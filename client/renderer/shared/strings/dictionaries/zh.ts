@@ -354,12 +354,8 @@ export const dict = {
       autonomy: '自主空间决策',
       autonomyAria: '自主空间决策',
       autonomyDesc: '自主档且桌面精灵显示时由 LLM 决定漫游、栖身与靠近（关闭按本地规则）',
-      autonomousMedia: '夜间自主心意创作',
-      autonomousMediaAria: '夜间自主心意创作',
-      autonomousMediaDesc: '夜间允许伙伴主动生成图片或短视频，并保存到生活空间片刻',
-      autonomousVoice: '夜间自主语音心意',
-      autonomousVoiceAria: '夜间自主语音心意',
-      autonomousVoiceDesc: '夜间允许伙伴使用当前音色录制语音，或为惊喜视频和图片添加配音'
+      postsEnabled: '动态创作',
+      postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额'
     },
     persona: {
       characterCard: {
@@ -594,6 +590,7 @@ export const dict = {
     code_execution: { label: '代码执行', description: '沙箱 Python 执行与受限调用。' },
     process_management: { label: '进程管理', description: '后台进程的启动与跟踪。' },
     skills_system: { label: '技能系统', description: '列出、查看与管理 Skill 内容。' },
+    posts: { label: '动态', description: '伙伴社交动态的独立发布和状态查询。' },
     memory: { label: '记忆', description: '长期记忆的写入、检索与删除。' },
     web_tools: { label: '联网工具', description: '网络搜索与网页内容抽取。' },
     image_generation: { label: '图片生成', description: '通过云端模型生成图片。' },
@@ -956,7 +953,7 @@ export const dict = {
     goToWorkbench: '前往工作台',
     rail: {
       chat: '对话',
-      moments: '片刻',
+      posts: '动态',
       diary: '日记',
       wardrobe: '衣柜',
       channels: '通道',
@@ -965,10 +962,16 @@ export const dict = {
       companionFallback: '伙伴',
       avatarMood: (name: string) => `${name} 的表情反馈`
     },
-    moments: {
+    posts: {
+      commentOpen: '评论',
+      loadMore: '加载更多',
+      replyPending: '正在回复…',
+      replyRetry: '回复失败 · 重试',
+      replyRetryFailed: '重试未成功，请稍后再试',
+
       loading: '正在翻看相册…',
-      empty: '还没有留下什么片刻。',
-      loadFailed: '片刻加载失败',
+      empty: '还没有留下什么动态。',
+      loadFailed: '动态加载失败',
       noTitle: '无题',
       commentPlaceholder: '写评论…',
       commentSend: '发送',
@@ -977,12 +980,8 @@ export const dict = {
       commentFailed: '评论发送失败',
       commentDeleteFailed: '评论删除失败',
       userLabel: '我',
-      kindLabels: {
-        emotion: '心情',
-        scene: '场景',
-        together: '在一起'
-      } as Record<string, string>,
-      kindFallback: '片刻'
+      contentTypeLabels: { text: '文字', image: '图片', video: '视频', audio: '语音' } as Record<string, string>,
+      contentTypeFallback: '动态'
     },
     diary: {
       loading: '翻开日记本中…',

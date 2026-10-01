@@ -85,7 +85,7 @@ flowchart LR
 
 衣柜启用外观是默认造型，场景穿着来自成品描述，本次造型冻结在生成任务中。`outfit_override` 仅作用于本次媒体；沿用场景穿着时从实际描述提取，资料不足不虚构或宣称完全一致。覆盖后不复用冲突的衣柜图。
 
-聊天与夜间共用图片装配入口，以当前全身图锚定身份，角色卡辅助；衣柜图仅供造型，不因角色卡文字修订而弃用。
+聊天与动态共用图片装配入口，以当前全身图锚定身份，角色卡辅助；衣柜图仅供造型，不因角色卡文字修订而弃用。
 
 | 输入情况 | 选择与处理 |
 |---|---|
@@ -149,7 +149,7 @@ flowchart LR
 
 - 两部分成功后原子发布并启动初始资产；来源未变只补失败部分，重启恢复中断任务。模型等待有超时且不持事务，回写核对身份、源路径及批次。
 - 重提取保留已发布资料，成功合并最新用户覆盖；下游只消费生效特征。普通媒体与换装不反写角色卡，全身采纳只更新身体。
-- 保存文字不重绘资产。全身/外观重绘写入与草稿确认核对修订，拒绝过期结果；场景、视频旧任务可留历史但不自动激活。已就绪的场景与视频包仍可手动启用：只有头像或已采纳全身图变化后才拒绝（场景按记录的全身图，视频包按冻结的全身身份图），角色卡文字修订与重新提取不影响。聊天与夜间出镜媒体在生成期间角色卡修订变化时丢弃结果，不交付。
+- 保存文字不重绘资产。全身/外观重绘写入与草稿确认核对修订，拒绝过期结果；场景、视频旧任务可留历史但不自动激活。已就绪的场景与视频包仍可手动启用：只有头像或已采纳全身图变化后才拒绝（场景按记录的全身图，视频包按冻结的全身身份图），角色卡文字修订与重新提取不影响。聊天与动态出镜媒体在生成期间角色卡修订变化时丢弃结果，不交付。
 - 外观记录生成/确认时的全身来源；仅文字修订不触发视频参考重绘，全身图改变或缺少来源标记时建包前按当前身份图校准，冻结外观图保留造型。
 - 自备图替换草稿清除旧来源，确认记录当前身份图；这代表用户采纳，不代表程序验证身份。
 
@@ -169,7 +169,7 @@ flowchart LR
 
 ### 质量选择
 
-- 身份保持图片与视频共用可见身份评分，覆盖换装、场景创建与重绘、出镜图片与视频首帧、身份校准图、动作姿态图，以及聊天、夜间与动作视频；头像与全身候选不评分，由用户预览确认。每输出位置在每家供应商只尝试一轮质量，达到[门槛](../backend/services/application/generation/media_chain.py)即停止，全部低分保留最高分，同分取较早候选。
+- 身份保持图片与视频共用可见身份评分，覆盖换装、场景创建与重绘、出镜图片与视频首帧、身份校准图、动作姿态图，以及聊天、动态与动作视频；头像与全身候选不评分，由用户预览确认。每输出位置在每家供应商只尝试一轮质量，达到[门槛](../backend/services/application/generation/media_chain.py)即停止，全部低分保留最高分，同分取较早候选。
 - 启用画幅机械门禁的功能（`size_enforced`，目前仅生活空间场景）按请求 `size`/`aspect_ratio` 核对候选宽高比；不合格结果在转存前丢弃并尝试下一供应商，全部不合格时明确失败。
 - 当前调用方均按单个输出位置调用质量链；聊天一次请求多张图时逐张独立择优。质量链支持多位置时只继续生成未达标的位置，并按供应商单次输出上限拆分请求。
 - 初次创建身份、明确修改身份的全身候选与自备图上传沿用预览采纳流程。
@@ -195,7 +195,6 @@ flowchart LR
 - 中间图片链耗尽时使用最佳候选继续后续生成。
 - 视频切换供应商复用已选首帧，单动作独立择优；整包发布前抽取必需动作的首、中、末帧与冻结参考做严格身份复核；可见冲突、证据不足或分析失败时保留素材供预览但不自动启用，用户可明确核对后启用。就绪包上单独制作的动作（动态动作、探身补齐、系统动作原位重做）逐段复核，疑点经复核项采纳前不进入播放目录。
 - 整包复核不重新生成整包。
-- 夜间旁白附着在最终选中的图片或视频上。
 
 ### 持久化与恢复
 
@@ -308,8 +307,9 @@ manifest 只含素材、画布与播放技术参数；使用场景元数据走 c
 | 角色卡 | [分析任务](../backend/services/application/generation/character_card.py)将头像与全身分别送入视觉提取（`avatar_service.extract_card_features`，与全身候选分析共用）→ 严格字段校验 → 自动值与用户覆盖合并 → [任务快照与渲染](../backend/services/domains/companion/character_card.py) | 部分分析失败重试、空白字段、覆盖恢复、头部／身体分工、旧任务修订校验 |
 | 换装 | 文字＋可选服装图 → 着装转写 → 原设计与连续反馈 → 身体判断 → [换装生成](../backend/services/application/generation/outfit_service.py) → 成品转写和命名 → 后续造型 | 新建、重绘、微调、参考转写失败、外部提示词、自备图、双语成品描述 |
 | 生活场景 | 初始引导／手动／聊天工具／夜间的环境要求与选定造型 → [场景装配](../backend/services/application/generation/scene_prompt.py) → 身份单图或环境双图生成 → 成品描述 → 当前环境；已保存场景按最新描述重绘并原位换图 | 有无造型、有无环境参考、文图冲突、外部制作、分析失败、重绘中继续使用旧图、身份变化、重启冻结输入与未知提交 |
-| 出镜图片 | [聊天工具说明](../backend/prompts/tools.py)经 [chat_images.py](../backend/services/application/generation/chat_images.py) 冻结每张图的计划，或[夜间规划](../backend/services/application/nightly/nightly_planning.py) → [共用身份与造型装配](../backend/services/application/generation/visual_identity.py) → 图片评分选择 → 对话／片刻；聊天另有验图与一次带修正资料的重做 | 默认造型、仅造型图、显式覆盖、缺图、生成前后身份修订、单／双参考、验图与重做 |
-| 出镜视频 | [视频工具](../backend/services/adapters/tools/builtin/video_generation_tool.py)或夜间规划 → 造型选择与首帧校准 → [视频任务](../backend/services/application/generation/video_jobs.py) → 抽帧评分 → 交付 | 默认首帧、显式首帧、造型覆盖、原样动画化省略 subject、后台恢复 |
+| 出镜图片 | [聊天工具说明](../backend/prompts/tools.py)经 [chat_images.py](../backend/services/application/generation/chat_images.py) 冻结每张图的计划，或[动态发布](../backend/services/application/posts/publication.py) → [共用身份与造型装配](../backend/services/application/generation/visual_identity.py) → 图片评分选择 → 对话／动态；聊天另有验图与一次带修正资料的重做 | 默认造型、仅造型图、显式覆盖、缺图、生成前后身份修订、单／双参考、验图与重做 |
+| 出镜视频 | [视频工具](../backend/services/adapters/tools/builtin/video_generation_tool.py)或[动态发布](../backend/services/application/posts/publication.py) → 造型选择与首帧校准 → [视频任务](../backend/services/application/generation/video_jobs.py) → 身份抽帧评分 → 对话／动态 | 默认首帧、显式首帧、造型覆盖、原样动画化省略 subject、后台恢复 |
+| 动态发布与评论 | 发布意图、伙伴背景、当前环境与近期动态 → [独立创作](../backend/services/application/posts/publication.py) → 正文与媒体制作计划 → 发布；本动态、目标评论、截至目标的线程资料及共享伙伴背景 → [回复](../backend/services/application/posts/replies.py) → 原线程评论 | 三类发布入口、四种内容类型、主对话隔离、连续评论、删除与重试 |
 | 动作视频 | 动态动作：提案与冻结身份／着装 → [独立评审](../backend/services/application/actions/review.py)；系统槽位由建包、原位重做或探身补齐直接排入 → [逐动作脚本](../backend/services/application/generation/video/script.py) → 姿态图 → 视频 → 机械门禁与严格身份复核 → 动作目录 | idle／drag／左右行走／左右探身／动态动作、loop／once、单动作反馈、结构重试、附加参考能力、旧包快照 |
 | 公共回退 | 完整提示词 → [审核改写](../backend/services/application/generation/avatar_service.py)（仅头像、全身与换装）、[图片质量链](../backend/services/application/generation/character_images.py)与[身份评分](../backend/services/application/generation/identity_review.py) → 保存最佳候选或明确失败 | 安全改写空值、可见身份冲突、证据不足、低分、评分不可用、未知付费结果、恢复冻结输入 |
 

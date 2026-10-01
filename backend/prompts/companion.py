@@ -106,7 +106,7 @@ SHOULD_ACT_INSTRUCTIONS: dict[str, str] = {
         "Default to stay. focused_category is the category of the user's foreground app: with ide (coding) or reader "
         "(reading documents) the user is probably focused on work, so prefer stay; perch fits quiet, infrequent "
         "companionship near the current window, while roam or approach needs a more specific, low-disturbance reason "
-        "than ordinary scenes. perch means quietly staying near the current window; roam suits only moments with no "
+        "than ordinary scenes. perch means quietly staying near the current window; roam suits only times with no "
         "obvious disturbance risk and enough time since the last action; approach means walking over and saying one "
         "line — choose it only for a concrete, sincere, low-frequency reason, never via guilt, nagging, or "
         "relationship pressure. last_action_seconds is the time since the last autonomous action; local_hour is the "

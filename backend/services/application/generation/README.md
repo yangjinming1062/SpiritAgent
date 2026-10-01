@@ -14,7 +14,7 @@
 | [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与场景提示词装配 |
 | [chat_images.py](chat_images.py) | 聊天图片批次登记、实际验图、版本与一次重做预算；工具入口见 [image_generation_tool.py](../../adapters/tools/builtin/image_generation_tool.py) |
 | [scene_service.py](scene_service.py) | 场景创建、描述分析、图片重生成与切换版本 |
-| [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、state、service）与聊天、夜间视频任务；供应商轮询 `poll_video_task` 两者共用，聊天工具入口见 [video_generation_tool.py](../../adapters/tools/builtin/video_generation_tool.py) |
+| [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、state、service）与聊天、动态视频任务；供应商轮询 `poll_video_task` 两者共用，聊天工具入口见 [video_generation_tool.py](../../adapters/tools/builtin/video_generation_tool.py) |
 | [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链择优、身份保持图片、评分与严格复核 |
 | [media_review.py](media_review.py) | 用户复核项的创建、查询、采纳与拒绝；采纳动作且所属包仍激活时同事务发布目录，拒绝时作废该次生成尝试；同一素材只复用仍待确认的复核项 |
 | [response_builders.py](response_builders.py) | 头像/外观响应装配 |
@@ -55,11 +55,11 @@
 
 [image_generation.py](image_generation.py)的 `resolve_image_gen_chain` 按参考图、编辑和透明能力筛选供应商链，`generate_images` 按 `persist_user_assets` 决定返回用户资产、原生 URL 或 data URI；能力位由[供应商基类](../../infrastructure/llm/providers/base.py)声明。提示词按点位选择，头像条款不能直接用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
 
-聊天与夜间图片共用 [visual_identity.py](visual_identity.py) 的 `build_self_image_prompt`，`SelfVisualPlan` 冻结造型。视频首帧生成/校准也走图片质量链，恢复沿用已保存首帧，具体规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频首帧)。
+聊天与动态图片共用 [visual_identity.py](visual_identity.py) 的 `build_self_image_prompt`，`SelfVisualPlan` 冻结造型。视频首帧生成/校准也走图片质量链，恢复沿用已保存首帧，具体规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频首帧)。
 
 ## 视频包与质量链
 
-聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。
+聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。没有目标会话的视频任务只保存结果，由[动态应用](../posts/README.md)接收，不执行聊天交付。
 
 上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）共用片段处理和发布；[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。任务按 `status × stage` 持久化，FFmpeg 在工作线程执行，新包失败不清空旧激活包；供应商句柄提交后立即落库，重启只续轮询，不重复付费提交。
 

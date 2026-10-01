@@ -2,7 +2,8 @@ from typing import Any
 
 # 工具集 id 权威枚举在 client/main/shared/lib/toolset-index.ts；此处只登记 backend/memory 桶 id，其余由 Runner get_tools 源头过滤。无归属且不受开关影响：search_tools、video_generate / video_generate_status。
 _TOOLSET_TOOL_NAMES: dict[str, tuple[str, ...]] = {
-    "memory": ("memory_retain", "memory_recall", "memory_inspect", "moment_create", "diary_write"),
+    "memory": ("memory_retain", "memory_recall", "memory_inspect", "diary_write"),
+    "posts": ("post_publish", "post_status"),
     "web_tools": ("web_search", "web_extract"),
     "image_generation": (
         "image_generate",

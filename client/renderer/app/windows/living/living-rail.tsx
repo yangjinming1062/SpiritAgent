@@ -38,7 +38,7 @@ export function LivingRail(): React.JSX.Element {
 
   const navEntries: NavEntry[] = [
     { icon: MessageSquareText, id: 'chat', label: t.chat },
-    { icon: Sparkles, id: 'moments', label: t.moments },
+    { icon: Sparkles, id: 'posts', label: t.posts },
     { icon: CalendarPlus, id: 'diary', label: t.diary },
     { icon: Shirt, id: 'appearance', label: t.wardrobe },
     { icon: Globe, id: 'channels', label: t.channels },

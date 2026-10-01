@@ -23,7 +23,7 @@ from components import (
     utc_now,
 )
 from modules.auth import User
-from modules.companion import companion_cron_source_key
+from modules.companion import Persona, companion_cron_source_key
 from modules.conversation import Conversation
 from modules.scheduler import CronJob, NightlyActivityLog
 from modules.settings import UserSetting, decode_setting_value, get_user_setting
@@ -32,8 +32,8 @@ from sqlalchemy import DateTime, bindparam, delete, or_, select, text, tuple_
 from sqlalchemy.engine import Row
 
 from services.application.automation import execute_standard_turn
-from services.application.moments import maybe_run_moment_impulse
 from services.application.nightly import run_nightly_pipeline
+from services.application.posts import scan_autonomous_posts
 from services.contracts import MemoryScope
 from services.domains.automation import STANDARD_CRON_KIND, compute_next_run_at
 from services.domains.companion import (
@@ -362,12 +362,6 @@ async def _maybe_run_ignored_outreach() -> None:
         )
 
 
-async def _maybe_run_moment_impulse() -> None:
-    """白天自主片刻：对在线用户低频咨询精灵是否发一条片刻；节流与门控在 maybe_run_moment_impulse 内。"""
-    for uid in MANAGER.local_user_ids():
-        await maybe_run_moment_impulse(uid)
-
-
 async def _tick() -> None:
     """为到期 job CAS 推进 next_run_at；special 持久化等待意图，standard 直接启动独立任务回合。"""
     now = utc_now()
@@ -377,7 +371,7 @@ async def _tick() -> None:
     _spawn_scan("outbox_gc", lambda: _maybe_run_outbox_gc(now))
     _spawn_scan("ignored_outreach", _maybe_run_ignored_outreach)
     _spawn_scan("companion_waits", _scan_companion_waits)
-    _spawn_scan("moment_impulse", _maybe_run_moment_impulse)
+    _spawn_scan("post_impulse", scan_autonomous_posts)
     due_jobs = await _select_due_jobs()
     if len(due_jobs) > _MAX_DUE_PER_TICK:
         logger.warning(
@@ -468,13 +462,26 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
                 .join(User, User.id == Conversation.user_id)
                 .join(UserSetting, UserSetting.user_id == User.id)
                 .where(
-                    User.nightly_activity_enabled.is_(True),
+                    User.is_active.is_(True),
                     Conversation.is_automation.is_(False),
                     UserSetting.setting_key == "timezone",
                 )
                 .distinct(),
             )
         ).all()
+        companion_rows = (
+            await db.execute(
+                select(User.id, UserSetting.setting_value)
+                .join(Persona, Persona.user_id == User.id)
+                .join(UserSetting, UserSetting.user_id == User.id)
+                .where(User.is_active.is_(True), Persona.is_complete.is_(True), UserSetting.setting_key == "timezone"),
+            )
+        ).all()
+        known_scopes = {(uid, preset) for uid, preset, _ in rows}
+        rows = [
+            *rows,
+            *((uid, "companion", tz) for uid, tz in companion_rows if (uid, "companion") not in known_scopes),
+        ]
         unfinished: dict[MemoryScope, list[NightlyActivityLog]] = {}
         for log in await db.scalars(
             select(NightlyActivityLog)

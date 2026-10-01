@@ -1,5 +1,3 @@
-// 片刻页：精灵主导的朋友圈式时间线，新在上；用户可就单条片刻评论与精灵互动。后端直连；精灵回复经 WS `companion.moment.comment` 增量推送。
-
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
@@ -7,13 +5,18 @@ import { useEffect, useMemo, useState } from 'react'
 import { $persona } from '@/modules/character'
 import { InlineMedia } from '@/modules/media'
 import {
-  $moments,
-  $momentsLoading,
-  commentMoment,
-  deleteMomentComment,
-  hydrateMoments,
-  type MomentCommentEntry
-} from '@/modules/memory'
+  $posts,
+  $postsHasMore,
+  $postsLoading,
+  $postsLoadingMore,
+  commentPost,
+  deletePostComment,
+  hydratePost,
+  hydratePosts,
+  loadMorePosts,
+  type PostCommentEntry,
+  retryPostReply
+} from '@/modules/posts'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import { BTN_SUBTLE } from '@/shared/panel'
@@ -22,7 +25,7 @@ import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import styles from './moments.module.css'
+import styles from './posts.module.css'
 
 function formatDate(formatter: Intl.DateTimeFormat, iso: string): string {
   try {
@@ -32,19 +35,21 @@ function formatDate(formatter: Intl.DateTimeFormat, iso: string): string {
   }
 }
 
-export function MomentsPage(): React.JSX.Element {
-  const moments = useStore($moments)
-  const loading = useStore($momentsLoading)
+export function PostsPage(): React.JSX.Element {
+  const posts = useStore($posts)
+  const loading = useStore($postsLoading)
+  const hasMore = useStore($postsHasMore)
+  const loadingMore = useStore($postsLoadingMore)
   const persona = useStore($persona)
   const authKind = useStore($auth).kind
   const locale = useStore($locale)
   const strings = useStrings()
-  const t = strings.living.moments
+  const t = strings.living.posts
   const [expandedId, setExpandedId] = useState<null | string>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
 
-  // 冷启动默认视图可能是片刻（hash/localStorage 持久化），hydrateAuth 的 IPC 往返尚未完成时 authedApi 会以 unauth 静默跳过——等 auth 就绪再水合。
+  // 冷启动可能先挂载动态页，鉴权完成后再水合。
   useEffect(() => {
     if (authKind !== 'authenticated') {
       return
@@ -53,7 +58,7 @@ export function MomentsPage(): React.JSX.Element {
     let cancelled = false
     setLoadFailed(false)
 
-    void hydrateMoments().then(ok => {
+    void hydratePosts().then(ok => {
       if (!cancelled) {
         setLoadFailed(!ok)
       }
@@ -64,22 +69,22 @@ export function MomentsPage(): React.JSX.Element {
     }
   }, [authKind, reloadKey])
 
-  const formattedMoments = useMemo(() => {
+  const formattedPosts = useMemo(() => {
     const formatter = new Intl.DateTimeFormat(locale)
 
-    return moments.map(m => ({
+    return posts.map(m => ({
       ...m,
-      displayDate: formatDate(formatter, m.createdAt)
+      displayDate: formatDate(formatter, m.publishedAt)
     }))
-  }, [moments, locale])
+  }, [posts, locale])
 
-  const getKindLabel = (kind: string): string => t.kindLabels[kind] ?? t.kindFallback
+  const getContentTypeLabel = (kind: string): string => t.contentTypeLabels[kind] ?? t.contentTypeFallback
 
-  if (loading && moments.length === 0) {
+  if (loading && posts.length === 0) {
     return <p className={styles.empty}>{t.loading}</p>
   }
 
-  if (moments.length === 0) {
+  if (posts.length === 0) {
     return loadFailed ? (
       <div className={styles.empty}>
         <p>{t.loadFailed}</p>
@@ -96,39 +101,71 @@ export function MomentsPage(): React.JSX.Element {
 
   return (
     <div className={styles.list}>
-      {formattedMoments.map(m => {
+      {formattedPosts.map(m => {
         const expanded = expandedId === m.id
 
         return (
           <article className={styles.card} key={m.id}>
             <button className={styles.cardToggle} onClick={() => setExpandedId(expanded ? null : m.id)} type="button">
               <div className={styles.cardHeader}>
-                <span className={styles.kindBadge}>{getKindLabel(m.kind)}</span>
-                <time className={styles.date} dateTime={m.createdAt}>
+                <span className={styles.contentTypeBadge}>{getContentTypeLabel(m.contentType)}</span>
+                <time className={styles.date} dateTime={m.publishedAt}>
                   {m.displayDate}
                 </time>
               </div>
               <h3 className={styles.title}>{m.title ?? t.noTitle}</h3>
               {m.body && <p className={cn(styles.body, expanded ? styles.bodyExpanded : styles.bodyClamp)}>{m.body}</p>}
             </button>
+            <button
+              className={styles.commentSend}
+              onClick={() => {
+                void hydratePost(m.id)
+                document.getElementById(`post-comments-${m.id}`)?.scrollIntoView({ block: 'nearest' })
+                document.getElementById(`post-input-${m.id}`)?.focus()
+              }}
+              type="button"
+            >
+              {t.commentOpen} ({m.comments.length})
+            </button>
             {m.mediaUrl ? (
-              <InlineMedia alt={m.title ?? ''} audioUrl={m.audioUrl} mediaType={m.mediaType} url={m.mediaUrl} />
+              <InlineMedia
+                alt={m.title ?? ''}
+                audioUrl={m.audioUrl}
+                mediaType={m.contentType === 'text' ? '' : m.contentType}
+                url={m.mediaUrl}
+              />
             ) : null}
-            <MomentComments comments={m.comments} companionName={companionName} momentId={m.id} />
+            <PostComments comments={m.comments} companionName={companionName} postId={m.id} />
           </article>
         )
       })}
+      {hasMore && (
+        <button
+          className={styles.commentSend}
+          disabled={loadingMore}
+          onClick={() => {
+            void loadMorePosts().then(ok => {
+              if (!ok) {
+                notify({ kind: 'error', message: t.loadFailed })
+              }
+            })
+          }}
+          type="button"
+        >
+          {loadingMore ? t.loading : t.loadMore}
+        </button>
+      )}
     </div>
   )
 }
 
-function MomentComments(props: {
-  comments: MomentCommentEntry[]
+function PostComments(props: {
+  comments: PostCommentEntry[]
   companionName: string
-  momentId: string
+  postId: string
 }): React.JSX.Element {
-  const { comments, companionName, momentId } = props
-  const t = useStrings().living.moments
+  const { comments, companionName, postId } = props
+  const t = useStrings().living.posts
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
 
@@ -142,7 +179,7 @@ function MomentComments(props: {
     setSending(true)
 
     const epoch = currentClearEpoch()
-    const ok = await commentMoment(momentId, content)
+    const ok = await commentPost(postId, content)
 
     setSending(false)
 
@@ -156,21 +193,32 @@ function MomentComments(props: {
   const remove = async (commentId: string): Promise<void> => {
     const epoch = currentClearEpoch()
 
-    if (!(await deleteMomentComment(momentId, commentId)) && epoch === currentClearEpoch()) {
+    if (!(await deletePostComment(postId, commentId)) && epoch === currentClearEpoch()) {
       notify({ kind: 'error', message: t.commentDeleteFailed })
     }
   }
 
   return (
-    <div className={styles.comments}>
+    <div className={styles.comments} id={`post-comments-${postId}`}>
       {comments.map(c => (
-        <CommentRow comment={c} companionName={companionName} key={c.id} onRemove={remove} />
+        <CommentRow
+          comment={c}
+          companionName={companionName}
+          key={c.id}
+          onRemove={remove}
+          onRetry={async commentId => {
+            if (!(await retryPostReply(postId, commentId))) {
+              notify({ kind: 'error', message: t.replyRetryFailed })
+            }
+          }}
+        />
       ))}
       <div className={styles.commentInputRow}>
         <input
           aria-label={t.commentPlaceholder}
           className={styles.commentInput}
           disabled={sending}
+          id={`post-input-${postId}`}
           maxLength={500}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => {
@@ -198,18 +246,36 @@ function MomentComments(props: {
 }
 
 function CommentRow(props: {
-  comment: MomentCommentEntry
+  comment: PostCommentEntry
   companionName: string
+  onRetry: (commentId: string) => Promise<void>
   onRemove: (commentId: string) => Promise<void>
 }): React.JSX.Element {
-  const { comment, companionName, onRemove } = props
+  const { comment, companionName, onRemove, onRetry } = props
+  const [retrying, setRetrying] = useState(false)
   const isCompanion = comment.role !== 'user'
-  const t = useStrings().living.moments
+  const t = useStrings().living.posts
 
   return (
     <div className={cn(styles.commentRow, isCompanion && styles.commentCompanion)}>
       <span className={styles.commentAuthor}>{isCompanion ? companionName : t.userLabel}</span>
       <span className={styles.commentContent}>{comment.content}</span>
+      {!isCompanion && (comment.replyStatus === 'pending' || comment.replyStatus === 'running') && (
+        <span className={styles.commentAuthor}>{t.replyPending}</span>
+      )}
+      {!isCompanion && comment.replyStatus === 'failed' && (
+        <button
+          className={styles.commentSend}
+          disabled={retrying}
+          onClick={() => {
+            setRetrying(true)
+            void onRetry(comment.id).finally(() => setRetrying(false))
+          }}
+          type="button"
+        >
+          {t.replyRetry}
+        </button>
+      )}
       {!isCompanion && (
         <button
           aria-label={t.commentDelete}

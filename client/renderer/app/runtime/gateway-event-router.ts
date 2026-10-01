@@ -1,5 +1,6 @@
 import { $chatSessionId } from '@/modules/conversation'
 import { onJournalEvent } from '@/modules/memory'
+import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
@@ -135,9 +136,14 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
 
-    case 'companion.moment.created':
+    case 'companion.post.created':
 
-    case 'companion.moment.comment':
+    case 'companion.post.comment':
+
+    case 'companion.post.comment.deleted':
+      onPostEvent(event)
+
+      break
 
     case 'companion.diary.upserted':
       onJournalEvent(event)

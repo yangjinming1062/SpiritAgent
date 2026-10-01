@@ -1,4 +1,4 @@
-"""夜间日记投影：把刚结束的本地日写成用户可见日记并关联当日片刻。时区、素材门控与上下文收集由 ``run_nightly_pipeline`` 完成。"""
+"""按目标本地日生成用户可见日记并关联动态；素材由夜间编排提供。"""
 
 from datetime import date
 from typing import Any
@@ -7,7 +7,8 @@ from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, SETTINGS, get_logge
 from modules.companion import DiarySource
 from prompts.nightly import JOURNAL_DIARY_TEXTS
 
-from services.domains.journal import MomentInteractions, diary_append_capacity, upsert_diary
+from services.domains.journal import diary_append_capacity, upsert_diary
+from services.domains.posts import PostInteractions
 from services.infrastructure.llm import UserLlmConfig, call_llm_once
 
 logger = get_logger(__name__)
@@ -23,11 +24,11 @@ async def project_today(
     messages: list[dict[str, str]],
     llm_cfg: UserLlmConfig,
     nightly_actions: list[dict[str, Any]],
-    moments: MomentInteractions,
+    posts: PostInteractions,
     persona: dict[str, str],
     language: str,
 ) -> bool | None:
-    """upsert target_date 的夜间日记。返回 ``True`` 成功落库 / ``False`` 配置关闭或同日日记已满 / ``None`` 应生成但 LLM 或解析失败（不写伪造内容）。"""
+    """生成或追加目标日的日记；True 表示已保存，False 表示无需生成，None 表示生成失败。"""
     if not SETTINGS.diary_nightly_enabled:
         logger.info("journal_nightly: disabled by config", extra={"user_id": user_id})
         return False
@@ -49,7 +50,7 @@ async def project_today(
         target_date,
         nightly_actions,
         persona,
-        moments.threads,
+        posts.threads,
         language,
         existing_entry=existing_entry,
         max_body_chars=max_body_chars,
@@ -61,8 +62,6 @@ async def project_today(
         )
         return None
     title, body = composed
-    # 夜间动作产生的片刻发布于次日凌晨，不在当日窗口内，需显式关联。
-    action_moment_ids = [str(item["moment_id"]) for item in nightly_actions if item.get("moment_id")]
     async with SESSION_LOCAL() as db:
         await upsert_diary(
             db,
@@ -71,7 +70,7 @@ async def project_today(
             title=title,
             body=body,
             source=DiarySource.NIGHTLY.value,
-            moment_ids=list(dict.fromkeys([*moments.posted_ids, *action_moment_ids])),
+            post_ids=posts.posted_ids,
         )
     return True
 
@@ -83,7 +82,7 @@ async def _compose_diary(
     target_date: date,
     nightly_actions: list[dict[str, Any]],
     persona: dict[str, str],
-    moment_interactions: list[dict[str, Any]],
+    post_interactions: list[dict[str, Any]],
     language: str,
     *,
     existing_entry: str,
@@ -93,7 +92,7 @@ async def _compose_diary(
         "local_date": target_date.isoformat(),
         "today_conversations": clean_messages[-40:],
         "nightly_autonomous_actions": nightly_actions,
-        **({"moment_interactions": moment_interactions} if moment_interactions else {}),
+        **({"post_interactions": post_interactions} if post_interactions else {}),
         **({"existing_entry": existing_entry} if existing_entry else {}),
         "max_body_chars": max_body_chars,
         "persona": persona,

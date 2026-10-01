@@ -48,12 +48,11 @@ OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = 
     "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
-        ("companion_moments", "session_id"),
         ("memories", None),
     ),
     "companion_scenes": (("personas", "active_scene_id"),),
-    "memories": (("companion_moments", "memory_id"), ("companion_diary_entries", None)),
-    "companion_moments": (("companion_diary_entries", None),),
+    "memories": (("companion_diary_entries", None),),
+    "companion_posts": (("companion_diary_entries", None),),
 }
 
 

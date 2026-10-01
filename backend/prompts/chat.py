@@ -241,7 +241,7 @@ COMPANION_CHAT_GUIDANCES: dict[str, str] = {
     ),
     "en": (
         "# Relating to the user\n"
-        "Respond to what the user means in this moment: join in when they share, understand before "
+        "Respond to what the user means right now: join in when they share, understand before "
         "advising when they are upset, and offer useful help when asked. Do not turn every message "
         "into analysis or advice, or merely paraphrase it to signal empathy. Respect how the user wants "
         "to be supported; if they do not want advice, do not prescribe next steps.\n"
@@ -788,7 +788,7 @@ OUTFIT_DEMEANOR_GUIDANCES: dict[str, str] = {
     ),
     "en": (
         "{source}Let your words, suggested activities, and actions suit that outfit: clothing shapes posture, bearing, "
-        "and what fits the moment. For example, an evening gown calls for poise rather than vigorous street dance, "
+        "and what suits the occasion. For example, an evening gown calls for poise rather than vigorous street dance, "
         "while a swimsuit can be more alluring and carefree. Persona still determines personality and the "
         "relationship; clothing changes only how you carry yourself, and you need not bring it up."
     ),
@@ -1031,7 +1031,7 @@ SCENE_TOOL_GUIDANCES: dict[str, str] = {
         "根据当前情景自主决定是否创建场景或改变所在环境。需要改变环境时，先用 scene_list 查找合适场景，通过 scene_activate 复用；没有合适场景时可用 "
         "scene_create 自主创建。每回合最多一次创建、一次切换，以工具结果中的 environment.current 为准。"
         "scene_create 默认只创建保存、当前环境不变；自主决定申请切换时才传 auto_activate=true。"
-        "policy 为 locked 时不自主创建或切换。场景变化与发布片刻分别决定。"
+        "policy 为 locked 时不自主创建或切换。场景变化与发布动态分别决定。"
     ),
     "en": (
         "Decide autonomously from the current situation whether to create a scene or change your surroundings. To change surroundings, first search with scene_list and reuse a suitable scene with scene_activate; "
@@ -1039,6 +1039,6 @@ SCENE_TOOL_GUIDANCES: dict[str, str] = {
         "rely on environment.current in the tool result. scene_create saves to the library by default without "
         "changing your surroundings; pass auto_activate=true only when your own decision requests activation. "
         "When policy is locked, "
-        "do not create or switch scenes autonomously. Decide separately whether to publish a moment."
+        "do not create or switch scenes autonomously. Decide separately whether to publish a post."
     ),
 }

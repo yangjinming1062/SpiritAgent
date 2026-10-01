@@ -94,19 +94,17 @@ export {
   selectPortraitEntry
 } from './portrait-store'
 export {
-  $autonomousMedia,
-  $autonomousVoice,
   $autoplayVoice,
   $companionVoiceId,
   $llmAffect,
   $llmAutonomy,
+  $postsEnabled,
   $responsePreference,
-  autonomousMediaPref,
-  autonomousVoicePref,
   autoplayVoicePref,
   initCompanionPrefsSync,
   llmAffectPref,
   llmAutonomyPref,
+  postsEnabledPref,
   type ResponsePreference,
   setCompanionVoiceId,
   setResponsePreference

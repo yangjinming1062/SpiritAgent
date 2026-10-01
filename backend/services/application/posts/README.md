@@ -1,0 +1,18 @@
+# 伙伴动态
+
+编排独立动态的发布、评论回复和后台任务；跨端契约见 [动态与日记](../../../../docs/PROTOCOL.md#动态与日记)。
+
+| 入口 | 职责与内部约束 |
+|---|---|
+| [publication.py](publication.py) | 受理发布意图、分类额度、冻结输入并编排创作与媒体制作；受理和执行阶段均核对开关与能力 |
+| [replies.py](replies.py) | 按动态串行处理评论；写回前核对触发评论及尝试版本 |
+| [autonomous.py](autonomous.py) | 扫描已完成伙伴初始化的活跃账户，发起低频决策并恢复待处理发布与回复 |
+| [领域存储](../../domains/posts/store.py) | 发布与额度事务、评论操作和夜间线程归集 |
+
+[发布任务](../../../modules/companion/posts.py)在创作前预留额度并冻结输入，已有计划时不重新规划。恢复时续查已知视频句柄；没有结果记录的 `*_submitting` 阶段按结果未知停止，旁白阶段可保留已完成主媒体发布。
+
+发布受理与状态查询共用 [PostPublicationResult](../../../modules/companion/schemas_posts.py)，工具出口序列化为 JSON。夜间账本将自主不发布记为跳过、政策或能力拦截记为阻止，成功和部分成功关联实际动态。
+
+启停由 [lifecycle.py](../../../bootstrap/lifecycle.py) 管理，周期恢复随 [Cron 扫描](../../adapters/scheduler/cron.py) 执行；后台任务须登记用户归属，以纳入账户维护。
+
+验证入口见 [Scripts](../../../../scripts/README.md)：核对主对话隔离、同线程顺序、删除与重试、并发额度、未知提交、重启，以及长媒体下的实际评论入口。

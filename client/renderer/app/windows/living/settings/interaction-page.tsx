@@ -3,20 +3,18 @@ import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import {
-  $autonomousMedia,
-  $autonomousVoice,
   $autoplayVoice,
   $llmAffect,
   $llmAutonomy,
+  $postsEnabled,
   $responsePreference,
   $userPreferredTier,
-  autonomousMediaPref,
-  autonomousVoicePref,
   autoplayVoicePref,
   type DisturbanceTier,
   endQuiet,
   llmAffectPref,
   llmAutonomyPref,
+  postsEnabledPref,
   type ResponsePreference,
   setDisturbanceTier,
   setResponsePreference
@@ -53,8 +51,7 @@ export function InteractionPage(): React.ReactElement {
   const responsePreference = useStore($responsePreference)
   const llmAffect = useStore($llmAffect)
   const llmAutonomy = useStore($llmAutonomy)
-  const autonomousMedia = useStore($autonomousMedia)
-  const autonomousVoice = useStore($autonomousVoice)
+  const postsEnabled = useStore($postsEnabled)
   const autoplayVoice = useStore($autoplayVoice)
 
   const [maxRecordingSeconds, setMaxRecordingSeconds] = useState<number>(DEFAULT_RECORDING_SECONDS)
@@ -197,11 +194,8 @@ export function InteractionPage(): React.ReactElement {
           <SettingRow description={t.autonomyDesc} label={t.autonomy}>
             <Toggle ariaLabel={t.autonomyAria} checked={llmAutonomy} onChange={llmAutonomyPref.set} />
           </SettingRow>
-          <SettingRow description={t.autonomousMediaDesc} label={t.autonomousMedia}>
-            <Toggle ariaLabel={t.autonomousMediaAria} checked={autonomousMedia} onChange={autonomousMediaPref.set} />
-          </SettingRow>
-          <SettingRow description={t.autonomousVoiceDesc} label={t.autonomousVoice}>
-            <Toggle ariaLabel={t.autonomousVoiceAria} checked={autonomousVoice} onChange={autonomousVoicePref.set} />
+          <SettingRow description={t.postsEnabledDesc} label={t.postsEnabled}>
+            <Toggle ariaLabel={t.postsEnabled} checked={postsEnabled} onChange={postsEnabledPref.set} />
           </SettingRow>
         </SettingCard>
       </section>

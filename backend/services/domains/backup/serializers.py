@@ -22,15 +22,16 @@ from modules.companion import (
     CompanionDiaryEntry,
     CompanionIntent,
     CompanionIntentView,
-    CompanionMoment,
-    CompanionMomentComment,
     CompanionOutfit,
+    CompanionPost,
+    CompanionPostComment,
     CompanionScene,
     DiarySource,
-    MomentCommentRole,
-    MomentKind,
-    MomentSource,
     Persona,
+    PostCommentResponse,
+    PostCommentRole,
+    PostContentType,
+    PostContext,
     SceneDescriptionRequest,
     companion_cron_source_key,
 )
@@ -44,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
 from services.domains.conversation import CHECKPOINT_SUBTYPES, validate_memory_scope
+from services.infrastructure.assets import parse_companion_asset_path
 
 from .action_assets import restore_action_payload
 from .file_packing import UrlRewriter
@@ -64,8 +66,8 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "cron_jobs": CronJob,
     "companion_intents": CompanionIntent,
     "memories": Memory,
-    "companion_moments": CompanionMoment,
-    "companion_moment_comments": CompanionMomentComment,
+    "companion_posts": CompanionPost,
+    "companion_post_comments": CompanionPostComment,
     "companion_diary_entries": CompanionDiaryEntry,
     "messages": Message,
 }
@@ -78,8 +80,7 @@ FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "companion_actions": {"pack_id": "companion_action_packs", "outfit_id": "companion_outfits"},
     "personas": {"active_scene_id": "companion_scenes"},
     "cron_jobs": {"conversation_id": "conversations"},
-    "companion_moments": {"memory_id": "memories", "session_id": "conversations"},
-    "companion_moment_comments": {"moment_id": "companion_moments"},
+    "companion_post_comments": {"post_id": "companion_posts"},
     "messages": {"conversation_id": "conversations"},
 }
 UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
@@ -181,26 +182,25 @@ async def insert_rows(
             conversation = await db.get(Conversation, payload["conversation_id"])
             if conversation.user_id != target_user_id or not conversation.is_automation:
                 raise ValueError("Standard job requires an automation conversation")
-        if table == "companion_moments":
-            memory_id = payload.get("memory_id")
-            if memory_id is not None:
-                memory = await db.get(Memory, int(memory_id))
-                if memory is None or memory.user_id != target_user_id or memory.system_preset_id != "companion":
-                    raise ValueError("Companion narrative refers to a different memory scope")
-            if payload.get("session_id") is not None:
-                conversation = await db.get(Conversation, payload["session_id"])
-                if conversation.user_id != target_user_id or conversation.system_preset_id != "companion":
-                    raise ValueError("Companion moment refers to a different conversation scope")
-            if payload.get("kind") not in {kind.value for kind in MomentKind}:
-                raise ValueError("Invalid moment kind")
-            if payload.get("source") not in {source.value for source in MomentSource}:
-                raise ValueError("Invalid moment source")
+        if table == "companion_posts":
+            if payload.get("content_type") not in {kind.value for kind in PostContentType}:
+                raise ValueError("Invalid post content type")
+            PostContext.model_validate(payload["context_json"])
+            if payload.get("quota_kind") not in {"autonomous", "user_requested"}:
+                raise ValueError("Invalid post quota kind")
+            if payload["content_type"] != "text" and not payload.get("media_url"):
+                raise ValueError("Post main media is missing")
+            for path in (payload.get("media_url"), payload.get("audio_url")):
+                if path and (not (parsed := parse_companion_asset_path(path)) or parsed[0] != target_user_id):
+                    raise ValueError("Post media must belong to the target account")
         if table == "companion_diary_entries" and payload.get("source") not in {source.value for source in DiarySource}:
             raise ValueError("Invalid diary source")
-        if table == "companion_moment_comments" and payload.get("role") not in {
-            role.value for role in MomentCommentRole
-        }:
-            raise ValueError("Invalid moment comment role")
+        if table == "companion_post_comments" and payload.get("role") not in {role.value for role in PostCommentRole}:
+            raise ValueError("Invalid post comment role")
+        if table == "companion_post_comments":
+            PostCommentResponse.model_validate({**payload, "id": raw["id"]})
+            if (payload["role"] == "companion") != (payload["reply_status"] == "none"):
+                raise ValueError("Invalid reply status for comment role")
         existing = None
         if mode == "merge" and table in UNIQUE_KEYS:
             existing = await db.scalar(
@@ -249,6 +249,22 @@ async def insert_rows(
         inserted += 1
         if table == "conversations":
             lineages.append((instance, raw.get("parent_id"), raw.get("forked_from_id"), payload.get("updated_at")))
+    if table == "companion_post_comments":
+        originals = {str(raw["id"]): raw for raw in raw_rows}
+        for raw in raw_rows:
+            target_id = raw.get("reply_to_comment_id")
+            if target_id is None:
+                continue
+            target = originals.get(str(target_id))
+            if (
+                target is None
+                or target["post_id"] != raw["post_id"]
+                or target["role"] != "user"
+                or raw["role"] != "companion"
+            ):
+                raise ValueError("Invalid post comment reply target")
+            row = await db.get(CompanionPostComment, new_map[str(raw["id"])])
+            row.reply_to_comment_id = new_map[str(target_id)]
     for conversation, parent_id, forked_from_id, updated_at in lineages:
         if parent_id is None and forked_from_id is None:
             continue
@@ -433,11 +449,16 @@ def _build_payload(
         if payload.get("status") == "pending":
             payload["status"] = "description_failed" if payload.get("media_path") else "failed"
             payload["error"] = "恢复的场景任务需要手动重试"
+    if table == "companion_post_comments":
+        payload["reply_to_comment_id"] = None
+        if payload.get("reply_status") in {"pending", "running"}:
+            payload["reply_status"] = "failed"
+            payload["reply_error"] = "恢复的评论可手动重试回复"
     if table == "companion_diary_entries":
-        payload["moment_ids"] = [
-            str(id_map["companion_moments"][str(value)])
-            for value in raw.get("moment_ids", [])
-            if str(value) in id_map.get("companion_moments", {})
+        payload["post_ids"] = [
+            str(id_map["companion_posts"][str(value)])
+            for value in raw.get("post_ids", [])
+            if str(value) in id_map.get("companion_posts", {})
         ]
     if table not in {"messages", "user_preferences"}:
         payload["user_id"] = user_id

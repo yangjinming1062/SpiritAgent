@@ -879,7 +879,7 @@ input[type="file"] { font-size: 0.78rem; }
                 <input type="text" id="baseUrl" placeholder="例如 https://example.com" autocomplete="off" required>
                 <div class="hint">嵌入激活码的后端地址，用户激活时客户端将连接此地址。</div>
             </div>
-            <label class="checkbox-row"><input type="checkbox" id="nightlyEnabled" checked> 启用夜间活动</label>
+            <label class="checkbox-row"><input type="checkbox" id="nightlyEnabled" checked> 启用夜间自主规划</label>
             <div class="field" id="regenField" style="display:none; margin-top:0.95rem; padding-top:0.95rem; border-top:1px solid var(--border);">
                 <label>激活码</label>
                 <button type="button" class="btn btn--ghost btn--sm" onclick="regenerateToken()">重新生成激活码</button>
@@ -900,7 +900,7 @@ input[type="file"] { font-size: 0.78rem; }
             <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
-            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">包含角色与形象、角色卡、衣柜与动作、场景、用户画像与设置、音色、长期记忆、片刻、日记和定时任务。</p>
+            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">包含角色与形象、角色卡、衣柜与动作、场景、用户画像与设置、音色、长期记忆、动态、日记和定时任务。</p>
             <label class="checkbox-row"><input type="checkbox" id="exportConversations"> 包含会话记录（消息、上下文与现存附件）</label>
             <p class="hint">默认不包含会话记录。备份包含用户 API 凭据，请妥善保存。导入后请重新启动客户端以刷新数据。</p>
         </div>
@@ -919,7 +919,7 @@ input[type="file"] { font-size: 0.78rem; }
         </div>
         <div class="modal-body">
             <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">
-                导入目标用户 #<span id="backupUserId"></span>。恢复备份中包含的角色、形象与角色卡、衣柜与动作、场景、设置与凭据、长期记忆、片刻、日记和定时任务；仅当备份包含会话记录时才恢复会话。各类数据会尽力恢复，不兼容的内容将在完成后列出。导入后请重新启动客户端。
+                导入目标用户 #<span id="backupUserId"></span>。恢复备份中包含的角色、形象与角色卡、衣柜与动作、场景、设置与凭据、长期记忆、动态、日记和定时任务；仅当备份包含会话记录时才恢复会话。各类数据会尽力恢复，不兼容的内容将在完成后列出。导入后请重新启动客户端。
             </p>
             <div class="field">
                 <label>导入模式</label>
@@ -1480,7 +1480,7 @@ const BACKUP_SECTION_LABELS = Object.freeze({
     companion_outfits: '衣柜', companion_action_packs: '动作包', companion_actions: '动作',
     companion_scenes: '场景', personas: '角色定义', user_settings: '用户设置',
     cron_jobs: '定时任务', companion_intents: '主动陪伴意图', memories: '长期记忆',
-    companion_moments: '片刻', companion_moment_comments: '片刻评论',
+    companion_posts: '动态', companion_post_comments: '动态评论',
     companion_diary_entries: '日记', asset_files: '资产文件',
 });
 const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });
@@ -1968,12 +1968,12 @@ const SETTINGS_SECTIONS = [
                 num('companion_avatar_generate_rate_limit_per_minute', '伙伴头像生成 (/分钟)'),
                 num('companion_outfit_generate_rate_limit_per_hour', '伙伴换装外观生成 (/小时)'),
             ]],
-            ['sub', '场景、片刻与安全配额'],
+            ['sub', '场景、动态与安全配额'],
             ['grid', [
                 num('scene_llm_create_per_24h', '角色自主新增场景上限 (/24小时)'),
                 num('scene_store_max_attempts', '场景图片转存最大重试次数'),
-                num('moment_llm_per_day', '对话中角色记录片刻配额 (/24小时)'),
-                num('moment_autonomous_per_day', '白天角色自主发布片刻配额 (/24小时)'),
+                num('post_requested_per_day', '用户明确请求动态配额 (/24小时)'),
+                num('post_autonomous_per_day', '伙伴自主发布动态配额 (/24小时)'),
                 num('max_attachments_per_turn', '单回合附件数量上限', 1),
                 num('attachment_session_quota_bytes', '会话附件目录配额 (字节)', 1048576),
             ]],

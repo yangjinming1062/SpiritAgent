@@ -12,7 +12,8 @@
 | 动作提案、生成与播放 | [动作编排](services/application/actions/README.md)、[动作领域](services/domains/actions/README.md) |
 | Cron 与在线陪伴 | 调度 [cron.py](services/adapters/scheduler/cron.py)；回合 [companion_turns.py](services/application/automation/companion_turns.py) / [standard_turns.py](services/application/automation/standard_turns.py)；任务与等待分别见 [cron_jobs.py](services/domains/automation/cron_jobs.py) / [intents.py](services/domains/companion/intents.py) |
 | 夜间计划与执行 | [nightly_activity.py](services/application/nightly/nightly_activity.py) 的 `run_nightly_pipeline` → [nightly_planning.py](services/application/nightly/nightly_planning.py)；检查 [阶段与恢复](#夜间批处理) |
-| 片刻与日记 | 领域 [journal_service.py](services/domains/journal/journal_service.py)；自主与回复 [autonomous.py](services/application/moments/autonomous.py) / [replies.py](services/application/moments/replies.py)；REST [companion_journal.py](api/v1/companion_journal.py) |
+| 动态 | [动态应用](services/application/posts/README.md)、[动态领域](services/domains/posts/store.py)、[REST](api/v1/companion_posts.py) |
+| 日记 | [日记领域](services/domains/journal/journal_service.py)、[REST](api/v1/companion_journal.py) |
 | IM 生命周期与投递 | 生命周期 [channels/manager.py](services/adapters/channels/manager.py)；入站、回合与补发 [bridge.py](services/adapters/channels/bridge.py)；iLink [weixin_ilink.py](services/adapters/channels/adapters/weixin_ilink.py)；REST [channels.py](api/v1/channels.py)；[IM 约束](#im-渠道) |
 | 激活、登录与 WS 票据 | [user.py](api/v1/user.py)（激活、ws-ticket、刷新、登出）、管理员登录 [page.py](api/v1/page.py)；令牌与鉴权依赖 [modules/auth](modules/auth/) |
 | 管理后台与用户管理 | 页面 [static/admin.html](static/admin.html)，API [admin.py](api/v1/admin.py)（用户、按用户模型配置、系统设置、夜间日志、备份导出导入、删除用户） |
@@ -57,7 +58,8 @@
 | backup → actions | 恢复动作资产后重建目录并复用发布校验 |
 | automation → chat / nightly | 复用自动化执行流程 |
 | chat → nightly | 回合后整理 |
-| nightly → generation | 制作夜间资产 |
+| nightly → generation / posts | 夜间资产与独立动态发布 |
+| posts → generation | 复用图片、视频与身份生成能力 |
 | application/actions → generation | 制作动作素材 |
 | chat / nightly → application/actions | 读取动作上下文 |
 
@@ -89,7 +91,7 @@
 | 阶段 | 顺序与归属 |
 |---|---|
 | 启动 | 配置检查 → 迁移 → 配置水合与目录准备 → 调度器 → 事件回路 → 渠道桥 → 任务恢复 |
-| 恢复 | 聊天与夜间视频任务、视频包生成/导入、动作提案评审、角色卡提取、场景、初始外观 |
+| 恢复 | 动态发布与评论、聊天与动态视频任务、视频包生成/导入、动作提案评审、角色卡提取、场景、初始外观 |
 | 停止 | 关闭清理任务与调度入口 → 收敛模块任务 → 停渠道桥与事件回路 → 释放数据库、Web 供应商及 LLM 连接池 |
 
 `MANAGER`、`REGISTRY`、`SETTINGS` 与用户锁遵守单进程边界。bootstrap 管装配，不另建通用依赖注入容器。
@@ -116,7 +118,7 @@
 
 ### 陪伴叙事
 
-检索记忆与片刻、日记分开维护。白天自主片刻只更新信息流，不写主对话或产生桌面打扰；互动统计按用户本地日聚合。片刻媒体由生成方先存为正式资产，写入入口拒绝外部或临时地址。证据和维护规则归 [记忆模块](services/domains/memory/README.md)。
+检索记忆的证据与维护规则归 [记忆模块](services/domains/memory/README.md)；动态与日记的隔离、发布及互动归集见 [PROTOCOL](../docs/PROTOCOL.md#动态与日记)，动态编排见 [动态应用](services/application/posts/README.md)。
 
 ### 夜间批处理
 
@@ -124,7 +126,7 @@
 - 计划与动作账本先持久化再执行；每项执行前重读政策并核对依赖，终态统一落库，失败互相隔离。场景阶段不依赖外观或动作阶段。
 - 规划动作 ID 保持原样并校验唯一性；过滤前置能力后依赖仍保留，只有前置整项成功才解锁后续，部分成功只提供已完成事实。
 - 有任务句柄时先核对原任务；结果未知的在途动作保留中断事实，不重发副作用。文本与媒体参数在执行前校验长度，不以截断改变计划。
-- 片刻发布与评论纳入当天经历，只有成功结果进入叙事；没有用户消息、成功（含部分成功）的夜间动作或片刻互动时不写内部反思和日记。反思按存储预算生成，结构不符时只修复一次，仍失败则不保存；写入 `diary:` 命名空间，供后续检索召回，读取时标注所属日期。
+- 没有可读用户发言、成功（含部分成功）的夜间动作或动态资料时，不写内部反思和用户可见日记；动态日期归属见 [PROTOCOL](../docs/PROTOCOL.md#动态与日记)。内部反思按存储预算生成，结构不符时只修复一次，仍失败则不保存；写入 `diary:` 命名空间供检索召回，读取时标注所属日期。
 
 ### 陪伴调度与恢复
 

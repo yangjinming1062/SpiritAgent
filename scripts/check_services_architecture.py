@@ -27,6 +27,8 @@ UPWARD_ALLOWED = {
 }
 # application 包级单向流程依赖（理由见 backend/README.md）。
 APPLICATION_FLOW_EDGES = {
+    ("services.application.nightly", "services.application.posts"),
+    ("services.application.posts", "services.application.generation"),
     ("services.application.automation", "services.application.chat"),
     ("services.application.chat", "services.application.nightly"),
     ("services.application.nightly", "services.application.generation"),

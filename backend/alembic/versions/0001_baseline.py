@@ -518,57 +518,112 @@ def upgrade() -> None:
     op.create_index(op.f("ix_personas_is_portrait_confirmed"), "personas", ["is_portrait_confirmed"], unique=False)
     op.create_index(op.f("ix_personas_user_id"), "personas", ["user_id"], unique=True)
     op.create_table(
-        "companion_moments",
-        sa.Column("id", UUID(as_uuid=False), nullable=False),
+        "companion_posts",
+        sa.Column("id", sa.UUID(as_uuid=False), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("occurred_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        # 片刻由精灵主导：无 greeting/system 缺省，默认情绪切片 + 夜间来源。
-        sa.Column("kind", sa.String(length=16), server_default=sa.text("'emotion'"), nullable=False),
-        sa.Column("title", sa.String(length=64), server_default=sa.text("''"), nullable=False),
-        sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("emotion", sa.String(length=32), nullable=True),
+        sa.Column("published_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("activity_date", sa.Date(), nullable=False),
+        sa.Column("content_type", sa.String(length=16), nullable=False),
+        sa.Column("title", sa.String(length=64), nullable=False),
+        sa.Column("body", sa.Text(), nullable=False),
         sa.Column("media_url", sa.String(length=2048), nullable=True),
-        sa.Column("source", sa.String(length=16), server_default=sa.text("'nightly'"), nullable=False),
-        sa.Column("memory_id", sa.Integer(), nullable=True),
-        sa.Column("session_id", sa.Integer(), nullable=True),
-        sa.Column("media_type", sa.String(length=16), server_default=sa.text("''"), nullable=False),
         sa.Column("audio_url", sa.String(length=2048), nullable=True),
-        sa.Column("media_metadata", sa.JSON(), nullable=True),
+        sa.Column("context_json", sa.JSON(), nullable=False),
+        sa.Column("quota_kind", sa.String(length=24), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["memory_id"], ["memories.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["session_id"], ["conversations.id"], ondelete="SET NULL"),
-        sa.PrimaryKeyConstraint("id"),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("companion_posts_user_id_fkey"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("companion_posts_pkey")),
     )
-    op.create_index(op.f("ix_companion_moments_user_id"), "companion_moments", ["user_id"], unique=False)
-    op.create_index(op.f("ix_companion_moments_occurred_at"), "companion_moments", ["occurred_at"], unique=False)
-    op.create_index(op.f("ix_companion_moments_kind"), "companion_moments", ["kind"], unique=False)
+    op.create_index(op.f("ix_companion_posts_activity_date"), "companion_posts", ["activity_date"], unique=False)
+    op.create_index(op.f("ix_companion_posts_published_at"), "companion_posts", ["published_at"], unique=False)
+    op.create_index(op.f("ix_companion_posts_quota_kind"), "companion_posts", ["quota_kind"], unique=False)
+    op.create_index(op.f("ix_companion_posts_user_id"), "companion_posts", ["user_id"], unique=False)
     op.create_table(
-        "companion_moment_comments",
-        sa.Column("id", UUID(as_uuid=False), nullable=False),
-        sa.Column("moment_id", UUID(as_uuid=False), nullable=False),
+        "companion_post_comments",
+        sa.Column("id", sa.UUID(as_uuid=False), nullable=False),
+        sa.Column("post_id", sa.UUID(as_uuid=False), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("role", sa.String(length=16), server_default=sa.text("'user'"), nullable=False),
-        sa.Column("content", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("role", sa.String(length=16), nullable=False),
+        sa.Column("content", sa.Text(), nullable=False),
+        sa.Column("reply_to_comment_id", sa.UUID(as_uuid=False), nullable=True),
+        sa.Column("reply_status", sa.String(length=16), server_default=sa.text("'none'"), nullable=False),
+        sa.Column("reply_error", sa.String(length=160), nullable=True),
+        sa.Column("reply_attempts", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["moment_id"], ["companion_moments.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
+        sa.ForeignKeyConstraint(
+            ["post_id"],
+            ["companion_posts.id"],
+            name=op.f("companion_post_comments_post_id_fkey"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["reply_to_comment_id"],
+            ["companion_post_comments.id"],
+            name=op.f("companion_post_comments_reply_to_comment_id_fkey"),
+            ondelete="SET NULL",
+            initially="DEFERRED",
+            deferrable=True,
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("companion_post_comments_user_id_fkey"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("companion_post_comments_pkey")),
+        sa.UniqueConstraint("reply_to_comment_id", name="uq_post_comment_reply_target"),
     )
+    op.create_index(op.f("ix_companion_post_comments_post_id"), "companion_post_comments", ["post_id"], unique=False)
     op.create_index(
-        op.f("ix_companion_moment_comments_moment_id"),
-        "companion_moment_comments",
-        ["moment_id"],
+        op.f("ix_companion_post_comments_reply_status"),
+        "companion_post_comments",
+        ["reply_status"],
         unique=False,
     )
-    op.create_index(
-        op.f("ix_companion_moment_comments_user_id"),
-        "companion_moment_comments",
-        ["user_id"],
-        unique=False,
+    op.create_index(op.f("ix_companion_post_comments_user_id"), "companion_post_comments", ["user_id"], unique=False)
+    op.create_table(
+        "post_publications",
+        sa.Column("id", sa.UUID(as_uuid=False), nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("idempotency_key", sa.String(length=200), nullable=False),
+        sa.Column("trigger", sa.String(length=24), nullable=False),
+        sa.Column("quota_kind", sa.String(length=24), nullable=False),
+        sa.Column("reserved_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("activity_date", sa.Date(), nullable=False),
+        sa.Column("status", sa.String(length=24), nullable=False),
+        sa.Column("phase", sa.String(length=32), nullable=False),
+        sa.Column("request_json", sa.JSON(), nullable=False),
+        sa.Column("plan_json", sa.JSON(), nullable=True),
+        sa.Column("progress_json", sa.JSON(), nullable=False),
+        sa.Column("post_id", sa.UUID(as_uuid=False), nullable=True),
+        sa.Column("error", sa.String(length=160), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["post_id"],
+            ["companion_posts.id"],
+            name=op.f("post_publications_post_id_fkey"),
+            ondelete="SET NULL",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("post_publications_user_id_fkey"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("post_publications_pkey")),
+        sa.UniqueConstraint("user_id", "idempotency_key", name="uq_post_publication_request"),
     )
+    op.create_index(op.f("ix_post_publications_reserved_at"), "post_publications", ["reserved_at"], unique=False)
+    op.create_index(op.f("ix_post_publications_status"), "post_publications", ["status"], unique=False)
+    op.create_index(op.f("ix_post_publications_user_id"), "post_publications", ["user_id"], unique=False)
     op.create_table(
         "companion_diary_entries",
         sa.Column("id", UUID(as_uuid=False), nullable=False),
@@ -578,7 +633,7 @@ def upgrade() -> None:
         sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("mood", sa.String(length=32), nullable=True),
         sa.Column("source", sa.String(length=16), server_default=sa.text("'nightly'"), nullable=False),
-        sa.Column("moment_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("post_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
@@ -1002,8 +1057,9 @@ def downgrade() -> None:
         "user_model_configs",
         "nightly_activity_actions",
         "personas",
-        "companion_moment_comments",
-        "companion_moments",
+        "post_publications",
+        "companion_post_comments",
+        "companion_posts",
         "companion_diary_entries",
         "companion_intents",
         "nightly_activity_logs",

@@ -20,12 +20,7 @@ from .character_card import (
 )
 from .journal import (
     CompanionDiaryEntry,
-    CompanionMoment,
-    CompanionMomentComment,
     DiarySource,
-    MomentCommentRole,
-    MomentKind,
-    MomentSource,
 )
 from .models import (
     OUTFIT_POLICY_DEFAULT,
@@ -36,6 +31,7 @@ from .models import (
     Persona,
 )
 from .models_loop import COMPANION_CRON_SOURCE_PREFIX, CompanionIntent, companion_cron_source_key
+from .posts import CompanionPost, CompanionPostComment, PostCommentRole, PostContentType, PostPublication
 from .scene import (
     CompanionScene,
     SceneGenerationAttempt,
@@ -94,10 +90,6 @@ from .schemas_actions import (
 from .schemas_journal import (
     DiaryEntryResponse,
     DiaryListResponse,
-    MomentCommentCreateRequest,
-    MomentCommentResponse,
-    MomentListResponse,
-    MomentResponse,
 )
 from .schemas_loop import (
     MAX_COMPANION_FAILURES,
@@ -106,6 +98,15 @@ from .schemas_loop import (
     CompanionTurnRequest,
     CompanionWaitRequest,
     CompanionWakeEvent,
+)
+from .schemas_posts import (
+    PostCommentCreateRequest,
+    PostCommentResponse,
+    PostContext,
+    PostListResponse,
+    PostPlan,
+    PostPublicationResult,
+    PostResponse,
 )
 from .schemas_scene import (
     SceneActivateRequest,
@@ -128,6 +129,18 @@ from .schemas_video import (
 )
 
 __all__ = [
+    "CompanionPost",
+    "CompanionPostComment",
+    "PostCommentRole",
+    "PostContentType",
+    "PostPublication",
+    "PostCommentCreateRequest",
+    "PostCommentResponse",
+    "PostListResponse",
+    "PostResponse",
+    "PostContext",
+    "PostPlan",
+    "PostPublicationResult",
     "ABSOLUTE_MAX_DURATION_SECONDS",
     "SceneGenerationAttempt",
     "BodyFeatures",
@@ -185,8 +198,6 @@ __all__ = [
     "AvatarHistoryResponse",
     "AvatarPromptRequest",
     "CompanionDiaryEntry",
-    "CompanionMoment",
-    "CompanionMomentComment",
     "CompanionOperationResponse",
     "CompanionOutfit",
     "CompanionScene",
@@ -200,13 +211,6 @@ __all__ = [
     "ImageAdoptRequest",
     "ImagePromptResponse",
     "ImageReviseMode",
-    "MomentCommentCreateRequest",
-    "MomentCommentResponse",
-    "MomentCommentRole",
-    "MomentKind",
-    "MomentListResponse",
-    "MomentResponse",
-    "MomentSource",
     "OnboardingStateResponse",
     "OutfitAdoptRequest",
     "OutfitConfirmRequest",

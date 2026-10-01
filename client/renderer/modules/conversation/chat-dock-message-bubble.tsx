@@ -43,7 +43,7 @@ interface MessageBubbleProps {
   variant?: ConversationVariant
 }
 
-// 异步送达的媒体行（片刻、后台视频）：有正文时显示在媒体卡上方；视频送达行不带正文。
+// 异步媒体送达复用此状态行；可见正文由消息投影决定。
 const MEDIA_STATUS_SUBTYPE = 'status_media'
 
 function wrapWithTimeDivider(timeDivider: React.ReactNode, node: React.JSX.Element): React.JSX.Element {

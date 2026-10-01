@@ -16,6 +16,7 @@ const TOOLSET_DEFS: ToolsetDef[] = [
   { extraTools: ['process'], id: 'process_management' },
   { extraTools: ['skills_list', 'skill_view', 'skill_manage'], id: 'skills_system' },
   { id: 'memory', staticTools: ['memory_retain', 'memory_recall', 'memory_inspect'] },
+  { id: 'posts', staticTools: ['post_publish', 'post_status'] },
   { id: 'web_tools', staticTools: ['web_search', 'web_extract'] },
   { id: 'image_generation', staticTools: ['image_generate'] },
   { id: 'messaging', staticTools: ['send_message_tool'] },

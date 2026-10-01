@@ -1,4 +1,8 @@
 .list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -6,6 +10,7 @@
 }
 
 .card {
+  flex-shrink: 0;
   align-items: stretch;
   background: var(--ui-surface-card);
   backdrop-filter: blur(20px) saturate(180%);
@@ -45,7 +50,7 @@
   justify-content: space-between;
 }
 
-.kindBadge {
+.contentTypeBadge {
   background: var(--ui-fill-faint);
   border: 1px solid var(--ui-line-hairline);
   border-radius: 999px;
@@ -102,6 +107,7 @@
 }
 
 .commentRow {
+  flex-wrap: wrap;
   align-items: baseline;
   color: var(--ui-text-body);
   display: flex;

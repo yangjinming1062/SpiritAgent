@@ -5,7 +5,7 @@ import { atom } from 'nanostores'
 import { normalizeHashPath } from '@/shared/lib/hash-route'
 import { definePersistedEnum } from '@/shared/lib/storage'
 
-const LIVING_VIEWS = ['chat', 'appearance', 'moments', 'diary', 'channels', 'scene', 'settings'] as const
+const LIVING_VIEWS = ['chat', 'appearance', 'posts', 'diary', 'channels', 'scene', 'settings'] as const
 
 export type LivingView = (typeof LIVING_VIEWS)[number]
 

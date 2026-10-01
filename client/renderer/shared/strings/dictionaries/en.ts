@@ -375,14 +375,9 @@ export const dict: Dictionary = {
       autonomyAria: 'Autonomous space decisions',
       autonomyDesc:
         'On autonomy and with the desktop pet visible, the LLM decides where to roam, perch, and approach (off uses local rules).',
-      autonomousMedia: 'Overnight surprise creations',
-      autonomousMediaAria: 'Overnight surprise creations',
-      autonomousMediaDesc:
-        'Let the companion create an image or short video overnight and save it to Living Space moments.',
-      autonomousVoice: 'Overnight voice surprises',
-      autonomousVoiceAria: 'Overnight voice surprises',
-      autonomousVoiceDesc:
-        'Let the companion use its current voice for an audio keepsake or add narration to a surprise image or video.'
+      postsEnabled: 'Post creation',
+      postsEnabledDesc:
+        'Let your companion create text, image, video or audio posts at any time, including while offline. All types share the posting limit.'
     },
     persona: {
       characterCard: {
@@ -645,6 +640,7 @@ export const dict: Dictionary = {
     code_execution: { label: 'Code execution', description: 'Sandboxed Python execution with restricted calls.' },
     process_management: { label: 'Process management', description: 'Background process startup and tracking.' },
     skills_system: { label: 'Skill system', description: 'List, view and manage Skill contents.' },
+    posts: { label: 'Posts', description: 'Publish independent companion posts and query their status.' },
     memory: { label: 'Memory', description: 'Write, retrieve and delete long-term memories.' },
     web_tools: { label: 'Web tools', description: 'Web search and page content extraction.' },
     image_generation: { label: 'Image generation', description: 'Generate images via cloud models.' },
@@ -1016,7 +1012,7 @@ export const dict: Dictionary = {
     goToWorkbench: 'Open Workbench',
     rail: {
       chat: 'Chat',
-      moments: 'Moments',
+      posts: 'Posts',
       diary: 'Diary',
       wardrobe: 'Wardrobe',
       channels: 'Channels',
@@ -1025,10 +1021,16 @@ export const dict: Dictionary = {
       companionFallback: 'Companion',
       avatarMood: (name: string) => `${name}'s mood`
     },
-    moments: {
+    posts: {
+      commentOpen: 'Comment',
+      loadMore: 'Load more',
+      replyPending: 'Replying…',
+      replyRetry: 'Reply failed · Retry',
+      replyRetryFailed: 'Retry failed. Please try again later.',
+
       loading: 'Flipping through the album…',
-      empty: 'No moments captured yet.',
-      loadFailed: "Couldn't load moments",
+      empty: 'No posts captured yet.',
+      loadFailed: "Couldn't load posts",
       noTitle: 'Untitled',
       commentPlaceholder: 'Write a comment…',
       commentSend: 'Send',
@@ -1037,12 +1039,8 @@ export const dict: Dictionary = {
       commentFailed: "Couldn't post the comment",
       commentDeleteFailed: "Couldn't delete the comment",
       userLabel: 'Me',
-      kindLabels: {
-        emotion: 'Feeling',
-        scene: 'Scene',
-        together: 'Together'
-      } as Record<string, string>,
-      kindFallback: 'Moment'
+      contentTypeLabels: { text: 'Text', image: 'Image', video: 'Video', audio: 'Voice' } as Record<string, string>,
+      contentTypeFallback: 'Post'
     },
     diary: {
       loading: 'Opening the journal…',
@@ -1050,7 +1048,7 @@ export const dict: Dictionary = {
       mood: (mood: string) => `Mood · ${mood}`,
       signature: (name: string) => `— ${name}'s diary`,
       emptyTitle: 'No diary entry for this day',
-      emptyHintToday: "Today's entry is written overnight — check back a little later.",
+      emptyHintToday: "Today's entry is written at any time — check back a little later.",
       emptyHintOther: 'No diary entry recorded for this day.',
       loadFailed: "Couldn't load the diary",
       weekHeader: ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as ReadonlyArray<string>,
@@ -1071,7 +1069,7 @@ export const dict: Dictionary = {
       outfitCount: (count: number) => (count === 1 ? '1 outfit' : `${count} outfits`),
       zoomOutfit: (name: string) => `View ${name} full size`,
       policyLabel: 'Companion-driven outfits',
-      policyDesc: 'When enabled, the companion may choose a ready look or design a new one overnight.',
+      policyDesc: 'When enabled, the companion may choose a ready look or design a new one at any time.',
       policyStatusLocked: 'Locked',
       policyStatusUnlocked: 'Allowed',
       policyToggleAria: 'Allow companion-driven outfit changes',

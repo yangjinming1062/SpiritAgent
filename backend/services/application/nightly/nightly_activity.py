@@ -34,7 +34,6 @@ from services.domains.conversation import (
     user_authored_conversation,
     validate_memory_scope,
 )
-from services.domains.journal import collect_moment_interactions
 from services.domains.memory import (
     backfill_memory_embeddings,
     list_memories,
@@ -43,6 +42,7 @@ from services.domains.memory import (
     review_memories,
     upsert_slotted_memory,
 )
+from services.domains.posts import collect_post_interactions
 from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_user_llm_config
 
 from .daily_checkpoint import run_daily_checkpoint
@@ -102,7 +102,7 @@ async def _stage_4_self_diary(
     background_memories: dict[str, str],
     local_date_str: str,
     autonomous_actions: list[dict[str, Any]],
-    moment_interactions: list[dict[str, Any]],
+    post_interactions: list[dict[str, Any]],
     persona: dict[str, str],
     language: str,
 ) -> bool:
@@ -113,7 +113,7 @@ async def _stage_4_self_diary(
         "contextual_memories": contextual_memories,
         "background_memories": background_memories,
         "nightly_autonomous_actions": autonomous_actions,
-        **({"moment_interactions": moment_interactions} if moment_interactions else {}),
+        **({"post_interactions": post_interactions} if post_interactions else {}),
         "local_date": local_date_str,
         "language": language,
         "max_content_chars": SETTINGS.diary_max_content_chars,
@@ -193,7 +193,7 @@ def _successful_action_facts(actions: dict[str, ActionExecutionResult]) -> list[
             "status": action.status,
             "fact": fact,
         }
-        for identifier in ("moment_id", "outfit_id", "scene_id"):
+        for identifier in ("post_id", "outfit_id", "scene_id"):
             if (value := getattr(action, identifier)) is not None:
                 item[identifier] = value
         facts.append(item)
@@ -281,9 +281,9 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     async with session_scope() as db:
         user = await db.get(User, user_id)
         tz_str = await resolve_user_timezone(db, user_id)
-    if user is None or not user.nightly_activity_enabled:
-        logger.info("nightly_activity: skipped, disabled by user policy", extra={"user_id": user_id})
-        await _update_log(log_id, status="skipped", summary="夜间活动总控已关闭")
+    if user is None or not user.is_active:
+        logger.info("nightly_activity: skipped, inactive account", extra={"user_id": user_id})
+        await _update_log(log_id, status="skipped", summary="账户不可用")
         return False
     if not tz_str:
         logger.info("nightly_activity: skipped, missing timezone", extra={"user_id": user_id})
@@ -343,8 +343,14 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             )
         ).all()
         user_language = resolve_language(await get_user_setting(db, user_id, "language"))
-        # 片刻互动（当日发布 + 当日评论）作为规划、反思日记与日记投影的共享输入。
-        moments = await collect_moment_interactions(db, user_id, utc_start=utc_start, utc_end=utc_end)
+        posts = await collect_post_interactions(
+            db,
+            user_id,
+            local_date=target_date,
+            user_timezone=tz_str,
+            utc_start=utc_start,
+            utc_end=utc_end,
+        )
         past_7_count = (
             await db.execute(
                 select(func.count())
@@ -383,34 +389,51 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     background_memories = {str(r["id"]): r["content"] for r in recall_rows if r["usage"] == "background"}
 
     action_results: dict[str, ActionExecutionResult] = {}
-    try:
-        planning_result = await run_nightly_planning(
-            llm_cfg,
-            user_id,
-            contextual_memories,
-            background_memories,
-            user_profile,
-            recall_rows[:_PLANNING_RECALL_HIGHLIGHTS],
-            date_context,
-            anomaly_stats,
-            clean_messages,
-            moments.threads,
-            log_id=log_id,
-        )
-        stages.append({"stage": "planning", "status": "ok", "actions": planning_result.model_dump()})
-        action_results = planning_result.actions
-    except Exception as exc:
-        logger.exception(
-            "nightly_activity: stage 3 planning failed",
-            extra={"user_id": user_id, "error": str(exc)},
-        )
-        stages.append({"stage": "planning", "status": "error", "error": str(exc)})
-        # 规划阶段中途失败时，账本里已落终态的动作仍是真实发生的事。
+    if user.nightly_activity_enabled:
         try:
-            action_results = await load_terminal_action_results(log_id)
-        except Exception:
-            logger.exception("nightly_activity: action ledger unavailable", extra={"user_id": user_id})
-    action_facts = _successful_action_facts(action_results)
+            planning_result = await run_nightly_planning(
+                llm_cfg,
+                user_id,
+                contextual_memories,
+                background_memories,
+                user_profile,
+                recall_rows[:_PLANNING_RECALL_HIGHLIGHTS],
+                date_context,
+                anomaly_stats,
+                clean_messages,
+                posts.threads,
+                log_id=log_id,
+            )
+            stages.append({"stage": "planning", "status": "ok", "actions": planning_result.model_dump()})
+            action_results = planning_result.actions
+        except Exception as exc:
+            logger.exception(
+                "nightly_activity: stage 3 planning failed",
+                extra={"user_id": user_id, "error": str(exc)},
+            )
+            stages.append({"stage": "planning", "status": "error", "error": str(exc)})
+            # 规划阶段中途失败时，账本里已落终态的动作仍是真实发生的事。
+            try:
+                action_results = await load_terminal_action_results(log_id)
+            except Exception:
+                logger.exception("nightly_activity: action ledger unavailable", extra={"user_id": user_id})
+    else:
+        stages.append({"stage": "planning", "status": "skipped", "reason": "夜间自主规划已关闭"})
+        action_results = await load_terminal_action_results(log_id)
+
+    # 刷新本轮新发布的动态，并在下面排除重复的动作事实。
+    async with session_scope() as db:
+        posts = await collect_post_interactions(
+            db,
+            user_id,
+            local_date=target_date,
+            user_timezone=tz_str,
+            utc_start=utc_start,
+            utc_end=utc_end,
+        )
+    action_facts = [
+        item for item in _successful_action_facts(action_results) if item.get("post_id") not in posts.posted_ids
+    ]
     try:
         await _write_action_memory(scope, local_date_str, action_facts, user_language)
     except Exception as exc:
@@ -420,9 +443,9 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         )
         stages.append({"stage": "action memory", "status": "error", "error": str(exc)})
 
-    # 没有可读的用户发言、成功行动或片刻互动时不虚构日记；反思与用户可见日记共用这一门控。
+    # 没有可读的用户发言、成功行动或动态互动时不虚构日记；反思与用户可见日记共用这一门控。
     has_readable_messages = any(message.role == "user" and message_text(message) for message in today_messages)
-    has_material = bool(has_readable_messages or action_facts or moments.threads)
+    has_material = bool(has_readable_messages or action_facts or posts.threads)
     if has_material:
         try:
             diary_ok = await _stage_4_self_diary(
@@ -433,7 +456,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 background_memories,
                 local_date_str,
                 action_facts,
-                moments.threads,
+                posts.threads,
                 persona,
                 user_language,
             )
@@ -461,7 +484,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 messages=clean_messages,
                 llm_cfg=llm_cfg,
                 nightly_actions=action_facts,
-                moments=moments,
+                posts=posts,
                 persona=persona,
                 language=user_language,
             ),

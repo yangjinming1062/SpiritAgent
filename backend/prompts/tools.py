@@ -71,7 +71,7 @@ _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
 
 IMAGE_GENERATION_PARAM_DESCS = {
     "prompt": (
-        "Write a self-contained visual description: subject, one visible moment, composition, environment, lighting "
+        "Write a self-contained visual description: subject, one visible instant, composition, environment, lighting "
         "and requested style. Describe the positions, contact and support needed for an action, rather than only "
         "naming it. Preserve the user's concrete requirements; do not add unrelated detail or quality-tag lists. "
         "Quote only text that must actually appear in the image and specify its placement; keep instructions and "
@@ -137,18 +137,26 @@ SCENE_TOOL_DESCRIPTIONS = {
     "scene_activate": "根据当前情景自主切换到已有的完整场景，不消耗生图额度。成功后 environment.current 记录所在环境、活动与穿着。锁定时禁止自主切换，每回合最多一次切换。",
 }
 
-MOMENT_CREATE_DESC = (
-    "发布一条伙伴的文字片刻，成功后用户可见，不向主对话发消息。"
-    "基于真实交流或明确标为愿望、创作的内容，不把计划或生成场景当作已发生经历，也不索要回应。"
-    "不逐轮记录普通聊天，不重复已有内容；受滚动 24 小时发布配额限制，以工具结果为准。"
+_POST_PUBLICATION_RESULT_DESC = (
+    "返回 publication_id、status、post_id 和 error，不包含动态内容。queued/running 表示尚未发布；"
+    "published/partial 且有 post_id 才表示已发布，partial 表示主内容已发布但可选旁白未完成；"
+    "declined/blocked/failed 表示未发布；result_unknown 表示制作结果未确认，不能认定成功或重新提交同一意图。"
 )
 
-MOMENT_CREATE_PARAM_DESCS = {
-    "title": "短标题（≤ 24 字）",
-    "body": "以伙伴视角写正文，使用与用户对话的语言，中文通常 40–160 字；所有语言均最多 500 字符（含空格与标点）。可以直接对用户说话，不代替用户断言感受或经历",
-    "emotion": "可选，从 happy/curious/calm/miss/thoughtful/proud/soft 中选最贴近的一个；不确定时省略",
-    "kind": "内容性质：emotion=心情感受 / together=与用户真实一起经历的事 / scene=描写你当前所处的场景；默认 emotion",
+POST_PUBLISH_DESC = (
+    "提出一条伙伴社交动态的发布意图，内容可为文字、图片、视频或语音。"
+    "正文、媒体与评论只保存在动态中，受理不代表已经发布。"
+    "不要在主对话生成或复述动态正文；用户可在动态页查看和评论。"
+    "自主发布受统一滚动24小时额度和创作开关约束，明确用户请求使用用户请求额度。" + _POST_PUBLICATION_RESULT_DESC
+)
+POST_STATUS_DESC = "按 publication_id 查询原发布任务；评论交互在动态页进行。" + _POST_PUBLICATION_RESULT_DESC
+
+POST_PUBLISH_PARAM_DESCS = {
+    "intent": "1–1000字符的发布主题与目的，保留明确的内容要求，不提交完整动态正文或把创作计划说成已经完成",
+    "content_type": "希望的动态类型；省略或auto时由独立创作选择，用户明确指定类型时使用该类型",
 }
+POST_STATUS_PARAM_DESCS = {"publication_id": "post_publish 返回的 publication_id，不使用 post_id"}
+
 
 DIARY_WRITE_DESC = (
     "以伙伴第一人称补写指定自然日的日记，缺省为用户本地今天；同日已有内容时只追加，不覆盖。"

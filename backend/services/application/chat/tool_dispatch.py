@@ -47,6 +47,8 @@ class _ToolDispatchContext:
     headless: bool
     excluded_tool_names: frozenset[str]
     scene_turn: SceneTurnState
+    proactive_turn: bool
+    user_message: str
 
 
 @dataclass
@@ -176,6 +178,10 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                     excluded_tool_names=ctx.excluded_tool_names,
                     scene_turn=ctx.scene_turn,
                     media_turn=ctx.media_turn,
+                    memory_scope=ctx.memory_scope,
+                    tool_call_id=tc["call_id"],
+                    proactive_turn=ctx.proactive_turn,
+                    user_message=ctx.user_message,
                 )
                 result_str = (
                     await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)

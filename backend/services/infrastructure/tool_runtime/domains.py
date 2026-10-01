@@ -53,8 +53,15 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
         id="memory",
         description_zh="长期记忆与日记",
         description_en="Long-term memory and journal",
-        aliases=("memory", "diary", "moments", "记忆", "日记", "时刻", "回忆", "记住", "备忘"),
-        extra_tools=("memory_retain", "memory_recall", "memory_inspect", "moment_create", "diary_write"),
+        aliases=("memory", "diary", "记忆", "日记", "回忆", "记住", "备忘"),
+        extra_tools=("memory_retain", "memory_recall", "memory_inspect", "diary_write"),
+    ),
+    ToolDomain(
+        id="posts",
+        description_zh="伙伴社交动态的独立发布与状态",
+        description_en="Independent companion posts and publication status",
+        aliases=("posts", "动态", "朋友圈"),
+        extra_tools=("post_publish", "post_status"),
     ),
     ToolDomain(
         id="media",

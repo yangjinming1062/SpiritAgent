@@ -1,4 +1,4 @@
-"""聊天与夜间视频任务：冻结供应商链逐家提交、轮询、下载、身份评分与交付；重启凭句柄或确定性落盘路径续跑。"""
+"""聊天与动态共用的视频任务：提交、轮询、下载与身份评分；凭句柄或已落盘候选恢复。"""
 
 import asyncio
 import contextlib
@@ -75,7 +75,7 @@ _DOWNLOAD_ATTEMPTS = 3
 
 
 class _VideoJobParams(BaseModel):
-    """任务冻结的请求参数与出镜身份（params_json）；夜间旁白发布前按键名读取 identity_snapshot。"""
+    """任务冻结的请求参数与出镜身份。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -429,7 +429,7 @@ _FAILURE_COPY: dict[str, str] = {
 
 
 async def _record_failure(job_id: int, *, reason: str) -> None:
-    """失败终态与事件同事务提交；error_message 与事件载荷只用按原因预设的文案，供应商原文不外泄。"""
+    """保存失败终态；聊天交付与状态同事务，错误文案不含供应商原文。"""
     logger.warning("video job failure", extra={"job_id": job_id, "reason": reason})
     user_msg = _FAILURE_COPY.get(reason, "视频生成失败，请稍后重试")
     async with SESSION_LOCAL() as db:
@@ -444,6 +444,9 @@ async def _record_failure(job_id: int, *, reason: str) -> None:
             await update_video_reply(db, row)
             await db.commit()
             return
+        if not session_id:
+            await db.commit()
+            return
         emit_ws_event(
             db,
             user_id=row.user_id,
@@ -455,7 +458,7 @@ async def _record_failure(job_id: int, *, reason: str) -> None:
 
 
 async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> None:
-    """已知最佳资产、任务终态和 WS outbox 同事务提交；重复恢复不会重复交付。"""
+    """保存最佳资产与终态；聊天交付同事务提交，重复恢复不再送达。"""
     async with SESSION_LOCAL() as db:
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
         if row is None or row.status in _TERMINAL_STATUSES:
@@ -488,19 +491,21 @@ async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> No
             await update_video_reply(db, row)
             await db.commit()
             return
-        if session_id:
-            with contextlib.suppress(TypeError, ValueError):
-                conversation = await db.get(Conversation, int(session_id))
-                if conversation is not None and conversation.user_id == row.user_id:
-                    db.add(
-                        Message(
-                            conversation_id=conversation.id,
-                            role="system",
-                            subtype=MEDIA_STATUS_SUBTYPE,
-                            content=f"[视频已生成 task {job_id}] {client_url}",
-                            media_json=json.dumps(media, ensure_ascii=False),
-                        ),
-                    )
+        if not session_id:
+            await db.commit()
+            return
+        with contextlib.suppress(TypeError, ValueError):
+            conversation = await db.get(Conversation, int(session_id))
+            if conversation is not None and conversation.user_id == row.user_id:
+                db.add(
+                    Message(
+                        conversation_id=conversation.id,
+                        role="system",
+                        subtype=MEDIA_STATUS_SUBTYPE,
+                        content=f"[视频已生成 task {job_id}] {client_url}",
+                        media_json=json.dumps(media, ensure_ascii=False),
+                    ),
+                )
         emit_ws_event(
             db,
             user_id=row.user_id,

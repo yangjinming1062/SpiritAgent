@@ -11,7 +11,7 @@
 | shared | 无业务依赖 |
 | `@ipc` | 跨进程契约来源，渲染侧不重复定义 |
 
-character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fallback}`、`sprite`、`wardrobe`，偏好、人格与空间等保留根入口。跨模块只经公共 barrel；character 另以 `rendering/video` 作为渲染域公共入口。`modules/memory` 当前只含片刻与日记的 `journal-store`，记忆管理页面在 [memory-section.tsx](app/windows/living/settings/memory-section.tsx)。
+character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fallback}`、`sprite`、`wardrobe`，偏好、人格与空间等保留根入口。跨模块只经公共 barrel；character 另以 `rendering/video` 作为渲染域公共入口。[modules/posts](modules/posts/) 管动态与评论，[modules/memory](modules/memory/) 的 `journal-store` 只管日记；记忆管理页面在 [memory-section.tsx](app/windows/living/settings/memory-section.tsx)。
 
 边界规则写在 [ESLint](../eslint.config.mjs)，不绕过内部路径；模块内部用相对路径，character 渲染域只经 `@/modules/character` barrel 访问角色能力。flat config 对同一文件按序合并配置对象，后面的对象再次配置 `no-restricted-imports` 会整体替换前面的 patterns 而不合并，因此各目录规则块都用文件顶部的共用限制组合出完整集合；新增或修改规则块时同样组合，不能只写本目录新增的部分。生产数据与资产统一走主进程桥；直连例外须说明 URL 来源。
 
@@ -33,7 +33,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ## 事件与异步生命周期
 
-- [网关路由](app/runtime/gateway-event-router.ts)在鉴权 pending 时丢弃事件，按信封 `session_id` 过滤（无该字段放行）后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call/cancel` 另收宿主或代理角色 `isProxy`），场景与片刻日记事件直达 modules/scene、modules/memory。
+- [网关路由](app/runtime/gateway-event-router.ts)在鉴权 pending 时丢弃事件，按信封 `session_id` 过滤（无该字段放行）后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call/cancel` 另收宿主或代理角色 `isProxy`）；场景、动态与日记分别直达 `modules/scene`、`modules/posts` 与 `modules/memory`。
 - 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；清理代次与账户存储键登记见 [storage.ts](shared/lib/storage.ts)。判活优先复用共享件，不在站点重写：store 与工作流用 [authed-api.ts](shared/lib/authed-api.ts) 的 `captureAuthScope`（鉴权会话 + 清理代次），`authedApi` 结果的失败记录用 `apiSucceeded`，组件用 [use-async-guard.ts](shared/hooks/use-async-guard.ts)（挂载 + 清理代次）；错误文案取 [ipc-error.ts](shared/lib/ipc-error.ts)。
 - 网关休眠唤醒重连的握手超时须落到 `error`，不能永久停在 `connecting`，否则调用方无法重试。
 - 账户切换释放旧账户的内存资料、会话与通知并按 `accountId` 重挂载；持久索引按账户隔离，切回时恢复，只在明确移除账户时删除。重置期间不回写持久索引，云端偏好广播等所属账户的存储切换完成后再应用。桌面精灵按目标账户状态自动进入未完成的 onboarding。完整入口开关状态由主进程维护。
@@ -64,7 +64,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 生效档位只由精灵窗推送：其他窗口缺少活动覆盖，只改偏好或临时安静，经 storage 事件同步。
 
-[activity.ts](modules/character/activity.ts)的快照单飞，停止后旧结果失效；变化只在可用上报成功后消费，失败期间保留。只报约定粗粒度信号，不传应用名或窗口标题；夜间政策由服务端决定，客户端只传 local_hour，自主媒体/语音偏好在 [prefs.ts](modules/character/prefs.ts)。
+[activity.ts](modules/character/activity.ts)的快照单飞，停止后旧结果失效；变化只在可用上报成功后消费，失败期间保留。只报约定粗粒度信号，不传应用名或窗口标题；夜间政策由服务端决定，客户端只传 local_hour，动态创作偏好在 [prefs.ts](modules/character/prefs.ts)。
 
 ### 直接交互与命中
 

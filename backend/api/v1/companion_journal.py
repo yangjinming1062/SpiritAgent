@@ -1,78 +1,15 @@
-"""伙伴时刻 / 日记 REST 端点。"""
+"""伙伴日记 REST 端点。"""
 
 from datetime import date
 
 from common import get_router
 from components import DbSession
-from fastapi import HTTPException, Query
+from fastapi import Query
 from modules.auth import CurrentUser
-from modules.companion import (
-    DiaryListResponse,
-    MomentCommentCreateRequest,
-    MomentCommentResponse,
-    MomentListResponse,
-)
-from services.application.moments import schedule_companion_reply
-from services.domains.journal import (
-    MomentNotFoundError,
-    create_moment_comment,
-    delete_moment_comment,
-    list_diary,
-    list_moments,
-    response_for_comment,
-    response_for_diary,
-    response_for_moment,
-)
+from modules.companion import DiaryListResponse
+from services.domains.journal import list_diary, response_for_diary
 
 router = get_router(prefix="/api/companion", tag="companion")
-
-
-@router.get("/moments", response_model=MomentListResponse)
-async def get_moments(
-    user: CurrentUser,
-    db: DbSession,
-    cursor: str | None = None,
-    limit: int = Query(default=20, ge=1, le=100),
-    kind: str | None = Query(default=None, max_length=64),
-) -> MomentListResponse:
-    rows, next_cursor = await list_moments(db, user.id, cursor=cursor, limit=limit, kind=kind)
-    return MomentListResponse(
-        moments=[response_for_moment(r) for r in rows],
-        next_cursor=next_cursor,
-    )
-
-
-@router.post(
-    "/moments/{moment_id}/comments",
-    response_model=MomentCommentResponse,
-    status_code=201,
-)
-async def post_moment_comment(
-    user: CurrentUser,
-    db: DbSession,
-    moment_id: str,
-    body: MomentCommentCreateRequest,
-) -> MomentCommentResponse:
-    try:
-        row = await create_moment_comment(db, user.id, moment_id, content=body.content)
-    except MomentNotFoundError as exc:
-        raise HTTPException(status_code=404, detail={"error": "moment not found", "reason": str(exc)})
-    # 精灵回复在请求返回后异步生成，经 companion.moment.comment 事件推送
-    schedule_companion_reply(user.id, moment_id)
-    return response_for_comment(row)
-
-
-@router.delete("/moments/{moment_id}/comments/{comment_id}", status_code=204)
-async def delete_moment_comment_route(
-    user: CurrentUser,
-    db: DbSession,
-    moment_id: str,
-    comment_id: str,
-) -> None:
-    try:
-        await delete_moment_comment(db, user.id, moment_id, comment_id)
-    except MomentNotFoundError as exc:
-        raise HTTPException(status_code=404, detail={"error": "comment not found", "reason": str(exc)})
 
 
 @router.get("/diary", response_model=DiaryListResponse)

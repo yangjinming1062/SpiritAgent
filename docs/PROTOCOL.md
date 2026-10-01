@@ -78,14 +78,14 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 | `tool.start/complete`、`error` | 按会话路由的过程与错误 |
 | `tool.call` / `tool.cancel` | 用户级设备指令，按 `call_id` 派发或撤回，不受当前可见会话过滤 |
 | `companion.message/mood` | 分别交付已持久化主动台词与独立心情 |
-| 形象、外观、场景、片刻、日记、视频与通道事件 | 更新对应资源或触发重新读取；不一律写入聊天历史 |
+| 形象、外观、场景、动态、日记、视频与通道事件 | 更新对应资源或触发重新读取；不一律写入聊天历史 |
 | `companion.video.progress/ready/failed/activated` | 载荷含 `packId`、`outfitId`；进度另含 `stage`，客户端按资源归属展示并重新读取状态 |
 | `companion.action.catalog_changed` / `job_updated` / `play_requested` | 动作目录变更、生成进度与播放指令；目录变更带 `packId`、`catalogVersion`、`appearanceEpoch`，播放指令结构为 [ActionPlayCommand](../backend/modules/companion/schemas_actions.py)（过期时刻 `expires_at`），语义见[动作目录与播放](#动作目录与播放) |
 | `system.notification` | 自动化结果通知，完整内容留在任务会话 |
 
 - 业务通知面向该用户的桌面交付，不能因目标会话未打开而丢弃。
 - 载荷中的 `session_id` 可用于落卡或跳转，不必然代表会话路由闸门。
-- 回合帧（`message.start/delta/break/complete/persisted`、`message.reasoning.delta`、`tool.start/complete`、`error`、`compress.completed`）的转换见 [emitter](../backend/services/adapters/desktop/emitter.py)；`message.edited/deleted`、`command.result`、`avatar.regenerated` 由 [handlers](../backend/services/adapters/desktop/handlers.py) 直接推送，`tool.call/cancel` 由 [ipc](../backend/services/infrastructure/desktop/ipc.py) 发出；`message.voice/media` 等业务事件经 `emit_ws_event` 写 outbox，载荷由各发射点定义。客户端分派见[事件路由](../client/renderer/app/runtime/gateway-event-router.ts)，解码在 [handlers/](../client/renderer/app/runtime/handlers/)，场景与片刻日记事件由 modules/scene、modules/memory 处理。
+- 回合帧（`message.start/delta/break/complete/persisted`、`message.reasoning.delta`、`tool.start/complete`、`error`、`compress.completed`）的转换见 [emitter](../backend/services/adapters/desktop/emitter.py)；`message.edited/deleted`、`command.result`、`avatar.regenerated` 由 [handlers](../backend/services/adapters/desktop/handlers.py) 直接推送，`tool.call/cancel` 由 [ipc](../backend/services/infrastructure/desktop/ipc.py) 发出；`message.voice/media` 等业务事件经 `emit_ws_event` 写 outbox，载荷由各发射点定义。客户端分派与消费入口见[渲染层事件路由](../client/renderer/README.md#事件与异步生命周期)。
 
 `tool.call` 不带 `params.session_id`，但其 `payload` 含 `name`、`args`、`call_id`、信息性 `session_id`、`headless` 与 `skill_scope`（仅学习技能工具非空，见[预设记忆与学习作用域](#预设记忆与学习作用域)）。`headless=true` 照常执行，不显示桌面工作态；IM、后台自动化和其他无头回合须由调用方显式传入，子 Agent 回合沿用父回合的标志，Client 不得靠会话类型猜测这一行为。`tool.cancel` 的 `payload` 只含 `call_id`，语义见[调用日志与未知结果](#调用日志与未知结果)。
 
@@ -181,7 +181,8 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 | 会话 REST 与传输结构 | [会话端点](../backend/api/v1/sessions.py)、[schema](../backend/modules/conversation/schemas.py) |
 | 伙伴资料、头像与全身、角色卡、衣柜、视频包、媒体复核与资产读取 | [伙伴端点](../backend/api/v1/companion.py)、[伙伴 schema](../backend/modules/companion/schemas.py)、[视频包 schema](../backend/modules/companion/schemas_video.py) |
 | 场景 | [场景端点](../backend/api/v1/companion_scenes.py)、[场景 schema](../backend/modules/companion/schemas_scene.py) |
-| 片刻与日记 | [片刻与日记端点](../backend/api/v1/companion_journal.py)、[schema](../backend/modules/companion/schemas_journal.py) |
+| 动态 | [动态端点](../backend/api/v1/companion_posts.py)、[schema](../backend/modules/companion/schemas_posts.py) |
+| 日记 | [日记端点](../backend/api/v1/companion_journal.py)、[schema](../backend/modules/companion/schemas_journal.py) |
 | 动作目录、设计、启停、额度与回执 | [动作端点](../backend/api/v1/companion_actions.py)、[schema](../backend/modules/companion/schemas_actions.py) |
 
 引导恢复依据服务端状态及已有资产；完成条件与身份锁定范围见 [DESIGN](DESIGN.md#认识伙伴)。
@@ -238,21 +239,29 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 - 每回合最多受理一次创建、一次切换，优先复用；创建并申请自动启用同时占切换额度。代码校验身份、归属、锁定、档位、额度和版本；身份按场景记录的头像与全身图判断，角色卡文字修订不阻止启用已有场景，创建任务完成时角色卡修订已变化则只保存、不自动启用。
 - 工具结果区分资产状态、自动启用申请、已启用及 `environment.current`；未启用不返回已到达。
-- 在线自主新增按滚动 24 小时提交计额，删除不返还，复用不占。夜间使用 `scene.create/activate` 与计划预算，不依赖换装；仅启用完成才入生活事实，场景操作不自动发片刻。
+- 在线自主新增按滚动 24 小时提交计额，删除不返还，复用不占。夜间使用 `scene.create/activate` 与计划预算，不依赖换装；仅启用完成才入生活事实，场景操作不自动发动态。
 
 ### 媒体复核与激活
 
 视频包按核查状态自动激活，疑点保留预览与手动启用，准备期间继续播放旧包；评分见 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
 
-就绪包上单独制作的动作（动态动作、探身补齐、系统动作原位重做）复核存疑时建复核项，经 `/api/companion/media-reviews` 列表、单项 GET、accept/reject 管理，用户采纳后才入可播目录；拒绝即作废该次生成，之后的同名重做为独立的新生成。日常聊天、场景、片刻、夜间媒体不建人工复核项。视频下载、评估与重生成凭句柄/落盘资产恢复，未知提交不重发。
+就绪包上单独制作的动作（动态动作、探身补齐、系统动作原位重做）复核存疑时建复核项，经 `/api/companion/media-reviews` 列表、单项 GET、accept/reject 管理，用户采纳后才入可播目录；拒绝即作废该次生成，之后的同名重做为独立的新生成。日常聊天、场景、动态、夜间媒体不建人工复核项。视频下载、评估与重生成凭句柄/落盘资产恢复，未知提交不重发。
 
-### 片刻与日记
+### 动态与日记
 
-片刻与日记均由伙伴创建：片刻用户只能评论或删除本人评论；日记后台只能追加已编辑内容。生活空间工具只向陪伴预设开放，装配与派发两层均校验，不能仅隐藏界面入口。
+动态与日记由伙伴创作，相关工具只向陪伴预设开放，装配与派发均校验。用户可请求发布动态、评论和删除本人评论，不能编辑动态或删除伙伴回复；同日日记的正文只追加，已有标题不覆盖。
 
-夜间动作发布的片刻只写入片刻列表与陪伴主会话历史，不发 `companion.message`（夜间更新不弹实时通知）；其发布时间落在次日凌晨，仍归产生它的那一夜的日记，次日整理不把它计为当日发布，次日的评论照常计入。
+`post_publish` 提交意图，`post_status` 查询原任务，两者只返回任务 ID、状态、动态 ID 和错误信息。正文、媒体与评论独立保存，不进入主会话或其历史摘要；评论回复只装配本线程及共享人设、有效记忆和心情。动态上下文保存发布意图、媒体制作说明与语音文稿，用于回复和夜间回顾：意图说明分享主题与目的，制作说明描述预期画面，文稿提供语音表达内容；预期画面不保证成品细节，作品描绘的情节不证明现实经历。
 
-生成正文须完整保存，超出消费方容量时明确失败，不静默裁切后报告成功；日记补记容量不足不改变既有正文。具体字段上限见[日记与片刻服务](../backend/services/domains/journal/journal_service.py)及[聊天工具 schema](../backend/services/adapters/tools/builtin/journal_tool.py)，中英文均按字符计数。
+文字、图片、视频和语音共用发布服务，发布来源不影响展示或评论。自主发布不依赖桌面连接，受统一创作开关 `companion.posts_enabled` 控制，默认值与能力筛选见[发布入口](../backend/services/application/posts/publication.py)。正文须通过校验，媒体动态还须取得主媒体才能发布；可选旁白失败保留主媒体，主媒体失败不产生动态。媒体须为本账户的正式资产。
+
+日间、夜间和主动陪伴共用自主额度；明确用户请求不受自主开关限制，使用独立请求额度。滚动 24 小时按动态条数在事务内预留：排队和在途任务占额，未知结果按原预留时间计入窗口，明确未发布的终态释放；未知请求不重复提交。额度上限与计数条件见 [Settings](../backend/components/config.py) 和[领域存储](../backend/services/domains/posts/store.py)。
+
+回复状态绑定触发评论，同一动态按评论顺序生成回复；失败重试原任务，删除触发评论后不写入迟到回复，已生成的伙伴回复保留。发布通过 `companion.post.created`、评论与回复状态通过 `companion.post.comment`、删除通过 `companion.post.comment.deleted` 刷新，事件与业务状态同事务提交，不发送 `companion.message`。
+
+发布时间为实际完成时刻，活动归属日由发布任务记录；夜间规划、反思和日记按动态 ID 去重归集发布事实，资料中的发布与评论时间均转换为带时区偏移的用户本地时间。评论按自身发生的本地日期归集，包括较早动态上的新评论。夜间反思可形成共享背景记忆。备份规则见[覆盖恢复](#备份校验与覆盖恢复)。
+
+生成正文完整保存，超出容量时明确失败，不静默裁切；日记补记失败不改变既有正文。字段上限见[动态 schema](../backend/modules/companion/schemas_posts.py)、[日记领域](../backend/services/domains/journal/journal_service.py)及[日记工具](../backend/services/adapters/tools/builtin/journal_tool.py)，中英文均按字符计数。
 
 ### 资产访问与缓存
 
@@ -399,7 +408,7 @@ standard 使用独立 automation 任务会话，可离线运行云端部分；�
 
 修改或主动删除源任务须同步撤销旧意图；调度后自动删除一次性任务不撤销已交接意图。认领、租约与提交隔离迟到结果；运行中崩溃或工具结果未知时保留待核对提示，不自动重放副作用。结构与恢复窗口见 [schemas_loop](../backend/modules/companion/schemas_loop.py) 和 [Backend](../backend/README.md#陪伴调度与恢复)。
 
-夜间活动每项执行前重读政策，仅成功结果进入后续叙事；相关片刻、陪伴消息与 outbox 保持事务一致。等待意图参与备份，恢复清除租约和旧事件标记，重映射源任务；运行中状态按结果未知处理，不能当作新任务直接重跑。
+夜间总控约束规划及计划动作的执行，每项执行前重读政策，仅成功结果进入后续叙事；动态互动归集、记忆整理和日记不受总控影响。阶段与恢复见 [Backend](../backend/README.md#夜间批处理)，动态归集见[动态与日记](#动态与日记)。等待意图参与备份，恢复清除租约和旧事件标记，重映射源任务；运行中状态按结果未知处理，不能当作新任务直接重跑。
 
 ### IM 通道
 
@@ -472,6 +481,8 @@ flowchart TD
 备份当前没有独立格式版本；整包校验通过后才允许按兼容数据类部分恢复。导入默认覆盖模式，另有 `merge` 模式：按唯一键、固定槽位记忆或特殊会话预设匹配已有行并保留，目标已有激活项时降级备份中的激活标记；特殊会话任一侧带上下文水位时整次导入回滚并返回 400；入口见 [serializers](../backend/services/domains/backup/serializers.py)。以下规则针对覆盖模式。
 
 对话摘要的覆盖消息引用须随消息 ID 重映射，缺少原消息或跨会话引用时拒绝相关类别恢复。IM 消费排序位置也须映射到新消息序列，保持接收与消费次序的区别；摘要读取见[对话上下文约束](../backend/services/application/chat/README.md#上下文与记忆)。
+
+动态备份保存已发布内容、制作上下文与评论线程，重映射动态、回复和日记关联；发布任务不导出、不恢复。未完成的评论回复恢复为可手动重试的失败状态，不自动创作；校验与转换见 [serializers](../backend/services/domains/backup/serializers.py)。
 
 导出只收集元数据归属该用户的临时媒体。用户模型配置与用户设置值须能按运行时规则解析才通过预检，失败原因只列字段，不回显配置值。覆盖只清理本次通过预检且准备写入的数据类，旧包未声明内容保留；会破坏未恢复关联数据的类别不得先清空。会话与消息成对恢复，特殊会话按预设去重，普通会话独立映射，无法映射的附件单独报告。派生来源无法映射时置空，子 Agent 会话则须映射到同域发起会话。
 

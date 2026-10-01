@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 
 
 class CompanionPromptContext(BaseModel):
-    """供心情、表达和片刻使用的人设、心情、记忆与可用动作；不注入视觉生成资料。"""
+    """供心情、表达和动态使用的人设、心情、记忆与可用动作；不注入视觉生成资料。"""
 
     language: str
     # 带时区偏移的用户本地时间；未设置时区时按 UTC。

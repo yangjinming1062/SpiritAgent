@@ -23,6 +23,7 @@ export type ResponsePreference = 'text' | 'voice'
 const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
 const RESPONSE_PREFERENCE_STORAGE_KEY = 'da.companion.responsePreference'
 const AUTOPLAY_VOICE_STORAGE_KEY = registerCompanionStorageKey('da.companion.autoplayVoice')
+const POSTS_ENABLED_STORAGE_KEY = registerCompanionStorageKey('da.companion.postsEnabled')
 
 // localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经 prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
 function reportCloud(key: string, value: unknown): void {
@@ -66,11 +67,13 @@ export function setResponsePreference(mode: ResponsePreference): void {
 registerStorageClearHandler(() => {
   $companionVoiceId.set('')
   $autoplayVoice.set(true)
+  $postsEnabled.set(true)
 })
 
 registerStorageRestoreHandler(() => {
   $companionVoiceId.set(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
   $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
+  $postsEnabled.set(storedBoolean(POSTS_ENABLED_STORAGE_KEY, true))
 })
 
 interface BooleanPref {
@@ -94,24 +97,23 @@ function makeBooleanPref(key: string, fallback: boolean, cloudKey: string): Bool
 const llmAffectPref = makeBooleanPref('da.companion.llmAffect', true, 'companion.llm_affect')
 const llmAutonomyPref = makeBooleanPref('da.companion.llmAutonomy', true, 'companion.llm_autonomy')
 
-const autonomousMediaPref = makeBooleanPref('da.companion.autonomousMedia', true, 'companion.autonomous_media')
-const autonomousVoicePref = makeBooleanPref('da.companion.autonomousVoice', true, 'companion.autonomous_voice')
+const postsEnabledPref = makeBooleanPref(POSTS_ENABLED_STORAGE_KEY, true, 'companion.posts_enabled')
+export const $postsEnabled = postsEnabledPref.$atom
+export { postsEnabledPref }
+
 export const autoplayVoicePref = makeBooleanPref(AUTOPLAY_VOICE_STORAGE_KEY, true, 'companion.autoplay_voice')
 export const $autoplayVoice = autoplayVoicePref.$atom
 
-export const $autonomousMedia = autonomousMediaPref.$atom
-export const $autonomousVoice = autonomousVoicePref.$atom
 export const $llmAffect = llmAffectPref.$atom
 export const $llmAutonomy = llmAutonomyPref.$atom
 
-export { autonomousMediaPref, autonomousVoicePref, llmAffectPref, llmAutonomyPref }
+export { llmAffectPref, llmAutonomyPref }
 
 // 云端水合时按序回写的布尔偏好（companion 节键 → 偏好）。
 const HYDRATED_BOOLEAN_PREFS = [
+  ['posts_enabled', postsEnabledPref],
   ['llm_affect', llmAffectPref],
-  ['llm_autonomy', llmAutonomyPref],
-  ['autonomous_media', autonomousMediaPref],
-  ['autonomous_voice', autonomousVoicePref]
+  ['llm_autonomy', llmAutonomyPref]
 ] as const
 
 // 云端水合应用：只接受类型匹配的键，坏值静默跳过（fail-open）。借道既有 setter 落 localStorage + atom；回写的 prefs:set 上报在主进程侧与最近一次成功上云内容比对后消解，不会形成回环。
@@ -123,6 +125,10 @@ export function initCompanionPrefsSync(): () => void {
 
     if (event.key === accountStorageKey(RESPONSE_PREFERENCE_STORAGE_KEY) || event.key === null) {
       responsePreferencePersisted.reload()
+    }
+
+    if (event.key === accountStorageKey(POSTS_ENABLED_STORAGE_KEY) || event.key === null) {
+      $postsEnabled.set(storedBoolean(POSTS_ENABLED_STORAGE_KEY, true))
     }
 
     syncDisturbanceFromStorage(event.key)

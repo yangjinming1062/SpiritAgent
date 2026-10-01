@@ -319,6 +319,8 @@ async def run_chat_turn(
             headless=headless,
             excluded_tool_names=inputs.excluded_tool_names,
             scene_turn=SceneTurnState(),
+            proactive_turn=ephemeral,
+            user_message=memory_query if not ephemeral else "",
             media_turn=media_turn,
         )
 

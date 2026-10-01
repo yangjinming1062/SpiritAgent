@@ -1,54 +1,17 @@
-"""moment_create / diary_write 工具：角色主动记录生活空间片刻与日记。不受打扰档位限制（档位只拦截主动打扰）；moment_create 受 moment_llm_per_day 的 24 小时配额约束；工作预设会话不绑定这两个工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）。"""
+"""伙伴日记补记工具。"""
 
 import datetime
 import json
 
 from components import SESSION_LOCAL, tool_error
-from modules.companion import DiarySource, MomentKind, MomentSource
+from modules.companion import DiarySource
 from prompts.tools import (
     DIARY_WRITE_DESC,
     DIARY_WRITE_PARAM_DESCS,
-    MOMENT_CREATE_DESC,
-    MOMENT_CREATE_PARAM_DESCS,
 )
 
-from services.domains.journal import check_moment_llm_quota, create_user_moment, resolve_user_local_today, upsert_diary
+from services.domains.journal import resolve_user_local_today, upsert_diary
 from services.infrastructure.tool_runtime import ToolsRegistry
-
-_VALID_MOMENT_KINDS: frozenset[str] = frozenset(k.value for k in MomentKind)
-
-
-async def moment_create_tool(
-    title: str,
-    body: str,
-    user_id: int,
-    parent_session_id: str,
-    emotion: str | None = None,
-    kind: str = MomentKind.EMOTION.value,
-    **_: object,
-) -> str:
-    clean_title = (title or "").strip()
-    clean_body = (body or "").strip()
-    if not clean_title or not clean_body:
-        return tool_error("片刻标题和内容不能为空")
-    if len(clean_title) > 24 or len(clean_body) > 500:
-        return tool_error("片刻标题最多 24 字符，正文最多 500 字符；请精简后提交，内容尚未保存")
-    if kind not in _VALID_MOMENT_KINDS:
-        kind = MomentKind.EMOTION.value
-    async with SESSION_LOCAL() as db:
-        if not await check_moment_llm_quota(db, user_id):
-            return tool_error("最近 24 小时的片刻发布额度已用完；本次未发布")
-        row = await create_user_moment(
-            db,
-            user_id,
-            title=clean_title,
-            body=clean_body,
-            emotion=emotion,
-            kind=kind,
-            source=MomentSource.LLM.value,
-            session_id=int(parent_session_id),
-        )
-    return json.dumps({"success": True, "moment_id": row.id}, ensure_ascii=False)
 
 
 async def diary_write_tool(
@@ -91,25 +54,6 @@ async def diary_write_tool(
     return json.dumps({"success": True, "diary_id": row.id, "entry_date": entry_date.isoformat()}, ensure_ascii=False)
 
 
-MOMENT_CREATE_SCHEMA = {
-    "name": "moment_create",
-    "description": MOMENT_CREATE_DESC,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "title": {"type": "string", "maxLength": 24, "description": MOMENT_CREATE_PARAM_DESCS["title"]},
-            "body": {"type": "string", "maxLength": 500, "description": MOMENT_CREATE_PARAM_DESCS["body"]},
-            "emotion": {"type": "string", "description": MOMENT_CREATE_PARAM_DESCS["emotion"]},
-            "kind": {
-                "type": "string",
-                "enum": ["emotion", "together", "scene"],
-                "description": MOMENT_CREATE_PARAM_DESCS["kind"],
-            },
-        },
-        "required": ["title", "body"],
-    },
-}
-
 DIARY_WRITE_SCHEMA = {
     "name": "diary_write",
     "description": DIARY_WRITE_DESC,
@@ -127,5 +71,4 @@ DIARY_WRITE_SCHEMA = {
 
 
 def register(registry: ToolsRegistry) -> None:
-    registry.register(MOMENT_CREATE_SCHEMA, moment_create_tool)
     registry.register(DIARY_WRITE_SCHEMA, diary_write_tool)

@@ -23,6 +23,10 @@ def schema_name(schema: dict[str, Any]) -> str:
 RESERVED_KEYS = frozenset(
     {
         "user_id",
+        "memory_scope",
+        "tool_call_id",
+        "proactive_turn",
+        "user_message",
         "llm_config",
         "user_settings",
         "scene_turn",

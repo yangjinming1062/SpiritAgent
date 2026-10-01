@@ -44,7 +44,7 @@ TOOLSET_CATALOG: tuple[ToolsetDef, ...] = (
 
 # Backend 桶 id 由后端过滤，不映射 Runner 工具；列出只为不把它们误报为未知 id。
 _BACKEND_TOOLSET_IDS = frozenset(
-    {"memory", "web_tools", "image_generation", "messaging", "scheduled_tasks", "agent_delegation"},
+    {"posts", "memory", "web_tools", "image_generation", "messaging", "scheduled_tasks", "agent_delegation"},
 )
 _KNOWN_TOOLSET_IDS: frozenset[str] = frozenset(d.id for d in TOOLSET_CATALOG) | _BACKEND_TOOLSET_IDS
 

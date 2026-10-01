@@ -38,6 +38,13 @@ from services.application.generation import (
     resume_scene_jobs,
     resume_video_generation_jobs,
 )
+from services.application.posts import (
+    drain_autonomous_posts,
+    drain_publications,
+    drain_replies,
+    resume_publications,
+    resume_replies,
+)
 from services.domains.companion import drain_first_greeting, drain_persona_background
 from services.infrastructure.event_store import drain_event_tasks, start_event_loop, stop_event_loop
 from services.infrastructure.llm import aclose_all
@@ -63,6 +70,9 @@ async def _drain_runtime_tasks() -> None:
     """按模块集中等待后台任务，并保留每个 drain 的失败诊断。"""
     steps: tuple[tuple[str, Awaitable[object]], ...] = (
         ("cron", drain_cron()),
+        ("posts_autonomous", drain_autonomous_posts()),
+        ("post_publications", drain_publications()),
+        ("post_replies", drain_replies()),
         ("first_greeting", drain_first_greeting()),
         ("persona_background", drain_persona_background()),
         ("character_extractions", drain_character_extractions()),
@@ -114,6 +124,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         await resume_character_extractions()
         await resume_scene_jobs()
         await resume_initial_appearance()
+        await resume_publications()
+        await resume_replies()
 
         async def _cleanup_loop() -> None:
             while True:

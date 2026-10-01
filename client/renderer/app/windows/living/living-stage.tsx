@@ -1,5 +1,3 @@
-// 生活空间右栏：根据 living-view 切换内容（chat 共用 ChatPanel；appearance 衣柜；moments/diary 后端直连；channels 单文件页；scene 库/详情/创建；settings 分区胶囊）。
-
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
@@ -13,7 +11,7 @@ import { ChannelsPage } from './channels-page'
 import { DiaryPage } from './diary-page'
 import { $livingView, type LivingView } from './living-store'
 import styles from './living.module.css'
-import { MomentsPage } from './moments-page'
+import { PostsPage } from './posts-page'
 import { ScenePage } from './scene-page'
 import { LivingSettings } from './settings/living-settings'
 
@@ -23,7 +21,7 @@ const VIEWS: Record<LivingView, React.ComponentType> = {
   channels: ChannelsPage,
   chat: LivingChatView,
   diary: DiaryPage,
-  moments: MomentsPage,
+  posts: PostsPage,
   scene: ScenePage,
   settings: LivingSettings
 }

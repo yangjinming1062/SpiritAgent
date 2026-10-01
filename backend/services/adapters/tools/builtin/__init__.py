@@ -4,12 +4,14 @@ from .action_tool import register as register_actions
 from .companion_wait_tool import register as register_companion_wait
 from .image_generation_tool import register as register_image_generation
 from .journal_tool import register as register_journal
+from .post_tool import register as register_posts
 from .scene_tool import register as register_scene
 from .send_message_tool import register as register_send_message
 from .video_generation_tool import register as register_video_generation
 from .web_tools import register as register_web
 
 __all__ = [
+    "register_posts",
     "register_actions",
     "register_companion_wait",
     "register_image_generation",
