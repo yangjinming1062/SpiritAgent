@@ -8,11 +8,13 @@ export function InlineMedia({
   alt,
   audioUrl,
   mediaType,
+  onImageClick,
   url
 }: {
   alt: string
   audioUrl: string | null
   mediaType: '' | 'image' | 'video' | 'audio'
+  onImageClick?: () => void
   url: string
 }): React.JSX.Element | null {
   const dict = useStrings()
@@ -78,9 +80,22 @@ export function InlineMedia({
     )
   }
 
+  const image = <img alt={alt} className="max-h-[70vh] max-w-full rounded-lg" src={src} />
+
   return (
     <div className="w-full">
-      <img alt={alt} className="max-h-[70vh] max-w-full rounded-lg" src={src} />
+      {onImageClick ? (
+        <button
+          aria-label={dict.ui.lightbox.zoomIn}
+          className="block max-w-full cursor-zoom-in rounded-lg p-0"
+          onClick={onImageClick}
+          type="button"
+        >
+          {image}
+        </button>
+      ) : (
+        image
+      )}
       {voiceSrc ? <audio className="w-full" controls src={voiceSrc} /> : voiceFailed}
     </div>
   )

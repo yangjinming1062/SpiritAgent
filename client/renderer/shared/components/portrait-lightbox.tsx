@@ -1,5 +1,5 @@
 import { clamp } from '@runtime'
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { Copy, Download } from '@/shared/lib/icons'
@@ -66,15 +66,21 @@ function clampView(view: LightboxView, viewport: { height: number; width: number
   }
 }
 
-// 灯箱支持自由缩放（滚轮以指针为中心、拖拽平移、双击切换适应/放大）；图片本身即窗口，半透明背景仅在点击背景时关闭。经 createPortal 挂到 document.body 避免 onboarding 容器的 backdrop-filter 锁死 position:fixed；遮罩须设 no-drag，否则在标题栏或侧边伙伴上方点背景会拖动窗口而不是关闭。
+// 未指定容器时经 Portal 挂到 body，避免 onboarding 的 backdrop-filter 限制 fixed 定位；遮罩设 no-drag，保证标题栏上方也能点击关闭。
 export function PortraitLightbox({
+  children,
+  containerRef,
   name,
   onClose,
-  url
+  url,
+  windowId
 }: {
+  children?: ReactNode
+  containerRef?: RefObject<HTMLElement | null>
   name: string
   onClose: () => void
   url: string
+  windowId?: number
 }): React.ReactPortal | null {
   const t = useStrings()
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -187,7 +193,7 @@ export function PortraitLightbox({
 
   const getLightboxRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
 
-  useInteractiveRegion('portrait-lightbox', overlayRef, getLightboxRect)
+  useInteractiveRegion('portrait-lightbox', overlayRef, containerRef ? undefined : getLightboxRect, undefined, windowId)
 
   // 灯箱挂在 bubble 阶段、不阻断冒泡——让外层的"返回上一层"也能响应 Esc。
   useEscapeKey(onClose, { capture: false, preventDefault: false, stopPropagation: false })
@@ -198,11 +204,17 @@ export function PortraitLightbox({
 
   const zoomed = view.scale > MIN_SCALE + 0.001
 
+  const imageLimits = containerRef
+    ? 'max-h-[min(80cqh,calc(100cqh-8rem))] max-w-[90cqw]'
+    : children
+      ? 'max-h-[70vh] max-w-[90vw]'
+      : 'max-h-[80vh] max-w-[90vw]'
+
   return createPortal(
     <div
       aria-label={t.ui.lightbox.backdropAria}
       aria-modal="true"
-      className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-2 p-6 [-webkit-app-region:no-drag]"
+      className={`${containerRef ? 'absolute' : 'fixed'} inset-0 z-[100] flex flex-col items-center justify-center gap-2 p-6 [-webkit-app-region:no-drag]`}
       onClick={event => {
         if (event.target === event.currentTarget) {
           onClose()
@@ -210,11 +222,16 @@ export function PortraitLightbox({
       }}
       ref={overlayRef}
       role="dialog"
-      style={{ background: 'rgba(0,0,0,0.35)', pointerEvents: 'auto', touchAction: 'none' }}
+      style={{
+        background: 'rgba(0,0,0,0.35)',
+        containerType: containerRef ? 'size' : undefined,
+        pointerEvents: 'auto',
+        touchAction: 'none'
+      }}
     >
       <div
         aria-label={name}
-        className={`relative max-h-[80vh] max-w-[90vw] touch-none overflow-hidden rounded-2xl ${
+        className={`relative ${imageLimits} touch-none overflow-hidden rounded-2xl ${
           zoomed ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'
         }`}
         onDoubleClick={event => {
@@ -272,7 +289,7 @@ export function PortraitLightbox({
       >
         <img
           alt={name}
-          className="block max-h-[80vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl select-none"
+          className={`block ${imageLimits} rounded-2xl object-contain shadow-2xl select-none`}
           draggable={false}
           src={url}
           style={{
@@ -286,6 +303,12 @@ export function PortraitLightbox({
           </span>
         ) : null}
       </div>
+
+      {children ? (
+        <div className="w-full max-w-md" onClick={event => event.stopPropagation()}>
+          {children}
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center justify-center gap-2" onClick={event => event.stopPropagation()}>
         <button
@@ -362,6 +385,6 @@ export function PortraitLightbox({
         </p>
       ) : null}
     </div>,
-    document.body
+    containerRef?.current ?? document.body
   )
 }

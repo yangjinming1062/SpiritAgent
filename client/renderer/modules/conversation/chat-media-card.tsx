@@ -26,6 +26,7 @@ function DeliveredMediaCard({ item }: { item: ChatMediaItem }): React.JSX.Elemen
       audioUrl={item.audio_url ?? null}
       key={`${item.url}:${item.audio_url}`}
       mediaType={item.type}
+      onImageClick={item.type === 'image' ? () => presentationPorts().openMediaViewer(item) : undefined}
       url={item.url}
     />
   ) : (
@@ -92,7 +93,13 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
       <p className="text-xs text-amber-300">
         {status === 'rejected' ? dict.reviewRejected : dict.reviewHint} {reason}
       </p>
-      <InlineMedia alt="" audioUrl={item.audio_url ?? null} mediaType={item.type} url={item.url} />
+      <InlineMedia
+        alt=""
+        audioUrl={item.audio_url ?? null}
+        mediaType={item.type}
+        onImageClick={item.type === 'image' ? () => presentationPorts().openMediaViewer(item) : undefined}
+        url={item.url}
+      />
       {error && (
         <p className="text-xs text-danger-fg" role="alert">
           {error}
@@ -136,6 +143,7 @@ function ImageCard({ item }: { item: ChatMediaItem }): React.JSX.Element {
 
   return (
     <button
+      aria-label={dict.ui.lightbox.zoomIn}
       className="block cursor-zoom-in overflow-hidden rounded-lg border border-line-standard bg-fill-trough p-0 transition hover:border-line-strong"
       onClick={() => presentationPorts().openMediaViewer(item)}
       type="button"
