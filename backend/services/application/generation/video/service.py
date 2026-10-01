@@ -57,7 +57,6 @@ from services.infrastructure.assets import (
     unlink_companion_asset,
 )
 from services.infrastructure.llm import (
-    ProviderConfig,
     ProviderError,
     ProviderResultUnknownError,
     VideoGenProvider,
@@ -118,6 +117,7 @@ from .state import ActionResult, GenerationContext, VideoClipSpec
 
 logger = get_logger(__name__)
 
+# 上传导入的默认像素画布；生成包仅取其比例。
 _DEFAULT_CANVAS = (512, 768)
 _SYSTEM_ACTION_SECONDS = 2.0
 _SOURCE_EXT_BY_MIME = {
@@ -761,6 +761,7 @@ async def _prepare_clip(
     *,
     start: float | None = None,
     end: float | None = None,
+    preserve_resolution: bool = False,
 ) -> ActionResult:
     """处理单动作片段并转存片段、封面与命中遮罩；封面/遮罩从最终交付片段读取（libvpx 解码 VP9 alpha），遮罩落盘供 hitmask_ref 按帧查询。"""
     dst = work / f"{action}.{TARGET_EXT}"
@@ -772,7 +773,9 @@ async def _prepare_clip(
         canvas_h=canvas_h,
         start_seconds=start,
         end_seconds=end,
+        preserve_resolution=preserve_resolution,
     )
+    canvas_w, canvas_h = processed.width, processed.height
     hitmask = await _process_thread(build_hitmask, dst, canvas_w=canvas_w, canvas_h=canvas_h)
     cover = await _process_thread(extract_cover, dst, canvas_w=canvas_w, canvas_h=canvas_h)
     stored = await save_companion_asset_async(
@@ -807,6 +810,8 @@ async def _prepare_clip(
             sha256=processed.sha256,
             frames=processed.frames,
             duration_ms=processed.duration_ms,
+            width=processed.width,
+            height=processed.height,
             content_rect=_hitmask_content_rect(hitmask),
         ),
         cover_path=cover_stored,
@@ -1039,30 +1044,25 @@ async def _build_pack(
         await _fail_pack(pack_id, exc)
 
 
-def _action_resolution(provider: VideoGenProvider) -> str | None:
-    """动作素材 720p 等价档；供应商未声明分辨率时沿用 720p。"""
-    if provider.resolutions is None:
-        return "720p"
-    for candidate in ("720p", "720P", "768P"):
-        if candidate in provider.resolutions:
-            return candidate
-    return None
-
-
-def _provider_matches_action(
+def _action_resolution(
     provider: VideoGenProvider,
     *,
     needs_loop_frames: bool,
     duration_seconds: float,
-) -> bool:
+) -> str | None:
     if not provider.supports_first_frame:
-        return False
+        return None
     if needs_loop_frames and not provider.supports_loop_frames:
-        return False
+        return None
     seconds = int(round(duration_seconds))
     if provider.durations is not None and seconds not in provider.durations:
-        return False
-    return _action_resolution(provider) is not None
+        return None
+    return provider.max_resolution(
+        duration=seconds,
+        first_frame=True,
+        last_frame=needs_loop_frames,
+        reference_images=provider.supports_reference_images,
+    )
 
 
 async def _resolve_action_video_plan(
@@ -1070,7 +1070,7 @@ async def _resolve_action_video_plan(
     *,
     needs_loop_frames: bool,
     duration_seconds: float,
-) -> tuple[float, list[tuple[ProviderConfig, VideoGenProvider]]]:
+) -> tuple[float, list[FrozenMediaProvider]]:
     """按链序选择不短于设计的最小时长，再冻结支持该时长的后续供应商。"""
     if (
         not 1 <= duration_seconds <= ABSOLUTE_MAX_DURATION_SECONDS
@@ -1088,33 +1088,36 @@ async def _resolve_action_video_plan(
                 value
                 for value in available
                 if requested <= value <= ABSOLUTE_MAX_DURATION_SECONDS
-                and _provider_matches_action(provider, needs_loop_frames=needs_loop_frames, duration_seconds=value)
+                and _action_resolution(provider, needs_loop_frames=needs_loop_frames, duration_seconds=value)
+                is not None
             ),
             default=None,
         )
         if seconds is None:
             continue
-        providers = [
-            (config, current)
-            for config, current in configured[index:]
-            if _provider_matches_action(current, needs_loop_frames=needs_loop_frames, duration_seconds=seconds)
-        ]
+        providers: list[FrozenMediaProvider] = []
+        for config, current in configured[index:]:
+            resolution = _action_resolution(current, needs_loop_frames=needs_loop_frames, duration_seconds=seconds)
+            if resolution is not None:
+                frozen = FrozenMediaProvider.from_config(config)
+                frozen.video_resolution = resolution
+                providers.append(frozen)
         return float(seconds), providers
     capability = "首尾帧" if needs_loop_frames else "首帧"
-    raise VideoPackStateError(f"请配置支持{capability}、720p 级分辨率及 {requested}–15 秒内可用时长的视频模型")
+    raise VideoPackStateError(f"请配置支持{capability}、声明最高可用分辨率及 {requested}–15 秒内可用时长的视频模型")
 
 
 def _freeze_action_video_plan(
     job: CompanionAction,
     duration_seconds: float,
-    providers: list[tuple[ProviderConfig, VideoGenProvider]],
+    providers: list[FrozenMediaProvider],
 ) -> None:
     state = (
         MediaChainState.model_validate_json(job.generation_state_json)
         if job.generation_state_json
         else MediaChainState()
     )
-    state.providers = [FrozenMediaProvider.from_config(config) for config, _ in providers]
+    state.providers = providers
     job.target_duration_seconds = duration_seconds
     job.generation_state_json = state.model_dump_json()
 
@@ -1387,7 +1390,7 @@ async def _run_action_pipeline(
                 break
             index = state.next_index
             config = await resolve_frozen_media_provider(pack.user_id, "video_gen", state.providers[index])
-            if config is None:
+            if config is None or not state.providers[index].video_resolution:
                 state.next_index += 1
                 await _save_action_state(job, state)
                 continue
@@ -1551,6 +1554,9 @@ async def _run_action_attempt(
             provider = build_provider(config, VideoGenProvider)
             task_id = job.provider_task_id
             if not task_id:
+                resolution = state.providers[attempt].video_resolution
+                if not resolution:
+                    raise VideoPackStateError("动作视频缺少冻结的分辨率，请核对任务后重做")
                 if not job.pose_path or not _artifact_abs_path(job.pose_path).is_file():
                     raise VideoPackError("动作起始姿态图不可读，请恢复原素材")
                 pose_uri = await _process_thread(_action_video_frame_uri, _artifact_abs_path(job.pose_path))
@@ -1561,7 +1567,7 @@ async def _run_action_attempt(
                         VideoGenRequest(
                             prompt=build_video_prompt(entry, context.identity),
                             duration=int(round(entry.duration_seconds)),
-                            resolution=_action_resolution(current) or "720p",
+                            resolution=resolution,
                             first_frame_image=pose_uri,
                             last_frame_image=pose_uri if entry.clip_kind == "loop" else None,
                             reference_images=(reference_uri,) if current.supports_reference_images else (),
@@ -1619,14 +1625,17 @@ async def _run_action_attempt(
         else:
             # once 动作保留完整时间轴（准备、主体、结束），不裁成短循环。
             window = await _process_thread(select_full_clip, matte, max_seconds=entry.duration_seconds)
+        canvas = json.loads(pack.canvas_spec)
         result = await _prepare_clip(
             work,
             job.key,
             matte,
             pack.user_id,
-            *_DEFAULT_CANVAS,
+            canvas["width"],
+            canvas["height"],
             start=window.start,
             end=window.end,
+            preserve_resolution=True,
         )
     return source_path, result
 

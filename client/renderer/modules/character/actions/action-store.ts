@@ -58,6 +58,13 @@ function isActionCatalogManifest(val: unknown): val is ActionCatalogManifest {
     isRecord(val) &&
     val.schema_version === 'spiritagent.action.pack' &&
     Array.isArray(val.clips) &&
+    val.clips.every(
+      clip =>
+        isRecord(clip) &&
+        [clip.width, clip.height].every(
+          dimension => typeof dimension === 'number' && Number.isSafeInteger(dimension) && dimension > 0
+        )
+    ) &&
     typeof val.pack_id === 'number'
   )
 }

@@ -59,6 +59,19 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         self.durations, self.resolutions = _model_capabilities(config.model or self.DEFAULT_MODEL)
         self._client = get_http(config.base_url, config.api_key)
 
+    def max_resolution(
+        self,
+        *,
+        duration: int,
+        first_frame: bool = False,
+        last_frame: bool = False,
+        reference_images: bool = False,
+    ) -> str | None:
+        durations, resolutions = _model_capabilities(self.config.model or self.DEFAULT_MODEL)
+        if duration not in durations or reference_images:
+            return None
+        return resolutions[-1]
+
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = req.model or self.config.model or self.DEFAULT_MODEL
         resp = await self._client.post("/v2/video_generation", json=self._payload(req, model))

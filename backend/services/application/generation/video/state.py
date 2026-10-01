@@ -35,6 +35,8 @@ class VideoClipSpec(BaseModel):
     sha256: str
     frames: int = Field(gt=0)
     duration_ms: int = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
     peek_geometry: PeekGeometry | None = None
     content_rect: tuple[float, float, float, float] | None = None
 

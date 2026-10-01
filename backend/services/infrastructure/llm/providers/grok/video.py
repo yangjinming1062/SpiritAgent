@@ -39,8 +39,22 @@ class GrokVideoGenProvider(VideoGenProvider):
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
-        self.supports_loop_frames = config.model == "grok-imagine-video-1.5"
+        self.supports_loop_frames = (config.model or self.DEFAULT_MODEL) == "grok-imagine-video-1.5"
         self.supports_reference_images = self.supports_loop_frames
+
+    def max_resolution(
+        self,
+        *,
+        duration: int,
+        first_frame: bool = False,
+        last_frame: bool = False,
+        reference_images: bool = False,
+    ) -> str | None:
+        if duration not in _SUPPORTED_DURATIONS:
+            return None
+        if last_frame or reference_images:
+            return "720p" if self.supports_loop_frames else None
+        return "1080p" if (self.config.model or self.DEFAULT_MODEL) == "grok-imagine-video-1.5" else "720p"
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = req.model or self.config.model

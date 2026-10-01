@@ -38,6 +38,18 @@ class QwenVideoGenProvider(VideoGenProvider):
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
 
+    def max_resolution(
+        self,
+        *,
+        duration: int,
+        first_frame: bool = False,
+        last_frame: bool = False,
+        reference_images: bool = False,
+    ) -> str | None:
+        if duration not in _DURATIONS or reference_images:
+            return None
+        return "1080P"
+
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         if req.reference_images:
             raise ValueError("qwen video adapter does not support reference media combinations")

@@ -218,10 +218,21 @@ class VideoGenProvider(BaseProvider):
 
     # 能力声明（与各适配器 submit 校验保持一致）：编排层据此取链上最保守时长并按供应商选档；None 按适配器自身校验兜底
     durations: tuple[int, ...] | None = None  # 可用时长档（整数秒，升序）
-    resolutions: tuple[str, ...] | None = None  # 可用分辨率档（按成本升序）
+    resolutions: tuple[str, ...] | None = None  # 可接受的分辨率档，可能包含兼容别名
     supports_first_frame: bool = False  # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商
     supports_loop_frames: bool = False
     supports_reference_images: bool = False  # 消费 reference_images 身份参考；False 时编排层省略该字段，不排除该供应商
+
+    def max_resolution(
+        self,
+        *,
+        duration: int,
+        first_frame: bool = False,
+        last_frame: bool = False,
+        reference_images: bool = False,
+    ) -> str | None:
+        """配置模型在本次输入组合下的最高原生档；未声明或组合不可用时返回 None。"""
+        return None
 
     @abstractmethod
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus: ...

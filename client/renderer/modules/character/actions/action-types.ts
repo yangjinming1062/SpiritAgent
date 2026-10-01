@@ -10,6 +10,8 @@ export interface ActionClipEntry {
   readonly video_ref: string
   readonly duration_ms: number
   readonly frames: number
+  readonly width: number
+  readonly height: number
   readonly loopable: boolean
   readonly enter_pose: string | null
   readonly exit_pose: string | null

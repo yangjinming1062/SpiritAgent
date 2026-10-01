@@ -31,6 +31,7 @@ class FrozenMediaProvider(BaseModel):
     model_overridden: bool = False
     max_images_per_request: int | None = Field(default=None, ge=1)
     background: Literal["transparent"] | None = None
+    video_resolution: str | None = Field(default=None, min_length=1)
 
     @classmethod
     def from_config(cls, config: ProviderConfig) -> "FrozenMediaProvider":

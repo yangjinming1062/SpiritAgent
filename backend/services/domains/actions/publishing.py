@@ -30,6 +30,8 @@ class ActionClipSpec(BaseModel):
     video_ref: str
     duration_ms: int = Field(gt=0)
     frames: int = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
     loopable: bool = False
     # 目录契约字段，后端不产出进出姿态，恒为 null。
     enter_pose: None = None
@@ -95,6 +97,9 @@ async def build_catalog_manifest(
 
         duration_ms = action.actual_duration_ms or int(action.target_duration_seconds * 1000) or 2000
         frames = action.frames or int(action.target_duration_seconds * 24) or 48
+        if not action.result_json:
+            raise CatalogValidationError("动作素材缺少处理结果")
+        clip_data = json.loads(action.result_json)["clip"]
 
         clips.append(
             ActionClipSpec(
@@ -104,6 +109,8 @@ async def build_catalog_manifest(
                 video_ref=action.video_path,
                 duration_ms=max(duration_ms, 1),
                 frames=max(frames, 1),
+                width=clip_data["width"],
+                height=clip_data["height"],
                 loopable=action.loopable,
                 hitmask_ref=action.hitmask_path,
                 hitmask_grid=(

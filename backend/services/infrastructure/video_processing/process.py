@@ -23,7 +23,7 @@ from .ffmpeg import (
 
 logger = get_logger(__name__)
 
-# 交付常量（PIPELINE「透明化与一致性」）：主格式与画布上限
+# 交付格式、源文件限额与上传导入的画布上限
 TARGET_EXT = "webm"
 MAX_SOURCE_BYTES = 96 * 1024 * 1024
 MAX_CANVAS_WIDTH = 1024
@@ -61,6 +61,8 @@ class ClipProcessResult:
     sha256: str
     frames: int
     duration_ms: int
+    width: int
+    height: int
 
 
 def _sha256(path: Path) -> str:
@@ -71,14 +73,21 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _canvas_filter(canvas_w: int, canvas_h: int) -> str:
-    """统一画布：等比缩放放入画布、水平居中、脚底（底边）对齐 canvas 底部。
+def _native_canvas_size(width: int, height: int, canvas_w: int, canvas_h: int) -> tuple[int, int]:
+    """容纳源像素的最小同宽高比偶数画布，供生成素材仅补边而不重采样。"""
+    divisor = math.gcd(canvas_w, canvas_h)
+    unit_w, unit_h = canvas_w // divisor, canvas_h // divisor
+    multiple = max((width + unit_w - 1) // unit_w, (height + unit_h - 1) // unit_h)
+    if (unit_w * multiple) % 2 or (unit_h * multiple) % 2:
+        multiple += 1
+    return unit_w * multiple, unit_h * multiple
+
+
+def _canvas_filter(canvas_w: int, canvas_h: int, *, preserve_resolution: bool = False) -> str:
+    """生成素材仅补边，导入素材等比缩放；水平居中、底边对齐画布。
     脚底锚点即画布底边；不逐帧紧裁，避免角色抖动。"""
-    return (
-        f"format=rgba,scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
-        f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih):color=black@0,"
-        "fps=24,format=rgba"
-    )
+    scale = "" if preserve_resolution else f"scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
+    return f"format=rgba,{scale}pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih):color=black@0,fps=24,format=rgba"
 
 
 def prepare_action_clip(
@@ -89,6 +98,7 @@ def prepare_action_clip(
     canvas_h: int,
     start_seconds: float | None = None,
     end_seconds: float | None = None,
+    preserve_resolution: bool = False,
 ) -> ClipProcessResult:
     """切分（可选区间）、重置时间轴、统一画布与帧率并编码为透明 WebM。
     输出从 0 开始的新时间轴；帧数与时长以编码产物 ffprobe 复核为准。
@@ -100,6 +110,10 @@ def prepare_action_clip(
         raise VideoProcessError("源片段过长，请提供单个动作的短视频")
     if not probe.has_alpha:
         raise VideoProcessError("源片段缺少透明通道，请提供透明背景的素材")
+    if canvas_w <= 0 or canvas_h <= 0 or canvas_w % 2 or canvas_h % 2:
+        raise VideoProcessError("视频画布必须为正偶数尺寸")
+    if preserve_resolution:
+        canvas_w, canvas_h = _native_canvas_size(probe.width, probe.height, canvas_w, canvas_h)
     for value in (start_seconds, end_seconds):
         if value is not None and not math.isfinite(value):
             raise VideoProcessError("动作区间必须为有限数值")
@@ -118,7 +132,7 @@ def prepare_action_clip(
     args += [*alpha_input_args(probe), "-i", str(src)]
     if end is not None:
         args += ["-t", f"{end - (start or 0.0):.3f}"]
-    args += ["-an", "-sn", "-dn", "-vf", _canvas_filter(canvas_w, canvas_h)]
+    args += ["-an", "-sn", "-dn", "-vf", _canvas_filter(canvas_w, canvas_h, preserve_resolution=preserve_resolution)]
     args += [*VP9_ALPHA_ENCODE_ARGS, str(dst)]
 
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -158,6 +172,8 @@ def _verify_output(dst: Path) -> ClipProcessResult:
         sha256=_sha256(dst),
         frames=max(1, round(out.duration_seconds * out.fps)),
         duration_ms=round(out.duration_seconds * 1000),
+        width=out.width,
+        height=out.height,
     )
 
 
@@ -199,8 +215,9 @@ def extract_cover(src: Path, *, canvas_w: int, canvas_h: int) -> bytes:
 def sample_key_frames(src: Path) -> list[bytes]:
     """按原画幅（边长上限 1024、取偶数）抽取首、中、末三帧透明 WebP；末帧前移 0.15 秒避开编码尾帧。"""
     probe = probe_video(src)
-    canvas_w = max(2, min(probe.width, 1024) // 2 * 2)
-    canvas_h = max(2, min(probe.height, 1024) // 2 * 2)
+    scale = min(1.0, 1024 / max(probe.width, probe.height))
+    canvas_w = max(2, round(probe.width * scale / 2) * 2)
+    canvas_h = max(2, round(probe.height * scale / 2) * 2)
     duration = probe.duration_seconds
     return [
         _frame_webp(src, probe, canvas_w=canvas_w, canvas_h=canvas_h, at_seconds=second)
