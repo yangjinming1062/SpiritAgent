@@ -1,6 +1,15 @@
 """进程级运行时设施：配置、数据库、日志、任务托管、附件与维护态；对外 re-export。"""
 
-from .ai_config import CAPABILITY_SERVICES, AIConfig, AIConfigPublic, AIConfigUpdate, ProviderCard, ProviderCardUpdate
+from .ai_config import (
+    CAPABILITY_SERVICES,
+    AIConfig,
+    AIConfigPublic,
+    AIConfigUpdate,
+    CapabilityCard,
+    CapabilityCardUpdate,
+    ProviderCard,
+    ProviderCardUpdate,
+)
 from .attachments import attachment_root, path_attach_ref, session_dir
 from .attachments import gc_session as attachments_gc_session
 from .background import BackgroundTask, TaskBag
@@ -113,6 +122,8 @@ __all__ = [
     "ATTACHMENT_VIDEO_EXTENSIONS",
     "ATTACHMENT_VIDEO_MAX_BYTES",
     "CAPABILITY_SERVICES",
+    "CapabilityCard",
+    "CapabilityCardUpdate",
     "CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT",
     "CONTEXT_SUMMARY_HEADROOM_FACTOR",
     "DEFAULT_LANGUAGE",

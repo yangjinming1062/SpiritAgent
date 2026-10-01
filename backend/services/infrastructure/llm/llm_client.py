@@ -85,7 +85,7 @@ def _chain_from_ai_config(
     service_type: ServiceType,
     inherited_sources: Iterable[ProviderCard] = (),
 ) -> list[ProviderConfig]:
-    """能力卡片按 卡片 → 本配置信息库 → 继承信息库 的顺序取密钥、端点与模型。"""
+    """密钥与端点按 卡片 → 本配置信息库 → 继承信息库 取值；模型只看能力卡片，空则用供应商默认。"""
     inherited = {card.provider: card for card in inherited_sources}
     sources = {card.provider: card for card in config.providers}
     result: list[ProviderConfig] = []
@@ -98,7 +98,7 @@ def _chain_from_ai_config(
             card.provider,
             api_key=next((layer.api_key for layer in layers if layer.api_key), ""),
             base_url=next((layer.base_url for layer in layers if layer.base_url), ""),
-            model=next((layer.model_name for layer in layers if layer.model_name), ""),
+            model=card.model_name,
         )
         if entry is not None:
             result.append(entry)

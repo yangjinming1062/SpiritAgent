@@ -6,6 +6,8 @@ CAPABILITY_SERVICES = ("llm", "stt", "tts", "image_gen", "video_gen", "embedding
 
 
 class ProviderCard(BaseModel):
+    """供应商信息库卡片：只存密钥与地址，模型名属能力卡片。"""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     provider: str = Field(
@@ -15,18 +17,21 @@ class ProviderCard(BaseModel):
     )
     api_key: str = Field(default="", max_length=2048)
     base_url: str = Field(default="", max_length=2048)
+
+
+class CapabilityCard(ProviderCard):
     model_name: str = Field(default="", max_length=128)
 
 
 class CapabilityChains(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    llm: list[ProviderCard] = Field(default_factory=list)
-    stt: list[ProviderCard] = Field(default_factory=list)
-    tts: list[ProviderCard] = Field(default_factory=list)
-    image_gen: list[ProviderCard] = Field(default_factory=list)
-    video_gen: list[ProviderCard] = Field(default_factory=list)
-    embedding: list[ProviderCard] = Field(default_factory=list)
+    llm: list[CapabilityCard] = Field(default_factory=list)
+    stt: list[CapabilityCard] = Field(default_factory=list)
+    tts: list[CapabilityCard] = Field(default_factory=list)
+    image_gen: list[CapabilityCard] = Field(default_factory=list)
+    video_gen: list[CapabilityCard] = Field(default_factory=list)
+    embedding: list[CapabilityCard] = Field(default_factory=list)
 
 
 class AIConfig(BaseModel):
@@ -52,15 +57,20 @@ class ProviderCardUpdate(ProviderCard):
     clear_api_key: bool = False
 
 
+class CapabilityCardUpdate(CapabilityCard):
+    api_key_set: bool = False
+    clear_api_key: bool = False
+
+
 class CapabilityChainsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    llm: list[ProviderCardUpdate] = Field(default_factory=list)
-    stt: list[ProviderCardUpdate] = Field(default_factory=list)
-    tts: list[ProviderCardUpdate] = Field(default_factory=list)
-    image_gen: list[ProviderCardUpdate] = Field(default_factory=list)
-    video_gen: list[ProviderCardUpdate] = Field(default_factory=list)
-    embedding: list[ProviderCardUpdate] = Field(default_factory=list)
+    llm: list[CapabilityCardUpdate] = Field(default_factory=list)
+    stt: list[CapabilityCardUpdate] = Field(default_factory=list)
+    tts: list[CapabilityCardUpdate] = Field(default_factory=list)
+    image_gen: list[CapabilityCardUpdate] = Field(default_factory=list)
+    video_gen: list[CapabilityCardUpdate] = Field(default_factory=list)
+    embedding: list[CapabilityCardUpdate] = Field(default_factory=list)
 
 
 class AIConfigUpdate(BaseModel):
@@ -74,15 +84,19 @@ class ProviderCardPublic(ProviderCard):
     api_key_set: bool = False
 
 
+class CapabilityCardPublic(CapabilityCard):
+    api_key_set: bool = False
+
+
 class CapabilityChainsPublic(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    llm: list[ProviderCardPublic] = Field(default_factory=list)
-    stt: list[ProviderCardPublic] = Field(default_factory=list)
-    tts: list[ProviderCardPublic] = Field(default_factory=list)
-    image_gen: list[ProviderCardPublic] = Field(default_factory=list)
-    video_gen: list[ProviderCardPublic] = Field(default_factory=list)
-    embedding: list[ProviderCardPublic] = Field(default_factory=list)
+    llm: list[CapabilityCardPublic] = Field(default_factory=list)
+    stt: list[CapabilityCardPublic] = Field(default_factory=list)
+    tts: list[CapabilityCardPublic] = Field(default_factory=list)
+    image_gen: list[CapabilityCardPublic] = Field(default_factory=list)
+    video_gen: list[CapabilityCardPublic] = Field(default_factory=list)
+    embedding: list[CapabilityCardPublic] = Field(default_factory=list)
 
 
 class AIConfigPublic(BaseModel):
