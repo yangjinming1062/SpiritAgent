@@ -5,6 +5,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from utils import (
@@ -51,10 +52,10 @@ def _resolve_cdp_override(cdp_url: str) -> str:
 
     discovery_url = raw
     if lowered.startswith(("ws://", "wss://")):
-        if raw.count(":") == 2 and raw.rstrip("/").rsplit(":", 1)[-1].isdigit() and "/" not in raw.split(":", 2)[-1]:
-            discovery_url = ("http://" if lowered.startswith("ws://") else "https://") + raw.split("://", 1)[1]
-        else:
+        parts = urlsplit(raw)
+        if parts.path not in {"", "/"} or parts.query or parts.fragment:
             return raw
+        discovery_url = urlunsplit(("http" if parts.scheme == "ws" else "https", parts.netloc, "", "", ""))
 
     version_url = (
         discovery_url

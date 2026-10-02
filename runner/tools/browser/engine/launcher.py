@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import psutil
 from utils import (
     CREATE_NO_WINDOW,
     cfg_get,
@@ -32,11 +33,36 @@ class BrowserLaunchError(Exception):
 class NativeBrowserProcess:
     """原生启动的 Chromium 进程及其 CDP 端点。"""
 
-    def __init__(self, proc: subprocess.Popen[Any], cdp_url: str) -> None:
+    def __init__(
+        self,
+        proc: subprocess.Popen[Any],
+        cdp_url: str,
+        *,
+        browser_process: psutil.Process | None = None,
+    ) -> None:
         self.proc = proc
         self.cdp_url = cdp_url
+        self._browser_process = browser_process
         self._terminated = False
         self._lock = threading.Lock()
+
+    @property
+    def pid(self) -> int:
+        return self._browser_process.pid if self._browser_process is not None else self.proc.pid
+
+    def poll(self) -> int | None:
+        """Windows 浏览器正常重启后以接管的主进程为准，不把启动器退出当作浏览器死亡。"""
+        if self._browser_process is None:
+            return self.proc.poll()
+        try:
+            if not self._browser_process.is_running():
+                return 0
+            code = self._browser_process.wait(timeout=0)
+        except psutil.TimeoutExpired:
+            return None
+        except psutil.NoSuchProcess:
+            return 0
+        return code if code is not None else 0
 
     def terminate(self) -> None:
         """结束浏览器进程树（幂等）；仅当 PID 已不存在时向原 pgid 补 SIGKILL，避免 PID 复用误杀。"""
@@ -45,21 +71,45 @@ class NativeBrowserProcess:
                 return
             self._terminated = True
         posix = sys.platform != "win32"
-        if self.proc.poll() is not None:
+        if self.poll() is not None:
             if posix and not pid_exists(self.proc.pid):
                 with contextlib.suppress(OSError):
                     os.killpg(self.proc.pid, signal.SIGKILL)
             return
         try:
             terminate_tree(
-                self.proc,
+                self._browser_process.pid if self._browser_process is not None else self.proc,
                 graceful_timeout=3.0,
                 force_timeout=2.0,
                 escalate=True,
                 pgid=self.proc.pid if posix else None,
             )
         except Exception as e:
-            logger.warning("Error killing browser process tree %s: %s", self.proc.pid, e)
+            logger.warning("Error killing browser process tree %s: %s", self.pid, e)
+
+
+def _find_relaunched_browser(executable: Path, profile_dir: Path, launched_at: float) -> psutil.Process | None:
+    """仅接管本次启动、同可执行文件且使用同一独立 profile 的 Windows 主进程。"""
+    expected_exe = os.path.normcase(str(executable.resolve()))
+    expected_profile = os.path.normcase(str(profile_dir.resolve()))
+    for pid in psutil.pids():
+        try:
+            # 不复用 process_iter 的缓存对象，兼容启动器退出期间的 PID/命令行变化。
+            process = psutil.Process(pid)
+            if process.create_time() < launched_at - 0.1 or os.path.normcase(process.exe()) != expected_exe:
+                continue
+            args = process.cmdline()
+            if any(arg.startswith("--type=") for arg in args):
+                continue
+            profile_arg = next((arg.partition("=")[2] for arg in args if arg.startswith("--user-data-dir=")), None)
+            if (
+                profile_arg is not None
+                and os.path.normcase(str(Path(profile_arg.strip('"')).resolve())) == expected_profile
+            ):
+                return process
+        except (psutil.Error, OSError):
+            continue
+    return None
 
 
 def find_browser_binary() -> Path | None:
@@ -229,6 +279,7 @@ def launch_chromium(
         with contextlib.suppress(OSError):
             active_port_file.unlink()
 
+    launched_at = time.time()
     try:
         proc = subprocess.Popen(args, **popen_kwargs)
     except Exception as e:
@@ -237,32 +288,39 @@ def launch_chromium(
     deadline = time.monotonic() + startup_timeout_s
     port: int | None = None
     ws_path: str = ""
+    browser_process: psutil.Process | None = None
 
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            raise BrowserLaunchError(f"Browser process exited prematurely with code {proc.returncode}")
+    try:
+        while time.monotonic() < deadline:
+            if sys.platform == "win32" and proc.poll() == 0 and browser_process is None:
+                browser_process = _find_relaunched_browser(exe, profile_dir, launched_at)
+            if active_port_file.is_file():
+                try:
+                    content = active_port_file.read_text(encoding="utf-8").strip()
+                    lines = [line.strip() for line in content.splitlines() if line.strip()]
+                    if len(lines) >= 2 and lines[0].isdigit() and 1 <= int(lines[0]) <= 65535:
+                        port = int(lines[0])
+                        ws_path = lines[1]
+                        if proc.poll() is None or browser_process is not None:
+                            break
+                except (OSError, ValueError):
+                    pass  # 浏览器可能正在写入，下一轮重读
+            if browser_process is not None:
+                if not browser_process.is_running():
+                    raise BrowserLaunchError("Relaunched browser process exited before its CDP endpoint was ready")
+            elif (code := proc.poll()) is not None and (sys.platform != "win32" or code != 0):
+                raise BrowserLaunchError(f"Browser process exited prematurely with code {code}")
+            time.sleep(0.1)
 
-        if active_port_file.is_file():
-            try:
-                content = active_port_file.read_text(encoding="utf-8").strip()
-                lines = [line.strip() for line in content.splitlines() if line.strip()]
-                if len(lines) >= 2 and lines[0].isdigit():
-                    port = int(lines[0])
-                    ws_path = lines[1]
-                    break
-            except (OSError, ValueError):
-                pass  # 浏览器可能正在写入，下一轮重读
-
-        time.sleep(0.1)
-
-    if port is None or not ws_path:
-        try:
-            terminate_tree(proc, graceful_timeout=0.5, force_timeout=1.0, escalate=True)
-        except Exception as e:
-            logger.debug("terminate_tree on launch timeout failed: %s", e)
-        raise BrowserLaunchError(
-            f"Timed out waiting for DevToolsActivePort in {profile_dir} after {startup_timeout_s}s",
-        )
+        if port is None or not ws_path or (proc.poll() is not None and browser_process is None):
+            raise BrowserLaunchError(
+                f"Timed out waiting for a live browser and DevToolsActivePort in {profile_dir} after {startup_timeout_s}s",
+            )
+    except BaseException:
+        if browser_process is None and sys.platform == "win32" and proc.poll() == 0:
+            browser_process = _find_relaunched_browser(exe, profile_dir, launched_at)
+        NativeBrowserProcess(proc, "", browser_process=browser_process).terminate()
+        raise
 
     cdp_url = f"ws://127.0.0.1:{port}/{ws_path.lstrip('/')}"
-    return NativeBrowserProcess(proc=proc, cdp_url=cdp_url)
+    return NativeBrowserProcess(proc=proc, cdp_url=cdp_url, browser_process=browser_process)

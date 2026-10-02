@@ -154,9 +154,19 @@ class InputDispatch:
                     "objectId": obj_id,
                     "functionDeclaration": (
                         "function() {"
+                        "  const tag = this.tagName?.toLowerCase();"
+                        "  const input = tag === 'input';"
+                        "  const textarea = tag === 'textarea';"
+                        "  const blockedTypes = ['button','checkbox','color','file','hidden','image','radio','range','reset','submit'];"
+                        "  if (this.disabled || this.readOnly || (input && blockedTypes.includes(this.type))) return false;"
+                        "  if (!input && !textarea && !this.isContentEditable) return false;"
                         "  this.focus();"
-                        "  if (typeof this.select === 'function') { this.select(); return true; }"
-                        "  if ('value' in this) { this.value = ''; return true; }"
+                        "  if (input || textarea) {"
+                        "    const proto = input ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;"
+                        "    Object.getOwnPropertyDescriptor(proto, 'value').set.call(this, '');"
+                        "    this.dispatchEvent(new Event('input', {bubbles: true}));"
+                        "    return true;"
+                        "  }"
                         "  if (this.isContentEditable) {"
                         "    const r = document.createRange(); r.selectNodeContents(this);"
                         "    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);"
@@ -169,36 +179,41 @@ class InputDispatch:
                 },
                 session_id=sid,
             )
-            if eval_clear.get("ok"):
-                js_cleared = bool(eval_clear["result"].get("result", {}).get("value"))
+            if not eval_clear.get("ok"):
+                return {"ok": False, "error": eval_clear.get("error", "Failed to focus and clear the input")}
+            clear_result = eval_clear.get("result", {})
+            if clear_result.get("exceptionDetails"):
+                return {"ok": False, "error": "Failed to focus and clear the editable input"}
+            js_cleared = clear_result.get("result", {}).get("value") is True
+            if not js_cleared:
+                return {"ok": False, "error": f"Target '{ref}' is not an editable input field"}
 
         if not js_cleared:
             res = self._dispatch_left_click(sid, cx, cy)
             if not res.get("ok"):
                 return res
 
-            if not obj_id:
-                eval_active = self._send_cdp(
-                    "Runtime.evaluate",
-                    {
-                        "expression": (
-                            "(() => {"
-                            "  const el = document.activeElement;"
-                            "  if (!el || el === document.body || el === document.documentElement) return false;"
-                            "  const tag = el.tagName.toLowerCase();"
-                            "  if (['input', 'textarea'].includes(tag)) return true;"
-                            "  if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') return true;"
-                            "  const role = (el.getAttribute('role') || '').toLowerCase();"
-                            "  return ['textbox', 'searchbox', 'combobox'].includes(role);"
-                            "})()"
-                        ),
-                        "returnByValue": True,
-                    },
-                    session_id=sid,
-                )
-                is_active_input = bool(eval_active.get("result", {}).get("result", {}).get("value"))
-                if not is_active_input:
-                    return {"ok": False, "error": f"Target at '{ref}' did not focus an editable input field"}
+            eval_active = self._send_cdp(
+                "Runtime.evaluate",
+                {
+                    "expression": (
+                        "(() => {"
+                        "  let el = document.activeElement;"
+                        "  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;"
+                        "  if (!el || el === document.body || el === document.documentElement || el.disabled || el.readOnly) return false;"
+                        "  const tag = el.tagName.toLowerCase();"
+                        "  if (tag === 'textarea') return true;"
+                        "  if (tag === 'input') return !['button','checkbox','color','file','hidden','image','radio','range','reset','submit'].includes(el.type);"
+                        "  return el.isContentEditable;"
+                        "})()"
+                    ),
+                    "returnByValue": True,
+                },
+                session_id=sid,
+            )
+            is_active_input = bool(eval_active.get("result", {}).get("result", {}).get("value"))
+            if not is_active_input:
+                return {"ok": False, "error": f"Target at '{ref}' did not focus an editable input field"}
 
             # CDP modifiers: Alt=1/Ctrl=2/Meta=4/Shift=8；mac 编辑键须附 selectAll。
             modifiers = 4 if sys.platform == "darwin" else 2

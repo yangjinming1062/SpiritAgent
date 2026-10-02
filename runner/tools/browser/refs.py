@@ -81,6 +81,12 @@ class Refs:
                         entry["is_visual"] = True
                         self._last_refs[key] = entry
 
+    def require_current_ref(self, ref: str) -> None:
+        normalized = str(ref).strip().removeprefix("@")
+        with self._lock:
+            if normalized not in self._last_refs and f"@{normalized}" not in self._last_refs:
+                raise ValueError(f"Element {ref} is not in the current page snapshot; take a new snapshot first.")
+
     def snapshot_axtree(
         self,
         *,
@@ -92,24 +98,28 @@ class Refs:
             return {"ok": False, "error": "Supervisor loop is not running"}
 
         async def _do_snapshot() -> dict[str, Any]:
-            sids = self._session_ids_provider()
-            sid = sids.active or sids.page
             # 导航冲突重抓一次，仍冲突则报错。
             for _ in range(2):
+                sids = self._session_ids_provider()
+                sid = sids.active or sids.page
                 with self._lock:
                     generation = self._generation
                 ax_resp = await self._cdp_async("Accessibility.getFullAXTree", {}, session_id=sid, timeout=15.0)
                 nodes = ax_resp.get("result", {}).get("nodes", [])
                 text, refs = build_snapshot_text(nodes, interactive_only=interactive_only, max_depth=max_depth)
                 with self._lock:
-                    if generation == self._generation:
+                    current = self._session_ids_provider()
+                    if generation == self._generation and sid == (current.active or current.page):
                         self._last_refs = {k: v for k, v in self._last_refs.items() if not AX_REF_PATTERN.match(str(k))}
                         self._last_refs.update(refs)
                         break
             else:
                 return {"ok": False, "error": "Page kept navigating while taking the snapshot; try again."}
 
-            await self._inject_aria_refs_async(refs, session_id=sid)
+            await self._inject_aria_refs_async(refs, session_id=sid, generation=generation)
+            with self._lock:
+                if generation != self._generation:
+                    return {"ok": False, "error": "The page changed while taking the snapshot; try again."}
 
             return {"ok": True, "snapshot": text, "refs": refs, "element_count": len(refs) // 2 if refs else 0}
 
@@ -124,7 +134,12 @@ class Refs:
             fut.cancel()
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
-    async def _inject_aria_refs_async(self, refs_map: dict[str, dict[str, Any]], session_id: str | None) -> None:
+    async def _inject_aria_refs_async(
+        self,
+        refs_map: dict[str, dict[str, Any]],
+        session_id: str | None,
+        generation: int,
+    ) -> None:
         """给快照节点写入 ``aria-ref`` 属性并缓存中心坐标，供 DOM 查询与坐标兜底解析 ref；逐元素失败不影响其余。"""
         sem = asyncio.Semaphore(16)
         try:
@@ -180,6 +195,8 @@ class Refs:
                 cx = round((content[0] + content[2]) / 2.0)
                 cy = round((content[1] + content[5]) / 2.0)
                 with self._lock:
+                    if generation != self._generation:
+                        return
                     for key in (ref_key, f"@{ref_key}"):
                         if (entry := self._last_refs.get(key)) is not None:
                             entry.update(
@@ -238,6 +255,7 @@ class Refs:
             return max(0.0, float(coord_m.group(1))), max(0.0, float(coord_m.group(2))), None
 
         normalized = ref_str[1:] if ref_str.startswith("@") else ref_str
+        self.require_current_ref(ref_str)
         with self._lock:
             info = (
                 self._last_refs.get(ref_str) or self._last_refs.get(normalized) or self._last_refs.get(f"@{normalized}")

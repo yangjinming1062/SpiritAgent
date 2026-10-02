@@ -39,7 +39,9 @@ def browser_tab_new(url: str | None = None, task_id: str | None = None) -> str:
         session_id = attach_res["result"].get("sessionId")
         if not session_id:
             return json.dumps({"success": False, "error": f"No session returned for new tab {target_id}"})
-        supervisor.activate_tab_session(session_id)
+        activated = supervisor.activate_tab_session(session_id)
+        if not activated.get("ok"):
+            return json.dumps({"success": False, "error": activated.get("error", "Failed to activate the new tab")})
         return json.dumps({"success": True, "tab_id": target_id, "url": target_url})
 
 
@@ -64,7 +66,9 @@ def browser_tab_switch(tab_id: str, task_id: str | None = None) -> str:
             if not session_id:
                 return json.dumps({"success": False, "error": f"No session returned for tab {tab_id}"})
 
-        supervisor.activate_tab_session(session_id)
+        activated = supervisor.activate_tab_session(session_id)
+        if not activated.get("ok"):
+            return json.dumps({"success": False, "error": activated.get("error", "Failed to switch tabs")})
         return json.dumps({"success": True, "active_tab_id": tab_id})
 
 

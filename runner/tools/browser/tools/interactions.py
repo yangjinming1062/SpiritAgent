@@ -11,7 +11,6 @@ from ..camofox import (
     is_camofox_mode,
 )
 from ..check import check_browser_native_requirements
-from ..engine import select_option_with_eval
 from ..schemas import (
     BROWSER_CLICK_SCHEMA,
     BROWSER_DRAG_SCHEMA,
@@ -125,7 +124,7 @@ def browser_select(
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
             return no_supervisor()
-        res = select_option_with_eval(supervisor.evaluate_runtime, ref, value=value, label=label, index=index)
+        res = supervisor.select_ref(ref, value=value, label=label, index=index)
         return json.dumps(res, ensure_ascii=False)
 
 

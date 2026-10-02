@@ -4,6 +4,7 @@ import secrets
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,7 @@ def browser_download(
         if supervisor is None:
             return no_supervisor()
 
+        started_after = time.monotonic()
         nav_error: str | None = None
         if ref_or_url.startswith(("http://", "https://")):
             safe_url, url_err = guard_browser_url(ref_or_url)
@@ -120,7 +122,11 @@ def browser_download(
                     ensure_ascii=False,
                 )
 
-        dl_res = supervisor.wait_for_download(timeout=timeout_s)
+        dl_res = supervisor.wait_for_download(
+            timeout=timeout_s,
+            cancel_token=cancel_token,
+            started_after=started_after,
+        )
         if not dl_res.get("ok"):
             error = dl_res.get("error", "Download timed out")
             if nav_error is not None:

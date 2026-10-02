@@ -248,22 +248,76 @@ class CDPSupervisor:
 
     def _build_frame_tree_locked(self) -> dict[str, Any]:
         frames = list(self._frames.values())
-        root = self._frames.get(self._current_sids().root_frame) or next(
-            (f for f in frames if not f.parent_frame_id),
-            None,
-        )
+        root = self._frames.get(self._current_sids().root_frame)
         if root is None:
-            return {"frames_count": 0}
+            return {"frames_count": len(frames)}
         return {"root": root.to_dict(), "frames_count": len(frames)}
 
-    def activate_tab_session(self, session_id: str) -> None:
+    def activate_tab_session(self, session_id: str) -> dict[str, Any]:
         """切到新 page session：启用事件域并跟 root_frame，否则导航等待器空等超时。"""
-        self._set_session(active=session_id)
         for method, params in _PAGE_DOMAINS:
-            self.send_cdp(method, params, session_id=session_id)
+            result = self.send_cdp(method, params, session_id=session_id)
+            if not result.get("ok"):
+                return {"ok": False, "error": result.get("error", f"Failed to enable {method}")}
         ft = self.send_cdp("Page.getFrameTree", session_id=session_id)
-        root = ft.get("result", {}).get("frameTree", {}).get("frame", {}).get("id", "") if ft.get("ok") else ""
-        self._set_session(root_frame=root)
+        if not ft.get("ok"):
+            return {"ok": False, "error": ft.get("error", "Failed to read the tab's frame tree")}
+        frame = ft.get("result", {}).get("frameTree", {}).get("frame", {})
+        root = frame.get("id", "")
+        if not root:
+            return {"ok": False, "error": "The tab has no root frame"}
+        visible = self.send_cdp("Page.bringToFront", session_id=session_id)
+        if not visible.get("ok"):
+            return {"ok": False, "error": visible.get("error", "Failed to activate the browser page")}
+        with self._state_lock:
+            sids = self._current_sids()
+            changed = (sids.active or sids.page) != session_id
+            self._set_session(active=session_id, page=sids.page or session_id, root_frame=root)
+            self._record_root_frame_locked(frame)
+            for info in self._attached_targets.values():
+                if info.get("session_id") == session_id:
+                    info["frame_id"] = root
+        if changed:
+            self._refs.note_root_navigation()
+        return {"ok": True}
+
+    def _record_root_frame_locked(self, frame: dict[str, Any]) -> None:
+        root = frame["id"]
+        self._frames[root] = FrameInfo(
+            frame_id=root,
+            url=frame.get("url", ""),
+            origin=frame.get("securityOrigin", ""),
+            parent_frame_id=None,
+            is_oopif=False,
+            name=frame.get("name", ""),
+        )
+
+    def ensure_active_page(self) -> None:
+        """关闭最后一页后附着现有页或创建空白页，不重启浏览器连接。"""
+        if (sids := self._current_sids()).active or sids.page:
+            return
+        targets = self.list_tabs()
+        if not targets.get("ok"):
+            raise RuntimeError(targets.get("error", "Failed to list browser tabs"))
+        page = next((t for t in targets.get("result", {}).get("targetInfos", []) if t.get("type") == "page"), None)
+        if page is None:
+            created = self.send_cdp("Target.createTarget", {"url": "about:blank"})
+            if not created.get("ok"):
+                raise RuntimeError(created.get("error", "Failed to create a browser tab"))
+            target_id = created.get("result", {}).get("targetId")
+        else:
+            target_id = page.get("targetId")
+        if not target_id:
+            raise RuntimeError("The browser did not return a page target")
+        attached = self.attach_target(target_id)
+        if not attached.get("ok"):
+            raise RuntimeError(attached.get("error", "Failed to attach to the browser tab"))
+        session_id = attached.get("result", {}).get("sessionId")
+        if not session_id:
+            raise RuntimeError("The browser did not return a page session")
+        activated = self.activate_tab_session(session_id)
+        if not activated.get("ok"):
+            raise RuntimeError(activated.get("error", "Failed to activate the browser tab"))
 
     def get_attached_targets(self) -> tuple[str | None, dict[str, dict[str, str]]]:
         with self._state_lock:
@@ -309,10 +363,6 @@ class CDPSupervisor:
                     if info.get("session_id") == self._current_sids().active:
                         tab_id = tid
                         break
-            closing_active = (
-                tab_id is not None
-                and self._attached_targets.get(tab_id, {}).get("session_id") == self._current_sids().active
-            )
             closed_session = self._attached_targets.get(tab_id, {}).get("session_id") if tab_id is not None else None
 
         if tab_id is None:
@@ -323,26 +373,44 @@ class CDPSupervisor:
             return result
         if result.get("result", {}).get("success") is False:
             return {"ok": False, "error": f"Browser did not close tab {tab_id}"}
-        fallback: str | None = None
-        with self._state_lock:
-            self._attached_targets.pop(tab_id, None)
-            if closing_active:
-                # page 会话被关时一并换选，否则 send_cdp 路由进死会话。
-                fallback = next(
-                    (info.get("session_id") for info in self._attached_targets.values() if info.get("session_id")),
-                    None,
-                )
-                if self._current_sids().page == closed_session:
-                    self._set_session(page=fallback, active=fallback)
-                else:
-                    self._set_session(active=fallback)
-                self._set_session(root_frame="")
+        fallback = self._forget_target(tab_id, closed_session)
         if fallback is not None:
             # root_frame 须跟回退会话。
             ft = self.send_cdp("Page.getFrameTree", session_id=fallback)
             if ft.get("ok"):
-                self._set_session(root_frame=ft["result"].get("frameTree", {}).get("frame", {}).get("id", ""))
+                with self._state_lock:
+                    if self._current_sids().active == fallback:
+                        frame = ft["result"].get("frameTree", {}).get("frame", {})
+                        if root := frame.get("id"):
+                            self._set_session(root_frame=root)
+                            self._record_root_frame_locked(frame)
         return {"ok": True, "tab_id": tab_id}
+
+    def _forget_target(self, target_id: str | None, session_id: str | None) -> str | None:
+        """移除关闭或断开的页会话，并把当前目标切到仍存活的已附着页。"""
+        with self._state_lock:
+            removed_ids = {
+                info["session_id"]
+                for tid, info in self._attached_targets.items()
+                if tid == target_id or (session_id is not None and info.get("session_id") == session_id)
+            }
+            if session_id is not None:
+                removed_ids.add(session_id)
+            self._attached_targets = {
+                tid: info for tid, info in self._attached_targets.items() if info.get("session_id") not in removed_ids
+            }
+            sids = self._current_sids()
+            remaining = {info["session_id"]: info for info in self._attached_targets.values()}
+            fallback = sids.active if sids.active in remaining else next(iter(remaining), None)
+            active = fallback if sids.active in removed_ids else sids.active
+            page = fallback if sids.page in removed_ids else sids.page
+            selected = active or page
+            changed = selected != (sids.active or sids.page)
+            root = remaining.get(selected, {}).get("frame_id", "") if changed else sids.root_frame
+            self._set_session(active=active, page=page, root_frame=root)
+        if changed:
+            self._refs.note_root_navigation()
+        return selected if changed else None
 
     def send_cdp(
         self,
@@ -540,6 +608,20 @@ class CDPSupervisor:
     def type_ref(self, ref: str, text: str, *, wait_stable: bool = True, timeout_s: float = 0.2) -> dict[str, Any]:
         """先聚焦并清空元素，再输入新文本。"""
         return self._input.type_ref(ref, text, wait_stable=wait_stable, timeout_s=timeout_s)
+
+    def select_ref(
+        self,
+        ref: str,
+        *,
+        value: str | None = None,
+        label: str | None = None,
+        index: int | None = None,
+    ) -> dict[str, Any]:
+        try:
+            self._refs.require_current_ref(ref)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        return select_option_with_eval(self.evaluate_runtime, ref, value=value, label=label, index=index)
 
     def scroll_page(self, direction: str = "down", pixels: int = 500) -> dict[str, Any]:
         return self._input.scroll_page(direction, pixels)
@@ -754,7 +836,7 @@ class CDPSupervisor:
             return {"ok": False, "error": f"Invalid select index '{raw_idx}' at step {step}"}
         if val is None and label is None and idx is None:
             return {"ok": False, "error": f"'select' action at step {step} requires one of 'value', 'label', 'index'"}
-        sel_res = select_option_with_eval(self.evaluate_runtime, ref, value=val, label=label, index=idx)
+        sel_res = self.select_ref(ref, value=val, label=label, index=idx)
         if not sel_res.get("success"):
             return {"ok": False, "error": sel_res.get("error", "Select failed")}
         return {"ok": True, "selected": sel_res.get("selected") or sel_res.get("text") or ref}
@@ -847,30 +929,38 @@ class CDPSupervisor:
         out_path.write_bytes(raw_bytes)
         return {"ok": True, "path": str(out_path), "bytes": len(raw_bytes)}
 
-    def wait_for_download(self, timeout: float = 30.0) -> dict[str, Any]:
-        grace_deadline = time.monotonic() + 2.0
-        while not self._pending_downloads:
-            if time.monotonic() >= grace_deadline:
-                return {"ok": False, "error": "no pending download found"}
-            time.sleep(0.05)
-
-        with self._state_lock:
-            if not self._pending_downloads:
-                return {"ok": False, "error": "no pending download found"}
-            guid, entry = list(self._pending_downloads.items())[-1]
-            event = entry["event"]
-
-        if not event.wait(timeout=timeout):
+    def wait_for_download(
+        self,
+        timeout: float = 30.0,
+        cancel_token: threading.Event | None = None,
+        *,
+        started_after: float = 0.0,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        guid: str | None = None
+        while time.monotonic() < deadline:
+            if self._stop_requested or (cancel_token is not None and cancel_token.is_set()):
+                return {"ok": False, "error": "Download wait was cancelled; the download may still complete"}
             with self._state_lock:
-                self._pending_downloads.pop(guid, None)
-            return {"ok": False, "error": f"download timed out after {timeout}s"}
-
-        with self._state_lock:
-            entry = self._pending_downloads.pop(guid, {})
-        state = entry.get("state", "unknown")
-        if state == "completed":
-            return {"ok": True, "filename": entry.get("filename", ""), "path": entry.get("file_path", ""), "guid": guid}
-        return {"ok": False, "error": f"download ended with state: {state}"}
+                if guid is None:
+                    guid = next(
+                        (key for key, value in self._pending_downloads.items() if value["started_at"] >= started_after),
+                        None,
+                    )
+                entry = self._pending_downloads.get(guid) if guid is not None else None
+                if entry is not None and entry["event"].is_set():
+                    self._pending_downloads.pop(guid, None)
+                    state = entry.get("state", "unknown")
+                    if state == "completed":
+                        return {
+                            "ok": True,
+                            "filename": entry.get("filename", ""),
+                            "path": entry.get("file_path", ""),
+                            "guid": guid,
+                        }
+                    return {"ok": False, "error": f"download ended with state: {state}"}
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+        return {"ok": False, "error": f"download timed out after {timeout}s; it may still complete"}
 
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
@@ -957,7 +1047,7 @@ class CDPSupervisor:
 
     def _launched_browser_exited(self) -> bool:
         """自行启动的浏览器进程已退出（崩溃或用户关闭窗口）时不再重连，由下次导航重新启动。"""
-        if not self.auto_owned or self.launch_handle is None or (code := self.launch_handle.proc.poll()) is None:
+        if not self.auto_owned or self.launch_handle is None or (code := self.launch_handle.poll()) is None:
             return False
         logger.warning("CDP supervisor %s: browser process exited with code %s; not reconnecting", self.task_id, code)
         return True
@@ -985,13 +1075,19 @@ class CDPSupervisor:
         sid = page_sid
 
         ft_resp = await self._cdp("Page.getFrameTree", session_id=sid)
-        self._set_session(root_frame=ft_resp.get("result", {}).get("frameTree", {}).get("frame", {}).get("id", ""))
+        frame = ft_resp.get("result", {}).get("frameTree", {}).get("frame", {})
+        root = frame.get("id", "")
+        with self._state_lock:
+            self._set_session(root_frame=root)
+            if root:
+                self._record_root_frame_locked(frame)
+            self._attached_targets[target_id]["frame_id"] = root
 
         await self._enable_page_domains(sid)
+        await self._cdp("Page.bringToFront", session_id=sid)
         await self._cdp(
             "Browser.setDownloadBehavior",
             {"behavior": "allow", "eventsEnabled": True, "downloadPath": tempfile.gettempdir()},
-            session_id=sid,
         )
         await self._cdp(
             "Target.setAutoAttach",
@@ -1175,10 +1271,14 @@ class CDPSupervisor:
         parent_id = frame.get("parentId")
         with self._state_lock:
             sids = self._current_sids()
-            # 尚无 root 或主 page 事件才采纳 root。
-            if not parent_id and (not sids.root_frame or session_id == sids.page):
+            selected = sids.active or sids.page
+            if not parent_id and session_id == selected:
                 self._set_session(root_frame=fid)
                 sids = self._current_sids()
+            if not parent_id:
+                for info in self._attached_targets.values():
+                    if info.get("session_id") == session_id:
+                        info["frame_id"] = fid
             page_sessions = {info.get("session_id") for info in self._attached_targets.values()}
             self._frames[fid] = FrameInfo(
                 frame_id=fid,
@@ -1188,7 +1288,7 @@ class CDPSupervisor:
                 is_oopif=session_id is not None and session_id != sids.page and session_id not in page_sessions,
                 name=frame.get("name", ""),
             )
-        if not parent_id and fid == sids.root_frame:
+        if not parent_id and session_id == selected:
             self._refs.note_root_navigation()
 
     def _on_frame_attached(self, params: dict[str, Any], session_id: str | None) -> None:
@@ -1213,9 +1313,7 @@ class CDPSupervisor:
                 self._attached_targets[target_id] = {"session_id": session_id, "title": target_info.get("title", "")}
 
     def _on_target_detached(self, params: dict[str, Any]) -> None:
-        target_id = params.get("targetId", "")
-        with self._state_lock:
-            self._attached_targets.pop(target_id, None)
+        self._forget_target(params.get("targetId"), params.get("sessionId"))
 
     def _on_console(self, params: dict[str, Any], level_from: str) -> None:
         ts = time.time()
@@ -1248,6 +1346,7 @@ class CDPSupervisor:
         with self._state_lock:
             self._pending_downloads[guid] = {
                 "state": "in_progress",
+                "started_at": time.monotonic(),
                 "filename": params.get("suggestedFilename", ""),
                 "event": threading.Event(),
             }

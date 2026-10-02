@@ -96,6 +96,7 @@ def ensure_supervisor(session_key: str) -> CDPSupervisor:
         session_info = get_or_create_session(session_key)
         supervisor = SUPERVISOR_REGISTRY.get(session_key)
         if supervisor is not None and supervisor.active:
+            supervisor.ensure_active_page()
             session_info.supervisor = supervisor
             return supervisor
         if supervisor is not None and session_info.active_users > 1:
