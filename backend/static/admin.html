@@ -900,9 +900,8 @@ input[type="file"] { font-size: 0.78rem; }
             <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
-            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">包含角色与形象、角色卡、衣柜与动作、场景、用户画像与设置、音色、长期记忆、动态、日记和定时任务。</p>
-            <label class="checkbox-row"><input type="checkbox" id="exportConversations"> 包含会话记录（消息、上下文与现存附件）</label>
-            <p class="hint">默认不包含会话记录。备份包含用户 API 凭据，请妥善保存。导入后请重新启动客户端以刷新数据。</p>
+            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">导出为全量数据：角色与形象、角色卡、衣柜与动作、场景、用户画像与设置、音色、长期记忆、动态、日记、定时任务和会话记录。</p>
+            <p class="hint">恢复时可在导入对话框选择范围（如仅基础身份）。备份包含用户 API 凭据，请妥善保存。导入后请重新启动客户端以刷新数据。</p>
         </div>
         <div class="modal-foot">
             <button class="btn btn--ghost" onclick="closeModal('userExportModal')">取消</button>
@@ -919,19 +918,39 @@ input[type="file"] { font-size: 0.78rem; }
         </div>
         <div class="modal-body">
             <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">
-                导入目标用户 #<span id="backupUserId"></span>。恢复备份中包含的角色、形象与角色卡、衣柜与动作、场景、设置与凭据、长期记忆、动态、日记和定时任务；仅当备份包含会话记录时才恢复会话。各类数据会尽力恢复，不兼容的内容将在完成后列出。导入后请重新启动客户端。
+                导入目标用户 #<span id="backupUserId"></span>。只恢复勾选范围内的数据，不动目标已有但未勾选的内容。各类数据会尽力恢复，不兼容的内容将在完成后列出。旧备份中的片刻表会静默忽略，视为没有动态。导入后请重新启动客户端。
             </p>
+            <div class="field">
+                <label>恢复范围</label>
+                <div style="display:flex; gap:0.75rem; margin-top:0.3rem; flex-wrap:wrap;">
+                    <label class="checkbox-row"><input type="radio" name="bk_scope" value="all" checked onchange="onBackupScopeChange()"> 全部数据</label>
+                    <label class="checkbox-row"><input type="radio" name="bk_scope" value="identity" onchange="onBackupScopeChange()"> 基础身份</label>
+                    <label class="checkbox-row"><input type="radio" name="bk_scope" value="custom" onchange="onBackupScopeChange()"> 自定义</label>
+                </div>
+                <div class="hint" id="backupScopeHint">恢复人设与音色、种子图与确认位、角色卡。写入空用户后无需再走引导。</div>
+                <div id="backupSectionBoxes" style="display:none; margin-top:0.45rem; padding:0.55rem 0.65rem; border:1px solid var(--border); border-radius:8px;">
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="identity" checked> 基础身份（人设、种子图、角色卡）</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="conversations"> 会话记录（消息与附件）</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="memories"> 长期记忆</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="posts"> 动态</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="diary"> 日记</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="wardrobe"> 衣柜与动作</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="scenes"> 场景</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="automation"> 定时与意图</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="settings"> 设置与凭据</label>
+                </div>
+            </div>
             <div class="field">
                 <label>导入模式</label>
                 <div style="display:flex; gap:0.75rem; margin-top:0.3rem; flex-wrap:wrap;">
-                    <label class="checkbox-row"><input type="radio" name="bk_mode" value="overwrite" checked> 覆盖（替换备份范围内的数据）</label>
+                    <label class="checkbox-row"><input type="radio" name="bk_mode" value="overwrite" checked> 覆盖（替换本次勾选范围内的数据）</label>
                     <label class="checkbox-row"><input type="radio" name="bk_mode" value="merge"> 合并（保留现有人设、凭据、同名设置、同日日记与激活形象，补入缺失内容）</label>
                 </div>
             </div>
             <div class="field">
                 <label for="backupFile">备份文件 (.zip)</label>
                 <input type="file" id="backupFile" accept=".zip">
-                <div class="hint">支持本后台导出的 ZIP；旧备份未包含的内容无法补回，损坏或校验失败的 ZIP 不会导入。</div>
+                <div class="hint">支持本后台导出的全量 ZIP；旧备份未包含的内容无法补回，损坏或校验失败的 ZIP 不会导入。</div>
             </div>
             <div id="backupStatus" style="margin-top:0.5rem; font-size:0.78rem; color:var(--text-3); white-space:pre-wrap; word-break:break-word;"></div>
         </div>
@@ -1483,12 +1502,35 @@ const BACKUP_SECTION_LABELS = Object.freeze({
     companion_posts: '动态', companion_post_comments: '动态评论',
     companion_diary_entries: '日记', asset_files: '资产文件',
 });
+// 与 backup/serializers.py 的 BACKUP_SECTIONS 对齐；页面只负责勾选，表映射以服务端为准。
+const BACKUP_SCOPE_HINTS = Object.freeze({
+    all: '恢复备份中的全部数据类别。',
+    identity: '恢复人设与音色、种子图与确认位、角色卡。写入空用户后无需再走引导。',
+    custom: '只恢复勾选的类别，不动目标已有但未勾选的数据。',
+});
 const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });
+const BACKUP_SCOPE_LABELS = Object.freeze({
+    all: '全部数据', identity: '基础身份', custom: '自定义',
+    conversations: '会话记录', memories: '长期记忆', posts: '动态', diary: '日记',
+    wardrobe: '衣柜与动作', scenes: '场景', automation: '定时与意图', settings: '设置与凭据',
+});
 let backupImportRunning = false;
+
+function onBackupScopeChange() {
+    const scope = ($$('input[name="bk_scope"]').find(r => r.checked) || {}).value || 'all';
+    $('#backupSectionBoxes').style.display = scope === 'custom' ? '' : 'none';
+    $('#backupScopeHint').textContent = BACKUP_SCOPE_HINTS[scope] || BACKUP_SCOPE_HINTS.all;
+}
+
+function selectedBackupSections() {
+    const scope = ($$('input[name="bk_scope"]').find(r => r.checked) || {}).value || 'all';
+    if (scope === 'all') return null;
+    if (scope === 'identity') return ['identity'];
+    return $$('.bk_section').filter(el => el.checked).map(el => el.value);
+}
 
 function exportUserPrompt(id) {
     $('#userExportModal').dataset.userId = String(id);
-    $('#exportConversations').checked = false;
     $('#exportSubmitBtn').disabled = false;
     openModal('userExportModal');
 }
@@ -1497,10 +1539,9 @@ async function exportUser(id) {
     const user = findCachedUser(id);
     const label = user ? user.username : `#${id}`;
     const btn = $('#exportSubmitBtn');
-    const includeConversations = $('#exportConversations').checked;
     btn.disabled = true;
     try {
-        const resp = await apiFetch(`/api/admin/users/${id}/export?include_conversations=${includeConversations}`);
+        const resp = await apiFetch(`/api/admin/users/${id}/export`);
         const blob = await resp.blob();
         let filename = `spiritagent-user-${id}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.zip`;
         const cd = resp.headers.get('Content-Disposition') || '';
@@ -1511,7 +1552,7 @@ async function exportUser(id) {
         a.href = url; a.download = filename; document.body.appendChild(a);
         a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        toast(`已导出用户 ${label}`);
+        toast(`已导出用户 ${label}（全量）`);
         closeModal('userExportModal');
     } catch (e) { toast(`导出失败：${e.message || e}`, 'err'); }
     finally { btn.disabled = false; }
@@ -1531,6 +1572,9 @@ function importUserPrompt(id) {
     $('#backupFile').value = '';
     $('#backupStatus').textContent = '';
     $('#backupSubmitBtn').disabled = false;
+    const scopeAll = document.querySelector('input[name="bk_scope"][value="all"]');
+    if (scopeAll) scopeAll.checked = true;
+    onBackupScopeChange();
     openModal('userBackupModal');
 }
 
@@ -1539,25 +1583,38 @@ async function submitUserBackup() {
     const userId = $('#userBackupModal').dataset.userId;
     const file = $('#backupFile').files[0];
     const mode = ($$('input[name="bk_mode"]').find(r => r.checked) || {}).value || 'overwrite';
+    const sections = selectedBackupSections();
+    const scope = ($$('input[name="bk_scope"]').find(r => r.checked) || {}).value || 'all';
     const modeLabel = (value) => BACKUP_MODE_LABELS[value] ?? value;
+    const scopeLabel = BACKUP_SCOPE_LABELS[scope] || scope;
     const status = $('#backupStatus');
     const btn = $('#backupSubmitBtn');
     if (!file) { status.textContent = '请选择 .zip 文件'; status.style.color = 'var(--red)'; return; }
+    if (scope === 'custom' && !(sections && sections.length)) {
+        status.textContent = '请至少勾选一个恢复范围';
+        status.style.color = 'var(--red)';
+        return;
+    }
     backupImportRunning = true;
     btn.disabled = true;
-    status.textContent = `上传并导入中（模式：${modeLabel(mode)}），请稍候…`;
+    status.textContent = `上传并导入中（范围：${scopeLabel}，模式：${modeLabel(mode)}），请稍候…`;
     status.style.color = 'var(--primary)';
     try {
         const fd = new FormData();
         fd.append('file', file);
-        const resp = await apiFetch(`/api/admin/users/${userId}/import?mode=${encodeURIComponent(mode)}`, {
+        const qs = new URLSearchParams({ mode });
+        if (sections) for (const item of sections) qs.append('sections', item);
+        const resp = await apiFetch(`/api/admin/users/${userId}/import?${qs.toString()}`, {
             method: 'POST', body: fd, headers: {},
         });
         const data = await resp.json();
         const total = Object.values(data.imported || {}).reduce((a, b) => a + b, 0);
         const restoredFiles = Number(data.restored_files) || 0;
         const failures = Array.isArray(data.failed) ? data.failed : [];
-        const summary = `已导入 ${total} 行数据、恢复 ${restoredFiles} 个资产文件`;
+        const restoredSections = Array.isArray(data.sections) && data.sections.length
+            ? data.sections.map(s => BACKUP_SCOPE_LABELS[s] || s).join('、')
+            : scopeLabel;
+        const summary = `已导入 ${total} 行数据、恢复 ${restoredFiles} 个资产文件（范围：${restoredSections}）`;
         if (failures.length) {
             const details = failures.map(item => {
                 const label = Object.prototype.hasOwnProperty.call(BACKUP_SECTION_LABELS, item.section)
@@ -1571,7 +1628,7 @@ async function submitUserBackup() {
         } else {
             status.textContent = `导入完成（${modeLabel(data.mode)}）：${summary}`;
             status.style.color = 'var(--green)';
-            toast(`已导入用户 #${userId} · ${modeLabel(data.mode)}`);
+            toast(`已导入用户 #${userId} · ${scopeLabel} · ${modeLabel(data.mode)}`);
             setTimeout(() => { closeModal('userBackupModal'); loadUsers(); }, 600);
         }
     } catch (err) {

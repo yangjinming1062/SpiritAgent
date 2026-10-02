@@ -119,6 +119,7 @@ def restore_files(
     target_uid: int,
     *,
     conversations: dict[str, int | str],
+    include_conversation_files: bool = True,
 ) -> FileRestoreResult:
     root = Path(SETTINGS.data_dir).resolve()
     source_root = extract_root / "files"
@@ -134,6 +135,8 @@ def restore_files(
             if parts[0] == USER_ASSET_ROOT and len(parts) >= 3 and parts[1] == str(source_uid):
                 target_relative = PurePosixPath(parts[0], str(target_uid), *parts[2:])
             elif parts[0] == "desktop-attachments" and len(parts) >= 3:
+                if not include_conversation_files:
+                    continue
                 if parts[1] not in conversations:
                     skipped_conversation_files += 1
                     continue

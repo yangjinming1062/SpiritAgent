@@ -2,6 +2,7 @@ import asyncio
 import json
 from bisect import bisect_left
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import date, datetime
 from functools import cache
 from pathlib import Path
@@ -74,6 +75,33 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
 TABLES = tuple(TABLE_MODELS)
 CONVERSATION_TABLES = frozenset({"conversations", "messages"})
 ACTION_TABLES = frozenset({"companion_action_packs", "companion_actions"})
+IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_cards"})
+# 旧版片刻表已重构为动态；导入时静默跳过，视为没有动态。
+RETIRED_TABLES = frozenset({"companion_moments", "companion_moment_comments"})
+# 导入勾选粒度：分组 ID → 表；Admin 与 API 共用，不在页面里再维护表名。
+BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
+    "identity": ("personas", "avatar_assets", "companion_character_cards"),
+    "conversations": ("conversations", "messages"),
+    "memories": ("memories",),
+    "posts": ("companion_posts", "companion_post_comments"),
+    "diary": ("companion_diary_entries",),
+    "wardrobe": ("companion_outfits", "companion_action_packs", "companion_actions"),
+    "scenes": ("companion_scenes",),
+    "automation": ("cron_jobs", "companion_intents"),
+    "settings": ("user_model_configs", "user_settings", "user_preferences"),
+}
+BACKUP_SECTION_IDS = tuple(BACKUP_SECTIONS)
+# 选中即整组恢复，不允许落成半个身份/会话/视频包。
+ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
+    IDENTITY_TABLES,
+    CONVERSATION_TABLES,
+    ACTION_TABLES,
+)
+# 预检与覆盖清理的成组写入顺序：先头像，再角色卡与人设。
+IDENTITY_GROUP: tuple[str, ...] = ("avatar_assets", "companion_character_cards", "personas")
+IDENTITY_INCOMPLETE_REASON = "基础身份必须同时包含人设、种子图与角色卡。"
+IDENTITY_BLOCKED_REASON = "目标现有场景、动作包等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
+IDENTITY_DEPENDENT_REASON = "缺少可映射的基础身份，无法恢复此类别。"
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "companion_character_cards": {"avatar_id": "avatar_assets"},
     "companion_action_packs": {"avatar_id": "avatar_assets", "outfit_id": "companion_outfits"},
@@ -105,6 +133,26 @@ _EXCLUDED_COLUMNS: dict[str, frozenset[str]] = {
 }
 IdMap = dict[str, dict[str, int | str]]
 BackupImportMode = Literal["overwrite", "merge"]
+
+
+def tables_for_sections(sections: Sequence[str] | None) -> frozenset[str]:
+    """解析导入分组为表集合；None 表示全部，空列表或未知 ID 由调用方拒绝。"""
+    if sections is None:
+        return frozenset(TABLES)
+    normalized = [item.strip() for item in sections if item and item.strip()]
+    if not normalized:
+        raise ValueError("恢复范围不能为空")
+    if "all" in normalized:
+        if len(normalized) > 1:
+            raise ValueError("恢复范围 all 不能与其他分组同时指定")
+        return frozenset(TABLES)
+    unknown = [item for item in normalized if item not in BACKUP_SECTIONS]
+    if unknown:
+        raise ValueError(f"未知的恢复范围：{', '.join(unknown)}")
+    tables: set[str] = set()
+    for item in normalized:
+        tables.update(BACKUP_SECTIONS[item])
+    return frozenset(tables)
 
 
 @cache

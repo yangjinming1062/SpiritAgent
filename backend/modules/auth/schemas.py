@@ -101,6 +101,7 @@ class UserBackupImportFailure(BaseModel):
 
 class UserBackupImportResponse(BaseModel):
     mode: Literal["overwrite", "merge"]
+    sections: list[str]
     imported: dict[str, int]
     restored_files: int = Field(ge=0)
     failed: list[UserBackupImportFailure]

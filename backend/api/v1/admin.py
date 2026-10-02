@@ -21,7 +21,7 @@ from components import (
     purge_user_temp_files,
     utc_now,
 )
-from fastapi import Depends, File, HTTPException, UploadFile, status
+from fastapi import Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from modules.auth import (
     CurrentAdmin,
@@ -55,7 +55,7 @@ from services.adapters.desktop import terminate_user_gateway
 from services.adapters.maintenance import user_maintenance
 from services.application.configuration import get_system_settings_for_admin, save_system_settings
 from services.domains.backup import (
-    CONVERSATION_TABLES,
+    BACKUP_SECTION_IDS,
     TABLES,
     BackupImportMode,
     BackupRestoreResult,
@@ -65,6 +65,7 @@ from services.domains.backup import (
     load_manifest,
     restore_backup_rows,
     serialize_rows,
+    tables_for_sections,
 )
 from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.domains.conversation import SYSTEM_PRESET_CATALOG, ensure_system_conversations_for_user
@@ -304,14 +305,10 @@ async def export_user_backup(
     user_id: int,
     admin: CurrentAdmin,
     db: DbSession,
-    include_conversations: bool = False,
 ) -> FileResponse:
+    """始终导出全量数据；恢复范围在导入时选择。"""
     user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
-    rows_by_table = {
-        tbl: await serialize_rows(db, tbl, user_id)
-        for tbl in TABLES
-        if include_conversations or tbl not in CONVERSATION_TABLES
-    }
+    rows_by_table = {tbl: await serialize_rows(db, tbl, user_id) for tbl in TABLES}
     files = await asyncio.to_thread(collect_files_for_export, user_id, rows_by_table)
 
     fd, tmp = tempfile.mkstemp(prefix="spiritagent-export-", suffix=".zip")
@@ -336,10 +333,23 @@ async def import_user_backup(
     db: DbSession,
     file: UploadFile = File(...),
     mode: BackupImportMode = "overwrite",
+    sections: list[str] | None = Query(
+        default=None,
+        description=f"恢复范围分组，可选 {', '.join(BACKUP_SECTION_IDS)} 或 all；缺省为全部",
+    ),
 ) -> UserBackupImportResponse:
-    """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。"""
+    """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。只写入所选分组，不动未勾选内容。"""
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传文件必须是 .zip。")
+    try:
+        selected_tables = tables_for_sections(sections)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    resolved_sections = (
+        list(BACKUP_SECTION_IDS)
+        if sections is None or "all" in {item.strip() for item in sections if item and item.strip()}
+        else [item.strip() for item in sections if item and item.strip()]
+    )
     await get_or_404(db, User, id=user_id, detail="用户不存在。")
     # 上传落盘、解压与维护等待都可能持续数分钟，期间不持有数据库事务。
     await db.rollback()
@@ -366,6 +376,7 @@ async def import_user_backup(
             extract_root,
             list(manifest["tables"]),
             dict(manifest["row_counts"]),
+            selected_tables=selected_tables,
         )
         restore_result: BackupRestoreResult | None = None
         async with user_maintenance(user_id):
@@ -401,6 +412,7 @@ async def import_user_backup(
     ]
     return UserBackupImportResponse(
         mode=mode,
+        sections=resolved_sections,
         imported=restore_result.imported,
         restored_files=restore_result.restored_files,
         failed=failed,

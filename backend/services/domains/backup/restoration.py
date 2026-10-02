@@ -17,7 +17,14 @@ from .action_assets import restore_action_catalogs, validate_action_files
 from .file_packing import UrlRewriter, restore_files
 from .serializers import (
     ACTION_TABLES,
+    ATOMIC_SECTION_GROUPS,
     CONVERSATION_TABLES,
+    IDENTITY_BLOCKED_REASON,
+    IDENTITY_DEPENDENT_REASON,
+    IDENTITY_GROUP,
+    IDENTITY_INCOMPLETE_REASON,
+    IDENTITY_TABLES,
+    RETIRED_TABLES,
     TABLE_MODELS,
     TABLES,
     BackupImportMode,
@@ -87,7 +94,13 @@ def load_backup_rows(
     extract_root: Path,
     manifest_tables: list[str],
     row_counts: dict[str, int],
+    *,
+    selected_tables: frozenset[str] | None = None,
 ) -> BackupReadResult:
+    wanted = frozenset(TABLES) if selected_tables is None else selected_tables
+    manifest_set = set(manifest_tables)
+    # 旧版已废弃表（如片刻）静默跳过；其后继表缺失视为“没有动态”，不报失败。
+    retired_present = bool(RETIRED_TABLES & manifest_set)
     failures = [
         BackupImportFailure(
             section=table,
@@ -95,9 +108,23 @@ def load_backup_rows(
             reason="当前版本不支持此数据类别。",
         )
         for table in manifest_tables
-        if table not in TABLES
+        if table not in TABLES and table not in RETIRED_TABLES
     ]
-    incomplete_conversation_tables = set(manifest_tables) & CONVERSATION_TABLES
+    # 仅在显式勾选子集时报告“备份未包含”；全量导入对历史缺表保持静默。
+    if selected_tables is not None and selected_tables != frozenset(TABLES):
+        for table in sorted(wanted - manifest_set):
+            if table not in TABLES:
+                continue
+            if retired_present and table in {"companion_posts", "companion_post_comments"}:
+                continue
+            failures.append(
+                BackupImportFailure(
+                    section=table,
+                    count=0,
+                    reason="备份未包含此数据类别。",
+                ),
+            )
+    incomplete_conversation_tables = set(manifest_tables) & CONVERSATION_TABLES & wanted
     incomplete_conversation_backup = (
         bool(incomplete_conversation_tables) and incomplete_conversation_tables != CONVERSATION_TABLES
     )
@@ -114,7 +141,13 @@ def load_backup_rows(
 
     rows: dict[str, list[dict[str, Any]]] = {}
     for table in manifest_tables:
-        if table not in TABLES or incomplete_conversation_backup and table in incomplete_conversation_tables:
+        if (
+            table not in wanted
+            or table not in TABLES
+            or table in RETIRED_TABLES
+            or incomplete_conversation_backup
+            and table in incomplete_conversation_tables
+        ):
             continue
         try:
             records = read_table_rows(extract_root, table)
@@ -134,6 +167,28 @@ def load_backup_rows(
                     reason=_failure_reason(exc),
                 ),
             )
+    # 基础身份等成组类别：缺任一表则整组不恢复，避免落成半个身份。
+    for group in ATOMIC_SECTION_GROUPS:
+        if not group & wanted:
+            continue
+        present = group & set(rows)
+        if present and present != group:
+            reason = (
+                IDENTITY_INCOMPLETE_REASON
+                if group == IDENTITY_TABLES
+                else "会话与消息必须同时恢复。"
+                if group == CONVERSATION_TABLES
+                else "视频包与动作必须同时恢复。"
+            )
+            for table in sorted(present):
+                rows.pop(table)
+                failures.append(
+                    BackupImportFailure(
+                        section=table,
+                        count=row_counts.get(table, 0),
+                        reason=reason,
+                    ),
+                )
     if CONVERSATION_TABLES.issubset(manifest_tables) and not CONVERSATION_TABLES.issubset(rows):
         for table in manifest_tables:
             if table not in CONVERSATION_TABLES or table not in rows:
@@ -146,12 +201,8 @@ def load_backup_rows(
                     reason="配套的会话或消息数据无效，无法单独恢复。",
                 ),
             )
-    if set(manifest_tables) & ACTION_TABLES and not ACTION_TABLES.issubset(rows):
-        for table in manifest_tables:
-            if table in ACTION_TABLES and table in rows:
-                rows.pop(table)
-                failures.append(BackupImportFailure(table, row_counts[table], "视频包与动作必须同时恢复。"))
-    elif not set(manifest_tables) & ACTION_TABLES:
+    # 成组约束已丢弃半套动作表；包内根本没有动作表但外观曾启动视频时单独提示。
+    if ACTION_TABLES & wanted and not ACTION_TABLES.issubset(rows) and not ACTION_TABLES & manifest_set:
         started = sum(bool(row.get("initial_video_started")) for row in rows.get("companion_outfits", []))
         if started:
             failures.append(
@@ -218,9 +269,19 @@ async def _preflight_tables(
         db.add(validation_user)
         await db.flush()
         for table in BACKUP_RESTORE_ORDER:
-            if table not in rows or table == "companion_actions":
+            if table not in rows:
                 continue
-            group = ("companion_action_packs", "companion_actions") if table == "companion_action_packs" else (table,)
+            if table == "companion_actions":
+                continue
+            # 身份三表与动作两表各自成组预检，避免只写通一半。
+            if table in {"companion_character_cards", "personas"} and "avatar_assets" in rows:
+                continue
+            if table == "avatar_assets" and IDENTITY_TABLES & set(rows):
+                group = tuple(member for member in IDENTITY_GROUP if member in rows)
+            elif table == "companion_action_packs":
+                group = ("companion_action_packs", "companion_actions")
+            else:
+                group = (table,)
             available_rows = {name: rows[name] for name in successful | set(group) if name in rows}
             staged_map = dict(id_map)
             try:
@@ -278,6 +339,16 @@ async def _preflight_tables(
                         section=table,
                         count=len(rows[table]),
                         reason="配套的会话或消息数据不兼容，无法单独恢复。",
+                    ),
+                )
+        if IDENTITY_TABLES & set(rows) and not IDENTITY_TABLES.issubset(successful):
+            for table in sorted(IDENTITY_TABLES & successful):
+                successful.remove(table)
+                failures.append(
+                    BackupImportFailure(
+                        section=table,
+                        count=len(rows[table]),
+                        reason=IDENTITY_INCOMPLETE_REASON,
                     ),
                 )
     finally:
@@ -351,8 +422,52 @@ async def _clear_compatible_rows(
             for table in TABLES:
                 if table in ACTION_TABLES:
                     failures.append(BackupImportFailure(table, len(remaining.pop(table)), action_failure))
+
+    def _drop_identity(reason: str) -> None:
+        for member in sorted(IDENTITY_TABLES & set(remaining)):
+            remaining.pop(member)
+            failures.append(
+                BackupImportFailure(
+                    section=member,
+                    count=len(compatible_rows.get(member, ())),
+                    reason=reason,
+                ),
+            )
+
+    # 身份三表一起判断、一起清理，避免先删人设后才发现头像被场景引用。
+    if IDENTITY_TABLES & set(remaining):
+        if await _has_retained_dependent(db, "avatar_assets", target_user_id, remaining):
+            _drop_identity(IDENTITY_BLOCKED_REASON)
+        else:
+            try:
+                async with db.begin_nested():
+                    for member in ("companion_character_cards", "personas", "avatar_assets"):
+                        if member in remaining:
+                            await _delete_user_rows(db, member, target_user_id)
+            except IntegrityError:
+                logger.warning(
+                    "backup identity tables could not be cleared without affecting retained data",
+                    extra={"target_user_id": target_user_id},
+                    exc_info=True,
+                )
+                _drop_identity(IDENTITY_BLOCKED_REASON)
+
+    # 身份未能写入时先摘掉依赖头像映射的类别，保留目标已有场景/视频包，也不在清理阶段误删。
+    if IDENTITY_TABLES & set(compatible_rows) and not set(remaining) >= IDENTITY_TABLES:
+        for table in ("companion_scenes", "companion_action_packs", "companion_actions"):
+            if table not in remaining:
+                continue
+            remaining.pop(table)
+            failures.append(
+                BackupImportFailure(
+                    section=table,
+                    count=len(compatible_rows.get(table, ())),
+                    reason=IDENTITY_DEPENDENT_REASON,
+                ),
+            )
+
     for table in reversed(TABLES):
-        if table in ACTION_TABLES:
+        if table in ACTION_TABLES or table in IDENTITY_TABLES:
             continue
         # user_preferences 就地更新用户行；messages 随 conversations 级联删除。
         if table not in remaining or table in {"user_preferences", "messages"}:
@@ -393,6 +508,20 @@ async def _clear_compatible_rows(
                 reason="配套的会话无法安全覆盖，消息也已保留为目标端原数据。",
             ),
         )
+    # 覆盖清理后仍须成组：身份缺一即整组不写，避免角色卡引用未写入的头像。
+    for group in (IDENTITY_TABLES, ACTION_TABLES):
+        present = group & set(remaining)
+        if present and present != group:
+            reason = IDENTITY_INCOMPLETE_REASON if group == IDENTITY_TABLES else "视频包与动作必须同时恢复。"
+            for table in sorted(present):
+                remaining.pop(table)
+                failures.append(
+                    BackupImportFailure(
+                        section=table,
+                        count=len(compatible_rows.get(table, ())),
+                        reason=reason,
+                    ),
+                )
     return remaining, tuple(failures)
 
 
@@ -406,6 +535,7 @@ async def restore_backup_rows(
     mode: BackupImportMode,
 ) -> BackupRestoreResult:
     import_batch_id = uuid.uuid4().hex
+    conversation_files_in_scope = bool(CONVERSATION_TABLES & set(rows))
     successful_tables, failures = await _preflight_tables(
         db,
         rows,
@@ -446,6 +576,7 @@ async def restore_backup_rows(
             source_user_id,
             target_user_id,
             conversations=id_map.get("conversations", {}),
+            include_conversation_files=conversation_files_in_scope,
         )
         rewriter = file_result.rewriter
         if file_result.skipped_conversation_files:
