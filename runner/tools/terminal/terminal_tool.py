@@ -330,6 +330,8 @@ def terminal_tool(
     取消经 ``is_interrupted()`` 感知（ContextVar 关联当前请求）：前台等待循环据此终止进程树。
     """
     try:
+        if timeout is not None and timeout < 1:
+            return _error_result("timeout must be at least 1")
         config = get_env_config()
         if blocked_host_error := _blocked_host_command_error(command, config["env_type"]):
             return _error_result(blocked_host_error, status="blocked")

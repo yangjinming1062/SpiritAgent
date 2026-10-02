@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 _SYNC_INTERVAL_SECONDS = 5.0
 
-type BulkUploadFn = Callable[[list[tuple[str, str]]], None]
+type BulkUploadFn = Callable[[list[tuple[str, str]]], dict[str, str]]
 type BulkDownloadFn = Callable[[Path], None]
 type DeleteFn = Callable[[list[str]], None]
 type GetFilesFn = Callable[[], list[tuple[str, str]]]
@@ -100,10 +100,11 @@ class FileSyncManager:
             return
         current_files = self._get_files_fn()
         current_remote_paths = {remote for _, remote in current_files}
+        current_versions = {rp: fk for hp, rp in current_files if (fk := _file_mtime_key(hp)) is not None}
         to_upload = [
             (hp, rp)
             for hp, rp in current_files
-            if (fk := _file_mtime_key(hp)) is not None and self._synced_files.get(rp) != fk
+            if rp in current_versions and self._synced_files.get(rp) != current_versions[rp]
         ]
         to_delete = [p for p in self._synced_files if p not in current_remote_paths]
         if not to_upload and not to_delete:
@@ -111,16 +112,15 @@ class FileSyncManager:
             return
         prev_files, prev_hashes = dict(self._synced_files), dict(self._pushed_hashes)
         try:
-            if to_upload:
-                self._bulk_upload_fn(to_upload)
+            uploaded_hashes = self._bulk_upload_fn(to_upload) if to_upload else {}
             if to_delete:
                 self._delete_fn(to_delete)
-            new_files = {rp: fk for hp, rp in current_files if (fk := _file_mtime_key(hp)) is not None}
-            self._pushed_hashes.update({rp: _sha256_file(hp) for hp, rp in to_upload})
+            # hash 来自实际上传副本；源文件晚改时仍保留采集前版本，下一轮会补传。
+            self._pushed_hashes.update(uploaded_hashes)
             for p in to_delete:
-                new_files.pop(p, None)
+                current_versions.pop(p, None)
                 self._pushed_hashes.pop(p, None)
-            self._synced_files = new_files
+            self._synced_files = current_versions
         except Exception as exc:
             self._synced_files, self._pushed_hashes = prev_files, prev_hashes
             logger.warning("file_sync: sync failed, rolled back state: %s", exc)

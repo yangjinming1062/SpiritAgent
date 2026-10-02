@@ -8,11 +8,10 @@ from ...registry import registry
 from ..camofox import camofox_back, camofox_navigate, is_camofox_mode
 from ..check import check_browser_native_requirements
 from ..schemas import BROWSER_BACK_SCHEMA, BROWSER_NAVIGATE_SCHEMA
-from ..session import _allow_private_urls, touch_session
+from ..session import _allow_private_urls
 from ._common import (
     browser_session,
     compact_snapshot,
-    ensure_supervisor,
     guard_browser_url,
     no_supervisor,
     unsafe_url_error,
@@ -69,30 +68,29 @@ def browser_navigate(url: str, task_id: str | None = None) -> str:
     if is_camofox_mode():
         return camofox_navigate(url, task_id)
 
-    session_key = task_id or "default"
     try:
-        supervisor = ensure_supervisor(session_key)
-        touch_session(session_key)
+        with browser_session(task_id, create=True) as (supervisor, _):
+            if supervisor is None:
+                return no_supervisor()
+            nav_res = supervisor.navigate(url)
+            final_url = nav_res.get("url", url)
+            title = nav_res.get("title", "")
 
-        nav_res = supervisor.navigate(url)
-        final_url = nav_res.get("url", url)
-        title = nav_res.get("title", "")
+            reject = _reject_redirect(final_url, url, allow_private)
+            if reject is not None:
+                supervisor.navigate("about:blank")
+                return reject
 
-        reject = _reject_redirect(final_url, url, allow_private)
-        if reject is not None:
-            supervisor.navigate("about:blank")
-            return reject
-
-        response: dict[str, Any] = {"success": True, "url": final_url, "title": title}
-        title_lower = title.lower()
-        if any(p in title_lower for p in BLOCKED_PATTERNS):
-            response["bot_detection_warning"] = (
-                f"Page title '{title}' suggests bot detection; the site may have blocked this request. "
-                "Try slowing down between actions or reaching the page through another path; "
-                "some sites cannot be automated."
-            )
-        response.update(compact_snapshot(supervisor))
-        return json.dumps(response, ensure_ascii=False)
+            response: dict[str, Any] = {"success": True, "url": final_url, "title": title}
+            title_lower = title.lower()
+            if any(p in title_lower for p in BLOCKED_PATTERNS):
+                response["bot_detection_warning"] = (
+                    f"Page title '{title}' suggests bot detection; the site may have blocked this request. "
+                    "Try slowing down between actions or reaching the page through another path; "
+                    "some sites cannot be automated."
+                )
+            response.update(compact_snapshot(supervisor))
+            return json.dumps(response, ensure_ascii=False)
 
     except Exception as e:
         logger.warning("browser_navigate failed: %s: %s", type(e).__name__, e)

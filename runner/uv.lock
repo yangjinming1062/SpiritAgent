@@ -467,8 +467,8 @@ dependencies = [
     { name = "mouseinfo" },
     { name = "pygetwindow" },
     { name = "pymsgbox" },
-    { name = "pyobjc-core", marker = "sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-core", marker = "python_version < '0'" },
+    { name = "pyobjc-framework-quartz", marker = "python_version < '0'" },
     { name = "pyscreeze" },
     { name = "pytweening" },
 ]
@@ -712,8 +712,8 @@ name = "pywinauto"
 version = "0.6.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "comtypes", marker = "sys_platform == 'win32'" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "comtypes" },
+    { name = "pywin32" },
     { name = "six" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2c/85/cc65e3b64e7473cc86c07f0b5c415d509402c03ef19dadc39c583835eb5f/pywinauto-0.6.9.tar.gz", hash = "sha256:94d710bfa796df245250f952ffa65d97233d9807bcd42e052b71b81af469b6de", size = 434734, upload-time = "2025-01-06T11:30:01.801Z" }
@@ -919,6 +919,7 @@ dependencies = [
     { name = "psutil" },
     { name = "ptyprocess", marker = "sys_platform != 'win32'" },
     { name = "pyautogui", marker = "sys_platform == 'win32'" },
+    { name = "pydantic" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
     { name = "pyperclip" },
@@ -947,6 +948,7 @@ requires-dist = [
     { name = "psutil", specifier = "==7.2.2" },
     { name = "ptyprocess", marker = "sys_platform != 'win32'", specifier = ">=0.7.0,<1" },
     { name = "pyautogui", marker = "sys_platform == 'win32'", specifier = ">=0.9.54" },
+    { name = "pydantic", specifier = "==2.13.4" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'", specifier = ">=12.2.2" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'", specifier = ">=12.2.2" },
     { name = "pyperclip", specifier = ">=0.7.0" },

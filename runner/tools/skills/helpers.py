@@ -1,10 +1,10 @@
 import re
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
-from utils import get_disabled_config_names, visible_skill_path
+from utils import get_disabled_config_names, has_traversal_component, visible_skill_path, visible_skill_roots
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
 _EXCLUDED_DIR_NAMES = frozenset({"__pycache__", "venv", ".venv", "node_modules"})
@@ -32,6 +32,45 @@ def iter_skill_files(root: Path) -> Iterator[Path]:
             continue
         if visible_skill_path(skill_md, root):
             yield skill_md
+
+
+def skill_lookup_path_error(name: str) -> str | None:
+    if not isinstance(name, str):
+        return "Skill name must be a string."
+    candidate = name.strip()
+    if (
+        PurePosixPath(candidate).is_absolute()
+        or PureWindowsPath(candidate).is_absolute()
+        or PureWindowsPath(candidate).drive
+    ):
+        return "Skill name must be a relative path within the skills directory."
+    return "Skill name cannot contain '..' path traversal components." if has_traversal_component(candidate) else None
+
+
+def find_skill_candidates(name: str) -> tuple[Path | None, list[Path]]:
+    """按目录名或相对路径匹配；首个有匹配的根胜出，同根歧义交给调用方拒绝。"""
+    if error := skill_lookup_path_error(name):
+        raise ValueError(error)
+    wanted = Path(name)
+    for root in visible_skill_roots():
+        matches = [
+            skill_md
+            for skill_md in iter_skill_files(root)
+            if skill_md.parent.name == name or skill_md.parent.relative_to(root) == wanted
+        ]
+        if matches:
+            return root, matches
+    return None, []
+
+
+def get_skill_description(frontmatter: dict[str, Any], body: str = "") -> str:
+    description = frontmatter.get("description", "")
+    if isinstance(description, str) and description:
+        return description
+    return next(
+        (line.strip() for line in body.splitlines() if line.strip() and not line.strip().startswith("#")),
+        "",
+    )
 
 
 def get_spiritagent_metadata(frontmatter: dict[str, Any] | None) -> dict[str, Any]:

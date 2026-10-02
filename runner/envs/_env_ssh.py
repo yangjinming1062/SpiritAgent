@@ -13,6 +13,7 @@ from utils import CREATE_NO_WINDOW, IS_WINDOWS
 from ._env_base import BaseEnvironment, _popen_bash
 from ._env_file_sync import (
     FileSyncManager,
+    _sha256_file,
     iter_sync_files,
     quoted_mkdir_command,
     quoted_rm_command,
@@ -161,9 +162,9 @@ class SSHEnvironment(BaseEnvironment):
         if res.returncode != 0:
             logger.warning("SSH: creating remote sync directories failed: %s", res.stderr.strip())
 
-    def _ssh_bulk_upload(self, files: list[tuple[str, str]]) -> None:
+    def _ssh_bulk_upload(self, files: list[tuple[str, str]]) -> dict[str, str]:
         if not files:
-            return
+            return {}
         base = f"{self._remote_home}/.spiritagent"
         if (parents := unique_parent_dirs(files)) and self._run_ssh(
             quoted_mkdir_command(parents),
@@ -171,6 +172,7 @@ class SSHEnvironment(BaseEnvironment):
         ).returncode != 0:
             raise RuntimeError("remote mkdir failed")
         with tempfile.TemporaryDirectory(prefix="spiritagent-ssh-bulk-") as staging:
+            uploaded_hashes: dict[str, str] = {}
             for host_path, remote_path in files:
                 # 远端路径用 posixpath，防反斜杠。
                 rel_remote = posixpath.relpath(remote_path, base)
@@ -178,14 +180,9 @@ class SSHEnvironment(BaseEnvironment):
                     raise RuntimeError(f"remote path {remote_path!r} escapes sync base {base!r}")
                 staged = os.path.join(staging, rel_remote)
                 os.makedirs(os.path.dirname(staged), exist_ok=True)
-                try:
-                    os.symlink(os.path.abspath(host_path), staged)
-                except OSError as e:
-                    if getattr(e, "winerror", None) == 1314:
-                        shutil.copy2(host_path, staged)
-                    else:
-                        raise
-            tar_cmd = ["tar", "-chf", "-", "-C", staging, "."]
+                shutil.copy2(host_path, staged)
+                uploaded_hashes[remote_path] = _sha256_file(staged)
+            tar_cmd = ["tar", "-cf", "-", "-C", staging, "."]
             ssh_cmd = self._build_ssh_command()
             ssh_cmd.append(f"tar xf - --no-overwrite-dir -C {shlex.quote(base)}")
             tar_proc = subprocess.Popen(
@@ -229,6 +226,7 @@ class SSHEnvironment(BaseEnvironment):
                 raise RuntimeError(
                     f"tar extract over SSH failed (rc={ssh_proc.returncode}): {ssh_stderr.decode(errors='replace').strip()}",
                 )
+            return uploaded_hashes
 
     def _ssh_bulk_download(self, dest: Path) -> None:
         ssh_cmd = self._build_ssh_command()

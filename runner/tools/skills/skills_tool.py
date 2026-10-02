@@ -1,7 +1,7 @@
 import json
 import logging
 import sys
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
 from utils import (
@@ -13,10 +13,13 @@ from utils import (
 
 from ..registry import registry, tool_error
 from .helpers import (
+    find_skill_candidates,
     get_disabled_skill_names,
+    get_skill_description,
     get_spiritagent_metadata,
     iter_skill_files,
     parse_frontmatter,
+    skill_lookup_path_error,
 )
 from .skill_manager_tool import MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH, MAX_SKILL_FILE_BYTES
 
@@ -24,19 +27,6 @@ logger = logging.getLogger(__name__)
 
 _PLATFORM_ALIASES = {"darwin": "macos", "macos": "macos", "win32": "windows", "windows": "windows"}
 _HOST_PLATFORM = _PLATFORM_ALIASES.get(sys.platform, sys.platform)
-
-
-def _skill_lookup_path_error(name: str) -> str | None:
-    if not isinstance(name, str):
-        return "Skill name must be a string."
-    candidate = name.strip()
-    if (
-        PurePosixPath(candidate).is_absolute()
-        or PureWindowsPath(candidate).is_absolute()
-        or PureWindowsPath(candidate).drive
-    ):
-        return "Skill name must be a relative path within the skills directory."
-    return "Skill name cannot contain '..' path traversal components." if has_traversal_component(candidate) else None
 
 
 def skill_matches_platform(frontmatter: dict[str, Any]) -> bool:
@@ -103,16 +93,7 @@ def _find_all_skills() -> list[dict[str, Any]]:
                 if name in seen_names or _is_disabled(name, category, disabled):
                     continue
 
-                desc = frontmatter.get("description", "")
-                if not desc:
-                    desc = next(
-                        (
-                            line.strip()
-                            for line in body.strip().split("\n")
-                            if line.strip() and not line.strip().startswith("#")
-                        ),
-                        "",
-                    )
+                desc = get_skill_description(frontmatter, body)
                 if len(desc) > MAX_DESCRIPTION_LENGTH:
                     desc = desc[: MAX_DESCRIPTION_LENGTH - 3] + "..."
 
@@ -123,20 +104,6 @@ def _find_all_skills() -> list[dict[str, Any]]:
             except Exception as e:
                 logger.debug("Skipping skill at %s: failed to parse: %s", skill_md, e, exc_info=True)
     return skills
-
-
-def _find_skill_candidates(name: str) -> tuple[Path | None, list[Path]]:
-    """按目录名或相对路径查找 SKILL.md；首个有匹配的根胜出（当前学习域先于共享技能），返回 ``(根, 候选)``。"""
-    wanted = Path(name)
-    for root in visible_skill_roots():
-        matches = [
-            skill_md
-            for skill_md in iter_skill_files(root)
-            if skill_md.parent.name == name or skill_md.parent.relative_to(root) == wanted
-        ]
-        if matches:
-            return root, matches
-    return None, []
 
 
 def _sort_skills(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -170,7 +137,7 @@ def skills_list(category: str | None = None) -> str:
 
 def skill_view(name: str, file_path: str | None = None) -> str:
     try:
-        if lookup_error := _skill_lookup_path_error(name):
+        if lookup_error := skill_lookup_path_error(name):
             return json.dumps(
                 {
                     "success": False,
@@ -180,7 +147,7 @@ def skill_view(name: str, file_path: str | None = None) -> str:
                 ensure_ascii=False,
             )
 
-        search_root, candidates = _find_skill_candidates(name)
+        search_root, candidates = find_skill_candidates(name)
 
         if len(candidates) > 1:
             paths = [str(smd) for smd in candidates]
@@ -357,7 +324,7 @@ def skill_view(name: str, file_path: str | None = None) -> str:
         result = {
             "success": True,
             "name": parsed_frontmatter.get("name", skill_md.parent.name),
-            "description": parsed_frontmatter.get("description", ""),
+            "description": get_skill_description(parsed_frontmatter),
             "tags": tags,
             "related_skills": related_skills,
             "content": content,

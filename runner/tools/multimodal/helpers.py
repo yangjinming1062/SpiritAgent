@@ -143,29 +143,39 @@ def resize_image_for_vision(image_path: Path, mime_type: str | None = None) -> s
     except Exception as exc:
         raise ValueError(f"image exceeds the size limit and cannot be resized: {exc}") from exc
 
-    pil_format = "PNG" if (mime_type or _guess_mime_from_extension(image_path)) == "image/png" else "JPEG"
-    if pil_format == "JPEG" and img.mode not in {"RGB", "L"}:
-        img = img.convert("RGB")
-    quality_steps: tuple[int | None, ...] = (85, 70, 50) if pil_format == "JPEG" else (None,)
+    try:
+        pil_format = "PNG" if (mime_type or _guess_mime_from_extension(image_path)) == "image/png" else "JPEG"
+        if pil_format == "JPEG" and img.mode not in {"RGB", "L"}:
+            converted = img.convert("RGB")
+            img.close()
+            img = converted
+        quality_steps: tuple[int | None, ...] = (85, 70, 50) if pil_format == "JPEG" else (None,)
 
-    # 两边减半直到进目标，短边有下限。
-    candidates: list[str] = []
-    while True:
-        for q in quality_steps:
-            buf = io.BytesIO()
-            img.save(buf, format=pil_format, **({"quality": q} if q is not None else {}))
-            candidate = f"data:image/{pil_format.lower()};base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
-            if len(candidate) <= RESIZE_TARGET_BYTES:
-                return candidate
-            candidates.append(candidate)
-        new_size = (
-            max(img.width // 2, min(img.width, _MIN_RESIZE_SIDE)),
-            max(img.height // 2, min(img.height, _MIN_RESIZE_SIDE)),
-        )
-        if new_size == img.size:
-            break
-        img = img.resize(new_size, Image.Resampling.LANCZOS)
-    # 下限内最小结果可交付，否则失败。
-    if len(best := min(candidates, key=len)) <= MAX_BASE64_BYTES:
-        return best
-    raise ValueError("image is still larger than the size limit after resizing")
+        # 两边减半直到进目标，短边有下限；只保留最小编码结果。
+        best: str | None = None
+        while True:
+            for q in quality_steps:
+                with io.BytesIO() as buf:
+                    img.save(buf, format=pil_format, **({"quality": q} if q is not None else {}))
+                    candidate = (
+                        f"data:image/{pil_format.lower()};base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
+                    )
+                if len(candidate) <= RESIZE_TARGET_BYTES:
+                    return candidate
+                if best is None or len(candidate) < len(best):
+                    best = candidate
+            new_size = (
+                max(img.width // 2, min(img.width, _MIN_RESIZE_SIDE)),
+                max(img.height // 2, min(img.height, _MIN_RESIZE_SIDE)),
+            )
+            if new_size == img.size:
+                break
+            resized = img.resize(new_size, Image.Resampling.LANCZOS)
+            img.close()
+            img = resized
+        # 下限内最小结果可交付，否则失败。
+        if best is not None and len(best) <= MAX_BASE64_BYTES:
+            return best
+        raise ValueError("image is still larger than the size limit after resizing")
+    finally:
+        img.close()

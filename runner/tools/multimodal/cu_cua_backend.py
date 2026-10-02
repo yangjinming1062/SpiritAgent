@@ -12,11 +12,12 @@ import threading
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 from mcp import ClientSession, McpError, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CONNECTION_CLOSED
+from pydantic import BaseModel, ConfigDict
 from utils import IS_MACOS, cfg_get, get_spiritagent_home, is_env_passthrough, load_config, safe_schedule_threadsafe
 
 from .cu_backend import DESKTOP_SENTINELS, ActionResult, CaptureResult, ComputerUseBackend, UIElement
@@ -53,7 +54,9 @@ _CUA_DRIVER_SECRET_SUBSTRINGS = (
 _driver_verified = False
 
 
-class _Window(TypedDict):
+class _Window(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     app_name: str
     pid: int
     window_id: int
@@ -425,7 +428,7 @@ class CuaDriverBackend(ComputerUseBackend):
 
     def _match_windows(self, app: str) -> list[_Window]:
         needle = app.lower()
-        return [w for w in self._list_windows() if needle in w["app_name"].lower()]
+        return [w for w in self._list_windows() if needle in w.app_name.lower()]
 
     def _current_target(self) -> _Window | None:
         with self._state_lock:
@@ -443,7 +446,7 @@ class CuaDriverBackend(ComputerUseBackend):
 
     def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult:
         if app and app.lower() in DESKTOP_SENTINELS:
-            windows = [w for w in self._list_windows() if w["app_name"].lower() in _MACOS_SHELL_APP_NAMES]
+            windows = [w for w in self._list_windows() if w.app_name.lower() in _MACOS_SHELL_APP_NAMES]
             if not windows:
                 raise LookupError(f"no Finder or Dock window is visible for app={app!r}")
         elif app:
@@ -464,14 +467,14 @@ class CuaDriverBackend(ComputerUseBackend):
 
     def _capture_window(self, target: _Window, mode: str) -> CaptureResult:
         # get_window_state 返回元素树+截图；每次调用刷新寻址参数。
-        args: dict[str, Any] = {"pid": target["pid"], "window_id": target["window_id"]}
+        args: dict[str, Any] = {"pid": target.pid, "window_id": target.window_id}
         if mode == "ax":
             args["include_screenshot"] = False
         out = self._query("get_window_state", args)
         structured = out["structuredContent"]
         raw_elements = structured.get("elements")
         elements, refs = (
-            _parse_elements(raw_elements, structured.get("snapshot_id"), target["window_id"])
+            _parse_elements(raw_elements, structured.get("snapshot_id"), target.window_id)
             if isinstance(raw_elements, list)
             else ([], {})
         )
@@ -483,8 +486,8 @@ class CuaDriverBackend(ComputerUseBackend):
             width=0,
             height=0,
             elements=elements if mode != "vision" else [],
-            app=target["app_name"],
-            window_title=target["title"],
+            app=target.app_name,
+            window_title=target.title,
             note=str(structured.get("degraded_reason") or ""),
         )
         if mode != "ax" and out["images"]:
@@ -531,13 +534,13 @@ class CuaDriverBackend(ComputerUseBackend):
                 message="Double-click is only supported with the left button.",
             )
         tool = "double_click" if click_count == 2 else "right_click" if button == "right" else "click"
-        args: dict[str, Any] = {"pid": target["pid"]}
+        args: dict[str, Any] = {"pid": target.pid}
         if element is not None:
             if (ref := self._element_ref(element)) is None:
                 return _unknown_element(tool, element)
             args |= ref
         elif x is not None and y is not None:
-            args |= {"window_id": target["window_id"], "x": x, "y": y}
+            args |= {"window_id": target.window_id, "x": x, "y": y}
         else:
             return ActionResult(ok=False, action=tool, message="click requires element or coordinate.")
         if button == "middle":
@@ -577,13 +580,13 @@ class CuaDriverBackend(ComputerUseBackend):
                 action="scroll",
                 message="Modifier keys are not supported for scrolling on macOS.",
             )
-        args: dict[str, Any] = {"pid": target["pid"], "direction": direction, "amount": max(1, min(50, amount))}
+        args: dict[str, Any] = {"pid": target.pid, "direction": direction, "amount": max(1, min(50, amount))}
         if element is not None:
             if (ref := self._element_ref(element)) is None:
                 return _unknown_element("scroll", element)
             args |= ref
         else:
-            args["window_id"] = target["window_id"]
+            args["window_id"] = target.window_id
             if x is not None and y is not None:
                 args |= {"x": x, "y": y}
         return self._action("scroll", args)
@@ -591,7 +594,7 @@ class CuaDriverBackend(ComputerUseBackend):
     def type_text(self, text: str) -> ActionResult:
         if (target := self._current_target()) is None:
             return _no_target("type")
-        return self._action("type_text", {"pid": target["pid"], "text": text})
+        return self._action("type_text", {"pid": target.pid, "text": text})
 
     def key(self, keys: list[str]) -> ActionResult:
         if (target := self._current_target()) is None:
@@ -604,9 +607,9 @@ class CuaDriverBackend(ComputerUseBackend):
                 message=f"A key combo needs exactly one non-modifier key: {keys}.",
             )
         res = (
-            self._action("hotkey", {"pid": target["pid"], "keys": [*modifiers, others[0]]})
+            self._action("hotkey", {"pid": target.pid, "keys": [*modifiers, others[0]]})
             if modifiers
-            else self._action("press_key", {"pid": target["pid"], "key": others[0]})
+            else self._action("press_key", {"pid": target.pid, "key": others[0]})
         )
         res.action = "key"
         return res
@@ -618,7 +621,7 @@ class CuaDriverBackend(ComputerUseBackend):
             return ActionResult(ok=False, action="set_value", message="set_value requires element.")
         if (ref := self._element_ref(element)) is None:
             return _unknown_element("set_value", element)
-        return self._action("set_value", {"pid": target["pid"], **ref, "value": value})
+        return self._action("set_value", {"pid": target.pid, **ref, "value": value})
 
     def list_apps(self) -> list[dict[str, Any]]:
         data = self._query("list_apps", {})["data"]
@@ -648,7 +651,7 @@ class CuaDriverBackend(ComputerUseBackend):
         return ActionResult(
             ok=True,
             action="focus_app",
-            message=f"Targeted {target['app_name']} (pid {target['pid']}, window {target['window_id']}). {suffix}",
+            message=f"Targeted {target.app_name} (pid {target.pid}, window {target.window_id}). {suffix}",
         )
 
 

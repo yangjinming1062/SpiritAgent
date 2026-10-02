@@ -19,6 +19,7 @@ class SkillScope:
             not isinstance(raw, dict)
             or type(raw.get("user_id")) is not int
             or raw["user_id"] <= 0
+            or not isinstance(raw.get("system_preset_id"), str)
             or raw.get("system_preset_id") not in _PRESETS
         ):
             raise ValueError("Valid server-controlled skill scope is required")

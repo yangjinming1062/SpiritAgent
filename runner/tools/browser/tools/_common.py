@@ -22,7 +22,7 @@ from ..session import (
     _get_cdp_override,
     _get_dialog_policy_config,
     get_or_create_session,
-    touch_session,
+    use_browser_session,
 )
 from ..supervisor import SUPERVISOR_REGISTRY, CDPSupervisor
 
@@ -92,28 +92,42 @@ def guard_browser_url(url: str, *, allow_private: bool | None = None) -> tuple[s
 
 def ensure_supervisor(session_key: str) -> CDPSupervisor:
     """返回会话的活动主管；没有时连接 ``browser.cdp_url`` 或启动本机 Chromium。"""
-    supervisor = SUPERVISOR_REGISTRY.get(session_key)
-    if supervisor is not None and supervisor.active:
+    with SUPERVISOR_REGISTRY.lifecycle(session_key):
+        session_info = get_or_create_session(session_key)
+        supervisor = SUPERVISOR_REGISTRY.get(session_key)
+        if supervisor is not None and supervisor.active:
+            session_info.supervisor = supervisor
+            return supervisor
+        if supervisor is not None and session_info.active_users > 1:
+            raise RuntimeError("Browser connection is recovering while other tool calls are still using this session")
+
+        SUPERVISOR_REGISTRY.stop(session_key)
+        session_info.supervisor = None
+        # 失联时先清旧本机浏览器放 profile 锁；覆盖模式不拥有进程。
+        if session_info.launch_handle is not None:
+            session_info.launch_handle.terminate()
+            session_info.launch_handle = None
+        try:
+            if not (cdp_url := _get_cdp_override()):
+                session_info.launch_handle = launch_chromium(profile_dir=resolve_profile_dir(session_key))
+                cdp_url = session_info.launch_handle.cdp_url
+
+            policy, timeout_s = _get_dialog_policy_config()
+            supervisor = SUPERVISOR_REGISTRY.get_or_start(
+                session_key,
+                cdp_url,
+                launch_handle=session_info.launch_handle,
+                auto_owned=session_info.launch_handle is not None,
+                dialog_policy=policy,
+                dialog_timeout_s=timeout_s,
+            )
+        except BaseException:
+            if session_info.launch_handle is not None:
+                session_info.launch_handle.terminate()
+                session_info.launch_handle = None
+            raise
+        session_info.supervisor = supervisor
         return supervisor
-
-    session_info = get_or_create_session(session_key)
-    # 失联时先清旧本机浏览器放 profile 锁；覆盖模式不拥有进程。
-    if session_info.launch_handle is not None:
-        session_info.launch_handle.terminate()
-        session_info.launch_handle = None
-    if not (cdp_url := _get_cdp_override()):
-        session_info.launch_handle = launch_chromium(profile_dir=resolve_profile_dir(session_key))
-        cdp_url = session_info.launch_handle.cdp_url
-
-    policy, timeout_s = _get_dialog_policy_config()
-    return SUPERVISOR_REGISTRY.get_or_start(
-        session_key,
-        cdp_url,
-        launch_handle=session_info.launch_handle,
-        auto_owned=session_info.launch_handle is not None,
-        dialog_policy=policy,
-        dialog_timeout_s=timeout_s,
-    )
 
 
 def pending_dialog_fields(supervisor: CDPSupervisor) -> dict[str, Any]:
@@ -148,10 +162,11 @@ def compact_snapshot(supervisor: CDPSupervisor) -> dict[str, Any]:
 
 
 @contextmanager
-def browser_session(task_id: str | None) -> Iterator[tuple[CDPSupervisor | None, str]]:
-    """取会话主管并刷新活跃时间；无活动主管时 yield ``(None, key)``，由调用方返回错误。"""
+def browser_session(task_id: str | None, *, create: bool = False) -> Iterator[tuple[CDPSupervisor | None, str]]:
+    """持有会话至工具返回；create 时按当前配置连接或启动，无会话由调用方返回错误。"""
     key = task_id or "default"
-    supervisor = SUPERVISOR_REGISTRY.get(key)
-    if supervisor is not None:
-        touch_session(key)
-    yield supervisor, key
+    with use_browser_session(key, create=create) as info:
+        supervisor = info.supervisor if info is not None else None
+        if create:
+            supervisor = ensure_supervisor(key)
+        yield supervisor, key

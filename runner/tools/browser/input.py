@@ -276,72 +276,96 @@ class InputDispatch:
         modifier = _DRAG_MODIFIERS.get((hold_key or "").lower())
         mask = modifier[0] if modifier else 0
         first_error: dict[str, Any] | None = None
+        mouse_pressed = False
         mouse_released = False
-        if modifier:
-            _, key, code, vk = modifier
-            res = self._send_cdp(
-                "Input.dispatchKeyEvent",
-                {"type": "rawKeyDown", "modifiers": mask, "key": key, "code": code, "windowsVirtualKeyCode": vk},
-                session_id=sid,
-            )
-            if not res.get("ok"):
-                first_error = res
+        release_x, release_y = fx, fy
         try:
-            res = self._send_cdp(
-                "Input.dispatchMouseEvent",
-                {"type": "mouseMoved", "x": fx, "y": fy, "modifiers": mask},
-                session_id=sid,
-            )
-            if not res.get("ok") and first_error is None:
-                first_error = res
-            res = self._send_cdp(
-                "Input.dispatchMouseEvent",
-                {"type": "mousePressed", "x": fx, "y": fy, "button": "left", "clickCount": 1, "modifiers": mask},
-                session_id=sid,
-            )
-            if not res.get("ok") and first_error is None:
-                first_error = res
+            if modifier:
+                _, key, code, vk = modifier
+                res = self._send_cdp(
+                    "Input.dispatchKeyEvent",
+                    {"type": "rawKeyDown", "modifiers": mask, "key": key, "code": code, "windowsVirtualKeyCode": vk},
+                    session_id=sid,
+                )
+                if not res.get("ok"):
+                    first_error = res
+            if first_error is None:
+                res = self._send_cdp(
+                    "Input.dispatchMouseEvent",
+                    {"type": "mouseMoved", "x": fx, "y": fy, "modifiers": mask},
+                    session_id=sid,
+                )
+                if not res.get("ok"):
+                    first_error = res
+            if first_error is None:
+                mouse_pressed = True
+                res = self._send_cdp(
+                    "Input.dispatchMouseEvent",
+                    {"type": "mousePressed", "x": fx, "y": fy, "button": "left", "clickCount": 1, "modifiers": mask},
+                    session_id=sid,
+                )
+                if not res.get("ok"):
+                    first_error = res
 
             for i in range(1, steps + 1):
                 if first_error is not None:
                     break
-                curr_x = fx + (tx - fx) * (i / steps)
-                curr_y = fy + (ty - fy) * (i / steps)
-                self._send_cdp(
+                release_x = fx + (tx - fx) * (i / steps)
+                release_y = fy + (ty - fy) * (i / steps)
+                res = self._send_cdp(
                     "Input.dispatchMouseEvent",
-                    {"type": "mouseMoved", "x": curr_x, "y": curr_y, "button": "left", "modifiers": mask},
+                    {"type": "mouseMoved", "x": release_x, "y": release_y, "button": "left", "modifiers": mask},
                     session_id=sid,
                 )
+                if not res.get("ok"):
+                    first_error = res
+                    break
                 time.sleep(0.02)
 
-            res = self._send_cdp(
-                "Input.dispatchMouseEvent",
-                {"type": "mouseReleased", "x": tx, "y": ty, "button": "left", "clickCount": 1, "modifiers": mask},
-                session_id=sid,
-            )
-            mouse_released = True
-            if not res.get("ok") and first_error is None:
-                first_error = res
-            if first_error is not None:
-                return {"ok": False, "error": first_error.get("error", "drag_refs: CDP dispatch failed")}
-            return {"ok": True, "from": from_ref, "to": to_ref}
+            if mouse_pressed:
+                res = self._send_cdp(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": "mouseReleased",
+                        "x": release_x,
+                        "y": release_y,
+                        "button": "left",
+                        "clickCount": 1,
+                        "modifiers": mask,
+                    },
+                    session_id=sid,
+                )
+                mouse_released = bool(res.get("ok"))
+                if not mouse_released and first_error is None:
+                    first_error = res
+        except Exception as exc:
+            if first_error is None:
+                first_error = {"error": f"{type(exc).__name__}: {exc}"}
         finally:
             # 异常路径也补抬键，防卡住。
-            if not mouse_released:
+            if mouse_pressed and not mouse_released:
                 with contextlib.suppress(Exception):
                     self._send_cdp(
                         "Input.dispatchMouseEvent",
-                        {"type": "mouseReleased", "x": tx, "y": ty, "button": "left", "clickCount": 1},
+                        {"type": "mouseReleased", "x": release_x, "y": release_y, "button": "left", "clickCount": 1},
                         session_id=sid,
                     )
             if modifier:
                 _, key, code, vk = modifier
-                with contextlib.suppress(Exception):
-                    self._send_cdp(
+                try:
+                    res = self._send_cdp(
                         "Input.dispatchKeyEvent",
                         {"type": "keyUp", "key": key, "code": code, "windowsVirtualKeyCode": vk},
                         session_id=sid,
                     )
+                    if not res.get("ok") and first_error is None:
+                        first_error = res
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = {"error": f"{type(exc).__name__}: {exc}"}
+        if first_error is not None:
+            return {"ok": False, "error": first_error.get("error", "drag_refs: CDP dispatch failed")}
+        return {"ok": True, "from": from_ref, "to": to_ref}
 
     def press_key(self, key: str, modifiers: int = 0) -> dict[str, Any]:
         sid = self._session_id_provider()

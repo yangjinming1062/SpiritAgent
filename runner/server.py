@@ -36,6 +36,7 @@ from utils import (
     init_runner_job_object,
     network_reachable,
     read_endpoint,
+    redact_sensitive_text,
     reset_cancel_event,
     set_cancel_event,
     set_handler,
@@ -81,6 +82,9 @@ class _InflightCall(NamedTuple):
 
 
 _INFLIGHT: dict[str, _InflightCall] = {}
+
+# 清单装配与配置快照串行；实际探测在线程执行，取消与 IPC 处理仍可继续。
+_CONFIG_LOCK = asyncio.Lock()
 
 # PROTOCOL「反向模型请求」 Runner 单连接守卫：累计 200 帧 / 1MB 文本 / 10MB 视觉，重连清零，防止工具失控刷爆 LLM。
 MAX_LLM_REQUESTS_PER_SESSION = 200
@@ -224,7 +228,9 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             return
 
         if method == "get_tools":
-            await _send(ws, req_id, result={"tools": registry.get_schemas_for_llm(get_disabled_toolset_ids())})
+            async with _CONFIG_LOCK:
+                schemas = await asyncio.to_thread(registry.get_schemas_for_llm, get_disabled_toolset_ids())
+                await _send(ws, req_id, result={"tools": schemas})
             return
 
         if method == "spiritagent.info":
@@ -239,7 +245,7 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             await _send(
                 ws,
                 req_id,
-                result=record if record is not None else {"call_id": call_id, "status": "not_found"},
+                result=record.model_dump() if record is not None else {"call_id": call_id, "status": "not_found"},
             )
             return
 
@@ -248,13 +254,15 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             config = params.get("config")
             if not isinstance(config, dict):
                 raise ValueError("spiritagent.config.update requires a 'config' object")
-            set_inmemory_config(config)
-            reset_cache()
-            reset_max_read_chars_cache()
-            utils.env_passthrough.reset_cache()
-            utils.credential_files.reset_cache()
-            utils.url_safety.reset_cache()
-            await _send(ws, req_id, result={"ok": True})
+            async with _CONFIG_LOCK:
+                set_inmemory_config(config)
+                registry.invalidate_availability_cache()
+                reset_cache()
+                reset_max_read_chars_cache()
+                utils.env_passthrough.reset_cache()
+                utils.credential_files.reset_cache()
+                utils.url_safety.reset_cache()
+                await _send(ws, req_id, result={"ok": True})
             return
 
         if method in {"execute_tool", "execute_scoped_tool"}:
@@ -335,7 +343,7 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
     except Exception as e:
         # 回复本身绝不能再抛: 中途断连的 handler 会让后台任务以未捕获异常死去。
         with contextlib.suppress(Exception):
-            await _send(ws, req_id, error={"code": -32000, "message": str(e)})
+            await _send(ws, req_id, error={"code": -32000, "message": redact_sensitive_text(str(e))})
 
 
 def _resolve_pending_rpc(data: dict[str, Any]) -> None:
@@ -524,6 +532,7 @@ async def _runner_main(endpoint: DesktopEndpoint) -> None:
         watcher.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await watcher
+        await asyncio.to_thread(registry.shutdown)
 
 
 def main() -> None:

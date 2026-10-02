@@ -9,7 +9,8 @@ import subprocess
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,6 +58,7 @@ class ProcessSession:
     exit_code: int | None = None  # 未结束或无法得知时为 None
     output_buffer: str = ""  # 最近 MAX_OUTPUT_CHARS 个字符
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _stdin_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _reader_thread: threading.Thread | None = field(default=None, repr=False)
     _pty: Any = field(default=None, repr=False)  # ptyprocess / pywinpty 句柄（本机 PTY 模式）
 
@@ -328,6 +330,8 @@ class ProcessRegistry:
 
     def read_log(self, session_id: str, offset: int = 0, limit: int = 200) -> dict:
         """读取完整输出日志，按行分页（默认返回末尾 limit 行）。"""
+        if limit < 1:
+            return {"status": "error", "error": "limit must be at least 1"}
         session = self.get(session_id)
         if session is None:
             return {"status": "not_found", "error": f"No process with ID {session_id}"}
@@ -352,6 +356,8 @@ class ProcessRegistry:
 
     def wait(self, session_id: str, timeout: int | None = None) -> dict:
         """阻塞到进程退出、超时或调用被取消；等待上限为 terminal.timeout，防止模型传入过大值。"""
+        if timeout is not None and timeout < 1:
+            return {"status": "error", "error": "timeout must be at least 1"}
         max_timeout = get_env_config()["timeout"]
         timeout_note = None
         if timeout and timeout > max_timeout:
@@ -398,10 +404,27 @@ class ProcessRegistry:
             # pid 是包裹 shell，先 TERM 再 KILL 其子树。
             env = session.env_ref
             qpid = shlex.quote(str(session.pid))
-            env.execute(f"pkill -TERM -P {qpid} 2>/dev/null; kill {qpid} 2>/dev/null", timeout=5)
-            alive = env.execute(f"kill -0 {qpid} 2>/dev/null || pgrep -P {qpid} >/dev/null 2>&1", timeout=5)
-            if alive["returncode"] == 0:
-                env.execute(f"pkill -KILL -P {qpid} 2>/dev/null; kill -9 {qpid} 2>/dev/null", timeout=5)
+            probe = f"kill -0 {qpid} 2>/dev/null || pgrep -P {qpid} >/dev/null 2>&1"
+            if self._remote_process_alive(env, probe):
+                self._remote_signal(env, f"pkill -TERM -P {qpid} 2>/dev/null; kill {qpid} 2>/dev/null")
+            if self._remote_process_alive(env, probe):
+                self._remote_signal(env, f"pkill -KILL -P {qpid} 2>/dev/null; kill -9 {qpid} 2>/dev/null")
+                if self._remote_process_alive(env, probe):
+                    raise RuntimeError("Remote process is still running after termination")
+
+    @staticmethod
+    def _remote_process_alive(env: BaseEnvironment, command: str) -> bool:
+        result = env.execute(command, timeout=5)
+        if result["returncode"] not in (0, 1):
+            raise RuntimeError(f"Could not check remote process: {clean_output(result['output']).strip()}")
+        return result["returncode"] == 0
+
+    @staticmethod
+    def _remote_signal(env: BaseEnvironment, command: str) -> None:
+        result = env.execute(command, timeout=5)
+        # 信号和退出可能同时发生；1 须由后续探活确认，传输失败不能当作已停止。
+        if result["returncode"] not in (0, 1):
+            raise RuntimeError(f"Could not terminate remote process: {clean_output(result['output']).strip()}")
 
     def kill_process(self, session_id: str) -> dict:
         """终止后台进程（本机 PTY / 本机管道 / SSH）。"""
@@ -418,26 +441,47 @@ class ProcessRegistry:
         self._mark_exited(session, session.process.poll() if session.process is not None else None)
         return {"status": "killed", "session_id": session.id}
 
+    @staticmethod
+    def _check_stdin_budget(deadline: float) -> None:
+        if is_interrupted():
+            raise InterruptedError("Process stdin operation was cancelled")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Process stdin operation timed out after 5s")
+
+    @contextmanager
+    def _stdin_guard(self, session: ProcessSession) -> Iterator[float]:
+        deadline = time.monotonic() + 5.0
+        while True:
+            self._check_stdin_budget(deadline)
+            if session._stdin_lock.acquire(timeout=0.05):
+                break
+        try:
+            self._check_stdin_budget(deadline)
+            yield deadline
+        finally:
+            session._stdin_lock.release()
+
     def write_stdin(self, session_id: str, data: str) -> dict:
         session = self.get(session_id)
         if session is None:
             return {"status": "not_found", "error": f"No process with ID {session_id}"}
         if session.exited:
             return {"status": "already_exited", "error": "Process has already finished"}
-        chunk_size = 4096
-        if session._pty is not None:
-            try:
-                pty_proc = session._pty
-                deadline = time.monotonic() + 5.0
-                if IS_WINDOWS:
-                    for i in range(0, len(data), chunk_size):
-                        chunk = data[i : i + chunk_size]
-                        retries = 2
-                        while retries > 0:
-                            if time.monotonic() > deadline:
-                                raise PTYBufferFull("PTY write timed out due to buffer backpressure")
+        bytes_written = 0
+        try:
+            with self._stdin_guard(session) as deadline:
+                if session.exited:
+                    return {"status": "already_exited", "error": "Process has already finished"}
+                if session._pty is not None:
+                    payload = data if IS_WINDOWS else data.encode("utf-8")
+                    for i in range(0, len(payload), 4096):
+                        chunk = payload[i : i + 4096]
+                        retries = 2 if IS_WINDOWS else 3
+                        while True:
+                            self._check_stdin_budget(deadline)
                             try:
-                                pty_proc.write(chunk)
+                                session._pty.write(chunk)
+                                bytes_written += len(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
                                 time.sleep(0.001)
                                 break
                             except (OSError, ValueError) as exc:
@@ -446,36 +490,29 @@ class ProcessRegistry:
                                     raise PTYBufferFull(f"PTY buffer full: {exc}") from exc
                                 time.sleep(0.01)
                 else:
-                    bytes_data = data.encode("utf-8")
-                    for i in range(0, len(bytes_data), chunk_size):
-                        chunk = bytes_data[i : i + chunk_size]
-                        retries = 3
-                        while retries > 0:
-                            if time.monotonic() > deadline:
-                                raise PTYBufferFull("PTY write timed out due to buffer backpressure")
+                    if session.process is None or session.process.stdin is None:
+                        return {"status": "error", "error": _STDIN_UNAVAILABLE}
+                    stdin = session.process.stdin
+                    fd = stdin.fileno()
+                    blocking = os.get_blocking(fd)
+                    os.set_blocking(fd, False)
+                    try:
+                        encoded = data.encode("utf-8")
+                        while bytes_written < len(encoded):
+                            self._check_stdin_budget(deadline)
                             try:
-                                pty_proc.write(chunk)
-                                time.sleep(0.001)
-                                break
-                            except (BlockingIOError, OSError) as exc:
-                                retries -= 1
-                                if retries == 0:
-                                    raise PTYBufferFull(f"PTY buffer full: {exc}") from exc
+                                written = os.write(fd, encoded[bytes_written : bytes_written + 4096])
+                            except BlockingIOError:
                                 time.sleep(0.01)
-                return {"status": "ok", "bytes_written": len(data)}
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
-        if session.process is None or session.process.stdin is None:
-            return {"status": "error", "error": _STDIN_UNAVAILABLE}
-        try:
-            stdin = session.process.stdin
-            for i in range(0, len(data), chunk_size):
-                stdin.write(data[i : i + chunk_size])
-                stdin.flush()
-                time.sleep(0.001)
-            return {"status": "ok", "bytes_written": len(data)}
+                                continue
+                            if written == 0:
+                                raise BrokenPipeError("Process stdin stopped accepting data")
+                            bytes_written += written
+                    finally:
+                        os.set_blocking(fd, blocking)
+            return {"status": "ok", "bytes_written": bytes_written}
         except Exception as e:
-            return {"status": "error", "error": str(e)}
+            return {"status": "error", "error": str(e), "bytes_written": bytes_written}
 
     def submit_stdin(self, session_id: str, data: str = "") -> dict:
         """向运行中进程的 stdin 发送 data + 换行（等价于按一次 Enter）。"""
@@ -488,17 +525,17 @@ class ProcessRegistry:
             return {"status": "not_found", "error": f"No process with ID {session_id}"}
         if session.exited:
             return {"status": "already_exited", "error": "Process has already finished"}
-        if session._pty is not None:
-            try:
-                session._pty.sendeof()
-                return {"status": "ok", "message": "EOF sent"}
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
-        if session.process is None or session.process.stdin is None:
-            return {"status": "error", "error": _STDIN_UNAVAILABLE}
         try:
-            session.process.stdin.close()
-            return {"status": "ok", "message": "stdin closed"}
+            with self._stdin_guard(session):
+                if session.exited:
+                    return {"status": "already_exited", "error": "Process has already finished"}
+                if session._pty is not None:
+                    session._pty.sendeof()
+                    return {"status": "ok", "message": "EOF sent"}
+                if session.process is None or session.process.stdin is None:
+                    return {"status": "error", "error": _STDIN_UNAVAILABLE}
+                session.process.stdin.close()
+                return {"status": "ok", "message": "stdin closed"}
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
@@ -610,6 +647,9 @@ def _handle_process(args: dict[str, Any], **kw: Any) -> str:
         offset = _coerce_int(args.get("offset"), "offset")
         limit = _coerce_int(args.get("limit"), "limit")
         timeout = _coerce_int(args.get("timeout"), "timeout")
+        for field_name, value in (("limit", limit), ("timeout", timeout)):
+            if value is not None and value < 1:
+                raise ValueError(f"{field_name} must be at least 1")
     except ValueError as e:
         return tool_error(str(e))
     match action:

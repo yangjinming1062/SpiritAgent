@@ -83,8 +83,9 @@ _BLOCKED_TYPE_PATTERNS = [
     re.compile(r":\s*\(\)\s*\{\s*:\|:\s*&\s*\}", re.IGNORECASE),
 ]
 
-_backend_lock = threading.Lock()
+_backend_lock = threading.RLock()
 _backend: ComputerUseBackend | None = None
+_backend_shutdown = False
 
 
 def _canonical_key(name: str) -> str:
@@ -139,16 +140,31 @@ def _new_backend() -> ComputerUseBackend:
 def _get_backend() -> ComputerUseBackend:
     global _backend
     with _backend_lock:
+        if _backend_shutdown:
+            raise RuntimeError("desktop automation is shutting down")
         if _backend is None:
             backend = _new_backend()
             try:
                 backend.start()
             except Exception:
                 # 启动失败不缓存。
-                backend.stop()
+                try:
+                    backend.stop()
+                except Exception as exc:
+                    logger.warning("Could not stop desktop backend after startup failed: %s", clean_output(str(exc)))
                 raise
             _backend = backend
         return _backend
+
+
+def shutdown_computer_use() -> None:
+    """停止已创建的桌面后端，等待当前动作收尾；关闭后不再启动后端。"""
+    global _backend, _backend_shutdown
+    with _backend_lock:
+        _backend_shutdown = True
+        backend, _backend = _backend, None
+        if backend is not None:
+            backend.stop()
 
 
 def handle_computer_use(args: dict[str, Any], **kwargs: Any) -> str | dict[str, Any]:
@@ -167,16 +183,25 @@ def handle_computer_use(args: dict[str, Any], **kwargs: Any) -> str | dict[str, 
             f"blocked key combo: {'+'.join(sorted(blocked))}",
             hint="Destructive system shortcuts are hard-blocked.",
         )
-    try:
-        backend = _get_backend()
-    except Exception as e:
-        return tool_error(f"computer_use is unavailable: {e}")
-    try:
-        return _dispatch(backend, action, args)
-    except Exception as e:
-        # 预期失败不记堆栈。
-        logger.warning("computer_use %s failed: %s", action, e, exc_info=not isinstance(e, LookupError | ValueError))
-        return tool_error(f"{action} failed: {e}")
+    # 目标状态和后端生命周期共用锁，避免动作执行时停止后端。
+    with _backend_lock:
+        if is_interrupted():
+            return tool_error("Interrupted")
+        try:
+            backend = _get_backend()
+        except Exception as e:
+            return tool_error(f"computer_use is unavailable: {e}")
+        try:
+            return _dispatch(backend, action, args)
+        except Exception as e:
+            # 预期失败不记堆栈。
+            logger.warning(
+                "computer_use %s failed: %s",
+                action,
+                e,
+                exc_info=not isinstance(e, LookupError | ValueError),
+            )
+            return tool_error(f"{action} failed: {e}")
 
 
 def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) -> str | dict[str, Any]:
@@ -369,3 +394,4 @@ def _computer_use_available() -> bool:
 registry.register_tool("computer_use", schema=COMPUTER_USE_SCHEMA, check_fn=_computer_use_available)(
     handle_computer_use,
 )
+registry.register_shutdown_hook(shutdown_computer_use)

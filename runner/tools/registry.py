@@ -21,13 +21,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_RESULT_SIZE_CHARS: int = 100_000
 
 
-def tool_error(msg: str, **extra) -> str:
+def tool_error(msg: str, **extra: Any) -> str:
     """构造一个 JSON 错误信封。"""
     return json.dumps({"error": str(msg)} | extra, ensure_ascii=False)
 
 
 class ToolError(Exception):
     """工具无法执行；dispatch 转 JSON 信封，async_dispatch 上抛由调用方映射错误帧。"""
+
+
+def _exception_summary(error: Exception) -> str:
+    return redact_sensitive_text(f"{type(error).__name__}: {error}")
 
 
 class ToolRegistry:
@@ -37,13 +41,29 @@ class ToolRegistry:
         self._tools: dict[str, Callable] = {}
         self._schemas: dict[str, dict | Callable[[], dict]] = {}
         self._check_fns: dict[str, Callable[[], bool]] = {}
-        self._check_fn_cache: dict[str, tuple[bool, float, float]] = {}
+        self._check_fn_cache: dict[Callable[[], bool], tuple[bool, float, float]] = {}
+        self._check_fn_generation = 0
         self._check_fn_ttl_seconds: float = 30.0
         self._check_fn_suppression_seconds: float = 60.0
         # 签名探测缓存：tool name -> 是否接受 cancel_token=；进程内不变，探测一次即可。
         self._supports_cancel_token: dict[str, bool] = {}
         self._import_failures: dict[str, str] = {}
+        self._shutdown_hooks: list[Callable[[], None]] = []
         self._lock = threading.RLock()
+
+    def register_shutdown_hook(self, hook: Callable[[], None]) -> None:
+        with self._lock:
+            if hook not in self._shutdown_hooks:
+                self._shutdown_hooks.append(hook)
+
+    def shutdown(self) -> None:
+        with self._lock:
+            hooks = list(self._shutdown_hooks)
+        for hook in hooks:
+            try:
+                hook()
+            except Exception as e:
+                logger.error("Tool shutdown failed: %s", _exception_summary(e))
 
     def record_import_failure(self, name: str, error: str) -> None:
         with self._lock:
@@ -68,37 +88,47 @@ class ToolRegistry:
                 self._schemas[name] = schema
                 if check_fn is not None:
                     self._check_fns[name] = check_fn
+                else:
+                    self._check_fns.pop(name, None)
+                self._supports_cancel_token.pop(name, None)
             return func
 
         return decorator
 
+    def invalidate_availability_cache(self) -> None:
+        with self._lock:
+            self._check_fn_generation += 1
+            self._check_fn_cache.clear()
+
     def is_tool_available(self, name: str) -> bool:
-        """能力探测：TTL 缓存 30s，成功后 60s 内的瞬时失败保留上次可用判定（见 README）。"""
-        with self._lock:
-            check = self._check_fns.get(name)
-            if check is None:
-                return name in self._tools
-            cached = self._check_fn_cache.get(name)
+        """相同探测共享缓存；配置变化后丢弃旧探测，TTL 与短期失败抑制见 README。"""
+        while True:
+            with self._lock:
+                check = self._check_fns.get(name)
+                if check is None:
+                    return name in self._tools
+                generation = self._check_fn_generation
+                cached = self._check_fn_cache.get(check)
 
-        now = time.monotonic()
-        if cached is not None:
-            last_ok, probed_at, suppress_until = cached
-            if now - probed_at < self._check_fn_ttl_seconds:
-                return last_ok
-            if last_ok and now < suppress_until:
-                return True
+            now = time.monotonic()
+            if cached is not None:
+                last_ok, probed_at, suppress_until = cached
+                if now - probed_at < self._check_fn_ttl_seconds or (last_ok and now < suppress_until):
+                    return last_ok
 
-        try:
-            ok = bool(check())
-        except Exception:
-            ok = False
+            try:
+                ok = bool(check())
+            except Exception:
+                ok = False
 
-        now = time.monotonic()
-        with self._lock:
-            prior = self._check_fn_cache.get(name)
-            suppress_until = now + self._check_fn_suppression_seconds if ok else (prior[2] if prior else now)
-            self._check_fn_cache[name] = (ok, now, suppress_until)
-        return ok
+            now = time.monotonic()
+            with self._lock:
+                if generation != self._check_fn_generation or check is not self._check_fns.get(name):
+                    continue
+                prior = self._check_fn_cache.get(check)
+                suppress_until = now + self._check_fn_suppression_seconds if ok else (prior[2] if prior else now)
+                self._check_fn_cache[check] = (ok, now, suppress_until)
+                return ok
 
     def get_all_tool_names(self) -> list[str]:
         """返回已注册工具名的快照(用于 ``get_schemas_for_llm`` 等过滤流程)。"""
@@ -120,8 +150,8 @@ class ToolRegistry:
                 continue
             try:
                 schemas.append(schema())
-            except Exception:
-                logger.exception("Could not build schema for tool %s; omitting it from the tool list", name)
+            except Exception as e:
+                logger.error("Could not build schema for tool %s: %s", name, _exception_summary(e))
         return schemas
 
     def get_max_result_size(self) -> int:
@@ -153,8 +183,9 @@ class ToolRegistry:
             else:
                 result = func(args, **kwargs)
         except Exception as e:
-            logger.error(f"Error executing {name}: {e}")
-            return json.dumps({"error": redact_sensitive_text(f"Tool execution failed: {type(e).__name__}: {e}")})
+            summary = _exception_summary(e)
+            logger.error("Error executing %s: %s", name, summary)
+            return json.dumps({"error": f"Tool execution failed: {summary}"})
 
         return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
 
@@ -179,11 +210,12 @@ class ToolRegistry:
                 raw = await func(args, **kwargs)
             else:
                 raw = await asyncio.to_thread(func, args, **kwargs)
-        except ToolError:
-            raise
+        except ToolError as e:
+            raise ToolError(redact_sensitive_text(str(e))) from e
         except Exception as e:
-            logger.error(f"Error executing {name}: {e}")
-            raise ToolError(redact_sensitive_text(f"Tool execution failed: {type(e).__name__}: {e}")) from e
+            summary = _exception_summary(e)
+            logger.error("Error executing %s: %s", name, summary)
+            raise ToolError(f"Tool execution failed: {summary}") from e
 
         if isinstance(raw, str):
             try:
@@ -221,6 +253,7 @@ def discover_builtin_tools() -> dict[str, str]:
         try:
             importlib.import_module(info.name)
         except Exception as exc:
-            logger.error("Could not import tool module %s: %s", info.name, exc, exc_info=True)
-            registry.record_import_failure(info.name, f"{type(exc).__name__}: {exc}")
+            summary = _exception_summary(exc)
+            logger.error("Could not import tool module %s: %s", info.name, summary)
+            registry.record_import_failure(info.name, summary)
     return registry.get_import_failures()

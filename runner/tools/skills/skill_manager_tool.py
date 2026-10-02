@@ -1,6 +1,8 @@
 import json
+import logging
 import re
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -10,14 +12,14 @@ from utils import (
     has_traversal_component,
     is_interrupted,
     learned_skills_root,
+    redact_sensitive_text,
     validate_within_dir,
     visible_skill_path,
-    visible_skill_roots,
 )
 
 from ..files import format_no_match_hint, fuzzy_find_and_replace
 from ..registry import registry, tool_error
-from .helpers import iter_skill_files
+from .helpers import find_skill_candidates
 
 MAX_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024
@@ -25,6 +27,8 @@ MAX_SKILL_CONTENT_CHARS = 100_000
 MAX_SKILL_FILE_BYTES = 1_048_576
 VALID_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 ALLOWED_SUBDIRS = {"references", "templates", "scripts", "assets"}
+_mutation_lock = threading.RLock()
+logger = logging.getLogger(__name__)
 
 
 def _validate_name(name: str) -> str | None:
@@ -63,7 +67,9 @@ def _validate_frontmatter(content: str, name: str) -> str | None:
         return f"Frontmatter 'name' must be '{name}' (the skill name)."
     if "description" not in parsed:
         return "Frontmatter must include 'description' field."
-    if len(str(parsed["description"])) > MAX_DESCRIPTION_LENGTH:
+    if not isinstance(parsed["description"], str):
+        return "Frontmatter 'description' must be a string."
+    if len(parsed["description"]) > MAX_DESCRIPTION_LENGTH:
         return f"Description exceeds {MAX_DESCRIPTION_LENGTH} characters."
     if not content[end_match.end() + 3 :].strip():
         return "SKILL.md must have content after the frontmatter (instructions, procedures, etc.)."
@@ -103,11 +109,10 @@ def _scoped_skill_dir(rel_dir: Path) -> Path:
 
 def _find_skill(name: str) -> tuple[Path, Path] | None:
     """按根目录优先级（当前学习域先于共享技能）查找技能，返回 ``(所在根, 技能目录)``。"""
-    for root in visible_skill_roots():
-        for skill_md in iter_skill_files(root):
-            if skill_md.parent.name == name:
-                return root, skill_md.parent
-    return None
+    root, candidates = find_skill_candidates(name)
+    if len(candidates) > 1:
+        raise ValueError(f"Ambiguous skill name '{name}': {len(candidates)} skills match; use a categorized path.")
+    return (root, candidates[0].parent) if root is not None else None
 
 
 def _in_scope(skill_dir: Path) -> bool:
@@ -121,9 +126,20 @@ def _writable_skill_dir(root: Path, skill_dir: Path) -> tuple[Path, bool]:
     if any(path.is_symlink() or not visible_skill_path(path, skill_dir) for path in skill_dir.rglob("*")):
         raise ValueError("Cannot copy a shared skill containing symlinks")
     target = _scoped_skill_dir(skill_dir.relative_to(root))
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(skill_dir, target, dirs_exist_ok=True)
+    target.mkdir(parents=True)
+    try:
+        shutil.copytree(skill_dir, target, dirs_exist_ok=True)
+    except BaseException:
+        _rollback_new_copy(target)
+        raise
     return target, True
+
+
+def _rollback_new_copy(skill_dir: Path) -> None:
+    try:
+        shutil.rmtree(skill_dir)
+    except Exception as exc:
+        logger.warning("Failed to remove newly created skill copy %s: %s", skill_dir, redact_sensitive_text(str(exc)))
 
 
 def _write_skill_file(skill_dir: Path, fresh_copy: bool, target: Path, content: str) -> None:
@@ -132,7 +148,7 @@ def _write_skill_file(skill_dir: Path, fresh_copy: bool, target: Path, content: 
         atomic_replace(str(target), content)
     except BaseException:
         if fresh_copy:
-            shutil.rmtree(skill_dir, ignore_errors=True)
+            _rollback_new_copy(skill_dir)
         raise
 
 
@@ -153,7 +169,7 @@ def _create_skill(name: str, content: str, category: str | None = None) -> dict[
     if _find_skill(name):
         return {"success": False, "error": f"A skill named '{name}' already exists."}
     skill_dir = _scoped_skill_dir(Path(category, name))
-    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_dir.mkdir(parents=True)
     _write_skill_file(skill_dir, True, skill_dir / "SKILL.md", content)
     result = {
         "success": True,
@@ -170,7 +186,7 @@ def _create_skill(name: str, content: str, category: str | None = None) -> dict[
 
 
 def _edit_skill(name: str, content: str) -> dict[str, Any]:
-    if err := _validate_frontmatter(content, name):
+    if err := _validate_frontmatter(content, Path(name).name):
         return {"success": False, "error": err}
     if err := _validate_content_size(content):
         return {"success": False, "error": err}
@@ -212,7 +228,7 @@ def _patch_skill(
         }
     if err := _validate_content_size(new_content, label=rel_path):
         return {"success": False, "error": err}
-    if rel_path == "SKILL.md" and (err := _validate_frontmatter(new_content, name)):
+    if rel_path == "SKILL.md" and (err := _validate_frontmatter(new_content, Path(name).name)):
         return {"success": False, "error": f"Patch would break SKILL.md structure: {err}"}
     skill_dir, fresh_copy = _writable_skill_dir(*found)
     _write_skill_file(skill_dir, fresh_copy, skill_dir / rel_path, new_content)
@@ -287,11 +303,16 @@ def _remove_file(name: str, file_path: str) -> dict[str, Any]:
             "error": f"File '{file_path}' not found in skill '{name}'.",
             "available_files": avail if avail else None,
         }
-    skill_dir, _ = _writable_skill_dir(*found)
+    skill_dir, fresh_copy = _writable_skill_dir(*found)
     target = skill_dir / file_path
-    target.unlink()
-    if (parent := target.parent) != skill_dir and not any(parent.iterdir()):
-        parent.rmdir()
+    try:
+        target.unlink()
+        if (parent := target.parent) != skill_dir and not any(parent.iterdir()):
+            parent.rmdir()
+    except BaseException:
+        if fresh_copy:
+            _rollback_new_copy(skill_dir)
+        raise
     return {"success": True, "message": f"File '{file_path}' removed from skill '{name}'."}
 
 
@@ -308,24 +329,30 @@ def skill_manage(
     absorbed_into: str | None = None,
 ) -> str:
     learned_skills_root()
-    if action == "create":
-        if not content:
-            return tool_error("content is required for 'create'. Provide the full SKILL.md text.", success=False)
-        result = _create_skill(name, content, category)
-    elif action == "edit":
-        if not content:
-            return tool_error("content is required for 'edit'. Provide the full updated SKILL.md text.", success=False)
-        result = _edit_skill(name, content)
-    elif action == "patch":
-        result = _patch_skill(name, old_string or "", new_string, file_path, replace_all)
-    elif action == "delete":
-        result = _delete_skill(name, absorbed_into=absorbed_into)
-    elif action == "write_file":
-        result = _write_file(name, file_path or "", file_content)
-    elif action == "remove_file":
-        result = _remove_file(name, file_path or "")
-    else:
-        result = {"success": False, "error": f"Unknown action '{action}'."}
+    try:
+        if action == "create":
+            if not content:
+                return tool_error("content is required for 'create'. Provide the full SKILL.md text.", success=False)
+            result = _create_skill(name, content, category)
+        elif action == "edit":
+            if not content:
+                return tool_error(
+                    "content is required for 'edit'. Provide the full updated SKILL.md text.",
+                    success=False,
+                )
+            result = _edit_skill(name, content)
+        elif action == "patch":
+            result = _patch_skill(name, old_string or "", new_string, file_path, replace_all)
+        elif action == "delete":
+            result = _delete_skill(name, absorbed_into=absorbed_into)
+        elif action == "write_file":
+            result = _write_file(name, file_path or "", file_content)
+        elif action == "remove_file":
+            result = _remove_file(name, file_path or "")
+        else:
+            result = {"success": False, "error": f"Unknown action '{action}'."}
+    except ValueError as exc:
+        return tool_error(str(exc), success=False)
 
     return json.dumps(result, ensure_ascii=False)
 
@@ -369,7 +396,8 @@ SKILL_MANAGE_SCHEMA = {
             "name": {
                 "type": "string",
                 "description": (
-                    "Skill name (lowercase, hyphens/underscores, max 64 chars). Must match an existing skill for patch/edit/delete/write_file/remove_file."
+                    "Skill name (lowercase, hyphens/underscores, max 64 chars). Must match an existing skill for "
+                    "patch/edit/delete/write_file/remove_file; use 'category/skill-name' for ambiguous names."
                 ),
             },
             "content": {
@@ -433,18 +461,21 @@ def _skill_manage_handler(args: dict[str, Any], **kw: Any) -> str:
     # interrupt 提前返回：create 会写盘，避免过期调用覆盖刚编辑的文件。
     if is_interrupted():
         return json.dumps({"error": "Interrupted", "interrupted": True})
-    return skill_manage(
-        action=args.get("action", ""),
-        name=args.get("name", ""),
-        content=args.get("content"),
-        category=args.get("category"),
-        file_path=args.get("file_path"),
-        file_content=args.get("file_content"),
-        old_string=args.get("old_string"),
-        new_string=args.get("new_string"),
-        replace_all=args.get("replace_all", False),
-        absorbed_into=args.get("absorbed_into"),
-    )
+    with _mutation_lock:
+        if is_interrupted():
+            return json.dumps({"error": "Interrupted", "interrupted": True})
+        return skill_manage(
+            action=args.get("action", ""),
+            name=args.get("name", ""),
+            content=args.get("content"),
+            category=args.get("category"),
+            file_path=args.get("file_path"),
+            file_content=args.get("file_content"),
+            old_string=args.get("old_string"),
+            new_string=args.get("new_string"),
+            replace_all=args.get("replace_all", False),
+            absorbed_into=args.get("absorbed_into"),
+        )
 
 
 registry.register_tool("skill_manage", schema=SKILL_MANAGE_SCHEMA)(_skill_manage_handler)

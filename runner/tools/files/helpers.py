@@ -784,6 +784,10 @@ class ShellFileOperations(FileOperations):
             f"else ls -1Ap {q}; fi",
             timeout=60,
         )
+        if result.exit_code != 0:
+            return ListResult(
+                error=f"Failed to list directory '{path}': {result.stdout.strip() or f'exit code {result.exit_code}'}",
+            )
         out = result.stdout.strip()
         if out == "__missing__":
             return ListResult(error=f"Directory '{path}' not found.")
@@ -855,8 +859,12 @@ class ShellFileOperations(FileOperations):
                 f"rg --files --sortr=modified -g {q_glob} {q_path} 2>/dev/null | head -n {fetch}",
                 timeout=60,
             )
+            if result.exit_code not in (0, 1, 141):
+                return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
             if not result.stdout.strip():
                 result = self._exec(f"rg --files -g {q_glob} {q_path} 2>/dev/null | head -n {fetch}", timeout=60)
+            if result.exit_code not in (0, 1, 141):
+                return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
             all_files = [f for f in result.stdout.strip().split("\n") if f]
         elif self._has_command("find"):
             root = path.rstrip("/") or "/"
@@ -870,9 +878,13 @@ class ShellFileOperations(FileOperations):
                 f"{find_cmd} -printf '%T@ %p\\n' 2>/dev/null | sort -rn | cut -d' ' -f2- | head -n {fetch}",
                 timeout=60,
             )
+            if result.exit_code not in (0, 1, 141):
+                return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
             if not result.stdout.strip():
                 # BSD 退化为不按时间排序。
                 result = self._exec(f"{find_cmd} 2>/dev/null | head -n {fetch}", timeout=60)
+            if result.exit_code not in (0, 1, 141):
+                return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
             all_files = [f for f in result.stdout.strip().split("\n") if f]
         else:
             return SearchResult(error="File search requires 'rg' (ripgrep) or 'find' in the terminal environment.")
@@ -938,9 +950,9 @@ class ShellFileOperations(FileOperations):
         fetch_limit = limit + offset + 1 + (200 if context > 0 else 0)
         result = self._exec(f"set -o pipefail; {' '.join(cmd_parts)} | head -n {fetch_limit}", timeout=60)
         diagnostics, payload = _split_tool_diagnostics(result.stdout)
-        if result.exit_code == 2 and not payload.strip():
+        if result.exit_code not in (0, 1, 2, 141) or (result.exit_code == 2 and not payload.strip()):
             return SearchResult(
-                error=f"Search failed: {diagnostics.strip() or result.stdout.strip() or 'unknown error'}",
+                error=f"Search failed: {diagnostics.strip() or result.stdout.strip() or f'exit code {result.exit_code}'}",
             )
         return _parse_search_output(payload, output_mode, limit, offset, context)
 

@@ -22,6 +22,8 @@ if IS_WINDOWS:
     import pyautogui
     import pywinauto
 
+    ctypes.windll.user32.GetForegroundWindow.restype = ctypes.wintypes.HWND
+
 logger = logging.getLogger(__name__)
 
 # 桌面自动化不能并发执行。
@@ -154,31 +156,29 @@ def _bitmap_to_png(hdc_mem: int, hbitmap: int, width: int, height: int) -> bytes
     buf = ctypes.create_string_buffer(width * height * 4)
     ctypes.windll.gdi32.GetDIBits(hdc_mem, hbitmap, 0, height, buf, ctypes.byref(bmi), 0)
 
-    img = Image.frombuffer("RGBA", (width, height), buf.raw, "raw", "BGRA", 0, 1)
-    png_io = io.BytesIO()
-    img.save(png_io, format="PNG")
-    return png_io.getvalue()
+    with Image.frombuffer("RGBA", (width, height), buf.raw, "raw", "BGRA", 0, 1) as img, io.BytesIO() as png_io:
+        img.save(png_io, format="PNG")
+        return png_io.getvalue()
 
 
 def _draw_som_overlay(png_bytes: bytes, elements: list[UIElement]) -> bytes:
-    img = Image.open(io.BytesIO(png_bytes))
-    draw = ImageDraw.Draw(img)
-    try:
-        font: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.truetype("arial.ttf", 14)
-    except OSError:
-        font = ImageFont.load_default()
+    with io.BytesIO(png_bytes) as source, Image.open(source) as img, io.BytesIO() as out:
+        draw = ImageDraw.Draw(img)
+        try:
+            font: ImageFont.FreeTypeFont | ImageFont.ImageFont = ImageFont.truetype("arial.ttf", 14)
+        except OSError:
+            font = ImageFont.load_default()
 
-    for elem in elements:
-        x, y, w, h = elem.bounds
-        draw.rectangle([x, y, x + w, y + h], outline="red", width=2)
-        label = str(elem.index)
-        left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
-        draw.rectangle([x, y, x + right - left + 4, y + bottom - top + 4], fill="red")
-        draw.text((x + 2, y + 2), label, fill="white", font=font)
+        for elem in elements:
+            x, y, w, h = elem.bounds
+            draw.rectangle([x, y, x + w, y + h], outline="red", width=2)
+            label = str(elem.index)
+            left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
+            draw.rectangle([x, y, x + right - left + 4, y + bottom - top + 4], fill="red")
+            draw.text((x + 2, y + 2), label, fill="white", font=font)
 
-    out = io.BytesIO()
-    img.save(out, format="PNG")
-    return out.getvalue()
+        img.save(out, format="PNG")
+        return out.getvalue()
 
 
 @contextlib.contextmanager
@@ -368,9 +368,13 @@ class WinBackend(ComputerUseBackend):
     def _foreground_refusal(self, action: str) -> ActionResult | None:
         """已选定目标但它不在前台时拒绝键盘输入：pyautogui 的按键总是发给前台窗口。"""
         if self._hwnd is None:
-            return None
+            return ActionResult(
+                ok=False,
+                action=action,
+                message="No target window; call capture or focus_app first.",
+            )
         foreground = ctypes.windll.user32.GetForegroundWindow()
-        if foreground and _window_pid(foreground) == _window_pid(self._hwnd):
+        if foreground == self._hwnd:
             return None
         return ActionResult(
             ok=False,
@@ -468,12 +472,14 @@ class WinBackend(ComputerUseBackend):
                 previous = None
                 with contextlib.suppress(Exception):
                     previous = pyperclip.paste()
-                pyperclip.copy(text)
-                pyautogui.hotkey("ctrl", "v")
-                if previous is not None:
+                try:
+                    pyperclip.copy(text)
+                    pyautogui.hotkey("ctrl", "v")
                     time.sleep(0.5)
-                    with contextlib.suppress(Exception):
-                        pyperclip.copy(previous)
+                finally:
+                    if previous is not None:
+                        with contextlib.suppress(Exception):
+                            pyperclip.copy(previous)
         except Exception as e:
             return _failed("type", e)
         return ActionResult(ok=True, action="type", message=f"typed {len(text)} chars")

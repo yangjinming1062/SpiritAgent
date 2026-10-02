@@ -9,7 +9,10 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from _thread import RLock
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
@@ -310,30 +313,36 @@ class CDPSupervisor:
                 tab_id is not None
                 and self._attached_targets.get(tab_id, {}).get("session_id") == self._current_sids().active
             )
+            closed_session = self._attached_targets.get(tab_id, {}).get("session_id") if tab_id is not None else None
 
         if tab_id is None:
             return {"ok": False, "error": "no tab to close (no active session)"}
 
         result = self.send_cdp("Target.closeTarget", {"targetId": tab_id})
+        if not result.get("ok"):
+            return result
+        if result.get("result", {}).get("success") is False:
+            return {"ok": False, "error": f"Browser did not close tab {tab_id}"}
         fallback: str | None = None
         with self._state_lock:
-            closed_session = self._attached_targets.pop(tab_id, {}).get("session_id")
+            self._attached_targets.pop(tab_id, None)
             if closing_active:
                 # page 会话被关时一并换选，否则 send_cdp 路由进死会话。
                 fallback = next(
                     (info.get("session_id") for info in self._attached_targets.values() if info.get("session_id")),
                     None,
                 )
-                if fallback is not None and self._current_sids().page == closed_session:
+                if self._current_sids().page == closed_session:
                     self._set_session(page=fallback, active=fallback)
                 else:
                     self._set_session(active=fallback)
+                self._set_session(root_frame="")
         if fallback is not None:
             # root_frame 须跟回退会话。
             ft = self.send_cdp("Page.getFrameTree", session_id=fallback)
             if ft.get("ok"):
                 self._set_session(root_frame=ft["result"].get("frameTree", {}).get("frame", {}).get("id", ""))
-        return result if not result.get("ok") else {"ok": True, "tab_id": tab_id}
+        return {"ok": True, "tab_id": tab_id}
 
     def send_cdp(
         self,
@@ -1292,10 +1301,34 @@ def _pause(seconds: float, cancel_token: threading.Event | None) -> None:
         time.sleep(seconds)
 
 
+@dataclass
+class _LifecycleState:
+    lock: RLock = field(default_factory=RLock)
+    users: int = 0
+
+
 class SupervisorRegistry:
     def __init__(self) -> None:
         self._supervisors: dict[str, CDPSupervisor] = {}
+        self._lifecycles: dict[str, _LifecycleState] = {}
         self._lock = threading.Lock()
+
+    @contextmanager
+    def lifecycle(self, task_id: str) -> Iterator[None]:
+        """同 task 的启动、替换和停止共用锁；等待者也持有锁条目，避免回收后分裂成两把锁。"""
+        with self._lock:
+            if (state := self._lifecycles.get(task_id)) is None:
+                state = _LifecycleState()
+                self._lifecycles[task_id] = state
+            state.users += 1
+        try:
+            with state.lock:
+                yield
+        finally:
+            with self._lock:
+                state.users -= 1
+                if state.users == 0 and task_id not in self._supervisors:
+                    self._lifecycles.pop(task_id, None)
 
     def get(self, task_id: str) -> CDPSupervisor | None:
         with self._lock:
@@ -1312,42 +1345,40 @@ class SupervisorRegistry:
         dialog_timeout_s: float = DEFAULT_DIALOG_TIMEOUT_S,
         timeout: float = 15.0,
     ) -> CDPSupervisor:
-        # 锁外探活；锁内只替换/stop，不调阻塞 start()。
-        existing = self._supervisors.get(task_id)
-        if existing is not None and existing.active:
-            return existing
-
-        stale = existing
-        sup = CDPSupervisor(
-            task_id=task_id,
-            cdp_url=cdp_url,
-            launch_handle=launch_handle,
-            auto_owned=auto_owned,
-            dialog_policy=dialog_policy,
-            dialog_timeout_s=dialog_timeout_s,
-        )
-        with self._lock:
-            # 拿锁后重新探活。
-            live = self._supervisors.get(task_id)
-            if live is not None and live.active:
-                return live
-            self._supervisors[task_id] = sup
-
-        # 锁外回收 stale 再启动，防泄漏。
-        if stale is not None:
+        with self.lifecycle(task_id):
+            existing = self.get(task_id)
+            if existing is not None and existing.active:
+                return existing
+            self.stop(task_id)
+            sup = CDPSupervisor(
+                task_id=task_id,
+                cdp_url=cdp_url,
+                launch_handle=launch_handle,
+                auto_owned=auto_owned,
+                dialog_policy=dialog_policy,
+                dialog_timeout_s=dialog_timeout_s,
+            )
             try:
-                stale.stop()
-            except Exception as e:
-                logger.debug("Error stopping stale supervisor %s: %s", task_id, e)
+                sup.start(timeout=timeout)
+            except BaseException:
+                try:
+                    sup.stop()
+                except Exception:
+                    logger.exception("Error stopping failed supervisor %s", task_id)
+                raise
+            with self._lock:
+                self._supervisors[task_id] = sup
+            return sup
 
-        sup.start(timeout=timeout)
-        return sup
-
-    def stop(self, task_id: str) -> None:
-        with self._lock:
-            sup = self._supervisors.pop(task_id, None)
-        if sup is not None:
-            sup.stop()
+    def stop(self, task_id: str, *, expected: CDPSupervisor | None = None) -> None:
+        with self.lifecycle(task_id):
+            with self._lock:
+                sup = self._supervisors.get(task_id)
+                if expected is not None and sup is not expected:
+                    return
+                self._supervisors.pop(task_id, None)
+            if sup is not None:
+                sup.stop()
 
 
 SUPERVISOR_REGISTRY = SupervisorRegistry()

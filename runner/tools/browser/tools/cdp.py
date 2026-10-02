@@ -2,13 +2,13 @@ import json
 import logging
 from typing import Any
 
+from utils import cfg_get, load_config
+
 from ...registry import registry, tool_error
 from ..camofox import is_camofox_mode
 from ..check import check_browser_native_requirements
 from ..schemas import BROWSER_CDP_SCHEMA
-from ..session import _get_cdp_override, touch_session
-from ..supervisor import SUPERVISOR_REGISTRY
-from ._common import NO_SUPERVISOR_MSG, camofox_unsupported, ensure_supervisor
+from ._common import NO_SUPERVISOR_MSG, browser_session, camofox_unsupported
 
 logger = logging.getLogger(__name__)
 
@@ -68,44 +68,43 @@ def browser_cdp(
         )
     logger.info("browser_cdp %s (target=%s)", method, target_id)
 
-    session_key = task_id or "default"
-    supervisor = SUPERVISOR_REGISTRY.get(session_key)
-    if supervisor is None:
-        if not _get_cdp_override():
-            return tool_error(NO_SUPERVISOR_MSG)
-        try:
-            supervisor = ensure_supervisor(session_key)
-        except Exception as exc:
-            return tool_error(f"Failed to connect to CDP endpoint: {exc}")
+    has_override = bool(str(cfg_get(load_config(), "browser", "cdp_url", default="")).strip())
+    try:
+        with browser_session(task_id, create=has_override) as (supervisor, _):
+            if supervisor is None:
+                return tool_error(NO_SUPERVISOR_MSG)
+            call_params = params or {}
+            safe_timeout = max(_CDP_TIMEOUT_MIN, min(float(timeout), _CDP_TIMEOUT_MAX))
+            clamped = safe_timeout != float(timeout)
 
-    touch_session(session_key)
-    call_params = params or {}
-    safe_timeout = max(_CDP_TIMEOUT_MIN, min(float(timeout), _CDP_TIMEOUT_MAX))
-    clamped = safe_timeout != float(timeout)
+            session_id: str | None = None
+            if target_id:
+                _, attached = supervisor.get_attached_targets()
+                session_id = attached.get(target_id, {}).get("session_id")
+                if not session_id:
+                    attach_res = supervisor.attach_target(target_id)
+                    if not attach_res.get("ok"):
+                        return tool_error(
+                            f"Failed to attach to target {target_id}: {attach_res.get('error')}",
+                            method=method,
+                        )
+                    session_id = attach_res["result"].get("sessionId")
 
-    session_id: str | None = None
-    if target_id:
-        _, attached = supervisor.get_attached_targets()
-        session_id = attached.get(target_id, {}).get("session_id")
-        if not session_id:
-            attach_res = supervisor.attach_target(target_id)
-            if not attach_res.get("ok"):
-                return tool_error(f"Failed to attach to target {target_id}: {attach_res.get('error')}", method=method)
-            session_id = attach_res["result"].get("sessionId")
-
-    res = supervisor.send_cdp(method, call_params, timeout=safe_timeout, session_id=session_id)
-    if not res.get("ok"):
-        return tool_error(res.get("error", "CDP call failed"), method=method, target_id=target_id)
-    return json.dumps(
-        {
-            "success": True,
-            "method": method,
-            "target_id": target_id,
-            "result": res.get("result", {}),
-            "timeout_clamped": clamped,
-        },
-        ensure_ascii=False,
-    )
+            res = supervisor.send_cdp(method, call_params, timeout=safe_timeout, session_id=session_id)
+            if not res.get("ok"):
+                return tool_error(res.get("error", "CDP call failed"), method=method, target_id=target_id)
+            return json.dumps(
+                {
+                    "success": True,
+                    "method": method,
+                    "target_id": target_id,
+                    "result": res.get("result", {}),
+                    "timeout_clamped": clamped,
+                },
+                ensure_ascii=False,
+            )
+    except Exception as exc:
+        return tool_error(f"CDP request failed: {type(exc).__name__}: {exc}")
 
 
 registry.register_tool("browser_cdp", check_fn=check_browser_native_requirements, schema=BROWSER_CDP_SCHEMA)(

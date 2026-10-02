@@ -215,7 +215,7 @@ def _strategy_line_trimmed(content: str, pattern: str) -> list[tuple[int, int]]:
 def _strategy_whitespace_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 3：将多个连续空格/制表符压缩为单空格，保留换行。"""
 
-    def normalize(s):
+    def normalize(s: str) -> str:
         return re.sub(r"[ \t]+", " ", s)
 
     pattern_normalized = normalize(pattern)

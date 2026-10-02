@@ -11,7 +11,9 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal, NotRequired, TypedDict, cast
+from typing import Any, Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .constants import get_spiritagent_home
 from .file_io import atomic_replace
@@ -39,25 +41,47 @@ type ClaimDisposition = Literal[
 ]
 
 
-class _JournalRecord(TypedDict):
+class _JournalRecord(BaseModel):
+    model_config = ConfigDict(strict=True, extra="allow")
+
     call_id: str
     status: CallStatus
-    fingerprint: NotRequired[str]
-    owner_pid: NotRequired[int]
-    claim_token: NotRequired[str]
-    claimed_at: NotRequired[float]
-    finished_at: NotRequired[float]
-    result: NotRequired[Any]
-    error: NotRequired[str]
+    fingerprint: str | None = None
+    owner_pid: int | None = Field(default=None, gt=0)
+    claim_token: str | None = None
+    claimed_at: int | float | None = None
+    finished_at: int | float | None = None
+    result: Any = None
+    error: str | None = None
+
+    @field_validator("fingerprint", "owner_pid", "claim_token", "claimed_at", "finished_at", "error", mode="before")
+    @classmethod
+    def _reject_explicit_null(cls, value: Any) -> Any:
+        # 磁盘字段可省略，显式 null 属损坏记录；result 则允许 null。
+        if value is None:
+            raise ValueError("journal metadata cannot be null")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_status_fields(self) -> Self:
+        if self.status != "unknown" and self.fingerprint is None:
+            raise ValueError("journal fingerprint is required")
+        if self.status == "claimed" and self.owner_pid is None:
+            raise ValueError("claimed journal record requires an owner")
+        if self.status == "completed" and "result" not in self.model_fields_set:
+            raise ValueError("completed journal record requires a result")
+        return self
 
 
-class CallResult(TypedDict):
+class CallResult(BaseModel):
+    model_config = ConfigDict(strict=True)
+
     call_id: str
     status: CallStatus
     result: Any
     error: str | None
-    claimed_at: float | None
-    finished_at: float | None
+    claimed_at: int | float | None
+    finished_at: int | float | None
 
 
 @dataclass(slots=True)
@@ -93,7 +117,11 @@ def _args_fingerprint(name: str, args: dict[str, Any], skill_scope: SkillScope |
 
 def _unreadable_record(path: Path) -> _JournalRecord:
     # 无法读取不等于从未认领；向恢复方报告待核对，避免重跑可能已发生的副作用。
-    return {"call_id": path.stem, "status": "unknown", "error": "journal record unreadable; side effects unverified"}
+    return _JournalRecord(
+        call_id=path.stem,
+        status="unknown",
+        error="journal record unreadable; side effects unverified",
+    )
 
 
 def _read_record(path: Path) -> _JournalRecord | None:
@@ -104,22 +132,11 @@ def _read_record(path: Path) -> _JournalRecord | None:
         return None
     except (OSError, ValueError):
         return _unreadable_record(path)
-    if (
-        not isinstance(data, dict)
-        or data.get("call_id") != path.stem
-        or not isinstance(data.get("status"), str)
-        or data.get("status") not in {"claimed", *_TERMINAL_STATUSES}
-        or ("fingerprint" in data and not isinstance(data["fingerprint"], str))
-        or ("owner_pid" in data and (type(data["owner_pid"]) is not int or data["owner_pid"] <= 0))
-        or ("claim_token" in data and not isinstance(data["claim_token"], str))
-        or ("error" in data and not isinstance(data["error"], str))
-        or any(type(data[key]) not in (int, float) for key in ("claimed_at", "finished_at") if key in data)
-        or (data["status"] != "unknown" and "fingerprint" not in data)
-        or (data["status"] == "claimed" and "owner_pid" not in data)
-        or (data["status"] == "completed" and "result" not in data)
-    ):
+    try:
+        record = _JournalRecord.model_validate(data)
+    except ValidationError:
         return _unreadable_record(path)
-    return cast(_JournalRecord, data)
+    return record if record.call_id == path.stem else _unreadable_record(path)
 
 
 def claim(
@@ -138,14 +155,14 @@ def claim(
         return _resolve_existing(record, path, fingerprint)
 
     claim_token = uuid.uuid4().hex
-    payload: _JournalRecord = {
-        "call_id": call_id,
-        "fingerprint": fingerprint,
-        "status": "claimed",
-        "owner_pid": owner_pid,
-        "claim_token": claim_token,
-        "claimed_at": time.time(),
-    }
+    payload = _JournalRecord(
+        call_id=call_id,
+        fingerprint=fingerprint,
+        status="claimed",
+        owner_pid=owner_pid,
+        claim_token=claim_token,
+        claimed_at=time.time(),
+    )
     try:
         # 记录含工具参数与结果，目录与文件都仅本人可读；终态改写沿用文件权限。
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -157,7 +174,7 @@ def claim(
                 return ClaimOutcome("unknown", error="journal record disappeared during claim; side effects unverified")
             return _resolve_existing(record, path, fingerprint)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False)
+            json.dump(payload.model_dump(exclude_unset=True), fh, ensure_ascii=False)
             fh.flush()
             os.fsync(fh.fileno())
     except OSError as e:
@@ -167,31 +184,31 @@ def claim(
 
 
 def _resolve_existing(record: _JournalRecord, path: Path, fingerprint: str) -> ClaimOutcome:
-    if record.get("fingerprint") is not None and record["fingerprint"] != fingerprint:
+    if record.fingerprint is not None and record.fingerprint != fingerprint:
         return ClaimOutcome("conflict", error="same call_id already used with different arguments or skill scope")
     record = _resolve_owner(record, path)
-    match record["status"]:
+    match record.status:
         case "completed":
-            return ClaimOutcome("completed", result=record["result"])
+            return ClaimOutcome("completed", result=record.result)
         case "failed":
-            return ClaimOutcome("failed", error=record.get("error") or "tool failed (details lost)")
+            return ClaimOutcome("failed", error=record.error or "tool failed (details lost)")
         case "unknown":
             return ClaimOutcome(
                 "unknown",
-                error=record.get("error") or "interrupted before completion; side effects unverified",
+                error=record.error or "interrupted before completion; side effects unverified",
             )
         case "claimed":
             return ClaimOutcome("claimed_elsewhere", error="call is already claimed by a live process")
 
 
 def _resolve_owner(record: _JournalRecord, path: Path) -> _JournalRecord:
-    if record["status"] == "claimed" and not pid_exists(record["owner_pid"]):
+    if record.status == "claimed" and record.owner_pid is not None and not pid_exists(record.owner_pid):
         return _mark_stale(record, path)
     return record
 
 
 def _mark_stale(record: _JournalRecord, path: Path) -> _JournalRecord:
-    record = {**record, "status": "unknown", "finished_at": time.time()}
+    record = record.model_copy(update={"status": "unknown", "finished_at": time.time()})
     _atomic_write(path, record)
     return record
 
@@ -239,14 +256,14 @@ def _finalize(
         return
     with _UPDATE_LOCK:
         record = _read_record(path)
-        if record is None or record["status"] != "claimed" or record.get("claim_token") != claim_token:
+        if record is None or record.status != "claimed" or record.claim_token != claim_token:
             return
-        record["status"] = status
-        record["finished_at"] = time.time()
+        record.status = status
+        record.finished_at = time.time()
         if status == "completed":
-            record["result"] = result
+            record.result = result
         elif error is not None:
-            record["error"] = error
+            record.error = error
         _atomic_write(path, record)
 
 
@@ -259,14 +276,14 @@ def lookup(call_id: str) -> CallResult | None:
     if record is None:
         return None
     record = _resolve_owner(record, path)
-    return {
-        "call_id": call_id,
-        "status": record["status"],
-        "result": record.get("result"),
-        "error": record.get("error"),
-        "claimed_at": record.get("claimed_at"),
-        "finished_at": record.get("finished_at"),
-    }
+    return CallResult(
+        call_id=call_id,
+        status=record.status,
+        result=record.result,
+        error=record.error,
+        claimed_at=record.claimed_at,
+        finished_at=record.finished_at,
+    )
 
 
 def sweep_stale_claims(owner_pid: int) -> int:
@@ -278,12 +295,12 @@ def sweep_stale_claims(owner_pid: int) -> int:
             record = _read_record(entry)
             if record is None:
                 continue
-            if record["status"] in _TERMINAL_STATUSES:
-                finished = record.get("finished_at") or record.get("claimed_at")
+            if record.status in _TERMINAL_STATUSES:
+                finished = record.finished_at or record.claimed_at
                 if finished is not None and finished < cutoff:
                     with contextlib.suppress(OSError):
                         entry.unlink(missing_ok=True)
-            elif record["owner_pid"] == owner_pid or not pid_exists(record["owner_pid"]):
+            elif record.owner_pid is not None and (record.owner_pid == owner_pid or not pid_exists(record.owner_pid)):
                 _mark_stale(record, entry)
                 updated += 1
     except OSError as e:
@@ -293,6 +310,6 @@ def sweep_stale_claims(owner_pid: int) -> int:
 
 def _atomic_write(path: Path, record: _JournalRecord) -> None:
     try:
-        atomic_replace(str(path), json.dumps(record, ensure_ascii=False))
+        atomic_replace(str(path), record.model_dump_json(exclude_unset=True))
     except OSError as e:
         logger.warning("call journal write failed for %s: %s", path.name, e)

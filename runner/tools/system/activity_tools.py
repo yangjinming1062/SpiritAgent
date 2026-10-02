@@ -153,7 +153,7 @@ def _power_handler(args: dict[str, Any], **kw: Any) -> str:
 
 
 def _windows_handler(args: dict[str, Any], **kw: Any) -> str:
-    return json.dumps(get_windows())
+    return get_windows().model_dump_json(exclude_none=True)
 
 
 def _open_app_handler(args: dict[str, Any], **kw: Any) -> str:

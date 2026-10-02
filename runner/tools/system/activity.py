@@ -2,9 +2,10 @@ import logging
 import subprocess
 import time
 import uuid
-from typing import Any, NotRequired, TypedDict
+from typing import Any
 
 import psutil
+from pydantic import BaseModel, Field
 from utils import IS_MACOS, IS_WINDOWS
 
 if IS_WINDOWS:
@@ -94,7 +95,7 @@ _DWMWA_CLOAKED = 14
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
-class WindowInfo(TypedDict):
+class WindowInfo(BaseModel):
     title: str
     name: str
     x: int
@@ -108,9 +109,9 @@ class WindowInfo(TypedDict):
     z_order: int
 
 
-class WindowScene(TypedDict):
-    windows: list[WindowInfo]
-    runner_instance_id: NotRequired[str]
+class WindowScene(BaseModel):
+    windows: list[WindowInfo] = Field(default_factory=list)
+    runner_instance_id: str | None = None
 
 
 def get_idle_seconds() -> float:
@@ -163,7 +164,7 @@ def get_windows() -> WindowScene:
         return _windows_windows()
     if IS_MACOS:
         return _windows_macos()
-    return {"windows": []}
+    return WindowScene()
 
 
 # 拦 cmd 元字符与前导 -/ 被当成选项。
@@ -525,28 +526,28 @@ def _windows_windows() -> WindowScene:
                 return True
             x, y, w, h = bounds
             results.append(
-                {
-                    "title": title,
-                    "name": exe or title,
-                    "x": x,
-                    "y": y,
-                    "w": w,
-                    "h": h,
-                    "focused": hwnd == foreground,
-                    "visible": True,
-                    "window_id": f"win:{hwnd:X}",
-                    "pid": pid,
-                    "z_order": len(results),
-                },
+                WindowInfo(
+                    title=title,
+                    name=exe or title,
+                    x=x,
+                    y=y,
+                    w=w,
+                    h=h,
+                    focused=hwnd == foreground,
+                    visible=True,
+                    window_id=f"win:{hwnd:X}",
+                    pid=pid,
+                    z_order=len(results),
+                ),
             )
             return True
 
         if not _user32.EnumWindows(_WNDENUMPROC(collect), 0):
             raise ctypes.WinError()
-        return {"windows": results, "runner_instance_id": _WINDOW_SCENE_INSTANCE_ID}
+        return WindowScene(windows=results, runner_instance_id=_WINDOW_SCENE_INSTANCE_ID)
     except Exception as e:
         logger.debug("win get_windows failed: %s", e)
-        return {"windows": []}
+        return WindowScene()
 
 
 def _windows_macos() -> WindowScene:
@@ -568,21 +569,21 @@ def _windows_macos() -> WindowScene:
             focused = win.get("kCGWindowOwnerPID", -1) == focused_pid and not focused_window_seen
             focused_window_seen |= focused
             results.append(
-                {
-                    "title": win.get("kCGWindowName", "") or owner,
-                    "name": owner,
-                    "x": int(b.get("X", 0)),
-                    "y": int(b.get("Y", 0)),
-                    "w": int(b["Width"]),
-                    "h": int(b["Height"]),
-                    "focused": focused,
-                    "visible": True,
-                    "window_id": f"mac:{int(win.get('kCGWindowNumber', 0))}",
-                    "pid": int(win.get("kCGWindowOwnerPID", 0)),
-                    "z_order": len(results),
-                },
+                WindowInfo(
+                    title=win.get("kCGWindowName", "") or owner,
+                    name=owner,
+                    x=int(b.get("X", 0)),
+                    y=int(b.get("Y", 0)),
+                    w=int(b["Width"]),
+                    h=int(b["Height"]),
+                    focused=focused,
+                    visible=True,
+                    window_id=f"mac:{int(win.get('kCGWindowNumber', 0))}",
+                    pid=int(win.get("kCGWindowOwnerPID", 0)),
+                    z_order=len(results),
+                ),
             )
-        return {"windows": results, "runner_instance_id": _WINDOW_SCENE_INSTANCE_ID}
+        return WindowScene(windows=results, runner_instance_id=_WINDOW_SCENE_INSTANCE_ID)
     except Exception as e:
         logger.debug("macos get_windows failed: %s", e)
-        return {"windows": []}
+        return WindowScene()

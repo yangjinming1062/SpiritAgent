@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import IO, Protocol
 
@@ -204,7 +205,7 @@ class BaseEnvironment(ABC):
         output_chunks: list[str] = []
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
-        def _drain_iterable(stream) -> None:
+        def _drain_iterable(stream: Iterable[str | bytes]) -> None:
             try:
                 for piece in stream:
                     if piece is not None:

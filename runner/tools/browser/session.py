@@ -2,6 +2,8 @@ import atexit
 import logging
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import httpx
@@ -14,7 +16,7 @@ from utils import (
 from .dialog_manager import _VALID_POLICIES, DEFAULT_DIALOG_POLICY, DEFAULT_DIALOG_TIMEOUT_S
 from .engine.launcher import NativeBrowserProcess
 from .profile_manager import cleanup_old_profiles
-from .supervisor import SUPERVISOR_REGISTRY
+from .supervisor import SUPERVISOR_REGISTRY, CDPSupervisor
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,8 @@ _DEFAULT_INACTIVITY_TIMEOUT_S = 300
 @dataclass
 class SessionInfo:
     launch_handle: NativeBrowserProcess | None = None
+    supervisor: CDPSupervisor | None = None
+    active_users: int = 0
     last_active_at: float = field(default_factory=time.time)
 
 
@@ -107,9 +111,8 @@ def _allow_private_urls() -> bool:
 
 
 def get_or_create_session(task_id: str) -> SessionInfo:
-    with _cleanup_lock:
-        info = _active_sessions.get(task_id)
-        if info is None:
+    with SUPERVISOR_REGISTRY.lifecycle(task_id), _cleanup_lock:
+        if (info := _active_sessions.get(task_id)) is None:
             info = SessionInfo()
             _active_sessions[task_id] = info
         info.last_active_at = time.time()
@@ -117,30 +120,51 @@ def get_or_create_session(task_id: str) -> SessionInfo:
         return info
 
 
-def touch_session(task_id: str) -> None:
-    with _cleanup_lock:
-        info = _active_sessions.get(task_id)
+@contextmanager
+def use_browser_session(task_id: str, *, create: bool = False) -> Iterator[SessionInfo | None]:
+    """工具持有期间不作空闲回收，退出时从最后一次使用重新计时。"""
+    with SUPERVISOR_REGISTRY.lifecycle(task_id):
+        with _cleanup_lock:
+            info = _active_sessions.get(task_id)
+        if info is None and create:
+            info = get_or_create_session(task_id)
         if info is not None:
-            info.last_active_at = time.time()
+            with _cleanup_lock:
+                info.active_users += 1
+                info.last_active_at = time.time()
+    try:
+        yield info
+    finally:
+        if info is not None:
+            with SUPERVISOR_REGISTRY.lifecycle(task_id), _cleanup_lock:
+                info.active_users -= 1
+                info.last_active_at = time.time()
 
 
 def _shutdown_session(task_id: str, info: SessionInfo) -> None:
     try:
-        SUPERVISOR_REGISTRY.stop(task_id)
+        if info.supervisor is not None:
+            SUPERVISOR_REGISTRY.stop(task_id, expected=info.supervisor)
     except Exception as e:
         logger.debug("Error stopping supervisor for %s: %s", task_id, e)
+    info.supervisor = None
     if info.launch_handle is not None:
         info.launch_handle.terminate()
+        info.launch_handle = None
 
 
 def cleanup_all_browsers() -> None:
     """关闭所有活跃浏览器会话与主管。"""
     with _cleanup_lock:
         sessions = list(_active_sessions.items())
-        _active_sessions.clear()
 
     for task_id, info in sessions:
-        _shutdown_session(task_id, info)
+        with SUPERVISOR_REGISTRY.lifecycle(task_id):
+            with _cleanup_lock:
+                if _active_sessions.get(task_id) is not info:
+                    continue
+                del _active_sessions[task_id]
+            _shutdown_session(task_id, info)
 
     try:
         cleanup_old_profiles()
@@ -151,13 +175,20 @@ def cleanup_all_browsers() -> None:
 def _cleanup_inactive_browser_sessions() -> None:
     cutoff = time.time() - _inactivity_timeout_s()
     with _cleanup_lock:
-        expired = [(task_id, info) for task_id, info in _active_sessions.items() if info.last_active_at < cutoff]
-        for task_id, _ in expired:
-            del _active_sessions[task_id]
+        expired = [
+            (task_id, info)
+            for task_id, info in _active_sessions.items()
+            if info.active_users == 0 and info.last_active_at < cutoff
+        ]
 
     for task_id, info in expired:
-        logger.info("Closing inactive browser session: %s", task_id)
-        _shutdown_session(task_id, info)
+        with SUPERVISOR_REGISTRY.lifecycle(task_id):
+            with _cleanup_lock:
+                if _active_sessions.get(task_id) is not info or info.active_users != 0 or info.last_active_at >= cutoff:
+                    continue
+                del _active_sessions[task_id]
+            logger.info("Closing inactive browser session: %s", task_id)
+            _shutdown_session(task_id, info)
 
 
 def _browser_cleanup_worker() -> None:
