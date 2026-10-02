@@ -23,7 +23,8 @@
     "dist:win:nsis": "pnpm run build && pnpm run builder -- --win nsis",
     "fix": "eslint renderer/ main/ shared/ --fix && prettier --write \"renderer/**/*.{ts,tsx}\" \"main/**/*.{ts,tsx}\" \"shared/**/*.{ts,tsx}\" \"scripts/**/*.{cjs,mjs,ts}\" \"vite.config.ts\" \"tsup.config.ts\" && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
-    "lint": "eslint renderer/ main/ shared/"
+    "lint": "eslint renderer/ main/ shared/",
+    "build:native": "node scripts/build-desktop-host.cjs"
   },
   "dependencies": {
     "electron-log": "^5.2.0",
@@ -158,6 +159,12 @@
       "target": [
         "nsis",
         "msi"
+      ],
+      "extraResources": [
+        {
+          "from": "build/${arch}/desktop-host.exe",
+          "to": "desktop-host.exe"
+        }
       ]
     },
     "nsis": {

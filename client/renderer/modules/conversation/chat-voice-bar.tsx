@@ -8,6 +8,7 @@ import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
 import styles from './chat-voice-bar.module.css'
+import { useConversationView } from './conversation-view'
 import {
   $voiceBarFailedIds,
   $voiceBarLoadingId,
@@ -15,7 +16,7 @@ import {
   $voiceBarPlayingId,
   voiceBarControl
 } from './voice-link'
-import { $voicePlaybackRecords } from './voice-playback'
+import { getVoicePlaybackStore } from './voice-playback'
 
 // 时长来自后端音频，播放状态经 voice-link 投影；本组件不发起文字合成。
 
@@ -32,6 +33,8 @@ export function ChatVoiceBar({ duration, messageId, playbackKey }: ChatVoiceBarP
   const loadingId = useStore($voiceBarLoadingId)
   const pausedId = useStore($voiceBarPausedId)
   const failedIds = useStore($voiceBarFailedIds, { keys: [messageId] })
+  const { runtime } = useConversationView()
+  const { $voicePlaybackRecords } = getVoicePlaybackStore(runtime.$chatSessionId.get())
   const records = useStore($voicePlaybackRecords, { keys: playbackKey ? [playbackKey] : [] })
   const record = playbackKey ? records[playbackKey] : undefined
   const unavailable = failedIds[messageId]

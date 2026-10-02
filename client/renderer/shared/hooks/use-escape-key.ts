@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 
+import { usePanelActivity } from '../context/panel-activity'
+
 import { useLatestRef } from './use-latest-ref'
 
 export interface UseEscapeKeyOptions {
@@ -25,9 +27,10 @@ export function useEscapeKey(
   }: UseEscapeKeyOptions = {}
 ): void {
   const handlerRef = useLatestRef(handler)
+  const panelActive = usePanelActivity()
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !panelActive) {
       return
     }
 
@@ -50,5 +53,5 @@ export function useEscapeKey(
     window.addEventListener('keydown', onKey, capture)
 
     return () => window.removeEventListener('keydown', onKey, capture)
-  }, [enabled, busy, capture, preventDefault, stopPropagation, handlerRef])
+  }, [enabled, panelActive, busy, capture, preventDefault, stopPropagation, handlerRef])
 }

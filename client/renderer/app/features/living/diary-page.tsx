@@ -57,7 +57,7 @@ function formatSelectedDate(dateStr: string, t: Dictionary['living']['diary']): 
   return weekDay ? t.dateFormat(dateStr, weekDay) : dateStr
 }
 
-export function DiaryPage(): React.JSX.Element {
+export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boolean } = {}): React.JSX.Element {
   const persona = useStore($persona)
   const diaryByDate = useStore($diaryByDate)
   const loading = useStore($diaryLoading)
@@ -85,7 +85,10 @@ export function DiaryPage(): React.JSX.Element {
   const readRequest = useRef<Promise<boolean> | undefined>(undefined)
   const snapshotCaptured = useRef(false)
   const beginAsync = useAsyncGuard()
-  const foreground = surfaceOpen === 'living' && surfaceVisible && !screenLocked && documentActive
+
+  const foreground =
+    (suppliedForeground ?? (surfaceOpen === 'living' && surfaceVisible)) && !screenLocked && documentActive
+
   const wasForeground = useRef(foreground)
 
   useEffect(() => {

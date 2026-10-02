@@ -1,3 +1,4 @@
+import { bindConversationActivity } from '@/app/workflows/conversation-activity'
 import { bindConversationSpeech } from '@/app/workflows/conversation-speech'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
 import {
@@ -27,6 +28,7 @@ export function bindPresentation(): void {
   })
 
   bindConversationSpeech()
+  bindConversationActivity()
 
   // 仪式行走等角色行为的主动性台词经工作流送达（角色模块不依赖应用层）。
   bindProactiveLineSpeaker(speakProactive)

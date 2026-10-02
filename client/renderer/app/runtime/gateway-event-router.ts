@@ -1,9 +1,8 @@
-import { $chatSessionId } from '@/modules/conversation'
+import { $chatSessionId, findConversationRuntime, getConversationRuntime } from '@/modules/conversation'
 import { onJournalEvent } from '@/modules/memory'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
-import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 
@@ -17,10 +16,8 @@ import { handleToolCall, handleToolCancel, handleToolComplete, handleToolStart }
 // 网关事件路由：只保留分派、窗口角色校验与公共守卫；各能力状态更新在 handlers/，跨模块后续动作进 app/workflows。精灵窗宿主与代理窗口共用；宿主专属 Runner 分发在 handlers/tool-dispatch。
 
 export function handleGatewayEvent(event: GatewayEvent): void {
-  // 仅在冷启动 hydrateAuth 尚未完成（'pending'）时丢弃 WSEvent：无用户态，事件无主。'unauthenticated' 不丢弃——登出 race 里到达的 message.complete 还要落地，否则流式 chat 卡 thinking；跨会话污染由下方 session_id 闸门兜底。
-  if ($auth.get().kind === 'pending') {
-    log.warn('events', 'Discarded event during pending auth:', event.type)
-
+  // 换号及登出期间的旧连接事件没有当前账户所有权；断连收尾由runtime生命周期负责。
+  if ($auth.get().kind !== 'authenticated') {
     return
   }
 
@@ -28,13 +25,14 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     pushDevLog(event.type, JSON.stringify(event.payload ?? {}))
   }
 
-  // 聊天回合事件（message.*/tool.*/error）携带 session_id：来自未查看会话的事件不应作用于可见聊天（如后台任务会话的工具帧），否则用户会看到它们像主会话回复。WSEvent 驱动的事件（companion.message/mood、avatar.regenerated）没有 session_id，直接放行。
-  if (event.session_id !== undefined) {
-    const current = $chatSessionId.get()
+  // 一份会话runtime接收一次事件；主对话与固定轻语只订阅共享投影。
+  const runtime =
+    event.session_id !== undefined
+      ? findConversationRuntime(event.session_id)
+      : getConversationRuntime($chatSessionId.get())
 
-    if (current === null || event.session_id !== current) {
-      return
-    }
+  if (event.session_id !== undefined && !runtime && event.type !== 'tool.call' && event.type !== 'tool.cancel') {
+    return
   }
 
   const ctx: EventRouteContext = { isProxy: $gateway.get()?.isProxy ?? false }
@@ -65,12 +63,12 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'compress.completed':
 
     case 'error':
-      handleConversationEvent(event, ctx)
+      handleConversationEvent(event, ctx, runtime)
 
       break
 
     case 'tool.start':
-      handleToolStart(event)
+      handleToolStart(event, runtime)
 
       break
 
@@ -85,7 +83,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     case 'tool.complete':
-      handleToolComplete()
+      handleToolComplete(runtime)
 
       break
 

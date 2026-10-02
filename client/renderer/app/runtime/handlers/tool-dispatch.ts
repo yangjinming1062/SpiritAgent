@@ -1,11 +1,18 @@
 import type { DesktopScreenRect, MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
 
-import { $spriteState, findWindowByKeyword, performRitualWalk, setSpriteState } from '@/modules/character'
-import { $chatSessionId, $chatTurnInFlight, setAssistantTool } from '@/modules/conversation'
+import { holdRemoteToolActivity, syncConversationActivity } from '@/app/workflows/conversation-activity'
+import { findWindowByKeyword, performRitualWalk } from '@/modules/character'
+import {
+  $chatSessionId,
+  type ConversationRuntime,
+  findConversationRuntime,
+  getConversationRuntime
+} from '@/modules/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { trimOldest } from '@/shared/lib/trim-oldest'
 import { $gateway } from '@/shared/store/gateway'
+import { $presentation } from '@/shared/store/presentation'
 import { getStrings } from '@/shared/strings'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
@@ -13,9 +20,6 @@ import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 // 宿主专属设备指令分发：tool.call/cancel 只在精灵窗宿主执行，按 call_id 去重重放帧，交互类工具先仪式行走再 execute。click_at 虚拟目标几何边长（px）：只为 perch 落位与指向方位提供参照，精灵会站到点击点旁而非覆盖它。
 const CLICK_GEOM_SIZE = 160
 const CLICK_GEOM_HALF = CLICK_GEOM_SIZE / 2
-
-// 遥控回合可并发多个工具，一个先返回不能把仍在跑的复位掉。
-let remoteToolDepth = 0
 
 const NOT_EXECUTED_RESULT = { ok: false, error: 'Not executed: the call did not reach the local runner.' }
 
@@ -62,25 +66,14 @@ function markToolCallSeen(callId: string): boolean {
   return true
 }
 
-function releaseRemoteTool(): void {
-  remoteToolDepth = Math.max(0, remoteToolDepth - 1)
-
-  // force：IDLE(10)<WORKING(70)，无 force 会被优先级门控静默拒绝，精灵永久卡在工作姿态；仅在仍工作态时复位，可见会话回合由其自身收尾。
-  if (remoteToolDepth === 0 && !$chatTurnInFlight.get()) {
-    const current = $spriteState.get()
-
-    if (current === 'working' || current === 'interacting') {
-      setSpriteState('idle', { force: true })
-    }
-  }
-}
-
-export function handleToolStart(event: GatewayEvent): void {
-  // 全局 WORKING 入口：所有工具执行前都发 tool_start，因此无论工具位置精灵都会进入 WORKING；tool.call 只针对 Runner 工具。
+export function handleToolStart(
+  event: GatewayEvent,
+  runtime: ConversationRuntime = getConversationRuntime($chatSessionId.get())
+): void {
   const p = decodePayload<{ name?: string }>(event.payload)
 
-  setAssistantTool(p.name ?? getStrings().chat.tools.genericName)
-  setSpriteState('working')
+  runtime.setAssistantTool(p.name ?? getStrings().chat.tools.genericName)
+  syncConversationActivity()
 }
 
 export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): void {
@@ -109,13 +102,8 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
 
   const name = p.name ?? ''
 
-  // 帧是否落在用户正看的会话：不是则 tool.start/message.complete 被会话闸门拦下，只能由本分支自持工作态（ARCHITECTURE「工具与表达」）。用 session_id 比对而非枚举回合类型，新回合种类自动落对。
-  const selfDriven = !p.headless && (!p.session_id || p.session_id !== $chatSessionId.get())
-
-  if (selfDriven) {
-    remoteToolDepth += 1
-    setSpriteState('working', { force: true })
-  }
+  const ownsTurn = p.session_id && findConversationRuntime(p.session_id)?.$chatTurnInFlight.get()
+  const releaseActivity = !p.headless && !ownsTurn ? holdRemoteToolActivity() : undefined
 
   // fire-and-forget 调用 Runner 并回传结果，让后端等待解析完成；工具错误不得冒泡到本处理器。
   const gateway = $gateway.get()
@@ -169,7 +157,39 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
       let outcome: null | RunnerCallOutcome
 
       try {
-        outcome = findTarget ? await performRitualWalk(findTarget, dispatch, { previewClick }) : await dispatch()
+        const stage = $presentation.get()
+
+        if (findTarget && stage.stageOwner === 'desktop') {
+          try {
+            const rect = p.headless || !stage.stageVisible || !stage.foreground ? null : await findTarget()
+
+            if (rect && !call.cancelled) {
+              const completed = await window.spiritagent.presentation.requestRitual({ callId, rect })
+              const currentStage = $presentation.get()
+
+              if (
+                completed &&
+                previewClick &&
+                !call.cancelled &&
+                currentStage.stageOwner === 'desktop' &&
+                currentStage.stageVisible &&
+                currentStage.foreground &&
+                currentStage.stageEpoch === stage.stageEpoch
+              ) {
+                await window.spiritagent.runnerInvoke('system.click_at', {
+                  x: Math.round(rect.x + rect.w / 2),
+                  y: Math.round(rect.y + rect.h / 2)
+                })
+              }
+            }
+          } catch (error) {
+            log.warn('events', `desktop ritual for ${callId} skipped:`, error)
+          }
+
+          outcome = await dispatch()
+        } else {
+          outcome = findTarget ? await performRitualWalk(findTarget, dispatch, { previewClick }) : await dispatch()
+        }
       } catch (err) {
         // 尚未交给 Runner 的调用确定没有执行；已交出后的 IPC 失败无法判断请求是否到达 Runner。
         log.warn('events', `runner tool ${name} (${callId}) failed:`, err)
@@ -197,9 +217,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
     } finally {
       activeToolCalls.delete(callId)
 
-      if (selfDriven) {
-        releaseRemoteTool()
-      }
+      releaseActivity?.()
     }
   })()
 }
@@ -215,6 +233,12 @@ export function handleToolCancel(event: GatewayEvent, ctx: EventRouteContext): v
 
   call.cancelled = true
 
+  if ($presentation.get().stageOwner === 'desktop') {
+    void window.spiritagent.presentation
+      .cancelRitual(callId)
+      .catch(error => log.warn('events', 'Ritual cancellation failed', error))
+  }
+
   if (call.running) {
     void window.spiritagent?.runnerCancel?.(callId).catch(err => {
       log.warn('events', `runner cancel for ${callId} failed:`, err)
@@ -222,8 +246,7 @@ export function handleToolCancel(event: GatewayEvent, ctx: EventRouteContext): v
   }
 }
 
-export function handleToolComplete(): void {
-  // 全局 WORKING 出口；force：THINKING(50)<WORKING(70)，无 force 优先级门控会静默拒绝。
-  setAssistantTool(null)
-  setSpriteState('thinking', { force: true })
+export function handleToolComplete(runtime: ConversationRuntime = getConversationRuntime($chatSessionId.get())): void {
+  runtime.setAssistantTool(null)
+  syncConversationActivity()
 }

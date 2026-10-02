@@ -1,3 +1,26 @@
+import type {
+  DesktopAccount,
+  DesktopBackground,
+  DesktopNavigation,
+  DockState,
+  PresentationMode,
+  PresentationState,
+  StageActivity,
+  StageRitualRequest
+} from './desktop-presentation'
+export type {
+  DesktopAccount,
+  DesktopBackground,
+  DesktopNavigation,
+  DockEntry,
+  DockState,
+  PresentationDisplay,
+  PresentationMode,
+  PresentationState,
+  StageActivity,
+  StageRitualRequest
+} from './desktop-presentation'
+
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 
 export interface MemoryToolScope {
@@ -364,6 +387,33 @@ export interface DesktopGatewayRpcResponse {
 
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {
+  'spiritagent:presentation:ritual-cancel': (callId: string) => void
+  'spiritagent:presentation:get-stage-activity': () => StageActivity
+  'spiritagent:presentation:set-stage-visible': (visible: boolean) => void
+  'spiritagent:presentation:get-state': () => Promise<PresentationState>
+  'spiritagent:presentation:set-mode': (mode: PresentationMode) => Promise<PresentationState>
+  'spiritagent:presentation:set-display': (id: number) => Promise<PresentationState>
+  'spiritagent:presentation:report-ready': () => void
+  'spiritagent:presentation:heartbeat': () => void
+  'spiritagent:presentation:host-ready': () => Promise<void>
+  'spiritagent:presentation:set-background': (background: DesktopBackground) => void
+  'spiritagent:presentation:claim-play': (claim: SurfacePlaybackClaim) => boolean
+  'spiritagent:presentation:stage-activity': (activity: StageActivity) => void
+  'spiritagent:presentation:ritual-request': (request: Omit<StageRitualRequest, 'epoch'>) => Promise<boolean>
+  'spiritagent:presentation:ritual-complete': (reply: { callId: string; epoch: number; completed: boolean }) => void
+  'spiritagent:dock:get-state': () => Promise<DockState>
+  'spiritagent:dock:add-from-picker': () => Promise<DockState>
+  'spiritagent:dock:add-dropped': (paths: string[]) => Promise<DockState>
+  'spiritagent:dock:launch': (id: string) => Promise<void>
+  'spiritagent:dock:reorder': (ids: string[]) => Promise<DockState>
+  'spiritagent:dock:remove': (id: string) => Promise<DockState>
+  'spiritagent:dock:repair': (id: string) => Promise<DockState>
+  'spiritagent:desktop:accounts': () => Promise<DesktopAccount[]>
+  'spiritagent:desktop:switch-account': (id: string) => Promise<void>
+  'spiritagent:desktop:add-account': () => Promise<void>
+  'spiritagent:desktop:quit': () => void
+  'spiritagent:background:ready': () => void
+
   // 连接与启动
   'spiritagent:gateway:ws-url': () => Promise<string> | string
   'spiritagent:gateway:request': (payload: {
@@ -533,6 +583,14 @@ export interface IpcInvokeContract {
 
 // 2. 主进程向渲染进程推送事件（通过 webContents.send / ipcRenderer.on）
 export interface IpcEventContract {
+  'spiritagent:presentation:ritual-cancelled': [payload: { callId: string; epoch: number }]
+  'spiritagent:presentation:changed': [payload: PresentationState]
+  'spiritagent:dock:changed': [payload: DockState]
+  'spiritagent:desktop:navigate': [payload: DesktopNavigation]
+  'spiritagent:background:image': [payload: DesktopBackground]
+  'spiritagent:presentation:stage-activity': [payload: StageActivity]
+  'spiritagent:presentation:ritual': [payload: StageRitualRequest]
+
   'spiritagent:voice-playback:changed': [payload: VoicePlaybackChanged]
   'spiritagent:auth:changed': [payload: DesktopAuthBroadcast]
   'spiritagent:auth:session-expired': [sessionId: string]
@@ -569,6 +627,33 @@ type IpcSendChannel = keyof IpcSendContract
 // 运行时 channel 常量。用扁平键(camelCase)避免 `Record<string, Record<string, ...>>` 守卫无法适配混合扁平/嵌套 channel 名的结构问题。每个叶子字符串都必须是对应契约接口的合法 key,任何拼写错误立即在 `satisfies` 检查处报错。在 main + preload 中以 `IPC.invoke.authActivate` 等方式使用,完全消除字面量字符串。
 export const IPC = {
   invoke: {
+    presentationRitualCancel: 'spiritagent:presentation:ritual-cancel',
+    presentationGetStageActivity: 'spiritagent:presentation:get-stage-activity',
+    presentationSetStageVisible: 'spiritagent:presentation:set-stage-visible',
+    presentationGetState: 'spiritagent:presentation:get-state',
+    presentationSetMode: 'spiritagent:presentation:set-mode',
+    presentationSetDisplay: 'spiritagent:presentation:set-display',
+    presentationReportReady: 'spiritagent:presentation:report-ready',
+    presentationHeartbeat: 'spiritagent:presentation:heartbeat',
+    presentationHostReady: 'spiritagent:presentation:host-ready',
+    presentationSetBackground: 'spiritagent:presentation:set-background',
+    presentationClaimPlay: 'spiritagent:presentation:claim-play',
+    presentationStageActivity: 'spiritagent:presentation:stage-activity',
+    presentationRitualRequest: 'spiritagent:presentation:ritual-request',
+    presentationRitualComplete: 'spiritagent:presentation:ritual-complete',
+    dockGetState: 'spiritagent:dock:get-state',
+    dockAddFromPicker: 'spiritagent:dock:add-from-picker',
+    dockAddDropped: 'spiritagent:dock:add-dropped',
+    dockLaunch: 'spiritagent:dock:launch',
+    dockReorder: 'spiritagent:dock:reorder',
+    dockRemove: 'spiritagent:dock:remove',
+    dockRepair: 'spiritagent:dock:repair',
+    desktopAccounts: 'spiritagent:desktop:accounts',
+    desktopSwitchAccount: 'spiritagent:desktop:switch-account',
+    desktopAddAccount: 'spiritagent:desktop:add-account',
+    desktopQuit: 'spiritagent:desktop:quit',
+    backgroundReady: 'spiritagent:background:ready',
+
     authActivate: 'spiritagent:auth:activate',
     authRefresh: 'spiritagent:auth:refresh',
     authLogout: 'spiritagent:auth:logout',
@@ -636,6 +721,14 @@ export const IPC = {
     updateGetState: 'spiritagent:update:get-state'
   } as const satisfies Record<string, IpcChannel>,
   event: {
+    presentationRitualCancelled: 'spiritagent:presentation:ritual-cancelled',
+    presentationChanged: 'spiritagent:presentation:changed',
+    dockChanged: 'spiritagent:dock:changed',
+    desktopNavigate: 'spiritagent:desktop:navigate',
+    backgroundImage: 'spiritagent:background:image',
+    presentationStageActivity: 'spiritagent:presentation:stage-activity',
+    presentationRitual: 'spiritagent:presentation:ritual',
+
     voicePlaybackChanged: 'spiritagent:voice-playback:changed',
     authChanged: 'spiritagent:auth:changed',
     authSessionExpired: 'spiritagent:auth:session-expired',

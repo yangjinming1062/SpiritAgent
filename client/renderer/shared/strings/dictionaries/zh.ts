@@ -633,6 +633,7 @@ export const dict = {
     filesReceived: (count: number) => `收到 ${count} 个文件`,
     attachmentsAdded: (count: number) => `添加了 ${count} 个附件`,
     filesHandoffFailed: '文件转交失败，请重新拖入',
+    connectionInterrupted: '连接中断，重连后同步回复。',
     sendFailed: '发送失败',
 
     media: {
@@ -1249,6 +1250,7 @@ export const dict = {
       searching: '搜索中…',
       noMatch: '没有找到匹配会话',
       badgeArchived: '已归档',
+      fixedHeading: '固定对话',
       specialHeading: '专业工作预设',
       loadingSpecial: '加载预设会话中…',
       noSpecial: '暂无专业预设会话',

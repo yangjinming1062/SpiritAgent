@@ -12,7 +12,7 @@
 | 场景与背景切换 | [生成服务任务链](../backend/services/application/generation/README.md#场景改动链)贯穿前后端 |
 | 窗口、拖拽、主题与动作播放 | [主进程窗口](main/README.md#窗口与几何)、[渲染层](renderer/README.md#角色呈现契约)；核对几何、命中与可见性 |
 | 设置同步与 Runner 更新 | [runner-config.ts](main/ipc/runner-config.ts)、[config-sync.ts](main/shared/lib/config-sync.ts)、[updater.ts](main/runner/updater.ts)；[同步](../docs/PROTOCOL.md#配置所有权与云同步)与[验签](../docs/PROTOCOL.md#自更新签名) |
-| 桌面应用更新 | [update.ts](main/ipc/update.ts)、[auto-updater.ts](main/lifecycle/auto-updater.ts) ↔ [update-bridge.ts](renderer/shared/lib/update-bridge.ts)（仅生活空间安装）、[about-page.tsx](renderer/app/windows/living/settings/about-page.tsx)；[更新契约](../docs/PROTOCOL.md#自更新签名) |
+| 桌面应用更新 | [update.ts](main/ipc/update.ts)、[auto-updater.ts](main/lifecycle/auto-updater.ts) ↔ [update-bridge.ts](renderer/shared/lib/update-bridge.ts)（生活空间和桌面入口）、[about-page.tsx](renderer/app/features/living/settings/about-page.tsx)；[更新契约](../docs/PROTOCOL.md#自更新签名) |
 
 ## 进程与代码边界
 
@@ -28,7 +28,7 @@ flowchart LR
 | 代码 | 职责 |
 |---|---|
 | `main` | 身份、窗口、Runner、缓存与更新 |
-| `renderer` | 交互与呈现，各窗口独立运行 |
+| `renderer` | 交互与呈现，各物理窗口独立运行；桌面内部面板共享运行时 |
 | `shared/ipc` | 跨进程通道与载荷 |
 | `shared/runtime.ts`（`@runtime`）、`shared/speech-text.ts` | 两个进程共用的运行时原语与朗读文本清理 |
 
@@ -46,7 +46,7 @@ Runner 握手、配置推送与工具清单读取由主进程完成；`tools.syn
 
 ## 窗口与主题
 
-- 生活空间与工作台互斥，各自用一个透明物理窗口承载内容和侧边伙伴；本机偏好与几何权威见 [主进程](main/README.md#窗口与几何)，显示规则见 [DESIGN](../docs/DESIGN.md#窗口与会话)。
+- 窗口模式中生活空间与工作台互斥，各自用一个透明物理窗口承载内容和侧边伙伴；本机偏好与几何权威见 [主进程](main/README.md#窗口与几何)，显示规则见 [DESIGN](../docs/DESIGN.md#窗口与会话)。
 - 开关窗口只改变呈现，不取消已执行工具。
 - 主题在 `loadURL` 前从配置镜像写入入口参数，渲染模块加载时优先消费并移除参数；localStorage 是即时缓存，云端水合负责收敛。
 - 镜像没有主题时不写入口参数，渲染层依次使用 localStorage 与默认主题 `day-clear`；非法值归一为 `day-clear`，不阻塞开窗。
@@ -55,6 +55,8 @@ Runner 握手、配置推送与工具清单读取由主进程完成；`tools.syn
 - 精灵窗使用系统 `floating` 层置顶，使 macOS 输入法候选窗等系统浮层可以显示在其上；独占全屏应用可能覆盖精灵。
 - 精灵窗只覆盖当前显示器工作区，跨屏统一换算原点与坐标，避免二次平移；恢复先选屏再定位，拔屏回到可用显示器。
 - 跨窗口附件通过主进程信箱转交；会话跳转只把目标 ID 交给目标窗口，来源窗口保留自己的会话。
+
+Windows 另提供统一桌面模式，交互主屏整合全部业务功能，其他屏只显示背景；普通应用覆盖整个桌面。呈现与系统恢复见[主进程](main/README.md#桌面承载与恢复)，体验见 [DESIGN](../docs/DESIGN.md#桌面模式)。
 
 ## 资产与历史缓存
 

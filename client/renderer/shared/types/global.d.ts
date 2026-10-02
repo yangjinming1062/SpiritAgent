@@ -21,7 +21,50 @@ export {}
 
 declare global {
   interface Window {
+    desktopBackground?: {
+      ready: () => Promise<void>
+      onImage: EventSubscription<'spiritagent:background:image'>
+    }
     spiritagent: {
+      presentation: {
+        cancelRitual: AsyncIpc<IpcInvokeContract['spiritagent:presentation:ritual-cancel']>
+        onRitualCancelled: EventSubscription<'spiritagent:presentation:ritual-cancelled'>
+        getStageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-stage-activity']>
+        setStageVisible: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-stage-visible']>
+        getState: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-state']>
+        setMode: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-mode']>
+        setDisplay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-display']>
+        reportReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:report-ready']>
+        heartbeat: AsyncIpc<IpcInvokeContract['spiritagent:presentation:heartbeat']>
+        hostReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:host-ready']>
+        setBackground: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-background']>
+        claimPlay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:claim-play']>
+        stageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:stage-activity']>
+        requestRitual: AsyncIpc<IpcInvokeContract['spiritagent:presentation:ritual-request']>
+        completeRitual: AsyncIpc<IpcInvokeContract['spiritagent:presentation:ritual-complete']>
+        onChanged: EventSubscription<'spiritagent:presentation:changed'>
+        onStageActivity: EventSubscription<'spiritagent:presentation:stage-activity'>
+        onRitual: EventSubscription<'spiritagent:presentation:ritual'>
+      }
+      dock: {
+        getState: AsyncIpc<IpcInvokeContract['spiritagent:dock:get-state']>
+        addFromPicker: AsyncIpc<IpcInvokeContract['spiritagent:dock:add-from-picker']>
+        addDroppedFiles: (
+          files: File[]
+        ) => Promise<Awaited<ReturnType<IpcInvokeContract['spiritagent:dock:add-dropped']>>>
+        launch: AsyncIpc<IpcInvokeContract['spiritagent:dock:launch']>
+        reorder: AsyncIpc<IpcInvokeContract['spiritagent:dock:reorder']>
+        remove: AsyncIpc<IpcInvokeContract['spiritagent:dock:remove']>
+        repair: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair']>
+        onChanged: EventSubscription<'spiritagent:dock:changed'>
+      }
+      desktop: {
+        accounts: AsyncIpc<IpcInvokeContract['spiritagent:desktop:accounts']>
+        switchAccount: AsyncIpc<IpcInvokeContract['spiritagent:desktop:switch-account']>
+        addAccount: AsyncIpc<IpcInvokeContract['spiritagent:desktop:add-account']>
+        quit: AsyncIpc<IpcInvokeContract['spiritagent:desktop:quit']>
+        onNavigate: EventSubscription<'spiritagent:desktop:navigate'>
+      }
       getGatewayWsUrl: AsyncIpc<IpcInvokeContract['spiritagent:gateway:ws-url']>
       gatewayRequest: <T = unknown>(
         payload: Parameters<IpcInvokeContract['spiritagent:gateway:request']>[0]

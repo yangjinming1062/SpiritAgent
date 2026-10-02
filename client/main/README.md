@@ -4,16 +4,16 @@
 
 ## 包边界
 
-| 包或入口 | 职责 |
-|---|---|
-| `entry.ts` | 唯一组合根，显式装配，不展开业务逻辑 |
-| `preload.ts` | 沙盒 preload，向渲染层暴露 `window.spiritagent` |
-| `backend` | 多账户凭据、会话与 HTTP |
-| `runner` | 进程、端点与本地 RPC 桥、反向模型代理、Runner 更新 |
-| `lifecycle` | 窗口、托盘、退出与桌面更新 |
-| `ipc` | 按能力注册通道，也持有资产、历史快照与 TTS 合成音频三类磁盘缓存及 Runner 宿主 |
-| `security` | sender、路径与能力准入 |
-| `shared` | 叶子层，经装配层注入结构端口，不导入 backend / runner 实现 |
+| 包或入口     | 职责                                                                          |
+| ------------ | ----------------------------------------------------------------------------- |
+| `entry.ts`   | 唯一组合根，显式装配，不展开业务逻辑                                          |
+| `preload.ts` | 沙盒 preload，向渲染层暴露 `window.spiritagent`                               |
+| `backend`    | 多账户凭据、会话与 HTTP                                                       |
+| `runner`     | 进程、端点与本地 RPC 桥、反向模型代理、Runner 更新                            |
+| `lifecycle`  | 窗口、托盘、退出与桌面更新                                                    |
+| `ipc`        | 按能力注册通道，也持有资产、历史快照与 TTS 合成音频三类磁盘缓存及 Runner 宿主 |
+| `security`   | sender、路径与能力准入                                                        |
+| `shared`     | 叶子层，经装配层注入结构端口，不导入 backend / runner 实现                    |
 
 主进程产物为 ESM `entry.js`，沙盒 preload 为 CJS `preload.cjs`；混入 ESM import 会使 preload 桥失效。`main/shared` 与跨进程契约包 `client/shared` 分层独立。
 
@@ -55,13 +55,25 @@
 
 [伙伴偏好](lifecycle/surface-companion.ts)在创建窗口前读取，独立保存在本机，不经云同步；原子保存失败向调用方报告，内存继续保留原值。侧边伙伴的偏好与实际可见状态、桌面精灵窗的实际显隐 `spriteVisible`（窗口存在、未隐藏且未最小化）都经 [IPC 快照](../shared/ipc/contracts.ts)传递，渲染层不得用迟到快照覆盖较新版本。精灵窗每次创建都经 [tray.ts](lifecycle/tray.ts) 的 `installCloseInterceptor` 在显示、隐藏、最小化与还原时发布快照，托盘、快捷键与右键隐藏无需各自发布；精灵窗关闭了后台节流，页面可见性 API 不反映隐藏。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
 
-[sprite.ts](ipc/sprite.ts)管理精灵窗位置（保存为 Home 下的 `companion-position.json`）、窗口场景快照、目标换算与跨屏移动；场景快照、目标换算与跟随目标跨屏（`moveToDisplay`）只接受精灵窗 sender，拖拽跨屏（`moveToCursorDisplay`）与位置读写不校验 sender。默认显示比例经它广播到各窗口。
+[sprite.ts](ipc/sprite.ts)管理精灵窗位置（保存为 Home 下的 `companion-position.json`）、窗口场景快照、目标换算与跨屏移动。场景快照与目标换算接受精灵宿主或交互桌面 sender，使用当前舞台窗口的坐标；跟随目标跨屏（`moveToDisplay`）仅允许精灵窗拥有舞台时执行。拖拽跨屏（`moveToCursorDisplay`）与精灵位置读写保持原入口。默认显示比例经它广播到各窗口。
 
 [快捷键](ipc/shortcuts.ts)返回注册冲突与失败。Windows 关窗隐藏到托盘，macOS 保留 Dock；多屏、透明命中见 [Client](../README.md#窗口与主题)，用户行为见 [DESIGN](../../docs/DESIGN.md#窗口与会话)。
 
+## 桌面承载与恢复
+
+[desktop-presentation.ts](lifecycle/desktop-presentation.ts)管理统一 desktop 生命周期、交互显示器、舞台所有权与受控 IPC；原 living／workbench 枚举只代表窗口入口。主屏使用完整 preload，副屏使用 [preload-background.ts](preload-background.ts)，只接收主屏取得的背景，不具备鉴权、配置、启动器或网关能力。desktop 可调用配置与安装更新，网关票及 Runner 派发仍只授予精灵宿主。
+
+[explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../native/desktop-host/README.md)。全部主副屏先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
+
+账户失效、呈现切换、显示器变化、渲染器失败与退出都先恢复系统，再销毁桌面窗口。guardian 独立监测主进程、host 和 10 秒续租；异常 journal 在下一次启动先恢复；独立的 interrupted 标记使 guardian 已恢复并清理 journal 的异常也停留窗口模式。恢复失败保留记录和错误，不阻断窗口模式启动。所有进程同时被强制终止不能保证即时恢复。
+
+[desktop-dock.ts](ipc/desktop-dock.ts)持有启动目标及图标缓存，只接受交互桌面 sender；数据和失败语义见[桌面呈现与本机启动器](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+
+真实平台门禁见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)，挂载探测入口见 [helper](../native/desktop-host/README.md#原生验收)。
+
 ## 配置镜像
 
-[runner-config.ts](ipc/runner-config.ts)只接受工作台 sender，读取整份配置、按路径修改字段；[配置存储](shared/lib/runner-config-store.ts)串行落盘与推送 Runner，云同步防抖、水合写入抑制回环；在途 flush 以 `flushQueued` 补跑防丢编辑，换号以 `authEpoch` 丢弃旧账户上云；`patch` 另拒绝触及原型链的路径与非 JSON 值；`patch` 与 `mutate` 修改抛错或落盘失败时回滚内存镜像，云端水合 `applyCloudMirror` 与账户隔离清理 `clearSyncedMirror` 落盘失败保留内存结果并抛出，理由见配置契约。其他写入方各走带校验的通道：[prefs.ts](ipc/prefs.ts) 只接受 `companion.*` 点键；快捷键、托盘语言与上次完整入口经 `patch`，主题与技能、工具集开关经 `mutate`，云端水合经 `applyCloudMirror` 整节写入，账户隔离清理经 `clearSyncedMirror`。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
+[runner-config.ts](ipc/runner-config.ts)只接受工作台或交互桌面 sender，读取整份配置、按路径修改字段；[配置存储](shared/lib/runner-config-store.ts)串行落盘与推送 Runner，云同步防抖、水合写入抑制回环；在途 flush 以 `flushQueued` 补跑防丢编辑，换号以 `authEpoch` 丢弃旧账户上云；`patch` 另拒绝触及原型链的路径与非 JSON 值；`patch` 与 `mutate` 修改抛错或落盘失败时回滚内存镜像，云端水合 `applyCloudMirror` 与账户隔离清理 `clearSyncedMirror` 落盘失败保留内存结果并抛出，理由见配置契约。其他写入方各走带校验的通道：[prefs.ts](ipc/prefs.ts) 只接受 `companion.*` 点键；快捷键、托盘语言与上次完整入口经 `patch`，主题与技能、工具集开关经 `mutate`，云端水合经 `applyCloudMirror` 整节写入，账户隔离清理经 `clearSyncedMirror`。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
 ## Runner 生命周期
 
@@ -79,7 +91,8 @@
 
 - electron-updater 的 error 事件不带来源，阶段按最近发起的检查、下载或安装归属；新增触发入口须同步设置阶段。
 - 更新源在每次检查和下载前按保存的后端地址核对，不锁定首个地址；Runner 预取使用发现该版本时的更新源。
-- 安装包下载完成只广播 `preparing`，预取校验通过才广播 `downloaded`；重启安装只认该状态与生活空间 sender。
+- 安装包下载完成只广播 `preparing`，预取校验通过才广播 `downloaded`；重启安装只认该状态与生活空间或交互桌面 sender。
+- 安装入口先等待桌面恢复，再调用 `quitAndInstall`；Windows updater 会先启动安装器再发退出事件，不能仅靠退出钩子保证恢复顺序。
 - 更新状态广播给全部窗口，不假定主窗口存在；实际消费方由渲染层 `update-bridge` 挂载位置决定。
 
 ## 网络与缓存

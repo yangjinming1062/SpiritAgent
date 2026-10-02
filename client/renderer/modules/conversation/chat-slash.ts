@@ -8,13 +8,8 @@ import type { SlashCommandMeta } from '@/shared/lib/slash-commands'
 import { getStrings } from '@/shared/strings'
 import type { SessionMessage } from '@/shared/types/spiritagent'
 
-import {
-  $chatSessionId,
-  hydrateChatMessages,
-  markAssistantTerminal,
-  type PendingAttachment,
-  pushStatusPill
-} from './chat-store'
+import type { ConversationRuntime } from './chat-runtime'
+import { activeConversationRuntime, type PendingAttachment } from './chat-store'
 import { rememberFullHistory } from './session-history-cache'
 import { ensureChatSession } from './session-list-store'
 import { removeVoicePlayback } from './voice-playback'
@@ -69,12 +64,15 @@ async function executeSlashCommand(
   cmd: SlashCommandMeta,
   args: string[],
   opts: {
+    runtime?: ConversationRuntime
     onFinish?: () => void
     onStart?: () => void
     requestGateway: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>
   }
 ): Promise<void> {
   const { requestGateway, onStart, onFinish } = opts
+  const runtime = opts.runtime ?? activeConversationRuntime()
+  const { $chatSessionId, hydrateChatMessages, markAssistantTerminal, pushStatusPill } = runtime
 
   if (cmd.requiresConfirmation && !window.confirm(getStrings().chat.slash.confirmMessage(cmd.name))) {
     return
@@ -82,12 +80,12 @@ async function executeSlashCommand(
 
   let sid: string | null = null
   // 结果只写回发起命令的会话；已切走时仅更新该会话的历史缓存。
-  const isCurrentSession = (): boolean => sid === null || $chatSessionId.get() === sid
+  const isCurrentSession = (): boolean => runtime.isCurrent() && (sid === null || $chatSessionId.get() === sid)
 
   try {
     onStart?.()
 
-    sid = await ensureChatSession()
+    sid = await ensureChatSession(runtime)
 
     const result = await requestGateway<SlashCommandResultPayload>('command.dispatch', {
       args,

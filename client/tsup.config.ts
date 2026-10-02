@@ -42,7 +42,8 @@ export default defineConfig([
   {
     ...baseOptions,
     entry: {
-      preload: 'main/preload.ts'
+      preload: 'main/preload.ts',
+      'preload-background': 'main/preload-background.ts'
     },
     outDir: 'dist-electron',
     format: ['cjs'],

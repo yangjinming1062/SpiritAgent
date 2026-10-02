@@ -3,6 +3,7 @@ import { useStore } from '@nanostores/react'
 import { IconRotateClockwise, IconVolume, IconVolumeOff } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef } from 'react'
 
+import { SPRITE_REGION_ID } from '@/app/components/sprite-stage'
 import {
   $contextMenuPos,
   $quietUntil,
@@ -24,8 +25,6 @@ import { SURFACE_OVERLAY } from '@/shared/panel/palette'
 import { $auth } from '@/shared/store/auth'
 import { requestCloseSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
-
-import { SPRITE_REGION_ID } from './behaviors/sprite-stage'
 
 interface ContextMenuProps {
   onOpenActivation?: () => void

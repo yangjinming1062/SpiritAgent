@@ -3,7 +3,7 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
-import { $artifacts, $isRailOpen, $runRound } from '@/app/windows/workbench/run-rail-store'
+import { $artifacts, $isRailOpen, $runRound } from '@/app/features/workbench/run-rail-store'
 import { ChatMediaCard } from '@/modules/conversation'
 import { X } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'

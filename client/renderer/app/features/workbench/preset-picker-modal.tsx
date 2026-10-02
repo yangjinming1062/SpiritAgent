@@ -39,7 +39,7 @@ interface PresetPickerModalProps {
   onClose: () => void
 }
 
-// 用户决策要求：工作台严格排除「陪伴」预设，仅允许从 4 种专业工位预设中创建新会话。
+// 新建会话只列专业预设；固定陪伴由单独入口承载。
 export function PresetPickerModal({ presets, loading, onConfirm, onClose }: PresetPickerModalProps): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string>('')
   const fetched = useStore($systemPresetsFetched)
@@ -51,7 +51,6 @@ export function PresetPickerModal({ presets, loading, onConfirm, onClose }: Pres
     }
   }, [fetched])
 
-  // 工作台剔除陪伴预设
   const workPresets = presets.filter(p => p.id !== 'companion')
   const canSubmit = selectedId !== '' && !loading && workPresets.length > 0
 

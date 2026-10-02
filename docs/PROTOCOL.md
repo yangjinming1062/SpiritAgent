@@ -398,6 +398,14 @@ Runner 仅内存持有配置，工具调用与 `get_tools` 时读取当前值；
 
 普通 standard 会话继承用户 `agent.* / chat.*` 默认，special 使用预设默认，IM 使用陪伴场景默认，再叠加各会话覆盖。`session.set_settings` 只接受规定的温度、压缩阈值和推理强度；null 删除覆盖，空 patch 只读取生效值。先提交再更新运行时，“恢复默认”删除覆盖而非固化当前默认数值。推理强度按供应商支持集向下取不高于请求的最高档，档位与降档定义见 [providers/base.py](../backend/services/infrastructure/llm/providers/base.py)。
 
+### 桌面呈现与本机启动器
+
+呈现模式、交互屏幕和 Dock 保存在 Client 独立的版本化本机文件，不放入云同步的 ui／companion 节。内部布局、角色位置及输入草稿按产品账户隔离。桌面状态由主进程广播带 revision 的快照；requestedMode 表示用户偏好，effectiveMode 表示实际成功呈现，失败不能以偏好值伪装成功。舞台所有权和 stageEpoch 隔离迟到动作、移动与仪式请求。
+
+桌面主对话与轻语持独立视图控制器，同一账户同一会话共享唯一 runtime；会话事件按 session_id 更新一次。视图可见、当前活动、系统前台和锁屏状态共同决定已读、录音与自动朗读资格，桌面窗口存在不证明用户正在查看。换号清理旧 runtime、视图及声音资格；断连只收尾本地状态，重连恢复历史，不自动重放消息提交或本机工具。
+
+Dock 的选择器由主进程导入，拖入 File 由 preload 获取真实路径；渲染层只能以已保存 entryId 启动，不接收任意命令或启动参数。程序和 .lnk 在添加、修复与启动时校验，图标读取限定已登记目标。修复重新选择目标并保留条目 ID 和顺序，取消选择不改变配置。删除 Dock 项只删除配置；失效和启动失败保留条目，写盘失败保留原状态。共享字段与通道见 [IPC](../client/shared/ipc/desktop-presentation.ts)。
+
 ### 语言与时区
 
 语言是可同步用户偏好，Client 切换后即时更新界面与默认媒体语言，Backend 从下一次装配起使用，不中途改写已锁定回合；未知语言回落默认中文。两端语言目录须一致，入口见 [Backend constants](../backend/components/constants.py) 与 [Client locales](../client/renderer/shared/strings/locales.ts)。

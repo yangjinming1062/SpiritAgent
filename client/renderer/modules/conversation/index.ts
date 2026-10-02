@@ -3,6 +3,7 @@ export { chatDisplayText } from './chat-display-text'
 export { ChatMediaCard } from './chat-media-card'
 export { ChatPanel } from './chat-panel'
 
+export type { ConversationRuntime } from './chat-runtime'
 export {
   $chatDraftFromUndo,
   $chatMessageBodies,
@@ -43,10 +44,20 @@ export {
   updateMediaBubble,
   updateVoiceBubble
 } from './chat-store'
+export { conversationRuntimes, findConversationRuntime, getConversationRuntime, runtimeForMessage } from './chat-store'
 export { ConversationInput } from './conversation-input'
 export { ConversationSurface } from './conversation-surface'
+export {
+  $conversationViews,
+  ConversationViewProvider,
+  isConversationActive,
+  isConversationVisible,
+  useConversationView
+} from './conversation-view'
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'
+
 export { presetDisplayDescription, presetDisplayName, sessionDisplayTitle } from './preset-labels'
+
 export {
   invalidateSessionHistory,
   loadLocalSessionHistory,
@@ -71,6 +82,7 @@ export {
   archiveSession,
   createNewSession,
   deleteSession,
+  ensureCompanionSession,
   fetchArchived,
   fetchSessions,
   fetchSystemPresets,
@@ -84,11 +96,11 @@ export {
   switchSession,
   TITLE_MAX_CHARS
 } from './session-list-store'
-
 export { useChatInput } from './use-chat-input'
 
 export { useIsReadOnlySession } from './use-is-read-only-session'
 export {
+  activeVoiceMessageId,
   setConversationVoiceSink,
   setVoiceBarControl,
   setVoiceBarFailed,
@@ -97,10 +109,9 @@ export {
   setVoiceBarPlaying
 } from './voice-link'
 export {
-  $voicePlaybackRecords,
   bindVoicePlaybackUpdates,
   captureVoiceProgress,
-  loadVoicePlayback,
+  getVoicePlaybackStore,
   removeVoicePlayback,
   voicePlaybackReady
 } from './voice-playback'

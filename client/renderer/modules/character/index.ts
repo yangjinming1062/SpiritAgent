@@ -20,7 +20,7 @@ export {
   shouldStartInstance,
   type VideoActionWire
 } from './actions'
-export { $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'
+export { $screenLocked, applyStageActivity, reportInteractionStat, startActivityMonitor } from './activity'
 export { startAutonomyProvision, stopAutonomyProvision } from './autonomy'
 export {
   clearDraftRefImage,
@@ -162,6 +162,7 @@ export {
   resetToHomePosition,
   restorePeekAfterExpression,
   setDefaultScale,
+  setSpatialInsets,
   setSpatialLocale,
   startDrag,
   syncDefaultScale,

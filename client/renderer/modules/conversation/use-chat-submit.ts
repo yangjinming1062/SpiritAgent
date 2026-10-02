@@ -1,36 +1,29 @@
 import { useStore } from '@nanostores/react'
-import { type Dispatch, type SetStateAction, useCallback, useRef, useState } from 'react'
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef } from 'react'
 
 import { requestGateway } from '@/shared'
-import { useAtomListen } from '@/shared/hooks/use-atom-listen'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
+import { currentClearEpoch } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
+import { $gateway } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { ChatAttachment } from '@/shared/types/spiritagent'
 
 import { basename } from './chat-path'
+import type { ConversationRuntime } from './chat-runtime'
 import { executeSlashCommand, slashPreCheck } from './chat-slash'
 import {
-  $chatEditDraft,
-  $chatMessageBodies,
-  $chatMessageList,
-  $chatSessionId,
-  $chatTurnInFlight,
-  $lastEditableUserMessage,
-  cancelPendingFlush,
+  $chatSessionId as $selectedChatSessionId,
   type ChatEditDraft,
-  finalizeAssistantMessage,
-  markAssistantTerminal,
-  type PendingAttachment,
-  pushPendingPrompt,
-  pushUserMessage,
-  schedulePendingFlush,
-  submitPendingBatch
+  getConversationRuntime,
+  type PendingAttachment
 } from './chat-store'
+import { useConversationView } from './conversation-view'
 import { ensureChatSession } from './session-list-store'
 import { conversationVoiceSink } from './voice-link'
 
@@ -54,12 +47,6 @@ export interface ChatSubmit {
   text: string
 }
 
-// 附件绑定加入时的会话；加入时尚无会话则绑定随后确定的会话（README 会话与草稿）。
-interface BoundAttachment {
-  attachment: PendingAttachment
-  sessionId: string | null
-}
-
 const appendLine = (text: string, line: string): string => (text ? `${text}\n${line}` : line)
 
 export function useChatSubmit({
@@ -69,35 +56,74 @@ export function useChatSubmit({
   onClearExternalPaths,
   onPreCheckFail
 }: UseChatSubmitOptions): ChatSubmit {
-  const [text, setText] = useState('')
-  const [bound, setBound] = useState<BoundAttachment | null>(null)
-  const [sending, setSending] = useState(false)
+  const view = useConversationView()
+  const controller = view.controller
+
+  const {
+    $chatEditDraft,
+    $chatMessageBodies,
+    $chatMessageList,
+    $chatSessionId,
+    $chatTurnInFlight,
+    $lastEditableUserMessage,
+    cancelPendingFlush,
+    finalizeAssistantMessage,
+    markAssistantTerminal,
+    submitPendingBatch
+  } = controller
+
+  const text = useStore(controller.$text)
+  const pending = useStore(controller.$pending)
+  const sending = useStore(controller.$sending)
+
+  const setText: Dispatch<SetStateAction<string>> = useCallback(
+    next => {
+      controller.$text.set(typeof next === 'function' ? next(controller.$text.get()) : next)
+    },
+    [controller]
+  )
+
+  const setSending = useCallback((value: boolean) => controller.$sending.set(value), [controller])
+  const ownerRef = useRef(controller)
+  ownerRef.current = controller
+  const controllerEpoch = currentClearEpoch()
+  const lifecycleRef = useRef({ controller, generation: 0, mounted: true })
+  useEffect(() => {
+    const generation = lifecycleRef.current.generation + 1
+    lifecycleRef.current = { controller, generation, mounted: true }
+
+    return () => {
+      lifecycleRef.current.mounted = false
+      queueMicrotask(() => {
+        if (
+          lifecycleRef.current.controller.$text === controller.$text &&
+          (lifecycleRef.current.controller !== controller || lifecycleRef.current.generation !== generation)
+        ) {
+          return
+        }
+
+        controller.$pending.set(null)
+        controller.$externalPaths.set([])
+        controller.$chatEditDraft.set(null)
+      })
+    }
+  }, [controller])
   const editing = useStore($chatEditDraft)
-  const pending = bound?.attachment ?? null
 
-  const setPending: Dispatch<SetStateAction<PendingAttachment | null>> = useCallback(next => {
-    setBound(prev => {
-      const current = prev?.attachment ?? null
-      const attachment = typeof next === 'function' ? next(current) : next
-
-      if (attachment === current) {
-        return prev
+  const setPending: Dispatch<SetStateAction<PendingAttachment | null>> = useCallback(
+    next => {
+      if (
+        !lifecycleRef.current.mounted ||
+        currentClearEpoch() !== controllerEpoch ||
+        ownerRef.current.$text !== controller.$text
+      ) {
+        return
       }
 
-      return attachment ? { attachment, sessionId: $chatSessionId.get() } : null
-    })
-  }, [])
-
-  // 切到其他会话或清理账户后丢弃旧附件；未绑定的附件归入新会话。
-  useAtomListen($chatSessionId, sessionId => {
-    setBound(prev => {
-      if (!prev || prev.sessionId === sessionId) {
-        return prev
-      }
-
-      return prev.sessionId === null ? { ...prev, sessionId } : null
-    })
-  })
+      controller.$pending.set(typeof next === 'function' ? next(controller.$pending.get()) : next)
+    },
+    [controller, controllerEpoch]
+  )
 
   // 通过 ref 转发最新值给 send（避免 useCallback 依赖列表频繁变更）。
   const textRef = useRef(text)
@@ -111,6 +137,23 @@ export function useChatSubmit({
   externalPathsRef.current = externalPaths
 
   const send = useCallback(async (): Promise<void> => {
+    const authScope = captureAuthScope()
+    const gateway = $gateway.get()
+
+    if (!view.eligible || !controller.isCurrent() || !authScope || !gateway) {
+      return
+    }
+
+    const requestCurrent = (): boolean => authScope() && $gateway.get() === gateway
+
+    const requestGateway = async <T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> => {
+      if (!requestCurrent()) {
+        throw new Error('Gateway request owner changed')
+      }
+
+      return gateway.request<T>(method, params)
+    }
+
     const edit = $chatEditDraft.get()
     const currentText = edit?.text ?? textRef.current
     const currentPending = edit ? null : pendingRef.current
@@ -162,7 +205,7 @@ export function useChatSubmit({
       sendingRef.current = true
       setSending(true)
       $chatTurnInFlight.set(true)
-      conversationVoiceSink().cancel()
+      conversationVoiceSink().cancel($chatSessionId.get())
 
       try {
         await requestGateway('prompt.submit', {
@@ -177,7 +220,12 @@ export function useChatSubmit({
         }
       } catch (err) {
         // 已收到修订事件时，服务端已接受；迟到的 RPC 失败不能中止新回合。
-        if ($chatSessionId.get() === edit.sessionId && $chatEditDraft.get() === edit) {
+        if (
+          requestCurrent() &&
+          controller.isCurrent() &&
+          $chatSessionId.get() === edit.sessionId &&
+          $chatEditDraft.get() === edit
+        ) {
           $chatTurnInFlight.set(false)
           notifyError(err, getStrings().chat.edit.failed)
         }
@@ -207,7 +255,8 @@ export function useChatSubmit({
             setSending(true)
             setText('')
           },
-          requestGateway
+          requestGateway,
+          runtime: controller
         })
 
         return
@@ -220,13 +269,17 @@ export function useChatSubmit({
 
     setSending(true)
     sendingRef.current = true
-    conversationVoiceSink().cancel()
+    conversationVoiceSink().cancel($chatSessionId.get())
 
     let id: string | null = null
+    const initialSessionId = $chatSessionId.get()
+    const epoch = currentClearEpoch()
+    let target: ConversationRuntime = view.runtime
 
     try {
       const submit = getStrings().chat.submit
-      id = await ensureChatSession()
+      id = await ensureChatSession(controller)
+      target = initialSessionId === null ? getConversationRuntime(id) : view.runtime
       let fullText = trimmed
       let promptText = trimmed
       const attachments: ChatAttachment[] = []
@@ -276,7 +329,14 @@ export function useChatSubmit({
       }
 
       // 等待期间切走的会话不再接收这条消息；附件已随切换丢弃，正文留在输入框。
-      if ($chatSessionId.get() !== id) {
+      if (
+        !requestCurrent() ||
+        !target.isCurrent() ||
+        epoch !== currentClearEpoch() ||
+        (ownerRef.current !== controller && ownerRef.current.$text !== controller.$text) ||
+        target.$chatSessionId.get() !== id ||
+        (initialSessionId === null && !view.scoped && $selectedChatSessionId.get() !== id)
+      ) {
         return
       }
 
@@ -317,22 +377,28 @@ export function useChatSubmit({
                 ? submit.promptFolder(currentPending.path)
                 : ''
 
-      pushUserMessage(fullText || displayPlaceholder, displayAttachments.length ? displayAttachments : undefined)
+      target.pushUserMessage(fullText || displayPlaceholder, displayAttachments.length ? displayAttachments : undefined)
       setText('')
-      setPending(null)
+      controller.$pending.set(null)
 
-      if (!$chatTurnInFlight.get()) {
+      if (!target.$chatTurnInFlight.get()) {
         presentationPorts().setSpriteState('listening')
       }
 
-      pushPendingPrompt({
+      target.pushPendingPrompt({
         attachments: attachments.length ? attachments : undefined,
         text: promptText || promptFallback
       })
-      schedulePendingFlush()
+      target.schedulePendingFlush()
     } catch (err) {
-      if (id === null || $chatSessionId.get() === id) {
-        markAssistantTerminal({ error: errorMessage(err, getStrings().chat.sendFailed) })
+      if (
+        requestCurrent() &&
+        target.isCurrent() &&
+        epoch === currentClearEpoch() &&
+        (ownerRef.current === controller || ownerRef.current.$text === controller.$text) &&
+        (id === null || target.$chatSessionId.get() === id)
+      ) {
+        target.markAssistantTerminal({ error: errorMessage(err, getStrings().chat.sendFailed) })
         presentationPorts().setSpriteState('idle')
         setPending(null)
       }
@@ -340,10 +406,31 @@ export function useChatSubmit({
       sendingRef.current = false
       setSending(false)
     }
-  }, [externalPathsRef, gatewayState, isReadOnlySession, onClearExternalPaths, onPreCheckFail, setPending])
+  }, [
+    controller,
+    view.eligible,
+    view.scoped,
+    view.runtime,
+    externalPathsRef,
+    gatewayState,
+    isReadOnlySession,
+    onClearExternalPaths,
+    onPreCheckFail,
+    setPending,
+    setSending,
+    setText,
+    $chatEditDraft,
+    $chatSessionId,
+    $chatTurnInFlight,
+    $lastEditableUserMessage
+  ])
 
   const handleStop = useCallback(async () => {
-    conversationVoiceSink().cancel()
+    if (!controller.isCurrent() || !view.eligible) {
+      return
+    }
+
+    conversationVoiceSink().cancel($chatSessionId.get())
     cancelPendingFlush()
     $chatTurnInFlight.set(false)
     const sid = $chatSessionId.get()
@@ -355,6 +442,10 @@ export function useChatSubmit({
       } catch (err) {
         log.warn('use-chat-submit', 'session.interrupt failed', err)
       }
+    }
+
+    if (!controller.isCurrent()) {
+      return
     }
 
     presentationPorts().setSpriteState('idle', { force: true })
@@ -374,7 +465,18 @@ export function useChatSubmit({
     }
 
     submitPendingBatch()
-  }, [])
+  }, [
+    controller,
+    view.eligible,
+    $chatMessageBodies,
+    $chatMessageList,
+    $chatSessionId,
+    $chatTurnInFlight,
+    cancelPendingFlush,
+    finalizeAssistantMessage,
+    markAssistantTerminal,
+    submitPendingBatch
+  ])
 
   return {
     cancelEdit: () => {

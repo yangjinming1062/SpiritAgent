@@ -10,6 +10,8 @@ import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 
+import { $presentation } from './presentation'
+
 export const $surfaceOpen = atom<null | SurfaceId>(null)
 export const $surfaceOpenVisible = atom(false)
 export const $surfaceScreenLocked = atom(false)
@@ -33,7 +35,7 @@ export const $surfaceCompanions = atom<Record<SurfaceId, SurfaceCompanionState>>
   }
 })
 
-export type SurfaceRole = 'living' | 'workbench' | 'sprite'
+export type SurfaceRole = 'living' | 'workbench' | 'sprite' | 'desktop'
 export const $surfaceRole = atom<SurfaceRole | null>(null)
 
 export function setSurfaceRole(role: SurfaceRole): void {
@@ -42,7 +44,23 @@ export function setSurfaceRole(role: SurfaceRole): void {
 
 // 桌面精灵舞台展示中：精灵窗未隐藏或最小化，且未被完整入口收起。
 export function isSpriteStageShown(): boolean {
-  return $surfaceOpen.get() === null && $surfaceSpriteVisible.get()
+  const presentation = $presentation.get()
+
+  if ($surfaceRole.get() === 'desktop') {
+    return (
+      presentation.stageOwner === 'desktop' &&
+      presentation.status === 'active' &&
+      presentation.foreground &&
+      presentation.stageVisible
+    )
+  }
+
+  return (
+    presentation.stageOwner === 'sprite' &&
+    !['starting', 'recovering'].includes(presentation.status) &&
+    $surfaceOpen.get() === null &&
+    $surfaceSpriteVisible.get()
+  )
 }
 
 export function isCompanionStageVisible(): boolean {
@@ -52,7 +70,7 @@ export function isCompanionStageVisible(): boolean {
 
   const role = $surfaceRole.get()
 
-  if (role === 'sprite') {
+  if (role === 'sprite' || role === 'desktop') {
     return isSpriteStageShown()
   }
 

@@ -2,11 +2,8 @@ import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
 import { openSessionSurface } from '@/app/workflows/session-delivery'
 import { $effectiveTier, $screenLocked } from '@/modules/character'
 import {
-  $chatSessionId,
   chatDisplayText,
-  finalizeCompanionReply,
-  pushMediaMessage,
-  pushProactiveMessage,
+  findConversationRuntime,
   rememberPendingMessage,
   setCompanionSessionId,
   showMediaHint
@@ -52,11 +49,13 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         rememberPendingMessage(payload.session_id, displayText)
       }
 
-      if (payload.session_id === $chatSessionId.get()) {
+      const runtime = payload.session_id ? findConversationRuntime(payload.session_id) : undefined
+
+      if (runtime) {
         if (bubbles && payload.message_id) {
-          finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
+          runtime.finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
         } else {
-          pushProactiveMessage(text, payload.media, payload.message_id)
+          runtime.pushProactiveMessage(text, payload.media, payload.message_id)
         }
       }
 
@@ -117,8 +116,10 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         rememberPendingMessage(sessionId, message)
       }
 
-      if (sessionId && sessionId === $chatSessionId.get()) {
-        pushMediaMessage(media)
+      const runtime = sessionId ? findConversationRuntime(sessionId) : undefined
+
+      if (runtime) {
+        runtime.pushMediaMessage(media)
       } else if (!$screenLocked.get()) {
         // 正在看别的会话或轻语时用通知承载跳转；对话界面收起且精灵可见时用精灵气泡提示。
         if ($chatVisible.get() && sessionId) {

@@ -9,7 +9,6 @@ import { cn } from '@/shared/lib/utils'
 
 import type { ConversationVariant } from './chat-dock-message-bubble'
 import { ChatParamsPanel, type ChatParamsTab } from './chat-params-panel'
-import { $chatSessionId } from './chat-store'
 import {
   ChatContextAmbientLine,
   ChatContextCapsule,
@@ -18,6 +17,7 @@ import {
 } from './context-progress-bar'
 import { ConversationInput } from './conversation-input'
 import { ConversationSurface } from './conversation-surface'
+import { useConversationView } from './conversation-view'
 import { useChatInput } from './use-chat-input'
 
 export interface ChatPanelProps {
@@ -39,6 +39,9 @@ export function ChatPanel({
   surfaceClassName,
   variant
 }: ChatPanelProps): React.JSX.Element {
+  const { controller, eligible } = useConversationView()
+  const { $chatSessionId } = controller
+
   const chatSessionId = useStore($chatSessionId)
   const [paramsPanelOpen, setParamsPanelOpen] = useState(false)
   const [paramsPanelTab, setParamsPanelTab] = useState<ChatParamsTab>('context')
@@ -53,7 +56,13 @@ export function ChatPanel({
   }, [gatewayState])
 
   // 点击面板外部 / ESC 关闭参数面板
-  useDismissOnOutside(paramsPanelRef, paramsPanelOpen, () => setParamsPanelOpen(false))
+  useDismissOnOutside(paramsPanelRef, paramsPanelOpen && eligible, () => setParamsPanelOpen(false))
+
+  useEffect(() => {
+    if (!eligible) {
+      setParamsPanelOpen(false)
+    }
+  }, [eligible])
 
   const headerWrapClass = cn(
     'relative flex items-center justify-end shrink-0',
@@ -63,6 +72,10 @@ export function ChatPanel({
   )
 
   const openParamsPanel = (tab: ChatParamsTab): void => {
+    if (!eligible) {
+      return
+    }
+
     if (paramsPanelOpen && paramsPanelTab === tab) {
       setParamsPanelOpen(false)
 

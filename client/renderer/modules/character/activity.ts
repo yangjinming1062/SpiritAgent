@@ -1,9 +1,11 @@
+import type { StageActivity } from '@ipc/contracts'
 import type { DesktopScreenRect } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
+import { $presentation } from '@/shared/store/presentation'
 import { $runnerPhase } from '@/shared/store/runner-status'
 import { isCompanionStageVisible } from '@/shared/store/surfaces'
 
@@ -399,12 +401,43 @@ async function pollSnapshot(generation: number): Promise<void> {
   maybeTriggerIdleExpression(snapshot.locked !== undefined ? idleSeconds : -1, $screenLocked.get())
 }
 
+export function applyStageActivity(activity: StageActivity): void {
+  $screenLocked.set(activity.locked)
+  $lastIdleSeconds.set(activity.idleSeconds)
+  $focusContext.set(activity.focus)
+  $effectiveTierOverride.set(activity.effectiveTier)
+  maybeTriggerIdleExpression(activity.idleSeconds, activity.locked)
+}
+
 export function startActivityMonitor(): () => void {
   if (timer) {
     return stopActivityMonitor
   }
 
   monitorGeneration += 1
+
+  const forwardStage = (): void => {
+    if ($presentation.get().stageOwner !== 'desktop') {
+      return
+    }
+
+    void window.spiritagent.presentation
+      .stageActivity({
+        locked: $screenLocked.get(),
+        idleSeconds: $lastIdleSeconds.get(),
+        effectiveTier: $effectiveTier.get(),
+        focus: $focusContext.get()
+      })
+      .catch(error => log.warn('activity', 'Desktop activity forwarding failed', error))
+  }
+
+  unsubs.push(
+    $presentation.listen(forwardStage),
+    $screenLocked.listen(forwardStage),
+    $lastIdleSeconds.listen(forwardStage),
+    $focusContext.listen(forwardStage),
+    $effectiveTier.listen(forwardStage)
+  )
   unsubs.push(
     $effectiveTier.subscribe(tier => {
       if (tier === 'still') {

@@ -7,7 +7,7 @@ import { cn } from '@/shared/lib/utils'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import { $chatSessionId } from './chat-store'
+import { useConversationView } from './conversation-view'
 import { forkConversation, undoToMessage } from './session-list-store'
 
 interface ChatMessageSessionButtonProps {
@@ -39,6 +39,8 @@ function SessionActionButton({
   run,
   sourceMessageId
 }: SessionActionButtonProps): React.JSX.Element {
+  const { $chatSessionId } = useConversationView().controller
+
   const sourceSessionId = useStore($chatSessionId)
   const inFlight = useStore($inFlight)
 

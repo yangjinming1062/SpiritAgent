@@ -72,6 +72,52 @@ function subscribe<C extends IpcEventChannel>(channel: C, callback: EventCallbac
 }
 
 contextBridge.exposeInMainWorld('spiritagent', {
+  presentation: {
+    cancelRitual: (callId: string) => invoke(IPC.invoke.presentationRitualCancel, callId),
+    onRitualCancelled: (cb: EventCallback<typeof IPC.event.presentationRitualCancelled>) =>
+      subscribe(IPC.event.presentationRitualCancelled, cb),
+    getStageActivity: () => invoke(IPC.invoke.presentationGetStageActivity),
+    setStageVisible: (visible: boolean) => invoke(IPC.invoke.presentationSetStageVisible, visible),
+    getState: () => invoke(IPC.invoke.presentationGetState),
+    setMode: (mode: InvokePayload<typeof IPC.invoke.presentationSetMode>) =>
+      invoke(IPC.invoke.presentationSetMode, mode),
+    setDisplay: (id: number) => invoke(IPC.invoke.presentationSetDisplay, id),
+    reportReady: () => invoke(IPC.invoke.presentationReportReady),
+    heartbeat: () => invoke(IPC.invoke.presentationHeartbeat),
+    hostReady: () => invoke(IPC.invoke.presentationHostReady),
+    setBackground: (background: InvokePayload<typeof IPC.invoke.presentationSetBackground>) =>
+      invoke(IPC.invoke.presentationSetBackground, background),
+    claimPlay: (claim: SurfacePlaybackClaim) => invoke(IPC.invoke.presentationClaimPlay, claim),
+    stageActivity: (activity: InvokePayload<typeof IPC.invoke.presentationStageActivity>) =>
+      invoke(IPC.invoke.presentationStageActivity, activity),
+    requestRitual: (request: InvokePayload<typeof IPC.invoke.presentationRitualRequest>) =>
+      invoke(IPC.invoke.presentationRitualRequest, request),
+    completeRitual: (reply: InvokePayload<typeof IPC.invoke.presentationRitualComplete>) =>
+      invoke(IPC.invoke.presentationRitualComplete, reply),
+    onChanged: (cb: EventCallback<typeof IPC.event.presentationChanged>) =>
+      subscribe(IPC.event.presentationChanged, cb),
+    onStageActivity: (cb: EventCallback<typeof IPC.event.presentationStageActivity>) =>
+      subscribe(IPC.event.presentationStageActivity, cb),
+    onRitual: (cb: EventCallback<typeof IPC.event.presentationRitual>) => subscribe(IPC.event.presentationRitual, cb)
+  },
+  dock: {
+    getState: () => invoke(IPC.invoke.dockGetState),
+    addFromPicker: () => invoke(IPC.invoke.dockAddFromPicker),
+    addDroppedFiles: (files: File[]) =>
+      invoke(IPC.invoke.dockAddDropped, files.map(file => webUtils.getPathForFile(file)).filter(Boolean)),
+    launch: (id: string) => invoke(IPC.invoke.dockLaunch, id),
+    reorder: (ids: string[]) => invoke(IPC.invoke.dockReorder, ids),
+    remove: (id: string) => invoke(IPC.invoke.dockRemove, id),
+    repair: (id: string) => invoke(IPC.invoke.dockRepair, id),
+    onChanged: (cb: EventCallback<typeof IPC.event.dockChanged>) => subscribe(IPC.event.dockChanged, cb)
+  },
+  desktop: {
+    accounts: () => invoke(IPC.invoke.desktopAccounts),
+    switchAccount: (id: string) => invoke(IPC.invoke.desktopSwitchAccount, id),
+    addAccount: () => invoke(IPC.invoke.desktopAddAccount),
+    quit: () => invoke(IPC.invoke.desktopQuit),
+    onNavigate: (cb: EventCallback<typeof IPC.event.desktopNavigate>) => subscribe(IPC.event.desktopNavigate, cb)
+  },
   activate: (payload: DesktopActivatePayload) => invoke(IPC.invoke.authActivate, payload),
   api: (request: SpiritAgentApiRequest) => invoke(IPC.invoke.api, request),
   apiAsset: (request: InvokePayload<typeof IPC.invoke.apiAsset>) => invoke(IPC.invoke.apiAsset, request),

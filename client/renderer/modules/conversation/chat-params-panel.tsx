@@ -12,14 +12,6 @@ import { useStrings } from '@/shared/strings'
 import type { SessionRuntimeInfo } from '@/shared/types/spiritagent'
 
 import {
-  $chatSessionId,
-  $sessionSettings,
-  hydrateChatMessages,
-  hydrateSessionSettings,
-  setSessionContextUsage,
-  updateSessionSetting
-} from './chat-store'
-import {
   type CompressContextResponse,
   DEFAULT_THRESHOLD,
   formatTokenNumber,
@@ -28,6 +20,7 @@ import {
   temperatureStyleLabel,
   useContextStatus
 } from './context-progress-bar'
+import { useConversationView } from './conversation-view'
 import { rememberFullHistory } from './session-history-cache'
 import { useIsReadOnlySession } from './use-is-read-only-session'
 
@@ -227,6 +220,17 @@ export function ChatParamsPanel({
   onTabChange,
   sessionId
 }: ChatParamsPanelProps): React.JSX.Element {
+  const { controller } = useConversationView()
+
+  const {
+    $chatSessionId,
+    $sessionSettings,
+    hydrateChatMessages,
+    hydrateSessionSettings,
+    setSessionContextUsage,
+    updateSessionSetting
+  } = controller
+
   const dict = useStrings()
   const params = dict.chat.params
   const settings = useStore($sessionSettings)
@@ -263,7 +267,13 @@ export function ChatParamsPanel({
     const revision = revisionRef.current
     const visibleSettings = $sessionSettings.get()
 
-    if (Object.keys(patch).length === 0 || !targetId || !gateway || gateway.connectionState !== 'open') {
+    if (
+      !controller.isCurrent() ||
+      Object.keys(patch).length === 0 ||
+      !targetId ||
+      !gateway ||
+      gateway.connectionState !== 'open'
+    ) {
       return
     }
 
@@ -274,6 +284,10 @@ export function ChatParamsPanel({
         settings: patch
       })
       .then(res => {
+        if (!controller.isCurrent()) {
+          return
+        }
+
         if (
           $chatSessionId.get() === targetId &&
           revisionRef.current === revision &&
@@ -286,8 +300,21 @@ export function ChatParamsPanel({
           notify({ durationMs: 2500, kind: 'info', message: params.resetConfirm })
         }
       })
-      .catch(error => notifyError(error, params.saveFailed))
-  }, [gateway, params.resetConfirm, params.saveFailed, sessionId])
+      .catch(error => {
+        if (controller.isCurrent()) {
+          notifyError(error, params.saveFailed)
+        }
+      })
+  }, [
+    gateway,
+    params.resetConfirm,
+    params.saveFailed,
+    sessionId,
+    $chatSessionId,
+    $sessionSettings,
+    hydrateSessionSettings,
+    controller
+  ])
 
   const scheduleSync = useCallback(
     (incremental: SessionSettingsPatch): void => {
@@ -349,6 +376,10 @@ export function ChatParamsPanel({
       const res = await gateway.request<CompressContextResponse>('session.compress_context', {
         session_id: sessionId
       })
+
+      if (!controller.isCurrent()) {
+        return
+      }
 
       if (res.compressed) {
         // 已切到其他会话时只更新本会话缓存，不改写当前视图。

@@ -31,8 +31,12 @@ export function setVoiceBarPaused(id: string | null): void {
   $voiceBarPausedId.set(id)
 }
 
+export function activeVoiceMessageId(): string | null {
+  return $voiceBarPlayingId.get() ?? $voiceBarLoadingId.get() ?? $voiceBarPausedId.get()
+}
+
 export interface ConversationVoiceSink {
-  cancel(): void
+  cancel(sessionId?: string | null, reason?: 'selection'): void
   enqueue(messageIds: string[]): void
   setVisible(visible: boolean): void
   setRecording(recording: boolean): void

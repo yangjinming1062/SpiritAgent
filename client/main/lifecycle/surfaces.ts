@@ -50,6 +50,7 @@ interface SurfacesManagerOptions {
   createWindow: (id: SurfaceId, payload?: DesktopSurfaceOpenPayload) => Promise<CreatedSurfaceWindow>
   getCompanionPreference: (id: SurfaceId) => SurfaceCompanionPreference
   getSpriteWindow: () => BrowserWindow | null
+  routeToDesktop?: (payload: DesktopSurfaceOpenPayload) => boolean
   navigateWindow?: (win: BrowserWindow, id: SurfaceId, payload: DesktopSurfaceOpenPayload) => Promise<void> | void
   saveCompanionPreference: (id: SurfaceId, preference: SurfaceCompanionPreference) => Promise<void>
   rememberLog?: (chunk: string) => void
@@ -398,6 +399,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   }
 
   const internalOpen = async (payload: DesktopSurfaceOpenPayload): Promise<void> => {
+    if (options.routeToDesktop?.(payload)) {
+      return
+    }
+
     const id = normalizeSurfaceId(payload.surface)
 
     if (openSurfaceId && openSurfaceId !== id) {
@@ -453,6 +458,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     const id = normalizeSurfaceId(payload.surface)
 
     return withMutex(async () => {
+      if (options.routeToDesktop?.(payload)) {
+        return
+      }
+
       if (openSurfaceId === id && isWindowShown(windows.get(id)?.win)) {
         internalClose()
 

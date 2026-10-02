@@ -76,7 +76,7 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
   }
 
   /** 入口页文件名与角色同名（`living.html`、`workbench.html`、`sprite.html`）。 */
-  function rendererUrlFor(role: SurfaceId | 'sprite', theme?: string): string {
+  function rendererUrlFor(role: SurfaceId | 'sprite' | 'desktop' | 'desktop-background', theme?: string): string {
     const htmlFile = `${role}.html`
     const url = devServer ? new URL(`${devServer}/${htmlFile}`) : pathToFileURL(resolveRendererHtml(htmlFile))
 

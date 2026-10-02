@@ -27,6 +27,7 @@ import { createAssetDiskCache } from './ipc/asset-disk-cache'
 import { createAuthBroadcaster, registerAuthIpc } from './ipc/auth'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerConnectionIpc } from './ipc/connection'
+import { registerDesktopDock } from './ipc/desktop-dock'
 import { registerFilesIpc } from './ipc/files'
 import { registerGatewayIpc } from './ipc/gateway'
 import { registerLogIpc } from './ipc/log'
@@ -49,6 +50,7 @@ import { installAppQuit } from './lifecycle/app-quit'
 import { createAutoUpdater } from './lifecycle/auto-updater'
 import { syncBundledSkills } from './lifecycle/bundled-skills'
 import { createDesktopLogger } from './lifecycle/desktop-log'
+import { createDesktopPresentation, type DesktopPresentation } from './lifecycle/desktop-presentation'
 import { applyAppIdentity, createMenu } from './lifecycle/menu'
 import { createOpenExternalUrl } from './lifecycle/open-external-url'
 import { applyChromiumSwitches } from './lifecycle/platform'
@@ -98,6 +100,7 @@ const singleInstance = acquireSingleInstance(app)
 let mainWindow: BrowserWindow | null = null
 const getMainWindow = (): BrowserWindow | null => mainWindow
 let surfaces: null | SurfacesManager = null
+let presentation: DesktopPresentation | null = null
 let getAuthToken = (): string | null => null
 // sessionRuntime 在下方创建；各端口晚绑定读取。
 const ensureBackendSession = (): BackendSessionPort => sessionRuntime.ensureBackendSession()
@@ -271,10 +274,41 @@ surfaces = createSurfacesManager({
   navigateWindow: navigateSurfaceWindow,
   rememberLog,
   saveCompanionPreference: (id, preference) => surfaceCompanionPreferences.set(id, preference),
-  syncSpriteToDisplay
+  syncSpriteToDisplay,
+  routeToDesktop: payload => presentation?.navigate(payload) ?? false
 })
 surfaces.registerIpcHandlers({ ipcMain })
 surfaces.hydrateLastSurface()
+presentation = createDesktopPresentation({
+  userData: SPIRITAGENT_HOME,
+  preloadPath: PRELOAD_PATH,
+  backgroundPreloadPath: path.join(import.meta.dirname, 'preload-background.cjs'),
+  helperPath: IS_PACKAGED
+    ? path.join(process.resourcesPath, 'desktop-host.exe')
+    : path.join(APP_ROOT, 'build', 'desktop-host.exe'),
+  rendererUrlFor,
+  seedTheme: seedUiTheme,
+  getSpriteWindow: getMainWindow,
+  isSettingsSender: sender => Boolean(surfaces?.isSurfaceSender('living', sender)),
+  closeSurfaces: () => surfaces?.closeSurface() ?? Promise.resolve(),
+  restoreSprite: () => {
+    if (!appQuit.isQuitting()) {
+      showMainWindow()
+    }
+  },
+  authenticated: () => Boolean(sessionRuntime.ensureBackendSession().getSession()?.hasToken),
+  authIdentity: () => sessionRuntime.ensureBackendSession().getSession()?.sessionId ?? null,
+  installWindowHandlers: windowHandlers.installSurfaceWindowHandlers,
+  log: rememberLog
+})
+presentation.registerIpc(ipcMain)
+registerDesktopDock({
+  ipcMain,
+  userData: SPIRITAGENT_HOME,
+  isDesktopSender: sender => presentation?.isDesktopSender(sender) ?? false,
+  getDesktopWindow: () => presentation?.getWindow() ?? null
+})
+
 registerShortcutsIpc({ ipcMain, rememberLog, surfaces, toggleMainWindow })
 registerClipboardIpc({
   electron: {
@@ -398,6 +432,7 @@ const authActions = registerAuthIpc({
     log: rememberLog,
     onAccountIdentityChanged: async () => {
       try {
+        await presentation?.accountChanged()
         await surfaces?.closeSurface()
       } finally {
         showMainWindow()
@@ -422,7 +457,8 @@ registerVoicePlaybackIpc({
 runnerHost.registerIpc(ipcMain)
 registerRunnerConfigIpc({
   ipcMain,
-  isAuthorizedSender: event => Boolean(surfaces?.isSurfaceSender('workbench', event.sender))
+  isAuthorizedSender: event =>
+    Boolean(surfaces?.isSurfaceSender('workbench', event.sender) || presentation?.isDesktopSender(event.sender))
 })
 registerSkillsIpc({
   spiritagentHome: SPIRITAGENT_HOME,
@@ -433,7 +469,9 @@ registerUpdateIpc({
   electron: { app },
   feed: autoUpdater,
   ipcMain,
-  isInstallSender: sender => Boolean(surfaces?.isSurfaceSender('living', sender)),
+  isInstallSender: sender =>
+    Boolean(surfaces?.isSurfaceSender('living', sender) || presentation?.isDesktopSender(sender)),
+  prepareInstall: () => presentation?.stop() ?? Promise.resolve(),
   markQuitting: () => appQuit.markQuitting()
 })
 
@@ -441,6 +479,9 @@ registerSpriteIpc({
   deps: {
     getRunnerBridge: () => runnerHost.getBridge(),
     getSpriteWindow: getMainWindow,
+    getStageWindow: () =>
+      presentation?.getState().effectiveMode === 'desktop' ? presentation.getWindow() : getMainWindow(),
+    isDesktopSender: sender => presentation?.isDesktopSender(sender) ?? false,
     getUserDataDir: () => app.getPath('userData'),
     log: rememberLog,
     screen
@@ -448,11 +489,44 @@ registerSpriteIpc({
   ipcMain
 })
 
+const assertDesktopAccountSender = (sender: Electron.WebContents): void => {
+  if (!presentation?.isDesktopSender(sender)) {
+    throw new Error('仅桌面入口允许此操作。')
+  }
+}
+
+ipcMain.handle(IPC.invoke.desktopAccounts, event => {
+  assertDesktopAccountSender(event.sender)
+
+  return sessionRuntime.ensureBackendSession().listAccounts()
+})
+ipcMain.handle(IPC.invoke.desktopSwitchAccount, async (event, id: unknown) => {
+  assertDesktopAccountSender(event.sender)
+
+  if (typeof id !== 'string') {
+    throw new Error('无效账户。')
+  }
+
+  await presentation?.accountChanged()
+  await authActions.switchAccount(id)
+})
+ipcMain.handle(IPC.invoke.desktopAddAccount, async event => {
+  assertDesktopAccountSender(event.sender)
+  await presentation?.accountChanged()
+  showMainWindow()
+  sendToWindow(mainWindow, IPC.event.trayActivate)
+})
+ipcMain.handle(IPC.invoke.desktopQuit, event => {
+  assertDesktopAccountSender(event.sender)
+  app.quit()
+})
+
 sessionRuntime.rewireAuthToken()
 
 void app.whenReady().then(async () => {
   setTimeout(() => authBroadcaster.autoStartBridgeIfSignedIn(), 200).unref()
 
+  await presentation?.initialize()
   surfaces?.watchSystemEvents()
   menu.installApplicationMenu()
   windowHandlers.installMediaPermissions()
@@ -497,5 +571,6 @@ const appQuit = installAppQuit({
   flushLog: () => desktopLogger.flushSync(),
   flushPlayback: () => voicePlaybackStore.flush(),
   log: rememberLog,
+  restoreDesktop: () => presentation?.stop() ?? Promise.resolve(),
   stopRunner: () => runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()
 })

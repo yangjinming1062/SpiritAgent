@@ -6,6 +6,7 @@ import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
 import { basename } from './chat-path'
+import type { ConversationRuntime } from './chat-runtime'
 import type { PendingAttachment } from './chat-store'
 import { ensureChatSession } from './session-list-store'
 
@@ -62,10 +63,10 @@ async function pickPath(
   }
 }
 
-export function pickFile(setPending: SetPending): Promise<void> {
+export function pickFile(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
   return pickPath({ multiple: false, title: getStrings().chat.picker.selectFile }, async path => {
     if (VIDEO_EXT.test(path)) {
-      await attachVideoFile(path, setPending)
+      await attachVideoFile(path, setPending, runtime)
     } else if (IMAGE_EXT.test(path)) {
       setPending({ type: 'image', value: path, fileName: basename(path) })
     } else {
@@ -74,29 +75,33 @@ export function pickFile(setPending: SetPending): Promise<void> {
   })
 }
 
-export function pickFolder(setPending: SetPending): Promise<void> {
+export function pickFolder(setPending: SetPending, _runtime?: ConversationRuntime): Promise<void> {
   return pickPath({ directories: true, multiple: false, title: getStrings().chat.picker.selectFolder }, path =>
     setPending({ type: 'folder', folderName: basename(path), path })
   )
 }
 
-export function pickImage(setPending: SetPending): Promise<void> {
+export function pickImage(setPending: SetPending, _runtime?: ConversationRuntime): Promise<void> {
   return pickPath(getImagePickOptions(), path => setPending({ type: 'image', value: path, fileName: basename(path) }))
 }
 
-export function pickVideo(setPending: SetPending): Promise<void> {
-  return pickPath(getVideoUploadOptions(), path => attachVideoFile(path, setPending))
+export function pickVideo(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
+  return pickPath(getVideoUploadOptions(), path => attachVideoFile(path, setPending, runtime))
 }
 
 // 视频附加即上传（本地后端 <1s）：本地模式下超 50MB 会被后端 413 拒绝并在 error 里给出指引。结果只回填本次加入的附件对象：切换会话、移除或重新选择后，迟到结果作废。
-export async function attachVideoFile(path: string, setPending: SetPending): Promise<void> {
+export async function attachVideoFile(
+  path: string,
+  setPending: SetPending,
+  runtime?: ConversationRuntime
+): Promise<void> {
   const fileName = basename(path)
   const uploading: PendingAttachment = { type: 'video', fileName, path, status: 'uploading' }
 
   setPending(uploading)
 
   try {
-    const sessionId = await ensureChatSession()
+    const sessionId = await ensureChatSession(runtime)
     const result = await window.spiritagent.uploadVideoForAttach({ path, sessionId })
 
     setPending(prev =>

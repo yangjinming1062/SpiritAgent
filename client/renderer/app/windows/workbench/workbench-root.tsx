@@ -6,6 +6,10 @@ import { useEffect, useRef, useState } from 'react'
 
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
+import { RunRail } from '@/app/features/workbench/run-rail'
+import { SessionSidebar } from '@/app/features/workbench/session-sidebar'
+import { StationSettings } from '@/app/features/workbench/station-settings'
+import styles from '@/app/features/workbench/workbench.module.css'
 import { SpriteStatusBadge } from '@/modules/character'
 import {
   $chatSessionId,
@@ -26,11 +30,6 @@ import { WindowControls } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 import { requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
-
-import { RunRail } from './run-rail'
-import { SessionSidebar } from './session-sidebar'
-import { StationSettings } from './station-settings'
-import styles from './workbench.module.css'
 
 function isStationSettingsHash(rawHash: string): boolean {
   const clean = normalizeHashPath(rawHash)

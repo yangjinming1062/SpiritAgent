@@ -2,20 +2,19 @@ import { voicePlaybackKey } from '@ipc/contracts'
 
 import { $autoplayVoice } from '@/modules/character'
 import {
-  $chatMessageBodies,
-  $chatMessageList,
-  $chatSessionId,
-  $voicePlaybackRecords,
+  $conversationViews,
+  activeVoiceMessageId,
   bindVoicePlaybackUpdates,
   captureVoiceProgress,
-  loadVoicePlayback,
+  getVoicePlaybackStore,
+  isConversationActive,
+  runtimeForMessage,
   setConversationVoiceSink,
   setVoiceBarControl,
   setVoiceBarFailed,
   setVoiceBarLoading,
   setVoiceBarPaused,
   setVoiceBarPlaying,
-  updateVoiceBubble,
   voicePlaybackReady
 } from '@/modules/conversation'
 import {
@@ -35,11 +34,16 @@ import type { CompanionBubble } from '@/shared/types/spiritagent'
 let dispose: (() => void) | undefined
 
 function voiceReference(id: string) {
-  const item = $chatMessageList.get().find(message => message.id === id)
-  const body = $chatMessageBodies.get()[id]
+  const runtime = runtimeForMessage(id)
+  const item = runtime?.$chatMessageList.get().find(message => message.id === id)
+  const body = runtime?.$chatMessageBodies.get()[id]
+  const sessionId = runtime?.$chatSessionId.get()
 
-  return item?.backendMessageId && body?.replyType === 'voice' && body.replyIndex !== undefined
+  return runtime && sessionId && item?.backendMessageId && body?.replyType === 'voice' && body.replyIndex !== undefined
     ? {
+        runtime,
+        sessionId,
+        body,
         messageId: item.backendMessageId,
         bubbleIndex: body.replyIndex,
         key: voicePlaybackKey(item.backendMessageId, body.replyIndex)
@@ -50,33 +54,44 @@ function voiceReference(id: string) {
 export function bindConversationSpeech(): void {
   dispose?.()
   bindVoiceBarProjection({
-    getAudio: id => $chatMessageBodies.get()[id]?.replyAudio,
+    isVisible: id => {
+      if ($conversationViews.get().length === 0) {
+        return undefined
+      }
+
+      const sessionId = id ? runtimeForMessage(id)?.$chatSessionId.get() : null
+
+      return id ? isConversationActive(sessionId ?? null) : $conversationViews.get().some(view => view.eligible)
+    },
+    getAudio: id => runtimeForMessage(id)?.$chatMessageBodies.get()[id]?.replyAudio,
     getRecord: id => {
       const reference = voiceReference(id)
 
-      return reference ? $voicePlaybackRecords.get()[reference.key] : undefined
+      return reference
+        ? getVoicePlaybackStore(reference.sessionId).$voicePlaybackRecords.get()[reference.key]
+        : undefined
     },
     getKey: id => {
       const reference = voiceReference(id)
       const auth = $auth.get()
-      const sessionId = $chatSessionId.get()
 
-      return reference && sessionId && auth.kind === 'authenticated'
-        ? [auth.snapshot.sessionId, sessionId, reference.key].join(':')
+      return reference && reference.runtime.isCurrent() && auth.kind === 'authenticated'
+        ? [auth.snapshot.sessionId, reference.sessionId, reference.key].join(':')
         : null
     },
     getFollowing: id => {
-      const list = $chatMessageList.get()
+      const runtime = runtimeForMessage(id)
+      const list = runtime?.$chatMessageList.get() ?? []
       const index = list.findIndex(item => item.id === id)
 
       return index < 0
         ? []
         : list
             .slice(index + 1)
-            .filter(item => $chatMessageBodies.get()[item.id]?.replyType === 'voice')
+            .filter(item => runtime?.$chatMessageBodies.get()[item.id]?.replyType === 'voice')
             .map(item => item.id)
     },
-    ready: voicePlaybackReady,
+    ready: id => voicePlaybackReady(voiceReference(id)?.sessionId ?? null),
     captureProgress: id => {
       const reference = voiceReference(id)
 
@@ -84,18 +99,16 @@ export function bindConversationSpeech(): void {
         throw new Error('Voice message is not saved')
       }
 
-      return captureVoiceProgress(reference.messageId, reference.bubbleIndex)
+      return captureVoiceProgress(reference.messageId, reference.bubbleIndex, reference.sessionId)
     },
     isAutoplay: () => $autoplayVoice.get(),
     retry: async id => {
       const reference = voiceReference(id)
-      const body = $chatMessageBodies.get()[id]
 
       if (!reference) {
         throw new Error('Voice message is not saved')
       }
 
-      const sessionId = $chatSessionId.get()
       const auth = $auth.get()
 
       const result = await window.spiritagent.api<CompanionBubble>({
@@ -109,10 +122,10 @@ export function bindConversationSpeech(): void {
         auth.kind === 'authenticated' &&
         currentAuth.kind === 'authenticated' &&
         currentAuth.snapshot.sessionId === auth.snapshot.sessionId &&
-        $chatSessionId.get() === sessionId &&
-        $chatMessageBodies.get()[id] === body
+        reference.runtime.isCurrent() &&
+        reference.runtime.$chatMessageBodies.get()[id] === reference.body
       ) {
-        updateVoiceBubble(reference.messageId, reference.bubbleIndex, result)
+        reference.runtime.updateVoiceBubble(reference.messageId, reference.bubbleIndex, result)
       }
     },
     setPlaying: setVoiceBarPlaying,
@@ -121,23 +134,34 @@ export function bindConversationSpeech(): void {
     setFailed: setVoiceBarFailed
   })
   setConversationVoiceSink({
-    cancel: cancelVoiceBar,
+    cancel: (sessionId, reason) => {
+      if (reason === 'selection' && $conversationViews.get().length > 0) {
+        return
+      }
+
+      const current = activeVoiceMessageId()
+
+      if (!sessionId || !current || voiceReference(current)?.sessionId === sessionId) {
+        cancelVoiceBar()
+      }
+    },
     enqueue: enqueueVoiceBars,
     setVisible: setVoiceSurfaceMounted,
     setRecording: setVoiceRecording
   })
   setVoiceBarControl({ toggle: toggleVoiceBar })
 
-  const syncScope = (): void => {
-    loadVoicePlayback($chatSessionId.get())
-  }
-
   const listeners = [
     bindVoicePlaybackUpdates(),
     bindVoiceBarListeners(),
-    $chatSessionId.listen(syncScope),
-    $auth.listen(syncScope),
     $autoplayVoice.listen(refreshVoiceAutoplay),
+    $conversationViews.listen(() => {
+      const current = activeVoiceMessageId()
+
+      if (current && !isConversationActive(voiceReference(current)?.sessionId ?? null)) {
+        cancelVoiceBar()
+      }
+    }),
     $gatewayState.listen(state => {
       if (state === 'closed' || state === 'error') {
         cancelVoiceBar()
@@ -145,6 +169,5 @@ export function bindConversationSpeech(): void {
     })
   ]
 
-  syncScope()
   dispose = () => listeners.forEach(stop => stop())
 }

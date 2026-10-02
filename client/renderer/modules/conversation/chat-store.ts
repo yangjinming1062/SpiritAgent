@@ -1,1239 +1,299 @@
-import { sleep } from '@runtime'
-import { atom, computed, map } from 'nanostores'
+import { atom, map, type ReadableAtom, type WritableAtom } from 'nanostores'
 
-import { errorMessage } from '@/shared/lib/ipc-error'
 import {
-  currentClearEpoch,
   persistString,
-  registerCompanionStorageKey,
   registerStorageClearHandler,
   registerStorageRestoreHandler,
   storedString
 } from '@/shared/lib/storage'
-import { presentationPorts } from '@/shared/presentation-ports'
-import { $gateway } from '@/shared/store/gateway'
-import { notifyError } from '@/shared/store/notifications'
-import { getStrings } from '@/shared/strings'
-import type {
-  ChatAttachment,
-  ChatMediaItem,
-  CompanionBubble,
-  CompanionMediaBubble,
-  ReplyAudio,
-  SessionMessage,
-  SessionRuntimeInfo
-} from '@/shared/types/spiritagent'
 
-import { chatDisplayText, stripAttachmentDirectives } from './chat-display-text'
+import { type ConversationRuntime, createConversationRuntime, type SessionSettings } from './chat-runtime'
+import { $companionSessionId, CHAT_SESSION_ID_KEY } from './conversation-state'
 import { conversationVoiceSink } from './voice-link'
-import { removeVoicePlayback } from './voice-playback'
+export type {
+  ChatEditDraft,
+  ChatMessageBody,
+  ChatMessageListItem,
+  ChatSessionKind,
+  PendingAttachment,
+  SessionContextUsage,
+  SessionSettings
+} from './chat-runtime'
+export {
+  $chatDraftFromUndo,
+  $companionSessionId,
+  $pendingExternalAttachment,
+  $proactiveBubble,
+  clearExternalAttachment,
+  pushExternalAttachment,
+  setCompanionSessionId,
+  setProactiveBubble,
+  showMediaHint
+} from './conversation-state'
 
-export interface ChatMessageListItem {
-  id: string
-  role: 'user' | 'assistant'
-  subtype?: string
-  /** 后端 Message.id——fork/undo 回传 source_message_id；hydrate 历史行与活路径绑定后都有值。 */
-  backendMessageId?: number
-  timestamp?: number
-}
-
-export interface ChatMessageBody {
-  /** 完整用户输入；陪伴拆泡与附件展示文案不能用作编辑原文。 */
-  editableText?: string
-  streamingText?: string
-  replyType?: CompanionBubble['type']
-  replyMedia?: CompanionMediaBubble
-  replyIndex?: number
-  replyAudio?: ReplyAudio | null
-  text: string
-  reasoning?: string
-  streaming?: boolean
-  queued?: boolean
-  toolName?: string | null
-  tools?: string[]
-  error?: string
-  retryMessageId?: number
-  cancelled?: boolean
-  attachments?: ChatAttachment[]
-  media?: ChatMediaItem[]
-}
-
-// 媒体终态可能早于完成帧；保留更新，避免迟到的等待快照把已就绪卡片覆盖回去。
-const mediaUpdates = new Map<string, CompanionMediaBubble>()
-const mediaUpdateKey = (messageId: number, mediaId: string): string => `${messageId}:${mediaId}`
-
-function companionBubbleBody(bubble: CompanionBubble, messageId?: number): Partial<ChatMessageBody> {
-  if (bubble.type === 'image' || bubble.type === 'video') {
-    const current = messageId === undefined ? undefined : mediaUpdates.get(mediaUpdateKey(messageId, bubble.media_id))
-    const media = current ?? bubble
-
-    if (messageId !== undefined && media.status !== 'pending') {
-      mediaUpdates.set(mediaUpdateKey(messageId, media.media_id), media)
-    }
-
-    return {
-      text: '',
-      replyType: media.type,
-      replyMedia: media,
-      media: media.status === 'ready' && media.url ? [{ type: media.type, url: media.url }] : undefined
-    }
-  }
-
-  return 'text' in bubble
-    ? { text: bubble.text, replyType: bubble.type, replyAudio: bubble.type === 'voice' ? bubble.audio : undefined }
-    : {}
-}
-
-const DEFAULT_CONTEXT_LIMIT = 1_000_000
-const CHAT_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.chatSessionId')
-const COMPANION_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.companionSessionId')
-const FLUSH_DEBOUNCE_MS = 4000
-
-let idCounter = 0
-const nextId = (): string => `m${++idCounter}`
-
-let bubbleTimer: ReturnType<typeof setTimeout> | null = null
-let bubbleGeneration = 0
-let flushTimer: ReturnType<typeof setTimeout> | null = null
-// 最近一次已提交批对应的用户气泡 id（工作台合并后只剩首条）；message.persisted 只按本集合绑定，失败回合孤儿气泡不会被下一轮错绑。
-let submittedBubbleIds: Set<string> = new Set()
-let historyEditRevision = 0
-
-export const $chatMessageList = atom<ChatMessageListItem[]>([])
-export const $chatMessageBodies = map<Record<string, ChatMessageBody>>({})
-export const $lastAssistantStreaming = atom<boolean>(false)
-export const $chatStreamingTick = atom<number>(0)
 export const $chatSessionId = atom<string | null>(storedString(CHAT_SESSION_ID_KEY))
-// 放在 chat-store：本模块要读它，而 session-list-store 已依赖 chat-store，反向导入会成环。
-export const $companionSessionId = atom<string | null>(storedString(COMPANION_SESSION_ID_KEY))
+const runtimes = new Map<string | null, ConversationRuntime>()
+const runtimeReferences = new Map<ConversationRuntime, number>()
 
-export function setCompanionSessionId(id: string): void {
-  $companionSessionId.set(id)
-  persistString(COMPANION_SESSION_ID_KEY, id)
+export function getConversationRuntime(sessionId: string | null): ConversationRuntime {
+  let runtime = runtimes.get(sessionId)
+
+  if (!runtime) {
+    runtime = createConversationRuntime(sessionId)
+    runtimes.set(sessionId, runtime)
+    const stopPruning = runtime.$chatTurnInFlight.listen(pruneConversationRuntimes)
+    const dispose = runtime.dispose
+
+    runtime.dispose = () => {
+      stopPruning()
+      dispose()
+    }
+  }
+
+  return runtime
 }
 
-// IM 守卫与语音入口的权威 kind 源，由 hydrate 注入服务端 info.kind（special / standard / im）。
-export type ChatSessionKind = 'im' | 'special' | 'standard'
+export function retainConversationRuntime(runtime: ConversationRuntime): () => void {
+  runtimeReferences.set(runtime, (runtimeReferences.get(runtime) ?? 0) + 1)
 
-function normalizeChatSessionKind(raw: unknown): ChatSessionKind {
-  return raw === 'im' || raw === 'special' || raw === 'standard' ? raw : 'standard'
-}
+  return () => {
+    const count = runtimeReferences.get(runtime) ?? 0
 
-export const $chatSessionKind = atom<ChatSessionKind>('standard')
-
-interface PendingPromptItem {
-  text: string
-  attachments?: ChatAttachment[]
-  messageId?: string
-}
-
-export const $pendingPromptBatch = atom<PendingPromptItem[]>([])
-
-export const $chatTurnInFlight = atom<boolean>(false)
-
-export interface ChatEditDraft {
-  sessionId: string
-  sourceMessageId: number
-  text: string
-}
-
-export const $chatEditDraft = atom<ChatEditDraft | null>(null)
-
-export const $lastEditableUserMessage = computed(
-  [$chatMessageList, $chatSessionKind, $chatTurnInFlight, $pendingPromptBatch],
-  (list, kind, inFlight, pending): ChatMessageListItem | null => {
-    if (kind === 'im' || inFlight || pending.length > 0) {
-      return null
+    if (count <= 1) {
+      runtimeReferences.delete(runtime)
+    } else {
+      runtimeReferences.set(runtime, count - 1)
     }
 
-    const last = list.findLast(item => item.role === 'user')
-
-    return last?.backendMessageId && !last.subtype ? last : null
+    pruneConversationRuntimes()
   }
-)
+}
 
-export const $retryableAssistantMessage = computed(
-  [$chatMessageList, $chatMessageBodies, $chatSessionKind, $chatTurnInFlight, $pendingPromptBatch, $chatEditDraft],
-  (list, bodies, kind, inFlight, pending, editing): ChatMessageListItem | null => {
-    if (kind === 'im' || inFlight || pending.length > 0 || editing) {
-      return null
-    }
-
-    const last = list.at(-1)
-    const body = last ? bodies[last.id] : undefined
-    const user = list.findLast(item => item.role === 'user')
-
-    return last?.role === 'assistant' &&
-      body?.error &&
-      body.retryMessageId === user?.backendMessageId &&
-      body.retryMessageId
-      ? last
-      : null
-  }
-)
-
-export async function retryAssistantReply(messageId: string): Promise<void> {
-  const sessionId = $chatSessionId.get()
-  const gateway = $gateway.get()
-  const body = $chatMessageBodies.get()[messageId]
-
-  if (
-    !sessionId ||
-    !gateway ||
-    gateway.connectionState !== 'open' ||
-    $retryableAssistantMessage.get()?.id !== messageId ||
-    !body?.retryMessageId
-  ) {
-    return
-  }
-
-  const epoch = currentClearEpoch()
-  $chatTurnInFlight.set(true)
-  conversationVoiceSink().cancel()
-
-  try {
-    await gateway.request('prompt.submit', {
-      session_id: sessionId,
-      retry_message_id: body.retryMessageId,
-      response_preference: presentationPorts().getResponsePreference()
-    })
-  } catch (error) {
-    // 已收到开始/完成事件时请求已被接受，迟到的 RPC 失败不能覆盖新回复。
+function pruneConversationRuntimes(): void {
+  for (const [sessionId, runtime] of runtimes) {
     if (
-      epoch === currentClearEpoch() &&
-      $chatSessionId.get() === sessionId &&
-      $chatMessageBodies.get()[messageId] === body
+      sessionId === $chatSessionId.get() ||
+      sessionId === $companionSessionId.get() ||
+      runtimeReferences.has(runtime) ||
+      runtime.$chatTurnInFlight.get() ||
+      runtime.$pendingPromptBatch.get().length > 0
     ) {
-      $chatTurnInFlight.set(false)
-      notifyError(error, getStrings().chat.sendFailed)
+      continue
     }
+
+    runtime.dispose()
+    runtimes.delete(sessionId)
   }
 }
 
-export function startEditingMessage(messageId: string): void {
-  const message = $lastEditableUserMessage.get()
-  const sessionId = $chatSessionId.get()
-  const body = $chatMessageBodies.get()[messageId]
+export function findConversationRuntime(sessionId: string): ConversationRuntime | undefined {
+  return runtimes.get(sessionId)
+}
 
-  if (!sessionId || message?.id !== messageId || !message.backendMessageId || !body) {
-    return
-  }
+export function conversationRuntimes(): ConversationRuntime[] {
+  return [...runtimes.values()]
+}
 
-  $chatEditDraft.set({
-    sessionId,
-    sourceMessageId: message.backendMessageId,
-    text: stripAttachmentDirectives(body.editableText ?? body.text).trim()
+export function runtimeForMessage(messageId: string): ConversationRuntime | undefined {
+  return conversationRuntimes().find(runtime => runtime.$chatMessageBodies.get()[messageId] !== undefined)
+}
+
+const $activeRuntime = atom(getConversationRuntime($chatSessionId.get()))
+$chatSessionId.listen(sessionId => $activeRuntime.set(getConversationRuntime(sessionId)))
+
+export function activeConversationRuntime(): ConversationRuntime {
+  return $activeRuntime.get()
+}
+
+// 旧窗口公开store投影到当前runtime；异步工作直接持有发起时的runtime。
+function followActiveRuntime(bind: (runtime: ConversationRuntime) => () => void): void {
+  let stop: (() => void) | undefined
+  $activeRuntime.subscribe(runtime => {
+    stop?.()
+    stop = bind(runtime)
   })
 }
 
-// 当后端在 in-flight 回合期间发出 bubble.break 时置位，防止 message.complete 的全文/推理覆盖末尾气泡。
-export const $turnHadBubbleBreak = atom<boolean>(false)
+function projectRead<T>(select: (runtime: ConversationRuntime) => ReadableAtom<T>): WritableAtom<T> {
+  const projected = atom(select(activeConversationRuntime()).get())
+  const apply = projected.set.bind(projected)
+  followActiveRuntime(runtime => select(runtime).subscribe(apply))
 
-interface ChatUndoDraft {
-  session_id: string
-  text: string
-  content_type?: string
-  media_json?: string | null
+  return projected
 }
 
-// 撤回落草稿总线：undo 成功后由 session-list-store 写入；多窗口订阅需按 session_id 过滤，避免 A 撤回落到 B 的输入框。
-export const $chatDraftFromUndo = atom<ChatUndoDraft | null>(null)
+function projectAtom<T>(select: (runtime: ConversationRuntime) => WritableAtom<T>): WritableAtom<T> {
+  const projected = projectRead(select)
+  projected.set = value => select(activeConversationRuntime()).set(value)
 
-interface SessionSettings {
-  temperature?: number
-  context_compression_threshold?: number
-  enable_context_compression?: boolean
-  reasoning_effort?: string
+  return projected
 }
 
-export const $sessionSettings = atom<SessionSettings>({})
+function projectMap(
+  select: (runtime: ConversationRuntime) => ConversationRuntime['$chatMessageBodies']
+): ConversationRuntime['$chatMessageBodies'] {
+  const projected = map(select(activeConversationRuntime()).get())
+  const apply = projected.set.bind(projected)
+  const applyKey = projected.setKey.bind(projected)
+  followActiveRuntime(runtime =>
+    select(runtime).subscribe((value, _old, key) => {
+      if (key === undefined) {
+        apply(value)
+      } else {
+        applyKey(key, value[key])
+      }
+    })
+  )
+  projected.set = value => select(activeConversationRuntime()).set(value)
+  projected.setKey = (key, value) => select(activeConversationRuntime()).setKey(key, value)
 
-// 服务端 settings 是开放字典，只保留客户端消费且类型相符的键。
-function toSessionSettings(raw: Record<string, unknown> = {}): SessionSettings {
-  const settings: SessionSettings = {}
-
-  if (typeof raw.temperature === 'number') {
-    settings.temperature = raw.temperature
-  }
-
-  if (typeof raw.context_compression_threshold === 'number') {
-    settings.context_compression_threshold = raw.context_compression_threshold
-  }
-
-  if (typeof raw.enable_context_compression === 'boolean') {
-    settings.enable_context_compression = raw.enable_context_compression
-  }
-
-  if (typeof raw.reasoning_effort === 'string') {
-    settings.reasoning_effort = raw.reasoning_effort
-  }
-
-  return settings
+  return projected
 }
 
-export function hydrateSessionSettings(info: SessionRuntimeInfo): void {
-  $sessionSettings.set(toSessionSettings(info.settings))
-}
+export const $chatMessageList = projectAtom(runtime => runtime.$chatMessageList)
+export const $chatMessageBodies = projectMap(runtime => runtime.$chatMessageBodies)
+export const $lastAssistantStreaming = projectAtom(runtime => runtime.$lastAssistantStreaming)
+export const $chatStreamingTick = projectAtom(runtime => runtime.$chatStreamingTick)
+export const $chatSessionKind = projectAtom(runtime => runtime.$chatSessionKind)
+export const $pendingPromptBatch = projectAtom(runtime => runtime.$pendingPromptBatch)
+export const $chatTurnInFlight = projectAtom(runtime => runtime.$chatTurnInFlight)
+export const $lastEditableUserMessage = projectRead(runtime => runtime.$lastEditableUserMessage)
+export const $retryableAssistantMessage = projectRead(runtime => runtime.$retryableAssistantMessage)
+export const $turnHadBubbleBreak = projectAtom(runtime => runtime.$turnHadBubbleBreak)
+export const $sessionSettings = projectAtom(runtime => runtime.$sessionSettings)
+export const $sessionContextUsage = projectAtom(runtime => runtime.$sessionContextUsage)
+export const retryAssistantReply = (
+  ...args: Parameters<ConversationRuntime['retryAssistantReply']>
+): ReturnType<ConversationRuntime['retryAssistantReply']> => activeConversationRuntime().retryAssistantReply(...args)
+export const hydrateSessionSettings = (
+  ...args: Parameters<ConversationRuntime['hydrateSessionSettings']>
+): ReturnType<ConversationRuntime['hydrateSessionSettings']> =>
+  activeConversationRuntime().hydrateSessionSettings(...args)
 
 export function updateSessionSetting<K extends keyof SessionSettings>(key: K, value: SessionSettings[K]): void {
-  $sessionSettings.set({
-    ...$sessionSettings.get(),
-    [key]: value
-  })
+  activeConversationRuntime().updateSessionSetting(key, value)
 }
 
-export interface SessionContextUsage {
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  contextLimit: number
-}
-
-export const $sessionContextUsage = atom<SessionContextUsage>({
-  promptTokens: 0,
-  completionTokens: 0,
-  totalTokens: 0,
-  contextLimit: DEFAULT_CONTEXT_LIMIT
-})
-
-export function setSessionContextUsage(usage: Partial<SessionContextUsage>): void {
-  const current = $sessionContextUsage.get()
-  const promptTokens = usage.promptTokens ?? current.promptTokens
-  const completionTokens = usage.completionTokens ?? current.completionTokens
-
-  const totalTokens =
-    usage.totalTokens ??
-    (usage.promptTokens !== undefined || usage.completionTokens !== undefined
-      ? promptTokens + completionTokens
-      : current.totalTokens)
-
-  const contextLimit = usage.contextLimit ?? current.contextLimit
-
-  $sessionContextUsage.set({
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    contextLimit
-  })
-}
-
-export function resetSessionContextUsage(contextLimit?: number, totalTokens = 0): void {
-  $sessionContextUsage.set({
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens,
-    contextLimit: contextLimit ?? DEFAULT_CONTEXT_LIMIT
-  })
-}
-
-export type PendingAttachment =
-  | { type: 'image'; value: string; fileName?: string }
-  | {
-      type: 'video'
-      fileName: string
-      path: string
-      status: 'error' | 'ready' | 'uploading'
-      url?: string
-      error?: string
-    }
-  | {
-      type: 'file'
-      fileName: string
-      path: string
-    }
-  | {
-      type: 'folder'
-      folderName: string
-      path: string
-    }
-
-// 伙伴主动说出的瞬时消息，聊天面板收起时以气泡浮出，说完清空；sessionId 存在时点击切到该会话（媒体送达跳转用）。
-interface ProactiveBubbleState {
-  text: string
-  sessionId?: string
-}
-
-export const $proactiveBubble = atom<ProactiveBubbleState | null>(null)
-
-// 外部投喂（DESIGN「拖拽与直接交互」）：精灵拖入或经主进程信箱转交的文件路径，对话输入订阅后并入待发附件。
-interface PendingExternalAttachment {
-  paths: string[]
-  nonce: number
-}
-
-let externalNonce = 0
-
-export const $pendingExternalAttachment = atom<PendingExternalAttachment | null>(null)
-
-export function pushExternalAttachment(paths: string[]): void {
-  $pendingExternalAttachment.set({ paths, nonce: ++externalNonce })
-}
-
-export function clearExternalAttachment(): void {
-  $pendingExternalAttachment.set(null)
-}
+export const setSessionContextUsage = (
+  ...args: Parameters<ConversationRuntime['setSessionContextUsage']>
+): ReturnType<ConversationRuntime['setSessionContextUsage']> =>
+  activeConversationRuntime().setSessionContextUsage(...args)
+export const resetSessionContextUsage = (
+  ...args: Parameters<ConversationRuntime['resetSessionContextUsage']>
+): ReturnType<ConversationRuntime['resetSessionContextUsage']> =>
+  activeConversationRuntime().resetSessionContextUsage(...args)
+export const hydrateEditedChatMessages = (
+  ...args: Parameters<ConversationRuntime['hydrateEditedChatMessages']>
+): ReturnType<ConversationRuntime['hydrateEditedChatMessages']> =>
+  activeConversationRuntime().hydrateEditedChatMessages(...args)
+export const hydrateChatMessages = (
+  ...args: Parameters<ConversationRuntime['hydrateChatMessages']>
+): ReturnType<ConversationRuntime['hydrateChatMessages']> => activeConversationRuntime().hydrateChatMessages(...args)
+export const pushProactiveMessage = (
+  ...args: Parameters<ConversationRuntime['pushProactiveMessage']>
+): ReturnType<ConversationRuntime['pushProactiveMessage']> => activeConversationRuntime().pushProactiveMessage(...args)
+export const pushMediaMessage = (
+  ...args: Parameters<ConversationRuntime['pushMediaMessage']>
+): ReturnType<ConversationRuntime['pushMediaMessage']> => activeConversationRuntime().pushMediaMessage(...args)
+export const pushUserMessage = (
+  ...args: Parameters<ConversationRuntime['pushUserMessage']>
+): ReturnType<ConversationRuntime['pushUserMessage']> => activeConversationRuntime().pushUserMessage(...args)
+export const bindTrailingUserMessageIds = (
+  ...args: Parameters<ConversationRuntime['bindTrailingUserMessageIds']>
+): ReturnType<ConversationRuntime['bindTrailingUserMessageIds']> =>
+  activeConversationRuntime().bindTrailingUserMessageIds(...args)
+export const bindTrailingAssistantMessageId = (
+  ...args: Parameters<ConversationRuntime['bindTrailingAssistantMessageId']>
+): ReturnType<ConversationRuntime['bindTrailingAssistantMessageId']> =>
+  activeConversationRuntime().bindTrailingAssistantMessageId(...args)
+export const pushStatusPill = (
+  ...args: Parameters<ConversationRuntime['pushStatusPill']>
+): ReturnType<ConversationRuntime['pushStatusPill']> => activeConversationRuntime().pushStatusPill(...args)
+export const pushPendingPrompt = (
+  ...args: Parameters<ConversationRuntime['pushPendingPrompt']>
+): ReturnType<ConversationRuntime['pushPendingPrompt']> => activeConversationRuntime().pushPendingPrompt(...args)
+export const clearPendingPrompts = (
+  ...args: Parameters<ConversationRuntime['clearPendingPrompts']>
+): ReturnType<ConversationRuntime['clearPendingPrompts']> => activeConversationRuntime().clearPendingPrompts(...args)
+export const setTurnHadBubbleBreak = (
+  ...args: Parameters<ConversationRuntime['setTurnHadBubbleBreak']>
+): ReturnType<ConversationRuntime['setTurnHadBubbleBreak']> =>
+  activeConversationRuntime().setTurnHadBubbleBreak(...args)
+export const schedulePendingFlush = (
+  ...args: Parameters<ConversationRuntime['schedulePendingFlush']>
+): ReturnType<ConversationRuntime['schedulePendingFlush']> => activeConversationRuntime().schedulePendingFlush(...args)
+export const cancelPendingFlush = (
+  ...args: Parameters<ConversationRuntime['cancelPendingFlush']>
+): ReturnType<ConversationRuntime['cancelPendingFlush']> => activeConversationRuntime().cancelPendingFlush(...args)
+export const submitPendingBatch = (
+  ...args: Parameters<ConversationRuntime['submitPendingBatch']>
+): ReturnType<ConversationRuntime['submitPendingBatch']> => activeConversationRuntime().submitPendingBatch(...args)
+export const beginAssistantMessage = (
+  ...args: Parameters<ConversationRuntime['beginAssistantMessage']>
+): ReturnType<ConversationRuntime['beginAssistantMessage']> =>
+  activeConversationRuntime().beginAssistantMessage(...args)
+export const appendAssistantDelta = (
+  ...args: Parameters<ConversationRuntime['appendAssistantDelta']>
+): ReturnType<ConversationRuntime['appendAssistantDelta']> => activeConversationRuntime().appendAssistantDelta(...args)
+export const appendAssistantReasoningDelta = (
+  ...args: Parameters<ConversationRuntime['appendAssistantReasoningDelta']>
+): ReturnType<ConversationRuntime['appendAssistantReasoningDelta']> =>
+  activeConversationRuntime().appendAssistantReasoningDelta(...args)
+export const setAssistantTool = (
+  ...args: Parameters<ConversationRuntime['setAssistantTool']>
+): ReturnType<ConversationRuntime['setAssistantTool']> => activeConversationRuntime().setAssistantTool(...args)
+export const finalizeAssistantMessage = (
+  ...args: Parameters<ConversationRuntime['finalizeAssistantMessage']>
+): ReturnType<ConversationRuntime['finalizeAssistantMessage']> =>
+  activeConversationRuntime().finalizeAssistantMessage(...args)
+export const finalizeCompanionReply = (
+  ...args: Parameters<ConversationRuntime['finalizeCompanionReply']>
+): ReturnType<ConversationRuntime['finalizeCompanionReply']> =>
+  activeConversationRuntime().finalizeCompanionReply(...args)
+export const updateMediaBubble = (
+  ...args: Parameters<ConversationRuntime['updateMediaBubble']>
+): ReturnType<ConversationRuntime['updateMediaBubble']> => activeConversationRuntime().updateMediaBubble(...args)
+export const updateVoiceBubble = (
+  ...args: Parameters<ConversationRuntime['updateVoiceBubble']>
+): ReturnType<ConversationRuntime['updateVoiceBubble']> => activeConversationRuntime().updateVoiceBubble(...args)
+export const forgetDeletedVoiceMessages = (
+  ...args: Parameters<ConversationRuntime['forgetDeletedVoiceMessages']>
+): ReturnType<ConversationRuntime['forgetDeletedVoiceMessages']> =>
+  activeConversationRuntime().forgetDeletedVoiceMessages(...args)
+export const markAssistantTerminal = (
+  ...args: Parameters<ConversationRuntime['markAssistantTerminal']>
+): ReturnType<ConversationRuntime['markAssistantTerminal']> =>
+  activeConversationRuntime().markAssistantTerminal(...args)
+export const resetChatMessages = (
+  ...args: Parameters<ConversationRuntime['resetChatMessages']>
+): ReturnType<ConversationRuntime['resetChatMessages']> => activeConversationRuntime().resetChatMessages(...args)
 
 export function setChatSession(id: string | null): void {
-  conversationVoiceSink().cancel()
-  clearPendingPrompts()
-  cancelPendingFlush()
-  $chatTurnInFlight.set(false)
-  $turnHadBubbleBreak.set(false)
+  const previous = $chatSessionId.get()
 
-  if ($chatSessionId.get() !== id) {
-    mediaUpdates.clear()
-    $chatEditDraft.set(null)
-    $sessionSettings.set({})
-    resetSessionContextUsage()
+  if (id !== previous) {
+    conversationVoiceSink().cancel(previous, 'selection')
   }
 
+  getConversationRuntime(id)
   $chatSessionId.set(id)
   persistString(CHAT_SESSION_ID_KEY, id)
-  // setChatSession 是无 info 的重置路径；后续 hydrate 会以服务端权威 kind 覆盖此值。
-  $chatSessionKind.set('standard')
-}
-
-// 用从后端加载的会话替换面板的聊天记录；其他窗口可能正在连发或等待提交确认，历史修订不能删掉未落库的输入。
-export function hydrateEditedChatMessages(messages: SessionMessage[]): void {
-  forgetDeletedVoiceMessages(messages)
-  historyEditRevision++
-  const pendingIds = new Set($pendingPromptBatch.get().map(item => item.messageId))
-
-  const pendingRows = $chatMessageList
-    .get()
-    .filter(item => pendingIds.has(item.id) || (submittedBubbleIds.has(item.id) && item.backendMessageId === undefined))
-
-  const previousBodies = $chatMessageBodies.get()
-
-  $chatTurnInFlight.set(true)
-  hydrateChatMessages(messages)
-  $chatEditDraft.set(null)
-
-  for (const item of pendingRows) {
-    $chatMessageBodies.setKey(item.id, previousBodies[item.id])
-  }
-
-  $chatMessageList.set([...$chatMessageList.get(), ...pendingRows])
-}
-
-export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRuntimeInfo): void {
-  conversationVoiceSink().cancel()
-  const items: ChatMessageListItem[] = []
-  const bodies: Record<string, ChatMessageBody> = {}
-
-  let totalChars = 0
-  const pendingReasoning: string[] = []
-
-  const takeReasoning = (current?: string): string | undefined => {
-    const parts = [...pendingReasoning, current].filter((part): part is string => Boolean(part?.trim()))
-    pendingReasoning.length = 0
-
-    return parts.length ? parts.join('\n\n') : undefined
-  }
-
-  const flushPendingReasoning = (timestamp?: number): void => {
-    const reasoning = takeReasoning()
-
-    if (!reasoning) {
-      return
-    }
-
-    const id = nextId()
-    items.push({ id, role: 'assistant', timestamp })
-    bodies[id] = { text: '', reasoning, streaming: false, toolName: null }
-  }
-
-  for (const m of messages) {
-    if (m.role === 'tool') {
-      continue
-    }
-
-    const companionBubbles = m.role === 'assistant' && m.content_type === 'companion_reply' ? m.bubbles : undefined
-
-    const { text, attachments } = extractMessageContent(m)
-    const textContent = m.role === 'assistant' ? chatDisplayText(text) : text
-
-    const reasoningContent = typeof m.reasoning === 'string' ? m.reasoning : ''
-
-    // 无正文无媒体的助手行（工具中间帧）不单独占气泡，推理并到下一可见助手行。
-    if (m.role === 'assistant' && !companionBubbles?.length && !textContent.trim() && !m.media?.length) {
-      if (reasoningContent.trim()) {
-        pendingReasoning.push(reasoningContent)
-      }
-
-      continue
-    }
-
-    if (m.role === 'user') {
-      flushPendingReasoning(m.timestamp)
-    }
-
-    totalChars +=
-      m.content_type === 'companion_reply' && typeof m.content === 'string' ? m.content.length : textContent.length
-
-    // 陪伴用户行按空行拆分（与实时呈现对齐），工作台整段阅读不拆。
-    const canSplit = !m.subtype && m.role === 'user' && splitUserBubblesEnabled()
-    // 后台视频送达的 system 行正文是给模型的任务记录，与实时送达一致只显示媒体卡。
-    const hideText = m.role === 'system' && m.subtype === 'status_media'
-
-    const segments = companionBubbles
-      ? companionBubbles.map(bubble => ('text' in bubble ? bubble.text : ''))
-      : canSplit
-        ? textContent
-            .split(/\r?\n(?:[ \t]*\r?\n)+/)
-            .map(part => part.trim())
-            .filter(Boolean)
-        : [hideText ? '' : textContent]
-
-    if (segments.length === 0) {
-      segments.push('')
-    }
-
-    for (const [index, segment] of segments.entries()) {
-      const id = nextId()
-
-      items.push({
-        id,
-        role: m.role === 'user' ? 'user' : 'assistant',
-        subtype: m.subtype,
-        backendMessageId: typeof m.id === 'number' ? m.id : undefined,
-        timestamp: m.timestamp
-      })
-
-      // 拆分后附件只挂首个气泡（附件伴随连发首条发出，每段都挂会重复渲染媒体卡）。
-      bodies[id] = {
-        text: segment,
-        editableText: m.role === 'user' ? textContent : undefined,
-        replyIndex: companionBubbles ? index : undefined,
-        ...(companionBubbles?.[index] ? companionBubbleBody(companionBubbles[index], m.id) : {}),
-        reasoning: m.role === 'assistant' && index === 0 ? takeReasoning(reasoningContent || undefined) : undefined,
-        toolName: m.tool_name ?? null,
-        tools: m.tool_name ? [m.tool_name] : undefined,
-        streaming: false,
-        queued: m.role === 'user' && m.queued,
-        attachments: index === 0 ? attachments : undefined,
-        ...(!companionBubbles && index === segments.length - 1 && m.media?.length ? { media: m.media } : {})
-      }
-    }
-  }
-
-  flushPendingReasoning()
-
-  $chatMessageBodies.set(bodies)
-  $chatMessageList.set(items)
-  $lastAssistantStreaming.set(false)
-
-  if (info) {
-    hydrateSessionSettings(info)
-    // 缺字段/未知值回落 standard 以免 IM 守卫误判；无 info 的本会话内操作（撤回/清空/压缩重水合）沿用当前 kind，重置会解除 IM 只读。
-    $chatSessionKind.set(normalizeChatSessionKind(info.kind))
-  }
-
-  // 估算 Token 占用（~3 字符/Token）；分项清零避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
-  const approxTokens = Math.round(totalChars / 3)
-  const contextLimit = info ? info.context_window || DEFAULT_CONTEXT_LIMIT : $sessionContextUsage.get().contextLimit
-  resetSessionContextUsage(contextLimit, approxTokens)
-}
-
-// 多模态正文和用户附件共用一次解析；附件只交给该消息的首个气泡。
-function extractMessageContent(m: SessionMessage): Pick<ChatMessageBody, 'text' | 'attachments'> {
-  if (m.content_type === 'companion_reply' || typeof m.content !== 'string') {
-    return { text: '' }
-  }
-
-  if (m.content_type !== 'multimodal_v1') {
-    return { text: m.content }
-  }
-
-  let parsed: unknown
-
-  try {
-    parsed = JSON.parse(m.content)
-  } catch {
-    return { text: m.content }
-  }
-
-  if (!Array.isArray(parsed)) {
-    return { text: m.content.trim() }
-  }
-
-  const parts: unknown[] = parsed
-  const texts: string[] = []
-  const attachments: ChatAttachment[] = []
-
-  for (const part of parts) {
-    if (!part || typeof part !== 'object' || !('type' in part)) {
-      continue
-    }
-
-    if (part.type === 'input_text' && 'text' in part && typeof part.text === 'string') {
-      texts.push(part.text)
-    } else if (m.role === 'user') {
-      if (part.type === 'input_image' && 'image_url' in part && typeof part.image_url === 'string' && part.image_url) {
-        attachments.push({ type: 'image', url: part.image_url })
-      } else if (
-        part.type === 'input_video' &&
-        'video_url' in part &&
-        typeof part.video_url === 'string' &&
-        part.video_url
-      ) {
-        attachments.push({ type: 'video', url: part.video_url })
-      }
-    }
-  }
-
-  return { text: texts.join('\n').trim(), attachments: attachments.length ? attachments : undefined }
-}
-
-export function setProactiveBubble(state: ProactiveBubbleState | null, lingerMs?: number): void {
-  if (bubbleTimer) {
-    clearTimeout(bubbleTimer)
-    bubbleTimer = null
-  }
-
-  $proactiveBubble.set(state)
-
-  if (state && lingerMs != null && lingerMs > 0) {
-    const gen = ++bubbleGeneration
-
-    bubbleTimer = setTimeout(() => {
-      // 连续主动消息/媒体提示时，只清理自己这一代的气泡。
-      if (gen === bubbleGeneration) {
-        $proactiveBubble.set(null)
-        bubbleTimer = null
-      }
-    }, lingerMs)
-  }
-}
-
-export function showMediaHint(text: string, sessionId?: string): void {
-  setProactiveBubble(sessionId ? { text, sessionId } : { text }, 8000)
-}
-
-// 先写 body 再入列：列表订阅者据 id 取 body 时必须已存在。
-function appendMessage(item: Omit<ChatMessageListItem, 'id' | 'timestamp'>, body: ChatMessageBody): string {
-  const id = nextId()
-  $chatMessageBodies.setKey(id, body)
-  $chatMessageList.set([...$chatMessageList.get(), { id, ...item, timestamp: Date.now() }])
-
-  return id
-}
-
-export function pushProactiveMessage(text: string, media?: ChatMediaItem[], messageId?: number): void {
-  if (messageId && $chatMessageList.get().some(item => item.backendMessageId === messageId)) {
-    return
-  }
-
-  appendMessage(
-    {
-      role: 'assistant',
-      subtype: media?.length ? 'status_media' : 'status_proactive',
-      backendMessageId: messageId
-    },
-    { text: chatDisplayText(text), media, streaming: false, toolName: null }
-  )
-}
-
-// 后台视频完成的实时送达行，只带媒体；历史水合的同类 system 行同样不显示正文。
-export function pushMediaMessage(media: ChatMediaItem[]): string {
-  return appendMessage(
-    { role: 'assistant', subtype: 'status_media' },
-    { text: '', media, streaming: false, toolName: null }
-  )
-}
-
-export function pushUserMessage(text: string, attachments?: ChatAttachment[]): string {
-  return appendMessage(
-    { role: 'user' },
-    { text, attachments: attachments?.length ? attachments : undefined, streaming: false, toolName: null }
-  )
-}
-
-function isPositiveInt(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
-}
-
-// 陪伴会话连发用户消息保留独立气泡（与 bubble.break 助手拆分对称），工作台整段阅读不拆，避免误拆粘贴的多段内容。
-function splitUserBubblesEnabled(): boolean {
-  const id = $chatSessionId.get()
-
-  return id !== null && id === $companionSessionId.get()
-}
-
-export function bindTrailingUserMessageIds(ids: number[]): void {
-  // 只绑本次提交的气泡，失败回合孤儿气泡不被下一轮错绑（错绑会让撤回截断别人的消息）；连发拆泡时超出 id 数的气泡挂最后一个 id，与 hydrate 同行同 id 语义一致。
-  const validIds = ids.filter(isPositiveInt)
-
-  if (validIds.length === 0) {
-    return
-  }
-
-  const list = $chatMessageList.get()
-  const missingIds = new Set(validIds)
-  const unboundIndexes: number[] = []
-
-  for (let i = 0; i < list.length; i++) {
-    const item = list[i]
-
-    if (item.backendMessageId !== undefined) {
-      missingIds.delete(item.backendMessageId)
-    } else if (item.role === 'user' && submittedBubbleIds.has(item.id)) {
-      unboundIndexes.push(i)
-    }
-  }
-
-  // 编辑已水合的落库通知不属于本窗口待确认的提交。
-  if (missingIds.size === 0 || unboundIndexes.length === 0) {
-    return
-  }
-
-  const next = list.slice()
-
-  for (const [index, idx] of unboundIndexes.entries()) {
-    const messageId = validIds[index] ?? validIds[validIds.length - 1]
-    next[idx] = { ...next[idx], backendMessageId: messageId }
-  }
-
-  $chatMessageList.set(next)
-}
-
-export function bindTrailingAssistantMessageId(messageId: number): void {
-  // bubble.break 会拆出多段助手气泡，但 DB 只有一行；同一 id 挂到上次用户之后所有未绑定的普通助手行。
-  if (!isPositiveInt(messageId)) {
-    return
-  }
-
-  const list = $chatMessageList.get()
-  const lastUserIndex = list.findLastIndex(item => item.role === 'user')
-  let changed = false
-  const next = list.slice()
-
-  for (let i = lastUserIndex + 1; i < next.length; i++) {
-    const item = next[i]
-
-    // 压缩卡片等 subtype 行不是终端助手气泡，不能挂上同一条 message_id。
-    if (item.role === 'assistant' && item.backendMessageId === undefined && !item.subtype) {
-      next[i] = { ...item, backendMessageId: messageId }
-      changed = true
-    }
-  }
-
-  if (changed) {
-    $chatMessageList.set(next)
-  }
-}
-
-/** 追加一行本地状态行（如 `status_command_result`、`compress_summary`），渲染层按 subtype 显示为居中 pill 或摘要卡片。 */
-export function pushStatusPill(subtype: string, text: string): void {
-  appendMessage({ role: 'assistant', subtype }, { text, streaming: false, toolName: null })
-}
-
-export function pushPendingPrompt(item: PendingPromptItem): void {
-  const last = $chatMessageList.get().at(-1)
-  $pendingPromptBatch.set([
-    ...$pendingPromptBatch.get(),
-    { ...item, messageId: last?.role === 'user' ? last.id : undefined }
-  ])
-}
-
-function drainPendingPrompts(): PendingPromptItem[] {
-  const items = $pendingPromptBatch.get()
-  $pendingPromptBatch.set([])
-
-  return items
-}
-
-export function clearPendingPrompts(): void {
-  $pendingPromptBatch.set([])
+  pruneConversationRuntimes()
 }
 
 registerStorageClearHandler(() => {
-  resetChatMessages()
-  resetSessionContextUsage()
-  cancelPendingFlush()
-  setProactiveBubble(null)
-  clearPendingPrompts()
-  $chatSessionId.set(null)
-  $companionSessionId.set(null)
-  $chatStreamingTick.set(0)
-  $chatSessionKind.set('standard')
-  $sessionSettings.set({})
-  $pendingExternalAttachment.set(null)
-  $chatDraftFromUndo.set(null)
-})
+  for (const runtime of runtimes.values()) {
+    runtime.cancelPendingFlush()
+    runtime.clearPendingPrompts()
+    runtime.resetChatMessages()
+    runtime.dispose()
+  }
 
+  runtimes.clear()
+  runtimeReferences.clear()
+  $chatSessionId.set(null)
+  $activeRuntime.set(getConversationRuntime($chatSessionId.get()))
+})
 registerStorageRestoreHandler(() => {
   $chatSessionId.set(storedString(CHAT_SESSION_ID_KEY))
-  $companionSessionId.set(storedString(COMPANION_SESSION_ID_KEY))
 })
-
-export function setTurnHadBubbleBreak(v: boolean): void {
-  $turnHadBubbleBreak.set(v)
-}
-
-export function schedulePendingFlush(): void {
-  if ($pendingPromptBatch.get().length === 0) {
-    return
-  }
-
-  if (flushTimer) {
-    clearTimeout(flushTimer)
-  }
-
-  flushTimer = setTimeout(() => {
-    flushTimer = null
-    submitPendingBatch()
-  }, FLUSH_DEBOUNCE_MS)
-}
-
-export function cancelPendingFlush(): void {
-  if (flushTimer) {
-    clearTimeout(flushTimer)
-    flushTimer = null
-  }
-}
-
-export function submitPendingBatch(): void {
-  if ($chatTurnInFlight.get() || flushTimer !== null) {
-    return
-  }
-
-  const sessionId = $chatSessionId.get()
-  const gateway = $gateway.get()
-
-  if (!sessionId || !gateway || gateway.connectionState !== 'open') {
-    return
-  }
-
-  const pendingBatch = drainPendingPrompts()
-
-  if (pendingBatch.length === 0) {
-    return
-  }
-
-  $chatTurnInFlight.set(true)
-
-  const pendingIds = new Set(pendingBatch.map(p => p.messageId).filter((id): id is string => Boolean(id)))
-  const list = $chatMessageList.get()
-  const pendingRows = list.filter(item => pendingIds.has(item.id))
-  const first = pendingRows[0]
-
-  // 工作台连发合回首条再提交；陪伴会话每条连发保留独立气泡（DB 仍合并为一行）。
-  if (first && !splitUserBubblesEnabled()) {
-    const bodies = $chatMessageBodies.get()
-    const displayAttachments = pendingRows.flatMap(item => bodies[item.id]?.attachments ?? [])
-    $chatMessageBodies.setKey(first.id, {
-      ...bodies[first.id],
-      text: pendingRows
-        .map(item => bodies[item.id]?.text ?? '')
-        .filter(Boolean)
-        .join('\n\n'),
-      attachments: displayAttachments.length ? displayAttachments : undefined
-    })
-    $chatMessageList.set([...list.filter(item => !pendingIds.has(item.id)), first])
-
-    for (const item of pendingRows.slice(1)) {
-      $chatMessageBodies.setKey(item.id, undefined)
-    }
-  }
-
-  // 记录本批对应的存活气泡 id（合并路径只剩首条），persisted 据此精确绑定。
-  submittedBubbleIds = new Set(pendingRows.map(item => item.id))
-
-  const attachments = pendingBatch.flatMap(p => p.attachments ?? [])
-  const promptText = pendingBatch.map(p => p.text).join('\n\n')
-
-  for (const id of submittedBubbleIds) {
-    const body = $chatMessageBodies.get()[id]
-
-    if (body) {
-      $chatMessageBodies.setKey(id, { ...body, editableText: promptText })
-    }
-  }
-
-  const batchPayload = {
-    session_id: sessionId,
-    response_preference: presentationPorts().getResponsePreference(),
-    batch: [
-      {
-        text: promptText,
-        ...(attachments.length ? { attachments: attachments.map(a => ({ file_url: a.url, type: a.type })) } : {})
-      }
-    ]
-  }
-
-  const submittedRevision = historyEditRevision
-  const epoch = currentClearEpoch()
-
-  // 本批未送达：不当作已发送。会话已切走时不写进新会话的列表与回合状态，改用通知。
-  const failSubmit = (err?: unknown): void => {
-    if (epoch !== currentClearEpoch()) {
-      return
-    }
-
-    const sendFailed = getStrings().chat.sendFailed
-
-    if ($chatSessionId.get() !== sessionId) {
-      notifyError(err, sendFailed)
-
-      return
-    }
-
-    markAssistantTerminal({ error: errorMessage(err, sendFailed) })
-    // thinking（50）> idle（10）：不带 force 会被优先级门控吞掉，精灵卡在思考态。
-    presentationPorts().setSpriteState('idle', { force: true })
-    $chatTurnInFlight.set(false)
-  }
-
-  const submitWithRetry = async (attempt = 0): Promise<void> => {
-    const g = $gateway.get()
-
-    // 首次提交前已确认连接；只有退避重试期间断连会走到这里。
-    if (!g || g.connectionState !== 'open') {
-      failSubmit()
-
-      return
-    }
-
-    try {
-      presentationPorts().setSpriteState('thinking')
-      await g.request('prompt.submit', batchPayload)
-    } catch (err: unknown) {
-      const errMsg = errorMessage(err)
-
-      if (
-        errMsg.includes('in-flight') &&
-        historyEditRevision !== submittedRevision &&
-        $chatSessionId.get() === sessionId
-      ) {
-        // 另一个窗口的编辑先被接受；本批尚未落库，回到队列等该回合结束。
-        $pendingPromptBatch.set([...pendingBatch, ...$pendingPromptBatch.get()])
-        submitPendingBatch()
-
-        return
-      }
-
-      if (errMsg.includes('in-flight') && attempt < 3) {
-        await sleep(50 * Math.pow(2, attempt))
-
-        return submitWithRetry(attempt + 1)
-      }
-
-      failSubmit(err)
-    }
-  }
-
-  void submitWithRetry()
-}
-
-function lastAssistantMessage(): {
-  list: ChatMessageListItem[]
-  item: ChatMessageListItem
-  body: ChatMessageBody
-} | null {
-  const list = $chatMessageList.get()
-  const item = list.at(-1)
-  const body = item?.role === 'assistant' ? $chatMessageBodies.get()[item.id] : undefined
-
-  return item && body ? { list, item, body } : null
-}
-
-export function beginAssistantMessage(): void {
-  const last = lastAssistantMessage()
-
-  if (last?.body.error && last.body.retryMessageId) {
-    $chatMessageBodies.setKey(last.item.id, { text: '', streaming: true, toolName: null })
-    $lastAssistantStreaming.set(true)
-
-    return
-  }
-
-  if (last?.body.streaming) {
-    const { body } = last
-
-    if (!body.text.trim() && !body.toolName && !body.error && !body.cancelled) {
-      return
-    }
-
-    finalizeAssistantMessage()
-  }
-
-  appendMessage({ role: 'assistant' }, { text: '', streaming: true, toolName: null })
-  $lastAssistantStreaming.set(true)
-}
-
-function ensureAssistantMessage(): ReturnType<typeof lastAssistantMessage> {
-  const last = lastAssistantMessage()
-
-  if (last?.body.streaming) {
-    return last
-  }
-
-  beginAssistantMessage()
-
-  return lastAssistantMessage()
-}
-
-function patchLastAssistant(patch: (body: ChatMessageBody) => ChatMessageBody): void {
-  const last = ensureAssistantMessage()
-
-  if (!last) {
-    return
-  }
-
-  $chatMessageBodies.setKey(last.item.id, patch(last.body))
-  $chatStreamingTick.set($chatStreamingTick.get() + 1)
-}
-
-export function appendAssistantDelta(text: string): void {
-  // 仅更新流式 body 不动 list 引用；首个 delta 过滤前导空行，避免撑大气泡上方。
-  patchLastAssistant(body => {
-    const streamingText = (body.streamingText ?? body.text) + text
-
-    return {
-      ...body,
-      streamingText,
-      text: chatDisplayText(streamingText, true).trimStart()
-    }
-  })
-}
-
-export function appendAssistantReasoningDelta(text: string): void {
-  patchLastAssistant(body => ({
-    ...body,
-    reasoning: !body.reasoning ? text.trimStart() : body.reasoning + text
-  }))
-}
-
-export function setAssistantTool(name: string | null): void {
-  const last = ensureAssistantMessage()
-
-  if (!last) {
-    return
-  }
-
-  const { body, item } = last
-  const tools = name && name !== body.tools?.at(-1) ? [...(body.tools ?? []), name] : body.tools
-
-  $chatMessageBodies.setKey(item.id, { ...body, toolName: name, tools })
-}
-
-export function finalizeAssistantMessage(text?: string, media?: ChatMediaItem[], reasoning?: string): void {
-  const last = lastAssistantMessage()
-
-  if (!last) {
-    return
-  }
-
-  const { list, item, body } = last
-
-  const rawStr = typeof text === 'string' ? text : (body.streamingText ?? body.text)
-  const finalStr = chatDisplayText(rawStr).trim()
-  const finalMedia = media ?? body.media
-
-  const finalReasoning =
-    (typeof reasoning === 'string' && reasoning.trim() ? reasoning : body.reasoning)?.trim() || undefined
-
-  const isEmpty =
-    !finalStr &&
-    !finalReasoning &&
-    !body.toolName &&
-    !body.error &&
-    !body.cancelled &&
-    !body.attachments?.length &&
-    !finalMedia?.length
-
-  if (isEmpty) {
-    $chatMessageList.set(list.slice(0, -1))
-    $chatMessageBodies.setKey(item.id, undefined)
-    $lastAssistantStreaming.set(false)
-
-    return
-  }
-
-  $chatMessageBodies.setKey(item.id, {
-    ...body,
-    text: finalStr,
-    streamingText: undefined,
-    reasoning: finalReasoning,
-    media: finalMedia,
-    streaming: false,
-    toolName: null
-  })
-  $lastAssistantStreaming.set(false)
-}
-
-export function finalizeCompanionReply(
-  bubbles: CompanionBubble[],
-  messageId: number,
-  reasoning?: string,
-  proactive = false
-): void {
-  const list = $chatMessageList.get()
-
-  if (list.some(item => item.backendMessageId === messageId)) {
-    bubbles.forEach((bubble, index) => {
-      if (bubble.type === 'image' || bubble.type === 'video') {
-        updateMediaBubble(messageId, bubble.media_id, bubble)
-      } else {
-        updateVoiceBubble(messageId, index, bubble)
-      }
-    })
-
-    return
-  }
-
-  const last = list.at(-1)
-  const streaming = last?.role === 'assistant' && $chatMessageBodies.get()[last.id]?.streaming
-  const placeholder = !proactive && streaming
-  const next = streaming ? list.slice(0, -1) : [...list]
-  const voiceIds: string[] = []
-
-  if (placeholder && last) {
-    $chatMessageBodies.setKey(last.id, undefined)
-  }
-
-  bubbles.forEach((bubble, index) => {
-    const id = nextId()
-
-    if (bubble.type === 'voice') {
-      voiceIds.push(id)
-    }
-
-    next.push({
-      id,
-      role: 'assistant',
-      backendMessageId: messageId,
-      timestamp: Date.now(),
-      ...(proactive ? { subtype: 'status_proactive' } : {})
-    })
-    $chatMessageBodies.setKey(id, {
-      text: '',
-      ...companionBubbleBody(bubble, messageId),
-      replyIndex: index,
-      streaming: false,
-      toolName: null,
-      ...(index === 0 ? { reasoning } : {})
-    })
-  })
-
-  if (proactive && streaming && last) {
-    next.push(last)
-  }
-
-  $chatMessageList.set(next)
-
-  conversationVoiceSink().enqueue(voiceIds)
-
-  if (!proactive) {
-    $lastAssistantStreaming.set(false)
-  }
-}
-
-export function updateMediaBubble(messageId: number, mediaId: string, bubble: CompanionMediaBubble): void {
-  if (bubble.media_id !== mediaId) {
-    return
-  }
-
-  const key = mediaUpdateKey(messageId, mediaId)
-
-  if (mediaUpdates.has(key)) {
-    return
-  }
-
-  if (bubble.status !== 'pending') {
-    mediaUpdates.set(key, bubble)
-  }
-
-  for (const item of $chatMessageList.get()) {
-    const body = $chatMessageBodies.get()[item.id]
-
-    if (item.backendMessageId !== messageId || body?.replyMedia?.media_id !== mediaId) {
-      continue
-    }
-
-    if (body.replyMedia.status !== 'pending') {
-      continue
-    }
-
-    $chatMessageBodies.setKey(item.id, { ...body, ...companionBubbleBody(bubble, messageId) })
-  }
-}
-
-export function updateVoiceBubble(messageId: number, index: number, bubble: CompanionBubble): void {
-  if (bubble.type !== 'voice') {
-    return
-  }
-
-  for (const item of $chatMessageList.get()) {
-    const body = $chatMessageBodies.get()[item.id]
-
-    if (item.backendMessageId === messageId && body?.replyIndex === index && body.replyType === 'voice') {
-      $chatMessageBodies.setKey(item.id, { ...body, replyAudio: bubble.audio ?? body.replyAudio })
-    }
-  }
-}
-
-// 仅历史编辑/撤回的完整结果调用；普通水合可能截断，不能据此删除播放记录。
-export function forgetDeletedVoiceMessages(messages: SessionMessage[]): void {
-  conversationVoiceSink().cancel()
-  const sessionId = $chatSessionId.get()
-  const remaining = new Set(messages.map(message => message.id))
-
-  const removed = $chatMessageList
-    .get()
-    .flatMap(item => (item.backendMessageId && !remaining.has(item.backendMessageId) ? [item.backendMessageId] : []))
-
-  if (sessionId) {
-    removeVoicePlayback(sessionId, [...new Set(removed)])
-  }
-}
-
-export function markAssistantTerminal({
-  error,
-  cancelled,
-  retryMessageId
-}: {
-  error?: string
-  cancelled?: boolean
-  retryMessageId?: number
-} = {}): void {
-  conversationVoiceSink().cancel()
-
-  const last = lastAssistantMessage()
-
-  const terminal = {
-    ...(error !== undefined && { error }),
-    ...(cancelled && { cancelled: true }),
-    ...(retryMessageId !== undefined && { retryMessageId })
-  }
-
-  if (last?.body.streaming) {
-    const { body, item } = last
-    $chatMessageBodies.setKey(item.id, {
-      ...body,
-      text: chatDisplayText(body.streamingText ?? body.text).trim(),
-      streamingText: undefined,
-      streaming: false,
-      ...terminal
-    })
-    $lastAssistantStreaming.set(false)
-
-    return
-  }
-
-  appendMessage({ role: 'assistant' }, { text: '', ...terminal, streaming: false, toolName: null })
-  $lastAssistantStreaming.set(false)
-}
-
-// 重置消息列表与 bodies，不触碰 $chatSessionId 与 pending batch。
-export function resetChatMessages(): void {
-  mediaUpdates.clear()
-  conversationVoiceSink().cancel()
-  $chatEditDraft.set(null)
-  $chatMessageList.set([])
-  $chatMessageBodies.set({})
-  $lastAssistantStreaming.set(false)
-  $chatTurnInFlight.set(false)
-  $turnHadBubbleBreak.set(false)
-}

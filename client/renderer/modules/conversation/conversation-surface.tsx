@@ -1,26 +1,18 @@
-// 对话表面（消息流）：生活空间、工作台与轻语共用。仅负责把消息列表、typing 占位、流式滚动跟随三件事渲染出来；头部拖拽、参数面板、会话侧栏、输入胶囊都归各自的宿主容器管理——各宿主布局形态差异大，共用部分只此一处。
-
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { type RefObject, useEffect, useMemo } from 'react'
 
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { cn } from '@/shared/lib/utils'
+import { presentationPorts } from '@/shared/presentation-ports'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $surfaceOpen, $surfaceRole } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 import { type ConversationVariant, MessageBubble } from './chat-dock-message-bubble'
-import {
-  $chatMessageList,
-  $chatSessionId,
-  $chatStreamingTick,
-  $chatTurnInFlight,
-  $lastAssistantStreaming,
-  $pendingPromptBatch
-} from './chat-store'
 import { CompanionAvatar } from './companion-avatar'
 import { collectTimeDividerIds } from './conversation-time'
+import { useConversationView } from './conversation-view'
 import { consumePendingMessages, pendingMessages } from './pending-messages'
 import { conversationVoiceSink } from './voice-link'
 
@@ -39,29 +31,42 @@ export function ConversationSurface({
   scrollRef,
   variant = 'living'
 }: ConversationSurfaceProps): React.JSX.Element {
+  const view = useConversationView()
+
+  const {
+    $chatMessageList,
+    $chatSessionId,
+    $chatStreamingTick,
+    $chatTurnInFlight,
+    $lastAssistantStreaming,
+    $pendingPromptBatch
+  } = view.controller
+
+  const locked = useStore(presentationPorts().$screenLocked)
   const sessionId = useStore($chatSessionId)
   useEffect(() => {
-    if (variant !== 'living') {
+    if (view.scoped || variant !== 'living') {
       return
     }
 
     conversationVoiceSink().setVisible(true)
 
     return () => conversationVoiceSink().setVisible(false)
-  }, [sessionId, variant])
+  }, [sessionId, variant, view.scoped])
   const pending = useStore(pendingMessages.$atom)
   const surfaceOpen = useStore($surfaceOpen)
   const surfaceRole = useStore($surfaceRole)
   useEffect(() => {
     if (
       sessionId &&
-      surfaceOpen !== null &&
-      surfaceOpen === surfaceRole &&
+      !locked &&
+      view.eligible &&
+      (view.scoped || (surfaceOpen !== null && surfaceOpen === surfaceRole)) &&
       pending.some(item => item.sessionId === sessionId)
     ) {
       consumePendingMessages(sessionId)
     }
-  }, [sessionId, pending, surfaceOpen, surfaceRole])
+  }, [sessionId, pending, surfaceOpen, surfaceRole, locked, view.eligible, view.scoped])
   const dict = useStrings()
   const list = useStore($chatMessageList)
   const lastAssistantStreaming = useStore($lastAssistantStreaming)

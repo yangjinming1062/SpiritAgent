@@ -4,6 +4,11 @@ import type React from 'react'
 
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
+import { LivingRail } from '@/app/features/living/living-rail'
+import { LivingStage } from '@/app/features/living/living-stage'
+import { $livingView } from '@/app/features/living/living-store'
+import styles from '@/app/features/living/living.module.css'
+import { SceneBackdrop } from '@/app/features/living/scene-backdrop'
 import { SpriteStatusBadge } from '@/modules/character'
 import { MediaViewerOverlay } from '@/modules/media'
 import { hydrateDiaryUnread } from '@/modules/memory'
@@ -16,12 +21,6 @@ import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $surfaceOpenVisible, $surfaceScreenLocked, requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
-
-import { LivingRail } from './living-rail'
-import { LivingStage } from './living-stage'
-import { $livingView } from './living-store'
-import styles from './living.module.css'
-import { SceneBackdrop } from './scene-backdrop'
 
 export function LivingRoot(): React.JSX.Element {
   useWindowMouseCapture(1, { setIgnoreMouseEvents: window.spiritagent?.surface?.setIgnoreMouseEvents })

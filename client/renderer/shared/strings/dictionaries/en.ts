@@ -689,6 +689,7 @@ export const dict: Dictionary = {
     filesReceived: (count: number) => `${count} file${count === 1 ? '' : 's'} received`,
     attachmentsAdded: (count: number) => `${count} attachment${count === 1 ? '' : 's'} added`,
     filesHandoffFailed: "Couldn't hand over the files. Drop them again.",
+    connectionInterrupted: 'Connection interrupted. Replies will sync after reconnecting.',
     sendFailed: 'Send failed',
 
     media: {
@@ -1329,6 +1330,7 @@ export const dict: Dictionary = {
       searching: 'Searching…',
       noMatch: 'No matching conversations',
       badgeArchived: 'Archived',
+      fixedHeading: 'Fixed conversations',
       specialHeading: 'Professional work presets',
       loadingSpecial: 'Loading preset conversations…',
       noSpecial: 'No professional preset conversations',

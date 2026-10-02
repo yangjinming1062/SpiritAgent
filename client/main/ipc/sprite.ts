@@ -81,6 +81,8 @@ function isScreenRect(value: unknown): value is DesktopScreenRect {
 
 interface SpriteIpcDeps {
   getSpriteWindow: () => BrowserWindow | null | undefined
+  getStageWindow?: () => BrowserWindow | null | undefined
+  isDesktopSender?: (sender: Electron.WebContents) => boolean
   getUserDataDir: () => string
   log: (chunk: string) => void
   screen: Screen
@@ -112,10 +114,14 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
   ipcMain.handle(IPC.invoke.spriteGetPosition, () => readRestPosition(getUserDataDir()))
 
   ipcMain.handle(IPC.invoke.spriteGetWindowScene, async (event): Promise<DesktopWindowSceneSnapshot | null> => {
-    const win = getSpriteWindow()
+    const win = deps.getStageWindow?.() ?? getSpriteWindow()
     const bridge = getRunnerBridge()
 
-    if (!isSenderWindow(event.sender, win) || !win || !bridge) {
+    if (
+      (!isSenderWindow(event.sender, getSpriteWindow()) && !deps.isDesktopSender?.(event.sender)) ||
+      !win ||
+      !bridge
+    ) {
       return null
     }
 
@@ -191,9 +197,13 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
 
   // 仪式行走目标：原生屏幕矩形换算为精灵视口内坐标，与窗口快照同一换算。
   ipcMain.handle(IPC.invoke.spriteMapScreenRect, async (event, rect?: unknown): Promise<DesktopScreenRect | null> => {
-    const win = getSpriteWindow()
+    const win = deps.getStageWindow?.() ?? getSpriteWindow()
 
-    if (!isSenderWindow(event.sender, win) || !win || !isScreenRect(rect)) {
+    if (
+      (!isSenderWindow(event.sender, getSpriteWindow()) && !deps.isDesktopSender?.(event.sender)) ||
+      !win ||
+      !isScreenRect(rect)
+    ) {
       return null
     }
 
@@ -213,6 +223,12 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
       !Number.isFinite(point.x) ||
       !Number.isFinite(point.y)
     ) {
+      return
+    }
+
+    const stageWindow = deps.getStageWindow?.()
+
+    if (stageWindow && stageWindow !== win) {
       return
     }
 

@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { CompanionEgg, useCompanionPresentation } from '@/app/components/companion-presentation'
+import { SpriteStage } from '@/app/components/sprite-stage'
 import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
@@ -29,6 +30,7 @@ import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack, requestGateway } from '@/shared'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
+import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { notify } from '@/shared/store/notifications'
@@ -36,7 +38,6 @@ import { hydrateRunnerStatus } from '@/shared/store/runner-status'
 import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
 
-import { SpriteStage } from './behaviors/sprite-stage'
 import { SpriteContextMenu } from './context-menu'
 import { DeveloperOverlay } from './developer-overlay'
 import { ProactiveBubble } from './proactive-bubble'
@@ -123,6 +124,8 @@ export function SpriteWindow(): React.JSX.Element {
     window.addEventListener('keydown', onKey)
 
     const stopActivity = startActivityMonitor()
+
+    void window.spiritagent.presentation.hostReady().catch(error => log.warn('desktop', error))
 
     void hydrateActionCatalog()
     void hydrateVideoPack()

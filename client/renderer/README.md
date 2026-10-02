@@ -4,36 +4,38 @@
 
 ## 分层与目录
 
-| 层 | 边界 |
-|---|---|
-| app | 窗口入口只初始化和挂载；runtime / workflows 不反向导入 windows，窗口间不互相导入 |
-| modules | 不依赖 app；conversation 可消费 media 展示原语，其余跨模块协作由 app 装配 |
-| shared | 无业务依赖 |
-| `@ipc` | 跨进程契约来源，渲染侧不重复定义 |
+| 层      | 边界                                                                             |
+| ------- | -------------------------------------------------------------------------------- |
+| app     | 窗口入口只初始化和挂载；runtime / workflows 不反向导入 windows，窗口间不互相导入 |
+| modules | 不依赖 app；conversation 可消费 media 展示原语，其余跨模块协作由 app 装配        |
+| shared  | 无业务依赖                                                                       |
+| `@ipc`  | 跨进程契约来源，渲染侧不重复定义                                                 |
 
-character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fallback}`、`sprite`、`wardrobe`，偏好、人格与空间等保留根入口。跨模块只经公共 barrel；character 另以 `rendering/video` 作为渲染域公共入口。[modules/posts](modules/posts/) 管动态与评论，[modules/memory](modules/memory/) 的 `journal-store` 只管日记；记忆管理页面在 [memory-section.tsx](app/windows/living/settings/memory-section.tsx)。
+character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fallback}`、`sprite`、`wardrobe`，偏好、人格与空间等保留根入口。跨模块只经公共 barrel；character 另以 `rendering/video` 作为渲染域公共入口。[modules/posts](modules/posts/) 管动态与评论，[modules/memory](modules/memory/) 的 `journal-store` 只管日记；记忆管理页面在 [memory-section.tsx](app/features/living/settings/memory-section.tsx)。
 
 边界规则写在 [ESLint](../eslint.config.mjs)，不绕过内部路径；模块内部用相对路径，character 渲染域只经 `@/modules/character` barrel 访问角色能力。flat config 对同一文件按序合并配置对象，后面的对象再次配置 `no-restricted-imports` 会整体替换前面的 patterns 而不合并，因此各目录规则块都用文件顶部的共用限制组合出完整集合；新增或修改规则块时同样组合，不能只写本目录新增的部分。生产数据与资产统一走主进程桥；直连例外须说明 URL 来源。
 
-窗口入口：精灵窗 [sprite-entry.tsx](sprite-entry.tsx) 初始化后并列挂载 [bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)（宿主网关 WS）与按账户重挂载的 [sprite-window.tsx](app/windows/sprite/sprite-window.tsx)（单击、双击、拖拽与命中捕获在 [sprite-stage.tsx](app/windows/sprite/behaviors/sprite-stage.tsx)）；生活空间与工作台由 [living-entry.tsx](app/windows/living/living-entry.tsx) / [workbench-entry.tsx](app/windows/workbench/workbench-entry.tsx) 调用 [bootstrap/surface.tsx](app/bootstrap/surface.tsx) 挂载。激活、引导与启动失败浮层在 [onboarding](app/onboarding/)。界面文案在 [strings/dictionaries](shared/strings/dictionaries/)，`en` 按 `zh` 的字典类型校验；引导问答与人格预设仍在代码中硬编码中文。
+窗口入口：精灵窗 [sprite-entry.tsx](sprite-entry.tsx) 初始化后并列挂载 [bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)（宿主网关 WS）与按账户重挂载的 [sprite-window.tsx](app/windows/sprite/sprite-window.tsx)（单击、双击、拖拽与命中捕获在 [sprite-stage.tsx](app/components/sprite-stage.tsx)）；生活空间与工作台由 [living-entry.tsx](app/windows/living/living-entry.tsx) / [workbench-entry.tsx](app/windows/workbench/workbench-entry.tsx) 调用 [bootstrap/surface.tsx](app/bootstrap/surface.tsx) 挂载。激活、引导与启动失败浮层在 [onboarding](app/onboarding/)。界面文案在 [strings/dictionaries](shared/strings/dictionaries/)，`en` 按 `zh` 的字典类型校验；引导问答与人格预设仍在代码中硬编码中文。
 
 ## 装配与状态归属
 
 [bind-presentation.ts](app/bootstrap/bind-presentation.ts)在渲染前显式绑定窄能力端口，不依赖 barrel 副作用。[presentation-ports.ts](shared/presentation-ports.ts)是绑定真源；角色与语音实现经端口注入，窗口能力由 app 注入，模块不反向导入窗口。新增端口用 [port.ts](shared/lib/port.ts) 的 `createPort`，未绑定即使用按装配错误抛出。
 
-| 状态或能力 | 权威模块与消费方式 |
-|---|---|
-| 音频播放 | speech；conversation 只维护投影 |
-| 表现优先级 | character；消费者不重建状态机 |
-| 窗口能力 | app 注入，模块不导入窗口 |
+| 状态或能力                     | 权威模块与消费方式                   |
+| ------------------------------ | ------------------------------------ |
+| 音频播放                       | speech；conversation 只维护投影      |
+| 表现优先级                     | character；消费者不重建状态机        |
+| 窗口能力                       | app 注入，模块不导入窗口             |
 | 偏好、生效档位、活动与空间策略 | character 统一裁决，各窗口不重新推导 |
-| 窗口开关与跨窗附件 | 主进程；不能只写来源窗口 store |
+| 窗口开关与跨窗附件             | 主进程；不能只写来源窗口 store       |
 
 订阅与注入随所有者清理，重新挂载不叠加监听。
 
+[conversation-activity](app/workflows/conversation-activity.ts)汇总仍在执行的会话和宿主工具，避免一个会话结束时清除其他会话的工作表现；它只消费现有执行状态，语音与瞬态优先级仍由 character 裁决。
+
 ## 事件与异步生命周期
 
-- [网关路由](app/runtime/gateway-event-router.ts)在鉴权 pending 时丢弃事件，按信封 `session_id` 过滤（无该字段放行）后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call/cancel` 另收宿主或代理角色 `isProxy`）；场景、动态与日记分别直达 `modules/scene`、`modules/posts` 与 `modules/memory`。
+- [网关路由](app/runtime/gateway-event-router.ts)在尚未认证、换号或退出期间丢弃事件，按信封 `session_id` 路由到该账户已保留的会话 runtime 后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call/cancel` 另收宿主或代理角色 `isProxy`）；场景、动态与日记分别直达 `modules/scene`、`modules/posts` 与 `modules/memory`。
 - 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；清理代次与账户存储键登记见 [storage.ts](shared/lib/storage.ts)。判活优先复用共享件，不在站点重写：store 与工作流用 [authed-api.ts](shared/lib/authed-api.ts) 的 `captureAuthScope`（鉴权会话 + 清理代次），`authedApi` 结果的失败记录用 `apiSucceeded`，组件用 [use-async-guard.ts](shared/hooks/use-async-guard.ts)（挂载 + 清理代次）；错误文案取 [ipc-error.ts](shared/lib/ipc-error.ts)。
 - 网关休眠唤醒重连的握手超时须落到 `error`，不能永久停在 `connecting`，否则调用方无法重试。
 - 账户切换释放旧账户的内存资料、会话与通知并按 `accountId` 重挂载；持久索引按账户隔离，切回时恢复，只在明确移除账户时删除。重置期间不回写持久索引，云端偏好广播等所属账户的存储切换完成后再应用。桌面精灵按目标账户状态自动进入未完成的 onboarding。完整入口开关状态由主进程维护。
@@ -45,6 +47,12 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 跳转按会话归属选择入口，工作会话不能送进轻语。
 - 未读只在所属对话可见时清除。
 - 动态与日记菜单分别订阅 `modules/posts`、`modules/memory` 的服务端未读镜像；生活空间负责补查，各页面负责快照确认。异步请求保留账户与组件生命周期守卫，迟到结果不能改变当前页面状态；确认条件与恢复契约见[动态与日记](../../docs/PROTOCOL.md#动态与日记)。
+
+## 统一桌面装配
+
+[desktop](app/windows/desktop/)以单个 renderer 装配共享 [features](app/features/)及内部窗口；原生活空间和工作台仍独立装配这些业务页。[ConversationViewProvider](modules/conversation/conversation-view.tsx)持有视图状态，[chat-store](modules/conversation/chat-store.ts)登记和回收按会话隔离的 [runtime](modules/conversation/chat-runtime.ts)。共享与隔离语义见[桌面呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+
+[desktop-stage](app/workflows/desktop-stage.ts)接入主进程舞台代次、宿主活动镜像和可取消的仪式请求；工具派发始终由宿主负责。内部面板的活动资格由 [panel-activity](shared/context/panel-activity.tsx)向子组件和 Portal 传递，子面板不能覆盖父级的禁用状态。桌面布局和角色位置按账户保存，防抖写入须守卫清理代次。
 
 ## 角色呈现契约
 
@@ -113,16 +121,16 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 编辑与普通草稿分离，取消恢复普通草稿；编辑文本不解析 Slash，成功只消费修订事件。
 - 会话参数显示后端生效值，只接受当前会话最新保存结果；恢复默认删除覆盖。
 - 系统预设与固定预设会话（`kind=special`）的显示名、预设说明按界面语言取字典 `presets`，经 [preset-labels.ts](modules/conversation/preset-labels.ts) 显示；后端目录只有中文，中文字典须与其同步，未知预设回落目录值。
-- 会话只读状态直接消费历史水合的 `info.kind`；陪伴归属由 `system_preset_id` 判定。
+- 会话只读状态直接消费历史水合的 `info.kind`；`system_preset_id` 标识陪伴预设归属，唯一陪伴主会话仍由服务端 `session.get_main` 确定。
 - 斜杠命令元数据权威在服务端注册表，本地副本只服务自动补全与确认弹窗，dispatch 仍以服务端为准。
-- `$companionSessionId` 在 chat-store 统一持有并按账户持久化，冷启动和切回账户时恢复；主会话加载、列表与 `companion.message` 校准同一份归属。
+- `$companionSessionId` 在 [conversation-state](modules/conversation/conversation-state.ts)统一持有并按账户持久化；主会话加载、列表与 `companion.message` 校准同一份归属。
 - 生活空间打开对话或重连时加载陪伴历史；持久化会话 ID 不代表本窗口已水合消息列表。
 - 工作台确认目标不是陪伴后才挂载对话面板。
 - 快照、增量与重放按 [Client](../README.md#资产与历史缓存)处理；`syncSessionHistory` 的 `last_seq` 由调用方以活动聊天列表水位传入，不用缓存 `currentSeq`。
 
 ### 轻语与入口
 
-轻语固定使用主陪伴会话，不挂参数面板；完整入口打开时收起。附件与通知通过统一入口路由，不把专业目标转成陪伴会话。
+轻语固定使用主陪伴会话，不挂参数面板；窗口模式中完整入口打开时收起，桌面模式中独立常驻。附件与通知通过统一入口路由，不把专业目标转成陪伴会话。
 
 ### 语音播放
 

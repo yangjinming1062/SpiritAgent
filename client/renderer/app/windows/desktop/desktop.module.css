@@ -1,0 +1,655 @@
+.desktop {
+  --desktop-bar: 44px;
+  color: var(--ui-text-strong);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  background: var(--ui-app-bg);
+  isolation: isolate;
+}
+
+.desktop button,
+.desktop select {
+  font: inherit;
+}
+.desktop button {
+  cursor: pointer;
+}
+.desktop button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.desktop button:focus-visible,
+.desktop input:focus-visible,
+.desktop select:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 3px;
+}
+.backgroundTint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgb(0 0 0 / 0.08), transparent 25%, rgb(0 0 0 / 0.12));
+}
+.topbar {
+  height: var(--desktop-bar);
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px 0 12px;
+  border-bottom: 1px solid var(--ui-line-hairline);
+  background: color-mix(in srgb, var(--ui-app-bg) 78%, transparent);
+  backdrop-filter: blur(28px) saturate(150%);
+  box-shadow: 0 1px 10px rgb(0 0 0 / 0.04);
+}
+.avatarMenu,
+.settingsMenu {
+  position: relative;
+  flex-shrink: 0;
+}
+.avatarButton {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 50%;
+  background: var(--ui-accent-soft);
+  font-size: 12px !important;
+  font-weight: 700 !important;
+}
+.avatarButton img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mainMenu {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: auto;
+  scrollbar-width: none;
+}
+.mainMenu button {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 6px 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  white-space: nowrap;
+}
+.mainMenu button:hover,
+.mainMenu button[data-current='true'],
+.topIcon:hover {
+  background: var(--ui-fill-hover);
+}
+.mainMenu button[data-current='true'] {
+  font-weight: 600;
+}
+.status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.connection {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-text-muted);
+}
+.connection[data-connected='true'] {
+  background: #66a883;
+}
+.topIcon {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.clock {
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.workspace {
+  position: absolute;
+  top: 60px;
+  left: 16px;
+  right: 16px;
+  bottom: 96px;
+  pointer-events: none;
+  z-index: 10;
+}
+.desktop[data-whisper='right'] .workspace {
+  right: 412px;
+}
+.desktop[data-whisper='left'] .workspace {
+  left: 412px;
+}
+.window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 14px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--ui-app-bg) 88%, transparent);
+  backdrop-filter: blur(32px) saturate(130%);
+  box-shadow:
+    0 18px 60px rgb(0 0 0 / 0.16),
+    0 1px 4px rgb(0 0 0 / 0.08);
+  transition: box-shadow 150ms;
+}
+.window[hidden] {
+  display: none;
+}
+.window[data-active='true'] {
+  border-color: var(--ui-line-strong);
+  box-shadow:
+    0 24px 72px rgb(0 0 0 / 0.24),
+    0 0 0 1px var(--ui-line-hairline);
+}
+.windowHeader {
+  height: 37px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+  border-bottom: 1px solid var(--ui-line-hairline);
+  background: var(--ui-fill-faint);
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+}
+.windowTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-text-muted);
+}
+.window[data-active='true'] .windowTitle {
+  color: var(--ui-text-strong);
+}
+.windowControls {
+  margin-left: auto;
+  height: 100%;
+  display: flex;
+}
+.windowControls button {
+  width: 37px;
+  border: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--ui-text-muted);
+}
+.windowControls button:hover {
+  background: var(--ui-fill-hover);
+  color: var(--ui-text-strong);
+}
+.windowControls .closeButton:hover {
+  background: #c85151;
+  color: white;
+}
+.windowContent {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.windowContent > * {
+  flex: 1;
+  min-width: 0;
+}
+.resizeHandle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  z-index: 5;
+  cursor: nwse-resize !important;
+  border: 0;
+  background: linear-gradient(
+    135deg,
+    transparent 55%,
+    var(--ui-line-standard) 56%,
+    transparent 62%,
+    transparent 72%,
+    var(--ui-line-standard) 73%,
+    transparent 80%
+  );
+  touch-action: none;
+}
+.chatLayout {
+  display: flex;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.sessionSidebar {
+  width: 208px;
+  flex: 0 0 208px;
+  overflow: hidden;
+  border-right: 1px solid var(--ui-line-hairline);
+}
+.sessionSidebar > aside {
+  width: 100%;
+  height: 100%;
+}
+.chatMain {
+  min-width: 240px;
+}
+.chatSurface {
+  padding: 18px 22px;
+}
+.chatInput {
+  padding: 8px 16px 16px;
+}
+.chatLayout > aside {
+  max-width: 250px;
+}
+.whisper {
+  position: absolute;
+  top: 60px;
+  bottom: 96px;
+  width: 380px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ui-app-bg) 78%, transparent);
+  backdrop-filter: blur(30px) saturate(130%);
+  box-shadow: 0 10px 36px rgb(0 0 0 / 0.13);
+}
+.whisper[hidden] {
+  display: none;
+}
+.whisper[data-side='right'] {
+  right: 16px;
+}
+.whisper[data-side='left'] {
+  left: 16px;
+}
+.whisperHeader {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 46px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--ui-line-hairline);
+  flex-shrink: 0;
+}
+.whisperHeader strong {
+  font-size: 12px;
+}
+.whisperHeader span {
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  margin-right: auto;
+}
+.whisperHeader button {
+  background: transparent;
+  border: 0;
+  padding: 5px;
+  border-radius: 5px;
+  color: var(--ui-text-muted);
+}
+.whisperHeader button:hover {
+  background: var(--ui-fill-hover);
+}
+.whisperMessages {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 16px;
+}
+.whisperInput {
+  padding: 10px 12px 14px;
+  flex-shrink: 0;
+}
+.whisperTab {
+  position: absolute;
+  top: 50%;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 7px;
+  border: 1px solid var(--ui-line-standard);
+  background: var(--ui-app-bg);
+  backdrop-filter: blur(20px);
+  font-size: 11px !important;
+}
+.whisperTab[data-side='right'] {
+  right: 0;
+  border-radius: 10px 0 0 10px;
+}
+.whisperTab[data-side='left'] {
+  left: 0;
+  border-radius: 0 10px 10px 0;
+}
+.whisperUnread {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ui-accent);
+}
+.companion {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 25;
+}
+.companionMenu {
+  position: fixed;
+  pointer-events: auto;
+  width: 205px;
+  padding: 14px;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 12px;
+  background: var(--ui-app-bg);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.18);
+  z-index: 60;
+  font-size: 12px;
+}
+.companionMenu label {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.companionMenu button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+}
+.dock {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  min-height: 65px;
+  max-width: calc(100% - 32px);
+  padding: 9px 12px;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--ui-app-bg) 66%, transparent);
+  backdrop-filter: blur(30px) saturate(160%);
+  box-shadow:
+    0 10px 36px rgb(0 0 0 / 0.2),
+    inset 0 1px 0 rgb(255 255 255 / 0.16);
+}
+.dock[data-drop='true'] {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 5px;
+}
+.dockItem {
+  position: relative;
+  flex: 0 0 48px;
+}
+.appIcon,
+.internalDockItem,
+.addApp {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 12px;
+  background: var(--ui-fill-faint);
+  transition:
+    transform 150ms,
+    background 150ms;
+  position: relative;
+}
+.appIcon {
+  width: 100%;
+}
+.appIcon:hover,
+.internalDockItem:hover,
+.addApp:hover {
+  transform: translateY(-6px) scale(1.08);
+  background: var(--ui-fill-hover);
+}
+.appIcon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.appIcon[data-unavailable='true'] {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.internalDockItem {
+  color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  flex-shrink: 0;
+}
+.internalDockItem span {
+  font-size: 18px;
+  font-weight: 600;
+}
+.internalDockItem i {
+  position: absolute;
+  bottom: -6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--ui-text-muted);
+}
+.internalDockItem[data-minimized='true'] {
+  opacity: 0.6;
+}
+.addApp {
+  background: transparent;
+  border-style: dashed;
+  color: var(--ui-text-muted);
+  flex-shrink: 0;
+}
+.dockDivider {
+  height: 34px;
+  width: 1px;
+  margin: 5px 3px;
+  background: var(--ui-line-standard);
+  flex-shrink: 0;
+}
+.dockMenu {
+  position: absolute;
+  bottom: 66px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 160px;
+  padding: 5px;
+  border-radius: 9px;
+  border: 1px solid var(--ui-line-standard);
+  background: var(--ui-app-bg);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.18);
+}
+.dockMenu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+.dockMenu button:hover {
+  background: var(--ui-fill-hover);
+}
+.menuContent {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 256px;
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  padding: 9px;
+  background: var(--ui-app-bg);
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 12px;
+  box-shadow: 0 16px 45px rgb(0 0 0 / 0.2);
+  font-size: 12px;
+}
+.settingsMenu .menuContent {
+  left: auto;
+  right: 0;
+}
+.menuContent strong {
+  padding: 7px 9px;
+  color: var(--ui-text-muted);
+  font-weight: 500;
+}
+.menuContent button {
+  border: 0;
+  border-radius: 6px;
+  padding: 9px;
+  display: flex;
+  justify-content: space-between;
+  text-align: left;
+  background: transparent;
+}
+.menuContent button:hover {
+  background: var(--ui-fill-hover);
+}
+.displaySelect {
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-block: 1px solid var(--ui-line-hairline);
+  margin-bottom: 5px;
+}
+.displaySelect select {
+  width: 100%;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 5px;
+  padding: 6px;
+  background: var(--ui-fill-faint);
+}
+.waiting {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  color: var(--ui-text-strong);
+  background: var(--ui-app-bg);
+}
+.waiting button {
+  padding: 8px 12px;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 8px;
+}
+@media (max-width: 1350px) {
+  .mainMenu button {
+    padding: 6px 7px;
+  }
+  .clock {
+    max-width: 138px;
+    overflow: hidden;
+  }
+  .status > :first-child {
+    display: none;
+  }
+  .sessionSidebar {
+    width: 172px;
+    flex-basis: 172px;
+  }
+  .chatLayout > aside {
+    max-width: 190px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .desktop *,
+  .desktop *::before,
+  .desktop *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+html.no-blur .topbar,
+html.no-blur .window,
+html.no-blur .whisper,
+html.no-blur .dock {
+  backdrop-filter: none;
+  background: var(--ui-app-bg);
+}
+
+.preferences {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+.preferencesTabs {
+  display: flex;
+  gap: 5px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--ui-line-hairline);
+  flex-shrink: 0;
+}
+.preferencesTabs button {
+  font-size: 12px;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 13px;
+  background: transparent;
+  color: var(--ui-text-muted);
+}
+.preferencesTabs button[aria-selected='true'] {
+  color: var(--ui-text-strong);
+  background: var(--ui-fill-hover);
+}
+
+.dockViewport {
+  min-width: 0;
+  overflow-x: auto;
+  padding: 8px 2px;
+  margin: -8px -2px;
+  scrollbar-width: thin;
+}
+.dockItems {
+  display: flex;
+  width: max-content;
+  gap: 8px;
+  align-items: end;
+}

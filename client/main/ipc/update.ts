@@ -27,8 +27,9 @@ interface UpdateIpcDeps {
   electron: { app: App }
   feed: UpdateFeedPort
   ipcMain: IpcMain
-  /** 重启安装只接受生活空间窗口的请求。 */
+  /** 重启安装只接受设置入口的请求。 */
   isInstallSender: (sender: WebContents) => boolean
+  prepareInstall: () => Promise<void>
   /** 置应用退出标志，使窗口关闭拦截放行。 */
   markQuitting: () => void
 }
@@ -49,14 +50,21 @@ function summarizeError(error: unknown): string {
   return firstLine.length > ERROR_MESSAGE_MAX_LENGTH ? `${firstLine.slice(0, ERROR_MESSAGE_MAX_LENGTH)}…` : firstLine
 }
 
-export function registerUpdateIpc({ electron, feed, ipcMain, isInstallSender, markQuitting }: UpdateIpcDeps): void {
+export function registerUpdateIpc({
+  electron,
+  feed,
+  ipcMain,
+  isInstallSender,
+  prepareInstall,
+  markQuitting
+}: UpdateIpcDeps): void {
   const { app } = electron
   let latestEvent: DesktopUpdateEvent | null = null
   let phase: DesktopUpdatePhase = 'check'
   // Runner 预取串行执行，避免重试时并发清理同一暂存目录。
   const enqueuePrepare = createSerialQueue()
 
-  // 更新状态的唯一消费方是生活空间设置页；广播到所有窗口而非假定主窗口，消费方由渲染层装配决定（update-bridge 挂在哪个入口哪个窗口收得到）。
+  // 消费方由各入口装配的 update-bridge 决定。
   function broadcastUpdate(event: DesktopUpdateEvent): void {
     latestEvent = event
     broadcastToAllWindows(IPC.event.updateEvent, event)
@@ -120,21 +128,35 @@ export function registerUpdateIpc({ electron, feed, ipcMain, isInstallSender, ma
     await autoUpdater.downloadUpdate().catch(() => {})
   })
 
-  ipcMain.handle(IPC.invoke.updateInstall, event => {
+  ipcMain.handle(IPC.invoke.updateInstall, async event => {
     if (!app.isPackaged) {
       throw new Error('desktop updates are unavailable in development builds')
     }
 
     if (!isInstallSender(event.sender)) {
-      throw new Error('update install is restricted to the living space window')
+      throw new Error('update install is restricted to a settings window')
     }
 
     if (latestEvent?.type !== 'downloaded') {
       throw new Error('no verified update is ready to install')
     }
 
+    const preparedUpdate = latestEvent
     phase = 'install'
-    electronUpdaterPkg.autoUpdater.quitAndInstall(true, true)
+
+    try {
+      // Windows updater 先启动安装器才发 before-quit，不能只依赖退出钩子恢复桌面。
+      await prepareInstall()
+
+      if (latestEvent !== preparedUpdate) {
+        throw new Error('verified update changed while preparing installation')
+      }
+
+      electronUpdaterPkg.autoUpdater.quitAndInstall(true, true)
+    } catch (error) {
+      broadcastError('install', error)
+      throw error
+    }
   })
 
   if (!app.isPackaged) {

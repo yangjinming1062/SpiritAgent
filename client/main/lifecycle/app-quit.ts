@@ -7,7 +7,7 @@ import { errorMessage } from '../shared/utils'
 const RUNNER_STOP_TIMEOUT_MS = 3000
 
 interface AppQuitDeps {
-  app: Pick<App, 'exit' | 'on'>
+  app: Pick<App, 'exit' | 'on' | 'quit'>
   cleanupShortcuts: () => void
   destroyTray: () => void
   flushConfig: () => Promise<void>
@@ -16,6 +16,7 @@ interface AppQuitDeps {
   log: (chunk: string) => void
   /** 停止 Runner；没有 Runner 时立即完成。 */
   stopRunner: () => Promise<unknown>
+  restoreDesktop?: () => Promise<void>
 }
 
 export interface AppQuit {
@@ -28,9 +29,31 @@ export interface AppQuit {
 export function installAppQuit(deps: AppQuitDeps): AppQuit {
   let quitting = false
   let willQuitCleanupDone = false
+  let desktopRestored = false
+  let desktopRestoring = false
 
-  deps.app.on('before-quit', () => {
+  deps.app.on('before-quit', event => {
     quitting = true
+
+    if (deps.restoreDesktop && !desktopRestored) {
+      event.preventDefault()
+
+      if (!desktopRestoring) {
+        desktopRestoring = true
+        void deps
+          .restoreDesktop()
+          .catch(error => {
+            deps.log(`[desktop] quit restoration failed: ${errorMessage(error)}`)
+          })
+          .finally(() => {
+            desktopRestored = true
+            deps.app.quit()
+          })
+      }
+
+      return
+    }
+
     deps.destroyTray()
     deps.cleanupShortcuts()
 

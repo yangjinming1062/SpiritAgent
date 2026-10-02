@@ -8,8 +8,14 @@ import { clamp } from '@runtime'
 import { atom, computed } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
-import { persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
-import { $surfaceOpen, $surfaceSpriteVisible, isSpriteStageShown } from '@/shared/store/surfaces'
+import {
+  persistString,
+  registerCompanionStorageKey,
+  registerStorageClearHandler,
+  storedString
+} from '@/shared/lib/storage'
+import { $presentation } from '@/shared/store/presentation'
+import { $surfaceOpen, $surfaceRole, $surfaceSpriteVisible, isSpriteStageShown } from '@/shared/store/surfaces'
 
 import { $actionCatalog, $activePlayInstance, ensurePeekAction } from './actions'
 import type { PeekGeometry } from './actions'
@@ -37,6 +43,61 @@ export function getBaseSpriteHeight(): number {
 
 export function getBaseSpriteWidth(): number {
   return baseSpriteSize(window.innerHeight).width
+}
+
+let stageInsets = { top: 0, bottom: 0, left: 0, right: 0 }
+const DESKTOP_POSITION_KEY = registerCompanionStorageKey('da.desktop.sprite.position')
+
+function saveRestPosition(position: {
+  x: number
+  y: number
+  screenEdge?: { side: 'left' | 'right'; yRatio: number }
+}): Promise<void> {
+  if ($surfaceRole.get() === 'desktop') {
+    persistString(DESKTOP_POSITION_KEY, JSON.stringify(position))
+
+    return Promise.resolve()
+  }
+
+  return window.spiritagent.sprite.setPosition(position)
+}
+
+function loadRestPosition(): Promise<{
+  x: number
+  y: number
+  screenEdge?: { side: 'left' | 'right'; yRatio: number }
+} | null> {
+  if ($surfaceRole.get() !== 'desktop') {
+    return window.spiritagent.sprite.getPosition()
+  }
+
+  const raw = storedString(DESKTOP_POSITION_KEY)
+
+  try {
+    const value: unknown = raw ? JSON.parse(raw) : null
+
+    if (
+      value &&
+      typeof value === 'object' &&
+      'x' in value &&
+      'y' in value &&
+      typeof value.x === 'number' &&
+      typeof value.y === 'number' &&
+      Number.isFinite(value.x) &&
+      Number.isFinite(value.y)
+    ) {
+      return Promise.resolve({ x: value.x, y: value.y })
+    }
+  } catch {
+    /* 损坏位置恢复默认落点。 */
+  }
+
+  return Promise.resolve(null)
+}
+
+export function setSpatialInsets(insets: { top: number; bottom: number; left: number; right: number }): void {
+  stageInsets = insets
+  $spatialPos.set(clampPosToViewport($spatialPos.get()))
 }
 
 const REST_MARGIN = 24
@@ -148,8 +209,8 @@ function getHomePosition(): { x: number; y: number } {
   const c = contentBox($defaultScale.get())
 
   return {
-    x: Math.max(REST_MARGIN, window.innerWidth - c.right - REST_MARGIN),
-    y: Math.max(-c.top, window.innerHeight - c.bottom)
+    x: Math.max(REST_MARGIN, window.innerWidth - stageInsets.right - c.right - REST_MARGIN),
+    y: Math.max(-c.top, window.innerHeight - stageInsets.bottom - c.bottom)
   }
 }
 
@@ -169,11 +230,11 @@ function clampPosToViewport(pos: { x: number; y: number }, scale = $spatialScale
   const c = contentBox(scale)
   const vw = window.innerWidth
   const vh = window.innerHeight
-  const maxY = vh - c.bottom
+  const maxY = vh - stageInsets.bottom - c.bottom
 
   return {
-    x: clamp(pos.x, -c.left, vw - c.right),
-    y: clamp(pos.y, -c.top, maxY)
+    x: clamp(pos.x, stageInsets.left - c.left, Math.max(stageInsets.left - c.left, vw - stageInsets.right - c.right)),
+    y: clamp(pos.y, stageInsets.top - c.top, Math.max(stageInsets.top - c.top, maxY))
   }
 }
 
@@ -497,7 +558,7 @@ function applyScreenPeek(
   $homePosition.set(position)
 
   const savePosition = (savedPosition: { x: number; y: number } = position): void => {
-    void window.spiritagent.sprite.setPosition({
+    void saveRestPosition({
       ...savedPosition,
       screenEdge: { side: target.side, yRatio: target.yRatio }
     })
@@ -778,7 +839,7 @@ function abandonPeekMode(): void {
 
   const position = settleHome(peek?.mode === 'window')
 
-  void window.spiritagent.sprite.setPosition({
+  void saveRestPosition({
     ...position,
     ...(screenEdgeHome ? { screenEdge: screenEdgeHome } : {})
   })
@@ -1401,6 +1462,12 @@ export function startDrag(): void {
 }
 
 export function updateDragPosition(pos: { x: number; y: number }): void {
+  if ($surfaceRole.get() === 'desktop') {
+    $spatialPos.set(clampPosToViewport(pos))
+
+    return
+  }
+
   const c = contentBox()
   const w = getBaseSpriteWidth() * $spatialScale.get()
   $spatialPos.set({
@@ -1418,11 +1485,13 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
   const rightClipped = Math.max(0, pos.x + c.right - window.innerWidth)
 
   const side =
-    !cancelled && rightClipped / fullWidth >= 0.25
-      ? 'right'
-      : !cancelled && leftClipped / fullWidth >= 0.25
-        ? 'left'
-        : null
+    $surfaceRole.get() === 'desktop'
+      ? null
+      : !cancelled && rightClipped / fullWidth >= 0.25
+        ? 'right'
+        : !cancelled && leftClipped / fullWidth >= 0.25
+          ? 'left'
+          : null
 
   $spatialPos.set(safe)
   $homePosition.set(safe)
@@ -1441,7 +1510,7 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
   if (side) {
     const yRatio = safe.y / Math.max(1, window.innerHeight)
     screenEdgeHome = { side, yRatio }
-    void window.spiritagent.sprite.setPosition({ ...safe, screenEdge: { side, yRatio } })
+    void saveRestPosition({ ...safe, screenEdge: { side, yRatio } })
     void activateScreenPeek(screenEdgeHome, true)
 
     return
@@ -1455,7 +1524,7 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
     return
   }
 
-  void window.spiritagent.sprite.setPosition(safe)
+  void saveRestPosition(safe)
 }
 
 export function resetToHomePosition(): void {
@@ -1470,7 +1539,7 @@ export function resetToHomePosition(): void {
   $spatialLocomotion.set('still')
 
   $spatialPos.set(home)
-  void window.spiritagent.sprite.setPosition(home)
+  void saveRestPosition(home)
 }
 
 export function initSpatial(): () => void {
@@ -1505,7 +1574,7 @@ export function initSpatial(): () => void {
     }
 
     if (next.x !== saved.x || next.y !== saved.y) {
-      void window.spiritagent.sprite.setPosition({
+      void saveRestPosition({
         ...next,
         ...(saved.screenEdge ? { screenEdge: saved.screenEdge } : {})
       })
@@ -1532,8 +1601,7 @@ export function initSpatial(): () => void {
     }
   }
 
-  void window.spiritagent.sprite
-    .getPosition()
+  void loadRestPosition()
     .then(saved => {
       if (disposed || !saved || userInteracted) {
         return
@@ -1594,6 +1662,27 @@ export function initSpatial(): () => void {
 
     updateSpatialDecision()
   }
+
+  let previousStageVisible = isSpriteStageShown()
+  let previousStageEpoch = $presentation.get().stageEpoch
+  offs.push(
+    $presentation.listen(state => {
+      const visible = isSpriteStageShown()
+
+      if (visible === previousStageVisible && state.stageEpoch === previousStageEpoch) {
+        return
+      }
+
+      previousStageVisible = visible
+      previousStageEpoch = state.stageEpoch
+
+      if (visible) {
+        resumeDesktopStage()
+      } else {
+        pauseDesktopStage()
+      }
+    })
+  )
 
   offs.push(
     $surfaceOpen.listen(open => {

@@ -1,50 +1,63 @@
+import { syncConversationActivity } from '@/app/workflows/conversation-activity'
 import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
-import { reportInteractionStat, setSpriteState, triggerFootGlowPulse } from '@/modules/character'
+import { reportInteractionStat, triggerFootGlowPulse } from '@/modules/character'
 import {
   $chatDraftFromUndo,
-  $chatSessionId,
-  $chatTurnInFlight,
-  $turnHadBubbleBreak,
-  appendAssistantDelta,
-  appendAssistantReasoningDelta,
-  beginAssistantMessage,
-  bindTrailingAssistantMessageId,
-  bindTrailingUserMessageIds,
   chatDisplayText,
-  clearPendingPrompts,
-  finalizeAssistantMessage,
-  finalizeCompanionReply,
-  forgetDeletedVoiceMessages,
-  hydrateChatMessages,
-  hydrateEditedChatMessages,
+  type ConversationRuntime,
+  getConversationRuntime,
   invalidateSessionHistory,
-  markAssistantTerminal,
-  pushStatusPill,
   rememberFullHistory,
   removeVoicePlayback,
-  setSessionContextUsage,
-  setTurnHadBubbleBreak,
-  showMediaHint,
-  submitPendingBatch,
-  updateMediaBubble,
-  updateVoiceBubble
+  showMediaHint
 } from '@/modules/conversation'
-import { cancelVoiceBar } from '@/modules/speech'
 import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, CompanionBubble, SessionMessage } from '@/shared/types/spiritagent'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
-// 会话回合事件处理：message.* 与 slash/压缩/撤回的状态更新；精灵表现命令（thinking/idle）经呈现端口下达。
+// 会话回合事件：message.*、Slash、压缩与撤回。
 
-export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteContext): void {
+export function handleConversationEvent(
+  event: GatewayEvent,
+  ctx: EventRouteContext,
+  runtime: ConversationRuntime = getConversationRuntime(event.session_id ?? null)
+): void {
+  if (!runtime.isCurrent()) {
+    return
+  }
+
+  const {
+    $chatSessionId,
+    $chatTurnInFlight,
+    $turnHadBubbleBreak,
+    appendAssistantDelta,
+    appendAssistantReasoningDelta,
+    beginAssistantMessage,
+    bindTrailingAssistantMessageId,
+    bindTrailingUserMessageIds,
+    clearPendingPrompts,
+    finalizeAssistantMessage,
+    finalizeCompanionReply,
+    forgetDeletedVoiceMessages,
+    hydrateChatMessages,
+    hydrateEditedChatMessages,
+    markAssistantTerminal,
+    pushStatusPill,
+    setSessionContextUsage,
+    setTurnHadBubbleBreak,
+    submitPendingBatch,
+    updateMediaBubble,
+    updateVoiceBubble
+  } = runtime
+
   switch (event.type) {
     case 'message.start':
       $chatTurnInFlight.set(true)
       beginAssistantMessage()
       setTurnHadBubbleBreak(false)
-      setSpriteState('thinking')
+      syncConversationActivity()
 
       break
     case 'message.delta': {
@@ -188,8 +201,6 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         )
       }
 
-      setSpriteState('idle', { force: true })
-
       triggerFootGlowPulse('completed', 1200)
 
       // 每日互动统计—— chat_turn 仅在确有文本可统计时计数
@@ -200,15 +211,14 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       // in-flight 回合结束——清标记并冲刷回合期间排队的消息（合并为单次批量提交）。
       $chatTurnInFlight.set(false)
       submitPendingBatch()
+      syncConversationActivity()
 
       break
     }
 
     case 'error': {
-      cancelVoiceBar()
       $chatTurnInFlight.set(false)
       clearPendingPrompts()
-      // 强制重置为 idle：thinking/working 时优先级门控会静默拒绝普通状态转换。
       const payload = decodePayload<{ message?: string; retry_message_id?: number }>(event.payload)
       markAssistantTerminal({
         error: payload.message ?? getStrings().chat.sendFailed,
@@ -217,7 +227,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
             ? payload.retry_message_id
             : undefined
       })
-      setSpriteState('idle', { force: true })
+      syncConversationActivity()
       triggerFootGlowPulse('failed', 2000)
 
       break

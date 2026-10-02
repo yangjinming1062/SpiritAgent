@@ -1,25 +1,17 @@
 import { useStore } from '@nanostores/react'
-import { atom } from 'nanostores'
-import { type ClipboardEvent, type DragEvent, type PointerEvent, useEffect, useState } from 'react'
+import { type ClipboardEvent, type DragEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
-import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
 import { blobToDataUrl } from './blob-data-url'
 import { attachVideoFile } from './chat-attach-picker'
-import {
-  $chatDraftFromUndo,
-  $chatSessionId,
-  $chatTurnInFlight,
-  $lastAssistantStreaming,
-  $pendingExternalAttachment,
-  $pendingPromptBatch
-} from './chat-store'
+import { $chatDraftFromUndo, $pendingExternalAttachment } from './chat-store'
 import type { ChatSubmitState, ConversationInputProps } from './conversation-input'
+import { useConversationView } from './conversation-view'
 import { useChatSubmit } from './use-chat-submit'
 import { useVoiceRecorder } from './use-voice-recorder'
 
@@ -35,40 +27,27 @@ export interface UseChatInputResult {
   inputProps: Omit<ConversationInputProps, 'variant'>
 }
 
-// 已消费过的投喂 nonce + 跨挂载暂存的附件路径（模块级 atom，StrictMode 卸载重挂不丢）。nonce 防止 listen 对同一份投喂重复 append。监听器内不 clear，由投喂方在下次 push 前清。
+// 跨挂载去重同一批外部投喂，附件归接收视图。
 let consumedExternalFeedNonce = 0
 
-// 暂存路径绑定加入时的会话；sessionId 为 null 时归入本窗口随后确定的会话。
-interface StagedExternalPaths {
-  paths: string[]
-  sessionId: string | null
-}
-
-const EMPTY_STAGED: StagedExternalPaths = { paths: [], sessionId: null }
-const $stagedExternalPaths = atom<StagedExternalPaths>(EMPTY_STAGED)
-
-function stageExternalPaths(paths: string[], sessionId: string | null): void {
-  const staged = $stagedExternalPaths.get()
-  $stagedExternalPaths.set({ paths: [...staged.paths, ...paths], sessionId: staged.sessionId ?? sessionId })
-}
-
-// 切到其他会话或清理账户后丢弃旧附件路径（README 会话与草稿）。
-$chatSessionId.listen(sessionId => {
-  const staged = $stagedExternalPaths.get()
-
-  if (staged.paths.length === 0 || staged.sessionId === sessionId) {
-    return
-  }
-
-  $stagedExternalPaths.set(staged.sessionId === null ? { ...staged, sessionId } : EMPTY_STAGED)
-})
-
-registerStorageClearHandler(() => {
-  $stagedExternalPaths.set(EMPTY_STAGED)
-})
-
 export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOptions): UseChatInputResult {
-  const externalPaths = useStore($stagedExternalPaths).paths
+  const view = useConversationView()
+  const { controller } = view
+  const ownerRef = useRef(controller)
+  ownerRef.current = controller
+  const isCurrent = useCallback(() => ownerRef.current === controller && controller.isCurrent(), [controller])
+  const { $chatSessionId, $chatTurnInFlight, $lastAssistantStreaming, $pendingPromptBatch, $externalPaths } = controller
+  const externalPaths = useStore($externalPaths)
+
+  const stageExternalPaths = useCallback(
+    (paths: string[]): void => {
+      if (view.eligible && isCurrent()) {
+        $externalPaths.set([...$externalPaths.get(), ...paths])
+      }
+    },
+    [view.eligible, isCurrent, $externalPaths]
+  )
+
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const chatSessionId = useStore($chatSessionId)
   const turnInFlight = useStore($chatTurnInFlight)
@@ -80,16 +59,20 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     gatewayState,
     isReadOnlySession,
     onClearExternalPaths: () => {
-      $stagedExternalPaths.set(EMPTY_STAGED)
+      $externalPaths.set([])
     },
     onPreCheckFail: msg => notify({ kind: 'warning', message: msg })
   })
 
-  const { recording, start: startRecording, stop: stopRecording } = useVoiceRecorder({ isReadOnlySession })
+  const {
+    recording,
+    start: startRecording,
+    stop: stopRecording
+  } = useVoiceRecorder({ isReadOnlySession, runtime: controller, eligible: view.eligible })
 
   // 撤销草稿回填，多窗口按会话过滤
   useAtomListen($chatDraftFromUndo, draft => {
-    if (!draft || draft.session_id !== chatSessionId) {
+    if (!view.eligible || !draft || draft.session_id !== chatSessionId) {
       return
     }
 
@@ -101,19 +84,26 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
   useEffect(
     () =>
       $pendingExternalAttachment.subscribe(state => {
-        if (!state || state.paths.length === 0 || state.nonce <= consumedExternalFeedNonce) {
+        if (
+          !view.eligible ||
+          !view.receiveExternalAttachments ||
+          !view.visible ||
+          !state ||
+          state.paths.length === 0 ||
+          state.nonce <= consumedExternalFeedNonce
+        ) {
           return
         }
 
         consumedExternalFeedNonce = state.nonce
-        stageExternalPaths(state.paths, null)
+        stageExternalPaths(state.paths)
         notify({ kind: 'info', message: getStrings().chat.filesReceived(state.paths.length) })
       }),
-    []
+    [controller, view.receiveExternalAttachments, view.visible, view.eligible, stageExternalPaths]
   )
 
   const handleDrop = (e: DragEvent): void => {
-    if (submit.editing) {
+    if (!view.eligible || submit.editing) {
       e.preventDefault()
 
       return
@@ -126,7 +116,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     }
 
     e.preventDefault()
-    stageExternalPaths(paths, $chatSessionId.get())
+    stageExternalPaths(paths)
     notify({ kind: 'info', message: getStrings().chat.attachmentsAdded(paths.length) })
   }
 
@@ -139,7 +129,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
 
     e.preventDefault()
 
-    if (submit.editing) {
+    if (!view.eligible || submit.editing) {
       return
     }
 
@@ -147,14 +137,14 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     const sessionId = $chatSessionId.get()
 
     for (const file of files) {
-      if ($chatSessionId.get() !== sessionId) {
+      if (!isCurrent() || $chatSessionId.get() !== sessionId) {
         return
       }
 
       if (file.type.startsWith('image/')) {
         const dataUrl = await blobToDataUrl(file).catch(() => null)
 
-        if (dataUrl && $chatSessionId.get() === sessionId) {
+        if (dataUrl && isCurrent() && $chatSessionId.get() === sessionId) {
           submit.setPending({ type: 'image', value: dataUrl, fileName: file.name })
         }
 
@@ -165,9 +155,9 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
 
       if (filePath) {
         if (file.type.startsWith('video/')) {
-          await attachVideoFile(filePath, submit.setPending)
+          await attachVideoFile(filePath, submit.setPending, controller)
         } else {
-          stageExternalPaths([filePath], sessionId)
+          stageExternalPaths([filePath])
         }
       }
     }

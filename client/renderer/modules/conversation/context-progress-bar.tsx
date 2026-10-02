@@ -8,7 +8,7 @@ import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 import type { SessionMessage } from '@/shared/types/spiritagent'
 
-import { $sessionContextUsage, $sessionSettings } from './chat-store'
+import { useConversationView } from './conversation-view'
 
 export const DEFAULT_THRESHOLD = 0.7
 const DEFAULT_LIMIT = 1_000_000
@@ -67,6 +67,8 @@ export function useContextStatus(): {
   thresholdPct: number
   totalTokens: number
 } {
+  const { $sessionContextUsage, $sessionSettings } = useConversationView().controller
+
   const usage = useStore($sessionContextUsage)
   const settings = useStore($sessionSettings)
 
@@ -185,6 +187,8 @@ export function ChatContextCapsule({ active, onClick, variant }: ChatCapsuleProp
 }
 
 export function ChatTemperatureCapsule({ active, onClick, variant }: ChatCapsuleProps): React.JSX.Element {
+  const { $sessionSettings } = useConversationView().controller
+
   const settings = useStore($sessionSettings)
   const temp = resolveTemperature(settings.temperature)
   const params = useStrings().chat.params
@@ -207,6 +211,8 @@ export function ChatTemperatureCapsule({ active, onClick, variant }: ChatCapsule
 }
 
 export function ChatReasoningCapsule({ active, onClick, variant }: ChatCapsuleProps): React.JSX.Element {
+  const { $sessionSettings } = useConversationView().controller
+
   const settings = useStore($sessionSettings)
   const reasoning = resolveReasoningEffort(settings.reasoning_effort)
   const params = useStrings().chat.params

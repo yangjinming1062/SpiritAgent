@@ -39,7 +39,7 @@ function formatDate(formatter: Intl.DateTimeFormat, iso: string): string {
   }
 }
 
-export function PostsPage(): React.JSX.Element {
+export function PostsPage({ foreground: suppliedForeground }: { foreground?: boolean } = {}): React.JSX.Element {
   const posts = useStore($posts)
   const loading = useStore($postsLoading)
   const hasMore = useStore($postsHasMore)
@@ -65,7 +65,10 @@ export function PostsPage(): React.JSX.Element {
   const [confirmedReadIds, setConfirmedReadIds] = useState(new Set<string>())
   const readInFlight = useRef(false)
   const beginAsync = useAsyncGuard()
-  const foreground = surfaceOpen === 'living' && surfaceVisible && !screenLocked && documentActive
+
+  const foreground =
+    (suppliedForeground ?? (surfaceOpen === 'living' && surfaceVisible)) && !screenLocked && documentActive
+
   const wasForeground = useRef(foreground)
 
   useEffect(() => {

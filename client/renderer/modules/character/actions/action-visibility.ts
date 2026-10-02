@@ -1,4 +1,5 @@
 import { $chatVisible } from '@/shared/store/chat-visibility'
+import { $presentation } from '@/shared/store/presentation'
 import {
   $surfaceCompanions,
   $surfaceOpen,
@@ -20,6 +21,7 @@ export function observeActionStageVisibility(listener: (visible: boolean) => voi
 
   const stops = [
     $screenLocked.listen(notify),
+    $presentation.listen(notify),
     $chatVisible.listen(notify),
     $surfaceOpen.listen(notify),
     $surfaceCompanions.listen(notify),

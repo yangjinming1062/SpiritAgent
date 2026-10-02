@@ -112,23 +112,25 @@ async function toViewportRect(geom: DesktopScreenRect): Promise<DesktopScreenRec
 export async function performRitualWalk<T>(
   findTarget: () => Promise<DesktopScreenRect | null>,
   execute: () => Promise<T>,
-  opts?: { previewClick?: boolean }
+  opts?: { previewClick?: boolean; signal?: AbortSignal; onPrepared?: () => void }
 ): Promise<T> {
-  if (!isActionStageVisible()) {
+  const available = (): boolean => isActionStageVisible() && !opts?.signal?.aborted
+
+  if (!available()) {
     return execute()
   }
 
   let geom = await findTarget()
 
-  for (let attempt = 0; !geom && attempt < RETRY_COUNT && isActionStageVisible(); attempt++) {
+  for (let attempt = 0; !geom && attempt < RETRY_COUNT && available(); attempt++) {
     await sleep(RETRY_MS)
     geom = await findTarget()
   }
 
-  const view = geom && isActionStageVisible() ? await toViewportRect(geom) : null
+  const view = geom && available() ? await toViewportRect(geom) : null
 
   // 查找与换算期间舞台变为不可见：不再出声或走动，直接执行原工具。
-  if (!isActionStageVisible()) {
+  if (!available()) {
     return execute()
   }
 
@@ -158,6 +160,24 @@ export async function performRitualWalk<T>(
 
   let cueSeq: number | null = null
   const stage = waitUntilHidden()
+  let stopAbort: (() => void) | undefined
+
+  const cancelled = new Promise<false>(resolve => {
+    if (!opts?.signal) {
+      return
+    }
+
+    const signal = opts.signal
+    const abort = (): void => resolve(false)
+    signal.addEventListener('abort', abort, { once: true })
+    stopAbort = () => signal.removeEventListener('abort', abort)
+
+    if (signal.aborted) {
+      abort()
+    }
+  })
+
+  const interrupted = Promise.race([stage.hidden, cancelled])
 
   try {
     const dist = Math.hypot(perch.x - $spatialPos.get().x, perch.y - $spatialPos.get().y)
@@ -169,7 +189,7 @@ export async function performRitualWalk<T>(
         setSpatialLocale('perch', { position: perch, locomotion, onArrive: () => resolve(true) })
       ),
       sleep(moveDurationMs(dist, locomotion) + WALK_ABORT_GRACE_MS).then(() => false),
-      stage.hidden
+      interrupted
     ])
 
     // 行走未抵达（被拖拽、收起、隐藏或锁屏打断）时不再指向或预点击，直接执行原工具。
@@ -179,15 +199,16 @@ export async function performRitualWalk<T>(
 
     // 抵达后指向目标，再以点击提示标出实际操作位置。
     cueSeq = playSpriteGesture({ kind: 'point', target: targetCenter })
-    await Promise.race([sleep(800), stage.hidden])
+    await Promise.race([sleep(800), interrupted])
 
     // 指向期间被打断（拖拽/收起/隐藏撤下提示）或舞台已不可见时跳过后续仪式；此后到预点击之间没有等待。
-    if ($spriteGesture.get()?.seq !== cueSeq || !isActionStageVisible()) {
+    if ($spriteGesture.get()?.seq !== cueSeq || !available()) {
       return await execute()
     }
 
     cueSeq = playSpriteGesture({ kind: 'tap', target: targetCenter })
     setSpriteState('interacting', { durationMs: 1500 })
+    opts?.onPrepared?.()
 
     // 预点击只对「点击不是工具本体」的仪式有意义（open_application）；click_at 本身就是那次点击，再补一次就是双击。
     if (opts?.previewClick !== false && window.spiritagent?.runnerInvoke) {
@@ -198,21 +219,24 @@ export async function performRitualWalk<T>(
         })
     }
 
-    await sleep(400)
+    await Promise.race([sleep(400), interrupted])
 
     return await execute()
   } finally {
     stage.stop()
+    stopAbort?.()
 
     if (cueSeq !== null) {
       clearSpriteGesture(cueSeq)
     }
 
     // 可见时在目标旁稍作停留再交回空间决策；不可见时空间决策已暂停，不再等待。
-    if (isActionStageVisible()) {
+    if (available()) {
       await sleep(800)
     }
 
-    updateSpatialDecision()
+    if (!opts?.signal?.aborted) {
+      updateSpatialDecision()
+    }
   }
 }

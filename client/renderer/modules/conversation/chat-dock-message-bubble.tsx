@@ -13,20 +13,11 @@ import { ChatMediaCard } from './chat-media-card'
 import { ChatMessageCopyButton } from './chat-message-copy-button'
 import { ChatMessageEditButton } from './chat-message-edit-button'
 import { ChatMessageForkButton, ChatMessageUndoButton } from './chat-message-session-buttons'
-import {
-  $chatEditDraft,
-  $chatMessageBodies,
-  $chatSessionKind,
-  $chatTurnInFlight,
-  $lastEditableUserMessage,
-  $retryableAssistantMessage,
-  type ChatMessageBody,
-  type ChatMessageListItem,
-  retryAssistantReply
-} from './chat-store'
+import { type ChatMessageBody, type ChatMessageListItem } from './chat-store'
 import { ChatVoiceBar, TranscriptBlock } from './chat-voice-bar'
 import { CompanionAvatar } from './companion-avatar'
 import { formatConversationTime } from './conversation-time'
+import { useConversationView } from './conversation-view'
 import { ToolChipTimeline } from './tool-chip-timeline'
 
 // 居中的元信息行，而非聊天气泡。Slash 命令结果与历史清空标记（详见 PROTOCOL「Slash 命令」）走同一形态。
@@ -60,6 +51,8 @@ function wrapWithTimeDivider(timeDivider: React.ReactNode, node: React.JSX.Eleme
 }
 
 function MessageBubbleInner({ message, showTimeLabel, variant }: MessageBubbleProps): React.JSX.Element {
+  const { $chatMessageBodies, $chatTurnInFlight } = useConversationView().controller
+
   // 仅订阅本 id 的 body，避免流式增量触发全局重渲染。
   const bodies = useStore($chatMessageBodies, { keys: [message.id], deps: [message.id] })
   // 撤回在 in-flight 时会被服务端拒绝，必须订这个 atom，否则 memo 挡掉按钮显隐。
@@ -94,6 +87,14 @@ function MessageBubbleWithBody({
   turnInFlight: boolean
   variant: ConversationVariant
 }): React.JSX.Element {
+  const {
+    $chatEditDraft,
+    $chatSessionKind,
+    $lastEditableUserMessage,
+    $retryableAssistantMessage,
+    retryAssistantReply
+  } = useConversationView().controller
+
   const dict = useStrings()
   const subtype = message.subtype || ''
   const isUser = message.role === 'user'

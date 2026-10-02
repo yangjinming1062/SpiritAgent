@@ -9,7 +9,7 @@ function checkDistBuilt(distDir) {
     return { ok: false, error: `no dist directory at ${distDir}` }
   }
 
-  const requiredHtmlFiles = ['sprite.html', 'living.html', 'workbench.html']
+  const requiredHtmlFiles = ['sprite.html', 'living.html', 'workbench.html', 'desktop.html', 'desktop-background.html']
   for (const file of requiredHtmlFiles) {
     const htmlPath = path.join(distDir, file)
     if (!fs.existsSync(htmlPath) || !fs.statSync(htmlPath).isFile()) {
@@ -48,7 +48,9 @@ function main() {
     process.exit(1)
   }
 
-  console.log('✓ assert-dist-built: HTML entries (sprite, living, workbench) + assets present')
+  console.log(
+    '✓ assert-dist-built: HTML entries (sprite, living, workbench, desktop, desktop-background) + assets present'
+  )
 }
 
 main()

@@ -1,7 +1,9 @@
 import { useStore } from '@nanostores/react'
 
-import { $chatSessionKind } from './chat-store'
+import { useConversationView } from './conversation-view'
 
 export function useIsReadOnlySession(): boolean {
+  const { $chatSessionKind } = useConversationView().controller
+
   return useStore($chatSessionKind) === 'im'
 }

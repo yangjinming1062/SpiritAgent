@@ -1,6 +1,7 @@
 import { initCompanionPrefsSync } from '@/modules/character'
 import { applyNoBlurIfNeeded } from '@/shared/lib/apply-no-blur'
 import { initLocaleSync } from '@/shared/store/locale'
+import { hydratePresentation } from '@/shared/store/presentation'
 import { hydrateSurfaces } from '@/shared/store/surfaces'
 import { initUiThemeSync } from '@/shared/store/theme'
 
@@ -14,4 +15,5 @@ export function initRenderer(): void {
   initLocaleSync()
   initCompanionPrefsSync()
   hydrateSurfaces()
+  hydratePresentation()
 }

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-role="desktop-background" data-theme="day-clear" data-palette="day" data-effect="clear">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f4f6fa" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' data: blob: ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* http: https: ws: wss:; font-src 'self' data:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none';"
+    />
+    <link rel="icon" type="image/png" href="/icon.png" />
+    <style>
+      html,
+      body,
+      #root {
+        background: transparent !important;
+      }
+    </style>
+    <title>唤生桌面</title>
+  </head>
+  <body>
+    <div id="root" class="scrollbar-dt"></div>
+    <script type="module" src="/renderer/app/windows/desktop/desktop-background-entry.tsx"></script>
+  </body>
+</html>

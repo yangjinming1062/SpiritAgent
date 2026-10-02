@@ -17,11 +17,12 @@ import type { ReplyAudio } from '@/shared/types/spiritagent'
 import { type AudioPlaybackOptions, playDataUrl, stopAudio } from './audio-track'
 
 export interface VoiceBarProjection {
+  isVisible?(messageId?: string): boolean | undefined
   getAudio(messageId: string): ReplyAudio | null | undefined
   getRecord(messageId: string): VoicePlaybackRecord | undefined
   getKey(messageId: string): string | null
   getFollowing(messageId: string): string[]
-  ready(): Promise<void>
+  ready(messageId: string): Promise<void>
   captureProgress(messageId: string): NonNullable<AudioPlaybackOptions['onProgress']>
   isAutoplay(): boolean
   retry(messageId: string): Promise<void>
@@ -52,7 +53,15 @@ function voiceProjection(): VoiceBarProjection {
   return projection
 }
 
-function isVoiceSurfaceVisible(): boolean {
+function isVoiceSurfaceVisible(messageId?: string): boolean {
+  const scopedVisible = projection?.isVisible?.(messageId)
+
+  if (scopedVisible !== undefined) {
+    return (
+      scopedVisible && !recording && $auth.get().kind === 'authenticated' && !presentationPorts().$screenLocked.get()
+    )
+  }
+
   if (!mounted || recording || $auth.get().kind !== 'authenticated' || presentationPorts().$screenLocked.get()) {
     return false
   }
@@ -122,7 +131,7 @@ async function playItem(messageId: string, manual: boolean): Promise<void> {
   const key = proj.getKey(messageId)
 
   const valid = (): boolean =>
-    token === playToken && key !== null && proj.getKey(messageId) === key && isVoiceSurfaceVisible()
+    token === playToken && key !== null && proj.getKey(messageId) === key && isVoiceSurfaceVisible(messageId)
 
   activeId = messageId
   pausedId = null
@@ -130,7 +139,7 @@ async function playItem(messageId: string, manual: boolean): Promise<void> {
   proj.setLoading(messageId)
 
   try {
-    await proj.ready()
+    await proj.ready(messageId)
 
     if (!valid() || (!manual && proj.getRecord(messageId)?.listened)) {
       return
@@ -213,7 +222,7 @@ export function enqueueVoiceBars(messageIds: string[]): void {
     received.add(key)
 
     if (
-      isVoiceSurfaceVisible() &&
+      isVoiceSurfaceVisible(id) &&
       proj.isAutoplay() &&
       !proj.getRecord(id)?.listened &&
       !queue.includes(id) &&
@@ -227,7 +236,7 @@ export function enqueueVoiceBars(messageIds: string[]): void {
 }
 
 export function toggleVoiceBar(messageId: string): void {
-  if (!isVoiceSurfaceVisible()) {
+  if (!isVoiceSurfaceVisible(messageId)) {
     return
   }
 

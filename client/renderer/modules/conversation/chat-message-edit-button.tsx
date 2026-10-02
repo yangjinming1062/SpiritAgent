@@ -3,9 +3,11 @@ import type React from 'react'
 import { Pencil } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
 
-import { startEditingMessage } from './chat-store'
+import { useConversationView } from './conversation-view'
 
 export function ChatMessageEditButton({ messageId }: { messageId: string }): React.JSX.Element {
+  const { startEditingMessage } = useConversationView().controller
+
   const dict = useStrings()
 
   return (

@@ -9,7 +9,8 @@ import { getStrings } from '@/shared/strings'
 import { IM_VOICE_BAR_AUDIO_CONSTRAINTS } from './audio-constraints'
 import { convertBlobToWav } from './audio-wav'
 import { blobToDataUrl } from './blob-data-url'
-import { markAssistantTerminal, pushPendingPrompt, pushUserMessage, schedulePendingFlush } from './chat-store'
+import type { ConversationRuntime } from './chat-runtime'
+import { activeConversationRuntime } from './chat-store'
 import { ensureChatSession } from './session-list-store'
 import { conversationVoiceSink } from './voice-link'
 
@@ -62,18 +63,37 @@ function stopTracks(stream: MediaStream | null): void {
   stream?.getTracks().forEach(track => track.stop())
 }
 
+let recordingOwner: symbol | null = null
+
 type Options = {
+  runtime?: ConversationRuntime
+  eligible?: boolean
   isReadOnlySession?: boolean
 }
 
 // 语音消息生命周期管理：录音、自动停止、全局事件解绑、音轨清理与转写提交。
 
-export function useVoiceRecorder({ isReadOnlySession }: Options): {
+export function useVoiceRecorder({
+  isReadOnlySession,
+  runtime = activeConversationRuntime(),
+  eligible = true
+}: Options): {
   recording: boolean
   start: () => void
   stop: () => Promise<void>
 } {
+  const { markAssistantTerminal, pushPendingPrompt, pushUserMessage, schedulePendingFlush } = runtime
   const [recording, setRecording] = useState(false)
+  const ownerToken = useRef(Symbol('recording-view'))
+  const scopeRef = useRef({ runtime, eligible })
+  scopeRef.current = { runtime, eligible }
+
+  const isCurrent = useCallback(
+    (): boolean =>
+      !unmountedRef.current && runtime.isCurrent() && scopeRef.current.runtime === runtime && scopeRef.current.eligible,
+    [runtime]
+  )
+
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
@@ -106,37 +126,49 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
   const endRecording = () => {
     setRecording(false)
 
-    if (!unmountedRef.current) {
+    if (recordingOwner === ownerToken.current) {
+      recordingOwner = null
       conversationVoiceSink().setRecording(false)
     }
   }
 
-  const transcribe = async (blob: Blob): Promise<string | null> => {
-    try {
-      let finalBlob = blob
-
+  const transcribe = useCallback(
+    async (blob: Blob): Promise<string | null> => {
       try {
-        finalBlob = await convertBlobToWav(blob, 16000)
-      } catch (convErr) {
-        log.warn('voice-recorder', 'Failed to convert audio to wav, fallback to raw blob:', convErr)
+        let finalBlob = blob
+
+        try {
+          finalBlob = await convertBlobToWav(blob, 16000)
+        } catch (convErr) {
+          log.warn('voice-recorder', 'Failed to convert audio to wav, fallback to raw blob:', convErr)
+        }
+
+        const dataUrl = await blobToDataUrl(finalBlob)
+
+        const ext = getAudioExtensionForMime(finalBlob.type)
+
+        // 不指定语言：主进程按当前用户语言设置转写。
+        if (!isCurrent()) {
+          return null
+        }
+
+        const res = await window.spiritagent.media.stt({ dataUrl, filename: `voice.${ext}` })
+        const text = (res.text ?? '').trim()
+
+        return text || null
+      } catch (err: unknown) {
+        log.warn('voice-recorder', 'Transcription failed:', err)
+        const voiceInput = getStrings().chat.voiceInput
+
+        if (isCurrent()) {
+          markAssistantTerminal({ error: isMediaBusyError(err) ? voiceInput.busy : voiceInput.notRecognized })
+        }
+
+        return null
       }
-
-      const dataUrl = await blobToDataUrl(finalBlob)
-
-      const ext = getAudioExtensionForMime(finalBlob.type)
-      // 不指定语言：主进程按当前用户语言设置转写。
-      const res = await window.spiritagent.media.stt({ dataUrl, filename: `voice.${ext}` })
-      const text = (res.text ?? '').trim()
-
-      return text || null
-    } catch (err: unknown) {
-      log.warn('voice-recorder', 'Transcription failed:', err)
-      const voiceInput = getStrings().chat.voiceInput
-      markAssistantTerminal({ error: isMediaBusyError(err) ? voiceInput.busy : voiceInput.notRecognized })
-
-      return null
-    }
-  }
+    },
+    [isCurrent, markAssistantTerminal]
+  )
 
   const stop = useCallback(async () => {
     if (startPendingRef.current) {
@@ -184,6 +216,10 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
     streamRef.current = null
     endRecording()
 
+    if (!isCurrent()) {
+      return
+    }
+
     if (!blob || blob.size === 0) {
       presentationPorts().setSpriteState('idle')
 
@@ -193,6 +229,10 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
     presentationPorts().setSpriteState('thinking')
     const text = await transcribe(blob)
 
+    if (!isCurrent()) {
+      return
+    }
+
     if (text) {
       if (isReadOnlySession) {
         presentationPorts().setSpriteState('idle', { force: true })
@@ -201,28 +241,55 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
       }
 
       try {
-        await ensureChatSession()
+        await ensureChatSession(runtime)
+
+        if (!isCurrent()) {
+          return
+        }
+
         pushUserMessage(text)
         presentationPorts().setSpriteState('thinking')
         pushPendingPrompt({ text })
         schedulePendingFlush()
       } catch (err) {
         log.warn('voice-recorder', 'Voice message send failed:', err)
+
+        if (!isCurrent()) {
+          return
+        }
+
         presentationPorts().setSpriteState('idle', { force: true })
         markAssistantTerminal({ error: errorMessage(err, getStrings().chat.sendFailed) })
       }
     } else {
       presentationPorts().setSpriteState('idle', { force: true })
     }
-  }, [isReadOnlySession])
+  }, [
+    isReadOnlySession,
+    runtime,
+    markAssistantTerminal,
+    pushPendingPrompt,
+    pushUserMessage,
+    schedulePendingFlush,
+    isCurrent,
+    transcribe
+  ])
 
   stopRef.current = stop
 
   const start = useCallback(() => {
-    if (startPendingRef.current || recorderRef.current?.state === 'recording') {
+    if (
+      !eligible ||
+      isReadOnlySession ||
+      !runtime.isCurrent() ||
+      recordingOwner !== null ||
+      startPendingRef.current ||
+      recorderRef.current?.state === 'recording'
+    ) {
       return
     }
 
+    recordingOwner = ownerToken.current
     conversationVoiceSink().setRecording(true)
     let pending: Promise<void> | null = null
     pending = (async () => {
@@ -232,8 +299,9 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
         stream = await navigator.mediaDevices.getUserMedia({ audio: IM_VOICE_BAR_AUDIO_CONSTRAINTS })
 
         // 等待麦克风期间已卸载：不再开录，也就不会自动发送。
-        if (unmountedRef.current) {
+        if (!isCurrent()) {
           stopTracks(stream)
+          endRecording()
 
           return
         }
@@ -273,7 +341,8 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
         chunksRef.current = []
         setRecording(false)
 
-        if (!unmountedRef.current) {
+        if (recordingOwner === ownerToken.current) {
+          recordingOwner = null
           conversationVoiceSink().setRecording(false)
           markAssistantTerminal({ error: getStrings().chat.voiceInput.micUnavailable })
           presentationPorts().setSpriteState('idle')
@@ -285,7 +354,24 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
       }
     })()
     startPendingRef.current = pending
-  }, [])
+  }, [eligible, isReadOnlySession, runtime, markAssistantTerminal, isCurrent])
+
+  useEffect(() => {
+    if (eligible) {
+      return
+    }
+
+    const recorder = recorderRef.current
+
+    if (recorder && recorder.state !== 'inactive') {
+      stopTracks(recorder.stream)
+      recorder.stop()
+    }
+
+    cancelAutoStop()
+    chunksRef.current = []
+    endRecording()
+  }, [eligible])
 
   // `recording` 切换驱动一个全局 mouseup 监听器，用户可在屏幕任意位置松开按钮即可停止录音。
   useEffect(() => {
@@ -307,6 +393,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
   // 卸载清理：关闭音轨，避免 OS 级别麦克风指示灯保持亮起。
   useEffect(() => {
     unmountedRef.current = false
+    const token = ownerToken.current
 
     return () => {
       unmountedRef.current = true
@@ -314,15 +401,18 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
       const recorder = recorderRef.current
 
       if (recorder && recorder.state !== 'inactive') {
-        recorder.onstop = null
         stopTracks(recorder.stream)
         recorder.stop()
       }
 
       setRecording(false)
-      conversationVoiceSink().setRecording(false)
+
+      if (recordingOwner === token) {
+        recordingOwner = null
+        conversationVoiceSink().setRecording(false)
+      }
     }
-  }, [])
+  }, [runtime])
 
   return { recording, start, stop }
 }

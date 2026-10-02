@@ -53,7 +53,7 @@ import type { SessionInfo } from '@/shared/types/spiritagent'
 
 import { presetIcon, PresetPickerModal } from './preset-picker-modal'
 
-const SPECIAL_PRESET_ORDER = ['developer', 'product_manager', 'copywriter', 'language_teacher']
+const SPECIAL_PRESET_ORDER = ['companion', 'developer', 'product_manager', 'copywriter', 'language_teacher']
 
 function buildSortOptions(
   t: ReturnType<typeof useStrings>['workbench']['sessionSidebar']
@@ -92,7 +92,7 @@ function formatSessionTime(
   return tStrings.dateFormat(date.getMonth() + 1, date.getDate(), timeStr)
 }
 
-export function SessionSidebar(): React.JSX.Element {
+export function SessionSidebar({ includeCompanion = false }: { includeCompanion?: boolean }): React.JSX.Element {
   const sessions = useStore($sessions)
   const loading = useStore($sessionsLoading)
   const sort = useStore($sessionSort)
@@ -151,9 +151,8 @@ export function SessionSidebar(): React.JSX.Element {
   // 固定对话只看 kind（PROTOCOL「会话种类与历史修改」）：普通会话与派生会话同样带专业预设，不能据此归入固定分组。
   const isSpecialSession = (s: SessionInfo): boolean => s.kind === 'special'
 
-  const workbenchSessions = sessions.filter(s => !isCompanionSession(s))
+  const workbenchSessions = sessions.filter(s => includeCompanion || !isCompanionSession(s))
 
-  // 工作台 4 套专业系统预设
   const specialSessions = workbenchSessions
     .filter(s => isSpecialSession(s))
     .sort((a, b) => {
@@ -167,7 +166,7 @@ export function SessionSidebar(): React.JSX.Element {
   const pinnedRegularSessions = workbenchSessions.filter(s => !isSpecialSession(s) && s.pinned)
   const unpinnedRegularSessions = workbenchSessions.filter(s => !isSpecialSession(s) && !s.pinned)
 
-  const visibleSearchResults = searchResults.filter(s => !isCompanionSession(s))
+  const visibleSearchResults = searchResults.filter(s => includeCompanion || !isCompanionSession(s))
 
   return (
     <aside className="flex h-full w-full min-h-0 flex-col overflow-hidden text-xs">
@@ -239,10 +238,9 @@ export function SessionSidebar(): React.JSX.Element {
           </div>
         ) : (
           <>
-            {/* 特殊对话：4 个专业工作预设 */}
             <div>
               <div className="mb-1.5 flex items-center justify-between px-1.5 text-[11px] font-semibold text-muted tracking-wider">
-                <span>{t.specialHeading}</span>
+                <span>{includeCompanion ? t.fixedHeading : t.specialHeading}</span>
                 <span className="rounded bg-fill-faint px-1 py-0.2 text-[10px] text-muted">
                   {specialSessions.length}
                 </span>

@@ -1,6 +1,5 @@
-// 对话输入胶囊：生活空间、工作台与轻语共用。默认单行胶囊；编辑消息，或工作台聚焦、挂附件、长文本时展开为多行指挥台。此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
-
 import { useStore } from '@nanostores/react'
+// 对话输入胶囊：生活空间、工作台与轻语共用。默认单行胶囊；编辑消息，或工作台聚焦、挂附件、长文本时展开为多行指挥台。此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
 import type React from 'react'
 import {
   type ClipboardEvent,
@@ -28,7 +27,8 @@ import { useStrings } from '@/shared/strings'
 import { attachVideoFile, pickFile, pickFolder, pickImage, pickVideo } from './chat-attach-picker'
 import type { ConversationVariant } from './chat-dock-message-bubble'
 import { PendingAttachmentView } from './chat-pending-attachment'
-import { type PendingAttachment, schedulePendingFlush } from './chat-store'
+import { type PendingAttachment } from './chat-store'
+import { useConversationView } from './conversation-view'
 import { SlashCommandPopover } from './slash-command-popover'
 
 export interface ChatSubmitState {
@@ -71,6 +71,10 @@ const ATTACH_MENU = [
 ] as const
 
 export function ConversationInput(props: ConversationInputProps): React.JSX.Element {
+  const { controller, eligible, scoped } = useConversationView()
+  const waitingForSession = scoped && controller.$chatSessionId.get() === null
+  const { schedulePendingFlush } = controller
+
   const {
     attachMenuOpen,
     externalPaths,
@@ -113,12 +117,12 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
 
   // 升格后把焦点同步进 textarea，避免升格瞬间丢失焦点。
   useEffect(() => {
-    if (expanded && editorRef.current && document.activeElement !== editorRef.current) {
+    if (eligible && expanded && editorRef.current && document.activeElement !== editorRef.current) {
       editorRef.current.focus()
       const len = editorRef.current.value.length
       editorRef.current.setSelectionRange(len, len)
     }
-  }, [editMessageId, expanded])
+  }, [editMessageId, expanded, eligible])
 
   // 仅前导 / 且尚未键入参数时，空 query 仍算命令模式，弹层展示全量。
   const slashContext = useMemo<{ active: boolean; query: string }>(() => {
@@ -147,7 +151,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   }, [isEditing, slashPaletteForced, text])
 
   const items = slashContext.active ? fuzzyFilterCommands(slashContext.query, 8) : []
-  const isOpen = !isEditing && slashContext.active && !slashDismissed && items.length > 0
+  const isOpen = eligible && !isEditing && slashContext.active && !slashDismissed && items.length > 0
 
   useEffect(() => {
     if (!slashContext.active || slashMeta.length > 0) {
@@ -167,6 +171,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   const showStop = !isEditing && isGenerating && !text.trim() && !pending && externalPaths.length === 0
 
   const sendDisabled =
+    waitingForSession ||
     isReadOnlySession ||
     (isEditing && isGenerating) ||
     (!showStop &&
@@ -184,6 +189,10 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
+    if (!eligible) {
+      return
+    }
+
     if (isEditing && e.key === 'Escape' && !e.nativeEvent.isComposing) {
       e.preventDefault()
       e.stopPropagation()
@@ -253,14 +262,18 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   }
 
   const commonEditorProps = {
-    disabled: isReadOnlySession || (isEditing && sending),
+    disabled: waitingForSession || isReadOnlySession || (isEditing && sending),
     onBlur: () => setFocused(false),
     onChange: handleChange,
     onCompositionUpdate: () => schedulePendingFlush(),
     onFocus: () => setFocused(true),
     onKeyDown: handleKeyDown,
     onPaste,
-    placeholder: variant === 'workbench' ? dict.chat.input.workbenchPlaceholder : dict.chat.inputPlaceholder,
+    placeholder: waitingForSession
+      ? dict.common.loading
+      : variant === 'workbench'
+        ? dict.chat.input.workbenchPlaceholder
+        : dict.chat.inputPlaceholder,
     value: text
   }
 
@@ -363,7 +376,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
                   <button
                     className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-body transition hover:bg-fill-hover hover:text-strong text-left"
                     key={labelKey}
-                    onClick={() => void pick(onSetPending)}
+                    onClick={() => void pick(onSetPending, controller)}
                     type="button"
                   >
                     <Icon className={cn('size-3.5', iconClass)} />

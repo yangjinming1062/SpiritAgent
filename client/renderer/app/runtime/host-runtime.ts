@@ -30,6 +30,7 @@ import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import { SpiritAgentGateway } from '@/shared/spiritagent'
 import { reportPrimaryGatewayState, setPrimaryGateway, tearDownPrimaryGateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
+import { $presentation } from '@/shared/store/presentation'
 import { getStrings } from '@/shared/strings'
 import type { SessionResumeResponse } from '@/shared/types/spiritagent'
 
@@ -210,6 +211,14 @@ export function useGatewayBoot(sessionId: string): void {
     const gateway = new SpiritAgentGateway()
     setPrimaryGateway(gateway)
 
+    const offStageOwner = $presentation.listen(state => {
+      if (state.stageOwner === 'sprite' && gatewayOpen()) {
+        startAutonomyProvision()
+      } else {
+        stopAutonomyProvision()
+      }
+    })
+
     const offState = gateway.onState(st => {
       if (cancelled) {
         return
@@ -232,7 +241,10 @@ export function useGatewayBoot(sessionId: string): void {
         syncDisturbanceTier()
         syncTimezone(gateway)
         void fetchSlashCommandMeta()
-        startAutonomyProvision()
+
+        if ($presentation.get().stageOwner === 'sprite') {
+          startAutonomyProvision()
+        }
 
         clearVfx('sleep_zzz')
 
@@ -413,6 +425,7 @@ export function useGatewayBoot(sessionId: string): void {
       offEvent()
       desktop.gatewayBroadcastState?.('closed')
       offRunnerStatus?.()
+      offStageOwner()
       stopAutonomyProvision()
       tearDownPrimaryGateway()
     }

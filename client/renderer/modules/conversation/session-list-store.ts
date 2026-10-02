@@ -3,7 +3,7 @@ import { atom, computed } from 'nanostores'
 import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
-import { $gateway } from '@/shared/store/gateway'
+import { $gateway, type SpiritAgentGatewayLike } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
@@ -17,16 +17,18 @@ import type {
   UndoResponse
 } from '@/shared/types/spiritagent'
 
+import type { ConversationRuntime } from './chat-runtime'
 import {
   $chatDraftFromUndo,
   $chatSessionId,
-  $chatTurnInFlight,
   $companionSessionId,
-  forgetDeletedVoiceMessages,
+  findConversationRuntime,
+  getConversationRuntime,
   hydrateChatMessages,
   hydrateSessionSettings,
   resetChatMessages,
   resetSessionContextUsage,
+  retainConversationRuntime,
   setChatSession,
   setCompanionSessionId
 } from './chat-store'
@@ -107,8 +109,8 @@ export const $currentSessionTitle = computed(
   }
 )
 
-export async function ensureChatSession(): Promise<string> {
-  const existing = $chatSessionId.get()
+export async function ensureChatSession(runtime?: ConversationRuntime): Promise<string> {
+  const existing = runtime?.$chatSessionId.get() ?? $chatSessionId.get()
 
   if (existing) {
     return existing
@@ -514,9 +516,11 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
       rememberFullHistory(res.session_id, res.messages)
 
       // 已切到其他会话时只更新缓存，不改写当前视图。
-      if ($chatSessionId.get() === sessionId) {
-        forgetDeletedVoiceMessages(res.messages)
-        hydrateChatMessages(res.messages)
+      const runtime = findConversationRuntime(sessionId)
+
+      if (runtime) {
+        runtime.forgetDeletedVoiceMessages(res.messages)
+        runtime.hydrateChatMessages(res.messages)
       }
     }
 
@@ -532,17 +536,85 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
   }
 }
 
+let companionLoad: Promise<string | null> | null = null
+let companionLoadGateway: SpiritAgentGatewayLike | null = null
+let companionLoadEpoch = -1
+
+// 固定轻语只水合陪伴runtime，不参与主对话的navigationToken。
+export async function ensureCompanionSession(): Promise<string | null> {
+  const gateway = $gateway.get()
+  const epoch = currentClearEpoch()
+
+  if (!gateway) {
+    return null
+  }
+
+  if (companionLoad && companionLoadGateway === gateway && companionLoadEpoch === epoch) {
+    return companionLoad
+  }
+
+  const load = (async () => {
+    try {
+      const knownId = $companionSessionId.get()
+      const knownRuntime = knownId ? findConversationRuntime(knownId) : undefined
+      const revision = knownRuntime?.$runtimeRevision.get()
+      const result = await gateway.request<SessionResumeResponse>('session.get_main')
+
+      if (epoch !== currentClearEpoch() || $gateway.get() !== gateway) {
+        return null
+      }
+
+      setCompanionSessionId(result.session_id)
+      rememberFullHistory(result.session_id, result.messages || [], {
+        currentSeq: result.current_seq,
+        info: result.info,
+        nextCursor: result.next_cursor,
+        truncated: result.truncated
+      })
+      const runtime = getConversationRuntime(result.session_id)
+      runtime.hydrateSyncedChatMessages(
+        result.messages || [],
+        result.info,
+        knownRuntime === runtime ? revision : undefined
+      )
+
+      return result.session_id
+    } catch (error) {
+      if (epoch === currentClearEpoch()) {
+        log.error('session-list', 'Failed to hydrate companion session:', error)
+      }
+
+      return null
+    }
+  })()
+
+  companionLoad = load
+  companionLoadGateway = gateway
+  companionLoadEpoch = epoch
+
+  try {
+    return await load
+  } finally {
+    if (companionLoad === load) {
+      companionLoad = null
+      companionLoadGateway = null
+      companionLoadEpoch = -1
+    }
+  }
+}
+
 // 挂载服务端快照：快照已挂上同一会话时不再重置，保留展示快照期间入列的待发消息；回合状态以服务端 running 为准。
-function mountSyncedSession(sessionId: string, messages: SessionMessage[], info?: SessionRuntimeInfo): void {
+function mountSyncedSession(
+  sessionId: string,
+  messages: SessionMessage[],
+  info?: SessionRuntimeInfo,
+  expectedRevision?: number
+): void {
   if ($chatSessionId.get() !== sessionId) {
     setChatSession(sessionId)
   }
 
-  hydrateChatMessages(messages, info)
-
-  if (typeof info?.running === 'boolean') {
-    $chatTurnInFlight.set(info.running)
-  }
+  getConversationRuntime(sessionId).hydrateSyncedChatMessages(messages, info, expectedRevision)
 }
 
 export async function switchSession(sessionId: string): Promise<void> {
@@ -553,18 +625,27 @@ export async function switchSession(sessionId: string): Promise<void> {
   }
 
   const token = ++navigationToken
+  const epoch = currentClearEpoch()
+  const isCurrent = (): boolean => token === navigationToken && epoch === currentClearEpoch() && $gateway.get() === gw
+  const runtime = getConversationRuntime(sessionId)
+  const release = retainConversationRuntime(runtime)
+  const localRevision = runtime.$runtimeRevision.get()
 
   try {
     const local = await loadLocalSessionHistory(sessionId)
 
-    if (token !== navigationToken) {
+    if (!isCurrent()) {
       return
     }
 
-    if (local) {
+    if (runtime.$historyHydrated.get()) {
       setChatSession(sessionId)
-      hydrateChatMessages(local.messages, local.info)
+    } else if (local) {
+      setChatSession(sessionId)
+      runtime.hydrateSyncedChatMessages(local.messages, local.info, localRevision)
     }
+
+    const revision = runtime.$runtimeRevision.get()
 
     const synced = await syncSessionHistory({
       sessionId,
@@ -572,35 +653,38 @@ export async function switchSession(sessionId: string): Promise<void> {
     })
 
     // 快速 A→B 切换时丢弃过期响应，避免旧会话写回覆盖新会话；未传活水位 last_seq，服务端只走增量或全量。
-    if (token !== navigationToken) {
+    if (!isCurrent()) {
       return
     }
 
-    mountSyncedSession(sessionId, synced.messages, synced.info)
+    mountSyncedSession(sessionId, synced.messages, synced.info, revision)
   } catch (err) {
-    if (token === navigationToken) {
+    if (isCurrent()) {
       log.error('session-list', 'Failed to switch session:', err)
     }
+  } finally {
+    release()
   }
 }
 
 let openMainPromise: Promise<string | null> | null = null
 let openMainToken = 0
+let openMainGateway: SpiritAgentGatewayLike | null = null
+let openMainEpoch = -1
 
 // 挂载主会话并加载其对话流。被更晚的会话跳转取代后仍完成挂载与缓存，但不再改写当前视图。
 export async function openMainSession(onMounted?: (res: SessionResumeResponse) => void): Promise<string | null> {
-  // 已被取代的在途挂载不会切换视图，不能复用。
-  if (openMainPromise && openMainToken === navigationToken) {
-    return openMainPromise
-  }
-
   const gw = $gateway.get()
+  const epoch = currentClearEpoch()
 
   if (!gw) {
     return null
   }
 
-  const epoch = currentClearEpoch()
+  if (openMainPromise && openMainToken === navigationToken && openMainGateway === gw && openMainEpoch === epoch) {
+    return openMainPromise
+  }
+
   const token = ++navigationToken
   const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
   const isLatest = (): boolean => token === navigationToken
@@ -620,10 +704,17 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
         if (local) {
           if (isLatest()) {
             setChatSession(knownCompanionId)
-            hydrateChatMessages(local.messages, local.info)
+            const runtime = getConversationRuntime(knownCompanionId)
+
+            if (!runtime.$historyHydrated.get()) {
+              runtime.hydrateSyncedChatMessages(local.messages, local.info)
+            }
           }
 
           try {
+            const runtime = getConversationRuntime(knownCompanionId)
+            const revision = runtime.$runtimeRevision.get()
+
             const synced = await syncSessionHistory({
               sessionId: knownCompanionId,
               request: body =>
@@ -636,7 +727,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
             // 同步期间已切到其他会话时不覆盖其视图。
             if (isLatest() && $chatSessionId.get() === knownCompanionId) {
-              mountSyncedSession(knownCompanionId, synced.messages, synced.info)
+              mountSyncedSession(knownCompanionId, synced.messages, synced.info, revision)
             }
 
             onMounted?.({
@@ -695,6 +786,8 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
   })()
 
   openMainPromise = load
+  openMainGateway = gw
+  openMainEpoch = epoch
   openMainToken = token
 
   try {
@@ -702,6 +795,8 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
   } finally {
     if (openMainPromise === load) {
       openMainPromise = null
+      openMainGateway = null
+      openMainEpoch = -1
     }
   }
 }
@@ -713,6 +808,11 @@ registerStorageClearHandler(() => {
   presetsToken++
   navigationToken++
   openMainPromise = null
+  openMainGateway = null
+  openMainEpoch = -1
+  companionLoad = null
+  companionLoadGateway = null
+  companionLoadEpoch = -1
   $sessions.set([])
   $sessionsLoading.set(false)
   $sessionSort.set('recent')
