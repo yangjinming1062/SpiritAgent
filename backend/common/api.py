@@ -1,6 +1,5 @@
 import sys
 
-from components import SETTINGS
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +9,7 @@ def get_router(*, prefix: str | None = None, tag: str | None = None, dependencie
     """默认 prefix 由 caller 模块的 leaf 名推导为 ``/api/<resource>``；传 ``prefix=""`` 挂载到根（admin 页面 router 用）。"""
     resource = sys._getframe(1).f_globals["__name__"].rsplit(".", 1)[-1]
     return APIRouter(
-        prefix=f"{SETTINGS.api_prefix}/{resource}" if prefix is None else prefix,
+        prefix=f"/api/{resource}" if prefix is None else prefix,
         tags=[tag or resource],
         dependencies=dependencies,
     )

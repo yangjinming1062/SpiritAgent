@@ -92,6 +92,7 @@ from .video import (
     kick_dynamic_action,
     list_pack_responses,
     load_pack_response,
+    resume_user_dynamic_actions,
     resume_video_generation_jobs,
 )
 from .video import (
@@ -117,6 +118,7 @@ from .video_jobs import (
     ensure_video_capability,
     get_job,
     resume_pending_video_jobs,
+    select_video_resolution,
     video_generation_wait_seconds,
 )
 from .visual_identity import (
@@ -228,7 +230,9 @@ __all__ = [
     "regenerate_outfit_draft",
     "resolve_image_gen_chain",
     "resume_pending_video_jobs",
+    "resume_user_dynamic_actions",
     "resume_video_generation_jobs",
     "select_avatar",
+    "select_video_resolution",
     "set_outfit_policy",
 ]

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
 from services.domains.conversation import ensure_system_conversations_for_user
-from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
+from services.domains.memory import read_user_profile, record_user_profile
 
 from .character_card import render_character_appearance
 from .first_greeting import enqueue_first_greeting, schedule_first_greeting_claim
@@ -101,8 +101,20 @@ def _validate_definition(definition: dict[str, Any]) -> dict[str, str]:
     return cleaned
 
 
+def _validate_user_profile(definition: dict[str, Any]) -> dict[str, str]:
+    """取出 user_* 回答：None 视为未填写，其余须为字符串；与引导问答一致，去空白后截断到 _ONBOARDING_MAX_LEN。"""
+    profile: dict[str, str] = {}
+    for key, value in definition.items():
+        if not key.startswith("user_"):
+            continue
+        if value is not None and not isinstance(value, str):
+            raise PersonaValidationError(f"persona.{key} must be a string", key)
+        profile[key] = (value or "").strip()[:_ONBOARDING_MAX_LEN]
+    return profile
+
+
 async def get_or_create_persona(db: AsyncSession, user_id: int) -> Persona:
-    """查询人设，不存在则插入一行；并发首次创建由唯一约束收敛到同一行。刻意不 commit，以便调用方把 user_profile + persona 放在同一事务里写（backend/README.md「数据与运行可靠性」）。"""
+    """查询人设，不存在则插入一行；并发首次创建由唯一约束收敛到同一行。刻意不 commit，以便调用方把 user_profile 与 persona 放在同一事务里写。"""
     persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
     if persona is None:
         await db.execute(
@@ -117,7 +129,7 @@ async def get_or_create_persona(db: AsyncSession, user_id: int) -> Persona:
 async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, Any]) -> Persona:
     if not isinstance(definition, dict):
         raise PersonaValidationError("persona definition must be an object")
-    user_profile = extract_user_profile(definition)
+    user_profile = _validate_user_profile(definition)
     _validate_birthday(user_profile.get("user_birthday"))
     persona_def = {k: v for k, v in definition.items() if not k.startswith("user_")}
     cleaned = _validate_definition(persona_def)
@@ -145,7 +157,7 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
     # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
     persona.is_complete = True
     await db.commit()
-    # onboarding 首次完成时一次性建出 5 套系统预设对话；幂等。
+    # 每次保存人设都幂等补齐 SYSTEM_PRESET_CATALOG 中缺失的系统预设对话。
     await ensure_system_conversations_for_user(db, persona.user_id)
     return persona
 

@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from components import SESSION_LOCAL, get_logger, parse_llm_json, tool_error
 from modules.companion import CharacterCardSnapshot
+from prompts.generation import CHAT_IMAGE_CORRECTION_PREFIX
 from prompts.tools import IMAGE_GENERATION_PARAM_DESCS, MEDIA_INSPECTION_INSTRUCTIONS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -19,6 +20,7 @@ from services.infrastructure.llm import VisualReasoningError, vision_chat
 from .avatar_service import AvatarGenerationError
 from .character_images import ImageChainState, generate_character_images
 from .image_generation import ImageGenerationError, generate_images
+from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from .visual_identity import (
     apply_outfit_override,
     build_self_image_prompt,
@@ -187,9 +189,10 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
         plan = state.plans.get(artifact.goal_id)
         try:
             data = await asyncio.to_thread(local[0].read_bytes)
+            uri = await asyncio.to_thread(build_data_uri, data, local[1])
             raw = await vision_chat(
                 state.user_id,
-                MEDIA_INSPECTION_INSTRUCTIONS,
+                MEDIA_INSPECTION_INSTRUCTIONS.format(accept_score=MEDIA_IDENTITY_ACCEPT_SCORE),
                 json.dumps(
                     {
                         "user_request": state.original_request,
@@ -198,7 +201,7 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
                     },
                     ensure_ascii=False,
                 ),
-                reference_images=(build_data_uri(data, local[1]),),
+                reference_images=(uri,),
             )
             result = InspectionResult.model_validate(parse_llm_json(raw))
             issues = tuple(issue.strip()[:1000] for issue in result.issues if issue.strip())
@@ -234,7 +237,7 @@ async def regenerate_chat_image(media_id: str, inspection_id: str, correction: s
         plan = replace(
             original,
             prompt=original.prompt
-            + "\n\n本次修正资料（仅修复原请求中的问题，保留原身份与造型）：\n"
+            + CHAT_IMAGE_CORRECTION_PREFIX
             + json.dumps({"verified_issues": inspection.issues, "correction": correction[:8000]}, ensure_ascii=False),
         )
         revised = MediaArtifact(uuid4().hex, "image", artifact.goal_id, "pending")

@@ -39,6 +39,7 @@ logger = get_logger(__name__)
 
 _DURATIONS = range(4, 16)
 _RESOLUTIONS = frozenset({"512P", "768P", "1080P", "2K"})
+_ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
 _SUBMIT_UNKNOWN_ERROR = "视频提交结果未核实，请勿重复提交"
 
 
@@ -57,6 +58,16 @@ def _first_frame_reference(reference: str, user_id: int) -> str | None:
     except OSError:
         return None
     return f"data:{resolved[1]};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _result_unknown_payload(task_id: str, job: VideoGenJob) -> dict[str, object]:
+    return {
+        "success": False,
+        "status": "result_unknown",
+        "task_id": task_id,
+        "error": job.error_message,
+        "retry_safe": False,
+    }
 
 
 async def _submit_video(
@@ -121,13 +132,7 @@ async def _submit_video(
 
     task_id = str(job.id)
     if job.status == "result_unknown":
-        return {
-            "success": False,
-            "status": "result_unknown",
-            "task_id": task_id,
-            "error": job.error_message,
-            "retry_safe": False,
-        }, job
+        return _result_unknown_payload(task_id, job), job
 
     if structured_reply:
         return {
@@ -154,7 +159,9 @@ async def _submit_video(
                 "task_id": task_id,
                 **({"warning": row.error_message} if row.error_message else {}),
             }, job
-        if row.status in ("failed", "result_unknown"):
+        if row.status == "result_unknown":
+            return _result_unknown_payload(task_id, row), job
+        if row.status == "failed":
             return {"success": False, "task_id": task_id, "error": row.error_message or "video generation failed"}, job
 
     # 已超时——任务在后台继续，模型可后续查询。
@@ -183,6 +190,8 @@ async def video_generation_tool(
         return tool_error("请提供非空视频描述和 4 至 15 秒的时长")
     if resolution not in _RESOLUTIONS:
         return tool_error("视频分辨率无效")
+    if aspect_ratio and aspect_ratio not in _ASPECT_RATIOS:
+        return tool_error("视频画幅无效")
     if first_frame_image:
         # 模型只看得到产物的裸存储路径；在占用本轮视频名额前转为供应商可读的 data URI，无法读取时按参数错误返回。
         first_frame_image = await asyncio.to_thread(_first_frame_reference, first_frame_image, media_turn.user_id)
@@ -321,7 +330,7 @@ VIDEO_GENERATION_SCHEMA = {
             },
             "aspect_ratio": {
                 "type": "string",
-                "enum": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+                "enum": list(_ASPECT_RATIOS),
                 "description": VIDEO_GENERATION_PARAM_DESCS["aspect_ratio"],
             },
             "outfit_override": {

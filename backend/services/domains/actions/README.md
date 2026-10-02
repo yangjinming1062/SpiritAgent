@@ -10,7 +10,7 @@
 | `application/actions` | 提案受理、异步评审、播放协调 |
 | `generation/video` | 脚本/姿态/视频素材；收尾经 `domains/actions/publishing` 发目录 |
 
-`generation` 不调用 `application/actions`，避免环。目录发布放在 domains，供生成收尾、人工复核采纳（`generation/media_review`）与动作管理 API（启停、删除后重发）共用。
+`generation` 不调用 `application/actions`，避免环。目录发布放在 domains，供生成收尾、人工复核采纳（`generation/media_review`）与动作管理 API（启停、删除后重发）共用；备份恢复只调用 `build_catalog_manifest` 重建 manifest，不经 CAS 发布。
 
 ## 模块入口
 
@@ -18,8 +18,8 @@
 |---|---|
 | [repository.py](repository.py) | pack、action、目录版本与播放意图读写；`create_action` 只新建动作行（同包同 key 由唯一约束拒绝），`clear_action_attempt` 作废当前生成尝试，供原位重做与用户拒绝复核共用 |
 | [policy.py](policy.py) | 受理与评审共用的用户级受理锁，受理门禁（时长、整秒、拒绝后 7 天抑制、自主创建开关），approve 时的制作额度与模型可点播判定 |
-| [usage.py](usage.py) | 播放事实：播放指令写出、回执终态与延迟表达意图兑现 |
-| [publishing.py](publishing.py) | manifest 结构（`ActionClipSpec` / `ActionCatalogManifest`）、构建、校验、写入用户资产目录与 CAS 版本推进 |
+| [usage.py](usage.py) | 播放事实：播放指令写出、回执终态与延迟表达意图兑现；`action_to_dict` 给出动作元信息，`ACTION_PROMPT_KEYS` 与 `action_prompt_entry` 取面向模型的动作条目，动作快照与伙伴提示词上下文共用 |
+| [publishing.py](publishing.py) | manifest 结构（`ActionClipSpec` / `ActionCatalogManifest`）、构建、校验、写入用户资产目录与 CAS 版本推进；`emit_catalog_changed` 是 `companion.action.catalog_changed` 事件的唯一发送入口，目录发布或包激活后由调用方在同一事务调用 |
 
 ## 资产、发布与表演
 

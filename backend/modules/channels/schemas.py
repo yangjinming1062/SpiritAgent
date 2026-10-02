@@ -15,11 +15,9 @@ class ChannelDeliveryPayload(BaseModel):
 
 
 class ChannelCapabilities(BaseModel):
-    """注册表里某渠道的静态能力位，随 GET /api/channels 一起返回供 UI 折叠不支持的开关。"""
+    """注册表里某渠道的静态能力位，随 GET /api/channels 一起返回。"""
 
     supports_typing: bool = False
-    supports_media: bool = False
-    can_initiate: bool = False
     requires_login: bool = False
 
 
@@ -67,8 +65,7 @@ class PeerActionRequest(BaseModel):
 
 
 class ChannelLoginStateResponse(BaseModel):
-    """扫码登录轮询视图：state ∈ idle|wait|scaned|confirmed|expired|error|login_required|connected；qr_image 为渠道下发的二维码内容，confirmed 后不再返回。"""
+    """扫码登录轮询视图：unsupported 是无登录流渠道的基类默认值；qr_image 为渠道下发的二维码内容，仅 wait 时返回；error 状态不含原因文本，由客户端显示本地化提示。"""
 
-    state: str
+    state: Literal["unsupported", "wait", "scaned", "confirmed", "expired", "error", "login_required", "connected"]
     qr_image: str | None = None
-    error: str | None = None

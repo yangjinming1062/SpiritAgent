@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from time import monotonic
-from typing import Annotated, Any, Literal, TypeGuard
+from typing import Any, Literal, TypeGuard
 from zoneinfo import ZoneInfo
 
 from components import (
@@ -32,7 +32,7 @@ from modules.companion import (
 from modules.scheduler import NightlyActivityAction, NightlyActivityLog
 from modules.settings import load_user_settings
 from prompts.nightly import NIGHTLY_FACT_TEXTS, OUTREACH_CONTEXT_TEMPLATES, PLANNING_SYSTEM_PROMPT
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +61,7 @@ from services.domains.companion import (
     render_character_appearance,
     scene_environment,
 )
+from services.domains.posts import PostBlockedError, publication_quota_remaining
 from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_provider_chain
 
 logger = get_logger(__name__)
@@ -131,23 +132,9 @@ class PostPublishArgs(_ActionArgs):
 
 class OutreachScheduleArgs(_ActionArgs):
     name: str = Field(default="主动问候", max_length=100)
-    # 规划给出用户本地时刻，时区换算由代码完成；schedule 仅供升级前已保存的计划恢复执行。
-    local_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    schedule: str | None = Field(default=None, min_length=1, max_length=100)
+    # 规划给出用户本地时刻，时区换算由代码完成。
+    local_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     prompt: str = Field(min_length=1, max_length=4000)
-
-    @model_validator(mode="after")
-    def require_time(self) -> "OutreachScheduleArgs":
-        if self.local_time is None and self.schedule is None:
-            raise ValueError("outreach requires local_time")
-        return self
-
-
-class ActionDesignArgs(ActionDesignRequest):
-    """夜间动作提案沿用动作设计契约，并按能力说明限制每条使用条件的长度。"""
-
-    use_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
-    avoid_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
 
 
 class PlannedAction(BaseModel):
@@ -175,12 +162,10 @@ class ActionExecutionResult(BaseModel):
     capability: str = ""
     fact: str | None = None
     reason: str | None = None
-    warning: str | None = None
     dependencies: list[str] | None = None
     outfit_id: int | None = None
     scene_id: int | None = None
     post_id: str | None = None
-    job_id: int | None = None
     cron_job_id: int | None = None
     expires_at: str | None = None
 
@@ -455,6 +440,8 @@ async def _reference_image_provider_available(
 
 def _capability_availability(
     context: PlanningContext,
+    *,
+    post_quota_available: bool,
 ) -> tuple[list[NightlyCapability], list[BlockedCapability]]:
     providers = context.providers
     persona_ready = bool(context.persona.complete)
@@ -468,7 +455,10 @@ def _capability_availability(
             providers.image_reference and persona_ready and not context.scene.generation_pending,
             "场景已锁定、形象/生图不可用或已有场景正在生成",
         ),
-        "post.publish": (bool(context.post_types), "动态自主发布或创作能力不可用"),
+        "post.publish": (
+            bool(context.post_types) and post_quota_available,
+            "动态自主发布或创作能力不可用，或最近24小时的自主发布额度已用完",
+        ),
         "outreach.schedule": (True, ""),
         "action.design": (
             bool(context.actions.get("pack_id")) and providers.video,
@@ -527,6 +517,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
                 .limit(20),
             )
         ).all()
+        post_quota_available = await publication_quota_remaining(db, user_id, "autonomous") > 0
         # 动作库摘要在会话生命周期内读取，避免 session 关闭后重开未托管事务。
         action_snapshot = await build_action_context(db, user_id)
 
@@ -589,7 +580,10 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             for occurred_at, content_type, title in recent_posts
         ],
     )
-    context.available_capabilities, context.blocked_capabilities = _capability_availability(context)
+    context.available_capabilities, context.blocked_capabilities = _capability_availability(
+        context,
+        post_quota_available=post_quota_available,
+    )
     return context
 
 
@@ -901,17 +895,30 @@ async def _execute_scene_create(run: _ActionRun, args: dict[str, Any]) -> Action
 
 
 async def _execute_post_publish(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    parsed = PostPublishArgs.model_validate(args)
+    try:
+        parsed = PostPublishArgs.model_validate(args)
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
     task_id = run.resume.get("publication_id")
     if task_id is None:
-        result = await request_publication(
-            run.user_id,
-            key=f"nightly:{run.row_id}",
-            trigger="nightly",
-            intent=parsed.intent,
-            requested_type=parsed.content_type,
-            activity_date=date.fromisoformat(run.date_context.source_date),
-        )
+        # 规划只会看到 post_types 中的类型，选列表外的类型属于规划违约；列表为空说明自主发布已关闭，交给受理判定。
+        if run.context.post_types and parsed.content_type not in ("auto", *run.context.post_types):
+            return ActionExecutionResult(
+                status="failed",
+                reason="invalid arguments: content_type: not listed in post_types",
+            )
+        # 规划后开关、类型或额度发生变化时受理被拦截，记为阻止而非失败。
+        try:
+            result = await request_publication(
+                run.user_id,
+                key=f"nightly:{run.row_id}",
+                trigger="nightly",
+                intent=parsed.intent,
+                requested_type=parsed.content_type,
+                activity_date=date.fromisoformat(run.date_context.source_date),
+            )
+        except PostBlockedError as exc:
+            return ActionExecutionResult(status="blocked", reason=str(exc))
         task_id = result.publication_id
         await _save_progress(run, publication_id=task_id)
     result = await await_publication(run.user_id, str(task_id))
@@ -985,20 +992,13 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
         return None
 
     now = utc_now()
-    if parsed_args.local_time is not None:
-        hour, minute = (int(part) for part in parsed_args.local_time.split(":"))
-        planned = datetime.combine(target, time(hour, minute), timezone).astimezone(UTC)
-        # 恢复执行时原定时刻可能已过，改为尽快开始等待；其余情况按规划时刻。
-        schedule = (
-            _near_term_cron(now)
-            if planned <= now
-            else f"{planned.minute} {planned.hour} {planned.day} {planned.month} *"
-        )
-        job = await schedule_on_target_day(schedule)
-    else:
-        job = await schedule_on_target_day(parsed_args.schedule or "")
-        if job is None and now.astimezone(timezone).date() == target and now < expires_at:
-            job = await schedule_on_target_day(_near_term_cron(now))
+    hour, minute = (int(part) for part in parsed_args.local_time.split(":"))
+    planned = datetime.combine(target, time(hour, minute), timezone).astimezone(UTC)
+    # 恢复执行时原定时刻可能已过，改为尽快开始等待；其余情况按规划时刻。
+    schedule = (
+        _near_term_cron(now) if planned <= now else f"{planned.minute} {planned.hour} {planned.day} {planned.month} *"
+    )
+    job = await schedule_on_target_day(schedule)
     if job is None:
         return ActionExecutionResult(status="failed", reason="outreach does not run on target local date")
     return ActionExecutionResult(
@@ -1013,7 +1013,7 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
     documented = _CAPABILITY_BY_NAME["action.design"].arguments
     try:
         # 只取能力说明列出的参数，其余字段与其他能力一样忽略。
-        request = ActionDesignArgs.model_validate({key: value for key, value in args.items() if key in documented})
+        request = ActionDesignRequest.model_validate({key: value for key, value in args.items() if key in documented})
     except ValidationError as exc:
         return _invalid_arguments(exc)
     name = request.name

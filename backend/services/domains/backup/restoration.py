@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.memory import rebuild_diary_indexes
 
 from .action_assets import restore_action_catalogs, validate_action_files
-from .file_packing import UrlRewriter, restore_files
+from .file_packing import UrlRewriter, planned_asset_mapping, restore_files
 from .serializers import (
     ACTION_TABLES,
     ATOMIC_SECTION_GROUPS,
@@ -180,7 +181,7 @@ def load_backup_rows(
                 if group == IDENTITY_TABLES
                 else "会话与消息必须同时恢复。"
                 if group == CONVERSATION_TABLES
-                else "视频包与动作必须同时恢复。"
+                else "动作包与动作必须同时恢复。"
             )
             for table in sorted(present):
                 rows.pop(table)
@@ -191,18 +192,6 @@ def load_backup_rows(
                         reason=reason,
                     ),
                 )
-    if CONVERSATION_TABLES.issubset(manifest_tables) and not CONVERSATION_TABLES.issubset(rows):
-        for table in manifest_tables:
-            if table not in CONVERSATION_TABLES or table not in rows:
-                continue
-            rows.pop(table)
-            failures.append(
-                BackupImportFailure(
-                    section=table,
-                    count=row_counts[table],
-                    reason="配套的会话或消息数据无效，无法单独恢复。",
-                ),
-            )
     # 成组约束已丢弃半套动作表；包内根本没有动作表但外观曾启动视频时单独提示。
     if ACTION_TABLES & wanted and not ACTION_TABLES.issubset(rows) and not ACTION_TABLES & manifest_set:
         started = sum(bool(row.get("initial_video_started")) for row in rows.get("companion_outfits", []))
@@ -211,7 +200,7 @@ def load_backup_rows(
                 BackupImportFailure(
                     "companion_action_packs",
                     started,
-                    "备份未包含视频包和动作记录，视频文件无法自动恢复为可播放形象。",
+                    "备份未包含动作包和动作记录，视频文件无法自动恢复为可播放形象。",
                 ),
             )
     return BackupReadResult(rows=rows, failures=tuple(failures))
@@ -228,6 +217,7 @@ async def _restore_table(
     *,
     mode: BackupImportMode,
     import_batch_id: str,
+    asset_owner_id: int,
 ) -> tuple[dict[str, int | str], int]:
     new_map, inserted = await insert_rows(
         db,
@@ -238,6 +228,7 @@ async def _restore_table(
         id_map,
         mode=mode,
         import_batch_id=import_batch_id,
+        asset_owner_id=asset_owner_id,
     )
     staged_id_map = {**id_map, table: new_map}
     if table == "messages":
@@ -262,6 +253,7 @@ async def _preflight_tables(
     successful: set[str] = set()
     failures: list[BackupImportFailure] = []
     id_map: dict[str, dict[str, int | str]] = {}
+    rewriter = UrlRewriter(await asyncio.to_thread(planned_asset_mapping, extract_root, source_user_id, target_user_id))
     # 未激活且 token 不外泄：该用户只承载预检行，结束即回滚。
     validation_user = User(
         username=f"backup-validation-{uuid.uuid4().hex}",
@@ -297,10 +289,12 @@ async def _preflight_tables(
                             rows[member],
                             available_rows,
                             validation_user.id,
-                            UrlRewriter({}),
+                            rewriter,
                             staged_map,
                             mode=mode,
                             import_batch_id=import_batch_id,
+                            # 预检行属于校验用户，包内资产仍按恢复后的真实归属判断。
+                            asset_owner_id=target_user_id,
                         )
                     if table == "companion_action_packs":
                         await asyncio.to_thread(
@@ -527,7 +521,7 @@ async def _clear_compatible_rows(
     for group in (IDENTITY_TABLES, ACTION_TABLES):
         present = group & set(remaining)
         if present and present != group:
-            reason = IDENTITY_INCOMPLETE_REASON if group == IDENTITY_TABLES else "视频包与动作必须同时恢复。"
+            reason = IDENTITY_INCOMPLETE_REASON if group == IDENTITY_TABLES else "动作包与动作必须同时恢复。"
             for table in sorted(present):
                 remaining.pop(table)
                 failures.append(
@@ -538,6 +532,38 @@ async def _clear_compatible_rows(
                     ),
                 )
     return remaining, tuple(failures)
+
+
+async def _copy_backup_files(
+    extract_root: Path,
+    source_user_id: int,
+    target_user_id: int,
+    rewriter: UrlRewriter,
+    *,
+    conversations: dict[str, int | str],
+    include_conversation_files: bool,
+) -> int:
+    """线程复制备份文件；取消时通知线程停止并等其退出，调用方回滚时 rewriter.created 才完整。"""
+    stop = threading.Event()
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            restore_files,
+            extract_root,
+            source_user_id,
+            target_user_id,
+            rewriter,
+            stop,
+            conversations=conversations,
+            include_conversation_files=include_conversation_files,
+        ),
+    )
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # 取消优先，线程内的失败不顶替它；等待中再次被取消时，线程已复制的文件由 restore_files 在线程内回滚。
+        stop.set()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
 
 
 async def restore_backup_rows(
@@ -584,22 +610,22 @@ async def restore_backup_rows(
                 id_map,
                 mode=mode,
                 import_batch_id=import_batch_id,
+                asset_owner_id=target_user_id,
             )
-        file_result = await asyncio.to_thread(
-            restore_files,
+        skipped_conversation_files = await _copy_backup_files(
             extract_root,
             source_user_id,
             target_user_id,
+            rewriter,
             conversations=id_map.get("conversations", {}),
             include_conversation_files=conversation_files_in_scope,
         )
-        rewriter = file_result.rewriter
-        if file_result.skipped_conversation_files:
+        if skipped_conversation_files:
             failures = (
                 *failures,
                 BackupImportFailure(
                     section="asset_files",
-                    count=file_result.skipped_conversation_files,
+                    count=skipped_conversation_files,
                     reason="对应会话未能恢复，附件缺少可用的目标会话。",
                 ),
             )
@@ -616,6 +642,7 @@ async def restore_backup_rows(
                 id_map,
                 mode=mode,
                 import_batch_id=import_batch_id,
+                asset_owner_id=target_user_id,
             )
         if ACTION_TABLES.issubset(imported):
             await restore_action_catalogs(

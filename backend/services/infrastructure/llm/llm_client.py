@@ -37,6 +37,10 @@ class MissingLlmConfigError(Exception):
     """能力链为空时抛出；调用方按端点协议映射为 400 响应包。"""
 
 
+class MissingVideoModelError(MissingLlmConfigError):
+    """会话含视频附件，但能力链中没有支持视频理解的模型；与链为空区分，以便给出针对性提示。"""
+
+
 async def _load_user_config(
     db: AsyncSession | None,
     user_id: int | None,

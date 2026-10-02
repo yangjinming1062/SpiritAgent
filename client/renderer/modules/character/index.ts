@@ -114,7 +114,8 @@ export {
   resolveVideoAction,
   VIDEO_ACTION_KEYS,
   VIDEO_GEN_STAGE_TEXT_KEYS,
-  type VideoActionKey
+  type VideoActionKey,
+  videoActionNames
 } from './presentation'
 export { bindProactiveLineSpeaker } from './proactive-speak'
 export { handleDragEndInteraction } from './reactions/reaction-audio'

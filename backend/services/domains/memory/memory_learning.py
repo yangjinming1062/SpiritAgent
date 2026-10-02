@@ -17,7 +17,7 @@ from services.domains.conversation import message_contains_text, message_text, u
 
 from .memory_bootstrap import resolve_user_timezone
 from .memory_policy import MemoryDecision
-from .memory_retrieval import extract_search_terms
+from .memory_retrieval import extract_search_terms, keyword_match_score
 from .memory_store import (
     backfill_memory_embeddings,
     fingerprint_history,
@@ -30,6 +30,7 @@ MESSAGE_LIMIT = 80
 REVIEW_MEMORY_LIMIT = 100
 REVIEW_MESSAGE_CHARS = 24000
 REVIEW_MEMORY_CHARS = 48000
+REVIEW_TERM_LIMIT = 64
 
 
 class ReviewMessage(BaseModel):
@@ -207,10 +208,11 @@ async def load_review_context(
         else (Memory.reviewed_at.asc().nullsfirst(), Memory.id.asc())
     )
     memories = list((await db.scalars(memory_stmt.order_by(*order).limit(REVIEW_MEMORY_LIMIT))).all())
-    # 带上新发言相关的事实（含候选和反例），即使它们不在本次轮转窗口中。
+    # 带上新发言相关的事实（含候选和反例），即使它们不在本次轮转窗口中；命中词多的优先。
     if new_only and messages:
         terms = extract_search_terms(
             " ".join(m.content for m in messages if m.role == "user" and not m.suppressed),
+            limit=REVIEW_TERM_LIMIT,
         )
         if terms:
             related = list(
@@ -223,7 +225,7 @@ async def load_review_context(
                             Memory.status != "forgotten",
                             or_(*(Memory.content.icontains(term, autoescape=True) for term in terms)),
                         )
-                        .order_by(Memory.updated_at.desc())
+                        .order_by(keyword_match_score(terms).desc(), Memory.updated_at.desc(), Memory.id.desc())
                         .limit(REVIEW_MEMORY_LIMIT),
                     )
                 ).all(),

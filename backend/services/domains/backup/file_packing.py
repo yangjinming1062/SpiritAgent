@@ -1,9 +1,9 @@
 import json
 import os
 import shutil
+import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -18,6 +18,8 @@ URL_PREFIXES: dict[str, str] = {
 
 # 用户维度、整目录按 user_id 重命名的资产根目录；备份按该常量在父子两代实例间搬迁。
 USER_ASSET_ROOT = "companion-assets"
+# 遍历正文中嵌套 JSON 的深度上限，远低于解释器递归限制；更深处不再收集文件引用，也不改写。
+_MAX_JSON_DEPTH = 64
 
 
 def _storage_path(value: str) -> str:
@@ -33,21 +35,23 @@ def _storage_path(value: str) -> str:
     return path
 
 
-def _strings(value: Any) -> Iterator[str]:
+def _strings(value: Any, depth: int = 0) -> Iterator[str]:
+    if depth > _MAX_JSON_DEPTH:
+        return
     if isinstance(value, str):
         yield value
         if value.lstrip().startswith(("{", "[")):
             try:
                 parsed = json.loads(value)
-            except ValueError:
+            except (ValueError, RecursionError):
                 return
-            yield from _strings(parsed)
+            yield from _strings(parsed, depth + 1)
     elif isinstance(value, dict):
         for item in value.values():
-            yield from _strings(item)
+            yield from _strings(item, depth + 1)
     elif isinstance(value, list):
         for item in value:
-            yield from _strings(item)
+            yield from _strings(item, depth + 1)
 
 
 class UrlRewriter:
@@ -67,18 +71,20 @@ class UrlRewriter:
                 return prefix + target.removeprefix(storage)
         return target
 
-    def rewrite(self, value: Any) -> Any:
+    def rewrite(self, value: Any, depth: int = 0) -> Any:
+        if depth > _MAX_JSON_DEPTH:
+            return value
         if isinstance(value, dict):
-            return {key: self.rewrite(item) for key, item in value.items()}
+            return {key: self.rewrite(item, depth + 1) for key, item in value.items()}
         if isinstance(value, list):
-            return [self.rewrite(item) for item in value]
+            return [self.rewrite(item, depth + 1) for item in value]
         if isinstance(value, str):
             if value.lstrip().startswith(("{", "[")):
                 try:
                     parsed = json.loads(value)
-                except ValueError:
+                except (ValueError, RecursionError):
                     return self(value)
-                rewritten = self.rewrite(parsed)
+                rewritten = self.rewrite(parsed, depth + 1)
                 return json.dumps(rewritten, ensure_ascii=False) if rewritten != parsed else value
             return self(value)
         return value
@@ -86,12 +92,6 @@ class UrlRewriter:
     def rollback(self) -> None:
         for path in reversed(self.created):
             path.unlink(missing_ok=True)
-
-
-@dataclass(frozen=True)
-class FileRestoreResult:
-    rewriter: UrlRewriter
-    skipped_conversation_files: int
 
 
 def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]) -> list[Path]:
@@ -113,27 +113,57 @@ def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]
     return sorted(path for path in files if path.resolve().is_relative_to(root))
 
 
+def _user_asset_target(relative: PurePosixPath, source_uid: int, target_uid: int) -> PurePosixPath | None:
+    """备份中源账户资产在目标账户下的相对路径；不在源账户资产目录内返回 None。"""
+    parts = relative.parts
+    if parts[0] == USER_ASSET_ROOT and len(parts) >= 3 and parts[1] == str(source_uid):
+        return PurePosixPath(parts[0], str(target_uid), *parts[2:])
+    return None
+
+
+def planned_asset_mapping(extract_root: Path, source_uid: int, target_uid: int) -> dict[str, str]:
+    """包内账户资产恢复后的路径映射，与 restore_files 同一规则但不复制文件，供预检与写入判断一致。"""
+    source_root = extract_root / "files"
+    mapping: dict[str, str] = {}
+    for source in source_root.rglob("*"):
+        if not source.is_file():
+            continue
+        relative = PurePosixPath(source.relative_to(source_root).as_posix())
+        if (target := _user_asset_target(relative, source_uid, target_uid)) is not None:
+            mapping[str(relative)] = target.as_posix()
+    return mapping
+
+
+def _ensure_running(stop: threading.Event) -> None:
+    if stop.is_set():
+        raise InterruptedError("Backup restore was cancelled")
+
+
 def restore_files(
     extract_root: Path,
     source_uid: int,
     target_uid: int,
+    rewriter: UrlRewriter,
+    stop: threading.Event,
     *,
     conversations: dict[str, int | str],
     include_conversation_files: bool = True,
-) -> FileRestoreResult:
+) -> int:
+    """复制备份文件，映射与新建文件记入调用方持有的 rewriter，返回因会话缺失而跳过的附件数；stop 置位后中止。"""
     root = Path(SETTINGS.data_dir).resolve()
     source_root = extract_root / "files"
-    rewriter = UrlRewriter({})
     skipped_conversation_files = 0
     temp_ids: dict[str, str] = {}
     try:
         for source in sorted(source_root.rglob("*")):
+            _ensure_running(stop)
             if not source.is_file():
                 continue
             relative = PurePosixPath(source.relative_to(source_root).as_posix())
             parts = relative.parts
-            if parts[0] == USER_ASSET_ROOT and len(parts) >= 3 and parts[1] == str(source_uid):
-                target_relative = PurePosixPath(parts[0], str(target_uid), *parts[2:])
+            user_asset = _user_asset_target(relative, source_uid, target_uid)
+            if user_asset is not None:
+                target_relative = user_asset
             elif parts[0] == "desktop-attachments" and len(parts) >= 3:
                 if not include_conversation_files:
                     continue
@@ -168,6 +198,7 @@ def restore_files(
                     staged.unlink(missing_ok=True)
             rewriter._mapping[str(relative)] = target_relative.as_posix()
         for old, new in temp_ids.items():
+            _ensure_running(stop)
             rewriter._mapping[f"/api/media/files/{old}"] = f"/api/media/files/{new}"
             meta_path = root / "temp-media" / f"{new}.json"
             if meta_path not in rewriter.created:
@@ -181,10 +212,8 @@ def restore_files(
             meta["user_id"] = target_uid
             meta["created_at"] = time.time()
             meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-        return FileRestoreResult(
-            rewriter=rewriter,
-            skipped_conversation_files=skipped_conversation_files,
-        )
+        return skipped_conversation_files
     except Exception:
+        # 线程自行回滚：调用方等待线程退出的过程被再次取消时，也不会留下已复制的文件。
         rewriter.rollback()
         raise

@@ -35,11 +35,17 @@ _FFMPEG_TIMEOUT_SECONDS = 600.0
 
 
 class VideoProcessError(RuntimeError):
-    """视频处理失败；str(exc) 为可展示的公开文案，internal 保留原始输出。"""
+    """视频处理失败；str(exc) 为可展示的公开文案，internal 保留原始输出并作为备注随回溯进入日志。"""
 
     def __init__(self, message: str, *, internal: str | None = None) -> None:
         super().__init__(message)
         self.internal = internal
+        if internal:
+            self.add_note(internal)
+
+
+class VideoToolUnavailableError(VideoProcessError):
+    """FFmpeg / ffprobe 缺失、无法启动或超时；说明本机环境故障，不能据此判定视频成品本身有问题。"""
 
 
 @dataclass(frozen=True)
@@ -61,7 +67,7 @@ class VideoProbe:
 def _binary(name: str) -> str:
     resolved = shutil.which(name)
     if resolved is None:
-        raise VideoProcessError(f"{name} 不可用，无法处理视频", internal=f"{name} not found on PATH")
+        raise VideoToolUnavailableError(f"{name} 不可用，无法处理视频", internal=f"{name} not found on PATH")
     return resolved
 
 
@@ -74,9 +80,9 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[bytes]:
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise VideoProcessError("视频处理超时", internal=str(exc)) from exc
+        raise VideoToolUnavailableError("视频处理超时", internal=str(exc)) from exc
     except OSError as exc:
-        raise VideoProcessError("视频处理进程启动失败", internal=str(exc)) from exc
+        raise VideoToolUnavailableError("视频处理进程启动失败", internal=str(exc)) from exc
 
 
 def probe_video(path: Path) -> VideoProbe:

@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass, field
 from weakref import WeakValueDictionary
 
 from components import get_logger, session_scope
@@ -6,12 +7,25 @@ from modules.system import ChatMessageRequest, ChatRequest
 from modules.ws import emit_ws_event
 
 from services.application.chat import HeadlessEmitter, run_chat_turn
-from services.domains.automation import resolve_job_conversation
+from services.domains.automation import STANDARD_CRON_KIND, get_user_job, resolve_job_conversation
 from services.infrastructure.llm import resolve_user_llm_config
 
 logger = get_logger(__name__)
-# 锁在仍有触发持有或等待时存活，全部结束后随引用释放移除，任务删除后不会累积。
-_STANDARD_TURN_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
+
+# 同一任务已受理且未结束的触发上限：持锁运行的一个和等待锁的一个。
+_MAX_ADMITTED_TURNS = 2
+
+
+@dataclass
+class _TurnSlot:
+    """同一任务的执行槽：admitted 统计已受理且未结束的触发，上限 ``_MAX_ADMITTED_TURNS``。"""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    admitted: int = 0
+
+
+# 槽在仍有触发持有或等待时存活，全部结束后随引用释放移除，任务删除后不会累积。
+_STANDARD_TURN_SLOTS: WeakValueDictionary[int, _TurnSlot] = WeakValueDictionary()
 
 
 async def _emit_notification(user_id: int, *, name: str, text: str, conversation_id: int, error: bool = False) -> None:
@@ -84,8 +98,25 @@ async def execute_standard_turn(
     name: str,
     prompt: str,
     conversation_id: int | None,
+    one_shot: bool,
 ) -> None:
-    """同一任务串行执行，避免短周期任务把同一历史交错写入。"""
-    lock = _STANDARD_TURN_LOCKS.setdefault(job_id, asyncio.Lock())
-    async with lock:
-        await _execute_standard_turn(user_id, job_id, name, prompt, conversation_id)
+    """同一任务串行执行，避免短周期任务把同一历史交错写入；至多一个运行中和一个待执行触发，其余合并丢弃。待执行触发获得执行权后重读任务：已删除、暂停或改为 special 的丢弃，否则按任务当前内容运行；一次性任务触发时已删除，沿用触发时的内容。"""
+    slot = _STANDARD_TURN_SLOTS.setdefault(job_id, _TurnSlot())
+    if slot.admitted >= _MAX_ADMITTED_TURNS:
+        logger.info("standard cron trigger coalesced", extra={"user_id": user_id, "job_id": job_id})
+        return
+    slot.admitted += 1
+    try:
+        async with slot.lock:
+            if not one_shot:
+                current = await get_user_job(user_id, job_id)
+                if current is None or current["is_paused"] or current["kind"] != STANDARD_CRON_KIND:
+                    logger.info(
+                        "standard cron trigger dropped: job removed, paused or no longer standard",
+                        extra={"user_id": user_id, "job_id": job_id},
+                    )
+                    return
+                name, prompt, conversation_id = current["name"], current["prompt"], current["conversation_id"]
+            await _execute_standard_turn(user_id, job_id, name, prompt, conversation_id)
+    finally:
+        slot.admitted -= 1

@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from services.infrastructure.llm import MissingLlmConfigError, resolve_provider_config
 
 from .persona_service import load_persona_definition
-from .personality_tagger import analyze_personality_tags
+from .personality_tagger import analyze_personality_tags, personality_tag_inputs
 
 logger = get_logger(__name__)
 
@@ -60,7 +60,7 @@ async def _refresh_personality_tags(persona_id: int, user_id: int) -> None:
 
 
 async def _refresh_once(persona_id: int, user_id: int) -> None:
-    # 每次尝试都重新查询 Persona，使并发 PUT 能以最新定义参与「后写者胜」；读/调用/写各持一个短会话，LLM 调用期间不占连接
+    # 每次尝试都重新读取 Persona；读/调用/写各持一个短会话，LLM 调用期间不占连接
     t_query = time.monotonic()
     async with SESSION_LOCAL() as db:
         persona = await db.scalar(select(Persona).where(Persona.id == persona_id))
@@ -72,7 +72,14 @@ async def _refresh_once(persona_id: int, user_id: int) -> None:
     tags = await analyze_personality_tags(definition, provider_config)
     t_write = time.monotonic()
     async with SESSION_LOCAL() as db:
-        # 只更新单列：LLM 调用期间发生的 definition PUT 在其余列上仍按后写者胜生效
+        # 行锁使依据核对与写入和 PUT 的人设写入互斥；定义已更新时，由那次保存调度的任务写入标签
+        current = await db.scalar(select(Persona).where(Persona.id == persona_id).with_for_update())
+        if current is None:
+            return
+        if personality_tag_inputs(load_persona_definition(current)) != personality_tag_inputs(definition):
+            logger.info("persona-tags-superseded persona_id=%s", persona_id)
+            return
+        # 只更新单列，其余列保持 PUT 写入的值
         await db.execute(
             update(Persona)
             .where(Persona.id == persona_id)

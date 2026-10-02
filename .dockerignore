@@ -33,7 +33,8 @@ node_modules/
 build/
 dist/
 release/
-updates/
+# Admin-uploaded release packages; provided at runtime by the ./updates volume
+backend/updates/
 
 # Secrets & config (mounted at runtime, not baked in). The context is the repo root and
 # `COPY backend/ .` copies nested files, so match them at any depth; config.toml.example stays.

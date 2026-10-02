@@ -205,8 +205,6 @@ export function handleCharacterEvent(event: GatewayEvent): void {
 
       const command: ActionPlayCommand = {
         play_id: p.play_id,
-        target_device: p.target_device ?? '',
-        target_surface: p.target_surface ?? '',
         pack_id: p.pack_id,
         appearance_epoch: p.appearance_epoch ?? 0,
         action_id: p.action_id,

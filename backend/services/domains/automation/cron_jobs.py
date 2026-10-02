@@ -18,6 +18,9 @@ logger = get_logger(__name__)
 SPECIAL_CRON_KIND = "special"
 STANDARD_CRON_KIND = "standard"
 _CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
+# 与 CronJob.name / schedule 的列宽一致；超长值会在提交时以数据库错误失败。
+_MAX_NAME_LENGTH = 128
+_MAX_SCHEDULE_LENGTH = 128
 
 _JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id", "system_preset_id"})
 _SCHEDULE_KEYS = ("schedule", "is_paused")
@@ -44,6 +47,17 @@ def _validate_kind(kind: str, scope: MemoryScope) -> str:
     if normalized == SPECIAL_CRON_KIND and scope.system_preset_id != "companion":
         raise ValueError("Special jobs require the companion preset")
     return normalized
+
+
+def _validate_job_text(name: str | None, schedule: str | None) -> None:
+    """name / schedule 的入口校验：超出列宽或含 NUL（PostgreSQL 文本不接受）时抛 ValueError，消息可直接回给模型。"""
+    for field, value, limit in (("name", name, _MAX_NAME_LENGTH), ("schedule", schedule, _MAX_SCHEDULE_LENGTH)):
+        if value is None:
+            continue
+        if len(value) > limit:
+            raise ValueError(f"{field} must be at most {limit} characters")
+        if "\x00" in value:
+            raise ValueError(f"{field} must not contain NUL characters")
 
 
 def compute_next_run_at(schedule: str, base: datetime) -> datetime | None:
@@ -111,6 +125,7 @@ async def create_job(
     expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     normalized_kind = _validate_kind(kind, scope)
+    _validate_job_text(name, schedule)
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
@@ -144,6 +159,13 @@ async def get_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
         return job.to_dict() if job else None
 
 
+async def get_user_job(user_id: int, job_id: int) -> dict[str, Any] | None:
+    """按 (id, user_id) 读取任务，不限预设；触发回合据此核对任务是否仍可执行。"""
+    async with session_scope() as db:
+        job = await db.scalar(select(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id))
+        return job.to_dict() if job else None
+
+
 async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[dict[str, Any]]:
     validate_memory_scope(scope)
     async with session_scope() as db:
@@ -164,6 +186,7 @@ async def update_job(
 ) -> dict[str, Any] | None:
     if "kind" in updates:
         updates["kind"] = _validate_kind(updates["kind"], scope)
+    _validate_job_text(updates.get("name"), updates.get("schedule"))
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:

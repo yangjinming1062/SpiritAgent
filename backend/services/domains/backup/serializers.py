@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from common import ModelBase
 from components import AIConfig, ensure_utc, utc_now
@@ -44,7 +44,7 @@ from pydantic import ValidationError
 from sqlalchemy import Date, DateTime, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts import MemoryScope
+from services.contracts import MemoryScope, MemorySource
 from services.domains.conversation import CHECKPOINT_SUBTYPES, validate_memory_scope
 from services.infrastructure.assets import parse_companion_asset_path
 
@@ -97,9 +97,9 @@ ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
     CONVERSATION_TABLES,
     ACTION_TABLES,
 )
-# 预检与覆盖清理的成组写入顺序：先头像，再角色卡与人设。
+# 预检时身份三表成组写入的顺序：先头像，再角色卡与人设。
 IDENTITY_GROUP: tuple[str, ...] = ("avatar_assets", "companion_character_cards", "personas")
-IDENTITY_INCOMPLETE_REASON = "基础身份必须同时包含人设、种子图与角色卡。"
+IDENTITY_INCOMPLETE_REASON = "基础身份必须同时包含人设、头像与角色卡。"
 IDENTITY_BLOCKED_REASON = "目标现有场景、动作包等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
 IDENTITY_DEPENDENT_REASON = "缺少可映射的基础身份，无法恢复此类别。"
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
@@ -131,6 +131,8 @@ _EXCLUDED_COLUMNS: dict[str, frozenset[str]] = {
         },
     ),
 }
+# 恢复时按 MemorySource.kind 原样保留记忆来源类型，备份中的其他取值落为 import。
+_MEMORY_SOURCE_KINDS = frozenset(get_args(MemorySource.__annotations__["kind"]))
 IdMap = dict[str, dict[str, int | str]]
 BackupImportMode = Literal["overwrite", "merge"]
 
@@ -216,6 +218,7 @@ async def insert_rows(
     *,
     mode: BackupImportMode,
     import_batch_id: str,
+    asset_owner_id: int,
 ) -> tuple[dict[str, int | str], int]:
     model = TABLE_MODELS[table]
     new_map: dict[str, int | str] = {}
@@ -246,7 +249,7 @@ async def insert_rows(
             if payload["content_type"] != "text" and not payload.get("media_url"):
                 raise ValueError("Post main media is missing")
             for path in (payload.get("media_url"), payload.get("audio_url")):
-                if path and (not (parsed := parse_companion_asset_path(path)) or parsed[0] != target_user_id):
+                if path and (not (parsed := parse_companion_asset_path(path)) or parsed[0] != asset_owner_id):
                     raise ValueError("Post media must belong to the target account")
         if table == "companion_diary_entries":
             if not isinstance(payload.get("is_read"), bool):
@@ -465,7 +468,8 @@ def _build_payload(
                 raise ValueError("Memory embedding must be a list of numbers")
             if len(embedding) != MEMORY_EMBEDDING_DIM:
                 raise ValueError(f"Memory embedding dim {len(embedding)} != {MEMORY_EMBEDDING_DIM}")
-        payload["source_kind"] = "import"
+        if payload["source_kind"] not in _MEMORY_SOURCE_KINDS:
+            payload["source_kind"] = "import"
         payload["source_refs"] = {
             "imported_memory_id": raw["id"],
             "original_source": _original_source(payload["source_refs"]),
@@ -584,8 +588,8 @@ async def restore_memory_context(
     messages = {str(row["id"]): row for row in rows.get("messages", [])}
     for raw in rows.get("memories", []):
         memory = await db.get(Memory, int(id_map["memories"][str(raw["id"])]))
-        # merge 保留现有槽位，不改写它的来源。
-        if memory.source_kind != "import" or memory.source_refs.get("import_batch_id") != import_batch_id:
+        # 只处理本批插入的记录；merge 命中的现有槽位保留原来源。
+        if memory.source_refs.get("import_batch_id") != import_batch_id:
             continue
         refs = raw["source_refs"]
         restored: dict[str, Any] = {
@@ -599,15 +603,10 @@ async def restore_memory_context(
             if conv["system_preset_id"] != raw["system_preset_id"]:
                 raise ValueError("Memory source belongs to a different preset")
             restored["session_id"] = int(id_map["conversations"][str(session_id)])
-            mapped_messages = []
             for mid in refs.get("message_ids", []):
                 message = messages.get(str(mid))
-                if message is None:
-                    continue
-                if str(message["conversation_id"]) != str(session_id):
+                if message is not None and str(message["conversation_id"]) != str(session_id):
                     raise ValueError("Invalid memory source message")
-                mapped_messages.append(int(id_map["messages"][str(mid)]))
-            restored["message_ids"] = mapped_messages
 
         def remap_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
             result = []
@@ -644,6 +643,8 @@ async def restore_memory_context(
         memory.history = history
         restored["message_ids"] = sorted({e["message_id"] for e in memory.evidence if "message_id" in e})
         memory.source_refs = restored
+        # 赋列表达式使 UPDATE 显式写入原值；否则 onupdate 会把备份中的 updated_at 改成导入时刻。
+        memory.updated_at = Memory.updated_at
     await db.flush()
 
 

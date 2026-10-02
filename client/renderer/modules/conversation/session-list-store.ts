@@ -411,18 +411,14 @@ function forkSessionInfo(sourceSessionId: string, res: SessionResumeResponse): S
 
   return {
     archived: false,
-    ended_at: null,
     id: res.session_id,
     input_tokens: 0,
-    is_active: true,
     kind: res.info?.kind ?? 'standard',
     last_active: now,
     message_count: res.message_count,
-    model: null,
     output_tokens: 0,
     pinned: false,
     preview: null,
-    source: null,
     started_at: now,
     system_preset_icon_key: source?.system_preset_icon_key ?? null,
     system_preset_id: source?.system_preset_id ?? null,
@@ -504,12 +500,18 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
     }
 
     if (res.anchor) {
+      const attachments = res.anchor.attachments ?? []
+
       $chatDraftFromUndo.set({
         session_id: res.session_id,
         text: res.anchor.text ?? '',
-        content_type: res.anchor.content_type ?? 'text',
-        media_json: res.anchor.media_json ?? null
+        attachments
       })
+
+      // 输入框一次只附加一张图片（见 use-chat-input 的草稿回填）；事件路径同样回填，提示只在发起窗口给一次。
+      if (attachments.length > 1) {
+        notify({ kind: 'info', message: getStrings().chat.undo.extraImagesNotRestored(attachments.length - 1) })
+      }
     }
 
     if (Array.isArray(res.messages)) {

@@ -1,11 +1,9 @@
+from .archive import BackupArchiveError, BackupArchiveTooLargeError, extract_backup_archive, write_backup_archive
 from .file_packing import collect_files_for_export
-from .manifest import build_manifest, load_manifest
+from .manifest import load_manifest
 from .restoration import BackupRestoreResult, load_backup_rows, restore_backup_rows
 from .serializers import (
     BACKUP_SECTION_IDS,
-    BACKUP_SECTIONS,
-    CONVERSATION_TABLES,
-    RETIRED_TABLES,
     TABLES,
     BackupImportMode,
     serialize_rows,
@@ -13,18 +11,18 @@ from .serializers import (
 )
 
 __all__ = [
-    "BACKUP_SECTIONS",
     "BACKUP_SECTION_IDS",
-    "CONVERSATION_TABLES",
+    "BackupArchiveError",
+    "BackupArchiveTooLargeError",
     "BackupImportMode",
     "BackupRestoreResult",
-    "RETIRED_TABLES",
     "TABLES",
-    "build_manifest",
     "collect_files_for_export",
+    "extract_backup_archive",
     "load_backup_rows",
     "load_manifest",
     "restore_backup_rows",
     "serialize_rows",
     "tables_for_sections",
+    "write_backup_archive",
 ]

@@ -66,6 +66,7 @@ INTERRUPTED_RUNNING_ERROR = (
     "the user first."
 )
 _INTERRUPTED_PENDING_ERROR = "Not executed: the turn was interrupted before this tool call started."
+_INVALID_ARGUMENTS_ERROR = "Not executed: the tool arguments were not a valid JSON object. Resend the call with complete, valid JSON arguments."
 
 
 def interrupted_tool_results(tool_calls_list: list[dict], progress: _BatchProgress) -> list[tuple[str, Any]]:
@@ -153,11 +154,12 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                 tool_error(f"Tool is unavailable in this execution mode: {name}"),
                 tc["call_id"],
             )
-        args = coerce_tool_args(
-            name,
-            parse_tool_call_arguments(tc["arguments"], name),
-            REGISTRY.get_schema(ctx.user_id, name),
-        )
+        parsed_args = parse_tool_call_arguments(tc["arguments"], name)
+        if parsed_args is None:
+            # 参数无法解析时不派发：以失败结果告知模型，并计入守卫，重复失败能得到换策略提示。
+            result_str = ctx.guardrails.after_call(name, {}, tool_error(_INVALID_ARGUMENTS_ERROR))
+            return make_tool_result_message(name, _redact_tool_payload(result_str), tc["call_id"])
+        args = coerce_tool_args(name, parsed_args, REGISTRY.get_schema(ctx.user_id, name))
         # 在入口处统一剥离保留键，使 backend / memory / runner 三类工具都受同一过滤。
         args = {k: v for k, v in args.items() if k not in RESERVED_KEYS}
 

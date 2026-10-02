@@ -2,6 +2,7 @@
 
 from . import asset_store
 from .asset_store import (
+    UnsupportedImageFormatError,
     action_pose_asset_path,
     action_source_asset_path,
     build_data_uri,
@@ -20,12 +21,14 @@ from .asset_store import (
     signed_companion_asset_url,
     sniff_media_ext,
     unlink_companion_asset,
+    validate_image_bytes,
     verify_signed_asset_request,
     video_job_asset_path,
 )
 from .http_range import serve_ranged_file
 
 __all__ = [
+    "UnsupportedImageFormatError",
     "action_pose_asset_path",
     "save_action_pose_asset_async",
     "action_source_asset_path",
@@ -47,5 +50,6 @@ __all__ = [
     "video_job_asset_path",
     "sniff_media_ext",
     "unlink_companion_asset",
+    "validate_image_bytes",
     "verify_signed_asset_request",
 ]

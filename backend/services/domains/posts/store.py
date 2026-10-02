@@ -37,6 +37,10 @@ class PostNotFoundError(PostError):
     pass
 
 
+class PostBlockedError(PostError):
+    """受理被自主发布开关、请求类型或发布额度拦截；与参数和系统错误区分，夜间账本据此记为阻止。"""
+
+
 @dataclass(frozen=True)
 class PostInteractions:
     threads: list[dict]
@@ -177,6 +181,27 @@ async def reserve_publication(
     )
     if existing is not None:
         return existing
+    if await publication_quota_remaining(db, user_id, quota_kind) <= 0:
+        raise PostBlockedError("最近24小时的动态发布额度已用完")
+    row = PostPublication(
+        user_id=user_id,
+        idempotency_key=key,
+        trigger=trigger,
+        quota_kind=quota_kind,
+        activity_date=activity_date,
+        request_json=request,
+        progress_json={},
+        status="queued",
+        phase="planning",
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def publication_quota_remaining(db: AsyncSession, user_id: int, quota_kind: str) -> int:
+    """最近24小时内该类别还可预留的发布数；已发布、排队或运行中的任务，以及24小时内结果未知的任务都占用额度。"""
     since = utc_now() - timedelta(hours=24)
     posted = await db.scalar(
         select(func.count())
@@ -200,23 +225,7 @@ async def reserve_publication(
         ),
     )
     limit = SETTINGS.post_autonomous_per_day if quota_kind == "autonomous" else SETTINGS.post_requested_per_day
-    if (posted or 0) + (reserved or 0) >= limit:
-        raise PostError("最近24小时的动态发布额度已用完")
-    row = PostPublication(
-        user_id=user_id,
-        idempotency_key=key,
-        trigger=trigger,
-        quota_kind=quota_kind,
-        activity_date=activity_date,
-        request_json=request,
-        progress_json={},
-        status="queued",
-        phase="planning",
-    )
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
-    return row
+    return max(0, limit - (posted or 0) - (reserved or 0))
 
 
 async def publication_status(db: AsyncSession, user_id: int, task_id: str) -> PostPublicationResult:

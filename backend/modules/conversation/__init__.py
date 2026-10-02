@@ -15,6 +15,9 @@ from .schemas import (
     DesktopSessionOperationResponse,
     DesktopSessionPatchRequest,
     DesktopSessionSearchResponse,
+    UndoAnchor,
+    UndoAttachment,
+    UndoResult,
 )
 
 __all__ = [
@@ -31,6 +34,9 @@ __all__ = [
     "MediaBubbleInput",
     "ReplyAudio",
     "TextBubble",
+    "UndoAnchor",
+    "UndoAttachment",
+    "UndoResult",
     "VoiceBubble",
     "VoiceBubbleView",
 ]

@@ -7,7 +7,6 @@ from components import (
     get_logger,
     parse_llm_json,
     resolve_language,
-    safe_json_loads,
     utc_now,
 )
 from modules.companion import Persona
@@ -16,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from services.contracts import MemoryScope
-from services.domains.actions import get_active_pack, is_expression_action, list_pack_actions
+from services.domains.actions import action_prompt_entry, get_active_pack, is_expression_action, list_pack_actions
 from services.domains.memory import format_memories_block, resolve_user_timezone
 from services.infrastructure.llm import (
     LLMRuntimeError,
@@ -65,20 +64,8 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         available_actions: list[dict[str, Any]] = []
         if pack is not None:
             for row in await list_pack_actions(db, pack.id, enabled_only=True):
-                if not is_expression_action(row):
-                    continue
-                duration_ms = row.actual_duration_ms or int((row.target_duration_seconds or 0) * 1000)
-                available_actions.append(
-                    {
-                        "action_id": row.id,
-                        "name": row.name or row.key,
-                        "motion_description": row.motion_description,
-                        "use_when": safe_json_loads(row.use_when or "[]", default=[]),
-                        "avoid_when": safe_json_loads(row.avoid_when or "[]", default=[]),
-                        "kind": row.kind,
-                        "duration_seconds": round(duration_ms / 1000, 3) if duration_ms else 0.0,
-                    },
-                )
+                if is_expression_action(row):
+                    available_actions.append(action_prompt_entry(row))
         available_actions.sort(key=lambda item: item["action_id"])
         return CompanionPromptContext(
             language=language,
@@ -132,6 +119,10 @@ async def run_prompt_json(
     raw = response.output_text
     parsed = parse_llm_json(raw)
     if not isinstance(parsed, dict):
-        logger.warning(f"{log_prefix}: unparseable LLM response", extra={"user_id": user_id, "raw": (raw or "")[:200]})
+        # 输出基于用户对话生成，常规日志不记原文；开启 LLM 调试日志后可按响应 ID 对照。
+        logger.warning(
+            f"{log_prefix}: unparseable LLM response",
+            extra={"user_id": user_id, "response_id": getattr(response, "id", None), "raw_chars": len(raw or "")},
+        )
         return PromptOutcome(parsed=None, reason="unparseable")
     return PromptOutcome(parsed=parsed, reason=None)

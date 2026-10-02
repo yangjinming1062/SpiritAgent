@@ -70,8 +70,7 @@ export interface ChatEditDraft {
 export interface ChatUndoDraft {
   session_id: string
   text: string
-  content_type?: string
-  media_json?: string | null
+  attachments?: ChatAttachment[]
 }
 
 export interface SessionSettings {

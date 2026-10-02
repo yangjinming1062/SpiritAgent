@@ -1,6 +1,6 @@
 import { atom } from 'nanostores'
 
-import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import {
@@ -507,16 +507,28 @@ export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<
 
     return status === 'ready'
   } catch (error) {
-    if (isCurrent()) {
-      $fullbodyReference.set({
-        ...current,
-        busy: false,
-        candidateError: backendDetailMessage(
-          error,
-          getStrings().settings.persona.fullbodyReference.retryCandidateAnalysisFailed
-        )
-      })
+    if (!isCurrent()) {
+      return false
     }
+
+    const httpStatus = ipcErrorStatus(error)
+
+    // 无状态码（超时、断连）或 404/409 时，先前未返回的分析可能已写成 ready，候选也可能已被采纳或替换；重读最近有效候选，面板才不会停在重试分析。
+    if (httpStatus === null || httpStatus === 404 || httpStatus === 409) {
+      log.warn('fullbody-reference', 'Candidate analysis result unknown', error)
+      await hydrateFullbodyReference(avatarId)
+
+      return $fullbodyReference.get().candidateStatus === 'ready'
+    }
+
+    $fullbodyReference.set({
+      ...current,
+      busy: false,
+      candidateError: backendDetailMessage(
+        error,
+        getStrings().settings.persona.fullbodyReference.retryCandidateAnalysisFailed
+      )
+    })
 
     return false
   }

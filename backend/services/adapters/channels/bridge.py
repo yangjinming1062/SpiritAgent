@@ -333,7 +333,7 @@ class ChannelTurnEmitter:
             if isinstance(new_media, list):
                 self.media.extend(m for m in new_media if isinstance(m, dict))
         elif frame_type == "error":
-            self.error = data.get("message")
+            self.error = data.get("detail") or data.get("message")
 
 
 async def _run_turn(adapter: ChannelAdapter, state: _ChannelState, batch: list[_QueuedMessage]) -> None:

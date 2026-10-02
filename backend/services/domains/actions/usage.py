@@ -13,7 +13,7 @@ from .policy import PLAY_INTENT_TTL_SECONDS
 
 
 def action_to_dict(action: CompanionAction) -> dict[str, Any]:
-    """动作元信息字典（无使用统计与冷却）。含时长，供检索与提示词资料块共用。"""
+    """动作元信息字典（含时长），供检索与提示词资料块共用。"""
     duration_ms = action.actual_duration_ms or int((action.target_duration_seconds or 0) * 1000)
     return {
         "action_id": action.id,
@@ -29,6 +29,24 @@ def action_to_dict(action: CompanionAction) -> dict[str, Any]:
         "loopable": action.loopable,
         "enabled": action.enabled,
     }
+
+
+# 面向模型的动作条目字段：陪伴快照与闲置表达共用，不含内部标识与状态。
+ACTION_PROMPT_KEYS: tuple[str, ...] = (
+    "action_id",
+    "name",
+    "motion_description",
+    "use_when",
+    "avoid_when",
+    "kind",
+    "duration_seconds",
+)
+
+
+def action_prompt_entry(action: CompanionAction) -> dict[str, Any]:
+    """面向模型的动作条目：取 `action_to_dict` 中的 `ACTION_PROMPT_KEYS` 字段。"""
+    item = action_to_dict(action)
+    return {key: item[key] for key in ACTION_PROMPT_KEYS}
 
 
 def emit_play_command(db: AsyncSession, entry: ActionPlayback, action: CompanionAction) -> None:

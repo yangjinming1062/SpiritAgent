@@ -1,4 +1,3 @@
-from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import DEFAULT_LANGUAGE, resolve_prompt_text
@@ -16,10 +15,6 @@ _USER_PROFILE_TAGS_JSON = '["onboarding", "user_profile"]'
 
 # CONTEXT_LABELS 的值→键反查表：read_user_profile 用它把 context 槽位还原为 user_* 原始键。
 _REVERSE_CONTEXT_LABELS: dict[str, str] = {v: k for k, v in CONTEXT_LABELS.items()}
-
-
-def extract_user_profile(payload: dict[str, Any]) -> dict[str, str]:
-    return {k: (payload.get(k) or "").strip() for k in payload if k.startswith("user_")}
 
 
 async def _active_profile_rows(db: AsyncSession, scope: MemoryScope) -> list[Memory]:

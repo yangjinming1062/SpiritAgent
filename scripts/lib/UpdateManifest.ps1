@@ -40,7 +40,7 @@ function Resolve-UpdateSigningKey {
           "or place the key at $default."
 }
 
-# 就地签署 Squirrel manifest：对 "<path>|<sha512>" 签名并回写 sha512/files/signature；缺 path、缺文件或无 openssl 时抛错。
+# 就地签署更新清单：对 "<path>|<sha512>" 签名并回写 sha512/files/signature；缺 path、缺文件或无 openssl 时抛错。
 function Sign-Manifest {
     [CmdletBinding()]
     param(
@@ -143,7 +143,7 @@ function New-RunnerManifest {
     $wheelName = Split-Path -Leaf $WheelPath
     $serverPyName = Split-Path -Leaf $ServerPyPath
 
-    # Squirrel 的 path 相对 manifest 所在目录；manifest 写在 staging 根，path 为 runner/<wheel>。
+    # 清单中的 path 相对 manifest 所在目录；manifest 写在 staging 根，path 为 runner/<wheel>。
     $wheelRel = "runner/$wheelName"
     $serverPyRel = "runner/$serverPyName"
 

@@ -11,6 +11,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.actions import (
+    ACTION_PROMPT_KEYS,
     DEFERRED_PROPOSAL_WINDOW,
     action_to_dict,
     get_active_pack,
@@ -35,21 +36,7 @@ class ActionContextSnapshot:
             "expected_pack_id": self.pack_id,
             **({"action_outfit": self.outfit_description} if self.outfit_description else {}),
             "ready_actions_total": len(self.ready_actions),
-            "ready_actions": [
-                {
-                    key: item.get(key)
-                    for key in (
-                        "action_id",
-                        "name",
-                        "motion_description",
-                        "use_when",
-                        "avoid_when",
-                        "kind",
-                        "duration_seconds",
-                    )
-                }
-                for item in self.ready_actions[:12]
-            ],
+            "ready_actions": [{key: item.get(key) for key in ACTION_PROMPT_KEYS} for item in self.ready_actions[:12]],
             "ready_actions_truncated": len(self.ready_actions) > 12,
             "in_flight_proposals": self.in_flight_proposals[:6],
             "in_flight_proposals_truncated": len(self.in_flight_proposals) > 6,
@@ -85,11 +72,12 @@ async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextS
                         ActionProposal.status.in_(("pending", "approved")),
                         and_(
                             ActionProposal.status == "deferred",
-                            ActionProposal.created_at >= utc_now() - DEFERRED_PROPOSAL_WINDOW,
+                            ActionProposal.updated_at >= utc_now() - DEFERRED_PROPOSAL_WINDOW,
                         ),
                     ),
                 )
-                .order_by(ActionProposal.created_at.desc(), ActionProposal.id.desc()),
+                # 按最近一次状态变更倒序：复用旧行重审后再次暂缓的提案排在前面，不被截断挤掉。
+                .order_by(ActionProposal.updated_at.desc(), ActionProposal.id.desc()),
             )
         )
         .scalars()

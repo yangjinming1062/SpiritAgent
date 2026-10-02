@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import io
 import os
 import secrets
 import shutil
@@ -9,7 +10,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlencode
 
-from components import SETTINGS, get_logger
+from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SETTINGS, get_logger
+from PIL import Image
 
 logger = get_logger(__name__)
 
@@ -31,6 +33,34 @@ def build_data_uri(data: bytes, content_type: str | None = None) -> str:
     """把图片字节编码为 data URI，使供应商内联读取种子图，无需后端可公网访问。"""
     mime = (content_type or "image/png").split(";")[0].strip().lower() or "image/png"
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+# MPO 是带多图扩展的 JPEG（部分手机照片），首帧可按 JPEG 读取。
+_IMAGE_MIME_BY_FORMAT: dict[str, str] = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "MPO": "image/jpeg",
+    "WEBP": "image/webp",
+    "GIF": "image/gif",
+}
+
+
+class UnsupportedImageFormatError(ValueError):
+    """图片可以识别，但格式不在 PNG / JPEG / WebP / GIF 范围内。"""
+
+
+def validate_image_bytes(data: bytes) -> tuple[bytes, str]:
+    """按实际字节校验用户图片并返回其真实 MIME，不采信客户端声明；限制体积与像素，并完整解码以拒绝截断或损坏的文件。"""
+    if not data or len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
+        raise ValueError("image size exceeds limit")
+    with Image.open(io.BytesIO(data)) as image:
+        mime = _IMAGE_MIME_BY_FORMAT.get(image.format or "")
+        if mime is None:
+            raise UnsupportedImageFormatError("unsupported image format")
+        if Image.MAX_IMAGE_PIXELS is not None and image.width * image.height > Image.MAX_IMAGE_PIXELS:
+            raise ValueError("image dimensions exceed limit")
+        image.load()
+    return data, mime
 
 
 def _assets_root() -> Path:
@@ -211,6 +241,7 @@ def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str
         "jpg": "image/jpeg",
         "jpeg": "image/jpeg",
         "webp": "image/webp",
+        "gif": "image/gif",
         "mp4": "video/mp4",
         "webm": "video/webm",
         "mov": "video/quicktime",

@@ -33,10 +33,10 @@ class DynamicLimiter(Limiter):
         pass
 
 
-# 默认内存存储（单进程）；可由 SETTINGS.rate_limit_storage_url 覆盖；config_filename="" 关闭 slowapi 自动读 .env（其默认 open 在 Windows cp936 遇到 UTF-8 BOM 会崩，配项由 pydantic-settings 加载）。
+# 内存存储（单进程，见 ARCHITECTURE「部署与运行时边界」）；config_filename="" 关闭 slowapi 自动读 .env（其默认 open 在 Windows cp936 遇到 UTF-8 BOM 会崩，配项由 pydantic-settings 加载）。
 limiter = DynamicLimiter(
     key_func=_user_key,
-    storage_uri=SETTINGS.rate_limit_storage_url.strip() or "memory://",
+    storage_uri="memory://",
     config_filename="",
 )
 

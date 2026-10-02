@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from services.infrastructure.llm import ReasoningEffort
 
-DEFAULT_PRESET_ID = "companion"
+COMPANION_PRESET_ID = "companion"
 
 
 @dataclass(frozen=True)

@@ -20,7 +20,7 @@ from .memory_scope import (
     user_authored_conversation,
     validate_memory_scope,
 )
-from .presets import DEFAULT_PRESET_ID, SYSTEM_PRESET_CATALOG, InferenceDefaults, resolve_preset_meta
+from .presets import COMPANION_PRESET_ID, SYSTEM_PRESET_CATALOG, InferenceDefaults, resolve_preset_meta
 from .reply_audio import client_reply_bubbles, discard_reply_audio, prepare_reply_audio, synthesize_reply_audio
 from .reply_media import (
     apply_video_status,
@@ -53,7 +53,7 @@ __all__ = [
     "validate_memory_scope",
     "CHECKPOINT_SUBTYPES",
     "CLEARED_STATUS_SUBTYPE",
-    "DEFAULT_PRESET_ID",
+    "COMPANION_PRESET_ID",
     "IM_KIND",
     "MEDIA_STATUS_SUBTYPE",
     "SPECIAL_KIND",

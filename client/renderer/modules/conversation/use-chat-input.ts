@@ -77,6 +77,13 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     }
 
     submit.setText(draft.text)
+    const [image] = draft.attachments ?? []
+
+    // 待发送附件是单槽，多张图片只回填第一张。
+    if (image) {
+      submit.setPending({ type: 'image', value: image.url })
+    }
+
     $chatDraftFromUndo.set(null)
   })
 

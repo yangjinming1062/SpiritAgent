@@ -4,12 +4,12 @@
 
 ## 提案处理
 
-去重、门禁与 flush 在用户级受理锁（`policy.get_action_accept_lock`）内完成，调用方在锁外提交。受理不等待评审或视频，评审仍持同一把锁，因此同用户的在途评审会先完成：
+去重、门禁与 flush 在用户级受理锁（`policy.get_action_accept_lock`）内完成，调用方在锁外提交。受理在取得该锁前不访问数据库，传入的会话须尚未开启事务（REST 入口先结束鉴权事务），排队等待时不占用连接。受理不等待评审或视频，评审仍持同一把锁，因此同用户的在途评审会先完成：
 
 - 同 key 已就绪则复用，制作中报告在制，待确认只返回复核项；失败、取消或复核结束仍停在 `review` 的动作原位重做，不新建提案。审中的同创意提案直接返回，最近一次结论为复用且动作仍可播放时也直接复用。
 - 新建提案须通过 [policy.py](../../domains/actions/policy.py) 的 `check_can_accept`（时长、整秒、拒绝后 7 天抑制、自主创建开关）。`deferred` / `rejected` 原行可重新评审；已批准或已复用但动作不可用时保留历史行并新建提案。
 - 同 key 重做与在制动作不重复门禁、评审或额度，由 `schedule_accepted_proposal` 按 `existing_action` 唤醒生成；同包已有在途任务时只记唤醒，待确认动作只等用户复核。复核拒绝或已结束复核仍停在 `review` 时，先用 `clear_action_attempt` 作废本次素材，再独立重做；受理阶段统一检查 `require_action_matting_model`，缺失即拒绝，不进入评审或付费生成。
-- 提案幂等键按 `(user, source, pack, fingerprint)` 取未占用序号，跨来源复用 `deferred` / `rejected` 行需换新来源键；保存点内以唯一约束去重，并发落败方返回已受理提案。评审失败落 `deferred` 可重试；重启时中断的 `pending` 重新排队，`deferred` 只在创建后 24 小时内重试并展示给模型（`DEFERRED_PROPOSAL_WINDOW`），超期后重提同一创意才复用原行重新评审，避免每次启动付费重审；拒绝抑制从拒绝行的 `updated_at` 起算，复用后再次拒绝会重新计时。
+- 提案幂等键按 `(user, source, pack, fingerprint)` 取未占用序号，跨来源复用 `deferred` / `rejected` 行需换新来源键；保存点内以唯一约束去重，并发落败方返回已受理提案。评审失败落 `deferred` 可重试；重启时中断的 `pending` 重新排队，`deferred` 只在创建后 24 小时内随重启重试；展示给模型的暂缓提案自最近一次暂缓（`updated_at`）起算 24 小时（`DEFERRED_PROPOSAL_WINDOW`），在途提案按最近一次状态变更倒序。超期后重提同一创意才复用原行重新评审，复用后再次暂缓的提案不随重启重审，避免每次启动付费重审；拒绝抑制从拒绝行的 `updated_at` 起算，复用后再次拒绝会重新计时。
 
 完整制作链见 [PIPELINE](../../../../docs/PIPELINE.md#评审与制作)。
 
@@ -20,7 +20,7 @@
 | [design.py](design.py) | 受理，结论为 reused / pending_review / rejected 并附所属包；落在同 key 已有动作上时附其状态（在制、待确认、重做） |
 | [pipeline.py](pipeline.py) | 调用方提交受理事务后经 `schedule_accepted_proposal` 启动评审或同 key 重做；`_run_proposal_review` 持受理锁覆盖评审、额度校验与提交；评审重启恢复；approve 后启动生成 |
 | [review.py](review.py) | 独立 LLM 评审；同 key 动作已存在时不调用模型，按其状态复用或暂缓；approve 时经 `consume_create_slot` 校验制作额度，只新建动作行并冻结设计规格 |
-| [playback.py](playback.py) | 播放请求：校验当前包与动作，账本与 outbox 指令同事务写入，动作制作中（queued / processing / result_unknown）时保存带有效期与外观代次的表达意图，失败、取消或待复核直接 rejected |
+| [playback.py](playback.py) | 播放请求：校验当前包与动作（系统槽位动作不对模型开放，点播与 `action_inspect` 均按不存在处理），账本与 outbox 指令同事务写入，动作制作中（queued / processing / result_unknown）时保存带有效期与外观代次的表达意图，失败、取消或待复核直接 rejected |
 | [context.py](context.py) | 动作快照（外观包 ID、就绪动作与时长、在途与拒绝提案），陪伴预设会话由对话编排的 `build_companion_environment_prompt` 在每次模型调用前追加；夜间规划直接读取其字段 |
 
 调用方：聊天工具 [action_tool.py](../../adapters/tools/builtin/action_tool.py)、动作 REST（[companion_actions.py](../../../api/v1/companion_actions.py)）与夜间规划受理提案；`action_tool` 与桌面 RPC `companion.idle_expression` 发起播放。回执经 REST 写入 `domains/actions/usage`。

@@ -2,7 +2,7 @@
 name = "spiritagent-backend"
 version = "0.1.0"
 description = "SpiritAgent Backend API"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.1",

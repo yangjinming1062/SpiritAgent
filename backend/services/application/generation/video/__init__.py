@@ -14,6 +14,7 @@ from .service import (
     list_pack_responses,
     load_pack_response,
     require_action_matting_model,
+    resume_user_dynamic_actions,
     resume_video_generation_jobs,
     retry_pack,
 )
@@ -33,5 +34,6 @@ __all__ = [
     "load_pack_response",
     "require_action_matting_model",
     "retry_pack",
+    "resume_user_dynamic_actions",
     "resume_video_generation_jobs",
 ]

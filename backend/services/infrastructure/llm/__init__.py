@@ -7,6 +7,7 @@ from .error_classifier import (
 )
 from .llm_client import (
     MissingLlmConfigError,
+    MissingVideoModelError,
     build_provider,
     generate_embedding,
     generate_embeddings,
@@ -90,6 +91,7 @@ __all__ = [
     "ImageGenResult",
     "LLMRuntimeError",
     "MissingLlmConfigError",
+    "MissingVideoModelError",
     "ProviderConfig",
     "ProviderError",
     "ProviderResultUnknownError",

@@ -45,11 +45,11 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 | 清空（`/clear`）、手动压缩（`/compress`、`session.compress_context`） | 允许 | 允许 | 拒绝 |
 | 改名（`PATCH /api/sessions/{id}` 的 `title`） | 允许 | 拒绝 | 拒绝 |
 
-编辑、撤回、清空和手动压缩遵守会话锁、权限及在途回合检查。编辑只接受新文本，保留原附件，与 batch / attachments 互斥；删除旧尾部与写入修订行在同一事务，校验失败不改历史。编辑广播完整历史，修订行使用新 ID；应用广播时保留本地未提交或待确认的消息与附件，RPC 响应不二次覆盖已开始的回复。任何历史修改都不撤销已执行工具的外部副作用。
+编辑、撤回、清空和手动压缩遵守会话锁、权限及在途回合检查。编辑只接受新文本，保留原附件，与 batch / attachments 互斥；删除旧尾部与写入修订行在同一事务，校验失败不改历史。编辑广播完整历史，修订行使用新 ID；应用广播时保留本地未提交或待确认的消息与附件，RPC 响应不二次覆盖已开始的回复。撤回删除锚点及其后的全部消息，并把锚点用户消息的正文与内联图片作为输入框草稿退回：RPC 响应与 `message.deleted` 事件的 `anchor` 为 `{text, attachments}`（定义见 [schemas](../backend/modules/conversation/schemas.py)），`attachments` 只含可重新附加的 data URL 图片；视频随撤回清理，不恢复。任何历史修改都不撤销已执行工具的外部副作用。
 
-回复生成失败的 `error.retry_message_id` 指向已保存的用户消息，客户端在当前失败气泡提供重试按钮。`prompt.submit.retry_message_id` 与 text / batch / attachments / edit_message_id 互斥；服务端在会话锁内校验归属、最新用户行、上下文边界与未保存终端回复，复用原消息、附件和工具结果，只重新生成最终回复，不重复执行工具。新消息、已保存回复或历史修改使旧重试入口失效。
+回复生成失败的 `error.retry_message_id` 指向已保存的用户消息，客户端在当前失败气泡提供重试按钮。`prompt.submit.retry_message_id` 与 text / batch / attachments / edit_message_id 互斥；服务端在会话锁内校验归属、最新用户行、上下文边界与未保存终端回复，复用原消息、附件和工具结果，只重新生成最终回复，不重复执行工具。新消息、已保存回复或历史修改使旧重试入口失效。`error.message` 面向用户：按会话语言本地化，不含失败原因枚举与内部名称，脱敏后才离开服务端；供应商错误消息经分类与脱敏后附在引导语之后。
 
-派生继承源预设、自动化归属与历史工具链、媒体和时间等信息，排除界面状态行并清零用量、耗时；复制历史不同时填入输入框。
+派生继承源预设、自动化归属与历史工具链、媒体和时间等信息，排除界面状态行并清零用量、耗时；复制历史不同时填入输入框。历史中的上传视频随派生复制到新会话自己的附件目录并改写引用，之后源会话的清理、撤回、清空或删除不影响派生历史；源文件已被清理的引用写为清理占位。附件复制失败或请求被取消时，整个派生请求失败，不保留半成品会话。
 
 派生会话是独立的普通会话，以 `forked_from_id` 记录来源，照常出现在会话列表与搜索中；删除来源只清空该记录。委派产生的子 Agent 会话以 `parent_id` 挂在发起会话下并随其级联删除，不出现在未归档会话列表与搜索中。字段见 [models](../backend/modules/conversation/models.py)。
 
@@ -85,7 +85,7 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 
 - 业务通知面向该用户的桌面交付，不能因目标会话未打开而丢弃。
 - 载荷中的 `session_id` 可用于落卡或跳转，不必然代表会话路由闸门。
-- 回合帧（`message.start/delta/break/complete/persisted`、`message.reasoning.delta`、`tool.start/complete`、`error`、`compress.completed`）的转换见 [emitter](../backend/services/adapters/desktop/emitter.py)；`message.edited/deleted`、`command.result`、`avatar.regenerated` 由 [handlers](../backend/services/adapters/desktop/handlers.py) 直接推送，`tool.call/cancel` 由 [ipc](../backend/services/infrastructure/desktop/ipc.py) 发出；`message.voice/media` 等业务事件经 `emit_ws_event` 写 outbox，载荷由各发射点定义。客户端分派与消费入口见[渲染层事件路由](../client/renderer/README.md#事件与异步生命周期)。
+- 回合帧（`message.start/delta/break/complete/persisted`、`message.reasoning.delta`、`tool.start/complete`、`error`、`compress.completed`）的转换见 [emitter](../backend/services/adapters/desktop/emitter.py)；`message.edited/deleted`、`command.result`、`avatar.regenerated` 由 [handlers](../backend/services/adapters/desktop/handlers.py) 直接推送，`tool.call/cancel` 由 [ipc](../backend/services/infrastructure/desktop/ipc.py) 发出；`message.voice/media` 等业务事件经 `emit_ws_event` 写 outbox，载荷由各发射点定义，并与 REST 响应一样按 JSON 模式序列化，时间字段同为 ISO 8601 文本（UTC 以 `Z` 结尾）。客户端分派与消费入口见[渲染层事件路由](../client/renderer/README.md#事件与异步生命周期)。
 
 `tool.call` 不带 `params.session_id`，但其 `payload` 含 `name`、`args`、`call_id`、信息性 `session_id`、`headless` 与 `skill_scope`（仅学习技能工具非空，见[预设记忆与学习作用域](#预设记忆与学习作用域)）。`headless=true` 照常执行，不显示桌面工作态；IM、后台自动化和其他无头回合须由调用方显式传入，子 Agent 回合沿用父回合的标志，Client 不得靠会话类型猜测这一行为。`tool.cancel` 的 `payload` 只含 `call_id`，语义见[调用日志与未知结果](#调用日志与未知结果)。
 
@@ -123,7 +123,7 @@ flowchart TD
 | 数据库 | `content_type=companion_reply` 标识结构化回复；`content` 原样保存模型输出的数组；`reply_json` 保存同组气泡的演绎、语音绑定、音频及服务端绑定的媒体资产与真实状态；整轮为同一条 `Message`，媒体不重复写入 `media_json` |
 | 对话上下文 | 回灌 `content` 中的气泡数组，补入媒体真实状态，排除供应商绑定、资产路径和时长 |
 | 客户端 | 历史与实时下发同序逐泡视图；文字／语音保留台词与音频，媒体携标识、状态及服务端资产地址；不解释演绎 |
-| 内容消费 | 记忆、摘要、标题与心情逐泡读取台词和媒体真实状态，未完成媒体不能总结为已发送成功；TTS 只读取语音台词，搜索只匹配台词；`text` 正文不按 JSON 外形推断气泡或附件 |
+| 内容消费 | 记忆、摘要、标题与心情逐泡读取台词和媒体真实状态，未完成媒体不能总结为已发送成功；TTS 只读取语音台词，搜索只匹配台词（多模态消息只匹配文本部分，附件地址不参与会话搜索与记忆证据检索）；`text` 正文不按 JSON 外形推断气泡或附件 |
 
 陪伴回合非流式取得最终回复，确认无工具调用后校验格式；完整 JSON 的单层代码围栏会在校验和保存前移除，单个气泡对象包装成数组后仍严格校验，不从其他正文或残缺响应中抽取 JSON。格式错误、取消或异常不交付未确认正文。每回合至多保存一条可见终端消息，工具中间行只保留调用结构。工作台、IM 与自动化继续使用各自文本契约。
 
@@ -165,7 +165,7 @@ flowchart TD
 
 ### Slash 命令
 
-Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名称、别名、说明和确认标记；clear、compress、remember 的注册与实现见 [handlers](../backend/services/adapters/desktop/handlers.py) 和 [slash_commands](../backend/services/application/chat/slash_commands.py)。
+Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名称、别名、说明和确认标记；clear、compress、remember 的注册与实现见 [handlers](../backend/services/adapters/desktop/handlers.py) 和 [slash_commands](../backend/services/adapters/desktop/slash_commands.py)。
 
 `//` 或不符合命令起始规则的输入视为普通文本；符合命令形式但未识别时提示错误，不退回 `prompt.submit`。编辑消息时的斜杠按正文处理。需要确认的命令由服务端再次校验 `confirmed=true`；影响历史的命令另检查在途状态。clear 需确认，compress 无需确认；清空保留会话并写清理状态行，不等于删除长期记忆或撤销工具。remember 只写当前认证记忆域，自动化无记忆域。
 
@@ -189,14 +189,14 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 ### 头像、全身与确认
 
-字段与限长见[伙伴 schema](../backend/modules/companion/schemas.py)。头像 POST 接受可选 feedback，空请求仍可生成；POST 与 `avatar.regenerate` 都不能因断连或空结果自动重发，应读当前头像恢复预览。
+字段与限长见[伙伴 schema](../backend/modules/companion/schemas.py)。头像 POST 接受可选 feedback，空请求仍可生成；POST 与 `avatar.regenerate` 都不能因断连或空结果自动重发，应读当前头像恢复预览。头像、全身、外观及服装参考的上传图按实际字节校验：须是体积与像素在限内、可完整解码的 PNG / JPEG / WebP / GIF，类型以图片内容为准，不采信客户端声明；无法读取返回 400，格式不支持返回 415。
 
 | 操作 | 并发与生效条件 |
 |---|---|
 | `portrait/confirm` | 用户锁内核对 `expected_avatar_id`，冲突返回 409 |
 | `fullbody/confirm` | 核对 `expected_url`；首次引导确认不等待分析或派生生成，分析进度归角色卡，视频启动失败归外观状态 |
-| 确认后的 `/fullbody/reference`、`/reference/adopt` | 只返回待采纳候选，不替换种子；`/fullbody/candidate` 恢复最近有效候选 |
-| 候选 `/analyze`、`/accept` | 前者重试身体分析；后者核对预期原图和角色卡修订，只更新身体并清旧覆盖，不重建已有外观/视频 |
+| 确认后的 `/fullbody/reference`、`/reference/prompt`、`/reference/adopt` | 角色卡未就绪（分析中或失败）时返回 409，不发起生成、不产出提示词、不采纳；就绪时 `/reference`、`/reference/adopt` 只返回待采纳候选、不替换种子，`/reference/prompt` 只返回提示词；`/fullbody/candidate` 恢复最近有效候选 |
+| 候选 `/analyze`、`/accept` | 前者重试身体分析；后者要求角色卡就绪（未就绪返回 409），并核对预期原图和角色卡修订（已变化返回 400），只更新身体并清旧覆盖，不重建已有外观/视频 |
 
 完整路由见[伙伴端点](../backend/api/v1/companion.py)。初始资产与重复启动守卫见[生成服务](../backend/services/application/generation/README.md#后台任务与初始资产)，编辑上传见 [PIPELINE](PIPELINE.md#编辑上传与身份采纳)。
 
@@ -237,7 +237,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 | 聊天工具 | LLM 自主决定，不从用户消息推断手动授权；create 默认 auto_activate=false，申请切换才传 true；activate 同样受自主政策约束 |
 | 引导与夜间 | 调用方显式声明是否自动启用 |
 
-- 每回合最多受理一次创建、一次切换，优先复用；创建并申请自动启用同时占切换额度。代码校验身份、归属、锁定、档位、额度和版本；身份按场景记录的头像与全身图判断，角色卡文字修订不阻止启用已有场景，创建任务完成时角色卡修订已变化则只保存、不自动启用。
+- 每回合最多受理一次创建、一次切换，优先复用；创建并申请自动启用同时占切换额度。代码校验身份、归属、锁定、额度和版本，场景变化不受打扰档位限制（见 [DESIGN](DESIGN.md#自主变化与锁定)）；身份按场景记录的头像与全身图判断，角色卡文字修订不阻止启用已有场景，创建任务完成时角色卡修订已变化则只保存、不自动启用。
 - 工具结果区分资产状态、自动启用申请、已启用及 `environment.current`；未启用不返回已到达。
 - 在线自主新增按滚动 24 小时提交计额，删除不返还，复用不占。夜间使用 `scene.create/activate` 与计划预算，不依赖换装；仅启用完成才入生活事实，场景操作不自动发动态。
 
@@ -245,7 +245,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 视频包按核查状态自动激活，疑点保留预览与手动启用，准备期间继续播放旧包；评分见 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
 
-就绪包上单独制作的动作（动态动作、探身补齐、系统动作原位重做）复核存疑时建复核项，经 `/api/companion/media-reviews` 列表、单项 GET、accept/reject 管理，用户采纳后才入可播目录；拒绝即作废该次生成，之后的同名重做为独立的新生成。日常聊天、场景、动态、夜间媒体不建人工复核项。视频下载、评估与重生成凭句柄/落盘资产恢复，未知提交不重发。
+就绪包上单独制作的动作（动态动作、探身补齐、系统动作原位重做）复核存疑时建复核项，经 `/api/companion/media-reviews` 列表、单项 GET、accept/reject 管理，用户采纳后才入可播目录；拒绝即作废该次生成，之后的同名重做为独立的新生成。复核项只对应生成它的那次成品：系统动作原位重做视为不采纳仍待确认的成品，其复核项随之结束；动作素材已被替换时，采纳失败并结束该复核项，拒绝只结束该复核项、不改动作。复核项响应中动态动作以设计名称作 `title`，系统动作无名称、以 `system_slot` 标识，由客户端按槽位本地化显示。日常聊天、场景、动态、夜间媒体不建人工复核项。视频下载、评估与重生成凭句柄/落盘资产恢复，未知提交不重发。
 
 ### 动态与日记
 
@@ -255,7 +255,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 文字、图片、视频和语音共用发布服务，发布来源不影响展示或评论。自主发布不依赖桌面连接，受统一创作开关 `companion.posts_enabled` 控制，默认值与能力筛选见[发布入口](../backend/services/application/posts/publication.py)。正文须通过校验，媒体动态还须取得主媒体才能发布；可选旁白失败保留主媒体，主媒体失败不产生动态。媒体须为本账户的正式资产。
 
-日间、夜间和主动陪伴共用自主额度；明确用户请求不受自主开关限制，使用独立请求额度。滚动 24 小时按动态条数在事务内预留：排队和在途任务占额，未知结果按原预留时间计入窗口，明确未发布的终态释放；未知请求不重复提交。额度上限与计数条件见 [Settings](../backend/components/config.py) 和[领域存储](../backend/services/domains/posts/store.py)。
+日间、夜间和主动陪伴共用自主额度；明确用户请求不受自主开关限制，使用独立请求额度。滚动 24 小时按动态条数在事务内预留：排队和在途任务占额，未知结果按原预留时间计入窗口，明确未发布的终态释放；未知请求不重复提交。额度上限与计数条件见 [Settings](../backend/components/config.py) 和[领域存储](../backend/services/domains/posts/store.py)。夜间规划发现自主额度已满时不提供动态发布；规划后开关、请求类型或额度变化使受理被拦截，夜间账本记为阻止而非失败。
 
 回复状态绑定触发评论，同一动态按评论顺序生成回复；失败重试原任务，删除触发评论后不写入迟到回复，已生成的伙伴回复保留。发布通过 `companion.post.created`、评论与回复状态通过 `companion.post.comment`、删除通过 `companion.post.comment.deleted` 刷新，事件与业务状态同事务提交，不发送 `companion.message`。
 
@@ -279,7 +279,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 动作目录的 `video_ref`、`hitmask_ref` 保存 `companion-assets/<user_id>/<filename>` 裸路径；客户端动作加载器将其转换为 `/api/companion/asset/<user_id>/<filename>`，经携带当前身份的资产桥下载。目录本身的签名 URL 直接交给资产桥，短时签名不写入持久化目录。
 
-图片附件可随 `prompt.submit` 以内联 data URL 或 HTTP(S) URL 提交，URL 由供应商拉取。视频先经 `POST /api/media/videos` 上传，再提交本会话附件 URL；视频拒绝 data URL、跨会话引用和第三方绝对 URL（公网模式须带 `public_base_url` 前缀）。公开读取端点 `/api/media/videos/...` 与临时媒体 `/api/media/files/...` 使用不可猜测文件标识，属于供供应商读取的例外，不应描述为所有媒体都要求 Bearer。
+图片附件可随 `prompt.submit` 以内联 data URL 或 HTTP(S) URL 提交，URL 由供应商拉取。视频先经 `POST /api/media/videos` 上传，再提交本会话附件 URL；视频拒绝 data URL、跨会话引用和第三方绝对 URL（公网模式须带 `public_base_url` 前缀）；文件已被配额剔除或清理的附件 URL 同样拒绝，须重新上传。公开读取端点 `/api/media/videos/...` 与临时媒体 `/api/media/files/...` 使用不可猜测文件标识，属于供供应商读取的例外，不应描述为所有媒体都要求 Bearer。
 
 视频按会话滚动配额与历史生命周期清理，删除时同步将消息中的引用改为清理占位，不留下死链。公网 URL 与内联模式、大小限制和供应商能力筛选见 [对话编排](../backend/services/application/chat/README.md)。
 
@@ -290,7 +290,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 - LLM 使用 `action_search` / `action_design` / `action_inspect` / `action_play`；source、用户、预算日、系统槽位和目标包由服务端绑定，`expected_pack_id` 只作并发守卫。聊天工具与 REST 设计按用户请求（user_requested）计额，夜间提案按自主（autonomous）计额。提案立即返回受理，不等评审/视频，也不进入聊天视频送达链。
 - 制作额度按用户本地日、approve 时强制，不设评审日限额；额度数值不进入模型上下文，超限转 deferred 的理由经动作快照与 `action_inspect` 可见，用户可经 `GET /api/companion/actions/budget` 查看。无手动播放入口；陪伴预设每次调用模型前刷新动作快照（就绪、在途和近期拒绝信息），见[动作编排](../backend/services/application/actions/README.md#模块入口)。
 - 所有动态呈现汇入 `companion.action.play_requested`，目录和任务事件仅更新资源。Client 按 `play_id` 去重，按 `pack_id` 与 `appearance_epoch` 校验归属和代次，遵守 TTL / `repeat_count`。
-- `appearance_epoch` 是服务端维护的视频包激活代次：每次激活（含换装后再穿回同一包）写入该用户已有最大代次加一；目录接口与 `catalog_changed` 携带包的当前代次，播放指令与账本记录受理时的代次。制作中保存的意图在动作就绪后，仅当意图未过期、所属包仍激活且代次未变才补发并重新计算即时有效期；未过期但包或代次失效记 rejected；已过期（不论包是否失效）或动作已停用、未就绪时保持 queued、不补发。补发只针对本轮制作完成的动作，不重发其他动作未执行的即时请求。
+- `appearance_epoch` 是服务端维护的视频包激活代次：每次激活（含换装后再穿回同一包）写入该用户已有最大代次加一；目录接口与 `catalog_changed` 携带包的当前代次，播放指令与账本记录受理时的代次。制作中保存的意图在动作就绪后（含复核项经用户采纳后就绪），仅当意图未过期、所属包仍激活且代次未变才补发并重新计算即时有效期；未过期但包或代次失效记 rejected；已过期（不论包是否失效）或动作已停用、未就绪时保持 queued、不补发。补发只针对本轮制作完成的动作，不重发其他动作未执行的即时请求。
 - Client 比较指令与本地目录代次：同包旧代次说明该包已重新激活，直接认领并回执 rejected；其他不能直接播放的指令先强制刷新目录（覆盖恢复保留备份中的代次，新包代次可能低于本地旧包）。刷新后指令仍较新则不认领，交由已加载新代次的舞台或 TTL 收尾；较旧或包不同则认领后回执 rejected。本地快照未记录代次时，网络校准前不受理；换包或代次变化时作废旧播放实例。
 - 播放回执按 `play_id` 幂等，同一请求只由一台可见设备执行；queued 不算完成，认领后不能播放报 rejected，抢占报 interrupted，表演事实只来自播放器回执。
 - Client 主进程按 `play_id` 在本机可见舞台之间唯一认领，认领记录保留到请求过期；完整入口侧边伙伴可接收播放。收起、最小化、最大化、切窗或锁屏时中断播放并作废在途加载，恢复后回到待机，不补播旧请求。持续可见时换侧不中断；同包目录刷新不替换已受理实例的素材版本，迟到媒体事件不得生成第二种终态回执。
@@ -420,6 +420,8 @@ special 触发陪伴主会话的无头回合；意图只是运行资料，不写
 
 standard 使用独立 automation 任务会话，可离线运行云端部分；结果和过程留在任务历史，完成或失败交付系统通知。不装配陪伴人格、长期记忆和生活空间工具，本机执行仍要求桌面在线。
 
+同一 standard 任务串行执行，至多一个运行中和一个待执行触发，更多触发合并丢弃并记录日志；触发获得执行权后重读任务，已删除、暂停或改为 special 的丢弃，否则按当前名称与提示词运行，一次性任务触发时已删除，沿用触发时的内容。回合没有整体时长预算，只受工具轮数上限与单次模型请求、工具调用的超时约束；某个回合长时间不结束时，该任务之后的触发持续被合并丢弃。
+
 `companion_wait` 保存时间或情境条件；并存时任一满足即可成为候选，仍须通过在线和档位闸门。主动续等不能延长原有效期。Client 的 `companion.signal` 只上报可用性及允许的事件类别，不上传窗口标题、应用名称或屏幕；信号过期、断连或不可用时停止认领，不可用同时取消在途主动回合。
 
 修改或主动删除源任务须同步撤销旧意图；调度后自动删除一次性任务不撤销已交接意图。认领、租约与提交隔离迟到结果；运行中崩溃或工具结果未知时保留待核对提示，不自动重放副作用。结构与恢复窗口见 [schemas_loop](../backend/modules/companion/schemas_loop.py) 和 [Backend](../backend/README.md#陪伴调度与恢复)。
@@ -495,7 +497,7 @@ flowchart TD
     Restore --> Report[报告失败类别、数量与原因]
 ```
 
-导出固定为全量数据包（含会话与消息），不提供导出侧裁剪；备份当前没有独立格式版本。整包校验通过后，按导入时选择的分组恢复兼容数据类。分组映射见 [serializers](../backend/services/domains/backup/serializers.py) 的 `BACKUP_SECTIONS`：`identity`（人设、种子图与角色卡）、`conversations`、`memories`、`posts`、`diary`、`wardrobe`、`scenes`、`automation`、`settings`。未勾选类别不写入、不清理目标已有数据；基础身份等成组类别缺表时整组不恢复。写入空用户且恢复 `identity` 后目标等同「刚完成引导」（角色卡按包内状态为就绪或可重试失败，视频包与初始场景不在该分组内）。
+导出固定为全量数据包（含会话与消息），不提供导出侧裁剪；备份当前没有独立格式版本。导出在同一只读数据库快照中读取全部数据行，并发写入不会让会话与消息等关联表相互错位；用户文件在快照之后按资产目录、快照内的会话和行内引用收集，不属于该快照。整包校验通过后，按导入时选择的分组恢复兼容数据类。分组映射见 [serializers](../backend/services/domains/backup/serializers.py) 的 `BACKUP_SECTIONS`：`identity`（人设、种子图与角色卡）、`conversations`、`memories`、`posts`、`diary`、`wardrobe`、`scenes`、`automation`、`settings`。未勾选类别不写入、不清理目标已有数据；基础身份等成组类别缺表时整组不恢复。写入空用户且恢复 `identity` 后目标等同「刚完成引导」（角色卡按包内状态为就绪或可重试失败，视频包与初始场景不在该分组内）。
 
 旧包中的 `companion_moments` / `companion_moment_comments` 等已废弃表静默跳过，不视为失败；其后继的动态表缺失也静默处理，等同于目标没有动态。显式勾选子集时，所选类别在包内不存在会列入失败；全量导入对历史缺表保持静默。
 
@@ -505,9 +507,9 @@ flowchart TD
 
 日记备份保存原文、日期、动态关联与已读状态；已读字段须为布尔值。日记索引不独立导出，恢复日记时从原文重建；单独覆盖普通记忆时保留未恢复日记的索引。最新反思快照随记忆备份并保留所属日期。
 
-动态备份保存已发布内容、制作上下文、已读状态与评论线程，已读字段须为布尔值，重映射动态、回复和日记关联；发布任务不导出、不恢复。未完成的评论回复恢复为可手动重试的失败状态，不自动创作；校验与转换见 [serializers](../backend/services/domains/backup/serializers.py)。
+动态备份保存已发布内容、制作上下文、已读状态与评论线程，已读字段须为布尔值，重映射动态、回复和日记关联；发布任务不导出、不恢复。动态的图片、视频与旁白须是恢复后归属目标账户的资产：包内资产按目标账户路径恢复，预检与写入使用同一映射；引用的资产既不在包内又不属于目标账户（如跨账户恢复时文件缺失）时，动态与评论按类失败，日记不再关联这些动态，其他类别照常恢复。未完成的评论回复恢复为可手动重试的失败状态，不自动创作；校验与转换见 [serializers](../backend/services/domains/backup/serializers.py)。
 
-导出只收集元数据归属该用户的临时媒体。用户模型配置与用户设置值须能按运行时规则解析才通过预检，失败原因只列字段，不回显配置值。覆盖只清理本次勾选、通过预检且准备写入的数据类，旧包未声明内容与未勾选类别保留；会破坏未恢复关联数据的类别不得先清空。会话与消息成对恢复，特殊会话按预设去重，普通会话独立映射，无法映射的附件单独报告。派生来源无法映射时置空，子 Agent 会话则须映射到同域发起会话。
+导出只收集元数据归属该用户的临时媒体。收集文件引用与改写恢复路径时会解析行内以 JSON 保存的文本，嵌套层数上限见 [file_packing](../backend/services/domains/backup/file_packing.py) 的 `_MAX_JSON_DEPTH`；更深的内容原样保留，其中的文件引用既不收集也不改写。用户模型配置与用户设置值须能按运行时规则解析才通过预检，失败原因只列字段，不回显配置值。覆盖只清理本次勾选、通过预检且准备写入的数据类，旧包未声明内容与未勾选类别保留；会破坏未恢复关联数据的类别不得先清空。会话与消息成对恢复，特殊会话按预设去重，普通会话独立映射，无法映射的附件单独报告。派生来源无法映射时置空，子 Agent 会话则须映射到同域发起会话。
 
 文件恢复按目标相对路径处理：目标文件已存在时跳过复制，并将备份中的引用映射到该文件；导入不会覆盖同名文件或另建冲突副本。会话附件仅在会话类别被勾选且会话恢复成功时映射；未勾选会话时不写附件，也不计入失败。
 

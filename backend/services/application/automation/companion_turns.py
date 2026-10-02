@@ -34,17 +34,36 @@ logger = get_logger(__name__)
 
 _FAILURE_REASON_MAX_CHARS = 200
 
+# 只收录无持久副作用、重试安全的查询工具（含访问外部服务的 web_search/web_extract），其余工具一律视为可能有副作用；新增查询工具时对照
+# tool_runtime/domains.py 的 DOMAIN_CATALOG 与 runner/tools/toolsets/catalog.py 同步更新。
 _READ_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "search_tools",
         "companion_wait",
         "memory_inspect",
         "memory_recall",
+        "scene_list",
+        "scene_get",
+        "action_search",
+        "action_inspect",
+        "post_status",
+        "video_generate_status",
+        "read_file",
+        "list_directory",
+        "search_files",
+        "skills_list",
+        "skill_view",
+        "web_search",
+        "web_extract",
         "system.snapshot",
         "system.get_idle_seconds",
         "system.is_screen_locked",
         "system.get_focused_app",
         "system.is_fullscreen",
+        "system.get_power_state",
+        "system.get_windows",
+        "system.get_work_area",
+        "system.get_cursor_pos",
     },
 )
 

@@ -6,8 +6,7 @@ from components import SESSION_LOCAL
 from prompts.tools import POST_PUBLISH_DESC, POST_PUBLISH_PARAM_DESCS, POST_STATUS_DESC, POST_STATUS_PARAM_DESCS
 
 from services.application.posts import request_publication
-from services.contracts import MemoryScope
-from services.domains.posts import PostError, publication_status
+from services.domains.posts import publication_status
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 
@@ -16,14 +15,11 @@ async def post_publish_tool(
     user_id: int,
     parent_session_id: str,
     tool_call_id: str,
-    memory_scope: MemoryScope | None,
     proactive_turn: bool,
     user_message: str,
     content_type: str = "auto",
     **_: object,
 ) -> str:
-    if memory_scope is None or memory_scope.system_preset_id != "companion":
-        raise PostError("动态发布只用于伙伴陪伴")
     result = await request_publication(
         user_id,
         key=f"chat:{parent_session_id}:{tool_call_id}",
@@ -39,11 +35,8 @@ async def post_publish_tool(
 async def post_status_tool(
     publication_id: str,
     user_id: int,
-    memory_scope: MemoryScope | None,
     **_: object,
 ) -> str:
-    if memory_scope is None or memory_scope.system_preset_id != "companion":
-        raise PostError("动态查询只用于伙伴陪伴")
     UUID(publication_id)
     async with SESSION_LOCAL() as db:
         result = await publication_status(db, user_id, publication_id)

@@ -1,11 +1,12 @@
 import math
 import re
 from datetime import date, datetime
+from itertools import zip_longest
 from typing import Any
 
 from components import session_scope, utc_now
 from modules.memory import MEMORY_EMBEDDING_DIM, Memory
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, case, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -23,13 +24,13 @@ TIME_DECAY_LAMBDA: float = 0.05
 # 衰减保底值，避免长期记忆被归零
 TIME_DECAY_FLOOR: float = 0.30
 
-# 单查询可下推到 LIKE 的最大关键词数；选 16 而非示例值 8，保留 2/3-gram 共存窗口，4-gram 由 PG pg_trgm 索引接手。
+# 单查询可下推到 LIKE 的最大关键词数；各汉字分句轮流取词，长句不独占配额。
 SPARSE_QUERY_TERM_MAX: int = 16
 
-_CJK_PATTERN = re.compile(r"[一-鿿㐀-䶿]")
 _CJK_RUN_PATTERN = re.compile(r"[一-鿿㐀-䶿]+")
-_NON_CJK_RUN_PATTERN = re.compile(r"[^一-鿿㐀-䶿]+")
-_TOKEN_SPLIT_PATTERN = re.compile(r"[\s,，。！？!?；;、\-—_()\[\]【】()（）]+")
+# 拉丁等非汉字词：以空白、中英文标点和汉字为界。
+_WORD_PATTERN = re.compile(r"[^\s一-鿿㐀-䶿,，。！？!?；;：、\-—_()\[\]【】（）…“”\"《》〈〉「」『』～~/·]+")
+_WORD_CHAR_PATTERN = re.compile(r"[^\W_]")
 
 
 def _compute_time_decay(updated_at: datetime, now: datetime) -> float:
@@ -37,41 +38,41 @@ def _compute_time_decay(updated_at: datetime, now: datetime) -> float:
     return TIME_DECAY_FLOOR + (1.0 - TIME_DECAY_FLOOR) * math.exp(-TIME_DECAY_LAMBDA * delta_days)
 
 
-def extract_search_terms(query: str) -> list[str]:
-    """结构化词条提取：优先保留拉丁/专有名词 token 与 CJK 完整词段，辅以 2/3-gram 滑动窗口，截断至 SPARSE_QUERY_TERM_MAX。"""
-    q = (query or "").strip()
-    if not q:
-        return []
+def _cjk_ngrams(run: str) -> list[str]:
+    """汉字分句的候选词：先全部 2-gram，再全部 3-gram。"""
+    return [run[i : i + n] for n in (2, 3) for i in range(len(run) - n + 1)]
 
-    tokens: list[str] = []
-    seen: set[str] = set()
 
-    def _add(term: str) -> None:
-        term = term.strip().lower()
-        if not term or term in seen:
-            return
-        # 单字符过滤：CJK 至少 2 字符；拉丁单字符保留（专有名 R/Go 等）。
-        if _CJK_PATTERN.search(term) and len(term) < 2:
-            return
-        seen.add(term)
-        tokens.append(term)
+def extract_search_terms(query: str, *, limit: int = SPARSE_QUERY_TERM_MAX) -> list[str]:
+    """提取至多 limit 个关键词：拉丁等非汉字词在前，其后各汉字分句轮流取词，避免首个长句独占配额。"""
+    q = (query or "").lower()
+    terms: dict[str, None] = {}
+    for word in _WORD_PATTERN.findall(q):
+        word = word.strip("'‘’")  # 只去词边缘的引号，don't 这类词内撇号保留
+        # 无字母数字的符号串与单个数字不构成关键词；拉丁单字符保留（专有名 R/Go 等）。
+        if _WORD_CHAR_PATTERN.search(word) and not (len(word) == 1 and word.isdigit()):
+            terms[word] = None
+    queues = [_cjk_ngrams(run) for run in _CJK_RUN_PATTERN.findall(q)]
+    for round_terms in zip_longest(*queues):
+        terms.update(dict.fromkeys(term for term in round_terms if term))
+        if len(terms) >= limit:
+            break
+    return list(terms)[:limit]
 
-    for raw in _TOKEN_SPLIT_PATTERN.split(q):
-        for latin in _NON_CJK_RUN_PATTERN.findall(raw):
-            _add(latin)
 
-    # 分句级 2-gram 滑动窗口：每个分句均能获得关键词代表，避免首句独占配额
-    for raw in _TOKEN_SPLIT_PATTERN.split(q):
-        for run in _CJK_RUN_PATTERN.findall(raw):
-            for i in range(len(run) - 1):
-                _add(run[i : i + 2])
-
-    for raw in _TOKEN_SPLIT_PATTERN.split(q):
-        for run in _CJK_RUN_PATTERN.findall(raw):
-            for i in range(len(run) - 2):
-                _add(run[i : i + 3])
-
-    return tokens[:SPARSE_QUERY_TERM_MAX]
+def keyword_match_score(keywords: list[str]) -> ColumnElement[float]:
+    """数据库端的关键词命中分：逐词累加，正文命中记 1，仅上下文命中记 0.5。"""
+    return sum(
+        (
+            case(
+                (Memory.content.icontains(kw, autoescape=True), 1.0),
+                (Memory.context.icontains(kw, autoescape=True), 0.5),
+                else_=0.0,
+            )
+            for kw in keywords
+        ),
+        literal(0.0),
+    )
 
 
 async def _dense_search(
@@ -111,7 +112,7 @@ async def _sparse_search(
     *,
     limit: int,
 ) -> list[Memory]:
-    """稀疏关键词检索：跨 content/context 的 ILIKE OR 拉取候选（受益于 ``ix_memories_content_trgm`` / ``ix_memories_context_trgm`` GIN trigram 索引），按关键词命中率与 updated_at 在 Python 端排序截断。"""
+    """稀疏关键词检索：跨 content/context 的 ILIKE OR 拉取候选（受益于 ``ix_memories_content_trgm`` / ``ix_memories_context_trgm`` GIN trigram 索引），在数据库端按关键词命中分与 updated_at 排序后截断。"""
     if not keywords:
         return []
     conditions = [
@@ -127,19 +128,10 @@ async def _sparse_search(
             or_(*conditions),
             *[context_not_in(p) for p in RESERVED_FROM_RECALL],
         )
-        .order_by(Memory.updated_at.desc())
-        .limit(limit * 2)
+        .order_by(keyword_match_score(keywords).desc(), Memory.updated_at.desc(), Memory.id.desc())
+        .limit(limit)
     )
-    rows = (await db.execute(stmt)).scalars().all()
-    scored = []
-    for r in rows:
-        c_low = (r.content or "").lower()
-        ctx_low = (r.context or "").lower()
-        hits = sum(1.0 if kw in c_low else (0.5 if kw in ctx_low else 0.0) for kw in keywords)
-        score = hits / max(len(keywords), 1)
-        scored.append((score, r))
-    scored.sort(key=lambda x: (x[0], x[1].updated_at), reverse=True)
-    return [r for _, r in scored[:limit]]
+    return list((await db.scalars(stmt)).all())
 
 
 async def embed_memory_text(user_id: int, text: str) -> list[float] | None:

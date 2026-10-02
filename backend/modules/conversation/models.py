@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from common import ModelBase, TimestampMixin
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, func, select, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,6 +15,13 @@ class Conversation(ModelBase, TimestampMixin):
     __table_args__ = (
         CheckConstraint("context_after_message_id >= 0", name="ck_conversations_context_watermark"),
         CheckConstraint("is_automation = (system_preset_id = 'automation')", name="ck_conversations_automation_preset"),
+        Index(
+            "uq_conversations_user_preset",
+            "user_id",
+            "system_preset_id",
+            unique=True,
+            postgresql_where=text("kind = 'special' AND system_preset_id IS NOT NULL"),
+        ),
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

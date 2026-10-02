@@ -29,7 +29,7 @@ from services.domains.companion import build_system_prompt_extras, get_disturban
 from services.domains.configuration import DEFAULT_CONFIG
 from services.domains.conversation import (
     CHECKPOINT_SUBTYPES,
-    DEFAULT_PRESET_ID,
+    COMPANION_PRESET_ID,
     IM_KIND,
     SPECIAL_KIND,
     InferenceDefaults,
@@ -49,6 +49,7 @@ from services.domains.memory import (
 from services.infrastructure.llm import (
     ChatProvider,
     MissingLlmConfigError,
+    MissingVideoModelError,
     ProviderConfig,
     ReasoningEffort,
     approx_responses_tokens,
@@ -60,7 +61,12 @@ from services.infrastructure.llm import (
     resolve_video_chain,
     resolve_vision_chain,
 )
-from services.infrastructure.tool_runtime import REGISTRY, apply_search_tools_catalog, schema_name
+from services.infrastructure.tool_runtime import (
+    REGISTRY,
+    apply_search_tools_catalog,
+    disabled_backend_tool_names,
+    schema_name,
+)
 
 from .native_memory import NativeMemory
 from .prompt_blocks import AgentPromptConfig
@@ -79,7 +85,7 @@ class TurnInputs:
     model_name: str
     ctx_length: int
     all_schemas: list[dict]
-    # 会话预设与调用方排除的工具；装配与执行层共用。
+    # 会话预设、调用方排除与用户已禁用工具集中的工具；装配与执行层共用。
     excluded_tool_names: frozenset[str]
     first_user_msg_content: str | None
     llm_chain: list[ProviderConfig]
@@ -323,17 +329,18 @@ async def build_turn_inputs(
 ) -> TurnInputs:
     """解析身份 prompt、schemas、历史与 LLM client。``memory_scope`` 由调用方经 ``conversation_memory_scope`` 校验；自动化会话没有记忆域。"""
     preset_id = conv.system_preset_id
-    is_companion = preset_id == DEFAULT_PRESET_ID
+    is_companion = preset_id == COMPANION_PRESET_ID
     history = await load_context_messages(db, conv)
     first_user_msg = next((m for m in history if m.role == "user"), None)
-    first_user_msg_content = first_user_msg.content if first_user_msg else None
+    # 标题只依据文字：多模态行的正文是 part 数组 JSON，附件地址不进标题请求。
+    first_user_msg_content = message_text(first_user_msg) if first_user_msg else None
 
     # 历史含媒体时筛选到对应能力供应商（视频优先于图片），确保压缩与流式共用同一 llm_chain；链为空显式报错不回落文本链，否则换来网关拒收 input_video 的 400。
     llm_chain: list[ProviderConfig] = []
     if any(_user_row_has_video_part(m) for m in history):
         llm_chain = await resolve_video_chain(db, user_id)
         if not llm_chain:
-            raise MissingLlmConfigError("当前供应商链中没有支持视频理解的模型，无法继续包含视频附件的对话")
+            raise MissingVideoModelError("no video-capable provider in the chain for a conversation containing video")
     elif any(m.content_type == "multimodal_v1" for m in history if m.role == "user"):
         llm_chain = await resolve_vision_chain(db, user_id)
     if not llm_chain:
@@ -342,7 +349,9 @@ async def build_turn_inputs(
             raise MissingLlmConfigError("no provider configured for service 'llm'")
     provider = build_provider(llm_chain[0], ChatProvider)
 
-    excluded_tool_names = excluded_tool_names | preset_excluded_tool_names(preset_id)
+    excluded_tool_names = (
+        excluded_tool_names | preset_excluded_tool_names(preset_id) | disabled_backend_tool_names(user_settings)
+    )
     # 排除后重算 search_tools 的业务域清单，只列出本回合实际可解锁的能力。
     all_schemas = apply_search_tools_catalog(
         [

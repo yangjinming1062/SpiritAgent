@@ -1,6 +1,6 @@
 from typing import Any
 
-from services.infrastructure.desktop import JsonRpcDispatcher
+from services.infrastructure.desktop import JsonRpcDispatcher, redact_message
 
 # 原始 ``type`` → JSON-RPC ``params.type``。每个原始帧要么翻译成 JSON-RPC 事件信封，要么丢弃（未知类型）。
 _TRANSLATED: dict[str, str] = {
@@ -46,8 +46,10 @@ class JsonRpcEmitter:
                 "status": "complete" if raw_type == "tool_end" else "running",
             }
         if raw_type == "error":
+            # 错误帧在此离开服务端边界：与 push_error_event 一样脱敏；``detail`` 只供无头消费者，不下发。
+            message = data.get("message", "Unknown error")
             return {
-                "message": data.get("message", "Unknown error"),
+                "message": redact_message(message) if isinstance(message, str) else message,
                 **({"retry_message_id": data["retry_message_id"]} if type(data.get("retry_message_id")) is int else {}),
             }
         if raw_type == "message.complete":

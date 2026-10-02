@@ -58,7 +58,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ### 状态、动作与回执
 
-[companion-store.ts](modules/character/companion-store.ts)维护表现状态优先级，视频系统动作键定义于 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用。
+[companion-store.ts](modules/character/companion-store.ts)维护表现状态优先级，视频系统动作键定义于 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用；系统动作的界面名称由 [action-names.ts](modules/character/presentation/action-names.ts) 的 `videoActionNames` 按字典生成，外观页与复核队列共用。
 
 - 瞬态保存恢复目标，旧计时器不得覆盖持续状态，重复瞬态不嵌套目标；语音准备与播放分开，尾随点播不切 speaking，完成聊天不触发 emotional。
 - [actions](modules/character/actions/)的 `acceptPlayCommand` 按 play_id 去重并校验包、外观代次、素材与有效期，不符即回执 rejected；换包或外观代次变化作废在播实例。强制刷新目录（同包旧代次除外）、主进程认领，以及认领后目录缺失或舞台不可用的 rejected 回执在 [character-events.ts](app/runtime/handlers/character-events.ts)；开播时过期与加载失败由播放器回执。动态动作不新增表现状态，表达真实可见（上报 started）期间以 emotional 瞬态呈现、收尾即恢复；判定与回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
@@ -119,6 +119,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 停止对会话和 Runner 都是尽力请求，本地仍需收尾，不能表示副作用已撤销。
 - 附件绑定加入时的会话，视频上传完成前不可发送；切换后丢弃旧附件及迟到结果。
 - 编辑与普通草稿分离，取消恢复普通草稿；编辑文本不解析 Slash，成功只消费修订事件。
+- 撤回把锚点草稿（正文与图片，契约见 [PROTOCOL](../../docs/PROTOCOL.md#会话种类与历史修改)）退回输入框；待发送附件是单槽，多张图片只回填第一张，其余未恢复的提示只在发起撤回的窗口显示。
 - 会话参数显示后端生效值，只接受当前会话最新保存结果；恢复默认删除覆盖。
 - 系统预设与固定预设会话（`kind=special`）的显示名、预设说明按界面语言取字典 `presets`，经 [preset-labels.ts](modules/conversation/preset-labels.ts) 显示；后端目录只有中文，中文字典须与其同步，未知预设回落目录值。
 - 会话只读状态直接消费历史水合的 `info.kind`；`system_preset_id` 标识陪伴预设归属，唯一陪伴主会话仍由服务端 `session.get_main` 确定。

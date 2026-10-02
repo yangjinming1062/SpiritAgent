@@ -1,5 +1,4 @@
 import json
-import re
 from typing import Any
 
 from components import get_logger, is_time_context_text
@@ -14,49 +13,73 @@ _MEDIA_RECENT_ITEMS = 10
 _MAX_CHARS_PER_ITEM = 15000
 
 
-def _escape_invalid_chars_in_json_strings(raw: str) -> str:
+def _repair_json_text(raw: str) -> str | None:
+    """字符串感知的 JSON 修复：转义字符串内的控制字符；字符串外删除紧邻闭括号的尾逗号和多余的闭括号，并按嵌套顺序补齐缺失的闭括号。字符串未结束或括号错配时返回 None。"""
     out: list[str] = []
+    closers: list[str] = []
+    # 字符串外、后面尚未出现其他内容的逗号；紧随其后的是闭括号（或输入结束）时才删除。
+    comma_index: int | None = None
     in_string = False
-    i = 0
-    n = len(raw)
-    while i < n:
-        ch = raw[i]
+    chars = iter(raw)
+    for ch in chars:
         if in_string:
-            if ch == "\\" and i + 1 < n:
-                out.append(ch)
-                out.append(raw[i + 1])
-                i += 2
-                continue
-            if ch == '"':
+            if ch == "\\":
+                out.append(ch + next(chars, ""))
+            elif ch == '"':
                 in_string = False
                 out.append(ch)
             elif ord(ch) < 0x20:
                 out.append(f"\\u{ord(ch):04x}")
             else:
                 out.append(ch)
+        elif ch in " \t\r\n":
+            out.append(ch)
+        elif ch in "}]":
+            if comma_index is not None:
+                out[comma_index] = ""
+                comma_index = None
+            if not closers:
+                continue
+            if closers.pop() != ch:
+                return None
+            out.append(ch)
         else:
+            comma_index = len(out) if ch == "," else None
             if ch == '"':
                 in_string = True
+            elif ch in "{[":
+                closers.append("}" if ch == "{" else "]")
             out.append(ch)
-        i += 1
-    return "".join(out)
+    if in_string:
+        return None
+    if comma_index is not None:
+        out[comma_index] = ""
+    return "".join(out) + "".join(reversed(closers))
 
 
-def parse_tool_call_arguments(raw_args: str, tool_name: str) -> dict[str, Any]:
-    """尽力解析 LLM tool-call 参数；空值、非对象或不可修复时返回空参数，避免单个坏调用阻塞聊天循环。"""
+def parse_tool_call_arguments(raw_args: str, tool_name: str) -> dict[str, Any] | None:
+    """尽力解析并修复 LLM tool-call 参数；空值、None 与 null 是无参调用，返回空字典。不可修复或不是 JSON 对象时返回 None，调用方须向模型报告参数错误而不是以空参数派发。参数含用户数据与凭据，日志只记录长度。"""
     if not raw_args:
         return {}
-    parsed = _repair_json(raw_args.strip(), tool_name)
-    return parsed if isinstance(parsed, dict) else {}
+    raw = raw_args.strip()
+    parsed = _repair_json(raw, tool_name)
+    if isinstance(parsed, dict):
+        return parsed
+    logger.warning(
+        "Invalid tool_call arguments, tool not dispatched",
+        extra={"tool_name": tool_name, "raw_len": len(raw)},
+    )
+    return None
 
 
 def _repair_json(raw: str, tool_name: str) -> object:
+    """返回解析结果；空值、None 与 null 是无参调用，返回 {}；不可修复时返回 None。"""
     if not raw:
         logger.warning("Sanitized empty tool_call arguments", extra={"tool_name": tool_name})
         return {}
 
-    if raw == "None":
-        logger.warning("Sanitized Python-None tool_call arguments", extra={"tool_name": tool_name})
+    if raw in ("None", "null"):
+        logger.warning("Sanitized null tool_call arguments", extra={"tool_name": tool_name})
         return {}
 
     try:
@@ -71,48 +94,15 @@ def _repair_json(raw: str, tool_name: str) -> object:
         logger.warning("Repaired unescaped control chars in tool_call arguments", extra={"tool_name": tool_name})
         return parsed
 
-    fixed = re.sub(r",\s*([}\]])", r"\1", raw)
-    open_curly = fixed.count("{") - fixed.count("}")
-    open_bracket = fixed.count("[") - fixed.count("]")
-    if open_curly > 0:
-        fixed += "}" * open_curly
-    if open_bracket > 0:
-        fixed += "]" * open_bracket
-    # 终止条件：仅当末尾 }/] 多于开括号时继续剪枝，最多执行 len(fixed) 次。
-    while True:
-        try:
-            parsed = json.loads(fixed)
-        except json.JSONDecodeError:
-            trailing_curly = fixed.endswith("}") and fixed.count("}") > fixed.count("{")
-            trailing_bracket = fixed.endswith("]") and fixed.count("]") > fixed.count("[")
-            if not (trailing_curly or trailing_bracket):
-                break
-            fixed = fixed[:-1]
-        else:
-            logger.warning(
-                "Repaired malformed tool_call arguments",
-                extra={"tool_name": tool_name, "raw": raw[:80], "fixed": fixed[:80]},
-            )
-            return parsed
-
-    escaped = _escape_invalid_chars_in_json_strings(fixed)
-    if escaped != fixed:
-        try:
-            parsed = json.loads(escaped)
-        except ValueError:
-            pass
-        else:
-            logger.warning(
-                "Repaired control-char-laced tool_call arguments",
-                extra={"tool_name": tool_name, "raw": raw[:80], "escaped": escaped[:80]},
-            )
-            return parsed
-
-    logger.warning(
-        "Unrepairable tool_call arguments, replaced with empty object",
-        extra={"tool_name": tool_name, "raw": raw[:80]},
-    )
-    return {}
+    repaired = _repair_json_text(raw)
+    if repaired is None:
+        return None
+    try:
+        parsed = json.loads(repaired)
+    except ValueError:
+        return None
+    logger.warning("Repaired malformed tool_call arguments", extra={"tool_name": tool_name, "raw_len": len(raw)})
+    return parsed
 
 
 def _truncate_response_text(value: Any, max_chars: int) -> Any:

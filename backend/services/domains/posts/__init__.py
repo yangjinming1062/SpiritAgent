@@ -1,6 +1,7 @@
 """独立动态的持久化与消费契约。"""
 
 from .store import (
+    PostBlockedError,
     PostError,
     PostInteractions,
     PostNotFoundError,
@@ -13,6 +14,7 @@ from .store import (
     has_unread_posts,
     list_posts,
     mark_posts_read,
+    publication_quota_remaining,
     publication_status,
     reserve_publication,
     response_for_comment,
@@ -23,6 +25,7 @@ from .store import (
 )
 
 __all__ = [
+    "PostBlockedError",
     "PostError",
     "PostInteractions",
     "PostNotFoundError",
@@ -35,6 +38,7 @@ __all__ = [
     "has_unread_posts",
     "list_posts",
     "mark_posts_read",
+    "publication_quota_remaining",
     "publication_status",
     "reserve_publication",
     "response_for_comment",

@@ -726,7 +726,9 @@ export const dict: Dictionary = {
       otherBusy: 'Another undo is in progress',
       failed: 'Undo failed',
       internalError: 'Undo failed: server rejected the request or the network is down',
-      confirm: 'Undo this message? This will also delete every message after it.'
+      confirm: 'Undo this message? This will also delete every message after it.',
+      extraImagesNotRestored: (count: number) =>
+        `Only one image can be attached at a time; ${count} other image${count === 1 ? ' was' : 's were'} not restored`
     },
 
     edit: {

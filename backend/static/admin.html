@@ -472,6 +472,7 @@ input[type="file"] { font-size: 0.78rem; }
 .settings-dock-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .settings-section.is-hidden { display: none; }
 .settings-field.is-hidden { display: none; }
+.subhead.is-hidden { display: none; }
 .settings-empty {
     display: none;
     padding: 2rem 1rem;
@@ -927,9 +928,9 @@ input[type="file"] { font-size: 0.78rem; }
                     <label class="checkbox-row"><input type="radio" name="bk_scope" value="identity" onchange="onBackupScopeChange()"> 基础身份</label>
                     <label class="checkbox-row"><input type="radio" name="bk_scope" value="custom" onchange="onBackupScopeChange()"> 自定义</label>
                 </div>
-                <div class="hint" id="backupScopeHint">恢复人设与音色、种子图与确认位、角色卡。写入空用户后无需再走引导。</div>
+                <div class="hint" id="backupScopeHint">恢复人设与音色、头像与全身形象（含确认状态）、角色卡。写入空用户后无需再走引导。</div>
                 <div id="backupSectionBoxes" style="display:none; margin-top:0.45rem; padding:0.55rem 0.65rem; border:1px solid var(--border); border-radius:8px;">
-                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="identity" checked> 基础身份（人设、种子图、角色卡）</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="identity" checked> 基础身份（人设、头像与全身形象、角色卡）</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="conversations"> 会话记录（消息与附件）</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="memories"> 长期记忆</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="posts"> 动态</label>
@@ -1505,7 +1506,7 @@ const BACKUP_SECTION_LABELS = Object.freeze({
 // 与 backup/serializers.py 的 BACKUP_SECTIONS 对齐；页面只负责勾选，表映射以服务端为准。
 const BACKUP_SCOPE_HINTS = Object.freeze({
     all: '恢复备份中的全部数据类别。',
-    identity: '恢复人设与音色、种子图与确认位、角色卡。写入空用户后无需再走引导。',
+    identity: '恢复人设与音色、头像与全身形象（含确认状态）、角色卡。写入空用户后无需再走引导。',
     custom: '只恢复勾选的类别，不动目标已有但未勾选的数据。',
 });
 const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });
@@ -1738,6 +1739,8 @@ const aiEditors = {
     user: { root: '#userAiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: [] },
 };
 let aiDrag = null;
+// 点过“清除”的卡片：API Key 留空保持清除，填写后以新密钥为准；卡片对象原样提交（接口禁止额外字段），故不把标记写进卡片。
+const clearedKeyCards = new WeakSet();
 let aiSettingsLoaded = false;
 let settingsDirty = false;
 
@@ -1834,8 +1837,9 @@ function renderAiCards(editorName) {
         if (!field) return;
         const group = event.target.closest('[data-ai-group]').dataset.aiGroup;
         const index = Number(event.target.closest('[data-ai-index]').dataset.aiIndex);
-        aiList(editor, group)[index][field] = event.target.value;
-        if (field === 'api_key' && event.target.value) aiList(editor, group)[index].clear_api_key = false;
+        const card = aiList(editor, group)[index];
+        card[field] = event.target.value;
+        if (field === 'api_key' && clearedKeyCards.has(card)) card.clear_api_key = !event.target.value.trim();
         if (editorName === 'system') markSettingsDirty();
     };
     root.onclick = event => {
@@ -1865,6 +1869,7 @@ function renderAiCards(editorName) {
             cards.splice(index, 1);
         } else if (action === 'clear-key') {
             Object.assign(cards[index], { api_key: '', api_key_set: false, clear_api_key: true });
+            clearedKeyCards.add(cards[index]);
         } else {
             const target = index + (action === 'up' ? -1 : 1);
             if (target < 0 || target >= cards.length) return;
@@ -1919,20 +1924,20 @@ const SETTINGS_SECTIONS = [
         blocks: [
             ['sub', 'LLM 调用超时与重试调优'],
             ['grid', [
-                num('llm_request_timeout_seconds', '请求超时时间 (秒)', 1),
-                num('llm_stream_idle_timeout_seconds', '流式静默超时 (秒)', 1),
-                num('llm_max_retry_attempts', '失败最大重试次数', 1),
-                num('llm_base_retry_delay', '初始重试退避 (秒)', 0.5),
-                num('llm_max_retry_delay', '最大重试延迟 (秒)', 1),
+                num('llm_request_timeout_seconds', '请求超时时间 (秒)', 1, { min: 1 }),
+                num('llm_stream_idle_timeout_seconds', '流式静默超时 (秒)', 1, { min: 1 }),
+                num('llm_max_retry_attempts', '失败最大重试次数', 1, { min: 0 }),
+                num('llm_base_retry_delay', '初始重试退避 (秒)', 0.5, { min: 0 }),
+                num('llm_max_retry_delay', '最大重试延迟 (秒)', 1, { min: 0 }),
                 num('default_llm_context_tokens', '默认 Token 兜底容量', 1000),
             ]],
             ['sub', '视频生成轮询与下载调优'],
             ['grid', [
-                num('video_gen_poll_interval_seconds', '轮询间隔 (秒)', 0.5),
-                num('video_gen_poll_backoff_max_seconds', '轮询退避上限 (秒)', 1),
-                num('video_gen_max_poll_seconds', '最大轮询超时 (秒)', 10),
-                num('video_gen_tool_wait_seconds', '工具等待超时 (秒)', 10),
-                num('video_gen_download_max_bytes', '产物下载上限 (字节)', 1048576),
+                num('video_gen_poll_interval_seconds', '轮询间隔 (秒)', 0.5, { min: 0.5 }),
+                num('video_gen_poll_backoff_max_seconds', '轮询退避上限 (秒)', 1, { min: 1 }),
+                num('video_gen_max_poll_seconds', '最大轮询超时 (秒)', 10, { min: 10 }),
+                num('video_gen_tool_wait_seconds', '工具等待超时 (秒)', 10, { min: 0 }),
+                num('video_gen_download_max_bytes', '产物下载上限 (字节)', 1048576, { min: 1048576 }),
             ]],
         ],
     },
@@ -1942,9 +1947,9 @@ const SETTINGS_SECTIONS = [
             ['field', bool('enable_context_compression', '启用长会话自动上下文压缩摘要')],
             ['grid', [
                 num('agent_max_loop_turns', '工具循环轮数上限', 1),
-                num('context_compression_threshold', '压缩触发阈值 (占上下文比例)', 0.05),
-                num('context_summary_target_tokens', '摘要压缩目标 Token 数', 100),
-                num('ipc_future_timeout_seconds', 'IPC 异步调用等待超时 (秒)', 10),
+                num('context_compression_threshold', '压缩触发阈值 (占上下文比例)', 0.05, { min: 0.3, max: 1 }),
+                num('context_summary_target_tokens', '摘要压缩目标 Token 数', 100, { min: 100 }),
+                num('ipc_future_timeout_seconds', 'IPC 异步调用等待超时 (秒)', 10, { min: 10 }),
             ], true],
         ],
     },
@@ -2016,21 +2021,21 @@ const SETTINGS_SECTIONS = [
         blocks: [
             ['field', bool('rate_limit_enabled', '开启接口速率限制 (Rate Limiting)')],
             ['grid', [
-                num('login_rate_limit_per_minute', '登录频次上限 (/分钟)'),
-                num('llm_completion_rate_limit_per_minute', '单用户 LLM 对话补全 (/分钟)'),
-                num('llm_completion_rate_limit_per_ip_per_minute', '单 IP LLM 对话补全 (/分钟)'),
-                num('media_stt_rate_limit_per_minute', '语音识别 STT (/分钟)'),
-                num('media_tts_rate_limit_per_minute', '语音合成 TTS (/分钟)'),
-                num('media_video_rate_limit_per_minute', '视频附件上传 (/分钟)'),
-                num('companion_avatar_generate_rate_limit_per_minute', '伙伴头像生成 (/分钟)'),
-                num('companion_outfit_generate_rate_limit_per_hour', '伙伴换装外观生成 (/小时)'),
+                num('login_rate_limit_per_minute', '登录频次上限 (/分钟)', 1, { min: 1 }),
+                num('llm_completion_rate_limit_per_minute', '单用户 LLM 对话补全 (/分钟)', 1, { min: 1 }),
+                num('llm_completion_rate_limit_per_ip_per_minute', '单 IP LLM 对话补全 (/分钟)', 1, { min: 1 }),
+                num('media_stt_rate_limit_per_minute', '语音识别 STT (/分钟)', 1, { min: 1 }),
+                num('media_tts_rate_limit_per_minute', '语音合成 TTS (/分钟)', 1, { min: 1 }),
+                num('media_video_rate_limit_per_minute', '视频附件上传 (/分钟)', 1, { min: 1 }),
+                num('companion_avatar_generate_rate_limit_per_minute', '伙伴头像生成 (/分钟)', 1, { min: 1 }),
+                num('companion_outfit_generate_rate_limit_per_hour', '伙伴换装外观生成 (/小时)', 1, { min: 1 }),
             ]],
             ['sub', '场景、动态与安全配额'],
             ['grid', [
                 num('scene_llm_create_per_24h', '角色自主新增场景上限 (/24小时)'),
-                num('scene_store_max_attempts', '场景图片转存最大重试次数'),
-                num('post_requested_per_day', '用户明确请求动态配额 (/24小时)'),
-                num('post_autonomous_per_day', '伙伴自主发布动态配额 (/24小时)'),
+                num('scene_store_max_attempts', '场景图片转存最大重试次数', 1, { min: 1 }),
+                num('post_requested_per_day', '用户明确请求动态配额 (/24小时)', 1, { min: 0 }),
+                num('post_autonomous_per_day', '伙伴自主发布动态配额 (/24小时)', 1, { min: 0 }),
                 num('max_attachments_per_turn', '单回合附件数量上限', 1),
                 num('attachment_session_quota_bytes', '会话附件目录配额 (字节)', 1048576),
             ]],
@@ -2044,24 +2049,24 @@ const SETTINGS_SECTIONS = [
         blocks: [
             ['sub', '微信 iLink 外部 IM 渠道'],
             ['grid', [
-                num('channels_turn_queue_max', '在途排队入站消息上限'),
-                num('channels_inbound_rate_per_minute', '入站限速频次 (/分钟)'),
-                num('channels_restart_backoff_seconds', '守卫重试退避时间 (秒)'),
+                num('channels_turn_queue_max', '在途排队入站消息上限', 1, { min: 0 }),
+                num('channels_inbound_rate_per_minute', '入站限速频次 (/分钟)', 1, { min: 1 }),
+                num('channels_restart_backoff_seconds', '守卫重试退避时间 (秒)', 1, { min: 1 }),
                 num('weixin_reply_max_chars', '微信回复单条分片上限 (字)'),
-                num('weixin_ilink_poll_timeout_seconds', '长轮询客户端超时 (秒)'),
+                num('weixin_ilink_poll_timeout_seconds', '长轮询客户端超时 (秒)', 1, { min: 1 }),
                 num('channels_delivery_max_attempts', '回复投递最大尝试次数', 1, { min: 1 }),
             ]],
             ['sub', '运行时与日志调优'],
             ['grid', [
                 text('public_base_url', '公网访问基础地址 (public_base_url)', 'https://example.com'),
-                num('temp_file_ttl_hours', '临时媒体文件存活时长 (小时)'),
-                num('access_token_expire_minutes', '用户登录 Token 有效期 (分钟)'),
+                num('temp_file_ttl_hours', '临时媒体文件存活时长 (小时)', 1, { min: 1 }),
+                num('access_token_expire_minutes', '登录令牌有效期 (用户与管理端，分钟)', 1, { min: 1, max: 5256000 }),
                 sel('log_level', '日志输出级别', ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map(v => [v, v])),
                 sel('log_format', '日志格式', [['json', 'json'], ['text', 'text']]),
                 secret('metrics_auth_token', '指标采集鉴权 Token'),
             ]],
             ['field', bool('llm_debug_logging', '开启 LLM Debug 面包屑追踪日志')],
-            ['field', { ...num('llm_debug_max_chars', 'LLM Debug 单字段截断字符数'), narrow: true }],
+            ['field', { ...num('llm_debug_max_chars', 'LLM Debug 单字段截断字符数', 1, { min: 0 }), narrow: true }],
         ],
     },
 ];
@@ -2155,17 +2160,18 @@ function filterSettingsFields() {
     const q = ($('#settingsSearch')?.value || '').trim().toLowerCase();
     let visible = 0;
 
-    $$('#systemSettingsForm .settings-field').forEach(field => {
-        const text = field.dataset.searchText || field.textContent.toLowerCase();
-        const hit = !q || text.includes(q);
-        field.classList.toggle('is-hidden', !hit);
-        if (hit) visible++;
-    });
-
     $$('#systemSettingsForm .settings-section').forEach(section => {
-        const fields = $$('.settings-field', section).filter(el => !el.classList.contains('is-hidden'));
+        // 分区标题或说明命中时，分区内字段全部显示。
         const selfHit = !q || (section.dataset.searchText || '').includes(q);
-        const show = !q || selfHit || fields.length > 0;
+        let shown = 0;
+        $$('.settings-field', section).forEach(field => {
+            const text = field.dataset.searchText || field.textContent.toLowerCase();
+            const hit = selfHit || text.includes(q);
+            field.classList.toggle('is-hidden', !hit);
+            if (hit) shown++;
+        });
+        visible += shown;
+        const show = selfHit || shown > 0;
         section.classList.toggle('is-hidden', !show);
         if (show) {
             $$('.subhead', section).forEach(h => {

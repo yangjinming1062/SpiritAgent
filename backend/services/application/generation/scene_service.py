@@ -1,13 +1,11 @@
 """场景资产生成、分析与启用；供应商等待不持有数据库会话。"""
 
 import asyncio
-import io
 import json
 from datetime import timedelta
 from uuid import uuid4
 
 from components import (
-    REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     SCENE_DOWNLOAD_MAX_BYTES,
     SCENE_FAILURES_TOTAL,
     SCENE_IMAGES_TOTAL,
@@ -35,7 +33,6 @@ from modules.companion import (
 )
 from modules.settings import get_user_setting
 from modules.ws import emit_ws_event
-from PIL import Image
 from prompts.generation import SCENE_DESCRIBE_SYSTEM
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -50,7 +47,7 @@ from services.domains.companion import (
     load_persona_definition,
     require_character_snapshot,
 )
-from services.infrastructure.assets import asset_store, build_data_uri
+from services.infrastructure.assets import asset_store, build_data_uri, validate_image_bytes
 from services.infrastructure.llm import vision_chat
 
 from .avatar_service import get_active_avatar, load_avatar_bytes_as_data_uri, read_portrait_bytes
@@ -378,7 +375,7 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
 
 async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> CompanionScene:
     try:
-        data, mime = await asyncio.to_thread(_decode_reference_image, data)
+        data, mime = await asyncio.to_thread(validate_image_bytes, data)
     except Exception as exc:
         raise SceneError("图片无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片") from exc
     if scene_id is None:
@@ -529,7 +526,7 @@ async def _scene_image_uri(user_id: int, path: str) -> str:
     )
     if local is None:
         raise SceneStateError("场景图片无法读取")
-    data, mime = await asyncio.to_thread(_decode_reference_image, await asyncio.to_thread(local[0].read_bytes))
+    data, mime = await asyncio.to_thread(validate_image_bytes, await asyncio.to_thread(local[0].read_bytes))
     return await asyncio.to_thread(build_data_uri, data, mime)
 
 
@@ -889,14 +886,17 @@ def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | Non
                     logger.exception("best scene recovery failed", extra={"scene_id": scene_id, "user_id": user_id})
             async with SESSION_LOCAL() as db:
                 row = await get_scene(db, user_id, scene_id)
-                error = (
-                    "图片已保存，描述分析失败；可重试分析或手动补全"
-                    if row and row.media_path
-                    else "生图结果未确认，未自动重发付费请求；请核对后再创建"
-                    if row and row.stage == "submitting"
-                    else "场景准备失败，请查看任务状态后重试"
-                )
-            await _mark_failed(user_id, scene_id, str(exc) if isinstance(exc, SceneError) else error)
+            if isinstance(exc, SceneError):
+                error = str(exc)
+            elif row and row.media_path:
+                error = "图片已保存，描述分析失败；可重试分析或手动补全"
+            elif row and row.stage == "submitting":
+                error = "生图结果未确认，未自动重发付费请求；请核对后再创建"
+            elif isinstance(exc, ImageGenerationError):
+                error = str(exc)
+            else:
+                error = "场景准备失败，请查看任务状态后重试"
+            await _mark_failed(user_id, scene_id, error)
 
     def completed(done: asyncio.Task[None]) -> None:
         if _INFLIGHT_TASKS.get((user_id, scene_id)) is done:
@@ -982,7 +982,8 @@ async def schedule_initial_scene(user_id: int) -> CompanionScene | None:
             notes=notes,
             auto_activate=True,
         )
-    except SceneStateError:
+    except SceneStateError as exc:
+        logger.warning("initial scene not scheduled", extra={"user_id": user_id, "error": str(exc)})
         return None
 
 
@@ -994,23 +995,10 @@ async def drain_scene_jobs() -> None:
     _INFLIGHT_TASKS.clear()
 
 
-def _decode_reference_image(data: bytes) -> tuple[bytes, str]:
-    if not data or len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
-        raise ValueError("image size exceeds limit")
-    with Image.open(io.BytesIO(data)) as image:
-        if image.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
-            raise ValueError("unsupported image format")
-        if Image.MAX_IMAGE_PIXELS is not None and image.width * image.height > Image.MAX_IMAGE_PIXELS:
-            raise ValueError("image dimensions exceed limit")
-        mime = Image.MIME[image.format]
-        image.load()
-    return data, mime
-
-
 async def _prepare_reference_image(data: bytes) -> str:
     """校验用户参考图并按实际格式冻结为 data URI。"""
     try:
-        data, mime = await asyncio.to_thread(_decode_reference_image, data)
+        data, mime = await asyncio.to_thread(validate_image_bytes, data)
     except Exception as exc:
         raise SceneError("参考图无法读取，请选择有效图片") from exc
     return await asyncio.to_thread(build_data_uri, data, mime)

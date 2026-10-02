@@ -1,6 +1,5 @@
 import asyncio
 from pathlib import Path
-from typing import Any
 from urllib.parse import quote
 
 from common import get_router
@@ -18,6 +17,7 @@ from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from modules.auth import CurrentUser
 from modules.conversation import Conversation
+from modules.media import ChatVideoUploadResponse, SpeechToTextResponse
 from pydantic import BaseModel
 from services.adapters.http import limiter
 from services.domains.media import (
@@ -83,7 +83,7 @@ async def serve_session_video(session_id: str, file_id: str) -> FileResponse:
     return FileResponse(path, media_type=video_mime_for_ext(path.suffix))
 
 
-@router.post("/videos")
+@router.post("/videos", response_model=ChatVideoUploadResponse)
 @limiter.limit(lambda: f"{SETTINGS.media_video_rate_limit_per_minute}/minute")
 async def upload_chat_video(
     request: Request,
@@ -91,7 +91,7 @@ async def upload_chat_video(
     user: CurrentUser,
     file: UploadFile | None = File(None),
     session_id: str = Form(""),
-) -> dict[str, Any]:
+) -> ChatVideoUploadResponse:
     """聊天视频附件上传：落会话目录（滚动配额）并返回附件 URL（本地相对 / 公网绝对）。"""
     if file is None:
         raise HTTPException(
@@ -145,23 +145,17 @@ async def upload_chat_video(
     await enforce_session_quota(db, session_id, len(data))
     file_id, size = await asyncio.to_thread(save_video_attachment, session_id, data, ext)
     logger.info("chat video uploaded", extra={"session_id": session_id, "file_id": file_id, "size": size})
-    return {
-        "success": True,
-        "file_id": file_id,
-        "url": attachment_video_url(session_id, file_id),
-        "mime": video_mime_for_ext(ext),
-        "size": size,
-    }
+    return ChatVideoUploadResponse(url=attachment_video_url(session_id, file_id))
 
 
-@router.post("/stt")
+@router.post("/stt", response_model=SpeechToTextResponse)
 @limiter.limit(lambda: f"{SETTINGS.media_stt_rate_limit_per_minute}/minute")
 async def speech_to_text(
     request: Request,
     user: CurrentUser,
     audio_file: UploadFile | None = File(None),
     language: str = "",
-) -> dict[str, Any]:
+) -> SpeechToTextResponse:
     """走供应商链路的语音转写。"""
     if audio_file is None:
         raise HTTPException(
@@ -188,7 +182,7 @@ async def speech_to_text(
         raise missing_config_http("语音识别服务")
     except Exception as e:
         raise llm_http_error(e, "stt") from e
-    return {"success": True, "text": text}
+    return SpeechToTextResponse(text=text)
 
 
 class TtsRequest(BaseModel):

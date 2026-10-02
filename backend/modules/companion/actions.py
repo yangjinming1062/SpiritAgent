@@ -45,6 +45,9 @@ class CompanionActionPack(ModelBase, TimestampMixin):
     """单外观冻结动作包；动作按外观快照隔离，生成任务只向当前 pack 追加。catalog_version CAS 推进提供不可变目录快照；appearance_epoch 为激活代次（重穿同一包也推进）。"""
 
     __tablename__ = "companion_action_packs"
+    __table_args__ = (
+        Index("uq_companion_action_packs_one_active", "user_id", unique=True, postgresql_where=text("active")),
+    )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

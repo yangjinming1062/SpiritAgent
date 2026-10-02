@@ -19,6 +19,7 @@ import {
 } from '@/modules/character'
 import { PortraitLightbox } from '@/shared'
 import { ArrowBackUp, FileImage, ImageIcon, ImagePlus, Pencil, Plus, Send, Trash2 } from '@/shared/lib/icons'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
@@ -89,8 +90,14 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
   const removeOutfit = async (id: number): Promise<void> => {
     const epoch = currentClearEpoch()
 
-    if (!(await deleteOutfit(id)) && epoch === currentClearEpoch()) {
-      notify({ kind: 'error', message: t.deleteFailed })
+    try {
+      await deleteOutfit(id)
+    } catch (err) {
+      log.warn('outfit', 'delete failed', err)
+
+      if (epoch === currentClearEpoch()) {
+        notify({ kind: 'error', message: backendDetailMessage(err, t.deleteFailed) })
+      }
     }
   }
 

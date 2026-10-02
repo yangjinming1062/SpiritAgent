@@ -6,7 +6,6 @@ from modules.companion import CompanionWaitRequest, CompanionWakeEvent
 from prompts.tools import COMPANION_WAIT_DESC, COMPANION_WAIT_PARAM_DESCS
 
 from services.domains.companion import cancel_companion_wait, list_companion_intents, set_companion_wait
-from services.domains.conversation import resolve_memory_scope
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 COMPANION_WAIT_SCHEMA: dict[str, object] = {
@@ -50,7 +49,6 @@ COMPANION_WAIT_SCHEMA: dict[str, object] = {
 async def companion_wait(
     action: Literal["schedule", "list", "cancel"],
     user_id: int,
-    parent_session_id: str,
     intent: str | None = None,
     intent_id: int | None = None,
     after_seconds: int | None = None,
@@ -59,13 +57,10 @@ async def companion_wait(
     **kwargs: object,
 ) -> str:
     try:
-        async with session_scope() as db:
-            scope = await resolve_memory_scope(db, user_id, parent_session_id)
-            if scope.system_preset_id != "companion":
-                return tool_error("Companion waits are only available in the companion preset")
-            if action == "list":
+        if action == "list":
+            async with session_scope() as db:
                 rows = await list_companion_intents(db, user_id)
-                return json.dumps({"intents": [row.model_dump(mode="json") for row in rows]}, ensure_ascii=False)
+            return json.dumps({"intents": [row.model_dump(mode="json") for row in rows]}, ensure_ascii=False)
         if action == "cancel":
             if intent_id is None:
                 raise ValueError("intent_id is required for cancellation")

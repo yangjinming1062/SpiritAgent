@@ -43,7 +43,8 @@ class HeadlessEmitter:
 
     @property
     def error(self) -> str | None:
+        """最近一帧 error 的诊断串：``detail`` 优先，其次是面向用户的 ``message``。"""
         for message in reversed(self.messages):
             if message.get("type") == "error":
-                return str(message.get("message") or "LLM turn failed")
+                return str(message.get("detail") or message.get("message") or "LLM turn failed")
         return None

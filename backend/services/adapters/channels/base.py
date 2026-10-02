@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
-from modules.channels import ChannelDeliveryMedia
+from modules.channels import ChannelDeliveryMedia, ChannelLoginStateResponse
 
 
 @dataclass(frozen=True)
@@ -51,13 +51,9 @@ class ChannelError(Exception):
 class ChannelAdapter:
     """外部 IM 渠道适配器基类：run() 常驻循环（轮询/WS 重连/空转），入站交给 bridge.handle_inbound，send_text 出站投递。生命周期由 ChannelManager 守卫任务驱动：fatal ChannelError → 标 error 停止；非 fatal → 退避 channels_restart_backoff_seconds 后重建适配器重试。"""
 
-    channel_name: str = ""
     # 桌面端 im 会话标题（如 "微信对话"）。
     conversation_title: str = ""
     supports_typing: bool = False
-    supports_media: bool = False
-    # 能否在无入站消息时主动发起（微信 iLink reply-only → False；其它可主动的通道 → True）。
-    can_initiate: bool = False
     requires_login: bool = False
 
     def has_credentials(self) -> bool:
@@ -111,9 +107,9 @@ class ChannelAdapter:
     async def start_login(self) -> None:
         """默认 no-op：无需扫码登录的渠道没有登录态。"""
 
-    async def login_state(self) -> dict:
-        """默认无登录流：REST 轮询登录状态时返回 {"state": "unsupported"}。"""
-        return {"state": "unsupported"}
+    async def login_state(self) -> ChannelLoginStateResponse:
+        """默认无登录流：REST 轮询登录状态时返回 unsupported。"""
+        return ChannelLoginStateResponse(state="unsupported")
 
     async def logout(self) -> None:
         """默认 no-op。"""

@@ -11,7 +11,7 @@ from .policy import (
     get_daily_budget_status,
     is_expression_action,
 )
-from .publishing import CatalogValidationError, build_catalog_manifest, publish_action_catalog
+from .publishing import CatalogValidationError, build_catalog_manifest, emit_catalog_changed, publish_action_catalog
 from .repository import (
     StaleCatalogError,
     clear_action_attempt,
@@ -24,21 +24,31 @@ from .repository import (
     make_semantic_fingerprint,
     record_playback,
 )
-from .usage import action_to_dict, emit_play_command, fulfill_deferred_play_intents, record_play_result
+from .usage import (
+    ACTION_PROMPT_KEYS,
+    action_prompt_entry,
+    action_to_dict,
+    emit_play_command,
+    fulfill_deferred_play_intents,
+    record_play_result,
+)
 
 __all__ = [
+    "ACTION_PROMPT_KEYS",
     "DEFERRED_PLAY_INTENT_TTL_SECONDS",
     "DEFERRED_PROPOSAL_WINDOW",
     "PLAY_INTENT_TTL_SECONDS",
     "ActionPolicyError",
     "CatalogValidationError",
     "StaleCatalogError",
+    "action_prompt_entry",
     "action_to_dict",
     "build_catalog_manifest",
     "check_can_accept",
     "clear_action_attempt",
     "consume_create_slot",
     "create_action",
+    "emit_catalog_changed",
     "emit_play_command",
     "get_action",
     "get_action_accept_lock",

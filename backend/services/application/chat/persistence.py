@@ -276,7 +276,8 @@ async def _persist_assistant_no_tool_turn(
         if reply is not None
         else None
     )
-    if persist and conv.title == DEFAULT_SESSION_TITLE and first_user_msg_content and turn_content:
+    # 首条用户消息只有附件时文字为空串，仍依据助手回复生成标题。
+    if persist and conv.title == DEFAULT_SESSION_TITLE and first_user_msg_content is not None and turn_content:
         _spawn_post_turn_task(
             user_id,
             auto_generate_title(

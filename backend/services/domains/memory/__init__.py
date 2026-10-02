@@ -7,7 +7,6 @@ from .memory_admin import (
 )
 from .memory_bootstrap import (
     build_user_profile_extras,
-    extract_user_profile,
     read_user_profile,
     record_user_profile,
     record_user_timezone,
@@ -35,7 +34,12 @@ from .memory_retrieval import (
     retrieve_hybrid_memories,
     retrieve_proactive_memories,
 )
-from .memory_review import assess_memory_changes, invalidate_memory_review_locks, review_memories
+from .memory_review import (
+    assess_memory_changes,
+    invalidate_memory_review_locks,
+    memory_review_backed_off,
+    review_memories,
+)
 from .memory_store import (
     backfill_memory_embeddings,
     create_memory,
@@ -55,13 +59,13 @@ __all__ = [
     "MemoryDecisions",
     "assess_memory_changes",
     "review_memories",
+    "memory_review_backed_off",
     "invalidate_memory_review_locks",
     "create_memory",
     "backfill_memory_embeddings",
     "build_user_profile_extras",
     "delete_memory",
     "embed_memory_text",
-    "extract_user_profile",
     "format_background_memory_block",
     "format_companion_reflection_block",
     "format_memories_block",

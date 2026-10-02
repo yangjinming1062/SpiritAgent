@@ -284,6 +284,8 @@ VIDEO_ACTION_POSE_TEMPLATE = (
 
 IMAGE_TRANSPARENT_BACKGROUND = "输出带真实 alpha 通道的透明背景 PNG，角色以外完全透明，不绘制棋盘格、色块或地面阴影。"
 IMAGE_OPAQUE_BACKGROUND = "输出纯白平面背景，均匀柔光，角色以外不画环境、地面阴影或投影。"
+# 聊天图片重做时附在原提示词之后，后接验图问题与修改要求的 JSON。
+CHAT_IMAGE_CORRECTION_PREFIX = "\n\n本次修正资料（仅修复原请求中的问题，保留原身份与造型）：\n"
 
 IMAGE_EDIT_TEMPLATE = (
     "修改输入图片：{feedback}。以输入图为编辑底图。局部颜色、材质或配饰修改只作用于指定目标；"

@@ -2,24 +2,32 @@ import json
 
 from components import safe_json_loads
 from modules.conversation import CompanionReply, CompanionReplyInput, MediaBubble, MediaBubbleInput, Message
-from sqlalchemy import ColumnElement, case, cast, column, func, select
+from sqlalchemy import ColumnElement, and_, case, cast, column, func, literal_column, select
 from sqlalchemy.dialects.postgresql import JSONB
 
 
 def message_contains_text(query: str) -> ColumnElement[bool]:
-    """逐泡匹配台词，解码 JSON 转义并排除演绎字段。"""
+    """逐泡匹配台词，解码 JSON 转义并排除演绎字段；多模态行只匹配文本部分，不扫描附件地址（旧版以 text 保存的多模态工具结果仍按原文匹配）。"""
     parts = (
         func.jsonb_array_elements(cast(Message.content, JSONB)).table_valued(column("value", JSONB)).render_derived()
     )
-    bubble_match = (
+    text_match = parts.c.value["text"].astext.icontains(query, autoescape=True)
+    bubble_match = select(1).select_from(parts).where(text_match).correlate(Message).exists()
+    text_part_match = (
         select(1)
         .select_from(parts)
-        .where(parts.c.value["text"].astext.icontains(query, autoescape=True))
+        .where(parts.c.value["type"].astext.in_(("input_text", "text")), text_match)
         .correlate(Message)
         .exists()
     )
+    # IS JSON ARRAY 排除畸形与非数组内容，pg_input_is_valid 排除 JSONB 无法表示的 \u0000；二者都不报错，CASE 保证只有通过才执行强转，其余多模态行退回原文匹配。
+    jsonb_array = and_(
+        Message.content.op("IS JSON", is_comparison=True)(literal_column("ARRAY")),
+        func.pg_input_is_valid(Message.content, "jsonb"),
+    )
     return case(
         (Message.content_type == "companion_reply", bubble_match),
+        (and_(Message.content_type == "multimodal_v1", jsonb_array), text_part_match),
         else_=Message.content.icontains(query, autoescape=True),
     )
 

@@ -40,16 +40,16 @@ async def action_search_tool(
         if pack is None:
             return tool_error("当前没有可用的形象动作")
         actions = await list_pack_actions(db, pack.id, enabled_only=True)
+        needle = (query or "").strip().lower()
         hits = []
         for action in actions:
             if not is_expression_action(action):
                 continue
             stats = action_to_dict(action)
-            if query:
-                text = json.dumps(stats, ensure_ascii=False).lower()
-                if query.lower() not in text:
-                    continue
-            hits.append(stats)
+            # 只匹配名称、动作描述与适用场景的文字，不含字段名、数值和布尔值；空查询匹配全部。
+            searchable = "\n".join([stats["name"], stats["motion_description"], *map(str, stats["use_when"])]).lower()
+            if needle in searchable:
+                hits.append(stats)
         return json.dumps(
             {"pack_id": pack.id, "hits": hits[: max(1, min(limit, 20))], "total": len(hits)},
             ensure_ascii=False,
@@ -122,7 +122,8 @@ async def action_inspect_tool(
             )
         if action_id is not None:
             action = await get_action(db, action_id)
-            if action is None or action.pack_id is None:
+            # 系统槽位动作不对模型开放，按不存在处理。
+            if action is None or action.pack_id is None or action.system_slot:
                 return tool_error("找不到对应动作")
             pack = await get_active_pack(db, user_id)
             if pack is None or action.pack_id != pack.id:
@@ -190,13 +191,13 @@ def register(registry: ToolsRegistry) -> None:
                 "use_when": {
                     "type": "array",
                     "maxItems": 8,
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "maxLength": 120},
                     "description": "适用场景列表，如「用户主动请求拥抱」。",
                 },
                 "avoid_when": {
                     "type": "array",
                     "maxItems": 8,
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "maxLength": 120},
                     "description": "应避免使用的场景。",
                 },
                 "reason": {"type": "string", "maxLength": 400, "description": "为何需要新动作；已有近义动作时先复用。"},

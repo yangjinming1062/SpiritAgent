@@ -17,6 +17,9 @@ from services.infrastructure.web import resolve_extract_provider, resolve_search
 
 logger = get_logger(__name__)
 
+# 与 schema 的 maximum 共用；派发层只矫正参数类型，不校验数值范围。
+_MAX_SEARCH_RESULTS = 100
+
 
 async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: dict) -> None:
     content = doc.get("content", "")
@@ -84,7 +87,7 @@ async def web_search_tool(query: str, limit: int | None = None, **_: object) -> 
         return tool_error(f"{provider.display_name} does not support search.")
 
     default_limit = SETTINGS.web_search_default_results
-    safe_limit = max(1, coerce_int(limit, default_limit))
+    safe_limit = min(_MAX_SEARCH_RESULTS, max(1, coerce_int(limit, default_limit)))
     # 查询词是对话内容，INFO 日志只记供应商与条数。
     logger.info("Web search", extra={"provider_name": provider.name, "limit": safe_limit})
     try:
@@ -138,7 +141,7 @@ WEB_SEARCH_SCHEMA = {
                 "type": "integer",
                 "description": WEB_SEARCH_PARAM_DESCS["limit"],
                 "minimum": 1,
-                "maximum": 100,
+                "maximum": _MAX_SEARCH_RESULTS,
             },
         },
         "required": ["query"],

@@ -25,6 +25,7 @@ from components import (
     SESSION_LOCAL,
     SETTINGS,
     adopt_inbound,
+    attachments_gc_session,
     coerce_hour_0_23,
     coerce_non_negative_float,
     get_logger,
@@ -45,17 +46,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.application.actions import request_playback
 from services.application.chat import (
     CompressionFailedError,
-    SlashCommandContext,
-    SlashCommandResult,
     compress_session_history,
-    list_commands_for_user,
     merge_session_settings,
     persist_extra_user_messages,
-    register_slash_command,
     resolve_inference_settings,
-    resolve_slash_command,
     run_chat_turn,
-    suggest_commands,
 )
 from services.application.generation import (
     AvatarGenerationError,
@@ -105,7 +100,12 @@ from services.domains.conversation import (
     undo_conversation_to_message,
     validate_memory_scope,
 )
-from services.domains.media import prune_videos_in_range, video_file_id_from_url
+from services.domains.media import (
+    copy_forked_video_attachments,
+    prune_videos_in_range,
+    resolve_video_file,
+    video_file_id_from_url,
+)
 from services.domains.memory import (
     backfill_memory_embeddings,
     create_memory,
@@ -138,6 +138,14 @@ from .runtime import (
     decode_session_settings,
     new_runtime_session,
 )
+from .slash_commands import (
+    SlashCommandContext,
+    SlashCommandResult,
+    list_commands_for_user,
+    register_slash_command,
+    resolve_slash_command,
+    suggest_commands,
+)
 
 logger = get_logger(__name__)
 
@@ -149,7 +157,6 @@ class UserGatewaySession:
     user_id: int
     login_record_id: int
     dispatcher: JsonRpcDispatcher
-    llm_config: UserLlmConfig
     session_client_context: ChatRequestClientContext | None
     runtime_sessions: dict[str, RuntimeSession] = field(default_factory=dict)
     background_tasks: set[asyncio.Task] = field(default_factory=set)
@@ -318,9 +325,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
 
             await MANAGER.connect(websocket, user_id)
 
-            # 模型配置只在连接时读一次；工具执行各自开新的 SESSION_LOCAL()，让并发工具调用不共享 SQLAlchemy 状态。
             async with SESSION_LOCAL() as boot_db:
-                llm_config = await resolve_user_llm_config(boot_db, user_id)
                 await get_or_create_special_conversation(boot_db, user_id, "companion")
 
             send = _ws_sender(websocket)
@@ -328,7 +333,6 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                 if user_session.grace_timer_task is not None:
                     user_session.grace_timer_task.cancel()
                     user_session.grace_timer_task = None
-                user_session.llm_config = llm_config
                 user_session.session_client_context = ticket.client_context
                 user_session.dispatcher.set_sender(send)
                 logger.info("Resumed active user gateway session across reconnect", extra={"user_id": user_id})
@@ -337,7 +341,6 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                     user_id=user_id,
                     login_record_id=login_record_id,
                     dispatcher=JsonRpcDispatcher(send),
-                    llm_config=llm_config,
                     session_client_context=ticket.client_context,
                 )
                 _USER_SESSIONS[user_id] = user_session
@@ -398,6 +401,12 @@ async def _require_owned_conv(db: AsyncSession, user_id: int, session_id: str) -
     return conv
 
 
+async def _resolve_llm_config(user_id: int) -> UserLlmConfig:
+    """每次调用现读用户能力链，管理端改配置后已连接的桌面无需重连即生效。"""
+    async with SESSION_LOCAL() as db:
+        return await resolve_user_llm_config(db, user_id)
+
+
 def _reject_im_session(runtime: RuntimeSession) -> None:
     """IM 会话由通道桥独占写入，桌面端只读；桥接回合不经桌面运行时，runtime.busy 拦不住与它并发的提交/清空/压缩。"""
     if runtime.kind == IM_KIND:
@@ -430,13 +439,13 @@ def _require_nonneg_int(params: dict[str, Any], key: str) -> int:
     return v
 
 
-def _is_session_video_url(file_url: str, session_id: str) -> bool:
-    """视频附件只认本会话的后端上传 URL（相对路径或 public_base_url 前缀）；任意第三方绝对 URL 会让供应商替我们发任意请求，必须绑死前缀。"""
-    return len(file_url) <= 2048 and video_file_id_from_url(file_url, session_id) is not None
+def _session_video_file_id(file_url: str, session_id: str) -> str | None:
+    """视频附件只认本会话的后端上传 URL（相对路径或 public_base_url 前缀），返回其 file_id；任意第三方绝对 URL 会让供应商替我们发任意请求，必须绑死前缀。"""
+    return video_file_id_from_url(file_url, session_id) if len(file_url) <= 2048 else None
 
 
 def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[str, Any]] | None:
-    """校验并规范化 attachments（每项重塑为 {type, file_url}），未传时返回 None。image 接受 HTTP(S) 与 data:image URL；video 只认本会话后端上传 URL（base64 视频超 WS 单帧上限，须先 POST /api/media/videos）。"""
+    """校验并规范化 attachments（每项重塑为 {type, file_url}），未传时返回 None。image 接受 HTTP(S) 与 data:image URL；video 只认本会话后端上传且文件仍在的 URL（base64 视频超 WS 单帧上限，须先 POST /api/media/videos）。"""
     raw = params.get("attachments")
     if raw is None:
         return None
@@ -462,11 +471,15 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[
                     JSONRPC_INVALID_PARAMS,
                     f"attachments[{idx}] video must reference an uploaded URL, not a data URL",
                 )
-            if not _is_session_video_url(file_url, session_id):
+            file_id = _session_video_file_id(file_url, session_id)
+            if file_id is None:
                 raise JsonRpcError(
                     JSONRPC_INVALID_PARAMS,
                     f"attachments[{idx}].file_url must be a video URL uploaded to this session (/api/media/videos/{session_id}/...)",
                 )
+            # 文件可能已被配额剔除或清理；拒绝提交，不把死链写入历史或交给供应商。
+            if resolve_video_file(session_id, file_id) is None:
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "视频附件已失效，请重新上传")
         elif file_url.startswith("http"):
             # HTTP/HTTPS URL（长度与 URL 语义一致，维持紧上限）
             if len(file_url) > 2048:
@@ -479,6 +492,17 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}] must have file_url")
         cleaned.append({"type": att_type, "file_url": file_url})
     return cleaned
+
+
+async def _discard_forked_conversation(db: AsyncSession, conv_id: int) -> None:
+    """派生后续步骤失败时撤销新会话：删除会话行（消息级联）和已写入的附件目录，不留下半成品。"""
+    await db.rollback()
+    await db.execute(delete(Conversation).where(Conversation.id == conv_id))
+    await db.commit()
+    try:
+        await asyncio.to_thread(attachments_gc_session, str(conv_id))
+    except OSError:
+        logger.warning("attachments_gc_session failed for forked session %s", conv_id, exc_info=True)
 
 
 async def _do_compress_history(conv: Conversation, user_id: int, runtime: RuntimeSession) -> dict[str, Any]:
@@ -693,9 +717,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     async def _runtime_info(runtime: RuntimeSession, conv: Conversation) -> SessionRuntimeInfo:
         async with SESSION_LOCAL() as db:
             user_settings = await load_user_settings(db, user_id)
+            llm_config = await resolve_user_llm_config(db, user_id)
         effective = merge_session_settings(user_settings, runtime.settings, conv=conv)
         settings = runtime.settings | asdict(resolve_inference_settings(effective, conv=conv))
-        return build_runtime_info(session.llm_config, runtime, settings)
+        return build_runtime_info(llm_config, runtime, settings)
 
     async def _mounted_history(
         conv: Conversation,
@@ -781,7 +806,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("system.list_presets", system_list_presets)
 
     async def session_fork(params: dict) -> dict:
-        """从用户拥有的源会话的某条消息派生新会话：复制 1..source_message_id 共 N 条消息到 kind='standard' 的新会话；新会话挂载 runtime 并返回 SessionResumeResult，客户端可直接 hydrate 并自动挂载。"""
+        """从用户拥有的源会话的某条消息派生新会话：复制 1..source_message_id 共 N 条消息到 kind='standard' 的新会话，上传视频同时复制进新会话的附件目录；新会话挂载 runtime 并返回 SessionResumeResult，客户端可直接 hydrate 并自动挂载。"""
         source_session_id = _require_str(params, "source_session_id")
         source_message_id = _require_nonneg_int(params, "source_message_id")
         async with SESSION_LOCAL() as db:
@@ -791,8 +816,20 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(e))
             except SourceNotFoundError as e:
                 raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, str(e))
-            # 服务函数只负责落库；runtime 挂载与 info 在这里补，与 session.resume 路径一致
+            # 服务函数只负责落库；视频附件复制、runtime 挂载与 info 在这里补，与 session.resume 路径一致
             conv = await _require_owned_conv(db, user_id, result["session_id"])
+            conv_id = conv.id  # 失败回滚会使 conv 过期，id 须先取出
+            try:
+                if await copy_forked_video_attachments(db, str(conv.forked_from_id), str(conv_id)):
+                    result["messages"] = await build_session_messages(conv_id, db)
+            except Exception as exc:
+                logger.exception("session.fork video copy failed", extra={"new_session_id": conv_id})
+                await _discard_forked_conversation(db, conv_id)
+                raise JsonRpcError(JSONRPC_INTERNAL_ERROR, "视频附件复制失败，请稍后重试") from exc
+            except asyncio.CancelledError:
+                # 网关会话销毁或进程关闭会取消本任务：已提交的派生会话同样撤销，再继续取消。
+                await asyncio.shield(_discard_forked_conversation(db, conv_id))
+                raise
         logger.info(
             "session.fork",
             extra={
@@ -929,7 +966,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("session.compress_context", session_compress_context)
 
     async def session_undo_to_message(params: dict) -> dict:
-        """就地截断会话并把锚点载荷以 anchor 字段返回，供客户端落回输入框作为草稿。需要 ``confirmed=true``；in-flight 拒绝；仅 ``kind='standard'`` 允许。广播 ``message.deleted`` 事件给同 user 其他窗口。"""
+        """就地截断会话并以 anchor 字段返回锚点消息的用户正文与图片附件，供客户端落回输入框作为草稿。需要 ``confirmed=true``；in-flight 拒绝；仅 ``kind='standard'`` 允许。广播 ``message.deleted`` 事件给同 user 其他窗口。"""
         session_id = _require_str(params, "session_id")
         if not bool(params.get("confirmed")):
             raise JsonRpcError(
@@ -958,9 +995,9 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             "message.deleted",
             {
                 "session_id": session_id,
-                "deleted_count": result["deleted_count"],
-                "anchor": result["anchor"],
-                "messages": result["messages"],
+                "deleted_count": result.deleted_count,
+                "anchor": result.anchor.model_dump(),
+                "messages": result.messages,
             },
             session_id=session_id,
         )
@@ -970,10 +1007,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 "user_id": user_id,
                 "session_id": session_id,
                 "source_message_id": source_message_id,
-                "deleted_count": result["deleted_count"],
+                "deleted_count": result.deleted_count,
             },
         )
-        return result
+        return result.model_dump(mode="json")
 
     dispatcher.register("session.undo_to_message", session_undo_to_message)
 
@@ -1016,10 +1053,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             session_id=runtime.session_id,
             user_id=user_id,
             runtime=runtime,
-            dispatcher=dispatcher,
             args=args_list,
-            raw=raw_command,
-            confirmed=confirmed,
         )
 
         try:
@@ -1037,7 +1071,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("command.dispatch", command_dispatch)
 
     async def command_list(_params: dict) -> dict:
-        """列出可用 slash 命令元数据；供客户端 ``/帮助`` 或调试面板使用。"""
+        """列出可用 slash 命令元数据；供客户端自动补全与确认弹窗使用。"""
         return {"commands": list_commands_for_user()}
 
     dispatcher.register("command.list", command_list)
@@ -1143,7 +1177,6 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 persisted_message_id = replacement.id
                 edited_messages = await build_session_messages(runtime.conversation_id, db)
 
-        llm_config = session.llm_config
         client_context = session.session_client_context
 
         async def _run_turn() -> None:
@@ -1154,6 +1187,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                         {"session_id": runtime.session_id, "messages": edited_messages},
                         session_id=runtime.session_id,
                     )
+                llm_config = await _resolve_llm_config(user_id)
                 await run_chat_turn(
                     req,
                     llm_config,
@@ -1259,7 +1293,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
 
         idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
         local_hour = coerce_hour_0_23(params.get("local_hour"))
-        result = await check_idle_expression(user_id, idle_seconds, local_hour, session.llm_config)
+        llm_config = await _resolve_llm_config(user_id)
+        result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
         if result.expressed and result.action_id is not None:
             async with SESSION_LOCAL() as db:
                 play = await request_playback(
@@ -1341,7 +1376,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             fullscreen=fullscreen,
             screen_locked=screen_locked,
             seconds_since_last_action=seconds_since_last_action,
-            llm_config=session.llm_config,
+            llm_config=await _resolve_llm_config(user_id),
         )
         # 走过去搭话（DESIGN「位置、移动与缩放」）：开场白经 companion.message 独立投递、客户端边走边说，RPC 响应只承载走位动作；should_act 已把 approach 的 params 收敛为非空 text。
         if res.action == "approach" and res.params is not None:
@@ -1423,7 +1458,6 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("memory.delete", memory_delete)
 
     async def onboarding_get_state(_params: dict) -> dict:
-        # persona 定稿后 complete: true，desktop 跳过 onboarding。
         async with SESSION_LOCAL() as db:
             return await get_onboarding_state(db, user_id)
 

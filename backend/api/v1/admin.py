@@ -1,10 +1,6 @@
 import asyncio
-import hashlib
-import json
 import os
-import shutil
 import tempfile
-import zipfile
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -57,15 +53,18 @@ from services.application.configuration import get_system_settings_for_admin, sa
 from services.domains.backup import (
     BACKUP_SECTION_IDS,
     TABLES,
+    BackupArchiveError,
+    BackupArchiveTooLargeError,
     BackupImportMode,
     BackupRestoreResult,
-    build_manifest,
     collect_files_for_export,
+    extract_backup_archive,
     load_backup_rows,
     load_manifest,
     restore_backup_rows,
     serialize_rows,
     tables_for_sections,
+    write_backup_archive,
 )
 from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.domains.conversation import SYSTEM_PRESET_CATALOG, ensure_system_conversations_for_user
@@ -246,60 +245,6 @@ async def delete_model_config(user_id: int, db: DbSession) -> MessageResponse:
     return MessageResponse(message="模型配置已删除。")
 
 
-def _create_export_zip(
-    tmp_path: str,
-    user: User,
-    admin: CurrentAdmin,
-    rows_by_table: dict[str, list[dict[str, Any]]],
-    files: list[Path],
-) -> None:
-    data_dir_root = Path(SETTINGS.data_dir).resolve()
-    with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        manifest = build_manifest(user, rows_by_table, admin)
-        checksums: dict[str, str] = {}
-        for tbl, rs in rows_by_table.items():
-            content = json.dumps({"table": tbl, "rows": rs}, ensure_ascii=False).encode("utf-8")
-            name = f"db/{tbl}.json"
-            zf.writestr(name, content)
-            checksums[name] = hashlib.sha256(content).hexdigest()
-        for src in files:
-            arc = "files/" + src.relative_to(data_dir_root).as_posix()
-            with src.open("rb") as source, zf.open(arc, "w") as target:
-                digest = hashlib.sha256()
-                while chunk := source.read(ARCHIVE_UPLOAD_CHUNK_BYTES):
-                    target.write(chunk)
-                    digest.update(chunk)
-            checksums[arc] = digest.hexdigest()
-        manifest["checksums"] = checksums
-        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
-
-
-def _extract_and_validate_zip(zip_path: Path, extract_root: Path) -> None:
-    try:
-        zf = zipfile.ZipFile(zip_path, "r")
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效 zip 文件。") from None
-
-    try:
-        if sum(entry.file_size for entry in zf.infolist()) > 4 * 1024**3:
-            raise HTTPException(status_code=413, detail="备份解压后超过 4 GB。")
-        if len(set(zf.namelist())) != len(zf.namelist()):
-            raise HTTPException(status_code=400, detail="备份包含重复文件。")
-        extract_resolved = extract_root.resolve()
-        for name in zf.namelist():
-            target_path = (extract_root / name).resolve()
-            if not target_path.is_relative_to(extract_resolved):
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"非法归档条目：{name}")
-            if name.endswith("/"):
-                target_path.mkdir(parents=True, exist_ok=True)
-                continue
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(name) as src, open(target_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-    finally:
-        zf.close()
-
-
 @router.get("/users/{user_id}/export")
 async def export_user_backup(
     user_id: int,
@@ -307,14 +252,19 @@ async def export_user_backup(
     db: DbSession,
 ) -> FileResponse:
     """始终导出全量数据；恢复范围在导入时选择。"""
+    # 各表在同一只读快照中读取，并发写入不会让会话与消息等关联表相互错位；鉴权依赖已让会话开启事务，须先结束才能设置隔离级别。
+    await db.rollback()
+    await db.connection(execution_options={"isolation_level": "REPEATABLE READ", "postgresql_readonly": True})
     user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
     rows_by_table = {tbl: await serialize_rows(db, tbl, user_id) for tbl in TABLES}
+    # 用 commit 而非 rollback 结束快照：rollback 会使 user 过期，打包线程读取其属性将触发懒加载；打包与下载可能持续数分钟，不能占着事务。
+    await db.commit()
     files = await asyncio.to_thread(collect_files_for_export, user_id, rows_by_table)
 
     fd, tmp = tempfile.mkstemp(prefix="spiritagent-export-", suffix=".zip")
     os.close(fd)
     try:
-        await asyncio.to_thread(_create_export_zip, tmp, user, admin, rows_by_table, files)
+        await asyncio.to_thread(write_backup_archive, Path(tmp), user, admin, rows_by_table, files)
         filename = f"spiritagent-user-{user_id}-{datetime.now(UTC):%Y%m%d%H%M%S}.zip"
         return FileResponse(
             path=tmp,
@@ -364,7 +314,12 @@ async def import_user_backup(
             while chunk := await file.read(ARCHIVE_UPLOAD_CHUNK_BYTES):
                 await asyncio.to_thread(out.write, chunk)
 
-        await asyncio.to_thread(_extract_and_validate_zip, zip_path, extract_root)
+        try:
+            await asyncio.to_thread(extract_backup_archive, zip_path, extract_root)
+        except BackupArchiveTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except BackupArchiveError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
         try:
             manifest = await asyncio.to_thread(load_manifest, extract_root)

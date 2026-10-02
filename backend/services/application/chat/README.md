@@ -14,22 +14,22 @@
 | [turn_inputs.py](turn_inputs.py) | 回合装配：历史转换、Token 估算、工具开关、推理与会话设置合并 |
 | [prompt_presets.py](prompt_presets.py) / [prompt_blocks.py](prompt_blocks.py) | 预设体与工具排除集合、共享块渲染 |
 | [system_prompt.py](system_prompt.py) / [streaming.py](streaming.py) | 系统提示词与每次模型调用前的环境、动作快照；请求装配（日期刷新、回复格式与可用媒体）及流式/非流式调用 |
-| [title_generator.py](title_generator.py) / [context_compressor.py](context_compressor.py) | 标题、运行时压缩 |
+| [title_generator.py](title_generator.py) / [context_compressor.py](context_compressor.py) | 标题（请求只取首条用户消息的文字，附件地址不进请求；只有附件时文字为空串，仍依据助手回复生成）、运行时压缩 |
 | [reply_delivery.py](reply_delivery.py) / [bubble.py](bubble.py) | 陪伴气泡 schema 与校验、文本流分泡 |
 | [tool_dispatch.py](tool_dispatch.py) / [delegation.py](delegation.py) | 工具派发与 `DelegateAction` 执行层接管 |
 | [persistence.py](persistence.py) | 工具调用行与结果落库、同步本回合输入并按 `search_tools` 结果解锁工具（批执行在 tool_dispatch）；终端回复落库、语音合成与 `message.complete` 交付；回合后任务调度；压缩检查点落库 |
-| [message_sanitization.py](message_sanitization.py) | 工具参数 JSON 修复、确定性窗口截断 |
+| [message_sanitization.py](message_sanitization.py) | 工具参数 JSON 修复（修复尾逗号、多余或缺失的括号与字符串内的裸控制字符，不改变字符串内容；无法修复或不是对象时返回 `None`）、确定性窗口截断 |
 | [chat_emitter.py](chat_emitter.py) | 事件发射接口与捕获全部帧的 `HeadlessEmitter` |
-| [slash_commands.py](slash_commands.py) | 斜杠命令静态注册表（与预设正交，不走 LLM tool_call）；clear、compress、remember 的实现在 [desktop handlers](../../adapters/desktop/handlers.py)；客户端 [slash-commands.ts](../../../../client/renderer/shared/lib/slash-commands.ts) 仅有自动补全/确认弹窗用的元数据镜像，`command.dispatch` 是唯一权威 |
-| [native_memory.py](native_memory.py) / [background_review.py](background_review.py) | 模型记忆工具执行、回合后记忆审阅 |
+| [turn_errors.py](turn_errors.py) | 回合失败的 `error` 帧：面向用户的本地化 `message` 与英文诊断串 `detail` |
+| [native_memory.py](native_memory.py) / [background_review.py](background_review.py) | 模型记忆工具执行（参数先校验；校验失败与已脱敏的 LLM 失败原因交给模型，数据库及其他异常的原文只进日志，工具结果仅返回通用失败）、回合后记忆审阅 |
 
-`run_chat_turn` 的调用方：桌面 `prompt.submit`（[handlers](../../adapters/desktop/handlers.py)）；IM（[bridge](../../adapters/channels/bridge.py)，复用已落库的入站消息，`headless`）；定时任务（[standard_turns](../automation/standard_turns.py)，`headless`）；主动陪伴（[companion_turns](../automation/companion_turns.py)，`ephemeral` 与 `headless`，排除发消息与委派工具，轮数上限为 `companion_max_loop_turns`）；子 Agent 委派（[delegation](delegation.py)，传入 `HeadlessEmitter`，沿用父回合的 `headless`）。
+`run_chat_turn` 的调用方：桌面 `prompt.submit`（[handlers](../../adapters/desktop/handlers.py)）；IM（[bridge](../../adapters/channels/bridge.py)，复用已落库的入站消息，`headless`）；定时任务（[standard_turns](../automation/standard_turns.py)，`headless`）；主动陪伴（[companion_turns](../automation/companion_turns.py)，`ephemeral` 与 `headless`，排除发消息与委派工具，轮数上限为 `companion_max_loop_turns`）；子 Agent 委派（[delegation](delegation.py)，传入 `HeadlessEmitter`，沿用父回合的 `headless`，并以 `has_viewer=False` 缓冲交付、不做气泡停顿）。
 
 提示词主体文本集中在 [prompts](../../../prompts/README.md)。
 
 ## 提示词与运行时数据
 
-- 身份、用户资料、记忆、附件和工具结果都是资料，不扩大权限；陪伴工具续轮继续使用同一完整预设。专业预设只装配职业目标与本域资料，automation 保持独立任务边界。
+- 身份、用户资料、记忆、附件和工具结果都是资料，不扩大权限；陪伴工具续轮继续使用同一完整预设。专业预设只装配职业目标与本域资料，automation 保持独立任务边界。专业预设共用工作预设体，仅靠[预设目录](../../domains/conversation/presets.py)条目和 `PRESET_HEADER_TEXTS`（[prompts/chat.py](../../../prompts/chat.py)）中的双语头部区分，缺少头部时回合装配直接报错；生活空间工具默认只对陪伴预设开放，新增预设无需另行登记工具排除。
 - 主动回合的沉默规则属于系统指令，意图、档位和未兑现等待属于尾部资料；陪伴预设每回合附加未兑现等待意图，并标明其不是用户发言或已完成操作。普通用户回合不注入沉默选项。每次模型调用（含工具续轮）由 `build_companion_environment_prompt` 追加环境与动作快照：有场景时此刻着装以场景成品描述中的可见造型为准，无场景才注入当前着装，两种来源都附着装与表现相称的说明；动作快照另列动作素材中的着装。常规档主动回合不提供语音与视觉表达工具。
 - 桌面客户端标识与 IM 渠道键换成对应渠道说明，无客户端资料时使用桌面说明，其他自由文本原样作为资料；设备环境带标题单独装配，环境资料和工具指令分别装配，关闭工具不等于没有环境资料。search_tools 的业务域清单在预设与调用方排除后重算。
 - 任务通过 `instructions` 定义，JSON 输入承载资料，输出由代码校验；生活空间回复格式与 schema 按音色和可引用产物动态装配，无产物时不提供媒体气泡。格式恢复与手动重试不附加调用工具的说明，主动回合的恢复仍允许 `[]`。基础提示词预览不能代表最终请求，修改遵循 [RULES](../../../../RULES.md#提示词设计与修改规范)。
@@ -67,15 +67,17 @@ Token 估算以最近一条带用量的助手行及其后新增内容为基线�
 
 ### 派发、委派与资源关闭
 
-[orchestrator.py](orchestrator.py)按轮数上限循环，委派由执行层接管 `DelegateAction`，工具处理器不反向调用聊天入口。整批调用只有在全为只读白名单或目标路径互不重叠的文件操作时才并发；工具开关每回合重读。
+[orchestrator.py](orchestrator.py)按轮数上限循环，委派由执行层接管 `DelegateAction`，工具处理器不反向调用聊天入口。整批调用只有在全为只读白名单或目标路径互不重叠的文件操作时才并发；工具开关每回合重读：用户已禁用工具集中的 backend/memory 工具与会话预设、调用方排除项并入同一排除集合，装配、`search_tools` 解锁和派发层共用，模型调用未提供 schema 的已禁用工具时同样被拒绝。参数无法修复为 JSON 对象时不派发，向模型返回参数错误并计入无进展守卫，`tool.start` 与 `tool.complete` 照常成对发出；参数含用户数据与凭据，修复日志只记录长度。
 
 预设、工具排除、记忆域和回合后整理由会话决定（`is_automation` 与 `system_preset_id='automation'` 等价），调用方只追加本轮排除项。`ephemeral` 只用于主动陪伴：请求作为尾部资料、不落库、允许沉默；`ephemeral` 与自动化回合都不计用户接触。
 
-交付模式由会话和 `headless` 决定：`special + companion` 会话非流式校验完整回复；无头或 IM 回合缓冲正文，其余流式推送。
+交付模式由会话、`headless` 与 `has_viewer` 决定：`special + companion` 会话非流式校验完整回复；无头、IM 或无观看者（`has_viewer=False`，子 Agent 委派）的回合缓冲正文，其余流式推送。气泡停顿只在有观看者且非无头时发生；`headless` 另决定本机工具调用是否显示桌面工作态，不表示有无观看者。
 
 [delegation.py](delegation.py)为每次委派在发起会话下新建子会话（`parent_id`），继承预设与自动化归属；子回合事件由 `HeadlessEmitter` 捕获、不推送到会话流，最终结果作为工具结果返回。子会话的列表与删除语义见 [PROTOCOL](../../../../docs/PROTOCOL.md#会话种类与历史修改)。
 
 供应商回退锁定独立于正文缓冲，不能因用户尚未看到文字就认为请求尚未开始；成功、异常和取消都关闭响应流，缓冲正文在连接释放后交付。终端正文、重试、分气泡和 TTS 幂等见 [PROTOCOL](../../../../docs/PROTOCOL.md#结构化回复与终端交付)。
+
+回合失败的 `error` 帧由 [turn_errors.py](turn_errors.py) 构造（回复格式错误帧除外，由 orchestrator 内联发出，不带 `detail`）：`message` 的约定见 [PROTOCOL](../../../../docs/PROTOCOL.md#会话种类与历史修改)，模型配置缺失按链为空与会话带视频却没有视频理解模型分别给出引导语；`detail` 保留英文诊断串，只供无头消费者（`HeadlessEmitter.error`：委派结果、主动回合失败原因）与 IM 日志读取，不下发客户端。Responses 流内的 `error` 事件按供应商错误分类，以 `LLMRuntimeError` 结束本轮。装配阶段的模型配置缺失在用户消息已落库时同样发带 `retry_message_id` 的帧；主动回合没有用户消息，仍以异常交调用方记录。
 
 格式校验失败的常规日志记录供应商、模型、响应 ID、完成状态、用量、错误类型、脱敏路径与是否为恢复尝试；不记录可能含原文的错误消息和未知字段名。原始请求和响应预览仅走显式启用的 [LLM 调试日志](../../../README.md#llm-调试日志)。
 

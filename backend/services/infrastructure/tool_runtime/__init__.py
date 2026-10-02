@@ -10,6 +10,7 @@ from .tool_dispatch_helpers import (
 )
 from .tool_guardrails import ToolCallGuardrailController, check_file_safety
 from .tool_result_classification import file_mutation_result_landed
+from .toolsets import disabled_backend_tool_names
 
 __all__ = [
     "REGISTRY",
@@ -19,6 +20,7 @@ __all__ = [
     "apply_search_tools_catalog",
     "check_file_safety",
     "coerce_tool_args",
+    "disabled_backend_tool_names",
     "file_mutation_result_landed",
     "is_multimodal_tool_result",
     "make_tool_result_message",

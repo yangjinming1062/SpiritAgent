@@ -27,6 +27,7 @@ from .models import (
     CompanionMediaReview,
     CompanionOutfit,
     FullbodyCandidate,
+    OutfitSource,
     Persona,
 )
 from .models_loop import COMPANION_CRON_SOURCE_PREFIX, CompanionIntent, companion_cron_source_key
@@ -54,6 +55,7 @@ from .schemas import (
     ImageAdoptRequest,
     ImagePromptResponse,
     ImageReviseMode,
+    MediaReviewPublication,
     MediaReviewResponse,
     OnboardingStateResponse,
     OutfitAdoptRequest,
@@ -200,6 +202,7 @@ __all__ = [
     "parse_content_rect",
     "AvatarAssetResponse",
     "FullbodyCandidateResponse",
+    "MediaReviewPublication",
     "MediaReviewResponse",
     "AvatarFromImageRequest",
     "AvatarGenerateRequest",
@@ -208,6 +211,7 @@ __all__ = [
     "CompanionDiaryEntry",
     "CompanionOperationResponse",
     "CompanionOutfit",
+    "OutfitSource",
     "CompanionScene",
     "DiaryContent",
     "DiaryReadRequest",

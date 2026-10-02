@@ -2,7 +2,7 @@ from modules.channels import ChannelCapabilities, ChannelInfo
 
 from .base import ChannelAdapter
 
-# channel_name → 适配器类；bootstrap/registrations.py 显式注册，未注册的渠道 PUT/启动均明确失败。
+# 渠道键 → 适配器类；bootstrap/registrations.py 显式注册，未注册的渠道 PUT/启动均明确失败。
 _REGISTRY: dict[str, type[ChannelAdapter]] = {}
 
 
@@ -29,8 +29,6 @@ def channels_info() -> list[ChannelInfo]:
             title=cls.conversation_title,
             capabilities=ChannelCapabilities(
                 supports_typing=cls.supports_typing,
-                supports_media=cls.supports_media,
-                can_initiate=cls.can_initiate,
                 requires_login=cls.requires_login,
             ),
         )

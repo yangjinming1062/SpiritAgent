@@ -47,9 +47,10 @@ from services.domains.companion import (
     note_outreach_throttle,
     queue_companion_intent,
 )
-from services.domains.memory import review_memories
+from services.domains.memory import memory_review_backed_off, review_memories
 from services.infrastructure.desktop import MANAGER
 from services.infrastructure.event_store import run_outbox_gc
+from services.infrastructure.llm import resolve_user_llm_config
 
 logger = get_logger(__name__)
 
@@ -94,7 +95,7 @@ _SCHEDULER = BackgroundTask("scheduler.cron_loop")
 
 
 async def drain() -> None:
-    """取消并 await 所有后台 task，容忍 CancelledError；由 main.py lifespan 关停时调用，避免 SIGTERM 在 db.commit() 中途被 engine 释放。"""
+    """取消并 await 所有后台 task，容忍 CancelledError；由 bootstrap/lifecycle.py 的停机 drain 调用，避免 SIGTERM 在 db.commit() 中途被 engine 释放。"""
     await _BG.drain()
 
 
@@ -291,6 +292,7 @@ async def _advance_due_jobs(due_jobs: list[Row], now: datetime) -> None:
                 name=job.name,
                 prompt=job.prompt,
                 conversation_id=job.conversation_id,
+                one_shot=job.one_shot,
             ),
         )
         for job in fired
@@ -401,8 +403,19 @@ async def _maybe_run_outbox_gc(now: datetime) -> None:
     await run_outbox_gc()
 
 
+async def _review_scope_memories(scope: MemoryScope) -> bool:
+    """审阅一个作用域的记忆；没有可用 LLM 配置时只记录并跳过（返回 False），不算失败。"""
+    async with session_scope() as db:
+        llm_config = await resolve_user_llm_config(db, scope.user_id)
+    if not llm_config.is_configured:
+        logger.info("memory_review: skipped, missing llm config", extra={"user_id": scope.user_id})
+        return False
+    await review_memories(scope, llm_config=llm_config)
+    return True
+
+
 async def _maybe_run_memory_review(now: datetime) -> None:
-    """为有记忆或待审核消息的预设执行证据维护——外层按 _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS 节流，per-user 按 SETTINGS.memory_review_interval_seconds 节流，并发通过 gather 单 tick 只付最大 LLM 延迟。"""
+    """为有记忆或待审核消息的预设执行证据维护——外层按 _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS 节流，per-user 按 SETTINGS.memory_review_interval_seconds 节流，失败后的作用域在记忆域退避期内跳过，并发通过 gather 单 tick 只付最大 LLM 延迟。"""
     global _LAST_MEMORY_REVIEW_SCAN
     if now.timestamp() - _LAST_MEMORY_REVIEW_SCAN < _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS:
         return
@@ -427,12 +440,14 @@ async def _maybe_run_memory_review(now: datetime) -> None:
             continue
         if now.timestamp() - _LAST_MEMORY_REVIEW.get(scope, 0.0) < SETTINGS.memory_review_interval_seconds:
             continue
+        if memory_review_backed_off(scope):
+            continue
         eligible.append(scope)
     if not eligible:
         return
 
-    # 预设级节流只在维护成功之后才生效——LLM 失败不该把用户锁在后续尝试之外。
-    tasks = [asyncio.create_task(review_memories(scope), name=f"scheduler.memory.{scope}") for scope in eligible]
+    # 预设级节流只在维护成功之后才生效；失败后的重试间隔由记忆域退避控制，不把用户永久锁在尝试之外。
+    tasks = [asyncio.create_task(_review_scope_memories(scope), name=f"scheduler.memory.{scope}") for scope in eligible]
     for scope, task in zip(eligible, tasks, strict=True):
         track_user_task(scope.user_id, task)
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -446,7 +461,8 @@ async def _maybe_run_memory_review(now: datetime) -> None:
                 extra={"user_id": uid},
             )
             continue
-        _LAST_MEMORY_REVIEW[scope] = now.timestamp()
+        if result:
+            _LAST_MEMORY_REVIEW[scope] = now.timestamp()
 
 
 async def _maybe_run_autonomous_activity(now: datetime) -> None:

@@ -30,11 +30,9 @@ STARTUP_ONLY_KEYS: frozenset[str] = frozenset(
         "admin_password",
         "companion_asset_signing_key",
         "data_dir",
-        "rate_limit_storage_url",
         "metrics_enabled",
         "metrics_path",
         "app_name",
-        "api_prefix",
     },
 )
 

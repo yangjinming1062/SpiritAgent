@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import json
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from datetime import timedelta
 from pathlib import Path
 
@@ -52,7 +52,7 @@ from services.infrastructure.llm import (
     execute_with_fallback,
     resolve_provider_chain,
 )
-from services.infrastructure.video_processing import probe_video, sample_key_frames
+from services.infrastructure.video_processing import VideoToolUnavailableError, probe_video, sample_key_frames
 
 from .avatar_service import load_avatar_bytes_as_data_uri
 from .identity_review import score_character_frames
@@ -71,6 +71,8 @@ _INFLIGHT: set[int] = set()
 _BG = TaskBag("media.video_jobs")
 _TERMINAL_STATUSES = ("succeeded", "failed", "result_unknown")
 _RESULT_UNKNOWN_MESSAGE = "视频提交结果不确定，供应商可能已接单；为避免重复计费，系统没有自动重试"
+# 供应商任务可能仍在进行或已计费，终态记为 result_unknown 而非可重试的失败。
+_RESULT_UNKNOWN_REASONS = frozenset({"submit_result_unknown", "timeout"})
 _DOWNLOAD_ATTEMPTS = 3
 
 
@@ -172,26 +174,30 @@ async def _score_self_video(
     identity_uri: str | None = None,
     identity_text: str = "",
 ) -> tuple[str, int | None]:
-    if not identity_path:
-        return "unavailable", None
-
-    async with SESSION_LOCAL() as db:
-        current_seed = await db.scalar(
-            select(AvatarAsset.seed_fullbody_url).where(
-                AvatarAsset.user_id == user_id,
-                AvatarAsset.active.is_(True),
-            ),
-        )
-    if current_seed != identity_path:
-        return "stale", None
+    """核查候选可解码性，出镜时再评分。undecodable 表示成品本身不可解码，可换下一家；文件缺失、探测工具不可用不是成品问题，返回 invalid，仅非出镜视频在工具不可用时返回 unavailable 照常交付。"""
+    if identity_path:
+        async with SESSION_LOCAL() as db:
+            current_seed = await db.scalar(
+                select(AvatarAsset.seed_fullbody_url).where(
+                    AvatarAsset.user_id == user_id,
+                    AvatarAsset.active.is_(True),
+                ),
+            )
+        if current_seed != identity_path:
+            return "stale", None
     local = _stored_asset_file(user_id, video_url)
     if local is None:
         return "invalid", None
     try:
         await asyncio.to_thread(probe_video, local)
+    except VideoToolUnavailableError:
+        logger.warning("chat video probe tool unavailable", extra={"user_id": user_id}, exc_info=True)
+        return ("invalid" if identity_path else "unavailable"), None
     except Exception:
         logger.warning("chat video cannot be decoded", extra={"user_id": user_id}, exc_info=True)
-        return "invalid", None
+        return "undecodable", None
+    if not identity_path:
+        return "unavailable", None
     try:
         identity_uri = identity_uri or await asyncio.to_thread(load_avatar_bytes_as_data_uri, identity_path)
     except Exception:
@@ -276,7 +282,7 @@ async def _add_channel_delivery(
 
 
 async def get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoGenJob | None:
-    """按 user_id 过滤，避免 GET 接口泄露其他用户的任务。"""
+    """按 user_id 过滤：task_id 来自模型的工具参数，只能读到本用户的任务；会话归属由调用方核对。"""
 
     stmt = select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id)
     return (await db.execute(stmt)).scalar_one_or_none()
@@ -342,6 +348,24 @@ async def ensure_video_capability(
         hints.append("可选分辨率：" + "、".join(options))
     detail = "；".join(hints) or "同一供应商不同时支持所选时长与分辨率，请调整其一"
     raise MissingLlmConfigError(f"已配置的视频供应商不支持本次的时长或分辨率（{detail}）")
+
+
+async def select_video_resolution(
+    user_id: int,
+    *,
+    first_frame: bool,
+    duration: int,
+    preferred: Sequence[str],
+) -> str | None:
+    """按偏好顺序返回供应商链里有能接单的第一档分辨率，大小写写法沿用首个可接单供应商的声明；没有则返回 None，由调用方在付费前处理。"""
+    async with SESSION_LOCAL() as db:
+        chain = await resolve_provider_chain(db, user_id, "video_gen")
+    for resolution in preferred:
+        compatible = _compatible_video_configs(chain, first_frame=first_frame, duration=duration, resolution=resolution)
+        if compatible:
+            declared = build_provider(compatible[0], VideoGenProvider).resolutions or ()
+            return next((value for value in declared if value.lower() == resolution.lower()), resolution)
+    return None
 
 
 async def enqueue_video_job(
@@ -421,7 +445,7 @@ _FAILURE_COPY: dict[str, str] = {
     "provider_unavailable": "视频生成服务配置已变更，请稍后重试",
     "provider_failed": "视频生成失败，请稍后重试",
     "download_failed": "视频下载失败，请稍后重试",
-    "timeout": "视频生成超时，请稍后重试",
+    "timeout": "视频生成超过等待时限，供应商任务可能仍在进行；为避免重复计费，系统没有自动重试",
     "worker_failed": "视频生成服务异常，请稍后重试",
     "identity_changed": "角色外形已更新，旧参考生成的视频未交付",
     "quality_failed": "视频文件无法完成质量核查，请稍后重试",
@@ -429,32 +453,32 @@ _FAILURE_COPY: dict[str, str] = {
 
 
 async def _record_failure(job_id: int, *, reason: str) -> None:
-    """保存失败终态；聊天交付与状态同事务，错误文案不含供应商原文。"""
+    """保存失败终态；聊天交付与状态同事务，错误文案不含供应商原文。终态不交付视频，已下载的成品与候选在提交后删除。"""
     logger.warning("video job failure", extra={"job_id": job_id, "reason": reason})
     user_msg = _FAILURE_COPY.get(reason, "视频生成失败，请稍后重试")
     async with SESSION_LOCAL() as db:
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
         if row is None or row.status in _TERMINAL_STATUSES:
             return
-        row.status = "result_unknown" if reason == "submit_result_unknown" else "failed"
+        row.status = "result_unknown" if reason in _RESULT_UNKNOWN_REASONS else "failed"
         row.error_reason = reason
         row.error_message = user_msg
+        discarded = (row.candidate_video_url, row.video_url)
+        row.candidate_video_url = row.video_url = None
         session_id = row.session_id
         if row.structured_reply:
             await update_video_reply(db, row)
-            await db.commit()
-            return
-        if not session_id:
-            await db.commit()
-            return
-        emit_ws_event(
-            db,
-            user_id=row.user_id,
-            event_type="video_gen.failed",
-            payload={"task_id": str(job_id), "error": user_msg, **({"session_id": session_id} if session_id else {})},
-        )
-        await _add_channel_delivery(db, session_id, text=f"视频生成失败（任务 {job_id}）：{user_msg}", media=[])
+        elif session_id:
+            emit_ws_event(
+                db,
+                user_id=row.user_id,
+                event_type="video_gen.failed",
+                payload={"task_id": str(job_id), "error": user_msg, "session_id": session_id},
+            )
+            await _add_channel_delivery(db, session_id, text=f"视频生成失败（任务 {job_id}）：{user_msg}", media=[])
         await db.commit()
+    for path in discarded:
+        await asyncio.to_thread(unlink_companion_asset, path)
 
 
 async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> None:
@@ -555,6 +579,20 @@ async def _evaluate_stored_video(job_id: int) -> str:
         if outcome == "invalid":
             return "invalid"
         state = MediaChainState.model_validate_json(row.generation_state_json)
+        if outcome == "undecodable":
+            if not state.needs_next():
+                return "invalid"
+            logger.warning(
+                "video candidate cannot be decoded; trying next provider",
+                extra={"job_id": job_id, "chain_index": row.generation_attempt_index},
+            )
+            row.candidate_video_url = None
+            row.status = "retry_pending"
+            state.phase = "ready"
+            row.generation_state_json = state.model_dump_json()
+            await db.commit()
+            await asyncio.to_thread(unlink_companion_asset, candidate)
+            return "retry"
         entry = MediaCandidate(path=candidate, attempt=row.generation_attempt_index)
         state.candidates.append(entry)
         state.accept_score(entry, score)
@@ -573,7 +611,15 @@ async def _evaluate_stored_video(job_id: int) -> str:
     return decision
 
 
+def _no_submission_reason(stop_reason: str, submit_failed: bool) -> str:
+    """没有可提交的供应商时的失败原因：此前提交失败的如实报告，结果未知不当作普通失败；只有供应商配置失效才报服务配置变更。"""
+    if stop_reason == "result_unknown":
+        return "submit_result_unknown"
+    return "submit_failed" if stop_reason or submit_failed else "provider_unavailable"
+
+
 async def _submit_next_video(job_id: int, user_id: int) -> bool:
+    submit_failed = False
     while True:
         async with SESSION_LOCAL() as db:
             row = await db.get(VideoGenJob, job_id)
@@ -583,7 +629,7 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             params = _VideoJobParams.model_validate_json(row.params_json)
             prompt = row.prompt
         if state.stop_reason or state.next_index >= len(state.providers):
-            await _fail_or_keep_best(job_id, "provider_unavailable")
+            await _fail_or_keep_best(job_id, _no_submission_reason(state.stop_reason, submit_failed))
             return False
         index = state.next_index
         config = await resolve_frozen_media_provider(user_id, "video_gen", state.providers[index])
@@ -630,17 +676,26 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             submitted = await execute_with_fallback([config], VideoGenProvider, submit, user_id=user_id)
         except Exception as exc:
             reason, can_continue = media_failure_reason(exc)
+            classified = classify_api_error(exc)
+            logger.warning(
+                "video submit failed",
+                extra={
+                    "job_id": job_id,
+                    "provider": config.provider_name,
+                    "model": config.model,
+                    "chain_index": index,
+                    "reason": reason,
+                    "can_continue": can_continue,
+                    "status_code": classified.status_code,
+                    "error": classified.message,
+                },
+            )
             state.phase = "ready"
-            if not can_continue:
+            if not can_continue or state.next_index >= len(state.providers):
                 state.stop_reason = reason
             await _update_job(job_id, status="retry_pending", generation_state_json=state.model_dump_json())
-            if can_continue:
-                continue
-            await _fail_or_keep_best(
-                job_id,
-                "submit_result_unknown" if reason == "result_unknown" else "submit_failed",
-            )
-            return False
+            submit_failed = True
+            continue
         state.phase = "processing"
         await _update_job(
             job_id,
@@ -665,7 +720,8 @@ async def _fail_or_keep_best(job_id: int, reason: str) -> None:
     if row is not None and row.video_url:
         state = MediaChainState.model_validate_json(row.generation_state_json)
         state.stop_reason = state.stop_reason or reason
-        await _update_job(job_id, generation_state_json=state.model_dump_json())
+        await _update_job(job_id, generation_state_json=state.model_dump_json(), candidate_video_url=None)
+        await asyncio.to_thread(unlink_companion_asset, row.candidate_video_url)
         await _finalize_best_video(job_id, warning="自动重生成未能完成，已保留此前最佳视频")
     else:
         await _record_failure(job_id, reason=reason)

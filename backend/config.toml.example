@@ -12,10 +12,8 @@
 # ─────────────────────────────────────────────────────────────────────
 
 [runtime]
-# 后端服务名称（用于日志、文档及 OpenAPI 标识）
+# FastAPI / OpenAPI 文档标题
 app_name = "SpiritAgent Backend"
-# 统一 API 路由前缀
-api_prefix = "/api"
 
 [database]
 # 数据库连接 URL（SQLAlchemy 格式）。在 Docker Compose 环境中服务名为 postgres（端口 5432）
@@ -37,10 +35,6 @@ admin_password = "spiritagent@admin123"
 [storage]
 # 后端磁盘数据与产物存储根目录（支持相对或绝对路径）
 data_dir = "./data"
-
-[rate_limit]
-# 速率限制器后端存储 URL（为空时默认使用进程内内存存储；生产高可用可配置 redis://...）
-rate_limit_storage_url = ""
 
 [observability]
 # 是否开启 Prometheus 指标端点（冷启动挂载）

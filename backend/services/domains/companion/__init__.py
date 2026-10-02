@@ -72,7 +72,6 @@ from .scenes import (
     response_for_scene,
     scene_environment,
 )
-from .session_preset import is_work_preset
 from .should_act import invalidate_user_should_act, should_act
 from .voice_catalog import (
     design_voice,
@@ -137,7 +136,6 @@ __all__ = [
     "invalidate_user_interaction_stats",
     "invalidate_user_should_act",
     "is_still",
-    "is_work_preset",
     "list_tts_voices",
     "load_persona_definition",
     "match_user_voice",

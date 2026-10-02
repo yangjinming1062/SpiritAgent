@@ -2,7 +2,7 @@
 
 from .connection import MANAGER, set_event_loop_hooks
 from .ipc import discard_user, dispatch_device_call, resolve_future
-from .jsonrpc import JsonRpcDispatcher, JsonRpcError
+from .jsonrpc import JsonRpcDispatcher, JsonRpcError, redact_message
 
 __all__ = [
     "MANAGER",
@@ -10,6 +10,7 @@ __all__ = [
     "JsonRpcError",
     "discard_user",
     "dispatch_device_call",
+    "redact_message",
     "resolve_future",
     "set_event_loop_hooks",
 ]

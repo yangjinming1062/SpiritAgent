@@ -1,7 +1,7 @@
 """动作库跨边界 schema：工具入参、REST 响应、播放指令与回执。source / user_id / 预算日 / 系统槽位由服务端绑定。"""
 
 import json
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -70,8 +70,8 @@ class ActionDesignRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=64)
     motion_description: str = Field(min_length=10, max_length=600)
-    use_when: list[str] = Field(default_factory=list, max_length=8)
-    avoid_when: list[str] = Field(default_factory=list, max_length=8)
+    use_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
+    avoid_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
     reason: str = Field(min_length=1, max_length=400)
     duration_seconds: float = Field(ge=1, le=ABSOLUTE_MAX_DURATION_SECONDS)
     clip_kind: str = Field(pattern="^(loop|once)$")
@@ -133,8 +133,6 @@ class ActionPlayCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     play_id: str
-    target_device: str = ""
-    target_surface: str = ""
     pack_id: int
     appearance_epoch: int
     action_id: int

@@ -1,3 +1,4 @@
+import { type VideoActionKey, videoActionNames } from '@/modules/character'
 import { ChatMediaCard } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
 import { SECTION_TITLE } from '@/shared/panel'
@@ -7,11 +8,14 @@ interface PendingMediaReview {
   id: number
   media_type: 'image' | 'video'
   media_url: string
+  system_slot: '' | VideoActionKey
   title: string
 }
 
 export function MediaReviewQueue(): React.JSX.Element {
-  const t = useStrings().settings.persona
+  const dict = useStrings()
+  const t = dict.settings.persona
+  const slotNames = videoActionNames(dict.living.appearance)
 
   const { data, error, reload, setData } = useAsyncLoader(() =>
     window.spiritagent.api<PendingMediaReview[]>({
@@ -37,15 +41,19 @@ export function MediaReviewQueue(): React.JSX.Element {
         </p>
       )}
       {!failed && rows.length === 0 && <p className="text-xs text-faint">{t.mediaReviewEmpty}</p>}
-      {rows.map(row => (
-        <div className="space-y-1" key={row.id}>
-          {row.title && <p className="text-sm text-fg">{row.title}</p>}
-          <ChatMediaCard
-            item={{ type: row.media_type, url: row.media_url, review_id: String(row.id) }}
-            onReviewed={() => setData(current => current?.filter(item => item.id !== row.id) ?? null)}
-          />
-        </div>
-      ))}
+      {rows.map(row => {
+        const title = row.system_slot ? slotNames[row.system_slot] : row.title
+
+        return (
+          <div className="space-y-1" key={row.id}>
+            {title && <p className="text-sm text-fg">{title}</p>}
+            <ChatMediaCard
+              item={{ type: row.media_type, url: row.media_url, review_id: String(row.id) }}
+              onReviewed={() => setData(current => current?.filter(item => item.id !== row.id) ?? null)}
+            />
+          </div>
+        )
+      })}
     </section>
   )
 }

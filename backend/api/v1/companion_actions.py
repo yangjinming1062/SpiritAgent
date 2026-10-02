@@ -14,9 +14,9 @@ from modules.companion import (
     CompanionAction,
     CompanionOperationResponse,
 )
-from modules.ws import emit_ws_event
 from services.application.actions import accept_proposal, schedule_accepted_proposal
 from services.domains.actions import (
+    emit_catalog_changed,
     get_action,
     get_active_pack,
     get_daily_budget_status,
@@ -37,17 +37,12 @@ async def _republish_catalog(db: AsyncSession, user_id: int) -> None:
     if pack is None:
         return
     try:
-        version = await publish_action_catalog(db, pack)
+        await publish_action_catalog(db, pack)
     except Exception:  # noqa: BLE001 — 目录无法重发时保留已提交的管理操作，记录原因待下次发布补齐
         logger.warning("action catalog republish failed", extra={"pack_id": pack.id}, exc_info=True)
         await db.commit()
         return
-    emit_ws_event(
-        db,
-        user_id=user_id,
-        event_type="companion.action.catalog_changed",
-        payload={"packId": pack.id, "catalogVersion": version, "appearanceEpoch": pack.appearance_epoch},
-    )
+    emit_catalog_changed(db, pack)
     await db.commit()
 
 
@@ -67,6 +62,8 @@ async def get_catalog(user: CurrentUser, db: DbSession) -> ActionCatalogResponse
 
 @router.post("/design", response_model=ActionDesignResult)
 async def design_action(body: ActionDesignRequest, user: CurrentUser, db: DbSession) -> ActionDesignResult:
+    # 鉴权查询已在本会话开启事务；受理可能排在在途评审之后，先结束事务以免带着连接等待。
+    await db.commit()
     acceptance = await accept_proposal(db, user.id, body, source="user_requested")
     await db.commit()
     schedule_accepted_proposal(acceptance, user.id)

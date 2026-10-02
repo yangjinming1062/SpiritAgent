@@ -177,15 +177,7 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
   }
 }
 
-export async function deleteOutfit(outfitId: number): Promise<boolean> {
-  try {
-    await window.spiritagent.api({ path: `/api/companion/outfits/${outfitId}`, method: 'DELETE' })
-    await hydrateWardrobe()
-
-    return true
-  } catch (err) {
-    log.warn('wardrobe', 'deleteOutfit failed', err)
-
-    return false
-  }
+export async function deleteOutfit(outfitId: number): Promise<void> {
+  await window.spiritagent.api({ path: `/api/companion/outfits/${outfitId}`, method: 'DELETE' })
+  await hydrateWardrobe()
 }

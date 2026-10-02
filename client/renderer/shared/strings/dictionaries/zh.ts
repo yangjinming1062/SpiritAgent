@@ -670,7 +670,8 @@ export const dict = {
       otherBusy: '另一条正在撤回',
       failed: '撤回消息失败',
       internalError: '撤回失败：服务端拒绝或网络异常',
-      confirm: '撤回这条消息？此操作将一并删除其后所有消息。'
+      confirm: '撤回这条消息？此操作将一并删除其后所有消息。',
+      extraImagesNotRestored: (count: number) => `输入框一次只能附加一张图片，另有 ${count} 张图片未恢复`
     },
 
     edit: {

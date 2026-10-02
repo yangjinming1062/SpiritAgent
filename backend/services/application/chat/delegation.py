@@ -23,6 +23,7 @@ class TurnRunner(Protocol):
         emitter: Emitter,
         *,
         excluded_tool_names: frozenset[str],
+        has_viewer: bool,
     ) -> Awaitable[None]: ...
 
 
@@ -75,7 +76,15 @@ async def run_delegated_turn(
                 ),
             ),
         )
-        await run_turn(req, llm_config, user_id, headless, excluded_tool_names=_DELEGATED_EXCLUDED_TOOLS)
+        # 帧只进入 HeadlessEmitter，没有观看者：缓冲交付，不做气泡停顿。
+        await run_turn(
+            req,
+            llm_config,
+            user_id,
+            headless,
+            excluded_tool_names=_DELEGATED_EXCLUDED_TOOLS,
+            has_viewer=False,
+        )
 
         if headless.error:
             return tool_error(headless.error)

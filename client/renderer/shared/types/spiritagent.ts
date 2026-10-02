@@ -6,16 +6,12 @@ export interface SessionInfo {
   pinned?: boolean
   /** 服务端是自由字符串；一级值有 'special'、'standard' 与 'im'（IM 桥接会话，桌面端只读）。 */
   kind?: string
-  ended_at: null | number
   id: string
   input_tokens: number
-  is_active: boolean
   last_active: number
   message_count: number
-  model: null | string
   output_tokens: number
   preview: null | string
-  source: null | string
   started_at: number
   title: null | string
   tool_call_count: number
@@ -91,14 +87,12 @@ export type SessionMessage = SessionMessageFields &
     | { content_type: 'multimodal_v1' | 'text'; bubbles?: never }
   )
 
-/** `session.undo_to_message` RPC 的 anchor 子类型：撤回后服务端把锚点行的载荷推回客户端落输入框。 */
+/** `session.undo_to_message` RPC 的 anchor 子类型：撤回后服务端把锚点消息的用户正文与图片退回客户端输入框。 */
 export interface UndoAnchor {
-  /** 锚点行 content（多模态形态以 JSON parts 字符串承载；纯文本则直接是文本）。 */
+  /** 用户正文，不含附件。 */
   text: string
-  /** 与 Message.content_type 对齐：text 或 multimodal_v1。 */
-  content_type?: string
-  /** 与 Message.media_json 对齐：助手媒体时存在；用户行通常为 null。 */
-  media_json?: string | null
+  /** 可重新附加的图片（data URL）；视频随撤回清理，不恢复。 */
+  attachments?: ChatAttachment[]
 }
 
 /** `session.undo_to_message` RPC 的返回形态。 */
@@ -123,7 +117,6 @@ export interface SessionResumeResponse {
 }
 
 export interface SessionRuntimeInfo {
-  branch?: string
   /** 客户端 IM 守卫与语音入口的权威判定源，避免依赖尚未加载的会话列表。 */
   kind?: 'im' | 'special' | 'standard' | (string & {})
   model?: string
@@ -158,8 +151,6 @@ export interface SpiritAgentConfigResponse {
 /** IM 通道桥（/api/channels）——绑定状态视图；凭据字段服务端永不回显。 */
 export interface ChannelCapabilities {
   supports_typing: boolean
-  supports_media: boolean
-  can_initiate: boolean
   requires_login: boolean
 }
 
@@ -183,7 +174,7 @@ export interface ChannelListResponse {
   items: ChannelInfo[]
 }
 
-/** 扫码登录轮询：state ∈ idle|wait|scaned|confirmed|expired|error|login_required|connected。 */
+/** 扫码登录轮询：state ∈ wait|scaned|confirmed|expired|error|login_required|connected；error 文本只由客户端在轮询超时或连续失败时本地写入，服务端不返回。 */
 export interface ChannelLoginState {
   state: string
   qr_image?: string | null

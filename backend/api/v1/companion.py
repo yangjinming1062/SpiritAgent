@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 
@@ -6,6 +7,7 @@ from components import SESSION_LOCAL, SETTINGS, DbSession, get_logger, safe_json
 from fastapi import Body, HTTPException, Request, Response, status
 from modules.auth import CurrentUser, OptionalSession
 from modules.companion import (
+    SYSTEM_SLOTS,
     AvatarAssetResponse,
     AvatarFromImageRequest,
     AvatarGenerateRequest,
@@ -24,6 +26,7 @@ from modules.companion import (
     FullbodyReferenceGenerateRequest,
     ImageAdoptRequest,
     ImagePromptResponse,
+    MediaReviewPublication,
     MediaReviewResponse,
     OnboardingStateResponse,
     OutfitAdoptRequest,
@@ -65,7 +68,6 @@ from services.application.generation import (
     VideoPackStateError,
     accept_fullbody_candidate,
     accept_media_review,
-    activate_outfit,
     activate_video_pack,
     adopt_avatar_seed,
     adopt_fullbody_seed,
@@ -123,9 +125,11 @@ from services.domains.companion import (
     update_persona,
 )
 from services.infrastructure.assets import (
+    UnsupportedImageFormatError,
     client_asset_url,
     resolve_companion_asset_path,
     serve_ranged_file,
+    validate_image_bytes,
     verify_signed_asset_request,
 )
 from services.infrastructure.llm import LLMRuntimeError, MissingLlmConfigError, VisualReasoningError
@@ -137,13 +141,20 @@ logger = get_logger(__name__)
 
 
 def _media_review_response(row: CompanionMediaReview) -> MediaReviewResponse:
+    publication = MediaReviewPublication.model_validate(row.publication) if row.publication else None
+    title = publication.title if publication else ""
+    system_slot = publication.system_slot if publication else ""
+    if publication is not None and "system_slot" not in publication.model_fields_set and title in SYSTEM_SLOTS:
+        # 仅服务升级前登记的待确认系统动作复核项：它们未记录槽位、以槽位键作标题，改由槽位字段交给客户端本地化；这些复核项处理完毕后可删除本段。
+        system_slot, title = title, ""
     return MediaReviewResponse(
         id=row.id,
         status=row.status,
         reason=row.reason,
         media_type=row.media_type,
         media_url=client_asset_url(row.media_url),
-        title=str((row.publication or {}).get("title") or ""),
+        title=title,
+        system_slot=system_slot,
     )
 
 
@@ -308,7 +319,7 @@ async def post_avatar(
             )
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await generate_avatar(user_id=user.id, persona=persona, feedback=body.feedback)
+            asset = await generate_avatar(user_id=user.id, feedback=body.feedback)
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
@@ -320,19 +331,29 @@ async def post_avatar(
     return avatar_response(asset)
 
 
-def _decode_upload_image(image_b64: str, content_type: str | None) -> tuple[bytes, str]:
-    """不支持的 MIME 抛 415；base64 损坏抛 400。"""
+async def _decode_upload_image(image_b64: str, content_type: str | None) -> tuple[bytes, str]:
+    """声明或实际格式不支持抛 415；base64 损坏或图片无法完整解码抛 400。返回按实际字节识别的 MIME，声明类型只做快速拒绝。"""
     normalized = (content_type or "image/png").split(";")[0].strip().lower()
     if normalized not in ALLOWED_AVATAR_UPLOAD_MIME_TYPES:
         raise HTTPException(status_code=415, detail={"error": "仅支持 PNG / JPEG / WebP / GIF 图片"})
     try:
-        return base64.b64decode(image_b64, validate=True), normalized
+        raw = base64.b64decode(image_b64, validate=True)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid base64 image data")
+    try:
+        return await asyncio.to_thread(validate_image_bytes, raw)
+    except UnsupportedImageFormatError:
+        raise HTTPException(status_code=415, detail={"error": "仅支持 PNG / JPEG / WebP / GIF 图片"})
+    except Exception:
+        # Pillow 各格式插件对损坏数据抛出的异常类型不统一，一律按图片无法读取处理。
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "图片无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片"},
+        )
 
 
-def _decode_optional_image(image_b64: str | None, content_type: str | None) -> tuple[bytes | None, str | None]:
-    return _decode_upload_image(image_b64, content_type) if image_b64 else (None, None)
+async def _decode_optional_image(image_b64: str | None, content_type: str | None) -> tuple[bytes | None, str | None]:
+    return await _decode_upload_image(image_b64, content_type) if image_b64 else (None, None)
 
 
 @router.post("/avatar/from-image", response_model=AvatarAssetResponse, status_code=status.HTTP_201_CREATED)
@@ -342,8 +363,8 @@ async def post_avatar_from_image(
     user: CurrentUser,
     body: AvatarFromImageRequest,
 ) -> AvatarAssetResponse:
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
-    pres_raw, pres_content_type = _decode_optional_image(body.presentation_image, body.presentation_content_type)
+    raw, content_type = await _decode_upload_image(body.image, body.content_type)
+    pres_raw, pres_content_type = await _decode_optional_image(body.presentation_image, body.presentation_content_type)
     async with SESSION_LOCAL() as pre_db:
         persona = await get_or_create_persona(pre_db, user.id)
         if not persona.is_complete:
@@ -355,7 +376,6 @@ async def post_avatar_from_image(
         async with get_avatar_job_lock(user.id):
             asset = await regenerate_avatar_from_image(
                 user_id=user.id,
-                persona=persona,
                 data=raw,
                 content_type=content_type,
                 description=body.description,
@@ -395,7 +415,7 @@ async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: 
 @router.post("/avatar/adopt", response_model=AvatarAssetResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_avatar_adopt(request: Request, body: FullbodyAdoptRequest, user: CurrentUser) -> AvatarAssetResponse:
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    raw, content_type = await _decode_upload_image(body.image, body.content_type)
     try:
         async with get_avatar_job_lock(user.id):
             asset = await adopt_avatar_seed(user_id=user.id, data=raw, content_type=content_type)
@@ -430,7 +450,7 @@ async def post_fullbody_reference(
     body: FullbodyReferenceGenerateRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
-    raw, content_type = _decode_optional_image(body.image, body.content_type)
+    raw, content_type = await _decode_optional_image(body.image, body.content_type)
     try:
         asset = await generate_fullbody_reference(
             user.id,
@@ -483,7 +503,7 @@ async def post_fullbody_candidate_accept(
 ) -> AvatarAssetResponse:
     try:
         asset = await accept_fullbody_candidate(user.id, avatar_id, candidate_id)
-    except AvatarGenerationError as exc:
+    except (AvatarGenerationError, VisualReasoningError) as exc:
         raise _avatar_http_error(exc) from exc
     return avatar_response(asset)
 
@@ -556,7 +576,7 @@ async def post_fullbody_adopt(
     user: CurrentUser,
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
     """自备图采纳：用户外部生成的图像按对应种子生成成功的语义落库。"""
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    raw, content_type = await _decode_upload_image(body.image, body.content_type)
     try:
         asset = await adopt_fullbody_seed(
             user_id=user.id,
@@ -564,11 +584,8 @@ async def post_fullbody_adopt(
             data=raw,
             content_type=content_type,
         )
-    except AvatarGenerationError as exc:
+    except (AvatarGenerationError, VisualReasoningError) as exc:
         raise _avatar_http_error(exc)
-    except MissingLlmConfigError as exc:
-        logger.warning("fullbody adopt missing config", extra={"user_id": user.id, "error": str(exc)})
-        raise missing_config_http() from exc
     return asset if isinstance(asset, FullbodyCandidateResponse) else avatar_response(asset)
 
 
@@ -604,7 +621,7 @@ async def post_outfit(
     user: CurrentUser,
     db: DbSession,
 ) -> OutfitResponse:
-    raw, content_type = _decode_optional_image(body.image, body.content_type)
+    raw, content_type = await _decode_optional_image(body.image, body.content_type)
     try:
         outfit = await create_outfit_draft(
             db,
@@ -636,7 +653,7 @@ async def post_outfit_prompt(
     db: DbSession,
 ) -> ImagePromptResponse:
     """自备图提示词（创建语境）：整合链与创建草稿一致；服装参考整合失败只降级着装描述，身份仍由全身种子图锚定。"""
-    raw, content_type = _decode_optional_image(body.image, body.content_type)
+    raw, content_type = await _decode_optional_image(body.image, body.content_type)
     try:
         prompt = await prepare_outfit_prompt(
             db,
@@ -665,7 +682,7 @@ async def post_outfit_adopt(
     db: DbSession,
 ) -> OutfitResponse:
     """自备图采纳（创建语境）：外部生成的立绘按创建草稿语义入库。"""
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    raw, content_type = await _decode_upload_image(body.image, body.content_type)
     try:
         outfit = await adopt_outfit_draft_image(
             db,
@@ -735,7 +752,7 @@ async def post_outfit_regenerate_adopt(
     db: DbSession,
 ) -> OutfitResponse:
     """自备图采纳（草稿重绘语境）：替换草稿/失败外观的立绘，状态回到草稿。"""
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    raw, content_type = await _decode_upload_image(body.image, body.content_type)
     try:
         outfit = await adopt_outfit_regenerate_image(
             db,
@@ -759,19 +776,6 @@ async def post_outfit_confirm(
     """确认入柜：外观立绘转正为持久参考图（ready）。与同模块其他 POST 一致：以可缺省的空模型收 body，空对象不触发 422。"""
     try:
         outfit = await confirm_outfit(db, user.id, outfit_id)
-    except OutfitError as exc:
-        raise _outfit_http_error(exc)
-    return outfit_response(outfit)
-
-
-@router.put("/outfits/{outfit_id}/activate", response_model=OutfitResponse)
-async def put_outfit_activate(
-    outfit_id: int,
-    user: CurrentUser,
-    db: DbSession,
-) -> OutfitResponse:
-    try:
-        outfit = await activate_outfit(db, user.id, outfit_id)
     except OutfitError as exc:
         raise _outfit_http_error(exc)
     return outfit_response(outfit)

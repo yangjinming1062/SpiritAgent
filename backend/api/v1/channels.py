@@ -150,7 +150,7 @@ async def start_weixin_login(
     if adapter is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="weixin adapter not running")
     await adapter.start_login()
-    return ChannelLoginStateResponse(**(await adapter.login_state()))
+    return await adapter.login_state()
 
 
 @router.get("/weixin/login", response_model=ChannelLoginStateResponse)
@@ -158,7 +158,7 @@ async def weixin_login_state(user: CurrentUser) -> ChannelLoginStateResponse:
     """轮询登录状态（Hub 2s 一拉），取值见 ChannelLoginStateResponse；适配器未运行时一律返回 login_required。"""
     adapter = MANAGER.adapter(user.id, WEIXIN_CHANNEL)
     if adapter is not None:
-        return ChannelLoginStateResponse(**(await adapter.login_state()))
+        return await adapter.login_state()
     # 适配器未跑（进程刚重启且绑定未拉起等）：给 Hub 一个可恢复的语义而非报错。
     return ChannelLoginStateResponse(state="login_required")
 

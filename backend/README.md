@@ -22,7 +22,7 @@
 | 附件、上传视频与语音 REST | REST [media.py](api/v1/media.py) / [sessions.py](api/v1/sessions.py)；临时与附件存储 [temp_files.py](components/temp_files.py) / [attachments.py](components/attachments.py)；视频 [chat_videos.py](services/domains/media/chat_videos.py) |
 | 资产存储与签名 | [asset_store.py](services/infrastructure/assets/asset_store.py)；访问契约见 [资产访问与缓存](../docs/PROTOCOL.md#资产访问与缓存) |
 | 桌面与 Runner 更新分发 | [update.py](api/v1/update.py)：管理端“版本管理”上传更新 ZIP，按最新启用版本生成 `latest.yml` / `latest-mac.yml`，原样提供构建时已签名的 `latest-runner.yml`；客户端流程见 [自更新签名](../docs/PROTOCOL.md#自更新签名) |
-| 备份校验与覆盖恢复 | API [admin.py](api/v1/admin.py)；清单、序列化与恢复 [manifest.py](services/domains/backup/manifest.py) / [serializers.py](services/domains/backup/serializers.py) / [restoration.py](services/domains/backup/restoration.py)；维护边界 [maintenance.py](services/adapters/maintenance.py)；核对 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复) |
+| 备份校验与覆盖恢复 | API [admin.py](api/v1/admin.py)；包布局与解压校验 [archive.py](services/domains/backup/archive.py)，清单、序列化与恢复 [manifest.py](services/domains/backup/manifest.py) / [serializers.py](services/domains/backup/serializers.py) / [restoration.py](services/domains/backup/restoration.py)；维护边界 [maintenance.py](services/adapters/maintenance.py)；核对 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复) |
 | 提示词、启动与事件恢复 | [提示词索引](prompts/README.md)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py)、[event_store/loop.py](services/infrastructure/event_store/loop.py) |
 
 ## 设计意图
@@ -57,8 +57,7 @@
 | companion → actions | 只读当前包动作目录快照 |
 | backup → actions | 恢复动作资产后重建目录并复用发布校验 |
 | backup → memory | 从恢复的日记原文重建召回索引 |
-| automation → chat / nightly | 复用自动化执行流程 |
-| chat → nightly | 回合后整理 |
+| automation → chat | 复用对话回合编排（`run_chat_turn` / `HeadlessEmitter`） |
 | nightly → generation / posts | 夜间资产与独立动态发布 |
 | posts → generation | 复用图片、视频与身份生成能力 |
 | application/actions → generation | 制作动作素材 |
@@ -69,7 +68,7 @@
 
 ### API 入口
 
-`api/v1/*.py` 通过 `router = get_router()` 自动发现，负责鉴权、限流和 DTO 组装。WS 从 `api/v1/chat.py` 进入，RPC 注册在 [desktop handlers](services/adapters/desktop/handlers.py)。管理页面位于 `static/admin.html`；页面可加载不代表管理 API 免鉴权。
+`api/v1/*.py` 通过 `router = get_router()` 自动发现，负责鉴权、限流和 DTO 组装。WS 从 `api/v1/chat.py` 进入，RPC 注册在 [desktop handlers](services/adapters/desktop/handlers.py)，斜杠命令注册表在同目录 [slash_commands.py](services/adapters/desktop/slash_commands.py)；客户端 [slash-commands.ts](../client/renderer/shared/lib/slash-commands.ts) 只镜像自动补全与确认弹窗用的元数据，`command.dispatch` 是唯一权威。管理页面位于 `static/admin.html`；页面可加载不代表管理 API 免鉴权。
 
 ## 配置与运行生命周期
 
@@ -83,7 +82,7 @@
 
 用户偏好 `user_settings` 同样按点键逐值 JSON 编码（桌面配置同步与服务端写入如时区共用同一格式），只经 [modules/settings](modules/settings/values.py) 读写，读取即得解码后的原值，消费方不自行解析。
 
-启动执行 Alembic 升级。未部署时可调整 baseline，部署后追加迁移；迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，迁移中维护的 PostgreSQL 部分、向量和全文索引不能误删。
+启动执行 Alembic 升级。未部署时可调整 baseline，部署后追加迁移；迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，迁移中维护的 PostgreSQL 部分、向量和全文索引不能误删。数据库版本要求见 [Docker Compose 部署](#docker-compose-部署)。
 
 ### 装配与启停
 
@@ -105,13 +104,15 @@
 
 ## 数据与运行可靠性
 
-数据库会话采用短读 → 无会话模型等待 → 短写，关系显式预加载，时间戳带时区。图片与视频等大字节处理与落盘卸载到工作线程。正式资产写入有两种取消语义：随机命名资产（`save_companion_asset_async`）取消时删除未交接文件；任务预登记固定路径的生成资产（视频任务、动作素材与图片链候选）取消时等待原子写完并保留，供恢复复用。
+数据库会话采用短读 → 无会话模型等待 → 短写，关系显式预加载，时间戳带时区。请求级 `DbSession` 与鉴权依赖共用同一会话，响应发送完毕才关闭：鉴权依赖在通过后提交只读事务（可选鉴权失败时回滚），路由与服务在模型调用、等待用户锁、文件打包及文件或流式下发之前须先提交请求会话，不让只读事务占着连接跨过这些等待；聊天视频上传在写盘期间仍持有读事务，属已知例外。会话 `expire_on_commit=False`，提交后已加载对象仍可读写，这里不能用回滚代替提交。
+
+图片与视频等大字节处理与落盘卸载到工作线程。正式资产写入有两种取消语义：随机命名资产（`save_companion_asset_async`）取消时删除未交接文件；任务预登记固定路径的生成资产（视频任务、动作素材与图片链候选）取消时等待原子写完并保留，供恢复复用。
 
 资产引用列保存 `companion-assets/{user_id}/...` 裸路径；响应出口改写为 Bearer 鉴权的 `/api/companion/asset/...`（`client_asset_url`）或短时签名 URL（`signed_companion_asset_url`），签名 URL 不入库。
 
 本机派发先注册等待对象，再发送并检查入队结果；直接持对象等待，避免极速返回后查表丢失。桌面离线以业务错误结束等待，不能一律抛取消异常而使 IM 回合静默退出。
 
-备份不迁移登录、激活、IM 授权、事件队列和执行账本，也不恢复已清理媒体；用户级模型配置（`user_model_configs`，含供应商密钥明文）随包导出与恢复，系统信息库与本机配置另行准备。导出固定全量，导入按分组（`BACKUP_SECTIONS`）勾选恢复，只写勾选类别；旧版片刻表静默跳过。包级校验、部分恢复和维护态见 [PROTOCOL](../docs/PROTOCOL.md#备份校验与覆盖恢复)。
+备份不迁移登录、激活、IM 授权、事件队列和执行账本，也不恢复已清理媒体；用户级模型配置（`user_model_configs`，含供应商密钥明文）随包导出与恢复，系统信息库与本机配置另行准备。导出固定全量，导入按分组（`BACKUP_SECTIONS`）勾选恢复，只写勾选类别；旧版片刻表静默跳过。恢复时的文件复制在工作线程执行：被取消时通知线程停止并等其退出，再回滚已复制的文件，不留下未入库的资产。包级校验、部分恢复和维护态见 [PROTOCOL](../docs/PROTOCOL.md#备份校验与覆盖恢复)。
 
 用户文件只落三处：`companion-assets/{user_id}/`（正式资产）、各会话的 `desktop-attachments/{session_id}/`，以及带 `user_id` 元数据的 `temp-media/`。删除用户（被遗忘权，[admin.py](api/v1/admin.py) 的 `delete_user`）先进入维护态并停稳运行时，再删除这三处文件和用户行；资产目录或会话附件删除失败时保留用户行，可重试，临时文件由逐文件清理和定期过期清理兜底。新增用户文件必须落在这三处之一，否则删除与备份都会遗漏。
 
@@ -133,7 +134,7 @@
 
 [等待域](services/domains/companion/intents.py)管理条件、有效期、认领和原子终态；[陪伴回合](services/application/automation/companion_turns.py)复用工具循环并限制轮数、时长和委派，要求用户桌面在线。取消或失败不提交暂存续等。
 
-未开始的认领可以重试；已执行而结果不明时保留待核对提示，不重跑副作用。有效期结束不抹去核对信息；创建、恢复及解除暂停统一在用户锁下检查活跃任务配额，重启不补算未互动时长。未知结果语义见[调用日志与未知结果](../docs/PROTOCOL.md#调用日志与未知结果)。
+未开始的认领可以重试，只调用[查询类工具](services/application/automation/companion_turns.py)的回合视同未开始；已执行而结果不明时保留待核对提示，不重跑副作用。有效期结束不抹去核对信息；创建、恢复及解除暂停统一在用户锁下检查活跃任务配额，重启不补算未互动时长。未知结果语义见[调用日志与未知结果](../docs/PROTOCOL.md#调用日志与未知结果)。
 
 ### IM 渠道
 
@@ -169,6 +170,8 @@ docker compose up -d
 docker compose --profile monitoring up -d
 ```
 
+数据库须为 PostgreSQL 16 及以上并安装 pgvector，compose 使用 `pgvector/pgvector:pg16`，外部数据库同样适用。会话搜索与记忆证据检索使用 `IS JSON` 谓词与 `pg_input_is_valid`，没有启动期版本检查，低版本只会让这两处查询报错。
+
 容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。`/metrics` 默认无需鉴权；配置 `metrics_auth_token` 后须以 `Authorization: Bearer <令牌>` 或 `X-Metrics-Token` 访问。
 
 使用随附 Prometheus 时在 `backend/.env` 设置 `METRICS_AUTH_TOKEN`，Backend 经 `env_file` 读取，Prometheus 经 compose 注入同一令牌文件；未设置时后端不校验。compose 不会因令牌变化自动重建容器，修改后执行 `docker compose --profile monitoring up -d --force-recreate backend prometheus`。管理后台保存或清除令牌会即时更新 Backend 的 `system_settings`；启用 Prometheus 时仍须同步 `.env`。Backend 不参与桌面安装包构建。
@@ -177,7 +180,7 @@ docker compose --profile monitoring up -d
 
 ### 本地供应商
 
-`local` 默认对接 LM Studio（LLM / embedding）和 ComfyUI（图像），默认地址见各适配器的 `DEFAULT_BASE_URL`（[local](services/infrastructure/llm/providers/local/)）。信息库卡片只保存 API Key 与 Base URL，各能力卡片可覆盖地址并单独填写模型名称；无鉴权服务可留空 API Key。地址须从 Backend（含容器）可达；启用 SSRF 守卫时，私网地址须加入 `SSRF_ALLOWED_CIDRS`。
+`local` 默认对接 LM Studio（LLM / embedding）和 ComfyUI（图像），默认地址见各适配器的 `DEFAULT_BASE_URL`（[local](services/infrastructure/llm/providers/local/)）。信息库卡片只保存 API Key 与 Base URL，各能力卡片可覆盖地址并单独填写模型名称；无鉴权服务可留空 API Key。地址须从 Backend（含容器）可达；启用 SSRF 守卫时，私网地址须加入 `SSRF_ALLOWED_CIDRS`；CGNAT（100.64.0.0/10，含 Tailscale 默认地址）与云元数据地址不可豁免（见[供应商与网络错误](#供应商与网络错误)），这类地址只能在守卫关闭时使用，或改用可豁免的局域网地址。
 
 - LLM 须支持 [Responses API](https://lmstudio.ai/docs/developer/openai-compat/responses)，显式填写已部署模型 ID，加载窗口须覆盖[适配器预算](services/infrastructure/llm/providers/local/chat.py)。
 - 能力链是各能力唯一调用信息源，信息库卡片只提供共享密钥与地址。用户未设 embedding 卡片时继承系统链；系统也未设卡片时该能力视为未配置。记忆只使用首个有效配置；链为空、显式链无效或调用失败时降级为[关键词召回](services/domains/memory/README.md#读取召回与恢复)，不自动切换模型。

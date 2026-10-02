@@ -1,12 +1,14 @@
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from common import ModelBase, TimestampMixin
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -22,10 +24,61 @@ if TYPE_CHECKING:
     from modules.auth import User
 
 
+class OutfitSource(BaseModel):
+    """`CompanionOutfit.source_json` 的结构：着装设计来源、已接受反馈，以及生成时的身份修订守卫。读取容错，遗留的未知键原样保留。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    description: str = ""
+    reference_image_path: str | None = None
+    reference_description: str | None = None
+    feedback_history: list[str] = Field(default_factory=list)
+    # 生成时的角色卡修订与全身身份图路径；确认、穿着和视频包据此判断外观是否仍对应当前身份。
+    character_card_revision: int | None = None
+    identity_reference_path: str | None = None
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _description(cls, value: object) -> str:
+        return value.strip() if isinstance(value, str) else ""
+
+    @field_validator("reference_image_path", "reference_description", "identity_reference_path", mode="before")
+    @classmethod
+    def _optional_text(cls, value: object) -> str | None:
+        return (value.strip() or None) if isinstance(value, str) else None
+
+    @field_validator("feedback_history", mode="before")
+    @classmethod
+    def _feedback_history(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+    @field_validator("character_card_revision", mode="before")
+    @classmethod
+    def _revision(cls, value: object) -> int | None:
+        return value if type(value) is int else None
+
+    @classmethod
+    def load(cls, raw: str) -> Self:
+        """JSON 损坏或不是对象时按空来源处理。"""
+        try:
+            return cls.model_validate_json(raw)
+        except ValidationError:
+            return cls()
+
+    def dump(self) -> str:
+        """只写入已设置且非空的键，不为旧行补出新键。"""
+        return self.model_dump_json(exclude_unset=True, exclude_none=True)
+
+
 class CompanionOutfit(ModelBase, TimestampMixin):
     """衣柜外观及其着装参考；ready 表示参考就绪，视频状态由动作包维护。"""
 
     __tablename__ = "companion_outfits"
+    __table_args__ = (
+        Index("uq_companion_outfits_one_active", "user_id", unique=True, postgresql_where=text("active")),
+    )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(64), default="新外观")
@@ -34,7 +87,7 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     fullbody_url: Mapped[str] = mapped_column(String(2048), default="")
     # draft → ready | failed | expired
     status: Mapped[str] = mapped_column(String(16), default="draft", server_default=text("'draft'"), index=True)
-    # 审计快照：着装描述 / feedback / 参考图前缀标记
+    # 生成来源与身份修订守卫，结构见 OutfitSource
     source_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     is_initial: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     # 与首次视频包同事务置位；删除视频包不撤销已启动事实。
@@ -88,7 +141,8 @@ class AvatarAsset(ModelBase):
     """头像与全身参考保存裸路径；引导草稿可指向 temp-media/。"""
 
     __tablename__ = "avatar_assets"
-    # 部分唯一索引（每用户一个 active）位于 alembic baseline——需要 WHERE 子句。
+    __table_args__ = (Index("uq_avatar_assets_one_active", "user_id", unique=True, postgresql_where=text("active")),)
+
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     prompt_json: Mapped[str] = mapped_column(Text)
     asset_url: Mapped[str] = mapped_column(String(2048))

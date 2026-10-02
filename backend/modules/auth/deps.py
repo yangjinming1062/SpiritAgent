@@ -32,6 +32,8 @@ async def get_current_admin_token(
     ).scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="管理员令牌已吊销或未登记，请重新登录。")
+    # 读完即提交，理由同 get_current_session。
+    await db.commit()
     return username
 
 
@@ -65,6 +67,8 @@ async def get_current_session(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已停用。")
     if is_user_in_maintenance(uid):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="用户数据正在维护，请稍后重试。")
+    # get_db 是请求级依赖，响应发送完毕才关闭会话；鉴权读取不能让事务跨过模型等待、文件与流式下发。提交（而非回滚）后 user 与 login_record 不过期，仍可使用。
+    await db.commit()
     return user, login_record
 
 
@@ -77,6 +81,8 @@ async def get_optional_current_session(
     try:
         return await get_current_session(credentials, db)
     except HTTPException:
+        # 鉴权失败被吞掉后路由仍继续（如按签名下发文件），读事务不能留到响应结束。
+        await db.rollback()
         return None
 
 

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 
 from common import ModelBase, TimestampMixin
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,14 +12,15 @@ if TYPE_CHECKING:
 
 # memories.embedding 列宽的唯一事实源；更换维度须同步迁移
 MEMORY_EMBEDDING_DIM = 1536
-# 每个作用域内同一 context 只有一行的槽位记忆前缀，与迁移中 memories 的部分唯一索引一一对应；增减须同步迁移。
-MEMORY_SLOT_CONTEXT_PREFIXES: tuple[str, ...] = (
-    "user_profile:",
-    "diary:",
-    "reflection:",
-    "interaction_stats:",
-    "recall:nightly_actions:",
-)
+# 每个作用域内同一 context 只有一行的槽位记忆：部分唯一索引名 → context 前缀。索引按此声明，`upsert_slotted_memory` 的 ON CONFLICT 谓词使用同一前缀；增减须同步迁移。
+_MEMORY_SLOT_INDEXES: dict[str, str] = {
+    "uq_memories_user_context": "user_profile:",
+    "uq_memories_diary_day": "diary:",
+    "uq_memories_reflection_slot": "reflection:",
+    "uq_memories_interaction_day": "interaction_stats:",
+    "uq_memories_nightly_actions": "recall:nightly_actions:",
+}
+MEMORY_SLOT_CONTEXT_PREFIXES: tuple[str, ...] = tuple(_MEMORY_SLOT_INDEXES.values())
 
 
 class Memory(ModelBase, TimestampMixin):
@@ -29,6 +30,42 @@ class Memory(ModelBase, TimestampMixin):
         CheckConstraint("status IN ('candidate', 'active', 'invalidated', 'forgotten')", name="ck_memories_status"),
         CheckConstraint("basis IN ('explicit', 'inferred', 'observed', 'system')", name="ck_memories_basis"),
         CheckConstraint("usage IN ('contextual', 'background')", name="ck_memories_usage"),
+        *(
+            Index(
+                name,
+                "user_id",
+                "system_preset_id",
+                "context",
+                unique=True,
+                postgresql_where=text(f"context LIKE '{prefix}%'"),
+            )
+            for name, prefix in _MEMORY_SLOT_INDEXES.items()
+        ),
+        Index("ix_memories_scope_updated", "user_id", "system_preset_id", text("updated_at DESC"), text("id DESC")),
+        Index(
+            "ix_memories_recall_user_updated",
+            "user_id",
+            text("updated_at DESC"),
+            postgresql_where=text("context LIKE 'recall:%'"),
+        ),
+        Index(
+            "ix_memories_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_memories_content_trgm",
+            "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_memories_context_trgm",
+            "context",
+            postgresql_using="gin",
+            postgresql_ops={"context": "gin_trgm_ops"},
+        ),
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

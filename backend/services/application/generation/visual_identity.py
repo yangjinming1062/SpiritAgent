@@ -4,7 +4,7 @@ import asyncio
 import io
 from dataclasses import dataclass
 
-from components import SESSION_LOCAL
+from components import SESSION_LOCAL, get_logger
 from modules.companion import AvatarAsset, CharacterCardSnapshot, CompanionOutfit
 from PIL import Image
 from prompts.generation import (
@@ -24,9 +24,11 @@ from services.domains.companion import render_character_identity, require_charac
 from services.infrastructure.assets import unlink_companion_asset
 from services.infrastructure.llm import ASPECT_RATIOS, resolve_reference_bytes
 
-from .avatar_service import AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
+from .avatar_service import FULLBODY_ASPECT, FULLBODY_SIZE, AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
 from .character_images import ImageChainState, ImageProgressWriter, generate_character_images
 from .image_generation import ImageGenerationError, resolve_image_gen_chain
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -117,17 +119,25 @@ async def align_character_reference(
     save_progress: ImageProgressWriter | None = None,
 ) -> str:
     """返回本次生成独有的持久参考；调用者承担保存或回收，不改变原图。"""
-    size = "1024x1792"
-    aspect = "9:16"
+    size = FULLBODY_SIZE
+    aspect = FULLBODY_ASPECT
     if preserve_frame:
-        raw, _ = await resolve_reference_bytes(reference_image)
 
-        def frame_aspect() -> str:
+        def frame_aspect(raw: bytes) -> str:
             with Image.open(io.BytesIO(raw)) as image:
                 ratio = image.width / image.height
             return min(ASPECT_RATIOS, key=lambda key: abs(ASPECT_RATIOS[key] - ratio))
 
-        aspect = size = await asyncio.to_thread(frame_aspect)
+        try:
+            raw, _ = await resolve_reference_bytes(reference_image)
+            aspect = size = await asyncio.to_thread(frame_aspect, raw)
+        except Exception as exc:
+            # 下载、协议、大小和图片解码失败尚未产生任何付费请求，都是首帧参数问题。
+            logger.warning("explicit first frame unreadable", extra={"user_id": user_id}, exc_info=True)
+            raise ImageGenerationError(
+                "首帧图片无法读取，请换一张可访问的图片",
+                internal=f"{type(exc).__name__}: {exc}",
+            ) from exc
     separate_reference = reference_image != identity_reference
     template = CHARACTER_FRAME_ALIGN if preserve_frame else CHARACTER_REFERENCE_ALIGN
     paths = await generate_character_images(
@@ -163,31 +173,41 @@ async def prepare_self_video_reference(
 ) -> str:
     """新视频先生成符合要求的起始画面；显式首帧仅校准身份与明确的造型覆盖。"""
     context = plan.context
-    if frame is None:
-        outfit_reference = await optional_outfit_image_reference(plan, user_id)
-        paths = await generate_character_images(
-            build_self_image_prompt(
-                plan,
-                SELF_VIDEO_FIRST_FRAME.format(prompt=prompt),
-                has_outfit_reference=bool(outfit_reference),
-            ),
-            user_id=user_id,
-            reference_image=context.reference_image,
-            secondary_reference_image=outfit_reference,
-            identity_reference=context.reference_image,
-            identity_text=render_character_identity(context.identity),
-            size=aspect_ratio or "9:16",
-        )
-        path = paths[0]
-    else:
-        path = await align_character_reference(
-            user_id,
-            frame,
-            context.identity,
-            plan.override_outfit_description,
-            preserve_frame=True,
-            identity_reference=context.reference_image,
-        )
+    try:
+        if frame is None:
+            outfit_reference = await optional_outfit_image_reference(plan, user_id)
+            paths = await generate_character_images(
+                build_self_image_prompt(
+                    plan,
+                    SELF_VIDEO_FIRST_FRAME.format(prompt=prompt),
+                    has_outfit_reference=bool(outfit_reference),
+                ),
+                user_id=user_id,
+                reference_image=context.reference_image,
+                secondary_reference_image=outfit_reference,
+                identity_reference=context.reference_image,
+                identity_text=render_character_identity(context.identity),
+                size=aspect_ratio or "9:16",
+            )
+            path = paths[0]
+        else:
+            path = await align_character_reference(
+                user_id,
+                frame,
+                context.identity,
+                plan.override_outfit_description,
+                preserve_frame=True,
+                identity_reference=context.reference_image,
+            )
+    except ImageGenerationError:
+        raise
+    except Exception as exc:
+        # 起始画面阶段尚未提交视频；图片链内的下载、转存失败是确定的失败，不能按提交结果未知处理。
+        logger.warning("video first frame generation failed", extra={"user_id": user_id}, exc_info=True)
+        raise ImageGenerationError(
+            "视频起始画面生成失败，请稍后重试",
+            internal=f"{type(exc).__name__}: {exc}",
+        ) from exc
     try:
         result = await asyncio.to_thread(load_avatar_bytes_as_data_uri, path)
         if not result:

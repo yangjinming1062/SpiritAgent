@@ -56,15 +56,15 @@ async def accept_proposal(
     *,
     source: str,
 ) -> ProposalAcceptance:
-    """受理提案；不阻塞等待评审与视频。"""
-    pack = await get_active_pack(db, user_id)
-    if pack is None:
-        return ProposalAcceptance(ActionDesignResult(outcome="rejected", message="当前没有可用的形象动作"))
-
-    if request.expected_pack_id is not None and request.expected_pack_id != pack.id:
-        return ProposalAcceptance(ActionDesignResult(outcome="rejected", message="形象已切换，请刷新动作列表"))
-
+    """受理提案；不阻塞等待评审与视频。取受理锁前不访问数据库（传入会话须未开启事务），排在在途评审之后等待时不占用连接。"""
     async with get_action_accept_lock(user_id):
+        pack = await get_active_pack(db, user_id)
+        if pack is None:
+            return ProposalAcceptance(ActionDesignResult(outcome="rejected", message="当前没有可用的形象动作"))
+
+        if request.expected_pack_id is not None and request.expected_pack_id != pack.id:
+            return ProposalAcceptance(ActionDesignResult(outcome="rejected", message="形象已切换，请刷新动作列表"))
+
         result, existing_action = await _accept_in_pack(db, user_id, pack.id, request, source=source)
     return ProposalAcceptance(result, pack.id, existing_action)
 

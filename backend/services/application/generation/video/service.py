@@ -14,6 +14,7 @@ from components import (
     TaskBag,
     download_capped,
     get_logger,
+    is_user_in_maintenance,
     safe_json_loads,
     track_user_task,
 )
@@ -25,6 +26,8 @@ from modules.companion import (
     CompanionAction,
     CompanionActionPack,
     CompanionOutfit,
+    MediaReviewPublication,
+    OutfitSource,
     PeekGeometry,
     VideoActionResponse,
     VideoPackResponse,
@@ -36,7 +39,12 @@ from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from services.domains.actions import clear_action_attempt, fulfill_deferred_play_intents, publish_action_catalog
+from services.domains.actions import (
+    clear_action_attempt,
+    emit_catalog_changed,
+    fulfill_deferred_play_intents,
+    publish_action_catalog,
+)
 from services.domains.companion import (
     character_snapshot_is_current,
     get_or_create_persona,
@@ -89,7 +97,7 @@ from services.infrastructure.video_processing import (
     validate_action_clip,
 )
 
-from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri, read_portrait_bytes
+from ..avatar_service import FULLBODY_SIZE, get_avatar_job_lock, load_avatar_bytes_as_data_uri, read_portrait_bytes
 from ..character_images import ImageChainState, generate_character_images
 from ..identity_review import review_character_frames, score_character_frames
 from ..image_generation import ImageGenerationError, resolve_image_gen_chain
@@ -101,7 +109,7 @@ from ..media_chain import (
     media_failure_reason,
     resolve_frozen_media_provider,
 )
-from ..media_review import create_media_review
+from ..media_review import create_media_review, reject_pending_action_reviews
 from ..video_jobs import VideoPollTimeoutError, poll_video_task
 from ..visual_identity import align_character_reference
 from .script import (
@@ -500,10 +508,7 @@ async def create_pack_from_reference(
             if identity_reference_path is None:
                 raise VideoPackStateError("全身形象无法读取")
             pending_assets.callback(unlink_companion_asset, identity_reference_path)
-            outfit_source = safe_json_loads(outfit.source_json, default={})
-            applied_identity_path = (
-                outfit_source.get("identity_reference_path") if isinstance(outfit_source, dict) else None
-            )
+            applied_identity_path = OutfitSource.load(outfit.source_json).identity_reference_path
             context = GenerationContext(
                 identity=identity,
                 identity_reference_path=identity_reference_path,
@@ -973,16 +978,7 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
             payload={"packId": pack.id, "outfitId": pack.outfit_id, "packVersion": pack.pack_version},
         )
         if published:
-            emit_ws_event(
-                db,
-                user_id=pack.user_id,
-                event_type="companion.action.catalog_changed",
-                payload={
-                    "packId": pack.id,
-                    "catalogVersion": pack.catalog_version,
-                    "appearanceEpoch": pack.appearance_epoch,
-                },
-            )
+            emit_catalog_changed(db, pack)
         if (
             published
             and context is not None
@@ -1380,7 +1376,7 @@ async def _run_action_pipeline(
             reference_image=reference_uri,
             identity_reference=identity_uri,
             identity_text=render_character_identity(context.identity),
-            size="1024x1792",
+            size=FULLBODY_SIZE,
             image_edit=True,
             prefer_transparent_background=True,
             state=pose_state,
@@ -1509,12 +1505,13 @@ async def _run_action_pipeline(
                 "video",
                 spec.path,
                 reason,
-                publication={
-                    "kind": "action",
-                    "pack_id": pack.id,
-                    "action_id": job.id,
-                    "title": job.name or job.key,
-                },
+                publication=MediaReviewPublication(
+                    kind="action",
+                    pack_id=pack.id,
+                    action_id=job.id,
+                    title=job.name,
+                    system_slot=job.system_slot,
+                ),
             )
     state.finish()
     await _save_action_state(
@@ -1688,8 +1685,20 @@ def _start_pack_task(
         # 单动作失败不阻塞其他排队项；整批无进展时停止，避免空转或反复恢复未知结果。
         if pending or drain_queue_after or done.result():
             _kick_dynamic_generation(pack_id, user_id, queued_only=True)
+        else:
+            _kick_retire(pack_id, user_id)
 
     task.add_done_callback(_done)
+
+
+def _kick_retire(pack_id: int, user_id: int) -> None:
+    """包上制作收尾后补做被在途任务推迟的旧版本退役。"""
+    task = asyncio.create_task(_retire_after_generation(pack_id, user_id), name=f"companion.video.retire.{pack_id}")
+    _TASKS.add(
+        task,
+        on_error=lambda t: logger.error("video pack retire failed", extra={"pack_id": pack_id}, exc_info=t.exception()),
+    )
+    track_user_task(user_id, task)
 
 
 def _kick_generate(pack_id: int, user_id: int) -> None:
@@ -1710,7 +1719,7 @@ async def _queue_in_place_redo(
     action: str,
     feedback: str,
 ) -> CompanionAction:
-    """ready 包上系统动作原地重做：保留动作身份与元数据，只重置素材生成状态。"""
+    """ready 包上系统动作原地重做：保留动作身份与元数据，只重置素材生成状态；仍待确认的旧成品视为未采纳，其复核项随之结束。"""
     job = (
         await db.execute(
             select(CompanionAction).where(CompanionAction.pack_id == pack.id, CompanionAction.key == action),
@@ -1739,6 +1748,7 @@ async def _queue_in_place_redo(
         )
         db.add(job)
     else:
+        await reject_pending_action_reviews(db, job)
         job.status = "queued"
         job.stage = "design"
         job.error = None
@@ -1765,6 +1775,9 @@ def _kick_dynamic_generation(
     action_ids: list[int] | None = None,
     queued_only: bool = False,
 ) -> None:
+    # 用户维护期间不启动新的制作，也不记唤醒；排队动作保持 queued，维护结束后由 resume_user_dynamic_actions 续跑。
+    if is_user_in_maintenance(user_id):
+        return
     if pack_id in _GEN_INFLIGHT:
         # 空队列查询与任务收尾之间也可能提交新动作，唤醒信号须保留到收尾。
         _GEN_PENDING.add(pack_id)
@@ -1806,6 +1819,9 @@ async def _generate_dynamic_actions(
             return False
         succeeded = False
         for job in jobs:
+            # 维护期间不再开始排队动作；已在制作的动作继续收敛。
+            if job.status == "queued" and is_user_in_maintenance(pack.user_id):
+                continue
             try:
                 if await _generate_one_dynamic(pack, job, context):
                     succeeded = True
@@ -1868,15 +1884,9 @@ async def _publish_dynamic_catalog(pack_id: int) -> None:
         pack = await db.get(CompanionActionPack, pack_id)
         if pack is None:
             return
-        version = await _publish_catalog(db, pack)
-        if version is None:
+        if await _publish_catalog(db, pack) is None:
             return
-        emit_ws_event(
-            db,
-            user_id=pack.user_id,
-            event_type="companion.action.catalog_changed",
-            payload={"packId": pack.id, "catalogVersion": version, "appearanceEpoch": pack.appearance_epoch},
-        )
+        emit_catalog_changed(db, pack)
         await db.commit()
 
 
@@ -1924,6 +1934,29 @@ async def resume_video_generation_jobs() -> None:
             _kick_generate(pack.id, pack.user_id)
     for pack_id, user_id in dynamic_rows:
         _kick_dynamic_generation(pack_id, user_id)
+
+
+async def resume_user_dynamic_actions(user_id: int) -> None:
+    """用户维护结束后，续跑该用户 ready 包上被维护挡下的排队动作。"""
+    async with SESSION_LOCAL() as db:
+        pack_ids = (
+            (
+                await db.execute(
+                    select(CompanionActionPack.id)
+                    .join(CompanionAction, CompanionAction.pack_id == CompanionActionPack.id)
+                    .where(
+                        CompanionActionPack.user_id == user_id,
+                        CompanionActionPack.status == "ready",
+                        CompanionAction.status == "queued",
+                    )
+                    .distinct(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+    for pack_id in pack_ids:
+        _kick_dynamic_generation(pack_id, user_id, queued_only=True)
 
 
 async def ensure_system_action(
@@ -2050,16 +2083,7 @@ async def _activate_locked(db: AsyncSession, pack: CompanionActionPack) -> None:
         event_type="companion.video.activated",
         payload={"packId": pack.id, "packVersion": pack.pack_version, "outfitId": pack.outfit_id},
     )
-    emit_ws_event(
-        db,
-        user_id=pack.user_id,
-        event_type="companion.action.catalog_changed",
-        payload={
-            "packId": pack.id,
-            "catalogVersion": pack.catalog_version,
-            "appearanceEpoch": pack.appearance_epoch,
-        },
-    )
+    emit_catalog_changed(db, pack)
 
 
 async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionActionPack:
@@ -2258,8 +2282,13 @@ async def _carry_incomplete_jobs(
         await db.flush()
 
 
+def _has_pending_work(pack_id: int, jobs: Sequence[CompanionAction]) -> bool:
+    """包上有在途或已排队的动作制作；此时删除任务行会让任务之后落盘的素材无人引用。"""
+    return pack_id in _GEN_INFLIGHT or any(job.status == "queued" for job in jobs)
+
+
 async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack) -> set[str]:
-    """kept 激活后删除同外观其余历史包。构建中的不动；同血缘包上不可续跑失败记录先迁到 kept；仍有可续跑任务的包保留作续跑入口。"""
+    """kept 激活后删除同外观其余历史包。构建中的不动；同血缘包上不可续跑失败记录先迁到 kept；仍有可续跑任务的包保留作续跑入口；有在途或排队制作的包留待制作收尾后退役。"""
     targets = [
         pack
         for pack in (
@@ -2279,7 +2308,8 @@ async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack)
     deletable = [
         pack
         for pack in targets
-        if not (
+        if not _has_pending_work(pack.id, jobs_by_pack.get(pack.id, []))
+        and not (
             _same_generation_lineage(kept, pack)
             and any(_can_resume_job(job) and job.key not in succeeded for job in jobs_by_pack.get(pack.id, []))
         )
@@ -2288,6 +2318,29 @@ async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack)
         return set()
     await _carry_incomplete_jobs(db, kept, deletable, jobs_by_pack)
     return await _remove_packs(db, kept.user_id, deletable)
+
+
+async def _retire_after_generation(pack_id: int, user_id: int) -> None:
+    """同外观已有更新的激活包时，回收该包及其他旧版本；制作期间被跳过的退役在此补做。"""
+    async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
+        pack = await db.get(CompanionActionPack, pack_id)
+        if pack is None:
+            return
+        kept = await db.scalar(
+            select(CompanionActionPack)
+            .where(
+                CompanionActionPack.user_id == user_id,
+                CompanionActionPack.outfit_id == pack.outfit_id,
+                CompanionActionPack.active.is_(True),
+                CompanionActionPack.pack_version > pack.pack_version,
+            )
+            .limit(1),
+        )
+        if kept is None:
+            return
+        retired = await _retire_superseded_locked(db, kept)
+        await db.commit()
+    _unlink_assets(retired)
 
 
 def _unlink_assets(paths: set[str]) -> None:
@@ -2301,7 +2354,8 @@ async def delete_pack(db: AsyncSession, user_id: int, pack_id: int) -> None:
         pack = await _get_pack(db, user_id, pack_id)
         if pack is None:
             raise VideoPackNotFoundError("找不到动作包")
-        if pack.active or pack.status == "processing":
+        jobs = (await _jobs_by_pack(db, CompanionAction.pack_id == pack.id)).get(pack.id, [])
+        if pack.active or pack.status == "processing" or _has_pending_work(pack.id, jobs):
             raise VideoPackStateError("使用中或制作中的动作包不能删除")
         candidates = await _remove_packs(db, user_id, [pack])
         await db.commit()
@@ -2328,6 +2382,7 @@ def _pack_response(pack: CompanionActionPack, jobs: Sequence[CompanionAction]) -
         actions.append(
             VideoActionResponse(
                 action=job.key,
+                name=job.name,
                 status=job.status,
                 stage=job.stage,
                 error=job.error,

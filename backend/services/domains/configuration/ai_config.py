@@ -45,7 +45,9 @@ def prepare_ai_config(update: AIConfigUpdate, previous: AIConfig | None) -> AICo
             },
         )
     except ValidationError as exc:
-        raise ValueError("AI 卡片配置无效，请检查字段与重复的供应商") from exc
+        # 只取 msg：str(exc) 带 input_value，可能夹带配置里的 API Key。
+        reasons = "；".join(error["msg"].removeprefix("Value error, ") for error in exc.errors())
+        raise ValueError(f"AI 卡片配置无效：{reasons}") from exc
 
     for service in CAPABILITY_SERVICES:
         supported = set(providers_supporting(service))

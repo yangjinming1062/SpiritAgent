@@ -31,7 +31,8 @@ async def request_playback(
         return ActionPlayResult(outcome="rejected", message="形象已切换，播放请求已取消")
 
     action = await get_action(db, request.action_id)
-    if action is None or action.pack_id != pack.id:
+    # 系统槽位动作由客户端按状态切换，不对模型开放，按不存在处理；制作中的也不保存意图。
+    if action is None or action.pack_id != pack.id or action.system_slot:
         return ActionPlayResult(outcome="rejected", message="动作不存在或不属于当前形象")
 
     if not action.enabled:

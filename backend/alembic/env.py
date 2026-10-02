@@ -1,34 +1,27 @@
-import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, make_url, pool
+from sqlalchemy import engine_from_config, pool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import modules  # noqa: F401  导入即把全部 ORM 模型注册到 ModelBase.metadata
 from common import ModelBase
-from components import SETTINGS
+from components import database_url
 
 config = context.config
-# fileConfig 默认会替换 root logger；main.py 内启动迁移时（lifespan 已先 setup_logging）必须跳过，否则 web 进程会"失明"。仅 CLI 调用 alembic 时才配置日志。
+# fileConfig 默认会替换 root logger；启动迁移（bootstrap/lifecycle.py::_run_migrations 设置 configure_logger=False，lifespan 已先 setup_logging）必须跳过，否则 web 进程会"失明"。仅 CLI 调用 alembic 时才配置日志。
 if config.config_file_name and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-# URL 优先级：调用方显式注入（main.py 启动迁移）> DATABASE_URL 环境变量 > SETTINGS。
+# 调用方显式注入优先，否则取 components.database_url（SETTINGS 已按 环境变量 > .env > config.toml 解析）。
 if not config.get_main_option("sqlalchemy.url"):
-    url = make_url(os.environ.get("DATABASE_URL") or SETTINGS.database_url)
-    url = url.set(drivername="postgresql+psycopg").render_as_string(hide_password=False)
-    config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+    config.set_main_option("sqlalchemy.url", database_url("postgresql+psycopg").replace("%", "%%"))
 
+# 索引只比对名称、唯一性和列表达式，不比对 WHERE / USING / 操作符类；这些在模型与迁移间须人工保持一致。
 target_metadata = ModelBase.metadata
-
-
-def _include_object(obj, name, type_, reflected, compare_to):
-    # PG 特有的索引（partial unique / hnsw / gin trgm）只在迁移里声明——ModelBase.metadata 无法表达 partial WHERE / vector / trgm ops。autogenerate 默认会把"仅存在数据库"的对象视为"模型少了"，提议删除迁移里手工建的索引；这里跳过让 autogenerate 信任数据库现状。
-    return not (type_ == "index" and reflected and compare_to is None)
 
 
 def run_migrations_offline() -> None:
@@ -39,7 +32,6 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
         compare_server_default=True,
-        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -57,7 +49,6 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             compare_type=True,
             compare_server_default=True,
-            include_object=_include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

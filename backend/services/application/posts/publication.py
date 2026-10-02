@@ -1,19 +1,21 @@
 """所有发布入口共用的独立规划、制作与可恢复任务。"""
 
 import asyncio
-from datetime import date
-from typing import Any
+from datetime import date, timedelta
+from typing import Any, get_args
 
 from components import (
     LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     TaskBag,
+    ensure_utc,
     get_logger,
     is_user_in_maintenance,
     parse_llm_json,
     resolve_language,
     resolve_prompt_text,
     track_user_task,
+    utc_now,
 )
 from modules.auth import User
 from modules.companion import (
@@ -42,6 +44,8 @@ from services.application.generation import (
     load_self_visual_context,
     optional_outfit_image_reference,
     prepare_self_video_reference,
+    select_video_resolution,
+    video_generation_wait_seconds,
 )
 from services.domains.companion import (
     character_snapshot_is_current,
@@ -51,13 +55,14 @@ from services.domains.companion import (
     scene_environment,
 )
 from services.domains.posts import (
+    PostBlockedError,
     PostError,
     commit_publication,
     publication_status,
     reserve_publication,
     response_for_publication,
 )
-from services.infrastructure.assets import save_companion_asset_async
+from services.infrastructure.assets import save_companion_asset_async, unlink_companion_asset
 from services.infrastructure.llm import (
     ProviderResultUnknownError,
     call_llm_once,
@@ -71,6 +76,14 @@ _BG = TaskBag("posts.publication")
 _TASKS: dict[str, asyncio.Task[None]] = {}
 _TERMINAL = {"published", "partial", "failed", "blocked", "result_unknown", "declined"}
 _POSTS_SWITCH = "companion.posts_enabled"
+# 视频分辨率按此顺序取供应商链能接单的第一档：768P 为默认档，720P 先于 1080P，因为部分供应商模型最高到 720p；动态视频刻意不含 512P/480P 低清档。
+_VIDEO_RESOLUTIONS = ("768P", "720P", "1080P")
+# 动态计划允许的视频时长。
+_VIDEO_DURATIONS: tuple[int, ...] = get_args(PostPlan.model_fields["duration"].annotation)
+
+
+class _VideoUnsupportedError(PostError):
+    """供应商链放不下本次视频的首帧、时长或分辨率；付费生成首帧之前抛出。"""
 
 
 async def available_types(user_id: int, *, autonomous: bool) -> list[str]:
@@ -88,7 +101,25 @@ async def available_types(user_id: int, *, autonomous: bool) -> list[str]:
                 service_type,
             ):
                 types.append(content_type)
-        return types
+    if "video" in types and not await _video_supported(user_id):
+        types.remove("video")
+    return types
+
+
+async def _video_supported(user_id: int) -> bool:
+    """供应商链对动态允许的时长至少有一档分辨率能接单；供应商配置无法解析时按不可用处理。"""
+    try:
+        for duration in _VIDEO_DURATIONS:
+            if await select_video_resolution(
+                user_id,
+                first_frame=False,
+                duration=duration,
+                preferred=_VIDEO_RESOLUTIONS,
+            ):
+                return True
+    except Exception:
+        logger.warning("Post video capability check failed", extra={"user_id": user_id}, exc_info=True)
+    return False
 
 
 async def _requested_by_user(user_id: int, user_message: str, intent: str) -> bool:
@@ -125,9 +156,9 @@ async def _freeze_input(
         raise PostError("伙伴资料尚未就绪")
     types = await available_types(user_id, autonomous=not requested)
     if not types:
-        raise PostError("动态自主发布已关闭")
+        raise PostBlockedError("动态自主发布已关闭")
     if requested_type != "auto" and requested_type not in types:
-        raise PostError("请求的动态类型当前不可用")
+        raise PostBlockedError("请求的动态类型当前不可用")
     async with SESSION_LOCAL() as db:
         recent = (
             await db.execute(
@@ -180,7 +211,25 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
         payload["requested_type"] != "auto" and plan.content_type.value != payload["requested_type"]
     ):
         raise PostError("发布决策选择了不可用的类型")
-    return plan
+    return _drop_inapplicable_fields(user_id, plan, payload["available_types"])
+
+
+def _drop_inapplicable_fields(user_id: int, plan: PostPlan, types: list[str]) -> PostPlan:
+    """丢弃模型多给的、不适用于所选类型或当前能力的字段，不因此拒绝整条计划。"""
+    is_media = plan.content_type in (PostContentType.IMAGE, PostContentType.VIDEO)
+    dropped: dict[str, Any] = {}
+    if plan.narration and not (is_media and "audio" in types):
+        dropped["narration"] = ""
+    if plan.text and plan.content_type != PostContentType.AUDIO:
+        dropped["text"] = ""
+    if plan.prompt and not is_media:
+        dropped["prompt"] = ""
+    if plan.depicts_self and not is_media:
+        dropped["depicts_self"] = False
+    if not dropped:
+        return plan
+    logger.warning("Post plan fields dropped", extra={"user_id": user_id, "fields": sorted(dropped)})
+    return plan.model_copy(update=dropped)
 
 
 async def request_publication(
@@ -240,6 +289,14 @@ def schedule_publication(task_id: str, user_id: int) -> None:
     track_user_task(user_id, task)
 
 
+def _owned_assets(progress: dict[str, Any]) -> list[str]:
+    """任务自己保存的图片、语音与旁白；视频动态的主媒体是视频任务的成品，由该任务管理。"""
+    paths = [progress.get("audio_url")]
+    if progress.get("job_id") is None:
+        paths.append(progress.get("media_url"))
+    return [path for path in paths if path]
+
+
 async def _save(
     task_id: str,
     *,
@@ -263,7 +320,12 @@ async def _save(
         if plan is not None:
             row.plan_json = plan.model_dump(mode="json")
         row.progress_json = {**row.progress_json, **progress}
+        # 阻止或失败的任务不会产生动态（已有动态时上方已返回），其保存的资产随之删除；结果未知的任务保留已有产物。
+        discarded = _owned_assets(row.progress_json) if status in ("blocked", "failed") else []
         await db.commit()
+    # 终态提交后再删除，提交失败时任务仍可凭已记录的资产恢复。
+    for path in discarded:
+        await asyncio.to_thread(unlink_companion_asset, path)
 
 
 async def _voice(task_id: str, user_id: int, text: str, *, phase: str) -> tuple[str, str]:
@@ -322,6 +384,14 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     else:
         job_id = progress.get("job_id")
         if job_id is None:
+            resolution = await select_video_resolution(
+                row.user_id,
+                first_frame=visual is not None,
+                duration=plan.duration,
+                preferred=_VIDEO_RESOLUTIONS,
+            )
+            if resolution is None:
+                raise _VideoUnsupportedError
             await _save(row.id, phase="video_submitting", **progress)
             first_frame, prompt = None, plan.prompt
             if visual is not None:
@@ -343,7 +413,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     session_id=None,
                     prompt=prompt,
                     duration=plan.duration,
-                    resolution="768P",
+                    resolution=resolution,
                     first_frame_image=first_frame,
                     aspect_ratio=plan.aspect_ratio,
                     identity_reference_path=visual.reference_path if visual else None,
@@ -362,6 +432,10 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
             if job.status == "succeeded":
                 progress["media_url"] = job.video_url
                 break
+            # 任务可能停在下载失败、等待重启恢复的非终态；按任务创建时间计时，重启后仍受同一预算约束，超时按结果未知收尾。
+            if utc_now() >= ensure_utc(job.created_at) + timedelta(seconds=video_generation_wait_seconds(job)):
+                logger.warning("Post video wait budget exhausted", extra={"publication_id": row.id, "job_id": job_id})
+                raise ProviderResultUnknownError("POST", "")
             await asyncio.sleep(3)
     await _save(row.id, phase="media_ready", **progress)
     return progress
@@ -451,6 +525,8 @@ async def _run_publication(task_id: str) -> None:
             )
     except asyncio.CancelledError:
         raise
+    except _VideoUnsupportedError:
+        await _save(task_id, status="blocked", error="视频供应商不支持本次视频要求")
     except ProviderResultUnknownError:
         await _save(task_id, status="result_unknown", error="制作请求结果未知，未重复提交")
     except ImageGenerationError as exc:

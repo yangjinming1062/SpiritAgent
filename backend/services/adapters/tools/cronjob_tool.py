@@ -1,15 +1,13 @@
 import json
 from typing import Any
 
-from components import coerce_int, get_logger, session_scope, tool_error, utc_now
+from components import coerce_int, session_scope, tool_error, utc_now
 from prompts.tools import CRONJOB_DESC, CRONJOB_PARAM_DESCS
 
 from services.contracts import MemoryScope
 from services.domains.automation import compute_next_run_at, create_job, get_job, list_jobs, remove_job, update_job
 from services.domains.conversation import resolve_memory_scope
 from services.infrastructure.tool_runtime import ToolsRegistry
-
-logger = get_logger(__name__)
 
 
 def _build_updates(prompt: str | None, name: str | None, schedule: str | None, kind: str | None) -> dict[str, Any]:
@@ -46,16 +44,13 @@ async def _handle_cron_action(
     if action == "create":
         if not schedule or not prompt:
             return tool_error("schedule and prompt are required for create")
-        try:
-            job = await create_job(
-                scope=scope,
-                prompt=prompt,
-                schedule=schedule,
-                name=name or "cron job",
-                kind=kind or "standard",
-            )
-        except ValueError as e:
-            return tool_error(str(e))
+        job = await create_job(
+            scope=scope,
+            prompt=prompt,
+            schedule=schedule,
+            name=name or "cron job",
+            kind=kind or "standard",
+        )
         return json.dumps(
             {"success": True, "message": f"Cron job '{job.get('name')}' created.", "job": job},
             ensure_ascii=False,
@@ -109,8 +104,8 @@ async def cronjob(
         async with session_scope() as db:
             scope = await resolve_memory_scope(db, user_id, parent_session_id)
         return await _handle_cron_action(normalized, scope, job_id, prompt, schedule, name, kind)
-    except Exception as e:
-        logger.exception("cronjob tool error")
+    except ValueError as e:
+        # 参数与作用域校验的提示可直接回给模型；其他异常交给注册表脱敏并记录，不把 SQL 与参数暴露为工具结果。
         return tool_error(str(e))
 
 
@@ -125,9 +120,10 @@ CRONJOB_SCHEMA = {
             "prompt": {"type": "string", "description": CRONJOB_PARAM_DESCS["prompt"]},
             "schedule": {
                 "type": "string",
+                "maxLength": 128,
                 "description": CRONJOB_PARAM_DESCS["schedule"],
             },
-            "name": {"type": "string", "description": CRONJOB_PARAM_DESCS["name"]},
+            "name": {"type": "string", "maxLength": 128, "description": CRONJOB_PARAM_DESCS["name"]},
             "kind": {
                 "type": "string",
                 "enum": ["special", "standard"],

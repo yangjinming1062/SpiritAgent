@@ -2,6 +2,7 @@
 
 from .chat_videos import (
     attachment_video_url,
+    copy_forked_video_attachments,
     enforce_session_quota,
     inline_video_parts,
     prune_videos_in_range,
@@ -13,6 +14,7 @@ from .chat_videos import (
 
 __all__ = [
     "attachment_video_url",
+    "copy_forked_video_attachments",
     "enforce_session_quota",
     "inline_video_parts",
     "prune_videos_in_range",

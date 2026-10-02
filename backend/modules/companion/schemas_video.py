@@ -54,6 +54,8 @@ class VideoPackEnsureSystemActionRequest(BaseModel):
 
 class VideoActionResponse(BaseModel):
     action: str
+    # 动态动作的用户可见名称；系统动作为空，界面按槽位本地化。
+    name: str = ""
     status: str
     stage: str
     error: str | None = None

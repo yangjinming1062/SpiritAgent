@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 ALLOWED_ACTIONS: frozenset[str] = frozenset({"roam", "perch", "approach", "stay"})
 
-# approach 专属低频闸：一次搭话=走位+主动消息+TTS，频繁会变骚扰；冷却内 approach 整体降级为 stay（不发消息也不返回 approach），避免「说了话却没走位」的割裂——客户端只认 action 走位。
+# approach 专属低频闸：一次搭话=走位+主动消息，频繁会变骚扰；冷却内 approach 整体降级为 stay（不发消息也不返回 approach），避免「说了话却没走位」的割裂——客户端只认 action 走位。
 _last_approach_at: dict[int, float] = {}
 
 

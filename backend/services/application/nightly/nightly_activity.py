@@ -475,7 +475,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
 
     # Daily checkpoint 与日记发布相互独立，并发执行以缩短每用户的夜间墙钟时间。
     labels = ["daily checkpoint"]
-    jobs: list[Coroutine[Any, Any, bool | None]] = [
+    jobs: list[Coroutine[Any, Any, bool]] = [
         run_daily_checkpoint(llm_cfg, user_id, utc_start, utc_end, local_date_str, user_language),
     ]
     if has_material:
@@ -503,11 +503,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
             logger.error(f"nightly_activity: {label} failed", exc_info=result, extra={"user_id": user_id})
             stages.append({"stage": label, "status": "error", "error": str(result)})
-        elif result is None:
-            # 两项都返回 True 已写入 / False 无需写入 / None 应写入却没有得到有效结果，失败原因已在各自内部记录。
-            error = "empty compose result" if label == "journal nightly" else "summary not generated"
-            logger.error(f"nightly_activity: {label} failed", extra={"user_id": user_id, "error": error})
-            stages.append({"stage": label, "status": "error", "error": error})
         elif result is False:
             stages.append({"stage": label, "status": "skipped"})
         else:

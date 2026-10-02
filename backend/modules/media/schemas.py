@@ -53,3 +53,11 @@ class MiniMaxSpeechStyle(BaseModel):
 
 SpeechStyle = Annotated[MiMoSpeechStyle | MiniMaxSpeechStyle, Field(discriminator="provider")]
 SPEECH_STYLE_ADAPTER = TypeAdapter(SpeechStyle)
+
+
+class ChatVideoUploadResponse(BaseModel):
+    url: str
+
+
+class SpeechToTextResponse(BaseModel):
+    text: str

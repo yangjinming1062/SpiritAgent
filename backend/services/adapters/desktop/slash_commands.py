@@ -1,11 +1,13 @@
-"""Slash 命令注册表与匹配；设计取舍见 chat/README.md。"""
+"""Slash 命令注册表与匹配；命令经 ``command.dispatch`` 执行，不交给 LLM。"""
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Literal
+from typing import Literal
 
 from components import get_logger
+
+from .runtime import RuntimeSession
 
 logger = get_logger(__name__)
 
@@ -14,15 +16,12 @@ SlashCommandStatus = Literal["ok", "error"]
 
 @dataclass(slots=True)
 class SlashCommandContext:
-    """命令 handler 的执行上下文。``runtime`` / ``dispatcher`` 用 ``Any`` 避免导入适配层（实为 RuntimeSession / JsonRpcDispatcher）。"""
+    """命令 handler 的执行上下文；确认由 ``command.dispatch`` 在调用 handler 前校验。"""
 
     session_id: str
     user_id: int
-    runtime: Any
-    dispatcher: Any
+    runtime: RuntimeSession
     args: list[str] = field(default_factory=list)
-    raw: str = ""
-    confirmed: bool = False
 
 
 @dataclass(slots=True)
@@ -52,7 +51,7 @@ class SlashCommand:
 SLASH_COMMANDS: dict[str, SlashCommand] = {}
 
 
-def register(
+def register_slash_command(
     *,
     name: str,
     aliases: tuple[str, ...] | list[str] = (),
@@ -87,13 +86,13 @@ def register(
     return deco
 
 
-def resolve(name: str) -> SlashCommand | None:
+def resolve_slash_command(name: str) -> SlashCommand | None:
     """按名（已剥离前缀 /，小写）查 SlashCommand；未识别返回 None。"""
     return SLASH_COMMANDS.get(name)
 
 
 def list_commands_for_user() -> list[dict]:
-    """供 ``/帮助`` / REST 镜像列出可用命令；去重（aliases 不重复展示）。"""
+    """供 ``command.list`` 返回客户端自动补全与确认弹窗所需的元数据；去重（aliases 不重复展示）。"""
     seen: set[int] = set()
     out: list[dict] = []
     for cmd in SLASH_COMMANDS.values():

@@ -4,10 +4,11 @@ import re
 import shutil
 import tempfile
 import zipfile
+import zlib
 from pathlib import Path
 
 from common import get_or_404, get_router
-from components import DbSession, apply_partial, sha512_b64
+from components import DbSession, apply_partial, get_logger, sha512_b64
 from fastapi import File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from modules.auth import CurrentAdmin
@@ -16,16 +17,17 @@ from modules.update import UpdateVersion, UpdateVersionItem, UpdateVersionListRe
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+logger = get_logger(__name__)
 router = get_router()
 
 # 相对工作目录；容器内挂载为 /app/updates。
 VERSIONS_DIR = Path("updates/versions")
 CHUNK_SIZE = 8192
+# 版本目录与数据库记录须成对出现：上传与删除在进程内串行（后端单 web 进程部署），避免并发写同一目录或互删。
+_VERSION_LOCK = asyncio.Lock()
 
 ALLOWED_ARCHIVE_SUFFIXES = (
     ".exe",
-    "RELEASES",
-    "-full.nupkg",
     ".blockmap",
     ".zip",
     ".dmg",
@@ -33,13 +35,10 @@ ALLOWED_ARCHIVE_SUFFIXES = (
     "server.py",
     "manifest.json",
     "latest-runner.yml",
-    "app-update.yml",
 )
 
 DOWNLOAD_SUFFIXES = (
     ".exe",
-    "-full.nupkg",
-    "-full.nupkg.blockmap",
     ".blockmap",
     ".zip",
     ".dmg",
@@ -62,16 +61,16 @@ async def _get_latest(db: AsyncSession) -> UpdateVersion:
         .scalars()
         .first()
     )
+    # 请求级会话要到响应（含安装包下载）发送完毕才关闭，读完即提交，不让连接占用到那时。
+    await db.commit()
     if latest is None:
         raise HTTPException(status_code=404, detail="No active version")
     return latest
 
 
 def _pick_asset(versions_dir: Path, *patterns: str) -> Path | None:
-    """按调用顺序拼接 pattern 后排序，取 versions_dir 中最后一条匹配文件；排除 ``.tmp.*`` 暂存名，避免返回不完整文件。"""
-    candidates = [
-        match for pattern in patterns for match in versions_dir.glob(pattern) if not match.name.startswith(".tmp.")
-    ]
+    """按调用顺序拼接 pattern 后排序，取 versions_dir 中最后一条匹配文件。"""
+    candidates = [match for pattern in patterns for match in versions_dir.glob(pattern)]
     return sorted(candidates)[-1] if candidates else None
 
 
@@ -124,6 +123,10 @@ async def list_versions(_admin: CurrentAdmin, db: DbSession) -> UpdateVersionLis
     return UpdateVersionListResponse(items=[UpdateVersionItem.model_validate(record) for record in records])
 
 
+# 条目损坏（CRC、压缩流、数据截断）、加密或压缩方式不受支持时，解压抛出的异常。
+_BAD_ZIP_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError)
+
+
 def _extract_archive_entries(zip_path: Path, versions_dir: Path) -> None:
     """从更新 zip 中解压允许的 desktop + runner 条目。"""
     versions_dir_resolved = versions_dir.resolve()
@@ -139,8 +142,8 @@ def _extract_archive_entries(zip_path: Path, versions_dir: Path) -> None:
                 shutil.copyfileobj(src, dst)
 
 
-def _inspect_release(versions_dir: Path, version: str) -> tuple[Path, Path | None, Path | None]:
-    """校验解压结果并返回 (exe, mac 包, runner wheel)。构建脚本（Build-UpdateZip）总会写入 manifest.json，其 version 必须匹配文件名版本，否则视为不同发布。"""
+def _inspect_release(versions_dir: Path, version: str) -> tuple[Path, Path | None, Path]:
+    """校验解压结果并返回 (exe, mac 包, runner wheel)。构建脚本（Build-UpdateZip）总会写入 manifest.json，其 version 必须匹配文件名版本，否则视为不同发布；客户端更新要预取同版本的 Runner 资产，缺失或版本不符会让所有客户端下载失败，故一并拒绝。"""
     manifest_path = versions_dir / "manifest.json"
     if not manifest_path.exists():
         raise ValueError("更新包缺少 manifest.json。")
@@ -156,7 +159,31 @@ def _inspect_release(versions_dir: Path, version: str) -> tuple[Path, Path | Non
     if exe_file is None:
         raise ValueError("更新包缺少 Windows 安装程序（*.exe）。")
     # Runner 侧：wheel + server.py 解压到 runner/，latest-runner.yml 位于根。
-    return exe_file, _pick_asset(versions_dir, "*.zip", "*.dmg"), _pick_asset(versions_dir, "runner/spirit_agent-*.whl")
+    wheel_file = _pick_asset(versions_dir, "runner/spirit_agent-*.whl")
+    if wheel_file is None:
+        raise ValueError("更新包缺少 Runner wheel（runner/spirit_agent-*.whl）。")
+    if not (versions_dir / "runner" / "server.py").is_file():
+        raise ValueError("更新包缺少 runner/server.py。")
+    runner_manifest_path = versions_dir / "latest-runner.yml"
+    if not runner_manifest_path.is_file():
+        raise ValueError("更新包缺少 latest-runner.yml。")
+    # 清单可能是 JSON 后接签名行，不严格解析，只取首个 version；签名由客户端验证。
+    runner_version = re.search(
+        r'(?m)^[ \t]*"?version"?[ \t]*[:=][ \t]*"?([^",\s]+)',
+        runner_manifest_path.read_text(encoding="utf-8"),
+    )
+    if runner_version is None:
+        raise ValueError("latest-runner.yml 缺少 version 字段。")
+    if runner_version.group(1) != version:
+        raise ValueError(f"latest-runner.yml 的版本 {runner_version.group(1)} 与文件名中的版本 {version} 不一致。")
+    return exe_file, _pick_asset(versions_dir, "*.zip", "*.dmg"), wheel_file
+
+
+def _replace_version_dir(stage: Path, versions_dir: Path) -> None:
+    """把校验通过的暂存目录改名为版本目录（同一文件系统，原子）。库中没有该版本，已存在的目录必是中断上传的残留，整体替换。"""
+    if versions_dir.exists():
+        shutil.rmtree(versions_dir)
+    stage.rename(versions_dir)
 
 
 @router.post("/versions", response_model=UpdateVersionItem, status_code=201)
@@ -166,7 +193,7 @@ async def create_version(
     file: UploadFile = File(...),
     release_notes: str = Form(""),
 ) -> UpdateVersionItem:
-    # Squirrel 构建产物 zip，必须含 *.exe。
+    # Build-UpdateZip 产出的更新包，必须含 Windows 安装程序（*.exe）。
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="上传文件必须是 .zip。")
 
@@ -175,45 +202,55 @@ async def create_version(
         raise HTTPException(status_code=400, detail="文件名须包含 1.2.3 形式的版本号。")
     version = match.group(0)
 
-    if (await db.execute(select(UpdateVersion).where(UpdateVersion.version == version))).scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"版本 {version} 已存在。")
-
     versions_dir = VERSIONS_DIR / version
-    versions_dir.mkdir(parents=True, exist_ok=True)
-    # 在进程唯一的临时目录暂存上传，避免两个并发管理上传同一版本时互相覆盖字节。
-    with tempfile.TemporaryDirectory(dir=VERSIONS_DIR, prefix=f".upload_{version}_") as tmp_dir:
-        zip_path = Path(tmp_dir) / "upload.zip"
-        # 上传包可达数百 MB：写盘与解压移出事件循环
-        with open(zip_path, "wb") as f:
-            while chunk := await file.read(CHUNK_SIZE):
-                await asyncio.to_thread(f.write, chunk)
+    async with _VERSION_LOCK:
+        if (await db.execute(select(UpdateVersion).where(UpdateVersion.version == version))).scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"版本 {version} 已存在。")
+        # 上传、解压与摘要计算耗时较长，查重后先结束读事务。
+        await db.commit()
 
-        try:
-            await asyncio.to_thread(_extract_archive_entries, zip_path, versions_dir)
-        except zipfile.BadZipFile:
-            raise HTTPException(status_code=400, detail="无效 zip 文件。")
+        VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        # upload.zip 在请求私有的临时目录暂存，解压与校验也在其中完成，通过后才原子换入版本目录。
+        with tempfile.TemporaryDirectory(dir=VERSIONS_DIR, prefix=f".upload_{version}_") as tmp_dir:
+            zip_path = Path(tmp_dir) / "upload.zip"
+            stage = Path(tmp_dir) / "stage"
+            stage.mkdir()
+            # 上传包可达数百 MB：写盘与解压移出事件循环
+            with open(zip_path, "wb") as f:
+                while chunk := await file.read(CHUNK_SIZE):
+                    await asyncio.to_thread(f.write, chunk)
 
-    try:
-        exe_file, mac_file, wheel_file = await asyncio.to_thread(_inspect_release, versions_dir, version)
-    except ValueError as exc:
-        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+            try:
+                await asyncio.to_thread(_extract_archive_entries, zip_path, stage)
+            except _BAD_ZIP_ERRORS:
+                raise HTTPException(status_code=400, detail="无效 zip 文件。")
+            try:
+                exe_file, mac_file, wheel_file = await asyncio.to_thread(_inspect_release, stage, version)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    record = UpdateVersion(
-        version=version,
-        release_notes=release_notes,
-        exe_filename=exe_file.name,
-        exe_sha512=await asyncio.to_thread(sha512_b64, exe_file),
-        exe_size=exe_file.stat().st_size,
-        mac_filename=mac_file.name if mac_file else None,
-        mac_sha512=await asyncio.to_thread(sha512_b64, mac_file) if mac_file else None,
-        mac_size=mac_file.stat().st_size if mac_file else None,
-        runner_filename=f"runner/{wheel_file.name}" if wheel_file else None,
-        is_active=True,
-        created_by=admin,
-    )
-    db.add(record)
-    await db.commit()
+            # 摘要与大小在换入前算好：换入后 stage 下的路径失效。
+            record = UpdateVersion(
+                version=version,
+                release_notes=release_notes,
+                exe_filename=exe_file.name,
+                exe_sha512=await asyncio.to_thread(sha512_b64, exe_file),
+                exe_size=exe_file.stat().st_size,
+                mac_filename=mac_file.name if mac_file else None,
+                mac_sha512=await asyncio.to_thread(sha512_b64, mac_file) if mac_file else None,
+                mac_size=mac_file.stat().st_size if mac_file else None,
+                runner_filename=f"runner/{wheel_file.name}",
+                is_active=True,
+                created_by=admin,
+            )
+            # 提交失败时删除刚换入的目录；被取消时提交结果未知，目录保留：已入库即为发布，否则是残留，下次同版本上传会替换。
+            try:
+                await asyncio.to_thread(_replace_version_dir, stage, versions_dir)
+                db.add(record)
+                await db.commit()
+            except Exception:
+                await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
+                raise
     await db.refresh(record)
     return UpdateVersionItem.model_validate(record)
 
@@ -233,12 +270,17 @@ async def update_version(
 
 @router.delete("/versions/{id}", response_model=MessageResponse)
 async def delete_version(id: int, _admin: CurrentAdmin, db: DbSession) -> MessageResponse:
-    record = await get_or_404(db, UpdateVersion, id=id, detail="版本不存在。")
-    versions_dir = VERSIONS_DIR / record.version
-    if versions_dir.exists():
-        await asyncio.to_thread(shutil.rmtree, versions_dir)
-    await db.delete(record)
-    await db.commit()
+    async with _VERSION_LOCK:
+        record = await get_or_404(db, UpdateVersion, id=id, detail="版本不存在。")
+        versions_dir = VERSIONS_DIR / record.version
+        # 先删记录再删目录：中途失败只留下无记录的残留目录，同版本再次上传时会整体替换。
+        await db.delete(record)
+        await db.commit()
+        if versions_dir.exists():
+            try:
+                await asyncio.to_thread(shutil.rmtree, versions_dir)
+            except OSError:
+                logger.warning("update version files removal failed", extra={"path": str(versions_dir)}, exc_info=True)
     return MessageResponse(message="Version deleted")
 
 

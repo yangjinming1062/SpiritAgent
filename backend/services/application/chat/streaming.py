@@ -27,11 +27,11 @@ from pydantic import ValidationError
 from services.contracts import MediaTurnState
 from services.infrastructure.llm import (
     ChatProvider,
-    FailoverReason,
     LLMRuntimeError,
     ProviderConfig,
     build_responses_kwargs,
     call_with_retry,
+    classify_api_error,
     resolve_provider_reasoning_effort,
     speech_style_guidance,
 )
@@ -60,6 +60,16 @@ class _IncompleteResponseError(RuntimeError):
         super().__init__(f"LLM response incomplete: {reason}")
 
 
+class _StreamErrorEvent(RuntimeError):
+    """流内 ``error`` 事件：SDK 只在载荷带顶层 error 键时抛错，Responses 的 error 事件（code / message）作为普通事件产出。属性按 SDK 异常的形状暴露，供 ``classify_api_error`` 分类。"""
+
+    def __init__(self, code: object, message: object) -> None:
+        text = message if isinstance(message, str) and message.strip() else "LLM stream error"
+        self.code = code if isinstance(code, str) else None
+        self.body = {"code": self.code, "message": text}
+        super().__init__(text)
+
+
 class _InvalidCompanionReplyError(RuntimeError):
     def __init__(self, error: ValueError, raw_reply: str) -> None:
         self.raw_reply = raw_reply
@@ -83,16 +93,6 @@ class _LLMTurnResult:
     turn_duration_ms: int
     reasoning: str | None = None
     reply: CompanionReply | None = None
-
-
-async def _emit_llm_error(emitter: Emitter, exc: LLMRuntimeError, *, retry_message_id: int | None = None) -> None:
-    """把 LLM 错误转为面向用户的 error 帧；attachment_fetch_failed 给出简短说明，避免暴露内部细节。"""
-    message = (
-        "The LLM provider couldn't fetch the media file attached to this turn. The file may have expired or the URL may not be publicly accessible. Try re-uploading the file."
-        if exc.classified.reason == FailoverReason.attachment_fetch_failed
-        else f"LLM call failed: {exc.classified.reason.value} — {exc.classified.message}"
-    )
-    await emitter.send_json({"type": "error", "message": message, "retry_message_id": retry_message_id})
 
 
 def _assign_tool_call_ids(tool_calls_list: list[dict]) -> None:
@@ -424,6 +424,9 @@ async def _generate_llm_response(
                     failed_response = getattr(chunk, "response", None)
                     error = getattr(failed_response, "error", None)
                     raise RuntimeError(getattr(error, "message", None) or "LLM response failed")
+                elif event_type == "error":
+                    stream_error = _StreamErrorEvent(getattr(chunk, "code", None), getattr(chunk, "message", None))
+                    raise LLMRuntimeError(classify_api_error(stream_error)) from stream_error
             if not response_finished:
                 raise RuntimeError("LLM stream ended before completion")
 

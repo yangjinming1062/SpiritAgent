@@ -943,7 +943,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_system_settings_setting_key"), "system_settings", ["setting_key"], unique=True)
 
-    # Partial unique 索引（声明式模型无法表达）：并发 POST /model 不留下两条 active 行。
+    # Partial unique 索引：并发生成或切换头像不留下两条 active 行。
     op.create_index(
         "uq_avatar_assets_one_active",
         "avatar_assets",
@@ -1006,7 +1006,7 @@ def upgrade() -> None:
             unique=True,
             postgresql_where=sa.text(f"context LIKE '{prefix}%'"),
         )
-    # 加速 recall consolidator 的 count-and-recent 查询。
+    # 召回记忆（context LIKE 'recall:%'）的最近条目读取与定时维护扫描。
     op.create_index(
         "ix_memories_recall_user_updated",
         "memories",

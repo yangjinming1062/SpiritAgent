@@ -17,6 +17,7 @@ from modules.ws import COMPANION_TURN_EVENT
 from services.adapters.channels import MANAGER as CHANNEL_MANAGER
 from services.adapters.desktop import terminate_user_gateway
 from services.adapters.scheduler import invalidate_user_scheduler_state
+from services.application.generation import resume_user_dynamic_actions
 from services.domains.companion import (
     clear_user_proactive_state,
     invalidate_user_interaction_stats,
@@ -59,7 +60,7 @@ def _invalidate_runtime_caches(user_id: int) -> None:
 
 @asynccontextmanager
 async def user_maintenance(user_id: int) -> AsyncIterator[None]:
-    """阻止新用户请求，停稳该用户的运行时任务，并在退出时从数据库真源恢复渠道。"""
+    """阻止新用户请求，停稳该用户的运行时任务，并在退出时从数据库真源恢复渠道与被维护挡下的动作制作。"""
     async with user_maintenance_lock(user_id):
         await mark_user_maintenance(user_id)
         try:
@@ -77,3 +78,8 @@ async def user_maintenance(user_id: int) -> AsyncIterator[None]:
                 await CHANNEL_MANAGER.resume_user_bindings(user_id)
             except Exception:
                 logger.exception("failed to resume user channels after maintenance", extra={"user_id": user_id})
+
+            try:
+                await resume_user_dynamic_actions(user_id)
+            except Exception:
+                logger.exception("failed to resume dynamic actions after maintenance", extra={"user_id": user_id})

@@ -13,7 +13,7 @@ import {
 } from '@/modules/conversation'
 import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
-import type { ChatMediaItem, CompanionBubble, SessionMessage } from '@/shared/types/spiritagent'
+import type { ChatMediaItem, CompanionBubble, SessionMessage, UndoAnchor } from '@/shared/types/spiritagent'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
@@ -295,7 +295,7 @@ export function handleConversationEvent(
       const p = decodePayload<{
         session_id?: string
         deleted_count?: number
-        anchor?: { text?: string; content_type?: string; media_json?: string | null }
+        anchor?: Partial<UndoAnchor>
         messages?: unknown[]
       }>(event.payload)
 
@@ -314,8 +314,7 @@ export function handleConversationEvent(
         $chatDraftFromUndo.set({
           session_id: p.session_id,
           text: p.anchor.text ?? '',
-          content_type: p.anchor.content_type ?? 'text',
-          media_json: p.anchor.media_json ?? null
+          attachments: p.anchor.attachments
         })
       }
 

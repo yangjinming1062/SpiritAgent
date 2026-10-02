@@ -1,4 +1,4 @@
-"""动作目录发布：manifest 构建、校验与 CAS 版本推进。位于 domains 层供 generation 收尾与 application/actions 共用；只依赖任务行与 pack 字段。"""
+"""动作目录发布：manifest 构建、校验、CAS 版本推进与目录变更广播。位于 domains 层，供生成收尾、复核采纳、动作管理 API 与备份恢复（仅构建 manifest）共用；只依赖任务行与 pack 字段。"""
 
 import hashlib
 import json
@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from components import SETTINGS, safe_json_loads
 from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack, PeekGeometry, parse_content_rect
+from modules.ws import emit_ws_event
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,7 @@ _PUBLISH_ATTEMPTS = 3
 
 
 class ActionClipSpec(BaseModel):
-    """目录 clip：可验证素材与播放技术参数；使用场景元数据走 catalog API。"""
+    """目录 clip：可验证素材与播放技术参数；动作语义（运动描述、适用与避免条件）不进入目录。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -35,9 +36,6 @@ class ActionClipSpec(BaseModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     loopable: bool = False
-    # 目录契约字段，后端不产出进出姿态，恒为 null。
-    enter_pose: None = None
-    exit_pose: None = None
     hitmask_ref: str | None = None
     hitmask_grid: tuple[int, int] | None = None
     hitmask_fps: int = Field(gt=0, le=60)
@@ -58,8 +56,6 @@ class ActionCatalogManifest(BaseModel):
 
     schema_version: str = MANIFEST_SCHEMA
     pack_id: int
-    # 目录契约字段，包不绑定独立角色 ID，恒为 null。
-    character_id: None = None
     outfit_id: int | None = None
     catalog_version: int = Field(gt=0)
     canvas: ActionPackCanvas
@@ -190,3 +186,13 @@ async def publish_action_catalog(db: AsyncSession, pack: CompanionActionPack) ->
         await db.flush()
         await db.refresh(pack, attribute_names=["catalog_version", "manifest_path", "content_hash"])
     raise StaleCatalogError(f"pack {pack.id} catalog version kept advancing concurrently")
+
+
+def emit_catalog_changed(db: AsyncSession, pack: CompanionActionPack) -> None:
+    """广播包的当前目录版本与外观代次，在目录发布或激活之后调用；事件与调用方事务同写 outbox。"""
+    emit_ws_event(
+        db,
+        user_id=pack.user_id,
+        event_type="companion.action.catalog_changed",
+        payload={"packId": pack.id, "catalogVersion": pack.catalog_version, "appearanceEpoch": pack.appearance_epoch},
+    )

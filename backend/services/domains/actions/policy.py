@@ -11,13 +11,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 REJECTED_PROPOSAL_COOLDOWN_DAYS = 7
-# 暂缓提案的自动重试与展示期限（自创建起算）：评审失败、额度不足多为暂时原因；超期后不再随重启付费重审，也不再占用模型上下文，重提同一创意仍复用原行重新评审。
+# 暂缓提案的期限：评审失败、额度不足多为暂时原因。重启自动重试自创建起算，超期不再随重启付费重审；展示给模型自最近一次暂缓（updated_at）起算，超期不再占用上下文。重提同一创意复用原行重新评审，复用后再次暂缓的不随重启重审，由模型核对条件后重提。
 DEFERRED_PROPOSAL_WINDOW = timedelta(days=1)
 PLAY_INTENT_TTL_SECONDS = 30
 # 制作完成前保存的表达意图有效期：过期只入库，不补播。
 DEFERRED_PLAY_INTENT_TTL_SECONDS = 15 * 60
 
-# 用户级受理/评审串行锁：查重、门禁与 flush 锁内串行，调用方锁外提交，评审持锁至提交；并发同创意提案由 (user_id, source, idempotency_key) 唯一约束兜底。
+# 用户级受理/评审串行锁：受理取锁前不访问数据库，排队等待不占连接；查重、门禁与 flush 锁内串行，调用方锁外提交，评审持锁至提交；并发同创意提案由 (user_id, source, idempotency_key) 唯一约束兜底。
 _ACCEPT_LOCKS: dict[int, asyncio.Lock] = {}
 
 

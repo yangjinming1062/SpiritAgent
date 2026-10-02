@@ -30,8 +30,8 @@ async def run_daily_checkpoint(
     utc_end: datetime,
     local_date_str: str,
     language: str,
-) -> bool | None:
-    """合并最新摘要与截至目标本地日末的原文；模型等待期间的新消息仍保留在读路径。返回 ``True`` 已写入 / ``False`` 无可总结内容或历史已变化 / ``None`` 应生成却没有得到有效摘要。"""
+) -> bool:
+    """合并最新摘要与截至目标本地日末的原文；模型等待期间的新消息仍保留在读路径。返回 ``True`` 已写入 / ``False`` 无可总结内容或历史已变化；模型调用失败或没有得到有效摘要时抛出。"""
     # 读、写两阶段各自持有短 session——中间 LLM 调用不能 pin 连接池（backend/README.md「数据与运行可靠性」）。
     async with session_scope() as db:
         inputs = await _collect_inputs(db, user_id, utc_start, utc_end)
@@ -39,7 +39,7 @@ async def run_daily_checkpoint(
         return False
     conv_id, chat_content, prev_summary_text, through_id, clear_watermark = inputs
 
-    parsed, _ = await run_prompt_json(
+    outcome = await run_prompt_json(
         user_id,
         llm_cfg,
         CHECKPOINT_SUMMARY_INSTRUCTIONS,
@@ -53,14 +53,12 @@ async def run_daily_checkpoint(
         log_prefix="daily_checkpoint",
         temperature=0.0,
     )
-    if not parsed:
-        # 调用或解析失败的原因已由 run_prompt_json 记录。
-        return None
-    raw_summary = parsed.get("summary")
+    if outcome.parsed is None:
+        raise RuntimeError(f"summary not generated: {outcome.reason}")
+    raw_summary = outcome.parsed.get("summary")
     summary_text = raw_summary.strip() if isinstance(raw_summary, str) else ""
     if not summary_text:
-        logger.warning("daily_checkpoint: summary missing from model output", extra={"user_id": user_id})
-        return None
+        raise ValueError("summary missing from model output")
 
     async with session_scope() as wdb:
         conv = await wdb.get(Conversation, conv_id)

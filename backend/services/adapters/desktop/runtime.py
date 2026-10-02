@@ -18,7 +18,6 @@ class SessionSettingsPatch(BaseModel):
 
 
 class SessionRuntimeInfo(BaseModel):
-    branch: str | None
     model: str | None
     provider: str
     running: bool
@@ -92,7 +91,6 @@ def build_runtime_info(
     """发给 renderer 的会话运行信息；settings 为会话覆盖叠加生效推理参数。"""
     provider = llm_config.provider_name or "openai"
     return SessionRuntimeInfo(
-        branch=None,
         model=llm_config.model_name,
         provider=provider,
         running=runtime.busy,

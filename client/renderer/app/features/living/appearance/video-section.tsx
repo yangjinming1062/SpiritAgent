@@ -15,6 +15,7 @@ import {
   VIDEO_ACTION_KEYS,
   VIDEO_GEN_STAGE_TEXT_KEYS,
   type VideoActionKey,
+  videoActionNames,
   type VideoActionWire,
   videoGenScopeMatches
 } from '@/modules/character'
@@ -99,14 +100,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   // 列表加载失败不能按“尚未生成”展示，避免网络错误引导用户重复发起付费生成。
   const packsLoadFailed = packsStatus === 'failed' && !!selectedOutfit && !selectedPack
 
-  const actionNames: Record<VideoActionKey, string> = {
-    idle: t.videoIdle,
-    walk_left: t.videoWalkLeft,
-    walk_right: t.videoWalkRight,
-    drag: t.videoDrag,
-    peek_left: t.videoPeekLeft,
-    peek_right: t.videoPeekRight
-  }
+  const actionNames = videoActionNames(t)
 
   const actions: ActionEntry[] = []
   const seenKeys = new Set<string>()

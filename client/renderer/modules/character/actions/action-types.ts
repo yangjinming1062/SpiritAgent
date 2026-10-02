@@ -13,8 +13,6 @@ export interface ActionClipEntry {
   readonly width: number
   readonly height: number
   readonly loopable: boolean
-  readonly enter_pose: string | null
-  readonly exit_pose: string | null
   readonly hitmask_ref: string | null
   readonly hitmask_grid: readonly [number, number] | null
   readonly hitmask_fps: number
@@ -32,7 +30,6 @@ export interface PeekGeometry {
 export interface ActionCatalogManifest {
   readonly schema_version: 'spiritagent.action.pack'
   readonly pack_id: number
-  readonly character_id: number | null
   readonly outfit_id: number | null
   readonly catalog_version: number
   readonly canvas: { readonly width: number; readonly height: number; readonly fps: number }
@@ -44,8 +41,6 @@ export interface ActionCatalogManifest {
 /** 播放指令（companion.action.play_requested 载荷）。 */
 export interface ActionPlayCommand {
   readonly play_id: string
-  readonly target_device: string
-  readonly target_surface: string
   readonly pack_id: number
   readonly appearance_epoch: number
   readonly action_id: number
@@ -72,7 +67,6 @@ export interface ActionPlayInstance {
 export interface VideoActionWire {
   action: string
   name: string
-  kind: string
   status: string
   stage: string
   error: string | null

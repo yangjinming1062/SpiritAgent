@@ -14,14 +14,14 @@ from components import (
 )
 from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
-from modules.settings import load_user_settings
+from modules.settings import get_user_setting, load_user_settings
 from modules.system import ChatMessageRequest, ChatRequest
 from prompts.companion import PENDING_INTENTIONS_LABELS
 
 from services.contracts import SceneTurnState
 from services.domains.companion import list_companion_intents, user_turn_activity
 from services.domains.conversation import (
-    DEFAULT_PRESET_ID,
+    COMPANION_PRESET_ID,
     IM_KIND,
     SPECIAL_KIND,
     conversation_memory_scope,
@@ -53,7 +53,6 @@ from .persistence import (
 )
 from .streaming import (
     _assign_tool_call_ids,
-    _emit_llm_error,
     _generate_llm_response,
     _IncompleteResponseError,
     _InvalidCompanionReplyError,
@@ -61,6 +60,7 @@ from .streaming import (
 )
 from .system_prompt import build_companion_environment_prompt
 from .tool_dispatch import _ToolDispatchContext, matched_tool_names
+from .turn_errors import emit_conversation_unavailable, emit_llm_error, emit_llm_unavailable, emit_turn_limit
 from .turn_inputs import (
     build_turn_inputs,
     load_memory_query_text,
@@ -151,10 +151,11 @@ async def run_chat_turn(
     final_reply_only: bool = False,
     ephemeral: bool = False,
     headless: bool = False,
+    has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
 ) -> None:
-    """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。"""
+    """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
     # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量。
     if max_loop_turns is None:
         max_loop_turns = SETTINGS.agent_max_loop_turns
@@ -164,12 +165,14 @@ async def run_chat_turn(
         async with session_scope() as db:
             conv = await Conversation.by_session_id(db, req.session_id, user_id=user_id)
             if not conv:
-                await emitter.send_json({"type": "error", "message": "Conversation not found"})
+                language = await get_user_setting(db, user_id, "language")
+                await emit_conversation_unavailable(emitter, language, "Conversation not found")
                 return
             try:
                 memory_scope = conversation_memory_scope(conv, user_id)
             except ValueError as exc:
-                await emitter.send_json({"type": "error", "message": str(exc)})
+                language = await get_user_setting(db, user_id, "language")
+                await emit_conversation_unavailable(emitter, language, str(exc))
                 return
             # 主动回合与自动化任务不算用户接触。
             turn_scope.enter_context(user_turn_activity(user_id, enabled=not ephemeral and not conv.is_automation))
@@ -213,22 +216,35 @@ async def run_chat_turn(
         memory_embedding = await embed_memory_text(user_id, memory_query) if len(memory_query.strip()) > 1 else None
 
         async with session_scope() as db:
-            inputs = await build_turn_inputs(
-                db,
-                conv,
-                user_id,
-                req,
-                session_client_context,
-                effective_settings,
-                memory_scope,
-                proactive_memory_query=memory_query,
-                proactive_memory_embedding=memory_embedding,
-                companion_proactive_turn=ephemeral,
-                excluded_tool_names=excluded_tool_names,
-            )
+            try:
+                inputs = await build_turn_inputs(
+                    db,
+                    conv,
+                    user_id,
+                    req,
+                    session_client_context,
+                    effective_settings,
+                    memory_scope,
+                    proactive_memory_query=memory_query,
+                    proactive_memory_embedding=memory_embedding,
+                    companion_proactive_turn=ephemeral,
+                    excluded_tool_names=excluded_tool_names,
+                )
+            except MissingLlmConfigError as exc:
+                # 用户行已落库：配置补齐后可按 retry_message_id 重试，不能以没有重试入口的异常收尾；主动回合没有用户行，异常交由调用方记录。
+                if user_message_id is None:
+                    raise
+                logger.warning("LLM turn failed: %s", exc)
+                await emit_llm_unavailable(
+                    emitter,
+                    exc,
+                    effective_settings.get("language"),
+                    retry_message_id=user_message_id,
+                )
+                return
             # 本轮尾部资料没有持久化来源，不进入持久摘要。
             runtime_item_start = len(inputs.context["input"])
-            waits = await list_companion_intents(db, user_id) if conv.system_preset_id == DEFAULT_PRESET_ID else []
+            waits = await list_companion_intents(db, user_id) if conv.system_preset_id == COMPANION_PRESET_ID else []
             if waits:
                 inputs.context["input"].append(
                     user_text_item(
@@ -296,7 +312,7 @@ async def run_chat_turn(
         turn_reasoning_parts: list[str] = []
 
         # 固定陪伴会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
-        companion_reply = conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID
+        companion_reply = conv.kind == SPECIAL_KIND and conv.system_preset_id == COMPANION_PRESET_ID
         async with session_scope() as db:
             media_turn = await load_media_turn(
                 db,
@@ -324,7 +340,7 @@ async def run_chat_turn(
             media_turn=media_turn,
         )
 
-        buffer_text = companion_reply or headless or conv.kind == IM_KIND or final_reply_only
+        buffer_text = companion_reply or headless or not has_viewer or conv.kind == IM_KIND or final_reply_only
         delivery = "complete" if companion_reply else "buffered" if buffer_text else "stream"
         if buffer_text:
             await emitter.send_json({"type": "message.start"})
@@ -332,7 +348,7 @@ async def run_chat_turn(
         for _ in range(max_loop_turns):
             async with session_scope() as db:
                 await refresh_video_media(db, media_turn)
-                if conv.system_preset_id == DEFAULT_PRESET_ID:
+                if conv.system_preset_id == COMPANION_PRESET_ID:
                     environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
                     current_context["instructions"] = base_instructions + "\n\n" + environment
 
@@ -371,7 +387,7 @@ async def run_chat_turn(
                             allow_silence=ephemeral and companion_reply,
                             reply_format_error=reply_format_error,
                             media_turn=media_turn,
-                            pace_bubbles=not headless,
+                            pace_bubbles=has_viewer and not headless,
                             final_reply_only=final_reply_only,
                             allow_voice_fallback=not retry_available,
                         )
@@ -404,7 +420,7 @@ async def run_chat_turn(
                     extra={"user_id": user_id, "reason": exc.classified.reason.value, "error": str(exc)},
                     exc_info=True,
                 )
-                await _emit_llm_error(emitter, exc, retry_message_id=user_message_id)
+                await emit_llm_error(emitter, exc, inputs.language, retry_message_id=user_message_id)
                 break
             except _InvalidCompanionReplyError:
                 await emitter.send_json(
@@ -420,13 +436,7 @@ async def run_chat_turn(
             except (MissingLlmConfigError, RuntimeError) as exc:
                 # 配置缺失或响应未正常完成：结束本轮；完整响应失败也可能发生在请求已开始之后。
                 logger.warning("LLM turn failed: %s", exc)
-                await emitter.send_json(
-                    {
-                        "type": "error",
-                        "message": f"LLM unavailable: {exc}",
-                        "retry_message_id": user_message_id,
-                    },
-                )
+                await emit_llm_unavailable(emitter, exc, inputs.language, retry_message_id=user_message_id)
                 break
 
             if llm_result.reasoning:
@@ -466,10 +476,4 @@ async def run_chat_turn(
                 persist=not ephemeral,
             )
         else:
-            await emitter.send_json(
-                {
-                    "type": "error",
-                    "message": f"Max tool execution turns ({max_loop_turns}) reached. Terminating loop to prevent unbounded execution.",
-                    "retry_message_id": user_message_id,
-                },
-            )
+            await emit_turn_limit(emitter, inputs.language, max_loop_turns, retry_message_id=user_message_id)

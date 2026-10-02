@@ -3,7 +3,6 @@ import base64
 import binascii
 import contextlib
 import hashlib
-import json
 import secrets
 import struct
 import time
@@ -21,7 +20,8 @@ from components import (
     session_scope,
 )
 from Crypto.Cipher import AES
-from modules.channels import ChannelBinding, ChannelDeliveryMedia, ChannelPeer
+from modules.channels import ChannelBinding, ChannelDeliveryMedia, ChannelLoginStateResponse, ChannelPeer
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 
 from services.infrastructure.assets import parse_companion_asset_path, resolve_companion_asset_path
@@ -214,27 +214,39 @@ async def _materialize_inbound_attachments(
     return tuple(out)
 
 
-class WeixinIlinkAdapter(ChannelAdapter):
-    """微信 iLink（ClawBot 个人号 Bot API）适配器：QR 扫码登录 + getupdates 长轮询 + reply-only 回复。硬约束（协议决定）：回复必须回显入站消息的 context_token（每 peer 缓存最新值并持久化，重启免重扫）；不能主动发起会话。凭据 JSON 形如 {bot_token, baseurl, ilink_user_id, ilink_bot_id, context_tokens{peer→token}, get_updates_buf, typing_ticket, typing_ticket_ts}。"""
+class _WeixinCredentials(BaseModel):
+    """channel_bindings.credentials 里持久化的 iLink 登录凭据，字段名即 JSON 键；读回时整体校验、未知键忽略，校验失败按无凭据处理，故服务端载荷写入前须先确认类型。"""
 
-    channel_name = "weixin_ilink"
+    bot_token: str = Field(min_length=1)
+    baseurl: str = DEFAULT_BASE_URL
+    ilink_user_id: str = ""
+    ilink_bot_id: str = ""
+    # peer_id → 该对端最新的 context_token。
+    context_tokens: dict[str, str] = Field(default_factory=dict)
+    get_updates_buf: str = ""
+    typing_ticket: str = ""
+    typing_ticket_ts: float = 0.0
+
+
+class WeixinIlinkAdapter(ChannelAdapter):
+    """微信 iLink（ClawBot 个人号 Bot API）适配器：QR 扫码登录 + getupdates 长轮询 + reply-only 回复。硬约束（协议决定）：回复必须回显入站消息的 context_token（每 peer 缓存最新值并持久化，重启免重扫）；不能主动发起会话。凭据结构见 _WeixinCredentials，无凭据（未登录或已失效）时为 None。"""
+
     conversation_title = "微信对话"
     supports_typing = True
-    can_initiate = False
     requires_login = True
 
     def __init__(self, snapshot: ChannelBindingSnapshot) -> None:
         super().__init__(snapshot)
-        self._creds: dict = _load_credentials(snapshot.credentials)
+        self._creds: _WeixinCredentials | None = _load_credentials(snapshot.credentials, snapshot.id)
         self._login_gate = asyncio.Event()
         if self.has_credentials():
             self._login_gate.set()
         self._login_task: asyncio.Task | None = None
-        self._login_state: dict = {"state": "connected" if self.has_credentials() else "login_required"}
+        self._login_state = ChannelLoginStateResponse(state="connected" if self.has_credentials() else "login_required")
         self._client: httpx.AsyncClient | None = None
 
     def has_credentials(self) -> bool:
-        return bool(self._creds.get("bot_token"))
+        return self._creds is not None
 
     def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -247,13 +259,13 @@ class WeixinIlinkAdapter(ChannelAdapter):
             "AuthorizationType": "ilink_bot_token",
             "X-WECHAT-UIN": _random_wechat_uin(),
         }
-        token = self._creds.get("bot_token")
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        if self._creds is not None:
+            headers["Authorization"] = f"Bearer {self._creds.bot_token}"
         return headers
 
     def _base_url(self) -> str:
-        return self._creds.get("baseurl") or DEFAULT_BASE_URL
+        base_url = self._creds.baseurl if self._creds is not None else ""
+        return base_url or DEFAULT_BASE_URL
 
     async def _request(
         self,
@@ -296,8 +308,8 @@ class WeixinIlinkAdapter(ChannelAdapter):
             return
         self._login_task = self.create_task(self._login_flow(), name=f"channels.weixin.login.{self.snapshot.id}")
 
-    async def login_state(self) -> dict:
-        return dict(self._login_state)
+    async def login_state(self) -> ChannelLoginStateResponse:
+        return self._login_state
 
     async def _login_flow(self) -> None:
         """QR 登录状态机：取码 → 3s 轮询 wait→scaned→confirmed|expired（5 分钟总超时）。confirmed 返回 bot_token/baseurl/ilink_user_id，凭据与游标清零重建（旧 token/对端回复凭据全部失效），登录账号本人自动加入白名单（omp-wechat 同款语义）。"""
@@ -306,9 +318,9 @@ class WeixinIlinkAdapter(ChannelAdapter):
             qrcode = data.get("qrcode")
             qr_image = data.get("qrcode_img_content")
             if not qrcode:
-                self._login_state = {"state": "error", "error": "二维码获取失败"}
+                self._login_state = ChannelLoginStateResponse(state="error")
                 return
-            self._login_state = {"state": "wait", "qr_image": qr_image or qrcode}
+            self._login_state = ChannelLoginStateResponse(state="wait", qr_image=qr_image or qrcode)
             deadline = time.monotonic() + QR_LOGIN_TIMEOUT_SECONDS
             while time.monotonic() < deadline:
                 await asyncio.sleep(QR_POLL_INTERVAL_SECONDS)
@@ -317,46 +329,44 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 if status == "wait":
                     continue
                 if status == "scaned":
-                    self._login_state = {"state": "scaned"}
+                    self._login_state = ChannelLoginStateResponse(state="scaned")
                     continue
                 if status == "expired":
-                    self._login_state = {"state": "expired"}
+                    self._login_state = ChannelLoginStateResponse(state="expired")
                     return
                 if status == "confirmed":
                     bot_token = data.get("bot_token")
                     if not bot_token:
-                        self._login_state = {"state": "error", "error": "登录响应缺少 bot_token"}
+                        self._login_state = ChannelLoginStateResponse(state="error")
                         return
-                    self._creds = {
-                        "bot_token": bot_token,
-                        "baseurl": data.get("baseurl") or DEFAULT_BASE_URL,
-                        "ilink_user_id": data.get("ilink_user_id") or "",
-                        "ilink_bot_id": data.get("ilink_bot_id") or "",
-                        "context_tokens": {},
-                        "get_updates_buf": "",
-                    }
+                    creds = _WeixinCredentials(
+                        bot_token=bot_token,
+                        baseurl=data.get("baseurl") or DEFAULT_BASE_URL,
+                        ilink_user_id=data.get("ilink_user_id") or "",
+                        ilink_bot_id=data.get("ilink_bot_id") or "",
+                    )
+                    self._creds = creds
                     await self._persist_credentials()
-                    await self._auto_allow_owner()
+                    await self._auto_allow_owner(creds.ilink_user_id)
                     await update_binding_status(
                         self.snapshot.id,
                         "connected",
                         account_ref=data.get("ilink_bot_id") or "",
                         account_name="微信",
                     )
-                    self._login_state = {"state": "confirmed"}
+                    self._login_state = ChannelLoginStateResponse(state="confirmed")
                     self._login_gate.set()
                     return
-            self._login_state = {"state": "expired"}
+            self._login_state = ChannelLoginStateResponse(state="expired")
         except asyncio.CancelledError:
             raise
         except IlinkSessionExpired:
-            self._login_state = {"state": "error", "error": "登录会话已过期，请重试"}
-        except Exception as e:
-            self._login_state = {"state": "error", "error": str(e)}
+            self._login_state = ChannelLoginStateResponse(state="error")
+        except Exception:
+            self._login_state = ChannelLoginStateResponse(state="error")
             logger.warning("weixin login flow failed", extra={"binding": self.snapshot.id}, exc_info=True)
 
-    async def _auto_allow_owner(self) -> None:
-        owner_id = self._creds.get("ilink_user_id")
+    async def _auto_allow_owner(self, owner_id: str) -> None:
         if not owner_id:
             return
         async with session_scope() as db:
@@ -387,9 +397,9 @@ class WeixinIlinkAdapter(ChannelAdapter):
 
     async def _clear_login(self) -> None:
         """登出与轮询 -14 共用：凭据清空落库、转 login_required（channel.status 事件驱动 Hub 提示重新扫码）。"""
-        self._creds = {}
+        self._creds = None
         await self._persist_credentials()
-        self._login_state = {"state": "login_required"}
+        self._login_state = ChannelLoginStateResponse(state="login_required")
         self._login_gate.clear()
         await update_binding_status(self.snapshot.id, "login_required")
 
@@ -415,11 +425,11 @@ class WeixinIlinkAdapter(ChannelAdapter):
             self._client = None
 
     async def _poll_loop(self) -> None:
-        while self.has_credentials():
+        while (creds := self._creds) is not None:
             data = await self._request(
                 "POST",
                 "ilink/bot/getupdates",
-                payload={"get_updates_buf": self._creds.get("get_updates_buf") or "", "base_info": _base_info()},
+                payload={"get_updates_buf": creds.get_updates_buf, "base_info": _base_info()},
                 timeout=SETTINGS.weixin_ilink_poll_timeout_seconds,
             )
             cursor = data.get("get_updates_buf")
@@ -427,8 +437,8 @@ class WeixinIlinkAdapter(ChannelAdapter):
             for msg in msgs:
                 await self._accept_inbound(msg)
             # 接收落库完成后才推进游标；回合在桥接层的独立任务中继续。
-            if cursor:
-                self._creds["get_updates_buf"] = cursor
+            if isinstance(cursor, str) and cursor:
+                creds.get_updates_buf = cursor
             # 游标与新增 context_token 一批一存（~35s 一次，DB 写频率可忽略）。
             if msgs or cursor:
                 await self._persist_credentials()
@@ -439,8 +449,8 @@ class WeixinIlinkAdapter(ChannelAdapter):
         if not peer_id or (not text and not media_descs):
             return
         token = msg.get("context_token")
-        if token:
-            self._creds.setdefault("context_tokens", {})[peer_id] = token
+        if isinstance(token, str) and token and self._creds is not None:
+            self._creds.context_tokens[peer_id] = token
 
         inbound = InboundMessage(
             peer_id=peer_id,
@@ -458,7 +468,8 @@ class WeixinIlinkAdapter(ChannelAdapter):
         await handle_inbound(self, inbound)
 
     def _reply_token(self, peer_id: str, context_token: str | None) -> str:
-        token = context_token or self._creds.get("context_tokens", {}).get(peer_id)
+        cached = self._creds.context_tokens.get(peer_id) if self._creds is not None else None
+        token = context_token or cached
         if not token:
             raise ChannelError(f"no context_token for peer {peer_id!r} (iLink reply-only)", fatal=False)
         return token
@@ -594,14 +605,18 @@ class WeixinIlinkAdapter(ChannelAdapter):
     async def send_typing(self, peer_id: str, context_token: str | None = None) -> None:
         """「对方正在输入…」指示：best-effort，失败只记 debug（omp-wechat 同款降级）。"""
         try:
-            ticket = await self._typing_ticket()
+            # 与轮询任务并发：登录失效会把 _creds 置空，一次发送内只用开头取到的这份凭据。
+            creds = self._creds
+            if creds is None:
+                return
+            ticket = await self._typing_ticket(creds)
             if not ticket:
                 return
             await self._request(
                 "POST",
                 "ilink/bot/sendtyping",
                 payload={
-                    "ilink_user_id": self._creds.get("ilink_user_id") or "",
+                    "ilink_user_id": creds.ilink_user_id,
                     "typing_ticket": ticket,
                     "status": 1,
                     "base_info": _base_info(),
@@ -614,21 +629,20 @@ class WeixinIlinkAdapter(ChannelAdapter):
         except Exception:
             logger.debug("typing indicator failed", extra={"binding": self.snapshot.id, "peer": peer_id})
 
-    async def _typing_ticket(self) -> str:
-        ticket = self._creds.get("typing_ticket")
-        ts = self._creds.get("typing_ticket_ts") or 0
-        if ticket and time.time() - ts < TYPING_TICKET_TTL_SECONDS:
-            return ticket
+    async def _typing_ticket(self, creds: _WeixinCredentials) -> str:
+        if creds.typing_ticket and time.time() - creds.typing_ticket_ts < TYPING_TICKET_TTL_SECONDS:
+            return creds.typing_ticket
         data = await self._request(
             "POST",
             "ilink/bot/getconfig",
-            payload={"ilink_user_id": self._creds.get("ilink_user_id") or "", "base_info": _base_info()},
+            payload={"ilink_user_id": creds.ilink_user_id, "base_info": _base_info()},
         )
-        ticket = data.get("typing_ticket") or ""
-        if ticket:
-            self._creds["typing_ticket"] = ticket
-            self._creds["typing_ticket_ts"] = time.time()
-            await self._persist_credentials()
+        ticket = data.get("typing_ticket")
+        if not isinstance(ticket, str) or not ticket:
+            return ""
+        creds.typing_ticket = ticket
+        creds.typing_ticket_ts = time.time()
+        await self._persist_credentials()
         return ticket
 
     def platform_hint(self) -> str | None:
@@ -639,13 +653,20 @@ class WeixinIlinkAdapter(ChannelAdapter):
             row = await db.get(ChannelBinding, self.snapshot.id)
             if row is None:
                 return
-            row.credentials = json.dumps(self._creds, ensure_ascii=False) if self._creds else ""
+            row.credentials = self._creds.model_dump_json() if self._creds is not None else ""
             await db.commit()
 
 
-def _load_credentials(raw: str) -> dict:
+def _load_credentials(raw: str, binding_id: int) -> _WeixinCredentials | None:
+    if not raw:
+        return None
     try:
-        parsed = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+        return _WeixinCredentials.model_validate_json(raw)
+    except ValidationError as exc:
+        # 不记录 str(exc)：其中的 input_value 会带出令牌，只记出错字段位置与类型。
+        fields = ", ".join(
+            f"{'.'.join(map(str, error['loc'])) or '<root>'} ({error['type']})"
+            for error in exc.errors(include_input=False, include_url=False)
+        )
+        logger.warning("iLink credentials invalid; login required", extra={"binding": binding_id, "fields": fields})
+        return None
