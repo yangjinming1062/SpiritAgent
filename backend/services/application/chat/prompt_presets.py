@@ -19,7 +19,6 @@ LIFE_SPACE_TOOL_NAMES = frozenset(
     {
         "send_message_tool",
         "companion_wait",
-        "diary_write",
         "post_publish",
         "post_status",
         "scene_list",

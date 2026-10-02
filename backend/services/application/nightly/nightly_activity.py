@@ -8,9 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import (
     SETTINGS,
-    format_day_marker,
-    format_local_date_str,
-    format_time_anchor,
+    format_local_iso,
     get_logger,
     parse_llm_json,
     resolve_language,
@@ -22,7 +20,7 @@ from modules.companion import Persona
 from modules.conversation import Conversation, Message
 from modules.scheduler import NightlyActivityLog
 from modules.settings import get_user_setting
-from prompts.nightly import NIGHTLY_REFLECTION_TEXTS, REFLECTION_REPAIR_INSTRUCTIONS
+from prompts.nightly import NIGHTLY_REFLECTION_TEXTS, REFLECTION_REPAIR_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -37,9 +35,12 @@ from services.domains.conversation import (
 from services.domains.memory import (
     backfill_memory_embeddings,
     list_memories,
+    load_companion_reflection,
+    narrative_date,
     read_user_profile,
     resolve_user_timezone,
     review_memories,
+    save_companion_reflection,
     upsert_slotted_memory,
 )
 from services.domains.posts import collect_post_interactions
@@ -48,6 +49,7 @@ from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_us
 from .daily_checkpoint import run_daily_checkpoint
 from .journal_nightly import project_today
 from .nightly_planning import ActionExecutionResult, DateContext, load_terminal_action_results, run_nightly_planning
+from .stage_state import load_narrative_result, save_narrative_result
 
 logger = get_logger(__name__)
 
@@ -63,28 +65,18 @@ def _local_day_utc_bounds(day: date, tz_str: str) -> tuple[datetime, datetime]:
     return local_start.astimezone(UTC), (local_start + timedelta(days=1)).astimezone(UTC)
 
 
-def _clean_messages(messages: Sequence[Message], tz_str: str, language: str) -> list[dict[str, str]]:
-    """夜间批处理对话正文；日期分界与用户时刻按用户语言作为独立项，不写入正文。"""
-    clean: list[dict[str, str]] = []
-    prev_date_key: str | None = None
-    last_user_at: datetime | None = None
-    for msg in messages:
-        text_content = message_text(msg)
-        if not text_content:
-            continue
-        cur_date_key = format_local_date_str(msg.created_at, tz_str, language)
-        if cur_date_key and cur_date_key != prev_date_key:
-            marker_text = format_day_marker(msg.created_at, tz_str, language)
-            if marker_text:
-                clean.append({"role": "user", "content": marker_text})
-            prev_date_key = cur_date_key
-        clean.append({"role": msg.role, "content": text_content})
-        if msg.role == "user":
-            clock = format_time_anchor(msg.created_at, last_user_at, tz_str, language)
-            if clock:
-                clean.append({"role": "user", "content": clock})
-            last_user_at = msg.created_at
-    return clean
+def _clean_messages(messages: Sequence[Message], tz_str: str) -> list[dict[str, str]]:
+    return [
+        {
+            "role": msg.role,
+            "content": content,
+            "created_at": format_local_iso(msg.created_at, tz_str) or msg.created_at.isoformat(),
+            "message_id": str(msg.id),
+            "session_id": str(msg.conversation_id),
+        }
+        for msg in messages
+        if (content := message_text(msg))
+    ]
 
 
 def _persona_brief(persona: Persona | None) -> dict[str, str]:
@@ -94,7 +86,7 @@ def _persona_brief(persona: Persona | None) -> dict[str, str]:
     }
 
 
-async def _stage_4_self_diary(
+async def _stage_4_reflection(
     llm_cfg: UserLlmConfig,
     scope: MemoryScope,
     clean_messages: list[dict[str, str]],
@@ -105,60 +97,65 @@ async def _stage_4_self_diary(
     post_interactions: list[dict[str, Any]],
     persona: dict[str, str],
     language: str,
+    log_id: int,
 ) -> bool:
-    """Stage 4：自我日记——伙伴写下当天的个人反思。"""
-    user_id = scope.user_id
+    async with session_scope() as db:
+        previous_result = await load_narrative_result(db, log_id, "reflection")
+        if previous_result is not None:
+            return previous_result
+        previous = await load_companion_reflection(db, scope)
+        previous_date = narrative_date(previous.context, previous.source_refs) if previous is not None else None
+        if previous_date is not None and previous_date >= local_date_str:
+            await save_narrative_result(db, log_id, "reflection", True)
+            await db.commit()
+            return True
+        previous_reflection = (
+            {"local_date": previous_date, "content": previous.content} if previous is not None else None
+        )
     payload = {
         "today_conversations": clean_messages,
         "contextual_memories": contextual_memories,
         "background_memories": background_memories,
+        "previous_reflection": previous_reflection,
         "nightly_autonomous_actions": autonomous_actions,
-        **({"post_interactions": post_interactions} if post_interactions else {}),
+        "post_interactions": post_interactions,
         "local_date": local_date_str,
         "language": language,
-        "max_content_chars": SETTINGS.diary_max_content_chars,
+        "max_content_chars": SETTINGS.reflection_max_content_chars,
         "persona": persona,
     }
     instructions = resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language)
     for attempt in range(2):
         raw = await call_llm_once(
             llm_cfg,
-            instructions + (REFLECTION_REPAIR_INSTRUCTIONS if attempt else ""),
+            instructions + (resolve_prompt_text(REFLECTION_REPAIR_TEXTS, language) if attempt else ""),
             payload,
-            max_output_tokens=SETTINGS.nightly_diary_max_tokens,
+            max_output_tokens=SETTINGS.nightly_reflection_max_tokens,
             json_output=True,
         )
         parsed = parse_llm_json(raw)
-        raw_content = parsed.get("content") if isinstance(parsed, dict) and set(parsed) == {"content"} else None
+        valid_shape = isinstance(parsed, dict) and set(parsed) == {"content"}
+        if valid_shape and parsed["content"] is None:
+            async with session_scope() as db:
+                await save_narrative_result(db, log_id, "reflection", False)
+                await db.commit()
+            return False
+        raw_content = parsed.get("content") if valid_shape else None
         content = raw_content.strip() if isinstance(raw_content, str) else ""
-        if content and len(content) <= SETTINGS.diary_max_content_chars:
+        if content and len(content) <= SETTINGS.reflection_max_content_chars:
             break
         payload["validation_feedback"] = {
-            "error": "Expected one object with a non-blank string content within max_content_chars",
+            "error": "Expected content:null or a non-blank string within max_content_chars",
             "received_content_chars": len(content),
         }
     else:
-        logger.warning("nightly_activity: invalid reflection after repair", extra={"user_id": user_id})
-        return False
-
-    diary_context = f"diary:{local_date_str}"
+        raise ValueError("Invalid companion reflection after repair")
     async with session_scope() as db:
-        row = await upsert_slotted_memory(
-            db,
-            scope,
-            diary_context,
-            content,
-            json.dumps(["diary", "self_reflection"]),
-            source=MemorySource("diary", batch_id=local_date_str),
-        )
+        row = await save_companion_reflection(db, scope, content, date.fromisoformat(local_date_str))
+        item = EmbeddingItem(row.id, row.content, row.content_version)
+        await save_narrative_result(db, log_id, "reflection", True)
         await db.commit()
-    # diary 命名空间参与 recall 检索，落库后补向量（best-effort，不阻塞夜间流水线）。
-    await backfill_memory_embeddings(scope, [EmbeddingItem(row.id, row.content, row.content_version)])
-
-    logger.info(
-        "nightly_activity: stage 4 completed",
-        extra={"user_id": user_id, "diary": diary_context},
-    )
+    await backfill_memory_embeddings(scope, [item])
     return True
 
 
@@ -369,7 +366,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         user_profile = await read_user_profile(db, scope)
         persona = _persona_brief(await db.scalar(select(Persona).where(Persona.user_id == user_id)))
 
-    clean_messages = _clean_messages(today_messages, tz_str, user_language)
+    clean_messages = _clean_messages(today_messages, tz_str)
     today_msg_count = sum(1 for message in today_messages if message.role == "user")
     tomorrow = target_date + timedelta(days=1)
     date_context = DateContext(
@@ -448,7 +445,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     has_material = bool(has_readable_messages or action_facts or posts.threads)
     if has_material:
         try:
-            diary_ok = await _stage_4_self_diary(
+            reflection_ok = await _stage_4_reflection(
                 llm_cfg,
                 scope,
                 clean_messages,
@@ -459,18 +456,24 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 posts.threads,
                 persona,
                 user_language,
+                log_id,
             )
-            stages.append({"stage": "diary", "status": "ok" if diary_ok else "error"})
+            stages.append({"stage": "reflection", "status": "ok" if reflection_ok else "skipped"})
         except Exception as exc:
             logger.exception(
-                "nightly_activity: stage 4 diary failed",
+                "nightly_activity: companion reflection failed",
                 extra={"user_id": user_id, "error": str(exc)},
             )
-            stages.append({"stage": "diary", "status": "error", "error": str(exc)})
+            stages.append({"stage": "reflection", "status": "error", "error": str(exc)})
     else:
-        stages.append({"stage": "diary", "status": "skipped", "reason": "当日无互动或自主行动"})
+        async with session_scope() as db:
+            for stage in ("reflection", "journal"):
+                if await load_narrative_result(db, log_id, stage) is None:
+                    await save_narrative_result(db, log_id, stage, False)
+            await db.commit()
+        stages.append({"stage": "reflection", "status": "skipped", "reason": "当日无互动或自主行动"})
 
-    # Daily checkpoint 与生活空间日记投影相互独立，并发执行以缩短每用户的夜间墙钟时间。
+    # Daily checkpoint 与日记发布相互独立，并发执行以缩短每用户的夜间墙钟时间。
     labels = ["daily checkpoint"]
     jobs: list[Coroutine[Any, Any, bool | None]] = [
         run_daily_checkpoint(llm_cfg, user_id, utc_start, utc_end, local_date_str, user_language),
@@ -481,6 +484,9 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             project_today(
                 user_id,
                 target_date,
+                log_id=log_id,
+                contextual_memories=contextual_memories,
+                background_memories=background_memories,
                 messages=clean_messages,
                 llm_cfg=llm_cfg,
                 nightly_actions=action_facts,
@@ -491,6 +497,8 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         )
     results = await asyncio.gather(*jobs, return_exceptions=True)
     for label, result in zip(labels, results, strict=True):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
         if isinstance(result, Exception):
             # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
             logger.error(f"nightly_activity: {label} failed", exc_info=result, extra={"user_id": user_id})

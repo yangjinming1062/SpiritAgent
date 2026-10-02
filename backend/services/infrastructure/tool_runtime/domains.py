@@ -51,10 +51,10 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ),
     ToolDomain(
         id="memory",
-        description_zh="长期记忆与日记",
-        description_en="Long-term memory and journal",
-        aliases=("memory", "diary", "记忆", "日记", "回忆", "记住", "备忘"),
-        extra_tools=("memory_retain", "memory_recall", "memory_inspect", "diary_write"),
+        description_zh="长期记忆",
+        description_en="Long-term memory",
+        aliases=("memory", "diary", "reflection", "记忆", "日记", "反思", "相处", "回忆", "记住", "备忘"),
+        extra_tools=("memory_retain", "memory_recall", "memory_inspect"),
     ),
     ToolDomain(
         id="posts",

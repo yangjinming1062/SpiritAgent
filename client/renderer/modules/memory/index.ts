@@ -1,1 +1,9 @@
-export { $diaryByDate, $diaryLoading, hydrateDiary, onJournalEvent } from './journal-store'
+export {
+  $diaryByDate,
+  $diaryHasUnread,
+  $diaryLoading,
+  hydrateDiary,
+  hydrateDiaryUnread,
+  markDiaryRead,
+  onJournalEvent
+} from './journal-store'

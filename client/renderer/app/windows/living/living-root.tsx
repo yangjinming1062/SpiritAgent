@@ -6,6 +6,7 @@ import { CompanionMenu } from '@/app/components/surface-companion/companion-menu
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { SpriteStatusBadge } from '@/modules/character'
 import { MediaViewerOverlay } from '@/modules/media'
+import { hydrateDiaryUnread } from '@/modules/memory'
 import { hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared'
@@ -13,7 +14,7 @@ import { ArrowRight, Home } from '@/shared/lib/icons'
 import { WindowControls } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
-import { $surfaceOpenVisible, requestOpenSurface } from '@/shared/store/surfaces'
+import { $surfaceOpenVisible, $surfaceScreenLocked, requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 import { LivingRail } from './living-rail'
@@ -50,6 +51,7 @@ export function LivingRoot(): React.JSX.Element {
 
     const refresh = (): void => {
       void hydratePostsUnread()
+      void hydrateDiaryUnread()
     }
 
     const onVisible = (): void => {
@@ -72,12 +74,19 @@ export function LivingRoot(): React.JSX.Element {
       }
     })
 
+    const stopLock = $surfaceScreenLocked.listen(locked => {
+      if (!locked) {
+        refresh()
+      }
+    })
+
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', onVisible)
 
     return () => {
       stopGateway()
       stopVisibility()
+      stopLock()
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', onVisible)
     }

@@ -20,7 +20,6 @@ from .character_card import (
 )
 from .journal import (
     CompanionDiaryEntry,
-    DiarySource,
 )
 from .models import (
     OUTFIT_POLICY_DEFAULT,
@@ -88,8 +87,12 @@ from .schemas_actions import (
     parse_content_rect,
 )
 from .schemas_journal import (
+    DIARY_BODY_MAX_CHARS,
+    DiaryContent,
     DiaryEntryResponse,
     DiaryListResponse,
+    DiaryReadRequest,
+    DiaryUnreadResponse,
 )
 from .schemas_loop import (
     MAX_COMPANION_FAILURES,
@@ -131,6 +134,7 @@ from .schemas_video import (
 )
 
 __all__ = [
+    "DIARY_BODY_MAX_CHARS",
     "CompanionPost",
     "CompanionPostComment",
     "PostCommentRole",
@@ -205,9 +209,11 @@ __all__ = [
     "CompanionOperationResponse",
     "CompanionOutfit",
     "CompanionScene",
+    "DiaryContent",
+    "DiaryReadRequest",
+    "DiaryUnreadResponse",
     "DiaryEntryResponse",
     "DiaryListResponse",
-    "DiarySource",
     "FullbodyAdoptRequest",
     "FullbodyConfirmRequest",
     "FullbodyPromptRequest",

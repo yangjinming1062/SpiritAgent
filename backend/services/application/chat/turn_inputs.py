@@ -41,6 +41,7 @@ from services.domains.conversation import (
 from services.domains.memory import (
     build_user_profile_extras,
     format_background_memory_block,
+    format_companion_reflection_block,
     format_proactive_memory_block,
     resolve_user_timezone,
     retrieve_proactive_memories,
@@ -361,9 +362,16 @@ async def build_turn_inputs(
     user_profile_extras = ""
     background_memory_extras = ""
     proactive_rows: list[dict] = []
+    companion_reflection_extras = ""
     if memory_scope is not None:
         user_profile_extras = await build_user_profile_extras(db, memory_scope, language=session_lang)
         background_memory_extras = await format_background_memory_block(db, memory_scope, language=session_lang)
+        if is_companion:
+            companion_reflection_extras = await format_companion_reflection_block(
+                db,
+                memory_scope,
+                language=session_lang,
+            )
         if proactive_memory_query:
             proactive_rows = await retrieve_proactive_memories(
                 db,
@@ -372,6 +380,8 @@ async def build_turn_inputs(
                 query_embedding=proactive_memory_embedding,
                 limit=3,
             )
+    if companion_reflection_extras:
+        proactive_rows = [row for row in proactive_rows if row.get("kind") != "reflection"]
     user_local_tz = await resolve_user_timezone(db, user_id)
     agent_config = AgentPromptConfig(
         language=session_lang,
@@ -385,6 +395,7 @@ async def build_turn_inputs(
         ),
         user_profile_extras=user_profile_extras,
         background_memory_extras=background_memory_extras,
+        companion_reflection_extras=companion_reflection_extras,
         proactive_memory_extras=format_proactive_memory_block(proactive_rows, language=session_lang),
         user_local_tz=user_local_tz,
     )

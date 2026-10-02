@@ -84,6 +84,8 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
         row = await get_memory(db, scope, memory_id)
         if row is None:
             return None
+        if (row.context or "").startswith("diary:"):
+            raise ValueError("Published diary memories are read-only")
         cap = SETTINGS.memory_recall_max_content_chars
         if len(content) > cap:
             raise ValueError(f"content exceeds {cap} chars for {row.context or 'recall'}")

@@ -27,7 +27,7 @@ from modules.companion import (
     CompanionPost,
     CompanionPostComment,
     CompanionScene,
-    DiarySource,
+    DiaryContent,
     Persona,
     PostCommentResponse,
     PostCommentRole,
@@ -41,7 +41,7 @@ from modules.memory import MEMORY_EMBEDDING_DIM, MEMORY_SLOT_CONTEXT_PREFIXES, M
 from modules.scheduler import CronJob
 from modules.settings import UserSetting
 from pydantic import ValidationError
-from sqlalchemy import Date, DateTime, select
+from sqlalchemy import Date, DateTime, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
@@ -176,6 +176,11 @@ async def serialize_rows(
         base_stmt = select(Message).join(Conversation).where(Conversation.user_id == user_id)
     else:
         base_stmt = select(model).where((User.id if table == "user_preferences" else model.user_id) == user_id)
+    if table == "memories":
+        base_stmt = base_stmt.where(
+            Memory.source_kind != "diary",
+            or_(Memory.context.is_(None), ~Memory.context.like("diary:%")),
+        )
 
     result: list[dict[str, Any]] = []
     offset = 0
@@ -243,8 +248,11 @@ async def insert_rows(
             for path in (payload.get("media_url"), payload.get("audio_url")):
                 if path and (not (parsed := parse_companion_asset_path(path)) or parsed[0] != target_user_id):
                     raise ValueError("Post media must belong to the target account")
-        if table == "companion_diary_entries" and payload.get("source") not in {source.value for source in DiarySource}:
-            raise ValueError("Invalid diary source")
+        if table == "companion_diary_entries":
+            if not isinstance(payload.get("is_read"), bool):
+                raise ValueError("Invalid diary read state")
+            content = DiaryContent.model_validate({key: payload.get(key) for key in ("title", "body", "mood")})
+            payload.update(content.model_dump())
         if table == "companion_post_comments" and payload.get("role") not in {role.value for role in PostCommentRole}:
             raise ValueError("Invalid post comment role")
         if table == "companion_post_comments":
@@ -436,6 +444,8 @@ def _build_payload(
             payload["source_key"] = companion_cron_source_key(int(job_id)) if job_id is not None else None
         payload["event_received_at"] = None
     if table == "memories":
+        if (payload.get("context") or "").startswith("diary:") or payload.get("source_kind") == "diary":
+            raise ValueError("Diary indexes must be rebuilt from published diaries")
         validate_memory_scope(MemoryScope(user_id, payload.get("system_preset_id")))
         if not isinstance(payload.get("content_version"), int) or payload["content_version"] <= 0:
             raise ValueError("Invalid memory content version")

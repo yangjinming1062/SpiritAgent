@@ -167,8 +167,8 @@ class Settings(BaseSettings):
     nightly_window_end_hour: int = Field(default=5, ge=0, le=23, validation_alias="NIGHTLY_WINDOW_END_HOUR")
     nightly_scan_interval_seconds: float = Field(default=300.0, gt=0, validation_alias="NIGHTLY_SCAN_INTERVAL_SECONDS")
     nightly_planning_max_tokens: int = Field(default=128_000, gt=0, validation_alias="NIGHTLY_PLANNING_MAX_TOKENS")
-    nightly_diary_max_tokens: int = Field(default=8_000, gt=0, validation_alias="NIGHTLY_DIARY_MAX_TOKENS")
-    diary_max_content_chars: int = Field(default=1_000, gt=0, validation_alias="DIARY_MAX_CONTENT_CHARS")
+    nightly_reflection_max_tokens: int = Field(default=8_000, gt=0, validation_alias="NIGHTLY_REFLECTION_MAX_TOKENS")
+    reflection_max_content_chars: int = Field(default=1_000, gt=0, validation_alias="REFLECTION_MAX_CONTENT_CHARS")
     scheduler_interval_seconds: float = Field(default=60.0, gt=0, validation_alias="SCHEDULER_INTERVAL_SECONDS")
     cron_max_active_per_user: int = Field(default=10, gt=0, validation_alias="CRON_MAX_ACTIVE_PER_USER")
 

@@ -16,6 +16,7 @@ MEMORY_EMBEDDING_DIM = 1536
 MEMORY_SLOT_CONTEXT_PREFIXES: tuple[str, ...] = (
     "user_profile:",
     "diary:",
+    "reflection:",
     "interaction_stats:",
     "recall:nightly_actions:",
 )

@@ -11,12 +11,14 @@ KIND_TO_PREFIX: dict[str, str] = {
     "user_profile": "user_profile:",
     "interaction_stats": "interaction_stats:",
     "diary": "diary:",
+    "reflection": "reflection:",
 }
-# 不参与检索召回：用户资料由专门的块注入，统计不是记忆；夜间反思（diary:）写给后续回忆，参与召回。
+# 用户资料单独注入，统计不参与召回；日记原文和相处理解参与召回。
 RESERVED_FROM_RECALL: frozenset[str] = frozenset(
     {KIND_TO_PREFIX["user_profile"], KIND_TO_PREFIX["interaction_stats"]},
 )
 _RECALL_LABEL_MAX = 200
+REFLECTION_CONTEXT = "reflection:current"
 
 
 def context_not_in(prefix: str) -> ColumnElement[bool]:

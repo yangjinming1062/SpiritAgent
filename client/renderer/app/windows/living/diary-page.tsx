@@ -1,15 +1,16 @@
-// 日记页：左月历（带点）+ 右当天日记正文（精灵编写，只读浏览）+ 心情徽标 + 伙伴署名。
-
 import { useStore } from '@nanostores/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 
 import { $persona } from '@/modules/character'
-import { $diaryByDate, $diaryLoading, hydrateDiary } from '@/modules/memory'
+import { $diaryByDate, $diaryLoading, hydrateDiary, markDiaryRead } from '@/modules/memory'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { BookOpen } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { BTN_SUBTLE } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
+import { $gatewayState } from '@/shared/store/gateway'
+import { $surfaceOpen, $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { type Dictionary, useStrings } from '@/shared/strings'
 
 import styles from './diary.module.css'
@@ -60,7 +61,12 @@ export function DiaryPage(): React.JSX.Element {
   const persona = useStore($persona)
   const diaryByDate = useStore($diaryByDate)
   const loading = useStore($diaryLoading)
-  const authKind = useStore($auth).kind
+  const auth = useStore($auth)
+  const authKind = auth.kind
+  const sessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
+  const surfaceOpen = useStore($surfaceOpen)
+  const surfaceVisible = useStore($surfaceOpenVisible)
+  const screenLocked = useStore($surfaceScreenLocked)
   const dict = useStrings()
   const t = dict.living.diary
   const tRail = dict.living.rail
@@ -68,11 +74,72 @@ export function DiaryPage(): React.JSX.Element {
   const [cursor, setCursor] = useState<Date>(new Date())
   const [loadFailed, setLoadFailed] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  const [readSnapshot, setReadSnapshot] = useState<string[] | null>(null)
+  const [readBlocked, setReadBlocked] = useState(false)
+  const [confirmedReadIds, setConfirmedReadIds] = useState(new Set<string>())
+
+  const [documentActive, setDocumentActive] = useState(
+    () => document.visibilityState === 'visible' && document.hasFocus()
+  )
+
+  const readRequest = useRef<Promise<boolean> | undefined>(undefined)
+  const snapshotCaptured = useRef(false)
+  const beginAsync = useAsyncGuard()
+  const foreground = surfaceOpen === 'living' && surfaceVisible && !screenLocked && documentActive
+  const wasForeground = useRef(foreground)
+
+  useEffect(() => {
+    const update = (): void => {
+      setDocumentActive(document.visibilityState === 'visible' && document.hasFocus())
+    }
+
+    update()
+    window.addEventListener('focus', update)
+    window.addEventListener('blur', update)
+    document.addEventListener('visibilitychange', update)
+
+    return () => {
+      window.removeEventListener('focus', update)
+      window.removeEventListener('blur', update)
+      document.removeEventListener('visibilitychange', update)
+    }
+  }, [])
+
+  useEffect(() => {
+    readRequest.current = undefined
+    snapshotCaptured.current = false
+    setReadSnapshot(null)
+    setReadBlocked(false)
+    setConfirmedReadIds(new Set())
+  }, [sessionId, reloadKey])
+
+  useEffect(
+    () =>
+      $gatewayState.listen(state => {
+        if (state === 'open') {
+          setReloadKey(key => key + 1)
+        }
+      }),
+    []
+  )
+
+  useEffect(() => {
+    const restored = foreground && !wasForeground.current
+    wasForeground.current = foreground
+
+    if (restored) {
+      setReadBlocked(false)
+
+      if (loadFailed) {
+        setReloadKey(key => key + 1)
+      }
+    }
+  }, [foreground, loadFailed])
 
   const displayName = persona?.name || tRail.companionFallback
   const isToday = selectedDate === todayKey()
 
-  // 月份切换时若选中日期超出当月范围则吸到该月首日，同时拉取当月数据。冷启动默认视图可能是日记（hash/localStorage 持久化），hydrateAuth 的 IPC 往返未完成时 authedApi 会以 unauth 静默跳过——等 auth 就绪再水合（authKind 变化重跑）。
+  // 月份翻阅只加载正文，首轮成功加载捕获进入页面时的未读快照。
   useEffect(() => {
     const cursorStart = cursorMonthStart(cursor)
     const cursorEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)
@@ -88,20 +155,66 @@ export function DiaryPage(): React.JSX.Element {
     let cancelled = false
     setLoadFailed(false)
 
-    void hydrateDiary({ from: startKey, to: endKey }).then(ok => {
+    void hydrateDiary({ from: startKey, to: endKey }).then(snapshot => {
       if (!cancelled) {
-        setLoadFailed(!ok)
+        setLoadFailed(snapshot === null)
+
+        if (snapshot !== null && !snapshotCaptured.current) {
+          snapshotCaptured.current = true
+          setReadSnapshot(snapshot)
+        }
       }
     })
 
     return () => {
       cancelled = true
     }
-  }, [cursor, authKind, reloadKey])
+  }, [cursor, authKind, sessionId, reloadKey])
 
   const days = useMemo(() => daysInMonth(cursor), [cursor])
   const firstDayOffset = days[0] ? (days[0].getDay() + 6) % 7 : 0
   const entry = diaryByDate[selectedDate]
+
+  useEffect(() => {
+    if (
+      authKind !== 'authenticated' ||
+      !foreground ||
+      loading ||
+      loadFailed ||
+      !snapshotCaptured.current ||
+      readSnapshot === null ||
+      readBlocked ||
+      readRequest.current !== undefined ||
+      document.visibilityState !== 'visible' ||
+      !document.hasFocus()
+    ) {
+      return
+    }
+
+    // 进入前的提醒统一确认；进入后发布的内容只确认当前实际展示的正文。
+    const ids = [...new Set([...readSnapshot, ...(entry ? [entry.id] : [])])].filter(id => !confirmedReadIds.has(id))
+
+    if (ids.length === 0) {
+      return
+    }
+
+    const isLive = beginAsync()
+    const request = markDiaryRead(ids)
+    readRequest.current = request
+    void request.then(ok => {
+      if (!isLive() || readRequest.current !== request) {
+        return
+      }
+
+      readRequest.current = undefined
+
+      if (ok) {
+        setConfirmedReadIds(current => new Set([...current, ...ids]))
+      } else {
+        setReadBlocked(true)
+      }
+    })
+  }, [authKind, foreground, loading, loadFailed, readSnapshot, readBlocked, entry, confirmedReadIds, beginAsync])
 
   return (
     <div className={styles.shell}>

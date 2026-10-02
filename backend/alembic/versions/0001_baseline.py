@@ -640,7 +640,7 @@ def upgrade() -> None:
         sa.Column("title", sa.String(length=128), server_default=sa.text("''"), nullable=False),
         sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("mood", sa.String(length=32), nullable=True),
-        sa.Column("source", sa.String(length=16), server_default=sa.text("'nightly'"), nullable=False),
+        sa.Column("is_read", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("post_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -654,6 +654,12 @@ def upgrade() -> None:
         "companion_diary_entries",
         ["entry_date"],
         unique=False,
+    )
+    op.create_index(
+        "ix_companion_diary_unread_user",
+        "companion_diary_entries",
+        ["user_id"],
+        postgresql_where=sa.text("is_read IS FALSE"),
     )
     # 待兑现的陪伴意图：等待、认领（租约）与交付状态和模型调用生命周期分离。
     op.create_table(
@@ -989,6 +995,7 @@ def upgrade() -> None:
         ["user_id", "system_preset_id", sa.text("updated_at DESC"), sa.text("id DESC")],
     )
     for name, prefix in (
+        ("uq_memories_reflection_slot", "reflection:"),
         ("uq_memories_interaction_day", "interaction_stats:"),
         ("uq_memories_nightly_actions", "recall:nightly_actions:"),
     ):

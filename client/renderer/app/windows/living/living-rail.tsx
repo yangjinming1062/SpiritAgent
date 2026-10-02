@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 
 import { $activeAvatarId, $companionMood, $persona, $portraitUrl, $spriteState } from '@/modules/character'
+import { $diaryHasUnread } from '@/modules/memory'
 import { $postsHasUnread } from '@/modules/posts'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import {
@@ -35,6 +36,7 @@ export function LivingRail(): React.JSX.Element {
   const view = useStore($livingView)
   const spriteState = useStore($spriteState)
   const postsHasUnread = useStore($postsHasUnread)
+  const diaryHasUnread = useStore($diaryHasUnread)
   const displayName = persona?.name || t.companionFallback
   const moodText = companionMood?.trim()
 
@@ -77,11 +79,11 @@ export function LivingRail(): React.JSX.Element {
         {navEntries.map(entry => {
           const Icon = entry.icon
           const isActive = view === entry.id
-          const hasUnread = entry.id === 'posts' && postsHasUnread
+          const hasUnread = (entry.id === 'posts' && postsHasUnread) || (entry.id === 'diary' && diaryHasUnread)
 
           return (
             <button
-              aria-label={hasUnread ? t.postsUnread : entry.label}
+              aria-label={hasUnread ? `${entry.label} (${t.unread})` : entry.label}
               className={cn(styles.navItem, isActive && styles.navItemActive)}
               key={entry.id}
               onClick={() => setLivingView(entry.id)}

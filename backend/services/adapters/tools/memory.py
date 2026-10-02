@@ -1,5 +1,5 @@
 from prompts.memory import MEMORY_POLICY
-from prompts.tools import MEMORY_INSPECT_DESC, MEMORY_RECALL_DESC, MEMORY_RETAIN_DESC
+from prompts.tools import MEMORY_INSPECT_DESC, MEMORY_RECALL_DESC, MEMORY_RECALL_PARAM_DESCS, MEMORY_RETAIN_DESC
 
 from services.domains.memory import MemoryDecisions
 from services.infrastructure.tool_runtime import ToolsRegistry
@@ -12,7 +12,17 @@ RETAIN_SCHEMA = {
 RECALL_SCHEMA = {
     "name": "memory_recall",
     "description": MEMORY_RECALL_DESC,
-    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": MEMORY_RECALL_PARAM_DESCS["query"]},
+            "diary_date": {
+                "type": "string",
+                "format": "date",
+                "description": MEMORY_RECALL_PARAM_DESCS["diary_date"],
+            },
+        },
+    },
 }
 INSPECT_SCHEMA = {
     "name": "memory_inspect",

@@ -6,6 +6,7 @@ PRESET_BODY_COMPANION = (
     "{{USER_PROFILE}}\n\n"
     "{{LANGUAGE_DIRECTIVE}}\n\n"
     "{{COMPANION_CONTEXT_GUIDANCE}}\n\n"
+    "{{COMPANION_REFLECTION}}\n\n"
     "{{BACKGROUND_MEMORY}}\n\n"
     "{{PROACTIVE_MEMORY}}\n\n"
     "{{MESSAGE_TIMESTAMPS}}\n\n"
@@ -662,8 +663,8 @@ MEMORY_TOOL_LABELS: dict[str, str] = {
 }
 
 MEMORY_RECALL_GUIDANCES: dict[str, str] = {
-    "zh": "需要补充与当前话题相关的长期信息时用 memory_recall；保留结果中的依据、范围和时效，不把推断当作用户确认。",
-    "en": "Use memory_recall for missing long-term context relevant to the current topic. Preserve each result's basis, scope, and time limits; an inference is not user confirmation.",
+    "zh": "需要补充与当前话题相关的记忆时用 memory_recall；保留结果中的来源、依据、范围和时效，不把自己的记录或推断当作用户确认。",
+    "en": "Use memory_recall for missing memories relevant to the current topic. Preserve each result's source, basis, scope, and time limits; your own records and inferences are not user confirmation.",
 }
 
 MEMORY_TOOL_GUIDANCES: dict[str, str] = {

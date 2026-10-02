@@ -7,11 +7,14 @@ from typing import Any
 from components import get_logger
 from modules.auth import User, generate_activation_token, hash_activation_token
 from modules.companion import COMPANION_CRON_SOURCE_PREFIX, Persona
+from modules.memory import Memory
 from modules.scheduler import CronJob
 from modules.ws import emit_ws_event
-from sqlalchemy import String, cast, delete, select
+from sqlalchemy import String, cast, delete, or_, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from services.domains.memory import rebuild_diary_indexes
 
 from .action_assets import restore_action_catalogs, validate_action_files
 from .file_packing import UrlRewriter, restore_files
@@ -58,7 +61,6 @@ OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = 
         ("memories", None),
     ),
     "companion_scenes": (("personas", "active_scene_id"),),
-    "memories": (("companion_diary_entries", None),),
     "companion_posts": (("companion_diary_entries", None),),
 }
 
@@ -242,6 +244,8 @@ async def _restore_table(
         await restore_conversation_context(db, rows, staged_id_map)
     elif table == "memories":
         await restore_memory_context(db, rows, staged_id_map, user_id, import_batch_id)
+    elif table == "companion_diary_entries":
+        await rebuild_diary_indexes(db, user_id)
     return new_map, inserted
 
 
@@ -388,7 +392,18 @@ async def _has_retained_dependent(
 
 async def _delete_user_rows(db: AsyncSession, table: str, user_id: int) -> None:
     model = TABLE_MODELS[table]
-    await db.execute(delete(model).where(model.user_id == user_id))
+    stmt = delete(model).where(model.user_id == user_id)
+    if table == "memories":
+        stmt = stmt.where(Memory.source_kind != "diary", or_(Memory.context.is_(None), ~Memory.context.like("diary:%")))
+    elif table == "companion_diary_entries":
+        await db.execute(
+            delete(Memory).where(
+                Memory.user_id == user_id,
+                Memory.system_preset_id == "companion",
+                or_(Memory.source_kind == "diary", Memory.context.like("diary:%")),
+            ),
+        )
+    await db.execute(stmt)
 
 
 async def _clear_compatible_rows(

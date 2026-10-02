@@ -12,6 +12,7 @@
 | [memory_retrieval.py](memory_retrieval.py) | 向量与关键词双路召回、融合排序 |
 | [memory_store.py](memory_store.py) | 存储、作用域过滤、写锁与遗忘清理 |
 | [memory_admin.py](memory_admin.py) | 人工列表、编辑与计数 |
+| [memory_narratives.py](memory_narratives.py) | 日记原文索引、恢复重建及最新相处理解快照 |
 | [memory_bootstrap.py](memory_bootstrap.py) | 用户资料与时区读写 |
 | [memory_format.py](memory_format.py) / [memory_namespaces.py](memory_namespaces.py) | 提示词记忆块渲染、记录上下文命名空间 |
 
@@ -47,7 +48,9 @@
 
 聊天、伙伴状态与夜间规划只读有效且未到期记录，推断标明依据类型。恢复时重映射证据和修订引用、重置审核水位并保留遗忘指纹；缺少原始消息的导入判断须失效，包级规则见 [PROTOCOL](../../../../docs/PROTOCOL.md#备份校验与覆盖恢复)。
 
-夜间反思（`diary:`）与夜间活动记录同为系统写入的伙伴自身记录，参与召回但不进入审阅，提示词里标注所属日期；用户资料由专门的块注入、统计不参与召回。夜间规划读取同域全部有效记忆，不套用管理列表分页上限；外部列表仍使用有界查询。写入时补向量，召回同时走向量和关键词 / CJK N-gram，经 RRF、重要性和时间衰减融合；嵌入不可用或维度不匹配时只降级到同域关键词，不跨域回退。
+`memory_narratives.py` 管理 `diary:<日期>` 派生索引与 `reflection:current` 理解快照；二者与夜间活动记录同为伙伴自身记录，参与召回但不进入事实审阅。发布、遗忘及日期召回契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动态与日记)。用户资料由专门的块注入、统计不参与召回。
+
+夜间规划读取同域全部有效事实记忆，不套用管理列表分页上限；外部列表仍使用有界查询。提交后补向量，失败不影响已保存内容及关键词召回；召回同时走向量和关键词 / CJK N-gram，经 RRF、重要性和时间衰减融合，嵌入不可用或维度不匹配时仅用同域关键词。
 
 ## 验证入口
 

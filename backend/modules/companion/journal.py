@@ -1,14 +1,15 @@
 """伙伴每日日记。"""
 
 from datetime import date
-from enum import StrEnum
 from uuid import uuid4
 
 from common import ModelBase, TimestampMixin
 from sqlalchemy import (
     ARRAY,
+    Boolean,
     Date,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -18,16 +19,14 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 
-class DiarySource(StrEnum):
-    NIGHTLY = "nightly"
-    LLM = "llm"
-
-
 class CompanionDiaryEntry(ModelBase, TimestampMixin):
-    """每日一篇第一人称日记；唯一约束 (user_id, entry_date) 决定夜间任务走 upsert。"""
+    """伙伴发布的第一人称日记；日期唯一约束防止夜间恢复重复发布。"""
 
     __tablename__ = "companion_diary_entries"
-    __table_args__ = (UniqueConstraint("user_id", "entry_date", name="uq_companion_diary_user_date"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "entry_date", name="uq_companion_diary_user_date"),
+        Index("ix_companion_diary_unread_user", "user_id", postgresql_where=text("is_read IS FALSE")),
+    )
 
     id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
@@ -46,11 +45,7 @@ class CompanionDiaryEntry(ModelBase, TimestampMixin):
     )
     body: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     mood: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    source: Mapped[str] = mapped_column(
-        String(16),
-        default=DiarySource.NIGHTLY.value,
-        server_default=text("'nightly'"),
-    )
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     post_ids: Mapped[list[str]] = mapped_column(
         ARRAY(String),
         default=list,

@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from components import get_logger, session_scope, tool_error, utc_now
@@ -70,12 +70,26 @@ class NativeMemory:
                     ensure_ascii=False,
                 )
             if tool_name == "memory_recall":
-                query = args.get("query")
-                if not isinstance(query, str) or not query.strip():
-                    return tool_error("query is required")
-                vector = await embed_memory_text(self._scope.user_id, query)
+                query = args.get("query", "")
+                raw_date = args.get("diary_date")
+                diary_date = None
+                if raw_date is not None:
+                    if not isinstance(raw_date, str):
+                        return tool_error("diary_date must be YYYY-MM-DD")
+                    diary_date = date.fromisoformat(raw_date)
+                    if diary_date.isoformat() != raw_date:
+                        return tool_error("diary_date must be YYYY-MM-DD")
+                if not isinstance(query, str) or (not query.strip() and diary_date is None):
+                    return tool_error("Provide query or diary_date")
+                vector = await embed_memory_text(self._scope.user_id, query) if diary_date is None else None
                 async with session_scope() as db:
-                    rows = await retrieve_hybrid_memories(db, self._scope, query, query_embedding=vector)
+                    rows = await retrieve_hybrid_memories(
+                        db,
+                        self._scope,
+                        query,
+                        query_embedding=vector,
+                        diary_date=diary_date,
+                    )
                 return json.dumps({"memories": rows}, default=str, ensure_ascii=False)
             return tool_error(f"Unknown memory tool: {tool_name}")
         except Exception as exc:

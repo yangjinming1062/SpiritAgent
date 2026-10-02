@@ -147,7 +147,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
 
-    case 'companion.diary.upserted':
+    case 'companion.diary.created':
+
+    case 'companion.diary.read':
+
+    case 'companion.diary.deleted':
       onJournalEvent(event)
 
       break

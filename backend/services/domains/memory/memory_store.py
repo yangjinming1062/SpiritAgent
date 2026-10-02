@@ -1,10 +1,13 @@
 import hashlib
+from datetime import date
 from typing import Any
 
 from components import get_logger, session_scope, utc_now
+from modules.companion import CompanionDiaryEntry
 from modules.conversation import Conversation
 from modules.memory import MEMORY_EMBEDDING_DIM, MEMORY_SLOT_CONTEXT_PREFIXES, Memory
-from sqlalchemy import ColumnElement, and_, case, func, or_, select, text, update
+from modules.ws import emit_ws_event
+from sqlalchemy import ColumnElement, and_, case, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -172,6 +175,20 @@ async def delete_memory(db: AsyncSession, scope: MemoryScope, memory_id: int) ->
     row = await get_memory(db, scope, memory_id)
     if row is None or row.status == "forgotten":
         return False
+    if scope.system_preset_id == "companion" and (row.context or "").startswith("diary:"):
+        entry_date = date.fromisoformat(row.context.removeprefix("diary:"))
+        diary_id = await db.scalar(
+            delete(CompanionDiaryEntry)
+            .where(CompanionDiaryEntry.user_id == scope.user_id, CompanionDiaryEntry.entry_date == entry_date)
+            .returning(CompanionDiaryEntry.id),
+        )
+        if diary_id is not None:
+            emit_ws_event(
+                db,
+                user_id=scope.user_id,
+                event_type="companion.diary.deleted",
+                payload={"diary_id": diary_id, "entry_date": entry_date.isoformat()},
+            )
     forget_record(row)
     await db.commit()
     return True

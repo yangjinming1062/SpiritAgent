@@ -158,19 +158,6 @@ POST_PUBLISH_PARAM_DESCS = {
 POST_STATUS_PARAM_DESCS = {"publication_id": "post_publish 返回的 publication_id，不使用 post_id"}
 
 
-DIARY_WRITE_DESC = (
-    "以伙伴第一人称补写指定自然日的日记，缺省为用户本地今天；同日已有内容时只追加，不覆盖。"
-    "仅写有依据的当天交流、已完成事件与自身感受，不把用户计划或助手猜测写成事实。"
-    "成功后静默保存供用户查看，不额外发消息。"
-)
-
-DIARY_WRITE_PARAM_DESCS = {
-    "body": "本次补记正文，所有语言均最多 1000 字符（含空格与标点）；容量不足时按工具返回精简本次内容，已保存的部分不要重复提交",
-    "mood": "可选，一个与正文语言一致的简短心情词，会显示在日记上",
-    "date": "ISO 日期（YYYY-MM-DD），不能是未来日期；缺省为用户本地今天",
-    "title": "可选标题",
-}
-
 WEB_SEARCH_DESC = (
     "Search the web for information. Returns results with title, "
     "URL, and description. Search operators (site:domain, filetype:pdf, intitle:word, "
@@ -196,7 +183,12 @@ WEB_EXTRACT_PARAM_DESCS = {
 
 MEMORY_RETAIN_DESC = "Propose an atomic batch of evidence-grounded memory changes after memory_inspect, using the decision fields defined in memory_inspect's policy. An independent review may reject or revise it. Revise or invalidate incorrect facts using their ID and version. Never ask the user to approve maintenance."
 
-MEMORY_RECALL_DESC = "Search active, unexpired memories for conversational use. Basis and scope qualify every result."
+MEMORY_RECALL_DESC = "Search active, unexpired memories. Provide query or diary_date; when both are supplied, diary_date selects the dated record."
+
+MEMORY_RECALL_PARAM_DESCS = {
+    "query": "Topic or keywords to recall; ignored when diary_date is supplied",
+    "diary_date": "Read your published diary for this date in the user's local calendar, YYYY-MM-DD",
+}
 
 MEMORY_INSPECT_DESC = "Inspect original conversation evidence and memory versions before maintenance. Candidates and invalidated claims are NOT user facts and must not inform conversation. Optional query limits both records and quotable messages to those containing the text, so omit it when the evidence may be worded differently; before_memory_id pages through older records."
 

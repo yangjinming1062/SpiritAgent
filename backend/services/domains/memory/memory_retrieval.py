@@ -1,6 +1,6 @@
 import math
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from components import session_scope, utc_now
@@ -13,6 +13,7 @@ from services.contracts import MemoryScope
 from services.infrastructure.llm import generate_embedding, resolve_embedding_provider
 
 from .memory_namespaces import RESERVED_FROM_RECALL, context_not_in
+from .memory_narratives import narrative_date
 from .memory_store import active_memory_filter, scope_filter
 
 # RRF 平滑常数（TREC/IR 标准取值）
@@ -158,9 +159,21 @@ async def retrieve_hybrid_memories(
     *,
     query_embedding: list[float] | None = None,
     limit: int = 10,
+    diary_date: date | None = None,
 ) -> list[dict[str, Any]]:
     """稠密与稀疏检索的混合搜索，用 RRF 融合排名并叠加艾宾浩斯时间衰减。"""
     q_str = (query or "").strip()
+    if diary_date is not None:
+        if scope.system_preset_id != "companion":
+            return []
+        row = await db.scalar(
+            select(Memory).where(
+                scope_filter(scope),
+                active_memory_filter(),
+                Memory.context == f"diary:{diary_date.isoformat()}",
+            ),
+        )
+        return [_memory_result(row, 1.0)] if row is not None else []
     if not q_str and not query_embedding:
         return []
 
@@ -193,22 +206,28 @@ async def retrieve_hybrid_memories(
         importance = max(0.1, mem.importance or 1.0)
         final_score = rrf_score * decay * importance
 
-        results.append(
-            {
-                "id": mem.id,
-                "content": mem.content,
-                "context": mem.context,
-                "tags": mem.tags,
-                "importance": importance,
-                "basis": mem.basis,
-                "expires_at": mem.expires_at,
-                "score": final_score,
-                "updated_at": mem.updated_at,
-            },
-        )
+        results.append(_memory_result(mem, final_score))
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:limit]
+
+
+def _memory_result(mem: Memory, score: float) -> dict[str, Any]:
+    kind = next((kind for kind in ("diary", "reflection") if (mem.context or "").startswith(f"{kind}:")), "recall")
+    return {
+        "id": mem.id,
+        "content": mem.content,
+        "context": mem.context,
+        "tags": mem.tags,
+        "importance": max(0.1, mem.importance or 1.0),
+        "basis": mem.basis,
+        "kind": kind,
+        "local_date": narrative_date(mem.context, mem.source_refs),
+        "source_kind": mem.source_kind,
+        "expires_at": mem.expires_at,
+        "score": score,
+        "updated_at": mem.updated_at,
+    }
 
 
 async def retrieve_proactive_memories(

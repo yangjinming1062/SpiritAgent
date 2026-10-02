@@ -2,24 +2,40 @@ import re
 
 from components import DEFAULT_LANGUAGE, SETTINGS, resolve_language, resolve_prompt_text
 from modules.memory import Memory
-from prompts.memory import BACKGROUND_MEMORY_LABELS_TEXTS, MEMORY_BASIS_LABELS, PROACTIVE_MEMORY_LABELS_TEXTS
+from prompts.memory import (
+    BACKGROUND_MEMORY_LABELS_TEXTS,
+    COMPANION_REFLECTION_LABELS,
+    MEMORY_BASIS_LABELS,
+    NARRATIVE_MEMORY_LABELS,
+    PROACTIVE_MEMORY_LABELS_TEXTS,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
 
+from .memory_narratives import load_companion_reflection, narrative_date
 from .memory_store import active_memory_filter, scope_filter
 
 _SLOT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
 
 
-def _format_record(content: str, basis: str, context: str | None, language: str) -> str:
-    """记忆行：依据标签与话题在前，内部命名空间前缀不进入提示词；系统写入的日期槽记录（活动、反思）改标其所属日期，正文里的“今天”才有所指。"""
+def _format_record(content: str, basis: str, context: str | None, language: str, local_date: str | None = None) -> str:
+    """显示依据、话题或所属日期，隐藏内部命名空间。"""
     labels = MEMORY_BASIS_LABELS[resolve_language(language)]
     parts = [labels.get(basis, basis)]
-    if basis != "system":
+    kind = next((kind for kind in ("diary", "reflection") if (context or "").startswith(f"{kind}:")), None)
+    if kind is not None:
+        parts.append(NARRATIVE_MEMORY_LABELS[resolve_language(language)][kind])
+        if local_date:
+            parts.append(local_date)
+        elif slot_date := _SLOT_DATE_RE.search(context or ""):
+            parts.append(slot_date.group())
+    elif basis != "system":
         if topic := (context or "").removeprefix("recall:"):
             parts.append(topic)
+    elif local_date:
+        parts.append(local_date)
     elif slot_date := _SLOT_DATE_RE.search(context or ""):
         parts.append(slot_date.group())
     return f"- [{' · '.join(parts)}] {content}"
@@ -81,6 +97,23 @@ def format_proactive_memory_block(memories: list[dict], *, language: str = DEFAU
         resolve_prompt_text(PROACTIVE_MEMORY_LABELS_TEXTS, language)
         + "\n"
         + "\n".join(
-            _format_record(m["content"], m.get("basis", "system"), m.get("context"), language) for m in memories
+            _format_record(m["content"], m.get("basis", "system"), m.get("context"), language, m.get("local_date"))
+            for m in memories
         )
+    )
+
+
+async def format_companion_reflection_block(
+    db: AsyncSession,
+    scope: MemoryScope,
+    *,
+    language: str = DEFAULT_LANGUAGE,
+) -> str:
+    row = await load_companion_reflection(db, scope)
+    if row is None:
+        return ""
+    return (
+        resolve_prompt_text(COMPANION_REFLECTION_LABELS, language)
+        + "\n"
+        + _format_record(row.content, row.basis, row.context, language, narrative_date(row.context, row.source_refs))
     )

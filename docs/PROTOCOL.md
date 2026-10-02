@@ -249,7 +249,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 ### 动态与日记
 
-动态与日记由伙伴创作，相关工具只向陪伴预设开放，装配与派发均校验。用户可请求发布动态、评论和删除本人评论，不能编辑动态或删除伙伴回复；同日日记的正文只追加，已有标题不覆盖。
+动态与日记由伙伴创作。动态工具只向陪伴预设开放，装配与派发均校验；用户可请求发布动态、评论和删除本人评论，不能编辑动态或删除伙伴回复。日记只由夜间流水线自主判断并发布，没有聊天写入工具或发布次数额度；当天已有日记时恢复复用原文，不追加、不覆盖，也不重新变为未读。日记、召回索引与发布事件在同一事务提交，主动不写与已发布结论持久化在夜间日志中供恢复。
 
 `post_publish` 提交意图，`post_status` 查询原任务，两者只返回任务 ID、状态、动态 ID 和错误信息。正文、媒体与评论独立保存，不进入主会话或其历史摘要；评论回复只装配本线程及共享人设、有效记忆和心情。动态上下文保存发布意图、媒体制作说明与语音文稿，用于回复和夜间回顾：意图说明分享主题与目的，制作说明描述预期画面，文稿提供语音表达内容；预期画面不保证成品细节，作品描绘的情节不证明现实经历。
 
@@ -259,11 +259,17 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 回复状态绑定触发评论，同一动态按评论顺序生成回复；失败重试原任务，删除触发评论后不写入迟到回复，已生成的伙伴回复保留。发布通过 `companion.post.created`、评论与回复状态通过 `companion.post.comment`、删除通过 `companion.post.comment.deleted` 刷新，事件与业务状态同事务提交，不发送 `companion.message`。
 
-动态未读状态由后端逐条保存，新发布默认未读，与评论无关。`GET /api/companion/posts/unread` 查询当前账户的 `has_unread`；首屏列表先捕获该账户全部未读 ID，返回 `unread_post_ids` 快照，翻页返回空快照。Client 在页面成功展示且生活空间可见、聚焦、未锁屏时，以 `POST /api/companion/posts/read` 的 `post_ids` 确认该快照，后续入列的动态展示后单独确认；确认只更新本账户对应记录，重复提交幂等，不能按确认时刻批量清空。已读更新与 `companion.posts.read` 事件同事务提交；发布和已读事件驱动重新查询，登录、开窗、重连及聚焦补查，避免离线发布、旧事件或迟到响应造成错误提醒。字段见[动态 schema](../backend/modules/companion/schemas_posts.py)。
+动态与日记的未读状态由后端逐条保存，新发布默认未读。列表加载前捕获当前账户全部未读 ID，Client 在页面成功展示且生活空间可见、聚焦、未锁屏时确认该快照；确认只更新本账户指定记录，重复提交幂等，不能按确认时刻批量清空。进入后新发布的内容在正文实际展示时单独确认，读取或确认失败保留提醒。发布、已读和遗忘事件驱动重新查询，登录、开窗、重连、聚焦与解锁补查；账户与请求生命周期守卫隔离迟到结果。
 
-发布时间为实际完成时刻，活动归属日由发布任务记录；夜间规划、反思和日记按动态 ID 去重归集发布事实，资料中的发布与评论时间均转换为带时区偏移的用户本地时间。评论按自身发生的本地日期归集，包括较早动态上的新评论。夜间反思可形成共享背景记忆。备份规则见[覆盖恢复](#备份校验与覆盖恢复)。
+动态未读与评论无关。`GET /api/companion/posts/unread` 查询 `has_unread`，首屏列表返回 `unread_post_ids`，翻页返回空快照；`POST /api/companion/posts/read` 提交 `post_ids`。已读更新与 `companion.posts.read` 事件同事务提交；字段见[动态 schema](../backend/modules/companion/schemas_posts.py)。
 
-生成正文完整保存，超出容量时明确失败，不静默裁切；日记补记失败不改变既有正文。字段上限见[动态 schema](../backend/modules/companion/schemas_posts.py)、[日记领域](../backend/services/domains/journal/journal_service.py)及[日记工具](../backend/services/adapters/tools/builtin/journal_tool.py)，中英文均按字符计数。
+日记使用 `GET /api/companion/diary/unread` 查询、`POST /api/companion/diary/read` 提交 `diary_ids`，列表返回 `unread_diary_ids`。快照涵盖全部日期，Client 只在进入页面或重载后确认；月份翻阅不重新确认全账户快照。`companion.diary.created/read/deleted` 分别通知发布、已读与遗忘，事件与业务更新同事务提交；字段见[日记 schema](../backend/modules/companion/schemas_journal.py)。
+
+日记原文是权威内容，`diary:<日期>` 是标题及完整正文的派生记忆索引，固定属于陪伴域；按日期读取使用 `memory_recall.diary_date`，普通话题沿用向量和关键词召回。索引不能通过普通记忆编辑改写，人工遗忘索引时同事务清除日记原文及索引内容。反思保存为 `reflection:current` 的最新相处理解快照，在后续陪伴对话中自动装配；更新由全天原始交互、有效记忆及先前理解生成，无新理解时保留原快照。日记和反思均标为伙伴自身记录并保留所属日期，不独立证明用户事实；用户当前明确表达优先于先前理解，不改变固定人设和行为授权。正文及召回入口见[记忆模块](../backend/services/domains/memory/README.md)。
+
+发布时间为实际完成时刻，活动归属日由发布任务记录；夜间规划、反思和日记按动态 ID 去重归集发布事实，资料中的发布与评论时间均转换为带时区偏移的用户本地时间。评论按自身发生的本地日期归集，包括较早动态上的新评论。备份规则见[覆盖恢复](#备份校验与覆盖恢复)。
+
+生成正文完整保存，超出容量时明确失败，不静默裁切。字段上限见[动态 schema](../backend/modules/companion/schemas_posts.py)与[日记 schema](../backend/modules/companion/schemas_journal.py)，中英文均按字符计数；反思的正文及输出预算由 [Settings](../backend/components/config.py) 的 `reflection_max_content_chars`、`nightly_reflection_max_tokens` 控制。
 
 ### 资产访问与缓存
 
@@ -410,7 +416,7 @@ standard 使用独立 automation 任务会话，可离线运行云端部分；�
 
 修改或主动删除源任务须同步撤销旧意图；调度后自动删除一次性任务不撤销已交接意图。认领、租约与提交隔离迟到结果；运行中崩溃或工具结果未知时保留待核对提示，不自动重放副作用。结构与恢复窗口见 [schemas_loop](../backend/modules/companion/schemas_loop.py) 和 [Backend](../backend/README.md#陪伴调度与恢复)。
 
-夜间总控约束规划及计划动作的执行，每项执行前重读政策，仅成功结果进入后续叙事；动态互动归集、记忆整理和日记不受总控影响。阶段与恢复见 [Backend](../backend/README.md#夜间批处理)，动态归集见[动态与日记](#动态与日记)。等待意图参与备份，恢复清除租约和旧事件标记，重映射源任务；运行中状态按结果未知处理，不能当作新任务直接重跑。
+夜间总控约束规划及计划动作的执行，每项执行前重读政策，仅成功结果进入后续叙事；动态互动归集、记忆整理、反思和日记不受总控影响。阶段与恢复见 [Backend](../backend/README.md#夜间批处理)，动态归集见[动态与日记](#动态与日记)。等待意图参与备份，恢复清除租约和旧事件标记，重映射源任务；运行中状态按结果未知处理，不能当作新任务直接重跑。
 
 ### IM 通道
 
@@ -488,6 +494,8 @@ flowchart TD
 导入默认覆盖模式，另有 `merge` 模式：按唯一键、固定槽位记忆或特殊会话预设匹配已有行并保留，目标已有激活项时降级备份中的激活标记；特殊会话任一侧带上下文水位时整次导入回滚并返回 400。以下规则针对覆盖模式。
 
 对话摘要的覆盖消息引用须随消息 ID 重映射，缺少原消息或跨会话引用时拒绝相关类别恢复。IM 消费排序位置也须映射到新消息序列，保持接收与消费次序的区别；摘要读取见[对话上下文约束](../backend/services/application/chat/README.md#上下文与记忆)。
+
+日记备份保存原文、日期、动态关联与已读状态；已读字段须为布尔值。日记索引不独立导出，恢复日记时从原文重建；单独覆盖普通记忆时保留未恢复日记的索引。最新反思快照随记忆备份并保留所属日期。
 
 动态备份保存已发布内容、制作上下文、已读状态与评论线程，已读字段须为布尔值，重映射动态、回复和日记关联；发布任务不导出、不恢复。未完成的评论回复恢复为可手动重试的失败状态，不自动创作；校验与转换见 [serializers](../backend/services/domains/backup/serializers.py)。
 

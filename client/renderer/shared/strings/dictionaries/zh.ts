@@ -954,8 +954,8 @@ export const dict = {
     rail: {
       chat: '对话',
       posts: '动态',
-      postsUnread: '动态，有未读动态',
       diary: '日记',
+      unread: '有未读信息',
       wardrobe: '衣柜',
       channels: '通道',
       scene: '场景',
@@ -990,7 +990,7 @@ export const dict = {
       mood: (mood: string) => `心情 · ${mood}`,
       signature: (name: string) => `—— ${name} 的日记`,
       emptyTitle: '这一天还没有日记',
-      emptyHintToday: '今日日记将在夜间整理生成，晚点再来翻看吧～',
+      emptyHintToday: '伙伴会在一天结束后决定是否留下日记。',
       emptyHintOther: '这一天没有日记记录哦～',
       loadFailed: '日记加载失败',
       weekHeader: ['一', '二', '三', '四', '五', '六', '日'] as ReadonlyArray<string>,

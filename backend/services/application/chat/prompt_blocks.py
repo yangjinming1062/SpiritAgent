@@ -61,6 +61,7 @@ class AgentPromptConfig:
     user_profile_extras: str | None = None
     background_memory_extras: str = ""
     proactive_memory_extras: str = ""
+    companion_reflection_extras: str = ""
     # 用户本地 IANA 时区；None 表示未设置，日期按服务端 UTC。
     user_local_tz: str | None = None
 
@@ -262,6 +263,7 @@ BLOCK_RENDERERS: dict[str, Callable[[AgentPromptConfig], str | None]] = {
     "COMPANION_PLATFORM_HINTS": _companion_platform_hints_block,
     "USER_PROFILE": lambda config: config.user_profile_extras or None,
     "BACKGROUND_MEMORY": lambda config: config.background_memory_extras or None,
+    "COMPANION_REFLECTION": lambda config: config.companion_reflection_extras or None,
     "PROACTIVE_MEMORY": lambda config: config.proactive_memory_extras or None,
     "MEMORY_TOOL_GUIDANCE": _memory_tool_guidance_block,
     "MEDIA_GUIDANCE": _media_guidance_block,

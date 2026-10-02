@@ -15,7 +15,7 @@
 | `generation.py` | 角色、外观、场景与出镜媒体的图像及视频提示词，以及身份评审与评分、角色卡提取、服装与场景描述等视觉理解指令，和造型命名描述、审核拒绝后改写等文本指令；共享风格机制见 [PIPELINE](../../docs/PIPELINE.md#提示词与供应商输入) | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/`、`services/application/posts/`、`services/adapters/tools/builtin/`、`services/domains/companion/character_card.py` |
 | `memory.py` | 记忆维护政策（`MEMORY_POLICY`）、审查指令、用户资料上下文标签、记忆块标题与依据标签 | `services/domains/memory/`（memory_review、memory_bootstrap、memory_format）、`services/adapters/tools/memory.py` |
 | `actions.py` | 动作检索、设计提案、状态检查与播放工具描述及独立评审指令 | `services/adapters/tools/builtin/action_tool.py`、`services/application/actions/`（review、context） |
-| `nightly.py` | 夜间规划、次日联系事项模板、夜间叙事事实、每日检查点及其标题、用户可见日记、内部夜间反思 | `services/application/nightly/` |
+| `nightly.py` | 夜间规划、次日联系事项模板、夜间叙事事实、每日检查点及其标题、自主日记发布、关系与相处方式的夜间反思 | `services/application/nightly/` |
 | `posts.py` | 发布请求判断、独立动态创作与线程回复，以及回复和夜间回顾共用的创作资料语义 | `services/application/posts/`、`nightly.py` |
 | `tools.py` | 工具 schema 的主描述与参数描述，以及验图（`MEDIA_INSPECTION_INSTRUCTIONS`）与网页摘要（`WEB_SUMMARY_INSTRUCTIONS`）指令；schema 结构（name/enum/类型/required）留在各工具文件 | `services/adapters/tools/`（builtin/ 与同级 `*.py`）、`services/application/generation/chat_images.py` |
 
@@ -40,7 +40,7 @@
 ## 命名与消费
 
 - 双语 dict 键为 `zh`/`en`，消费方用 `components.resolve_prompt_text` 取文本。
-- `JOURNAL_DIARY_TEXTS`（用户可见日记）与 `NIGHTLY_REFLECTION_TEXTS`（内部夜间反思）是内容不同的两套文本，不可混用。
+- 日记与反思共用资料说明，输出分别由发布与理解快照消费；契约见 [PROTOCOL](../../docs/PROTOCOL.md#动态与日记)。通用记忆指导只说明检索用途，具体参数语义归工具说明，来源与时效归返回资料标签。
 - 本包不设转发别名：消费方按模块文件直接导入常量（如 `from prompts.chat import COMPANION_CHAT_GUIDANCES`）；重命名时用常量名全仓搜索同步所有导入点。
 - Runner 是独立物理模块（独立 pyproject、物理解耦），其提示词不在本包；例外见下文 Runner 一节。
 

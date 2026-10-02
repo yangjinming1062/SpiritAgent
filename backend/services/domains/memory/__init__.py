@@ -15,11 +15,20 @@ from .memory_bootstrap import (
 )
 from .memory_format import (
     format_background_memory_block,
+    format_companion_reflection_block,
     format_memories_block,
     format_proactive_memory_block,
 )
 from .memory_learning import MemoryReviewContext, load_review_context
 from .memory_namespaces import normalize_recall_context
+from .memory_narratives import (
+    backfill_diary_embeddings,
+    index_diary_memory,
+    load_companion_reflection,
+    narrative_date,
+    rebuild_diary_indexes,
+    save_companion_reflection,
+)
 from .memory_policy import MemoryDecisions
 from .memory_retrieval import (
     embed_memory_text,
@@ -35,6 +44,12 @@ from .memory_store import (
 )
 
 __all__ = [
+    "backfill_diary_embeddings",
+    "index_diary_memory",
+    "load_companion_reflection",
+    "narrative_date",
+    "rebuild_diary_indexes",
+    "save_companion_reflection",
     "MemoryReviewContext",
     "load_review_context",
     "MemoryDecisions",
@@ -48,6 +63,7 @@ __all__ = [
     "embed_memory_text",
     "extract_user_profile",
     "format_background_memory_block",
+    "format_companion_reflection_block",
     "format_memories_block",
     "format_proactive_memory_block",
     "list_memories",

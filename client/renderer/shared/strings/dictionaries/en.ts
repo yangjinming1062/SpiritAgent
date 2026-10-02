@@ -1013,8 +1013,8 @@ export const dict: Dictionary = {
     rail: {
       chat: 'Chat',
       posts: 'Posts',
-      postsUnread: 'Posts, unread posts',
       diary: 'Diary',
+      unread: 'Unread content',
       wardrobe: 'Wardrobe',
       channels: 'Channels',
       scene: 'Scene',
@@ -1049,7 +1049,7 @@ export const dict: Dictionary = {
       mood: (mood: string) => `Mood · ${mood}`,
       signature: (name: string) => `— ${name}'s diary`,
       emptyTitle: 'No diary entry for this day',
-      emptyHintToday: "Today's entry is written at any time — check back a little later.",
+      emptyHintToday: 'Your companion may leave an entry after the day ends.',
       emptyHintOther: 'No diary entry recorded for this day.',
       loadFailed: "Couldn't load the diary",
       weekHeader: ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as ReadonlyArray<string>,

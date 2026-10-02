@@ -59,7 +59,7 @@ PROACTIVE_MEMORY_LABELS_TEXTS: dict[str, str] = {
     "en": "# Memories relevant to this topic (inference is not user confirmation; respect scope and expiry)",
 }
 
-# 记忆行前缀：依据标签说明事实来源；system 是系统写入的伙伴自身记录（夜间活动、反思），不是关于用户的事实。
+# 依据类型的展示标签；system 表示伙伴自身记录。
 MEMORY_BASIS_LABELS: dict[str, dict[str, str]] = {
     "zh": {
         "explicit": "用户明确表达",
@@ -73,4 +73,15 @@ MEMORY_BASIS_LABELS: dict[str, dict[str, str]] = {
         "inferred": "inferred",
         "system": "your own record",
     },
+}
+
+
+COMPANION_REFLECTION_LABELS: dict[str, str] = {
+    "zh": "# 你对双方关系与相处方式的理解（先前形成、可修正的看法，不是用户确认的事实）",
+    "en": "# Your understanding of the relationship and how to interact (an earlier, revisable view, not user-confirmed facts)",
+}
+
+NARRATIVE_MEMORY_LABELS: dict[str, dict[str, str]] = {
+    "zh": {"diary": "你发布的日记", "reflection": "你的相处理解"},
+    "en": {"diary": "your published diary", "reflection": "your understanding of how to interact"},
 }
