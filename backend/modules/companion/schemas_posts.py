@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -79,6 +80,16 @@ class PostResponse(BaseModel):
 class PostListResponse(BaseModel):
     posts: list[PostResponse]
     next_cursor: str | None
+    unread_post_ids: list[str]
+
+
+class PostUnreadResponse(BaseModel):
+    has_unread: bool
+
+
+class PostReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    post_ids: list[UUID] = Field(min_length=1)
 
 
 class PostCommentCreateRequest(BaseModel):

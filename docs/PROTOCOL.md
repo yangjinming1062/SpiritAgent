@@ -259,6 +259,8 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 回复状态绑定触发评论，同一动态按评论顺序生成回复；失败重试原任务，删除触发评论后不写入迟到回复，已生成的伙伴回复保留。发布通过 `companion.post.created`、评论与回复状态通过 `companion.post.comment`、删除通过 `companion.post.comment.deleted` 刷新，事件与业务状态同事务提交，不发送 `companion.message`。
 
+动态未读状态由后端逐条保存，新发布默认未读，与评论无关。`GET /api/companion/posts/unread` 查询当前账户的 `has_unread`；首屏列表先捕获该账户全部未读 ID，返回 `unread_post_ids` 快照，翻页返回空快照。Client 在页面成功展示且生活空间可见、聚焦、未锁屏时，以 `POST /api/companion/posts/read` 的 `post_ids` 确认该快照，后续入列的动态展示后单独确认；确认只更新本账户对应记录，重复提交幂等，不能按确认时刻批量清空。已读更新与 `companion.posts.read` 事件同事务提交；发布和已读事件驱动重新查询，登录、开窗、重连及聚焦补查，避免离线发布、旧事件或迟到响应造成错误提醒。字段见[动态 schema](../backend/modules/companion/schemas_posts.py)。
+
 发布时间为实际完成时刻，活动归属日由发布任务记录；夜间规划、反思和日记按动态 ID 去重归集发布事实，资料中的发布与评论时间均转换为带时区偏移的用户本地时间。评论按自身发生的本地日期归集，包括较早动态上的新评论。夜间反思可形成共享背景记忆。备份规则见[覆盖恢复](#备份校验与覆盖恢复)。
 
 生成正文完整保存，超出容量时明确失败，不静默裁切；日记补记失败不改变既有正文。字段上限见[动态 schema](../backend/modules/companion/schemas_posts.py)、[日记领域](../backend/services/domains/journal/journal_service.py)及[日记工具](../backend/services/adapters/tools/builtin/journal_tool.py)，中英文均按字符计数。
@@ -487,7 +489,7 @@ flowchart TD
 
 对话摘要的覆盖消息引用须随消息 ID 重映射，缺少原消息或跨会话引用时拒绝相关类别恢复。IM 消费排序位置也须映射到新消息序列，保持接收与消费次序的区别；摘要读取见[对话上下文约束](../backend/services/application/chat/README.md#上下文与记忆)。
 
-动态备份保存已发布内容、制作上下文与评论线程，重映射动态、回复和日记关联；发布任务不导出、不恢复。未完成的评论回复恢复为可手动重试的失败状态，不自动创作；校验与转换见 [serializers](../backend/services/domains/backup/serializers.py)。
+动态备份保存已发布内容、制作上下文、已读状态与评论线程，已读字段须为布尔值，重映射动态、回复和日记关联；发布任务不导出、不恢复。未完成的评论回复恢复为可手动重试的失败状态，不自动创作；校验与转换见 [serializers](../backend/services/domains/backup/serializers.py)。
 
 导出只收集元数据归属该用户的临时媒体。用户模型配置与用户设置值须能按运行时规则解析才通过预检，失败原因只列字段，不回显配置值。覆盖只清理本次勾选、通过预检且准备写入的数据类，旧包未声明内容与未勾选类别保留；会破坏未恢复关联数据的类别不得先清空。会话与消息成对恢复，特殊会话按预设去重，普通会话独立映射，无法映射的附件单独报告。派生来源无法映射时置空，子 Agent 会话则须映射到同域发起会话。
 

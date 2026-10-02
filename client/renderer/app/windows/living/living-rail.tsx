@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 
 import { $activeAvatarId, $companionMood, $persona, $portraitUrl, $spriteState } from '@/modules/character'
+import { $postsHasUnread } from '@/modules/posts'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import {
   CalendarPlus,
@@ -33,6 +34,7 @@ export function LivingRail(): React.JSX.Element {
   const activeAvatarId = useStore($activeAvatarId)
   const view = useStore($livingView)
   const spriteState = useStore($spriteState)
+  const postsHasUnread = useStore($postsHasUnread)
   const displayName = persona?.name || t.companionFallback
   const moodText = companionMood?.trim()
 
@@ -75,15 +77,20 @@ export function LivingRail(): React.JSX.Element {
         {navEntries.map(entry => {
           const Icon = entry.icon
           const isActive = view === entry.id
+          const hasUnread = entry.id === 'posts' && postsHasUnread
 
           return (
             <button
+              aria-label={hasUnread ? t.postsUnread : entry.label}
               className={cn(styles.navItem, isActive && styles.navItemActive)}
               key={entry.id}
               onClick={() => setLivingView(entry.id)}
               type="button"
             >
-              <Icon className={styles.navItemIcon} />
+              <span className={styles.navItemIconWrap}>
+                <Icon className={styles.navItemIcon} />
+                {hasUnread && <span aria-hidden="true" className={styles.navUnreadDot} />}
+              </span>
               <span className={styles.navItemLabel}>{entry.label}</span>
             </button>
           )

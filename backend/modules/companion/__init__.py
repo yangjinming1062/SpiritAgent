@@ -106,7 +106,9 @@ from .schemas_posts import (
     PostListResponse,
     PostPlan,
     PostPublicationResult,
+    PostReadRequest,
     PostResponse,
+    PostUnreadResponse,
 )
 from .schemas_scene import (
     SceneActivateRequest,
@@ -138,6 +140,8 @@ __all__ = [
     "PostCommentResponse",
     "PostListResponse",
     "PostResponse",
+    "PostReadRequest",
+    "PostUnreadResponse",
     "PostContext",
     "PostPlan",
     "PostPublicationResult",

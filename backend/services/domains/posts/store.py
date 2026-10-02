@@ -1,6 +1,7 @@
 """动态持久化、额度预留、评论状态与夜间资料。"""
 
 import base64
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from uuid import UUID
@@ -19,7 +20,7 @@ from modules.companion import (
 )
 from modules.ws import emit_ws_event
 from pydantic import TypeAdapter
-from sqlalchemy import func, or_, select, tuple_
+from sqlalchemy import func, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -77,6 +78,46 @@ async def get_post(db: AsyncSession, user_id: int, post_id: str) -> CompanionPos
             CompanionPost.user_id == user_id,
         ),
     )
+
+
+async def unread_post_ids(db: AsyncSession, user_id: int) -> list[str]:
+    return list(
+        (
+            await db.scalars(
+                select(CompanionPost.id).where(CompanionPost.user_id == user_id, CompanionPost.is_read.is_(False)),
+            )
+        ).all(),
+    )
+
+
+async def has_unread_posts(db: AsyncSession, user_id: int) -> bool:
+    return bool(
+        await db.scalar(
+            select(
+                select(CompanionPost.id)
+                .where(CompanionPost.user_id == user_id, CompanionPost.is_read.is_(False))
+                .exists(),
+            ),
+        ),
+    )
+
+
+async def mark_posts_read(db: AsyncSession, user_id: int, post_ids: Sequence[str]) -> bool:
+    await db.scalar(select(User.id).where(User.id == user_id).with_for_update())
+    result = await db.execute(
+        update(CompanionPost)
+        .where(
+            CompanionPost.user_id == user_id,
+            CompanionPost.id.in_(post_ids),
+            CompanionPost.is_read.is_(False),
+        )
+        .values(is_read=True),
+    )
+    if result.rowcount:
+        emit_ws_event(db, user_id=user_id, event_type="companion.posts.read", payload={})
+    has_unread = await has_unread_posts(db, user_id)
+    await db.commit()
+    return has_unread
 
 
 async def list_posts(

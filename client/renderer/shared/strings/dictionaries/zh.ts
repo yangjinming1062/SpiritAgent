@@ -954,6 +954,7 @@ export const dict = {
     rail: {
       chat: '对话',
       posts: '动态',
+      postsUnread: '动态，有未读动态',
       diary: '日记',
       wardrobe: '衣柜',
       channels: '通道',

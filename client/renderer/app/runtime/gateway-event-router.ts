@@ -138,6 +138,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'companion.post.created':
 
+    case 'companion.posts.read':
+
     case 'companion.post.comment':
 
     case 'companion.post.comment.deleted':

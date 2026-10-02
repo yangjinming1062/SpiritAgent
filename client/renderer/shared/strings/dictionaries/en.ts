@@ -1013,6 +1013,7 @@ export const dict: Dictionary = {
     rail: {
       chat: 'Chat',
       posts: 'Posts',
+      postsUnread: 'Posts, unread posts',
       diary: 'Diary',
       wardrobe: 'Wardrobe',
       channels: 'Channels',

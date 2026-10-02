@@ -231,6 +231,8 @@ async def insert_rows(
             if conversation.user_id != target_user_id or not conversation.is_automation:
                 raise ValueError("Standard job requires an automation conversation")
         if table == "companion_posts":
+            if not isinstance(payload.get("is_read"), bool):
+                raise ValueError("Invalid post read state")
             if payload.get("content_type") not in {kind.value for kind in PostContentType}:
                 raise ValueError("Invalid post content type")
             PostContext.model_validate(payload["context_json"])

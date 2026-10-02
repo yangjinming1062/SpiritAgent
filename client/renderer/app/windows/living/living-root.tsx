@@ -6,13 +6,14 @@ import { CompanionMenu } from '@/app/components/surface-companion/companion-menu
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { SpriteStatusBadge } from '@/modules/character'
 import { MediaViewerOverlay } from '@/modules/media'
+import { hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared'
 import { ArrowRight, Home } from '@/shared/lib/icons'
 import { WindowControls } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
-import { requestOpenSurface } from '@/shared/store/surfaces'
+import { $surfaceOpenVisible, requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 import { LivingRail } from './living-rail'
@@ -27,6 +28,7 @@ export function LivingRoot(): React.JSX.Element {
   useInteractiveRegion('living-shell', shellRef, undefined, undefined, 1)
   const auth = useStore($auth)
   const gatewayState = useStore($gatewayState)
+  const sessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const livingView = useStore($livingView)
   const dict = useStrings()
   const t = dict.living
@@ -40,6 +42,46 @@ export function LivingRoot(): React.JSX.Element {
       void hydrateScene()
     }
   }, [auth.kind, gatewayState])
+
+  useEffect(() => {
+    if (!sessionId) {
+      return
+    }
+
+    const refresh = (): void => {
+      void hydratePostsUnread()
+    }
+
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') {
+        refresh()
+      }
+    }
+
+    refresh()
+
+    const stopGateway = $gatewayState.listen(state => {
+      if (state === 'open') {
+        refresh()
+      }
+    })
+
+    const stopVisibility = $surfaceOpenVisible.listen(visible => {
+      if (visible) {
+        refresh()
+      }
+    })
+
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      stopGateway()
+      stopVisibility()
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [sessionId])
 
   useEffect(() => {
     const root = document.documentElement

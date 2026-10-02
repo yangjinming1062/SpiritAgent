@@ -5,7 +5,20 @@ from enum import StrEnum
 from uuid import uuid4
 
 from common import ModelBase, TimestampMixin
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,10 +37,12 @@ class PostCommentRole(StrEnum):
 
 class CompanionPost(ModelBase, TimestampMixin):
     __tablename__ = "companion_posts"
+    __table_args__ = (Index("ix_companion_posts_unread_user", "user_id", postgresql_where=text("is_read IS FALSE")),)
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     activity_date: Mapped[date] = mapped_column(Date, index=True)
     content_type: Mapped[str] = mapped_column(String(16))
     title: Mapped[str] = mapped_column(String(64))

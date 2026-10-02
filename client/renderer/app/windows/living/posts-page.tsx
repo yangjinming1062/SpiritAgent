@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { $persona } from '@/modules/character'
 import { InlineMedia } from '@/modules/media'
@@ -14,15 +14,19 @@ import {
   hydratePost,
   hydratePosts,
   loadMorePosts,
+  markPostsRead,
   type PostCommentEntry,
   retryPostReply
 } from '@/modules/posts'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import { BTN_SUBTLE } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
+import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
+import { $surfaceOpen, $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 import styles from './posts.module.css'
@@ -42,12 +46,44 @@ export function PostsPage(): React.JSX.Element {
   const loadingMore = useStore($postsLoadingMore)
   const persona = useStore($persona)
   const authKind = useStore($auth).kind
+  const surfaceOpen = useStore($surfaceOpen)
+  const surfaceVisible = useStore($surfaceOpenVisible)
+  const screenLocked = useStore($surfaceScreenLocked)
   const locale = useStore($locale)
   const strings = useStrings()
   const t = strings.living.posts
   const [expandedId, setExpandedId] = useState<null | string>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  const [readSnapshot, setReadSnapshot] = useState<string[] | null>(null)
+
+  const [documentActive, setDocumentActive] = useState(
+    () => document.visibilityState === 'visible' && document.hasFocus()
+  )
+
+  const [readBlocked, setReadBlocked] = useState(false)
+  const [confirmedReadIds, setConfirmedReadIds] = useState(new Set<string>())
+  const readInFlight = useRef(false)
+  const beginAsync = useAsyncGuard()
+  const foreground = surfaceOpen === 'living' && surfaceVisible && !screenLocked && documentActive
+  const wasForeground = useRef(foreground)
+
+  useEffect(() => {
+    const update = (): void => {
+      setDocumentActive(document.visibilityState === 'visible' && document.hasFocus())
+    }
+
+    update()
+    window.addEventListener('focus', update)
+    window.addEventListener('blur', update)
+    document.addEventListener('visibilitychange', update)
+
+    return () => {
+      window.removeEventListener('focus', update)
+      window.removeEventListener('blur', update)
+      document.removeEventListener('visibilitychange', update)
+    }
+  }, [])
 
   // 冷启动可能先挂载动态页，鉴权完成后再水合。
   useEffect(() => {
@@ -57,10 +93,12 @@ export function PostsPage(): React.JSX.Element {
 
     let cancelled = false
     setLoadFailed(false)
+    setReadSnapshot(null)
 
-    void hydratePosts().then(ok => {
+    void hydratePosts().then(snapshot => {
       if (!cancelled) {
-        setLoadFailed(!ok)
+        setLoadFailed(snapshot === null)
+        setReadSnapshot(snapshot)
       }
     })
 
@@ -68,6 +106,63 @@ export function PostsPage(): React.JSX.Element {
       cancelled = true
     }
   }, [authKind, reloadKey])
+
+  useEffect(() => {
+    return $gatewayState.listen(state => {
+      if (state === 'open') {
+        setReloadKey(key => key + 1)
+        setReadBlocked(false)
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    const restored = foreground && !wasForeground.current
+    wasForeground.current = foreground
+
+    if (restored) {
+      setReadBlocked(false)
+
+      if (loadFailed) {
+        setReloadKey(key => key + 1)
+      }
+    }
+  }, [foreground, loadFailed])
+
+  // 首屏快照包括较早未读内容；后续事件只确认已进入本次渲染的动态。
+  useEffect(() => {
+    if (authKind !== 'authenticated' || !foreground || readSnapshot === null || readBlocked || readInFlight.current) {
+      return
+    }
+
+    // 浏览器焦点事件可能已到达，而 React 的可见性状态尚未更新。
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) {
+      return
+    }
+
+    const ids = [...new Set([...readSnapshot, ...posts.map(post => post.id)])].filter(id => !confirmedReadIds.has(id))
+
+    if (ids.length === 0) {
+      return
+    }
+
+    const isLive = beginAsync()
+    readInFlight.current = true
+
+    void markPostsRead(ids).then(ok => {
+      if (!isLive()) {
+        return
+      }
+
+      readInFlight.current = false
+
+      if (ok) {
+        setConfirmedReadIds(current => new Set([...current, ...ids]))
+      } else {
+        setReadBlocked(true)
+      }
+    })
+  }, [authKind, foreground, readSnapshot, readBlocked, posts, confirmedReadIds, beginAsync])
 
   const formattedPosts = useMemo(() => {
     const formatter = new Intl.DateTimeFormat(locale)

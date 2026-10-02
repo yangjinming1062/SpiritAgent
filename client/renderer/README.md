@@ -44,6 +44,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 消息入列与提醒分开：已提交陪伴消息按 ID 合并，提醒受可见性等条件控制；自动化系统通知不套陪伴打扰闸门。精灵旁的提示气泡与主动台词只在精灵舞台可见时出现（[proactive-delivery.ts](app/workflows/proactive-delivery.ts) 的 `isSpriteOverlayVisible`），不可见时主动消息仍记入未读，重新可见后由待读气泡承接。
 - 跳转按会话归属选择入口，工作会话不能送进轻语。
 - 未读只在所属对话可见时清除。
+- 动态菜单订阅 `modules/posts` 的服务端未读镜像；生活空间负责登录、重连、开窗与聚焦补查，动态页负责可见且聚焦后的快照确认。读取失败不清除提醒，异步确认须保留账户与组件生命周期守卫；契约见[动态与日记](../../docs/PROTOCOL.md#动态与日记)。
 
 ## 角色呈现契约
 

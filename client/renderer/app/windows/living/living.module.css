@@ -434,6 +434,24 @@ html[data-palette='night'] .statusMoodText {
   width: 20px;
 }
 
+.navItemIconWrap {
+  display: inline-flex;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.navUnreadDot {
+  background: #ef4444;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--ui-window-fill);
+  height: 7px;
+  pointer-events: none;
+  position: absolute;
+  right: -3px;
+  top: -2px;
+  width: 7px;
+}
+
 .navItemLabel {
   flex: 1;
   min-width: 0;

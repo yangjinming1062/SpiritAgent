@@ -1,6 +1,6 @@
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { isRecord } from '@/shared/lib/is-record'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 
@@ -56,15 +56,112 @@ interface PostWire {
 interface ListWire {
   posts: PostWire[]
   next_cursor: string | null
+  unread_post_ids: string[]
+}
+
+interface UnreadWire {
+  has_unread: boolean
 }
 
 export const $posts = atom<PostEntry[]>([])
+export const $postsHasUnread = atom(false)
 export const $postsLoading = atom(false)
 export const $postsHasMore = atom(false)
 export const $postsLoadingMore = atom(false)
 let cursor: string | null = null
 let revision = 0
+let unreadRevision = 0
+let unreadRequest: Promise<boolean> | null = null
 const deletedComments = new Set<string>()
+
+function isUnreadState(value: unknown): value is UnreadWire {
+  return isRecord(value) && typeof value.has_unread === 'boolean'
+}
+
+export function hydratePostsUnread(): Promise<boolean> {
+  unreadRevision++
+
+  if (unreadRequest) {
+    return unreadRequest
+  }
+
+  const isCurrent = captureAuthScope()
+
+  if (!isCurrent) {
+    return Promise.resolve(false)
+  }
+
+  let version = unreadRevision
+
+  // 同轮信号合并后查询；在途期间的新信号由请求结束后的补查处理。
+  const request = Promise.resolve()
+    .then(async () => {
+      if (!isCurrent()) {
+        return false
+      }
+
+      version = unreadRevision
+      const result = await authedApi<UnreadWire>({ path: '/api/companion/posts/unread' })
+
+      if (!isCurrent() || version !== unreadRevision) {
+        return false
+      }
+
+      if (!apiSucceeded(result, 'posts', 'unread failed') || !isUnreadState(result.value)) {
+        return false
+      }
+
+      $postsHasUnread.set(result.value.has_unread)
+
+      return true
+    })
+    .finally(() => {
+      if (unreadRequest === request) {
+        unreadRequest = null
+
+        if (isCurrent() && version !== unreadRevision) {
+          void hydratePostsUnread()
+        }
+      }
+    })
+
+  unreadRequest = request
+
+  return request
+}
+
+export async function markPostsRead(postIds: string[]): Promise<boolean> {
+  const isCurrent = captureAuthScope()
+
+  if (!isCurrent) {
+    return false
+  }
+
+  if (postIds.length === 0) {
+    return true
+  }
+
+  // 作废确认前的查询；发布或其他窗口的事件会再次推进代次。
+  const version = ++unreadRevision
+
+  const result = await authedApi<UnreadWire>({
+    method: 'POST',
+    path: '/api/companion/posts/read',
+    body: { post_ids: postIds }
+  })
+
+  if (!isCurrent() || !apiSucceeded(result, 'posts', 'read failed') || !isUnreadState(result.value)) {
+    return false
+  }
+
+  if (version === unreadRevision) {
+    $postsHasUnread.set(result.value.has_unread)
+  } else {
+    void hydratePostsUnread()
+  }
+
+  return true
+}
 
 function comment(w: CommentWire): PostCommentEntry {
   return {
@@ -133,9 +230,9 @@ function upsertComment(w: CommentWire): void {
   )
 }
 
-async function fetchPage(more: boolean): Promise<boolean> {
+async function fetchPage(more: boolean): Promise<string[] | null> {
   if (more && (!cursor || $postsLoadingMore.get() || $postsLoading.get())) {
-    return false
+    return null
   }
 
   const version = more ? revision : ++revision
@@ -153,24 +250,27 @@ async function fetchPage(more: boolean): Promise<boolean> {
     const result = await authedApi<ListWire>({ path: `/api/companion/posts${query}` })
 
     if (version !== revision || epoch !== currentClearEpoch()) {
-      return false
+      return null
     }
 
     if (
       !apiSucceeded(result, 'posts', 'load failed') ||
       !isRecord(result.value) ||
       !Array.isArray(result.value.posts) ||
+      !result.value.posts.every(isPost) ||
+      !Array.isArray(result.value.unread_post_ids) ||
+      !result.value.unread_post_ids.every(id => typeof id === 'string') ||
       !(result.value.next_cursor === null || typeof result.value.next_cursor === 'string')
     ) {
-      return false
+      return null
     }
 
-    upsertPosts(result.value.posts.filter(isPost))
+    upsertPosts(result.value.posts)
 
     cursor = result.value.next_cursor
     $postsHasMore.set(Boolean(cursor))
 
-    return true
+    return result.value.unread_post_ids
   } finally {
     if (version === revision) {
       loading.set(false)
@@ -178,12 +278,12 @@ async function fetchPage(more: boolean): Promise<boolean> {
   }
 }
 
-export function hydratePosts(): Promise<boolean> {
+export function hydratePosts(): Promise<string[] | null> {
   return fetchPage(false)
 }
 
-export function loadMorePosts(): Promise<boolean> {
-  return fetchPage(true)
+export async function loadMorePosts(): Promise<boolean> {
+  return (await fetchPage(true)) !== null
 }
 
 export async function hydratePost(id: string): Promise<boolean> {
@@ -277,6 +377,11 @@ export function onPostEvent(event: { type: string; payload?: unknown }): void {
 
   if (event.type === 'companion.post.created' && isPost(w)) {
     upsertPosts([w])
+    void hydratePostsUnread()
+  }
+
+  if (event.type === 'companion.posts.read') {
+    void hydratePostsUnread()
   }
 
   if (event.type === 'companion.post.comment' && isRecord(w) && isComment(w.comment)) {
@@ -295,9 +400,12 @@ export function onPostEvent(event: { type: string; payload?: unknown }): void {
 
 registerStorageClearHandler(() => {
   revision++
+  unreadRevision++
+  unreadRequest = null
   cursor = null
   deletedComments.clear()
   $posts.set([])
+  $postsHasUnread.set(false)
   $postsLoading.set(false)
   $postsLoadingMore.set(false)
   $postsHasMore.set(false)

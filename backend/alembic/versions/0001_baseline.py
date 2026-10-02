@@ -522,6 +522,7 @@ def upgrade() -> None:
         sa.Column("id", sa.UUID(as_uuid=False), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("published_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("is_read", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("activity_date", sa.Date(), nullable=False),
         sa.Column("content_type", sa.String(length=16), nullable=False),
         sa.Column("title", sa.String(length=64), nullable=False),
@@ -544,6 +545,13 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_posts_published_at"), "companion_posts", ["published_at"], unique=False)
     op.create_index(op.f("ix_companion_posts_quota_kind"), "companion_posts", ["quota_kind"], unique=False)
     op.create_index(op.f("ix_companion_posts_user_id"), "companion_posts", ["user_id"], unique=False)
+    op.create_index(
+        "ix_companion_posts_unread_user",
+        "companion_posts",
+        ["user_id"],
+        unique=False,
+        postgresql_where=sa.text("is_read IS FALSE"),
+    )
     op.create_table(
         "companion_post_comments",
         sa.Column("id", sa.UUID(as_uuid=False), nullable=False),

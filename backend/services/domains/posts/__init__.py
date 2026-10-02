@@ -10,13 +10,16 @@ from .store import (
     delete_comment,
     emit_comment,
     get_post,
+    has_unread_posts,
     list_posts,
+    mark_posts_read,
     publication_status,
     reserve_publication,
     response_for_comment,
     response_for_post,
     response_for_publication,
     retry_reply,
+    unread_post_ids,
 )
 
 __all__ = [
@@ -29,11 +32,14 @@ __all__ = [
     "delete_comment",
     "emit_comment",
     "get_post",
+    "has_unread_posts",
     "list_posts",
+    "mark_posts_read",
     "publication_status",
     "reserve_publication",
     "response_for_comment",
     "response_for_post",
     "response_for_publication",
     "retry_reply",
+    "unread_post_ids",
 ]
