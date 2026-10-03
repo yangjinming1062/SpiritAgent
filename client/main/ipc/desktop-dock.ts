@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 
-import { type DockEntry, type DockState, IPC } from '@ipc/contracts'
+import { type DockCatalog, type DockEntry, type DockState, IPC } from '@ipc/contracts'
 import { app, type BrowserWindow, dialog, type IpcMain, shell, type WebContents } from 'electron'
 
 import { atomicWriteFile, createSerialQueue, safeReadJson, sendToWindow } from '../shared/utils'
+
+import { createWindowsAppCatalog } from './windows-app-catalog'
 
 interface SavedDockEntry {
   id: string
@@ -52,6 +54,26 @@ async function validateTarget(target: string): Promise<void> {
   }
 }
 
+/**
+ * Windows 的 `getFileIcon` 不解析 .lnk，直接读快捷方式只会得到通用快捷方式图标，
+ * 因此先按解析出的目标程序取图标，读不到再退回快捷方式本身。
+ */
+async function readTargetIcon(target: string): Promise<string> {
+  if (path.extname(target).toLowerCase() === '.lnk') {
+    try {
+      const shortcut = shell.readShortcutLink(target)
+
+      if (path.extname(shortcut.target).toLowerCase() === '.exe') {
+        return (await app.getFileIcon(shortcut.target, { size: 'large' })).toDataURL()
+      }
+    } catch {
+      // 目标不可读时退回快捷方式本身。
+    }
+  }
+
+  return (await app.getFileIcon(target, { size: 'large' })).toDataURL()
+}
+
 export function registerDesktopDock(options: {
   ipcMain: IpcMain
   userData: string
@@ -64,6 +86,7 @@ export function registerDesktopDock(options: {
   let revision = 0
   const serial = createSerialQueue()
   const icons = new Map<string, string>()
+  const catalog = createWindowsAppCatalog()
 
   const assertSender = (sender: WebContents): void => {
     if (!options.isDesktopSender(sender) || process.platform !== 'win32') {
@@ -86,7 +109,7 @@ export function registerDesktopDock(options: {
 
     if (icon === null && status === 'ready') {
       try {
-        icon = (await app.getFileIcon(entry.target, { size: 'large' })).toDataURL()
+        icon = await readTargetIcon(entry.target)
         icons.set(entry.target, icon)
       } catch {
         /* 图标失败保留程序启动能力。 */
@@ -154,12 +177,97 @@ export function registerDesktopDock(options: {
     return result.canceled ? [] : result.filePaths
   }
 
+  // 目录条目以主进程句柄下发；渲染层无法自造路径，重扫后旧句柄立即失效。
+  function resolveCatalogTarget(id: unknown): string {
+    const item = typeof id === 'string' ? catalog.resolve(id) : null
+
+    if (!item) {
+      throw new Error('应用列表已更新，请重新选择。')
+    }
+
+    return item.shortcutPath
+  }
+
+  async function catalogState(force: boolean): Promise<DockCatalog> {
+    const scan = force ? await catalog.refresh() : await catalog.get()
+    const registered = new Set(entries.map(entry => entry.target.toLowerCase()))
+
+    return {
+      revision: scan.revision,
+      sources: scan.sources,
+      items: scan.items.map(item => ({
+        id: item.id,
+        name: item.name,
+        detail: item.detail,
+        // 条目既可能登记为快捷方式，也可能直接登记为程序本身，两种都要识别为已在 Dock。
+        inDock: registered.has(item.shortcutPath.toLowerCase()) || registered.has(item.target.toLowerCase())
+      }))
+    }
+  }
+
+  function requireEntry(id: unknown): SavedDockEntry {
+    const entry = typeof id === 'string' ? entries.find(item => item.id === id) : undefined
+
+    if (!entry) {
+      throw new Error('Dock 项目不存在。')
+    }
+
+    return entry
+  }
+
+  function commitRepair(entry: SavedDockEntry, target: string): Promise<DockState> {
+    return commit(
+      entries.map(item =>
+        item === entry ? { ...entry, target, name: path.basename(target, path.extname(target)) } : item
+      )
+    )
+  }
+
+  async function repairTo(entry: SavedDockEntry, target: string): Promise<DockState> {
+    await validateTarget(target)
+
+    if (entries.some(item => item.id !== entry.id && item.target.toLowerCase() === target.toLowerCase())) {
+      throw new Error('该程序已在 Dock 中。')
+    }
+
+    return commitRepair(entry, target)
+  }
+
   options.ipcMain.handle(IPC.invoke.dockGetState, event => {
     assertSender(event.sender)
 
     return serial(snapshot)
   })
-  options.ipcMain.handle(IPC.invoke.dockAddFromPicker, event => {
+  options.ipcMain.handle(IPC.invoke.dockCatalog, (event, force: unknown) => {
+    assertSender(event.sender)
+
+    return serial(() => catalogState(force === true))
+  })
+  // 图标读取不进串行队列：批量读取耗时长，不应阻塞启动与增删排；期间重扫只会让个别条目回落默认图标。
+  options.ipcMain.handle(IPC.invoke.dockCatalogIcons, (event, raw: unknown) => {
+    assertSender(event.sender)
+
+    if (!Array.isArray(raw) || !raw.every(item => typeof item === 'string')) {
+      throw new Error('无效应用列表。')
+    }
+
+    return catalog.icons(raw)
+  })
+  options.ipcMain.handle(IPC.invoke.dockAddFromCatalog, (event, raw: unknown) => {
+    assertSender(event.sender)
+
+    if (!Array.isArray(raw) || !raw.every(item => typeof item === 'string')) {
+      throw new Error('无效应用列表。')
+    }
+
+    return serial(async () => {
+      assertSender(event.sender)
+      const targets = raw.map(resolveCatalogTarget)
+
+      return targets.length ? add(targets) : snapshot()
+    })
+  })
+  options.ipcMain.handle(IPC.invoke.dockAddFromFiles, event => {
     assertSender(event.sender)
 
     return serial(async () => {
@@ -168,33 +276,23 @@ export function registerDesktopDock(options: {
       return paths.length ? add(paths) : snapshot()
     })
   })
-  options.ipcMain.handle(IPC.invoke.dockRepair, (event, id: unknown) => {
+  options.ipcMain.handle(IPC.invoke.dockRepairWithCatalog, (event, entryId: unknown, catalogId: unknown) => {
     assertSender(event.sender)
 
     return serial(async () => {
-      const entry = entries.find(item => item.id === id)
+      assertSender(event.sender)
 
-      if (!entry) {
-        throw new Error('Dock 项目不存在。')
-      }
+      return repairTo(requireEntry(entryId), resolveCatalogTarget(catalogId))
+    })
+  })
+  options.ipcMain.handle(IPC.invoke.dockRepairWithFiles, (event, entryId: unknown) => {
+    assertSender(event.sender)
 
+    return serial(async () => {
+      const entry = requireEntry(entryId)
       const [target] = await pickApplications(event.sender, false)
 
-      if (!target) {
-        return snapshot()
-      }
-
-      await validateTarget(target)
-
-      if (entries.some(item => item.id !== id && item.target.toLowerCase() === target.toLowerCase())) {
-        throw new Error('该程序已在 Dock 中。')
-      }
-
-      return commit(
-        entries.map(item =>
-          item === entry ? { ...entry, target, name: path.basename(target, path.extname(target)) } : item
-        )
-      )
+      return target ? repairTo(entry, target) : snapshot()
     })
   })
   options.ipcMain.handle(IPC.invoke.dockAddDropped, (event, raw: unknown) => {

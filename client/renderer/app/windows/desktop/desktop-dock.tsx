@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import {
@@ -17,6 +17,7 @@ import {
 } from '@/shared/lib/icons'
 import { notifyError } from '@/shared/store/notifications'
 
+import { DesktopDockPicker, type DockPickerMode } from './desktop-dock-picker'
 import { type DesktopApp, type DesktopWindowState } from './desktop-layout'
 import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
@@ -54,23 +55,37 @@ export function DesktopDock({
   const t = useDesktopStrings()
   const [state, setState] = useState<DockState>({ entries: [], revision: -1 })
   const [menu, setMenu] = useState<{ id: string; x: number } | null>(null)
+  const [picker, setPicker] = useState<DockPickerMode | null>(null)
   const dockRef = useRef<HTMLElement>(null)
+  const triggerRef = useRef<HTMLElement | null>(null)
   const [draggingOver, setDraggingOver] = useState(false)
   const draggedId = useRef<string | null>(null)
   const [busy, setBusy] = useState(false)
   const beginAsync = useAsyncGuard()
 
+  const closePicker = useCallback((): void => {
+    setPicker(null)
+    triggerRef.current?.focus()
+  }, [])
+
+  const openPicker = (mode: DockPickerMode, trigger: HTMLElement): void => {
+    setMenu(null)
+    triggerRef.current = trigger
+    setPicker(mode)
+  }
+
   useEffect(() => {
     if (!menuEnabled) {
       setMenu(null)
+      setPicker(null)
     }
   }, [menuEnabled])
 
   useEffect(() => {
-    onMenuOpenChange(menu !== null)
+    onMenuOpenChange(menu !== null || picker !== null)
 
     return () => onMenuOpenChange(false)
-  }, [menu, onMenuOpenChange])
+  }, [menu, onMenuOpenChange, picker])
 
   useEffect(() => {
     let disposed = false
@@ -120,6 +135,25 @@ export function DesktopDock({
       window.removeEventListener('keydown', onKey)
     }
   }, [menu, menuEnabled])
+
+  // 选择面板自己处理遮罩点击，窗口级监听只收 Escape。
+  useEffect(() => {
+    if (!picker || !menuEnabled) {
+      return
+    }
+
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        closePicker()
+      }
+    }
+
+    window.addEventListener('keydown', onKey)
+
+    return () => window.removeEventListener('keydown', onKey)
+  }, [closePicker, menuEnabled, picker])
 
   const run = async (action: () => Promise<DockState | void>, fallback = t.dock): Promise<void> => {
     if (busy) {
@@ -179,169 +213,182 @@ export function DesktopDock({
   }
 
   return (
-    <nav
-      aria-label={t.dock}
-      className={styles.dock}
-      data-drop={draggingOver}
-      onDragLeave={event => {
-        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+    <>
+      <nav
+        aria-label={t.dock}
+        className={styles.dock}
+        data-drop={draggingOver}
+        onDragLeave={event => {
+          if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+            setDraggingOver(false)
+          }
+        }}
+        onDragOver={event => {
+          event.preventDefault()
+          setDraggingOver(true)
+        }}
+        onDrop={event => {
+          event.preventDefault()
           setDraggingOver(false)
-        }
-      }}
-      onDragOver={event => {
-        event.preventDefault()
-        setDraggingOver(true)
-      }}
-      onDrop={event => {
-        event.preventDefault()
-        setDraggingOver(false)
-        const files = Array.from(event.dataTransfer.files)
+          const files = Array.from(event.dataTransfer.files)
 
-        if (files.length) {
-          void run(() => window.spiritagent.dock.addDroppedFiles(files))
-        }
-      }}
-      ref={dockRef}
-      title={t.dockHint}
-    >
-      <div className={styles.dockViewport} onScroll={() => setMenu(null)}>
-        <div className={styles.dockItems}>
-          {windows.map(item => (
-            <button
-              aria-label={t[item.id]}
-              className={styles.internalDockItem}
-              data-minimized={item.minimized}
-              key={item.id}
-              onClick={() => onActivate(item.id)}
-              title={t[item.id]}
-              type="button"
-            >
-              <BuiltinAppIcon id={item.id} />
-              <i />
-            </button>
-          ))}
-          {windows.length > 0 && <span className={styles.dockDivider} />}
-          {state.entries.map(entry => (
-            <div className={styles.dockItem} key={entry.id}>
+          if (files.length) {
+            void run(() => window.spiritagent.dock.addDroppedFiles(files))
+          }
+        }}
+        ref={dockRef}
+        title={t.dockHint}
+      >
+        <div className={styles.dockViewport} onScroll={() => setMenu(null)}>
+          <div className={styles.dockItems}>
+            {windows.map(item => (
               <button
-                aria-label={entry.name}
-                className={styles.appIcon}
-                data-unavailable={entry.status !== 'ready'}
-                disabled={busy}
-                draggable
-                onClick={() => void run(() => window.spiritagent.dock.launch(entry.id))}
-                onContextMenu={event => {
-                  event.preventDefault()
-                  openMenu(entry.id, event.currentTarget)
-                }}
-                onDragEnd={() => {
-                  draggedId.current = null
-                  setDraggingOver(false)
-                }}
-                onDragStart={event => {
-                  draggedId.current = entry.id
-                  event.dataTransfer.effectAllowed = 'move'
-                  event.dataTransfer.setData('text/plain', entry.id)
-                }}
-                onDrop={event => {
-                  if (draggedId.current) {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    setDraggingOver(false)
-                    reorder(draggedId.current, entry.id)
-                    draggedId.current = null
-                  }
-                }}
-                onKeyDown={event => {
-                  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                    event.preventDefault()
-                    openMenu(entry.id, event.currentTarget)
-                  }
-                }}
-                title={entry.status === 'ready' ? entry.name : `${entry.name} · ${entry.error || t.missing}`}
+                aria-label={t[item.id]}
+                className={styles.internalDockItem}
+                data-minimized={item.minimized}
+                key={item.id}
+                onClick={() => onActivate(item.id)}
+                title={t[item.id]}
                 type="button"
               >
-                {entry.icon ? <img alt="" draggable={false} src={entry.icon} /> : <Monitor size={26} />}
+                <BuiltinAppIcon id={item.id} />
+                <i />
               </button>
-            </div>
-          ))}
+            ))}
+            {windows.length > 0 && <span className={styles.dockDivider} />}
+            {state.entries.map(entry => (
+              <div className={styles.dockItem} key={entry.id}>
+                <button
+                  aria-label={entry.name}
+                  className={styles.appIcon}
+                  data-unavailable={entry.status !== 'ready'}
+                  disabled={busy}
+                  draggable
+                  onClick={() => void run(() => window.spiritagent.dock.launch(entry.id))}
+                  onContextMenu={event => {
+                    event.preventDefault()
+                    openMenu(entry.id, event.currentTarget)
+                  }}
+                  onDragEnd={() => {
+                    draggedId.current = null
+                    setDraggingOver(false)
+                  }}
+                  onDragStart={event => {
+                    draggedId.current = entry.id
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', entry.id)
+                  }}
+                  onDrop={event => {
+                    if (draggedId.current) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setDraggingOver(false)
+                      reorder(draggedId.current, entry.id)
+                      draggedId.current = null
+                    }
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                      event.preventDefault()
+                      openMenu(entry.id, event.currentTarget)
+                    }
+                  }}
+                  title={entry.status === 'ready' ? entry.name : `${entry.name} · ${entry.error || t.missing}`}
+                  type="button"
+                >
+                  {entry.icon ? <img alt="" draggable={false} src={entry.icon} /> : <Monitor size={26} />}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
-      {menuEnabled && menu && menuEntry && (
-        <div
-          className={styles.dockMenu}
-          onPointerDown={event => event.stopPropagation()}
-          role="menu"
-          style={{ left: menu.x }}
-        >
-          {menuEntry.status !== 'ready' && (
+        {menuEnabled && menu && menuEntry && (
+          <div
+            className={styles.dockMenu}
+            onPointerDown={event => event.stopPropagation()}
+            role="menu"
+            style={{ left: menu.x }}
+          >
+            {menuEntry.status !== 'ready' && (
+              <button
+                disabled={busy}
+                onClick={event => openPicker({ entryId: menuEntry.id, kind: 'repair' }, event.currentTarget)}
+                role="menuitem"
+                type="button"
+              >
+                {t.repairApp}
+              </button>
+            )}
             <button
-              disabled={busy}
+              disabled={menuIndex === 0 || busy}
               onClick={() => {
-                void run(() => window.spiritagent.dock.repair(menuEntry.id), t.repairApp)
+                const previous = state.entries[menuIndex - 1]
+
+                if (previous) {
+                  reorder(menuEntry.id, previous.id)
+                }
+
                 setMenu(null)
               }}
               role="menuitem"
               type="button"
             >
-              {t.repairApp}
+              {t.moveLeft}
             </button>
-          )}
-          <button
-            disabled={menuIndex === 0 || busy}
-            onClick={() => {
-              const previous = state.entries[menuIndex - 1]
+            <button
+              disabled={menuIndex === state.entries.length - 1 || busy}
+              onClick={() => {
+                const next = state.entries[menuIndex + 1]
 
-              if (previous) {
-                reorder(menuEntry.id, previous.id)
-              }
+                if (next) {
+                  reorder(menuEntry.id, next.id)
+                }
 
-              setMenu(null)
-            }}
-            role="menuitem"
-            type="button"
-          >
-            {t.moveLeft}
-          </button>
-          <button
-            disabled={menuIndex === state.entries.length - 1 || busy}
-            onClick={() => {
-              const next = state.entries[menuIndex + 1]
+                setMenu(null)
+              }}
+              role="menuitem"
+              type="button"
+            >
+              {t.moveRight}
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => {
+                void run(() => window.spiritagent.dock.remove(menuEntry.id))
+                setMenu(null)
+              }}
+              role="menuitem"
+              type="button"
+            >
+              {t.removeApp}
+            </button>
+          </div>
+        )}
+        <button
+          aria-label={t.addApp}
+          className={styles.addApp}
+          disabled={busy}
+          onClick={event => openPicker({ kind: 'add' }, event.currentTarget)}
+          title={t.addApp}
+          type="button"
+        >
+          <Plus size={24} />
+        </button>
+      </nav>
+      {picker && (
+        <DesktopDockPicker
+          dockRevision={state.revision}
+          mode={picker}
+          onClose={closePicker}
+          onCommitted={(next, close) => {
+            setState(previous => (next.revision >= previous.revision ? next : previous))
 
-              if (next) {
-                reorder(menuEntry.id, next.id)
-              }
-
-              setMenu(null)
-            }}
-            role="menuitem"
-            type="button"
-          >
-            {t.moveRight}
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => {
-              void run(() => window.spiritagent.dock.remove(menuEntry.id))
-              setMenu(null)
-            }}
-            role="menuitem"
-            type="button"
-          >
-            {t.removeApp}
-          </button>
-        </div>
+            if (close) {
+              closePicker()
+            }
+          }}
+        />
       )}
-      <button
-        aria-label={t.addApp}
-        className={styles.addApp}
-        disabled={busy}
-        onClick={() => void run(() => window.spiritagent.dock.addFromPicker())}
-        title={t.addApp}
-        type="button"
-      >
-        <Plus size={24} />
-      </button>
-    </nav>
+    </>
   )
 }

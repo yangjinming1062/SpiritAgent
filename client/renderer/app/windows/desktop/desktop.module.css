@@ -609,7 +609,8 @@
 html.no-blur .topbar,
 html.no-blur .window,
 html.no-blur .whisper,
-html.no-blur .dock {
+html.no-blur .dock,
+html.no-blur .dockPicker {
   backdrop-filter: none;
   background: var(--ui-app-bg);
 }
@@ -652,4 +653,167 @@ html.no-blur .dock {
   width: max-content;
   gap: 8px;
   align-items: end;
+}
+
+/* 选择面板是 Dock 的兄弟节点：.dock 的 backdrop-filter 会成为 fixed 子元素的包含块。 */
+.dockPickerScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.28);
+}
+.dockPicker {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: min(70vh, 560px);
+  padding: 14px;
+  gap: 10px;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--ui-app-bg) 92%, transparent);
+  backdrop-filter: blur(30px) saturate(160%);
+  box-shadow:
+    0 18px 48px rgb(0 0 0 / 0.28),
+    inset 0 1px 0 rgb(255 255 255 / 0.16);
+}
+.dockPickerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.dockPickerHeader button {
+  display: flex;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ui-text-muted);
+}
+.dockPickerHeader button:hover {
+  background: var(--ui-fill-hover);
+}
+.dockPickerSearch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 12px;
+  background: var(--ui-fill-faint);
+  color: var(--ui-text-muted);
+}
+.dockPickerSearch input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-strong);
+  font-size: 12px;
+  outline: none;
+}
+.dockPickerNote,
+.dockPickerStatus {
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--ui-text-muted);
+  text-align: center;
+}
+.dockPickerNote {
+  text-align: left;
+}
+.dockPickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.dockPickerItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  cursor: pointer;
+}
+.dockPickerItem[data-active='true'] {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-fill-hover);
+}
+.dockPickerItem[data-added='true'] {
+  cursor: default;
+  opacity: 0.5;
+}
+.dockPickerIcon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 8px;
+  background: var(--ui-fill-faint);
+  color: var(--ui-text-muted);
+}
+.dockPickerIcon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+.dockPickerText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+.dockPickerName {
+  font-size: 12px;
+  color: var(--ui-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dockPickerDetail {
+  font-size: 10px;
+  color: var(--ui-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dockPickerAdded {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--ui-text-muted);
+  flex-shrink: 0;
+}
+.dockPickerFooter {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+.dockPickerFooter button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 9px;
+  background: transparent;
+  font-size: 11px;
+  color: var(--ui-text-muted);
+}
+.dockPickerFooter button:hover:not(:disabled) {
+  background: var(--ui-fill-hover);
+  color: var(--ui-text-strong);
 }

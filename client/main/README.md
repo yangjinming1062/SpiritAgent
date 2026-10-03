@@ -73,7 +73,7 @@
 
 启动时先处理遗留恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号、兼容与限制见 [helper](../native/desktop-host/README.md#恢复)。
 
-[desktop-dock.ts](ipc/desktop-dock.ts)持有启动目标及图标缓存，只接受交互桌面 sender；数据和失败语义见[桌面呈现与本机启动器](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+[desktop-dock.ts](ipc/desktop-dock.ts)持有启动目标及图标缓存，只接受交互桌面 sender；[windows-app-catalog.ts](ipc/windows-app-catalog.ts)枚举开始菜单与桌面的 `.lnk` 并按句柄提供图标，不认识 Dock 状态。数据和失败语义见[桌面呈现与本机启动器](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 真实平台门禁见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)，挂载探测入口见 [helper](../native/desktop-host/README.md#原生验收)。
 

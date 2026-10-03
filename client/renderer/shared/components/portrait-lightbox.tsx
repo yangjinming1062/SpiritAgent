@@ -275,75 +275,75 @@ export function PortraitLightbox({
           className={`relative ${imageLimits} touch-none overflow-hidden ${
             zoomed ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'
           }`}
-        onDoubleClick={event => {
-          event.stopPropagation()
-          // viewRef 是事实源：state 在换图后尚未刷新时不应回退到旧 scale 计算因子。
-          const currentScale = viewRef.current.scale
-          const target = currentScale > MIN_SCALE + 0.001 ? MIN_SCALE : DOUBLE_CLICK_SCALE
-          zoomAt(target / currentScale, event.clientX, event.clientY)
-        }}
-        onLostPointerCapture={() => {
-          dragRef.current = null
-        }}
-        onPointerCancel={() => {
-          dragRef.current = null
-        }}
-        onPointerDown={event => {
-          if (event.button !== 0) {
-            return
-          }
-
-          event.currentTarget.setPointerCapture(event.pointerId)
-          dragRef.current = {
-            originX: viewRef.current.x,
-            originY: viewRef.current.y,
-            pointerId: event.pointerId,
-            startX: event.clientX,
-            startY: event.clientY
-          }
-        }}
-        onPointerMove={event => {
-          const drag = dragRef.current
-
-          if (!drag || drag.pointerId !== event.pointerId) {
-            return
-          }
-
-          commitView({
-            scale: viewRef.current.scale,
-            x: drag.originX + (event.clientX - drag.startX),
-            y: drag.originY + (event.clientY - drag.startY)
-          })
-        }}
-        onPointerUp={event => {
-          const drag = dragRef.current
-
-          if (drag && drag.pointerId === event.pointerId) {
-            dragRef.current = null
-
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId)
-            }
-          }
-        }}
-        ref={viewportRef}
-      >
-        <img
-          alt={name}
-          className={`block ${imageLimits} object-contain select-none`}
-          draggable={false}
-          src={url}
-          style={{
-            transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
-            transformOrigin: 'center center'
+          onDoubleClick={event => {
+            event.stopPropagation()
+            // viewRef 是事实源：state 在换图后尚未刷新时不应回退到旧 scale 计算因子。
+            const currentScale = viewRef.current.scale
+            const target = currentScale > MIN_SCALE + 0.001 ? MIN_SCALE : DOUBLE_CLICK_SCALE
+            zoomAt(target / currentScale, event.clientX, event.clientY)
           }}
-        />
-        {zoomed ? (
-          <span className="pointer-events-none absolute right-2 bottom-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] text-white/90">
-            {t.ui.lightbox.zoomPercent(Math.round(view.scale * 100))}
-          </span>
-        ) : null}
-      </div>
+          onLostPointerCapture={() => {
+            dragRef.current = null
+          }}
+          onPointerCancel={() => {
+            dragRef.current = null
+          }}
+          onPointerDown={event => {
+            if (event.button !== 0) {
+              return
+            }
+
+            event.currentTarget.setPointerCapture(event.pointerId)
+            dragRef.current = {
+              originX: viewRef.current.x,
+              originY: viewRef.current.y,
+              pointerId: event.pointerId,
+              startX: event.clientX,
+              startY: event.clientY
+            }
+          }}
+          onPointerMove={event => {
+            const drag = dragRef.current
+
+            if (!drag || drag.pointerId !== event.pointerId) {
+              return
+            }
+
+            commitView({
+              scale: viewRef.current.scale,
+              x: drag.originX + (event.clientX - drag.startX),
+              y: drag.originY + (event.clientY - drag.startY)
+            })
+          }}
+          onPointerUp={event => {
+            const drag = dragRef.current
+
+            if (drag && drag.pointerId === event.pointerId) {
+              dragRef.current = null
+
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+            }
+          }}
+          ref={viewportRef}
+        >
+          <img
+            alt={name}
+            className={`block ${imageLimits} object-contain select-none`}
+            draggable={false}
+            src={url}
+            style={{
+              transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+              transformOrigin: 'center center'
+            }}
+          />
+          {zoomed ? (
+            <span className="pointer-events-none absolute right-2 bottom-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] text-white/90">
+              {t.ui.lightbox.zoomPercent(Math.round(view.scale * 100))}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {children ? (

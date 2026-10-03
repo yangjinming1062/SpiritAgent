@@ -63,7 +63,7 @@ export function DesktopRoot(): React.JSX.Element {
   const [focusedConversation, setFocusedConversation] = useState<'main' | 'whisper' | null>('whisper')
   const [accountOpen, setAccountOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [dockMenuOpen, setDockMenuOpen] = useState(false)
+  const [dockOverlayOpen, setDockOverlayOpen] = useState(false)
   const [companionMenuOpen, setCompanionMenuOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<'living' | 'station'>('living')
   const [area, setArea] = useState({ width: 1000, height: 700, left: 16, top: 60 })
@@ -77,7 +77,7 @@ export function DesktopRoot(): React.JSX.Element {
   const foreground = desktopVisible && presentation.foreground
   const activeWindow = layout.windows.findLast(item => !item.minimized)?.id
 
-  const panelsEnabled = foreground && !accountOpen && !settingsOpen && !dockMenuOpen && !companionMenuOpen
+  const panelsEnabled = foreground && !accountOpen && !settingsOpen && !dockOverlayOpen && !companionMenuOpen
   const activePanel = panelsEnabled && focusedConversation !== 'whisper' ? activeWindow : null
   const mainChatActive = activePanel === 'chat' && focusedConversation === 'main'
   const whisperChatActive = panelsEnabled && focusedConversation === 'whisper' && layout.whisperOpen
@@ -529,7 +529,7 @@ export function DesktopRoot(): React.JSX.Element {
       </main>
       {layout.spriteVisible && desktopVisible && (
         <DesktopCompanion
-          menuEnabled={foreground && !accountOpen && !settingsOpen && !dockMenuOpen}
+          menuEnabled={foreground && !accountOpen && !settingsOpen && !dockOverlayOpen}
           onHide={toggleSprite}
           onMenuOpenChange={setCompanionMenuOpen}
           onOpenWhisper={openWhisper}
@@ -586,7 +586,7 @@ export function DesktopRoot(): React.JSX.Element {
       <DesktopDock
         menuEnabled={foreground && !accountOpen && !settingsOpen && !companionMenuOpen}
         onActivate={activatePanel}
-        onMenuOpenChange={setDockMenuOpen}
+        onMenuOpenChange={setDockOverlayOpen}
         windows={layout.windows}
       />
     </div>

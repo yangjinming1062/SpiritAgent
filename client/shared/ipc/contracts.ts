@@ -2,6 +2,7 @@ import type {
   DesktopAccount,
   DesktopBackground,
   DesktopNavigation,
+  DockCatalog,
   DockState,
   PresentationMode,
   PresentationState,
@@ -12,6 +13,10 @@ export type {
   DesktopAccount,
   DesktopBackground,
   DesktopNavigation,
+  DockCatalog,
+  DockCatalogItem,
+  DockCatalogSource,
+  DockCatalogSourceKey,
   DockEntry,
   DockState,
   PresentationDisplay,
@@ -403,12 +408,16 @@ export interface IpcInvokeContract {
   'spiritagent:presentation:ritual-request': (request: Omit<StageRitualRequest, 'epoch'>) => Promise<boolean>
   'spiritagent:presentation:ritual-complete': (reply: { callId: string; epoch: number; completed: boolean }) => void
   'spiritagent:dock:get-state': () => Promise<DockState>
-  'spiritagent:dock:add-from-picker': () => Promise<DockState>
+  'spiritagent:dock:catalog': (force?: boolean) => Promise<DockCatalog>
+  'spiritagent:dock:catalog-icons': (ids: string[]) => Promise<Record<string, string | null>>
+  'spiritagent:dock:add-from-catalog': (ids: string[]) => Promise<DockState>
+  'spiritagent:dock:add-from-files': () => Promise<DockState>
   'spiritagent:dock:add-dropped': (paths: string[]) => Promise<DockState>
   'spiritagent:dock:launch': (id: string) => Promise<void>
   'spiritagent:dock:reorder': (ids: string[]) => Promise<DockState>
   'spiritagent:dock:remove': (id: string) => Promise<DockState>
-  'spiritagent:dock:repair': (id: string) => Promise<DockState>
+  'spiritagent:dock:repair-with-catalog': (entryId: string, catalogId: string) => Promise<DockState>
+  'spiritagent:dock:repair-with-files': (entryId: string) => Promise<DockState>
   'spiritagent:desktop:accounts': () => Promise<DesktopAccount[]>
   'spiritagent:desktop:switch-account': (id: string) => Promise<void>
   'spiritagent:desktop:add-account': () => Promise<void>
@@ -644,12 +653,16 @@ export const IPC = {
     presentationRitualRequest: 'spiritagent:presentation:ritual-request',
     presentationRitualComplete: 'spiritagent:presentation:ritual-complete',
     dockGetState: 'spiritagent:dock:get-state',
-    dockAddFromPicker: 'spiritagent:dock:add-from-picker',
+    dockCatalog: 'spiritagent:dock:catalog',
+    dockCatalogIcons: 'spiritagent:dock:catalog-icons',
+    dockAddFromCatalog: 'spiritagent:dock:add-from-catalog',
+    dockAddFromFiles: 'spiritagent:dock:add-from-files',
     dockAddDropped: 'spiritagent:dock:add-dropped',
     dockLaunch: 'spiritagent:dock:launch',
     dockReorder: 'spiritagent:dock:reorder',
     dockRemove: 'spiritagent:dock:remove',
-    dockRepair: 'spiritagent:dock:repair',
+    dockRepairWithCatalog: 'spiritagent:dock:repair-with-catalog',
+    dockRepairWithFiles: 'spiritagent:dock:repair-with-files',
     desktopAccounts: 'spiritagent:desktop:accounts',
     desktopSwitchAccount: 'spiritagent:desktop:switch-account',
     desktopAddAccount: 'spiritagent:desktop:add-account',

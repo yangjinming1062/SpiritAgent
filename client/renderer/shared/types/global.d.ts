@@ -49,14 +49,18 @@ declare global {
       }
       dock: {
         getState: AsyncIpc<IpcInvokeContract['spiritagent:dock:get-state']>
-        addFromPicker: AsyncIpc<IpcInvokeContract['spiritagent:dock:add-from-picker']>
+        catalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:catalog']>
+        catalogIcons: AsyncIpc<IpcInvokeContract['spiritagent:dock:catalog-icons']>
+        addFromCatalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:add-from-catalog']>
+        addFromFiles: AsyncIpc<IpcInvokeContract['spiritagent:dock:add-from-files']>
         addDroppedFiles: (
           files: File[]
         ) => Promise<Awaited<ReturnType<IpcInvokeContract['spiritagent:dock:add-dropped']>>>
         launch: AsyncIpc<IpcInvokeContract['spiritagent:dock:launch']>
         reorder: AsyncIpc<IpcInvokeContract['spiritagent:dock:reorder']>
         remove: AsyncIpc<IpcInvokeContract['spiritagent:dock:remove']>
-        repair: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair']>
+        repairWithCatalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair-with-catalog']>
+        repairWithFiles: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair-with-files']>
         onChanged: EventSubscription<'spiritagent:dock:changed'>
       }
       desktop: {

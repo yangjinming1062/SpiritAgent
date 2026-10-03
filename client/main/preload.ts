@@ -103,13 +103,18 @@ contextBridge.exposeInMainWorld('spiritagent', {
   },
   dock: {
     getState: () => invoke(IPC.invoke.dockGetState),
-    addFromPicker: () => invoke(IPC.invoke.dockAddFromPicker),
+    catalog: (force?: boolean) => invoke(IPC.invoke.dockCatalog, force === true),
+    catalogIcons: (ids: string[]) => invoke(IPC.invoke.dockCatalogIcons, ids),
+    addFromCatalog: (ids: string[]) => invoke(IPC.invoke.dockAddFromCatalog, ids),
+    addFromFiles: () => invoke(IPC.invoke.dockAddFromFiles),
     addDroppedFiles: (files: File[]) =>
       invoke(IPC.invoke.dockAddDropped, files.map(file => webUtils.getPathForFile(file)).filter(Boolean)),
     launch: (id: string) => invoke(IPC.invoke.dockLaunch, id),
     reorder: (ids: string[]) => invoke(IPC.invoke.dockReorder, ids),
     remove: (id: string) => invoke(IPC.invoke.dockRemove, id),
-    repair: (id: string) => invoke(IPC.invoke.dockRepair, id),
+    repairWithCatalog: (entryId: string, catalogId: string) =>
+      invoke(IPC.invoke.dockRepairWithCatalog, entryId, catalogId),
+    repairWithFiles: (entryId: string) => invoke(IPC.invoke.dockRepairWithFiles, entryId),
     onChanged: (cb: EventCallback<typeof IPC.event.dockChanged>) => subscribe(IPC.event.dockChanged, cb)
   },
   desktop: {
