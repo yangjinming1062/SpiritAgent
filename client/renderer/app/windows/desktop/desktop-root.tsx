@@ -17,6 +17,7 @@ import {
   setChatSession,
   switchSession
 } from '@/modules/conversation'
+import { MediaViewerOverlay } from '@/modules/media'
 import { hydrateDiaryUnread } from '@/modules/memory'
 import { hydratePostsUnread } from '@/modules/posts'
 import { $activeScene, hydrateScene } from '@/modules/scene'
@@ -379,7 +380,12 @@ export function DesktopRoot(): React.JSX.Element {
         )
 
       case 'posts':
-        return <PostsPage foreground={reading} />
+        return (
+          <>
+            <PostsPage foreground={reading} mediaViewId="desktop-posts" />
+            <MediaViewerOverlay containerRef={rootRef} viewId="desktop-posts" windowId={1} />
+          </>
+        )
 
       case 'diary':
         return <DiaryPage foreground={reading} />

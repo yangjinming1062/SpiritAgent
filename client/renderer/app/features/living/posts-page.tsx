@@ -3,7 +3,7 @@ import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { $persona } from '@/modules/character'
-import { InlineMedia } from '@/modules/media'
+import { InlineMedia, openMediaViewer } from '@/modules/media'
 import {
   $posts,
   $postsHasMore,
@@ -11,7 +11,6 @@ import {
   $postsLoadingMore,
   commentPost,
   deletePostComment,
-  hydratePost,
   hydratePosts,
   loadMorePosts,
   markPostsRead,
@@ -39,7 +38,13 @@ function formatDate(formatter: Intl.DateTimeFormat, iso: string): string {
   }
 }
 
-export function PostsPage({ foreground: suppliedForeground }: { foreground?: boolean } = {}): React.JSX.Element {
+export function PostsPage({
+  foreground: suppliedForeground,
+  mediaViewId
+}: {
+  foreground?: boolean
+  mediaViewId?: string
+} = {}): React.JSX.Element {
   const posts = useStore($posts)
   const loading = useStore($postsLoading)
   const hasMore = useStore($postsHasMore)
@@ -214,22 +219,16 @@ export function PostsPage({ foreground: suppliedForeground }: { foreground?: boo
               <h3 className={styles.title}>{m.title ?? t.noTitle}</h3>
               {m.body && <p className={cn(styles.body, expanded ? styles.bodyExpanded : styles.bodyClamp)}>{m.body}</p>}
             </button>
-            <button
-              className={styles.commentSend}
-              onClick={() => {
-                void hydratePost(m.id)
-                document.getElementById(`post-comments-${m.id}`)?.scrollIntoView({ block: 'nearest' })
-                document.getElementById(`post-input-${m.id}`)?.focus()
-              }}
-              type="button"
-            >
-              {t.commentOpen} ({m.comments.length})
-            </button>
             {m.mediaUrl ? (
               <InlineMedia
                 alt={m.title ?? ''}
                 audioUrl={m.audioUrl}
                 mediaType={m.contentType === 'text' ? '' : m.contentType}
+                onImageClick={
+                  m.contentType === 'image'
+                    ? () => openMediaViewer({ type: 'image', url: m.mediaUrl ?? '' }, mediaViewId)
+                    : undefined
+                }
                 url={m.mediaUrl}
               />
             ) : null}
@@ -297,7 +296,7 @@ function PostComments(props: {
   }
 
   return (
-    <div className={styles.comments} id={`post-comments-${postId}`}>
+    <div className={styles.comments}>
       {comments.map(c => (
         <CommentRow
           comment={c}
@@ -316,7 +315,6 @@ function PostComments(props: {
           aria-label={t.commentPlaceholder}
           className={styles.commentInput}
           disabled={sending}
-          id={`post-input-${postId}`}
           maxLength={500}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => {

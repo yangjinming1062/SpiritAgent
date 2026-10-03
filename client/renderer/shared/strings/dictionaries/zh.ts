@@ -966,7 +966,6 @@ export const dict = {
       avatarMood: (name: string) => `${name} 的表情反馈`
     },
     posts: {
-      commentOpen: '评论',
       loadMore: '加载更多',
       replyPending: '正在回复…',
       replyRetry: '回复失败 · 重试',

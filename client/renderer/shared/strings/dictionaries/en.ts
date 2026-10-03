@@ -1026,7 +1026,6 @@ export const dict: Dictionary = {
       avatarMood: (name: string) => `${name}'s mood`
     },
     posts: {
-      commentOpen: 'Comment',
       loadMore: 'Load more',
       replyPending: 'Replying…',
       replyRetry: 'Reply failed · Retry',

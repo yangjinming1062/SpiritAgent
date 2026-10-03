@@ -286,19 +286,6 @@ export async function loadMorePosts(): Promise<boolean> {
   return (await fetchPage(true)) !== null
 }
 
-export async function hydratePost(id: string): Promise<boolean> {
-  const epoch = currentClearEpoch()
-  const result = await authedApi<PostWire>({ path: `/api/companion/posts/${id}` })
-
-  if (epoch !== currentClearEpoch() || !apiSucceeded(result, 'posts', 'detail failed') || !isPost(result.value)) {
-    return false
-  }
-
-  upsertPosts([result.value])
-
-  return true
-}
-
 async function postCommentResult(path: string, body?: { content: string }): Promise<boolean> {
   const epoch = currentClearEpoch()
   const result = await authedApi<CommentWire>({ method: 'POST', path, ...(body ? { body } : {}) })

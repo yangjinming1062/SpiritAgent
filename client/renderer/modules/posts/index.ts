@@ -6,7 +6,6 @@ export {
   $postsLoadingMore,
   commentPost,
   deletePostComment,
-  hydratePost,
   hydratePosts,
   hydratePostsUnread,
   loadMorePosts,
