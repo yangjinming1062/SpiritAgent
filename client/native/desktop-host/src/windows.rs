@@ -17,6 +17,9 @@ use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromRect, ScreenToClient,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
+use windows_sys::Win32::System::Registry::{
+    HKEY, HKEY_CURRENT_USER, KEY_READ, RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW,
+};
 use windows_sys::Win32::System::Threading::*;
 use windows_sys::Win32::UI::HiDpi::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
@@ -465,6 +468,125 @@ fn child(window: HWND, class: &str) -> HWND {
     unsafe { FindWindowExW(window, null_mut(), wide(class).as_ptr(), null()) }
 }
 
+fn slideshow_wallpaper() -> bool {
+    std::env::var_os("APPDATA")
+        .map(|root| Path::new(&root).join(r"Microsoft\Windows\Themes\slideshow.ini"))
+        .and_then(|config| fs::read_to_string(config).ok())
+        .is_some_and(|content| !content.trim().is_empty())
+}
+
+fn per_monitor_wallpaper() -> bool {
+    let mut settings: HKEY = null_mut();
+    if unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            wide(r"Control Panel\Desktop\PerMonitorSettings").as_ptr(),
+            0,
+            KEY_READ,
+            &mut settings,
+        )
+    } != 0
+    {
+        return false;
+    }
+    let _close = OwnedKey(settings);
+    let mut index = 0u32;
+    loop {
+        let mut name = [0u16; 256];
+        let mut length = name.len() as u32;
+        let result = unsafe {
+            RegEnumKeyExW(
+                settings,
+                index,
+                name.as_mut_ptr(),
+                &mut length,
+                null(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+            )
+        };
+        if result == ERROR_NO_MORE_ITEMS {
+            return false;
+        }
+        if result != 0 {
+            return true;
+        }
+        let mut monitor = null_mut();
+        let subkey = String::from_utf16_lossy(&name[..length as usize]);
+        if unsafe {
+            RegOpenKeyExW(
+                settings,
+                wide(&subkey).as_ptr(),
+                0,
+                KEY_READ,
+                &mut monitor,
+            )
+        } == 0
+        {
+            let _close = OwnedKey(monitor);
+            let mut value = [0u16; 256];
+            let mut size = (value.len() * 2) as u32;
+            if unsafe {
+                RegQueryValueExW(
+                    monitor,
+                    wide("WallpaperSRC").as_ptr(),
+                    null(),
+                    null_mut(),
+                    value.as_mut_ptr().cast(),
+                    &mut size,
+                )
+            } == 0
+            {
+                return true;
+            }
+        }
+        index += 1;
+    }
+}
+
+struct OwnedKey(HKEY);
+
+impl Drop for OwnedKey {
+    fn drop(&mut self) {
+        unsafe {
+            RegCloseKey(self.0);
+        }
+    }
+}
+
+fn refresh_wallpaper() {
+    // 全屏子窗长期遮挡会令 DWM 逐出壁纸合成表面，摘除后偶尔不重建而留黑桌面；
+    // 重应用同一壁纸可促 Explorer/DWM 重建该表面。逐显示器或幻灯片壁纸无法用
+    // SPI 无损刷新（会退化为单张静态壁纸），保留系统自身重绘。
+    const MAX_WALLPAPER: usize = 260;
+    let mut source = [0u16; MAX_WALLPAPER];
+    if unsafe {
+        SystemParametersInfoW(
+            SPI_GETDESKWALLPAPER,
+            MAX_WALLPAPER as u32,
+            source.as_mut_ptr().cast(),
+            0,
+        )
+    } == 0
+    {
+        return;
+    }
+    let end = source.iter().position(|&unit| unit == 0).unwrap_or(MAX_WALLPAPER);
+    let path = PathBuf::from(String::from_utf16_lossy(&source[..end]));
+    if slideshow_wallpaper() || per_monitor_wallpaper() || !path.is_absolute() || !path.is_file() {
+        return;
+    }
+    unsafe {
+        SystemParametersInfoW(
+            SPI_SETDESKWALLPAPER,
+            0,
+            source.as_mut_ptr().cast(),
+            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
+        );
+    }
+}
+
 fn shell_windows() -> Result<Vec<Identity>> {
     let shell = unsafe { GetShellWindow() };
     if shell.is_null() || !is_explorer(window_pid(shell)) {
@@ -811,6 +933,7 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
         return Err("restoration session changed".into());
     }
     let mut failures = Vec::new();
+    let mut hosted = false;
     if !matches!(journal.phase, JournalPhase::Prepared) {
         // 先恢复系统界面，避免应用窗口复位阻断桌面可用性。
         for item in &journal.shell {
@@ -850,9 +973,13 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
                 failures.push(error);
             }
         }
+        hosted = true;
     }
     if !failures.is_empty() {
         return Err(failures.join("; "));
+    }
+    if hosted {
+        refresh_wallpaper();
     }
     match fs::remove_file(sidecar(path, ".lease")) {
         Ok(()) => {}
