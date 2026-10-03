@@ -1,13 +1,11 @@
-from typing import Any
-
 from components import SETTINGS, session_scope, utc_now
-from modules.memory import Memory
+from modules.memory import USER_PROFILE_MAX_CONTENT_CHARS, Memory
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import EmbeddingItem, MemoryScope
 
-from .memory_learning import memory_record
+from .memory_learning import MemoryRecord, memory_record
 from .memory_namespaces import KIND_TO_PREFIX, RECALL_TAGS, participates_in_recall
 from .memory_store import (
     active_memory_filter,
@@ -22,13 +20,19 @@ _LIST_DEFAULT_LIMIT = 100
 _LIST_MAX_LIMIT = 500
 
 
-def _row_to_dict(row: Memory) -> dict[str, Any]:
-    return {
+class MemoryListItem(MemoryRecord):
+    system_preset_id: str
+    importance: float
+    created_at: str
+
+
+def _list_item(row: Memory) -> MemoryListItem:
+    return MemoryListItem(
         **memory_record(row).model_dump(),
-        "system_preset_id": row.system_preset_id,
-        "importance": row.importance or 1.0,
-        "created_at": row.created_at.isoformat(),
-    }
+        system_preset_id=row.system_preset_id,
+        importance=row.importance or 1.0,
+        created_at=row.created_at.isoformat(),
+    )
 
 
 async def list_memories(
@@ -40,7 +44,7 @@ async def list_memories(
     tag: str | None = None,
     q: str | None = None,
     limit: int | None = _LIST_DEFAULT_LIMIT,
-) -> list[dict[str, Any]]:
+) -> list[MemoryListItem]:
     """列出用户记忆；内部批处理可用 limit=None 读取全部，分页调用仍限制条数。"""
     if kind is not None and kind not in KIND_TO_PREFIX:
         raise ValueError(f"kind must be one of {sorted(KIND_TO_PREFIX)}")
@@ -71,10 +75,10 @@ async def list_memories(
         )
 
     rows = (await db.execute(stmt.order_by(Memory.updated_at.desc(), Memory.id.desc()).limit(limit))).scalars().all()
-    return [_row_to_dict(r) for r in rows]
+    return [_list_item(row) for row in rows]
 
 
-async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> dict[str, Any] | None:
+async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> MemoryListItem | None:
     """人工编辑作为明确事实重新生效。"""
     content = (content or "").strip()
     if not content:
@@ -86,7 +90,11 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
             return None
         if (row.context or "").startswith("diary:"):
             raise ValueError("Published diary memories are read-only")
-        cap = SETTINGS.memory_recall_max_content_chars
+        cap = (
+            USER_PROFILE_MAX_CONTENT_CHARS
+            if (row.context or "").startswith("user_profile:")
+            else SETTINGS.memory_recall_max_content_chars
+        )
         if len(content) > cap:
             raise ValueError(f"content exceeds {cap} chars for {row.context or 'recall'}")
         if row.status == "forgotten":
@@ -103,7 +111,7 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
         row.source_kind, row.source_refs = "manual", {}
         row.updated_at = utc_now()
         await db.commit()
-        result = _row_to_dict(row)
+        result = _list_item(row)
         embedding_item = (
             EmbeddingItem(row.id, row.content, row.content_version) if participates_in_recall(row.context) else None
         )

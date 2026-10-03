@@ -1,16 +1,19 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
+from components import get_logger
 from modules.channels import ChannelDeliveryMedia, ChannelLoginStateResponse
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
 class InboundAttachment:
-    """入站附件：url 是后端 temp-media 地址（`/api/media/files/...`），type 按持久化约定映射为 LLM 输入。"""
+    """已校验的入站图片；内联 data URI 保证历史不依赖临时下载地址。"""
 
-    type: str  # "image" | "file"（LLM 侧 video / voice 也按 image 消费）
+    type: Literal["image"]
     url: str
 
 
@@ -69,8 +72,17 @@ class ChannelAdapter:
         """创建归当前适配器实例所有的子任务。"""
         task = asyncio.create_task(coro, name=name)
         self._owned_tasks.add(task)
-        task.add_done_callback(self._owned_tasks.discard)
+        task.add_done_callback(self._task_done)
         return task
+
+    def _task_done(self, task: asyncio.Task) -> None:
+        self._owned_tasks.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            logger.error(
+                "channel owned task failed",
+                extra={"binding": self.snapshot.id, "task": task.get_name()},
+                exc_info=exc,
+            )
 
     async def aclose(self) -> None:
         """取消并等待当前适配器实例派生的全部子任务；可重复调用。"""
@@ -97,7 +109,9 @@ class ChannelAdapter:
         media: list[ChannelDeliveryMedia],
         context_token: str | None = None,
     ) -> None:
-        """出站媒体（与回复文本合并成一条消息）；默认回退到仅文本，媒体被丢弃。"""
+        """未实现媒体投递的渠道明确失败，由桥接层保留媒体补发。"""
+        if media:
+            raise ChannelError("channel media delivery unsupported")
         if text:
             await self.send_text(peer_id, text, context_token=context_token)
 

@@ -3,8 +3,10 @@ from dataclasses import dataclass, field
 from weakref import WeakValueDictionary
 
 from components import get_logger, session_scope
+from modules.auth import User
 from modules.system import ChatMessageRequest, ChatRequest
 from modules.ws import emit_ws_event
+from sqlalchemy import select
 
 from services.application.chat import HeadlessEmitter, run_chat_turn
 from services.domains.automation import STANDARD_CRON_KIND, get_user_job, resolve_job_conversation
@@ -108,6 +110,14 @@ async def execute_standard_turn(
     slot.admitted += 1
     try:
         async with slot.lock:
+            async with session_scope() as db:
+                active = await db.scalar(select(User.is_active).where(User.id == user_id))
+            if not active:
+                logger.info(
+                    "standard cron trigger dropped: user inactive",
+                    extra={"user_id": user_id, "job_id": job_id},
+                )
+                return
             if not one_shot:
                 current = await get_user_job(user_id, job_id)
                 if current is None or current["is_paused"] or current["kind"] != STANDARD_CRON_KIND:

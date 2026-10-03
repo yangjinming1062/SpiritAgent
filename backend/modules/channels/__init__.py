@@ -1,7 +1,6 @@
 from .models import ChannelBinding, ChannelDelivery, ChannelPeer
 from .schemas import (
     BindingInfo,
-    ChannelCapabilities,
     ChannelDeliveryMedia,
     ChannelDeliveryPayload,
     ChannelInfo,
@@ -18,7 +17,6 @@ __all__ = [
     "BindingInfo",
     "ChannelBinding",
     "ChannelDelivery",
-    "ChannelCapabilities",
     "ChannelInfo",
     "ChannelListResponse",
     "ChannelLoginStateResponse",

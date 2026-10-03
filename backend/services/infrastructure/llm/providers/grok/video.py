@@ -2,8 +2,8 @@ from typing import ClassVar
 
 from components import get_logger
 
-from ..base import ProviderConfig, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
-from ..http import get_http
+from ..base import ProviderConfig, ProviderError, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
+from ..http import ProviderResultUnknownError, get_http
 from ._errors import raise_for_grok_response
 
 logger = get_logger(__name__)
@@ -25,11 +25,11 @@ _MAX_PROMPT_CHARS = 7000
 # xAI 文档（Imagine Overview 与 grok-imagine-video-1.5 模型页）显示时长范围 1–15s；接受全范围而非窄枚举，确保 VideoGenRequest 默认 duration=6 不会被客户端拒。
 _SUPPORTED_DURATIONS = tuple(range(1, 16))  # 1..15 inclusive
 # 文档规定分辨率为小写（如 "720p"、"1080p"），同时接受大写以屏蔽大小写差异。
-_SUPPORTED_RESOLUTIONS = ("480p", "720p", "1080p", "480P", "720P", "1080P")
+_SUPPORTED_RESOLUTIONS = ("480p", "720p", "1080p")
 
 
 class GrokVideoGenProvider(VideoGenProvider):
-    """通过 xAI 的两阶段异步管道提供视频生成：submit→POST /videos/generations 返回 request_id；poll→GET /videos/{request_id} 返回状态与下载 URL（done 时 URL 内联）；fetch 不可达（URL 仅由 poll 返回）；默认模型 grok-imagine-video-1.5。"""
+    """通过 xAI submit→POST /videos/generations 取得 request_id；poll→GET /videos/{request_id} 读取状态与成品 URL。"""
 
     provider_name = "grok"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
@@ -64,13 +64,20 @@ class GrokVideoGenProvider(VideoGenProvider):
         model = self.config.model
 
         if len(req.prompt) > _MAX_PROMPT_CHARS:
-            raise ValueError(f"prompt exceeds xAI limit ({_MAX_PROMPT_CHARS} chars)")
+            raise ProviderError(f"prompt exceeds xAI limit ({_MAX_PROMPT_CHARS} chars)", status_code=400)
         if req.duration not in _SUPPORTED_DURATIONS:
-            raise ValueError(f"{model} requires duration in {_SUPPORTED_DURATIONS}, got {req.duration!r}")
-        if req.resolution not in _SUPPORTED_RESOLUTIONS:
-            raise ValueError(f"{model} requires resolution in {_SUPPORTED_RESOLUTIONS}, got {req.resolution!r}")
+            raise ProviderError(
+                f"{model} requires duration in {_SUPPORTED_DURATIONS}, got {req.duration!r}",
+                status_code=400,
+            )
+        resolution = req.resolution.lower()
+        if resolution not in _SUPPORTED_RESOLUTIONS:
+            raise ProviderError(
+                f"{model} requires resolution in {_SUPPORTED_RESOLUTIONS}, got {req.resolution!r}",
+                status_code=400,
+            )
 
-        payload: dict = {"model": model, "prompt": req.prompt, "duration": req.duration, "resolution": req.resolution}
+        payload: dict = {"model": model, "prompt": req.prompt, "duration": req.duration, "resolution": resolution}
         if req.aspect_ratio:
             payload["aspect_ratio"] = req.aspect_ratio
         if req.first_frame_image:
@@ -78,9 +85,12 @@ class GrokVideoGenProvider(VideoGenProvider):
 
         if req.last_frame_image or req.reference_images:
             if model != "grok-imagine-video-1.5" or req.resolution.lower() not in ("480p", "720p"):
-                raise ValueError("Grok reference/first-last frame mode requires grok-imagine-video-1.5 at up to 720p")
+                raise ProviderError(
+                    "Grok reference/first-last frame mode requires grok-imagine-video-1.5 at up to 720p",
+                    status_code=400,
+                )
             if len(req.reference_images) > 7:
-                raise ValueError("Grok accepts at most seven reference images")
+                raise ProviderError("Grok accepts at most seven reference images", status_code=400)
             if req.last_frame_image:
                 payload["last_frame"] = {"url": req.last_frame_image}
             if req.reference_images:
@@ -90,8 +100,8 @@ class GrokVideoGenProvider(VideoGenProvider):
         body = raise_for_grok_response(resp)
 
         request_id = body.get("request_id", "")
-        if not request_id:
-            raise RuntimeError(f"grok video_generation returned no request_id: {body}")
+        if not isinstance(request_id, str) or not request_id:
+            raise ProviderResultUnknownError("POST", self.config.base_url)
         return VideoJobStatus(task_id=request_id, status="queued")
 
     async def poll(self, task_id: str) -> VideoJobStatus:

@@ -94,6 +94,6 @@ async def run_delegated_turn(
             {"success": True, "result": final_answer, "subagent_session_id": sid},
             ensure_ascii=False,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Agent delegation failed")
-        return tool_error(str(e))
+        return tool_error("Subagent did not complete. Check any work already started before repeating the task.")

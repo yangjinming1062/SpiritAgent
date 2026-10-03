@@ -6,10 +6,11 @@
 
 | 入口 | 职责 |
 |---|---|
+| [appearance_prompts.py](appearance_prompts.py) | 头像、衣柜、身体结构与服装参考提示词装配；Persona 读取由公共模型辅助完成，文本与视觉调用走 LLM 公共入口，显式输出预算与未完成响应按失败处理 |
 | [avatar_service.py](avatar_service.py) / [fullbody_reference_prompt.py](fullbody_reference_prompt.py) | 头像、全身草稿与候选、全身确认（锁定身份并建默认外观）、立绘裸路径读写与响应签名；全身参考提示词与自备图画幅 |
 | [character_card.py](character_card.py) | 角色卡分析任务 |
 | [initial_appearance.py](initial_appearance.py) | 首个视频包启动（含补排默认外观描述）；首个视频包与初始场景的重启恢复（初始场景由角色卡就绪后经 `scene_service.schedule_initial_scene` 启动） |
-| [visual_identity.py](visual_identity.py) | 出镜身份与本次造型（`SelfVisualPlan`），共用 `build_self_image_prompt` |
+| [visual_identity.py](visual_identity.py) | 出镜身份与本次造型（`SelfVisualPlan`），共用 `build_self_image_prompt` 与 `build_self_video_prompt` |
 | [outfit_service.py](outfit_service.py) | 衣柜外观草稿、重绘、自备图、确认、穿着、删除（已建过动作包的外观拒绝删除）、替换策略与后台命名 |
 | [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与场景提示词装配 |
 | [chat_images.py](chat_images.py) | 聊天图片批次登记、实际验图、版本与一次重做预算；工具入口见 [image_generation_tool.py](../../adapters/tools/builtin/image_generation_tool.py) |
@@ -60,9 +61,9 @@
 
 ## 视频包与质量链
 
-聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。没有目标会话的视频任务只保存结果，由[动态应用](../posts/README.md)接收，不执行聊天交付。
+聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。新增视频任务的固定文件名包含冻结的生成 ID，避免恢复后数据库序列与旧媒体文件重名；旧在途任务仍沿用原路径恢复。没有目标会话的视频任务只保存结果，由[动态应用](../posts/README.md)接收，不执行聊天交付。
 
-上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）共用片段处理和发布；[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。任务按 `status × stage` 持久化，FFmpeg 在工作线程执行，新包失败不清空旧激活包；供应商句柄提交后立即落库，重启只续轮询，不重复付费提交。
+上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）共用片段处理和发布；[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。任务按 `status × stage` 持久化，FFmpeg 在工作线程执行，新包失败不清空旧激活包；供应商成品下载共用有界重试，只重试传输错误和 5xx，不重新提交制作；供应商句柄提交后立即落库，重启只续轮询，不重复付费提交。
 
 探身补齐由 [video/service.py](video/service.py)编排，定位校准在 [video/script.py](video/script.py)，接口契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。生成任务收尾须兑现新排队动作的唤醒；空队列停止，不循环恢复未知结果任务；队列清空后还须补做因在途制作而推迟的旧版本退役（见[恢复与历史包](../../../../docs/PIPELINE.md#恢复与历史包)）。
 

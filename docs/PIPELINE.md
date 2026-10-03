@@ -97,7 +97,7 @@ flowchart LR
 
 首帧校准须向生图模型同时传图 1 全身身份、图 2 原首帧；图 2 负责构图、环境、姿态与造型，要求原生双图能力，不能只在评分时传身份图。只有身份底图时可直接编辑。画幅取最近支持比例，模板与请求一致；非标准比例只调整边缘背景，不改已有主体、关键物体或补造未展示身体。
 
-造型调整在图片/首帧阶段完成，运动阶段保持实际首帧，不另以文字改造造型。重试不重读造型，恢复不重做已有首帧、只续原视频任务。夜间 `narration` 是独立音轨，不保证口型同步。
+造型调整在图片/首帧阶段完成，运动阶段保持实际首帧，不另以文字改造造型。重试不重读造型，恢复不重做已有首帧、只续原视频任务。动态可选的 `narration` 是独立音轨，不保证口型同步。
 
 显式首帧无法读取，以及起始画面在图片链内的下载或转存失败，都发生在视频提交之前，按确定失败返回，不当作视频提交结果未知；视频任务提交后才适用结果未知规则。
 
@@ -248,7 +248,7 @@ flowchart LR
 #### 提案与评审
 
 - 受理时冻结 pack 与设计资料，做语义去重并检查时长、整秒、拒绝抑制（自拒绝时刻起 7 天）、自主创建开关与抠像模型。同名动作的成品仍待用户确认时直接返回，复核已结束仍未采纳的按未采纳处理并重做；同一创意最近一次评审为复用且所指动作仍可播放时直接复用；已批准或已复用而动作已删除或不可用时新建提案重新评审，历史提案保留，每次批准都计入额度。
-- 独立 LLM 在后台评审（approve / reuse / defer / reject），重启时 pending 与 deferred 提案重新排队；输入含冻结参考图、包内角色快照与人设、着装快照及同包表达动作（超过 10 个时只取词面最相近的 10 个，见[动作编排](../backend/services/application/actions/README.md#评审输入与额度)），着装用于判断可行性。同包已有同名动作时不调用模型：该动作就绪即按复用结案，否则暂缓并写明原因；批准只新建动作行，不覆盖或重排其他提案的动作。
+- 独立 LLM 在后台评审（approve / reuse / defer / reject），重启时 pending 与 deferred 提案的恢复窗口见[动作编排](../backend/services/application/actions/README.md#提案处理)；输入含冻结参考图、包内角色快照与人设、着装快照及同包表达动作（超过 10 个时只取词面最相近的 10 个，见[动作编排](../backend/services/application/actions/README.md#评审输入与额度)），着装用于判断可行性。同包已有同名动作时不调用模型：该动作就绪即按复用结案，否则暂缓并写明原因；批准只新建动作行，不覆盖或重排其他提案的动作。
 - 评审不设日限额；approve 后占用制作额度并冻结规格到动作行。
 
 #### 脚本与关键帧
@@ -309,7 +309,7 @@ manifest 只含素材、画布与播放技术参数；动作语义（`motion_des
 
 | 功能 | 输入 → 中间模型 → 最终消费 | 必查分支 |
 |---|---|---|
-| 头像 | 角色资料 → [头像提示词整理](../backend/services/infrastructure/llm/prompt_engineer.py) → [头像生成](../backend/services/application/generation/avatar_service.py) → 预览确认 | 纯文字、身份单图、身份＋呈现双图、微调、外部提示词、直接自备图 |
+| 头像 | 角色资料 → [头像提示词整理](../backend/services/application/generation/appearance_prompts.py) → [头像生成](../backend/services/application/generation/avatar_service.py) → 预览确认 | 纯文字、身份单图、身份＋呈现双图、微调、外部提示词、直接自备图 |
 | 全身形象 | 头像、可选身体参考、身体默认资料与造型 → 身体判断 → [全身提示词](../backend/services/application/generation/fullbody_reference_prompt.py) → 候选分析及采纳 | 首次补全、已确认重绘、编辑当前图或候选图、外部制作、上传；只有明确采纳更新身体身份 |
 | 角色卡 | [分析任务](../backend/services/application/generation/character_card.py)将头像与全身分别送入视觉提取（`avatar_service.extract_card_features`，与全身候选分析共用）→ 严格字段校验 → 自动值与用户覆盖合并 → [任务快照与渲染](../backend/services/domains/companion/character_card.py) | 部分分析失败重试、空白字段、覆盖恢复、头部／身体分工、旧任务修订校验 |
 | 换装 | 文字＋可选服装图 → 着装转写 → 原设计与连续反馈 → 身体判断 → [换装生成](../backend/services/application/generation/outfit_service.py) → 成品转写和命名 → 后续造型 | 新建、重绘、微调、参考转写失败、外部提示词、自备图、双语成品描述 |

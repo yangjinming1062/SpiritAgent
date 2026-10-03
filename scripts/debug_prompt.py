@@ -48,6 +48,7 @@ def _build_mock_user_profile_extras(profile: dict[str, str], *, language: str = 
 
 
 async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -> dict[str, Any]:
+    from bootstrap.registrations import register_tools
     from components import SESSION_LOCAL
     from modules.companion import Persona
     from services.application.chat.system_prompt import build_companion_environment_prompt
@@ -62,6 +63,7 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
     from services.infrastructure.tool_runtime import REGISTRY
     from sqlalchemy import select
 
+    register_tools()
     scope = MemoryScope(user_id, preset_id)
     validate_memory_scope(scope)
     async with SESSION_LOCAL() as db:
@@ -111,6 +113,7 @@ def assemble_debug_prompt(
     from datetime import datetime
     from types import SimpleNamespace
 
+    from bootstrap.registrations import register_tools
     from components import ensure_utc, utc_now
     from modules.auth import ChatRequestClientContext
     from services.application.chat.prompt_blocks import AgentPromptConfig
@@ -122,6 +125,7 @@ def assemble_debug_prompt(
     from services.infrastructure.llm import approx_responses_tokens
     from services.infrastructure.tool_runtime import REGISTRY, schema_name
 
+    register_tools()
     if db_data is not None:
         persona_extras = db_data["persona_extras"]
         user_profile_extras = db_data["user_profile_extras"]

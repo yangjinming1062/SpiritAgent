@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.actions import build_catalog_manifest
-from services.infrastructure.assets import build_data_uri, compute_file_sha256
+from services.infrastructure.assets import build_data_uri, compute_file_sha256, image_mime_for_extension
 
 from .file_packing import UrlRewriter
 
@@ -193,11 +193,10 @@ async def restore_action_catalogs(
                 original_path = outfit["fullbody_url"]
                 restored_path = rewriter(original_path)
                 path = _asset_file(restored_path, user_id)
-                mime = {".jpg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}.get(
-                    path.suffix.lower(),
-                    "image/png",
-                )
-                reference = build_data_uri(await asyncio.to_thread(path.read_bytes), mime)
+                mime = image_mime_for_extension(path.suffix)
+                if mime is None:
+                    raise ValueError("外观参考图格式无效")
+                reference = await asyncio.to_thread(lambda: build_data_uri(path.read_bytes(), mime))
                 original_hash = make_action_reference_hash(outfit["id"], original_path, raw.get("avatar_id"), reference)
                 # 只迁移仍对应原外观的指纹；历史失效包不能在导入后意外变成当前身份。
                 if pack.reference_hash == original_hash:

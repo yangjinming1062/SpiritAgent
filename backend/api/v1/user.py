@@ -10,6 +10,7 @@ from modules.auth import (
     User,
     UserInfo,
     create_access_token,
+    create_ws_ticket,
     decode_activation_code,
     hash_activation_token,
 )
@@ -18,9 +19,6 @@ from services.adapters.desktop import terminate_user_gateway
 from services.adapters.http import limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select, update
-
-# 短期 ticket TTL：足以开 WS、重放前已过期。
-WS_TICKET_TTL_SECONDS = 60
 
 router = get_router()
 
@@ -74,11 +72,9 @@ async def activate(payload: ActivateRequest, request: Request, db: DbSession) ->
 async def mint_ws_ticket(session: CurrentSession) -> TokenResponse:
     """签发仅供 WS 的短期 JWT，避免 renderer 持有长寿命 bearer。"""
     user, login_record = session
-    token, expires_in, _ = create_access_token(
+    token, expires_in = create_ws_ticket(
         user_id=user.id,
         username=user.username,
-        expires_in_seconds=WS_TICKET_TTL_SECONDS,
-        purpose="ws",
         login_record_id=login_record.id,
     )
     return TokenResponse(access_token=token, expires_in=expires_in, user=UserInfo.model_validate(user))

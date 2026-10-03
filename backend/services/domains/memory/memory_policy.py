@@ -16,14 +16,14 @@ MemoryCategory = Literal[
 
 class EvidenceQuote(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    message_id: int = Field(gt=0)
+    message_id: int = Field(gt=0, le=2147483647)
     quote: str = Field(min_length=1, max_length=1000)
     stance: Literal["supports", "opposes"]
 
 
 class MemoryDecision(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    memory_id: int | None = Field(default=None, gt=0)
+    memory_id: int | None = Field(default=None, gt=0, le=2147483647)
     expected_version: int | None = Field(default=None, gt=0)
     content: str = Field(min_length=1, max_length=2000)
     topic: str = Field(min_length=1, max_length=200)

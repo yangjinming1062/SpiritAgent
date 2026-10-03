@@ -98,7 +98,8 @@ export enum SpiritAgentRpcErrorCode {
   // Slash 命令扩展错误码：与 backend/components/constants.py JSONRPC_SLASH_* 对齐。
   SlashConfirmRequired = -32001,
   SlashBusy = -32002,
-  SlashGeneric = -32003
+  SlashGeneric = -32003,
+  TurnBusy = -32004
 }
 
 export class SpiritAgentRpcError extends Error {

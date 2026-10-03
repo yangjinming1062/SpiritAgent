@@ -11,7 +11,7 @@ class GrokImageGenProvider(ImageGenProvider):
 
     透明背景：grok-imagine-image-2.0 即使提示词直接要求透明背景，返回的仍是不带 Alpha
     通道的 RGB PNG，xAI Images API 亦无背景参数可映射；supports_transparent_background
-    保持 False，透明交付走色幕兼容路径。"""
+    保持 False。"""
 
     provider_name = "grok"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"

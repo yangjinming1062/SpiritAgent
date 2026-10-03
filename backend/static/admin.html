@@ -2012,7 +2012,7 @@ const SETTINGS_SECTIONS = [
                 secret('brave_search_api_key', 'Brave Search API Key'),
                 secret('tavily_api_key', 'Tavily API Key'),
                 text('tavily_base_url', 'Tavily Base URL (可选覆盖)', '留空使用官方默认地址'),
-                num('web_search_default_results', '默认搜索结果条数', 1, { min: 1 }),
+                num('web_search_default_results', '默认搜索结果条数', 1, { min: 1, max: 100 }),
             ], true],
         ],
     },

@@ -12,11 +12,11 @@
 |---|---|---|
 | `chat.py` | 预设体骨架（陪伴 / 工作 / 自动化）、四职业双语头部、系统提示词块、陪伴回复格式与修复及媒体气泡规则、标题生成、上下文压缩 | `services/application/chat/`（prompt_blocks、prompt_presets、system_prompt、streaming、title_generator、context_compressor） |
 | `companion.py` | 心情、空闲表达、空间行为、动态性格标签、角色设定字段与外形资料标签、当前着装标题、初次见面与低频问候意图、陪伴回合尾部资料标注 | `services/domains/companion/`、`services/application/automation/companion_turns.py`、`services/adapters/scheduler/cron.py`、`services/application/chat/orchestrator.py` |
-| `generation.py` | 角色、外观、场景与出镜媒体的图像及视频提示词，以及身份评审与评分、角色卡提取、服装与场景描述等视觉理解指令，和造型命名描述、审核拒绝后改写等文本指令；共享风格机制见 [PIPELINE](../../docs/PIPELINE.md#提示词与供应商输入) | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/`、`services/application/posts/`、`services/adapters/tools/builtin/`、`services/domains/companion/character_card.py` |
+| `generation.py` | 角色、外观、场景与出镜媒体的图像及视频提示词，以及身份评审与评分、角色卡提取、服装与场景描述等视觉理解指令，和造型命名描述、审核拒绝后改写等文本指令；共享风格机制见 [PIPELINE](../../docs/PIPELINE.md#提示词与供应商输入) | `services/application/generation/`（`appearance_prompts.py` 与各功能装配器）、`services/application/posts/`、`services/adapters/tools/builtin/`、`services/domains/companion/character_card.py` |
 | `memory.py` | 记忆维护政策（`MEMORY_POLICY`）、审查指令、用户资料上下文标签、记忆块标题与依据标签 | `services/domains/memory/`（memory_review、memory_bootstrap、memory_format）、`services/adapters/tools/memory.py` |
 | `actions.py` | 动作检索、设计提案、状态检查与播放工具描述及独立评审指令 | `services/adapters/tools/builtin/action_tool.py`、`services/application/actions/`（review、context） |
 | `nightly.py` | 夜间规划、次日联系事项模板、夜间叙事事实、每日检查点及其标题、自主日记发布、关系与相处方式的夜间反思 | `services/application/nightly/` |
-| `posts.py` | 发布请求判断、独立动态创作与线程回复，以及回复和夜间回顾共用的创作资料语义 | `services/application/posts/`、`nightly.py` |
+| `posts.py` | 发布请求判断、独立动态创作与线程回复，以及回复和夜间回顾共用的创作资料语义 | `services/application/posts/`（含由公共 schema 装配长度与选项的 `prompt_contract.py`）、`nightly.py` |
 | `tools.py` | 工具 schema 的主描述与参数描述，以及验图（`MEDIA_INSPECTION_INSTRUCTIONS`）与网页摘要（`WEB_SUMMARY_INSTRUCTIONS`）指令；schema 结构（name/enum/类型/required）留在各工具文件 | `services/adapters/tools/`（builtin/ 与同级 `*.py`）、`services/application/generation/chat_images.py` |
 
 ## 场景与动作装配
@@ -25,7 +25,7 @@
 
 - `chat.py::SCENE_TOOL_GUIDANCES` / `tools.py::SCENE_TOOL_DESCRIPTIONS` 负责自主创建与启用的决策和结果语义，由 `scene_tool.py` 执行；手动操作走独立客户端路径，契约见 [场景启用与授权](../../docs/PROTOCOL.md#场景启用与授权)。
 - `generation.py::SELF_IMAGE_*` / `SELF_VIDEO_*` 装配本次出镜要求，图片由 `visual_identity.py::build_self_image_prompt` 共用于聊天和动态。
-- `generation.py` 的场景模板、参考规则和 `SCENE_DESCRIBE_SYSTEM` 由 `scene_prompt.py` 装配；创建、重绘和 JSON 结构分别遵循 [参考输入](../../docs/PIPELINE.md#身份造型与参考输入) 与 `SceneDescriptionRequest`。初始场景默认文案在 `scene_service.py::_INITIAL_SCENE_DEFAULT_NOTES`。
+- `generation.py` 的场景模板与参考规则由 `scene_prompt.py` 装配，`SCENE_DESCRIBE_SYSTEM` 由 `scene_service.py` 的视觉分析入口装配；创建、重绘和 JSON 结构分别遵循 [参考输入](../../docs/PIPELINE.md#身份造型与参考输入) 与 `SceneDescriptionRequest`。初始场景默认文案在 `scene_service.py::_INITIAL_SCENE_DEFAULT_NOTES`。
 
 **动作**
 
@@ -49,6 +49,7 @@
 - [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，字段说明包含类型、用途及必要的可选性、长度和取值约束；说明供规划模型阅读，实际校验由参数模型与执行器负责。动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
 - [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商与模型装配能力和 JSON 示例，附加到陪伴终端请求；检查正文规则时一并核对。
 - [媒体气泡](../services/application/chat/streaming.py)——本轮有可引用产物时，`chat.py::COMPANION_MEDIA_REPLY_GUIDANCES` 与可信产物清单装配到正常和恢复请求；`tools.py` 的批次生成、验图与重做说明对应 [chat_images.py](../services/application/generation/chat_images.py)。
+- [工具域目录](../services/infrastructure/tool_runtime/domains.py)——根据当前实际可用工具重写 `search_tools` 描述，预设与调用方排除后在对话装配中再次计算。
 - [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。
 - [初次见面意图](../services/domains/companion/first_greeting.py)——`companion.py::FIRST_MEETING_INTENT_TEXTS` 按用户语言写入意图记录，由[主动回合](../services/application/automation/companion_turns.py)作为资料消息与 `chat.py::COMPANION_PROACTIVE_GUIDANCES` 一同装配；两者对开口与沉默（`[]`）的约定须一致。
 - [陪伴小推理资料](../services/domains/companion/prompt_runtime.py)——心情、空闲表达、空间行为与动态使用人设和相关记忆，不附加完整视觉形象资料；当前时间是带时区偏移的用户本地时间，近期对话保留原始角色、时间和截断标记，旧请求不自动成为当前触发条件。

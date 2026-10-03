@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -54,6 +55,16 @@ class _DropHealthAccessFilter(logging.Filter):
         return " /health HTTP/" not in record.getMessage()
 
 
+class _RedactUvicornQueryFilter(logging.Filter):
+    """HTTP access 与 WS 握手日志只保留路径，查询串可能含凭据与资产签名。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "uvicorn" or record.name.startswith("uvicorn."):
+            record.msg = re.sub(r"\?[^\s\"']*", "?[redacted]", record.getMessage())
+            record.args = ()
+        return True
+
+
 class _JsonFormatter(logging.Formatter):
     """JSON 行输出；不做脱敏——信任上游已脱敏的字符串。"""
 
@@ -95,6 +106,7 @@ def setup_logging() -> None:
     """lifespan 入口调一次接管 root logger；不用 dictConfig（会重新实例化 handler、丢弃已挂 formatter/filter）。"""
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_FORMATTERS[SETTINGS.log_format]())
+    handler.addFilter(_RedactUvicornQueryFilter())
     handler.addFilter(_RequestContextFilter())
 
     root_logger = logging.getLogger()

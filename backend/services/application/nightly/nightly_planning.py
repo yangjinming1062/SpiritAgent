@@ -61,6 +61,7 @@ from services.domains.companion import (
     render_character_appearance,
     scene_environment,
 )
+from services.domains.memory import MemoryListItem
 from services.domains.posts import PostBlockedError, publication_quota_remaining
 from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_provider_chain
 
@@ -1168,7 +1169,7 @@ async def run_nightly_planning(
     contextual_memories: dict[str, str],
     background_memories: dict[str, str],
     user_profile: dict[str, str],
-    recall_highlights: list[dict[str, Any]],
+    recall_highlights: list[MemoryListItem],
     date_context: DateContext,
     anomaly_stats: dict[str, Any],
     today_conversations: list[dict[str, str]],
@@ -1188,7 +1189,7 @@ async def run_nightly_planning(
             "contextual_memories": contextual_memories,
             "background_memories_state": background_memories,
             "user_profile": user_profile,
-            "recall_highlights": recall_highlights,
+            "recall_highlights": [item.model_dump() for item in recall_highlights],
             "today_conversations": today_conversations,
             **({"post_interactions": post_interactions} if post_interactions else {}),
             "autonomous_context": context.model_dump(exclude_none=True),

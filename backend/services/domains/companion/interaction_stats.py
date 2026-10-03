@@ -1,18 +1,17 @@
-import contextlib
 from dataclasses import dataclass, field
 from datetime import timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from components import SESSION_LOCAL, get_logger, utc_now
+from components import SESSION_LOCAL, get_logger, parse_timezone, utc_now
+from modules.settings import resolve_user_timezone
 
 from services.contracts import MemoryScope, MemorySource
-from services.domains.memory import resolve_user_timezone, upsert_slotted_memory
+from services.domains.memory import upsert_slotted_memory
 
 logger = get_logger(__name__)
 
 STATS_THRESHOLD = 10
 
-# 时区进程级缓存：统计是每事件一次的高频路径，逐次读 Memory 行纯属浪费；覆盖恢复时显式失效。
+# 时区进程级缓存：统计是每事件一次的高频路径，逐次读用户设置会重复访问数据库；覆盖恢复时显式失效。
 _TZ_CACHE: dict[int, str | None] = {}
 
 
@@ -42,9 +41,8 @@ async def _tz_for(user_id: int) -> str | None:
 
 def _local_today(tz: str | None) -> str:
     now = utc_now()
-    if tz:
-        with contextlib.suppress(ZoneInfoNotFoundError, ValueError, KeyError):
-            now = now.astimezone(ZoneInfo(tz))
+    if zone := parse_timezone(tz):
+        now = now.astimezone(zone)
     return now.strftime("%Y-%m-%d")
 
 

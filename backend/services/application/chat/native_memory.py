@@ -34,8 +34,6 @@ class NativeMemory:
         self._inspection: MemoryReviewContext | None = None
 
     async def execute_tool(self, tool_name: str, args: dict[str, Any]) -> str:
-        if {"scope", "user_id", "system_preset_id", "source_refs", "source_kind", "content_version"} & args.keys():
-            return tool_error("Memory ownership and provenance are server-controlled")
         try:
             if tool_name == "memory_inspect":
                 query = args.get("query")
@@ -110,7 +108,7 @@ class NativeMemory:
                         query_embedding=vector,
                         diary_date=diary_date,
                     )
-                return json.dumps({"memories": rows}, default=str, ensure_ascii=False)
+                return json.dumps({"memories": [row.model_dump() for row in rows]}, default=str, ensure_ascii=False)
             return tool_error(f"Unknown memory tool: {tool_name}")
         except (ValueError, LLMRuntimeError) as exc:
             # 校验失败与已脱敏的 LLM 失败，原因交给模型决定纠正或放弃。

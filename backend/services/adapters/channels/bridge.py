@@ -13,7 +13,7 @@ from modules.auth import ChatRequestClientContext
 from modules.channels import ChannelBinding, ChannelDelivery, ChannelDeliveryPayload, ChannelPeer
 from modules.conversation import Message
 from modules.settings import get_user_setting
-from modules.system import ChatMessageRequest, ChatRequest
+from modules.system import ChatAttachment, ChatMessageRequest, ChatRequest
 from modules.ws import COMPANION_TURN_EVENT, emit_ws_event
 from pydantic import ValidationError
 from sqlalchemy import func, select, update
@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.chat import persist_queued_inbound_message, run_chat_turn
 from services.domains.companion import note_user_contact
+from services.infrastructure.assets import normalize_asset_reference
 from services.infrastructure.desktop import MANAGER
 from services.infrastructure.event_store import interrupt_user_event_tasks
 from services.infrastructure.llm import resolve_user_llm_config
@@ -258,14 +259,7 @@ async def _intake_message(
             return True
 
         fetched = await msg.fetch_attachments() if msg.fetch_attachments is not None else ()
-        base = SETTINGS.public_base_url.strip().rstrip("/")
-        attachments = [
-            {
-                "type": a.type,
-                "file_url": f"{base}{a.url}" if base and a.url.startswith("/api/media/files/") else a.url,
-            }
-            for a in (*msg.attachments, *fetched)
-        ]
+        attachments = [ChatAttachment(type=a.type, file_url=a.url) for a in (*msg.attachments, *fetched)]
         async with session_scope() as db:
             binding = await db.get(ChannelBinding, snapshot.id)
             if binding is None:
@@ -337,7 +331,7 @@ class ChannelTurnEmitter:
 
 
 async def _run_turn(adapter: ChannelAdapter, state: _ChannelState, batch: list[_QueuedMessage]) -> None:
-    """执行一轮 im 回合并投递回复；结束后接管排队消息（整批合并为下一轮前导）或释放单飞行锁。"""
+    """执行一轮 im 回合并投递回复；结束后接管同一对端连续排队消息或释放单飞行锁。"""
     try:
         await _execute_im_turn(adapter, state, batch)
     except Exception:
@@ -359,9 +353,11 @@ async def _finish_turn(adapter: ChannelAdapter, state: _ChannelState, task: asyn
         state.owner_peer_id = None
         state.cancelling = False
         if state.queue:
-            next_batch = list(state.queue)
-            state.queue.clear()
-            state.owner_peer_id = next_batch[0].msg.peer_id
+            first = state.queue.popleft()
+            next_batch = [first]
+            state.owner_peer_id = first.msg.peer_id
+            while state.queue and state.queue[0].msg.peer_id == state.owner_peer_id:
+                next_batch.append(state.queue.popleft())
             state.task = adapter.create_task(
                 _run_turn(adapter, state, next_batch),
                 name=f"channels.turn.{adapter.snapshot.id}",
@@ -426,11 +422,8 @@ async def _execute_im_turn(adapter: ChannelAdapter, state: _ChannelState, batch:
     if emitter.error:
         logger.warning("im turn ended with error frame", extra={"binding": snapshot.id, "error": emitter.error})
         return
-    if not emitter.reply_text or not emitter.reply_text.strip():
-        return
-
     payload = ChannelDeliveryPayload.model_validate(
-        {"text": strip_markdown(emitter.reply_text), "media": emitter.media},
+        {"text": strip_markdown(emitter.reply_text or ""), "media": emitter.media},
     )
     if not payload.text and not payload.media:
         return
@@ -480,8 +473,11 @@ async def _deliver_reply(
 async def _enqueue_delivery(binding_id: int, peer_id: str, payload: ChannelDeliveryPayload) -> None:
     """把未送达的回复持久化为待补发行；后台任务产物以空 peer_id 另行写入（对端未定）。"""
     try:
+        stored = payload.model_copy(deep=True)
+        for media in stored.media:
+            media.url = normalize_asset_reference(media.url) or media.url
         async with session_scope() as db:
-            db.add(ChannelDelivery(binding_id=binding_id, peer_id=peer_id, payload_json=payload.model_dump_json()))
+            db.add(ChannelDelivery(binding_id=binding_id, peer_id=peer_id, payload_json=stored.model_dump_json()))
             await db.commit()
     except Exception:
         logger.warning("failed to persist channel delivery", extra={"binding": binding_id}, exc_info=True)

@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 from datetime import timedelta
 from uuid import uuid4
@@ -8,8 +7,6 @@ from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
 from modules.media import VideoGenJob
 from prompts.generation import (
     IMAGE_ANIMATION_TEMPLATE,
-    SELF_VIDEO_KEEP_OUTFIT,
-    SELF_VIDEO_REFERENCE_TEMPLATE,
 )
 from prompts.tools import (
     VIDEO_GENERATION_DESC,
@@ -22,6 +19,7 @@ from services.application.generation import (
     AvatarGenerationError,
     ImageGenerationError,
     apply_outfit_override,
+    build_self_video_prompt,
     enqueue_video_job,
     ensure_video_capability,
     get_job,
@@ -29,7 +27,6 @@ from services.application.generation import (
     prepare_self_video_reference,
 )
 from services.contracts import MediaArtifact, MediaTurnState
-from services.domains.companion import render_character_identity
 from services.domains.conversation import apply_video_status
 from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import MissingLlmConfigError, VisualReasoningError
@@ -57,7 +54,7 @@ def _first_frame_reference(reference: str, user_id: int) -> str | None:
         data = resolved[0].read_bytes()
     except OSError:
         return None
-    return f"data:{resolved[1]};base64,{base64.b64encode(data).decode('ascii')}"
+    return asset_store.build_data_uri(data, resolved[1])
 
 
 def _result_unknown_payload(task_id: str, job: VideoGenJob) -> dict[str, object]:
@@ -99,14 +96,7 @@ async def _submit_video(
             )
         except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as e:
             return {"success": False, "error": str(e)}, None
-        prompt = (
-            SELF_VIDEO_REFERENCE_TEMPLATE.format(
-                prompt=prompt,
-                outfit=SELF_VIDEO_KEEP_OUTFIT,
-            )
-            + "\n"
-            + render_character_identity(visual.identity)
-        )
+        prompt = build_self_video_prompt(visual.identity, prompt)
     elif first_frame_image:
         prompt = IMAGE_ANIMATION_TEMPLATE.format(prompt=prompt)
 

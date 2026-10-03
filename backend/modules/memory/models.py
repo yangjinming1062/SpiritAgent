@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 # memories.embedding 列宽的唯一事实源；更换维度须同步迁移
 MEMORY_EMBEDDING_DIM = 1536
+USER_PROFILE_MAX_CONTENT_CHARS = 2000
 # 每个作用域内同一 context 只有一行的槽位记忆：部分唯一索引名 → context 前缀。索引按此声明，`upsert_slotted_memory` 的 ON CONFLICT 谓词使用同一前缀；增减须同步迁移。
 _MEMORY_SLOT_INDEXES: dict[str, str] = {
     "uq_memories_user_context": "user_profile:",

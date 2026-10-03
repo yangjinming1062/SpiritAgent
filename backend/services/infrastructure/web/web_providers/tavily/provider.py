@@ -2,7 +2,7 @@ from typing import Any
 
 from components import get_logger, safe_outbound_async_client
 
-from .. import WebSearchProvider
+from ..base import WebDocument, WebSearchData, WebSearchItem, WebSearchProvider, WebSearchResult
 
 logger = get_logger(__name__)
 
@@ -16,38 +16,32 @@ async def aclose_tavily() -> None:
     await _HTTP_CLIENT.aclose()
 
 
-def _normalize_tavily_search_results(response: dict[str, Any]) -> dict[str, Any]:
+def _normalize_tavily_search_results(response: dict[str, Any]) -> WebSearchResult:
     """将 Tavily ``/search`` 响应映射为 ``{success, data: {web: [...]}}`` 格式。"""
     web_results = [
-        {
-            "title": result.get("title", ""),
-            "url": result.get("url", ""),
-            "description": result.get("content", ""),
-            "position": i + 1,
-        }
+        WebSearchItem(
+            title=result.get("title", ""),
+            url=result.get("url", ""),
+            description=result.get("content", ""),
+            position=i + 1,
+        )
         for i, result in enumerate(response.get("results", []))
     ]
-    return {"success": True, "data": {"web": web_results}}
+    return WebSearchResult(success=True, data=WebSearchData(web=web_results))
 
 
-def _failed_document(url: str, error: str) -> dict[str, Any]:
-    return {"url": url, "title": "", "content": "", "raw_content": "", "error": error, "metadata": {"sourceURL": url}}
+def _failed_document(url: str, error: str) -> WebDocument:
+    return WebDocument(url=url, title="", content="", error=error)
 
 
-def _normalize_tavily_documents(response: dict[str, Any], fallback_url: str = "") -> list[dict[str, Any]]:
+def _normalize_tavily_documents(response: dict[str, Any], fallback_url: str = "") -> list[WebDocument]:
     """将 Tavily ``/extract`` 响应映射为标准文档；失败项（``failed_results``、``failed_urls``）转为带 ``error`` 字段的条目而非抛错。"""
-    documents: list[dict[str, Any]] = []
+    documents: list[WebDocument] = []
     for result in response.get("results", []):
         url = result.get("url", fallback_url)
         raw = result.get("raw_content", "") or result.get("content", "")
         documents.append(
-            {
-                "url": url,
-                "title": result.get("title", ""),
-                "content": raw,
-                "raw_content": raw,
-                "metadata": {"sourceURL": url, "title": result.get("title", "")},
-            },
+            WebDocument(url=url, title=result.get("title", ""), content=raw),
         )
     for fail in response.get("failed_results", []):
         documents.append(_failed_document(fail.get("url", fallback_url), fail.get("error", "extraction failed")))
@@ -88,7 +82,7 @@ class TavilyWebSearchProvider(WebSearchProvider):
         response.raise_for_status()
         return response.json()
 
-    async def search(self, query: str, limit: int = 5) -> dict[str, Any]:
+    async def search(self, query: str, limit: int = 5) -> WebSearchResult:
         try:
             logger.debug("Tavily search", extra={"limit": limit})
             raw = await self._request(
@@ -97,14 +91,14 @@ class TavilyWebSearchProvider(WebSearchProvider):
             )
             return _normalize_tavily_search_results(raw)
         except Exception as exc:
-            logger.warning("Tavily search error", extra={"error": str(exc)})
-            return {"success": False, "error": f"Tavily search failed: {exc}"}
+            logger.warning("Tavily search error", extra={"error_type": type(exc).__name__})
+            return WebSearchResult(success=False, error="Tavily search failed")
 
-    async def extract(self, urls: list[str]) -> list[dict[str, Any]]:
+    async def extract(self, urls: list[str]) -> list[WebDocument]:
         try:
             logger.info("Tavily extract", extra={"url_count": len(urls)})
             raw = await self._request("extract", {"urls": urls, "include_images": False})
             return _normalize_tavily_documents(raw, fallback_url=urls[0] if urls else "")
         except Exception as exc:
-            logger.warning("Tavily extract error", extra={"error": str(exc)})
-            return [_failed_document(u, f"Tavily extract failed: {exc}") for u in urls]
+            logger.warning("Tavily extract error", extra={"error_type": type(exc).__name__})
+            return [_failed_document(u, "Tavily extract failed") for u in urls]

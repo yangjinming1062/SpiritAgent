@@ -1,9 +1,7 @@
-from typing import Any
-
 import httpx
 from components import get_logger
 
-from .. import WebSearchProvider
+from ..base import WebSearchData, WebSearchItem, WebSearchProvider, WebSearchResult
 
 logger = get_logger(__name__)
 
@@ -31,7 +29,7 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
     def is_available(self) -> bool:
         return bool(self._api_key)
 
-    async def search(self, query: str, limit: int = 5) -> dict[str, Any]:
+    async def search(self, query: str, limit: int = 5) -> WebSearchResult:
         # Brave 的 `count` 上限为 20。
         count = max(1, min(int(limit), 20))
 
@@ -43,28 +41,28 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
             )
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            logger.warning("Brave Search HTTP error", extra={"error": str(exc)})
-            return {"success": False, "error": f"Brave Search returned HTTP {exc.response.status_code}"}
+            logger.warning("Brave Search HTTP error", extra={"status_code": exc.response.status_code})
+            return WebSearchResult(success=False, error=f"Brave Search returned HTTP {exc.response.status_code}")
         except httpx.RequestError as exc:
-            logger.warning("Brave Search request error", extra={"error": str(exc)})
-            return {"success": False, "error": f"Could not reach Brave Search: {exc}"}
+            logger.warning("Brave Search request error", extra={"error_type": type(exc).__name__})
+            return WebSearchResult(success=False, error="Could not reach Brave Search")
 
         try:
             data = resp.json()
         except Exception as exc:
-            logger.warning("Brave Search response parse error", extra={"error": str(exc)})
-            return {"success": False, "error": "Could not parse Brave Search response as JSON"}
+            logger.warning("Brave Search response parse error", extra={"error_type": type(exc).__name__})
+            return WebSearchResult(success=False, error="Could not parse Brave Search response as JSON")
 
         raw_results = (data.get("web") or {}).get("results", []) or []
         truncated = raw_results[:limit]
 
         web_results = [
-            {
-                "title": str(r.get("title", "")),
-                "url": str(r.get("url", "")),
-                "description": str(r.get("description", "")),
-                "position": i + 1,
-            }
+            WebSearchItem(
+                title=str(r.get("title", "")),
+                url=str(r.get("url", "")),
+                description=str(r.get("description", "")),
+                position=i + 1,
+            )
             for i, r in enumerate(truncated)
         ]
 
@@ -74,4 +72,4 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
             extra={"result_count": len(web_results), "raw_count": len(raw_results), "limit": limit},
         )
 
-        return {"success": True, "data": {"web": web_results}}
+        return WebSearchResult(success=True, data=WebSearchData(web=web_results))

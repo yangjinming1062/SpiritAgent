@@ -19,7 +19,7 @@ from modules.auth import User
 from modules.companion import Persona
 from modules.conversation import Conversation, Message
 from modules.scheduler import NightlyActivityLog
-from modules.settings import get_user_setting
+from modules.settings import get_user_setting, resolve_user_timezone
 from prompts.nightly import NIGHTLY_REFLECTION_TEXTS, REFLECTION_REPAIR_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -38,7 +38,6 @@ from services.domains.memory import (
     load_companion_reflection,
     narrative_date,
     read_user_profile,
-    resolve_user_timezone,
     review_memories,
     save_companion_reflection,
     upsert_slotted_memory,
@@ -380,10 +379,8 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         "today_msg_count": today_msg_count,
         "seven_day_avg": round(past_7_count / 7.0, 2),
     }
-    contextual_memories = {
-        str(r["id"]): f"[{r['basis']}] {r['content']}" for r in recall_rows if r["usage"] == "contextual"
-    }
-    background_memories = {str(r["id"]): r["content"] for r in recall_rows if r["usage"] == "background"}
+    contextual_memories = {str(r.id): f"[{r.basis}] {r.content}" for r in recall_rows if r.usage == "contextual"}
+    background_memories = {str(r.id): r.content for r in recall_rows if r.usage == "background"}
 
     action_results: dict[str, ActionExecutionResult] = {}
     if user.nightly_activity_enabled:
@@ -476,7 +473,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     # Daily checkpoint 与日记发布相互独立，并发执行以缩短每用户的夜间墙钟时间。
     labels = ["daily checkpoint"]
     jobs: list[Coroutine[Any, Any, bool]] = [
-        run_daily_checkpoint(llm_cfg, user_id, utc_start, utc_end, local_date_str, user_language),
+        run_daily_checkpoint(llm_cfg, user_id, utc_start, utc_end, local_date_str, user_language, user_timezone=tz_str),
     ]
     if has_material:
         labels.append("journal nightly")

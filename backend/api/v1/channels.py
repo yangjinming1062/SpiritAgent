@@ -46,7 +46,7 @@ async def _list_peers(db: AsyncSession, binding_id: int) -> PeerListResponse:
 
 @router.get("", response_model=ChannelListResponse)
 async def list_channels(user: CurrentUser, db: DbSession) -> ChannelListResponse:
-    """注册表能力位 + 当前用户各渠道绑定状态；凭据字段永不出现。"""
+    """已注册渠道与当前用户绑定状态；凭据字段永不出现。"""
     bindings = {
         b.channel: b
         for b in (await db.execute(select(ChannelBinding).where(ChannelBinding.user_id == user.id))).scalars().all()

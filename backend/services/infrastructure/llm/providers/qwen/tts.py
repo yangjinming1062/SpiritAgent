@@ -1,9 +1,11 @@
 import base64
+import io
 from typing import ClassVar
 
 from modules.media import SpeechStyle
+from mutagen import File, MutagenError
 
-from ..base import ProviderConfig, TTSProvider, TTSResult, pick_catalog_voice
+from ..base import ProviderConfig, ProviderError, TTSProvider, TTSResult, pick_catalog_voice
 from ..http import download_bytes, get_http
 from ._errors import raise_for_qwen_response
 
@@ -118,4 +120,11 @@ class QwenTTSProvider(TTSProvider):
             raw = await download_bytes(url)
         else:
             raise RuntimeError(f"qwen tts returned no audio: {body}")
-        return TTSResult(audio=raw, mime="audio/mpeg", voice=chosen_voice)
+        try:
+            parsed = File(io.BytesIO(raw))
+        except MutagenError as exc:
+            raise ProviderError("qwen tts returned invalid audio", status_code=422) from exc
+        if parsed is None or not parsed.mime:
+            raise ProviderError("qwen tts returned unrecognized audio", status_code=422)
+        mime = "audio/mpeg" if parsed.mime[0] == "audio/mp3" else parsed.mime[0]
+        return TTSResult(audio=raw, mime=mime, voice=chosen_voice)

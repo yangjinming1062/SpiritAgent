@@ -52,7 +52,9 @@ async def transcribe_input_audio(
         extra_body={"asr_options": asr_options} if asr_options is not None else {},
     )
     choice = response.choices[0] if response.choices else None
-    if choice is not None and choice.finish_reason != "stop":
+    if choice is None:
+        raise ProviderError(f"{config.provider_name} transcription response has no choices", status_code=502)
+    if choice.finish_reason != "stop":
         raise RuntimeError(f"{config.provider_name} transcription did not complete: {choice.finish_reason}")
     text = (choice.message.content or "") if choice and choice.message else ""
     return STTResult(text=text.strip())

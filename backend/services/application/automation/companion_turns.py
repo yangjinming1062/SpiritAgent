@@ -79,10 +79,29 @@ def _build_proactive_hint(intent: CompanionIntentView, disturbance_tier: str, la
     )
 
 
-def _failure_reason(exc: Exception) -> str:
-    """等待意图记下的失败原因会进入后续回合的模型资料：只留异常类型与脱敏、限长的首行说明，完整诊断写日志。"""
-    detail = redact_sensitive_text(next(iter(str(exc).strip().splitlines()), ""))
-    return (f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__)[:_FAILURE_REASON_MAX_CHARS]
+def _failure_reason(exc: Exception, language: str) -> str:
+    """持久化原因供用户与后续模型读取；诊断原因由调用方完整记录。"""
+    if isinstance(exc, TimeoutError):
+        return (
+            "This contact timed out; check any work already started."
+            if language == "en"
+            else "本次联系超时，请核对已开始的操作。"
+        )
+    return (
+        "This contact could not complete; check any work already started."
+        if language == "en"
+        else "本次联系未能完成，请核对已开始的操作。"
+    )
+
+
+def _turn_error(emitter: HeadlessEmitter, language: str) -> str | None:
+    for frame in reversed(emitter.messages):
+        if frame.get("type") == "error":
+            message = frame.get("message")
+            if isinstance(message, str) and message.strip():
+                return redact_sensitive_text(message.strip())[:_FAILURE_REASON_MAX_CHARS]
+            return _failure_reason(RuntimeError(), language)
+    return None
 
 
 def _tools_may_have_effects(emitter: HeadlessEmitter) -> bool:
@@ -115,6 +134,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
     message_id = 0
     reply = None
     delivered = False
+    language = "zh"
     try:
         remaining = (intent.expires_at - utc_now()).total_seconds()
         async with asyncio.timeout(min(SETTINGS.companion_turn_timeout_seconds, max(0.0, remaining))):
@@ -153,7 +173,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 followup=plan.followup,
                 contact_revision=revision,
                 user_message_id=message_id,
-                error=emitter.error,
+                error=_turn_error(emitter, language),
                 tools_started=_tools_may_have_effects(emitter),
             ),
         )
@@ -179,7 +199,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
             trigger,
             contact_revision=revision,
             user_message_id=message_id,
-            error=_failure_reason(exc),
+            error=_failure_reason(exc, language),
             tools_started=_tools_may_have_effects(emitter),
         )
     finally:

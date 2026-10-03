@@ -1,8 +1,8 @@
-from .base import WebSearchProvider
+from .base import WebDocument, WebSearchData, WebSearchItem, WebSearchProvider, WebSearchResult
 from .brave_free.provider import aclose_brave
 from .tavily.provider import aclose_tavily
 
-__all__ = ["WebSearchProvider", "aclose"]
+__all__ = ["WebDocument", "WebSearchData", "WebSearchItem", "WebSearchProvider", "WebSearchResult", "aclose"]
 
 
 async def aclose() -> None:

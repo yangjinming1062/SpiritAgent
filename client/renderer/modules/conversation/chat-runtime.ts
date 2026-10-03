@@ -1,6 +1,7 @@
 import { sleep } from '@runtime'
 import { atom, computed, map } from 'nanostores'
 
+import { SpiritAgentRpcError, SpiritAgentRpcErrorCode } from '@/shared/lib/gateway-protocol'
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
@@ -840,13 +841,9 @@ export function createConversationRuntime(sessionId: string | null) {
         presentationPorts().setSpriteState('thinking')
         await g.request('prompt.submit', batchPayload)
       } catch (err: unknown) {
-        const errMsg = errorMessage(err)
+        const turnBusy = err instanceof SpiritAgentRpcError && err.code === SpiritAgentRpcErrorCode.TurnBusy
 
-        if (
-          errMsg.includes('in-flight') &&
-          historyEditRevision !== submittedRevision &&
-          $chatSessionId.get() === sessionId
-        ) {
+        if (turnBusy && historyEditRevision !== submittedRevision && $chatSessionId.get() === sessionId) {
           // 另一个窗口的编辑先被接受；本批尚未落库，回到队列等该回合结束。
           $pendingPromptBatch.set([...pendingBatch, ...$pendingPromptBatch.get()])
           submitPendingBatch()
@@ -854,7 +851,7 @@ export function createConversationRuntime(sessionId: string | null) {
           return
         }
 
-        if (errMsg.includes('in-flight') && attempt < 3) {
+        if (turnBusy && attempt < 3) {
           await sleep(50 * Math.pow(2, attempt))
 
           return submitWithRetry(attempt + 1)

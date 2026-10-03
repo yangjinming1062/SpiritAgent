@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .posts import PostCommentRole, PostContentType
 
 ReplyStatus = Literal["none", "pending", "running", "completed", "failed"]
+POST_COMMENT_MAX_CHARS = 500
 
 
 class PostPublicationResult(BaseModel):
@@ -94,4 +95,4 @@ class PostReadRequest(BaseModel):
 
 class PostCommentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    content: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=POST_COMMENT_MAX_CHARS)

@@ -1,6 +1,7 @@
-"""记忆业务域：记忆 CRUD、召回、画像、时区与命名空间规范。"""
+"""记忆业务域：记忆 CRUD、召回、画像与命名空间规范。"""
 
 from .memory_admin import (
+    MemoryListItem,
     list_memories,
     memory_counts,
     update_memory,
@@ -9,8 +10,6 @@ from .memory_bootstrap import (
     build_user_profile_extras,
     read_user_profile,
     record_user_profile,
-    record_user_timezone,
-    resolve_user_timezone,
 )
 from .memory_format import (
     format_background_memory_block,
@@ -18,7 +17,7 @@ from .memory_format import (
     format_memories_block,
     format_proactive_memory_block,
 )
-from .memory_learning import MemoryReviewContext, load_review_context
+from .memory_learning import MemoryReviewContext, list_memory_review_scopes, load_review_context
 from .memory_namespaces import normalize_recall_context
 from .memory_narratives import (
     backfill_diary_embeddings,
@@ -30,6 +29,7 @@ from .memory_narratives import (
 )
 from .memory_policy import MemoryDecisions
 from .memory_retrieval import (
+    MemoryRecallResult,
     embed_memory_text,
     retrieve_hybrid_memories,
     retrieve_proactive_memories,
@@ -48,6 +48,8 @@ from .memory_store import (
 )
 
 __all__ = [
+    "MemoryListItem",
+    "MemoryRecallResult",
     "backfill_diary_embeddings",
     "index_diary_memory",
     "load_companion_reflection",
@@ -56,6 +58,7 @@ __all__ = [
     "save_companion_reflection",
     "MemoryReviewContext",
     "load_review_context",
+    "list_memory_review_scopes",
     "MemoryDecisions",
     "assess_memory_changes",
     "review_memories",
@@ -75,8 +78,6 @@ __all__ = [
     "normalize_recall_context",
     "read_user_profile",
     "record_user_profile",
-    "record_user_timezone",
-    "resolve_user_timezone",
     "retrieve_hybrid_memories",
     "retrieve_proactive_memories",
     "update_memory",

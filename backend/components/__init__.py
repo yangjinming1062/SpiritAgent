@@ -10,7 +10,7 @@ from .ai_config import (
     ProviderCard,
     ProviderCardUpdate,
 )
-from .attachments import attachment_root, path_attach_ref, session_dir
+from .attachments import attachment_root, session_dir
 from .attachments import gc_session as attachments_gc_session
 from .background import BackgroundTask, TaskBag
 from .backoff import backoff_for_poll
@@ -34,6 +34,7 @@ from .constants import (
     JSONRPC_SLASH_BUSY,
     JSONRPC_SLASH_CONFIRM_REQUIRED,
     JSONRPC_SLASH_GENERIC,
+    JSONRPC_TURN_BUSY,
     LLM_MAX_OUTPUT_TOKENS,
     LLM_RETRY_MIN_TIMEOUT,
     MAX_VOICE_DESIGN_PROMPT_CHARS,
@@ -82,6 +83,7 @@ from .functions import (
     resolve_language,
     resolve_prompt_text,
     safe_json_loads,
+    strip_outer_code_fence,
     tool_error,
     utc_now,
 )
@@ -99,6 +101,7 @@ from .paid_calls import log_paid_call
 from .redact import redact_sensitive_text
 from .temp_files import cleanup_expired, get_file_path, owned_temp_files, save_file
 from .temp_files import purge_user as purge_user_temp_files
+from .timezone import parse_timezone
 from .user_maintenance_runtime import (
     begin_user_request,
     cancel_user_tasks,
@@ -138,6 +141,7 @@ __all__ = [
     "JSONRPC_SLASH_BUSY",
     "JSONRPC_SLASH_CONFIRM_REQUIRED",
     "JSONRPC_SLASH_GENERIC",
+    "JSONRPC_TURN_BUSY",
     "JSON_RPC_VERSION",
     "LLM_MAX_OUTPUT_TOKENS",
     "LLM_RETRY_MIN_TIMEOUT",
@@ -208,7 +212,7 @@ __all__ = [
     "new_request_id",
     "owned_temp_files",
     "parse_llm_json",
-    "path_attach_ref",
+    "parse_timezone",
     "redact_sensitive_text",
     "render_metrics_response",
     "resolve_language",
@@ -216,6 +220,7 @@ __all__ = [
     "resolve_prompt_text",
     "rpc_metrics",
     "safe_json_loads",
+    "strip_outer_code_fence",
     "safe_outbound_async_client",
     "safe_outbound_async_transport",
     "save_file",

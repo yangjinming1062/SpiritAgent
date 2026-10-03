@@ -19,6 +19,7 @@ from components import (
 from modules.auth import ChatRequestClientContext
 from modules.companion import Persona
 from modules.conversation import Conversation, Message
+from modules.settings import resolve_user_timezone
 from modules.system import ChatRequest
 from openai import AsyncOpenAI
 from sqlalchemy import select
@@ -39,11 +40,11 @@ from services.domains.conversation import (
     resolve_preset_meta,
 )
 from services.domains.memory import (
+    MemoryRecallResult,
     build_user_profile_extras,
     format_background_memory_block,
     format_companion_reflection_block,
     format_proactive_memory_block,
-    resolve_user_timezone,
     retrieve_proactive_memories,
 )
 from services.infrastructure.llm import (
@@ -88,7 +89,6 @@ class TurnInputs:
     # 会话预设、调用方排除与用户已禁用工具集中的工具；装配与执行层共用。
     excluded_tool_names: frozenset[str]
     first_user_msg_content: str | None
-    llm_chain: list[ProviderConfig]
     provider_name: str
     estimated_tokens: int
     user_local_tz: str | None
@@ -216,12 +216,33 @@ def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
     return items
 
 
-def _user_row_has_video_part(msg: Message) -> bool:
-    """多模态用户行是否含 ``input_video`` part；链选择据此优先走视频能力供应商。"""
-    if msg.role != "user" or msg.content_type != "multimodal_v1":
-        return False
-    parsed = safe_json_loads(msg.content or "", default=[])
-    return isinstance(parsed, list) and any(isinstance(p, dict) and p.get("type") == "input_video" for p in parsed)
+async def resolve_context_provider_chain(
+    db: AsyncSession,
+    user_id: int,
+    input_items: list[dict[str, Any]],
+) -> list[ProviderConfig]:
+    """仅按本次请求仍携带的媒体选链，包括多模态工具结果。"""
+    media_types = {
+        part.get("type")
+        for item in input_items
+        for key in ("content", "output")
+        if isinstance(parts := item.get(key), list)
+        for part in parts
+        if isinstance(part, dict)
+    }
+    if "input_video" in media_types:
+        chain = await resolve_video_chain(db, user_id)
+        if not chain:
+            raise MissingVideoModelError("no video-capable provider in the chain for a request containing video")
+    elif "input_image" in media_types:
+        chain = await resolve_vision_chain(db, user_id)
+        if not chain:
+            raise MissingLlmConfigError("no vision-capable provider in the chain for a request containing images")
+    else:
+        chain = await resolve_provider_chain(db, user_id, "llm")
+    if not chain:
+        raise MissingLlmConfigError("no provider configured for service 'llm'")
+    return chain
 
 
 def user_text_item(text: str) -> dict[str, Any]:
@@ -254,7 +275,12 @@ def _history_to_responses_context(
     inject_time_perception: bool = True,
 ) -> dict[str, Any]:
     """DB 消息转 Responses 上下文；所有会话保留原始 call/result 工具帧。陪伴预设插入日期分界与用户时刻为独立输入项，工作预设跳过。"""
-    context: dict[str, Any] = {"instructions": system_prompt, "input": [], "source_message_ids": []}
+    context: dict[str, Any] = {
+        "instructions": system_prompt,
+        "input": [],
+        "source_message_ids": [],
+        "checkpoint_indices": [],
+    }
     prev_date_key: str | None = None
     last_user_at: datetime | None = None
     answered_call_ids = {msg.tool_call_id for msg in db_msgs if msg.role == "tool" and msg.tool_call_id}
@@ -270,6 +296,8 @@ def _history_to_responses_context(
                 lang,
             )
         items = db_message_to_response_items(msg)
+        if msg.subtype in CHECKPOINT_SUBTYPES:
+            context["checkpoint_indices"].extend(range(len(context["input"]), len(context["input"]) + len(items)))
         context["input"].extend(items)
         # 调用行已落库而缺结果行（如进程在保存结果前退出）时补记结果未知，孤立调用会让供应商拒绝整个上下文。
         for item in items:
@@ -335,18 +363,10 @@ async def build_turn_inputs(
     # 标题只依据文字：多模态行的正文是 part 数组 JSON，附件地址不进标题请求。
     first_user_msg_content = message_text(first_user_msg) if first_user_msg else None
 
-    # 历史含媒体时筛选到对应能力供应商（视频优先于图片），确保压缩与流式共用同一 llm_chain；链为空显式报错不回落文本链，否则换来网关拒收 input_video 的 400。
-    llm_chain: list[ProviderConfig] = []
-    if any(_user_row_has_video_part(m) for m in history):
-        llm_chain = await resolve_video_chain(db, user_id)
-        if not llm_chain:
-            raise MissingVideoModelError("no video-capable provider in the chain for a conversation containing video")
-    elif any(m.content_type == "multimodal_v1" for m in history if m.role == "user"):
-        llm_chain = await resolve_vision_chain(db, user_id)
+    # 摘要只接收文字，基础链用于压缩与预算估算；实际回合在截断和视频内联后按幸存媒体选链。
+    llm_chain = await resolve_provider_chain(db, user_id, "llm")
     if not llm_chain:
-        llm_chain = await resolve_provider_chain(db, user_id, "llm")
-        if not llm_chain:
-            raise MissingLlmConfigError("no provider configured for service 'llm'")
+        raise MissingLlmConfigError("no provider configured for service 'llm'")
     provider = build_provider(llm_chain[0], ChatProvider)
 
     excluded_tool_names = (
@@ -370,7 +390,7 @@ async def build_turn_inputs(
     # 自动化任务没有记忆域，不装配用户画像或长期记忆；其它 preset 即使 persona 未完成也能承载背景上下文。
     user_profile_extras = ""
     background_memory_extras = ""
-    proactive_rows: list[dict] = []
+    proactive_rows: list[MemoryRecallResult] = []
     companion_reflection_extras = ""
     if memory_scope is not None:
         user_profile_extras = await build_user_profile_extras(db, memory_scope, language=session_lang)
@@ -390,7 +410,7 @@ async def build_turn_inputs(
                 limit=3,
             )
     if companion_reflection_extras:
-        proactive_rows = [row for row in proactive_rows if row.get("kind") != "reflection"]
+        proactive_rows = [row for row in proactive_rows if row.kind != "reflection"]
     user_local_tz = await resolve_user_timezone(db, user_id)
     agent_config = AgentPromptConfig(
         language=session_lang,
@@ -459,7 +479,6 @@ async def build_turn_inputs(
         all_schemas=all_schemas,
         excluded_tool_names=excluded_tool_names,
         first_user_msg_content=first_user_msg_content,
-        llm_chain=llm_chain,
         provider_name=provider.provider_name,
         estimated_tokens=estimated_tokens,
         user_local_tz=user_local_tz,

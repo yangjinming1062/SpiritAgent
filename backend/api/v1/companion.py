@@ -200,7 +200,7 @@ async def get_onboarding_state_route(
     db: DbSession,
 ) -> OnboardingStateResponse:
     result = await get_onboarding_state(db, user.id)
-    return OnboardingStateResponse(**result)
+    return result
 
 
 @router.get("/character-card", response_model=CharacterCardResponse | None)
@@ -318,8 +318,7 @@ async def post_avatar(
                 detail={"error": "请先完成引导再生成形象", "reason": "persona is incomplete"},
             )
     try:
-        async with get_avatar_job_lock(user.id):
-            asset = await generate_avatar(user_id=user.id, feedback=body.feedback)
+        asset = await generate_avatar(user_id=user.id, feedback=body.feedback)
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
@@ -373,15 +372,14 @@ async def post_avatar_from_image(
                 detail={"error": "请先完成引导再基于图片生成形象", "reason": "persona is incomplete"},
             )
     try:
-        async with get_avatar_job_lock(user.id):
-            asset = await regenerate_avatar_from_image(
-                user_id=user.id,
-                data=raw,
-                content_type=content_type,
-                description=body.description,
-                presentation_data=pres_raw,
-                presentation_content_type=pres_content_type,
-            )
+        asset = await regenerate_avatar_from_image(
+            user_id=user.id,
+            data=raw,
+            content_type=content_type,
+            description=body.description,
+            presentation_data=pres_raw,
+            presentation_content_type=pres_content_type,
+        )
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
@@ -417,8 +415,7 @@ async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: 
 async def post_avatar_adopt(request: Request, body: FullbodyAdoptRequest, user: CurrentUser) -> AvatarAssetResponse:
     raw, content_type = await _decode_upload_image(body.image, body.content_type)
     try:
-        async with get_avatar_job_lock(user.id):
-            asset = await adopt_avatar_seed(user_id=user.id, data=raw, content_type=content_type)
+        asset = await adopt_avatar_seed(user_id=user.id, data=raw, content_type=content_type)
     except AvatarGenerationError as exc:
         raise _avatar_http_error(exc)
     return avatar_response(asset)

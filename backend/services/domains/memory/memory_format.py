@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.contracts import MemoryScope
 
 from .memory_narratives import load_companion_reflection, narrative_date
+from .memory_retrieval import MemoryRecallResult
 from .memory_store import active_memory_filter, scope_filter
 
 _SLOT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
@@ -90,16 +91,13 @@ async def format_background_memory_block(
     )
 
 
-def format_proactive_memory_block(memories: list[dict], *, language: str = DEFAULT_LANGUAGE) -> str:
+def format_proactive_memory_block(memories: list[MemoryRecallResult], *, language: str = DEFAULT_LANGUAGE) -> str:
     if not memories:
         return ""
     return (
         resolve_prompt_text(PROACTIVE_MEMORY_LABELS_TEXTS, language)
         + "\n"
-        + "\n".join(
-            _format_record(m["content"], m.get("basis", "system"), m.get("context"), language, m.get("local_date"))
-            for m in memories
-        )
+        + "\n".join(_format_record(m.content, m.basis, m.context, language, m.local_date) for m in memories)
     )
 
 

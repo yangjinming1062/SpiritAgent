@@ -1,4 +1,3 @@
-import json
 from typing import Any, NamedTuple
 
 from components import (
@@ -10,21 +9,18 @@ from components import (
     utc_now,
 )
 from modules.companion import Persona
-from modules.settings import get_user_setting
+from modules.settings import get_user_setting, resolve_user_timezone
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from services.contracts import MemoryScope
 from services.domains.actions import action_prompt_entry, get_active_pack, is_expression_action, list_pack_actions
-from services.domains.memory import format_memories_block, resolve_user_timezone
+from services.domains.memory import format_memories_block
 from services.infrastructure.llm import (
+    IncompleteLlmResponseError,
     LLMRuntimeError,
-    ServiceType,
     UserLlmConfig,
-    build_responses_kwargs,
-    call_with_retry,
-    client_for_config,
-    try_resolve,
+    call_llm_once,
 )
 
 from .persona_service import load_persona_definition, render_extras
@@ -90,39 +86,28 @@ async def run_prompt_json(
     """执行一次结构化伙伴推理；静态规则放 instructions，运行时数据作为 JSON 输入。"""
     if not llm_config.is_configured:
         return PromptOutcome(parsed=None, reason="llm_error")
-    model_name = llm_config.model_name
-
     try:
-        client = client_for_config(llm_config)
-        provider_cls = try_resolve(ServiceType.llm, llm_config.provider_name or "")
-        request = build_responses_kwargs(
-            model=model_name,
-            instructions=instructions,
-            input_items=[
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}],
-                },
-            ],
-            temperature=temperature,
+        raw = await call_llm_once(
+            llm_config,
+            instructions,
+            payload,
             max_output_tokens=max_output_tokens,
-            text={"format": {"type": "json_object"}} if getattr(provider_cls, "supports_json_object", False) else None,
+            json_output=True,
+            temperature=temperature,
         )
-        response = await call_with_retry(client, **request)
-    except (TimeoutError, LLMRuntimeError) as exc:
+    except IncompleteLlmResponseError as exc:
+        logger.info(f"{log_prefix}: incomplete response", extra={"user_id": user_id, "error": str(exc)})
+        return PromptOutcome(parsed=None, reason="incomplete_response")
+    except (TimeoutError, LLMRuntimeError, RuntimeError) as exc:
         logger.warning(f"{log_prefix}: LLM call failed", extra={"user_id": user_id, "error": str(exc)})
         return PromptOutcome(parsed=None, reason="llm_error")
 
-    if response.status != "completed":
-        logger.info(f"{log_prefix}: incomplete response", extra={"user_id": user_id, "status": response.status})
-        return PromptOutcome(parsed=None, reason="incomplete_response")
-    raw = response.output_text
     parsed = parse_llm_json(raw)
     if not isinstance(parsed, dict):
         # 输出基于用户对话生成，常规日志不记原文；开启 LLM 调试日志后可按响应 ID 对照。
         logger.warning(
             f"{log_prefix}: unparseable LLM response",
-            extra={"user_id": user_id, "response_id": getattr(response, "id", None), "raw_chars": len(raw or "")},
+            extra={"user_id": user_id, "raw_chars": len(raw or "")},
         )
         return PromptOutcome(parsed=None, reason="unparseable")
     return PromptOutcome(parsed=parsed, reason=None)

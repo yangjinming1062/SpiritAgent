@@ -13,7 +13,7 @@ from prompts.tools import (
 
 from services.infrastructure.llm import UserLlmConfig, build_responses_kwargs, call_with_retry, client_for_config
 from services.infrastructure.tool_runtime import ToolsRegistry
-from services.infrastructure.web import resolve_extract_provider, resolve_search_provider
+from services.infrastructure.web import WebDocument, resolve_extract_provider, resolve_search_provider
 
 logger = get_logger(__name__)
 
@@ -21,8 +21,8 @@ logger = get_logger(__name__)
 _MAX_SEARCH_RESULTS = 100
 
 
-async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: dict) -> None:
-    content = doc.get("content", "")
+async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: WebDocument) -> None:
+    content = doc.content
     if not content or len(content) <= 1000:
         return
     try:
@@ -37,7 +37,7 @@ async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: dict) -> Non
                             "type": "input_text",
                             "text": json.dumps(
                                 {
-                                    "source_url": doc.get("url"),
+                                    "source_url": doc.url,
                                     "content": content[:50000],
                                     "source_excerpted": len(content) > 50000,
                                 },
@@ -52,19 +52,19 @@ async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: dict) -> Non
         response = await call_with_retry(client, **request)
         if response.status != "completed" or not response.output_text.strip():
             raise RuntimeError("Web summary response did not complete with text")
-        doc["content"] = response.output_text
-        doc["content_kind"] = "summary"
-        doc["source_excerpted"] = len(content) > 50000
+        doc.content = response.output_text
+        doc.content_kind = "summary"
+        doc.source_excerpted = len(content) > 50000
     except Exception as e:
         # 单文档失败必须隔离，否则会拖垮整批 gather（httpx、JSON 解析、LLMRuntimeError、空 choices 都落在这一层）。
         logger.warning("Failed to summarize content", extra={"error_msg": str(e)})
-        doc["content"] = content[:5000]
-        doc["content_kind"] = "extracted_text"
-        doc["source_excerpted"] = len(content) > 5000
-        doc["summarization_failed"] = True
+        doc.content = content[:5000]
+        doc.content_kind = "extracted_text"
+        doc.source_excerpted = len(content) > 5000
+        doc.summarization_failed = True
 
 
-async def _summarize_documents(documents: list[dict], llm_config: UserLlmConfig) -> None:
+async def _summarize_documents(documents: list[WebDocument], llm_config: UserLlmConfig) -> None:
     if not documents:
         return
     model_name = llm_config.model_name
@@ -72,7 +72,7 @@ async def _summarize_documents(documents: list[dict], llm_config: UserLlmConfig)
     # 限制并发数，避免 50 个 URL 时同时打开 50 条 LLM 流。
     sem = asyncio.Semaphore(4)
 
-    async def _guarded(doc: dict) -> None:
+    async def _guarded(doc: WebDocument) -> None:
         async with sem:
             await _summarize_doc(client, model_name, doc)
 
@@ -95,7 +95,7 @@ async def web_search_tool(query: str, limit: int | None = None, **_: object) -> 
     except Exception as e:
         return tool_error(f"Search error: {e!s}")
 
-    return json.dumps(result, ensure_ascii=False)
+    return result.model_dump_json(exclude_none=True)
 
 
 async def web_extract_tool(
@@ -120,11 +120,13 @@ async def web_extract_tool(
     if use_llm_processing:
         # 并行展开摘要，10 URL 提取的耗时由最慢的那一份决定，而非 10 倍叠加。
         await _summarize_documents(documents, llm_config)
-    # content 已是摘要或抽取原文；再附 raw_content 会把整页原文重复送入上下文。
-    for doc in documents:
-        doc.pop("raw_content", None)
-
-    return json.dumps({"success": True, "data": {"web": documents}}, ensure_ascii=False)
+    return json.dumps(
+        {
+            "success": True,
+            "data": {"web": [doc.model_dump(exclude_none=True, exclude_unset=True) for doc in documents]},
+        },
+        ensure_ascii=False,
+    )
 
 
 WEB_SEARCH_SCHEMA = {

@@ -28,8 +28,10 @@ from .schemas import (
     UserUpdate,
 )
 from .security import (
+    consume_ws_ticket,
     create_access_token,
     create_admin_token,
+    create_ws_ticket,
     decode_access_token,
     decode_activation_code,
     encode_activation_code,
@@ -66,8 +68,10 @@ __all__ = [
     "UserModelConfigRequest",
     "UserResponse",
     "UserUpdate",
+    "consume_ws_ticket",
     "create_access_token",
     "create_admin_token",
+    "create_ws_ticket",
     "decode_access_token",
     "decode_activation_code",
     "encode_activation_code",

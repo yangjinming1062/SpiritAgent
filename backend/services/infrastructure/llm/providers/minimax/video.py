@@ -2,8 +2,8 @@ from typing import ClassVar
 
 from components import get_logger
 
-from ..base import ProviderConfig, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
-from ..http import get_http
+from ..base import ProviderConfig, ProviderError, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
+from ..http import ProviderResultUnknownError, get_http
 from ._errors import raise_for_minimax_response
 
 logger = get_logger(__name__)
@@ -29,11 +29,17 @@ _MAX_PROMPT_CHARS = 7000
 def _build_content(req: VideoGenRequest) -> list[dict]:
     """组装文本与首尾帧；参考素材与首尾帧是互斥模式。"""
     if req.reference_images:
-        raise ValueError("MiniMax adapter does not implement reference media mode; it cannot be mixed with frames")
+        raise ProviderError(
+            "MiniMax adapter does not implement reference media mode; it cannot be mixed with frames",
+            status_code=400,
+        )
     if not req.prompt.strip():
-        raise ValueError("MiniMax requires a non-empty prompt")
+        raise ProviderError("MiniMax requires a non-empty prompt", status_code=400)
     if len(req.prompt) > _MAX_PROMPT_CHARS:
-        raise ValueError(f"prompt exceeds MiniMax limit ({_MAX_PROMPT_CHARS} chars per ContentItem.text)")
+        raise ProviderError(
+            f"prompt exceeds MiniMax limit ({_MAX_PROMPT_CHARS} chars per ContentItem.text)",
+            status_code=400,
+        )
     content: list[dict] = [{"type": "text", "text": req.prompt}]
     if req.first_frame_image:
         content.append({"type": "image_url", "image_url": {"url": req.first_frame_image}, "role": "first_frame"})
@@ -46,7 +52,10 @@ def _model_capabilities(model: str) -> tuple[tuple[int, ...], tuple[str, ...]]:
     try:
         return _MODEL_CAPABILITIES[model]
     except KeyError as exc:
-        raise ValueError(f"MiniMax video model must be one of {tuple(_MODEL_CAPABILITIES)}, got {model!r}") from exc
+        raise ProviderError(
+            f"MiniMax video model must be one of {tuple(_MODEL_CAPABILITIES)}, got {model!r}",
+            status_code=400,
+        ) from exc
 
 
 class MiniMaxVideoGenProvider(VideoGenProvider):
@@ -60,7 +69,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
-        self.durations, self.resolutions = _model_capabilities(config.model or self.DEFAULT_MODEL)
+        self.durations, self.resolutions = _MODEL_CAPABILITIES.get(config.model or self.DEFAULT_MODEL, ((), ()))
         self._client = get_http(config.base_url, config.api_key)
 
     def max_resolution(
@@ -71,7 +80,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
     ) -> str | None:
-        durations, resolutions = _model_capabilities(self.config.model or self.DEFAULT_MODEL)
+        durations, resolutions = self.durations, self.resolutions
         if duration not in durations or reference_images:
             return None
         return resolutions[-1]
@@ -81,19 +90,23 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         resp = await self._client.post("/v2/video_generation", json=self._payload(req, model))
         body = raise_for_minimax_response(resp)
         task_id = body.get("task_id", "")
-        if not task_id:
-            raise RuntimeError(f"MiniMax video_generation returned no task_id: {body}")
+        if not isinstance(task_id, str) or not task_id:
+            raise ProviderResultUnknownError("POST", self.config.base_url)
         return VideoJobStatus(task_id=task_id, status="queued")
 
     @staticmethod
     def _payload(req: VideoGenRequest, model: str) -> dict:
         durations, resolutions = _model_capabilities(model)
         if not isinstance(req.duration, int) or req.duration not in durations:
-            raise ValueError(
+            raise ProviderError(
                 f"{model} requires an integer duration in [{durations[0]}, {durations[-1]}], got {req.duration!r}",
+                status_code=400,
             )
         if req.resolution not in resolutions:
-            raise ValueError(f"{model} requires resolution in {resolutions}, got {req.resolution!r}")
+            raise ProviderError(
+                f"{model} requires resolution in {resolutions}, got {req.resolution!r}",
+                status_code=400,
+            )
         payload: dict = {
             "model": model,
             "content": _build_content(req),
@@ -106,7 +119,10 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         elif req.aspect_ratio in ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9"):
             payload["ratio"] = req.aspect_ratio
         else:
-            raise ValueError(f"{model} t2v mode requires aspect_ratio (one of 16:9, 9:16, 1:1, 4:3, 3:4, 21:9)")
+            raise ProviderError(
+                f"{model} t2v mode requires aspect_ratio (one of 16:9, 9:16, 1:1, 4:3, 3:4, 21:9)",
+                status_code=400,
+            )
         return payload
 
     async def poll(self, task_id: str) -> VideoJobStatus:

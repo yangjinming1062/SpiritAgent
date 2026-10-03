@@ -1,8 +1,8 @@
 import re
 
 # 行内代码 / 围栏代码块：去壳保内容（IM 是纯文本场，代码内容原样保留）。
-_FENCE_RE = re.compile(r"^\s*(```|~~~)[^\n]*$", re.MULTILINE)
-_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n?$")
+_INLINE_CODE_RE = re.compile(r"(?<!`)(`+)(?!`)(.+?)\1(?!`)")
 # 加粗/斜体标记（保留内部文本；拆两层覆盖 ***粗斜体***）。星号允许词内成对；下划线按 CommonMark 只在词边界成对——词内成对会把 snake_case 误剥成 snakecase。
 _BOLD_ASTERISK_RE = re.compile(r"(\*{1,3})(?=\S)(.+?)(?<=\S)\1", re.DOTALL)
 _BOLD_UNDERSCORE_RE = re.compile(r"(?<!\w)(_{1,3})(?=\S)(.+?)(?<=\S)\1(?!\w)", re.DOTALL)
@@ -23,10 +23,37 @@ def strip_markdown(text: str) -> str:
     """把 LLM 输出的 Markdown 降级为 IM 可读的纯文本：去标记保留语义内容，不做完整 Markdown 解析。"""
     if not text:
         return ""
-    out = _FENCE_RE.sub("", text)
+    # 先隐藏代码，正文降级规则不得改写其中的运算符、注释、列表或连续空行。
+    code: list[str] = []
+    prefix = "\x00code:"
+    while prefix in text:
+        prefix += ":"
+
+    def preserve(value: str) -> str:
+        code.append(value)
+        return f"{prefix}{len(code) - 1}\x00"
+
+    lines = text.splitlines(keepends=True)
+    parts: list[str] = []
+    index = 0
+    while index < len(lines):
+        opening = _FENCE_RE.fullmatch(lines[index])
+        if opening is None:
+            parts.append(_INLINE_CODE_RE.sub(lambda match: preserve(match[2]), lines[index]))
+            index += 1
+            continue
+        marker = opening[1]
+        closing = re.compile(rf"^ {{0,3}}{re.escape(marker[0])}{{{len(marker)},}}[ \t]*\n?$")
+        index += 1
+        start = index
+        while index < len(lines) and closing.fullmatch(lines[index]) is None:
+            index += 1
+        parts.append(preserve("".join(lines[start:index])))
+        if index < len(lines):
+            index += 1
+    out = "".join(parts)
     out = _IMAGE_RE.sub(r"（图片 \2）", out)
     out = _LINK_RE.sub(r"\1（\2）", out)
-    out = _INLINE_CODE_RE.sub(r"\1", out)
     for _ in range(2):
         out = _BOLD_ASTERISK_RE.sub(r"\2", out)
         out = _BOLD_UNDERSCORE_RE.sub(r"\2", out)
@@ -38,7 +65,10 @@ def strip_markdown(text: str) -> str:
     out = _TABLE_BAR_RE.sub("", out)
     # 去壳后残留的连续空行折叠为一行，段落结构仍在。
     out = re.sub(r"\n{3,}", "\n\n", out)
-    return out.strip()
+    out = out.strip()
+    for index, value in enumerate(code):
+        out = out.replace(f"{prefix}{index}\x00", value)
+    return out
 
 
 _CHUNK_SEPARATORS = ("\n\n", "\n", " ")

@@ -14,13 +14,6 @@ class ChannelDeliveryPayload(BaseModel):
     media: list[ChannelDeliveryMedia] = Field(default_factory=list)
 
 
-class ChannelCapabilities(BaseModel):
-    """注册表里某渠道的静态能力位，随 GET /api/channels 一起返回。"""
-
-    supports_typing: bool = False
-    requires_login: bool = False
-
-
 class BindingInfo(BaseModel):
     """绑定状态视图；凭据一律不回显。"""
 
@@ -37,7 +30,6 @@ class BindingInfo(BaseModel):
 class ChannelInfo(BaseModel):
     channel: str
     title: str
-    capabilities: ChannelCapabilities
     binding: BindingInfo | None = None
 
 

@@ -3,8 +3,15 @@ import re
 from datetime import date
 from typing import Any
 
-from components import DEFAULT_LANGUAGE, resolve_language, resolve_prompt_text, safe_json_loads
-from modules.companion import AvatarAsset, CharacterCardSnapshot, Persona
+from components import DEFAULT_LANGUAGE, resolve_language, resolve_prompt_text
+from modules.companion import (
+    AvatarAsset,
+    CharacterCardSnapshot,
+    OnboardingStateResponse,
+    Persona,
+    parse_persona_definition,
+)
+from modules.memory import USER_PROFILE_MAX_CONTENT_CHARS
 from prompts.companion import PERSONA_FIELD_LABELS, PERSONA_LABELS_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -38,7 +45,7 @@ ONBOARDING_FIELDS: tuple[str, ...] = (
     "user_hobbies",
     "user_freeform",
 )
-_ONBOARDING_MAX_LEN: int = 2000
+_ONBOARDING_MAX_LEN: int = USER_PROFILE_MAX_CONTENT_CHARS
 
 # voice 之前的字段构成角色阶段，由唯一的顺序事实源派生。
 _VOICE_FIELD_INDEX: int = ONBOARDING_FIELDS.index("voice")
@@ -76,10 +83,11 @@ def _validate_birthday(value: str | None) -> None:
 def load_persona_definition(persona: Persona | None) -> dict[str, str]:
     if persona is None:
         return {}
-    draft = safe_json_loads(persona.definition_json or "{}", default={})
-    if not isinstance(draft, dict):
-        return {}
-    return {key: value for key, value in draft.items() if key in ONBOARDING_FIELDS and isinstance(value, str)}
+    return {
+        key: value
+        for key, value in parse_persona_definition(persona.definition_json).items()
+        if key in ONBOARDING_FIELDS
+    }
 
 
 def _validate_definition(definition: dict[str, Any]) -> dict[str, str]:
@@ -107,6 +115,8 @@ def _validate_user_profile(definition: dict[str, Any]) -> dict[str, str]:
     for key, value in definition.items():
         if not key.startswith("user_"):
             continue
+        if key not in ONBOARDING_FIELDS:
+            raise PersonaValidationError("unknown user profile field", key)
         if value is not None and not isinstance(value, str):
             raise PersonaValidationError(f"persona.{key} must be a string", key)
         profile[key] = (value or "").strip()[:_ONBOARDING_MAX_LEN]
@@ -195,8 +205,8 @@ def render_extras(definition: dict[str, str], *, language: str = DEFAULT_LANGUAG
     return "\n".join(lines)
 
 
-def _state(answers: dict[str, str], next_field: str | None, complete: bool) -> dict[str, Any]:
-    return {"answers": answers, "next_field": next_field, "complete": complete}
+def _state(answers: dict[str, str], next_field: str | None, complete: bool) -> OnboardingStateResponse:
+    return OnboardingStateResponse(answers=answers, next_field=next_field, complete=complete)
 
 
 async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona, draft: dict[str, str]) -> str | None:
@@ -217,7 +227,7 @@ async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona
     return None
 
 
-async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]:
+async def get_onboarding_state(db: AsyncSession, user_id: int) -> OnboardingStateResponse:
     """从数据库恢复引导进度；complete 以角色、头像、全身种子确认与音色为门槛。"""
     persona = await get_or_create_persona(db, user_id)
     draft = load_persona_definition(persona)
@@ -231,7 +241,12 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]
     return _state({**draft, **user_profile}, next_step, False)
 
 
-async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, value: str | None) -> dict[str, Any]:
+async def submit_onboarding_field(
+    db: AsyncSession,
+    user_id: int,
+    field: str,
+    value: str | None,
+) -> OnboardingStateResponse:
     """写入一条引导回答；is_complete 之后仅 user_*/voice 可改，角色字段须走 PUT /persona。"""
     if field not in ONBOARDING_FIELDS:
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)

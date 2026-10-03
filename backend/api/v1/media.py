@@ -128,22 +128,47 @@ async def upload_chat_video(
     max_bytes = session_quota if SETTINGS.public_base_url.strip() else ATTACHMENT_VIDEO_MAX_BYTES
 
     hint = "" if max_bytes == session_quota else "；配置 server.public_base_url 后可经公网 URL 发送更大文件"
-    data = await _read_capped(
-        file,
-        max_bytes,
-        HTTPException(
-            status_code=413,
-            detail={
-                "error": f"Video too large (max {max_bytes // (1024 * 1024)} MB){hint}",
-                "reason": "payload_too_large",
-                "status_code": 413,
-            },
-        ),
+    too_large = HTTPException(
+        status_code=413,
+        detail={
+            "error": f"Video too large (max {max_bytes // (1024 * 1024)} MB){hint}",
+            "reason": "payload_too_large",
+            "status_code": 413,
+        },
     )
+    # Starlette 在 multipart 解析阶段记录实际落盘大小。
+    size = file.size
+    if size is None:
+        raise HTTPException(status_code=422, detail="Video size unavailable")
+    if size > max_bytes:
+        raise too_large
+    await db.commit()
+    await enforce_session_quota(db, session_id, size)
+    await db.commit()
+    copy_task = asyncio.create_task(asyncio.to_thread(save_video_attachment, session_id, file.file, ext, max_bytes))
+    try:
+        file_id, size = await asyncio.shield(copy_task)
+    except asyncio.CancelledError:
+        # 上传临时文件由请求关闭；重复取消也要先等复制线程退出，避免关闭它正在读的源文件。
+        while not copy_task.done():
+            try:
+                await asyncio.shield(copy_task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        try:
+            result = copy_task.result()
+        except (Exception, asyncio.CancelledError):
+            result = None
+        if isinstance(result, tuple):
+            path = resolve_video_file(session_id, result[0])
+            if path is not None:
+                path.unlink(missing_ok=True)
+        raise
+    except ValueError as exc:
+        raise too_large from exc
 
-    # 配额滚动剔除发生在写盘前：保证新文件落得下，且引用行同步改写不产生死链。
-    await enforce_session_quota(db, session_id, len(data))
-    file_id, size = await asyncio.to_thread(save_video_attachment, session_id, data, ext)
     logger.info("chat video uploaded", extra={"session_id": session_id, "file_id": file_id, "size": size})
     return ChatVideoUploadResponse(url=attachment_video_url(session_id, file_id))
 

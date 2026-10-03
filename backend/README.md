@@ -68,21 +68,21 @@
 
 ### API 入口
 
-`api/v1/*.py` 通过 `router = get_router()` 自动发现，负责鉴权、限流和 DTO 组装。WS 从 `api/v1/chat.py` 进入，RPC 注册在 [desktop handlers](services/adapters/desktop/handlers.py)，斜杠命令注册表在同目录 [slash_commands.py](services/adapters/desktop/slash_commands.py)；客户端 [slash-commands.ts](../client/renderer/shared/lib/slash-commands.ts) 只镜像自动补全与确认弹窗用的元数据，`command.dispatch` 是唯一权威。管理页面位于 `static/admin.html`；页面可加载不代表管理 API 免鉴权。
+`api/v1/*.py` 通过 `router = get_router()` 自动发现，负责鉴权、限流和 DTO 组装。路由前缀固定为 `/api/<文件名>`；`/api` 同时用于资产、备份、限流及客户端，不能配置修改。请求体在解析前按 [入口策略](services/adapters/http/body_limit.py) 硬限，实际流超过上限同样返回 413；大载荷入口先验证当前登录，避免未认证上传占用磁盘。WS 从 `api/v1/chat.py` 进入，RPC 注册在 [desktop handlers](services/adapters/desktop/handlers.py)，斜杠命令注册表在同目录 [slash_commands.py](services/adapters/desktop/slash_commands.py)；客户端 [slash-commands.ts](../client/renderer/shared/lib/slash-commands.ts) 只镜像自动补全与确认弹窗用的元数据，`command.dispatch` 是唯一权威。管理页面位于 `static/admin.html`；页面可加载不代表管理 API 免鉴权。
 
 ## 配置与运行生命周期
 
 ### 配置与迁移
 
-复制 [config.toml.example](config.toml.example) 为 `config.toml` 后填写数据库、JWT、资产签名密钥和管理员凭据等冷启动依赖；JWT、资产签名密钥或管理员密码为空或仍是示例值时，web 进程拒绝启动。配置来源优先级为环境变量 → `.env` → `config.toml` → `config.toml.example`；业务型参数进入 `system_settings`，由 [Settings](components/config.py) 声明，技术常量不承载可运营配置。
+复制 [config.toml.example](config.toml.example) 为 `config.toml` 后填写数据库、JWT、资产签名密钥和管理员凭据等冷启动依赖；JWT、资产签名密钥或管理员密码为空或仍是示例值时，web 进程拒绝启动。配置来源优先级为环境变量 → `backend/.env` → `backend/config.toml` → `backend/config.toml.example`，文件均按 Backend 目录定位，与进程工作目录无关；业务型参数进入 `system_settings`，由 [Settings](components/config.py) 声明，技术常量不承载可运营配置。
 
 热更新入口为 [system_settings.py](services/application/configuration/system_settings.py)：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新连接池等副作用。管理后台的系统设置写入数据库并立即更新当前进程；重启时数据库中的动态值会在环境变量和 TOML 水合后再次覆盖它们。启动专用参数不能从管理后台修改。
 
-校验或提交失败不修改运行时，避免数据库与内存分叉。持久值统一 JSON 编码，启动水合时解析或校验失败即中止启动。
+校验或提交失败不修改运行时，避免数据库与内存分叉。持久值统一 JSON 编码，启动水合时解析或校验失败即中止启动。数值范围由 `Settings` 字段声明，拒绝非有限浮点数；管理页 `min/max` 只作输入提示，保存接口对越界值返回 422。升级前须检查数据库与配置来源中的存量值，越界值会阻止启动。资产签名密钥至少 32 字符。
 
 用户偏好 `user_settings` 同样按点键逐值 JSON 编码（桌面配置同步与服务端写入如时区共用同一格式），只经 [modules/settings](modules/settings/values.py) 读写，读取即得解码后的原值，消费方不自行解析。
 
-启动执行 Alembic 升级。未部署时可调整 baseline，部署后追加迁移；迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，迁移中维护的 PostgreSQL 部分、向量和全文索引不能误删。数据库版本要求见 [Docker Compose 部署](#docker-compose-部署)。
+启动执行 Alembic 升级。未部署时可调整 baseline，部署后追加迁移；迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，部分唯一、向量和全文索引均在 ORM 模型声明；autogenerate 比对名称、唯一性与列表达式，`WHERE`、索引方法与操作符类仍须人工核对。生成迁移中被写成 `%%` 的百分号须还原为 `%`。数据库版本要求见 [Docker Compose 部署](#docker-compose-部署)。
 
 ### 装配与启停
 
@@ -92,19 +92,19 @@
 |---|---|
 | 启动 | 配置检查 → 迁移 → 配置水合与目录准备 → 调度器 → 事件回路 → 渠道桥 → 任务恢复 |
 | 恢复 | 动态发布与评论、聊天与动态视频任务、视频包生成/导入、动作提案评审、角色卡提取、场景、初始外观 |
-| 停止 | 关闭清理任务与调度入口 → 收敛模块任务 → 停渠道桥与事件回路 → 释放数据库、Web 供应商及 LLM 连接池 |
+| 停止 | 关闭清理任务与调度入口 → 停渠道桥 → 停事件回路 → 收敛模块任务 → 释放数据库、Web 供应商及 LLM 连接池 |
 
 `MANAGER`、`REGISTRY`、`SETTINGS` 与用户锁遵守单进程边界。bootstrap 管装配，不另建通用依赖注入容器。
 
 ### 事件与交付
 
 - `emit_ws_event` 与业务状态在同一事务写入 outbox；数据库 `NOTIFY` 只负责唤醒，事件行负责恢复。
-- 事件回路只认领本进程有桌面 dispatcher 的用户（含断线宽限期）。内部处理器派生任务即记送达；用户投递失败按预算退避，达到 `MAX_OUTBOX_RETRIES` 后转死信。具体清理由 [outbox_gc.py](services/infrastructure/event_store/outbox_gc.py) 负责，普通离线待投递行不过期，过期的主动回合请求例外清理。
+- 事件回路只认领本进程有桌面 dispatcher 的用户（含断线宽限期）。内部处理器派生任务即记送达；用户投递失败按预算退避，达到 `MAX_OUTBOX_RETRIES` 后转死信。具体清理由 [outbox_gc.py](services/infrastructure/event_store/outbox_gc.py) 负责，普通离线待投递行不过期，过期的主动回合请求例外清理。LISTEN 专线每 15 秒以 `SELECT 1` 探活，5 秒超时，失败后 5 秒重连；周期扫描继续承担兜底。
 - 聊天流走会话 emitter，后台任务由各自所有者启停和恢复；事件存储不直接调用业务处理器。
 
 ## 数据与运行可靠性
 
-数据库会话采用短读 → 无会话模型等待 → 短写，关系显式预加载，时间戳带时区。请求级 `DbSession` 与鉴权依赖共用同一会话，响应发送完毕才关闭：鉴权依赖在通过后提交只读事务（可选鉴权失败时回滚），路由与服务在模型调用、等待用户锁、文件打包及文件或流式下发之前须先提交请求会话，不让只读事务占着连接跨过这些等待；聊天视频上传在写盘期间仍持有读事务，属已知例外。会话 `expire_on_commit=False`，提交后已加载对象仍可读写，这里不能用回滚代替提交。
+数据库会话采用短读 → 无会话模型等待 → 短写，关系显式预加载，时间戳带时区。请求级 `DbSession` 与鉴权依赖共用同一会话，响应发送完毕才关闭：鉴权依赖在通过后提交只读事务（可选鉴权失败时回滚），路由与服务在模型调用、等待用户锁、文件打包及文件或流式下发之前须先提交请求会话，不让只读事务占着连接跨过这些等待。会话 `expire_on_commit=False`，提交后已加载对象仍可读写，这里不能用回滚代替提交。
 
 图片与视频等大字节处理与落盘卸载到工作线程。正式资产写入有两种取消语义：随机命名资产（`save_companion_asset_async`）取消时删除未交接文件；任务预登记固定路径的生成资产（视频任务、动作素材与图片链候选）取消时等待原子写完并保留，供恢复复用。
 
@@ -124,6 +124,7 @@
 
 ### 夜间批处理
 
+- 扫描只为活跃账户按用户／记忆域启动单飞任务，不等待本轮全部流水线结束；关闭调度入口时取消并等待这些任务。
 - 调度传入刚结束的本地日，缺时区跳过；同日完成不重跑，未完成日按恢复窗口接续，并为每次执行保留夜间日志。
 - 计划与动作账本先持久化再执行；每项执行前重读政策并核对依赖，终态统一落库，失败互相隔离。场景阶段不依赖外观或动作阶段。
 - 规划动作 ID 保持原样并校验唯一性；过滤前置能力后依赖仍保留，只有前置整项成功才解锁后续，部分成功只提供已完成事实。
@@ -138,7 +139,7 @@
 
 ### IM 渠道
 
-适配器由装配层注册。接收锁保证落库与入队顺序，投递锁避免并发补发；登录、入站、回合、typing 和补发均归绑定实例，退出或重建前取消并等待整棵任务树。绑定启停由 REST 直驱、守卫循环自愈，无周期对账（单 web 进程，无端口单例锁 / failover）。
+适配器由装配层注册。接收锁保证落库与入队顺序，投递锁避免并发补发；登录、入站、回合、typing 和补发均归绑定实例，退出或重建前取消并等待整棵任务树。绑定启停由 REST 直驱、守卫循环自愈，无周期对账（单 web 进程，无端口单例锁 / failover）。可恢复的长轮询错误在同一实例中退避重试，保留游标及在途回合；适配器子任务失败由绑定所有者读取并上报。持久化 iLink 凭据读回时整体严格校验，无法解析或字段类型不符按无凭据处理，须重新扫码；日志不记录令牌。
 
 iLink 长轮询 `getupdates` 返回 `-14` 即清除登录凭据并将绑定置为 `login_required`（用户重新发起扫码后为 `login_pending`）；发送或 typing 返回同码只代表回复上下文失效，等待下一次来信，不触发重新扫码。超出每分钟入站限流的消息在落库前丢弃且不通知对端。媒体经渠道加解密转换；配对、排队、只读与本机授权见 [PROTOCOL](../docs/PROTOCOL.md#im-通道)。
 
@@ -174,9 +175,11 @@ docker compose --profile monitoring up -d
 
 容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。`/metrics` 默认无需鉴权；配置 `metrics_auth_token` 后须以 `Authorization: Bearer <令牌>` 或 `X-Metrics-Token` 访问。
 
-使用随附 Prometheus 时在 `backend/.env` 设置 `METRICS_AUTH_TOKEN`，Backend 经 `env_file` 读取，Prometheus 经 compose 注入同一令牌文件；未设置时后端不校验。compose 不会因令牌变化自动重建容器，修改后执行 `docker compose --profile monitoring up -d --force-recreate backend prometheus`。管理后台保存或清除令牌会即时更新 Backend 的 `system_settings`；启用 Prometheus 时仍须同步 `.env`。Backend 不参与桌面安装包构建。
+使用随附 Prometheus 时在 `backend/.env` 设置 `METRICS_AUTH_TOKEN`，Backend 经 `env_file` 读取，Prometheus 经 compose 注入同一令牌文件；未设置时后端不校验。compose 不会因令牌变化自动重建容器，修改后执行 `docker compose --profile monitoring up -d --force-recreate backend prometheus`。管理后台保存或清除令牌会即时更新 Backend 的 `system_settings`；数据库中的动态值在启动时优先于 `.env`，只改文件不能覆盖已保存值；启用 Prometheus 时须同步管理后台与 `.env`。Backend 不参与桌面安装包构建。
 
-后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。更新 Dockerfile 后，在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。
+后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。后端代码和依赖均打入镜像，修改后在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。构建上下文为仓库根，仅根 `.dockerignore` 生效。
+
+动作素材处理还须在数据卷 `models/<matting_model>.onnx` 放置 ISNet 模型（默认 `isnet-general-use.onnx`），运行路径由 [matting.py](services/infrastructure/video_processing/matting.py) 决定；镜像不自动下载。每个动作都需要模型，缺失时在新付费制作前拒绝并保留进度。
 
 ### 本地供应商
 

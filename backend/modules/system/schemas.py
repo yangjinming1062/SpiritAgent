@@ -37,9 +37,18 @@ class ReleaseManifestResponse(BaseModel):
     files: list[ReleaseManifestFileItem] = Field(default_factory=list)
 
 
+class ChatAttachment(BaseModel):
+    type: Literal["image", "video"]
+    file_url: str = Field(min_length=1)
+
+
+class ImageAttachResponse(BaseModel):
+    ref_text: str
+
+
 class ChatMessageRequest(BaseModel):
     content: str
-    attachments: list[dict] | None = None
+    attachments: list[ChatAttachment] | None = None
 
 
 class ChatRequest(BaseModel):

@@ -7,13 +7,11 @@ from collections.abc import Awaitable, Callable, Collection, Sequence
 from datetime import timedelta
 from pathlib import Path
 
-import httpx
 from components import (
     SESSION_LOCAL,
     SETTINGS,
     TaskBag,
     backoff_for_poll,
-    download_capped,
     get_logger,
     redact_sensitive_text,
     track_user_task,
@@ -24,16 +22,18 @@ from modules.companion import AvatarAsset, CharacterCardSnapshot
 from modules.conversation import Conversation, Message
 from modules.media import VideoGenJob
 from modules.ws import emit_ws_event
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import character_snapshot_is_current, render_character_identity
 from services.domains.conversation import MEDIA_STATUS_SUBTYPE, update_video_reply
 from services.infrastructure.assets import (
+    VIDEO_DOWNLOAD_ATTEMPTS,
     asset_store,
     build_data_uri,
     client_asset_url,
+    download_media_result,
     save_video_job_asset_async,
     sniff_media_ext,
     unlink_companion_asset,
@@ -73,7 +73,6 @@ _TERMINAL_STATUSES = ("succeeded", "failed", "result_unknown")
 _RESULT_UNKNOWN_MESSAGE = "视频提交结果不确定，供应商可能已接单；为避免重复计费，系统没有自动重试"
 # 供应商任务可能仍在进行或已计费，终态记为 result_unknown 而非可重试的失败。
 _RESULT_UNKNOWN_REASONS = frozenset({"submit_result_unknown", "timeout"})
-_DOWNLOAD_ATTEMPTS = 3
 
 
 class _VideoJobParams(BaseModel):
@@ -88,6 +87,8 @@ class _VideoJobParams(BaseModel):
     identity_reference_path: str | None
     identity_snapshot: CharacterCardSnapshot | None
     identity_reference: str | None
+    # 老任务沿用原路径，新增任务冻结随机ID，避免恢复后数据库序列与旧文件重名。
+    asset_generation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
 
 
 class VideoPollTimeoutError(RuntimeError):
@@ -161,7 +162,7 @@ def _stored_asset_file(user_id: int, storage_path: str | None) -> Path | None:
 def video_generation_wait_seconds(job: VideoGenJob) -> float:
     state = MediaChainState.model_validate_json(job.generation_state_json)
     per_provider = (
-        SETTINGS.video_gen_max_poll_seconds + _DOWNLOAD_ATTEMPTS * 600 + 2 * SETTINGS.llm_request_timeout_seconds
+        SETTINGS.video_gen_max_poll_seconds + VIDEO_DOWNLOAD_ATTEMPTS * 600 + 2 * SETTINGS.llm_request_timeout_seconds
     )
     return max(1, len(state.providers)) * per_provider + 90
 
@@ -401,6 +402,7 @@ async def enqueue_video_job(
         aspect_ratio=aspect_ratio,
         identity_reference_path=identity_reference_path,
         identity_snapshot=identity,
+        asset_generation_id=state.generation_id,
         identity_reference=(
             await asyncio.to_thread(load_avatar_bytes_as_data_uri, identity_reference_path)
             if identity_reference_path
@@ -769,7 +771,12 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
         if job.status in ("downloading", "evaluating"):
             candidate_path = job.candidate_video_url
             if not candidate_path:
-                candidate_path = video_job_asset_path(user_id, job_id, job.generation_attempt_index)
+                candidate_path = video_job_asset_path(
+                    user_id,
+                    job_id,
+                    job.generation_attempt_index,
+                    generation_id=_VideoJobParams.model_validate_json(job.params_json).asset_generation_id,
+                )
                 if _stored_asset_file(user_id, candidate_path) is None:
                     candidate_path = None
             if candidate_path:
@@ -794,6 +801,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     user_id=user_id,
                     job_id=job_id,
                     attempt=job.generation_attempt_index,
+                    generation_id=_VideoJobParams.model_validate_json(job.params_json).asset_generation_id,
                 )
             except Exception:
                 logger.warning("known video result awaits download recovery", extra={"job_id": job_id}, exc_info=True)
@@ -878,6 +886,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     user_id,
                     job_id,
                     latest.generation_attempt_index,
+                    generation_id=_VideoJobParams.model_validate_json(latest.params_json).asset_generation_id,
                 )
                 if _stored_asset_file(user_id, candidate) is not None:
                     logger.warning("stored video awaits recovery", extra={"job_id": job_id, "path": candidate})
@@ -887,30 +896,27 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
             logger.exception("could not update video job after worker error", extra={"job_id": job_id})
 
 
-async def _download_and_store(download_url: str | None, *, user_id: int, job_id: int, attempt: int) -> str:
+async def _download_and_store(
+    download_url: str | None,
+    *,
+    user_id: int,
+    job_id: int,
+    attempt: int,
+    generation_id: str | None,
+) -> str:
     """有界重试下载供应商成品并原子写入确定性路径，返回裸存储路径。只对传输错误与服务端 5xx 退避重试，超限、4xx 与过期地址等确定性失败直接上抛。慢速大文件读取超时放宽到 10 分钟，上限 ``video_gen_download_max_bytes``。"""
     if not download_url:
         raise RuntimeError("video result has no download url")
-    failures = 0
-    while True:
-        try:
-            data = await download_capped(download_url, max_bytes=SETTINGS.video_gen_download_max_bytes, timeout=600.0)
-            break
-        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
-            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
-                raise
-            failures += 1
-            if failures == _DOWNLOAD_ATTEMPTS:
-                raise
-            logger.warning(
-                "video download failed; retrying",
-                extra={"job_id": job_id, "failures": failures},
-                exc_info=True,
-            )
-            await asyncio.sleep(SETTINGS.video_gen_poll_interval_seconds * 2 ** (failures - 1))
+    data = await download_media_result(download_url, max_bytes=SETTINGS.video_gen_download_max_bytes, timeout=600.0)
     if sniff_media_ext(data) != "mp4":
         raise RuntimeError("provider returned a payload that is not an mp4 stream")
-    return await save_video_job_asset_async(data, user_id=user_id, job_id=job_id, attempt=attempt)
+    return await save_video_job_asset_async(
+        data,
+        user_id=user_id,
+        job_id=job_id,
+        attempt=attempt,
+        generation_id=generation_id,
+    )
 
 
 async def resume_pending_video_jobs() -> None:

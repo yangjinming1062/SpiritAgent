@@ -10,7 +10,11 @@ from .asset_store import (
     compute_file_sha256,
     delete_user_assets,
     image_chain_asset_path,
+    image_mime_for_extension,
+    normalize_asset_reference,
     parse_companion_asset_path,
+    read_asset_data_uri,
+    resolve_asset_reference,
     resolve_companion_asset_path,
     save_action_pose_asset_async,
     save_action_source_asset_async,
@@ -26,15 +30,22 @@ from .asset_store import (
     video_job_asset_path,
 )
 from .http_range import serve_ranged_file
+from .media_download import VIDEO_DOWNLOAD_ATTEMPTS, download_media_result
 
 __all__ = [
     "UnsupportedImageFormatError",
+    "VIDEO_DOWNLOAD_ATTEMPTS",
+    "download_media_result",
     "action_pose_asset_path",
     "save_action_pose_asset_async",
     "action_source_asset_path",
     "save_action_source_asset_async",
     "asset_store",
     "build_data_uri",
+    "image_mime_for_extension",
+    "normalize_asset_reference",
+    "read_asset_data_uri",
+    "resolve_asset_reference",
     "client_asset_url",
     "compute_file_sha256",
     "delete_user_assets",

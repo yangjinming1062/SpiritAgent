@@ -18,9 +18,20 @@ const TOOLSET_DEFS: ToolsetDef[] = [
   { id: 'memory', staticTools: ['memory_retain', 'memory_recall', 'memory_inspect'] },
   { id: 'posts', staticTools: ['post_publish', 'post_status'] },
   { id: 'web_tools', staticTools: ['web_search', 'web_extract'] },
-  { id: 'image_generation', staticTools: ['image_generate'] },
+  {
+    id: 'image_generation',
+    staticTools: [
+      'image_generate',
+      'media_inspect',
+      'image_regenerate',
+      'scene_list',
+      'scene_get',
+      'scene_create',
+      'scene_activate'
+    ]
+  },
   { id: 'messaging', staticTools: ['send_message_tool'] },
-  { id: 'scheduled_tasks', staticTools: ['cronjob'] },
+  { id: 'scheduled_tasks', staticTools: ['cronjob', 'companion_wait'] },
   { id: 'agent_delegation', staticTools: ['agent_delegate_tool'] },
   { extraTools: ['computer_use'], id: 'computer_use' },
   { extraTools: ['vision_analyze'], id: 'media_analysis' },

@@ -2,8 +2,8 @@ from typing import ClassVar
 
 from components import get_logger
 
-from ..base import ProviderConfig, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
-from ..http import get_http
+from ..base import ProviderConfig, ProviderError, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
+from ..http import ProviderResultUnknownError, get_http
 from ._errors import raise_for_qwen_response
 
 logger = get_logger(__name__)
@@ -56,13 +56,16 @@ class QwenVideoGenProvider(VideoGenProvider):
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         if req.reference_images:
-            raise ValueError("qwen video adapter does not support reference media combinations")
+            raise ProviderError("qwen video adapter does not support reference media combinations", status_code=400)
         if req.duration not in _DURATIONS:
-            raise ValueError(f"qwen video_gen requires duration in 2..30, got {req.duration!r}")
+            raise ProviderError(f"qwen video_gen requires duration in 2..30, got {req.duration!r}", status_code=400)
         resolution = (req.resolution or "").upper()
         api_resolution = _RESOLUTION_TO_API.get(resolution)
         if not api_resolution:
-            raise ValueError(f"qwen video_gen requires resolution in {self.resolutions}, got {req.resolution!r}")
+            raise ProviderError(
+                f"qwen video_gen requires resolution in {self.resolutions}, got {req.resolution!r}",
+                status_code=400,
+            )
 
         media: list[dict] = []
         if req.first_frame_image:
@@ -90,8 +93,8 @@ class QwenVideoGenProvider(VideoGenProvider):
         body = raise_for_qwen_response(resp)
         output = body.get("output") or {}
         task_id = output.get("task_id") or ""
-        if not task_id:
-            raise RuntimeError(f"qwen video_gen returned no task_id: {body}")
+        if not isinstance(task_id, str) or not task_id:
+            raise ProviderResultUnknownError("POST", self.config.base_url)
         return VideoJobStatus(task_id=task_id, status="queued")
 
     async def poll(self, task_id: str) -> VideoJobStatus:

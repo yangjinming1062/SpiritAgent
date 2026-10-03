@@ -69,7 +69,7 @@ def check_metrics_auth(auth_header: str | None, token_header: str | None) -> Non
 
     if not provided:
         raise HTTPException(status_code=401, detail="Metrics authentication required")
-    if not secrets.compare_digest(provided, expected_token):
+    if not secrets.compare_digest(provided.encode("utf-8"), expected_token.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Forbidden: Invalid metrics token")
 
 

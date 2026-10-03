@@ -18,6 +18,7 @@ from .character_card import (
     CompanionCharacterCard,
     PortraitFeatures,
 )
+from .definition import parse_persona_definition
 from .journal import (
     CompanionDiaryEntry,
 )
@@ -105,6 +106,7 @@ from .schemas_loop import (
     CompanionWakeEvent,
 )
 from .schemas_posts import (
+    POST_COMMENT_MAX_CHARS,
     PostCommentCreateRequest,
     PostCommentResponse,
     PostContext,
@@ -136,6 +138,8 @@ from .schemas_video import (
 )
 
 __all__ = [
+    "parse_persona_definition",
+    "POST_COMMENT_MAX_CHARS",
     "DIARY_BODY_MAX_CHARS",
     "CompanionPost",
     "CompanionPostComment",

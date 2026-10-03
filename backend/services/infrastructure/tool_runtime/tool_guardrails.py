@@ -5,7 +5,6 @@ from typing import Any
 from components import safe_json_loads, sha256_hex
 
 from .file_safety import get_read_block_error, is_write_denied
-from .tool_dispatch_helpers import is_multimodal_tool_result
 
 # 只读工具：同参数反复得到相同结果即视为无进展。
 _IDEMPOTENT_TOOL_NAMES = frozenset(
@@ -76,14 +75,18 @@ class ToolCallGuardrailController:
         self._same_tool_failure_counts: dict[str, int] = {}
         self._no_progress: dict[tuple[str, str], tuple[str, int]] = {}
 
-    def after_call(self, tool_name: str, args: dict[str, Any], result: str) -> str:
-        """记录本次调用结果，返回（必要时）追加了循环提示的工具结果。"""
+    def record_call(self, tool_name: str, args: dict[str, Any], result: str) -> str:
+        """记录原始结果，返回独立于不可信工具内容的循环提示。"""
         signature = (tool_name, _hash_json(args))
         if _tool_failed(result):
             warning = self._record_failure(tool_name, signature)
         else:
             warning = self._record_success(tool_name, signature, result)
-        return result if warning is None else _append_warning(result, warning)
+        return (
+            ""
+            if warning is None
+            else f"\n\n[Tool loop warning: {warning.code}; count={warning.count}; {warning.message}]"
+        )
 
     def _record_failure(self, tool_name: str, signature: tuple[str, str]) -> _LoopWarning | None:
         exact_count = self._exact_failure_counts.get(signature, 0) + 1
@@ -135,24 +138,6 @@ def _tool_failed(result: str) -> bool:
     return isinstance(data, dict) and (
         bool(data.get("error")) or data.get("success") is False or data.get("ok") is False
     )
-
-
-def _append_warning(result: str, warning: _LoopWarning) -> str:
-    """向工具结果追加循环提示；multimodal 包裹把提示加到第一个文本段与摘要。"""
-    suffix = f"\n\n[Tool loop warning: {warning.code}; count={warning.count}; {warning.message}]"
-    parsed = safe_json_loads(result) if result.lstrip().startswith("{") else None
-    if not is_multimodal_tool_result(parsed):
-        return result + suffix
-    parts = parsed["content"]
-    for part in parts:
-        if isinstance(part, dict) and part.get("type") == "input_text":
-            part["text"] = str(part.get("text", "")) + suffix
-            break
-    else:
-        parts.insert(0, {"type": "input_text", "text": suffix})
-    if isinstance(parsed.get("text_summary"), str):
-        parsed["text_summary"] += suffix
-    return json.dumps(parsed, ensure_ascii=False)
 
 
 def _tool_failure_recovery_hint(tool_name: str, count: int) -> str:

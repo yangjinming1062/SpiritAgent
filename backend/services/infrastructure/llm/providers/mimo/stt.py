@@ -5,7 +5,7 @@ from ..openai_compat import transcribe_input_audio
 
 
 class MiMoSTTProvider(STTProvider):
-    """通过 MiMo 的 input_audio 内容块 + asr_options 体提供 STT；POST /v1/chat/completions，body 含 messages=[{user,[{input_audio,...}]}] 与 extra_body.asr_options={language}。"""
+    """通过 MiMo chat/completions 的 input_audio 内容块提供 STT；请求体的 asr_options 传递 language。"""
 
     provider_name = "mimo"
     DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"

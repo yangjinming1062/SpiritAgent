@@ -2,10 +2,11 @@ import math
 import re
 from datetime import date, datetime
 from itertools import zip_longest
-from typing import Any
+from typing import Literal
 
 from components import session_scope, utc_now
 from modules.memory import MEMORY_EMBEDDING_DIM, Memory
+from pydantic import BaseModel
 from sqlalchemy import ColumnElement, case, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -31,6 +32,21 @@ _CJK_RUN_PATTERN = re.compile(r"[一-鿿㐀-䶿]+")
 # 拉丁等非汉字词：以空白、中英文标点和汉字为界。
 _WORD_PATTERN = re.compile(r"[^\s一-鿿㐀-䶿,，。！？!?；;：、\-—_()\[\]【】（）…“”\"《》〈〉「」『』～~/·]+")
 _WORD_CHAR_PATTERN = re.compile(r"[^\W_]")
+
+
+class MemoryRecallResult(BaseModel):
+    id: int
+    content: str
+    context: str | None
+    tags: str | None
+    importance: float
+    basis: str
+    kind: Literal["diary", "reflection", "recall"]
+    local_date: str | None
+    source_kind: str
+    expires_at: datetime | None
+    score: float
+    updated_at: datetime
 
 
 def _compute_time_decay(updated_at: datetime, now: datetime) -> float:
@@ -152,7 +168,7 @@ async def retrieve_hybrid_memories(
     query_embedding: list[float] | None = None,
     limit: int = 10,
     diary_date: date | None = None,
-) -> list[dict[str, Any]]:
+) -> list[MemoryRecallResult]:
     """稠密与稀疏检索的混合搜索，用 RRF 融合排名并叠加艾宾浩斯时间衰减。"""
     q_str = (query or "").strip()
     if diary_date is not None:
@@ -200,26 +216,29 @@ async def retrieve_hybrid_memories(
 
         results.append(_memory_result(mem, final_score))
 
-    results.sort(key=lambda x: x["score"], reverse=True)
+    results.sort(key=lambda result: result.score, reverse=True)
     return results[:limit]
 
 
-def _memory_result(mem: Memory, score: float) -> dict[str, Any]:
-    kind = next((kind for kind in ("diary", "reflection") if (mem.context or "").startswith(f"{kind}:")), "recall")
-    return {
-        "id": mem.id,
-        "content": mem.content,
-        "context": mem.context,
-        "tags": mem.tags,
-        "importance": max(0.1, mem.importance or 1.0),
-        "basis": mem.basis,
-        "kind": kind,
-        "local_date": narrative_date(mem.context, mem.source_refs),
-        "source_kind": mem.source_kind,
-        "expires_at": mem.expires_at,
-        "score": score,
-        "updated_at": mem.updated_at,
-    }
+def _memory_result(mem: Memory, score: float) -> MemoryRecallResult:
+    context = mem.context or ""
+    kind: Literal["diary", "reflection", "recall"] = (
+        "diary" if context.startswith("diary:") else "reflection" if context.startswith("reflection:") else "recall"
+    )
+    return MemoryRecallResult(
+        id=mem.id,
+        content=mem.content,
+        context=mem.context,
+        tags=mem.tags,
+        importance=max(0.1, mem.importance or 1.0),
+        basis=mem.basis,
+        kind=kind,
+        local_date=narrative_date(mem.context, mem.source_refs),
+        source_kind=mem.source_kind,
+        expires_at=mem.expires_at,
+        score=score,
+        updated_at=mem.updated_at,
+    )
 
 
 async def retrieve_proactive_memories(
@@ -230,10 +249,10 @@ async def retrieve_proactive_memories(
     query_embedding: list[float] | None = None,
     limit: int = 3,
     min_score: float = 0.002,
-) -> list[dict[str, Any]]:
+) -> list[MemoryRecallResult]:
     """检索与当前语境最相关的若干条记忆，用于主动注入对话。"""
     q_str = (query or "").strip()
     if len(q_str) <= 1:
         return []
     candidates = await retrieve_hybrid_memories(db, scope, q_str, query_embedding=query_embedding, limit=limit)
-    return [c for c in candidates if c["score"] >= min_score]
+    return [candidate for candidate in candidates if candidate.score >= min_score]

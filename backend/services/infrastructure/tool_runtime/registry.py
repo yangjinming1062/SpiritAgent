@@ -33,7 +33,6 @@ RESERVED_KEYS = frozenset(
         "media_turn",
         "system_preset_id",
         "scope",
-        "memory_scope",
         "source_kind",
         "source_refs",
         "content_version",
@@ -130,6 +129,11 @@ class ToolsRegistry:
             # 语句与参数只进服务端日志，不作为工具结果交给模型
             logger.exception("Database error executing backend tool", extra={"tool_name": name})
             return tool_error(f"Tool {name} failed because of a temporary storage error.")
+        except OSError:
+            logger.exception("Operating system error executing backend tool", extra={"tool_name": name})
+            return tool_error(
+                f"Tool {name} did not complete because of an operating system or connection error. Check any work already started before repeating it.",
+            )
         except Exception as e:
             logger.exception("Error executing backend tool", extra={"tool_name": name})
             return tool_error(redact_sensitive_text(str(e)))

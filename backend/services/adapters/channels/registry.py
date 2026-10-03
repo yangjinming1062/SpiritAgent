@@ -1,4 +1,4 @@
-from modules.channels import ChannelCapabilities, ChannelInfo
+from modules.channels import ChannelInfo
 
 from .base import ChannelAdapter
 
@@ -22,15 +22,11 @@ def try_resolve(name: str) -> type[ChannelAdapter] | None:
 
 
 def channels_info() -> list[ChannelInfo]:
-    """按注册顺序列出渠道静态能力（不含绑定状态）。"""
+    """按注册顺序列出渠道（不含绑定状态）。"""
     return [
         ChannelInfo(
             channel=name,
             title=cls.conversation_title,
-            capabilities=ChannelCapabilities(
-                supports_typing=cls.supports_typing,
-                requires_login=cls.requires_login,
-            ),
         )
         for name, cls in _REGISTRY.items()
     ]

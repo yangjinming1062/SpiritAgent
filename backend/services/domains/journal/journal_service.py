@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import date
 from uuid import uuid4
 
-from modules.auth import User
+from modules.auth import lock_user_row
 from modules.companion import CompanionDiaryEntry, DiaryContent, DiaryEntryResponse
 from modules.ws import emit_ws_event
 from sqlalchemy import select, update
@@ -53,7 +53,7 @@ async def publish_diary(
     post_ids: list[str],
 ) -> CompanionDiaryEntry:
     """调用方提交事务；已有日记保持原文、已读状态与发布事件不变。"""
-    await db.scalar(select(User.id).where(User.id == user_id).with_for_update())
+    await lock_user_row(db, user_id)
     existing = await get_diary_by_date(db, user_id, entry_date)
     if existing is not None:
         return existing
@@ -104,7 +104,7 @@ async def has_unread_diary(db: AsyncSession, user_id: int) -> bool:
 
 
 async def mark_diary_read(db: AsyncSession, user_id: int, diary_ids: Sequence[str]) -> bool:
-    await db.scalar(select(User.id).where(User.id == user_id).with_for_update())
+    await lock_user_row(db, user_id)
     result = await db.execute(
         update(CompanionDiaryEntry)
         .where(

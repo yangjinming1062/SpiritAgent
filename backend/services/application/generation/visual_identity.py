@@ -17,6 +17,8 @@ from prompts.generation import (
     SELF_IMAGE_OUTFIT_REFERENCE,
     SELF_IMAGE_REFERENCE_TEMPLATE,
     SELF_VIDEO_FIRST_FRAME,
+    SELF_VIDEO_KEEP_OUTFIT,
+    SELF_VIDEO_REFERENCE_TEMPLATE,
 )
 from sqlalchemy import select
 
@@ -215,3 +217,12 @@ async def prepare_self_video_reference(
         return result
     finally:
         unlink_companion_asset(path)
+
+
+def build_self_video_prompt(identity: CharacterCardSnapshot, prompt: str) -> str:
+    """视频阶段保持首帧造型，固定身份条款在同一位置装配。"""
+    return (
+        SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt, outfit=SELF_VIDEO_KEEP_OUTFIT)
+        + "\n"
+        + render_character_identity(identity)
+    )

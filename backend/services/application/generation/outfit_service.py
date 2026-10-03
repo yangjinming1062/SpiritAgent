@@ -41,12 +41,14 @@ from services.domains.companion import (
 )
 from services.infrastructure.assets import build_data_uri, unlink_companion_asset
 from services.infrastructure.llm import (
-    build_image_edit_prompt,
-    build_outfit_prompt,
     chat,
-    describe_garment_image,
 )
 
+from .appearance_prompts import (
+    build_image_edit_prompt,
+    build_outfit_prompt,
+    describe_garment_image,
+)
 from .avatar_service import (
     FULLBODY_ASPECT,
     FULLBODY_SIZE,
@@ -780,9 +782,13 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
                 },
             )
             return
-        name = str(parsed.get("name") or "").strip()[:64]
-        description = str(parsed.get("description") or "").strip()
-        if not name and not description:
+        name = parsed.get("name")
+        description = parsed.get("description")
+        if not isinstance(name, str) or not isinstance(description, str):
+            logger.warning("outfit description fields invalid", extra={"user_id": user_id, "outfit_id": outfit_id})
+            return
+        name, description = name.strip(), description.strip()
+        if not name or len(name) > 64 or not description or len(description) > 2000:
             logger.warning(
                 "outfit description output empty",
                 extra={"user_id": user_id, "outfit_id": outfit_id, "output_chars": len(raw)},

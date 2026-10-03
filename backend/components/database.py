@@ -20,6 +20,7 @@ ENGINE: AsyncEngine = create_async_engine(
     max_overflow=10,
     pool_recycle=3600,
     pool_pre_ping=True,
+    hide_parameters=True,
 )
 
 SESSION_LOCAL = async_sessionmaker(ENGINE, autoflush=False, expire_on_commit=False)

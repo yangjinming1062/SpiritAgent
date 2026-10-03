@@ -1,7 +1,6 @@
 """视频动作包编排：外观版本 → 动作片段处理 → 不可变包发布 → 激活；架构与入口见 generation/README.md。"""
 
 import asyncio
-import base64
 import contextlib
 import json
 import tempfile
@@ -12,7 +11,6 @@ from components import (
     SESSION_LOCAL,
     SETTINGS,
     TaskBag,
-    download_capped,
     get_logger,
     is_user_in_maintenance,
     safe_json_loads,
@@ -57,6 +55,8 @@ from services.infrastructure.assets import (
     action_pose_asset_path,
     action_source_asset_path,
     build_data_uri,
+    download_media_result,
+    image_mime_for_extension,
     save_action_pose_asset_async,
     save_action_source_asset_async,
     save_companion_asset_async,
@@ -211,15 +211,15 @@ def _source_ext(content_type: str) -> str:
 
 def _image_data_uri(path: Path) -> str:
     data = path.read_bytes()
-    mime = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}.get(sniff_media_ext(data) or "")
+    mime = image_mime_for_extension(sniff_media_ext(data) or "")
     if mime is None:
         raise VideoPackError("参考图格式无效")
-    return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+    return build_data_uri(data, mime)
 
 
 def _action_video_frame_uri(path: Path) -> str:
     data = action_frame_video_input(path.read_bytes())
-    return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+    return build_data_uri(data, "image/png")
 
 
 def _artifact_abs_path(stored: str) -> Path:
@@ -1613,7 +1613,7 @@ async def _run_action_attempt(
         await progress("download")
         if not state.result_url:
             raise VideoPackError("供应商未返回视频下载地址")
-        data = await download_capped(state.result_url, max_bytes=MAX_SOURCE_BYTES, timeout=180)
+        data = await download_media_result(state.result_url, max_bytes=MAX_SOURCE_BYTES, timeout=180)
         ext = sniff_media_ext(data)
         if ext not in _SOURCE_MEDIA_EXTS:
             raise VideoPackError("供应商返回了不支持的视频格式")

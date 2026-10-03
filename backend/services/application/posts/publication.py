@@ -30,7 +30,6 @@ from modules.companion import (
 )
 from modules.media import VideoGenJob
 from modules.settings import get_user_setting, load_user_settings
-from prompts.generation import SELF_VIDEO_KEEP_OUTFIT, SELF_VIDEO_REFERENCE_TEMPLATE
 from prompts.posts import POST_PUBLISH_INSTRUCTIONS, POST_REQUEST_CLASSIFICATION
 from sqlalchemy import select
 
@@ -38,6 +37,7 @@ from services.application.generation import (
     ImageGenerationError,
     apply_outfit_override,
     build_self_image_prompt,
+    build_self_video_prompt,
     enqueue_video_job,
     generate_character_images,
     generate_images,
@@ -70,6 +70,8 @@ from services.infrastructure.llm import (
     resolve_user_llm_config,
     synthesize_speech,
 )
+
+from .prompt_contract import render_post_instructions
 
 logger = get_logger(__name__)
 _BG = TaskBag("posts.publication")
@@ -192,7 +194,7 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
         raise PostError("模型配置不可用")
     raw = await call_llm_once(
         config,
-        resolve_prompt_text(POST_PUBLISH_INSTRUCTIONS, payload["output_language"]),
+        render_post_instructions(POST_PUBLISH_INSTRUCTIONS, payload["output_language"]),
         payload,
         json_output=True,
         max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
@@ -401,11 +403,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     prompt=prompt,
                     aspect_ratio=plan.aspect_ratio,
                 )
-                prompt = (
-                    SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt, outfit=SELF_VIDEO_KEEP_OUTFIT)
-                    + "\n"
-                    + render_character_identity(identity)
-                )
+                prompt = build_self_video_prompt(identity, prompt)
             async with SESSION_LOCAL() as db:
                 job = await enqueue_video_job(
                     db,

@@ -1,8 +1,5 @@
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
 from components import DEFAULT_LANGUAGE, resolve_prompt_text
 from modules.memory import Memory
-from modules.settings import get_user_setting, put_user_settings
 from prompts.memory import CONTEXT_LABELS, USER_PROFILE_LABELS_TEXTS
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,19 +59,3 @@ async def record_user_profile(db: AsyncSession, scope: MemoryScope, profile: dic
             continue
         ctx = CONTEXT_LABELS.get(user_key, f"user_profile:{user_key.removeprefix('user_')}")
         await upsert_slotted_memory(db, scope, ctx, val, _USER_PROFILE_TAGS_JSON, source=MemorySource("onboarding"))
-
-
-async def resolve_user_timezone(db: AsyncSession, user_id: int) -> str | None:
-    """读用户 IANA 时区；夜间批处理与互动统计按它做本地日聚合。"""
-    tz = await get_user_setting(db, user_id, "timezone")
-    return tz if isinstance(tz, str) and tz else None
-
-
-async def record_user_timezone(db: AsyncSession, user_id: int, tz: str) -> bool:
-    """校验并落盘时区；非法 IANA 名拒绝（返回 False），避免毒值让夜间窗口永远跳过。"""
-    try:
-        ZoneInfo(tz)
-    except (ZoneInfoNotFoundError, ValueError, KeyError):
-        return False
-    await put_user_settings(db, user_id, {"timezone": tz})
-    return True

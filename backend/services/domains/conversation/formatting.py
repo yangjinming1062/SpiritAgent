@@ -1,13 +1,13 @@
 import json
 
-from components import safe_json_loads
+from components import format_local_iso, safe_json_loads
 from modules.conversation import CompanionReply, CompanionReplyInput, MediaBubble, MediaBubbleInput, Message
-from sqlalchemy import ColumnElement, and_, case, cast, column, func, literal_column, select
+from sqlalchemy import ColumnElement, and_, case, cast, column, false, func, literal_column, select
 from sqlalchemy.dialects.postgresql import JSONB
 
 
 def message_contains_text(query: str) -> ColumnElement[bool]:
-    """逐泡匹配台词，解码 JSON 转义并排除演绎字段；多模态行只匹配文本部分，不扫描附件地址（旧版以 text 保存的多模态工具结果仍按原文匹配）。"""
+    """逐泡匹配台词，解码 JSON 转义并排除演绎字段；多模态行只匹配文本部分，不扫描附件地址，旧版工具结果数组同样只搜索文本部分。"""
     parts = (
         func.jsonb_array_elements(cast(Message.content, JSONB)).table_valued(column("value", JSONB)).render_derived()
     )
@@ -20,14 +20,26 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
         .correlate(Message)
         .exists()
     )
-    # IS JSON ARRAY 排除畸形与非数组内容，pg_input_is_valid 排除 JSONB 无法表示的 \u0000；二者都不报错，CASE 保证只有通过才执行强转，其余多模态行退回原文匹配。
+    legacy_parts = (
+        select(1)
+        .select_from(parts)
+        .where(parts.c.value["type"].astext.in_(("input_text", "input_image", "input_video")))
+        .correlate(Message)
+        .exists()
+    )
+    # IS JSON ARRAY 排除畸形与非数组内容，pg_input_is_valid 排除 JSONB 无法表示的 \u0000；二者都不报错，CASE 保证只有通过才执行强转，其余多模态行不按原文匹配。
     jsonb_array = and_(
         Message.content.op("IS JSON", is_comparison=True)(literal_column("ARRAY")),
         func.pg_input_is_valid(Message.content, "jsonb"),
     )
     return case(
-        (Message.content_type == "companion_reply", bubble_match),
+        (and_(Message.content_type == "companion_reply", jsonb_array), bubble_match),
         (and_(Message.content_type == "multimodal_v1", jsonb_array), text_part_match),
+        (
+            and_(Message.role == "tool", jsonb_array),
+            case((legacy_parts, text_part_match), else_=Message.content.icontains(query, autoescape=True)),
+        ),
+        (Message.content_type.in_(("companion_reply", "multimodal_v1")), false()),
         else_=Message.content.icontains(query, autoescape=True),
     )
 
@@ -69,7 +81,12 @@ def message_text(m: Message) -> str:
     return raw
 
 
-def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None) -> str:
+def format_messages_compact(
+    msgs: list[Message],
+    *,
+    char_cap: int | None = None,
+    user_local_tz: str | None = None,
+) -> str:
     """保留发言归属、时间、截断与工具关联；正文中的换行不能伪装成另一条发言。"""
     records = []
     for msg in msgs:
@@ -101,7 +118,11 @@ def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None)
             truncated = char_cap is not None and len(text) > char_cap
         record = {
             "role": msg.role,
-            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            "created_at": format_local_iso(msg.created_at, user_local_tz)
+            if user_local_tz is not None and msg.created_at
+            else msg.created_at.isoformat()
+            if msg.created_at
+            else None,
             "content": content,
             "truncated": truncated,
         }

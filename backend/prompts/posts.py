@@ -61,11 +61,11 @@ POST_PUBLISH_INSTRUCTIONS = {
         "只有 available_types 包含 audio 时才可提供 narration；它是可选的独立旁白，不要求画面人物与其对口型。\n\n"
         '决定不发时只输出 {"post":false}。发布时输出 '
         '{"post":true,"plan":{...}}。'
-        "plan 包含 content_type（text/image/video/audio）和 title（1–64字符），可有 body（最多500字符，文字动态必须非空）。"
-        "语音动态另外包含 text（最多800字符）；图片和视频另外包含 prompt（最多4000字符）"
-        "和 depicts_self（布尔值），可有 narration（最多800字符）。"
-        "只有图片使用 size：字符串1024x1024/1024x1792/1792x1024/1:1/16:9/4:3/3:2/2:3/3:4/9:16/21:9，默认1024x1024。"
-        "只有视频使用 duration（整数6或10秒，默认6）和 aspect_ratio（字符串16:9/9:16/1:1/4:3/3:4/21:9，默认16:9）。"
+        "plan 包含 content_type（{content_types}）和 title（{title_min}–{title_max}字符），可有 body（最多{body_max}字符，文字动态必须非空）。"
+        "语音动态另外包含 text（最多{text_max}字符）；图片和视频另外包含 prompt（最多{prompt_max}字符）"
+        "和 depicts_self（布尔值），可有 narration（最多{narration_max}字符）。"
+        "只有图片使用 size：字符串{image_sizes}，默认{default_size}。"
+        "只有视频使用 duration（整数{durations_zh}秒，默认{default_duration}）和 aspect_ratio（字符串{video_ratios}，默认{default_ratio}）。"
         "用户指定的图片画幅写入 size，视频画幅写入 aspect_ratio，视频时长写入 duration；未指定时才采用默认值。"
         "省略不适用于所选类型的字段；采用默认值的可选字段也可省略。"
         "只输出一个JSON对象，不加Markdown、解释或额外字段。"
@@ -101,13 +101,13 @@ POST_PUBLISH_INSTRUCTIONS = {
         "it is a separate voiceover, not lip sync.\n\n"
         'To decline, output only {"post":false}. To publish, output '
         '{"post":true,"plan":{...}}. '
-        "plan contains content_type (text/image/video/audio), title (1–64 characters), and optional body "
-        "(up to 500 characters, required and non-blank for text). Audio adds text (up to 800 characters). "
-        "Image and video add prompt (up to 4000 characters) and depicts_self (a boolean), and may include "
-        "narration (up to 800 characters). Only images use size, a string chosen from "
-        "1024x1024/1024x1792/1792x1024/1:1/16:9/4:3/3:2/2:3/3:4/9:16/21:9 (default 1024x1024). "
-        "Only videos use duration (integer 6 or 10 seconds, default 6) and aspect_ratio (a string chosen from "
-        "16:9/9:16/1:1/4:3/3:4/21:9, default 16:9). Put an explicitly requested image frame ratio in size, "
+        "plan contains content_type ({content_types}), title ({title_min}–{title_max} characters), and optional body "
+        "(up to {body_max} characters, required and non-blank for text). Audio adds text (up to {text_max} characters). "
+        "Image and video add prompt (up to {prompt_max} characters) and depicts_self (a boolean), and may include "
+        "narration (up to {narration_max} characters). Only images use size, a string chosen from "
+        "{image_sizes} (default {default_size}). "
+        "Only videos use duration (integer {durations_en} seconds, default {default_duration}) and aspect_ratio (a string chosen from "
+        "{video_ratios}, default {default_ratio}). Put an explicitly requested image frame ratio in size, "
         "video frame ratio in aspect_ratio, and video length in duration; use defaults only when unspecified. "
         "Omit fields that do not apply to the chosen type; optional fields using defaults may also be omitted. "
         "Output only one JSON object, without Markdown, "
@@ -125,7 +125,7 @@ POST_REPLY_INSTRUCTIONS = {
         f"{POST_CREATION_CONTEXT_GUIDANCE['zh']}"
         "自然承接目标评论和此前往来，避免重复复述、索要回应或施加关系压力。"
         "本轮只写评论；遇到操作请求时说明评论回复不能执行该操作，不声称本轮已经执行或许诺稍后自行处理。\n\n"
-        "使用 output_language，人设和评论的语言不覆盖它。通常10–60字，最多500字符（含标点和空格）。"
+        "使用 output_language，人设和评论的语言不覆盖它。通常10–60字，最多{comment_max}字符（含标点和空格）。"
         "只输出直接对用户说的回复正文，不加JSON、Markdown、角色前缀、动作旁白或解释。"
     ),
     "en": (
@@ -143,7 +143,7 @@ POST_REPLY_INSTRUCTIONS = {
         "only writes a comment. For an operational request, explain that a comment reply cannot perform "
         "the operation; do not claim to have performed it this turn or promise to handle it later.\n\n"
         "Use output_language regardless of the persona or comment language. Usually write one or two "
-        "sentences, within 500 characters including spaces and punctuation. Output only the direct reply "
+        "sentences, within {comment_max} characters including spaces and punctuation. Output only the direct reply "
         "text, without JSON, Markdown, speaker labels, action narration or explanation."
     ),
 }

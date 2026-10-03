@@ -69,7 +69,7 @@ def _chain_entry(
     base_url = base_url or default_base_url(provider, service_type)
     # 同一 MiniMax 卡片的端点含 /v1 供 chat SDK 使用；其余能力的请求路径自带版本前缀。
     if provider == "minimax" and service_type != ServiceType.llm:
-        base_url = base_url.removesuffix("/v1")
+        base_url = base_url.rstrip("/").removesuffix("/v1")
     if not base_url or provider not in providers_supporting(service_type):
         return None
     if not api_key and provider_requires_api_key(service_type, provider):
@@ -97,11 +97,23 @@ def _chain_from_ai_config(
         layers = [
             layer for layer in (card, sources.get(card.provider), inherited.get(card.provider)) if layer is not None
         ]
+        base_url = next((layer.base_url for layer in layers if layer.base_url), "")
+        if card.provider == "qwen" and not card.base_url:
+            # 共享卡片的两种标准 API 前缀按能力转换，代理主机和自定义前缀保持；能力显式覆盖不改写。
+            for suffix in ("/compatible-mode/v1", "/api/v1"):
+                if base_url.rstrip("/").endswith(suffix):
+                    target = (
+                        "/api/v1"
+                        if service_type in (ServiceType.tts, ServiceType.image_gen, ServiceType.video_gen)
+                        else "/compatible-mode/v1"
+                    )
+                    base_url = base_url.rstrip("/").removesuffix(suffix) + target
+                    break
         entry = _chain_entry(
             service_type,
             card.provider,
             api_key=next((layer.api_key for layer in layers if layer.api_key), ""),
-            base_url=next((layer.base_url for layer in layers if layer.base_url), ""),
+            base_url=base_url,
             model=card.model_name,
         )
         if entry is not None:

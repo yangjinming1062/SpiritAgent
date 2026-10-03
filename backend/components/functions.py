@@ -3,11 +3,11 @@ import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
 from .constants import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
+from .timezone import parse_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,16 @@ def safe_json_loads(text: str, default: Any = None) -> Any:
         return json.loads(text)
     except (TypeError, ValueError):
         return default
+
+
+def strip_outer_code_fence(raw: str) -> str:
+    """剥离最外层 ```...``` 包装；只匹配首个开 fence 与字符串末尾的闭 fence，避免破坏 JSON 内的 ``` 子串。"""
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        first_newline = cleaned.find("\n")
+        if first_newline != -1 and cleaned.endswith("```") and len(cleaned) > first_newline + 3:
+            cleaned = cleaned[first_newline + 1 : -3].strip()
+    return cleaned
 
 
 def parse_llm_json(text: str | None) -> Any:
@@ -82,10 +92,7 @@ def _safe_localize(dt: datetime | None, tz_str: str | None) -> datetime | None:
     if dt is None:
         return None
     dt = ensure_utc(dt)
-    try:
-        zone = ZoneInfo(tz_str) if tz_str else ZoneInfo("UTC")
-    except (OSError, ValueError, TypeError):
-        zone = ZoneInfo("UTC")
+    zone = parse_timezone(tz_str) or UTC
     return dt.astimezone(zone)
 
 

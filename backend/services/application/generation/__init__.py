@@ -1,5 +1,13 @@
 """生成应用流程：形象、外观、场景与媒体生成的生命周期编排。"""
 
+from .appearance_prompts import (
+    build_avatar_reference_prompt,
+    build_image_edit_prompt,
+    build_outfit_prompt,
+    describe_character_form,
+    describe_garment_image,
+    enhance_avatar_prompt,
+)
 from .avatar_service import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AvatarGenerationError,
@@ -124,17 +132,25 @@ from .video_jobs import (
 from .visual_identity import (
     apply_outfit_override,
     build_self_image_prompt,
+    build_self_video_prompt,
     load_self_visual_context,
     optional_outfit_image_reference,
     prepare_self_video_reference,
 )
 
 __all__ = [
+    "build_avatar_reference_prompt",
+    "build_image_edit_prompt",
+    "build_outfit_prompt",
+    "describe_character_form",
+    "describe_garment_image",
+    "enhance_avatar_prompt",
     "ImageBatch",
     "generate_chat_images",
     "inspect_chat_image",
     "regenerate_chat_image",
     "build_self_image_prompt",
+    "build_self_video_prompt",
     "SceneError",
     "SceneNotFoundError",
     "SceneStateError",

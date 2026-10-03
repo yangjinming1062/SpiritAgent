@@ -33,7 +33,6 @@ logger = get_logger(__name__)
 
 # 2% 容差覆盖 local 1792x1024 与 16:9 的差异，并拒绝 5:3。
 _SIZE_ASPECT_TOLERANCE = 0.02
-_IMAGE_MIME_BY_EXT = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
 
 
 class CharacterImageInput(BaseModel):
@@ -145,7 +144,7 @@ async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD
             raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
     else:
         data = await download_capped(path, max_bytes=max_bytes, timeout=360.0)
-        mime = _IMAGE_MIME_BY_EXT.get(asset_store.sniff_media_ext(data) or "", "image/jpeg")
+        mime = asset_store.image_mime_for_extension(asset_store.sniff_media_ext(data) or "") or "image/jpeg"
     if len(data) > max_bytes:
         raise ImageGenerationError("生成图片超过大小限制", can_fallback=True)
     return data, mime

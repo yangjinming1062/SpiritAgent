@@ -5,7 +5,6 @@ from collections.abc import Callable, Coroutine
 from datetime import date, datetime, timedelta
 from functools import partial
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import (
     SETTINGS,
@@ -16,6 +15,7 @@ from components import (
     end_user_request,
     get_logger,
     is_user_in_maintenance,
+    parse_timezone,
     resolve_language,
     resolve_prompt_text,
     session_scope,
@@ -47,7 +47,7 @@ from services.domains.companion import (
     note_outreach_throttle,
     queue_companion_intent,
 )
-from services.domains.memory import memory_review_backed_off, review_memories
+from services.domains.memory import list_memory_review_scopes, memory_review_backed_off, review_memories
 from services.infrastructure.desktop import MANAGER
 from services.infrastructure.event_store import run_outbox_gc
 from services.infrastructure.llm import resolve_user_llm_config
@@ -56,16 +56,17 @@ logger = get_logger(__name__)
 
 _BG = TaskBag("scheduler.cron")
 
-# 每个慢扫描的在飞 task：LLM 流水线可能比扫描间隔跑得更久，而 per-user 去重标记只在成功后才写——不挡住重入会让同一用户的流水线并行跑两遍。
+# 扫描只发现并提交工作；同名扫描与同域流水线各自单飞。
 _SCANS: dict[str, asyncio.Task] = {}
+_SCOPE_TASKS: dict[tuple[str, MemoryScope], asyncio.Task] = {}
 
-# per-user 最近一次记忆审核运行时间戳：进程本地——匹配 ARCHITECTURE「部署与运行时边界」（多 replica 会分裂状态）。
+# 每作用域最近一次成功审阅的时间戳：进程本地，遵守单进程部署边界。
 _LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
 
 # per-user 最近一次成功的 nightly pipeline 运行的目标本地日。
 _LAST_NIGHTLY_RUN: dict[MemoryScope, date] = {}
 
-# recall-pool 扫描本身的外层节流：扫描便宜（部分索引），但没用户符合时每分钟跑一次没意义。10 min 让发现延迟可控，由 per-user 6h 节流把重 LLM 调用频率压住。
+# 待审作用域每 10 分钟扫描；成功后按配置节流，失败由记忆域退避。
 _LAST_MEMORY_REVIEW_SCAN: float = 0.0
 _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS: int = 600
 
@@ -88,7 +89,7 @@ def invalidate_user_scheduler_state(user_id: int) -> None:
                 state.pop(scope, None)
 
 
-# 每个 tick 处理的到期 job 硬上限——限制批量 CAS 的语句大小和单 tick 工作量，避免长时间停摆后的回追（例如 60 分钟 ``* * * * *`` 调度，第一 tick 有 3600 个到期）。超出上限的 job 保留原 next_run_at，下一 tick 再触发。
+# 每个 tick 最多推进 200 个到期 job；按当前时间计算下一次，停摆期间不逐次回追。
 _MAX_DUE_PER_TICK = 200
 
 _SCHEDULER = BackgroundTask("scheduler.cron_loop")
@@ -109,7 +110,7 @@ def _log_task_error(name: str, task: asyncio.Task) -> None:
 
 
 def _spawn_scan(name: str, factory: Callable[[], Coroutine[Any, Any, None]]) -> None:
-    """把慢扫描移出 tick 关键路径——内部 await 多阶段 LLM 流水线，inline 会让本 tick 的 CAS 排在几分钟模型调用之后；同名扫描仍在飞则跳过本轮。"""
+    """扫描移出 tick 关键路径；同名扫描仍在飞则跳过本轮。"""
     running = _SCANS.get(name)
     if running is not None and not running.done():
         logger.warning("cron: scan still in flight, skipping", extra={"scan": name})
@@ -123,6 +124,28 @@ def _spawn_scan(name: str, factory: Callable[[], Coroutine[Any, Any, None]]) -> 
     task = asyncio.create_task(_scoped(), name=f"scheduler.{name}")
     _SCANS[name] = task
     _BG.add(task, on_error=partial(_log_task_error, name))
+
+
+def _spawn_scope_task(name: str, scope: MemoryScope, factory: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    """同域流水线单飞，任务由调度器与用户维护边界共同收敛。"""
+    key = (name, scope)
+    if (running := _SCOPE_TASKS.get(key)) is not None and not running.done():
+        return
+
+    async def _scoped() -> None:
+        begin_local_scope()
+        await factory()
+
+    task = asyncio.create_task(_scoped(), name=f"scheduler.{name}.{scope}")
+    _SCOPE_TASKS[key] = task
+
+    def _discard(completed: asyncio.Task) -> None:
+        if _SCOPE_TASKS.get(key) is completed:
+            _SCOPE_TASKS.pop(key, None)
+
+    task.add_done_callback(_discard)
+    _BG.add(task, on_error=partial(_log_task_error, f"{name}:{scope}"))
+    track_user_task(scope.user_id, task)
 
 
 async def _select_due_jobs() -> list[Row]:
@@ -150,7 +173,9 @@ async def _select_due_jobs() -> list[Row]:
                     CronJob.conversation_id,
                     CronJob.expires_at,
                 )
+                .join(User, User.id == CronJob.user_id)
                 .where(
+                    User.is_active.is_(True),
                     CronJob.is_paused.is_(False),
                     CronJob.next_run_at.is_not(None),
                     CronJob.next_run_at <= now,
@@ -169,11 +194,13 @@ async def _bulk_cas_advance(due_jobs: list[Row], now: datetime) -> list[Row]:
     won: set[int] = set()
 
     async with session_scope() as db:
-        await db.execute(
-            select(User.id)
-            .where(User.id.in_(sorted({job.user_id for job in due_jobs})))
-            .order_by(User.id)
-            .with_for_update(),
+        active_users = set(
+            await db.scalars(
+                select(User.id)
+                .where(User.id.in_(sorted({job.user_id for job in due_jobs})), User.is_active.is_(True))
+                .order_by(User.id)
+                .with_for_update(),
+            ),
         )
         # 内容或轨别修改未必改变调度游标；持有用户锁后核对快照，防止撤销的旧意图再次交接。
         current_jobs: dict[int, CronJob] = {
@@ -184,6 +211,7 @@ async def _bulk_cas_advance(due_jobs: list[Row], now: datetime) -> list[Row]:
             job
             for job in due_jobs
             if (current := current_jobs.get(job.id)) is not None
+            and job.user_id in active_users
             and not current.is_paused
             and all(getattr(current, key) == value for key, value in job._mapping.items())
         ]
@@ -406,6 +434,8 @@ async def _maybe_run_outbox_gc(now: datetime) -> None:
 async def _review_scope_memories(scope: MemoryScope) -> bool:
     """审阅一个作用域的记忆；没有可用 LLM 配置时只记录并跳过（返回 False），不算失败。"""
     async with session_scope() as db:
+        if not await db.scalar(select(User.is_active).where(User.id == scope.user_id)):
+            return False
         llm_config = await resolve_user_llm_config(db, scope.user_id)
     if not llm_config.is_configured:
         logger.info("memory_review: skipped, missing llm config", extra={"user_id": scope.user_id})
@@ -415,54 +445,27 @@ async def _review_scope_memories(scope: MemoryScope) -> bool:
 
 
 async def _maybe_run_memory_review(now: datetime) -> None:
-    """为有记忆或待审核消息的预设执行证据维护——外层按 _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS 节流，per-user 按 SETTINGS.memory_review_interval_seconds 节流，失败后的作用域在记忆域退避期内跳过，并发通过 gather 单 tick 只付最大 LLM 延迟。"""
+    """按域发现待审材料并独立提交；在途域不重复提交，不阻塞其他用户的后续扫描。"""
     global _LAST_MEMORY_REVIEW_SCAN
     if now.timestamp() - _LAST_MEMORY_REVIEW_SCAN < _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS:
         return
     _LAST_MEMORY_REVIEW_SCAN = now.timestamp()
 
     async with session_scope() as db:
-        rows = (
-            await db.execute(
-                text(
-                    "SELECT user_id, system_preset_id FROM memories WHERE context LIKE 'recall:%' AND status != 'forgotten' "
-                    "UNION SELECT c.user_id, c.system_preset_id FROM conversations c JOIN messages m ON m.conversation_id = c.id "
-                    "WHERE NOT c.is_automation AND c.parent_id IS NULL AND m.id > GREATEST(c.context_after_message_id, c.memory_reviewed_message_id) "
-                    "AND m.role IN ('user', 'assistant') AND m.subtype IS NULL",
-                ),
-            )
-        ).all()
-    eligible: list[MemoryScope] = []
-    for uid_raw, preset in rows:
-        uid = int(uid_raw)
-        scope = MemoryScope(uid, preset)
-        if is_user_in_maintenance(uid):
+        scopes = await list_memory_review_scopes(db)
+    for scope in scopes:
+        if is_user_in_maintenance(scope.user_id):
             continue
         if now.timestamp() - _LAST_MEMORY_REVIEW.get(scope, 0.0) < SETTINGS.memory_review_interval_seconds:
             continue
         if memory_review_backed_off(scope):
             continue
-        eligible.append(scope)
-    if not eligible:
-        return
+        _spawn_scope_task("memory_review", scope, partial(_run_memory_review, scope))
 
-    # 预设级节流只在维护成功之后才生效；失败后的重试间隔由记忆域退避控制，不把用户永久锁在尝试之外。
-    tasks = [asyncio.create_task(_review_scope_memories(scope), name=f"scheduler.memory.{scope}") for scope in eligible]
-    for scope, task in zip(eligible, tasks, strict=True):
-        track_user_task(scope.user_id, task)
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for scope, result in zip(eligible, results, strict=True):
-        uid = scope.user_id
-        if isinstance(result, BaseException):
-            # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
-            logger.error(
-                "memory_review: tick failed",
-                exc_info=result,
-                extra={"user_id": uid},
-            )
-            continue
-        if result:
-            _LAST_MEMORY_REVIEW[scope] = now.timestamp()
+
+async def _run_memory_review(scope: MemoryScope) -> None:
+    if await _review_scope_memories(scope):
+        _LAST_MEMORY_REVIEW[scope] = utc_now().timestamp()
 
 
 async def _maybe_run_autonomous_activity(now: datetime) -> None:
@@ -509,15 +512,16 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
             if is_user_in_maintenance(user_id):
                 continue
             scope = MemoryScope(user_id, preset)
-            try:
-                local_now = now.astimezone(ZoneInfo(decode_setting_value(timezone_name)))
-            except (ZoneInfoNotFoundError, ValueError, TypeError):
+            zone = parse_timezone(decode_setting_value(timezone_name))
+            if zone is None:
                 continue
+            local_now = now.astimezone(zone)
             recover = None
             for log in unfinished.get(scope, ()):
                 if log.target_date < local_now.date() - timedelta(days=1) or recover is not None:
-                    log.status = "completed_with_errors"
-                    log.summary = "已超过恢复窗口或有更新日期优先恢复，未确认动作不再重放"
+                    if log.status == "running":
+                        log.status = "completed_with_errors"
+                        log.summary = "已超过恢复窗口或有更新日期优先恢复，未确认动作不再重放"
                 else:
                     recover = log.target_date
             target = recover or local_now.date() - timedelta(days=1)
@@ -530,18 +534,16 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
                 continue
             eligible.append((scope, target))
         await db.commit()
-    tasks = [
-        asyncio.create_task(run_nightly_pipeline(scope, target), name=f"scheduler.nightly.{scope}.{target}")
-        for scope, target in eligible
-    ]
-    for (scope, _), task in zip(eligible, tasks, strict=True):
-        track_user_task(scope.user_id, task)
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for (scope, target), result in zip(eligible, results, strict=True):
-        if isinstance(result, BaseException):
-            logger.error("nightly_activity: tick failed", exc_info=result, extra={"scope": str(scope)})
-        elif result is True:
-            _LAST_NIGHTLY_RUN[scope] = target
+    for scope, target in eligible:
+        _spawn_scope_task("nightly_activity", scope, partial(_run_nightly_activity, scope, target))
+
+
+async def _run_nightly_activity(scope: MemoryScope, target: date) -> None:
+    async with session_scope() as db:
+        if not await db.scalar(select(User.is_active).where(User.id == scope.user_id)):
+            return
+    if await run_nightly_pipeline(scope, target) is True:
+        _LAST_NIGHTLY_RUN[scope] = target
 
 
 async def scheduler_loop() -> None:

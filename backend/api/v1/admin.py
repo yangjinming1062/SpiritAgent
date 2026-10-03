@@ -349,16 +349,24 @@ async def import_user_backup(
                     await ensure_system_conversations_for_user(db, user_id)
                 else:
                     await db.commit()
-            except (ValueError, OSError, KeyError, TypeError) as exc:
+            except (ValueError, OSError) as exc:
                 await db.rollback()
                 if restore_result is not None:
                     restore_result.rewriter.rollback()
-                reason = str(exc) if not isinstance(exc, OSError) else "目标存储不可用。"
-                raise HTTPException(status_code=400, detail=f"备份无效或文件无法恢复：{reason}") from exc
-            except BaseException:
+                logger.warning(
+                    "backup restore failed",
+                    extra={"user_id": user_id, "error_type": type(exc).__name__},
+                    exc_info=True,
+                )
+                if isinstance(exc, OSError):
+                    raise HTTPException(status_code=503, detail="目标存储暂时不可用，请稍后重试。") from exc
+                raise HTTPException(status_code=400, detail="备份数据无法写入目标账户，请核对恢复范围。") from exc
+            except BaseException as exc:
                 await db.rollback()
                 if restore_result is not None:
                     restore_result.rewriter.rollback()
+                if not isinstance(exc, asyncio.CancelledError):
+                    logger.exception("backup restore failed unexpectedly", extra={"user_id": user_id})
                 raise
 
     failed = [

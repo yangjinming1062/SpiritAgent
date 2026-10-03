@@ -1,9 +1,11 @@
 from .schemas import (
+    ChatAttachment,
     ChatMessageRequest,
     ChatRequest,
     CompletionResponse,
     DesktopConfigPutRequest,
     DesktopConfigResponse,
+    ImageAttachResponse,
     MessageResponse,
     PromptPresetListResponse,
     PromptPresetSummary,
@@ -12,11 +14,13 @@ from .schemas import (
 )
 
 __all__ = [
+    "ChatAttachment",
     "ChatMessageRequest",
     "ChatRequest",
     "CompletionResponse",
     "DesktopConfigPutRequest",
     "DesktopConfigResponse",
+    "ImageAttachResponse",
     "MessageResponse",
     "PromptPresetListResponse",
     "PromptPresetSummary",

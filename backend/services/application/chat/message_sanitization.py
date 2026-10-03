@@ -184,6 +184,7 @@ def truncate_responses_context(
             keep_start = min(keep_start, call_positions.get(item.get("call_id"), index))
 
     tail = items[keep_start:]
+    checkpoint_indices = set(context.get("checkpoint_indices", ()))
     current_start = _trailing_user_start(items)
     # 手动重试时工具结果排在原请求之后，按持久化来源保留原请求的长度预算和附件。
     current_indices = {
@@ -203,9 +204,19 @@ def truncate_responses_context(
         for index, item in enumerate(tail)
     ]
     if keep_start > 0:
-        anchor_index = next((index for index in range(keep_start - 1, -1, -1) if _is_user_anchor(items[index])), None)
-        anchor = items[anchor_index] if anchor_index is not None else None
-        removed = keep_start - (1 if anchor is not None else 0)
+        anchor_index = next(
+            (
+                index
+                for index in range(keep_start - 1, -1, -1)
+                if index not in checkpoint_indices and _is_user_anchor(items[index])
+            ),
+            None,
+        )
+        retained_indices = sorted(index for index in checkpoint_indices if index < keep_start)
+        if anchor_index is not None:
+            retained_indices.append(anchor_index)
+            retained_indices.sort()
+        removed = keep_start - len(retained_indices)
         marker = {
             "role": "user",
             "content": [
@@ -215,17 +226,14 @@ def truncate_responses_context(
                 },
             ],
         }
-        prefix = (
-            [
-                _normalize_older_response_item(
-                    anchor,
-                    replace_images=anchor_index not in current_indices,
-                    max_chars=current_chars if anchor_index in current_indices else _MAX_CHARS_PER_ITEM,
-                ),
-                marker,
-            ]
-            if anchor is not None
-            else [marker]
-        )
+        prefix = [
+            _normalize_older_response_item(
+                items[index],
+                replace_images=index not in current_indices,
+                max_chars=current_chars if index in current_indices else _MAX_CHARS_PER_ITEM,
+            )
+            for index in retained_indices
+        ]
+        prefix.append(marker)
         kept = prefix + kept
     return {"instructions": context["instructions"], "input": kept}

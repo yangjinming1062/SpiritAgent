@@ -14,17 +14,19 @@ from components import (
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     SETTINGS,
     download_capped,
-    get_file_path,
     get_logger,
-    save_file,
     session_scope,
 )
 from Crypto.Cipher import AES
 from modules.channels import ChannelBinding, ChannelDeliveryMedia, ChannelLoginStateResponse, ChannelPeer
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 
-from services.infrastructure.assets import parse_companion_asset_path, resolve_companion_asset_path
+from services.infrastructure.assets import (
+    build_data_uri,
+    resolve_asset_reference,
+    validate_image_bytes,
+)
 
 from ..base import ChannelAdapter, ChannelBindingSnapshot, ChannelError, InboundAttachment, InboundMessage
 from ..bridge import handle_inbound
@@ -166,56 +168,39 @@ def _split_text_and_media(item_list: list | None) -> tuple[str, list[_InboundMed
     return "\n".join(p for p in parts if p).strip(), media
 
 
-def _mime_for_kind(kind: str) -> tuple[str, str]:
-    if kind == "image":
-        return "image/jpeg", "jpg"
-    if kind == "voice":
-        return "audio/ogg", "ogg"
-    if kind == "video":
-        return "video/mp4", "mp4"
-    return "application/octet-stream", "bin"
-
-
 async def _materialize_inbound_attachments(
     binding_id: int,
-    user_id: int,
     media_descs: list[_InboundMedia],
 ) -> tuple[InboundAttachment, ...]:
-    """把 iLink 媒体项下载 + AES-ECB 解密 → temp-media 公网 URL → 转 InboundAttachment；单项失败跳过。"""
+    """仅下载、解密和校验图片，内联保存；语音转写与其他附件保留入站文字标记。"""
     out: list[InboundAttachment] = []
     for desc in media_descs:
+        if desc.kind != "image":
+            continue
         key = _decode_aes_key(desc.aes_key)
         if key is None:
             logger.warning("iLink media missing aes_key", extra={"binding": binding_id, "kind": desc.kind})
             continue
         try:
             ciphertext = await download_capped(desc.cdn_url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=30.0)
-        except (httpx.HTTPError, ValueError, RuntimeError) as e:
-            logger.warning("iLink media download failed", extra={"binding": binding_id, "error": str(e)})
+        except (httpx.HTTPError, ValueError, RuntimeError):
+            logger.warning("iLink media download failed", extra={"binding": binding_id})
             continue
         try:
             # 整文件解密是 CPU 密集操作，移出事件循环
             plaintext = await asyncio.to_thread(_aes_ecb_decrypt, ciphertext, key)
-        except Exception as e:
-            logger.warning("iLink media decrypt failed", extra={"binding": binding_id, "error": str(e)})
+            plaintext, content_type = await asyncio.to_thread(validate_image_bytes, plaintext)
+        except Exception:
+            logger.warning("iLink media decrypt or image validation failed", extra={"binding": binding_id})
             continue
-        content_type, ext = _mime_for_kind(desc.kind)
-        # 微信图片为 JPEG，ISO 媒体魔数识别；其他按 kind 推 MIME。
-        if plaintext[:3] == b"\xff\xd8\xff":
-            content_type = "image/jpeg"
-        elif plaintext[:8] == b"\x89PNG\r\n\x1a\n":
-            content_type, ext = "image/png", "png"
-        elif plaintext[:4] == b"GIF8":
-            content_type, ext = "image/gif", "gif"
-        _, public_url = await asyncio.to_thread(save_file, plaintext, content_type, ext, user_id=user_id)
-        out.append(
-            InboundAttachment(type="image" if desc.kind in ("image", "video", "voice") else "file", url=public_url),
-        )
+        out.append(InboundAttachment(type="image", url=build_data_uri(plaintext, content_type)))
     return tuple(out)
 
 
 class _WeixinCredentials(BaseModel):
     """channel_bindings.credentials 里持久化的 iLink 登录凭据，字段名即 JSON 键；读回时整体校验、未知键忽略，校验失败按无凭据处理，故服务端载荷写入前须先确认类型。"""
+
+    model_config = ConfigDict(strict=True)
 
     bot_token: str = Field(min_length=1)
     baseurl: str = DEFAULT_BASE_URL
@@ -289,18 +274,23 @@ class WeixinIlinkAdapter(ChannelAdapter):
         except httpx.TimeoutException:
             raise
         except httpx.HTTPError as e:
-            raise ChannelError(f"iLink transport error: {e}", fatal=False) from e
+            raise ChannelError("iLink transport error", fatal=False) from e
         if resp.status_code >= 500:
             raise ChannelError(f"iLink server error {resp.status_code}", fatal=False)
         if resp.status_code >= 400:
             raise ChannelError(f"iLink auth/request error {resp.status_code}", fatal=False)
-        data = resp.json() if resp.content else {}
+        try:
+            data = resp.json() if resp.content else {}
+        except ValueError as exc:
+            raise ChannelError("iLink returned invalid JSON", fatal=False) from exc
+        if not isinstance(data, dict):
+            raise ChannelError("iLink returned invalid response", fatal=False)
         ret = data.get("ret")
         errcode = data.get("errcode")
         if ret == SESSION_EXPIRED or errcode == SESSION_EXPIRED:
             raise IlinkSessionExpired()
         if (ret is not None and ret != 0) or (errcode is not None and errcode != 0):
-            raise ChannelError(f"iLink API error: {data.get('errmsg') or data}", fatal=False)
+            raise ChannelError("iLink API request failed", fatal=False)
         return data
 
     async def start_login(self) -> None:
@@ -309,7 +299,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         self._login_task = self.create_task(self._login_flow(), name=f"channels.weixin.login.{self.snapshot.id}")
 
     async def login_state(self) -> ChannelLoginStateResponse:
-        return self._login_state
+        return self._login_state.model_copy()
 
     async def _login_flow(self) -> None:
         """QR 登录状态机：取码 → 3s 轮询 wait→scaned→confirmed|expired（5 分钟总超时）。confirmed 返回 bot_token/baseurl/ilink_user_id，凭据与游标清零重建（旧 token/对端回复凭据全部失效），登录账号本人自动加入白名单（omp-wechat 同款语义）。"""
@@ -317,7 +307,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
             data = await self._request("GET", "ilink/bot/get_bot_qrcode", params={"bot_type": 3})
             qrcode = data.get("qrcode")
             qr_image = data.get("qrcode_img_content")
-            if not qrcode:
+            if not isinstance(qrcode, str) or not qrcode or (qr_image is not None and not isinstance(qr_image, str)):
                 self._login_state = ChannelLoginStateResponse(state="error")
                 return
             self._login_state = ChannelLoginStateResponse(state="wait", qr_image=qr_image or qrcode)
@@ -336,15 +326,22 @@ class WeixinIlinkAdapter(ChannelAdapter):
                     return
                 if status == "confirmed":
                     bot_token = data.get("bot_token")
-                    if not bot_token:
+                    if not isinstance(bot_token, str) or not bot_token:
                         self._login_state = ChannelLoginStateResponse(state="error")
                         return
-                    creds = _WeixinCredentials(
-                        bot_token=bot_token,
-                        baseurl=data.get("baseurl") or DEFAULT_BASE_URL,
-                        ilink_user_id=data.get("ilink_user_id") or "",
-                        ilink_bot_id=data.get("ilink_bot_id") or "",
-                    )
+                    try:
+                        creds = _WeixinCredentials.model_validate(
+                            {
+                                "bot_token": bot_token,
+                                "baseurl": data.get("baseurl") or DEFAULT_BASE_URL,
+                                "ilink_user_id": data.get("ilink_user_id") or "",
+                                "ilink_bot_id": data.get("ilink_bot_id") or "",
+                            },
+                        )
+                    except ValidationError:
+                        self._login_state = ChannelLoginStateResponse(state="error")
+                        logger.warning("weixin login returned invalid credentials", extra={"binding": self.snapshot.id})
+                        return
                     self._creds = creds
                     await self._persist_credentials()
                     await self._auto_allow_owner(creds.ilink_user_id)
@@ -406,7 +403,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
     async def run(self) -> None:
         while True:
             if not self.has_credentials():
-                # login_pending 已由守卫循环标记；等 REST 触发的登录流置位 gate。
+                # 等 REST 触发的登录流置位 gate。
                 await self._login_gate.wait()
                 continue
             try:
@@ -416,6 +413,12 @@ class WeixinIlinkAdapter(ChannelAdapter):
             except httpx.TimeoutException:
                 # 长轮询客户端超时（服务端 35s hold 临界抖动）：立即用同一游标重试。
                 continue
+            except ChannelError as exc:
+                if exc.fatal:
+                    raise
+                # 轮询可恢复错误只重试同实例与游标，保留在途回合、typing 和未送达回复。
+                logger.warning("iLink polling failed; retrying", extra={"binding": self.snapshot.id})
+                await asyncio.sleep(SETTINGS.channels_restart_backoff_seconds)
 
     async def aclose(self) -> None:
         await super().aclose()
@@ -460,9 +463,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
             msg_id=str(msg.get("new_msg_id") or msg.get("msg_id") or ""),
             context_token=token,
             fetch_attachments=(
-                partial(_materialize_inbound_attachments, self.snapshot.id, self.snapshot.user_id, media_descs)
-                if media_descs
-                else None
+                partial(_materialize_inbound_attachments, self.snapshot.id, media_descs) if media_descs else None
             ),
         )
         await handle_inbound(self, inbound)
@@ -536,23 +537,11 @@ class WeixinIlinkAdapter(ChannelAdapter):
     async def _upload_one(self, peer_id: str, media: ChannelDeliveryMedia) -> dict:
         """上传单个媒体：拉本地媒体字节 → AES 加密 → getuploadurl 拿 upload_full_url → POST 字节 → 返回 iLink image_item/video_item 段。"""
         url = media.url
-        if url.startswith("/api/media/files/"):
-            file_id = url.removeprefix("/api/media/files/")
-            stored = get_file_path(file_id)
-            if stored is None:
-                raise ChannelError(f"temp-media not found: {file_id}", fatal=False)
-            plain = await asyncio.to_thread(stored[0].read_bytes)
+        resolved = resolve_asset_reference(url)
+        if resolved is not None:
+            plain = await asyncio.to_thread(resolved[0].read_bytes)
         else:
-            # 回合媒体经 message.complete 帧到达时是客户端资产路径，补发行与后台任务产物是裸存储路径。
-            asset_path = url.split("?", 1)[0]
-            if asset_path.startswith("/api/companion/asset/"):
-                asset_path = "companion-assets/" + asset_path.removeprefix("/api/companion/asset/")
-            parsed = parse_companion_asset_path(asset_path)
-            resolved = resolve_companion_asset_path(*parsed) if parsed else None
-            if resolved is not None:
-                plain = await asyncio.to_thread(resolved[0].read_bytes)
-            else:
-                plain = await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=60.0)
+            plain = await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=60.0)
 
         # iLink 上传媒体类型编码：1=image 2=voice 3=video 4=file。
         ilink_kind = 1 if media.type == "image" else 3

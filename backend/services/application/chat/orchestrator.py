@@ -57,6 +57,7 @@ from .streaming import (
     _IncompleteResponseError,
     _InvalidCompanionReplyError,
     _LLMTurnResult,
+    _reply_repair_history,
 )
 from .system_prompt import build_companion_environment_prompt
 from .tool_dispatch import _ToolDispatchContext, matched_tool_names
@@ -66,6 +67,7 @@ from .turn_inputs import (
     load_memory_query_text,
     merge_session_settings,
     parse_temperature,
+    resolve_context_provider_chain,
     resolve_inference_settings,
     user_text_item,
 )
@@ -109,6 +111,7 @@ async def compress_session_history(
         model=inputs.model_name,
         temperature=_compression_temperature(inputs.provider_name, effective_settings),
         language=inputs.language,
+        context_length=inputs.ctx_length,
     )
     if info is None:
         return ManualCompressionResult(
@@ -280,6 +283,7 @@ async def run_chat_turn(
                     model=inputs.model_name,
                     temperature=_compression_temperature(inputs.provider_name, effective_settings),
                     language=inputs.language,
+                    context_length=inputs.ctx_length,
                 )
             except CompressionFailedError:
                 # 自动压缩失败不阻断本轮，按原上下文继续。
@@ -406,8 +410,16 @@ async def run_chat_turn(
                         logger.warning("Retrying final companion reply after format validation failed")
 
             try:
+                async with session_scope() as db:
+                    llm_chain = await resolve_context_provider_chain(
+                        db,
+                        user_id,
+                        _reply_repair_history(current_context["input"])
+                        if final_reply_only
+                        else current_context["input"],
+                    )
                 llm_result = await execute_with_fallback(
-                    inputs.llm_chain,
+                    llm_chain,
                     ChatProvider,
                     _call,
                     user_id=user_id,

@@ -243,6 +243,10 @@ class TTSProvider(BaseProvider):
 
     VOICE_DESIGN_GUIDE: ClassVar[str | None] = None  # None 不支持声纹设计；非空字符串表示支持并作为面向用户的撰写指引
 
+    def model_for_voice(self, voice: str) -> str:
+        """返回该音色实际使用的模型，供演绎配置与合成共同核对。"""
+        return self.config.model
+
     @abstractmethod
     async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
         """合成 MP3 音频。"""

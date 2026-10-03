@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.memory import rebuild_diary_indexes
 
 from .action_assets import restore_action_catalogs, validate_action_files
-from .file_packing import UrlRewriter, planned_asset_mapping, restore_files
+from .file_packing import UrlRewriter, planned_asset_mapping, referenced_backup_files, restore_files
 from .serializers import (
     ACTION_TABLES,
     ATOMIC_SECTION_GROUPS,
@@ -407,13 +407,24 @@ async def _clear_compatible_rows(
 ) -> tuple[dict[str, list[dict[str, Any]]], tuple[BackupImportFailure, ...]]:
     remaining = dict(compatible_rows)
     failures: list[BackupImportFailure] = []
+    # 动态与评论同组保护：保留的日记仍引用动态时，在任何清理前阻止两表覆盖。
+    if "companion_posts" in remaining and await _has_retained_dependent(
+        db,
+        "companion_posts",
+        target_user_id,
+        remaining,
+    ):
+        for table in ("companion_posts", "companion_post_comments"):
+            records = remaining.pop(table, None)
+            if records is not None:
+                failures.append(BackupImportFailure(table, len(records), "目标已有日记仍关联动态，无法单独覆盖动态。"))
     if ACTION_TABLES.issubset(remaining):
         action_failure = None
         for parent, field in (("avatar_assets", "avatar_id"), ("companion_outfits", "outfit_id")):
-            if any(row.get(field) is not None for row in remaining["companion_action_packs"]) and (
-                await _has_retained_dependent(db, parent, target_user_id, remaining)
-            ):
-                action_failure = "视频资产引用的身份或外观无法安全覆盖。"
+            if (
+                parent in remaining or any(row.get(field) is not None for row in remaining["companion_action_packs"])
+            ) and (await _has_retained_dependent(db, parent, target_user_id, remaining)):
+                action_failure = "动作包引用的身份或外观无法安全覆盖。"
                 break
         if action_failure is None:
             try:
@@ -426,7 +437,7 @@ async def _clear_compatible_rows(
                     extra={"target_user_id": target_user_id},
                     exc_info=True,
                 )
-                action_failure = "现有视频资产仍被其他内容引用，无法覆盖。"
+                action_failure = "现有动作包仍被其他内容引用，无法覆盖。"
         if action_failure is not None:
             for table in TABLES:
                 if table in ACTION_TABLES:
@@ -541,6 +552,7 @@ async def _copy_backup_files(
     rewriter: UrlRewriter,
     *,
     conversations: dict[str, int | str],
+    referenced_files: frozenset[str],
     include_conversation_files: bool,
 ) -> int:
     """线程复制备份文件；取消时通知线程停止并等其退出，调用方回滚时 rewriter.created 才完整。"""
@@ -554,6 +566,7 @@ async def _copy_backup_files(
             rewriter,
             stop,
             conversations=conversations,
+            referenced_files=referenced_files,
             include_conversation_files=include_conversation_files,
         ),
     )
@@ -618,6 +631,7 @@ async def restore_backup_rows(
             target_user_id,
             rewriter,
             conversations=id_map.get("conversations", {}),
+            referenced_files=await asyncio.to_thread(referenced_backup_files, extract_root, compatible_rows),
             include_conversation_files=conversation_files_in_scope,
         )
         if skipped_conversation_files:

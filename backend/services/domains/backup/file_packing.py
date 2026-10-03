@@ -134,6 +134,25 @@ def planned_asset_mapping(extract_root: Path, source_uid: int, target_uid: int) 
     return mapping
 
 
+def referenced_backup_files(extract_root: Path, rows: dict[str, list[dict[str, Any]]]) -> frozenset[str]:
+    """仅选通过恢复校验的数据行引用的文件；临时媒体的 payload 与元数据成对选择。"""
+    references = {_storage_path(value) for value in _strings(rows)}
+    temp_ids = {
+        PurePosixPath(path).stem for path in references if path.startswith(("temp-media/", "/api/media/files/"))
+    }
+    source_root = extract_root / "files"
+    return frozenset(
+        relative.as_posix()
+        for source in source_root.rglob("*")
+        if source.is_file()
+        and (
+            (relative := PurePosixPath(source.relative_to(source_root).as_posix())).as_posix() in references
+            or relative.parts[0] == "temp-media"
+            and relative.stem in temp_ids
+        )
+    )
+
+
 def _ensure_running(stop: threading.Event) -> None:
     if stop.is_set():
         raise InterruptedError("Backup restore was cancelled")
@@ -147,6 +166,7 @@ def restore_files(
     stop: threading.Event,
     *,
     conversations: dict[str, int | str],
+    referenced_files: frozenset[str],
     include_conversation_files: bool = True,
 ) -> int:
     """复制备份文件，映射与新建文件记入调用方持有的 rewriter，返回因会话缺失而跳过的附件数；stop 置位后中止。"""
@@ -160,6 +180,8 @@ def restore_files(
             if not source.is_file():
                 continue
             relative = PurePosixPath(source.relative_to(source_root).as_posix())
+            if relative.as_posix() not in referenced_files:
+                continue
             parts = relative.parts
             user_asset = _user_asset_target(relative, source_uid, target_uid)
             if user_asset is not None:

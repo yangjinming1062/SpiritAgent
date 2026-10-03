@@ -196,14 +196,14 @@ function mergeComments(old: PostCommentEntry[], incoming: PostCommentEntry[]): P
   for (const c of incoming) {
     const previous = map.get(c.id)
 
-    if (!previous || c.updatedAt >= previous.updatedAt) {
+    if (!previous || Date.parse(c.updatedAt) >= Date.parse(previous.updatedAt)) {
       map.set(c.id, c)
     }
   }
 
   return [...map.values()]
     .filter(c => !deletedComments.has(c.id))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id))
 }
 
 function upsertPosts(wires: PostWire[]): void {

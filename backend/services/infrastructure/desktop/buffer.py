@@ -66,6 +66,10 @@ class ReplayBuffer:
             count += 1
         return count
 
+    def discard(self, seq: int) -> None:
+        """删除未受理的帧；序号空洞要求客户端恢复完整状态。"""
+        self._buffer.pop(seq, None)
+
     def replay_since(self, last_seq: int) -> list[BufferedFrame] | None:
         """返回 seq > last_seq 的所有帧；last_seq 之后已有帧被裁剪或序号失同步时返回 None，调用方走完整状态同步。"""
         self._prune(time.monotonic())
@@ -74,9 +78,10 @@ class ReplayBuffer:
             return None
         if last_seq == self._current_seq:
             return []
-        if not self._buffer or next(iter(self._buffer)) > last_seq + 1:
+        frames = [f for f in self._buffer.values() if f.seq > last_seq]
+        if len(frames) != self._current_seq - last_seq:
             return None
-        return [f for f in self._buffer.values() if f.seq > last_seq]
+        return frames
 
     def _prune(self, now: float) -> None:
         """裁剪超过 TTL 或超出容量的帧。"""

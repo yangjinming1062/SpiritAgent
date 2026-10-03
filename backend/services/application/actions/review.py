@@ -27,7 +27,7 @@ from services.domains.actions import (
     list_pack_actions,
 )
 from services.domains.companion import render_character_profile
-from services.infrastructure.assets import build_data_uri, sniff_media_ext
+from services.infrastructure.assets import build_data_uri, image_mime_for_extension, sniff_media_ext
 from services.infrastructure.llm import vision_chat
 
 from .design import action_key_from_name
@@ -166,12 +166,10 @@ async def review_proposal(proposal_id: int, user_id: int) -> ReviewOutcome | Non
         payload = await _review_payload(db, proposal, pack)
 
     reference_bytes = await asyncio.to_thread(reference_path.read_bytes)
-    mime = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}.get(
-        sniff_media_ext(reference_bytes) or "",
-    )
+    mime = image_mime_for_extension(sniff_media_ext(reference_bytes) or "")
     if mime is None:
         raise ValueError("动作评审参考图格式无效")
-    verdict = await _request_verdict(user_id, payload, build_data_uri(reference_bytes, mime))
+    verdict = await _request_verdict(user_id, payload, await asyncio.to_thread(build_data_uri, reference_bytes, mime))
 
     async with SESSION_LOCAL() as db:
         if (proposal := await _reviewable_proposal(db, proposal_id, user_id)) is None:

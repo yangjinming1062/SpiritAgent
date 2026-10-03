@@ -6,7 +6,7 @@ from .._provider_errors import raise_for_provider_response
 from ..base import ProviderConfig, TTSProvider, TTSResult, pick_catalog_voice
 from ..http import get_http
 
-# xAI 已发布内置音色目录的子集（https://docs.x.ai/docs/rest-api-reference/inference/voice — GET /v1/tts/voices）；按性别/音色分桶每桶取一条；运行时若配置了 API key 可向运行端点扩展。
+# xAI 内置音色目录的本地子集；合成仅消费下方目录。
 _GROK_VOICES: tuple[tuple[str, str, str], ...] = (
     ("eve", "Eve", "female"),  # docs default
     ("ara", "Ara", "female"),

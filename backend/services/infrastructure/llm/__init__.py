@@ -21,15 +21,10 @@ from .llm_client import (
 from .llm_fallback import execute_with_fallback
 from .llm_retry import call_with_retry
 from .prompt_engineer import (
+    IncompleteLlmResponseError,
     VisualReasoningError,
-    build_avatar_reference_prompt,
-    build_image_edit_prompt,
-    build_outfit_prompt,
     call_llm_once,
     chat,
-    describe_character_form,
-    describe_garment_image,
-    enhance_avatar_prompt,
     vision_chat,
 )
 from .providers import (
@@ -89,6 +84,7 @@ __all__ = [
     "ImageGenProvider",
     "ImageGenRequest",
     "ImageGenResult",
+    "IncompleteLlmResponseError",
     "LLMRuntimeError",
     "MissingLlmConfigError",
     "MissingVideoModelError",
@@ -105,9 +101,6 @@ __all__ = [
     "VoiceDesignResult",
     "aclose_all",
     "approx_responses_tokens",
-    "build_avatar_reference_prompt",
-    "build_image_edit_prompt",
-    "build_outfit_prompt",
     "build_provider",
     "build_responses_kwargs",
     "call_llm_once",
@@ -115,9 +108,6 @@ __all__ = [
     "chat",
     "classify_api_error",
     "client_for_config",
-    "describe_character_form",
-    "describe_garment_image",
-    "enhance_avatar_prompt",
     "execute_with_fallback",
     "generate_embedding",
     "generate_embeddings",

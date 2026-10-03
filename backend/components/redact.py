@@ -1,4 +1,3 @@
-import os
 import re
 from collections.abc import Callable
 
@@ -29,9 +28,6 @@ _SENSITIVE_QUERY_PARAMS = frozenset(
         "x-amz-signature",
     },
 )
-
-# 导入时快照，避免运行时改 env（甚至 LLM 注入的 `export SPIRITAGENT_REDACT_SECRETS=false`）中途关闭脱敏。
-_REDACT_ENABLED = os.getenv("SPIRITAGENT_REDACT_SECRETS", "true").lower() in {"1", "true", "yes", "on"}
 
 _PREFIX_PATTERNS = [
     r"sk-[A-Za-z0-9_-]{10,}",  # OpenAI / OpenRouter / Anthropic
@@ -208,8 +204,6 @@ def redact_sensitive_text(text: str | None) -> str | None:
     if not isinstance(text, str):
         text = str(text)
     if not text:
-        return text
-    if not _REDACT_ENABLED:
         return text
 
     if _has_known_prefix_substring(text):

@@ -106,13 +106,16 @@ class MiMoTTSProvider(TTSProvider):
         super().__init__(config)
         self._client = get_async_client(config.api_key, config.base_url)
 
+    def model_for_voice(self, voice: str) -> str:
+        return VOICEDESIGN_MODEL if voice.startswith(VOICEDESIGN_PREFIX) else self.config.model
+
     def _request_parts(
         self,
         text: str,
         voice: str,
         speech_style: SpeechStyle | None,
     ) -> tuple[str, list[dict], dict, str]:
-        model = VOICEDESIGN_MODEL if voice.startswith(VOICEDESIGN_PREFIX) else self.config.model
+        model = self.model_for_voice(voice)
         instruction = ""
         if isinstance(speech_style, MiMoSpeechStyle) and speech_style_matches(speech_style, self.provider_name, model):
             direction = speech_style.direction

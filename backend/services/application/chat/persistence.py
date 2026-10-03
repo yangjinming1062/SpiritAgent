@@ -14,7 +14,7 @@ from components import (
     track_user_task,
 )
 from modules.conversation import Conversation, MediaBubble, Message
-from modules.system import ChatMessageRequest
+from modules.system import ChatAttachment, ChatMessageRequest
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,16 +76,14 @@ def _tool_result_row(content: Any) -> tuple[str, Literal["text", "multimodal_v1"
     return text, "multimodal_v1" if isinstance(content, list) else "text"
 
 
-def _build_persisted_content(text: str, attachments: list[dict] | None) -> tuple[str, str]:
+def _build_persisted_content(text: str, attachments: list[ChatAttachment] | None) -> tuple[str, str]:
     """纯文本返回 ``(text, "text")``；有附件时返回 ``multimodal_v1`` 的 Responses 形状 parts 数组 JSON。"""
     if not attachments:
         return text, "text"
     parts = [{"type": "input_text", "text": text}]
     for att in attachments:
-        url = att.get("file_url")
-        if not url:
-            continue
-        if att.get("type") == ATTACHMENT_TYPE_VIDEO:
+        url = att.file_url
+        if att.type == ATTACHMENT_TYPE_VIDEO:
             parts.append({"type": "input_video", "video_url": url})
         else:
             parts.append({"type": "input_image", "image_url": url})
@@ -115,7 +113,7 @@ async def persist_queued_inbound_message(
     conv_id: int,
     *,
     text: str,
-    attachments: list[dict] | None = None,
+    attachments: list[ChatAttachment] | None = None,
     dedup_key: str | None = None,
 ) -> Message | None:
     """IM 入站消息先持久化再确认接收：queued 落为会话行。接收顺序即行 id 序，回合消费时整批清标记；dedup_key 命中已有行时返回 None，调用方不再入队。"""

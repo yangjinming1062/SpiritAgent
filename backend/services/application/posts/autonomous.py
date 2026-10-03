@@ -10,6 +10,8 @@ from modules.auth import User
 from modules.companion import Persona
 from sqlalchemy import select
 
+from services.domains.posts import PostBlockedError
+
 from .publication import available_types, request_publication, resume_publications
 from .replies import resume_replies
 
@@ -60,6 +62,8 @@ async def _decide(user_id: int) -> None:
             trigger="autonomous",
             intent="结合此刻的生活和心情，决定是否有值得分享的新动态。",
         )
+    except PostBlockedError:
+        logger.info("Autonomous post skipped by policy or quota", extra={"user_id": user_id})
     except Exception:
         logger.warning("Autonomous post decision failed", extra={"user_id": user_id}, exc_info=True)
 

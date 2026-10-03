@@ -259,7 +259,15 @@ class JsonRpcDispatcher:
         session_id: str | None = None,
         event_id: int | None = None,
     ) -> bool:
-        """事件帧入缓冲并交给 writer；返回 False 表示队列满或 writer 未运行时同步发送失败。"""
+        """事件帧入缓冲并交给 writer；返回 False 的帧不得在重连时补发。"""
+        writer_running = self._writer_task is not None and not self._writer_task.done()
+        # 判定到入队之间没有 await，拒绝的 tool.call 不分配序号、不进入重放缓冲。
+        if not self._hold_events and writer_running and self._outbox.full():
+            logger.warning(
+                "outbox writer queue full, rejecting event",
+                extra={"event_type": event_type, "queue_size": self._outbox.qsize()},
+            )
+            return False
         params: dict[str, Any] = {"type": event_type}
         if session_id is not None:
             params["session_id"] = session_id
@@ -272,21 +280,15 @@ class JsonRpcDispatcher:
         if self._hold_events:
             return True
 
-        if self._writer_task is not None and not self._writer_task.done():
-            try:
-                self._outbox.put_nowait((seq, frame))
-                return True
-            except asyncio.QueueFull:
-                logger.warning(
-                    "outbox writer queue full, dropping event",
-                    extra={"event_type": event_type, "seq": seq, "queue_size": self._outbox.qsize()},
-                )
-                self._pending_outbox_events.pop(seq, None)
-                return False
+        if writer_running:
+            self._outbox.put_nowait((seq, frame))
+            return True
 
         # writer 未运行（注销后仍被在途任务引用）：同步发送
         async with self._send_lock:
             if not await self._send(frame):
+                self.replay_buffer.discard(seq)
+                self._pending_outbox_events.pop(seq, None)
                 return False
             self.replay_buffer.mark_sent_through(seq)
             self._record_delivered(seq)

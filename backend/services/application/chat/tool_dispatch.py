@@ -157,8 +157,13 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
         parsed_args = parse_tool_call_arguments(tc["arguments"], name)
         if parsed_args is None:
             # 参数无法解析时不派发：以失败结果告知模型，并计入守卫，重复失败能得到换策略提示。
-            result_str = ctx.guardrails.after_call(name, {}, tool_error(_INVALID_ARGUMENTS_ERROR))
-            return make_tool_result_message(name, _redact_tool_payload(result_str), tc["call_id"])
+            result_str = tool_error(_INVALID_ARGUMENTS_ERROR)
+            return make_tool_result_message(
+                name,
+                _redact_tool_payload(result_str),
+                tc["call_id"],
+                trusted_suffix=ctx.guardrails.record_call(name, {}, result_str),
+            )
         args = coerce_tool_args(name, parsed_args, REGISTRY.get_schema(ctx.user_id, name))
         # 在入口处统一剥离保留键，使 backend / memory / runner 三类工具都受同一过滤。
         args = {k: v for k, v in args.items() if k not in RESERVED_KEYS}
@@ -209,13 +214,13 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
             case _:
                 result_str = tool_error(f"Unknown tool location for {name}")
 
-        result_str = ctx.guardrails.after_call(name, args, result_str)
+        trusted_suffix = ctx.guardrails.record_call(name, args, result_str)
 
         if file_mutation_result_landed(name, result_str):
-            result_str += "\n[System: The file write/patch operation successfully landed.]"
+            trusted_suffix += "\n[System: The file write/patch operation successfully landed.]"
 
         final_content = _redact_tool_payload(result_str)
-        return make_tool_result_message(name, final_content, tc["call_id"])
+        return make_tool_result_message(name, final_content, tc["call_id"], trusted_suffix=trusted_suffix)
     finally:
         await ctx.emitter.send_json({"type": "tool_end", "name": name, "call_id": tc["call_id"]})
 

@@ -6,10 +6,9 @@ from components import SESSION_LOCAL
 from modules.media import SpeechStyle
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .llm_client import MissingLlmConfigError, resolve_provider_chain
+from .llm_client import MissingLlmConfigError, build_provider, resolve_provider_chain
 from .llm_fallback import execute_with_fallback
 from .providers import ProviderConfig, ServiceType, TTSProvider, TTSResult
-from .providers.mimo.tts import VOICEDESIGN_MODEL, VOICEDESIGN_PREFIX
 from .voice_catalog import pick_voice_id, voices_for_provider
 
 
@@ -44,10 +43,8 @@ def _route_selected_voice(
 
 
 def _with_voice_model(config: ProviderConfig, voice_id: str) -> ProviderConfig:
-    """MiMo 声纹设计音色须用声纹设计模型合成。"""
-    if config.provider_name == "mimo" and voice_id.startswith(VOICEDESIGN_PREFIX):
-        return replace(config, model=VOICEDESIGN_MODEL)
-    return config
+    model = build_provider(config, TTSProvider).model_for_voice(voice_id)
+    return replace(config, model=model) if model != config.model else config
 
 
 async def resolve_reply_voice(
@@ -79,11 +76,15 @@ async def synthesize_speech(
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, ServiceType.tts)
     if not chain:
+        if preserve_performance:
+            raise ValueError("Voice message TTS configuration is no longer available")
         raise MissingLlmConfigError()
     if preserve_performance:
         if speech_style is None:
             raise ValueError("Voice message requires speech performance")
         chain = [config for config in chain if config.provider_name == speech_style.provider]
+        if not chain:
+            raise ValueError("Voice message TTS configuration is no longer available")
     voice, chain, selected_provider = _route_selected_voice(voice, chain, language)
     if not chain:
         raise MissingLlmConfigError(f"no TTS provider supports language {language!r}")

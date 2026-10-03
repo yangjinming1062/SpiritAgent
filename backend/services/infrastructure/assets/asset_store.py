@@ -8,9 +8,9 @@ import secrets
 import shutil
 import time
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode, urlsplit
 
-from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SETTINGS, get_logger
+from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SETTINGS, get_file_path, get_logger
 from PIL import Image
 
 logger = get_logger(__name__)
@@ -43,6 +43,56 @@ _IMAGE_MIME_BY_FORMAT: dict[str, str] = {
     "WEBP": "image/webp",
     "GIF": "image/gif",
 }
+
+
+_IMAGE_MIME_BY_EXTENSION = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "gif": "image/gif",
+}
+
+
+def image_mime_for_extension(extension: str) -> str | None:
+    return _IMAGE_MIME_BY_EXTENSION.get(extension.lower().lstrip("."))
+
+
+def normalize_asset_reference(reference: str | None) -> str:
+    """将响应资产／草稿 URL 还原为校验后的裸路径；非本服务资产返回空串。"""
+    if not reference:
+        return ""
+    try:
+        path = unquote(urlsplit(reference.strip()).path)
+    except ValueError:
+        return ""
+    for prefix, bare in (("/api/media/files/", "temp-media/"), ("/api/companion/asset/", "companion-assets/")):
+        if path.startswith(prefix):
+            path = bare + path.removeprefix(prefix)
+            break
+    if path.startswith("temp-media/"):
+        name = path.removeprefix("temp-media/")
+        return path if name and "/" not in name and "\\" not in name and ".." not in name and "\x00" not in name else ""
+    return path if parse_companion_asset_path(path) is not None else ""
+
+
+def resolve_asset_reference(reference: str | None) -> tuple[Path, str] | None:
+    bare = normalize_asset_reference(reference)
+    if bare.startswith("temp-media/"):
+        return get_file_path(bare.removeprefix("temp-media/"))
+    parsed = parse_companion_asset_path(bare)
+    return resolve_companion_asset_path(*parsed) if parsed is not None else None
+
+
+def read_asset_data_uri(reference: str | None) -> str | None:
+    """在工作线程中读取并编码图片；不可读或非图像资产返回 None。"""
+    resolved = resolve_asset_reference(reference)
+    if resolved is None or not resolved[1].startswith("image/"):
+        return None
+    try:
+        return build_data_uri(resolved[0].read_bytes(), resolved[1])
+    except OSError:
+        return None
 
 
 class UnsupportedImageFormatError(ValueError):
@@ -128,11 +178,14 @@ async def save_companion_asset_async(data: bytes, *, user_id: int, label: str, e
         raise
 
 
-def video_job_asset_path(user_id: int, job_id: int, attempt: int) -> str:
+def video_job_asset_path(user_id: int, job_id: int, attempt: int, *, generation_id: str | None = None) -> str:
     """视频任务每次已知提交对应唯一落盘位置，供崩溃后按任务恢复。"""
     if user_id <= 0 or job_id <= 0 or attempt < 0:
         raise ValueError("invalid video job asset key")
-    return f"companion-assets/{user_id}/chat_video_job_{job_id}_a{attempt}.mp4"
+    if generation_id is not None and not _is_generation_id(generation_id):
+        raise ValueError("invalid video generation ID")
+    suffix = f"_{generation_id}" if generation_id else ""
+    return f"companion-assets/{user_id}/chat_video_job_{job_id}{suffix}_a{attempt}.mp4"
 
 
 def _save_generation_asset(data: bytes, user_id: int, bare_path: str) -> str:
@@ -156,8 +209,19 @@ async def _save_generation_asset_async(data: bytes, user_id: int, bare_path: str
         raise
 
 
-async def save_video_job_asset_async(data: bytes, *, user_id: int, job_id: int, attempt: int) -> str:
-    return await _save_generation_asset_async(data, user_id, video_job_asset_path(user_id, job_id, attempt))
+async def save_video_job_asset_async(
+    data: bytes,
+    *,
+    user_id: int,
+    job_id: int,
+    attempt: int,
+    generation_id: str | None = None,
+) -> str:
+    return await _save_generation_asset_async(
+        data,
+        user_id,
+        video_job_asset_path(user_id, job_id, attempt, generation_id=generation_id),
+    )
 
 
 def _is_generation_id(value: str) -> bool:
@@ -242,6 +306,8 @@ def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str
         "jpeg": "image/jpeg",
         "webp": "image/webp",
         "gif": "image/gif",
+        "json": "application/json",
+        "mkv": "video/x-matroska",
         "mp4": "video/mp4",
         "webm": "video/webm",
         "mov": "video/quicktime",
@@ -260,10 +326,18 @@ def parse_companion_asset_path(storage_path: str | None) -> tuple[int, str] | No
     if not storage_path or not storage_path.startswith("companion-assets/"):
         return None
     parts = storage_path.split("/", 2)
-    if len(parts) != 3 or "/" in parts[2] or "\\" in parts[2]:
+    if (
+        len(parts) != 3
+        or not parts[2]
+        or parts[2] in {".", ".."}
+        or "/" in parts[2]
+        or "\\" in parts[2]
+        or "\x00" in storage_path
+    ):
         return None
     try:
-        return int(parts[1]), parts[2]
+        user_id = int(parts[1])
+        return (user_id, parts[2]) if user_id > 0 and str(user_id) == parts[1] else None
     except ValueError:
         return None
 

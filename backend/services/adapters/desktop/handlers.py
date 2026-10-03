@@ -7,6 +7,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, TypeGuard
+from weakref import WeakValueDictionary
 
 from components import (
     ATTACHMENT_DATA_URL_MAX_CHARS,
@@ -18,6 +19,7 @@ from components import (
     JSONRPC_SLASH_BUSY,
     JSONRPC_SLASH_CONFIRM_REQUIRED,
     JSONRPC_SLASH_GENERIC,
+    JSONRPC_TURN_BUSY,
     MAX_VOICE_DESIGN_PROMPT_CHARS,
     REQUEST_ID_HEADER,
     SESSION_HISTORY_PRE_BUFFER,
@@ -30,14 +32,20 @@ from components import (
     coerce_non_negative_float,
     get_logger,
     is_user_in_maintenance,
-    path_attach_ref,
 )
 from fastapi import WebSocket, WebSocketDisconnect
 from modules.auth import ChatRequestClientContext
-from modules.companion import ActionPlayRequest, CompanionSignal
+from modules.companion import ActionPlayRequest, AvatarGenerateRequest, CompanionSignal
 from modules.conversation import Conversation, Message
-from modules.settings import load_user_settings
-from modules.system import ChatMessageRequest, ChatRequest, PromptPresetListResponse, PromptPresetSummary
+from modules.settings import load_user_settings, record_user_timezone
+from modules.system import (
+    ChatAttachment,
+    ChatMessageRequest,
+    ChatRequest,
+    ImageAttachResponse,
+    PromptPresetListResponse,
+    PromptPresetSummary,
+)
 from modules.ws import COMPANION_TURN_EVENT
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select
@@ -113,7 +121,6 @@ from services.domains.memory import (
     list_memories,
     memory_counts,
     normalize_recall_context,
-    record_user_timezone,
     update_memory,
 )
 from services.infrastructure.desktop import MANAGER, JsonRpcDispatcher, JsonRpcError, discard_user, resolve_future
@@ -224,17 +231,17 @@ _last_should_act_ts: dict[int, float] = {}
 _VOICE_PREVIEW_TEXT_MAX_CHARS = MAX_VOICE_DESIGN_PROMPT_CHARS
 
 # 会话级锁串行化修改历史的操作（提交、清空、压缩、撤回）：防止双击 / 多窗口并发写出重复状态行或与在途回合交错。
-_conversation_locks: dict[str, asyncio.Lock] = {}
+_conversation_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
 
 def _conversation_lock(session_id: str) -> asyncio.Lock:
     return _conversation_locks.setdefault(session_id, asyncio.Lock())
 
 
-async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | None = None) -> bool:
+async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | None = None) -> None:
     sess = _USER_SESSIONS.get(user_id)
     if login_record_id is not None and (sess is None or sess.login_record_id != login_record_id):
-        return False
+        return
 
     websocket = MANAGER.active_connections.get(user_id)
     if websocket is not None:
@@ -252,12 +259,11 @@ async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | No
     _last_should_act_ts.pop(user_id, None)
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
-    return sess is not None or websocket is not None
 
 
-async def terminate_user_gateway(user_id: int, *, login_record_id: int | None = None) -> bool:
+async def terminate_user_gateway(user_id: int, *, login_record_id: int | None = None) -> None:
     async with _user_lock(user_id):
-        return await _terminate_user_gateway_locked(user_id, login_record_id)
+        await _terminate_user_gateway_locked(user_id, login_record_id)
 
 
 async def _expire_disconnected_gateway(user_id: int) -> None:
@@ -312,6 +318,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
     login_record_id = ticket.login_record_id
     lock = _user_lock(user_id)
     async with lock:
+        connected = False
         try:
             # accept 前核对登录有效性；被拒握手在传输层快速失败为 1008，不占 ConnectionManager 槽位。
             if is_user_in_maintenance(user_id) or not await is_ws_login_active(user_id, login_record_id):
@@ -324,6 +331,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                 user_session = None
 
             await MANAGER.connect(websocket, user_id)
+            connected = True
 
             async with SESSION_LOCAL() as boot_db:
                 await get_or_create_special_conversation(boot_db, user_id, "companion")
@@ -347,8 +355,9 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                 _register_session_handlers(user_session)
             user_session.dispatcher.enable_hold()
             MANAGER.register_dispatcher(user_id, user_session.dispatcher)
-        except Exception:
-            logger.exception("WebSocket boot initialization failed", extra={"user_id": user_id})
+        except (Exception, asyncio.CancelledError) as exc:
+            if not isinstance(exc, asyncio.CancelledError):
+                logger.exception("WebSocket boot initialization failed", extra={"user_id": user_id})
             MANAGER.disconnect(websocket, user_id)
             try:
                 await websocket.close(code=1011)
@@ -358,6 +367,11 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                     extra={"user_id": user_id},
                     exc_info=True,
                 )
+            # 新 socket 已替换旧连接时，旧连接的 finally 不再拥有清理权；初始化失败须在本锁内完整销毁。
+            if connected:
+                await _terminate_user_gateway_locked(user_id)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             return
 
     try:
@@ -444,7 +458,7 @@ def _session_video_file_id(file_url: str, session_id: str) -> str | None:
     return video_file_id_from_url(file_url, session_id) if len(file_url) <= 2048 else None
 
 
-def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[str, Any]] | None:
+def _validate_attachments(params: dict[str, Any], session_id: str) -> list[ChatAttachment] | None:
     """校验并规范化 attachments（每项重塑为 {type, file_url}），未传时返回 None。image 接受 HTTP(S) 与 data:image URL；video 只认本会话后端上传且文件仍在的 URL（base64 视频超 WS 单帧上限，须先 POST /api/media/videos）。"""
     raw = params.get("attachments")
     if raw is None:
@@ -453,7 +467,7 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[
         raise JsonRpcError(JSONRPC_INVALID_PARAMS, "attachments must be a list")
     if len(raw) > SETTINGS.max_attachments_per_turn:
         raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"too many attachments (max {SETTINGS.max_attachments_per_turn})")
-    cleaned: list[dict[str, Any]] = []
+    cleaned: list[ChatAttachment] = []
     for idx, att in enumerate(raw):
         if not isinstance(att, dict):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}] must be an object")
@@ -490,7 +504,7 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}].file_url too long")
         else:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}] must have file_url")
-        cleaned.append({"type": att_type, "file_url": file_url})
+        cleaned.append(ChatAttachment(type=att_type, file_url=file_url))
     return cleaned
 
 
@@ -970,9 +984,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         source_message_id = _require_nonneg_int(params, "source_message_id")
         # 锁与在途检查按会话主键的规范形式取键："0123" 等别名与 "123" 指向同一会话。
         async with SESSION_LOCAL() as db:
-            owned = await Conversation.by_session_id(db, session_id, user_id=user_id)
-        if owned is not None:
-            session_id = str(owned.id)
+            owned = await _require_owned_conv(db, user_id, session_id)
+        session_id = str(owned.id)
         runtime = runtime_sessions.get(session_id)
         async with _conversation_lock(session_id), SESSION_LOCAL() as db:
             if runtime is not None and runtime.busy:
@@ -1076,8 +1089,9 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             await asyncio.wait({runtime.chat_task}, timeout=0.3)
             if runtime.busy:
                 raise JsonRpcError(
-                    JSONRPC_INVALID_PARAMS,
-                    f"session {runtime.session_id!r} already has an in-flight turn",
+                    JSONRPC_TURN_BUSY,
+                    "当前会话有正在生成的回复，请稍后再试",
+                    data={"reason": "turn_busy"},
                 )
 
         response_preference = params.get("response_preference")
@@ -1246,8 +1260,9 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("tools.sync", tools_sync)
 
     async def image_attach(params: dict) -> dict:
-        # 路径模式：后端不读字节，LLM 通过 Runner 文件工具读取。
-        return path_attach_ref(_require_str(params, "path"))
+        # 路径属于用户本机，后端视为不透明引用，LLM 通过 Runner 文件工具读取。
+        path = _require_str(params, "path").replace("\\", "/")
+        return ImageAttachResponse(ref_text=f"@file:{path}").model_dump()
 
     dispatcher.register("image.attach", image_attach)
 
@@ -1414,7 +1429,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         except ValueError as exc:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc))
         return {
-            "memories": rows,
+            "memories": [row.model_dump() for row in rows],
             "counts": counts,
             "system_preset_id": scope.system_preset_id,
             "session_id": params.get("session_id"),
@@ -1433,7 +1448,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc))
         if row is None:
             raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"memory {memory_id} not found")
-        return row
+        return row.model_dump()
 
     async def memory_delete(params: dict) -> dict:
         memory_id = params.get("memory_id")
@@ -1452,7 +1467,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
 
     async def onboarding_get_state(_params: dict) -> dict:
         async with SESSION_LOCAL() as db:
-            return await get_onboarding_state(db, user_id)
+            return (await get_onboarding_state(db, user_id)).model_dump()
 
     async def onboarding_submit(params: dict) -> dict:
         # 每字段增量落库，崩溃最多丢当前一题。
@@ -1464,7 +1479,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "value must be a string or null")
         async with SESSION_LOCAL() as db:
             try:
-                return await submit_onboarding_field(db, user_id, field, value)
+                return (await submit_onboarding_field(db, user_id, field, value)).model_dump()
             except PersonaValidationError as exc:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc))
 
@@ -1474,6 +1489,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     async def avatar_regenerate(params: dict) -> dict:
         # 10-60s 同步生图以后台 task 跑，立即返回 queued: true 不阻塞 WS 接收循环；结果通过 avatar.regenerated 事件回。
         feedback = _optional_str(params, "feedback")
+        try:
+            feedback = AvatarGenerateRequest(feedback=feedback).feedback
+        except ValidationError as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "头像修改描述不能超过 500 字") from exc
         mode = params.get("mode")
         if mode not in ("edit", "regenerate"):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "mode must be 'edit' or 'regenerate'")
@@ -1486,20 +1505,18 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         job_id = f"avatar_regen_{user_id}_{secrets.token_urlsafe(6)}"
         lock = get_avatar_job_lock(user_id)
         if lock.locked():
-            # 该用户上一轮 regen 仍在跑：desktop UI 是乐观的，告诉它这次请求排在活动请求之后，避免跨周期抢占。
-            return {"queued": False, "job_id": job_id, "reason": "already_running"}
+            return {"queued": False, "reason": "already_running", "error": "头像正在生成，请等待当前任务完成"}
 
         async def _run() -> None:
-            async with lock:
-                try:
-                    asset = await regenerate_avatar(user_id=user_id, feedback=feedback, mode=mode)
-                    payload = {"job_id": job_id, "asset_url": avatar_response(asset).asset_url, "id": asset.id}
-                except AvatarGenerationError as exc:
-                    logger.warning("avatar regenerate failed", extra={"user_id": user_id, "error": exc.internal})
-                    payload = {"job_id": job_id, "error": str(exc)}
-                except Exception:
-                    logger.exception("avatar regenerate unexpected failure", extra={"user_id": user_id})
-                    payload = {"job_id": job_id, "error": "伙伴形象生成失败，请稍后重试"}
+            try:
+                asset = await regenerate_avatar(user_id=user_id, feedback=feedback, mode=mode)
+                payload = {"job_id": job_id, "asset_url": avatar_response(asset).asset_url, "id": asset.id}
+            except AvatarGenerationError as exc:
+                logger.warning("avatar regenerate failed", extra={"user_id": user_id, "error": exc.internal})
+                payload = {"job_id": job_id, "error": str(exc)}
+            except Exception:
+                logger.exception("avatar regenerate unexpected failure", extra={"user_id": user_id})
+                payload = {"job_id": job_id, "error": "伙伴形象生成失败，请稍后重试"}
             try:
                 await dispatcher.push_event("avatar.regenerated", payload, session_id=None)
             except Exception:

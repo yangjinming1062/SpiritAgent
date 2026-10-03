@@ -1,5 +1,34 @@
 import abc
-from typing import Any
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class WebSearchItem(BaseModel):
+    title: str
+    url: str
+    description: str
+    position: int
+
+
+class WebSearchData(BaseModel):
+    web: list[WebSearchItem] = Field(default_factory=list)
+
+
+class WebSearchResult(BaseModel):
+    success: bool
+    data: WebSearchData | None = None
+    error: str | None = None
+
+
+class WebDocument(BaseModel):
+    url: str
+    title: str = ""
+    content: str = ""
+    error: str | None = None
+    content_kind: Literal["extracted_text", "summary"] = "extracted_text"
+    source_excerpted: bool = False
+    summarization_failed: bool = False
 
 
 class WebSearchProvider(abc.ABC):
@@ -26,12 +55,12 @@ class WebSearchProvider(abc.ABC):
         """实现了 :meth:`extract` 时返回 True。"""
         return False
 
-    async def search(self, query: str, limit: int = 5) -> dict[str, Any]:
+    async def search(self, query: str, limit: int = 5) -> WebSearchResult:
         """执行一次 Web 搜索；当 :meth:`supports_search` 为 True 时由子类重写。"""
         raise NotImplementedError(f"{self.name} does not support search (override supports_search)")
 
-    async def extract(self, urls: list[str]) -> list[dict[str, Any]]:
-        """从一个或多个 URL 抽取内容；返回 ``[{"url", "title", "content", "raw_content", "metadata": dict?, "error": str?}, ...]`` 形式，包装同步 HTTP 库的子类需在 ``search``/``extract`` 内部用 :func:`asyncio.to_thread` 避免阻塞事件循环。"""
+    async def extract(self, urls: list[str]) -> list[WebDocument]:
+        """抽取页面为文档，失败保留 URL 与错误；同步 HTTP 库须在线程运行。"""
         raise NotImplementedError(f"{self.name} does not support extract (override supports_extract)")
 
     def missing_credential_message(self) -> str | None:

@@ -2,6 +2,8 @@ import base64
 import hashlib
 import json
 import secrets
+import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -15,6 +17,18 @@ from .models import AdminSession
 # 激活 token 是不可猜随机串（非用户密码），SHA-256 已够，不需要慢哈希。
 ACTIVATION_TOKEN_BYTES = 32
 BEARER_SCHEME = HTTPBearer(auto_error=False)
+WS_TICKET_TTL_SECONDS = 60
+
+
+@dataclass(frozen=True)
+class _PendingWsTicket:
+    jti: str
+    expires_at: float
+
+
+# WS 本身按单 web 进程部署；每个登录只保留最新待握手票据，签发与消费没有 await。
+_pending_ws_tickets: dict[int, _PendingWsTicket] = {}
+_next_ws_ticket_prune = 0.0
 
 
 def _to_urlsafe_b64(data: bytes) -> str:
@@ -95,6 +109,43 @@ async def create_admin_token() -> tuple[str, int]:
 
 def decode_access_token(token: str) -> dict:
     return jwt.decode(token, SETTINGS.jwt_secret_key, algorithms=[SETTINGS.jwt_algorithm])
+
+
+def create_ws_ticket(*, user_id: int, username: str, login_record_id: int) -> tuple[str, int]:
+    global _next_ws_ticket_prune
+    now = time.monotonic()
+    if now >= _next_ws_ticket_prune:
+        expired = [key for key, ticket in _pending_ws_tickets.items() if ticket.expires_at <= now]
+        for key in expired:
+            del _pending_ws_tickets[key]
+        _next_ws_ticket_prune = now + WS_TICKET_TTL_SECONDS
+    token, expires_in, jti = create_access_token(
+        user_id=user_id,
+        username=username,
+        expires_in_seconds=WS_TICKET_TTL_SECONDS,
+        purpose="ws",
+        login_record_id=login_record_id,
+    )
+    _pending_ws_tickets[login_record_id] = _PendingWsTicket(jti=jti, expires_at=now + expires_in)
+    return token, expires_in
+
+
+def consume_ws_ticket(token: str) -> bool:
+    """签名与用途正确且仍待握手的票据只允许消费一次，失败后客户端须重新签发。"""
+    try:
+        payload = decode_access_token(token)
+    except jwt.PyJWTError:
+        return False
+    if payload.get("purpose") != "ws":
+        return False
+    login_id = payload.get("login_id")
+    if not isinstance(login_id, int) or isinstance(login_id, bool):
+        return False
+    pending = _pending_ws_tickets.get(login_id)
+    if pending is None or pending.jti != payload.get("jti") or pending.expires_at <= time.monotonic():
+        return False
+    del _pending_ws_tickets[login_id]
+    return True
 
 
 def decode_bearer_token(credentials: HTTPAuthorizationCredentials | None) -> dict:

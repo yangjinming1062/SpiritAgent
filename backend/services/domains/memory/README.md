@@ -13,10 +13,10 @@
 | [memory_store.py](memory_store.py) | 存储、作用域过滤、写锁与遗忘清理 |
 | [memory_admin.py](memory_admin.py) | 人工列表、编辑与计数 |
 | [memory_narratives.py](memory_narratives.py) | 日记原文索引、恢复重建及最新相处理解快照 |
-| [memory_bootstrap.py](memory_bootstrap.py) | 用户资料与时区读写 |
+| [memory_bootstrap.py](memory_bootstrap.py) | 用户资料读写；用户时区归 [settings](../../../modules/settings/timezone.py) |
 | [memory_format.py](memory_format.py) / [memory_namespaces.py](memory_namespaces.py) | 提示词记忆块渲染、记录上下文命名空间 |
 
-审阅入口包括回合后审阅（[persistence.py](../../application/chat/persistence.py)）、夜间整理（[nightly_activity.py](../../application/nightly/nightly_activity.py)）和调度器定期审阅（[cron.py](../../adapters/scheduler/cron.py)）；模型记忆工具经 [native_memory.py](../../application/chat/native_memory.py) 提交即时提案。
+审阅入口包括回合后审阅（[persistence.py](../../application/chat/persistence.py)）、夜间整理（[nightly_activity.py](../../application/nightly/nightly_activity.py)）和调度器定期审阅（[cron.py](../../adapters/scheduler/cron.py)）；调度候选与审阅装配共用 `list_memory_review_scopes` 的用户、会话及学习范围规则，停用账户不入选；模型记忆工具经 [native_memory.py](../../application/chat/native_memory.py) 提交即时提案。
 
 `/remember` 经 `create_memory` 写入无证据的显式记录，属于 `recall:` 命名空间，写入时不经审阅但会进入后续维护轮转。学习记录保存原子事实，长期背景只是明确陈述的视图；onboarding、统计、系统事件、日记和助手表达各自不能单独证明用户偏好。
 
@@ -29,6 +29,7 @@
 
 ### 完整审阅
 
+- 审阅输出预算含推理与决策，见 [memory_review.py](memory_review.py)；未完成响应不应用决策，失败保留水位并退避。
 - 后台审阅按消息 ID 升序从各会话水位取连续批次，排空到本次触发的截止消息；只有完整批次成功后才推进水位，零变更也算成功检查。
 - 任一批次失败即停止本次审阅，该批及后续消息从原位置续审；持续失败会阻塞后续批次。原始消息不截断后跳过，单条超预算时单独审阅，超过供应商上下文能力则保留待处理。
 - 审阅失败后按作用域和审阅范围在进程内指数退避：调度器与夜间整理的整域审阅算一个范围，回合后审阅按单个会话各算一个。退避从 10 分钟起，退避期结束后再失败则翻倍，上限为 [`memory_review_interval_seconds`](../../../components/config.py)，成功后清除，用户维护边界内随审阅锁一并丢弃；审阅期间记忆被并发修改的冲突（`MemoryConflictError`）不算失败。调度器和回合后审阅在退避期内跳过该范围，失败前已排队的回合后审阅仍各执行一次但不延长退避；夜间整理按自己的每日节奏执行、不受退避限制，其成败仍按同一规则更新退避状态。调度器遇到没有可用 LLM 配置的作用域只记录并跳过，不计入失败。
@@ -49,7 +50,7 @@
 
 聊天、伙伴状态与夜间规划只读有效且未到期记录，推断标明依据类型。恢复时重映射证据和修订引用、重置审核水位，并保留遗忘指纹、来源类型与更新时间，手写记录恢复后仍只接受更新的用户消息改动；缺少原始消息的导入判断须失效，包级规则见 [PROTOCOL](../../../../docs/PROTOCOL.md#备份校验与覆盖恢复)。来源类型已记为 `import` 的既有记录无法还原原类型；备份中无法识别的来源类型同样记为 `import`。
 
-`memory_narratives.py` 管理 `diary:<日期>` 派生索引与 `reflection:current` 理解快照；二者与夜间活动记录同为伙伴自身记录，参与召回但不进入事实审阅。发布、遗忘及日期召回契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动态与日记)。用户资料由专门的块注入、统计不参与召回。
+`memory_narratives.py` 管理 `diary:<日期>` 派生索引与 `reflection:current` 理解快照；二者与夜间活动记录同为伙伴自身记录，参与召回但不进入事实审阅。发布、遗忘及日期召回契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动态与日记)。用户资料由专门的块注入、统计不参与召回。画像入口只接收已登记的 `user_*` 引导字段，引导、人设提交和记忆编辑共用 `USER_PROFILE_MAX_CONTENT_CHARS` 上限。
 
 夜间规划读取同域全部有效事实记忆，不套用管理列表分页上限；外部列表仍使用有界查询。提交后补向量，失败不影响已保存内容及关键词召回；召回同时走向量和关键词，经 RRF、重要性和时间衰减融合，嵌入不可用或维度不匹配时仅用同域关键词。关键词取拉丁词和各汉字分句轮流产生的 2/3-gram（上限见 [memory_retrieval.py](memory_retrieval.py) 的 `SPARSE_QUERY_TERM_MAX`），长句不独占配额；关键词候选在数据库端先按命中词数（正文命中重于仅上下文命中）、再按更新时间取前若干条，然后才进入融合。融合只使用候选名次而非命中分，较旧但命中更多的记录进入候选后，最终排名仍可能因时间衰减低于近期记录。
 

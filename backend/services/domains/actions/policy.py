@@ -2,11 +2,11 @@
 
 import asyncio
 from datetime import UTC, date, datetime, time, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
-from components import SETTINGS
+from components import SETTINGS, parse_timezone
 from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS, ActionBudgetStatus, ActionProposal, CompanionAction
-from modules.settings import get_user_setting
+from modules.settings import resolve_user_timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,11 +38,7 @@ def daily_create_limit(source: str) -> int:
 
 async def resolve_action_budget_zone(db: AsyncSession, user_id: int) -> ZoneInfo | None:
     """用户本地时区（IANA，桌面握手上报）；缺失或非法时回落 None（按 UTC 日切）。"""
-    tz = await get_user_setting(db, user_id, "timezone")
-    try:
-        return ZoneInfo(tz) if tz else None
-    except (ZoneInfoNotFoundError, ValueError, KeyError, TypeError):
-        return None
+    return parse_timezone(await resolve_user_timezone(db, user_id))
 
 
 async def _budget_day(db: AsyncSession, user_id: int) -> tuple[date, datetime, datetime]:

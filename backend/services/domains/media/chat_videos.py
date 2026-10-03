@@ -10,6 +10,7 @@ import shutil
 import threading
 from collections.abc import Sequence
 from pathlib import Path
+from typing import BinaryIO
 from urllib.parse import quote, urlsplit
 
 from components import (
@@ -82,7 +83,10 @@ def _video_file_path(session_id: str, file_id: str) -> Path | None:
     """把 (session_id, file_id) 解析到会话目录内的文件路径；形态非法或越界返回 None。"""
     if not _FILE_NAME_RE.fullmatch(file_id):
         return None
-    root = session_dir(session_id).resolve()
+    try:
+        root = session_dir(session_id).resolve()
+    except ValueError:
+        return None
     target = (root / file_id).resolve()
     if not target.is_relative_to(root):
         return None
@@ -97,15 +101,27 @@ def resolve_video_file(session_id: str, file_id: str) -> Path | None:
     return path
 
 
-def save_video_attachment(session_id: str, data: bytes, ext: str) -> tuple[str, int]:
-    """落盘视频附件，返回 (file_id, size)。扩展名白名单在此兜底；配额剔除由调用方先行。"""
+def save_video_attachment(session_id: str, source: BinaryIO, ext: str, max_bytes: int) -> tuple[str, int]:
+    """从上传临时文件分块复制；失败删除未交接文件，不再将整个视频读入内存。"""
     if ext.lower() not in ATTACHMENT_VIDEO_EXTENSIONS:
         raise ValueError(f"unsupported video extension: {ext!r}")
     target_dir = session_dir(session_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     file_id = f"{secrets.token_urlsafe(16)}{ext.lower()}"
-    (target_dir / file_id).write_bytes(data)
-    return file_id, len(data)
+    target = target_dir / file_id
+    size = 0
+    try:
+        source.seek(0)
+        with target.open("xb") as output:
+            while chunk := source.read(256 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise ValueError("video size exceeds limit")
+                output.write(chunk)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return file_id, size
 
 
 def _rewrite_parts(parts: list, file_ids: set[str], *, session_id: str) -> tuple[list, bool]:

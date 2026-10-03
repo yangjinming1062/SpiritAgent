@@ -166,6 +166,7 @@ function New-RunnerManifest {
         path         = $wheelRel
         sha512       = $wheelSha
         size         = $wheelSize
+        signature    = ''
         files        = @(@{ url = $wheelRel; sha512 = $wheelSha; size = $wheelSize })
         runner       = [ordered]@{
             version          = $Version

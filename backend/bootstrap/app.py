@@ -10,6 +10,7 @@ from components import (
 from fastapi import FastAPI, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from services.adapters.http import (
+    BodyLimitMiddleware,
     limiter,
     rate_limit_exception_handler,
     stash_user_id_middleware,
@@ -22,6 +23,7 @@ from bootstrap.registrations import register_all
 register_all()
 
 app = FastAPI(title=SETTINGS.app_name, lifespan=lifespan)
+app.add_middleware(BodyLimitMiddleware)
 # CORS 通配：鉴权走 Bearer token（非 cookie），跨域请求不会带凭据，FastAPI 会拒绝 `*` + credentials 组合。
 app.add_middleware(
     CORSMiddleware,

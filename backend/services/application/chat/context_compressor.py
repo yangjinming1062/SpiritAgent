@@ -95,6 +95,60 @@ def _pick_compressible_block(
     return rest[:keep_start], rest[keep_start:]
 
 
+def _summary_input(block: list[dict[str, Any]], target_tokens: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": json.dumps(
+                        {"target_tokens": target_tokens, "conversation_items": _summary_items(block)},
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                },
+            ],
+        },
+    ]
+
+
+def _fit_summary_block(
+    block: list[dict[str, Any]],
+    source_ids: list[int | None],
+    *,
+    context_length: int,
+    target_tokens: int,
+    language: str,
+) -> list[dict[str, Any]]:
+    """只总结预算内的完整原消息前缀；超长单条保留原文，不把截断资料当作完整覆盖。"""
+    output_budget = max(LLM_MAX_OUTPUT_TOKENS, target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR)
+    input_budget = context_length - output_budget - max(1024, context_length // 20)
+    instructions = resolve_prompt_text(CONTEXT_SUMMARY_PROMPTS, language)
+    pending_calls: set[str] = set()
+    boundaries = []
+    for index, item in enumerate(block):
+        call_id = item.get("call_id")
+        if item.get("type") == "function_call" and call_id:
+            pending_calls.add(call_id)
+        elif item.get("type") == "function_call_output":
+            pending_calls.discard(call_id)
+        end = index + 1
+        if not pending_calls and (end == len(block) or source_ids[index] != source_ids[end]):
+            boundaries.append(end)
+    lo, hi = 0, len(boundaries)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        tokens = approx_responses_tokens(instructions, _summary_input(block[: boundaries[mid]], target_tokens))
+        if tokens <= input_budget:
+            lo = mid + 1
+        else:
+            hi = mid
+    if lo == 0:
+        raise CompressionFailedError("first complete message exceeds summary input budget")
+    return block[: boundaries[lo - 1]]
+
+
 async def _summarize_block(
     block: list[dict[str, Any]],
     *,
@@ -103,30 +157,17 @@ async def _summarize_block(
     target_tokens: int,
     temperature: float,
     language: str,
+    context_length: int,
 ) -> tuple[str, bool, int, int]:
     """通过 Responses API 对输入项生成摘要；响应未完成时保留原上下文。"""
     request = build_responses_kwargs(
         model=model,
         instructions=resolve_prompt_text(CONTEXT_SUMMARY_PROMPTS, language),
-        input_items=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": json.dumps(
-                            {"target_tokens": target_tokens, "conversation_items": _summary_items(block)},
-                            ensure_ascii=False,
-                            default=str,
-                        ),
-                    },
-                ],
-            },
-        ],
+        input_items=_summary_input(block, target_tokens),
         temperature=temperature,
         max_output_tokens=max(LLM_MAX_OUTPUT_TOKENS, target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR),
     )
-    response = await call_with_retry(client, **request)
+    response = await call_with_retry(client, context_length=context_length, **request)
     completed = response.status == "completed"
     usage = getattr(response, "usage", None)
     prompt_tokens = getattr(usage, "input_tokens", 0) if usage else 0
@@ -157,6 +198,7 @@ async def compress_history(
     model: str,
     temperature: float,
     language: str,
+    context_length: int,
 ) -> tuple[dict[str, Any], CompressionInfo | None]:
     """压缩可总结的历史前缀；成功返回压缩后的 Responses 上下文，无可压缩内容返回原上下文；摘要调用失败、未完成或为空时抛 CompressionFailedError，历史不变。"""
     target = SETTINGS.context_summary_target_tokens
@@ -164,6 +206,15 @@ async def compress_history(
     block, keep = _pick_compressible_block(context["input"], source_message_ids=source_ids)
     if not block:
         return context, None
+    bounded = _fit_summary_block(
+        block,
+        source_ids,
+        context_length=context_length,
+        target_tokens=target,
+        language=language,
+    )
+    keep = [*block[len(bounded) :], *keep]
+    block = bounded
     through_id = source_ids[len(block) - 1]
 
     try:
@@ -174,6 +225,7 @@ async def compress_history(
             target_tokens=target,
             temperature=temperature,
             language=language,
+            context_length=context_length,
         )
     except Exception as exc:
         logger.warning("context_compressor: summary call failed, leaving history unchanged", exc_info=True)
@@ -182,7 +234,7 @@ async def compress_history(
     if not completed:
         logger.warning(
             "context_compressor: summary response did not complete, leaving history unchanged",
-            extra={"message_count": len(block)},
+            extra={"input_item_count": len(block)},
         )
         raise CompressionFailedError("summary response did not complete")
 
@@ -190,18 +242,19 @@ async def compress_history(
         logger.warning("context_compressor: LLM returned empty summary; leaving history unchanged")
         raise CompressionFailedError("summary response was empty")
 
-    replaced_count = len(block)
+    replaced_count = len(set(source_ids[: len(block)]))
     title = resolve_prompt_text(COMPRESSION_CHECKPOINT_TITLE_TEXTS, language).format(count=replaced_count)
     checkpoint_text = f"{title}\n{summary}"
     placeholder = {"role": "user", "content": [{"type": "input_text", "text": checkpoint_text}]}
-    kept_ids = source_ids[replaced_count:]
+    kept_ids = source_ids[len(block) :]
     compressed: dict[str, Any] = {
         "instructions": context["instructions"],
         "input": [placeholder, *keep],
         "source_message_ids": [through_id, *kept_ids],
+        "checkpoint_indices": [0],
     }
     logger.info(
-        "context_compressor: summarized messages into one summary",
+        "context_compressor: summarized history into one summary",
         extra={
             "replaced_count": replaced_count,
             "input_tokens": approx_responses_tokens("", block),

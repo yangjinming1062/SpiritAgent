@@ -149,11 +149,6 @@ export interface SpiritAgentConfigResponse {
 }
 
 /** IM 通道桥（/api/channels）——绑定状态视图；凭据字段服务端永不回显。 */
-export interface ChannelCapabilities {
-  supports_typing: boolean
-  requires_login: boolean
-}
-
 export interface ChannelBindingInfo {
   status: string
   account_ref: string
@@ -166,7 +161,6 @@ export interface ChannelBindingInfo {
 export interface ChannelInfo {
   channel: string
   title: string
-  capabilities: ChannelCapabilities
   binding: ChannelBindingInfo | null
 }
 

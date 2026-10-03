@@ -277,6 +277,7 @@ class LocalImageGenProvider(ImageGenProvider):
             detail = str(messages)[:500]
             raise ProviderError(
                 f"local image_gen execution error: {detail}",
+                status_code=422,
                 body=status,
             )
 

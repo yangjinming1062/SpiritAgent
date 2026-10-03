@@ -5,9 +5,10 @@ from datetime import datetime
 from typing import Any, Literal
 
 from components import DEFAULT_LANGUAGE, resolve_language, session_scope, utc_now
+from modules.auth import User
 from modules.conversation import Conversation, Message
 from modules.memory import Memory
-from modules.settings import get_user_setting
+from modules.settings import get_user_setting, resolve_user_timezone
 from pydantic import BaseModel, field_serializer
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.conversation import message_contains_text, message_text, user_authored_conversation
 
-from .memory_bootstrap import resolve_user_timezone
 from .memory_policy import MemoryDecision
 from .memory_retrieval import extract_search_terms, keyword_match_score
 from .memory_store import (
@@ -127,6 +127,36 @@ def learning_filter() -> ColumnElement[bool]:
     return and_(or_(Memory.context.like("recall:%"), Memory.context.like("user_profile:%")), Memory.basis != "system")
 
 
+def _review_message_filter() -> ColumnElement[bool]:
+    return and_(
+        user_authored_conversation(),
+        Message.id > Conversation.context_after_message_id,
+        Message.role.in_(("user", "assistant")),
+        Message.subtype.is_(None),
+    )
+
+
+async def list_memory_review_scopes(db: AsyncSession) -> list[MemoryScope]:
+    """按实际审阅规则发现活跃账户的待维护作用域。"""
+    memory_scopes = (
+        select(Memory.user_id, Memory.system_preset_id)
+        .join(User, User.id == Memory.user_id)
+        .where(User.is_active.is_(True), learning_filter(), Memory.status != "forgotten")
+    )
+    message_scopes = (
+        select(Conversation.user_id, Conversation.system_preset_id)
+        .join(User, User.id == Conversation.user_id)
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(
+            User.is_active.is_(True),
+            _review_message_filter(),
+            Message.id > Conversation.memory_reviewed_message_id,
+        )
+    )
+    rows = (await db.execute(memory_scopes.union(message_scopes))).all()
+    return [MemoryScope(user_id, preset) for user_id, preset in rows]
+
+
 async def _forgotten_fingerprints(db: AsyncSession, scope: MemoryScope) -> set[str]:
     """已遗忘记录保留的原始事件指纹；对应消息不得再作为证据。"""
     evidence_lists = await db.scalars(select(Memory.evidence).where(scope_filter(scope), Memory.status == "forgotten"))
@@ -156,10 +186,7 @@ async def load_review_context(
         .where(
             Conversation.user_id == scope.user_id,
             Conversation.system_preset_id == scope.system_preset_id,
-            user_authored_conversation(),
-            Message.id > Conversation.context_after_message_id,
-            Message.role.in_(("user", "assistant")),
-            Message.subtype.is_(None),
+            _review_message_filter(),
         )
     )
     if session_id is not None:

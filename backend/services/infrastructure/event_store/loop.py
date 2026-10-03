@@ -20,6 +20,8 @@ logger = get_logger(__name__)
 WS_EVENT_CLAIM_BATCH_SIZE = 100
 MAX_OUTBOX_RETRIES = 5  # 超过即转入 FAILED 死信状态
 STALE_LOCK_TIMEOUT_SECONDS = 60
+_LISTEN_HEARTBEAT_SECONDS = 15.0
+_LISTEN_HEARTBEAT_TIMEOUT_SECONDS = 5.0
 WORKER_ID = f"worker-{secrets.token_hex(4)}"  # 进程唯一，用于原子锁追踪
 
 InternalEventHandler = Callable[[int, dict[str, Any]], Coroutine[Any, Any, None]]
@@ -205,6 +207,21 @@ async def _periodic_flusher_loop() -> None:
             logger.warning("flush gateway delivered markers failed", exc_info=True)
 
 
+async def _listen_heartbeat(conn: asyncpg.Connection) -> None:
+    """有界探活 LISTEN 专线，半开连接终止后唤醒主回路重连。"""
+    while not conn.is_closed():
+        await asyncio.sleep(_LISTEN_HEARTBEAT_SECONDS)
+        try:
+            await conn.execute("SELECT 1", timeout=_LISTEN_HEARTBEAT_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("WS event loop LISTEN heartbeat failed", exc_info=True)
+            conn.terminate()
+            _WAKEUP_STATE.notify()
+            return
+
+
 async def ws_event_loop(dsn: str) -> None:
     """基于 PostgreSQL LISTEN/NOTIFY 的 outbox 派发：进程持有专用 asyncpg 连接（被 LISTEN pin 住）；连接出错或被服务端断开后 5s 重连，避免 PG 重启/网络抖动让派发器失聪。"""
     logger.info("Starting background WS event loop with PG LISTEN/NOTIFY.")
@@ -226,14 +243,18 @@ async def ws_event_loop(dsn: str) -> None:
                     await conn.add_listener("ws_events_channel", _listener)
                     # 首轮不等唤醒：启动前或断线期间提交的事件没有送达本连接的通知
                     seen_version = -1
+                    heartbeat_task = asyncio.create_task(_listen_heartbeat(conn), name="event_store.listen-heartbeat")
                     try:
                         while not conn.is_closed():
                             seen_version = await _process_events(seen_version)
                     finally:
+                        heartbeat_task.cancel()
+                        await asyncio.gather(heartbeat_task, return_exceptions=True)
                         with contextlib.suppress(Exception):
-                            await conn.remove_listener("ws_events_channel", _listener)
+                            async with asyncio.timeout(_LISTEN_HEARTBEAT_TIMEOUT_SECONDS):
+                                await conn.remove_listener("ws_events_channel", _listener)
                 finally:
-                    await conn.close()
+                    await conn.close(timeout=_LISTEN_HEARTBEAT_TIMEOUT_SECONDS)
             except asyncio.CancelledError:
                 raise
             except Exception:

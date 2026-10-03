@@ -85,5 +85,5 @@ class UserModelConfig(ModelBase, TimestampMixin):
 
 
 async def lock_user_row(db: AsyncSession, user_id: int) -> None:
-    """锁定用户行直到所在事务结束；Cron 任务变更与陪伴意图状态转换共用这把锁，任务改动与意图失效才不会交错。"""
+    """锁定用户行直到所在事务结束；序列化同用户的任务、陪伴意图、动态额度与日记状态变更。"""
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())

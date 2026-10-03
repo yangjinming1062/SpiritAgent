@@ -9,7 +9,7 @@ from ._parts import iter_parts
 
 
 class GeminiImageGenProvider(ImageGenProvider):
-    """通过 Gemini generateContent（responseModalities=["TEXT","IMAGE"]）生成图像；imageSize 固定 2K（取值严格大写 K）；reference_image 作为 inlineData 部件置于文本前，触发原生图像编辑模式。透明背景无参数可映射，supports_transparent_background 保持 False，透明交付走色幕兼容路径。"""
+    """通过 Gemini generateContent 生成 2K 图像；参考图以内联部件置于文本前。不支持原生透明背景。"""
 
     provider_name = "gemini"
     DEFAULT_BASE_URL: ClassVar[str] = "https://generativelanguage.googleapis.com"

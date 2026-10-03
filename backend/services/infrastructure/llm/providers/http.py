@@ -457,7 +457,7 @@ class _RetryAwareAsyncOpenAI(AsyncOpenAI):
         if response.status_code in (500, 502):
             # 流式请求在读取响应体之前就询问是否重试，此时无法检查正文，按 SDK 默认规则决定
             try:
-                body = response.text or ""
+                body = (response.text or "").lower()
             except httpx.ResponseNotRead:
                 body = ""
             if body and any(pattern in body for pattern in REQUEST_VALIDATION_PATTERNS):

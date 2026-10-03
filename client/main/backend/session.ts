@@ -406,10 +406,18 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       return
     }
 
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null
-      void refresh().catch(error => log(`[session] proactive refresh failed: ${errorMessage(error)}`))
-    }, delay)
+    refreshTimer = setTimeout(
+      () => {
+        refreshTimer = null
+
+        if (delay > 2 ** 31 - 1) {
+          scheduleRefresh()
+        } else {
+          void refresh().catch(error => log(`[session] proactive refresh failed: ${errorMessage(error)}`))
+        }
+      },
+      Math.min(delay, 2 ** 31 - 1)
+    )
     refreshTimer.unref?.()
   }
 

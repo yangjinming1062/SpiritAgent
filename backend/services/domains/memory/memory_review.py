@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from components import LLM_MAX_OUTPUT_TOKENS, SETTINGS, get_logger, parse_llm_json, session_scope, utc_now
+from components import SETTINGS, get_logger, parse_llm_json, session_scope, utc_now
 from modules.conversation import Conversation, Message
 from prompts.memory import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 from sqlalchemy import func, select
@@ -21,6 +21,9 @@ from .memory_learning import (
 from .memory_policy import MemoryDecisions
 
 logger = get_logger(__name__)
+
+# 整批最多 24 项决策，证据引用与理由和推理共用输出预算。
+_MEMORY_REVIEW_MAX_OUTPUT_TOKENS = 32768
 
 # 每个记忆作用域一把审阅锁，保证同域审核串行；用户覆盖恢复/删除后经 invalidate 丢弃。
 _REVIEW_LOCKS: dict[MemoryScope, asyncio.Lock] = {}
@@ -85,7 +88,7 @@ async def assess_memory_changes(
             llm_config,
             MEMORY_POLICY + "\n" + MEMORY_REVIEW_INSTRUCTIONS,
             payload,
-            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
+            max_output_tokens=_MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
             json_output=True,
         )
         try:

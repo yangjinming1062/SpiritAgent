@@ -27,6 +27,7 @@ from services.adapters.http import limiter
 from services.domains.conversation import (
     IM_KIND,
     SPECIAL_KIND,
+    SYSTEM_PRESET_CATALOG,
     client_reply_bubbles,
     message_contains_text,
     resolve_preset_meta,
@@ -165,11 +166,10 @@ async def list_sessions(
             (
                 Conversation.kind == SPECIAL_KIND,
                 case(
-                    (Conversation.system_preset_id == "companion", 0),
-                    (Conversation.system_preset_id == "developer", 1),
-                    (Conversation.system_preset_id == "product_manager", 2),
-                    (Conversation.system_preset_id == "copywriter", 3),
-                    (Conversation.system_preset_id == "language_teacher", 4),
+                    *(
+                        (Conversation.system_preset_id == preset_id, rank)
+                        for rank, preset_id in enumerate(SYSTEM_PRESET_CATALOG)
+                    ),
                     else_=99,
                 ),
             ),
@@ -221,13 +221,15 @@ async def search_sessions(
     )
     pattern = f"%{escaped}%"
 
-    # 内容候选仍限制为 200 个会话，标题和 ID 匹配不占此额度。
+    # 内容候选按最近活跃排序，与最终列表同序；标题和 ID 匹配不占此额度。
     content_match_ids = (
-        select(Message.conversation_id)
+        select(Conversation.id)
+        .select_from(Message)
         .where(message_contains_text(q))
         .join(Conversation, Conversation.id == Message.conversation_id)
         .where(Conversation.user_id == user.id, Conversation.parent_id.is_(None))
-        .distinct()
+        .group_by(Conversation.id)
+        .order_by(desc(Conversation.updated_at), desc(Conversation.id))
         .limit(200)
         .correlate(None)
     )
@@ -237,6 +239,9 @@ async def search_sessions(
         "exclude": Conversation.archived_at.is_(None),
         "include": None,
     }[archived]
+
+    if archived_filter is not None:
+        content_match_ids = content_match_ids.where(archived_filter)
 
     rows_query = (
         select(Conversation, _preview_subquery, func.count(Message.id).label("msg_count"))
@@ -251,7 +256,7 @@ async def search_sessions(
             ),
         )
         .group_by(Conversation.id)
-        .order_by(desc(Conversation.updated_at))
+        .order_by(desc(Conversation.updated_at), desc(Conversation.id))
         .limit(20)
     )
     if archived_filter is not None:

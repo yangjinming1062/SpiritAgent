@@ -1,4 +1,4 @@
-# JSON-RPC 2.0 标准错误码；-32000..-32099 为 Slash 命令扩展区间。
+# JSON-RPC 2.0 标准错误码；-32000..-32099 为应用扩展区间。
 JSON_RPC_VERSION: str = "2.0"
 JSONRPC_PARSE_ERROR: int = -32700
 JSONRPC_INVALID_REQUEST: int = -32600
@@ -8,6 +8,7 @@ JSONRPC_INTERNAL_ERROR: int = -32603
 JSONRPC_SLASH_CONFIRM_REQUIRED: int = -32001  # 未传 confirmed=true；失败 data 触发前端 confirm。
 JSONRPC_SLASH_BUSY: int = -32002  # 回合生成中拒绝命令。
 JSONRPC_SLASH_GENERIC: int = -32003  # handler 未映射异常兜底。
+JSONRPC_TURN_BUSY: int = -32004  # prompt.submit 回合在途，可有限重试。
 
 # LLM 预算、温度边界与标题/摘要回退值。
 LLM_MAX_OUTPUT_TOKENS: int = 8192  # 含推理与正文。

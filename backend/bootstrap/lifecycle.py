@@ -143,13 +143,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             with contextlib.suppress(asyncio.CancelledError):
                 await cleanup_task
 
-        # 先停调度器与 IM 通道桥再 drain：tick 与 IM 回合都会派生新任务，反过来会留下逃过 drain 的窗口。
+        # 先停所有任务生产入口再 drain，避免收敛期间派生的新任务逃过快照。
         await _best_effort_shutdown("scheduler", stop_scheduler())
         await _best_effort_shutdown("channel manager", stop_channel_manager())
+        await _best_effort_shutdown("event loop", stop_event_loop())
 
         # 释放引擎前先 drain 模块级任务集合，避免 SIGTERM 把持有连接池的协程留在 commit 中途。
         await _best_effort_shutdown("runtime tasks", _drain_runtime_tasks())
-        await _best_effort_shutdown("event loop", stop_event_loop())
 
         await _best_effort_shutdown("database engine", ENGINE.dispose())
         await _best_effort_shutdown("web providers", aclose_web_providers())

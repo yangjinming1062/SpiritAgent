@@ -3,11 +3,9 @@ import contextlib
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from components import (
     SESSION_LOCAL,
-    get_file_path,
     get_logger,
     parse_llm_json,
     safe_json_loads,
@@ -51,23 +49,26 @@ from services.domains.companion import (
 )
 from services.infrastructure.assets import (
     build_data_uri,
-    parse_companion_asset_path,
-    resolve_companion_asset_path,
+    normalize_asset_reference,
+    read_asset_data_uri,
+    resolve_asset_reference,
     save_companion_asset_async,
     signed_companion_asset_url,
 )
 from services.infrastructure.llm import (
     SIZE_TO_ASPECT,
     LLMRuntimeError,
-    build_avatar_reference_prompt,
-    build_image_edit_prompt,
     chat,
-    describe_character_form,
-    enhance_avatar_prompt,
     is_content_policy_error_message,
     vision_chat,
 )
 
+from .appearance_prompts import (
+    build_avatar_reference_prompt,
+    build_image_edit_prompt,
+    describe_character_form,
+    enhance_avatar_prompt,
+)
 from .character_images import image_asset_bytes
 from .fullbody_reference_prompt import build_fullbody_reference_prompt
 from .image_generation import ImageGenerationError, generate_images
@@ -529,12 +530,7 @@ async def _generate_avatar_step(
 
 def _portrait_file(path: str | None) -> tuple[Path, str] | None:
     """定位立绘裸路径：temp-media 草稿或 companion-assets 用户资产；缺失或过期返回 None。"""
-    if not path:
-        return None
-    if path.startswith("temp-media/"):
-        return get_file_path(path.removeprefix("temp-media/"))
-    parsed = parse_companion_asset_path(path)
-    return resolve_companion_asset_path(*parsed) if parsed is not None else None
+    return resolve_asset_reference(path)
 
 
 def read_portrait_bytes(path: str | None) -> tuple[bytes, str] | None:
@@ -550,8 +546,7 @@ def read_portrait_bytes(path: str | None) -> tuple[bytes, str] | None:
 
 def load_avatar_bytes_as_data_uri(path: str | None) -> str | None:
     """立绘裸路径读为供应商可内联的 data URI；不可读时返回 None。"""
-    loaded = read_portrait_bytes(path)
-    return build_data_uri(*loaded) if loaded is not None else None
+    return read_asset_data_uri(path)
 
 
 def delete_portrait_file(path: str | None) -> None:
@@ -573,14 +568,7 @@ def re_sign_bare_path(bare_path: str | None) -> str | None:
 
 def normalize_avatar_url_to_bare(url: str | None) -> str:
     """客户端回传的立绘地址（签名 URL 或草稿地址）还原为裸路径，供与存储值比对。"""
-    if not url:
-        return ""
-    path = urlsplit(url.strip()).path
-    if path.startswith("/api/media/files/"):
-        return "temp-media/" + path.removeprefix("/api/media/files/")
-    if path.startswith("/api/companion/asset/"):
-        return "companion-assets/" + path.removeprefix("/api/companion/asset/")
-    return path
+    return normalize_asset_reference(url)
 
 
 async def _verified_persona(user_id: int) -> Persona:
@@ -608,6 +596,11 @@ async def _avatar_description(
 
 async def generate_avatar(user_id: int, *, feedback: str | None = None) -> AvatarAsset:
     """按角色资料与本次要求生成头像。"""
+    async with get_avatar_job_lock(user_id):
+        return await _generate_avatar(user_id, feedback=feedback)
+
+
+async def _generate_avatar(user_id: int, *, feedback: str | None = None) -> AvatarAsset:
     persona = await _verified_persona(user_id)
     return await _generate_avatar_step(
         user_id,
@@ -669,28 +662,29 @@ def _is_orphan_temp_media_asset(asset: AvatarAsset) -> bool:
 
 async def regenerate_avatar(mode: ImageReviseMode, user_id: int, feedback: str | None = None) -> AvatarAsset:
     """根据反馈微调当前头像，或按角色资料重新生成。"""
-    if mode == "regenerate":
-        return await generate_avatar(user_id, feedback=feedback)
-    persona = await _verified_persona(user_id)
-    effective_feedback = (feedback or "").strip()
-    if not effective_feedback:
-        raise AvatarGenerationError("请先描述要微调的内容")
-    # 编辑底图即当前激活头像，成功后照常写入新 AvatarAsset 行。
-    async with SESSION_LOCAL() as db:
-        current = await get_active_avatar(db, user_id)
-    if current is None:
-        raise AvatarNotFoundError("找不到当前头像，请重新生成")
-    edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, current.asset_url)
-    if not edit_uri:
-        raise AvatarSourceUnreadableError("当前头像文件缺失或无法读取，请重新生成")
-    return await _generate_avatar_step(
-        user_id,
-        avatar_prompt=build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_AVATAR),
-        persist=persona.is_portrait_confirmed,
-        feedback=effective_feedback,
-        reference_image=edit_uri,
-        image_edit=True,
-    )
+    async with get_avatar_job_lock(user_id):
+        if mode == "regenerate":
+            return await _generate_avatar(user_id, feedback=feedback)
+        persona = await _verified_persona(user_id)
+        effective_feedback = (feedback or "").strip()
+        if not effective_feedback:
+            raise AvatarGenerationError("请先描述要微调的内容")
+        # 编辑底图即当前激活头像，成功后照常写入新 AvatarAsset 行。
+        async with SESSION_LOCAL() as db:
+            current = await get_active_avatar(db, user_id)
+        if current is None:
+            raise AvatarNotFoundError("找不到当前头像，请重新生成")
+        edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, current.asset_url)
+        if not edit_uri:
+            raise AvatarSourceUnreadableError("当前头像文件缺失或无法读取，请重新生成")
+        return await _generate_avatar_step(
+            user_id,
+            avatar_prompt=build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_AVATAR),
+            persist=persona.is_portrait_confirmed,
+            feedback=effective_feedback,
+            reference_image=edit_uri,
+            image_edit=True,
+        )
 
 
 async def regenerate_avatar_from_image(
@@ -703,27 +697,28 @@ async def regenerate_avatar_from_image(
     presentation_content_type: str | None = None,
 ) -> AvatarAsset:
     """以用户图锚定身份重绘头像，第二张图仅参考光线、色调与构图。"""
-    persona = await _verified_persona(user_id)
-    base_description = await _avatar_description(user_id, persona, description, has_reference=True)
-    avatar_prompt = build_avatar_reference_prompt(
-        personality="",
-        description=base_description,
-        feedback=description,
-        has_presentation_reference=presentation_data is not None,
-    )
-    secondary_uri = (
-        await asyncio.to_thread(build_data_uri, presentation_data, presentation_content_type or "image/png")
-        if presentation_data is not None
-        else None
-    )
-    return await _generate_avatar_step(
-        user_id,
-        avatar_prompt=avatar_prompt,
-        persist=persona.is_portrait_confirmed,
-        feedback=description,
-        reference_image=await asyncio.to_thread(build_data_uri, data, content_type),
-        secondary_reference_image=secondary_uri,
-    )
+    async with get_avatar_job_lock(user_id):
+        persona = await _verified_persona(user_id)
+        base_description = await _avatar_description(user_id, persona, description, has_reference=True)
+        avatar_prompt = build_avatar_reference_prompt(
+            personality="",
+            description=base_description,
+            feedback=description,
+            has_presentation_reference=presentation_data is not None,
+        )
+        secondary_uri = (
+            await asyncio.to_thread(build_data_uri, presentation_data, presentation_content_type or "image/png")
+            if presentation_data is not None
+            else None
+        )
+        return await _generate_avatar_step(
+            user_id,
+            avatar_prompt=avatar_prompt,
+            persist=persona.is_portrait_confirmed,
+            feedback=description,
+            reference_image=await asyncio.to_thread(build_data_uri, data, content_type),
+            secondary_reference_image=secondary_uri,
+        )
 
 
 async def finalize_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
@@ -1055,17 +1050,18 @@ async def adopt_avatar_seed(
     content_type: str,
 ) -> AvatarAsset:
     """直接使用用户上传的图片作为头像，跳过 AI 生成。"""
-    if not data:
-        raise ValueError("image data is required")
-    persona = await _verified_persona(user_id)
-    persist = persona.is_portrait_confirmed
-    return await _write_avatar_step(
-        user_id,
-        asset_url=await persist_portrait_or_draft(data, user_id, content_type, persist=persist),
-        avatar_prompt="用户上传头像",
-        style="custom",
-        persist=persist,
-    )
+    async with get_avatar_job_lock(user_id):
+        if not data:
+            raise ValueError("image data is required")
+        persona = await _verified_persona(user_id)
+        persist = persona.is_portrait_confirmed
+        return await _write_avatar_step(
+            user_id,
+            asset_url=await persist_portrait_or_draft(data, user_id, content_type, persist=persist),
+            avatar_prompt="用户上传头像",
+            style="custom",
+            persist=persist,
+        )
 
 
 async def prepare_avatar_prompt(user_id: int, *, feedback: str | None = None, has_reference: bool = False) -> str:

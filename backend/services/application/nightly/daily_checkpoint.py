@@ -1,12 +1,11 @@
 from datetime import datetime
 
-from components import LLM_MAX_OUTPUT_TOKENS, get_logger, resolve_prompt_text, session_scope
+from components import LLM_MAX_OUTPUT_TOKENS, get_logger, parse_llm_json, resolve_prompt_text, session_scope
 from modules.conversation import Conversation, Message
 from prompts.nightly import CHECKPOINT_SUMMARY_INSTRUCTIONS, CHECKPOINT_SUMMARY_TITLE_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.companion import run_prompt_json
 from services.domains.conversation import (
     CHECKPOINT_SUBTYPES,
     UI_ONLY_SUBTYPES,
@@ -15,7 +14,7 @@ from services.domains.conversation import (
     load_context_messages,
 )
 from services.domains.media import prune_videos_in_range
-from services.infrastructure.llm import UserLlmConfig
+from services.infrastructure.llm import UserLlmConfig, call_llm_once
 
 logger = get_logger(__name__)
 
@@ -30,32 +29,35 @@ async def run_daily_checkpoint(
     utc_end: datetime,
     local_date_str: str,
     language: str,
+    *,
+    user_timezone: str,
 ) -> bool:
     """合并最新摘要与截至目标本地日末的原文；模型等待期间的新消息仍保留在读路径。返回 ``True`` 已写入 / ``False`` 无可总结内容或历史已变化；模型调用失败或没有得到有效摘要时抛出。"""
     # 读、写两阶段各自持有短 session——中间 LLM 调用不能 pin 连接池（backend/README.md「数据与运行可靠性」）。
     async with session_scope() as db:
-        inputs = await _collect_inputs(db, user_id, utc_start, utc_end)
+        inputs = await _collect_inputs(db, user_id, utc_start, utc_end, user_timezone=user_timezone)
     if inputs is None:
         return False
     conv_id, chat_content, prev_summary_text, through_id, clear_watermark = inputs
 
-    outcome = await run_prompt_json(
-        user_id,
+    raw = await call_llm_once(
         llm_cfg,
         CHECKPOINT_SUMMARY_INSTRUCTIONS,
         {
             "output_language": language,
             "summary_date": local_date_str,
+            "user_timezone": user_timezone,
             "previous_summary": prev_summary_text,
             "recent_conversation": chat_content,
         },
         max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
-        log_prefix="daily_checkpoint",
+        json_output=True,
         temperature=0.0,
     )
-    if outcome.parsed is None:
-        raise RuntimeError(f"summary not generated: {outcome.reason}")
-    raw_summary = outcome.parsed.get("summary")
+    parsed = parse_llm_json(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("summary output is not an object")
+    raw_summary = parsed.get("summary")
     summary_text = raw_summary.strip() if isinstance(raw_summary, str) else ""
     if not summary_text:
         raise ValueError("summary missing from model output")
@@ -89,6 +91,8 @@ async def _collect_inputs(
     user_id: int,
     utc_start: datetime,
     utc_end: datetime,
+    *,
+    user_timezone: str,
 ) -> tuple[int, str, str, int, int] | None:
     main_conv = await get_special_conversation(db, user_id, "companion")
     if main_conv is None:
@@ -127,7 +131,7 @@ async def _collect_inputs(
     prev_summary_text = (prev_checkpoint.content or "") if prev_checkpoint else ""
     return (
         main_conv.id,
-        format_messages_compact(rows),
+        format_messages_compact(rows, user_local_tz=user_timezone),
         prev_summary_text,
         rows[-1].id,
         main_conv.context_after_message_id,

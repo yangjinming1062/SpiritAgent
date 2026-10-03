@@ -184,7 +184,7 @@ async def _generate_llm_response(
     )
     final_only = final_reply_only or reply_format_error is not None
     request_input = _reply_repair_history(context["input"]) if final_only else context["input"]
-    if final_reply_only and reply_format_error is None:
+    if final_reply_only:
         instructions += resolve_prompt_text(FINAL_REPLY_RETRY_GUIDANCES, lang)
     if reply_preference is not None:
         delivery_guidance = resolve_prompt_text(

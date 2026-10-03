@@ -7,8 +7,9 @@ from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from components import SETTINGS, ensure_utc, format_local_iso, utc_now
-from modules.auth import User
+from modules.auth import User, lock_user_row
 from modules.companion import (
+    POST_COMMENT_MAX_CHARS,
     CompanionPost,
     CompanionPostComment,
     PostCommentResponse,
@@ -107,7 +108,7 @@ async def has_unread_posts(db: AsyncSession, user_id: int) -> bool:
 
 
 async def mark_posts_read(db: AsyncSession, user_id: int, post_ids: Sequence[str]) -> bool:
-    await db.scalar(select(User.id).where(User.id == user_id).with_for_update())
+    await lock_user_row(db, user_id)
     result = await db.execute(
         update(CompanionPost)
         .where(
@@ -170,7 +171,8 @@ async def reserve_publication(
     activity_date: date,
     request: dict,
 ) -> PostPublication:
-    user = await db.scalar(select(User).where(User.id == user_id).with_for_update())
+    await lock_user_row(db, user_id)
+    user = await db.get(User, user_id, populate_existing=True)
     if user is None or not user.is_active:
         raise PostError("账户不可用")
     existing = await db.scalar(
@@ -255,7 +257,7 @@ async def commit_publication(
     initial = await db.get(PostPublication, task_id)
     if initial is None:
         raise PostNotFoundError("发布任务已不存在")
-    await db.scalar(select(User).where(User.id == initial.user_id).with_for_update())
+    await lock_user_row(db, initial.user_id)
     task = await db.scalar(
         select(PostPublication)
         .where(PostPublication.id == task_id)
@@ -308,8 +310,8 @@ async def commit_publication(
 
 async def create_comment(db: AsyncSession, user_id: int, post_id: str, content: str) -> CompanionPostComment:
     content = content.strip()
-    if not content or len(content) > 500:
-        raise PostError("评论需要1至500字符")
+    if not content or len(content) > POST_COMMENT_MAX_CHARS:
+        raise PostError(f"评论需要1至{POST_COMMENT_MAX_CHARS}字符")
     if (
         await db.scalar(select(CompanionPost.id).where(CompanionPost.id == post_id, CompanionPost.user_id == user_id))
         is None

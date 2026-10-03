@@ -168,9 +168,13 @@ class ChannelManager:
         key = (snapshot.user_id, snapshot.channel)
         while True:
             try:
-                # 需要登录且尚无凭据的渠道停在 login_pending 等扫码；connected 由登录完成路径迁移。
+                # 仅显式发起扫码的入口写 login_pending；启动、登出和过期保持 login_required。
                 if adapter.requires_login and not adapter.has_credentials():
-                    await update_binding_status(snapshot.id, "login_pending")
+                    async with session_scope() as db:
+                        binding = await db.get(ChannelBinding, snapshot.id)
+                        login_pending = binding is not None and binding.status == "login_pending"
+                    if not login_pending:
+                        await update_binding_status(snapshot.id, "login_required")
                 else:
                     await update_binding_status(snapshot.id, "connected")
                 await adapter.run()

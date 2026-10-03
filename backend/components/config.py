@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # 抠像 onnx 模型（data_dir/models/<name>.onnx）：背景不纯色时必需，纯色背景走色键不依赖。
     matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
 
-    companion_asset_signing_key: str
+    companion_asset_signing_key: str = Field(min_length=32)
     # 默认关闭：DNS 污染 / fake-ip 代理易误拦正常出站，部署者权衡内网风险后自行开启。
     ssrf_guard_enabled: bool = Field(default=False, validation_alias="SSRF_GUARD_ENABLED")
     ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
 
     web_search_backend: str = Field(default="ddgs", validation_alias="WEB_SEARCH_BACKEND")
     web_extract_backend: str = Field(default="tavily", validation_alias="WEB_EXTRACT_BACKEND")
-    web_search_default_results: int = Field(default=5, gt=0, validation_alias="WEB_SEARCH_DEFAULT_RESULTS")
+    web_search_default_results: int = Field(default=5, gt=0, le=100, validation_alias="WEB_SEARCH_DEFAULT_RESULTS")
     brave_search_api_key: str = Field(default="", validation_alias="BRAVE_SEARCH_API_KEY")
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
     tavily_base_url: str = Field(default="", validation_alias="TAVILY_BASE_URL")
@@ -282,6 +282,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        allow_inf_nan=False,
     )
 
     def validate_runtime_update(self, mapping: dict[str, Any]) -> Self:

@@ -2,14 +2,16 @@
 
 import asyncio
 
-from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, TaskBag, get_logger, resolve_prompt_text, track_user_task
-from modules.companion import CompanionPostComment, PostContext
+from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, TaskBag, get_logger, track_user_task
+from modules.companion import POST_COMMENT_MAX_CHARS, CompanionPostComment, PostContext
 from prompts.posts import POST_REPLY_INSTRUCTIONS
 from sqlalchemy import select
 
 from services.domains.companion import load_companion_prompt_context
 from services.domains.posts import emit_comment, get_post
 from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
+
+from .prompt_contract import render_post_instructions
 
 logger = get_logger(__name__)
 _BG = TaskBag("posts.replies")
@@ -111,12 +113,12 @@ async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
     reply = (
         await call_llm_once(
             config,
-            resolve_prompt_text(POST_REPLY_INSTRUCTIONS, ctx.language),
+            render_post_instructions(POST_REPLY_INSTRUCTIONS, ctx.language),
             payload,
             max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         )
     ).strip()
-    if not reply or len(reply) > 500:
+    if not reply or len(reply) > POST_COMMENT_MAX_CHARS:
         raise ValueError("Empty or oversized comment reply")
     async with SESSION_LOCAL() as db:
         target = await db.scalar(

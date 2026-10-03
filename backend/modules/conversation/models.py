@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from common import ModelBase, TimestampMixin
+from components import DEFAULT_SESSION_TITLE
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -42,7 +43,7 @@ class Conversation(ModelBase, TimestampMixin):
     system_preset_id: Mapped[str] = mapped_column(String(32), index=True)
     memory_reviewed_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     context_after_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    title: Mapped[str] = mapped_column(Text, default="New Conversation")
+    title: Mapped[str] = mapped_column(Text, default=DEFAULT_SESSION_TITLE)
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # reasoning/language 的 key-value 覆盖；随 conversation 级联清除，跨 WS 重连存活（不像 RuntimeSession.settings）。
