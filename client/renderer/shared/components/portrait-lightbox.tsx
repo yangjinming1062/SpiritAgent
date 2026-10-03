@@ -233,17 +233,20 @@ export function PortraitLightbox({
 
   const zoomed = view.scale > MIN_SCALE + 0.001
 
+  // 取景框尽量吃满整窗暗底，工具条与提示叠在下方，不再把预览收成小卡片。
   const imageLimits = containerRef
-    ? 'max-h-[min(80cqh,calc(100cqh-8rem))] max-w-[90cqw]'
+    ? children
+      ? 'max-h-[calc(100cqh-9rem)] max-w-[96cqw]'
+      : 'max-h-[calc(100cqh-5.5rem)] max-w-[96cqw]'
     : children
-      ? 'max-h-[70vh] max-w-[90vw]'
-      : 'max-h-[80vh] max-w-[90vw]'
+      ? 'max-h-[calc(100vh-9rem)] max-w-[96vw]'
+      : 'max-h-[calc(100vh-6.5rem)] max-w-[96vw]'
 
   return createPortal(
     <div
       aria-label={t.ui.lightbox.backdropAria}
       aria-modal="true"
-      className={`${containerRef ? 'absolute' : 'fixed'} inset-0 z-[100] flex flex-col items-center justify-center gap-2 p-6 [-webkit-app-region:no-drag]`}
+      className={`${containerRef ? 'absolute' : 'fixed'} inset-0 z-[100] flex flex-col items-center [-webkit-app-region:no-drag]`}
       onClick={event => {
         if (event.target === event.currentTarget) {
           onClose()
@@ -253,17 +256,25 @@ export function PortraitLightbox({
       role="dialog"
       style={{
         display: panelActive ? undefined : 'none',
-        background: 'rgba(0,0,0,0.35)',
+        background: 'rgba(0,0,0,0.88)',
         containerType: containerRef ? 'size' : undefined,
         pointerEvents: 'auto',
         touchAction: 'none'
       }}
     >
       <div
-        aria-label={name}
-        className={`relative ${imageLimits} touch-none overflow-hidden rounded-2xl ${
-          zoomed ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'
-        }`}
+        className="flex min-h-0 w-full flex-1 items-center justify-center p-3"
+        onClick={event => {
+          if (event.target === event.currentTarget) {
+            onClose()
+          }
+        }}
+      >
+        <div
+          aria-label={name}
+          className={`relative ${imageLimits} touch-none overflow-hidden ${
+            zoomed ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'
+          }`}
         onDoubleClick={event => {
           event.stopPropagation()
           // viewRef 是事实源：state 在换图后尚未刷新时不应回退到旧 scale 计算因子。
@@ -319,7 +330,7 @@ export function PortraitLightbox({
       >
         <img
           alt={name}
-          className={`block ${imageLimits} rounded-2xl object-contain shadow-2xl select-none`}
+          className={`block ${imageLimits} object-contain select-none`}
           draggable={false}
           src={url}
           style={{
@@ -333,17 +344,21 @@ export function PortraitLightbox({
           </span>
         ) : null}
       </div>
+      </div>
 
       {children ? (
-        <div className="w-full max-w-md" onClick={event => event.stopPropagation()}>
+        <div className="w-full max-w-md px-3 pb-1" onClick={event => event.stopPropagation()}>
           {children}
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-center gap-2" onClick={event => event.stopPropagation()}>
+      <div
+        className="mb-1 flex flex-wrap items-center justify-center gap-1 rounded-full bg-white/15 px-2 py-1.5 backdrop-blur-md"
+        onClick={event => event.stopPropagation()}
+      >
         <button
           aria-label={t.ui.lightbox.closePreview}
-          className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white"
+          className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] text-white/90 transition hover:bg-white/25 hover:text-white"
           onClick={onClose}
           ref={closeButtonRef}
           type="button"
@@ -352,7 +367,7 @@ export function PortraitLightbox({
         </button>
         <button
           aria-label={t.ui.lightbox.zoomOut}
-          className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white disabled:opacity-40"
+          className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] text-white/90 transition hover:bg-white/25 hover:text-white disabled:opacity-40"
           disabled={view.scale <= MIN_SCALE + 0.001}
           onClick={() => zoomAt(1 / WHEEL_ZOOM_STEP)}
           type="button"
@@ -364,7 +379,7 @@ export function PortraitLightbox({
         </span>
         <button
           aria-label={t.ui.lightbox.zoomIn}
-          className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white disabled:opacity-40"
+          className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] text-white/90 transition hover:bg-white/25 hover:text-white disabled:opacity-40"
           disabled={view.scale >= MAX_SCALE - 0.001}
           onClick={() => zoomAt(WHEEL_ZOOM_STEP)}
           type="button"
@@ -373,7 +388,7 @@ export function PortraitLightbox({
         </button>
         <button
           aria-label={t.ui.lightbox.zoomReset}
-          className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white disabled:opacity-40"
+          className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] text-white/90 transition hover:bg-white/25 hover:text-white disabled:opacity-40"
           disabled={!zoomed}
           onClick={() => commitView({ scale: MIN_SCALE, x: 0, y: 0 })}
           type="button"
@@ -381,7 +396,7 @@ export function PortraitLightbox({
           {t.ui.lightbox.zoomReset}
         </button>
         <button
-          className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white"
+          className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] text-white/90 transition hover:bg-white/25 hover:text-white"
           onClick={e => {
             e.stopPropagation()
             void copy(url)
@@ -392,7 +407,7 @@ export function PortraitLightbox({
           {t.selfSource.copyRefImage}
         </button>
         <button
-          className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white"
+          className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] text-white/90 transition hover:bg-white/25 hover:text-white"
           onClick={e => {
             e.stopPropagation()
             void save(url, name)
@@ -403,14 +418,14 @@ export function PortraitLightbox({
           {t.selfSource.saveRefImage}
         </button>
       </div>
-      <p className="text-[10px] text-white/55">{t.ui.lightbox.zoomHint}</p>
+      <p className="mb-2 text-[10px] text-white/50">{t.ui.lightbox.zoomHint}</p>
       {copied && (
-        <p className="text-xs text-white/80" role="status">
+        <p className="mb-2 text-xs text-white/80" role="status">
           {t.selfSource.copiedRefImage}
         </p>
       )}
       {error ? (
-        <p className="text-xs text-rose-300" role="alert">
+        <p className="mb-2 text-xs text-rose-300" role="alert">
           {error === 'copy' ? t.selfSource.copyRefImageFailed : t.selfSource.saveRefImageFailed}
         </p>
       ) : null}
