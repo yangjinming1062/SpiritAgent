@@ -695,14 +695,11 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     runtime_sessions = session.runtime_sessions
     replay_buffer = dispatcher.replay_buffer
 
-    def _mount_runtime(conv: Conversation, *, cancel_existing: bool = False) -> RuntimeSession:
-        """挂载会话 runtime：默认复用内存中已有的；cancel_existing 时取消其在途回合并按数据库状态重建。"""
+    def _mount_runtime(conv: Conversation) -> RuntimeSession:
+        """历史同步复用已有 runtime，不能取消其他视图正在消费的回合。"""
         existing = runtime_sessions.get(str(conv.id))
         if existing is not None:
-            if not cancel_existing:
-                return existing
-            if existing.chat_task is not None:
-                existing.chat_task.cancel()
+            return existing
         runtime = new_runtime_session(conv)
         runtime_sessions[runtime.session_id] = runtime
         return runtime
@@ -725,12 +722,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     async def _mounted_history(
         conv: Conversation,
         messages: list[dict[str, Any]],
-        *,
-        cancel_existing: bool,
         **flags: Any,
     ) -> dict[str, Any]:
         """挂载 runtime、释放事件 hold 后返回历史同步结果；flags 为 SessionResumeResult 的截断 / 增量标记。"""
-        runtime = _mount_runtime(conv, cancel_existing=cancel_existing)
+        runtime = _mount_runtime(conv)
         await dispatcher.flush_unsent()
         return SessionResumeResult(
             session_id=runtime.session_id,
@@ -759,7 +754,6 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         return await _mounted_history(
             conv,
             delivered,
-            cancel_existing=False,
             truncated=truncated,
             next_cursor=next_cursor,
         )
@@ -840,7 +834,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 "message_count": result["message_count"],
             },
         )
-        return await _mounted_history(conv, result["messages"], cancel_existing=False)
+        return await _mounted_history(conv, result["messages"])
 
     dispatcher.register("session.fork", session_fork)
 
@@ -895,7 +889,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                         "new_count": len(delivered),
                     },
                 )
-                return await _mounted_history(conv, delivered, cancel_existing=True, incremental=True)
+                return await _mounted_history(conv, delivered, incremental=True)
 
         # 客户端序列号失同步或超时，回退到 DB 历史防御性截断重水化
         async with SESSION_LOCAL() as db:
@@ -904,7 +898,6 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         return await _mounted_history(
             conv,
             delivered,
-            cancel_existing=True,
             truncated=truncated,
             next_cursor=next_cursor,
         )

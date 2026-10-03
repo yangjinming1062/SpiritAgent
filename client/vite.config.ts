@@ -56,7 +56,11 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5174,
-    strictPort: true
+    strictPort: true,
+    watch: {
+      // 构建目录中的 DLL 可能正在复制或被进程占用。
+      ignored: ['**/build/**', '**/dist-electron/**', '**/native/desktop-host/target/**', '**/release/**']
+    }
   },
   preview: {
     host: '127.0.0.1',

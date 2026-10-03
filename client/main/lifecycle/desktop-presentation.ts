@@ -14,7 +14,7 @@ import {
 import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
-import { broadcastToAllWindows, createSerialQueue, errorMessage, sendToWindow } from '../shared/utils'
+import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, errorMessage, sendToWindow } from '../shared/utils'
 
 import { createExplorerDesktopHost } from './explorer-desktop-host'
 import { createPresentationPreferences } from './presentation-preferences'
@@ -40,6 +40,9 @@ interface DesktopPresentationOptions {
 export function createDesktopPresentation(options: DesktopPresentationOptions) {
   const preferences = createPresentationPreferences(options.userData)
   const serial = createSerialQueue()
+  const journalFile = path.join(options.userData, 'desktop-shell-recovery.json')
+  const interruptedFile = `${journalFile}.interrupted`
+  const mainInterruptedFile = `${journalFile}.main-interrupted`
   let interactive: BrowserWindow | null = null
   const backgrounds = new Set<BrowserWindow>()
   const displayBoundsByWindow = new WeakMap<BrowserWindow, Electron.Rectangle>()
@@ -71,7 +74,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
   const native = createExplorerDesktopHost({
     helperPath: options.helperPath,
-    journalPath: path.join(options.userData, 'desktop-shell-recovery.json'),
+    journalPath: journalFile,
     log: options.log,
     onForegroundChanged: active => {
       if (foreground === active) {
@@ -214,6 +217,20 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     claims.clear()
     publish()
 
+    const recording = reason
+      ? Promise.resolve()
+          .then(() => atomicWriteFile(mainInterruptedFile, 'main_failure'))
+          .catch(error => {
+            const message = `[desktop] interruption marker write: ${errorMessage(error)}`
+
+            try {
+              options.log(message)
+            } catch {
+              console.warn(message)
+            }
+          })
+      : Promise.resolve()
+
     try {
       await native.stop()
     } catch (error) {
@@ -226,18 +243,22 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw recoveryError
       }
     } finally {
-      destroyWindows()
-      foreground = false
-      effectiveMode = 'window'
-      status = finalReason ? 'failed' : 'inactive'
-      failureReason = finalReason ?? null
+      try {
+        destroyWindows()
+        foreground = false
+        effectiveMode = 'window'
+        status = finalReason ? 'failed' : 'inactive'
+        failureReason = finalReason ?? null
 
-      if (finalReason) {
-        suppressAutoRestore = true
+        if (finalReason) {
+          suppressAutoRestore = true
+        }
+
+        publish()
+        options.restoreSprite()
+      } finally {
+        await recording
       }
-
-      publish()
-      options.restoreSprite()
     }
   }
 
@@ -459,11 +480,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     initialized = true
-    const interruptedFile = path.join(options.userData, 'desktop-shell-recovery.json.interrupted')
-    let interrupted = existsSync(interruptedFile)
+    let interrupted = existsSync(interruptedFile) || existsSync(mainInterruptedFile)
     suppressAutoRestore = interrupted
 
-    if (process.platform === 'win32' && existsSync(path.join(options.userData, 'desktop-shell-recovery.json'))) {
+    if (process.platform === 'win32' && existsSync(journalFile)) {
       try {
         suppressAutoRestore = (await native.recover()) || interrupted
       } catch (error) {
@@ -479,7 +499,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
     }
 
-    interrupted ||= existsSync(interruptedFile)
+    interrupted ||= existsSync(interruptedFile) || existsSync(mainInterruptedFile)
     suppressAutoRestore ||= interrupted
 
     if (interrupted && !failureReason) {
@@ -487,11 +507,15 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       status = 'failed'
     }
 
-    if (interrupted && !existsSync(path.join(options.userData, 'desktop-shell-recovery.json'))) {
-      try {
-        unlinkSync(interruptedFile)
-      } catch (error) {
-        options.log(`[desktop] interruption marker cleanup: ${errorMessage(error)}`)
+    if (interrupted && !existsSync(journalFile)) {
+      for (const marker of [interruptedFile, mainInterruptedFile]) {
+        if (existsSync(marker)) {
+          try {
+            unlinkSync(marker)
+          } catch (error) {
+            options.log(`[desktop] interruption marker cleanup: ${errorMessage(error)}`)
+          }
+        }
       }
     }
 
@@ -588,6 +612,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       if (mode === 'desktop') {
         try {
           await enter()
+
+          if (effectiveMode === 'desktop' && status === 'active' && existsSync(mainInterruptedFile)) {
+            try {
+              unlinkSync(mainInterruptedFile)
+            } catch (error) {
+              options.log(`[desktop] main interruption marker cleanup: ${errorMessage(error)}`)
+            }
+          }
         } catch (error) {
           if (status !== 'failed') {
             status = 'failed'
