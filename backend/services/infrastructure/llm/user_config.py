@@ -9,9 +9,15 @@ from .providers import ChatProvider, ProviderConfig, ServiceType
 
 @dataclass(frozen=True)
 class UserLlmConfig:
-    """用户 LLM 能力链首项；链为空时 ``config`` 为 None。"""
+    """已解析的用户文本能力链；首项为空时未配置。"""
 
     config: ProviderConfig | None
+    fallback_configs: tuple[ProviderConfig, ...] = ()
+    user_id: int | None = None
+
+    @property
+    def chain(self) -> tuple[ProviderConfig, ...]:
+        return (self.config, *self.fallback_configs) if self.config is not None else ()
 
     @property
     def is_configured(self) -> bool:
@@ -33,7 +39,7 @@ class UserLlmConfig:
 
 async def resolve_user_llm_config(db: AsyncSession, user_id: int) -> UserLlmConfig:
     chain = await resolve_provider_chain(db, user_id, ServiceType.llm)
-    return UserLlmConfig(chain[0] if chain else None)
+    return UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
 
 
 def client_for_config(llm_config: UserLlmConfig) -> AsyncOpenAI:

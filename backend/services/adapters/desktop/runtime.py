@@ -25,6 +25,7 @@ class SessionRuntimeInfo(BaseModel):
     context_window: int | None = None
     # 客户端 IM 守卫与语音入口的权威判定源，避免依赖尚未加载的会话列表。
     kind: str = "standard"
+    is_automation: bool = False
 
 
 class SessionCreateResult(BaseModel):
@@ -58,6 +59,7 @@ class RuntimeSession:
     settings: dict[str, Any] = field(default_factory=dict)
     # 会话种类镜像（special/standard/im）：prompt_submit 据此拒绝 im 渠道会话（由通道桥独占写入）。
     kind: str = "standard"
+    is_automation: bool = False
 
     @property
     def session_id(self) -> str:
@@ -80,6 +82,7 @@ def new_runtime_session(conv: Conversation) -> RuntimeSession:
         conversation_id=conv.id,
         settings=decode_session_settings(conv.settings_json),
         kind=conv.kind,
+        is_automation=conv.is_automation,
     )
 
 
@@ -97,4 +100,5 @@ def build_runtime_info(
         settings=settings,
         context_window=resolve_context_tokens(provider),
         kind=runtime.kind,
+        is_automation=runtime.is_automation,
     )

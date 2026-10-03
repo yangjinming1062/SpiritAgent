@@ -2,7 +2,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal, Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -126,6 +126,7 @@ class Settings(BaseSettings):
 
     # 对话回合与陪伴交互节奏：控制工具循环上限、桌面互动的 LLM 成本窗口与主动行为的静默门槛。
     agent_max_loop_turns: int = Field(default=150, gt=0, validation_alias="AGENT_MAX_LOOP_TURNS")
+    agent_turn_timeout_seconds: float = Field(default=1800.0, gt=0, validation_alias="AGENT_TURN_TIMEOUT_SECONDS")
     companion_idle_expression_min_interval_seconds: float = Field(
         default=2.0,
         gt=0,
@@ -260,6 +261,12 @@ class Settings(BaseSettings):
         validation_alias="CHANNELS_RESTART_BACKOFF_SECONDS",
     )
     channels_delivery_max_attempts: int = Field(default=3, gt=0, validation_alias="CHANNELS_DELIVERY_MAX_ATTEMPTS")
+    channels_failure_threshold: int = Field(default=3, ge=1, validation_alias="CHANNELS_FAILURE_THRESHOLD")
+    channels_failure_grace_seconds: float = Field(
+        default=120.0,
+        ge=0,
+        validation_alias="CHANNELS_FAILURE_GRACE_SECONDS",
+    )
     # 小于等于 0 表示回复不分片，因此不设下界。
     weixin_reply_max_chars: int = Field(default=2000, validation_alias="WEIXIN_REPLY_MAX_CHARS")
     weixin_ilink_poll_timeout_seconds: float = Field(
@@ -292,6 +299,12 @@ class Settings(BaseSettings):
 
     def apply_runtime_candidate(self, candidate: Self) -> None:
         self.__dict__.update({key: getattr(candidate, key) for key in type(self).model_fields})
+
+    @model_validator(mode="after")
+    def validate_nightly_window(self) -> Self:
+        if self.nightly_window_start_hour == self.nightly_window_end_hour:
+            raise ValueError("夜间窗口的开始和结束小时不能相同")
+        return self
 
     @classmethod
     def settings_customise_sources(

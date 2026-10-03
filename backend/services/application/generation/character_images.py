@@ -4,6 +4,7 @@ import asyncio
 import io
 from collections.abc import Awaitable, Callable
 
+import httpx
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger
 from PIL import Image
 from prompts.generation import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
@@ -195,7 +196,8 @@ async def generate_character_images(
     identity_text: str = "",
     state: ImageChainState | None = None,
     save_progress: ImageProgressWriter | None = None,
-    store_attempts: int = 1,
+    store_attempts: int = 3,
+    before_submit: Callable[[], Awaitable[None]] | None = None,
     max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     size_enforced: bool = False,
     prefer_transparent_background: bool = False,
@@ -298,7 +300,12 @@ async def generate_character_images(
                                 if exc.size_mismatch:
                                     state.size_rejected += 1
                                 break
-                            if attempt + 1 < max(1, store_attempts):
+                            retryable_download = isinstance(exc, httpx.TransportError) or (
+                                isinstance(exc, httpx.HTTPStatusError)
+                                and exc.response.status_code in {408, 429, 500, 502, 503, 504}
+                            )
+                            if retryable_download and attempt + 1 < max(1, store_attempts):
+                                await asyncio.sleep(min(2.0, 0.25 * 2**attempt))
                                 continue
                             if state.candidates:
                                 state.stop_reason = "storage_failed"
@@ -338,6 +345,7 @@ async def generate_character_images(
                             inputs.identity_reference,
                             uri,
                             identity_text=inputs.identity_text,
+                            before_submit=before_submit,
                         )
                     )
                     state.accept_score(candidate, score)
@@ -365,6 +373,8 @@ async def generate_character_images(
                 state.remaining_slots = []
                 await _save_progress(state, save_progress)
                 continue
+            if before_submit is not None:
+                await before_submit()
             batch_size = state.providers[index].max_images_per_request or len(state.remaining_slots)
             slots = state.remaining_slots[:batch_size]
             state.remaining_slots = state.remaining_slots[batch_size:]

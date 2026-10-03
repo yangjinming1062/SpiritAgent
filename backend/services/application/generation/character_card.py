@@ -3,7 +3,7 @@
 import asyncio
 from typing import Literal
 
-from components import SESSION_LOCAL, get_logger, track_user_task
+from components import SESSION_LOCAL, get_logger, is_user_in_maintenance, track_user_task
 from modules.companion import AvatarAsset, BodyFeatures, CharacterFeatures, CompanionCharacterCard, PortraitFeatures
 from sqlalchemy import select
 
@@ -11,6 +11,7 @@ from services.domains.companion import emit_character_card_updated, get_characte
 
 from .avatar_service import extract_card_features, get_avatar_job_lock
 from .initial_appearance import start_initial_video
+from .paid_work import GenerationWorkPaused, require_new_generation_call
 from .scene_service import schedule_initial_scene
 
 logger = get_logger(__name__)
@@ -19,6 +20,8 @@ _reschedule: set[int] = set()
 
 
 def schedule_character_extraction(user_id: int) -> None:
+    if is_user_in_maintenance(user_id):
+        return
     task = _tasks.get(user_id)
     if task is not None and not task.done():
         _reschedule.add(user_id)
@@ -70,12 +73,19 @@ async def _extract_part(user_id: int, extraction_id: str, part: Literal["portrai
         await db.commit()
     result: PortraitFeatures | BodyFeatures | None = None
     error: str | None = None
+
+    async def before_submit() -> None:
+        require_new_generation_call(user_id)
+
     try:
         result = await extract_card_features(
             user_id,
             source_path,
             PortraitFeatures if part == "portrait" else BodyFeatures,
+            before_submit=before_submit,
         )
+    except GenerationWorkPaused:
+        raise
     except Exception:
         logger.warning("character extraction failed", extra={"user_id": user_id, "part": part}, exc_info=True)
         error = "头像特征分析失败，请重试" if part == "portrait" else "身体特征分析失败，请重试"
@@ -148,6 +158,8 @@ async def _extract_character(user_id: int) -> None:
         if ready:
             await start_initial_video(user_id)
             await schedule_initial_scene(user_id)
+    except GenerationWorkPaused:
+        return
     except Exception:
         logger.exception("character card task failed", extra={"user_id": user_id})
         async with SESSION_LOCAL() as db:
@@ -157,3 +169,11 @@ async def _extract_character(user_id: int) -> None:
                 card.error = "角色资料分析中断，请重试"
                 emit_character_card_updated(db, card)
                 await db.commit()
+
+
+async def resume_user_character_extraction(user_id: int) -> None:
+    async with SESSION_LOCAL() as db:
+        card = await get_character_card(db, user_id)
+        pending = card is not None and card.status in ("pending", "running")
+    if pending:
+        schedule_character_extraction(user_id)

@@ -184,11 +184,13 @@ class OutfitRegeneratePromptRequest(BaseModel):
 
 class OutfitResponse(BaseModel):
     initial_video_error: str | None = None
+    description_status: Literal["pending", "processing", "ready", "failed"] = "pending"
+    description_error: str | None = None
     id: int
     name: str
     description: str | None = None
     fullbody_url: str = ""
-    # draft → ready | failed | expired
+    # draft → ready | expired
     status: str = "draft"
     active: bool = False
 

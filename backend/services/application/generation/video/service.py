@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import json
 import tempfile
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from pathlib import Path
 
 from components import (
@@ -38,10 +38,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from services.domains.actions import (
+    accept_action_asset,
+    accepted_action_asset,
+    action_asset_paths,
     clear_action_attempt,
     emit_catalog_changed,
     fulfill_deferred_play_intents,
     publish_action_catalog,
+    retire_action_assets,
 )
 from services.domains.companion import (
     character_snapshot_is_current,
@@ -65,6 +69,7 @@ from services.infrastructure.assets import (
     unlink_companion_asset,
 )
 from services.infrastructure.llm import (
+    LlmCallBlockedError,
     ProviderError,
     ProviderResultUnknownError,
     VideoGenProvider,
@@ -73,7 +78,6 @@ from services.infrastructure.llm import (
     VisualReasoningError,
     build_provider,
     execute_with_fallback,
-    is_content_policy_error_message,
     resolve_provider_chain,
     resolve_vision_chain,
 )
@@ -85,6 +89,7 @@ from services.infrastructure.video_processing import (
     MAX_CANVAS_WIDTH,
     MAX_SOURCE_BYTES,
     TARGET_EXT,
+    ActionMaterialRejectedError,
     VideoProcessError,
     action_frame_video_input,
     build_hitmask,
@@ -108,8 +113,12 @@ from ..media_chain import (
     MediaProviderFailedError,
     media_failure_reason,
     resolve_frozen_media_provider,
+    video_failure_message,
+    video_provider_failure_reason,
 )
 from ..media_review import create_media_review, reject_pending_action_reviews
+from ..outfit_service import wait_outfit_description
+from ..paid_work import GenerationWorkPaused, require_new_generation_call
 from ..video_jobs import VideoPollTimeoutError, poll_video_task
 from ..visual_identity import align_character_reference
 from .script import (
@@ -166,6 +175,25 @@ class VideoPackStateError(VideoPackError):
 
 class _GenerationRowGoneError(Exception):
     """生成中的动作行已删除，或包已离开生成流程；只跳过受影响的目标。"""
+
+
+async def _require_new_paid_step(pack: CompanionActionPack, context: GenerationContext) -> None:
+    require_new_generation_call(pack.user_id)
+    async with SESSION_LOCAL() as db:
+        avatar = await _active_avatar(db, pack.user_id)
+    try:
+        await _require_current_identity_image(context, avatar)
+    except VideoPackError as exc:
+        raise LlmCallBlockedError(str(exc)) from exc
+    require_new_generation_call(pack.user_id)
+
+
+async def require_pack_generation_identity(db: AsyncSession, user_id: int, pack_id: int) -> None:
+    pack = await _get_pack(db, user_id, pack_id)
+    context = _load_generation_context(pack) if pack is not None else None
+    if pack is None or context is None or not pack.reference_path:
+        raise VideoPackStateError("该动作包没有可制作的冻结参考，请重新生成动作包")
+    await _require_current_identity_image(context, await _active_avatar(db, user_id))
 
 
 async def _active_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
@@ -388,6 +416,10 @@ async def create_pack_from_reference(
         if source is not None and action is not None and source.status == "ready":
             await _reject_concurrent_build(db, user_id)
             require_action_matting_model()
+            source_context = _load_generation_context(source)
+            if source_context is None:
+                raise VideoPackStateError("该动作包的制作资料不完整，请重新生成动作包")
+            await _require_current_identity_image(source_context, await _active_avatar(db, user_id))
             job = await _queue_in_place_redo(db, source, action, feedback)
             await db.commit()
             kick_dynamic_action(source.id, job.id, user_id)
@@ -426,6 +458,8 @@ async def create_pack_from_reference(
         source_context = _load_generation_context(source) if source is not None else None
         if source is not None and source_context is None:
             raise VideoPackStateError("该动作包的制作资料不完整，请重新生成动作包")
+        if source_context is not None:
+            await _require_current_identity_image(source_context, avatar)
         identity = (
             source_context.identity if source_context is not None else await require_character_snapshot(db, user_id)
         )
@@ -455,9 +489,9 @@ async def create_pack_from_reference(
                 and await _newer_ready_pack(db, reusable) is None
             ):
                 await _activate_locked(db, reusable)
-                retired = await _retire_superseded_locked(db, reusable)
+                await _retire_superseded_locked(db, reusable)
                 await db.commit()
-                _unlink_assets(retired)
+
                 return reusable
         system_seconds, system_providers = await _resolve_action_video_plan(
             user_id,
@@ -483,7 +517,7 @@ async def create_pack_from_reference(
                 if key == action:
                     continue
                 old = _inheritable_job(previous.get(key))
-                if old is not None and old.status != "succeeded" and not _can_resume_job(old):
+                if old is not None and accepted_action_asset(old) is None and not _can_resume_job(old):
                     raise VideoPackStateError("请先重做失败的必需动作，再补齐其他动作")
             reference_path = source.reference_path
             if not _artifact_abs_path(reference_path).is_file():
@@ -497,7 +531,7 @@ async def create_pack_from_reference(
         active_outfit_id = await _active_outfit_id(db, user_id)
         if source_context is not None:
             action_feedback = dict(source_context.action_feedback)
-            if action is not None and feedback.strip():
+            if action is not None:
                 action_feedback[action] = feedback.strip()[:1000]
             context = source_context.model_copy(
                 update={"action_feedback": action_feedback, "active_outfit_id": active_outfit_id},
@@ -517,6 +551,7 @@ async def create_pack_from_reference(
                 persona_definition=load_persona_definition(persona),
                 personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
                 outfit_description=outfit.description or "",
+                outfit_description_frozen=bool(outfit.description),
                 feedback=feedback,
                 active_outfit_id=outfit.id if initial_only else active_outfit_id,
                 must_actions=[],
@@ -557,7 +592,7 @@ async def create_pack_from_reference(
             else:
                 job = _copy_job_to_pack(old, pack)
                 job.outfit_id, job.reference_hash = outfit.id, reference_hash
-                if job.status == "succeeded":
+                if accepted_action_asset(job) is not None:
                     must_actions.add(key)
                 elif _can_resume_job(old):
                     job.status, job.error = "queued", None
@@ -578,7 +613,7 @@ def _action_order(action: str) -> tuple[int, str]:
 
 
 def _can_resume_job(job: CompanionAction) -> bool:
-    if job.status in ("succeeded", "review") or job.stage == "merged":
+    if job.status in ("succeeded", "review") or job.stage in ("merged", "invalid_asset"):
         return False
     if job.generation_state_json:
         state = MediaChainState.model_validate_json(job.generation_state_json)
@@ -615,7 +650,7 @@ def _can_publish_jobs(jobs: Sequence[CompanionAction], context_must: list[str]) 
     by_action = {job.key: job for job in jobs}
     for action in _must_succeed_actions(context_must):
         job = by_action.get(action)
-        if job is None or job.status != "succeeded" or not job.result_json:
+        if job is None or accepted_action_asset(job) is None:
             return False
     return True
 
@@ -651,11 +686,13 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionA
             )
             for job in newer_jobs:
                 # 最新成功结果优先；尚未完成的动作沿用原任务句柄和脚本。
-                if job.status == "succeeded" or job.key not in by_action:
+                if accepted_action_asset(job) is not None or job.key not in by_action:
                     by_action[job.key] = job
             jobs = sorted(by_action.values(), key=lambda job: _action_order(job.key))
             must_actions = _must_succeed_actions(context.must_actions)
-            must_actions.update(job.key for job in jobs if job.status == "succeeded" or _can_resume_job(job))
+            must_actions.update(
+                job.key for job in jobs if accepted_action_asset(job) is not None or _can_resume_job(job)
+            )
             context = context.model_copy(update={"must_actions": sorted(must_actions, key=_action_order)})
         recoverable = [job for job in jobs if _can_resume_job(job)]
         if not recoverable and not _can_publish_jobs(jobs, context.must_actions):
@@ -842,10 +879,14 @@ async def _advance_job(job_id: int, *, stage: str, status: str = "processing", *
             raise _GenerationRowGoneError
         if job.status in ("succeeded", "review", "failed"):
             return
+        previous = accepted_action_asset(job)
         job.status = status
         job.stage = stage
         for key, value in fields.items():
             setattr(job, key, value)
+        if status == "succeeded":
+            await retire_action_assets(db, job.user_id, previous.paths() if previous else [])
+            accept_action_asset(job)
         await db.commit()
 
 
@@ -915,6 +956,8 @@ async def _review_pack_identity(
     user_id: int,
     context: GenerationContext,
     results: dict[str, ActionResult],
+    *,
+    before_submit: Callable[[], Awaitable[None]],
 ) -> tuple[str, str]:
     """必需动作首、中、末帧与冻结身份图做整包复核；复核不可用时转人工预览。"""
     try:
@@ -929,7 +972,10 @@ async def _review_pack_identity(
             tuple(frame_uris),
             pack_wide=True,
             identity_text=render_character_identity(context.identity),
+            before_submit=before_submit,
         )
+    except LlmCallBlockedError:
+        raise
     except Exception:
         logger.warning("video pack identity review failed", extra={"pack_id": pack_id}, exc_info=True)
         return "review", "视频形象的自动检查未完成，请预览后手动启用"
@@ -948,10 +994,15 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
     if context is None:
         review_status, review_reason = "accepted", ""
     elif cover_path:
-        review_status, review_reason = await _review_pack_identity(pack_id, user_id, context, results)
+        review_status, review_reason = await _review_pack_identity(
+            pack_id,
+            user_id,
+            context,
+            results,
+            before_submit=lambda: _require_new_paid_step(pack, context),
+        )
     else:
         review_status, review_reason = "review", "视频封面不可用，请预览后手动启用"
-    retired: set[str] = set()
     async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
         pack = await db.get(CompanionActionPack, pack_id)
         if pack is None or pack.status != "processing":
@@ -989,9 +1040,8 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
             and await character_snapshot_is_current(db, pack.user_id, context.identity)
         ):
             await _activate_locked(db, pack)
-            retired = await _retire_superseded_locked(db, pack)
+            await _retire_superseded_locked(db, pack)
         await db.commit()
-    _unlink_assets(retired)
 
 
 async def _publish_catalog(db: AsyncSession, pack: CompanionActionPack) -> int | None:
@@ -1169,6 +1219,7 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
         identity_reference=source,
         state=context.reference_chain,
         save_progress=save_progress,
+        before_submit=lambda: _require_new_paid_step(pack, context),
     )
     previous_path = pack.reference_path
     async with SESSION_LOCAL() as db:
@@ -1178,10 +1229,10 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
         context.reference_alignment = "ready"
         row.reference_path = path
         row.context_json = context.model_dump_json()
+        await retire_action_assets(db, pack.user_id, [previous_path])
         await db.commit()
     pack.reference_path = path
     pack.context_json = context.model_dump_json()
-    unlink_companion_asset(previous_path)
     return context
 
 
@@ -1232,8 +1283,30 @@ async def _compose_scripts(
         outfit_description=context.outfit_description,
         specs=specs,
         feedback=context.feedback,
+        before_submit=lambda: _require_new_paid_step(pack, context),
     )
     return script.actions
+
+
+async def _freeze_outfit_description(pack: CompanionActionPack, context: GenerationContext) -> GenerationContext:
+    if context.outfit_description_frozen:
+        return context
+    if is_user_in_maintenance(pack.user_id):
+        raise GenerationWorkPaused
+    if pack.outfit_id is not None:
+        with contextlib.suppress(TimeoutError):
+            await wait_outfit_description(pack.user_id, pack.outfit_id)
+    async with SESSION_LOCAL() as db:
+        row = await db.get(CompanionActionPack, pack.id)
+        if row is None:
+            raise _GenerationRowGoneError
+        outfit = await db.get(CompanionOutfit, row.outfit_id) if row.outfit_id is not None else None
+        description = (outfit.description or "") if outfit else ""
+        context = context.model_copy(update={"outfit_description": description, "outfit_description_frozen": True})
+        row.context_json = context.model_dump_json()
+        row.outfit_snapshot = json.dumps({"description": description}, ensure_ascii=False)
+        await db.commit()
+    return context
 
 
 async def _generate_pack(pack_id: int) -> None:
@@ -1255,6 +1328,7 @@ async def _generate_pack(pack_id: int) -> None:
         context = _load_generation_context(pack)
         if context is None:
             raise VideoPackError("动作包的制作资料不完整，请重新生成动作包")
+        context = await _freeze_outfit_description(pack, context)
         pending = [job for job in jobs if job.status != "succeeded" and job.status != "failed" and not job.script_json]
         for job in pending:
             await _prepare_action_video_plan(job)
@@ -1283,22 +1357,24 @@ async def _generate_pack(pack_id: int) -> None:
             try:
                 entry = ActionScriptEntry.model_validate_json(job.script_json or "")
                 await _run_action_pipeline(pack, job, entry, context)
+            except GenerationWorkPaused:
+                continue
             except Exception as exc:  # noqa: BLE001 — 动作失败隔离，其他已请求动作仍可交付并独立重做
                 await _record_action_failure(pack_id, job, exc)
         async with SESSION_LOCAL() as db:
             rows = (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars().all()
         # 阻塞发布：must_actions（必需 + 本版本必须成功）未完成。继承的其他未知失败不阻塞。
-        blocking = [
-            job for job in rows if (job.status != "succeeded" or not job.result_json) and job.key in must_actions
-        ]
+        blocking = [job for job in rows if accepted_action_asset(job) is None and job.key in must_actions]
         if blocking:
+            if is_user_in_maintenance(pack.user_id):
+                return
             # 各动作原因已写入动作行；包级文案只汇总不重复的原因，不暴露内部动作键。
             await _fail_pack(pack_id, "；".join(dict.fromkeys(job.error or "动作未完成" for job in blocking)))
             return
         results = {
-            job.key: ActionResult.model_validate_json(job.result_json)
+            job.key: ActionResult.model_validate_json(material.result_json)
             for job in rows
-            if job.status == "succeeded" and job.result_json
+            if (material := accepted_action_asset(job)) is not None
         }
         await _emit_pack_event(
             pack.user_id,
@@ -1306,6 +1382,8 @@ async def _generate_pack(pack_id: int) -> None:
             {"packId": pack_id, "outfitId": pack.outfit_id, "stage": "publish"},
         )
         await _publish_ready(pack_id, results)
+    except GenerationWorkPaused:
+        return
     except _GenerationRowGoneError:
         logger.info("video pack left generation", extra={"pack_id": pack_id})
     except Exception as exc:  # noqa: BLE001 — 后台异常必须转为持久可见失败
@@ -1320,7 +1398,10 @@ async def _record_action_failure(pack_id: int, job: CompanionAction, exc: Except
         logger.info("video action row removed during generation", extra=extra)
         return
     logger.error("video action failed", extra=extra, exc_info=exc)
-    status = "result_unknown" if isinstance(exc, ProviderResultUnknownError) else "failed"
+    reason, _ = media_failure_reason(exc)
+    status = "result_unknown" if reason == "result_unknown" else "failed"
+    if isinstance(exc, ActionMaterialRejectedError):
+        job.stage = "invalid_asset"
     try:
         await _advance_job(job.id, stage=job.stage, status=status, error=_generation_error(exc))
     except _GenerationRowGoneError:
@@ -1328,13 +1409,22 @@ async def _record_action_failure(pack_id: int, job: CompanionAction, exc: Except
 
 
 def _generation_error(exc: Exception) -> str:
-    if isinstance(exc, ProviderResultUnknownError):
-        return "提交结果未知，未自动重发；请核对供应商任务后再决定是否重做"
-    if isinstance(exc, ProviderError):
-        return _provider_failure_copy(str(exc))
+    reason, _ = media_failure_reason(exc)
+    if reason in {"result_unknown", "content_policy_blocked"} or isinstance(
+        exc,
+        (ProviderError, MediaProviderFailedError),
+    ):
+        return video_failure_message(reason)
     if isinstance(
         exc,
-        (VideoProcessError, VideoPackError, VideoScriptError, ImageGenerationError, VisualReasoningError),
+        (
+            VideoProcessError,
+            VideoPackError,
+            VideoScriptError,
+            ImageGenerationError,
+            VisualReasoningError,
+            LlmCallBlockedError,
+        ),
     ):
         return str(exc)[:500]
     return "动作处理失败，可重试已有任务或素材"
@@ -1381,6 +1471,7 @@ async def _run_action_pipeline(
             prefer_transparent_background=True,
             state=pose_state,
             save_progress=save_pose,
+            before_submit=lambda: _require_new_paid_step(pack, context),
         )
         job.pose_path = action_pose_asset_path(pack.user_id, pose_state.generation_id)
         await _advance_job(job.id, stage="pose", pose_path=job.pose_path)
@@ -1395,6 +1486,7 @@ async def _run_action_pipeline(
         if state.phase == "ready":
             if not state.needs_next():
                 break
+            await _require_new_paid_step(pack, context)
             try:
                 require_action_matting_model()
             except VideoPackStateError:
@@ -1444,18 +1536,25 @@ async def _run_action_pipeline(
                         identity_uri,
                         await _clip_frame_uris(result.clip),
                         identity_text=render_character_identity(context.identity),
+                        before_submit=lambda: _require_new_paid_step(pack, context),
                     )
+                except LlmCallBlockedError:
+                    raise
                 except Exception:
                     logger.warning("action identity score unavailable", extra={"action_id": job.id}, exc_info=True)
                     score = None
                 state.accept_score(candidate, score)
             state.phase = "ready"
             await _save_action_state(job, state)
+        except GenerationWorkPaused:
+            raise
         except Exception as exc:
             reason, can_continue = media_failure_reason(exc)
             # 只有明确未提交成功的 API 错误允许技术回退；轮询、下载、后处理继续原任务。
-            if (state.phase == "submitting" and can_continue) or isinstance(exc, MediaProviderFailedError):
+            if can_continue and (state.phase == "submitting" or isinstance(exc, MediaProviderFailedError)):
                 state.phase = "ready"
+                if state.next_index >= len(state.providers):
+                    state.stop_reason = reason
                 await _save_action_state(job, state)
                 continue
             if state.best() is None and state.phase != "submitting":
@@ -1470,6 +1569,8 @@ async def _run_action_pipeline(
     if best is None:
         if state.stop_reason == "result_unknown":
             raise ProviderResultUnknownError("POST", "video_gen")
+        if state.stop_reason:
+            raise MediaProviderFailedError(video_failure_message(state.stop_reason), reason=state.stop_reason)
         raise VideoPackError("视频生成服务未返回可用素材")
     unused_source = job.artifact_path
     result = ActionResult.model_validate_json(best.result_json or "")
@@ -1483,7 +1584,13 @@ async def _run_action_pipeline(
             logger.warning("video action frame sampling failed", extra={"action_id": job.id}, exc_info=True)
 
     if job.system_slot in ("peek_left", "peek_right"):
-        geometry = await inspect_peek_geometry(pack.user_id, job.system_slot, identity_uri, frames)
+        geometry = await inspect_peek_geometry(
+            pack.user_id,
+            job.system_slot,
+            identity_uri,
+            frames,
+            before_submit=lambda: _require_new_paid_step(pack, context),
+        )
         spec = spec.model_copy(update={"peek_geometry": geometry})
         result = result.model_copy(update={"clip": spec})
 
@@ -1496,7 +1603,10 @@ async def _run_action_pipeline(
                 identity_uri,
                 frames,
                 identity_text=render_character_identity(context.identity),
+                before_submit=lambda: _require_new_paid_step(pack, context),
             )
+        except LlmCallBlockedError:
+            raise
         except Exception:
             verdict, reason = "review", "动作视频的自动检查未完成，请预览确认"
         if verdict == "review":
@@ -1581,6 +1691,7 @@ async def _run_action_attempt(
                 reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
 
                 async def submit(current: VideoGenProvider) -> VideoJobStatus:
+                    await _require_new_paid_step(pack, context)
                     status = await current.submit(
                         VideoGenRequest(
                             prompt=build_video_prompt(entry, context.identity),
@@ -1595,7 +1706,13 @@ async def _run_action_attempt(
                         raise ProviderResultUnknownError("POST", config.base_url)
                     return status
 
-                submitted = await execute_with_fallback([config], VideoGenProvider, submit, user_id=pack.user_id)
+                try:
+                    submitted = await execute_with_fallback([config], VideoGenProvider, submit, user_id=pack.user_id)
+                except GenerationWorkPaused:
+                    # 尚未提交的游标回到可安全提交的位置，维护恢复不能把它判为结果未知。
+                    state.phase, state.active_index, state.next_index = "ready", None, attempt
+                    await _save_action_state(job, state)
+                    raise
                 task_id = job.provider_task_id = submitted.task_id
                 state.phase = "processing"
                 await _save_action_state(job, state, stage="generate", provider_task_id=task_id)
@@ -1606,7 +1723,8 @@ async def _run_action_attempt(
                 except VideoPollTimeoutError as exc:
                     raise VideoPackError("视频生成超时，请稍后重试") from exc
                 if status.status != "succeeded":
-                    raise MediaProviderFailedError(_provider_failure_copy(status.error))
+                    reason = video_provider_failure_reason(status.error)
+                    raise MediaProviderFailedError(video_failure_message(reason), reason=reason)
                 state.result_url = status.download_url
                 state.phase = "storing"
                 await _save_action_state(job, state, stage="download")
@@ -1646,17 +1764,6 @@ async def _run_action_attempt(
             preserve_resolution=True,
         )
     return source_path, result
-
-
-# 视频供应商的中文审核提示；共享审核模式只覆盖英文文案与错误码，这里不扩大到其他能力的错误分类。
-_POLICY_KEYWORDS_ZH = ("敏感", "违规")
-
-
-def _provider_failure_copy(error: str | None) -> str:
-    """供应商失败的用户文案：按共享审核模式识别策略拦截，原始错误文本不外泄。"""
-    if error and (is_content_policy_error_message(error) or any(keyword in error for keyword in _POLICY_KEYWORDS_ZH)):
-        return "内容审核未通过，请调整角色形象后重试"
-    return "视频生成失败，请稍后重试"
 
 
 def _start_pack_task(
@@ -1749,13 +1856,14 @@ async def _queue_in_place_redo(
         db.add(job)
     else:
         await reject_pending_action_reviews(db, job)
+        await retire_action_assets(db, pack.user_id, action_asset_paths(job))
+        clear_action_attempt(job)
         job.status = "queued"
         job.stage = "design"
         job.error = None
-        clear_action_attempt(job)
         job.metadata_revision += 1
     _freeze_action_video_plan(job, seconds, providers)
-    context = _load_generation_context(pack) if feedback.strip() else None
+    context = _load_generation_context(pack)
     if context is not None:
         context.action_feedback[action] = feedback.strip()[:1000]
         pack.context_json = context.model_dump_json()
@@ -1825,13 +1933,15 @@ async def _generate_dynamic_actions(
             try:
                 if await _generate_one_dynamic(pack, job, context):
                     succeeded = True
+            except GenerationWorkPaused:
+                continue
             except Exception as exc:  # noqa: BLE001 — 单动作失败隔离，不影响已就绪目录
                 await _record_action_failure(pack_id, job, exc)
         # 只有新成功的动作改变目录：发布新目录快照（失败与待复核动作不并入），并兑现这些动作制作期间的表达意图。
         if succeeded:
             await _publish_dynamic_catalog(pack_id)
             await _fulfill_pending_intents([job.id for job in jobs])
-        return True
+        return not is_user_in_maintenance(pack.user_id)
     except Exception as exc:  # noqa: BLE001 — 后台任务兜底：失败必须落库可见
         logger.exception("dynamic action generation crashed", extra={"pack_id": pack_id})
         await _fail_dynamic_jobs(pack_id, _generation_error(exc), action_ids=action_ids)
@@ -1939,6 +2049,15 @@ async def resume_video_generation_jobs() -> None:
 async def resume_user_dynamic_actions(user_id: int) -> None:
     """用户维护结束后，续跑该用户 ready 包上被维护挡下的排队动作。"""
     async with SESSION_LOCAL() as db:
+        processing = (
+            await db.scalars(
+                select(CompanionActionPack).where(
+                    CompanionActionPack.user_id == user_id,
+                    CompanionActionPack.status == "processing",
+                    CompanionActionPack.reference_path != "",
+                ),
+            )
+        ).all()
         pack_ids = (
             (
                 await db.execute(
@@ -1947,7 +2066,7 @@ async def resume_user_dynamic_actions(user_id: int) -> None:
                     .where(
                         CompanionActionPack.user_id == user_id,
                         CompanionActionPack.status == "ready",
-                        CompanionAction.status == "queued",
+                        CompanionAction.status.in_(("queued", "processing")),
                     )
                     .distinct(),
                 )
@@ -1955,8 +2074,10 @@ async def resume_user_dynamic_actions(user_id: int) -> None:
             .scalars()
             .all()
         )
+    for pack in processing:
+        _kick_generate(pack.id, user_id)
     for pack_id in pack_ids:
-        _kick_dynamic_generation(pack_id, user_id, queued_only=True)
+        _kick_dynamic_generation(pack_id, user_id)
 
 
 async def ensure_system_action(
@@ -2105,10 +2226,10 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> Compani
         if pack.identity_review == "review":
             pack.identity_review = "accepted"
         await _activate_locked(db, pack)
-        retired = await _retire_superseded_locked(db, pack)
+        await _retire_superseded_locked(db, pack)
         await db.commit()
         await db.refresh(pack)
-        _unlink_assets(retired)
+
     return pack
 
 
@@ -2120,6 +2241,7 @@ def _pack_assets(pack: CompanionActionPack, jobs: list[CompanionAction]) -> set[
         paths.update(candidate.path for candidate in context.reference_chain.candidates)
         paths.add(context.reference_chain.pending_path or "")
     for job in jobs:
+        paths |= action_asset_paths(job)
         if job.generation_state_json:
             state = MediaChainState.model_validate_json(job.generation_state_json)
             paths.add(state.source_path or "")
@@ -2160,6 +2282,8 @@ async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionA
     target_ids = {pack.id for pack in targets}
     candidates: set[str] = set()
     for pack in targets:
+        for job in jobs_by_pack.get(pack.id, []):
+            await reject_pending_action_reviews(db, job)
         candidates |= _pack_assets(pack, jobs_by_pack.get(pack.id, []))
     for other in packs:
         if other.id not in target_ids:
@@ -2168,6 +2292,7 @@ async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionA
         for job in jobs_by_pack.get(pack.id, []):
             await db.delete(job)
         await db.delete(pack)
+    await retire_action_assets(db, user_id, candidates)
     return candidates
 
 
@@ -2203,7 +2328,7 @@ def _same_generation_lineage(kept: CompanionActionPack, other: CompanionActionPa
 
 
 def _copy_job_to_pack(job: CompanionAction, pack: CompanionActionPack) -> CompanionAction:
-    return CompanionAction(
+    clone = CompanionAction(
         user_id=job.user_id,
         pack_id=pack.id,
         outfit_id=job.outfit_id,
@@ -2228,6 +2353,7 @@ def _copy_job_to_pack(job: CompanionAction, pack: CompanionActionPack) -> Compan
         artifact_path=job.artifact_path,
         pose_path=job.pose_path,
         result_json=job.result_json,
+        accepted_asset_json=job.accepted_asset_json,
         peek_geometry_json=job.peek_geometry_json,
         content_rect_json=job.content_rect_json,
         source_design_json=job.source_design_json,
@@ -2244,6 +2370,18 @@ def _copy_job_to_pack(job: CompanionAction, pack: CompanionActionPack) -> Compan
         hitmask_grid_h=job.hitmask_grid_h,
         hitmask_fps=job.hitmask_fps,
     )
+    if job.status == "review":
+        # 复核 publication 绑定原 action_id，跨包继承不能复制出无复核入口的候选。
+        material = accepted_action_asset(job)
+        clear_action_attempt(clone)
+        if material is not None:
+            for field, value in material.model_dump().items():
+                setattr(clone, field, value)
+            clone.status, clone.stage, clone.error = "succeeded", "publish", None
+        else:
+            clone.status, clone.stage = "failed", "design"
+            clone.error = "待复核候选未迁入此动作包，请在此版本重新制作"
+    return clone
 
 
 async def _carry_incomplete_jobs(
@@ -2257,7 +2395,6 @@ async def _carry_incomplete_jobs(
     if not rows:
         return
     kept_jobs = {job.key: job for job in jobs_by_pack.get(kept.id, [])}
-    kept_success = {action for action, job in kept_jobs.items() if job.status == "succeeded" and job.result_json}
     cloned = False
     for job in rows:
         if job.stage == "merged":
@@ -2266,16 +2403,11 @@ async def _carry_incomplete_jobs(
             continue
         if _can_resume_job(job):
             continue
-        if job.status == "succeeded" and job.result_json:
-            if job.key in kept_success:
-                continue
-        elif job.key in kept_jobs:
+        if job.key in kept_jobs:
             continue
         clone = _copy_job_to_pack(job, kept)
         db.add(clone)
         kept_jobs[job.key] = clone
-        if job.status == "succeeded" and job.result_json:
-            kept_success.add(job.key)
         cloned = True
     if cloned:
         # autoflush=False：先 flush 让迁入行进入资产引用查询，避免源素材被回收。
@@ -2284,7 +2416,7 @@ async def _carry_incomplete_jobs(
 
 def _has_pending_work(pack_id: int, jobs: Sequence[CompanionAction]) -> bool:
     """包上有在途或已排队的动作制作；此时删除任务行会让任务之后落盘的素材无人引用。"""
-    return pack_id in _GEN_INFLIGHT or any(job.status == "queued" for job in jobs)
+    return pack_id in _GEN_INFLIGHT or any(job.status in ("queued", "processing") for job in jobs)
 
 
 async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack) -> set[str]:
@@ -2304,7 +2436,7 @@ async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack)
     if not targets:
         return set()
     jobs_by_pack = await _jobs_by_pack(db, CompanionAction.pack_id.in_([kept.id, *(pack.id for pack in targets)]))
-    succeeded = {job.key for job in jobs_by_pack.get(kept.id, []) if job.status == "succeeded" and job.result_json}
+    succeeded = {job.key for job in jobs_by_pack.get(kept.id, []) if accepted_action_asset(job) is not None}
     deletable = [
         pack
         for pack in targets
@@ -2338,15 +2470,8 @@ async def _retire_after_generation(pack_id: int, user_id: int) -> None:
         )
         if kept is None:
             return
-        retired = await _retire_superseded_locked(db, kept)
+        await _retire_superseded_locked(db, kept)
         await db.commit()
-    _unlink_assets(retired)
-
-
-def _unlink_assets(paths: set[str]) -> None:
-    for path in paths:
-        with contextlib.suppress(OSError):
-            unlink_companion_asset(path)
 
 
 async def delete_pack(db: AsyncSession, user_id: int, pack_id: int) -> None:
@@ -2357,9 +2482,8 @@ async def delete_pack(db: AsyncSession, user_id: int, pack_id: int) -> None:
         jobs = (await _jobs_by_pack(db, CompanionAction.pack_id == pack.id)).get(pack.id, [])
         if pack.active or pack.status == "processing" or _has_pending_work(pack.id, jobs):
             raise VideoPackStateError("使用中或制作中的动作包不能删除")
-        candidates = await _remove_packs(db, user_id, [pack])
+        await _remove_packs(db, user_id, [pack])
         await db.commit()
-    _unlink_assets(candidates)
 
 
 async def _get_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionActionPack | None:
@@ -2379,6 +2503,15 @@ def _pack_response(pack: CompanionActionPack, jobs: Sequence[CompanionAction]) -
     actions = []
     for job in sorted(jobs, key=lambda job: _action_order(job.key)):
         script = ActionScriptEntry.model_validate_json(job.script_json) if job.script_json else None
+        material = accepted_action_asset(job)
+        preview_path = job.video_path or (material.video_path if material else "")
+        if not preview_path and job.generation_state_json:
+            try:
+                candidate = MediaChainState.model_validate_json(job.generation_state_json).best()
+                if candidate is not None and candidate.result_json:
+                    preview_path = candidate.path
+            except ValueError:
+                logger.warning("action preview progress invalid", extra={"action_id": job.id})
         actions.append(
             VideoActionResponse(
                 action=job.key,
@@ -2386,7 +2519,8 @@ def _pack_response(pack: CompanionActionPack, jobs: Sequence[CompanionAction]) -
                 status=job.status,
                 stage=job.stage,
                 error=job.error,
-                clip_url=signed_companion_asset_url(job.video_path) if job.video_path else None,
+                clip_url=signed_companion_asset_url(preview_path) if preview_path else None,
+                feedback=context.action_feedback.get(job.key, "") if context else "",
                 motion_prompt=script.motion_prompt if script else "",
                 peek_geometry=PeekGeometry.from_stored_json(job.peek_geometry_json),
                 content_rect=parse_content_rect(job.content_rect_json),

@@ -2,11 +2,11 @@
 
 import asyncio
 
-from components import SESSION_LOCAL, get_logger, track_user_task, utc_now
+from components import SESSION_LOCAL, get_logger, is_user_in_maintenance, track_user_task, utc_now
 from modules.companion import ActionProposal
 from sqlalchemy import and_, or_, select
 
-from services.application.generation import kick_dynamic_action
+from services.application.generation import GenerationWorkPaused, kick_dynamic_action
 from services.domains.actions import DEFERRED_PROPOSAL_WINDOW, get_action_accept_lock
 
 from .design import ProposalAcceptance
@@ -36,7 +36,7 @@ def schedule_accepted_proposal(acceptance: ProposalAcceptance, user_id: int) -> 
 
 def schedule_proposal_review(proposal_id: int, user_id: int) -> None:
     """安排一次后台评审；不阻塞调用方事务。同一 proposal_id 去重。"""
-    if proposal_id in _INFLIGHT_REVIEWS:
+    if is_user_in_maintenance(user_id) or proposal_id in _INFLIGHT_REVIEWS:
         return
     _INFLIGHT_REVIEWS.add(proposal_id)
     task = asyncio.create_task(_run_proposal_review(proposal_id, user_id), name=f"action.review.{proposal_id}")
@@ -55,6 +55,8 @@ async def _run_proposal_review(proposal_id: int, user_id: int) -> None:
     async with get_action_accept_lock(user_id):
         try:
             outcome = await review_proposal(proposal_id, user_id)
+        except GenerationWorkPaused:
+            return
         except Exception:  # noqa: BLE001 — 评审失败必须落库为可重试状态，不静默
             logger.exception("action proposal review failed", extra={"proposal_id": proposal_id})
             await defer_failed_review(proposal_id, user_id)
@@ -71,19 +73,18 @@ async def drain_proposal_reviews() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def resume_proposal_reviews() -> None:
+async def resume_proposal_reviews(user_id: int | None = None) -> None:
     """进程重启恢复：中断的 pending 评审重新调度；deferred 只在创建期限内重试，超期不再随每次启动付费重审。"""
     cutoff = utc_now() - DEFERRED_PROPOSAL_WINDOW
     async with SESSION_LOCAL() as db:
-        pending = (
-            await db.execute(
-                select(ActionProposal.id, ActionProposal.user_id).where(
-                    or_(
-                        ActionProposal.status == "pending",
-                        and_(ActionProposal.status == "deferred", ActionProposal.created_at >= cutoff),
-                    ),
-                ),
-            )
-        ).all()
-    for proposal_id, user_id in pending:
-        schedule_proposal_review(proposal_id, user_id)
+        statement = select(ActionProposal.id, ActionProposal.user_id).where(
+            or_(
+                ActionProposal.status == "pending",
+                and_(ActionProposal.status == "deferred", ActionProposal.created_at >= cutoff),
+            ),
+        )
+        if user_id is not None:
+            statement = statement.where(ActionProposal.user_id == user_id)
+        pending = (await db.execute(statement)).all()
+    for proposal_id, owner_id in pending:
+        schedule_proposal_review(proposal_id, owner_id)

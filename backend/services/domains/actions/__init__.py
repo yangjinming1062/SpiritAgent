@@ -1,5 +1,13 @@
 """动作资产域：repository、policy、usage、publishing。"""
 
+from .asset_retirement import (
+    action_asset_paths,
+    cleanup_retired_action_assets,
+    delete_outfit_action_packs,
+    pack_asset_paths,
+    retire_action_assets,
+)
+from .materials import AcceptedActionAsset, accept_action_asset, accepted_action_asset, preserve_action_asset
 from .policy import (
     DEFERRED_PLAY_INTENT_TTL_SECONDS,
     DEFERRED_PROPOSAL_WINDOW,
@@ -13,15 +21,18 @@ from .policy import (
 )
 from .publishing import CatalogValidationError, build_catalog_manifest, emit_catalog_changed, publish_action_catalog
 from .repository import (
+    ActionNameConflictError,
     StaleCatalogError,
     clear_action_attempt,
     create_action,
     get_action,
     get_action_by_key,
+    get_action_by_name,
     get_active_pack,
     get_playback,
     list_pack_actions,
     make_semantic_fingerprint,
+    normalize_action_name,
     record_playback,
 )
 from .usage import (
@@ -35,6 +46,18 @@ from .usage import (
 
 __all__ = [
     "ACTION_PROMPT_KEYS",
+    "AcceptedActionAsset",
+    "ActionNameConflictError",
+    "get_action_by_name",
+    "normalize_action_name",
+    "accept_action_asset",
+    "accepted_action_asset",
+    "preserve_action_asset",
+    "action_asset_paths",
+    "pack_asset_paths",
+    "retire_action_assets",
+    "cleanup_retired_action_assets",
+    "delete_outfit_action_packs",
     "DEFERRED_PLAY_INTENT_TTL_SECONDS",
     "DEFERRED_PROPOSAL_WINDOW",
     "PLAY_INTENT_TTL_SECONDS",

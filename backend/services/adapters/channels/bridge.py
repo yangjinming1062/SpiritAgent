@@ -2,7 +2,8 @@ import asyncio
 import hashlib
 import json
 from collections import deque
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -10,7 +11,7 @@ from typing import Any
 
 from components import SETTINGS, get_logger, resolve_prompt_text, session_scope
 from modules.auth import ChatRequestClientContext
-from modules.channels import ChannelBinding, ChannelDelivery, ChannelDeliveryPayload, ChannelPeer
+from modules.channels import ChannelBinding, ChannelDelivery, ChannelDeliveryPayload, ChannelPeer, ChannelTurnSource
 from modules.conversation import Message
 from modules.settings import get_user_setting
 from modules.system import ChatAttachment, ChatMessageRequest, ChatRequest
@@ -48,6 +49,16 @@ _STOP_COMMANDS = frozenset({"停", "停止", "停下", "stop", "/stop"})
 
 _STOP_ACK = "（已停止本轮回复）"
 
+_TURN_FAILED_TEXTS = {
+    "zh": "（系统提示：本次处理未完成。已开始的操作可能已经生效，请先核对结果再重试。）",
+    "en": "(System notice: this request did not complete. Operations already started may have taken effect; check their results before trying again.)",
+}
+_OWNER_FAILURE_TITLE_TEXTS = {"zh": "聊天通道处理失败", "en": "Chat channel request failed"}
+_OWNER_FAILURE_TEXTS = {
+    "zh": "聊天通道的一次请求未完成。请查看会话；已开始的电脑操作可能已经生效，请先核对结果。",
+    "en": "A chat channel request did not complete. Review the conversation and check any computer operations already started before retrying.",
+}
+
 # 桌面连接状态注入 IM 回合的环境事实；离线时提示只报告可验证的「当前未连接」，不猜测关机/断网等原因。
 _DESKTOP_ONLINE_TEXTS = {
     "zh": "【环境】用户的电脑当前在线，你可以使用本机工具（读写文件、终端、浏览器等）帮他做事。",
@@ -68,6 +79,7 @@ class _QueuedMessage:
     msg: InboundMessage
     message_id: int
     conversation_id: int
+    authorization_epoch: int
 
 
 @dataclass
@@ -86,6 +98,7 @@ class _ChannelState:
     owner_peer_id: str | None = None
     # stop 已取消当前 task、但 task 仍在 finally 收尾。保留句柄用于所有权校验，并吞掉重复 stop。
     cancelling: bool = False
+    peer_epochs: dict[str, int] = field(default_factory=dict)
 
 
 _STATES: dict[int, _ChannelState] = {}
@@ -93,6 +106,78 @@ _STATES: dict[int, _ChannelState] = {}
 
 def _state_for(binding_id: int) -> _ChannelState:
     return _STATES.setdefault(binding_id, _ChannelState())
+
+
+@asynccontextmanager
+async def peer_access_update(binding_id: int) -> AsyncIterator[None]:
+    """对端权限更新与入站持久化共用接收锁，防止撤权清理后迟到输入再次入队。"""
+    async with _state_for(binding_id).intake_lock:
+        yield
+
+
+async def revoke_peer_messages(db: AsyncSession, binding_id: int, peer_id: str) -> None:
+    """在接收锁内原子提交撤权与丢弃状态，再停稳该对端回合；已执行历史保留。"""
+    await db.flush()
+    conversation_id = await db.scalar(select(ChannelBinding.conversation_id).where(ChannelBinding.id == binding_id))
+    if conversation_id is not None:
+        await db.execute(
+            update(Message)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.channel_peer_id == peer_id,
+                Message.queued.is_(True),
+            )
+            .values(queued=False, discarded=True),
+        )
+    await db.execute(
+        update(ChannelDelivery)
+        .where(
+            ChannelDelivery.binding_id == binding_id,
+            ChannelDelivery.peer_id == peer_id,
+            ChannelDelivery.status == "pending",
+        )
+        .values(status="abandoned"),
+    )
+    await db.commit()
+    state = _state_for(binding_id)
+    async with _STATE_LOCK:
+        state.peer_epochs[peer_id] = state.peer_epochs.get(peer_id, 0) + 1
+        state.queue = deque(item for item in state.queue if item.msg.peer_id != peer_id)
+        task = state.task if state.owner_peer_id == peer_id else None
+        if task is not None and not task.done():
+            state.cancelling = True
+            task.cancel()
+    if task is not None and task is not asyncio.current_task():
+        await asyncio.gather(task, return_exceptions=True)
+    # 已发出的请求不能撤回；等待最后一次投递结束，下一块和补发均重新检查权限。
+    async with state.delivery_lock:
+        pass
+
+
+async def _peer_allowed(binding_id: int, peer_id: str, user_id: int) -> bool:
+    async with session_scope() as db:
+        allowed = await db.scalar(
+            select(ChannelPeer.id)
+            .join(ChannelBinding, ChannelBinding.id == ChannelPeer.binding_id)
+            .where(
+                ChannelPeer.binding_id == binding_id,
+                ChannelPeer.peer_id == peer_id,
+                ChannelPeer.status == "allowed",
+                ChannelBinding.user_id == user_id,
+            ),
+        )
+    return allowed is not None
+
+
+async def _turn_authorized(
+    adapter: ChannelAdapter,
+    state: _ChannelState,
+    peer_id: str,
+    authorization_epoch: int,
+) -> bool:
+    if _STATES.get(adapter.snapshot.id) is not state or state.peer_epochs.get(peer_id, 0) != authorization_epoch:
+        return False
+    return await _peer_allowed(adapter.snapshot.id, peer_id, adapter.snapshot.user_id)
 
 
 def _rate_exceeded(state: _ChannelState, peer_id: str) -> bool:
@@ -244,6 +329,8 @@ async def _intake_message(
     """接收段：容量校验 → 下载渠道媒体 → 先持久化（queued 行 + 去重）→ 单飞行入队；intake 锁保证落库/入队序等于投递序。容量不足在落库前明确拒收（已落库的不静默丢弃，被拒收的不落库可重发）；返回是否为新接收或明确拒收。"""
     snapshot = adapter.snapshot
     async with state.intake_lock:
+        if not await _peer_allowed(snapshot.id, msg.peer_id, snapshot.user_id):
+            return False
         async with _STATE_LOCK:
             busy = state.task is not None and len(state.queue) >= SETTINGS.channels_turn_queue_max
         if busy:
@@ -271,13 +358,19 @@ async def _intake_message(
                 text=msg.text,
                 attachments=attachments,
                 dedup_key=dedup_key,
+                channel_peer_id=msg.peer_id,
             )
             if row is None:
                 # 渠道重投的重复消息：同标识行已存在，不再入队或回复。
                 logger.info("duplicate inbound dropped", extra={"binding": snapshot.id, "peer": msg.peer_id})
                 return False
 
-        item = _QueuedMessage(msg=msg, message_id=row.id, conversation_id=conversation_id)
+        item = _QueuedMessage(
+            msg=msg,
+            message_id=row.id,
+            conversation_id=conversation_id,
+            authorization_epoch=state.peer_epochs.get(msg.peer_id, 0),
+        )
         async with _STATE_LOCK:
             if _STATES.get(snapshot.id) is not state:
                 return False
@@ -337,6 +430,7 @@ async def _run_turn(adapter: ChannelAdapter, state: _ChannelState, batch: list[_
     except Exception:
         snapshot = adapter.snapshot
         logger.exception("channel turn failed", extra={"binding": snapshot.id, "channel": snapshot.channel})
+        await _report_turn_failure(adapter, state, batch[-1])
     finally:
         # shield：收尾常在被取消路径上，Lock.acquire 是取消点，不屏蔽会让 CancelledError 二次抛出并跳过清理，绑定永久假占用。
         task = asyncio.current_task()
@@ -370,8 +464,20 @@ async def _execute_im_turn(adapter: ChannelAdapter, state: _ChannelState, batch:
     last_item = batch[-1]
     last = last_item.msg
     conversation_id = last_item.conversation_id
+    authorization_check = partial(_turn_authorized, adapter, state, last.peer_id, last_item.authorization_epoch)
+    if not await authorization_check():
+        return
     async with session_scope() as db:
         llm_config = await resolve_user_llm_config(db, snapshot.user_id)
+        peer = await _get_peer(db, snapshot.id, last.peer_id)
+        if peer is None or peer.status != "allowed":
+            return
+        channel_source = ChannelTurnSource(
+            binding_id=snapshot.id,
+            peer_record_id=peer.id,
+            peer_id=peer.peer_id,
+            authorization_revision=peer.authorization_revision,
+        )
         language = await get_user_setting(db, snapshot.user_id, "language")
         # 只收编本批及更早的遗留输入；新到达的下一批保持 queued，不能提前进入当前上下文。
         latest_id = (
@@ -382,6 +488,8 @@ async def _execute_im_turn(adapter: ChannelAdapter, state: _ChannelState, batch:
             .where(
                 Message.conversation_id == conversation_id,
                 Message.queued.is_(True),
+                Message.discarded.is_(False),
+                Message.channel_peer_id == last.peer_id,
                 Message.id <= last_item.message_id,
             )
             .values(queued=False, context_order=latest_id + 1),
@@ -412,15 +520,19 @@ async def _execute_im_turn(adapter: ChannelAdapter, state: _ChannelState, batch:
             emitter,
             persisted_message_id=last_item.message_id,
             headless=True,
+            authorization_check=authorization_check,
+            channel_source=channel_source,
         )
     except Exception:
         logger.exception("im chat turn crashed", extra={"binding": snapshot.id, "channel": snapshot.channel})
+        await _report_turn_failure(adapter, state, last_item)
         return
     finally:
         await emitter.aclose()
 
     if emitter.error:
         logger.warning("im turn ended with error frame", extra={"binding": snapshot.id, "error": emitter.error})
+        await _report_turn_failure(adapter, state, last_item)
         return
     payload = ChannelDeliveryPayload.model_validate(
         {"text": strip_markdown(emitter.reply_text or ""), "media": emitter.media},
@@ -428,14 +540,57 @@ async def _execute_im_turn(adapter: ChannelAdapter, state: _ChannelState, batch:
     if not payload.text and not payload.media:
         return
     async with state.delivery_lock:
+        if not await authorization_check():
+            return
         remaining, delivered = await _deliver_reply(adapter, last.peer_id, last.context_token, payload)
-        if remaining.text or remaining.media:
+        if (remaining.text or remaining.media) and await authorization_check():
             await _enqueue_delivery(snapshot.id, last.peer_id, remaining)
     if not delivered:
         try:
-            await adapter.send_text(last.peer_id, _DELIVERY_FAILED_FALLBACK, last.context_token)
+            if await authorization_check():
+                await adapter.send_text(last.peer_id, _DELIVERY_FAILED_FALLBACK, last.context_token)
         except Exception:
             logger.error("fallback delivery also failed", extra={"binding": snapshot.id})
+
+
+async def _report_turn_failure(adapter: ChannelAdapter, state: _ChannelState, item: _QueuedMessage) -> None:
+    """生成错误使用系统提示，不泄露供应商原因；通知与补发不重新执行回合。撤权与用户取消不报失败。"""
+    snapshot = adapter.snapshot
+    try:
+        if not await _turn_authorized(adapter, state, item.msg.peer_id, item.authorization_epoch):
+            return
+        async with session_scope() as db:
+            language = await get_user_setting(db, snapshot.user_id, "language")
+            emit_ws_event(
+                db,
+                user_id=snapshot.user_id,
+                event_type="system.notification",
+                payload={
+                    "kind": "error",
+                    "title": resolve_prompt_text(_OWNER_FAILURE_TITLE_TEXTS, language),
+                    "message": resolve_prompt_text(_OWNER_FAILURE_TEXTS, language),
+                    "session_id": str(item.conversation_id),
+                },
+            )
+            await db.commit()
+        async with state.delivery_lock:
+            if not await _turn_authorized(adapter, state, item.msg.peer_id, item.authorization_epoch):
+                return
+            payload = ChannelDeliveryPayload(text=resolve_prompt_text(_TURN_FAILED_TEXTS, language))
+            remaining, _ = await _deliver_reply(adapter, item.msg.peer_id, item.msg.context_token, payload)
+            if remaining.text and await _turn_authorized(adapter, state, item.msg.peer_id, item.authorization_epoch):
+                await _enqueue_delivery(snapshot.id, item.msg.peer_id, remaining)
+    except Exception:
+        logger.exception("channel failure notification failed", extra={"binding": snapshot.id})
+
+
+async def _delivery_allowed(adapter: ChannelAdapter, peer_id: str, source: ChannelTurnSource | None) -> bool:
+    if source is None:
+        return await _peer_allowed(adapter.snapshot.id, peer_id, adapter.snapshot.user_id)
+    if source.binding_id != adapter.snapshot.id or source.peer_id != peer_id:
+        return False
+    async with session_scope() as db:
+        return await ChannelPeer.authorizes(db, adapter.snapshot.user_id, source)
 
 
 async def _deliver_reply(
@@ -446,9 +601,11 @@ async def _deliver_reply(
 ) -> tuple[ChannelDeliveryPayload, bool]:
     """返回剩余内容与是否送达任何片段；成功部分不参与补发。"""
     chunks = chunk_text(payload.text, SETTINGS.weixin_reply_max_chars) if payload.text else []
-    remaining = ChannelDeliveryPayload(media=payload.media)
+    remaining = ChannelDeliveryPayload(media=payload.media, channel_source=payload.channel_source)
     delivered = False
     if payload.media:
+        if not await _delivery_allowed(adapter, peer_id, payload.channel_source):
+            return ChannelDeliveryPayload(), False
         try:
             await adapter.send_media(peer_id, chunks[0] if chunks else None, payload.media, context_token)
         except Exception:
@@ -459,6 +616,8 @@ async def _deliver_reply(
             chunks = chunks[1:]
     failed_chunks: list[str] = []
     for chunk in chunks:
+        if not await _delivery_allowed(adapter, peer_id, payload.channel_source):
+            return ChannelDeliveryPayload(), delivered
         try:
             await adapter.send_text(peer_id, chunk, context_token)
         except Exception:
@@ -477,6 +636,27 @@ async def _enqueue_delivery(binding_id: int, peer_id: str, payload: ChannelDeliv
         for media in stored.media:
             media.url = normalize_asset_reference(media.url) or media.url
         async with session_scope() as db:
+            if peer_id:
+                allowed = await db.scalar(
+                    select(ChannelPeer.id)
+                    .where(
+                        ChannelPeer.binding_id == binding_id,
+                        ChannelPeer.peer_id == peer_id,
+                        ChannelPeer.status == "allowed",
+                    )
+                    .with_for_update(),
+                )
+                if allowed is None:
+                    return
+            if stored.channel_source is not None:
+                binding = await db.get(ChannelBinding, binding_id)
+                if (
+                    binding is None
+                    or stored.channel_source.binding_id != binding_id
+                    or stored.channel_source.peer_id != peer_id
+                    or not await ChannelPeer.authorizes(db, binding.user_id, stored.channel_source, lock=True)
+                ):
+                    return
             db.add(ChannelDelivery(binding_id=binding_id, peer_id=peer_id, payload_json=stored.model_dump_json()))
             await db.commit()
     except Exception:
@@ -489,10 +669,12 @@ async def _flush_pending_deliveries(
     peer_id: str,
     context_token: str | None,
 ) -> None:
-    """对端来消息即拿到新鲜回复上下文：逐条补发该对端（及对端未定）的待交付行，不重新执行任务；一次失败即停，等下次入站再试。"""
+    """来信后只补发该对端的待交付行；无归属旧记录作废，失败等下次来信重试，不重新执行任务。"""
     binding_id = adapter.snapshot.id
     async with state.delivery_lock:
         while True:
+            if not await _peer_allowed(binding_id, peer_id, adapter.snapshot.user_id):
+                return
             async with session_scope() as db:
                 row = (
                     await db.execute(
@@ -514,6 +696,10 @@ async def _flush_pending_deliveries(
                     row.status = "abandoned"
                     await db.commit()
                     logger.error("invalid channel delivery payload", extra={"delivery_id": row.id})
+                    continue
+                if not row.peer_id or not await _delivery_allowed(adapter, peer_id, payload.channel_source):
+                    row.status = "abandoned"
+                    await db.commit()
                     continue
                 row_id = row.id
             remaining, _ = await _deliver_reply(adapter, peer_id, context_token, payload)

@@ -75,6 +75,7 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
 TABLES = tuple(TABLE_MODELS)
 CONVERSATION_TABLES = frozenset({"conversations", "messages"})
 ACTION_TABLES = frozenset({"companion_action_packs", "companion_actions"})
+POST_TABLES = frozenset({"companion_posts", "companion_post_comments"})
 IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_cards"})
 # 旧版片刻表已重构为动态；导入时静默跳过，视为没有动态。
 RETIRED_TABLES = frozenset({"companion_moments", "companion_moment_comments"})
@@ -96,12 +97,14 @@ ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
     IDENTITY_TABLES,
     CONVERSATION_TABLES,
     ACTION_TABLES,
+    POST_TABLES,
 )
 # 预检时身份三表成组写入的顺序：先头像，再角色卡与人设。
 IDENTITY_GROUP: tuple[str, ...] = ("avatar_assets", "companion_character_cards", "personas")
 IDENTITY_INCOMPLETE_REASON = "基础身份必须同时包含人设、头像与角色卡。"
 IDENTITY_BLOCKED_REASON = "目标现有场景、动作包等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
 IDENTITY_DEPENDENT_REASON = "缺少可映射的基础身份，无法恢复此类别。"
+CONVERSATION_MERGE_CONFLICT_REASON = "固定会话已有历史，或任一侧上下文已清理，无法合并；请取消会话恢复或使用覆盖模式。"
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "companion_character_cards": {"avatar_id": "avatar_assets"},
     "companion_action_packs": {"avatar_id": "avatar_assets", "outfit_id": "companion_outfits"},
@@ -291,8 +294,8 @@ async def insert_rows(
                 ),
             )
         if existing is not None:
-            if table == "conversations" and (raw["context_after_message_id"] or existing.context_after_message_id):
-                raise ValueError("Cannot merge conversation histories with context watermarks")
+            if table == "conversations":
+                await validate_conversation_merge(db, existing, raw)
             new_map[str(raw["id"])] = existing.id
             continue
         if (
@@ -346,10 +349,22 @@ async def insert_rows(
     return new_map, inserted
 
 
+async def validate_conversation_merge(db: AsyncSession, existing: Conversation, raw: dict[str, Any]) -> None:
+    """已有固定会话仅在历史为空、两端无上下文水位时可接收备份历史。"""
+    if (
+        raw.get("context_after_message_id")
+        or existing.context_after_message_id
+        or await db.scalar(select(Message.id).where(Message.conversation_id == existing.id).limit(1)) is not None
+    ):
+        raise ValueError(CONVERSATION_MERGE_CONFLICT_REASON)
+
+
 def _validated_ai_config(value: Any) -> dict[str, Any]:
     """按运行期读取方式整体校验模型配置；配置含供应商密钥，错误只报告字段位置与类型，不回显取值。"""
     try:
-        return AIConfig.model_validate(value).model_dump()
+        config = AIConfig.model_validate(value)
+        config.validate_capability_overrides()
+        return config.model_dump()
     except ValidationError as exc:
         fields = ", ".join(
             f"{'.'.join(str(part) for part in error['loc']) or 'ai_config'} ({error['type']})"
@@ -410,6 +425,10 @@ def _build_payload(
     if table == "messages" and payload.get("conversation_id") is None:
         raise ValueError("Message conversation is missing from backup")
     if table == "messages":
+        if payload.get("queued"):
+            # IM 配对授权不随备份迁移，未消费的旧输入只能保留为不可执行历史。
+            payload["queued"] = False
+            payload["discarded"] = True
         through_id = payload.get("summary_through_message_id")
         if payload.get("subtype") in CHECKPOINT_SUBTYPES:
             if type(through_id) is not int or through_id <= 0:
@@ -513,6 +532,12 @@ def _build_payload(
         if payload.get("status") == "pending":
             payload["status"] = "description_failed" if payload.get("media_path") else "failed"
             payload["error"] = "恢复的场景任务需要手动重试"
+    if table == "companion_outfits":
+        if "description_status" not in payload:
+            payload["description_status"] = "ready" if payload.get("description") else "pending"
+        if payload.get("status") == "ready" and payload["description_status"] in {"pending", "processing"}:
+            payload["description_status"] = "failed"
+            payload["description_error"] = "恢复的外观描述任务需要手动重试"
     if table == "companion_post_comments":
         payload["reply_to_comment_id"] = None
         if payload.get("reply_status") in {"pending", "running"}:
@@ -618,7 +643,13 @@ async def restore_memory_context(
                     conv = conversations.get(str(message["conversation_id"])) if message else None
                     if conv and conv["system_preset_id"] != raw["system_preset_id"]:
                         raise ValueError("Memory evidence belongs to a different preset")
-                    if not message or not conv or str(mid) not in id_map.get("messages", {}):
+                    if (
+                        not message
+                        or not conv
+                        or str(mid) not in id_map.get("messages", {})
+                        or message.get("discarded")
+                        or message.get("queued")
+                    ):
                         entry.pop("message_id", None)
                         entry.pop("session_id", None)
                         entry["source_unavailable"] = True
@@ -633,7 +664,7 @@ async def restore_memory_context(
         memory.evidence = remap_evidence(raw["evidence"])
         if any(e.get("source_unavailable") for e in memory.evidence) and memory.status in {"active", "candidate"}:
             memory.status = "invalidated"
-            memory.reason = "Original evidence was not included in the restored backup"
+            memory.reason = "Original evidence is unavailable after restoration"
         history = []
         for old in raw["history"]:
             item = dict(old)

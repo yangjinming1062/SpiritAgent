@@ -28,6 +28,10 @@ class BackupArchiveTooLargeError(BackupArchiveError):
     """备份解压后超过大小上限。"""
 
 
+class BackupExportFileChangedError(ValueError):
+    """在线导出期间文件被清理；管理员可重新导出，不返回不完整包。"""
+
+
 def write_backup_archive(
     archive_path: Path,
     user: User,
@@ -47,11 +51,14 @@ def write_backup_archive(
             checksums[name] = hashlib.sha256(content).hexdigest()
         for src in files:
             arc = "files/" + src.relative_to(data_dir_root).as_posix()
-            with src.open("rb") as source, zf.open(arc, "w") as target:
-                digest = hashlib.sha256()
-                while chunk := source.read(_FILE_CHUNK_BYTES):
-                    target.write(chunk)
-                    digest.update(chunk)
+            try:
+                with src.open("rb") as source, zf.open(arc, "w") as target:
+                    digest = hashlib.sha256()
+                    while chunk := source.read(_FILE_CHUNK_BYTES):
+                        target.write(chunk)
+                        digest.update(chunk)
+            except FileNotFoundError:
+                raise BackupExportFileChangedError("导出期间有媒体文件被清理，本次备份未生成；请重新导出。") from None
             checksums[arc] = digest.hexdigest()
         manifest["checksums"] = checksums
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))

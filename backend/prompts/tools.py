@@ -20,17 +20,14 @@ COMPANION_WAIT_PARAM_DESCS = {
 }
 
 SEND_MESSAGE_DESC = (
-    "Send a message now. Without target_webhook, deliver a proactive message in the primary companion "
+    "Send a proactive message now to the account owner in the primary companion "
     "conversation; speech depends on user settings, and still mode suppresses delivery. Normal replies are "
     "delivered automatically: do not duplicate them with this tool. Use only for grounded, low-pressure "
     "outreach within current authorization. still_suppressed=true means no message was delivered, even if success=true. "
-    "With target_webhook, POST JSON containing text and content "
-    "to an authorized endpoint that accepts those fields; this is not a general messaging-service client."
 )
 
 SEND_MESSAGE_PARAM_DESCS = {
     "message": "The full text message content to send.",
-    "target_webhook": "Optional external bot webhook URL. Omit to deliver in the primary conversation.",
 }
 
 IMAGE_GENERATION_DESC = (

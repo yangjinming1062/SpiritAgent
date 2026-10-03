@@ -34,7 +34,12 @@ from .avatar_service import (
     retry_fullbody_candidate_analysis,
     select_avatar,
 )
-from .character_card import drain_character_extractions, resume_character_extractions, schedule_character_extraction
+from .character_card import (
+    drain_character_extractions,
+    resume_character_extractions,
+    resume_user_character_extraction,
+    schedule_character_extraction,
+)
 from .character_images import generate_character_images
 from .chat_images import ImageBatch, generate_chat_images, inspect_chat_image, regenerate_chat_image
 from .image_generation import (
@@ -50,6 +55,7 @@ from .media_review import (
     has_pending_action_review,
     list_pending_media_reviews,
     reject_media_review,
+    reject_pending_action_reviews,
 )
 from .outfit_service import (
     OutfitDraftExpiredError,
@@ -67,9 +73,12 @@ from .outfit_service import (
     list_outfits,
     prepare_outfit_prompt,
     prepare_outfit_regenerate_prompt,
+    recover_outfit_descriptions,
     regenerate_outfit_draft,
+    retry_outfit_description,
     set_outfit_policy,
 )
+from .paid_work import GenerationWorkPaused, require_new_generation_call, require_video_generation_call
 from .response_builders import (
     avatar_response,
     outfit_response,
@@ -87,6 +96,7 @@ from .scene_service import (
     regenerate_scene,
     resume_scene_generation,
     resume_scene_jobs,
+    resume_user_scene_jobs,
     retry_scene_description,
     scene_generation_wait_seconds,
     schedule_scene_generation,
@@ -100,6 +110,8 @@ from .video import (
     kick_dynamic_action,
     list_pack_responses,
     load_pack_response,
+    require_action_matting_model,
+    require_pack_generation_identity,
     resume_user_dynamic_actions,
     resume_video_generation_jobs,
 )
@@ -120,15 +132,20 @@ from .video import ensure_system_action as ensure_video_system_action
 from .video import (
     retry_pack as retry_video_pack,
 )
-from .video_jobs import drain as drain_video_jobs
 from .video_jobs import (
+    discard_post_video_job,
     enqueue_video_job,
     ensure_video_capability,
     get_job,
+    post_video_asset,
+    post_video_ready,
+    query_post_video_job,
     resume_pending_video_jobs,
+    resume_user_video_jobs,
     select_video_resolution,
     video_generation_wait_seconds,
 )
+from .video_jobs import drain as drain_video_jobs
 from .visual_identity import (
     apply_outfit_override,
     build_self_image_prompt,
@@ -139,6 +156,11 @@ from .visual_identity import (
 )
 
 __all__ = [
+    "GenerationWorkPaused",
+    "require_new_generation_call",
+    "require_video_generation_call",
+    "require_action_matting_model",
+    "require_pack_generation_identity",
     "build_avatar_reference_prompt",
     "build_image_edit_prompt",
     "build_outfit_prompt",
@@ -164,6 +186,8 @@ __all__ = [
     "retry_scene_description",
     "resume_scene_generation",
     "resume_scene_jobs",
+    "resume_user_scene_jobs",
+    "resume_user_character_extraction",
     "schedule_scene_generation",
     "schedule_scene_prompt",
     "set_scene_policy",
@@ -183,6 +207,7 @@ __all__ = [
     "has_pending_action_review",
     "list_pending_media_reviews",
     "reject_media_review",
+    "reject_pending_action_reviews",
     "MediaReviewStateError",
     "latest_fullbody_candidate",
     "retry_fullbody_candidate_analysis",
@@ -222,6 +247,11 @@ __all__ = [
     "drain_video_jobs",
     "drain_video_pack_generation",
     "enqueue_video_job",
+    "discard_post_video_job",
+    "post_video_asset",
+    "post_video_ready",
+    "query_post_video_job",
+    "resume_user_video_jobs",
     "ensure_video_capability",
     "finalize_avatar",
     "generate_avatar",
@@ -244,6 +274,8 @@ __all__ = [
     "regenerate_avatar",
     "regenerate_avatar_from_image",
     "regenerate_outfit_draft",
+    "recover_outfit_descriptions",
+    "retry_outfit_description",
     "resolve_image_gen_chain",
     "resume_pending_video_jobs",
     "resume_user_dynamic_actions",

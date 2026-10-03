@@ -19,6 +19,7 @@ UI_ONLY_SUBTYPES: frozenset[str] = frozenset({"hint", CLEARED_STATUS_SUBTYPE})
 
 # 文本会话中后台视频任务完成后的送达行：媒体列携带可播放 URL，渲染端显示为媒体卡。故意不在 UI_ONLY_SUBTYPES——它进入模型上下文，是回答视频是否完成的依据；结构化回复会话的视频结果写回原回复气泡，不产生此行。
 MEDIA_STATUS_SUBTYPE: str = "status_media"
+MEDIA_FAILURE_SUBTYPE: str = "status_media_failed"
 
 
 async def get_special_conversation(db: AsyncSession, user_id: int, preset_id: str) -> Conversation | None:

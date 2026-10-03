@@ -4,10 +4,9 @@ import contextlib
 import json
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, TypeGuard
-from weakref import WeakValueDictionary
 
 from components import (
     ATTACHMENT_DATA_URL_MAX_CHARS,
@@ -80,12 +79,12 @@ from services.domains.companion import (
     list_tts_voices,
     match_user_voice,
     normalize_voice_language,
-    note_user_contact,
     observe_companion_presence,
     queue_companion_intent,
     record_interaction,
     should_act,
     submit_onboarding_field,
+    user_turn_activity,
 )
 from services.domains.conversation import (
     CLEARED_STATUS_SUBTYPE,
@@ -131,6 +130,7 @@ from services.infrastructure.llm import (
     resolve_user_llm_config,
 )
 from services.infrastructure.tool_runtime import REGISTRY
+from services.infrastructure.turn_ownership import conversation_lock
 
 from .auth import decode_ws_ticket, is_ws_login_active
 from .emitter import JsonRpcEmitter
@@ -230,12 +230,14 @@ _last_should_act_ts: dict[int, float] = {}
 # 试听文本交给付费语音合成，只需一句示例台词；与音色描述同上限。
 _VOICE_PREVIEW_TEXT_MAX_CHARS = MAX_VOICE_DESIGN_PROMPT_CHARS
 
-# 会话级锁串行化修改历史的操作（提交、清空、压缩、撤回）：防止双击 / 多窗口并发写出重复状态行或与在途回合交错。
-_conversation_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
-
-def _conversation_lock(session_id: str) -> asyncio.Lock:
-    return _conversation_locks.setdefault(session_id, asyncio.Lock())
+@contextlib.asynccontextmanager
+async def desktop_history_lock(session_id: str) -> AsyncIterator[None]:
+    lock = conversation_lock(session_id)
+    if lock.locked():
+        raise JsonRpcError(JSONRPC_TURN_BUSY, "当前会话正在执行任务，请先停止任务")
+    async with lock:
+        yield
 
 
 async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | None = None) -> None:
@@ -421,10 +423,10 @@ async def _resolve_llm_config(user_id: int) -> UserLlmConfig:
         return await resolve_user_llm_config(db, user_id)
 
 
-def _reject_im_session(runtime: RuntimeSession) -> None:
-    """IM 会话由通道桥独占写入，桌面端只读；桥接回合不经桌面运行时，runtime.busy 拦不住与它并发的提交/清空/压缩。"""
-    if runtime.kind == IM_KIND:
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, "IM 会话由通道桥接维护，仅只读")
+def _reject_read_only_session(runtime: RuntimeSession) -> None:
+    """渠道和自动化历史只由各自执行入口写入。"""
+    if runtime.kind == IM_KIND or runtime.is_automation:
+        raise JsonRpcError(JSONRPC_INVALID_PARAMS, "渠道和任务会话由对应执行入口维护，仅只读")
 
 
 def _require_str(params: dict[str, Any], key: str) -> str:
@@ -586,8 +588,8 @@ async def _do_clear_history(db: AsyncSession, conv: Conversation) -> dict[str, A
 )
 async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/清理`` 命令 handler。``confirmed`` 由 ``command.dispatch`` 在调用前把关，未传则抛 SLASH_CONFIRM_REQUIRED。"""
-    _reject_im_session(ctx.runtime)
-    async with _conversation_lock(ctx.session_id), SESSION_LOCAL() as db:
+    _reject_read_only_session(ctx.runtime)
+    async with desktop_history_lock(ctx.session_id), SESSION_LOCAL() as db:
         if ctx.runtime.busy:
             raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再清理会话")
         conv = await _require_owned_conv(db, ctx.user_id, ctx.session_id)
@@ -616,8 +618,8 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
 )
 async def _slash_compress(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/压缩`` 命令 handler：复用 session.compress_context 的核心实现。"""
-    _reject_im_session(ctx.runtime)
-    async with _conversation_lock(ctx.session_id):
+    _reject_read_only_session(ctx.runtime)
+    async with desktop_history_lock(ctx.session_id):
         if ctx.runtime.busy:
             raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再压缩会话")
         async with SESSION_LOCAL() as db:
@@ -962,8 +964,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
 
     async def session_compress_context(params: dict) -> dict:
         runtime = _require_runtime(params)
-        _reject_im_session(runtime)
-        async with _conversation_lock(runtime.session_id):
+        _reject_read_only_session(runtime)
+        async with desktop_history_lock(runtime.session_id):
             if runtime.busy:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
             async with SESSION_LOCAL() as db:
@@ -987,7 +989,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             owned = await _require_owned_conv(db, user_id, session_id)
         session_id = str(owned.id)
         runtime = runtime_sessions.get(session_id)
-        async with _conversation_lock(session_id), SESSION_LOCAL() as db:
+        async with desktop_history_lock(session_id), SESSION_LOCAL() as db:
             if runtime is not None and runtime.busy:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
             try:
@@ -1082,8 +1084,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
 
     dispatcher.register("command.list", command_list)
 
-    async def _submit_prompt(params: dict, runtime: RuntimeSession) -> dict:
-        _reject_im_session(runtime)
+    async def _submit_prompt(params: dict, runtime: RuntimeSession, admission: contextlib.ExitStack) -> dict:
+        _reject_read_only_session(runtime)
         if runtime.chat_task is not None and runtime.busy:
             # 刚被中断的回合可能仍在收尾：短暂等待其结束；asyncio.wait 不把旧回合的取消或异常传播到本请求。
             await asyncio.wait({runtime.chat_task}, timeout=0.3)
@@ -1164,9 +1166,6 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
 
         emitter = JsonRpcEmitter(dispatcher=dispatcher, session_id=runtime.session_id)
 
-        note_user_contact(user_id)
-        await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
-
         persisted_message_id: int | None = retry_message_id
         edited_messages: list[dict] | None = None
         if edit_message_id is not None:
@@ -1215,13 +1214,20 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     await dispatcher.push_error_event(str(e), session_id=runtime.session_id)
 
         runtime.chat_task = asyncio.create_task(_run_turn())
+        turn_activity = admission.pop_all()
+        runtime.chat_task.add_done_callback(lambda _done: turn_activity.close())
         session.track(runtime.chat_task)
         return {"queued": True}
 
     async def prompt_submit(params: dict) -> dict:
         runtime = _require_runtime(params)
-        async with _conversation_lock(runtime.session_id):
-            return await _submit_prompt(params, runtime)
+        _reject_read_only_session(runtime)
+        # 用户占位先阻止新主动回合，再停稳旧任务；任务接手后由完成回调释放占位。
+        with contextlib.ExitStack() as admission:
+            admission.enter_context(user_turn_activity(user_id, enabled=True))
+            await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
+            async with desktop_history_lock(runtime.session_id):
+                return await _submit_prompt(params, runtime, admission)
 
     dispatcher.register("prompt.submit", prompt_submit)
 

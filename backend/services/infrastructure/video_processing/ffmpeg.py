@@ -44,6 +44,10 @@ class VideoProcessError(RuntimeError):
             self.add_note(internal)
 
 
+class ActionMaterialRejectedError(VideoProcessError):
+    """素材违反确定性机械门禁；重新处理同一素材无法恢复。"""
+
+
 class VideoToolUnavailableError(VideoProcessError):
     """FFmpeg / ffprobe 缺失、无法启动或超时；说明本机环境故障，不能据此判定视频成品本身有问题。"""
 

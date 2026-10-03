@@ -4,7 +4,7 @@ from functools import partial
 
 from components import get_logger, log_paid_call
 
-from .error_classifier import FailoverReason, classify_api_error
+from .error_classifier import FailoverReason, LlmCallBlockedError, classify_api_error
 from .llm_client import MissingLlmConfigError, build_provider
 from .llm_debug import log_event, new_call_id
 from .providers import BaseProvider, ProviderConfig
@@ -46,6 +46,8 @@ async def execute_with_fallback[P: BaseProvider, T](
         started = time.monotonic()
         try:
             result = await call_fn(provider)
+        except LlmCallBlockedError:
+            raise
         except Exception as exc:
             classified = classify_api_error(exc)
             if classified.reason == FailoverReason.content_policy_blocked:

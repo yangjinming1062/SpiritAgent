@@ -2,15 +2,38 @@
 
 import hashlib
 import json
+import unicodedata
 from datetime import datetime
 
 from modules.companion import ActionPlayback, CompanionAction, CompanionActionPack
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .materials import preserve_action_asset
+
 
 class StaleCatalogError(RuntimeError):
     """目录版本已被并发发布推进；`publish_action_catalog` 重读后重试，仍冲突才抛给调用方。"""
+
+
+class ActionNameConflictError(ValueError):
+    """遗留同名多动作不能静默合并、重命名或覆盖。"""
+
+
+def normalize_action_name(name: str) -> str:
+    return unicodedata.normalize("NFKC", name.strip()).casefold()
+
+
+async def get_action_by_name(db: AsyncSession, pack_id: int, name: str) -> CompanionAction | None:
+    expected = normalize_action_name(name)
+    matches = [
+        action
+        for action in await list_pack_actions(db, pack_id, enabled_only=False)
+        if not action.system_slot and normalize_action_name(action.name) == expected
+    ]
+    if len(matches) > 1:
+        raise ActionNameConflictError("存在多个同名动作，请先删除重复动作后重新提案")
+    return matches[0] if matches else None
 
 
 def make_semantic_fingerprint(name: str, motion: str) -> str:
@@ -97,6 +120,7 @@ async def create_action(
 
 def clear_action_attempt(action: CompanionAction) -> None:
     """作废动作当前的生成尝试与成品，下一次制作从独立的新尝试开始；不改状态与元信息，也不删除文件。"""
+    preserve_action_asset(action)
     action.provider_task_id = None
     action.artifact_path = None
     action.pose_path = None

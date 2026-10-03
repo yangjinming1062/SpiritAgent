@@ -104,6 +104,7 @@ from services.application.generation import (
     regenerate_outfit_draft,
     reject_media_review,
     retry_fullbody_candidate_analysis,
+    retry_outfit_description,
     retry_video_pack,
     schedule_character_extraction,
     select_avatar,
@@ -125,6 +126,7 @@ from services.domains.companion import (
     update_persona,
 )
 from services.infrastructure.assets import (
+    ImagePixelLimitError,
     UnsupportedImageFormatError,
     client_asset_url,
     resolve_companion_asset_path,
@@ -343,6 +345,8 @@ async def _decode_upload_image(image_b64: str, content_type: str | None) -> tupl
         return await asyncio.to_thread(validate_image_bytes, raw)
     except UnsupportedImageFormatError:
         raise HTTPException(status_code=415, detail={"error": "仅支持 PNG / JPEG / WebP / GIF 图片"})
+    except ImagePixelLimitError:
+        raise HTTPException(status_code=400, detail={"error": "图片尺寸过大，无法安全解码，请缩小后重新上传"})
     except Exception:
         # Pillow 各格式插件对损坏数据抛出的异常类型不统一，一律按图片无法读取处理。
         raise HTTPException(
@@ -775,6 +779,15 @@ async def post_outfit_confirm(
         outfit = await confirm_outfit(db, user.id, outfit_id)
     except OutfitError as exc:
         raise _outfit_http_error(exc)
+    return outfit_response(outfit)
+
+
+@router.post("/outfits/{outfit_id}/description/retry", response_model=OutfitResponse)
+async def post_retry_outfit_description(outfit_id: int, user: CurrentUser, db: DbSession) -> OutfitResponse:
+    try:
+        outfit = await retry_outfit_description(db, user.id, outfit_id)
+    except OutfitError as exc:
+        raise _outfit_http_error(exc) from exc
     return outfit_response(outfit)
 
 

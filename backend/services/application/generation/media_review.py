@@ -9,10 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.actions import (
     CatalogValidationError,
     StaleCatalogError,
+    accept_action_asset,
+    accepted_action_asset,
+    action_asset_paths,
     clear_action_attempt,
     emit_catalog_changed,
     fulfill_deferred_play_intents,
     publish_action_catalog,
+    retire_action_assets,
 )
 
 
@@ -112,7 +116,10 @@ async def _accept_reviewed_action(
         raise MediaReviewStateError("动作视频仍在保存，请稍后重试")
     if job.status not in ("review", "succeeded") or not job.result_json or job.video_path != media_url:
         return False
+    previous = accepted_action_asset(job)
+    await retire_action_assets(db, user_id, previous.paths() if previous else [])
     job.status = "succeeded"
+    accept_action_asset(job)
     await db.flush()
     if pack.active:
         try:
@@ -164,6 +171,7 @@ async def _reject_reviewed_action(db: AsyncSession, user_id: int, action_id: int
     job = await db.get(CompanionAction, action_id)
     # 复核项只对应生成它的成品；动作已换成别的成品时，拒绝只结束复核项本身。
     if job is not None and job.user_id == user_id and job.status == "review" and job.video_path == media_url:
+        await retire_action_assets(db, user_id, action_asset_paths(job))
         job.status = "failed"
         job.error = "用户未采纳该动作视频"
         # 未采纳成品连同生成进度一并作废，之后的重做是独立新尝试；复核链已收尾无待续句柄，文件保留供该记录查看。

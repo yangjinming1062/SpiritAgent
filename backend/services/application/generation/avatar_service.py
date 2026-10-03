@@ -170,7 +170,13 @@ def _portrait_identity(identity: CharacterCardSnapshot | None) -> str:
     return PORTRAIT_IDENTITY_TEMPLATE.format(features=json.dumps(features, ensure_ascii=False))
 
 
-async def extract_card_features[F: BaseModel](user_id: int, source_path: str, model: type[F]) -> F:
+async def extract_card_features[F: BaseModel](
+    user_id: int,
+    source_path: str,
+    model: type[F],
+    *,
+    before_submit: Callable[[], Awaitable[None]] | None = None,
+) -> F:
     """按角色卡字段分析立绘裸路径，返回特征；缺字段视为失败，空字段允许未知特征。"""
     loaded = await asyncio.to_thread(read_portrait_bytes, source_path)
     if loaded is None:
@@ -186,6 +192,7 @@ async def extract_card_features[F: BaseModel](user_id: int, source_path: str, mo
             CHARACTER_CARD_EXTRACTION,
             json.dumps({"source": source, "schema": schema}, ensure_ascii=False),
             reference_images=(uri,),
+            before_submit=before_submit,
         )
     payload = parse_llm_json(raw)
     if not isinstance(payload, dict) or set(payload) != set(model.model_fields):

@@ -179,4 +179,11 @@ export { SpriteTargetCue, useSpriteBodyGesture } from './sprite/gesture-layer'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
 
-export { $outfitPolicy, $outfits, deleteOutfit, hydrateWardrobe, setOutfitPolicy } from './wardrobe/wardrobe-store'
+export {
+  $outfitPolicy,
+  $outfits,
+  deleteOutfit,
+  hydrateWardrobe,
+  retryOutfitDescription,
+  setOutfitPolicy
+} from './wardrobe/wardrobe-store'

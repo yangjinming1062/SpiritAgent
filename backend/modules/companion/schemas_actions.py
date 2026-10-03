@@ -154,12 +154,14 @@ class ActionCatalogResponse(BaseModel):
 
 
 class ActionBudgetStatus(BaseModel):
-    """当前用户动作制作额度状态（按用户本地日）。
+    """当前用户动态动作制作额度状态（滚动24小时）。
     上限实际值由后台配置给出，schema 不背书默认。"""
 
     model_config = ConfigDict(extra="forbid")
 
     budget_date: str
+    window_start: str
+    window_end: str
     autonomous_create_used: int = 0
     autonomous_create_limit: int = 0
     user_requested_create_used: int = 0

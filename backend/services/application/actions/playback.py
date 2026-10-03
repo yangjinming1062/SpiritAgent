@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.actions import (
     DEFERRED_PLAY_INTENT_TTL_SECONDS,
     PLAY_INTENT_TTL_SECONDS,
+    accepted_action_asset,
     emit_play_command,
     get_action,
     get_active_pack,
@@ -38,7 +39,7 @@ async def request_playback(
     if not action.enabled:
         return ActionPlayResult(outcome="rejected", message="该动作已停用")
 
-    ready = action.status == "succeeded" and bool(action.video_path)
+    ready = accepted_action_asset(action) is not None
     # 制作中：保存表达意图，完成后按有效期与外观代次决定是否补播。
     if not ready and action.status not in ("queued", "processing", "result_unknown"):
         return ActionPlayResult(outcome="rejected", message="该动作素材尚未就绪")

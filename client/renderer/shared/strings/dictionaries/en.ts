@@ -130,6 +130,7 @@ export const dict: Dictionary = {
       channelLabel: 'IM channel',
       channelWeixin: 'WeChat',
       channelConnected: (label: string) => `${label} connected`,
+      channelReconnecting: (label: string) => `${label} connection is unavailable; reconnecting`,
       channelLoginRequired: (label: string) => `${label} login expired — rescan in Settings`,
       channelError: (label: string, detail?: string) => `${label} channel error${detail ? `: ${detail}` : ''}`,
       channelPeerRequest: (label: string, name: string) =>
@@ -192,6 +193,7 @@ export const dict: Dictionary = {
       loadFailed: 'Failed to load channel status',
       statusLabels: {
         connected: 'Connected',
+        reconnecting: 'Reconnecting',
         login_pending: 'Waiting for scan',
         login_required: 'Login required',
         error: 'Error',
@@ -216,7 +218,8 @@ export const dict: Dictionary = {
         expiredPrompt: 'QR code expired, please refresh',
         loginTimeout: 'Login timed out. Get a new QR code.',
         qrAlt: 'WeChat login QR code',
-        connectedAs: (name: string) => `Connected${name ? `: ${name}` : ''}`
+        connectedAs: (name: string) => `Connected${name ? `: ${name}` : ''}`,
+        reconnecting: 'Connection unavailable. Reconnecting automatically; no new QR scan is needed.'
       },
       peers: {
         title: 'Peer approvals',
@@ -684,6 +687,7 @@ export const dict: Dictionary = {
     inputPlaceholder: 'Say something, or drag a file over',
     typing: 'Typing...',
     queued: 'Received, waiting to be processed',
+    discarded: 'Authorization revoked; not executed',
     openMainSessionFailed: 'Could not open daily chat',
 
     filesReceived: (count: number) => `${count} file${count === 1 ? '' : 's'} received`,
@@ -1026,6 +1030,29 @@ export const dict: Dictionary = {
       avatarMood: (name: string) => `${name}'s mood`
     },
     posts: {
+      videoRecoveryHeading: 'Video posts awaiting review',
+      videoRecoveryHint:
+        'These posts exceeded the wait limit and were not recreated or published. Check the original task, review any existing video, then publish or discard it. Adoption does not create narration.',
+      videoRecoveryLoadFailed: 'Could not load videos awaiting review. Refresh the posts page.',
+      videoRecoveryStatuses: {
+        pending: 'The original video task is still pending',
+        ready: 'A video is available; review it before adopting',
+        failed: 'The original video task failed',
+        unknown: 'The original video result is unconfirmed',
+        discarded: 'Discarded'
+      },
+      videoQuery: 'Check original task',
+      videoRefresh: 'Refresh',
+      videoAdopt: 'Adopt and publish',
+      videoDiscard: 'Discard',
+      videoCleanupPending: 'Publication was discarded. Some local assets still need cleanup.',
+      videoRetryCleanup: 'Retry cleanup',
+      videoQueryFailed: 'Could not check the original video task. Try again later.',
+      videoAdoptFailed: 'Cannot adopt this video now. Check the current appearance, post settings, and quota.',
+      videoDiscardFailed: 'Discard did not complete. Try again later.',
+      videoDiscardTitle: 'Discard this video post?',
+      videoDiscardDescription:
+        'This post will not be published. Its exclusive local video will be removed. The provider task may still be running, and costs already incurred will not be refunded.',
       loadMore: 'Load more',
       replyPending: 'Replying…',
       replyRetry: 'Reply failed · Retry',
@@ -1079,6 +1106,8 @@ export const dict: Dictionary = {
       policyFailed: "Couldn't save the outfit setting",
       deleteFailed: "Couldn't delete the outfit",
       confirmFailed: "Couldn't confirm the outfit. Try again.",
+      retryDescription: 'Complete description',
+      descriptionRetryFailed: 'Could not complete the outfit description. Please try again.',
       wearing: 'Wearing',
       statusLabels: {
         draft: 'Draft',

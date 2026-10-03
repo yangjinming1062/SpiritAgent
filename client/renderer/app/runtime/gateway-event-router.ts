@@ -1,4 +1,9 @@
-import { $chatSessionId, findConversationRuntime, getConversationRuntime } from '@/modules/conversation'
+import {
+  $chatSessionId,
+  findConversationRuntime,
+  getConversationRuntime,
+  invalidateSessionHistory
+} from '@/modules/conversation'
 import { onJournalEvent } from '@/modules/memory'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
@@ -7,7 +12,7 @@ import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 
 import { $devMode, pushDevLog } from './dev-log'
-import type { EventRouteContext } from './gateway-event-util'
+import { decodePayload, type EventRouteContext } from './gateway-event-util'
 import { handleCharacterEvent } from './handlers/character-events'
 import { handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
@@ -56,14 +61,26 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'command.result':
 
-    case 'compress.completed':
-
     case 'error':
       if (runtime) {
         handleConversationEvent(event, ctx, runtime)
       }
 
       break
+    case 'compress.completed': {
+      const payload = decodePayload<{ subtype?: string; text?: string }>(event.payload)
+      const sessionId = event.session_id ?? $chatSessionId.get()
+
+      if (sessionId && payload.subtype === 'compress_summary' && typeof payload.text === 'string') {
+        invalidateSessionHistory(sessionId)
+      }
+
+      if (runtime) {
+        handleConversationEvent(event, ctx, runtime)
+      }
+
+      break
+    }
 
     case 'tool.start':
       if (runtime) {

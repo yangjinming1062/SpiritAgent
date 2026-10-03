@@ -1,8 +1,11 @@
 from datetime import datetime
 
 from common import ModelBase, TimestampMixin
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
+
+from .schemas import ChannelTurnSource
 
 
 class ChannelBinding(ModelBase, TimestampMixin):
@@ -37,7 +40,33 @@ class ChannelPeer(ModelBase, TimestampMixin):
     peer_id: Mapped[str] = mapped_column(String(128))
     peer_name: Mapped[str] = mapped_column(String(128), default="", server_default=text("''"))
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), index=True)
+    authorization_revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @classmethod
+    async def authorizes(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+        source: ChannelTurnSource,
+        *,
+        lock: bool = False,
+    ) -> bool:
+        statement = (
+            select(cls.id)
+            .join(ChannelBinding, ChannelBinding.id == cls.binding_id)
+            .where(
+                ChannelBinding.user_id == user_id,
+                cls.binding_id == source.binding_id,
+                cls.id == source.peer_record_id,
+                cls.peer_id == source.peer_id,
+                cls.status == "allowed",
+                cls.authorization_revision == source.authorization_revision,
+            )
+        )
+        if lock:
+            statement = statement.with_for_update(of=cls)
+        return await db.scalar(statement) is not None
 
 
 class ChannelDelivery(ModelBase, TimestampMixin):
@@ -46,7 +75,7 @@ class ChannelDelivery(ModelBase, TimestampMixin):
     __tablename__ = "channel_deliveries"
 
     binding_id: Mapped[int] = mapped_column(ForeignKey("channel_bindings.id", ondelete="CASCADE"), index=True)
-    # 空串=对端未定（后台任务产物），补发时跟随触发补发的对端。
+    # 旧版空串没有可证明的接收对端，补发入口将其作废。
     peer_id: Mapped[str] = mapped_column(String(128), default="", server_default=text("''"))
     # ChannelDeliveryPayload 的 JSON；media URL 为裸资产路径。
     payload_json: Mapped[str] = mapped_column(Text)

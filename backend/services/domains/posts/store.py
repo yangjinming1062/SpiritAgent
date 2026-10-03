@@ -202,7 +202,13 @@ async def reserve_publication(
     return row
 
 
-async def publication_quota_remaining(db: AsyncSession, user_id: int, quota_kind: str) -> int:
+async def publication_quota_remaining(
+    db: AsyncSession,
+    user_id: int,
+    quota_kind: str,
+    *,
+    exclude_publication_id: str | None = None,
+) -> int:
     """最近24小时内该类别还可预留的发布数；已发布、排队或运行中的任务，以及24小时内结果未知的任务都占用额度。"""
     since = utc_now() - timedelta(hours=24)
     posted = await db.scalar(
@@ -214,7 +220,7 @@ async def publication_quota_remaining(db: AsyncSession, user_id: int, quota_kind
             CompanionPost.published_at >= since,
         ),
     )
-    reserved = await db.scalar(
+    reservations = (
         select(func.count())
         .select_from(PostPublication)
         .where(
@@ -224,8 +230,11 @@ async def publication_quota_remaining(db: AsyncSession, user_id: int, quota_kind
                 PostPublication.status.in_(("queued", "running")),
                 (PostPublication.status == "result_unknown") & (PostPublication.reserved_at >= since),
             ),
-        ),
+        )
     )
+    if exclude_publication_id is not None:
+        reservations = reservations.where(PostPublication.id != exclude_publication_id)
+    reserved = await db.scalar(reservations)
     limit = SETTINGS.post_autonomous_per_day if quota_kind == "autonomous" else SETTINGS.post_requested_per_day
     return max(0, limit - (posted or 0) - (reserved or 0))
 

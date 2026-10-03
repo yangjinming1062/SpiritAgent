@@ -16,14 +16,13 @@ from fastapi.responses import FileResponse
 from modules.auth import CurrentAdmin
 from modules.system import MessageResponse, ReleaseManifestFileItem, ReleaseManifestResponse
 from modules.update import UpdateVersion, UpdateVersionItem, UpdateVersionListResponse, UpdateVersionUpdate
+from services.domains.update_releases import VERSIONS_DIR
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
 router = get_router()
 
-# 相对工作目录；容器内挂载为 /app/updates。
-VERSIONS_DIR = Path("updates/versions")
 CHUNK_SIZE = 8192
 # 版本目录与数据库记录须成对出现：上传与删除在进程内串行（后端单 web 进程部署），避免并发写同一目录或互删。
 _VERSION_LOCK = asyncio.Lock()
@@ -145,7 +144,7 @@ def _extract_archive_entries(zip_path: Path, versions_dir: Path) -> None:
 
 
 def _inspect_release(versions_dir: Path, version: str) -> tuple[Path, Path | None, Path]:
-    """校验解压结果并返回 (exe, mac 包, runner wheel)。构建脚本（Build-UpdateZip）总会写入 manifest.json，其 version 必须匹配文件名版本，否则视为不同发布；客户端更新要预取同版本的 Runner 资产，缺失或版本不符会让所有客户端下载失败，故一并拒绝。"""
+    """校验同版本桌面安装包、Runner 资产与清单，返回 (exe, mac 包, runner wheel)。"""
     manifest_path = versions_dir / "manifest.json"
     if not manifest_path.exists():
         raise ValueError("更新包缺少 manifest.json。")

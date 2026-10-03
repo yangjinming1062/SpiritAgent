@@ -61,6 +61,7 @@ class VideoActionResponse(BaseModel):
     error: str | None = None
     clip_url: str | None = None
     motion_prompt: str = ""
+    feedback: str = ""
     peek_geometry: PeekGeometry | None = None
     content_rect: tuple[float, float, float, float] | None = None
 

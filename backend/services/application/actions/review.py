@@ -18,17 +18,24 @@ from prompts.actions import ACTION_REVIEW_INSTRUCTIONS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.application.generation import (
+    VideoPackError,
+    require_new_generation_call,
+    require_pack_generation_identity,
+)
 from services.domains.actions import (
+    ActionNameConflictError,
     ActionPolicyError,
+    accepted_action_asset,
     consume_create_slot,
     create_action,
-    get_action_by_key,
+    get_action_by_name,
     is_expression_action,
     list_pack_actions,
 )
 from services.domains.companion import render_character_profile
 from services.infrastructure.assets import build_data_uri, image_mime_for_extension, sniff_media_ext
-from services.infrastructure.llm import vision_chat
+from services.infrastructure.llm import LlmCallBlockedError, vision_chat
 
 from .design import action_key_from_name
 
@@ -169,7 +176,12 @@ async def review_proposal(proposal_id: int, user_id: int) -> ReviewOutcome | Non
     mime = image_mime_for_extension(sniff_media_ext(reference_bytes) or "")
     if mime is None:
         raise ValueError("动作评审参考图格式无效")
-    verdict = await _request_verdict(user_id, payload, await asyncio.to_thread(build_data_uri, reference_bytes, mime))
+    verdict = await _request_verdict(
+        user_id,
+        pack.id,
+        payload,
+        await asyncio.to_thread(build_data_uri, reference_bytes, mime),
+    )
 
     async with SESSION_LOCAL() as db:
         if (proposal := await _reviewable_proposal(db, proposal_id, user_id)) is None:
@@ -193,8 +205,23 @@ async def defer_failed_review(proposal_id: int, user_id: int) -> None:
         await db.commit()
 
 
-async def _request_verdict(user_id: int, payload: dict[str, Any], reference_image: str) -> ReviewVerdict | str:
+async def _request_verdict(
+    user_id: int,
+    pack_id: int,
+    payload: dict[str, Any],
+    reference_image: str,
+) -> ReviewVerdict | str:
     """调用评审模型；结论不合规时附校验错误重试一次，仍失败返回写入评审理由的简短原因。"""
+
+    async def before_submit() -> None:
+        require_new_generation_call(user_id)
+        async with SESSION_LOCAL() as db:
+            try:
+                await require_pack_generation_identity(db, user_id, pack_id)
+            except VideoPackError as exc:
+                raise LlmCallBlockedError(str(exc)) from exc
+        require_new_generation_call(user_id)
+
     failure = "评审失败"
     for _attempt in range(2):
         try:
@@ -203,6 +230,7 @@ async def _request_verdict(user_id: int, payload: dict[str, Any], reference_imag
                 ACTION_REVIEW_INSTRUCTIONS,
                 json.dumps(payload, ensure_ascii=False),
                 reference_images=(reference_image,),
+                before_submit=before_submit,
             )
             verdict = ReviewVerdict.model_validate(parse_llm_json(raw))
             if verdict.decision == "reuse":
@@ -242,21 +270,20 @@ async def _commit_verdict(
     return ReviewOutcome(decision, proposal.pack_id, proposal.action_id)
 
 
-def _action_key(proposal: ActionProposal, design: dict[str, Any]) -> str:
-    return action_key_from_name(str(design.get("name", "action")), proposal.semantic_fingerprint or "")
-
-
 async def _same_key_verdict(
     db: AsyncSession,
     proposal: ActionProposal,
     design: dict[str, Any],
 ) -> ReviewVerdict | None:
     """同包已有同 key 动作时的确定结论：就绪即复用，其余暂缓，不覆盖或重排。同名即同一动作身份；两个同名提案先后获批时后者按先者状态收敛。"""
-    existing = await get_action_by_key(db, proposal.pack_id, _action_key(proposal, design))
+    try:
+        existing = await get_action_by_name(db, proposal.pack_id, str(design.get("name", "action")))
+    except ActionNameConflictError as exc:
+        return ReviewVerdict(decision="defer", reason=str(exc))
     if existing is None:
         return None
     name = existing.name or existing.key
-    if existing.status == "succeeded" and existing.video_path:
+    if accepted_action_asset(existing) is not None:
         return ReviewVerdict(
             decision="reuse",
             reason=f"同名动作「{name}」已就绪，按复用处理",
@@ -283,7 +310,12 @@ async def _apply_verdict(
     if verdict.decision == "approve":
         # 制作额度校验：approve 计数由聚合决定；超限回退 defer，不默认批准。
         try:
-            await consume_create_slot(db, proposal.user_id, source=proposal.source)
+            creation = await consume_create_slot(
+                db,
+                proposal.user_id,
+                source=proposal.source,
+                creation_key=f"proposal:{proposal.id}",
+            )
         except ActionPolicyError as exc:
             proposal.review_decision = "defer"
             proposal.review_reason = f"额度不足：{exc}"
@@ -296,7 +328,7 @@ async def _apply_verdict(
             db,
             user_id=proposal.user_id,
             pack_id=proposal.pack_id,
-            key=_action_key(proposal, design),
+            key=action_key_from_name(str(design.get("name", "action"))),
             name=str(design.get("name", "未命名动作")),
             kind=str(design.get("clip_kind", "once")),
             motion_description=str(design.get("motion_description", "")),
@@ -310,6 +342,7 @@ async def _apply_verdict(
         # 冻结提案规格：生成编排按此演绎，不回读提案表。
         action.source_design_json = proposal.design_json
         proposal.action_id = action.id
+        creation.action_id = action.id
     elif verdict.decision == "reuse":
         proposal.status = "reused"
         proposal.action_id = verdict.reuse_action_id

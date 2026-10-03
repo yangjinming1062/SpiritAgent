@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from components import SESSION_LOCAL, get_logger
@@ -24,7 +25,7 @@ from sqlalchemy import select
 
 from services.domains.companion import render_character_identity, require_character_snapshot
 from services.infrastructure.assets import unlink_companion_asset
-from services.infrastructure.llm import ASPECT_RATIOS, resolve_reference_bytes
+from services.infrastructure.llm import ASPECT_RATIOS, LlmCallBlockedError, resolve_reference_bytes
 
 from .avatar_service import FULLBODY_ASPECT, FULLBODY_SIZE, AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
 from .character_images import ImageChainState, ImageProgressWriter, generate_character_images
@@ -119,6 +120,7 @@ async def align_character_reference(
     identity_reference: str,
     state: ImageChainState | None = None,
     save_progress: ImageProgressWriter | None = None,
+    before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
     """返回本次生成独有的持久参考；调用者承担保存或回收，不改变原图。"""
     size = FULLBODY_SIZE
@@ -161,6 +163,7 @@ async def align_character_reference(
         identity_text=render_character_identity(identity),
         state=state,
         save_progress=save_progress,
+        before_submit=before_submit,
     )
     return paths[0]
 
@@ -172,6 +175,7 @@ async def prepare_self_video_reference(
     *,
     prompt: str,
     aspect_ratio: str | None = None,
+    before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
     """新视频先生成符合要求的起始画面；显式首帧仅校准身份与明确的造型覆盖。"""
     context = plan.context
@@ -190,6 +194,7 @@ async def prepare_self_video_reference(
                 identity_reference=context.reference_image,
                 identity_text=render_character_identity(context.identity),
                 size=aspect_ratio or "9:16",
+                before_submit=before_submit,
             )
             path = paths[0]
         else:
@@ -200,8 +205,9 @@ async def prepare_self_video_reference(
                 plan.override_outfit_description,
                 preserve_frame=True,
                 identity_reference=context.reference_image,
+                before_submit=before_submit,
             )
-    except ImageGenerationError:
+    except (ImageGenerationError, LlmCallBlockedError):
         raise
     except Exception as exc:
         # 起始画面阶段尚未提交视频；图片链内的下载、转存失败是确定的失败，不能按提交结果未知处理。

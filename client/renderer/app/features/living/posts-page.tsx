@@ -28,6 +28,7 @@ import { notify } from '@/shared/store/notifications'
 import { $surfaceOpen, $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
+import { PostVideoRecovery } from './post-video-recovery'
 import styles from './posts.module.css'
 
 function formatDate(formatter: Intl.DateTimeFormat, iso: string): string {
@@ -50,7 +51,8 @@ export function PostsPage({
   const hasMore = useStore($postsHasMore)
   const loadingMore = useStore($postsLoadingMore)
   const persona = useStore($persona)
-  const authKind = useStore($auth).kind
+  const authState = useStore($auth)
+  const authKind = authState.kind
   const surfaceOpen = useStore($surfaceOpen)
   const surfaceVisible = useStore($surfaceOpenVisible)
   const screenLocked = useStore($surfaceScreenLocked)
@@ -130,12 +132,9 @@ export function PostsPage({
 
     if (restored) {
       setReadBlocked(false)
-
-      if (loadFailed) {
-        setReloadKey(key => key + 1)
-      }
+      setReloadKey(key => key + 1)
     }
-  }, [foreground, loadFailed])
+  }, [foreground])
 
   // 首屏快照包括较早未读内容；后续事件只确认已进入本次渲染的动态。
   useEffect(() => {
@@ -183,6 +182,11 @@ export function PostsPage({
 
   const getContentTypeLabel = (kind: string): string => t.contentTypeLabels[kind] ?? t.contentTypeFallback
 
+  const recovery =
+    authState.kind === 'authenticated' ? (
+      <PostVideoRecovery key={`${authState.snapshot.sessionId}:${reloadKey}`} />
+    ) : null
+
   if (loading && posts.length === 0) {
     return <p className={styles.empty}>{t.loading}</p>
   }
@@ -190,13 +194,17 @@ export function PostsPage({
   if (posts.length === 0) {
     return loadFailed ? (
       <div className={styles.empty}>
+        {recovery}
         <p>{t.loadFailed}</p>
         <button className={cn(BTN_SUBTLE, 'mt-3')} onClick={() => setReloadKey(key => key + 1)} type="button">
           {strings.common.retry}
         </button>
       </div>
     ) : (
-      <p className={styles.empty}>{t.empty}</p>
+      <div className={styles.list}>
+        {recovery}
+        <p className={styles.empty}>{t.empty}</p>
+      </div>
     )
   }
 
@@ -204,6 +212,7 @@ export function PostsPage({
 
   return (
     <div className={styles.list}>
+      {recovery}
       {formattedPosts.map(m => {
         const expanded = expandedId === m.id
 

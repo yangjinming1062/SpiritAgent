@@ -6,6 +6,8 @@ from typing import Any, Literal
 from components import get_logger
 from modules.channels import ChannelDeliveryMedia, ChannelLoginStateResponse
 
+from .state import BindingHealth
+
 logger = get_logger(__name__)
 
 
@@ -58,6 +60,7 @@ class ChannelAdapter:
     conversation_title: str = ""
     supports_typing: bool = False
     requires_login: bool = False
+    reports_connection_health: bool = False
 
     def has_credentials(self) -> bool:
         """requires_login 渠道据此区分启动即连与等待登录；无需登录的渠道恒 True。"""
@@ -65,6 +68,7 @@ class ChannelAdapter:
 
     def __init__(self, snapshot: ChannelBindingSnapshot) -> None:
         self.snapshot = snapshot
+        self.connection_health = BindingHealth(snapshot.id)
         # 登录、回合与补发等派生任务都归当前绑定实例；守卫重建或绑定停止时由 aclose 统一取消并等待，避免旧实例越过生命周期边界继续驱动本机工具。
         self._owned_tasks: set[asyncio.Task] = set()
 

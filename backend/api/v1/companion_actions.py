@@ -15,7 +15,9 @@ from modules.companion import (
     CompanionOperationResponse,
 )
 from services.application.actions import accept_proposal, schedule_accepted_proposal
+from services.application.generation import reject_pending_action_reviews
 from services.domains.actions import (
+    action_asset_paths,
     emit_catalog_changed,
     get_action,
     get_active_pack,
@@ -23,6 +25,7 @@ from services.domains.actions import (
     get_playback,
     publish_action_catalog,
     record_play_result,
+    retire_action_assets,
 )
 from services.infrastructure.assets import signed_companion_asset_url
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -130,6 +133,10 @@ async def delete_action(action_id: int, user: CurrentUser, db: DbSession) -> Com
     action = await _owned_action(db, user.id, action_id)
     if action.system_slot in REQUIRED_SYSTEM_SLOTS:
         raise HTTPException(status_code=400, detail=f"必需系统动作（{action.system_slot}）不可删除")
+    if action.status in ("queued", "processing"):
+        raise HTTPException(status_code=409, detail="动作正在制作，请等待完成后再删除")
+    await reject_pending_action_reviews(db, action)
+    await retire_action_assets(db, user.id, action_asset_paths(action))
     await db.delete(action)
     await db.commit()
     await _republish_catalog(db, user.id)

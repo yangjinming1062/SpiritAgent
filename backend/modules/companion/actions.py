@@ -78,7 +78,7 @@ class CompanionActionPack(ModelBase, TimestampMixin):
 
 
 class CompanionAction(ModelBase, TimestampMixin):
-    """单个动作条目（系统槽位或动态动作）；metadata_revision 仅元信息变更递增，不重生成视频。"""
+    """单个动作条目（系统槽位或动态动作）；metadata_revision 标识当前素材尝试，已采纳版本保留在独立快照中。"""
 
     __tablename__ = "companion_actions"
     __table_args__ = (
@@ -126,6 +126,8 @@ class CompanionAction(ModelBase, TimestampMixin):
     pose_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     script_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 已采纳素材独立于当前制作尝试；原位重做和拒绝候选不撤销旧版本的播放资格。
+    accepted_asset_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 动态动作的设计规格冻结；系统动作为空。
     source_design_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -144,8 +146,35 @@ class CompanionAction(ModelBase, TimestampMixin):
     content_rect_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class ActionAssetRetirement(ModelBase):
+    """释放的动作资产；宽限期后仍须重新核对引用才可删除。"""
+
+    __tablename__ = "action_asset_retirements"
+    __table_args__ = (UniqueConstraint("user_id", "path", name="uq_action_asset_retirements_user_path"),)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    path: Mapped[str] = mapped_column(String(2048))
+    retired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ActionCreation(ModelBase, TimestampMixin):
+    """动态动作制作额度账本；删除包或动作不撤销已使用额度。"""
+
+    __tablename__ = "action_creations"
+    __table_args__ = (UniqueConstraint("user_id", "creation_key", name="uq_action_creations_user_key"),)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(16))
+    creation_key: Mapped[str] = mapped_column(String(96))
+    consumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), index=True)
+    action_id: Mapped[int | None] = mapped_column(
+        ForeignKey("companion_actions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
 class ActionProposal(ModelBase, TimestampMixin):
-    """动作设计提案：语义指纹去重；同时是每日设计额度与近 7 天拒绝创意抑制的权威记录源。"""
+    """动作设计提案：语义指纹去重与近 7 天拒绝创意抑制；制作额度由独立账本管理。"""
 
     __tablename__ = "action_proposals"
     __table_args__ = (
@@ -169,7 +198,7 @@ class ActionProposal(ModelBase, TimestampMixin):
     )
     review_decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
     review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # approve 时刻：制作额度按批准日（用户本地日）结算，与受理日区分。
+    # approve 时刻；制作额度由独立账本按滚动24小时结算。
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     idempotency_key: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     action_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

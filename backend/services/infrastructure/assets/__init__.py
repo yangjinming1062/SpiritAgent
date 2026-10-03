@@ -2,6 +2,7 @@
 
 from . import asset_store
 from .asset_store import (
+    ImagePixelLimitError,
     UnsupportedImageFormatError,
     action_pose_asset_path,
     action_source_asset_path,
@@ -33,6 +34,7 @@ from .http_range import serve_ranged_file
 from .media_download import VIDEO_DOWNLOAD_ATTEMPTS, download_media_result
 
 __all__ = [
+    "ImagePixelLimitError",
     "UnsupportedImageFormatError",
     "VIDEO_DOWNLOAD_ATTEMPTS",
     "download_media_result",

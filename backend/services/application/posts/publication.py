@@ -2,7 +2,9 @@
 
 import asyncio
 from datetime import date, timedelta
-from typing import Any, get_args
+from typing import Any, Literal, get_args
+from uuid import UUID
+from weakref import WeakValueDictionary
 
 from components import (
     LLM_MAX_OUTPUT_TOKENS,
@@ -17,7 +19,7 @@ from components import (
     track_user_task,
     utc_now,
 )
-from modules.auth import User
+from modules.auth import User, lock_user_row
 from modules.companion import (
     CharacterCardSnapshot,
     CompanionPost,
@@ -26,24 +28,31 @@ from modules.companion import (
     PostContext,
     PostPlan,
     PostPublication,
+    PostPublicationRecovery,
+    PostPublicationRecoveryList,
     PostPublicationResult,
 )
 from modules.media import VideoGenJob
+from modules.scheduler import NightlyActivityAction
 from modules.settings import get_user_setting, load_user_settings
 from prompts.posts import POST_PUBLISH_INSTRUCTIONS, POST_REQUEST_CLASSIFICATION
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 
 from services.application.generation import (
     ImageGenerationError,
     apply_outfit_override,
     build_self_image_prompt,
     build_self_video_prompt,
+    discard_post_video_job,
     enqueue_video_job,
     generate_character_images,
     generate_images,
     load_self_visual_context,
     optional_outfit_image_reference,
+    post_video_asset,
+    post_video_ready,
     prepare_self_video_reference,
+    query_post_video_job,
     select_video_resolution,
     video_generation_wait_seconds,
 )
@@ -57,12 +66,20 @@ from services.domains.companion import (
 from services.domains.posts import (
     PostBlockedError,
     PostError,
+    PostNotFoundError,
     commit_publication,
+    publication_quota_remaining,
     publication_status,
     reserve_publication,
     response_for_publication,
 )
-from services.infrastructure.assets import save_companion_asset_async, unlink_companion_asset
+from services.infrastructure.assets import (
+    parse_companion_asset_path,
+    resolve_companion_asset_path,
+    save_companion_asset_async,
+    signed_companion_asset_url,
+    unlink_companion_asset,
+)
 from services.infrastructure.llm import (
     ProviderResultUnknownError,
     call_llm_once,
@@ -76,7 +93,8 @@ from .prompt_contract import render_post_instructions
 logger = get_logger(__name__)
 _BG = TaskBag("posts.publication")
 _TASKS: dict[str, asyncio.Task[None]] = {}
-_TERMINAL = {"published", "partial", "failed", "blocked", "result_unknown", "declined"}
+_TERMINAL = {"published", "partial", "failed", "blocked", "result_unknown", "declined", "discarded"}
+_RECOVERY_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 _POSTS_SWITCH = "companion.posts_enabled"
 # 视频分辨率按此顺序取供应商链能接单的第一档：768P 为默认档，720P 先于 1080P，因为部分供应商模型最高到 720p；动态视频刻意不含 512P/480P 低清档。
 _VIDEO_RESOLUTIONS = ("768P", "720P", "1080P")
@@ -312,7 +330,7 @@ async def _save(
         row = await db.scalar(select(PostPublication).where(PostPublication.id == task_id).with_for_update())
         if row is None:
             raise PostError("发布任务已不存在")
-        if row.post_id is not None:
+        if row.post_id is not None or row.status in _TERMINAL:
             return
         if phase is not None:
             row.phase = phase
@@ -557,3 +575,285 @@ async def resume_publications() -> None:
 
 async def drain_publications() -> None:
     await _BG.drain()
+
+
+def _recovery_lock(task_id: str) -> asyncio.Lock:
+    return _RECOVERY_LOCKS.setdefault(task_id, asyncio.Lock())
+
+
+def _video_job_id(row: PostPublication) -> int | None:
+    value = row.progress_json.get("job_id")
+    return value if type(value) is int and value > 0 else None
+
+
+def _recovery_response(row: PostPublication, job: VideoGenJob | None) -> PostPublicationRecovery:
+    video_status: Literal["pending", "ready", "failed", "unknown", "discarded"] = "unknown"
+    media_url = None
+    can_adopt = False
+    if row.status == "discarded" or (job is not None and job.status == "discarded"):
+        video_status = "discarded"
+    elif job is not None and job.status == "failed":
+        video_status = "failed"
+    elif job is not None:
+        path = job.video_url or job.candidate_video_url
+        parsed = parse_companion_asset_path(path)
+        if parsed is not None and parsed[0] == row.user_id and resolve_companion_asset_path(*parsed) is not None:
+            video_status = "ready"
+            media_url = signed_companion_asset_url(path)
+            can_adopt = row.status == "result_unknown" and post_video_ready(job)
+        elif job.status != "result_unknown":
+            video_status = "pending"
+    return PostPublicationRecovery(
+        **response_for_publication(row).model_dump(),
+        title=(row.plan_json or {}).get("title", "视频动态"),
+        video_status=video_status,
+        media_url=media_url,
+        can_adopt=can_adopt,
+        can_discard=row.post_id is None
+        and (
+            row.status == "result_unknown"
+            or (row.status == "discarded" and bool(row.progress_json.get("discard_cleanup_pending")))
+        ),
+    )
+
+
+async def publication_recovery(user_id: int, task_id: str, *, query: bool = False) -> PostPublicationRecovery:
+    async with _recovery_lock(task_id):
+        async with SESSION_LOCAL() as db:
+            row = await db.scalar(
+                select(PostPublication).where(PostPublication.id == task_id, PostPublication.user_id == user_id),
+            )
+        if row is None:
+            raise PostNotFoundError("找不到发布任务")
+        job_id = _video_job_id(row)
+        if query and row.status == "result_unknown" and job_id is not None:
+            try:
+                job = await query_post_video_job(user_id, job_id)
+            except Exception as exc:
+                logger.warning("original post video query failed", extra={"publication_id": task_id}, exc_info=True)
+                raise PostError("原视频任务暂时无法查询，请稍后再试") from exc
+        else:
+            async with SESSION_LOCAL() as db:
+                job = (
+                    await db.scalar(select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id))
+                    if job_id
+                    else None
+                )
+        return _recovery_response(row, job)
+
+
+async def list_publication_recoveries(user_id: int, *, limit: int = 50, offset: int = 0) -> PostPublicationRecoveryList:
+    async with SESSION_LOCAL() as db:
+        rows = list(
+            (
+                await db.scalars(
+                    select(PostPublication)
+                    .where(
+                        PostPublication.user_id == user_id,
+                        or_(
+                            PostPublication.status == "result_unknown",
+                            (PostPublication.status == "discarded")
+                            & PostPublication.progress_json["discard_cleanup_pending"].as_boolean().is_(True),
+                        ),
+                        PostPublication.plan_json["content_type"].as_string() == "video",
+                    )
+                    .order_by(PostPublication.created_at.desc(), PostPublication.id.desc())
+                    .offset(offset)
+                    .limit(limit + 1),
+                )
+            ).all(),
+        )
+        job_ids = [job_id for row in rows[:limit] if (job_id := _video_job_id(row)) is not None]
+        jobs = {
+            job.id: job
+            for job in (
+                await db.scalars(select(VideoGenJob).where(VideoGenJob.id.in_(job_ids), VideoGenJob.user_id == user_id))
+            ).all()
+        }
+    return PostPublicationRecoveryList(
+        items=[_recovery_response(row, jobs.get(_video_job_id(row))) for row in rows[:limit]],
+        next_offset=offset + limit if len(rows) > limit else None,
+    )
+
+
+async def adopt_publication_video(user_id: int, task_id: str) -> PostPublicationResult:
+    """明确采纳现有视频：原任务幂等，按采纳时政策、身份和额度发布，不重新制作旁白。"""
+    if is_user_in_maintenance(user_id):
+        raise PostError("账户正在维护，暂不能采纳")
+    async with _recovery_lock(task_id), SESSION_LOCAL() as db:
+        await lock_user_row(db, user_id)
+        row = await db.scalar(
+            select(PostPublication)
+            .where(PostPublication.id == task_id, PostPublication.user_id == user_id)
+            .with_for_update(),
+        )
+        if row is None:
+            raise PostNotFoundError("找不到发布任务")
+        if row.post_id is not None:
+            return response_for_publication(row)
+        if row.status != "result_unknown" or row.plan_json is None:
+            raise PostError("只有待核对的视频动态可以采纳")
+        user = await db.get(User, user_id, populate_existing=True)
+        if (
+            user is None
+            or not user.is_active
+            or not await db.scalar(select(Persona.is_complete).where(Persona.user_id == user_id))
+        ):
+            raise PostBlockedError("账户或伙伴资料不可用")
+        enabled = await get_user_setting(db, user_id, _POSTS_SWITCH)
+        if row.quota_kind == "autonomous" and enabled is not None and enabled is not True:
+            raise PostBlockedError("动态自主发布已关闭")
+        remaining = await publication_quota_remaining(db, user_id, row.quota_kind, exclude_publication_id=row.id)
+        if remaining <= 0:
+            raise PostBlockedError("最近24小时的动态发布额度已用完")
+        plan = PostPlan.model_validate(row.plan_json)
+        job_id = _video_job_id(row)
+        if plan.content_type != PostContentType.VIDEO or job_id is None:
+            raise PostError("本任务没有可查询的原视频成品")
+        if row.progress_json.get("identity") and not await character_snapshot_is_current(
+            db,
+            user_id,
+            CharacterCardSnapshot.model_validate(row.progress_json["identity"]),
+        ):
+            raise PostBlockedError("伙伴外形已更新，不能采纳旧参考视频")
+        try:
+            path = await post_video_asset(db, user_id, job_id)
+        except ValueError as exc:
+            raise PostError(str(exc)) from exc
+        row.progress_json = {**row.progress_json, "media_url": path}
+        # 发布入口会重读任务；autoflush=False，先保存本事务的采纳进度。
+        await db.flush()
+        await commit_publication(
+            db,
+            task_id,
+            title=plan.title,
+            body=plan.body,
+            content_type=plan.content_type,
+            media_url=path,
+            audio_url=row.progress_json.get("audio_url"),
+            context=PostContext(
+                publication_intent=row.request_json.get("intent", ""),
+                creation_intent=plan.prompt,
+                narration=plan.narration if row.progress_json.get("audio_url") else "",
+                voice_id=row.progress_json.get("voice_id", ""),
+            ),
+            partial=bool(plan.narration and not row.progress_json.get("audio_url")),
+        )
+        return response_for_publication(row)
+
+
+async def discard_publication_video(user_id: int, task_id: str) -> PostPublicationResult:
+    async with _recovery_lock(task_id):
+        async with SESSION_LOCAL() as db:
+            row = await db.scalar(
+                select(PostPublication)
+                .where(PostPublication.id == task_id, PostPublication.user_id == user_id)
+                .with_for_update(),
+            )
+            if row is None:
+                raise PostNotFoundError("找不到发布任务")
+            if row.status not in ("result_unknown", "discarded") or row.post_id is not None:
+                raise PostError("只有尚未发布的待核对视频动态可以放弃")
+            if row.status == "discarded" and not row.progress_json.get("discard_cleanup_pending"):
+                return response_for_publication(row)
+            job_id = _video_job_id(row)
+            row.status = "discarded"
+            row.phase = "complete"
+            row.error = "已放弃本次动态，不会自动重新制作或发布"
+            row.progress_json = {**row.progress_json, "discard_cleanup_pending": True}
+            await db.commit()
+        if job_id is not None:
+            try:
+                await discard_post_video_job(user_id, job_id, task_id)
+            except ValueError as exc:
+                raise PostError(str(exc)) from exc
+        for path in _owned_assets(row.progress_json):
+            await asyncio.to_thread(unlink_companion_asset, path)
+        async with SESSION_LOCAL() as db:
+            row = await db.scalar(
+                select(PostPublication)
+                .where(PostPublication.id == task_id, PostPublication.user_id == user_id)
+                .with_for_update(),
+            )
+            if row is None:
+                raise PostNotFoundError("发布任务已不存在")
+            row.progress_json = {
+                key: value for key, value in row.progress_json.items() if key != "discard_cleanup_pending"
+            }
+            await db.commit()
+        return response_for_publication(row)
+
+
+async def gc_autonomous_publications() -> tuple[int, int]:
+    """随机自主任务完整资料保留七天、精简记录九十天；未知、在途和引用职责不删除。"""
+    compacted = deleted = 0
+    cutoff = utc_now() - timedelta(days=7)
+    remove_before = utc_now() - timedelta(days=90)
+    cursor: str | None = None
+    while True:
+        async with SESSION_LOCAL() as db:
+            statement = (
+                select(PostPublication)
+                .where(
+                    PostPublication.trigger == "autonomous",
+                    PostPublication.quota_kind == "autonomous",
+                    PostPublication.status.in_(_TERMINAL - {"result_unknown"}),
+                    PostPublication.updated_at < cutoff,
+                    PostPublication.idempotency_key.startswith("autonomous:"),
+                )
+                .order_by(PostPublication.id)
+                .limit(200)
+                .with_for_update(skip_locked=True)
+            )
+            if cursor:
+                statement = statement.where(PostPublication.id > cursor)
+            rows = list((await db.scalars(statement)).all())
+            if not rows:
+                break
+            cursor = rows[-1].id
+            for row in rows:
+                try:
+                    key = UUID(row.idempotency_key.removeprefix("autonomous:"))
+                except ValueError:
+                    continue
+                if (
+                    key.version != 4
+                    or row.progress_json.get("discard_cleanup_pending")
+                    or is_user_in_maintenance(row.user_id)
+                    or ((task := _TASKS.get(row.id)) is not None and not task.done())
+                ):
+                    continue
+                reference = await db.scalar(
+                    select(NightlyActivityAction.id)
+                    .where(NightlyActivityAction.result["publication_id"].as_string() == row.id)
+                    .limit(1),
+                )
+                if reference is not None:
+                    continue
+                job_id = _video_job_id(row)
+                if job_id is not None:
+                    job = await db.get(VideoGenJob, job_id)
+                    if job is not None and job.status not in ("succeeded", "failed", "discarded"):
+                        continue
+                keep = {
+                    key: value
+                    for key, value in row.progress_json.items()
+                    if key in ("job_id", "media_url", "audio_url", "voice_id", "narration_failed")
+                }
+                if row.updated_at < remove_before and row.post_id is None and not keep:
+                    await db.delete(row)
+                    deleted += 1
+                elif row.request_json or row.plan_json is not None or row.progress_json != keep:
+                    await db.execute(
+                        update(PostPublication)
+                        .where(PostPublication.id == row.id)
+                        .values(
+                            request_json={},
+                            plan_json=None,
+                            progress_json=keep,
+                            updated_at=row.updated_at,
+                        ),
+                    )
+                    compacted += 1
+            await db.commit()
+    return compacted, deleted

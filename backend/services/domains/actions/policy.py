@@ -1,14 +1,21 @@
 """动作域策略：受理门禁、制作额度与模型可点播判定。"""
 
 import asyncio
-from datetime import UTC, date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime, timedelta
 
-from components import SETTINGS, parse_timezone
-from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS, ActionBudgetStatus, ActionProposal, CompanionAction
-from modules.settings import resolve_user_timezone
+from components import SETTINGS, utc_now
+from modules.auth import lock_user_row
+from modules.companion import (
+    ABSOLUTE_MAX_DURATION_SECONDS,
+    ActionBudgetStatus,
+    ActionCreation,
+    ActionProposal,
+    CompanionAction,
+)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from .materials import accepted_action_asset
 
 REJECTED_PROPOSAL_COOLDOWN_DAYS = 7
 # 暂缓提案的期限：评审失败、额度不足多为暂时原因。重启自动重试自创建起算，超期不再随重启付费重审；展示给模型自最近一次暂缓（updated_at）起算，超期不再占用上下文。重提同一创意复用原行重新评审，复用后再次暂缓的不随重启重审，由模型核对条件后重提。
@@ -36,42 +43,29 @@ def daily_create_limit(source: str) -> int:
     return SETTINGS.action_autonomous_create_daily_limit
 
 
-async def resolve_action_budget_zone(db: AsyncSession, user_id: int) -> ZoneInfo | None:
-    """用户本地时区（IANA，桌面握手上报）；缺失或非法时回落 None（按 UTC 日切）。"""
-    return parse_timezone(await resolve_user_timezone(db, user_id))
-
-
-async def _budget_day(db: AsyncSession, user_id: int) -> tuple[date, datetime, datetime]:
-    """额度结算日按用户本地时区（缺失时 UTC）；返回本地日及其 UTC 起止，与 approved_at 比较。"""
-    zone = await resolve_action_budget_zone(db, user_id) or UTC
-    today = datetime.now(zone).date()
-    start = datetime.combine(today, time.min, tzinfo=zone)
-    end = datetime.combine(today + timedelta(days=1), time.min, tzinfo=zone)
-    return today, start.astimezone(UTC), end.astimezone(UTC)
-
-
-async def _count_approved(db: AsyncSession, user_id: int, source: str, start: datetime, end: datetime) -> int:
-    """统计窗口内已获批（制作）量：按评审 approve 时刻（approved_at）计。"""
-    stmt = select(func.count(ActionProposal.id)).where(
-        ActionProposal.user_id == user_id,
-        ActionProposal.source == source,
-        ActionProposal.approved_at >= start,
-        ActionProposal.approved_at < end,
-        ActionProposal.review_decision == "approve",
+async def _count_creations(db: AsyncSession, user_id: int, source: str, start: datetime) -> int:
+    return (
+        await db.scalar(
+            select(func.count(ActionCreation.id)).where(
+                ActionCreation.user_id == user_id,
+                ActionCreation.source == source,
+                ActionCreation.consumed_at > start,
+            ),
+        )
+        or 0
     )
-    return (await db.execute(stmt)).scalar_one() or 0
 
 
-async def get_daily_budget_status(
-    db: AsyncSession,
-    user_id: int,
-) -> ActionBudgetStatus:
-    today, start, end = await _budget_day(db, user_id)
+async def get_daily_budget_status(db: AsyncSession, user_id: int) -> ActionBudgetStatus:
+    now = utc_now()
+    start = now - timedelta(hours=24)
     return ActionBudgetStatus(
-        budget_date=today.isoformat(),
-        autonomous_create_used=await _count_approved(db, user_id, "autonomous", start, end),
+        budget_date=now.date().isoformat(),
+        window_start=start.isoformat(),
+        window_end=now.isoformat(),
+        autonomous_create_used=await _count_creations(db, user_id, "autonomous", start),
         autonomous_create_limit=daily_create_limit("autonomous"),
-        user_requested_create_used=await _count_approved(db, user_id, "user_requested", start, end),
+        user_requested_create_used=await _count_creations(db, user_id, "user_requested", start),
         user_requested_create_limit=daily_create_limit("user_requested"),
     )
 
@@ -110,13 +104,40 @@ async def check_can_accept(
         raise ActionPolicyError("自动创建新动作当前已关闭")
 
 
-async def consume_create_slot(db: AsyncSession, user_id: int, *, source: str) -> None:
-    """approve 后校验制作额度；超限抛 ActionPolicyError，调用方回退 defer。"""
-    _, start, end = await _budget_day(db, user_id)
-    if await _count_approved(db, user_id, source, start, end) >= daily_create_limit(source):
-        raise ActionPolicyError("今日动作制作额度已用完")
+async def consume_create_slot(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    source: str,
+    creation_key: str,
+    action_id: int | None = None,
+) -> ActionCreation:
+    """在制作受理事务中预留滚动24小时额度；同一制作键幂等，删包不返额。"""
+    if source not in {"user_requested", "autonomous"}:
+        raise ValueError("Unknown action creation source")
+    await lock_user_row(db, user_id)
+    existing = await db.scalar(
+        select(ActionCreation).where(ActionCreation.user_id == user_id, ActionCreation.creation_key == creation_key),
+    )
+    if existing is not None:
+        return existing
+    if source == "autonomous" and not SETTINGS.action_autocreate_enabled:
+        raise ActionPolicyError("自动创建新动作当前已关闭")
+    now = utc_now()
+    if await _count_creations(db, user_id, source, now - timedelta(hours=24)) >= daily_create_limit(source):
+        raise ActionPolicyError("最近24小时的动作制作额度已用完")
+    entry = ActionCreation(
+        user_id=user_id,
+        source=source,
+        creation_key=creation_key,
+        action_id=action_id,
+        consumed_at=now,
+    )
+    db.add(entry)
+    await db.flush()
+    return entry
 
 
 def is_expression_action(action: CompanionAction) -> bool:
     """模型可点播的表达动作：已启用、素材就绪且不占系统产品槽位。"""
-    return action.enabled and action.status == "succeeded" and bool(action.video_path) and not action.system_slot
+    return action.enabled and not action.system_slot and accepted_action_asset(action) is not None

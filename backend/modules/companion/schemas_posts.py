@@ -15,9 +15,32 @@ POST_COMMENT_MAX_CHARS = 500
 class PostPublicationResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     publication_id: str
-    status: Literal["queued", "running", "published", "partial", "failed", "blocked", "result_unknown", "declined"]
+    status: Literal[
+        "queued",
+        "running",
+        "published",
+        "partial",
+        "failed",
+        "blocked",
+        "result_unknown",
+        "declined",
+        "discarded",
+    ]
     post_id: str | None
     error: str | None
+
+
+class PostPublicationRecovery(PostPublicationResult):
+    title: str
+    video_status: Literal["pending", "ready", "failed", "unknown", "discarded"]
+    media_url: str | None
+    can_adopt: bool
+    can_discard: bool
+
+
+class PostPublicationRecoveryList(BaseModel):
+    items: list[PostPublicationRecovery]
+    next_offset: int | None
 
 
 class PostContext(BaseModel):

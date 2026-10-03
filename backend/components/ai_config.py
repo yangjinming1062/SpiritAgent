@@ -40,6 +40,11 @@ class AIConfig(BaseModel):
     providers: list[ProviderCard] = Field(default_factory=list)
     capabilities: CapabilityChains = Field(default_factory=CapabilityChains)
 
+    def validate_capability_overrides(self) -> None:
+        for card in self.capabilities.image_gen:
+            if card.provider == "local" and (card.api_key or card.model_name not in {"", "qwen"}):
+                raise ValueError("本地生图使用固定 Qwen 工作流，不支持独立 API Key 或自选模型名称")
+
     @model_validator(mode="after")
     def validate_unique_providers(self) -> Self:
         provider_names = [card.provider for card in self.providers]

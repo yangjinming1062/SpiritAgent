@@ -69,9 +69,9 @@ logger = get_logger(__name__)
 
 _SCENE_WAIT_SECONDS = 15 * 60
 _POLL_SECONDS = 3.0
-ActionStatus = Literal["succeeded", "partial", "skipped", "blocked", "failed", "interrupted"]
+ActionStatus = Literal["succeeded", "partial", "skipped", "blocked", "failed", "interrupted", "result_unknown"]
 _TERMINAL_ACTION_STATUSES = frozenset(
-    ("succeeded", "partial", "skipped", "blocked", "failed", "interrupted"),
+    ("succeeded", "partial", "skipped", "blocked", "failed", "interrupted", "result_unknown"),
 )
 _SUCCESS_ACTION_STATUSES = frozenset(("succeeded", "partial"))
 # 在途动作记下这些子任务 id 后，进程重启可以核对原任务续跑而不重复付费。
@@ -927,6 +927,10 @@ async def _execute_post_publish(run: _ActionRun, args: dict[str, Any]) -> Action
         return ActionExecutionResult(status="skipped", reason="伙伴决定本次不发布")
     if result.status == "blocked":
         return ActionExecutionResult(status="blocked", reason=result.error)
+    if result.status == "result_unknown":
+        return ActionExecutionResult(status="result_unknown", reason=result.error or "原制作结果尚未确认，未重新提交")
+    if result.status == "discarded":
+        return ActionExecutionResult(status="skipped", reason="本次动态已被明确放弃")
     if result.status not in ("published", "partial"):
         return ActionExecutionResult(status="failed", reason=result.error or "动态尚未发布")
     async with SESSION_LOCAL() as db:

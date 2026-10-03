@@ -10,11 +10,20 @@ from modules.companion import (
     PostCommentCreateRequest,
     PostCommentResponse,
     PostListResponse,
+    PostPublicationRecovery,
+    PostPublicationRecoveryList,
+    PostPublicationResult,
     PostReadRequest,
     PostResponse,
     PostUnreadResponse,
 )
-from services.application.posts import schedule_companion_reply
+from services.application.posts import (
+    adopt_publication_video,
+    discard_publication_video,
+    list_publication_recoveries,
+    publication_recovery,
+    schedule_companion_reply,
+)
 from services.domains.posts import (
     PostError,
     PostNotFoundError,
@@ -67,6 +76,49 @@ async def read_posts(user: CurrentUser, db: DbSession, body: PostReadRequest) ->
     return PostUnreadResponse(
         has_unread=await mark_posts_read(db, user.id, [str(post_id) for post_id in body.post_ids]),
     )
+
+
+@router.get("/publications/recovery", response_model=PostPublicationRecoveryList)
+async def get_publication_recoveries(
+    user: CurrentUser,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> PostPublicationRecoveryList:
+    return await list_publication_recoveries(user.id, limit=limit, offset=offset)
+
+
+@router.get("/publications/{publication_id}", response_model=PostPublicationRecovery)
+async def get_publication_recovery(user: CurrentUser, publication_id: UUID) -> PostPublicationRecovery:
+    try:
+        return await publication_recovery(user.id, str(publication_id))
+    except PostError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/publications/{publication_id}/query", response_model=PostPublicationRecovery)
+async def query_publication_recovery(user: CurrentUser, db: DbSession, publication_id: UUID) -> PostPublicationRecovery:
+    await db.commit()
+    try:
+        return await publication_recovery(user.id, str(publication_id), query=True)
+    except PostError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/publications/{publication_id}/adopt", response_model=PostPublicationResult)
+async def adopt_publication_recovery(user: CurrentUser, publication_id: UUID) -> PostPublicationResult:
+    try:
+        return await adopt_publication_video(user.id, str(publication_id))
+    except PostError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/publications/{publication_id}/discard", response_model=PostPublicationResult)
+async def discard_publication_recovery(user: CurrentUser, db: DbSession, publication_id: UUID) -> PostPublicationResult:
+    await db.commit()
+    try:
+        return await discard_publication_video(user.id, str(publication_id))
+    except PostError as exc:
+        raise _error(exc) from exc
 
 
 @router.get("/{post_id}", response_model=PostResponse)

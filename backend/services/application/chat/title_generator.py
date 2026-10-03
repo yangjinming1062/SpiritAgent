@@ -1,5 +1,3 @@
-import json
-
 import httpx
 import sqlalchemy.exc
 from components import (
@@ -18,13 +16,11 @@ from prompts.chat import TITLE_PROMPTS
 from sqlalchemy import select
 
 from services.infrastructure.llm import (
+    IncompleteLlmResponseError,
     LLMRuntimeError,
     MissingLlmConfigError,
     UserLlmConfig,
-    build_responses_kwargs,
-    call_with_retry,
-    client_for_config,
-    scale_temperature,
+    call_llm_once,
 )
 
 logger = get_logger(__name__)
@@ -60,37 +56,14 @@ async def auto_generate_title(
                     break
                 assistant_snippet.append(text[:remaining])
                 remaining -= len(text)
-        client = client_for_config(llm_config)
-        request = build_responses_kwargs(
-            model=llm_config.model_name,
-            instructions=resolve_prompt_text(TITLE_PROMPTS, language),
-            input_items=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": json.dumps(
-                                {
-                                    "user": (user_message or "")[:TITLE_SNIPPET_MAX_CHARS],
-                                    "assistant": assistant_snippet,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        },
-                    ],
-                },
-            ],
-            temperature=scale_temperature(
-                llm_config.provider_name,
-                temperature if temperature is not None else TITLE_GENERATION_TEMPERATURE,
-            ),
+        raw = await call_llm_once(
+            llm_config,
+            resolve_prompt_text(TITLE_PROMPTS, language),
+            {"user": (user_message or "")[:TITLE_SNIPPET_MAX_CHARS], "assistant": assistant_snippet},
             max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
+            temperature=temperature if temperature is not None else TITLE_GENERATION_TEMPERATURE,
         )
-        response = await call_with_retry(client, **request)
-        if response.status != "completed":
-            return
-        if not (title := _clean_title(response.output_text)):
+        if not (title := _clean_title(raw)):
             return
 
         async with SESSION_LOCAL() as db:
@@ -102,5 +75,12 @@ async def auto_generate_title(
                 await db.commit()
                 logger.info("Auto-generated session title", extra={"conversation_id": conversation_id, "title": title})
 
-    except (TimeoutError, httpx.HTTPError, sqlalchemy.exc.SQLAlchemyError, LLMRuntimeError, MissingLlmConfigError) as e:
+    except (
+        TimeoutError,
+        httpx.HTTPError,
+        sqlalchemy.exc.SQLAlchemyError,
+        LLMRuntimeError,
+        MissingLlmConfigError,
+        IncompleteLlmResponseError,
+    ) as e:
         logger.warning("Title generation failed", extra={"conversation_id": conversation_id, "error": str(e)})

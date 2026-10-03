@@ -99,17 +99,31 @@ class UnsupportedImageFormatError(ValueError):
     """图片可以识别，但格式不在 PNG / JPEG / WebP / GIF 范围内。"""
 
 
+class ImagePixelLimitError(ValueError):
+    """Pillow 拒绝解码的超大图片。"""
+
+
 def validate_image_bytes(data: bytes) -> tuple[bytes, str]:
-    """按实际字节校验用户图片并返回其真实 MIME，不采信客户端声明；限制体积与像素，并完整解码以拒绝截断或损坏的文件。"""
+    """按实际字节校验用户图片并返回其真实 MIME，不采信客户端声明；限制体积并完整解码，拒绝截断或损坏文件。"""
     if not data or len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
         raise ValueError("image size exceeds limit")
-    with Image.open(io.BytesIO(data)) as image:
+    try:
+        opened = Image.open(io.BytesIO(data))
+    except Image.DecompressionBombError:
+        raise ImagePixelLimitError("image dimensions exceed limit") from None
+    with opened as image:
         mime = _IMAGE_MIME_BY_FORMAT.get(image.format or "")
         if mime is None:
             raise UnsupportedImageFormatError("unsupported image format")
-        if Image.MAX_IMAGE_PIXELS is not None and image.width * image.height > Image.MAX_IMAGE_PIXELS:
-            raise ValueError("image dimensions exceed limit")
         image.load()
+        if image.format in {"GIF", "MPO"} or getattr(image, "is_animated", False):
+            image.seek(0)
+            output = io.BytesIO()
+            image.convert("RGBA").save(output, format="PNG")
+            normalized = output.getvalue()
+            if len(normalized) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
+                raise ValueError("normalized image size exceeds limit")
+            return normalized, "image/png"
     return data, mime
 
 

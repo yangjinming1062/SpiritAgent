@@ -121,11 +121,11 @@ def resolve_inference_settings(settings: dict[str, Any], *, conv: Conversation) 
     reasoning = _parse_reasoning_effort(reasoning) if isinstance(reasoning, str) else None
     threshold = parse_temperature(
         settings.get("chat.context_compression_threshold"),
-        defaults.context_compression_threshold,
+        SETTINGS.context_compression_threshold,
     )
     return InferenceDefaults(
         temperature=parse_temperature(settings.get("agent.temperature"), defaults.temperature),
-        context_compression_threshold=threshold if threshold >= 0.3 else defaults.context_compression_threshold,
+        context_compression_threshold=threshold if threshold >= 0.3 else SETTINGS.context_compression_threshold,
         reasoning_effort=reasoning or defaults.reasoning_effort,
     )
 
@@ -142,7 +142,13 @@ def merge_session_settings(
         key: value for key, value in user_settings.items() if not isolated or not key.startswith(("agent.", "chat."))
     }
     if isolated:
-        merged.update({f"chat.{key}": value for key, value in DEFAULT_CONFIG["chat"].items()})
+        merged.update(
+            {
+                f"chat.{key}": value
+                for key, value in DEFAULT_CONFIG["chat"].items()
+                if key not in {"enable_context_compression", "context_compression_threshold"}
+            },
+        )
     if session_settings:
         for k, v in session_settings.items():
             merged[SESSION_TO_GLOBAL_KEY_ALIASES[k]] = v
@@ -357,7 +363,8 @@ async def build_turn_inputs(
 ) -> TurnInputs:
     """解析身份 prompt、schemas、历史与 LLM client。``memory_scope`` 由调用方经 ``conversation_memory_scope`` 校验；自动化会话没有记忆域。"""
     preset_id = conv.system_preset_id
-    is_companion = preset_id == COMPANION_PRESET_ID
+    delegated = conv.parent_id is not None
+    is_companion = preset_id == COMPANION_PRESET_ID and not delegated
     history = await load_context_messages(db, conv)
     first_user_msg = next((m for m in history if m.role == "user"), None)
     # 标题只依据文字：多模态行的正文是 part 数组 JSON，附件地址不进标题请求。
@@ -431,7 +438,7 @@ async def build_turn_inputs(
     # 仅陪伴预设（生活空间 / special Cron）插入时间提示与跨日分界；工作台预设只保留 volatile header 的日期。
     context = _history_to_responses_context(
         history,
-        build_system_prompt(agent_config, preset_id=preset_id),
+        build_system_prompt(agent_config, preset_id=preset_id, delegated=delegated),
         user_local_tz=user_local_tz,
         lang=session_lang,
         inject_time_perception=is_companion,

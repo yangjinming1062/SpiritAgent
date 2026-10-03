@@ -49,6 +49,8 @@ def prepare_ai_config(update: AIConfigUpdate, previous: AIConfig | None) -> AICo
         reasons = "；".join(error["msg"].removeprefix("Value error, ") for error in exc.errors())
         raise ValueError(f"AI 卡片配置无效：{reasons}") from exc
 
+    config.validate_capability_overrides()
+
     for service in CAPABILITY_SERVICES:
         supported = set(providers_supporting(service))
         if any(card.provider not in supported for card in getattr(config.capabilities, service)):

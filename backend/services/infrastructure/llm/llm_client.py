@@ -63,6 +63,8 @@ def _chain_entry(
     model: str,
 ) -> ProviderConfig | None:
     """补齐供应商默认端点与模型；缺少必需密钥、端点或未注册该能力时返回 None。"""
+    if provider == "local" and service_type == ServiceType.image_gen and model not in {"", "qwen"}:
+        raise MissingLlmConfigError("本地生图使用固定 Qwen 工作流，请清除自选模型名称")
     resolved_model = model or default_model_for(provider, service_type)
     if service_type == ServiceType.llm and not resolved_model:
         return None
@@ -94,6 +96,8 @@ def _chain_from_ai_config(
     sources = {card.provider: card for card in config.providers}
     result: list[ProviderConfig] = []
     for card in getattr(config.capabilities, service_type):
+        if card.provider == "local" and service_type == ServiceType.image_gen and card.api_key:
+            raise MissingLlmConfigError("本地生图不支持独立 API Key，请清除该能力卡片的密钥覆盖")
         layers = [
             layer for layer in (card, sources.get(card.provider), inherited.get(card.provider)) if layer is not None
         ]

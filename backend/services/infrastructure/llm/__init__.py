@@ -1,6 +1,7 @@
 from .error_classifier import (
     ClassifiedError,
     FailoverReason,
+    LlmCallBlockedError,
     LLMRuntimeError,
     classify_api_error,
     is_content_policy_error_message,
@@ -86,6 +87,7 @@ __all__ = [
     "ImageGenResult",
     "IncompleteLlmResponseError",
     "LLMRuntimeError",
+    "LlmCallBlockedError",
     "MissingLlmConfigError",
     "MissingVideoModelError",
     "ProviderConfig",

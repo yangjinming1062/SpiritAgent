@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import AsyncExitStack
 from typing import Literal
 
 from common import get_router
@@ -33,6 +34,7 @@ from services.domains.conversation import (
     resolve_preset_meta,
     synthesize_reply_audio,
 )
+from services.infrastructure.turn_ownership import conversation_is_running, conversation_lock
 from sqlalchemy import String, asc, case, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -319,8 +321,20 @@ async def delete_session(
     if conv.kind == SPECIAL_KIND or not conv.is_deletable:
         raise HTTPException(status_code=403, detail="System preset conversations cannot be modified or deleted")
     deleted_id = conv.id
-    await db.delete(conv)
-    await db.commit()
+    descendants = select(Conversation.id).where(Conversation.parent_id == conv.id).cte("descendants", recursive=True)
+    descendants = descendants.union(
+        select(Conversation.id).join(descendants, Conversation.parent_id == descendants.c.id),
+    )
+    subtree = sorted({conv.id, *await db.scalars(select(descendants.c.id))})
+    if any(conversation_is_running(str(sid)) for sid in subtree):
+        raise HTTPException(status_code=409, detail="请先停止当前任务，再删除会话")
+    async with AsyncExitStack() as locks:
+        for sid in subtree:
+            if conversation_is_running(str(sid)):
+                raise HTTPException(status_code=409, detail="请先停止当前任务，再删除会话")
+            await locks.enter_async_context(conversation_lock(str(sid)))
+        await db.delete(conv)
+        await db.commit()
     # 级联清理远端模式附件，尽力而为——文件系统错误（权限、磁盘满）不能让已删除会话行残留，日志记录后吞掉；gc_session 校验 session_id 形态并拒绝路径穿越，rmtree 仅作用于 SETTINGS.data_dir/desktop-attachments/。
     try:
         await asyncio.to_thread(attachments_gc_session, str(deleted_id))

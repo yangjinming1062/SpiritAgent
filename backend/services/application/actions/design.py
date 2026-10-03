@@ -1,32 +1,38 @@
 """提案受理与语义去重（reused / pending_review / rejected）；受理顺序与幂等规则见 actions/README.md。"""
 
 import hashlib
-import re
-import unicodedata
 from dataclasses import dataclass
 from typing import Literal
+from uuid import uuid4
 
-from modules.companion import SYSTEM_SLOTS, ActionDesignRequest, ActionDesignResult, ActionProposal, CompanionAction
+from modules.companion import ActionDesignRequest, ActionDesignResult, ActionProposal, CompanionAction
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.application.generation import has_pending_action_review
-from services.application.generation.video import VideoPackStateError, require_action_matting_model
+from services.application.generation import (
+    VideoPackStateError,
+    has_pending_action_review,
+    require_action_matting_model,
+    require_pack_generation_identity,
+)
 from services.domains.actions import (
+    ActionNameConflictError,
     ActionPolicyError,
+    accepted_action_asset,
+    action_asset_paths,
     check_can_accept,
     clear_action_attempt,
+    consume_create_slot,
     get_action,
     get_action_accept_lock,
-    get_action_by_key,
+    get_action_by_name,
     get_active_pack,
     is_expression_action,
     make_semantic_fingerprint,
+    normalize_action_name,
+    retire_action_assets,
 )
-
-# 名称含非 ASCII 字母数字（如中文）时 slug 会丢掉这些字符，不同名动作会撞 key，改按语义指纹派生；与系统槽位同名的也用指纹，避免动态动作与系统动作互相认成同一动作。
-_KEY_STRIP_RE = re.compile(r"[^a-z0-9]+")
 
 ExistingActionState = Literal["in_production", "awaiting_review", "redo_requested"]
 
@@ -41,12 +47,9 @@ class ProposalAcceptance:
     existing_action: ExistingActionState | None = None
 
 
-def action_key_from_name(name: str, fingerprint: str) -> str:
-    normalized = unicodedata.normalize("NFKC", name.strip().lower())
-    slug = _KEY_STRIP_RE.sub("_", normalized).strip("_")
-    if slug and slug not in SYSTEM_SLOTS and not any(ch.isalnum() and not ch.isascii() for ch in normalized):
-        return slug[:32]
-    return f"action_{fingerprint[:12]}"
+def action_key_from_name(name: str) -> str:
+    normalized = normalize_action_name(name)
+    return f"action_{hashlib.sha256(normalized.encode()).hexdigest()[:25]}"
 
 
 async def accept_proposal(
@@ -79,8 +82,11 @@ async def _accept_in_pack(
 ) -> tuple[ActionDesignResult, ExistingActionState | None]:
     """受理锁内：同 key 动作复用、等待或重做 → 同创意提案去重、沿用复用结论或重审 → 门禁后新建提案。"""
     fingerprint = make_semantic_fingerprint(request.name, request.motion_description)
-    existing = await get_action_by_key(db, pack_id, action_key_from_name(request.name, fingerprint))
-    if existing is not None and (same_key := await _accept_same_key(db, existing)) is not None:
+    try:
+        existing = await get_action_by_name(db, pack_id, request.name)
+    except ActionNameConflictError as exc:
+        return ActionDesignResult(outcome="rejected", message=str(exc)), None
+    if existing is not None and (same_key := await _accept_same_key(db, existing, source=source)) is not None:
         return same_key
 
     pending_id = await db.scalar(
@@ -126,6 +132,7 @@ async def _accept_in_pack(
             semantic_fingerprint=fingerprint,
         )
         require_action_matting_model()
+        await require_pack_generation_identity(db, user_id, pack_id)
     except (ActionPolicyError, VideoPackStateError) as exc:
         return ActionDesignResult(outcome="rejected", message=str(exc)), None
 
@@ -180,10 +187,12 @@ async def _accept_in_pack(
 async def _accept_same_key(
     db: AsyncSession,
     existing: CompanionAction,
+    *,
+    source: str,
 ) -> tuple[ActionDesignResult, ExistingActionState | None] | None:
     """同 key 已有动作时按其状态受理；返回 None 表示交给提案流程。"""
     name = existing.name
-    if existing.status == "succeeded" and existing.video_path:
+    if accepted_action_asset(existing) is not None:
         return (
             ActionDesignResult(
                 outcome="reused",
@@ -203,11 +212,18 @@ async def _accept_same_key(
         return None
     try:
         require_action_matting_model()
-    except VideoPackStateError as exc:
+        await require_pack_generation_identity(db, existing.user_id, existing.pack_id)
+        await consume_create_slot(
+            db,
+            existing.user_id,
+            source=source,
+            creation_key=f"redo:{existing.id}:{uuid4().hex}",
+            action_id=existing.id,
+        )
+    except (VideoPackStateError, ActionPolicyError) as exc:
         return ActionDesignResult(outcome="rejected", message=str(exc)), None
-    if existing.status == "review":
-        # 复核已结束的成品视同未采纳，作废后独立重做；用户拒绝的成品在拒绝时已作废。
-        clear_action_attempt(existing)
+    await retire_action_assets(db, existing.user_id, action_asset_paths(existing))
+    clear_action_attempt(existing)
     # 失败或未采纳的同名动作原位重做，不新建提案。
     existing.status = "queued"
     existing.stage = "design"

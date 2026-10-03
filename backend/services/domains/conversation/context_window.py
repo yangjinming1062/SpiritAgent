@@ -26,6 +26,7 @@ async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Me
         Message.conversation_id == conv.id,
         order > conv.context_after_message_id,
         Message.queued.is_(False),
+        Message.discarded.is_(False),
         Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, *CHECKPOINT_SUBTYPES)),
     )
     if checkpoint is not None:
@@ -56,6 +57,7 @@ async def load_recent_context_window(db: AsyncSession, user_id: int, max_message
                     Message.conversation_id == main_conv.id,
                     Message.id > main_conv.context_after_message_id,
                     Message.role.in_(("user", "assistant")),
+                    Message.discarded.is_(False),
                     # ``NULL NOT IN (...)`` 在 WHERE 中为 NULL（视为 false），显式 is_(None) 分支是保留普通消息的关键。
                     Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
                     Message.tool_calls.is_(None),

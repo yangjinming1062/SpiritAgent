@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from components import get_logger, redact_sensitive_text, safe_json_loads, tool_error
+from modules.channels import ChannelTurnSource
 
 from services.contracts import DelegateAction, MediaTurnState, MemoryScope, SceneTurnState
 from services.infrastructure.desktop import MANAGER, dispatch_device_call
@@ -49,6 +50,8 @@ class _ToolDispatchContext:
     scene_turn: SceneTurnState
     proactive_turn: bool
     user_message: str
+    authorization_check: Callable[[], Awaitable[bool]] | None = None
+    channel_source: ChannelTurnSource | None = None
 
 
 @dataclass
@@ -142,8 +145,11 @@ async def _dispatch_runner_tool(
     return result
 
 
-async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
+async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _BatchProgress) -> dict:
     name = tc["name"]
+
+    if ctx.authorization_check is not None and not await ctx.authorization_check():
+        raise asyncio.CancelledError("The channel authorization was revoked")
 
     await ctx.emitter.send_json({"type": "tool_start", "name": name, "call_id": tc["call_id"]})
 
@@ -172,6 +178,9 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
             return make_tool_result_message(name, blocked, tc["call_id"])
 
         tool_location = REGISTRY.get_location(ctx.user_id, name)
+        if ctx.authorization_check is not None and not await ctx.authorization_check():
+            raise asyncio.CancelledError("The channel authorization was revoked")
+        progress.started.add(tc["call_id"])
         match tool_location:
             case "backend":
                 # 委派工具只返回控制动作；子回合由对话执行层接管，避免工具处理器反向重入对话入口。
@@ -189,6 +198,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                     tool_call_id=tc["call_id"],
                     proactive_turn=ctx.proactive_turn,
                     user_message=ctx.user_message,
+                    channel_source=ctx.channel_source,
                 )
                 result_str = (
                     await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)
@@ -226,9 +236,8 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
 
 
 async def _run_tracked_tool(tc: dict, ctx: _ToolDispatchContext, progress: _BatchProgress) -> dict:
-    progress.started.add(tc["call_id"])
     try:
-        result = await _execute_single_tool(tc, ctx)
+        result = await _execute_single_tool(tc, ctx, progress)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -245,12 +254,15 @@ async def _run_tool_batch(
     if len(tool_calls_list) > 1 and should_parallelize_tool_batch(
         [(tc["name"], tc["arguments"]) for tc in tool_calls_list],
     ):
-        # return_exceptions=True：单工具失败不取消兄弟协程，否则一个 IPC 超时会拖满 ipc_future_timeout_seconds 并丢失本轮其他结果。
-        results = await asyncio.gather(
-            *(_run_tracked_tool(tc, ctx, progress) for tc in tool_calls_list),
-            return_exceptions=True,
-        )
-        return [_crash_result(tc, r) if isinstance(r, BaseException) else r for tc, r in zip(tool_calls_list, results)]
+        tasks = [asyncio.create_task(_run_tracked_tool(tc, ctx, progress)) for tc in tool_calls_list]
+        try:
+            # 普通异常由单工具转换；撤权和取消必须停止整批，不能变成可继续执行的工具错误。
+            return await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     return [await _run_tracked_tool(tc, ctx, progress) for tc in tool_calls_list]
 
 

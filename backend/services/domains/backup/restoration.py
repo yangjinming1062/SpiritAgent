@@ -8,6 +8,7 @@ from typing import Any
 from components import get_logger
 from modules.auth import User, generate_activation_token, hash_activation_token
 from modules.companion import COMPANION_CRON_SOURCE_PREFIX, Persona
+from modules.conversation import Conversation
 from modules.memory import Memory
 from modules.scheduler import CronJob
 from modules.ws import emit_ws_event
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.memory import rebuild_diary_indexes
 
 from .action_assets import restore_action_catalogs, validate_action_files
-from .file_packing import UrlRewriter, planned_asset_mapping, referenced_backup_files, restore_files
+from .file_packing import UrlRewriter, planned_asset_mapping, referenced_backup_files, restore_files, validate_row_files
 from .serializers import (
     ACTION_TABLES,
     ATOMIC_SECTION_GROUPS,
@@ -28,6 +29,7 @@ from .serializers import (
     IDENTITY_GROUP,
     IDENTITY_INCOMPLETE_REASON,
     IDENTITY_TABLES,
+    POST_TABLES,
     RETIRED_TABLES,
     TABLE_MODELS,
     TABLES,
@@ -36,6 +38,7 @@ from .serializers import (
     read_table_rows,
     restore_conversation_context,
     restore_memory_context,
+    validate_conversation_merge,
 )
 
 logger = get_logger(__name__)
@@ -181,6 +184,8 @@ def load_backup_rows(
                 if group == IDENTITY_TABLES
                 else "会话与消息必须同时恢复。"
                 if group == CONVERSATION_TABLES
+                else "动态与评论必须同时恢复。"
+                if group == POST_TABLES
                 else "动作包与动作必须同时恢复。"
             )
             for table in sorted(present):
@@ -231,7 +236,9 @@ async def _restore_table(
         asset_owner_id=asset_owner_id,
     )
     staged_id_map = {**id_map, table: new_map}
-    if table == "messages":
+    if table == "conversations":
+        rewriter.conversations = new_map
+    elif table == "messages":
         await restore_conversation_context(db, rows, staged_id_map)
     elif table == "memories":
         await restore_memory_context(db, rows, staged_id_map, user_id, import_batch_id)
@@ -252,8 +259,32 @@ async def _preflight_tables(
 ) -> tuple[set[str], tuple[BackupImportFailure, ...]]:
     successful: set[str] = set()
     failures: list[BackupImportFailure] = []
+    conversation_merge_conflict: str | None = None
+    if mode == "merge":
+        for raw in rows.get("conversations", []):
+            if raw.get("kind") != "special" or not raw.get("system_preset_id"):
+                continue
+            existing = await db.scalar(
+                select(Conversation).where(
+                    Conversation.user_id == target_user_id,
+                    Conversation.kind == "special",
+                    Conversation.system_preset_id == raw["system_preset_id"],
+                ),
+            )
+            if existing is not None:
+                try:
+                    await validate_conversation_merge(db, existing, raw)
+                except ValueError as exc:
+                    conversation_merge_conflict = str(exc)
+                    break
     id_map: dict[str, dict[str, int | str]] = {}
-    rewriter = UrlRewriter(await asyncio.to_thread(planned_asset_mapping, extract_root, source_user_id, target_user_id))
+    rewriter = UrlRewriter(
+        await asyncio.to_thread(planned_asset_mapping, extract_root, source_user_id, target_user_id),
+        source_user_id=source_user_id,
+        target_user_id=target_user_id,
+        extract_root=extract_root,
+        conversation_ids=frozenset(str(row["id"]) for row in rows.get("conversations", [])),
+    )
     # 未激活且 token 不外泄：该用户只承载预检行，结束即回滚。
     validation_user = User(
         username=f"backup-validation-{uuid.uuid4().hex}",
@@ -269,20 +300,31 @@ async def _preflight_tables(
                 continue
             if table == "companion_actions":
                 continue
+            if table == "messages" and "conversations" in rows:
+                continue
+            if table == "companion_post_comments" and "companion_posts" in rows:
+                continue
             # 身份三表与动作两表各自成组预检，避免只写通一半。
             if table in {"companion_character_cards", "personas"} and "avatar_assets" in rows:
                 continue
-            if table == "avatar_assets" and IDENTITY_TABLES & set(rows):
+            if table == "conversations":
+                group = ("conversations", "messages")
+            elif table == "avatar_assets" and IDENTITY_TABLES & set(rows):
                 group = tuple(member for member in IDENTITY_GROUP if member in rows)
             elif table == "companion_action_packs":
                 group = ("companion_action_packs", "companion_actions")
+            elif table == "companion_posts":
+                group = ("companion_posts", "companion_post_comments")
             else:
                 group = (table,)
             available_rows = {name: rows[name] for name in successful | set(group) if name in rows}
             staged_map = dict(id_map)
             try:
+                if table == "conversations" and conversation_merge_conflict is not None:
+                    raise ValueError(conversation_merge_conflict)
                 async with db.begin_nested():
                     for member in group:
+                        await asyncio.to_thread(validate_row_files, member, rows[member], rewriter)
                         staged_map[member], _ = await _restore_table(
                             db,
                             member,
@@ -569,13 +611,26 @@ async def _copy_backup_files(
             referenced_files=referenced_files,
             include_conversation_files=include_conversation_files,
         ),
+        name="backup.restore.copy-files",
     )
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
-        # 取消优先，线程内的失败不顶替它；等待中再次被取消时，线程已复制的文件由 restore_files 在线程内回滚。
+        # to_thread 包装任务不能取消：线程仍可能写盘，必须持有它直到实际退出再交还维护边界。
         stop.set()
-        await asyncio.gather(task, return_exceptions=True)
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        try:
+            task.result()
+        except InterruptedError:
+            pass
+        except Exception:
+            logger.warning("backup file copy failed during cancellation cleanup", exc_info=True)
         raise
 
 
@@ -600,7 +655,13 @@ async def restore_backup_rows(
         import_batch_id=import_batch_id,
     )
     compatible_rows = {table: records for table, records in rows.items() if table in successful_tables}
-    rewriter = UrlRewriter({})
+    rewriter = UrlRewriter(
+        {},
+        source_user_id=source_user_id,
+        target_user_id=target_user_id,
+        extract_root=extract_root,
+        conversation_ids=frozenset(str(row["id"]) for row in compatible_rows.get("conversations", [])),
+    )
     existing_scene_versions = (
         await db.execute(
             select(Persona.scene_state_version, Persona.scene_switch_version).where(Persona.user_id == target_user_id),
@@ -643,6 +704,7 @@ async def restore_backup_rows(
                     reason="对应会话未能恢复，附件缺少可用的目标会话。",
                 ),
             )
+        await asyncio.to_thread(rewriter.rewrite, compatible_rows)
         for table in BACKUP_RESTORE_ORDER:
             if table == "conversations" or table not in compatible_rows:
                 continue
@@ -681,6 +743,15 @@ async def restore_backup_rows(
                     event_type="companion.scene.updated",
                     payload={"version": persona.scene_state_version, "switch_version": persona.scene_switch_version},
                 )
+        if rewriter.missing_paths:
+            failures = (
+                *failures,
+                BackupImportFailure(
+                    "asset_files",
+                    len(rewriter.missing_paths),
+                    "部分历史媒体已清理，记录已恢复，媒体引用保持失效。",
+                ),
+            )
         return BackupRestoreResult(
             imported=imported,
             restored_files=len(rewriter.created),

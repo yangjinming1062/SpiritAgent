@@ -219,6 +219,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
     conversation_title = "微信对话"
     supports_typing = True
     requires_login = True
+    reports_connection_health = True
 
     def __init__(self, snapshot: ChannelBindingSnapshot) -> None:
         super().__init__(snapshot)
@@ -271,7 +272,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 headers=self._headers(),
                 timeout=timeout,
             )
-        except httpx.TimeoutException:
+        except httpx.ReadTimeout:
             raise
         except httpx.HTTPError as e:
             raise ChannelError("iLink transport error", fatal=False) from e
@@ -397,6 +398,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         self._creds = None
         await self._persist_credentials()
         self._login_state = ChannelLoginStateResponse(state="login_required")
+        self.connection_health.reset()
         self._login_gate.clear()
         await update_binding_status(self.snapshot.id, "login_required")
 
@@ -410,12 +412,13 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 await self._poll_loop()
             except IlinkSessionExpired:
                 await self._clear_login()
-            except httpx.TimeoutException:
+            except httpx.ReadTimeout:
                 # 长轮询客户端超时（服务端 35s hold 临界抖动）：立即用同一游标重试。
                 continue
             except ChannelError as exc:
                 if exc.fatal:
                     raise
+                await self.connection_health.failed()
                 # 轮询可恢复错误只重试同实例与游标，保留在途回合、typing 和未送达回复。
                 logger.warning("iLink polling failed; retrying", extra={"binding": self.snapshot.id})
                 await asyncio.sleep(SETTINGS.channels_restart_backoff_seconds)
@@ -435,6 +438,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 payload={"get_updates_buf": creds.get_updates_buf, "base_info": _base_info()},
                 timeout=SETTINGS.weixin_ilink_poll_timeout_seconds,
             )
+            await self.connection_health.connected()
             cursor = data.get("get_updates_buf")
             msgs = data.get("msgs") or []
             for msg in msgs:

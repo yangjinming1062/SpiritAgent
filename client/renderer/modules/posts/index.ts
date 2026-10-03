@@ -1,4 +1,10 @@
 export {
+  listVideoPublications,
+  queryVideoPublication,
+  resolveVideoPublication,
+  type VideoPublicationRecovery
+} from './recovery'
+export {
   $posts,
   $postsHasMore,
   $postsHasUnread,

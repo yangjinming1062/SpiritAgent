@@ -1,8 +1,7 @@
 import asyncio
 import json
 
-from components import SETTINGS, coerce_int, get_logger, tool_error
-from openai import AsyncOpenAI
+from components import LLM_MAX_OUTPUT_TOKENS, SETTINGS, coerce_int, get_logger, tool_error
 from prompts.tools import (
     WEB_EXTRACT_DESC,
     WEB_EXTRACT_PARAM_DESCS,
@@ -11,7 +10,7 @@ from prompts.tools import (
     WEB_SUMMARY_INSTRUCTIONS,
 )
 
-from services.infrastructure.llm import UserLlmConfig, build_responses_kwargs, call_with_retry, client_for_config
+from services.infrastructure.llm import UserLlmConfig, call_llm_once
 from services.infrastructure.tool_runtime import ToolsRegistry
 from services.infrastructure.web import WebDocument, resolve_extract_provider, resolve_search_provider
 
@@ -21,38 +20,21 @@ logger = get_logger(__name__)
 _MAX_SEARCH_RESULTS = 100
 
 
-async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: WebDocument) -> None:
+async def _summarize_doc(llm_config: UserLlmConfig, doc: WebDocument) -> None:
     content = doc.content
     if not content or len(content) <= 1000:
         return
     try:
-        request = build_responses_kwargs(
-            model=model_name,
-            instructions=WEB_SUMMARY_INSTRUCTIONS,
-            input_items=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": json.dumps(
-                                {
-                                    "source_url": doc.url,
-                                    "content": content[:50000],
-                                    "source_excerpted": len(content) > 50000,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        },
-                    ],
-                },
-            ],
+        summary = await call_llm_once(
+            llm_config,
+            WEB_SUMMARY_INSTRUCTIONS,
+            {"source_url": doc.url, "content": content[:50000], "source_excerpted": len(content) > 50000},
+            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
             temperature=0.1,
         )
-        response = await call_with_retry(client, **request)
-        if response.status != "completed" or not response.output_text.strip():
-            raise RuntimeError("Web summary response did not complete with text")
-        doc.content = response.output_text
+        if not summary.strip():
+            raise RuntimeError("Web summary response was empty")
+        doc.content = summary
         doc.content_kind = "summary"
         doc.source_excerpted = len(content) > 50000
     except Exception as e:
@@ -67,14 +49,12 @@ async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: WebDocument)
 async def _summarize_documents(documents: list[WebDocument], llm_config: UserLlmConfig) -> None:
     if not documents:
         return
-    model_name = llm_config.model_name
-    client = client_for_config(llm_config)
     # 限制并发数，避免 50 个 URL 时同时打开 50 条 LLM 流。
     sem = asyncio.Semaphore(4)
 
     async def _guarded(doc: WebDocument) -> None:
         async with sem:
-            await _summarize_doc(client, model_name, doc)
+            await _summarize_doc(llm_config, doc)
 
     await asyncio.gather(*(_guarded(d) for d in documents))
 

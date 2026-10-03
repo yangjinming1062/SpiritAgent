@@ -39,6 +39,7 @@ async def run_delegated_turn(
     llm_config: UserLlmConfig,
     *,
     run_turn: TurnRunner,
+    inherited_excluded_tool_names: frozenset[str] = frozenset(),
 ) -> str:
     """执行子 Agent 回合并转成父回合 ToolResult。子回合继承父回合 llm_config、用户作用域与会话类型；回合入口由 orchestrator 注入（绑定父回合无头标志），避免循环导入。输出经 HeadlessEmitter 捕获，以 final_text/error 结构化返回。"""
     try:
@@ -82,7 +83,7 @@ async def run_delegated_turn(
             llm_config,
             user_id,
             headless,
-            excluded_tool_names=_DELEGATED_EXCLUDED_TOOLS,
+            excluded_tool_names=_DELEGATED_EXCLUDED_TOOLS | inherited_excluded_tool_names,
             has_viewer=False,
         )
 

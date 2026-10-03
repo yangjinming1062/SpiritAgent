@@ -1,6 +1,7 @@
 """动作脚本与探身定位：模型描述画面，代码绑定规格并校验结果。"""
 
 import json
+from collections.abc import Awaitable, Callable
 
 from components import get_logger, parse_llm_json
 from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS, CharacterCardSnapshot, PeekGeometry
@@ -21,7 +22,7 @@ from services.domains.companion import (
     render_character_profile,
     render_character_video_identity,
 )
-from services.infrastructure.llm import vision_chat
+from services.infrastructure.llm import LlmCallBlockedError, vision_chat
 from services.infrastructure.video_processing import ACTION_FRAME_MARGIN
 
 logger = get_logger(__name__)
@@ -122,6 +123,7 @@ async def compose_action_script(
     outfit_description: str,
     specs: list[ActionSpec],
     feedback: str = "",
+    before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> ActionScript:
     """为一批动作规格编写演绎脚本。返回条目与请求规格一一对应。"""
     payload = {
@@ -150,6 +152,7 @@ async def compose_action_script(
             VIDEO_ACTION_SCRIPT_INSTRUCTIONS + "\n" + render_character_profile(identity),
             json.dumps(payload, ensure_ascii=False),
             reference_images=(reference_image,),
+            before_submit=before_submit,
         )
         try:
             script = ActionScript.model_validate(parse_llm_json(raw))
@@ -173,6 +176,8 @@ async def inspect_peek_geometry(
     action: str,
     identity_uri: str,
     frame_uris: tuple[str, ...],
+    *,
+    before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> PeekGeometry | None:
     """定位成品采样帧的遮挡线；不可用时返回 None。"""
     if action not in ("peek_left", "peek_right") or not identity_uri or len(frame_uris) != 3:
@@ -184,6 +189,7 @@ async def inspect_peek_geometry(
             VIDEO_PEEK_GEOMETRY_INSTRUCTIONS,
             json.dumps({"expected_side": expected_side}),
             reference_images=(identity_uri, *frame_uris),
+            before_submit=before_submit,
         )
         payload = parse_llm_json(raw)
         if not isinstance(payload, dict) or payload.get("usable") is not True:
@@ -192,6 +198,8 @@ async def inspect_peek_geometry(
             {"side": payload.get("side"), "cut_x": payload.get("cut_x"), "focus_rect": payload.get("focus_rect")},
         )
         return geometry if geometry.side == expected_side else None
+    except LlmCallBlockedError:
+        raise
     except Exception:
         logger.warning("peek geometry calibration failed", extra={"user_id": user_id, "action": action}, exc_info=True)
         return None

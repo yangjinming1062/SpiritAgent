@@ -72,6 +72,7 @@ export interface VideoActionWire {
   error: string | null
   clip_url: string | null
   motion_prompt: string
+  feedback?: string
   peek_geometry?: PeekGeometry | null
 }
 

@@ -166,6 +166,7 @@ class ChannelManager:
         """守卫循环：fatal ChannelError → 标 error 停止；其他异常/意外返回 → 退避后重建适配器重试。"""
         snapshot = adapter.snapshot
         key = (snapshot.user_id, snapshot.channel)
+        health = adapter.connection_health
         while True:
             try:
                 # 仅显式发起扫码的入口写 login_pending；启动、登出和过期保持 login_required。
@@ -175,10 +176,11 @@ class ChannelManager:
                         login_pending = binding is not None and binding.status == "login_pending"
                     if not login_pending:
                         await update_binding_status(snapshot.id, "login_required")
-                else:
+                elif not adapter.reports_connection_health and not health.failures:
                     await update_binding_status(snapshot.id, "connected")
                 await adapter.run()
                 logger.warning("channel adapter run() returned unexpectedly; restarting", extra={"key": key})
+                await health.failed()
             except asyncio.CancelledError:
                 raise
             except ChannelError as e:
@@ -187,8 +189,10 @@ class ChannelManager:
                     await update_binding_status(snapshot.id, "error", error=str(e))
                     return
                 logger.warning("channel adapter transient error; backing off", extra={"key": key, "error": str(e)})
+                await health.failed()
             except Exception:
                 logger.exception("channel adapter crashed; backing off", extra={"key": key})
+                await health.failed()
             finally:
                 if self._adapters.get(key) is adapter:
                     self._adapters.pop(key, None)
@@ -217,6 +221,7 @@ class ChannelManager:
                 return
             snapshot = fresh
             adapter = rebuilt
+            adapter.connection_health = health
 
 
 MANAGER = ChannelManager()

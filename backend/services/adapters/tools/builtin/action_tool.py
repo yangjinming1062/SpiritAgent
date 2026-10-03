@@ -16,6 +16,7 @@ from prompts.actions import (
     ACTION_PLAY_TOOL_DESCRIPTION,
     ACTION_SEARCH_TOOL_DESCRIPTION,
 )
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from services.application.actions import accept_proposal, request_playback, schedule_accepted_proposal
@@ -66,6 +67,7 @@ async def action_design_tool(
     duration_seconds: float = 4,
     clip_kind: str = "once",
     expected_pack_id: int | None = None,
+    proactive_turn: bool = False,
     **_: Any,
 ) -> str:
     try:
@@ -79,12 +81,19 @@ async def action_design_tool(
             clip_kind=clip_kind,
             expected_pack_id=expected_pack_id,
         )
-    except Exception as exc:  # 参数契约失败
-        return tool_error(f"动作设计参数不合法：{exc}")
+    except ValidationError as exc:
+        fields = sorted(
+            {str(error["loc"][0]) for error in exc.errors(include_input=False, include_url=False) if error["loc"]},
+        )
+        return tool_error("动作设计参数不合法，请检查：" + "、".join(fields))
 
     async with SESSION_LOCAL() as db:
-        # 对话工具入口视为用户表达驱动，计入手动额度；夜间自主提案走 nightly 的 autonomous。
-        acceptance = await accept_proposal(db, user_id, request, source="user_requested")
+        acceptance = await accept_proposal(
+            db,
+            user_id,
+            request,
+            source="autonomous" if proactive_turn else "user_requested",
+        )
         await db.commit()
     # 评审或重做在提案事务提交后异步执行；approve 后由流水线接手制作。
     schedule_accepted_proposal(acceptance, user_id)

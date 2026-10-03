@@ -11,6 +11,7 @@ from services.infrastructure.llm import (
     FailoverReason,
     ProviderConfig,
     classify_api_error,
+    is_content_policy_error_message,
     resolve_provider_chain,
 )
 
@@ -20,6 +21,39 @@ MEDIA_IDENTITY_ACCEPT_SCORE = 75
 
 class MediaProviderFailedError(RuntimeError):
     """已获供应商失败终态，可安全推进到下一家。"""
+
+    def __init__(self, message: str, *, reason: str = "provider_failed") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+_VIDEO_FAILURE_COPY: dict[str, str] = {
+    "result_unknown": "视频提交结果不确定，供应商可能已接单；为避免重复计费，系统没有自动重试",
+    "submit_failed": "视频提交失败，请稍后重试",
+    "provider_unavailable": "视频生成服务配置已变更，请稍后重试",
+    "provider_failed": "视频生成失败，请稍后重试",
+    "content_policy_blocked": "内容审核未通过，请调整请求内容或参考形象后重试",
+    "download_failed": "视频下载失败，请稍后重试",
+    "timeout": "视频生成超过等待时限，供应商任务可能仍在进行；为避免重复计费，系统没有自动重试",
+    "worker_failed": "视频生成服务异常，请稍后重试",
+    "identity_changed": "角色外形已更新，旧参考生成的视频未交付",
+    "quality_failed": "视频文件无法完成质量核查，请稍后重试",
+    "authorization_revoked": "原通道授权已撤销，未继续制作或投递",
+}
+
+
+def video_provider_failure_reason(error: str | None) -> str:
+    """已知视频失败终态只提取审核原因，不向用户暴露供应商原文。"""
+    if error and (is_content_policy_error_message(error) or any(word in error for word in ("敏感", "违规"))):
+        return "content_policy_blocked"
+    return "provider_failed"
+
+
+def video_failure_message(reason: str) -> str:
+    """聊天与动作视频共用的失败文案；未知提交与审核拒绝保留各自恢复要求。"""
+    if reason == "submit_result_unknown":
+        reason = "result_unknown"
+    return _VIDEO_FAILURE_COPY.get(reason, _VIDEO_FAILURE_COPY["provider_failed"])
 
 
 class FrozenMediaProvider(BaseModel):
@@ -140,4 +174,6 @@ def media_failure_reason(exc: Exception) -> tuple[str, bool]:
     classified = classify_api_error(exc)
     if getattr(exc, "result_unknown", False) or classified.reason == FailoverReason.result_unknown:
         return "result_unknown", False
+    if isinstance(exc, MediaProviderFailedError):
+        return exc.reason, exc.reason != "result_unknown"
     return classified.reason.value, getattr(exc, "can_fallback", False) or classified.should_fallback

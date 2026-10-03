@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 
 import { InlineMedia, useResolvedMediaSrc } from '@/modules/media'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
@@ -45,22 +47,29 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const beginAsync = useAsyncGuard()
+  const onReviewedRef = useLatestRef(onReviewed)
 
   useEffect(() => {
     let mounted = true
+    const isLive = beginAsync()
     void window.spiritagent
       .api<{ status: string; reason: string }>({
         path: `/api/companion/media-reviews/${item.review_id}`,
         method: 'GET'
       })
       .then(result => {
-        if (mounted) {
+        if (mounted && isLive()) {
           setStatus(result.status === 'accepted' ? 'accepted' : result.status === 'rejected' ? 'rejected' : 'pending')
           setReason(result.reason)
+
+          if (result.status !== 'pending') {
+            onReviewedRef.current?.()
+          }
         }
       })
       .catch(() => {
-        if (mounted) {
+        if (mounted && isLive()) {
           setError(dict.reviewLoadError)
         }
       })
@@ -68,28 +77,62 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
     return () => {
       mounted = false
     }
-  }, [item.review_id, dict.reviewLoadError])
+  }, [item.review_id, dict.reviewLoadError, beginAsync, onReviewedRef])
 
   if (status === 'accepted') {
     return <DeliveredMediaCard item={item} />
   }
 
   const decide = async (decision: 'accept' | 'reject'): Promise<void> => {
+    const isLive = beginAsync()
     setBusy(true)
     setError('')
 
     try {
-      await window.spiritagent.api({
+      const result = await window.spiritagent.api<{ status: string }>({
         path: `/api/companion/media-reviews/${item.review_id}/${decision}`,
         method: 'POST',
         body: {}
       })
-      setStatus(decision === 'accept' ? 'accepted' : 'rejected')
-      onReviewed?.()
+
+      if (!isLive()) {
+        return
+      }
+
+      setStatus(result.status === 'accepted' ? 'accepted' : 'rejected')
+      onReviewedRef.current?.()
     } catch {
-      setError(dict.reviewAcceptError)
+      if (!isLive()) {
+        return
+      }
+
+      try {
+        const current = await window.spiritagent.api<{ status: string }>({
+          path: `/api/companion/media-reviews/${item.review_id}`,
+          method: 'GET'
+        })
+
+        if (!isLive()) {
+          return
+        }
+
+        if (current.status !== 'pending') {
+          setStatus(current.status === 'accepted' ? 'accepted' : 'rejected')
+          onReviewedRef.current?.()
+
+          return
+        }
+      } catch {
+        // 状态查询失败时保留本次操作错误，用户仍可刷新或重试。
+      }
+
+      if (isLive()) {
+        setError(dict.reviewAcceptError)
+      }
     } finally {
-      setBusy(false)
+      if (isLive()) {
+        setBusy(false)
+      }
     }
   }
 

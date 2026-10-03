@@ -12,6 +12,7 @@ from components import (
     SESSION_LOCAL,
     SETTINGS,
     get_logger,
+    is_user_in_maintenance,
     parse_llm_json,
     resolve_language,
     track_user_task,
@@ -54,6 +55,7 @@ from .avatar_service import get_active_avatar, load_avatar_bytes_as_data_uri, re
 from .character_images import ImageChainState, generate_character_images
 from .image_generation import ImageGenerationError
 from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE, MediaCandidate
+from .paid_work import GenerationWorkPaused, require_new_generation_call
 from .scene_prompt import build_scene_prompt
 
 logger = get_logger(__name__)
@@ -543,6 +545,7 @@ async def _analyze(user_id: int, scene_id: int) -> None:
         SCENE_DESCRIBE_SYSTEM,
         json.dumps({"output_language": language}),
         reference_images=(data_uri,),
+        before_submit=lambda: _scene_paid_boundary(user_id),
     )
     description = SceneDescriptionRequest.model_validate(parse_llm_json(raw))
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
@@ -652,6 +655,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             store_attempts=SETTINGS.scene_store_max_attempts,
             max_image_bytes=SCENE_DOWNLOAD_MAX_BYTES,
             size_enforced=True,
+            before_submit=lambda: _scene_paid_boundary(user_id),
         )
         new_path = paths[0]
         parsed = asset_store.parse_companion_asset_path(new_path)
@@ -802,6 +806,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
             store_attempts=SETTINGS.scene_store_max_attempts,
             max_image_bytes=SCENE_DOWNLOAD_MAX_BYTES,
             size_enforced=True,
+            before_submit=lambda: _scene_paid_boundary(user_id),
         )
     await _analyze(user_id, scene_id)
 
@@ -865,6 +870,8 @@ def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | Non
                 await _run_scene_regeneration(user_id, scene_id, regeneration_task_id)
             else:
                 await _run_pipeline(scene_id, user_id)
+        except GenerationWorkPaused:
+            return
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -881,6 +888,8 @@ def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | Non
             if await _restore_best_scene(user_id, scene_id):
                 try:
                     await _run_pipeline(scene_id, user_id)
+                    return
+                except GenerationWorkPaused:
                     return
                 except Exception:
                     logger.exception("best scene recovery failed", extra={"scene_id": scene_id, "user_id": user_id})
@@ -912,6 +921,8 @@ def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | Non
 
 
 async def resume_scene_generation(user_id: int, scene_id: int) -> bool:
+    if is_user_in_maintenance(user_id):
+        return True
     if (task := _INFLIGHT_TASKS.get((user_id, scene_id))) is not None and not task.done():
         return True
     async with SESSION_LOCAL() as db:
@@ -947,8 +958,29 @@ async def resume_scene_jobs() -> None:
             )
         ).all()
     for user_id, scene_id, task_id in regenerations:
-        if task_id:
+        if task_id and not is_user_in_maintenance(user_id):
             _launch_task(scene_id, user_id, regeneration_task_id=task_id)
+
+
+async def _scene_paid_boundary(user_id: int) -> None:
+    require_new_generation_call(user_id)
+
+
+async def resume_user_scene_jobs(user_id: int) -> None:
+    async with SESSION_LOCAL() as db:
+        scenes = (
+            await db.scalars(
+                select(CompanionScene).where(
+                    CompanionScene.user_id == user_id,
+                    (CompanionScene.status == "pending") | (CompanionScene.regeneration_status == "pending"),
+                ),
+            )
+        ).all()
+    for row in scenes:
+        if row.regeneration_status == "pending" and row.regeneration_task_id:
+            _launch_task(row.id, user_id, regeneration_task_id=row.regeneration_task_id)
+        elif row.status == "pending":
+            await resume_scene_generation(user_id, row.id)
 
 
 _INITIAL_SCENE_DEFAULT_NOTES = (

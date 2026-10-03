@@ -1,6 +1,6 @@
 """角色视频片段处理基础设施：FFmpeg 受控封装、动作片段规范化与命中遮罩。仅服务端使用；参数由代码构造，不执行用户字符串，不向客户端分发 FFmpeg。"""
 
-from .ffmpeg import VideoProcessError, VideoToolUnavailableError, probe_video
+from .ffmpeg import ActionMaterialRejectedError, VideoProcessError, VideoToolUnavailableError, probe_video
 from .frames import ACTION_FRAME_MARGIN, action_frame_video_input, prepare_action_frame
 from .matting import matte_video, require_matting_model
 from .process import (
@@ -20,6 +20,7 @@ from .quality import validate_action_clip
 
 __all__ = [
     "ACTION_FRAME_MARGIN",
+    "ActionMaterialRejectedError",
     "HITMASK_FPS",
     "HITMASK_GRID_H",
     "HITMASK_GRID_W",

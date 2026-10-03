@@ -328,7 +328,12 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
             await _mark_event_failure(event_id, retry_count, error=f"User {user_id} dispatcher not available")
             continue
         try:
-            enqueued = await dispatcher.enqueue_event(event_type, payload, event_id=event_id)
+            enqueued = await dispatcher.enqueue_event(
+                event_type,
+                payload,
+                event_id=event_id,
+                session_id=payload.get("session_id") if event_type == "compress.completed" else None,
+            )
         except Exception as e:
             logger.exception(
                 "Failed to dispatch event to user",

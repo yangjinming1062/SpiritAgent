@@ -44,6 +44,7 @@ export interface ChatMessageBody {
   reasoning?: string
   streaming?: boolean
   queued?: boolean
+  discarded?: boolean
   toolName?: string | null
   tools?: string[]
   error?: string
@@ -179,15 +180,16 @@ export function createConversationRuntime(sessionId: string | null) {
   }
 
   const $chatSessionKind = atom<ChatSessionKind>('standard')
+  const $chatSessionReadOnly = atom(false)
 
   const $pendingPromptBatch = atom<PendingPromptItem[]>([])
 
   const $chatTurnInFlight = atom<boolean>(false)
 
   const $lastEditableUserMessage = computed(
-    [$chatMessageList, $chatSessionKind, $chatTurnInFlight, $pendingPromptBatch],
-    (list, kind, inFlight, pending): ChatMessageListItem | null => {
-      if (kind === 'im' || inFlight || pending.length > 0) {
+    [$chatMessageList, $chatTurnInFlight, $pendingPromptBatch, $chatSessionReadOnly],
+    (list, inFlight, pending, readOnly): ChatMessageListItem | null => {
+      if (readOnly || inFlight || pending.length > 0) {
         return null
       }
 
@@ -198,9 +200,9 @@ export function createConversationRuntime(sessionId: string | null) {
   )
 
   const $retryableAssistantMessage = computed(
-    [$chatMessageList, $chatMessageBodies, $chatSessionKind, $chatTurnInFlight, $pendingPromptBatch],
-    (list, bodies, kind, inFlight, pending): ChatMessageListItem | null => {
-      if (kind === 'im' || inFlight || pending.length > 0) {
+    [$chatMessageList, $chatMessageBodies, $chatTurnInFlight, $pendingPromptBatch, $chatSessionReadOnly],
+    (list, bodies, inFlight, pending, readOnly): ChatMessageListItem | null => {
+      if (readOnly || inFlight || pending.length > 0) {
         return null
       }
 
@@ -459,6 +461,7 @@ export function createConversationRuntime(sessionId: string | null) {
           tools: m.tool_name ? [m.tool_name] : undefined,
           streaming: false,
           queued: m.role === 'user' && m.queued,
+          discarded: m.role === 'user' && m.discarded,
           attachments: index === 0 ? attachments : undefined,
           ...(!companionBubbles && index === segments.length - 1 && m.media?.length ? { media: m.media } : {})
         }
@@ -475,6 +478,7 @@ export function createConversationRuntime(sessionId: string | null) {
       hydrateSessionSettings(info)
       // 缺字段/未知值回落 standard 以免 IM 守卫误判；无 info 的本会话内操作（撤回/清空/压缩重水合）沿用当前 kind，重置会解除 IM 只读。
       $chatSessionKind.set(normalizeChatSessionKind(info.kind))
+      $chatSessionReadOnly.set(info.kind === 'im' || info.is_automation === true)
     }
 
     // 估算 Token 占用（~3 字符/Token）；分项清零避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
@@ -543,7 +547,13 @@ export function createConversationRuntime(sessionId: string | null) {
   function appendMessage(item: Omit<ChatMessageListItem, 'id' | 'timestamp'>, body: ChatMessageBody): string {
     const id = nextChatMessageId()
     $chatMessageBodies.setKey(id, body)
-    $chatMessageList.set([...$chatMessageList.get(), { id, ...item, timestamp: Date.now() }])
+    const list = $chatMessageList.get()
+    const last = list.at(-1)
+    const next = { id, ...item, timestamp: Date.now() }
+
+    // 后台交付插在活动回复之前，流式增量与完成帧仍以末行定位自己的气泡。
+    const preserveStreaming = item.subtype && last?.role === 'assistant' && $chatMessageBodies.get()[last.id]?.streaming
+    $chatMessageList.set(preserveStreaming ? [...list.slice(0, -1), next, last] : [...list, next])
 
     return id
   }
@@ -687,8 +697,15 @@ export function createConversationRuntime(sessionId: string | null) {
   }
 
   /** 追加一行本地状态行（如 `status_command_result`、`compress_summary`），渲染层按 subtype 显示为居中 pill 或摘要卡片。 */
-  function pushStatusPill(subtype: string, text: string): void {
-    appendMessage({ role: 'assistant', subtype }, { text, streaming: false, toolName: null })
+  function pushStatusPill(subtype: string, text: string, backendMessageId?: number): void {
+    if (
+      backendMessageId !== undefined &&
+      $chatMessageList.get().some(item => item.backendMessageId === backendMessageId)
+    ) {
+      return
+    }
+
+    appendMessage({ role: 'assistant', subtype, backendMessageId }, { text, streaming: false, toolName: null })
   }
 
   function pushPendingPrompt(item: PendingPromptItem): void {
@@ -1313,6 +1330,7 @@ export function createConversationRuntime(sessionId: string | null) {
     $chatStreamingTick,
     $chatSessionId,
     $chatSessionKind,
+    $chatSessionReadOnly,
     $pendingPromptBatch,
     $chatTurnInFlight,
     $lastEditableUserMessage,

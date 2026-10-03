@@ -55,7 +55,7 @@ logger = get_logger(__name__)
 # 传给 planning 阶段的 recall 行数（用作高亮）。
 _PLANNING_RECALL_HIGHLIGHTS: int = 10
 # 规划动作以这些状态结束时，整晚记为部分失败。
-_FAILED_ACTION_STATUSES = frozenset(("failed", "interrupted", "partial"))
+_FAILED_ACTION_STATUSES = frozenset(("failed", "interrupted", "partial", "result_unknown"))
 
 
 def _local_day_utc_bounds(day: date, tz_str: str) -> tuple[datetime, datetime]:
@@ -321,6 +321,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         Conversation.user_id == user_id,
         Conversation.system_preset_id == scope.system_preset_id,
         Message.id > Conversation.context_after_message_id,
+        Message.discarded.is_(False),
         user_authored_conversation(),
         Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
     )

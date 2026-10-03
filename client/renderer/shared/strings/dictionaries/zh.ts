@@ -123,6 +123,7 @@ export const dict = {
       channelLabel: 'IM 通道',
       channelWeixin: '微信',
       channelConnected: (label: string) => `${label}已连接`,
+      channelReconnecting: (label: string) => `${label}连接暂时不可用，正在重新连接`,
       channelLoginRequired: (label: string) => `${label}登录已过期，请到设置重新扫码`,
       channelError: (label: string, detail?: string) => `${label}通道异常${detail ? `：${detail}` : ''}`,
       channelPeerRequest: (label: string, name: string) =>
@@ -183,6 +184,7 @@ export const dict = {
       loadFailed: '通道状态加载失败',
       statusLabels: {
         connected: '已连接',
+        reconnecting: '重连中',
         login_pending: '等待扫码',
         login_required: '需重新登录',
         error: '异常',
@@ -205,7 +207,8 @@ export const dict = {
         expiredPrompt: '二维码已过期，请重新获取',
         loginTimeout: '登录超时，请重新获取二维码',
         qrAlt: '微信登录二维码',
-        connectedAs: (name: string) => `已连接${name ? `：${name}` : ''}`
+        connectedAs: (name: string) => `已连接${name ? `：${name}` : ''}`,
+        reconnecting: '连接暂时不可用，正在自动重连；无需重新扫码。'
       },
       peers: {
         title: '对端审批',
@@ -628,6 +631,7 @@ export const dict = {
     inputPlaceholder: '跟它说，或把文件拖过来',
     typing: '正在输入...',
     queued: '已接收，等待处理',
+    discarded: '授权已撤销，未执行',
     openMainSessionFailed: '无法打开日常对话',
 
     filesReceived: (count: number) => `收到 ${count} 个文件`,
@@ -966,6 +970,29 @@ export const dict = {
       avatarMood: (name: string) => `${name} 的表情反馈`
     },
     posts: {
+      videoRecoveryHeading: '待核对的视频动态',
+      videoRecoveryHint:
+        '这些动态超过了等待时限，系统没有重新制作或发布。查询原任务后，可查看现有视频并决定发布或放弃；采纳不会补做旁白。',
+      videoRecoveryLoadFailed: '待核对视频加载失败，请刷新动态页。',
+      videoRecoveryStatuses: {
+        pending: '原视频任务尚未完成',
+        ready: '已有视频成品，请先查看再采纳',
+        failed: '原视频任务已失败',
+        unknown: '原视频结果尚未确认',
+        discarded: '已放弃'
+      },
+      videoQuery: '查询原任务',
+      videoRefresh: '刷新',
+      videoAdopt: '采纳并发布',
+      videoDiscard: '放弃',
+      videoCleanupPending: '已放弃本次发布，部分本地素材尚待清理。',
+      videoRetryCleanup: '重试清理',
+      videoQueryFailed: '暂时无法查询原视频任务，请稍后再试。',
+      videoAdoptFailed: '暂时无法采纳，请检查当前形象、动态设置和发布额度。',
+      videoDiscardFailed: '放弃未完成，请稍后重试。',
+      videoDiscardTitle: '放弃这次视频动态？',
+      videoDiscardDescription:
+        '本次动态不会再发布；系统会清理它独占的本地视频。供应商任务可能仍在运行，已支付的费用不会因此退还。',
       loadMore: '加载更多',
       replyPending: '正在回复…',
       replyRetry: '回复失败 · 重试',
@@ -1011,6 +1038,8 @@ export const dict = {
       policyFailed: '换装设置保存失败',
       deleteFailed: '删除着装失败',
       confirmFailed: '确认着装失败，请重试',
+      retryDescription: '补全描述',
+      descriptionRetryFailed: '外观描述补全失败，请稍后重试',
       wearing: '穿着中',
       statusLabels: {
         draft: '草稿',

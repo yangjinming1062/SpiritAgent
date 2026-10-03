@@ -17,7 +17,13 @@ from modules.ws import COMPANION_TURN_EVENT
 from services.adapters.channels import MANAGER as CHANNEL_MANAGER
 from services.adapters.desktop import terminate_user_gateway
 from services.adapters.scheduler import invalidate_user_scheduler_state
-from services.application.generation import resume_user_dynamic_actions
+from services.application.actions import resume_proposal_reviews
+from services.application.generation import (
+    resume_user_character_extraction,
+    resume_user_dynamic_actions,
+    resume_user_scene_jobs,
+    resume_user_video_jobs,
+)
 from services.domains.companion import (
     clear_user_proactive_state,
     invalidate_user_interaction_stats,
@@ -83,3 +89,13 @@ async def user_maintenance(user_id: int) -> AsyncIterator[None]:
                 await resume_user_dynamic_actions(user_id)
             except Exception:
                 logger.exception("failed to resume dynamic actions after maintenance", extra={"user_id": user_id})
+            for resume in (
+                resume_user_scene_jobs,
+                resume_user_character_extraction,
+                resume_user_video_jobs,
+                resume_proposal_reviews,
+            ):
+                try:
+                    await resume(user_id)
+                except Exception:
+                    logger.exception("failed to resume generation after maintenance", extra={"user_id": user_id})

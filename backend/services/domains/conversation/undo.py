@@ -25,7 +25,7 @@ async def resolve_undo_target(
     if conv is None:
         raise SourceNotFoundError(f"会话不存在或不属于当前用户: {session_id!r}")
 
-    if conv.kind in (SPECIAL_KIND, IM_KIND):
+    if conv.is_automation or conv.kind in (SPECIAL_KIND, IM_KIND):
         raise UndoNotAllowedError(f"该类型会话不可撤回 (kind={conv.kind!r})")
 
     anchor_row = (

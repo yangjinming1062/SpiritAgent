@@ -7,13 +7,15 @@ import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
-type OutfitStatus = 'draft' | 'ready' | 'failed' | 'expired'
+type OutfitStatus = 'draft' | 'ready' | 'expired'
 
 interface WardrobeOutfit {
   initialVideoError: string | null
   id: number
   name: string
   description: string | null
+  descriptionStatus: 'pending' | 'processing' | 'ready' | 'failed'
+  descriptionError: string | null
   fullbodyPath: string | null
   fullbodyUrl: string | null
   status: OutfitStatus
@@ -25,6 +27,8 @@ interface OutfitResponse {
   id: number
   name: string
   description: string | null
+  description_status?: WardrobeOutfit['descriptionStatus']
+  description_error?: string | null
   fullbody_url: string
   status: string
   active: boolean
@@ -80,6 +84,8 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
         id: o.id,
         name: o.name,
         description: o.description ?? null,
+        descriptionStatus: o.description_status ?? (o.description ? 'ready' : 'pending'),
+        descriptionError: o.description_error ?? null,
         initialVideoError: o.initial_video_error || null,
         fullbodyPath,
         fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
@@ -179,5 +185,14 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
 
 export async function deleteOutfit(outfitId: number): Promise<void> {
   await window.spiritagent.api({ path: `/api/companion/outfits/${outfitId}`, method: 'DELETE' })
+  await hydrateWardrobe()
+}
+
+export async function retryOutfitDescription(outfitId: number): Promise<void> {
+  await window.spiritagent.api({
+    path: `/api/companion/outfits/${outfitId}/description/retry`,
+    method: 'POST',
+    body: {}
+  })
   await hydrateWardrobe()
 }

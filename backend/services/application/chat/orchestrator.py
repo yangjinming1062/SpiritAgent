@@ -1,4 +1,6 @@
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
 from functools import partial
@@ -13,6 +15,7 @@ from components import (
     session_scope,
 )
 from modules.auth import ChatRequestClientContext
+from modules.channels import ChannelTurnSource
 from modules.conversation import Conversation, Message
 from modules.settings import get_user_setting, load_user_settings
 from modules.system import ChatMessageRequest, ChatRequest
@@ -40,6 +43,7 @@ from services.infrastructure.llm import (
     scale_temperature,
 )
 from services.infrastructure.tool_runtime import ToolCallGuardrailController, schema_name
+from services.infrastructure.turn_ownership import conversation_lock
 
 from .chat_emitter import Emitter
 from .context_compressor import CompressionFailedError, CompressionInfo, compress_history, compression_due
@@ -157,6 +161,70 @@ async def run_chat_turn(
     has_viewer: bool = True,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
+    authorization_check: Callable[[], Awaitable[bool]] | None = None,
+    turn_timeout_seconds: float | None = None,
+    channel_source: ChannelTurnSource | None = None,
+) -> None:
+    """所有入口共享会话互斥和整体预算；渠道撤权在模型与工具派发边界复核。"""
+    async with conversation_lock(req.session_id):
+        if authorization_check is not None and not await authorization_check():
+            raise asyncio.CancelledError("The channel authorization was revoked")
+        timeout = asyncio.timeout(turn_timeout_seconds or SETTINGS.agent_turn_timeout_seconds)
+        try:
+            async with timeout:
+                await _run_chat_turn(
+                    req,
+                    llm_config,
+                    user_id,
+                    emitter,
+                    session_client_context,
+                    track_task,
+                    session_settings=session_settings,
+                    precursor_user_message_ids=precursor_user_message_ids,
+                    persisted_message_id=persisted_message_id,
+                    final_reply_only=final_reply_only,
+                    ephemeral=ephemeral,
+                    headless=headless,
+                    has_viewer=has_viewer,
+                    excluded_tool_names=excluded_tool_names,
+                    max_loop_turns=max_loop_turns,
+                    authorization_check=authorization_check,
+                    channel_source=channel_source,
+                )
+        except TimeoutError:
+            if not timeout.expired():
+                raise
+            async with session_scope() as db:
+                language = await get_user_setting(db, user_id, "language")
+            await emitter.send_json(
+                {
+                    "type": "error",
+                    "message": "本次任务已达到运行时限。请核对已执行的操作后再继续。"
+                    if language != "en"
+                    else "The task reached its time limit. Check completed operations before continuing.",
+                },
+            )
+
+
+async def _run_chat_turn(
+    req: ChatRequest,
+    llm_config: UserLlmConfig,
+    user_id: int,
+    emitter: Emitter,
+    session_client_context: ChatRequestClientContext | None = None,
+    track_task: TrackTask | None = None,
+    *,
+    session_settings: dict | None = None,
+    precursor_user_message_ids: list[int] | None = None,
+    persisted_message_id: int | None = None,
+    final_reply_only: bool = False,
+    ephemeral: bool = False,
+    headless: bool = False,
+    has_viewer: bool = True,
+    excluded_tool_names: frozenset[str] = frozenset(),
+    max_loop_turns: int | None = None,
+    authorization_check: Callable[[], Awaitable[bool]] | None = None,
+    channel_source: ChannelTurnSource | None = None,
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
     # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量。
@@ -189,6 +257,7 @@ async def run_chat_turn(
                         or persisted.conversation_id != conv.id
                         or persisted.role != "user"
                         or persisted.queued
+                        or persisted.discarded
                     ):
                         raise ValueError("Persisted user message does not belong to this turn")
                     user_message_id = persisted_message_id
@@ -247,7 +316,11 @@ async def run_chat_turn(
                 return
             # 本轮尾部资料没有持久化来源，不进入持久摘要。
             runtime_item_start = len(inputs.context["input"])
-            waits = await list_companion_intents(db, user_id) if conv.system_preset_id == COMPANION_PRESET_ID else []
+            waits = (
+                await list_companion_intents(db, user_id)
+                if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None
+                else []
+            )
             if waits:
                 inputs.context["input"].append(
                     user_text_item(
@@ -264,9 +337,10 @@ async def run_chat_turn(
         compressed_context = inputs.context
         if (
             not final_reply_only
+            and SETTINGS.enable_context_compression
             and effective_settings.get(
                 "chat.enable_context_compression",
-                SETTINGS.enable_context_compression,
+                True,
             )
             and compression_due(
                 inputs.context,
@@ -288,9 +362,14 @@ async def run_chat_turn(
             except CompressionFailedError:
                 # 自动压缩失败不阻断本轮，按原上下文继续。
                 compress_info = None
-            if compress_info is not None and not ephemeral:
+            if compress_info is not None:
                 async with session_scope() as db:
-                    checkpoint = await persist_compression_checkpoint(db, conv.id, compress_info)
+                    checkpoint = await persist_compression_checkpoint(
+                        db,
+                        conv.id,
+                        compress_info,
+                        notify_user_id=user_id if headless else None,
+                    )
                 # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。
                 await emitter.send_json(
                     {
@@ -335,13 +414,24 @@ async def run_chat_turn(
             guardrails=ToolCallGuardrailController(),
             emitter=emitter,
             # 子 Agent 回合沿用本回合的无头标志：IM、定时任务等无头回合委派出的本机调用同样不显示桌面工作态。
-            delegate_executor=partial(run_delegated_turn, run_turn=partial(run_chat_turn, headless=headless)),
+            delegate_executor=partial(
+                run_delegated_turn,
+                run_turn=partial(
+                    run_chat_turn,
+                    headless=headless,
+                    authorization_check=authorization_check,
+                    channel_source=channel_source,
+                ),
+                inherited_excluded_tool_names=inputs.excluded_tool_names,
+            ),
             headless=headless,
             excluded_tool_names=inputs.excluded_tool_names,
             scene_turn=SceneTurnState(),
             proactive_turn=ephemeral,
             user_message=memory_query if not ephemeral else "",
             media_turn=media_turn,
+            authorization_check=authorization_check,
+            channel_source=channel_source,
         )
 
         buffer_text = companion_reply or headless or not has_viewer or conv.kind == IM_KIND or final_reply_only
@@ -350,9 +440,11 @@ async def run_chat_turn(
             await emitter.send_json({"type": "message.start"})
         base_instructions = current_context["instructions"]
         for _ in range(max_loop_turns):
+            if authorization_check is not None and not await authorization_check():
+                raise asyncio.CancelledError("The channel authorization was revoked")
             async with session_scope() as db:
                 await refresh_video_media(db, media_turn)
-                if conv.system_preset_id == COMPANION_PRESET_ID:
+                if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
                     environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
                     current_context["instructions"] = base_instructions + "\n\n" + environment
 

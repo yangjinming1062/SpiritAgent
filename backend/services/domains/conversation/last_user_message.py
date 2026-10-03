@@ -15,7 +15,7 @@ async def find_last_user_message(
 ) -> tuple[Conversation | None, Message | None]:
     """返回 (会话, 源消息)。会话不属于该用户或不允许改写历史时均为 None；``source_message_id`` 不再是最后一条已消费的普通用户消息、或已在上下文水位之下时消息为 None。"""
     conv = await Conversation.by_session_id(db, session_id, user_id=user_id)
-    if conv is None or conv.kind not in (STANDARD_KIND, SPECIAL_KIND):
+    if conv is None or conv.is_automation or conv.kind not in (STANDARD_KIND, SPECIAL_KIND):
         return None, None
     source = await db.scalar(
         select(Message)
@@ -28,6 +28,7 @@ async def find_last_user_message(
         or source.id != source_message_id
         or source.subtype
         or source.queued
+        or source.discarded
         or source.id <= conv.context_after_message_id
     ):
         return conv, None

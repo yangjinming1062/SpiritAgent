@@ -35,6 +35,7 @@ interface ActionEntry {
   error: string | null
   clipUrl: string | null
   motionPrompt: string
+  feedback: string
   peekGeometry: VideoActionWire['peek_geometry']
 }
 
@@ -121,6 +122,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
       error: entry.error,
       clipUrl: entry.clip_url,
       motionPrompt: entry.motion_prompt,
+      feedback: entry.feedback ?? '',
       peekGeometry: entry.peek_geometry
     })
   }
@@ -131,6 +133,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
         key: slot,
         label: actionNames[slot],
         status: 'missing',
+        feedback: '',
         error: null,
         clipUrl: null,
         motionPrompt: '',
@@ -235,7 +238,13 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   }, [globalBusy])
 
   const requestActionGeneration = (feedback: string): void => {
-    if (!selectedPack || !selectedAction || !selectedPack.can_regenerate || globalBusy) {
+    if (
+      !selectedPack ||
+      !selectedAction ||
+      !isVideoActionKey(selectedAction.key) ||
+      !selectedPack.can_regenerate ||
+      globalBusy
+    ) {
       return
     }
 
@@ -270,11 +279,15 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
       return { label: t.videoPeekCalibrationFailed, hint: t.videoPeekCalibrationFailedHint, className: 'bg-amber-400' }
     }
 
+    if (action.status === 'failed') {
+      return { label: t.videoActionFailed, hint: action.error ?? undefined, className: 'bg-danger-fg' }
+    }
+
     if (action.clipUrl) {
       return { label: t.videoActionReady, className: 'bg-success' }
     }
 
-    if (action.status === 'failed' || action.error) {
+    if (action.error) {
       return { label: t.videoActionFailed, className: 'bg-danger-fg' }
     }
 
@@ -282,7 +295,13 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   }
 
   const selectedStatus = selectedAction ? actionStatus(selectedAction) : null
-  const canGenerateAction = !!selectedPack?.can_regenerate && !globalBusy && !actionIsGenerating
+
+  const canGenerateAction =
+    !!selectedPack?.can_regenerate &&
+    !!selectedAction &&
+    isVideoActionKey(selectedAction.key) &&
+    !globalBusy &&
+    !actionIsGenerating
 
   return (
     <section
@@ -504,7 +523,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                       </button>
                     </div>
                   </div>
-                ) : actionRetryWaiting ? (
+                ) : actionRetryWaiting && isVideoActionKey(selectedAction.key) ? (
                   <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                     <span className="text-[10px] text-muted" id="video-action-retry-wait-hint" role="status">
                       {t.videoActionRetryWaitHint}
@@ -522,7 +541,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                   <div className="mt-3 flex justify-end">
                     <button
                       className={BTN_SUBTLE}
-                      onClick={() => setEditing({ key: selectedAction.key, feedback: '' })}
+                      onClick={() => setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })}
                       type="button"
                     >
                       {selectedAction.clipUrl ? t.videoRedoAction : t.videoGenMissingAction}

@@ -269,7 +269,7 @@ export function handleConversationEvent(
       const p = decodePayload<{ subtype?: string; text?: string; message_id?: number }>(event.payload)
 
       if (p.subtype === 'compress_summary' && typeof p.text === 'string') {
-        pushStatusPill('compress_summary', p.text)
+        pushStatusPill('compress_summary', p.text, typeof p.message_id === 'number' ? p.message_id : undefined)
       }
 
       break

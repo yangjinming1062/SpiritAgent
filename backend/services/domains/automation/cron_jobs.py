@@ -49,7 +49,7 @@ def _validate_kind(kind: str, scope: MemoryScope) -> str:
     return normalized
 
 
-def _validate_job_text(name: str | None, schedule: str | None) -> None:
+def _validate_job_text(name: str | None, schedule: str | None, prompt: str | None = None) -> None:
     """name / schedule 的入口校验：超出列宽或含 NUL（PostgreSQL 文本不接受）时抛 ValueError，消息可直接回给模型。"""
     for field, value, limit in (("name", name, _MAX_NAME_LENGTH), ("schedule", schedule, _MAX_SCHEDULE_LENGTH)):
         if value is None:
@@ -58,6 +58,8 @@ def _validate_job_text(name: str | None, schedule: str | None) -> None:
             raise ValueError(f"{field} must be at most {limit} characters")
         if "\x00" in value:
             raise ValueError(f"{field} must not contain NUL characters")
+    if prompt is not None and "\x00" in prompt:
+        raise ValueError("任务内容不能包含空字符，请移除后重新保存")
 
 
 def compute_next_run_at(schedule: str, base: datetime) -> datetime | None:
@@ -125,7 +127,7 @@ async def create_job(
     expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     normalized_kind = _validate_kind(kind, scope)
-    _validate_job_text(name, schedule)
+    _validate_job_text(name, schedule, prompt)
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
@@ -186,7 +188,7 @@ async def update_job(
 ) -> dict[str, Any] | None:
     if "kind" in updates:
         updates["kind"] = _validate_kind(updates["kind"], scope)
-    _validate_job_text(updates.get("name"), updates.get("schedule"))
+    _validate_job_text(updates.get("name"), updates.get("schedule"), updates.get("prompt"))
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:

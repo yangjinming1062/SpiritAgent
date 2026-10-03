@@ -6,7 +6,7 @@ from math import ceil
 from components import get_logger
 from PIL import Image
 
-from .ffmpeg import VideoProcessError
+from .ffmpeg import ActionMaterialRejectedError
 from .matting import ForegroundMatte, require_matting_model
 
 logger = get_logger(__name__)
@@ -19,7 +19,7 @@ def prepare_action_frame(data: bytes) -> bytes:
         image = source.convert("RGBA")
     alpha_min, alpha_max = image.getchannel("A").getextrema()
     if alpha_max < 128:
-        raise VideoProcessError("动作姿态图缺少可见角色")
+        raise ActionMaterialRejectedError("动作姿态图缺少可见角色")
     method = "native_alpha"
     if alpha_min > 8:
         image = ForegroundMatte(require_matting_model()).apply(image)
@@ -27,10 +27,10 @@ def prepare_action_frame(data: bytes) -> bytes:
     alpha = image.getchannel("A")
     alpha_min, alpha_max = alpha.getextrema()
     if alpha_min > 8:
-        raise VideoProcessError("动作姿态图背景未去干净，请重新生成此动作")
+        raise ActionMaterialRejectedError("动作姿态图背景未去干净，请重新生成此动作")
     bounds = alpha.point(lambda value: 255 if value > 8 else 0).getbbox()
     if bounds is None or alpha_max < 128:
-        raise VideoProcessError("动作姿态图缺少可见角色")
+        raise ActionMaterialRejectedError("动作姿态图缺少可见角色")
     width, height = image.size
     margin_x, margin_y = ceil(width * ACTION_FRAME_MARGIN), ceil(height * ACTION_FRAME_MARGIN)
     left, top, right, bottom = bounds

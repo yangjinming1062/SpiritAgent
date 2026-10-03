@@ -1,4 +1,10 @@
-from .archive import BackupArchiveError, BackupArchiveTooLargeError, extract_backup_archive, write_backup_archive
+from .archive import (
+    BackupArchiveError,
+    BackupArchiveTooLargeError,
+    BackupExportFileChangedError,
+    extract_backup_archive,
+    write_backup_archive,
+)
 from .file_packing import collect_files_for_export
 from .manifest import load_manifest
 from .restoration import BackupRestoreResult, load_backup_rows, restore_backup_rows
@@ -14,6 +20,7 @@ __all__ = [
     "BACKUP_SECTION_IDS",
     "BackupArchiveError",
     "BackupArchiveTooLargeError",
+    "BackupExportFileChangedError",
     "BackupImportMode",
     "BackupRestoreResult",
     "TABLES",

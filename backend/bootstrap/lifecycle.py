@@ -32,6 +32,7 @@ from services.application.generation import (
     drain_scene_jobs,
     drain_video_jobs,
     drain_video_pack_generation,
+    recover_outfit_descriptions,
     resume_character_extractions,
     resume_initial_appearance,
     resume_pending_video_jobs,
@@ -42,10 +43,13 @@ from services.application.posts import (
     drain_autonomous_posts,
     drain_publications,
     drain_replies,
+    gc_autonomous_publications,
     resume_publications,
     resume_replies,
 )
+from services.domains.actions import cleanup_retired_action_assets
 from services.domains.companion import drain_first_greeting, drain_persona_background
+from services.domains.update_releases import recover_update_storage
 from services.infrastructure.event_store import drain_event_tasks, start_event_loop, stop_event_loop
 from services.infrastructure.llm import aclose_all
 from services.infrastructure.web import aclose as aclose_web_providers
@@ -112,6 +116,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             await load_and_apply_system_settings(session)
 
         attachment_root().mkdir(parents=True, exist_ok=True)
+        await recover_update_storage()
+        await recover_outfit_descriptions()
+        await cleanup_retired_action_assets()
+        await gc_autonomous_publications()
 
         start_scheduler()
         # LISTEN 专线：event_store 内部直连 + 断线 5s 重连；asyncpg 只接受纯 postgresql:// URL。
@@ -134,6 +142,14 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
                     await asyncio.to_thread(cleanup_expired)
                 except Exception:
                     logger.warning("Temp file cleanup failed", exc_info=True)
+                try:
+                    await cleanup_retired_action_assets()
+                except Exception:
+                    logger.warning("Action asset cleanup failed", exc_info=True)
+                try:
+                    await gc_autonomous_publications()
+                except Exception:
+                    logger.warning("Publication cleanup failed", exc_info=True)
 
         cleanup_task = asyncio.create_task(_cleanup_loop(), name="backend.temp-file-cleanup")
         yield

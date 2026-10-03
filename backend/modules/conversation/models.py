@@ -123,6 +123,9 @@ class Message(ModelBase):
     summary_through_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # IM 入站先落库再确认；queued=True 表示已接收未被回合消费，消费时整批清除；接收顺序即 id 序。
     queued: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
+    # IM 接收来源独立于去重哈希；撤权后未消费输入保留为丢弃历史，不再进入回合上下文。
+    channel_peer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    discarded: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
     # IM 消费批的上下文排序位置；排队输入在上一轮工具与回复之后进入上下文。
     context_order: Mapped[int | None] = mapped_column(nullable=True)
     # 渠道重投去重标识（绑定 + 对端 + 消息标识的 sha256）。

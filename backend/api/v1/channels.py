@@ -12,7 +12,14 @@ from modules.channels import (
     PeerInfo,
     PeerListResponse,
 )
-from services.adapters.channels import MANAGER, channels_info, try_resolve, update_binding_status
+from services.adapters.channels import (
+    MANAGER,
+    channels_info,
+    peer_access_update,
+    revoke_peer_messages,
+    try_resolve,
+    update_binding_status,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,12 +125,20 @@ async def act_on_peer(
 ) -> PeerListResponse:
     """对端审批：approve/block 改状态，delete 删行；返回操作后的全量列表便于前端就地刷新。"""
     binding = await get_or_404(db, ChannelBinding, detail="Binding not found", user_id=user.id, channel=channel)
-    peer = await get_or_404(db, ChannelPeer, detail="Peer not found", binding_id=binding.id, peer_id=peer_id)
-    if body.action == "delete":
-        await db.delete(peer)
-    else:
-        peer.status = "allowed" if body.action == "approve" else "blocked"
     await db.commit()
+    async with peer_access_update(binding.id):
+        peer = await get_or_404(db, ChannelPeer, detail="Peer not found", binding_id=binding.id, peer_id=peer_id)
+        if body.action == "delete":
+            await db.delete(peer)
+        else:
+            status = "allowed" if body.action == "approve" else "blocked"
+            if peer.status != status:
+                peer.authorization_revision += 1
+                peer.status = status
+        if body.action == "approve":
+            await db.commit()
+        else:
+            await revoke_peer_messages(db, binding.id, peer_id)
     return await _list_peers(db, binding.id)
 
 

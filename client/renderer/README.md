@@ -128,7 +128,7 @@ Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/deskt
 - 撤回把锚点草稿（正文与图片，契约见 [PROTOCOL](../../docs/PROTOCOL.md#会话种类与历史修改)）退回输入框；待发送附件是单槽，多张图片只回填第一张，其余未恢复的提示只在发起撤回的窗口显示。
 - 会话参数显示后端生效值，只接受当前会话最新保存结果；恢复默认删除覆盖。
 - 系统预设与固定预设会话（`kind=special`）的显示名、预设说明按界面语言取字典 `presets`，经 [preset-labels.ts](modules/conversation/preset-labels.ts) 显示；后端目录只有中文，中文字典须与其同步，未知预设回落目录值。
-- 会话只读状态直接消费历史水合的 `info.kind`；`system_preset_id` 标识陪伴预设归属，唯一陪伴主会话仍由服务端 `session.get_main` 确定。
+- 会话只读状态消费历史水合的 `info.kind` 与 `info.is_automation`，IM 和任务会话均只读；`system_preset_id` 标识陪伴预设归属，唯一陪伴主会话仍由服务端 `session.get_main` 确定。
 - 斜杠命令元数据权威在服务端注册表，本地副本只服务自动补全与确认弹窗，dispatch 仍以服务端为准。
 - `$companionSessionId` 在 [conversation-state](modules/conversation/conversation-state.ts)统一持有并按账户持久化；主会话加载、列表与 `companion.message` 校准同一份归属。
 - 生活空间打开对话或重连时加载陪伴历史；持久化会话 ID 不代表本窗口已水合消息列表。

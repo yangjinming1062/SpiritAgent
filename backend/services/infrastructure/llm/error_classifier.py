@@ -71,6 +71,10 @@ class LLMRuntimeError(Exception):
         super().__init__(classified.message or classified.reason.value)
 
 
+class LlmCallBlockedError(RuntimeError):
+    """业务守卫阻止新模型调用；不按供应商故障回退或降级。"""
+
+
 _BILLING_PATTERNS = (
     "insufficient credits",
     "credit balance",

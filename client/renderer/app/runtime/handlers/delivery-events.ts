@@ -142,7 +142,17 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
     }
 
     case 'video_gen.failed': {
-      const p = decodePayload<{ error?: string }>(event.payload)
+      const p = decodePayload<{
+        error?: string
+        session_id?: string
+        status_message_id?: number
+        status_text?: string
+      }>(event.payload)
+
+      if (p.session_id && p.status_text && p.status_message_id) {
+        findConversationRuntime(p.session_id)?.pushStatusPill('status_media_failed', p.status_text, p.status_message_id)
+        rememberPendingMessage(p.session_id, p.status_text)
+      }
 
       if (p.error && !$screenLocked.get()) {
         notify({ kind: 'warning', message: p.error })
@@ -160,14 +170,19 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       const text =
         p.status === 'connected'
           ? sys.channelConnected(label)
-          : p.status === 'login_required'
-            ? sys.channelLoginRequired(label)
-            : p.status === 'error'
-              ? sys.channelError(label, p.error)
-              : null
+          : p.status === 'reconnecting'
+            ? sys.channelReconnecting(label)
+            : p.status === 'login_required'
+              ? sys.channelLoginRequired(label)
+              : p.status === 'error'
+                ? sys.channelError(label, p.error)
+                : null
 
       if (text && !$screenLocked.get()) {
-        notify({ kind: p.status === 'error' ? 'error' : 'info', message: text })
+        notify({
+          kind: p.status === 'error' ? 'error' : p.status === 'reconnecting' ? 'warning' : 'info',
+          message: text
+        })
       }
 
       break

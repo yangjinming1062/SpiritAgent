@@ -160,6 +160,8 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=64), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
+        sa.Column("description_status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("description_error", sa.Text(), nullable=True),
         sa.Column("fullbody_url", sa.String(length=2048), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'draft'"), nullable=False),
         sa.Column("source_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
@@ -236,6 +238,7 @@ def upgrade() -> None:
         sa.Column("pose_path", sa.String(length=2048), nullable=True),
         sa.Column("script_json", sa.Text(), nullable=True),
         sa.Column("result_json", sa.Text(), nullable=True),
+        sa.Column("accepted_asset_json", sa.Text(), nullable=True),
         sa.Column("source_design_json", sa.Text(), nullable=True),  # 提案设计规格冻结。
         sa.Column("video_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("video_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
@@ -268,6 +271,34 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_actions_user_id"), "companion_actions", ["user_id"], unique=False)
     op.create_index(op.f("ix_companion_actions_pack_id"), "companion_actions", ["pack_id"], unique=False)
     op.create_index(op.f("ix_companion_actions_status"), "companion_actions", ["status"], unique=False)
+    op.create_table(
+        "action_creations",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("source", sa.String(length=16), nullable=False),
+        sa.Column("creation_key", sa.String(length=96), nullable=False),
+        sa.Column("consumed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("action_id", sa.Integer(), nullable=True),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["action_id"], ["companion_actions.id"], ondelete="SET NULL"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "creation_key", name="uq_action_creations_user_key"),
+    )
+    op.create_index(op.f("ix_action_creations_user_id"), "action_creations", ["user_id"], unique=False)
+    op.create_index(op.f("ix_action_creations_consumed_at"), "action_creations", ["consumed_at"], unique=False)
+    op.create_table(
+        "action_asset_retirements",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("path", sa.String(length=2048), nullable=False),
+        sa.Column("retired_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "path", name="uq_action_asset_retirements_user_path"),
+    )
+    op.create_index(op.f("ix_action_asset_retirements_user_id"), "action_asset_retirements", ["user_id"], unique=False)
     op.create_table(
         "action_proposals",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -843,6 +874,8 @@ def upgrade() -> None:
         sa.Column("summary_through_message_id", sa.Integer(), nullable=True),
         # IM 入站先落库再确认；context_order 表达 queued 批排序，dedup_key 做渠道重投去重。
         sa.Column("queued", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("channel_peer_id", sa.String(length=128), nullable=True),
+        sa.Column("discarded", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("dedup_key", sa.String(length=64), nullable=True),
         sa.Column("context_order", sa.Integer(), nullable=True),
         sa.Column("reply_json", sa.Text(), nullable=True),
@@ -903,6 +936,7 @@ def upgrade() -> None:
         sa.Column("peer_id", sa.String(length=128), nullable=False),
         sa.Column("peer_name", sa.String(length=128), server_default=sa.text("''"), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("authorization_revision", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("last_message_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -1084,6 +1118,8 @@ def downgrade() -> None:
         "login_records",
         "cron_jobs",
         "action_playbacks",
+        "action_asset_retirements",
+        "action_creations",
         "action_proposals",
         "companion_actions",
         "companion_action_packs",

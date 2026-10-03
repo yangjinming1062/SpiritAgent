@@ -7,6 +7,7 @@ from .history import build_session_messages, client_media_entries
 from .main_conversation import (
     CLEARED_STATUS_SUBTYPE,
     IM_KIND,
+    MEDIA_FAILURE_SUBTYPE,
     MEDIA_STATUS_SUBTYPE,
     SPECIAL_KIND,
     STANDARD_KIND,
@@ -56,6 +57,7 @@ __all__ = [
     "COMPANION_PRESET_ID",
     "IM_KIND",
     "MEDIA_STATUS_SUBTYPE",
+    "MEDIA_FAILURE_SUBTYPE",
     "SPECIAL_KIND",
     "STANDARD_KIND",
     "SYSTEM_PRESET_CATALOG",

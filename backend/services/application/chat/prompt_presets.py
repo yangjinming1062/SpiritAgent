@@ -1,7 +1,14 @@
 """内置系统提示词预设体，按会话的 ``system_preset_id`` 选取；预设体里的 ``{{BLOCK}}`` 由 ``prompt_blocks`` 渲染。"""
 
 from components import resolve_prompt_text
-from prompts.chat import PRESET_BODY_AUTOMATION, PRESET_BODY_COMPANION, PRESET_BODY_WORK, PRESET_HEADER_TEXTS
+from prompts.chat import (
+    DELEGATED_GUIDANCES,
+    PRESET_BODY_AUTOMATION,
+    PRESET_BODY_COMPANION,
+    PRESET_BODY_DELEGATED,
+    PRESET_BODY_WORK,
+    PRESET_HEADER_TEXTS,
+)
 
 from services.domains.conversation import COMPANION_PRESET_ID, resolve_preset_meta
 
@@ -35,9 +42,13 @@ AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
 )
 
 
-def preset_body(preset_id: str, language: str) -> str:
+def preset_body(preset_id: str, language: str, *, delegated: bool = False) -> str:
     """陪伴与自动化各用独立预设体；职业预设在共享工作预设体前加各自的双语头部。"""
     # 自动化会话以字面量 "automation" 识别：is_automation 与 system_preset_id == "automation" 由数据库约束保证等价。
+    if delegated:
+        if preset_id != "automation":
+            resolve_preset_meta(preset_id)
+        return resolve_prompt_text(DELEGATED_GUIDANCES, language) + "\n\n" + PRESET_BODY_DELEGATED
     if preset_id == "automation":
         return PRESET_BODY_AUTOMATION
     if preset_id == COMPANION_PRESET_ID:

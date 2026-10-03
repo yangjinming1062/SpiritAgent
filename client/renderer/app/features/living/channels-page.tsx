@@ -244,12 +244,13 @@ export function ChannelsPage(): React.JSX.Element {
   const weixinStatus = weixinBinding?.status ?? 'disabled'
   const weixinStatusLabel = t.statusLabels[weixinStatus] ?? weixinStatus
   const connected = weixinStatus === 'connected'
+  const reconnecting = weixinStatus === 'reconnecting'
   // 已连接下再次扫码（重登录）也走同一面板：绑定状态要等确认后才翻转，不能拿 connected 判断。
   const loginFlowActive = login !== null && login.state !== 'confirmed'
 
   const statusPill = loginFlowActive
     ? t.statusLabels.login_pending
-    : connected || weixinStatus === 'login_required'
+    : connected || reconnecting || weixinStatus === 'login_required'
       ? weixinStatusLabel
       : null
 
@@ -263,7 +264,7 @@ export function ChannelsPage(): React.JSX.Element {
         <SettingsSubsection intro={t.weixin.intro} title={t.weixin.title}>
           <ListRow
             action={
-              connected ? (
+              connected || reconnecting ? (
                 <button className={BTN_SUBTLE} onClick={() => setConfirmLogout(true)} type="button">
                   {t.weixin.logoutAction}
                 </button>
@@ -274,7 +275,13 @@ export function ChannelsPage(): React.JSX.Element {
                 </button>
               )
             }
-            description={connected ? t.weixin.connectedAs(weixinBinding?.account_name ?? '') : t.weixin.intro}
+            description={
+              reconnecting
+                ? t.weixin.reconnecting
+                : connected
+                  ? t.weixin.connectedAs(weixinBinding?.account_name ?? '')
+                  : t.weixin.intro
+            }
             title={
               <span className="flex items-center gap-2">
                 <IconBrandWechat className="size-4 text-emerald-400" />

@@ -1506,7 +1506,7 @@ const BACKUP_SECTION_LABELS = Object.freeze({
 // 与 backup/serializers.py 的 BACKUP_SECTIONS 对齐；页面只负责勾选，表映射以服务端为准。
 const BACKUP_SCOPE_HINTS = Object.freeze({
     all: '恢复备份中的全部数据类别。',
-    identity: '恢复人设与音色、头像与全身形象（含确认状态）、角色卡。写入空用户后无需再走引导。',
+    identity: '恢复人设、头像与全身参考（含确认状态）、角色卡。音色需勾选设置，动作包与场景需分别恢复；缺少引导资料时继续完成对应步骤，不自动生成素材。',
     custom: '只恢复勾选的类别，不动目标已有但未勾选的数据。',
 });
 const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });
@@ -1803,6 +1803,8 @@ function renderAiCards(editorName) {
                 <p class="hint" style="margin:0 0 1rem">${hint}</p>
                 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,310px),1fr));gap:1rem">
                     ${cards.map((card, index) => {
+                        const localImage = !library && group === 'image_gen' && card.provider === 'local';
+                        if (localImage) Object.assign(card, { api_key: '', api_key_set: false, clear_api_key: true, model_name: '' });
                         const source = library ? null : aiSource(editor, card.provider);
                         const inherited = source ? '继承 ' + aiProviderLabel(source.provider) : '独立配置';
                         const keySet = card.api_key || card.api_key_set;
@@ -1816,12 +1818,13 @@ function renderAiCards(editorName) {
                                 <button class="btn btn--ghost" data-ai-action="remove" aria-label="删除卡片">删除</button>
                             </div>
                             ${library ? '' : `<p class="hint">${esc(inherited)}</p>`}
-                            <div class="field"><label>API Key <span class="keybadge ${keySet || sourceKey ? 'on' : 'off'}">${keySet ? '已设置独立密钥' : sourceKey ? '继承供应商密钥' : '未设置'}</span>
+                            ${localImage ? '<p class="hint">本地生图使用固定 Qwen 工作流，不使用 API Key；模型文件由服务自动匹配。</p>' : `                            <div class="field"><label>API Key <span class="keybadge ${keySet || sourceKey ? 'on' : 'off'}">${keySet ? '已设置独立密钥' : sourceKey ? '继承供应商密钥' : '未设置'}</span>
                                 <input type="password" autocomplete="new-password" data-ai-field="api_key" value="${esc(card.api_key)}" placeholder="${keySet ? '留空保持已保存密钥' : source ? '留空继承供应商' : '填写 API Key'}"></label>
                                 <button class="btn btn--ghost" data-ai-action="clear-key">${source ? '清除覆盖，恢复继承' : '清除密钥'}</button>
                             </div>
+`}
                             <div class="field"><label>Base URL<input type="text" data-ai-field="base_url" value="${esc(card.base_url)}" placeholder="${esc(source?.base_url || '使用供应商官方地址')}"></label></div>
-                            ${library ? '' : `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(card.provider === 'local' && group === 'llm' ? '填写已部署的对话模型 ID' : '使用该能力的默认模型')}"></label></div>`}
+                            ${library || localImage ? '' : `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(card.provider === 'local' && group === 'llm' ? '填写已部署的对话模型 ID' : '使用该能力的默认模型')}"></label></div>`}
                         </article>`;
                     }).join('') || `<p class="hint" style="padding:1rem 0">${library ? '尚未添加供应商。可先建立共享信息卡片，再在能力中引用。' : editorName === 'user' ? '该用户继承系统的此项能力链。添加卡片后改为用户专属调用顺序。' : '该能力未配置。点击“添加卡片”选择共享供应商或填写独立配置。'}</p>`}
                 </div>

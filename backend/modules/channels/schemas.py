@@ -4,6 +4,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ChannelTurnSource(BaseModel):
+    """服务端捕获的对端及授权版本；异步结果不能随来信转投其他对端。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    binding_id: int = Field(gt=0)
+    peer_record_id: int = Field(gt=0)
+    peer_id: str = Field(min_length=1, max_length=128)
+    authorization_revision: int = Field(ge=0)
+
+
 class ChannelDeliveryMedia(BaseModel):
     type: Literal["image", "video"]
     url: str
@@ -12,6 +23,7 @@ class ChannelDeliveryMedia(BaseModel):
 class ChannelDeliveryPayload(BaseModel):
     text: str = ""
     media: list[ChannelDeliveryMedia] = Field(default_factory=list)
+    channel_source: ChannelTurnSource | None = None
 
 
 class BindingInfo(BaseModel):

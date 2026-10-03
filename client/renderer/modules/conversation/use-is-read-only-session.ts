@@ -3,7 +3,7 @@ import { useStore } from '@nanostores/react'
 import { useConversationView } from './conversation-view'
 
 export function useIsReadOnlySession(): boolean {
-  const { $chatSessionKind } = useConversationView().controller
+  const { $chatSessionReadOnly } = useConversationView().controller
 
-  return useStore($chatSessionKind) === 'im'
+  return useStore($chatSessionReadOnly)
 }

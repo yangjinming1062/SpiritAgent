@@ -21,7 +21,7 @@ import { useConversationView } from './conversation-view'
 import { ToolChipTimeline } from './tool-chip-timeline'
 
 // 居中的元信息行，而非聊天气泡。Slash 命令结果与历史清空标记（详见 PROTOCOL「Slash 命令」）走同一形态。
-const SYSTEM_PILL_SUBTYPES = new Set(['status_cleared', 'status_command_result'])
+const SYSTEM_PILL_SUBTYPES = new Set(['status_cleared', 'status_command_result', 'status_media_failed'])
 
 // 对话摘要与上下文压缩检查点：居中分界线式可折叠卡片；走独立分支而非 pill，视觉上要突出为有信息量的节点。
 const SUMMARY_CARD_SUBTYPES = new Set(['compress_summary', 'daily_summary'])
@@ -90,6 +90,7 @@ function MessageBubbleWithBody({
   const {
     $chatEditDraft,
     $chatSessionKind,
+    $chatSessionReadOnly,
     $lastEditableUserMessage,
     $retryableAssistantMessage,
     retryAssistantReply
@@ -99,6 +100,7 @@ function MessageBubbleWithBody({
   const subtype = message.subtype || ''
   const isUser = message.role === 'user'
   const sessionKind = useStore($chatSessionKind)
+  const readOnly = useStore($chatSessionReadOnly)
   const editing = useStore($chatEditDraft)
   const lastEditableMessage = useStore($lastEditableUserMessage)
   const retryableMessage = useStore($retryableAssistantMessage)
@@ -206,6 +208,7 @@ function MessageBubbleWithBody({
 
   // 必须有后端 Message.id 才能回传；回合进行中服务端会拒绝撤回，按钮一并藏掉。
   const canOperate =
+    !readOnly &&
     Boolean(message.backendMessageId) &&
     !editing &&
     !turnInFlight &&
@@ -361,6 +364,7 @@ function MessageBubbleWithBody({
               ))}
             </div>
           ) : null}
+          {isUser && body.discarded ? <span className="mt-1 text-[11px] text-faint">{dict.chat.discarded}</span> : null}
           {isUser && body.queued ? <span className="mt-1 text-[11px] text-faint">{dict.chat.queued}</span> : null}
         </div>
         {hasActions && (

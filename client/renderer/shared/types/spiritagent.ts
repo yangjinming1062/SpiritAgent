@@ -73,6 +73,7 @@ interface SessionMessageFields {
   reasoning?: null | string
   role: 'assistant' | 'system' | 'tool' | 'user'
   queued?: boolean
+  discarded?: boolean
   subtype?: string
   text?: unknown
   timestamp?: number
@@ -117,6 +118,7 @@ export interface SessionResumeResponse {
 }
 
 export interface SessionRuntimeInfo {
+  is_automation?: boolean
   /** 客户端 IM 守卫与语音入口的权威判定源，避免依赖尚未加载的会话列表。 */
   kind?: 'im' | 'special' | 'standard' | (string & {})
   model?: string

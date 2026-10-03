@@ -13,7 +13,7 @@ from modules.companion import CharacterCardSnapshot, CompanionAction, CompanionA
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions import build_catalog_manifest
+from services.domains.actions import AcceptedActionAsset, accepted_action_asset, build_catalog_manifest
 from services.infrastructure.assets import build_data_uri, compute_file_sha256, image_mime_for_extension
 
 from .file_packing import UrlRewriter
@@ -35,6 +35,10 @@ def restore_action_payload(
     # 已清理的中间文件不在复制清单中，仍须迁移引用，避免后续清理触及源用户目录。
     payload.update(UrlRewriter(asset_paths).rewrite(payload))
     if table == "companion_actions":
+        if payload.get("accepted_asset_json"):
+            payload["accepted_asset_json"] = AcceptedActionAsset.model_validate_json(
+                payload["accepted_asset_json"],
+            ).model_dump_json()
         if payload.get("pack_id") is None:
             raise ValueError("Action pack is missing from backup")
         if payload.get("status") in {"queued", "processing", "result_unknown", "review"}:
@@ -95,16 +99,20 @@ def _asset_file(path: str, user_id: int) -> Path:
     return target
 
 
-def _asset_references(value: Any) -> Iterator[str]:
+def _asset_references(value: Any, depth: int = 0) -> Iterator[str]:
+    if depth > 64:
+        raise ValueError("Action asset metadata is nested too deeply")
     if isinstance(value, str) and value.lstrip().startswith(("{", "[")):
         try:
             parsed = json.loads(value)
+        except RecursionError:
+            raise ValueError("Action asset metadata is nested too deeply") from None
         except json.JSONDecodeError:
             return
-        yield from _asset_references(parsed)
+        yield from _asset_references(parsed, depth + 1)
     elif isinstance(value, list):
         for item in value:
-            yield from _asset_references(item)
+            yield from _asset_references(item, depth + 1)
     elif isinstance(value, dict):
         for key, item in value.items():
             if key == "path" or key.endswith("_path"):
@@ -116,6 +124,7 @@ def _asset_references(value: Any) -> Iterator[str]:
                 yield from item
             elif key in {
                 "context_json",
+                "accepted_asset_json",
                 "reference_chain",
                 "generation_state_json",
                 "pose_generation_state_json",
@@ -124,7 +133,7 @@ def _asset_references(value: Any) -> Iterator[str]:
                 "clip",
             }:
                 # 只进入资产结构；反馈、脚本和人设中的 JSON 文本不代表文件引用。
-                yield from _asset_references(item)
+                yield from _asset_references(item, depth + 1)
 
 
 def validate_action_files(
@@ -155,14 +164,22 @@ def validate_action_files(
             # 中间候选可能已清理；仍须限制恢复后重试、删除等操作的路径归属。
             for path in _asset_references(row):
                 effective_file(path)
-            if table == "companion_actions" and row.get("status") == "succeeded":
-                video = effective_file(row.get("video_path"))
+            accepted: dict[str, Any] | None = None
+            if table == "companion_actions":
+                if row.get("accepted_asset_json"):
+                    accepted = AcceptedActionAsset.model_validate_json(row["accepted_asset_json"]).model_dump()
+                elif row.get("status") == "succeeded":
+                    accepted = row
+            if accepted is not None:
+                video = effective_file(accepted.get("video_path"))
                 if not video.is_file():
                     raise ValueError("Action video is missing from backup and destination")
-                if row.get("video_hash") and compute_file_sha256(video) != row["video_hash"]:
+                if accepted.get("video_hash") and compute_file_sha256(video) != accepted["video_hash"]:
                     raise ValueError("Action video does not match its content hash")
-                if row.get("hitmask_path") and not effective_file(row["hitmask_path"]).is_file():
+                if accepted.get("hitmask_path") and not effective_file(accepted["hitmask_path"]).is_file():
                     raise ValueError("Action hitmask is missing from backup and destination")
+                if accepted.get("cover_path") and not effective_file(accepted["cover_path"]).is_file():
+                    raise ValueError("Action cover is missing from backup and destination")
             if (
                 table == "companion_action_packs"
                 and row.get("status") == "ready"
@@ -210,12 +227,17 @@ async def restore_action_catalogs(
                         if job.reference_hash == original_hash:
                             job.reference_hash = pack.reference_hash
             for job in jobs:
-                if job.status == "succeeded":
-                    video = _asset_file(job.video_path, user_id)
-                    if job.video_hash and await asyncio.to_thread(compute_file_sha256, video) != job.video_hash:
+                if (accepted := accepted_action_asset(job)) is not None:
+                    video = _asset_file(accepted.video_path, user_id)
+                    if (
+                        accepted.video_hash
+                        and await asyncio.to_thread(compute_file_sha256, video) != accepted.video_hash
+                    ):
                         raise ValueError("Restored action video does not match its content hash")
-                    if job.hitmask_path:
-                        _asset_file(job.hitmask_path, user_id)
+                    if accepted.hitmask_path:
+                        _asset_file(accepted.hitmask_path, user_id)
+                    if accepted.cover_path:
+                        _asset_file(accepted.cover_path, user_id)
         if pack.status != "ready":
             continue
         manifest = await build_catalog_manifest(db, pack)

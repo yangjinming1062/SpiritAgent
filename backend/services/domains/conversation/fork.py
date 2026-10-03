@@ -31,7 +31,7 @@ async def fork_conversation_from_message(
 
     conversation_memory_scope(src, user_id)
 
-    if src.kind in (SPECIAL_KIND, IM_KIND):
+    if src.is_automation or src.kind in (SPECIAL_KIND, IM_KIND):
         raise ForkNotAllowedError(f"该类型会话不可派生 (kind={src.kind!r})")
 
     src_msg = (

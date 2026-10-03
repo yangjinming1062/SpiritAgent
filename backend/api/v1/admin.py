@@ -55,6 +55,7 @@ from services.domains.backup import (
     TABLES,
     BackupArchiveError,
     BackupArchiveTooLargeError,
+    BackupExportFileChangedError,
     BackupImportMode,
     BackupRestoreResult,
     collect_files_for_export,
@@ -272,6 +273,10 @@ async def export_user_backup(
             filename=filename,
             background=BackgroundTask(lambda p=tmp: Path(p).unlink(missing_ok=True)),
         )
+    except BackupExportFileChangedError as exc:
+        Path(tmp).unlink(missing_ok=True)
+        logger.info("backup export media changed; retry required", extra={"user_id": user_id})
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception:
         Path(tmp).unlink(missing_ok=True)
         raise

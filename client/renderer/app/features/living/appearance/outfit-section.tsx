@@ -12,6 +12,7 @@ import {
   hydrateWardrobe,
   type PickedImage,
   resolvePortraitUrl,
+  retryOutfitDescription,
   SelfSourceImageFlow,
   type SelfSourceReferenceImage,
   setOutfitPolicy,
@@ -70,19 +71,16 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
     void action().finally(() => setBusyId(null))
   }
 
-  // 失败着装重新确认（草稿立绘仍在）：转正为参考图就绪，不触发动作生成。
-  const retryConfirm = async (id: number): Promise<void> => {
+  const completeDescription = async (id: number): Promise<void> => {
     const epoch = currentClearEpoch()
 
     try {
-      // 与设计会话确认一致：始终带 JSON body（可空），避免无 body 的 POST 被 422。
-      await window.spiritagent.api({ path: `/api/companion/outfits/${id}/confirm`, method: 'POST', body: {} })
-      await hydrateWardrobe()
+      await retryOutfitDescription(id)
     } catch (err) {
-      log.warn('outfit', 'retry confirm failed', err)
+      log.warn('outfit', 'retry description failed', err)
 
       if (epoch === currentClearEpoch()) {
-        notifyError(err, t.confirmFailed)
+        notifyError(err, t.descriptionRetryFailed)
       }
     }
   }
@@ -224,7 +222,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
         >
           {outfits.map(outfit => {
             const statusLabel = outfit.active ? t.wearing : (t.statusLabels[outfit.status] ?? '')
-            const canEdit = outfit.status === 'draft' || outfit.status === 'failed'
+            const canEdit = outfit.status === 'draft'
             const canDelete = !outfit.active
 
             return (
@@ -291,16 +289,16 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
                       <Pencil className="size-3.5" />
                     </button>
                   )}
-                  {outfit.status === 'failed' && (
+                  {outfit.status === 'ready' && outfit.descriptionStatus === 'failed' && (
                     <button
-                      aria-label={t.actions.retry}
+                      aria-label={t.retryDescription}
                       className={CARD_ACTION_CLASS}
                       disabled={busyId === outfit.id}
-                      onClick={() => withBusy(outfit.id, () => retryConfirm(outfit.id))}
-                      title={t.actions.retry}
+                      onClick={() => withBusy(outfit.id, () => completeDescription(outfit.id))}
+                      title={outfit.descriptionError ?? t.retryDescription}
                       type="button"
                     >
-                      {t.actions.retry}
+                      {t.retryDescription}
                     </button>
                   )}
                   {canDelete && (

@@ -79,7 +79,7 @@ async def list_memories(
 
 
 async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> MemoryListItem | None:
-    """人工编辑作为明确事实重新生效。"""
+    """人工编辑重新生效；伙伴自身记录保留表达主体，不转为用户事实。"""
     content = (content or "").strip()
     if not content:
         raise ValueError("content must be non-empty")
@@ -105,9 +105,14 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
             row.embedding = None
         row.content = content
         row.content_version += 1
-        row.basis, row.status = "explicit", "active"
+        is_companion_record = row.basis == "system"
+        row.basis, row.status = "system" if is_companion_record else "explicit", "active"
         row.expires_at, row.reviewed_at = None, None
-        row.reason = "User edited this memory directly"
+        row.reason = (
+            "User corrected this companion record directly"
+            if is_companion_record
+            else "User edited this memory directly"
+        )
         row.source_kind, row.source_refs = "manual", {}
         row.updated_at = utc_now()
         await db.commit()

@@ -1,10 +1,9 @@
-import math
 import re
 from datetime import date, datetime
 from itertools import zip_longest
 from typing import Literal
 
-from components import session_scope, utc_now
+from components import session_scope
 from modules.memory import MEMORY_EMBEDDING_DIM, Memory
 from pydantic import BaseModel
 from sqlalchemy import ColumnElement, case, literal, or_, select
@@ -20,10 +19,6 @@ from .memory_store import active_memory_filter, scope_filter
 
 # RRF 平滑常数（TREC/IR 标准取值）
 RRF_K: int = 60
-# 艾宾浩斯遗忘衰减系数（半衰期约 14 天）
-TIME_DECAY_LAMBDA: float = 0.05
-# 衰减保底值，避免长期记忆被归零
-TIME_DECAY_FLOOR: float = 0.30
 
 # 单查询可下推到 LIKE 的最大关键词数；各汉字分句轮流取词，长句不独占配额。
 SPARSE_QUERY_TERM_MAX: int = 16
@@ -47,11 +42,6 @@ class MemoryRecallResult(BaseModel):
     expires_at: datetime | None
     score: float
     updated_at: datetime
-
-
-def _compute_time_decay(updated_at: datetime, now: datetime) -> float:
-    delta_days = max(0.0, (now - updated_at).total_seconds() / 86400.0)
-    return TIME_DECAY_FLOOR + (1.0 - TIME_DECAY_FLOOR) * math.exp(-TIME_DECAY_LAMBDA * delta_days)
 
 
 def _cjk_ngrams(run: str) -> list[str]:
@@ -169,7 +159,7 @@ async def retrieve_hybrid_memories(
     limit: int = 10,
     diary_date: date | None = None,
 ) -> list[MemoryRecallResult]:
-    """稠密与稀疏检索的混合搜索，用 RRF 融合排名并叠加艾宾浩斯时间衰减。"""
+    """稠密与稀疏检索用 RRF 融合；相关性相同时再按重要性、更新时间排序。"""
     q_str = (query or "").strip()
     if diary_date is not None:
         if scope.system_preset_id != "companion":
@@ -200,7 +190,6 @@ async def retrieve_hybrid_memories(
     dense_ranks = {r.id: rank + 1 for rank, r in enumerate(dense_candidates)}
     sparse_ranks = {r.id: rank + 1 for rank, r in enumerate(sparse_candidates)}
 
-    now = utc_now()
     results = []
 
     for mem_id, mem in all_memories.items():
@@ -210,13 +199,9 @@ async def retrieve_hybrid_memories(
         if mem_id in sparse_ranks:
             rrf_score += 1.0 / (RRF_K + sparse_ranks[mem_id])
 
-        decay = _compute_time_decay(mem.updated_at, now)
-        importance = max(0.1, mem.importance or 1.0)
-        final_score = rrf_score * decay * importance
+        results.append(_memory_result(mem, rrf_score))
 
-        results.append(_memory_result(mem, final_score))
-
-    results.sort(key=lambda result: result.score, reverse=True)
+    results.sort(key=lambda result: (result.score, result.importance, result.updated_at, result.id), reverse=True)
     return results[:limit]
 
 

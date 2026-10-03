@@ -525,9 +525,10 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
                 else:
                     recover = log.target_date
             target = recover or local_now.date() - timedelta(days=1)
-            if (
-                recover is None
-                and not SETTINGS.nightly_window_start_hour <= local_now.hour < SETTINGS.nightly_window_end_hour
+            if recover is None and not _in_nightly_window(
+                local_now.hour,
+                SETTINGS.nightly_window_start_hour,
+                SETTINGS.nightly_window_end_hour,
             ):
                 continue
             if _LAST_NIGHTLY_RUN.get(scope) == target:
@@ -536,6 +537,12 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
         await db.commit()
     for scope, target in eligible:
         _spawn_scope_task("nightly_activity", scope, partial(_run_nightly_activity, scope, target))
+
+
+def _in_nightly_window(hour: int, start: int, end: int) -> bool:
+    if start < end:
+        return start <= hour < end
+    return start != end and (hour >= start or hour < end)
 
 
 async def _run_nightly_activity(scope: MemoryScope, target: date) -> None:

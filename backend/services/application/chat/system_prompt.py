@@ -17,8 +17,8 @@ _VOLATILE_HEADER_RE = re.compile(
 )
 
 
-def build_system_prompt(config: AgentPromptConfig, *, preset_id: str) -> str:
-    return render_preset_body(preset_body(preset_id, config.language), config)
+def build_system_prompt(config: AgentPromptConfig, *, preset_id: str, delegated: bool = False) -> str:
+    return render_preset_body(preset_body(preset_id, config.language, delegated=delegated), config)
 
 
 async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, language: str) -> str:

@@ -15,6 +15,7 @@ from components import (
 )
 from modules.conversation import Conversation, MediaBubble, Message
 from modules.system import ChatAttachment, ChatMessageRequest
+from modules.ws import emit_ws_event
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +50,39 @@ logger = get_logger(__name__)
 
 # track_task=None 路径的兜底：模块级强引用集合，防止 CPython GC 在 await 期间销毁进行中的 task。
 _BG = TaskBag("chat.persistence")
+_PERSISTENCE_WRITE_TIMEOUT_SECONDS = 30.0
+
+
+def _start_persistence_write(coro: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
+    """写入由回合持有；连接池等待、提交和关闭均纳入有限数据库预算。"""
+
+    async def bounded_write() -> None:
+        async with asyncio.timeout(_PERSISTENCE_WRITE_TIMEOUT_SECONDS):
+            await coro
+
+    return asyncio.create_task(bounded_write(), name=name)
+
+
+async def _wait_persistence_write(task: asyncio.Task[None]) -> None:
+    """取消只终止回合，先等已交接写入真实收尾，避免解锁后仍有迟到写入。"""
+    owner = asyncio.current_task()
+    cancelled = owner is not None and owner.cancelling() > 0
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            break
+    try:
+        task.result()
+    except Exception as exc:
+        if cancelled:
+            logger.warning("Interrupted turn persistence failed", extra={"task": task.get_name()}, exc_info=exc)
+            raise asyncio.CancelledError from exc
+        raise
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 def _on_bg_error(task: asyncio.Task) -> None:
@@ -115,6 +149,7 @@ async def persist_queued_inbound_message(
     text: str,
     attachments: list[ChatAttachment] | None = None,
     dedup_key: str | None = None,
+    channel_peer_id: str | None = None,
 ) -> Message | None:
     """IM 入站消息先持久化再确认接收：queued 落为会话行。接收顺序即行 id 序，回合消费时整批清标记；dedup_key 命中已有行时返回 None，调用方不再入队。"""
     db_content, db_content_type = _build_persisted_content(text, attachments)
@@ -125,6 +160,7 @@ async def persist_queued_inbound_message(
         content_type=db_content_type,
         queued=True,
         dedup_key=dedup_key,
+        channel_peer_id=channel_peer_id,
     )
     row = (
         await db.execute(stmt.on_conflict_do_nothing(index_elements=[Message.dedup_key]).returning(Message))
@@ -142,7 +178,13 @@ async def _persist_user_message(db: AsyncSession, conv_id: int, message: ChatMes
     return row.id
 
 
-async def persist_compression_checkpoint(db: AsyncSession, conv_id: int, info: CompressionInfo) -> Message:
+async def persist_compression_checkpoint(
+    db: AsyncSession,
+    conv_id: int,
+    info: CompressionInfo,
+    *,
+    notify_user_id: int | None = None,
+) -> Message:
     """写入压缩检查点，下一轮历史从其覆盖边界之后读取；原消息保留，边界前无人引用的视频随之清理。"""
     checkpoint = Message(
         conversation_id=conv_id,
@@ -154,6 +196,19 @@ async def persist_compression_checkpoint(db: AsyncSession, conv_id: int, info: C
         completion_tokens=info.completion_tokens,
     )
     db.add(checkpoint)
+    if notify_user_id is not None:
+        await db.flush()
+        emit_ws_event(
+            db,
+            user_id=notify_user_id,
+            event_type="compress.completed",
+            payload={
+                "session_id": str(conv_id),
+                "subtype": "compress_summary",
+                "text": checkpoint.content,
+                "message_id": checkpoint.id,
+            },
+        )
     await db.commit()
     if info.prune_before_message_id:
         await prune_videos_in_range(db, conv_id, hi=info.prune_before_message_id, preserve_queued=True)
@@ -343,20 +398,25 @@ async def _persist_assistant_with_tool_calls_and_results(
     context["input"].extend(tool_calls_list)
     progress = _BatchProgress()
     # 调用行提交不随取消中断：取消落在提交或关闭会话的窗口时，仍等它落库后补记结果。
-    call_row = asyncio.create_task(_persist_tool_call_row(conv.id, result)) if persist else None
+    call_row = (
+        _start_persistence_write(_persist_tool_call_row(conv.id, result), "chat.persist-tool-call") if persist else None
+    )
     try:
         if call_row is not None:
-            await asyncio.shield(call_row)
+            await _wait_persistence_write(call_row)
         # 工具批处理必须在 DB 事务外执行，避免 runner / LLM 调用期间持有连接。
         tool_results = await _run_tool_batch(tool_calls_list, dispatch_ctx, progress)
     except asyncio.CancelledError:
         # 每个 tool_call 都要有对应结果行，否则下一轮上下文会出现孤立 tool_calls；已完成的照实保存，否则用户说“继续”时模型会重做已生效的副作用。
         if call_row is not None:
-            await asyncio.shield(
-                _persist_interrupted_tool_results(
-                    call_row,
-                    conv.id,
-                    interrupted_tool_results(tool_calls_list, progress),
+            await _wait_persistence_write(
+                _start_persistence_write(
+                    _persist_interrupted_tool_results(
+                        call_row,
+                        conv.id,
+                        interrupted_tool_results(tool_calls_list, progress),
+                    ),
+                    "chat.persist-interrupted-tools",
                 ),
             )
         raise
@@ -373,6 +433,9 @@ async def _persist_assistant_with_tool_calls_and_results(
                     schemas_by_name[name] = schema
     if persist:
         # 工具已经执行，结果保存同样不随取消中断。
-        await asyncio.shield(
-            _persist_tool_results(conv.id, [(res["tool_call_id"], res.get("content", "")) for res in tool_results]),
+        await _wait_persistence_write(
+            _start_persistence_write(
+                _persist_tool_results(conv.id, [(res["tool_call_id"], res.get("content", "")) for res in tool_results]),
+                "chat.persist-tool-results",
+            ),
         )

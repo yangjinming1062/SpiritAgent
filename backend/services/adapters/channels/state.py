@@ -1,6 +1,38 @@
-from components import session_scope
+import asyncio
+from dataclasses import dataclass
+
+from components import SETTINGS, session_scope
 from modules.channels import ChannelBinding
 from modules.ws import emit_ws_event
+
+
+@dataclass
+class BindingHealth:
+    """连续请求失败越过次数和持续时间后显示重连；正常长轮询超时不参与计数。"""
+
+    binding_id: int
+    failures: int = 0
+    first_failure_at: float | None = None
+
+    async def failed(self) -> None:
+        now = asyncio.get_running_loop().time()
+        if self.first_failure_at is None:
+            self.first_failure_at = now
+        self.failures += 1
+        if (
+            self.failures >= SETTINGS.channels_failure_threshold
+            and now - self.first_failure_at >= SETTINGS.channels_failure_grace_seconds
+        ):
+            await update_binding_status(self.binding_id, "reconnecting")
+
+    async def connected(self) -> None:
+        self.failures = 0
+        self.first_failure_at = None
+        await update_binding_status(self.binding_id, "connected")
+
+    def reset(self) -> None:
+        self.failures = 0
+        self.first_failure_at = None
 
 
 async def update_binding_status(

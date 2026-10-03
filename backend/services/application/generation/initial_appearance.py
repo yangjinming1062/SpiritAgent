@@ -29,7 +29,7 @@ async def start_initial_video(user_id: int) -> None:
         if initial is None:
             return
         outfit_id = initial.id
-        if not initial.description:
+        if not initial.description and initial.description_status == "pending":
             schedule_outfit_description(user_id, outfit_id)
         if initial.initial_video_started:
             return
