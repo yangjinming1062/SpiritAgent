@@ -421,7 +421,8 @@ def main() -> int:
 
     if args.save:
         args.save.parent.mkdir(parents=True, exist_ok=True)
-        args.save.write_text(output_str, encoding="utf-8")
+        # newline="\n"：Windows 上 write_text 默认写出 CRLF。
+        args.save.write_text(output_str, encoding="utf-8", newline="\n")
         print(f"\n[Saved output to {args.save}]", file=sys.stderr)
 
     return 0

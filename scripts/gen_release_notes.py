@@ -245,7 +245,8 @@ def main() -> int:
         notes = fallback_notes(commits)
 
     if args.output:
-        Path(args.output).write_text(notes, encoding="utf-8")
+        # newline="\n"：Windows 上 write_text 默认写出 CRLF。
+        Path(args.output).write_text(notes, encoding="utf-8", newline="\n")
         print(f"==> Release notes written to {args.output}")
     else:
         print(notes)

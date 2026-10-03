@@ -77,7 +77,8 @@ def clean_future_annotations(path: Path) -> bool:
 
     new_content = "".join(lines)
     if new_content != content:
-        path.write_text(new_content, encoding="utf-8")
+        # newline="\n"：Windows 上 write_text 默认写出 CRLF，会产生整文件 diff。
+        path.write_text(new_content, encoding="utf-8", newline="\n")
         return True
     return False
 

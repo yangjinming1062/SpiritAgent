@@ -1,5 +1,46 @@
-# Pin shell-script line endings to LF so Windows checkout (with
-# `core.autocrlf=true`) doesn't CRLF-convert the husky hooks and break
-# the `#!/usr/bin/env sh` shebang.
-.husky/*            text eol=lf
-*.sh                text eol=lf
+# 统一换行符：文本文件仓库与检出均为 LF。仅靠 core.autocrlf 时 Windows 会检出
+# CRLF，与工具写回的 LF 不一致，未修改的文件也会被判为整文件改动。
+* text=auto eol=lf
+
+# shell 脚本必须 LF，否则 shebang 解析失败。
+*.sh      text eol=lf
+
+# 批处理同样统一 LF：LF 文件里 goto 与标签解析失败，新增 .cmd / .bat
+# 不要使用 goto / 标签（现有 install.cmd 未用到）。
+*.cmd     text eol=lf
+*.bat     text eol=lf
+
+# 二进制资源，防止被 text=auto 转换内容。
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.bmp     binary
+*.ico     binary
+*.icns    binary
+*.tiff    binary
+*.mp3     binary
+*.wav     binary
+*.ogg     binary
+*.mp4     binary
+*.webm    binary
+*.mov     binary
+*.pdf     binary
+*.zip     binary
+*.gz      binary
+*.tgz     binary
+*.7z      binary
+*.wasm    binary
+*.ttf     binary
+*.otf     binary
+*.woff    binary
+*.woff2   binary
+*.onnx    binary
+*.tflite  binary
+*.exe     binary
+*.dll     binary
+*.so      binary
+*.dylib   binary
+*.sqlite  binary
+*.db      binary

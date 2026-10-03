@@ -32,3 +32,5 @@ ignore = [
 # skip-magic-trailing-comma = false 显式写出来，避免未来升级时默认值变更静默改变行为。
 # （line-length 在顶层已统一设置。）
 skip-magic-trailing-comma = false
+# 行尾钉死 LF；默认 "auto" 沿用文件现有行尾，Windows 上会保留 CRLF。
+line-ending = "lf"

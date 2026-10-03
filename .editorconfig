@@ -1,0 +1,9 @@
+# 编辑器侧换行符兜底（权威约定在 .gitattributes），避免写回 CRLF
+# 再被钩子改回 LF，产生整文件 diff。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
