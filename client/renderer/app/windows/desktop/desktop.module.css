@@ -102,13 +102,14 @@
   white-space: nowrap;
 }
 .connection {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ui-text-muted);
+  display: inline-flex;
+  color: var(--ui-text-muted);
 }
-.connection[data-connected='true'] {
-  background: #66a883;
+.connection[data-tone='online'] {
+  color: #66a883;
+}
+.connection[data-tone='offline'] {
+  color: var(--ui-danger-fg);
 }
 .topIcon {
   border: 0;

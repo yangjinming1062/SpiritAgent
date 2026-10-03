@@ -58,6 +58,8 @@ export {
   IconUsers as Users,
   IconVideo as Video,
   IconVolume2 as Volume2,
+  IconWifi as Wifi,
+  IconWifiOff as WifiOff,
   IconX as X,
   IconZoomIn as ZoomIn
 } from '@tabler/icons-react'

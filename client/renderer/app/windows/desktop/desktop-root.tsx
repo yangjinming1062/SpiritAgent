@@ -21,7 +21,8 @@ import { MediaViewerOverlay } from '@/modules/media'
 import { hydrateDiaryUnread } from '@/modules/memory'
 import { hydratePostsUnread } from '@/modules/posts'
 import { $activeScene, hydrateScene } from '@/modules/scene'
-import { ArrowLeft, ArrowRight, ChevronDown, MessageCircle, Settings, X } from '@/shared/lib/icons'
+import type { ConnectionState } from '@/shared/lib/gateway-protocol'
+import { ArrowLeft, ArrowRight, ChevronDown, MessageCircle, Settings, Wifi, WifiOff, X } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
@@ -43,6 +44,17 @@ import { DesktopWindow } from './desktop-window'
 import styles from './desktop.module.css'
 
 const MENU: DesktopApp[] = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'station']
+
+// 顶栏是两个独立状态：绿点只说伙伴在不在忙，网络用图标说，免得两个同色圆点指代不清。
+type ConnectionTone = 'offline' | 'online' | 'pending'
+
+const CONNECTION_TONE: Record<ConnectionState, ConnectionTone> = {
+  closed: 'offline',
+  connecting: 'pending',
+  error: 'offline',
+  idle: 'pending',
+  open: 'online'
+}
 
 export function DesktopRoot(): React.JSX.Element {
   const t = useDesktopStrings()
@@ -82,6 +94,8 @@ export function DesktopRoot(): React.JSX.Element {
   const mainChatActive = activePanel === 'chat' && focusedConversation === 'main'
   const whisperChatActive = panelsEnabled && focusedConversation === 'whisper' && layout.whisperOpen
   const whisperHasUnread = pending.some(message => message.sessionId === companionSessionId)
+  const connectionTone = CONNECTION_TONE[gatewayState]
+  const connectionLabel = { offline: t.disconnected, online: t.connected, pending: t.loading }[connectionTone]
 
   useEffect(() => {
     const onPointerUp = (event: PointerEvent): void => {
@@ -462,20 +476,15 @@ export function DesktopRoot(): React.JSX.Element {
         <div className={styles.status}>
           <SpriteStatusBadge />
           <span
+            aria-label={connectionLabel}
             className={styles.connection}
-            data-connected={gatewayState === 'open'}
-            title={gatewayState === 'open' ? t.connected : t.disconnected}
-          />
+            data-tone={connectionTone}
+            role="img"
+            title={connectionLabel}
+          >
+            {connectionTone === 'offline' ? <WifiOff size={14} /> : <Wifi size={14} />}
+          </span>
         </div>
-        <button
-          aria-label={layout.whisperOpen ? t.hideWhisper : t.showWhisper}
-          className={styles.topIcon}
-          onClick={toggleWhisper}
-          title={t.whisper}
-          type="button"
-        >
-          <MessageCircle size={17} />
-        </button>
         <div className={styles.settingsMenu} ref={settingsRef}>
           <button
             aria-expanded={settingsOpen}
