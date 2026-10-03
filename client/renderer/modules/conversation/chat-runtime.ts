@@ -19,7 +19,7 @@ import type {
 
 import { chatDisplayText } from './chat-display-text'
 import { $companionSessionId, DEFAULT_CONTEXT_LIMIT, FLUSH_DEBOUNCE_MS, nextChatMessageId } from './conversation-state'
-import { conversationVoiceSink } from './voice-link'
+import { activeVoiceMessageId, conversationVoiceSink } from './voice-link'
 import { releaseVoicePlaybackStore, removeVoicePlayback } from './voice-playback'
 
 export interface ChatMessageListItem {
@@ -50,6 +50,13 @@ export interface ChatMessageBody {
   cancelled?: boolean
   attachments?: ChatAttachment[]
   media?: ChatMediaItem[]
+}
+
+export interface ConversationHistorySync {
+  revision: number
+  historyRevision: number
+  messages: ChatMessageListItem[]
+  bodies: Record<string, ChatMessageBody>
 }
 
 // IM 守卫与语音入口的权威 kind 源，由 hydrate 注入服务端 info.kind（special / standard / im）。
@@ -158,6 +165,7 @@ export function createConversationRuntime(sessionId: string | null) {
   // 最近一次已提交批对应的用户气泡 id（工作台合并后只剩首条）；message.persisted 只按本集合绑定，失败回合孤儿气泡不会被下一轮错绑。
   let submittedBubbleIds: Set<string> = new Set()
   let historyEditRevision = 0
+  let historyReplacementRevision = 0
 
   const $chatMessageList = atom<ChatMessageListItem[]>([])
   const $chatMessageBodies = map<Record<string, ChatMessageBody>>({})
@@ -236,6 +244,7 @@ export function createConversationRuntime(sessionId: string | null) {
     } catch (error) {
       // 已收到开始/完成事件时请求已被接受，迟到的 RPC 失败不能覆盖新回复。
       if (
+        isCurrent() &&
         epoch === currentClearEpoch() &&
         $chatSessionId.get() === sessionId &&
         $chatMessageBodies.get()[messageId] === body
@@ -347,7 +356,15 @@ export function createConversationRuntime(sessionId: string | null) {
   }
 
   function hydrateChatMessages(messages: SessionMessage[], info?: SessionRuntimeInfo): void {
-    conversationVoiceSink().cancel($chatSessionId.get())
+    historyReplacementRevision++
+    replaceChatMessages(messages, info)
+  }
+
+  function replaceChatMessages(messages: SessionMessage[], info?: SessionRuntimeInfo, cancelVoice = true): void {
+    if (cancelVoice) {
+      conversationVoiceSink().cancel($chatSessionId.get())
+    }
+
     const items: ChatMessageListItem[] = []
     const bodies: Record<string, ChatMessageBody> = {}
 
@@ -571,6 +588,43 @@ export function createConversationRuntime(sessionId: string | null) {
     return id !== null && id === $companionSessionId.get()
   }
 
+  // 历史可能先于落库事件返回；活气泡替换同一后端消息的快照，沿用历史位置。
+  function reconcilePersistedMessages(list: ChatMessageListItem[], boundIds: Set<string>): void {
+    const groups = new Map<number, ChatMessageListItem[]>()
+
+    for (const item of list) {
+      if (boundIds.has(item.id) && item.backendMessageId !== undefined) {
+        const group = groups.get(item.backendMessageId) ?? []
+        group.push(item)
+        groups.set(item.backendMessageId, group)
+      }
+    }
+
+    const inserted = new Set<number>()
+
+    const merged = list.flatMap(item => {
+      const group = item.backendMessageId === undefined ? undefined : groups.get(item.backendMessageId)
+
+      if (!group || item.backendMessageId === undefined) {
+        return [item]
+      }
+
+      if (!boundIds.has(item.id)) {
+        $chatMessageBodies.setKey(item.id, undefined)
+      }
+
+      if (inserted.has(item.backendMessageId)) {
+        return []
+      }
+
+      inserted.add(item.backendMessageId)
+
+      return group
+    })
+
+    $chatMessageList.set(merged)
+  }
+
   function bindTrailingUserMessageIds(ids: number[]): void {
     // 只绑本次提交的气泡，失败回合孤儿气泡不被下一轮错绑（错绑会让撤回截断别人的消息）；连发拆泡时超出 id 数的气泡挂最后一个 id，与 hydrate 同行同 id 语义一致。
     const validIds = ids.filter(isPositiveInt)
@@ -580,21 +634,18 @@ export function createConversationRuntime(sessionId: string | null) {
     }
 
     const list = $chatMessageList.get()
-    const missingIds = new Set(validIds)
     const unboundIndexes: number[] = []
 
     for (let i = 0; i < list.length; i++) {
       const item = list[i]
 
-      if (item.backendMessageId !== undefined) {
-        missingIds.delete(item.backendMessageId)
-      } else if (item.role === 'user' && submittedBubbleIds.has(item.id)) {
+      if (item.backendMessageId === undefined && item.role === 'user' && submittedBubbleIds.has(item.id)) {
         unboundIndexes.push(i)
       }
     }
 
     // 编辑已水合的落库通知不属于本窗口待确认的提交。
-    if (missingIds.size === 0 || unboundIndexes.length === 0) {
+    if (unboundIndexes.length === 0) {
       return
     }
 
@@ -605,7 +656,7 @@ export function createConversationRuntime(sessionId: string | null) {
       next[idx] = { ...next[idx], backendMessageId: messageId }
     }
 
-    $chatMessageList.set(next)
+    reconcilePersistedMessages(next, new Set(unboundIndexes.map(index => next[index].id)))
   }
 
   function bindTrailingAssistantMessageId(messageId: number): void {
@@ -616,8 +667,8 @@ export function createConversationRuntime(sessionId: string | null) {
 
     const list = $chatMessageList.get()
     const lastUserIndex = list.findLastIndex(item => item.role === 'user')
-    let changed = false
     const next = list.slice()
+    const boundIds = new Set<string>()
 
     for (let i = lastUserIndex + 1; i < next.length; i++) {
       const item = next[i]
@@ -625,12 +676,12 @@ export function createConversationRuntime(sessionId: string | null) {
       // 压缩卡片等 subtype 行不是终端助手气泡，不能挂上同一条 message_id。
       if (item.role === 'assistant' && item.backendMessageId === undefined && !item.subtype) {
         next[i] = { ...item, backendMessageId: messageId }
-        changed = true
+        boundIds.add(item.id)
       }
     }
 
-    if (changed) {
-      $chatMessageList.set(next)
+    if (boundIds.size > 0) {
+      reconcilePersistedMessages(next, boundIds)
     }
   }
 
@@ -962,6 +1013,14 @@ export function createConversationRuntime(sessionId: string | null) {
     const list = $chatMessageList.get()
 
     if (list.some(item => item.backendMessageId === messageId)) {
+      const placeholder = list.at(-1)
+
+      if (!proactive && placeholder?.role === 'assistant' && $chatMessageBodies.get()[placeholder.id]?.streaming) {
+        $chatMessageBodies.setKey(placeholder.id, undefined)
+        $chatMessageList.set(list.slice(0, -1))
+        $lastAssistantStreaming.set(false)
+      }
+
       bubbles.forEach((bubble, index) => {
         if (bubble.type === 'image' || bubble.type === 'video') {
           updateMediaBubble(messageId, bubble.media_id, bubble)
@@ -1118,6 +1177,7 @@ export function createConversationRuntime(sessionId: string | null) {
 
   // 重置消息列表与 bodies，不触碰 $chatSessionId 与 pending batch。
   function resetChatMessages(): void {
+    historyReplacementRevision++
     mediaUpdates.clear()
     conversationVoiceSink().cancel($chatSessionId.get())
     $chatMessageList.set([])
@@ -1135,45 +1195,98 @@ export function createConversationRuntime(sessionId: string | null) {
     $chatTurnInFlight.listen(revise)
   ]
 
+  const captureHistorySync = (): ConversationHistorySync => ({
+    revision: $runtimeRevision.get(),
+    historyRevision: historyReplacementRevision,
+    messages: $chatMessageList.get(),
+    bodies: $chatMessageBodies.get()
+  })
+
   const hydrateSyncedChatMessages = (
     messages: SessionMessage[],
     info?: SessionRuntimeInfo,
-    expectedRevision?: number
-  ): void => {
-    if (!isCurrent()) {
-      return
+    snapshot?: ConversationHistorySync
+  ): boolean => {
+    // 编辑、撤回及清空的全量结果有独立权威，较早发起的同步不能恢复其已删除行。
+    if (!isCurrent() || historyReplacementRevision !== (snapshot?.historyRevision ?? 0)) {
+      return false
     }
 
-    const changed = expectedRevision !== undefined && expectedRevision !== $runtimeRevision.get()
-
-    if (changed && $historyHydrated.get()) {
-      return
-    }
-
-    const liveList = changed ? $chatMessageList.get() : []
     const liveBodies = $chatMessageBodies.get()
-    const inFlight = $chatTurnInFlight.get()
-    hydrateChatMessages(messages, info)
+    const playingId = activeVoiceMessageId()
+    const original = new Map(snapshot?.messages.map(item => [item.id, item]))
+    const changed = (snapshot?.revision ?? 0) !== $runtimeRevision.get()
 
-    if (changed) {
-      const liveIds = new Set(
-        liveList.flatMap(item => (item.backendMessageId === undefined ? [] : [item.backendMessageId]))
+    const preserved = $chatMessageList
+      .get()
+      .filter(
+        item =>
+          item.backendMessageId === undefined ||
+          item.id === playingId ||
+          liveBodies[item.id]?.streaming ||
+          (changed && (original.get(item.id) !== item || snapshot?.bodies[item.id] !== liveBodies[item.id]))
       )
 
-      const history = $chatMessageList
-        .get()
-        .filter(item => item.backendMessageId === undefined || !liveIds.has(item.backendMessageId))
+    const preservedIds = new Set(preserved.map(item => item.id))
+
+    const liveIds = new Set(
+      preserved.flatMap(item => (item.backendMessageId === undefined ? [] : [item.backendMessageId]))
+    )
+
+    // 拆泡属于同一后端消息，不能用部分实时气泡覆盖其余气泡。
+    const liveList = $chatMessageList
+      .get()
+      .filter(
+        item => preservedIds.has(item.id) || (item.backendMessageId !== undefined && liveIds.has(item.backendMessageId))
+      )
+
+    const inFlight = $chatTurnInFlight.get()
+    replaceChatMessages(messages, info, liveList.length === 0)
+
+    if (liveList.length > 0) {
+      const history = $chatMessageList.get()
+      const liveGroups = new Map<number, ChatMessageListItem[]>()
 
       for (const item of liveList) {
-        $chatMessageBodies.setKey(item.id, liveBodies[item.id])
+        if (item.backendMessageId !== undefined) {
+          const group = liveGroups.get(item.backendMessageId) ?? []
+          group.push(item)
+          liveGroups.set(item.backendMessageId, group)
+        }
       }
 
-      $chatMessageList.set([...history, ...liveList])
+      const replaced = new Set<number>()
+
+      const merged = history.flatMap(item => {
+        if (item.backendMessageId === undefined || !liveIds.has(item.backendMessageId)) {
+          return [item]
+        }
+
+        if (replaced.has(item.backendMessageId)) {
+          return []
+        }
+
+        replaced.add(item.backendMessageId)
+
+        return liveGroups.get(item.backendMessageId) ?? []
+      })
+
+      const next = [
+        ...merged,
+        ...liveList.filter(item => item.backendMessageId === undefined || !replaced.has(item.backendMessageId))
+      ]
+
+      const hydratedBodies = $chatMessageBodies.get()
+      $chatMessageBodies.set(
+        Object.fromEntries(next.map(item => [item.id, liveBodies[item.id] ?? hydratedBodies[item.id]]))
+      )
+      $chatMessageList.set(next)
       $lastAssistantStreaming.set(liveList.some(item => liveBodies[item.id]?.streaming))
-      $chatTurnInFlight.set(inFlight)
-    } else if (typeof info?.running === 'boolean') {
-      $chatTurnInFlight.set(info.running)
     }
+
+    $chatTurnInFlight.set(changed ? inFlight : (info?.running ?? inFlight))
+
+    return true
   }
 
   const abandonDisconnectedTurn = (): void => {
@@ -1244,6 +1357,7 @@ export function createConversationRuntime(sessionId: string | null) {
     dispose,
     $historyHydrated,
     $runtimeRevision,
+    captureHistorySync,
     hydrateSyncedChatMessages,
     abandonDisconnectedTurn
   }

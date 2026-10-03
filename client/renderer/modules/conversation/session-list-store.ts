@@ -17,11 +17,12 @@ import type {
   UndoResponse
 } from '@/shared/types/spiritagent'
 
-import type { ConversationRuntime } from './chat-runtime'
+import type { ConversationHistorySync, ConversationRuntime } from './chat-runtime'
 import {
   $chatDraftFromUndo,
   $chatSessionId,
   $companionSessionId,
+  conversationRuntimes,
   findConversationRuntime,
   getConversationRuntime,
   hydrateChatMessages,
@@ -559,7 +560,7 @@ export async function ensureCompanionSession(): Promise<string | null> {
     try {
       const knownId = $companionSessionId.get()
       const knownRuntime = knownId ? findConversationRuntime(knownId) : undefined
-      const revision = knownRuntime?.$runtimeRevision.get()
+      const snapshot = knownRuntime?.captureHistorySync()
       const result = await gateway.request<SessionResumeResponse>('session.get_main')
 
       if (epoch !== currentClearEpoch() || $gateway.get() !== gateway) {
@@ -567,18 +568,22 @@ export async function ensureCompanionSession(): Promise<string | null> {
       }
 
       setCompanionSessionId(result.session_id)
-      rememberFullHistory(result.session_id, result.messages || [], {
-        currentSeq: result.current_seq,
-        info: result.info,
-        nextCursor: result.next_cursor,
-        truncated: result.truncated
-      })
       const runtime = getConversationRuntime(result.session_id)
-      runtime.hydrateSyncedChatMessages(
+
+      const accepted = runtime.hydrateSyncedChatMessages(
         result.messages || [],
         result.info,
-        knownRuntime === runtime ? revision : undefined
+        knownRuntime === runtime ? snapshot : undefined
       )
+
+      if (accepted) {
+        rememberFullHistory(result.session_id, result.messages || [], {
+          currentSeq: result.current_seq,
+          info: result.info,
+          nextCursor: result.next_cursor,
+          truncated: result.truncated
+        })
+      }
 
       return result.session_id
     } catch (error) {
@@ -610,13 +615,13 @@ function mountSyncedSession(
   sessionId: string,
   messages: SessionMessage[],
   info?: SessionRuntimeInfo,
-  expectedRevision?: number
-): void {
+  snapshot?: ConversationHistorySync
+): boolean {
   if ($chatSessionId.get() !== sessionId) {
     setChatSession(sessionId)
   }
 
-  getConversationRuntime(sessionId).hydrateSyncedChatMessages(messages, info, expectedRevision)
+  return getConversationRuntime(sessionId).hydrateSyncedChatMessages(messages, info, snapshot)
 }
 
 export async function switchSession(sessionId: string): Promise<void> {
@@ -631,7 +636,7 @@ export async function switchSession(sessionId: string): Promise<void> {
   const isCurrent = (): boolean => token === navigationToken && epoch === currentClearEpoch() && $gateway.get() === gw
   const runtime = getConversationRuntime(sessionId)
   const release = retainConversationRuntime(runtime)
-  const localRevision = runtime.$runtimeRevision.get()
+  const localSnapshot = runtime.captureHistorySync()
 
   try {
     const local = await loadLocalSessionHistory(sessionId)
@@ -644,10 +649,10 @@ export async function switchSession(sessionId: string): Promise<void> {
       setChatSession(sessionId)
     } else if (local) {
       setChatSession(sessionId)
-      runtime.hydrateSyncedChatMessages(local.messages, local.info, localRevision)
+      runtime.hydrateSyncedChatMessages(local.messages, local.info, localSnapshot)
     }
 
-    const revision = runtime.$runtimeRevision.get()
+    const snapshot = runtime.captureHistorySync()
 
     const synced = await syncSessionHistory({
       sessionId,
@@ -659,7 +664,7 @@ export async function switchSession(sessionId: string): Promise<void> {
       return
     }
 
-    mountSyncedSession(sessionId, synced.messages, synced.info, revision)
+    mountSyncedSession(sessionId, synced.messages, synced.info, snapshot)
   } catch (err) {
     if (isCurrent()) {
       log.error('session-list', 'Failed to switch session:', err)
@@ -715,7 +720,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
           try {
             const runtime = getConversationRuntime(knownCompanionId)
-            const revision = runtime.$runtimeRevision.get()
+            const snapshot = runtime.captureHistorySync()
 
             const synced = await syncSessionHistory({
               sessionId: knownCompanionId,
@@ -729,7 +734,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
             // 同步期间已切到其他会话时不覆盖其视图。
             if (isLatest() && $chatSessionId.get() === knownCompanionId) {
-              mountSyncedSession(knownCompanionId, synced.messages, synced.info, revision)
+              mountSyncedSession(knownCompanionId, synced.messages, synced.info, snapshot)
             }
 
             onMounted?.({
@@ -757,6 +762,10 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
         }
       }
 
+      const snapshots = new Map(
+        conversationRuntimes().map(runtime => [runtime.$chatSessionId.get(), runtime.captureHistorySync()])
+      )
+
       const res = await gw.request<SessionResumeResponse>('session.get_main')
 
       if (!isCurrent()) {
@@ -764,15 +773,22 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
       }
 
       setCompanionSessionId(res.session_id)
-      rememberFullHistory(res.session_id, res.messages || [], {
-        currentSeq: res.current_seq,
-        info: res.info,
-        nextCursor: res.next_cursor,
-        truncated: res.truncated
-      })
 
-      if (isLatest()) {
-        mountSyncedSession(res.session_id, res.messages || [], res.info)
+      const accepted = isLatest()
+        ? mountSyncedSession(res.session_id, res.messages || [], res.info, snapshots.get(res.session_id))
+        : getConversationRuntime(res.session_id).hydrateSyncedChatMessages(
+            res.messages || [],
+            res.info,
+            snapshots.get(res.session_id)
+          )
+
+      if (accepted) {
+        rememberFullHistory(res.session_id, res.messages || [], {
+          currentSeq: res.current_seq,
+          info: res.info,
+          nextCursor: res.next_cursor,
+          truncated: res.truncated
+        })
       }
 
       onMounted?.(res)

@@ -5,6 +5,8 @@ import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
 
+import { useConversationView } from './conversation-view'
+
 export function ChatMediaCard({
   item,
   onReviewed
@@ -20,13 +22,15 @@ export function ChatMediaCard({
 }
 
 function DeliveredMediaCard({ item }: { item: ChatMediaItem }): React.JSX.Element {
+  const { viewId } = useConversationView()
+
   return item.type !== 'image' || item.audio_url ? (
     <InlineMedia
       alt=""
       audioUrl={item.audio_url ?? null}
       key={`${item.url}:${item.audio_url}`}
       mediaType={item.type}
-      onImageClick={item.type === 'image' ? () => presentationPorts().openMediaViewer(item) : undefined}
+      onImageClick={item.type === 'image' ? () => presentationPorts().openMediaViewer(item, viewId) : undefined}
       url={item.url}
     />
   ) : (
@@ -35,6 +39,7 @@ function DeliveredMediaCard({ item }: { item: ChatMediaItem }): React.JSX.Elemen
 }
 
 function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed?: () => void }): React.JSX.Element {
+  const { viewId } = useConversationView()
   const dict = useStrings().chat.media
   const [status, setStatus] = useState<'pending' | 'accepted' | 'rejected' | null>(null)
   const [reason, setReason] = useState('')
@@ -97,7 +102,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
         alt=""
         audioUrl={item.audio_url ?? null}
         mediaType={item.type}
-        onImageClick={item.type === 'image' ? () => presentationPorts().openMediaViewer(item) : undefined}
+        onImageClick={item.type === 'image' ? () => presentationPorts().openMediaViewer(item, viewId) : undefined}
         url={item.url}
       />
       {error && (
@@ -130,6 +135,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
 }
 
 function ImageCard({ item }: { item: ChatMediaItem }): React.JSX.Element {
+  const { viewId } = useConversationView()
   const dict = useStrings()
   const media = useResolvedMediaSrc(item)
 
@@ -145,7 +151,7 @@ function ImageCard({ item }: { item: ChatMediaItem }): React.JSX.Element {
     <button
       aria-label={dict.ui.lightbox.zoomIn}
       className="block cursor-zoom-in overflow-hidden rounded-lg border border-line-standard bg-fill-trough p-0 transition hover:border-line-strong"
-      onClick={() => presentationPorts().openMediaViewer(item)}
+      onClick={() => presentationPorts().openMediaViewer(item, viewId)}
       type="button"
     >
       <img alt="" className="block max-h-56 max-w-full object-contain" src={media.src} />

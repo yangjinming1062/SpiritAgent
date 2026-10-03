@@ -35,6 +35,7 @@ declare global {
         setMode: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-mode']>
         setDisplay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-display']>
         reportReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:report-ready']>
+        focus: AsyncIpc<IpcInvokeContract['spiritagent:presentation:focus']>
         heartbeat: AsyncIpc<IpcInvokeContract['spiritagent:presentation:heartbeat']>
         hostReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:host-ready']>
         setBackground: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-background']>

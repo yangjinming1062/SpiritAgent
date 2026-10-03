@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 import type React from 'react'
 
+import { PresentationModeButton } from '@/app/components/presentation-settings'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { LivingRail } from '@/app/features/living/living-rail'
@@ -120,6 +121,7 @@ export function LivingRoot(): React.JSX.Element {
               <SpriteStatusBadge />
             </div>
             <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+              <PresentationModeButton className={styles.workbenchButton} />
               <CompanionMenu surface="living" />
               <button
                 className={styles.workbenchButton}

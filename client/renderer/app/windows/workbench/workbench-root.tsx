@@ -4,6 +4,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import { PresentationModeButton } from '@/app/components/presentation-settings'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { RunRail } from '@/app/features/workbench/run-rail'
@@ -150,6 +151,7 @@ export function WorkbenchRoot(): React.JSX.Element {
           </div>
 
           <div className={styles.actionsArea}>
+            <PresentationModeButton className={styles.glassButton} />
             <CompanionMenu surface="workbench" />
             <button
               className={cn(styles.glassButton, settingsOpen && styles.glassButtonActive)}

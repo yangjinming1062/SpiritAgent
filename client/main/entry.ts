@@ -83,6 +83,7 @@ import {
   DEV_CSP_POLICY,
   resolvePathTimeoutMs
 } from './security/hardening'
+import { isSenderWindow } from './security/ipc-trust'
 import { resolveDesktopHome } from './security/paths'
 import type { BackendSessionPort } from './shared/backend-port'
 import { readStoredBackendUrl } from './shared/config'
@@ -285,11 +286,16 @@ presentation = createDesktopPresentation({
   backgroundPreloadPath: path.join(import.meta.dirname, 'preload-background.cjs'),
   helperPath: IS_PACKAGED
     ? path.join(process.resourcesPath, 'desktop-host.exe')
-    : path.join(APP_ROOT, 'build', 'desktop-host.exe'),
+    : path.join(APP_ROOT, 'build', process.arch, 'desktop-host.exe'),
   rendererUrlFor,
   seedTheme: seedUiTheme,
   getSpriteWindow: getMainWindow,
-  isSettingsSender: sender => Boolean(surfaces?.isSurfaceSender('living', sender)),
+  isSettingsSender: sender =>
+    Boolean(
+      isSenderWindow(sender, getMainWindow()) ||
+      surfaces?.isSurfaceSender('living', sender) ||
+      surfaces?.isSurfaceSender('workbench', sender)
+    ),
   closeSurfaces: () => surfaces?.closeSurface() ?? Promise.resolve(),
   restoreSprite: () => {
     if (!appQuit.isQuitting()) {
@@ -299,7 +305,8 @@ presentation = createDesktopPresentation({
   authenticated: () => Boolean(sessionRuntime.ensureBackendSession().getSession()?.hasToken),
   authIdentity: () => sessionRuntime.ensureBackendSession().getSession()?.sessionId ?? null,
   installWindowHandlers: windowHandlers.installSurfaceWindowHandlers,
-  log: rememberLog
+  log: rememberLog,
+  onModeChanged: rebuildTrayMenu
 })
 presentation.registerIpc(ipcMain)
 registerDesktopDock({
@@ -524,7 +531,15 @@ ipcMain.handle(IPC.invoke.desktopQuit, event => {
 sessionRuntime.rewireAuthToken()
 
 void app.whenReady().then(async () => {
-  setTimeout(() => authBroadcaster.autoStartBridgeIfSignedIn(), 200).unref()
+  if (appQuit.isQuitting()) {
+    return
+  }
+
+  setTimeout(() => {
+    if (!appQuit.isQuitting()) {
+      authBroadcaster.autoStartBridgeIfSignedIn()
+    }
+  }, 200).unref()
 
   await presentation?.initialize()
   surfaces?.watchSystemEvents()
@@ -537,6 +552,11 @@ void app.whenReady().then(async () => {
   autoUpdater.setup()
 
   await autoUpdater.installPendingRunnerUpdate()
+
+  if (appQuit.isQuitting()) {
+    return
+  }
+
   createSpriteWindow()
 
   const trayDeps = {
@@ -548,6 +568,7 @@ void app.whenReady().then(async () => {
     getMainWindow,
     Menu,
     nativeImage,
+    presentation: presentation ?? undefined,
     rememberLog,
     removeAccount: authActions.removeAccount,
     switchAccount: authActions.switchAccount,
@@ -559,6 +580,14 @@ void app.whenReady().then(async () => {
   singleInstance.replayEarlySecondInstance(showMainWindow)
 
   installTray({ ...trayDeps, getIsQuitting: () => appQuit.isQuitting(), surfaces: surfaces ?? undefined })
+
+  if (!IS_PACKAGED && process.connected) {
+    process.send?.({ event: 'spiritagent:dev-ready' }, error => {
+      if (error) {
+        rememberLog(`[dev] launcher readiness failed: ${error.message}`)
+      }
+    })
+  }
 
   app.on('activate', () => showMainWindow())
 })
@@ -574,3 +603,24 @@ const appQuit = installAppQuit({
   restoreDesktop: () => presentation?.stop() ?? Promise.resolve(),
   stopRunner: () => runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()
 })
+
+if (!IS_PACKAGED && process.connected) {
+  process.on('message', (message: unknown) => {
+    if (
+      !message ||
+      typeof message !== 'object' ||
+      !('command' in message) ||
+      message.command !== 'spiritagent:dev-restart' ||
+      Object.keys(message).length !== 1
+    ) {
+      return
+    }
+
+    rememberLog('[dev] graceful restart requested')
+    app.quit()
+  })
+  process.once('disconnect', () => {
+    rememberLog('[dev] launcher disconnected, requesting normal exit')
+    app.quit()
+  })
+}

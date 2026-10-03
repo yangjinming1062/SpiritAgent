@@ -19,6 +19,7 @@ interface HistoryCacheState {
 const memoryBySession = new Map<string, HistoryCacheState>()
 const persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const invalidations = new Map<string, symbol>()
+const historyRevisions = new Map<string, number>()
 
 export class SessionHistoryChangedError extends Error {
   constructor() {
@@ -147,6 +148,7 @@ export function rememberFullHistory(
   }
 
   memoryBySession.set(sessionId, next)
+  historyRevisions.set(sessionId, (historyRevisions.get(sessionId) ?? 0) + 1)
   schedulePersist(sessionId)
 }
 
@@ -235,6 +237,7 @@ export async function syncSessionHistory(params: {
   const authSessionId = currentAuthSessionId()
   const local = memoryBySession.get(params.sessionId)
   let invalidation = invalidations.get(params.sessionId)
+  let historyRevision = historyRevisions.get(params.sessionId)
   const body: { after_id?: number; last_seq?: number } = {}
 
   // 离线期间的视频完成事件可能已过重放窗口，增量锚点无法发现原等待卡片的变化。
@@ -258,7 +261,10 @@ export async function syncSessionHistory(params: {
       throw new SessionHistoryChangedError()
     }
 
-    if (invalidations.get(params.sessionId) === invalidation) {
+    if (
+      invalidations.get(params.sessionId) === invalidation &&
+      historyRevisions.get(params.sessionId) === historyRevision
+    ) {
       break
     }
 
@@ -267,6 +273,7 @@ export async function syncSessionHistory(params: {
     }
 
     invalidation = invalidations.get(params.sessionId)
+    historyRevision = historyRevisions.get(params.sessionId)
     res = await params.request({})
   }
 
@@ -363,6 +370,7 @@ async function persistNow(sessionId: string): Promise<void> {
 function clearSessionHistoryMemory(): void {
   memoryBySession.clear()
   invalidations.clear()
+  historyRevisions.clear()
 
   for (const sessionId of persistTimers.keys()) {
     cancelPersist(sessionId)
@@ -389,6 +397,7 @@ export function invalidateSessionHistory(sessionId: string): void {
 /** 会话被删除后清掉内存与磁盘快照，避免已删对话内容留盘。 */
 export function forgetSessionHistory(sessionId: string): void {
   memoryBySession.delete(sessionId)
+  historyRevisions.set(sessionId, (historyRevisions.get(sessionId) ?? 0) + 1)
   cancelPersist(sessionId)
   removeSnapshot(sessionId, 'deleted')
 }

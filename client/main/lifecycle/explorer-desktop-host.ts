@@ -4,7 +4,7 @@ import path from 'node:path'
 
 export interface ExplorerDesktopWindow {
   handle: Buffer
-  /** 使用 Electron screen.dipToScreenRect 转换的屏幕物理像素。 */
+  /** 使用 screen.dipToScreenRect 转换完整显示器边界；helper 校正最多两像素的舍入。 */
   bounds: { x: number; y: number; width: number; height: number }
 }
 
@@ -19,6 +19,7 @@ interface HostOptions {
 export interface ExplorerDesktopHost {
   start: (options: { windows: ExplorerDesktopWindow[]; parentPid: number; takeover: boolean }) => Promise<void>
   heartbeat: () => Promise<void>
+  focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   stop: () => Promise<void>
   recover: () => Promise<boolean>
   status: () => 'idle' | 'starting' | 'running' | 'stopping'
@@ -40,16 +41,25 @@ function parseMessage(line: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function encodeWindow(window: ExplorerDesktopWindow): { handle: string; bounds: ExplorerDesktopWindow['bounds'] } {
-  if (window.handle.length !== 4 && window.handle.length !== 8) {
+function encodeHandle(buffer: Buffer): string {
+  if (buffer.length !== 4 && buffer.length !== 8) {
     throw new Error('Desktop native window handle has an unsupported size')
   }
 
-  const handle = window.handle.length === 8 ? window.handle.readBigUInt64LE() : BigInt(window.handle.readUInt32LE())
+  const handle = buffer.length === 8 ? buffer.readBigUInt64LE() : BigInt(buffer.readUInt32LE())
+
+  if (handle === 0n) {
+    throw new Error('Desktop native window handle is invalid')
+  }
+
+  return handle.toString(16)
+}
+
+function encodeWindow(window: ExplorerDesktopWindow): { handle: string; bounds: ExplorerDesktopWindow['bounds'] } {
+  const handle = encodeHandle(window.handle)
   const bounds = window.bounds
 
   if (
-    handle === 0n ||
     !Object.values(bounds).every(Number.isSafeInteger) ||
     bounds.width <= 0 ||
     bounds.height <= 0 ||
@@ -61,7 +71,7 @@ function encodeWindow(window: ExplorerDesktopWindow): { handle: string; bounds: 
     throw new Error('Desktop native window handle or physical bounds are invalid')
   }
 
-  return { bounds: { ...bounds }, handle: handle.toString(16) }
+  return { bounds: { ...bounds }, handle }
 }
 
 export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktopHost {
@@ -113,7 +123,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
     }
   }
 
-  function request(command: Record<string, unknown>, timeoutMs: number): Promise<void> {
+  function request(command: Record<string, unknown>, timeoutMs: number, fatalTimeout = false): Promise<void> {
     const process = child
 
     if (!process || exited(process) || process.killed) {
@@ -125,7 +135,14 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id)
-        reject(new Error(`Desktop helper ${String(command.command)} timed out`))
+        const reason = `Desktop helper ${String(command.command)} timed out`
+
+        if (fatalTimeout) {
+          process.kill()
+          reportFailure(reason)
+        }
+
+        reject(new Error(reason))
       }, timeoutMs)
 
       timer.unref()
@@ -434,6 +451,23 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
   }
 
   return {
+    focus: (handle, eligible = () => true) => {
+      const currentGeneration = generation
+
+      return serialize(async () => {
+        if (state !== 'running' || generation !== currentGeneration) {
+          throw new Error('Desktop focus requires the current running host')
+        }
+
+        if (!eligible()) {
+          return false
+        }
+
+        await request({ command: 'focus', handle: encodeHandle(handle) }, 1_000, true)
+
+        return true
+      })
+    },
     heartbeat: async () => {
       if (state !== 'running') {
         return

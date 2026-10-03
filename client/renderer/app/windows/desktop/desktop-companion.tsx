@@ -17,11 +17,15 @@ import styles from './desktop.module.css'
 export function DesktopCompanion({
   onHide,
   onOpenWhisper,
-  onToggleWhisper
+  onToggleWhisper,
+  menuEnabled,
+  onMenuOpenChange
 }: {
   onHide: () => void
   onOpenWhisper: () => void
   onToggleWhisper: () => void
+  menuEnabled: boolean
+  onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {
   const presentation = useCompanionPresentation()
   const t = useDesktopStrings()
@@ -34,27 +38,56 @@ export function DesktopCompanion({
   }, [])
 
   useEffect(() => {
-    if (!menu) {
+    if (!menuEnabled) {
+      setMenu(null)
+    }
+  }, [menuEnabled])
+
+  useEffect(() => {
+    onMenuOpenChange(menu !== null)
+
+    return () => onMenuOpenChange(false)
+  }, [menu, onMenuOpenChange])
+
+  useEffect(() => {
+    if (!menu || !menuEnabled) {
       return
     }
 
     const close = (): void => setMenu(null)
-    window.addEventListener('pointerdown', close)
 
-    return () => window.removeEventListener('pointerdown', close)
-  }, [menu])
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        close()
+      }
+    }
+
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', onKey)
+
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu, menuEnabled])
 
   return (
     <div className={styles.companion}>
       <SpriteStage
         allowDisplaySwitch={false}
         domHitPassthrough
-        onContextMenu={event =>
+        onContextMenu={event => {
+          if (!menuEnabled) {
+            return
+          }
+
           setMenu({
-            x: Math.min(event.clientX, window.innerWidth - 220),
-            y: Math.min(event.clientY, window.innerHeight - 120)
+            x: Math.max(0, Math.min(event.clientX, window.innerWidth - 220)),
+            y: Math.max(0, Math.min(event.clientY, window.innerHeight - 120))
           })
-        }
+        }}
         onDoubleTap={onToggleWhisper}
         onDropFiles={files => {
           const paths = resolveDroppedFiles(files)
@@ -72,7 +105,7 @@ export function DesktopCompanion({
           <CompanionEgg presentation={presentation} size="90%" windowId={1} />
         )}
       </SpriteStage>
-      {menu && (
+      {menuEnabled && menu && (
         <div
           className={styles.companionMenu}
           onPointerDown={event => event.stopPropagation()}

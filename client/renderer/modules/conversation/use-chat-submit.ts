@@ -87,25 +87,13 @@ export function useChatSubmit({
   const ownerRef = useRef(controller)
   ownerRef.current = controller
   const controllerEpoch = currentClearEpoch()
-  const lifecycleRef = useRef({ controller, generation: 0, mounted: true })
+  const lifecycleRef = useRef({ mounted: true })
   useEffect(() => {
-    const generation = lifecycleRef.current.generation + 1
-    lifecycleRef.current = { controller, generation, mounted: true }
+    const lifecycle = lifecycleRef.current
+    lifecycle.mounted = true
 
     return () => {
-      lifecycleRef.current.mounted = false
-      queueMicrotask(() => {
-        if (
-          lifecycleRef.current.controller.$text === controller.$text &&
-          (lifecycleRef.current.controller !== controller || lifecycleRef.current.generation !== generation)
-        ) {
-          return
-        }
-
-        controller.$pending.set(null)
-        controller.$externalPaths.set([])
-        controller.$chatEditDraft.set(null)
-      })
+      lifecycle.mounted = false
     }
   }, [controller])
   const editing = useStore($chatEditDraft)

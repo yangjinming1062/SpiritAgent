@@ -3,6 +3,7 @@ import { atom, computed } from 'nanostores'
 import { createContext, type ReactNode, useContext, useEffect, useMemo } from 'react'
 
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { presentationPorts } from '@/shared/presentation-ports'
 
 import { stripAttachmentDirectives } from './chat-display-text'
 import { type ConversationRuntime } from './chat-runtime'
@@ -110,6 +111,7 @@ export function ConversationViewProvider({
   receiveExternalAttachments?: boolean
   children: ReactNode
 }): React.JSX.Element {
+  const locked = useStore(presentationPorts().$screenLocked)
   const runtime = getConversationRuntime(sessionId)
   const controller = useMemo(() => controllerFor(viewId, runtime), [viewId, runtime])
 
@@ -121,11 +123,11 @@ export function ConversationViewProvider({
       active,
       visible,
       foreground,
-      eligible: sessionId !== null && active && visible && foreground,
+      eligible: sessionId !== null && active && visible && foreground && !locked,
       scoped: true,
       receiveExternalAttachments
     }),
-    [viewId, runtime, controller, sessionId, active, visible, foreground, receiveExternalAttachments]
+    [viewId, runtime, controller, sessionId, active, visible, foreground, receiveExternalAttachments, locked]
   )
 
   useEffect(() => retainConversationRuntime(runtime), [runtime])

@@ -30,6 +30,8 @@ import {
 } from './spatial-peek'
 import { clearSpriteGesture, playSpriteGesture } from './sprite/gesture'
 
+export const EXPRESSION_BOOST_SCALE = 1.12
+
 /** 未缩放舞台尺寸，只随视口高度变化；落位与视频画布共用。 */
 export function baseSpriteSize(viewportHeight: number): { width: number; height: number } {
   const height = Math.round(clamp(viewportHeight / 3, 260, 960))
@@ -97,6 +99,20 @@ function loadRestPosition(): Promise<{
 
 export function setSpatialInsets(insets: { top: number; bottom: number; left: number; right: number }): void {
   stageInsets = insets
+
+  if ($surfaceRole.get() === 'desktop') {
+    setScaleTarget(computeTargetScale(), true)
+    $homePosition.set(clampPosToViewport($homePosition.get()))
+
+    if (moveStart) {
+      moveStart = clampPosToViewport(moveStart)
+    }
+
+    if (moveTarget) {
+      moveTarget = clampPosToViewport(moveTarget)
+    }
+  }
+
   $spatialPos.set(clampPosToViewport($spatialPos.get()))
 }
 
@@ -216,13 +232,31 @@ function getHomePosition(): { x: number; y: number } {
 
 // 普通落位约束缩放后的内容像素，透明留白可越界；探身另按露出范围落位。
 function contentBox(scale = $spatialScale.get()): { left: number; top: number; right: number; bottom: number } {
-  const r = $spriteContentRect.get()
+  const r = contentBounds()
 
   return {
-    left: (r?.left ?? 0) * getBaseSpriteWidth() * scale,
-    top: (r?.top ?? 0) * getBaseSpriteHeight() * scale,
-    right: (r?.right ?? 1) * getBaseSpriteWidth() * scale,
-    bottom: (r?.bottom ?? 1) * getBaseSpriteHeight() * scale
+    left: r.left * getBaseSpriteWidth() * scale,
+    top: r.top * getBaseSpriteHeight() * scale,
+    right: r.right * getBaseSpriteWidth() * scale,
+    bottom: r.bottom * getBaseSpriteHeight() * scale
+  }
+}
+
+function contentBounds(): SpriteRect {
+  const content = $spriteContentRect.get() ?? { left: 0, top: 0, right: 1, bottom: 1 }
+
+  if ($surfaceRole.get() !== 'desktop') {
+    return content
+  }
+
+  // 预留情绪放大与退出过渡的范围，避免空间比例先恢复时 CSS 放大尚未结束。
+  const center = (content.left + content.right) / 2
+
+  return {
+    left: center + (content.left - center) * EXPRESSION_BOOST_SCALE,
+    right: center + (content.right - center) * EXPRESSION_BOOST_SCALE,
+    top: content.bottom + (content.top - content.bottom) * EXPRESSION_BOOST_SCALE,
+    bottom: content.bottom
   }
 }
 
@@ -248,16 +282,28 @@ export function computePerchPlacement(geom: DesktopScreenRect, maxScale: number)
   const margin = 8
   const spriteW = getBaseSpriteWidth()
   const spriteH0 = getBaseSpriteHeight()
-  const content = $spriteContentRect.get()
-  const contentLeft = content?.left ?? 0
-  const contentTop = content?.top ?? 0
-  const contentRight = content?.right ?? 1
-  const contentBottom = content?.bottom ?? 1
+  const content = contentBounds()
+  const contentLeft = content.left
+  const contentTop = content.top
+  const contentRight = content.right
+  const contentBottom = content.bottom
   const contentW = Math.max(1, (contentRight - contentLeft) * spriteW)
-  const rightAvail = Math.max(0, window.innerWidth - REST_MARGIN - (geom.x + geom.w) - margin)
-  const leftAvail = Math.max(0, geom.x - margin - REST_MARGIN)
-  const rightScale = Math.min(maxScale, rightAvail / contentW)
-  const leftScale = Math.min(maxScale, leftAvail / contentW)
+
+  const rightAvail = Math.max(
+    0,
+    window.innerWidth - Math.max(REST_MARGIN, stageInsets.right) - (geom.x + geom.w) - margin
+  )
+
+  const leftAvail = Math.max(0, geom.x - margin - Math.max(REST_MARGIN, stageInsets.left))
+  const contentH = Math.max(1, (contentBottom - contentTop) * spriteH0)
+
+  const heightLimit =
+    $surfaceRole.get() === 'desktop'
+      ? Math.max(0, window.innerHeight - stageInsets.top - Math.max(REST_MARGIN, stageInsets.bottom)) / contentH
+      : maxScale
+
+  const rightScale = Math.min(maxScale, rightAvail / contentW, heightLimit)
+  const leftScale = Math.min(maxScale, leftAvail / contentW, heightLimit)
 
   let side: 'left' | 'right'
   let scale: number
@@ -281,8 +327,11 @@ export function computePerchPlacement(geom: DesktopScreenRect, maxScale: number)
       : geom.x - margin - contentRight * spriteW * scale
 
   const y = Math.max(
-    -contentTopPx,
-    Math.min(geom.y + geom.h - margin - contentBottomPx, window.innerHeight - REST_MARGIN - contentBottomPx)
+    stageInsets.top - contentTopPx,
+    Math.min(
+      geom.y + geom.h - margin - contentBottomPx,
+      window.innerHeight - Math.max(REST_MARGIN, stageInsets.bottom) - contentBottomPx
+    )
   )
 
   return { pos: { x, y }, scale }
@@ -369,7 +418,9 @@ function tick(now: number): void {
     y: moveStart.y + (moveTarget.y - moveStart.y) * eased
   }
 
-  $spatialPos.set(t === 1 && !$spatialPeek.get() ? clampPosToViewport(position) : position)
+  $spatialPos.set(
+    (t === 1 || $surfaceRole.get() === 'desktop') && !$spatialPeek.get() ? clampPosToViewport(position) : position
+  )
 
   if (t < 1) {
     rafId = requestAnimationFrame(tick)
@@ -390,6 +441,10 @@ export function locomotionForDistance(dist: number): 'walk' | 'fly' {
 
 function moveTo(target: { x: number; y: number }, locomotion: 'walk' | 'fly', onArrive?: () => void): void {
   cancelMovement()
+
+  if ($surfaceRole.get() === 'desktop' && !$spatialPeek.get()) {
+    target = clampPosToViewport(target)
+  }
 
   const current = $spatialPos.get()
   const dist = Math.hypot(target.x - current.x, target.y - current.y)
@@ -482,15 +537,26 @@ function readDefaultScale(): number {
 function computeTargetScale(): number {
   const base = $defaultScale.get()
 
-  if ($effectiveTier.get() === 'still') {
-    return base
+  // 栖息缩身上限：空间不够时先保证舒适栖身
+  const hasScaleLimit =
+    $effectiveTier.get() !== 'still' && ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'window_peek')
+
+  const cap = hasScaleLimit ? perchScaleLimit : null
+  const requested = cap !== null ? Math.min(base, cap) : base
+
+  if ($surfaceRole.get() !== 'desktop') {
+    return requested
   }
 
-  // 栖息缩身上限：空间不够时先保证舒适栖身
-  const hasScaleLimit = $spatialLocale.get() === 'perch' || $spatialLocale.get() === 'window_peek'
-  const cap = hasScaleLimit ? perchScaleLimit : null
+  const content = contentBox(1)
+  const width = Math.max(1, content.right - content.left)
+  const height = Math.max(1, content.bottom - content.top)
 
-  return cap !== null ? Math.min(base, cap) : base
+  return Math.min(
+    requested,
+    Math.max(0, window.innerWidth - stageInsets.left - stageInsets.right) / width,
+    Math.max(0, window.innerHeight - stageInsets.top - stageInsets.bottom) / height
+  )
 }
 
 function updateAdaptiveScale(): void {
@@ -1283,7 +1349,12 @@ export function setSpatialLocale(
 
   // home 落点可能记录于更低 scale 的时期；按当前 scale 重钳，情绪放大期间回 home 不裁脚。
   const rawTarget = opts?.position ?? $homePosition.get()
-  const target = locale === 'home' ? clampPosToViewport(rawTarget) : rawTarget
+
+  const target =
+    locale === 'home' || ($surfaceRole.get() === 'desktop' && locale !== 'screen_peek' && locale !== 'window_peek')
+      ? clampPosToViewport(rawTarget)
+      : rawTarget
+
   const locomotion = opts?.locomotion ?? (locale === 'target' ? 'fly' : 'walk')
 
   if (opts?.instant) {
@@ -1767,6 +1838,10 @@ export function initSpatial(): () => void {
   // 片段切换只重钳当前位置，不能把表演落点或离开探身的路径拉回 home。
   offs.push(
     $spriteContentRect.listen(() => {
+      if ($surfaceRole.get() === 'desktop') {
+        setSpatialInsets(stageInsets)
+      }
+
       if (!screenEdgeHome) {
         $homePosition.set(clampPosToViewport($homePosition.get()))
       }
@@ -1885,6 +1960,10 @@ export function initSpatial(): () => void {
   const onResize = () => {
     $viewport.set({ width: window.innerWidth, height: window.innerHeight })
 
+    if ($surfaceRole.get() === 'desktop') {
+      setSpatialInsets(stageInsets)
+    }
+
     // 跨屏拖拽由指针路径重映射位置，resize 不接管。
     if ($spatialLocomotion.get() === 'drag') {
       return
@@ -1893,10 +1972,13 @@ export function initSpatial(): () => void {
     const home = $homePosition.get()
     const c = contentBox()
 
-    const clamped = {
-      x: clamp(home.x, REST_MARGIN, window.innerWidth - c.right - REST_MARGIN),
-      y: clamp(home.y, -c.top, window.innerHeight - c.bottom)
-    }
+    const clamped =
+      $surfaceRole.get() === 'desktop'
+        ? clampPosToViewport(home)
+        : {
+            x: clamp(home.x, REST_MARGIN, window.innerWidth - c.right - REST_MARGIN),
+            y: clamp(home.y, -c.top, window.innerHeight - c.bottom)
+          }
 
     $homePosition.set(clamped)
 

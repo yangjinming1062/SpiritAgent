@@ -17,7 +17,6 @@ import {
   setChatSession,
   switchSession
 } from '@/modules/conversation'
-import { MediaViewerOverlay } from '@/modules/media'
 import { hydrateDiaryUnread } from '@/modules/memory'
 import { hydratePostsUnread } from '@/modules/posts'
 import { $activeScene, hydrateScene } from '@/modules/scene'
@@ -63,8 +62,10 @@ export function DesktopRoot(): React.JSX.Element {
   const [focusedConversation, setFocusedConversation] = useState<'main' | 'whisper' | null>('whisper')
   const [accountOpen, setAccountOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [dockMenuOpen, setDockMenuOpen] = useState(false)
+  const [companionMenuOpen, setCompanionMenuOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<'living' | 'station'>('living')
-  const [area, setArea] = useState({ width: 1000, height: 700 })
+  const [area, setArea] = useState({ width: 1000, height: 700, left: 16, top: 60 })
   const initialized = useRef(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -75,11 +76,43 @@ export function DesktopRoot(): React.JSX.Element {
   const foreground = desktopVisible && presentation.foreground
   const activeWindow = layout.windows.findLast(item => !item.minimized)?.id
 
-  const panelsEnabled = foreground && !accountOpen && !settingsOpen
+  const panelsEnabled = foreground && !accountOpen && !settingsOpen && !dockMenuOpen && !companionMenuOpen
   const activePanel = panelsEnabled && focusedConversation !== 'whisper' ? activeWindow : null
   const mainChatActive = activePanel === 'chat' && focusedConversation === 'main'
   const whisperChatActive = panelsEnabled && focusedConversation === 'whisper' && layout.whisperOpen
   const whisperHasUnread = pending.some(message => message.sessionId === companionSessionId)
+
+  useEffect(() => {
+    const onPointerUp = (event: PointerEvent): void => {
+      if (
+        !event.isTrusted ||
+        !event.isPrimary ||
+        event.button !== 0 ||
+        event.buttons !== 0 ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.metaKey ||
+        !navigator.userActivation.isActive
+      ) {
+        return
+      }
+
+      const current = $presentation.get()
+
+      if (current?.effectiveMode !== 'desktop' || current.status !== 'active' || $surfaceScreenLocked.get()) {
+        return
+      }
+
+      void window.spiritagent.presentation.focus(current.stageEpoch).catch(error => {
+        console.warn('[desktop] pointer activation failed', error)
+      })
+    }
+
+    window.addEventListener('pointerup', onPointerUp, true)
+
+    return () => window.removeEventListener('pointerup', onPointerUp, true)
+  }, [])
 
   const activatePanel = useCallback(
     (id: DesktopApp): void => {
@@ -159,13 +192,24 @@ export function DesktopRoot(): React.JSX.Element {
       return
     }
 
-    const update = (): void => setArea({ width: element.clientWidth, height: element.clientHeight })
+    const update = (): void => {
+      const rect = element.getBoundingClientRect()
+      setArea({ width: element.clientWidth, height: element.clientHeight, left: rect.left, top: rect.top })
+    }
+
     const observer = new ResizeObserver(update)
     observer.observe(element)
     update()
 
     return () => observer.disconnect()
-  }, [auth.kind])
+  }, [auth.kind, layout.whisperOpen, layout.whisperSide])
+
+  useEffect(() => {
+    if (!foreground) {
+      setAccountOpen(false)
+      setSettingsOpen(false)
+    }
+  }, [foreground])
 
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
@@ -328,6 +372,7 @@ export function DesktopRoot(): React.JSX.Element {
           <DesktopChat
             active={mainChatActive}
             companionSessionId={companionSessionId}
+            containerRef={rootRef}
             foreground={foreground}
             visible={visible && desktopVisible}
           />
@@ -477,7 +522,13 @@ export function DesktopRoot(): React.JSX.Element {
         ))}
       </main>
       {layout.spriteVisible && desktopVisible && (
-        <DesktopCompanion onHide={toggleSprite} onOpenWhisper={openWhisper} onToggleWhisper={toggleWhisper} />
+        <DesktopCompanion
+          menuEnabled={foreground && !accountOpen && !settingsOpen && !dockMenuOpen}
+          onHide={toggleSprite}
+          onMenuOpenChange={setCompanionMenuOpen}
+          onOpenWhisper={openWhisper}
+          onToggleWhisper={toggleWhisper}
+        />
       )}
       <aside
         aria-label={t.whisper}
@@ -506,6 +557,7 @@ export function DesktopRoot(): React.JSX.Element {
         </header>
         <DesktopWhisper
           active={whisperChatActive}
+          containerRef={rootRef}
           foreground={foreground}
           sessionId={companionSessionId}
           visible={layout.whisperOpen && desktopVisible}
@@ -525,8 +577,12 @@ export function DesktopRoot(): React.JSX.Element {
           {whisperHasUnread && <span aria-hidden="true" className={styles.whisperUnread} />}
         </button>
       )}
-      <DesktopDock onActivate={activatePanel} windows={layout.windows} />
-      <MediaViewerOverlay containerRef={rootRef} windowId={1} />
+      <DesktopDock
+        menuEnabled={foreground && !accountOpen && !settingsOpen && !companionMenuOpen}
+        onActivate={activatePanel}
+        onMenuOpenChange={setDockMenuOpen}
+        windows={layout.windows}
+      />
     </div>
   )
 }

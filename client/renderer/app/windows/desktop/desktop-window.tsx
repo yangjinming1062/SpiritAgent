@@ -15,7 +15,7 @@ interface Props {
   title: string
   active: boolean
   index: number
-  area: { width: number; height: number }
+  area: { width: number; height: number; left: number; top: number }
   onActivate: () => void
   onClose: () => void
   onChange: (patch: Partial<DesktopWindowState>) => void
@@ -88,10 +88,12 @@ export function DesktopWindow({
   }, [finish])
 
   useEffect(() => {
-    if (item.minimized) {
+    if (!active || item.minimized || item.maximized) {
       finish()
     }
-  }, [finish, item.minimized])
+  }, [active, finish, item.minimized, item.maximized])
+
+  useEffect(() => finish(), [area.width, area.height, area.left, area.top, finish])
 
   const move = (event: React.PointerEvent<HTMLElement>): void => {
     const initial = drag.current

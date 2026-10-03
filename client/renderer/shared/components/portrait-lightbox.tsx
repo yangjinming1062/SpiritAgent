@@ -1,10 +1,11 @@
 import { clamp } from '@runtime'
-import { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react'
+import { type ReactNode, type RefObject, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { Copy, Download } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
 
+import { usePanelActivity } from '../context/panel-activity'
 import { useEscapeKey } from '../hooks/use-escape-key'
 import { useImageActions } from '../hooks/use-image-actions'
 import { useLatestRef } from '../hooks/use-latest-ref'
@@ -83,6 +84,9 @@ export function PortraitLightbox({
   windowId?: number
 }): React.ReactPortal | null {
   const t = useStrings()
+  const panelActive = usePanelActivity()
+  const panelActiveRef = useRef(panelActive)
+  const regionId = useId()
   const overlayRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
@@ -98,6 +102,25 @@ export function PortraitLightbox({
 
   const [view, setView] = useState<LightboxView>({ scale: 1, x: 0, y: 0 })
   const { copied, copy, error, save } = useImageActions()
+
+  useLayoutEffect(() => {
+    panelActiveRef.current = panelActive
+  }, [panelActive])
+
+  useEffect(() => {
+    if (panelActive) {
+      return
+    }
+
+    const pointer = dragRef.current
+    dragRef.current = null
+
+    if (pointer && viewportRef.current?.hasPointerCapture(pointer.pointerId)) {
+      viewportRef.current.releasePointerCapture(pointer.pointerId)
+    }
+
+    overlayRef.current?.querySelectorAll<HTMLMediaElement>('audio, video').forEach(media => media.pause())
+  }, [panelActive])
 
   const commitView = (next: LightboxView): void => {
     const el = viewportRef.current
@@ -144,13 +167,19 @@ export function PortraitLightbox({
 
   // 打开后把键盘焦点落到关闭钮（全局去掉了 focus ring，否则 Tab 会先走到底层设置页）；卸载时把焦点还给打开前的元素。portal 异步挂载时 ref 可能仍为 null，聚焦失败不影响后续 Esc/点击关闭。
   useEffect(() => {
+    if (!panelActive) {
+      return
+    }
+
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeButtonRef.current?.focus()
 
     return () => {
-      previous?.focus()
+      if (panelActiveRef.current && previous?.isConnected) {
+        previous.focus()
+      }
     }
-  }, [])
+  }, [panelActive])
 
   const zoomAtRef = useLatestRef(zoomAt)
 
@@ -191,9 +220,9 @@ export function PortraitLightbox({
     return () => el.removeEventListener('wheel', onWheel)
   }, [zoomAtRef])
 
-  const getLightboxRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
+  const getLightboxRect = (el: HTMLElement): DOMRect | null => (panelActive ? el.getBoundingClientRect() : null)
 
-  useInteractiveRegion('portrait-lightbox', overlayRef, containerRef ? undefined : getLightboxRect, undefined, windowId)
+  useInteractiveRegion(`portrait-lightbox:${regionId}`, overlayRef, getLightboxRect, undefined, windowId)
 
   // 灯箱挂在 bubble 阶段、不阻断冒泡——让外层的"返回上一层"也能响应 Esc。
   useEscapeKey(onClose, { capture: false, preventDefault: false, stopPropagation: false })
@@ -223,6 +252,7 @@ export function PortraitLightbox({
       ref={overlayRef}
       role="dialog"
       style={{
+        display: panelActive ? undefined : 'none',
         background: 'rgba(0,0,0,0.35)',
         containerType: containerRef ? 'size' : undefined,
         pointerEvents: 'auto',

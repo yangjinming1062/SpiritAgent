@@ -34,6 +34,7 @@ interface DesktopPresentationOptions {
   authIdentity: () => string | null
   installWindowHandlers: (win: BrowserWindow) => void
   log: (message: string) => void
+  onModeChanged?: () => void
 }
 
 export function createDesktopPresentation(options: DesktopPresentationOptions) {
@@ -41,24 +42,32 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   const serial = createSerialQueue()
   let interactive: BrowserWindow | null = null
   const backgrounds = new Set<BrowserWindow>()
+  const displayBoundsByWindow = new WeakMap<BrowserWindow, Electron.Rectangle>()
   let revision = 0
   let stageEpoch = 0
   let stageVisible = true
   let foreground = false
   let effectiveMode: PresentationMode = 'window'
   let status: PresentationState['status'] = 'inactive'
+  let notifiedMode: PresentationMode | undefined
+  let notifiedStatus: PresentationState['status'] | undefined
   let failureReason: string | null = null
   let hostReady = false
   let suppressAutoRestore = false
   let lastHeartbeat = 0
-  const readyWindows = new Map<BrowserWindow, () => void>()
+  let startupGeneration = 0
+  const readyWindows = new Map<BrowserWindow, { resolve: () => void; reject: (error: Error) => void }>()
   let initialized = false
   let displayTimer: ReturnType<typeof setTimeout> | undefined
   let healthTimer: ReturnType<typeof setInterval> | undefined
   let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
   let currentBackground: DesktopBackground = { image: null, theme: 'day-clear', reduceMotion: false }
   const claims = new Map<string, number>()
-  const rituals = new Map<string, { resolve: (completed: boolean) => void; timer: ReturnType<typeof setTimeout> }>()
+
+  const rituals = new Map<
+    string,
+    { epoch: number; resolve: (completed: boolean) => void; timer: ReturnType<typeof setTimeout> }
+  >()
 
   const native = createExplorerDesktopHost({
     helperPath: options.helperPath,
@@ -70,6 +79,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
 
       foreground = active
+
+      if (!active) {
+        clearRituals()
+      }
+
       publish()
     },
     onFailure: reason => {
@@ -115,6 +129,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   function publish(): void {
     revision += 1
     broadcastToAllWindows(IPC.event.presentationChanged, snapshot())
+
+    if (notifiedMode !== effectiveMode || notifiedStatus !== status) {
+      notifiedMode = effectiveMode
+      notifiedStatus = status
+      options.onModeChanged?.()
+    }
   }
 
   function cancelRitual(callId: string): void {
@@ -127,7 +147,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     clearTimeout(ritual.timer)
     rituals.delete(callId)
 
-    sendToWindow(interactive, IPC.event.presentationRitualCancelled, { callId, epoch: stageEpoch })
+    sendToWindow(interactive, IPC.event.presentationRitualCancelled, { callId, epoch: ritual.epoch })
     ritual.resolve(false)
   }
 
@@ -157,6 +177,15 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function scheduleRecovery(reason: string): void {
+    if (status === 'inactive' || status === 'failed') {
+      return
+    }
+
+    invalidateStartup(reason)
+    foreground = false
+    clearRituals()
+    publish()
+
     void serial(async () => {
       if (status === 'inactive' || status === 'failed') {
         return
@@ -164,6 +193,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       await leave(reason)
     }).catch(error => options.log(`[desktop] recovery: ${errorMessage(error)}`))
+  }
+
+  function invalidateStartup(reason: string): void {
+    startupGeneration += 1
+
+    for (const waiting of readyWindows.values()) {
+      waiting.reject(new Error(reason))
+    }
   }
 
   async function leave(reason?: string): Promise<void> {
@@ -208,6 +245,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     const win = new BrowserWindow({
       ...display.bounds,
       frame: false,
+      thickFrame: false,
       show: false,
       skipTaskbar: true,
       resizable: false,
@@ -225,13 +263,16 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
     })
 
+    win.setBounds(display.bounds)
+    displayBoundsByWindow.set(win, { ...display.bounds })
+
     win.webContents.on('render-process-gone', (_event, details) => {
-      if (status === 'active') {
+      if (status === 'starting' || status === 'active') {
         scheduleRecovery(`桌面渲染进程已退出：${details.reason}`)
       }
     })
     win.on('unresponsive', () => {
-      if (status === 'active') {
+      if (status === 'starting' || status === 'active') {
         scheduleRecovery('桌面暂时无响应，已恢复系统桌面。')
       }
     })
@@ -266,7 +307,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     win.on('closed', () => {
-      if (status === 'active') {
+      if (status === 'starting' || status === 'active') {
         scheduleRecovery('桌面窗口已关闭，已恢复系统桌面。')
       }
     })
@@ -277,16 +318,20 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   async function loadWindow(win: BrowserWindow, primary: boolean): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
 
-    const ready = new Promise<void>((resolve, reject) => {
-      readyWindows.set(win, resolve)
+    const loading = new Promise<void>((resolve, reject) => {
+      const ready = new Promise<void>(reportReady => {
+        readyWindows.set(win, { resolve: reportReady, reject })
+      })
+
       timer = setTimeout(() => reject(new Error('桌面界面准备超时。')), 15000)
+      void Promise.all([
+        ready,
+        win.loadURL(options.rendererUrlFor(primary ? 'desktop' : 'desktop-background', options.seedTheme()))
+      ]).then(() => resolve(), reject)
     })
 
     try {
-      await Promise.all([
-        ready,
-        win.loadURL(options.rendererUrlFor(primary ? 'desktop' : 'desktop-background', options.seedTheme()))
-      ])
+      await loading
     } finally {
       clearTimeout(timer)
       readyWindows.delete(win)
@@ -306,7 +351,28 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       throw new Error('请先完成账户激活与伙伴准备。')
     }
 
+    if (!existsSync(options.helperPath)) {
+      throw new Error(
+        app.isPackaged
+          ? 'Windows 桌面组件缺失，请重新安装客户端。'
+          : 'Windows 桌面组件尚未准备，请在 client 目录运行 pnpm build:native；需要 Rust、Visual Studio C++ 构建工具和 Windows SDK。'
+      )
+    }
+
     const startingIdentity = options.authIdentity()
+    const currentGeneration = startupGeneration
+
+    const assertAttempt = (): void => {
+      if (
+        currentGeneration !== startupGeneration ||
+        !options.authenticated() ||
+        options.authIdentity() !== startingIdentity ||
+        !hostReady
+      ) {
+        throw new Error('桌面准备期间账户或窗口已失效。')
+      }
+    }
+
     status = 'starting'
     failureReason = null
     stageEpoch += 1
@@ -319,9 +385,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         allDisplays.find(display => display.id === preferences.get().displayId) ?? screen.getPrimaryDisplay()
 
       await options.closeSurfaces()
+      assertAttempt()
       interactive = makeWindow(selected, true)
       const main = interactive
       await loadWindow(main, true)
+      assertAttempt()
 
       for (const display of allDisplays) {
         if (display.id === selected.id) {
@@ -337,12 +405,9 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       const windows = [main, ...backgrounds]
 
       const assertReady = (): void => {
-        if (
-          !options.authenticated() ||
-          options.authIdentity() !== startingIdentity ||
-          !hostReady ||
-          windows.some(win => win.isDestroyed())
-        ) {
+        assertAttempt()
+
+        if (windows.some(win => win.isDestroyed())) {
           throw new Error('桌面准备期间账户或窗口已失效。')
         }
       }
@@ -352,11 +417,22 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       await native.start({
         parentPid: process.pid,
         takeover: process.env.SPIRITAGENT_DESKTOP_PROBE !== '1',
-        windows: windows.map(win => ({
-          handle: win.getNativeWindowHandle(),
-          bounds: screen.dipToScreenRect(win, win.getBounds())
-        }))
+        windows: windows.map(win => {
+          const bounds = displayBoundsByWindow.get(win)
+
+          if (!bounds) {
+            throw new Error('桌面窗口缺少显示器边界。')
+          }
+
+          return { handle: win.getNativeWindowHandle(), bounds: screen.dipToScreenRect(win, bounds) }
+        })
       })
+
+      assertReady()
+
+      for (const win of windows) {
+        win.showInactive()
+      }
 
       assertReady()
 
@@ -420,15 +496,23 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     const onDisplays = (): void => {
-      if (effectiveMode === 'desktop') {
+      if (status === 'starting') {
+        scheduleRecovery('桌面准备期间显示器已变化，请重新选择桌面模式。')
+      } else if (status === 'active') {
+        const currentGeneration = startupGeneration
         clearTimeout(displayTimer)
         displayTimer = setTimeout(() => {
           void serial(async () => {
-            if (effectiveMode !== 'desktop') {
+            if (status !== 'active' || currentGeneration !== startupGeneration) {
               return
             }
 
             await leave()
+
+            if (currentGeneration !== startupGeneration) {
+              return
+            }
+
             await enter()
           }).catch(error => options.log(errorMessage(error)))
         }, 100)
@@ -450,6 +534,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       publish()
     })
     powerMonitor.on('unlock-screen', publish)
+    powerMonitor.on('suspend', () => {
+      scheduleRecovery('电脑已进入休眠，已恢复窗口模式。')
+    })
+    powerMonitor.on('resume', () => {
+      scheduleRecovery('电脑已从休眠恢复，已恢复窗口模式。')
+    })
     publish()
   }
 
@@ -465,6 +555,54 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     if (!isDesktopSender(sender) && !options.isSettingsSender(sender)) {
       throw new Error('仅本机设置入口允许此操作。')
     }
+  }
+
+  function setMode(mode: PresentationMode, sender?: WebContents): Promise<PresentationState> {
+    if (sender) {
+      assertSettings(sender)
+    }
+
+    if (mode === 'desktop' && process.platform !== 'win32') {
+      return Promise.reject(new Error('桌面模式目前仅支持 Windows。'))
+    }
+
+    if (mode === 'window') {
+      invalidateStartup('桌面准备已取消。')
+    }
+
+    const currentGeneration = startupGeneration
+
+    return serial(async () => {
+      if (sender) {
+        assertSettings(sender)
+      }
+
+      await preferences.set({ mode })
+
+      if (mode === 'desktop' && currentGeneration !== startupGeneration) {
+        return snapshot()
+      }
+
+      suppressAutoRestore = false
+
+      if (mode === 'desktop') {
+        try {
+          await enter()
+        } catch (error) {
+          if (status !== 'failed') {
+            status = 'failed'
+            failureReason = errorMessage(error)
+            publish()
+          }
+
+          throw error
+        }
+      } else {
+        await leave()
+      }
+
+      return snapshot()
+    })
   }
 
   function registerIpc(ipcMain: IpcMain): void {
@@ -507,23 +645,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error('无效呈现方式。')
       }
 
-      if (raw === 'desktop' && process.platform !== 'win32') {
-        throw new Error('桌面模式目前仅支持 Windows。')
-      }
-
-      return serial(async () => {
-        assertSettings(event.sender)
-        await preferences.set({ mode: raw })
-        suppressAutoRestore = false
-
-        if (raw === 'desktop') {
-          await enter()
-        } else {
-          await leave()
-        }
-
-        return snapshot()
-      })
+      return setMode(raw, event.sender)
     })
     ipcMain.handle(IPC.invoke.presentationSetDisplay, (event, id: unknown) => {
       assertSettings(event.sender)
@@ -532,13 +654,18 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error('显示器不可用。')
       }
 
+      const currentGeneration = startupGeneration
+
       return serial(async () => {
         assertSettings(event.sender)
         await preferences.set({ displayId: id })
 
-        if (effectiveMode === 'desktop') {
+        if (effectiveMode === 'desktop' && currentGeneration === startupGeneration) {
           await leave()
-          await enter()
+
+          if (currentGeneration === startupGeneration) {
+            await enter()
+          }
         }
 
         publish()
@@ -550,10 +677,41 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       assertDesktop(event.sender)
 
       if (interactive) {
-        readyWindows.get(interactive)?.()
+        readyWindows.get(interactive)?.resolve()
       }
 
       lastHeartbeat = Date.now()
+    })
+    ipcMain.handle(IPC.invoke.presentationFocus, (event, epoch: unknown) => {
+      assertDesktop(event.sender)
+
+      if (typeof epoch !== 'number' || !Number.isSafeInteger(epoch)) {
+        throw new Error('无效桌面代次。')
+      }
+
+      const currentGeneration = startupGeneration
+      const identity = options.authIdentity()
+
+      return serial(async () => {
+        assertDesktop(event.sender)
+
+        const eligible = (): boolean =>
+          status === 'active' &&
+          effectiveMode === 'desktop' &&
+          epoch === stageEpoch &&
+          currentGeneration === startupGeneration &&
+          !lastActivity.locked &&
+          powerMonitor.getSystemIdleState(1) !== 'locked' &&
+          options.authenticated() &&
+          identity === options.authIdentity() &&
+          isSenderWindow(event.sender, interactive)
+
+        if (!eligible()) {
+          return false
+        }
+
+        return native.focus(interactive!.getNativeWindowHandle(), eligible)
+      })
     })
     ipcMain.handle(IPC.invoke.presentationHeartbeat, event => {
       assertDesktop(event.sender)
@@ -570,10 +728,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         return
       }
 
+      const currentGeneration = startupGeneration
+
       return serial(async () => {
         await initialize()
 
-        if (!suppressAutoRestore && preferences.get().mode === 'desktop') {
+        if (currentGeneration === startupGeneration && !suppressAutoRestore && preferences.get().mode === 'desktop') {
           await enter()
         }
       }).catch(error => options.log(`[desktop] auto restore: ${errorMessage(error)}`))
@@ -612,7 +772,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
 
       sendToWindow(win, IPC.event.backgroundImage, currentBackground)
-      readyWindows.get(win)?.()
+      readyWindows.get(win)?.resolve()
     })
     ipcMain.handle(IPC.invoke.presentationClaimPlay, (event, raw: unknown) => {
       assertDesktop(event.sender)
@@ -695,7 +855,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
         const timer = setTimeout(() => cancelRitual(raw.callId), 10000)
 
-        rituals.set(raw.callId, { resolve, timer })
+        rituals.set(raw.callId, { epoch: stageEpoch, resolve, timer })
         sendToWindow(interactive, IPC.event.presentationRitual, { ...raw, epoch: stageEpoch })
       })
     })
@@ -705,32 +865,39 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         assertDesktop(event.sender)
         const pending = reply && rituals.get(reply.callId)
 
-        if (!pending || reply.epoch !== stageEpoch) {
+        if (!pending || reply.epoch !== pending.epoch || reply.epoch !== stageEpoch) {
           return
         }
 
         clearTimeout(pending.timer)
         rituals.delete(reply.callId)
-        pending.resolve(reply.completed === true)
+        pending.resolve(reply.completed === true && snapshot().foreground && stageVisible && status === 'active')
       }
     )
   }
 
   return {
     getState: snapshot,
+    setMode,
     getWindow: () => interactive,
     isDesktopSender,
     registerIpc,
     initialize,
-    stop: () => serial(() => leave()),
-    accountChanged: () =>
-      serial(async () => {
-        hostReady = false
+    stop: () => {
+      invalidateStartup('桌面准备已取消。')
 
+      return serial(() => leave())
+    },
+    accountChanged: () => {
+      hostReady = false
+      invalidateStartup('桌面准备期间账户已变化。')
+
+      return serial(async () => {
         if (status !== 'inactive') {
           await leave()
         }
-      }),
+      })
+    },
     navigate: (payload: DesktopNavigation): boolean => {
       if (effectiveMode !== 'desktop' || !interactive || interactive.isDestroyed()) {
         return false

@@ -1,4 +1,4 @@
-import { IPC, type IpcEventChannel, type IpcEventContract, type SurfaceId } from '@ipc/contracts'
+import { IPC, type IpcEventChannel, type IpcEventContract, type PresentationMode, type SurfaceId } from '@ipc/contracts'
 import type { dialog } from 'electron'
 import {
   type App,
@@ -15,6 +15,7 @@ import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, isWindowShown, sendToWindow } from '../shared/utils'
 
+import type { DesktopPresentation } from './desktop-presentation'
 import type { SurfacesManager } from './surfaces'
 
 interface TrayDeps {
@@ -31,6 +32,7 @@ interface TrayDeps {
   rememberLog: (chunk: string) => void
   removeAccount: (accountId: string) => Promise<void>
   surfaces?: SurfacesManager
+  presentation?: Pick<DesktopPresentation, 'getState' | 'setMode'>
   switchAccount: (accountId: string) => Promise<unknown>
 }
 
@@ -54,7 +56,11 @@ const TRAY_STRINGS = {
     quit: (brandName: string) => `退出 ${brandName}`,
     resetPosition: '一键归位',
     show: '显示',
-    workbench: '工作台'
+    workbench: '工作台',
+    presentation: '呈现方式',
+    desktopMode: '桌面模式',
+    windowMode: '窗口模式',
+    presentationFailed: '呈现方式切换失败'
   },
   en: {
     brandName: 'SpiritAgent',
@@ -76,7 +82,11 @@ const TRAY_STRINGS = {
     quit: (brandName: string) => `Quit ${brandName}`,
     resetPosition: 'Reset Position',
     show: 'Show',
-    workbench: 'Workbench'
+    workbench: 'Workbench',
+    presentation: 'Presentation',
+    desktopMode: 'Desktop mode',
+    windowMode: 'Window mode',
+    presentationFailed: 'Could not change presentation'
   }
 } as const
 
@@ -85,6 +95,7 @@ const MAC_TRAY_ICON_SIZE = 16
 let trayInstance: null | Tray = null
 let trayDeps: null | TrayDeps = null
 let accountOperationBusy = false
+let presentationOperationBusy = false
 
 function isAuthenticated(): boolean {
   return Boolean(trayDeps?.ensureBackendSession?.()?.getSession()?.hasToken)
@@ -144,6 +155,26 @@ async function switchFromTray(accountId: string): Promise<void> {
     trayDeps.dialog.showErrorBox(TRAY_STRINGS[getCurrentLanguage()].switchFailed, errorMessage(error))
   } finally {
     accountOperationBusy = false
+    rebuildTrayMenu()
+  }
+}
+
+async function changePresentationFromTray(mode: PresentationMode): Promise<void> {
+  const presentation = trayDeps?.presentation
+
+  if (!trayDeps || !presentation || presentationOperationBusy) {
+    return
+  }
+
+  presentationOperationBusy = true
+  rebuildTrayMenu()
+
+  try {
+    await presentation.setMode(mode)
+  } catch (error) {
+    trayDeps.dialog.showErrorBox(TRAY_STRINGS[getCurrentLanguage()].presentationFailed, errorMessage(error))
+  } finally {
+    presentationOperationBusy = false
     rebuildTrayMenu()
   }
 }
@@ -253,6 +284,33 @@ function buildTrayMenu(): Menu | null {
         label: t.workbench
       }
     )
+  }
+
+  const presentation = trayDeps.presentation?.getState()
+
+  if (authed && presentation?.supported) {
+    const enabled =
+      !presentationOperationBusy && presentation.status !== 'starting' && presentation.status !== 'recovering'
+
+    template.push({
+      label: t.presentation,
+      submenu: [
+        {
+          type: 'radio',
+          label: t.windowMode,
+          checked: presentation.effectiveMode === 'window',
+          enabled,
+          click: () => void changePresentationFromTray('window')
+        },
+        {
+          type: 'radio',
+          label: t.desktopMode,
+          checked: presentation.effectiveMode === 'desktop',
+          enabled,
+          click: () => void changePresentationFromTray('desktop')
+        }
+      ]
+    })
   }
 
   template.push(

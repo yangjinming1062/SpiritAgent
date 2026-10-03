@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
       invoke(IPC.invoke.presentationSetMode, mode),
     setDisplay: (id: number) => invoke(IPC.invoke.presentationSetDisplay, id),
     reportReady: () => invoke(IPC.invoke.presentationReportReady),
+    focus: (epoch: number) => invoke(IPC.invoke.presentationFocus, epoch),
     heartbeat: () => invoke(IPC.invoke.presentationHeartbeat),
     hostReady: () => invoke(IPC.invoke.presentationHostReady),
     setBackground: (background: InvokePayload<typeof IPC.invoke.presentationSetBackground>) =>

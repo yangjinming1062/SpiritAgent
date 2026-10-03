@@ -394,6 +394,7 @@ export interface IpcInvokeContract {
   'spiritagent:presentation:set-mode': (mode: PresentationMode) => Promise<PresentationState>
   'spiritagent:presentation:set-display': (id: number) => Promise<PresentationState>
   'spiritagent:presentation:report-ready': () => void
+  'spiritagent:presentation:focus': (epoch: number) => Promise<boolean>
   'spiritagent:presentation:heartbeat': () => void
   'spiritagent:presentation:host-ready': () => Promise<void>
   'spiritagent:presentation:set-background': (background: DesktopBackground) => void
@@ -634,6 +635,7 @@ export const IPC = {
     presentationSetMode: 'spiritagent:presentation:set-mode',
     presentationSetDisplay: 'spiritagent:presentation:set-display',
     presentationReportReady: 'spiritagent:presentation:report-ready',
+    presentationFocus: 'spiritagent:presentation:focus',
     presentationHeartbeat: 'spiritagent:presentation:heartbeat',
     presentationHostReady: 'spiritagent:presentation:host-ready',
     presentationSetBackground: 'spiritagent:presentation:set-background',

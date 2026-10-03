@@ -5,15 +5,17 @@ import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 
 import type { PendingAttachment } from './chat-store'
+import { useConversationView } from './conversation-view'
 
 function PendingImageThumb({ path }: { path: string }): React.JSX.Element {
+  const { viewId } = useConversationView()
   const dict = useStrings()
   const media = useResolvedMediaSrc({ type: 'image', url: path })
 
   return (
     <button
       className="block h-16 w-16 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-line-standard bg-fill-trough p-0 transition hover:border-line-strong"
-      onClick={() => presentationPorts().openMediaViewer({ type: 'image', url: path })}
+      onClick={() => presentationPorts().openMediaViewer({ type: 'image', url: path }, viewId)}
       type="button"
     >
       {media.status === 'ready' ? (

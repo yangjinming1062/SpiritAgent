@@ -13,6 +13,7 @@ import {
   cancelMovement,
   emitVfx,
   endDragAt,
+  EXPRESSION_BOOST_SCALE,
   FootGlow,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
@@ -647,8 +648,10 @@ export function SpriteStage({
         <FootGlow />
         <div
           className="sprite-body"
-          data-expression-boost={expressionBoost ? '' : undefined}
-          style={{ transformOrigin: bodyOrigin }}
+          style={{
+            transformOrigin: bodyOrigin,
+            transform: expressionBoost ? `scale(${EXPRESSION_BOOST_SCALE})` : undefined
+          }}
         >
           <div className="absolute inset-0" ref={bodyRef} style={{ transformOrigin: bodyOrigin }}>
             {children}

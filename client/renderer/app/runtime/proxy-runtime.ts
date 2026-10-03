@@ -43,7 +43,7 @@ export function ProxyGatewayPump(): null {
           continue
         }
 
-        const revision = runtime.$runtimeRevision.get()
+        const snapshot = runtime.captureHistorySync()
         void syncSessionHistory({
           sessionId: targetId,
           request: body => gateway.request<SessionResumeResponse>('session.resume', { session_id: targetId, ...body })
@@ -58,7 +58,7 @@ export function ProxyGatewayPump(): null {
               return
             }
 
-            runtime.hydrateSyncedChatMessages(result.messages, result.info, revision)
+            runtime.hydrateSyncedChatMessages(result.messages, result.info, snapshot)
           })
           .catch(error => {
             if (isCurrent() && generation === syncGeneration) {

@@ -1209,10 +1209,6 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
   position: absolute;
   transition: transform 300ms ease-in-out;
 }
-.sprite-body[data-expression-boost] {
-  transform: scale(1.12);
-}
-
 /* 仪式指向与点击提示：视口坐标，不参与命中。 */
 .sprite-target-cue {
   height: 100%;

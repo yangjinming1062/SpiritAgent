@@ -27,7 +27,7 @@ export interface PresentationPorts {
   $portraitUrl: Atom<string | null>
   $screenLocked: Atom<boolean>
   getResponsePreference: () => 'text' | 'voice'
-  openMediaViewer: (item: ChatMediaItem) => void
+  openMediaViewer: (item: ChatMediaItem, ownerViewId?: string) => void
   setSpriteState: (name: SpriteStateName, options?: SetSpriteStateOptions) => void
   /** 预制台词的合成+播放（内容寻址落盘缓存）：角色反应池经此送达，避免模块直连语音引擎。 */
   speakScripted: (text: string, voice?: string, context?: string) => Promise<boolean>

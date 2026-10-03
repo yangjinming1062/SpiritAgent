@@ -2,6 +2,7 @@ use crate::{Bounds, Command, Result, WindowSpec, commands, emit};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs::{self, File};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::{size_of, zeroed};
 use std::os::windows::process::CommandExt;
@@ -12,7 +13,9 @@ use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows_sys::Win32::Foundation::*;
-use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromRect, ScreenToClient,
+};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
 use windows_sys::Win32::System::Threading::*;
 use windows_sys::Win32::UI::HiDpi::*;
@@ -77,6 +80,106 @@ impl Drop for MutexGuard {
             ReleaseMutex(self.0.0);
         }
     }
+}
+
+struct RestoringSignal {
+    handle: OwnedHandle,
+    session: String,
+    host_pid: u32,
+    host_created: u64,
+}
+
+impl RestoringSignal {
+    fn new(journal: &Journal) -> Result<Self> {
+        let mut scope = DefaultHasher::new();
+        journal.session.hash(&mut scope);
+        journal.host_pid.hash(&mut scope);
+        journal.host_created.hash(&mut scope);
+        let name = format!("Local\\SpiritAgentDesktopRestoring-{:016x}", scope.finish());
+        let handle = unsafe { CreateEventW(null(), 1, 0, wide(&name).as_ptr()) };
+        if handle.is_null() {
+            return Err(failure("CreateEventW desktop restoration"));
+        }
+        Ok(Self {
+            handle: OwnedHandle(handle),
+            session: journal.session.clone(),
+            host_pid: journal.host_pid,
+            host_created: journal.host_created,
+        })
+    }
+
+    fn requested(&self) -> Result<bool> {
+        match unsafe { WaitForSingleObject(self.handle.0, 0) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            _ => Err(failure("desktop restoration state")),
+        }
+    }
+
+    fn request(&self) -> Result<bool> {
+        let previous = self.requested()?;
+        if unsafe { SetEvent(self.handle.0) } == 0 {
+            return Err(failure("signal desktop restoration"));
+        }
+        Ok(previous)
+    }
+
+    fn matches(&self, journal: &Journal) -> bool {
+        journal.session == self.session
+            && journal.host_pid == self.host_pid
+            && journal.host_created == self.host_created
+    }
+}
+
+fn stop_matching_host(journal: &Journal) -> Result<()> {
+    if unsafe { GetCurrentProcessId() } == journal.host_pid {
+        // host 的异常路径在恢复尝试后退出，不会返回命令循环。
+        return Ok(());
+    }
+    if actual_parent()? != journal.host_pid {
+        return Err("restoration cannot stop a process outside its guardian parent".into());
+    }
+    let host = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE,
+            0,
+            journal.host_pid,
+        )
+    };
+    if host.is_null() {
+        return Err(failure("open restoration host"));
+    }
+    let host = OwnedHandle(host);
+    match unsafe { WaitForSingleObject(host.0, 0) } {
+        WAIT_OBJECT_0 => return Ok(()),
+        WAIT_TIMEOUT => {}
+        _ => return Err(failure("query restoration host state")),
+    }
+    if created(host.0)? != journal.host_created {
+        return Err("restoration host process identity changed".into());
+    }
+    let mut image = [0u16; 32_768];
+    let mut length = image.len() as u32;
+    if unsafe { QueryFullProcessImageNameW(host.0, 0, image.as_mut_ptr(), &mut length) } == 0 {
+        return Err(failure("restoration host executable identity"));
+    }
+    let image = fs::canonicalize(String::from_utf16_lossy(&image[..length as usize]))
+        .map_err(|error| format!("resolve restoration host executable: {error}"))?;
+    let own_image = fs::canonicalize(std::env::current_exe().map_err(|error| error.to_string())?)
+        .map_err(|error| format!("resolve guardian executable: {error}"))?;
+    if !image
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&own_image.to_string_lossy())
+    {
+        return Err("restoration host executable does not match guardian".into());
+    }
+    if unsafe { TerminateProcess(host.0, 1) } == 0 {
+        return Err(failure("stop restoration host"));
+    }
+    if unsafe { WaitForSingleObject(host.0, 1_000) } != WAIT_OBJECT_0 {
+        return Err("restoration host did not stop".into());
+    }
+    Ok(())
 }
 
 fn process(pid: u32) -> Result<OwnedHandle> {
@@ -331,8 +434,13 @@ impl Journal {
     }
 }
 
-fn require_session(path: &Path, session: &str) -> Result<()> {
-    if read_journal(path)?.is_some_and(|journal| journal.session == session) {
+fn require_session(path: &Path, session: &str, restoring: &RestoringSignal) -> Result<()> {
+    if restoring.requested()? {
+        return Err("desktop session is restoring".into());
+    }
+    if read_journal(path)?
+        .is_some_and(|journal| journal.session == session && restoring.matches(&journal))
+    {
         Ok(())
     } else {
         Err("desktop session is missing or changed".into())
@@ -372,16 +480,16 @@ fn shell_windows() -> Result<Vec<Identity>> {
             captured.push(Identity::capture(window)?);
         }
         let view = child(window, "SHELLDLL_DefView");
-        if !view.is_null() {
-            let icons = child(view, "SysListView32");
-            if !icons.is_null() {
-                captured.push(Identity::capture(icons)?);
-            }
+        if !view.is_null()
+            && window_pid(view) == shell_pid
+            && !child(view, "SysListView32").is_null()
+        {
+            captured.push(Identity::capture(view)?);
         }
     }
     if !captured
         .iter()
-        .any(|window| window.class == "SysListView32")
+        .any(|window| window.class == "SHELLDLL_DefView")
     {
         return Err("Explorer desktop icons could not be identified".into());
     }
@@ -403,6 +511,17 @@ fn worker() -> Result<Identity> {
         == 0
     {
         return Err(failure("Explorer WorkerW request"));
+    }
+    // 新版背景 WorkerW 带 WS_DISABLED，不能承载交互窗口；自有舞台挂在其 Progman 父窗。
+    let candidate = child(progman, "WorkerW");
+    if !candidate.is_null()
+        && window_pid(candidate) == window_pid(shell)
+        && class_name(candidate) == "WorkerW"
+        && unsafe { GetParent(candidate) } == progman
+        && child(candidate, "SHELLDLL_DefView").is_null()
+        && !child(progman, "SHELLDLL_DefView").is_null()
+    {
+        return Identity::capture(progman);
     }
     for window in top_windows()? {
         if child(window, "SHELLDLL_DefView").is_null() {
@@ -437,6 +556,53 @@ fn rectangle(window: HWND) -> Result<Bounds> {
             .checked_sub(rect.top)
             .ok_or("invalid window height")?,
     })
+}
+
+fn monitor_bounds(requested: Bounds) -> Result<Bounds> {
+    let rect = RECT {
+        left: requested.x,
+        top: requested.y,
+        right: requested
+            .x
+            .checked_add(requested.width)
+            .ok_or("invalid desktop right edge")?,
+        bottom: requested
+            .y
+            .checked_add(requested.height)
+            .ok_or("invalid desktop bottom edge")?,
+    };
+    let monitor = unsafe { MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) };
+    if monitor.is_null() {
+        return Err("desktop bounds do not identify an available monitor".into());
+    }
+    let mut info: MONITORINFO = unsafe { zeroed() };
+    info.cbSize = size_of::<MONITORINFO>() as u32;
+    if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
+        return Err(failure("GetMonitorInfoW"));
+    }
+    let bounds = Bounds {
+        x: info.rcMonitor.left,
+        y: info.rcMonitor.top,
+        width: info
+            .rcMonitor
+            .right
+            .checked_sub(info.rcMonitor.left)
+            .ok_or("invalid monitor width")?,
+        height: info
+            .rcMonitor
+            .bottom
+            .checked_sub(info.rcMonitor.top)
+            .ok_or("invalid monitor height")?,
+    };
+    if !bounds.valid()
+        || bounds.x.abs_diff(requested.x) > 2
+        || bounds.y.abs_diff(requested.y) > 2
+        || bounds.width.abs_diff(requested.width) > 2
+        || bounds.height.abs_diff(requested.height) > 2
+    {
+        return Err("desktop bounds must cover one complete physical monitor".into());
+    }
+    Ok(bounds)
 }
 
 fn visibility(window: &Identity, visible: bool) -> Result<()> {
@@ -538,7 +704,9 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
             "Electron and Explorer DPI awareness differ; desktop hosting was rejected".into(),
         );
     }
-    let style = (saved.style as u32 & !WS_POPUP) | WS_CHILD;
+    let style = (saved.style as u32
+        & !(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX))
+        | WS_CHILD;
     set_long(window, GWL_STYLE, style as isize)?;
     set_long(
         window,
@@ -552,6 +720,45 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
         return Err("Electron DPI awareness changed after Explorer attachment".into());
     }
     move_window(window, layer, bounds)?;
+    if worker.class == "Progman" {
+        let view = Identity::capture(child(layer, "SHELLDLL_DefView"))?;
+        if view.pid != worker.pid
+            || view.created != worker.created
+            || unsafe { GetParent(view.window()) } != layer
+        {
+            return Err("Explorer icon view changed before desktop ordering".into());
+        }
+        // 仅调整自有子窗，保留图标视图在上、系统背景 WorkerW 在下的顺序。
+        if unsafe {
+            SetWindowPos(
+                window,
+                view.window(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+            )
+        } == 0
+        {
+            return Err(failure("desktop child window ordering"));
+        }
+    }
+    let mut client: RECT = unsafe { zeroed() };
+    if unsafe { GetClientRect(window, &mut client) } == 0 {
+        return Err(failure("GetClientRect"));
+    }
+    if client.right - client.left != bounds.width || client.bottom - client.top != bounds.height {
+        return Err(format!(
+            "desktop client area does not fill its monitor: {}x{} instead of {}x{} (style {:#x}, ex-style {:#x})",
+            client.right - client.left,
+            client.bottom - client.top,
+            bounds.width,
+            bounds.height,
+            unsafe { GetWindowLongPtrW(window, GWL_STYLE) },
+            unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) },
+        ));
+    }
     let mut ui_state = 0;
     if unsafe {
         SendMessageTimeoutW(
@@ -609,8 +816,13 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
         for item in &journal.shell {
             if !item.valid()
                 || !is_explorer(item.pid)
-                || !["SysListView32", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
-                    .contains(&item.class.as_str())
+                || ![
+                    "SHELLDLL_DefView",
+                    "SysListView32",
+                    "Shell_TrayWnd",
+                    "Shell_SecondaryTrayWnd",
+                ]
+                .contains(&item.class.as_str())
             {
                 continue;
             }
@@ -626,10 +838,10 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
             if let Err(error) = visibility(&saved.identity, false) {
                 failures.push(error);
             }
-            let parent = null_mut();
-            let result = set_parent(window, parent)
-                .and_then(|()| set_long(window, GWL_STYLE, saved.style as isize))
+            let parent = saved.parent as usize as HWND;
+            let result = set_long(window, GWL_STYLE, saved.style as isize)
                 .and_then(|()| set_long(window, GWL_EXSTYLE, saved.ex_style as isize))
+                .and_then(|()| set_parent(window, parent))
                 .and_then(|()| move_window(window, parent, saved.bounds));
             if let Err(error) = result {
                 failures.push(error);
@@ -651,15 +863,38 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
     Ok(true)
 }
 
-fn restore_interrupted(path: &Path, session: &str, reason: &str) -> Result<bool> {
+fn restore_interrupted(
+    path: &Path,
+    session: &str,
+    reason: &str,
+    restoring: &RestoringSignal,
+) -> Result<bool> {
     let _lock = MutexGuard::restoration()?;
     let Some(journal) = read_journal(path)? else {
         return Ok(false);
     };
-    if journal.session != session {
+    if journal.session != session || !restoring.matches(&journal) {
         return Err("interruption session changed".into());
     }
-    if let Err(error) = atomic_write(&sidecar(path, ".interrupted"), reason.as_bytes()) {
+    // 信号与接管写操作共享锁；恢复失败保留 journal 时，host 也不能再次隐藏系统界面。
+    let requested = restoring.request();
+    let marker = sidecar(path, ".interrupted");
+    let recording = match requested {
+        Ok(true) if unsafe { GetCurrentProcessId() } == journal.host_pid => Ok(()),
+        _ => atomic_write(&marker, reason.as_bytes()),
+    };
+    // 信号失败时 guardian 只停止身份仍匹配的自有 parent host，随后仍优先恢复系统。
+    let stop_error = if requested.is_err() {
+        stop_matching_host(&journal).err()
+    } else {
+        None
+    };
+    for error in requested
+        .err()
+        .into_iter()
+        .chain(recording.err())
+        .chain(stop_error)
+    {
         let diagnostic = format!("interruption marker write failed: {error}\n");
         if let Ok(mut log) = fs::OpenOptions::new()
             .create(true)
@@ -753,6 +988,22 @@ struct Session {
     takeover: bool,
     last_shell_scan: Instant,
     stopped: bool,
+    restoring: RestoringSignal,
+}
+
+struct InputAttachment {
+    source: u32,
+    target: u32,
+}
+
+impl Drop for InputAttachment {
+    fn drop(&mut self) {
+        if unsafe { AttachThreadInput(self.source, self.target, 0) } == 0 {
+            emit(json!({ "event": "failure", "reason": failure("detach desktop input thread") }));
+            // 线程附着不能遗留在循环内；退出自有 host，让独立 guardian 恢复。
+            std::process::exit(1);
+        }
+    }
 }
 
 impl Session {
@@ -770,6 +1021,7 @@ impl Session {
         let host_pid = unsafe { GetCurrentProcessId() };
         let host = process(host_pid)?;
         let mut windows = Vec::new();
+        let mut targets = Vec::new();
         for spec in specs {
             if spec.handle.len() > 16
                 || spec.handle.is_empty()
@@ -791,6 +1043,7 @@ impl Session {
             if !bounds.valid() {
                 return Err("desktop physical bounds are out of range".into());
             }
+            targets.push(monitor_bounds(bounds)?);
             let window = value as usize as HWND;
             let identity = Identity::capture(window)?;
             if identity.pid != parent_pid || identity.created != created(parent.0)? {
@@ -829,6 +1082,7 @@ impl Session {
             },
             windows,
         };
+        let restoring = RestoringSignal::new(&journal)?;
         if let Some(directory) = path.parent() {
             fs::create_dir_all(directory)
                 .map_err(|error| format!("create desktop journal directory: {error}"))?;
@@ -912,14 +1166,14 @@ impl Session {
         // 挂载和紧急恢复共享锁，防止恢复后又隐藏系统界面。
         let transaction = MutexGuard::restoration()?;
         let attached = (|| {
-            require_session(path, &journal.session)?;
+            require_session(path, &journal.session, &restoring)?;
             if !worker.visible {
                 return Err("Explorer WorkerW is not visible".into());
             }
             journal.phase = JournalPhase::Attaching;
             journal.save(path)?;
-            for (saved, spec) in journal.windows.iter().zip(specs) {
-                attach(saved, &worker, spec.bounds)?;
+            for (saved, target) in journal.windows.iter().zip(&targets) {
+                attach(saved, &worker, *target)?;
             }
             if takeover {
                 for item in &journal.shell {
@@ -941,7 +1195,7 @@ impl Session {
         Ok(Self {
             journal,
             worker,
-            targets: specs.iter().map(|spec| spec.bounds).collect(),
+            targets,
             guardian,
             path: path.into(),
             last_heartbeat: Instant::now(),
@@ -950,12 +1204,13 @@ impl Session {
             takeover,
             last_shell_scan: Instant::now(),
             stopped: false,
+            restoring,
         })
     }
 
     fn heartbeat(&mut self) -> Result<()> {
         let _transaction = MutexGuard::restoration()?;
-        require_session(&self.path, &self.journal.session)?;
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
         self.lease_number += 1;
         atomic_write(
             &sidecar(&self.path, ".lease"),
@@ -966,7 +1221,121 @@ impl Session {
         Ok(())
     }
 
+    fn focus(&self, handle: &str) -> Result<()> {
+        if handle.is_empty()
+            || handle.len() > 16
+            || !handle.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("invalid desktop focus handle".into());
+        }
+        let value = u64::from_str_radix(handle, 16).map_err(|_| "invalid desktop focus handle")?;
+        let saved = self
+            .journal
+            .windows
+            .iter()
+            .find(|saved| saved.identity.handle == value)
+            .ok_or("desktop focus target is not registered in this session")?;
+        let window = saved.identity.window();
+        let validate = || -> Result<()> {
+            require_session(&self.path, &self.journal.session, &self.restoring)?;
+            if !self.takeover
+                || !saved.identity.valid()
+                || !self.worker.valid()
+                || unsafe { GetParent(window) } != self.worker.window()
+                || unsafe { IsWindowVisible(window) } == 0
+            {
+                return Err("desktop focus target is no longer an active stage".into());
+            }
+            let foreground = unsafe { GetForegroundWindow() };
+            if foreground != self.worker.window()
+                && !self.journal.windows.iter().any(|registered| {
+                    foreground == registered.identity.window()
+                        || unsafe { IsChild(registered.identity.window(), foreground) } != 0
+                })
+            {
+                return Err("desktop focus requires the desktop to be foreground".into());
+            }
+            Ok(())
+        };
+        let _transaction = MutexGuard::restoration()?;
+        validate()?;
+        let foreground = unsafe { GetForegroundWindow() };
+        let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, null_mut()) };
+        let mut info: GUITHREADINFO = unsafe { zeroed() };
+        info.cbSize = size_of::<GUITHREADINFO>() as u32;
+        if unsafe { GetGUIThreadInfo(foreground_thread, &mut info) } == 0 {
+            return Err(failure("desktop focus query"));
+        }
+        if info.hwndFocus == window || unsafe { IsChild(window, info.hwndFocus) } != 0 {
+            return Ok(());
+        }
+        let keys_up = || -> Result<()> {
+            for key in [
+                VK_CONTROL,
+                VK_MENU,
+                VK_SHIFT,
+                VK_LWIN,
+                VK_RWIN,
+                VK_LBUTTON,
+                VK_RBUTTON,
+                VK_MBUTTON,
+                VK_XBUTTON1,
+                VK_XBUTTON2,
+            ] {
+                if unsafe { GetAsyncKeyState(i32::from(key)) } < 0 {
+                    return Err(
+                        "desktop focus cannot change while modifiers or mouse buttons are held"
+                            .into(),
+                    );
+                }
+            }
+            Ok(())
+        };
+        keys_up()?;
+        let source = unsafe { GetCurrentThreadId() };
+        let target = unsafe { GetWindowThreadProcessId(window, null_mut()) };
+        if target == 0 || target == source {
+            return Err("desktop focus target thread is invalid".into());
+        }
+        let mut message: MSG = unsafe { zeroed() };
+        unsafe {
+            PeekMessageW(&mut message, null_mut(), 0, 0, PM_NOREMOVE);
+        }
+        validate()?;
+        keys_up()?;
+        if unsafe { AttachThreadInput(source, target, 1) } == 0 {
+            return Err(failure("attach desktop input thread"));
+        }
+        let attached = InputAttachment { source, target };
+        let focused = (|| {
+            validate()?;
+            keys_up()?;
+            unsafe {
+                SetLastError(0);
+                SetFocus(window);
+            }
+            let focus = unsafe { GetFocus() };
+            if focus != window && unsafe { IsChild(window, focus) } == 0 {
+                return Err(failure("set desktop input focus"));
+            }
+            Ok(())
+        })();
+        drop(attached);
+        focused?;
+        validate()?;
+        if unsafe { GetGUIThreadInfo(foreground_thread, &mut info) } == 0 {
+            return Err(failure("desktop focus verification"));
+        }
+        if info.hwndFocus != window && unsafe { IsChild(window, info.hwndFocus) } == 0 {
+            return Err("desktop input focus was lost after detaching helper thread".into());
+        }
+        Ok(())
+    }
+
     fn poll(&mut self) -> Result<()> {
+        if self.restoring.requested()? {
+            return Err("desktop restoration has started".into());
+        }
         if !self.path.exists() {
             return Err("desktop restored by guardian or emergency shortcut".into());
         }
@@ -992,7 +1361,7 @@ impl Session {
         if !self.worker.valid() {
             let replacement = worker()?;
             let _transaction = MutexGuard::restoration()?;
-            require_session(&self.path, &self.journal.session)?;
+            require_session(&self.path, &self.journal.session, &self.restoring)?;
             for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
                 attach(saved, &replacement, *target)?;
             }
@@ -1001,11 +1370,12 @@ impl Session {
         }
         if self.takeover && self.last_shell_scan.elapsed() >= Duration::from_secs(1) {
             let _transaction = MutexGuard::restoration()?;
-            require_session(&self.path, &self.journal.session)?;
+            require_session(&self.path, &self.journal.session, &self.restoring)?;
             self.refresh_shell()?;
         }
         let foreground = unsafe { GetForegroundWindow() };
-        let active = foreground == self.worker.window()
+        let active = (foreground == self.worker.window()
+            && (self.takeover || self.worker.class != "Progman"))
             || self.journal.windows.iter().any(|saved| {
                 foreground == saved.identity.window()
                     || unsafe { IsChild(saved.identity.window(), foreground) } != 0
@@ -1093,6 +1463,10 @@ pub fn host(path: &Path) -> Result<()> {
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(Session::heartbeat),
+                    Command::Focus { handle, .. } => session
+                        .as_ref()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| active.focus(&handle)),
                     Command::Stop { .. } => {
                         exiting = true;
                         session.as_mut().map_or(Ok(()), Session::stop)
@@ -1112,6 +1486,7 @@ pub fn host(path: &Path) -> Result<()> {
                         path,
                         &active.journal.session,
                         "command_channel_failure",
+                        &active.restoring,
                     ) {
                         return Err(format!("{reason}; restoration: {error}"));
                     }
@@ -1120,9 +1495,12 @@ pub fn host(path: &Path) -> Result<()> {
             }
             Err(RecvTimeoutError::Disconnected) => {
                 if let Some(active) = session.as_ref() {
-                    if let Err(error) =
-                        restore_interrupted(path, &active.journal.session, "command_channel_closed")
-                    {
+                    if let Err(error) = restore_interrupted(
+                        path,
+                        &active.journal.session,
+                        "command_channel_closed",
+                        &active.restoring,
+                    ) {
                         return Err(format!(
                             "desktop parent closed command channel; restoration: {error}"
                         ));
@@ -1135,7 +1513,12 @@ pub fn host(path: &Path) -> Result<()> {
         if let Some(active) = session.as_mut() {
             if let Err(reason) = active.poll() {
                 return Err(
-                    match restore_interrupted(path, &active.journal.session, "host_failure") {
+                    match restore_interrupted(
+                        path,
+                        &active.journal.session,
+                        "host_failure",
+                        &active.restoring,
+                    ) {
                         Ok(_) => reason,
                         Err(error) => format!("{reason}; restoration: {error}"),
                     },
@@ -1158,6 +1541,7 @@ pub fn guardian(path: &Path, session: &str) -> Result<()> {
     if created(parent.0)? != journal.parent_created || created(host.0)? != journal.host_created {
         return Err("guardian process identity changed".into());
     }
+    let restoring = RestoringSignal::new(&journal)?;
     // 紧急键由独立守护进程持有，宿主无响应时仍可请求恢复。
     if unsafe {
         RegisterHotKey(
@@ -1216,7 +1600,7 @@ pub fn guardian(path: &Path, session: &str) -> Result<()> {
         };
         if let Some(reason) = reason {
             loop {
-                match restore_interrupted(path, session, reason) {
+                match restore_interrupted(path, session, reason, &restoring) {
                     Ok(_) => return Ok(()),
                     Err(error) => match read_journal(path) {
                         Ok(None) => return Ok(()),

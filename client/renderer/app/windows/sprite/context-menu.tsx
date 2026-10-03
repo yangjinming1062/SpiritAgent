@@ -3,6 +3,7 @@ import { useStore } from '@nanostores/react'
 import { IconRotateClockwise, IconVolume, IconVolumeOff } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef } from 'react'
 
+import { usePresentationModeSwitch } from '@/app/components/presentation-settings'
 import { SPRITE_REGION_ID } from '@/app/components/sprite-stage'
 import {
   $contextMenuPos,
@@ -32,22 +33,25 @@ interface ContextMenuProps {
 }
 
 const MENU_ITEM_CLASS =
-  'flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-xl px-2.5 text-left text-xs font-medium text-body transition-all duration-150 hover:bg-fill-hover hover:text-strong focus:bg-fill-hover focus:outline-none'
+  'flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-xl px-2.5 text-left text-xs font-medium text-body transition-all duration-150 hover:bg-fill-hover hover:text-strong focus:bg-fill-hover focus:outline-none disabled:cursor-wait disabled:opacity-50'
 
 function MenuItem({
   accent,
   icon: Icon,
   label,
-  onClick
+  onClick,
+  disabled = false
 }: {
   accent?: boolean
   icon: IconComponent
   label: string
   onClick: () => void
+  disabled?: boolean
 }): React.JSX.Element {
   return (
     <button
       className={MENU_ITEM_CLASS}
+      disabled={disabled}
       onClick={() => {
         onClick()
         closeContextMenu()
@@ -69,8 +73,8 @@ function quietMinutesLeft(until: number): number {
   return Math.max(1, Math.ceil((until - Date.now()) / 60_000))
 }
 
-// 精灵右键快捷菜单（超高质感液态玻璃）：收敛为生活空间与工作台两大入口
 export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMenuProps): React.JSX.Element {
+  const { state: presentation, en, busy, switchMode } = usePresentationModeSwitch()
   const auth = useStore($auth)
   const pos = useStore($contextMenuPos)
   // 临时安静只设置或清除截止时间，不改写档位偏好；已选静止档时无需临时安静，不显示该项。
@@ -166,6 +170,14 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
           <>
             <MenuItem accent icon={Home} label={dict.living.title} onClick={() => onOpenSurface?.('living')} />
             <MenuItem accent icon={Monitor} label={dict.workbench.title} onClick={() => onOpenSurface?.('workbench')} />
+            {presentation.supported && presentation.effectiveMode !== 'desktop' && (
+              <MenuItem
+                disabled={busy}
+                icon={Monitor}
+                label={en ? 'Desktop mode' : '桌面模式'}
+                onClick={() => void switchMode('desktop')}
+              />
+            )}
             <MenuDivider />
             {preferredTier !== 'still' ? (
               <MenuItem

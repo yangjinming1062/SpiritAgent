@@ -111,6 +111,9 @@ importers:
       react-router-dom:
         specifier: ^7.17.0
         version: 7.18.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      resedit:
+        specifier: 1.7.0
+        version: 1.7.0
       tailwind-merge:
         specifier: ^3.5.0
         version: 3.6.0

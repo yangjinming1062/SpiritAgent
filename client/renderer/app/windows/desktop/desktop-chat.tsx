@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useRef } from 'react'
+import { type RefObject, useRef } from 'react'
 
 import { RunRail } from '@/app/features/workbench/run-rail'
 import { SessionSidebar } from '@/app/features/workbench/session-sidebar'
@@ -15,6 +15,7 @@ import {
   useChatInput,
   useIsReadOnlySession
 } from '@/modules/conversation'
+import { MediaViewerOverlay } from '@/modules/media'
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { $gatewayState } from '@/shared/store/gateway'
 
@@ -24,12 +25,14 @@ export function DesktopChat({
   active,
   visible,
   foreground,
-  companionSessionId
+  companionSessionId,
+  containerRef
 }: {
   active: boolean
   visible: boolean
   foreground: boolean
   companionSessionId: string | null
+  containerRef: RefObject<HTMLElement | null>
 }): React.JSX.Element {
   const sessionId = useStore($chatSessionId)
   const sessions = useStore($sessions)
@@ -53,6 +56,7 @@ export function DesktopChat({
         visible={visible}
       >
         <MainChat companion={companion} />
+        <MediaViewerOverlay containerRef={containerRef} viewId="desktop-main" windowId={1} />
       </ConversationViewProvider>
       {!companion && <RunRail />}
     </div>
@@ -81,12 +85,14 @@ export function DesktopWhisper({
   sessionId,
   active,
   visible,
-  foreground
+  foreground,
+  containerRef
 }: {
   sessionId: string | null
   active: boolean
   visible: boolean
   foreground: boolean
+  containerRef: RefObject<HTMLElement | null>
 }): React.JSX.Element {
   return (
     <PanelActivityProvider active={active && visible && foreground}>
@@ -99,6 +105,7 @@ export function DesktopWhisper({
         visible={visible}
       >
         <WhisperChat />
+        <MediaViewerOverlay containerRef={containerRef} viewId="desktop-whisper" windowId={1} />
       </ConversationViewProvider>
     </PanelActivityProvider>
   )

@@ -94,14 +94,13 @@ export function useVoiceRecorder({
     [runtime]
   )
 
-  const recorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const streamRef = useRef<MediaStream | null>(null)
+  const recordingRef = useRef<{ recorder: MediaRecorder; chunks: Blob[] } | null>(null)
   const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const configRef = useRef<{ voice?: { max_recording_seconds?: number } }>({})
   const startPendingRef = useRef<Promise<void> | null>(null)
   const stopRef = useRef<() => Promise<void>>(async () => {})
   const unmountedRef = useRef(false)
+  const operationRef = useRef(0)
 
   useEffect(() => {
     void getSpiritAgentConfig()
@@ -133,7 +132,7 @@ export function useVoiceRecorder({
   }
 
   const transcribe = useCallback(
-    async (blob: Blob): Promise<string | null> => {
+    async (blob: Blob, operation: number): Promise<string | null> => {
       try {
         let finalBlob = blob
 
@@ -148,7 +147,7 @@ export function useVoiceRecorder({
         const ext = getAudioExtensionForMime(finalBlob.type)
 
         // 不指定语言：主进程按当前用户语言设置转写。
-        if (!isCurrent()) {
+        if (!isCurrent() || operation !== operationRef.current) {
           return null
         }
 
@@ -160,7 +159,7 @@ export function useVoiceRecorder({
         log.warn('voice-recorder', 'Transcription failed:', err)
         const voiceInput = getStrings().chat.voiceInput
 
-        if (isCurrent()) {
+        if (isCurrent() && operation === operationRef.current) {
           markAssistantTerminal({ error: isMediaBusyError(err) ? voiceInput.busy : voiceInput.notRecognized })
         }
 
@@ -171,6 +170,9 @@ export function useVoiceRecorder({
   )
 
   const stop = useCallback(async () => {
+    const operation = operationRef.current
+    const recordingCurrent = (): boolean => isCurrent() && operation === operationRef.current
+
     if (startPendingRef.current) {
       try {
         await startPendingRef.current
@@ -179,23 +181,23 @@ export function useVoiceRecorder({
       }
     }
 
-    cancelAutoStop()
-
-    const recorder = recorderRef.current
-
-    if (!recorder || recorder.state === 'inactive') {
-      endRecording()
-
+    if (!recordingCurrent()) {
       return
     }
 
+    cancelAutoStop()
+
+    const capture = recordingRef.current
+
+    if (!capture || capture.recorder.state === 'inactive') {
+      return
+    }
+
+    const { recorder, chunks } = capture
     const mimeType = recorder.mimeType || getSupportedOpusMimeType() || 'audio/webm'
 
     const blob = await new Promise<Blob | null>(resolve => {
       recorder.onstop = () => {
-        const chunks = chunksRef.current
-        chunksRef.current = []
-
         if (chunks.length === 0) {
           resolve(null)
 
@@ -213,12 +215,13 @@ export function useVoiceRecorder({
     })
 
     stopTracks(recorder.stream)
-    streamRef.current = null
-    endRecording()
 
-    if (!isCurrent()) {
+    if (!recordingCurrent()) {
       return
     }
+
+    recordingRef.current = null
+    endRecording()
 
     if (!blob || blob.size === 0) {
       presentationPorts().setSpriteState('idle')
@@ -227,9 +230,9 @@ export function useVoiceRecorder({
     }
 
     presentationPorts().setSpriteState('thinking')
-    const text = await transcribe(blob)
+    const text = await transcribe(blob, operation)
 
-    if (!isCurrent()) {
+    if (!recordingCurrent()) {
       return
     }
 
@@ -243,7 +246,7 @@ export function useVoiceRecorder({
       try {
         await ensureChatSession(runtime)
 
-        if (!isCurrent()) {
+        if (!recordingCurrent()) {
           return
         }
 
@@ -254,7 +257,7 @@ export function useVoiceRecorder({
       } catch (err) {
         log.warn('voice-recorder', 'Voice message send failed:', err)
 
-        if (!isCurrent()) {
+        if (!recordingCurrent()) {
           return
         }
 
@@ -279,17 +282,17 @@ export function useVoiceRecorder({
 
   const start = useCallback(() => {
     if (
-      !eligible ||
+      !isCurrent() ||
       isReadOnlySession ||
-      !runtime.isCurrent() ||
       recordingOwner !== null ||
       startPendingRef.current ||
-      recorderRef.current?.state === 'recording'
+      recordingRef.current !== null
     ) {
       return
     }
 
     recordingOwner = ownerToken.current
+    const operation = ++operationRef.current
     conversationVoiceSink().setRecording(true)
     let pending: Promise<void> | null = null
     pending = (async () => {
@@ -298,8 +301,8 @@ export function useVoiceRecorder({
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: IM_VOICE_BAR_AUDIO_CONSTRAINTS })
 
-        // 等待麦克风期间已卸载：不再开录，也就不会自动发送。
-        if (!isCurrent()) {
+        // 等待麦克风期间失去资格，即使重新活动也不能恢复旧录音。
+        if (!isCurrent() || operation !== operationRef.current) {
           stopTracks(stream)
           endRecording()
 
@@ -309,13 +312,12 @@ export function useVoiceRecorder({
         const mimeType = getSupportedOpusMimeType()
         const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
 
-        streamRef.current = stream
-        recorderRef.current = recorder
-        chunksRef.current = []
+        const chunks: Blob[] = []
+        recordingRef.current = { recorder, chunks }
 
         recorder.ondataavailable = e => {
           if (e.data.size > 0) {
-            chunksRef.current.push(e.data)
+            chunks.push(e.data)
           }
         }
 
@@ -327,7 +329,7 @@ export function useVoiceRecorder({
 
         if (cap > 0) {
           autoStopRef.current = setTimeout(() => {
-            if (recorderRef.current?.state === 'recording') {
+            if (recordingRef.current?.recorder.state === 'recording') {
               void stopRef.current()
             }
           }, cap * 1000)
@@ -336,14 +338,10 @@ export function useVoiceRecorder({
         log.warn('voice-recorder', 'Recording failed to start:', err)
         // 构造或启动录音失败都要就地停轨并复位，否则麦克风指示灯常亮、按钮停在录音态。
         stopTracks(stream)
-        streamRef.current = null
-        recorderRef.current = null
-        chunksRef.current = []
-        setRecording(false)
 
-        if (recordingOwner === ownerToken.current) {
-          recordingOwner = null
-          conversationVoiceSink().setRecording(false)
+        if (isCurrent() && operation === operationRef.current && recordingOwner === ownerToken.current) {
+          recordingRef.current = null
+          endRecording()
           markAssistantTerminal({ error: getStrings().chat.voiceInput.micUnavailable })
           presentationPorts().setSpriteState('idle')
         }
@@ -354,22 +352,27 @@ export function useVoiceRecorder({
       }
     })()
     startPendingRef.current = pending
-  }, [eligible, isReadOnlySession, runtime, markAssistantTerminal, isCurrent])
+  }, [isReadOnlySession, markAssistantTerminal, isCurrent])
 
   useEffect(() => {
     if (eligible) {
       return
     }
 
-    const recorder = recorderRef.current
+    operationRef.current++
+    const recorder = recordingRef.current?.recorder
+    recordingRef.current = null
 
-    if (recorder && recorder.state !== 'inactive') {
+    if (recorder) {
+      recorder.ondataavailable = null
       stopTracks(recorder.stream)
-      recorder.stop()
+
+      if (recorder.state !== 'inactive') {
+        recorder.stop()
+      }
     }
 
     cancelAutoStop()
-    chunksRef.current = []
     endRecording()
   }, [eligible])
 
@@ -394,15 +397,22 @@ export function useVoiceRecorder({
   useEffect(() => {
     unmountedRef.current = false
     const token = ownerToken.current
+    const operations = operationRef
 
     return () => {
       unmountedRef.current = true
+      operations.current++
       cancelAutoStop()
-      const recorder = recorderRef.current
+      const recorder = recordingRef.current?.recorder
+      recordingRef.current = null
 
-      if (recorder && recorder.state !== 'inactive') {
+      if (recorder) {
+        recorder.ondataavailable = null
         stopTracks(recorder.stream)
-        recorder.stop()
+
+        if (recorder.state !== 'inactive') {
+          recorder.stop()
+        }
       }
 
       setRecording(false)

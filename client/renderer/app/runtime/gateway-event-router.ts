@@ -31,10 +31,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       ? findConversationRuntime(event.session_id)
       : getConversationRuntime($chatSessionId.get())
 
-  if (event.session_id !== undefined && !runtime && event.type !== 'tool.call' && event.type !== 'tool.cancel') {
-    return
-  }
-
   const ctx: EventRouteContext = { isProxy: $gateway.get()?.isProxy ?? false }
 
   switch (event.type) {
@@ -63,12 +59,16 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'compress.completed':
 
     case 'error':
-      handleConversationEvent(event, ctx, runtime)
+      if (runtime) {
+        handleConversationEvent(event, ctx, runtime)
+      }
 
       break
 
     case 'tool.start':
-      handleToolStart(event, runtime)
+      if (runtime) {
+        handleToolStart(event, runtime)
+      }
 
       break
 
@@ -83,7 +83,9 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     case 'tool.complete':
-      handleToolComplete(runtime)
+      if (runtime) {
+        handleToolComplete(runtime)
+      }
 
       break
 

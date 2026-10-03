@@ -42,10 +42,14 @@ function BuiltinAppIcon({ id }: { id: DesktopApp }): React.JSX.Element {
 
 export function DesktopDock({
   windows,
-  onActivate
+  onActivate,
+  menuEnabled,
+  onMenuOpenChange
 }: {
   windows: DesktopWindowState[]
   onActivate: (id: DesktopApp) => void
+  menuEnabled: boolean
+  onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {
   const t = useDesktopStrings()
   const [state, setState] = useState<DockState>({ entries: [], revision: -1 })
@@ -55,6 +59,18 @@ export function DesktopDock({
   const draggedId = useRef<string | null>(null)
   const [busy, setBusy] = useState(false)
   const beginAsync = useAsyncGuard()
+
+  useEffect(() => {
+    if (!menuEnabled) {
+      setMenu(null)
+    }
+  }, [menuEnabled])
+
+  useEffect(() => {
+    onMenuOpenChange(menu !== null)
+
+    return () => onMenuOpenChange(false)
+  }, [menu, onMenuOpenChange])
 
   useEffect(() => {
     let disposed = false
@@ -82,7 +98,7 @@ export function DesktopDock({
   }, [t.dock])
 
   useEffect(() => {
-    if (!menu) {
+    if (!menu || !menuEnabled) {
       return
     }
 
@@ -90,6 +106,8 @@ export function DesktopDock({
 
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
         close()
       }
     }
@@ -101,7 +119,7 @@ export function DesktopDock({
       window.removeEventListener('pointerdown', close)
       window.removeEventListener('keydown', onKey)
     }
-  }, [menu])
+  }, [menu, menuEnabled])
 
   const run = async (action: () => Promise<DockState | void>, fallback = t.dock): Promise<void> => {
     if (busy) {
@@ -129,6 +147,10 @@ export function DesktopDock({
   }
 
   const openMenu = (id: string, button: HTMLElement): void => {
+    if (!menuEnabled) {
+      return
+    }
+
     const dock = dockRef.current?.getBoundingClientRect()
 
     if (!dock) {
@@ -245,7 +267,7 @@ export function DesktopDock({
           ))}
         </div>
       </div>
-      {menu && menuEntry && (
+      {menuEnabled && menu && menuEntry && (
         <div
           className={styles.dockMenu}
           onPointerDown={event => event.stopPropagation()}

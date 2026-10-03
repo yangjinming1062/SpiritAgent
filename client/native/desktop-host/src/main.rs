@@ -58,6 +58,10 @@ enum Command {
     Heartbeat {
         id: u32,
     },
+    Focus {
+        id: u32,
+        handle: String,
+    },
     Stop {
         id: u32,
     },
@@ -67,7 +71,10 @@ enum Command {
 impl Command {
     fn id(&self) -> u32 {
         match self {
-            Self::Start { id, .. } | Self::Heartbeat { id } | Self::Stop { id } => *id,
+            Self::Start { id, .. }
+            | Self::Heartbeat { id }
+            | Self::Focus { id, .. }
+            | Self::Stop { id } => *id,
         }
     }
 }
@@ -115,7 +122,20 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args
         .first()
-        .ok_or("missing host, guardian, or recover mode")?;
+        .ok_or("missing check-runtime, host, guardian, or recover mode")?;
+    if mode == "check-runtime" && args.len() == 1 {
+        #[cfg(windows)]
+        {
+            emit(json!({
+                "event": "runtime_ready",
+                "arch": std::env::consts::ARCH,
+                "version": env!("CARGO_PKG_VERSION"),
+            }));
+            return Ok(());
+        }
+        #[cfg(not(windows))]
+        return Err("Explorer desktop hosting is available on Windows only".into());
+    }
     if args.get(1).map(String::as_str) != Some("--journal") {
         return Err("expected --journal followed by an absolute path".into());
     }

@@ -156,6 +156,7 @@ export {
   commitPeekPreparation,
   computeOverlayAnchorBesideSprite,
   endDragAt,
+  EXPRESSION_BOOST_SCALE,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
   initSpatial,
