@@ -8,7 +8,7 @@ import {
   storedJson
 } from '@/shared/lib/storage'
 
-export type DesktopApp = 'chat' | 'posts' | 'diary' | 'scene' | 'appearance' | 'channels' | 'settings' | 'station'
+export type DesktopApp = 'chat' | 'posts' | 'diary' | 'scene' | 'appearance' | 'channels' | 'settings'
 
 export interface DesktopRect {
   x: number
@@ -31,7 +31,7 @@ interface DesktopLayout {
   spriteVisible: boolean
 }
 
-const APPS: readonly string[] = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'settings', 'station']
+const APPS: readonly string[] = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'settings']
 const LAYOUT_KEY = registerCompanionStorageKey('da.desktop.layout')
 
 function validRect(value: unknown): value is DesktopRect {
@@ -131,8 +131,7 @@ export function useDesktopLayout() {
     }
   }, [persist])
 
-  const activate = useCallback((requested: DesktopApp): void => {
-    const id = requested === 'station' ? 'settings' : requested
+  const activate = useCallback((id: DesktopApp): void => {
     setLayout(current => {
       const last = current.windows.at(-1)
 

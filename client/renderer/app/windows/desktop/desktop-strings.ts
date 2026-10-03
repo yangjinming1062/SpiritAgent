@@ -11,7 +11,6 @@ const zh = {
   appearance: '外观',
   channels: '消息渠道',
   settings: '设置',
-  station: '工作环境',
   whisper: '轻语',
   showWhisper: '展开轻语',
   hideWhisper: '收起轻语',
@@ -68,7 +67,6 @@ const zh = {
   still: '静止',
   normal: '常规',
   autonomous: '自主',
-  livingSettings: '生活设置',
   waiting: '正在准备桌面…'
 }
 
@@ -81,7 +79,6 @@ const en: typeof zh = {
   appearance: 'Appearance',
   channels: 'Channels',
   settings: 'Settings',
-  station: 'Workspace',
   whisper: 'Whisper',
   showWhisper: 'Show whisper',
   hideWhisper: 'Collapse whisper',
@@ -138,7 +135,6 @@ const en: typeof zh = {
   still: 'Still',
   normal: 'Normal',
   autonomous: 'Autonomous',
-  livingSettings: 'Life settings',
   waiting: 'Preparing desktop…'
 }
 

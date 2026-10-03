@@ -616,32 +616,6 @@ html.no-blur .dockPicker {
   background: var(--ui-app-bg);
 }
 
-.preferences {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  width: 100%;
-}
-.preferencesTabs {
-  display: flex;
-  gap: 5px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--ui-line-hairline);
-  flex-shrink: 0;
-}
-.preferencesTabs button {
-  font-size: 12px;
-  border: 0;
-  border-radius: 6px;
-  padding: 7px 13px;
-  background: transparent;
-  color: var(--ui-text-muted);
-}
-.preferencesTabs button[aria-selected='true'] {
-  color: var(--ui-text-strong);
-  background: var(--ui-fill-hover);
-}
-
 .dockViewport {
   min-width: 0;
   overflow-x: auto;

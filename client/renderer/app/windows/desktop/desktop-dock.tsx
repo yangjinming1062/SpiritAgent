@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import {
   BookOpen,
-  Cpu,
   Globe,
   type IconComponent,
   ImageIcon,
@@ -31,8 +30,7 @@ const APP_ICONS: Record<DesktopApp, IconComponent> = {
   scene: ImageIcon,
   appearance: Shirt,
   channels: Globe,
-  settings: Settings,
-  station: Cpu
+  settings: Settings
 }
 
 function BuiltinAppIcon({ id }: { id: DesktopApp }): React.JSX.Element {

@@ -150,7 +150,7 @@ export const dict = {
       theme: '主题',
       interaction: '交互',
       navAriaLabel: '设置分区导航',
-      persona: '角色与记忆',
+      persona: '角色',
       shortcuts: '快捷键',
       voice: '音色'
     },
@@ -1265,9 +1265,9 @@ export const dict = {
     station: {
       tabsAria: '工位设置分区导航',
       tabs: {
-        inference: '推理与对话',
-        runner: '本机执行器',
-        skills: '技能与工具'
+        inference: '对话',
+        runner: '执行器',
+        skills: '技能'
       }
     },
     sessionSidebar: {

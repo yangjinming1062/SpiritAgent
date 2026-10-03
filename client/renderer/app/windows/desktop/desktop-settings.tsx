@@ -2,8 +2,6 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
-import { LivingSettings } from '@/app/features/living/settings/living-settings'
-import { StationSettings } from '@/app/features/workbench/station-settings'
 import { $userPreferredTier, setDisturbanceTier } from '@/modules/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { notifyError } from '@/shared/store/notifications'
@@ -170,30 +168,6 @@ export function DesktopAccounts(): React.JSX.Element {
       <button disabled={busy} onClick={() => void run(() => window.spiritagent.desktop.quit())} type="button">
         {t.quit}
       </button>
-    </div>
-  )
-}
-
-export function DesktopPreferences({
-  tab,
-  onTabChange
-}: {
-  tab: 'living' | 'station'
-  onTabChange: (tab: 'living' | 'station') => void
-}): React.JSX.Element {
-  const t = useDesktopStrings()
-
-  return (
-    <div className={styles.preferences}>
-      <div aria-label={t.settings} className={styles.preferencesTabs} role="tablist">
-        <button aria-selected={tab === 'living'} onClick={() => onTabChange('living')} role="tab" type="button">
-          {t.livingSettings}
-        </button>
-        <button aria-selected={tab === 'station'} onClick={() => onTabChange('station')} role="tab" type="button">
-          {t.station}
-        </button>
-      </div>
-      {tab === 'living' ? <LivingSettings /> : <StationSettings />}
     </div>
   )
 }

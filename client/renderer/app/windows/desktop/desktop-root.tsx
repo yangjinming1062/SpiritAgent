@@ -38,12 +38,13 @@ import { DesktopChat, DesktopWhisper } from './desktop-chat'
 import { DesktopCompanion } from './desktop-companion'
 import { DesktopDock } from './desktop-dock'
 import { type DesktopApp, useDesktopLayout } from './desktop-layout'
-import { DesktopAccounts, DesktopPreferences, DesktopSettings } from './desktop-settings'
+import { DesktopPreferences } from './desktop-preferences'
+import { DesktopAccounts, DesktopSettings } from './desktop-settings'
 import { useDesktopStrings } from './desktop-strings'
 import { DesktopWindow } from './desktop-window'
 import styles from './desktop.module.css'
 
-const MENU: DesktopApp[] = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'station']
+const MENU: DesktopApp[] = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'settings']
 
 // 顶栏是两个独立状态：绿点只说伙伴在不在忙，网络用图标说，免得两个同色圆点指代不清。
 type ConnectionTone = 'offline' | 'online' | 'pending'
@@ -77,7 +78,6 @@ export function DesktopRoot(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dockOverlayOpen, setDockOverlayOpen] = useState(false)
   const [companionMenuOpen, setCompanionMenuOpen] = useState(false)
-  const [settingsTab, setSettingsTab] = useState<'living' | 'station'>('living')
   const [area, setArea] = useState({ width: 1000, height: 700, left: 16, top: 60 })
   const initialized = useRef(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -164,18 +164,13 @@ export function DesktopRoot(): React.JSX.Element {
       window.spiritagent.desktop.onNavigate(payload => {
         const view = payload.view?.split('/')[0]
 
-        const target =
-          view && ['inference', 'runner', 'skills', 'station'].includes(view)
-            ? 'station'
-            : view && [...MENU, 'settings'].includes(view)
+        // 工位与设置深链统一进设置窗口，具体分区由 DesktopPreferences 从 hash 解析。
+        const target: DesktopApp =
+          view !== undefined && ['inference', 'runner', 'skills', 'station'].includes(view)
+            ? 'settings'
+            : view && (MENU as readonly string[]).includes(view)
               ? (view as DesktopApp)
               : 'chat'
-
-        if (target === 'station') {
-          setSettingsTab('station')
-        } else if (target === 'settings') {
-          setSettingsTab('living')
-        }
 
         activatePanel(target)
 
@@ -414,10 +409,7 @@ export function DesktopRoot(): React.JSX.Element {
         return <ChannelsPage />
 
       case 'settings':
-        return <DesktopPreferences onTabChange={setSettingsTab} tab={settingsTab} />
-
-      case 'station':
-        return <DesktopPreferences onTabChange={setSettingsTab} tab={settingsTab} />
+        return <DesktopPreferences />
     }
   }
 
@@ -460,13 +452,7 @@ export function DesktopRoot(): React.JSX.Element {
             <button
               data-current={activeWindow === id}
               key={id}
-              onClick={() => {
-                if (id === 'station') {
-                  setSettingsTab('station')
-                }
-
-                activatePanel(id)
-              }}
+              onClick={() => activatePanel(id)}
               type="button"
             >
               {t[id]}
@@ -499,7 +485,6 @@ export function DesktopRoot(): React.JSX.Element {
           {settingsOpen && (
             <DesktopSettings
               onSettings={() => {
-                setSettingsTab('living')
                 activatePanel('settings')
                 setSettingsOpen(false)
               }}

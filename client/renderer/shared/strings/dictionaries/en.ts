@@ -157,7 +157,7 @@ export const dict: Dictionary = {
       theme: 'Theme',
       interaction: 'Interaction',
       navAriaLabel: 'Settings section navigation',
-      persona: 'Persona & memory',
+      persona: 'Persona',
       shortcuts: 'Shortcuts',
       voice: 'Voice'
     },
@@ -1346,9 +1346,9 @@ export const dict: Dictionary = {
     station: {
       tabsAria: 'Station settings navigation',
       tabs: {
-        inference: 'Inference & chat',
-        runner: 'Local runner',
-        skills: 'Skills & tools'
+        inference: 'Chat',
+        runner: 'Runner',
+        skills: 'Skills'
       }
     },
     sessionSidebar: {
