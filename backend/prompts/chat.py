@@ -747,8 +747,8 @@ MEDIA_IMAGE_GUIDANCES: dict[str, str] = {
 }
 
 MEDIA_VIDEO_GUIDANCES: dict[str, str] = {
-    "zh": "把本会话生成的图片做成动画时，把该图片工具结果中的 url 传给 video_generate 的 first_frame_image；用户发来的图片没有可用地址，不能直接作为首帧。要保持图中角色与造型时省略 subject，即使图中有当前角色本人。需要按当前角色身份校准首帧时才同时传 subject='self'，首帧可见造型仍保留；需要更换造型时另传 outfit_override。",
-    "en": "To animate an image generated in this conversation, pass the url from that image's tool result as video_generate's first_frame_image; images the user attached have no usable address and cannot be used as a first frame. Omit subject to preserve the image's character and styling, even if it depicts the current character. Add subject='self' to align that frame to the current identity while retaining its visible styling; use outfit_override as well to change styling.",
+    "zh": "video_generate 根据 prompt 决定视频的环境、动作顺序与镜头；图片仅提供身份与造型参考，不固定开场。本人出镜传 subject='self'，系统直接提供已确认的角色参考。可把本会话图片工具结果中的 url 传入 reference_image：本人出镜时作为造型参考，否则保持图中主体身份与造型；用户附件没有可用于此参数的地址。本人出镜需要更换造型时传 outfit_override。",
+    "en": "video_generate uses prompt to determine the setting, ordered motion and camera work; images provide identity and styling references without pinning the opening. Set subject='self' to supply the confirmed character reference directly. A conversation image tool's url may be passed as reference_image: it supplies styling with subject='self', or subject identity and styling when subject is omitted. User attachments have no usable address for this parameter. Use outfit_override for a styling change with subject='self'.",
 }
 
 COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {

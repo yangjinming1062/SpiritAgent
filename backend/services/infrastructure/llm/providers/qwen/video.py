@@ -37,10 +37,14 @@ class QwenVideoGenProvider(VideoGenProvider):
     resolutions = ("480P", "720P", "1080P", "512P", "768P", "2K")
     supports_first_frame = True
     supports_loop_frames = True
+    supports_reference_images = True
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
+
+    def native_resolution(self, resolution: str) -> str | None:
+        return _RESOLUTION_TO_API.get(resolution.upper())
 
     def max_resolution(
         self,
@@ -50,24 +54,26 @@ class QwenVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
     ) -> str | None:
-        if duration not in _DURATIONS or reference_images:
+        if duration not in _DURATIONS or (reference_images and (first_frame or last_frame)):
             return None
         return "1080P"
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         if req.reference_images:
-            raise ProviderError("qwen video adapter does not support reference media combinations", status_code=400)
+            if req.first_frame_image or req.last_frame_image:
+                raise ProviderError("qwen reference images cannot be mixed with first/last frames", status_code=400)
+            if len(req.reference_images) > 10:
+                raise ProviderError("qwen accepts at most ten reference images", status_code=400)
         if req.duration not in _DURATIONS:
             raise ProviderError(f"qwen video_gen requires duration in 2..30, got {req.duration!r}", status_code=400)
-        resolution = (req.resolution or "").upper()
-        api_resolution = _RESOLUTION_TO_API.get(resolution)
+        api_resolution = self.native_resolution(req.resolution or "")
         if not api_resolution:
             raise ProviderError(
                 f"qwen video_gen requires resolution in {self.resolutions}, got {req.resolution!r}",
                 status_code=400,
             )
 
-        media: list[dict] = []
+        media: list[dict] = [{"type": "reference_image", "url": image} for image in req.reference_images]
         if req.first_frame_image:
             media.append({"type": "first_frame", "url": req.first_frame_image})
         if req.last_frame_image:
@@ -81,7 +87,7 @@ class QwenVideoGenProvider(VideoGenProvider):
                 "resolution": api_resolution,
                 "ratio": req.aspect_ratio or "adaptive",
                 "duration": req.duration,
-                "prompt_extend": not bool(req.first_frame_image or req.last_frame_image),
+                "prompt_extend": not bool(req.first_frame_image or req.last_frame_image or req.reference_images),
                 "watermark": False,
             },
         }

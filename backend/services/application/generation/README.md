@@ -37,7 +37,7 @@
 
 场景、角色卡和动作包在用户维护期间保存已付费结果，但暂停尚未提交的后继模型调用；显式取消和进程停止仍可取消。动作包上传导入不涉及付费，维护中断即按失败落库，只能重新提交。动作包在每次脚本、图片或视频提交、评分与复核调用前核对维护边界和当前身份；维护时保留进度，只续已有句柄、下载和本地处理，不启动新的付费步骤。维护结束时 `resume_user_dynamic_actions`、`resume_user_scene_jobs`、`resume_user_character_extraction` 分别恢复持久任务，用户已被删除则无行可续；失效身份的已有素材继续保留，新付费步骤明确失败。
 
-视觉调用的业务守卫随请求传到 `vision_chat`，每次实际供应商调用（含回退）前重查；维护、撤权或身份失效不降级为评分不可用，也不被此前供应商错误覆盖。IM 视频首帧制作与评分共用原对端授权守卫；同一 HTTP 请求的内部重试仍由既有供应商传输策略管理。
+视觉调用的业务守卫随请求传到 `vision_chat`，每次实际供应商调用（含回退）前重查；维护、撤权或身份失效不降级为评分不可用，也不被此前供应商错误覆盖。IM 视频提交与评分共用原对端授权守卫；同一 HTTP 请求的内部重试仍由既有供应商传输策略管理。
 
 默认外观、启动标记与错误用 ORM 字段，标记与首动作包同事务写入。外观描述按用户/外观合并在途任务，命名先读取实际采纳图再转写，回写核对路径。失败或重启中断保留原名与已完成描述，持久化失败原因，由衣柜手动补全，不隐式重复付费。空描述的新包在首次模型调用前有界等待已受理的描述任务，再原子冻结描述及评审快照；等待耗尽或描述失败时按参考图兜底，既有冻结包不回填新描述。
 
@@ -59,11 +59,11 @@
 
 [image_generation.py](image_generation.py)的 `resolve_image_gen_chain` 按参考图、编辑、多参考与提示词长度筛选供应商链，不按透明能力过滤（透明优先与回退见[能力筛选](../../../../docs/PIPELINE.md#能力筛选)），`generate_images` 按 `persist_user_assets` 决定返回用户资产、原生 URL 或 data URI；能力位由[供应商基类](../../infrastructure/llm/providers/base.py)声明。提示词按点位选择，头像条款不能直接用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
 
-聊天与动态图片共用 [visual_identity.py](visual_identity.py) 的 `build_self_image_prompt`，`SelfVisualPlan` 冻结造型。视频首帧生成/校准也走图片质量链，恢复沿用已保存首帧，具体规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频首帧)。没有 `save_progress` 的同步调用（换装草稿、出镜视频首帧）只对结果下载的可恢复传输错误做有界重试，不重新提交生图；最终失败时回收已落盘文件。调用方须把非 `ImageGenerationError` 的失败转为公开错误（换装转 `AvatarGenerationError`，视频首帧转 `ImageGenerationError`），不能落成 500 或结果未知。
+聊天与动态媒体共用 [visual_identity.py](visual_identity.py) 装配提示词，视频参考通过 `self_video_references` 提供；参考与造型规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频)。没有 `save_progress` 的同步生图调用（如换装草稿）只对结果下载的可恢复传输错误做有界重试，不重新提交生图；最终失败时回收已落盘文件。调用方须把非 `ImageGenerationError` 的失败转为公开错误，不能落成 500 或结果未知。
 
 ## 动作包与媒体质量链
 
-聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。新增视频任务的固定文件名包含冻结的生成 ID，避免恢复后数据库序列与旧媒体文件重名；旧在途任务仍沿用原路径恢复。没有目标会话的视频任务只保存结果，由[动态应用](../posts/README.md)接收，不执行聊天交付。
+聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。视频任务的固定文件名包含冻结的生成 ID，避免恢复后数据库序列与旧媒体文件重名。没有目标会话的视频任务只保存结果，由[动态应用](../posts/README.md)接收，不执行聊天交付。
 
 上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）按素材类型调用图片或视频处理并共用发布；[video/state.py](video/state.py)保存冻结生成上下文，单动作结果共用 [schema](../../../modules/companion/schemas_video.py) 的 `ActionResult`，上传包没有可重做的冻结参考。任务按 `status × stage` 持久化，图片处理及 FFmpeg 在工作线程执行，新包失败不清空旧激活包；供应商成品下载共用有界重试，只重试传输错误和 5xx，不重新提交制作；供应商句柄提交后立即落库，重启只续轮询，不重复付费提交。
 
@@ -79,7 +79,7 @@
 
 图片成品、姿态图留白及视频透明化边界见 [图片交付](../../../../docs/PIPELINE.md#图片交付)与 [视频与交付](../../../../docs/PIPELINE.md#视频与交付)。
 
-[media_chain.py](media_chain.py)保存无凭据供应商快照、游标和候选；`character_images.py`、`identity_review.py`、`media_review.py`分别负责身份图链、评分和人工复核。图片、视频进度分别持久化并可复用原始参考、已选首帧和成功动作；动作包独立冻结全身身份图。恢复与清理见 [恢复规则](../../../../docs/PIPELINE.md#持久化与恢复)。
+[media_chain.py](media_chain.py)保存无凭据供应商快照、游标和候选；`character_images.py`、`identity_review.py`、`media_review.py`分别负责身份图链、评分和人工复核。图片、视频分别持久化质量进度；动作包还独立冻结全身身份图，复用已选姿态图和成功动作。恢复与清理见 [恢复规则](../../../../docs/PIPELINE.md#持久化与恢复)。
 
 聊天与动作视频共用 `media_chain.py` 的失败分类和 `video_failure_message` 文案；审核拒绝与结果未知保留独立原因，供应商原文不进入用户提示。
 

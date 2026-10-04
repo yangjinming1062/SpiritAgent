@@ -152,7 +152,7 @@ from .visual_identity import (
     build_self_video_prompt,
     load_self_visual_context,
     optional_outfit_image_reference,
-    prepare_self_video_reference,
+    self_video_references,
 )
 
 __all__ = [
@@ -193,7 +193,7 @@ __all__ = [
     "set_scene_policy",
     "load_self_visual_context",
     "optional_outfit_image_reference",
-    "prepare_self_video_reference",
+    "self_video_references",
     "apply_outfit_override",
     "drain_character_extractions",
     "resume_character_extractions",

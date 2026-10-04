@@ -86,7 +86,7 @@ IMAGE_GENERATION_PARAM_DESCS = {
 }
 
 VIDEO_GENERATION_DESC = (
-    "Generate a short video from a text prompt (and optionally a first-frame image). "
+    "Generate a short video from a text prompt and optional identity and styling reference images. "
     "Returns media_id and task_id with the current status. In structured replies, include media_id in a video "
     "bubble to deliver a waiting card that updates in place. One initial video request per turn; subsequent "
     "calls reuse the task. Check an existing pending task later with video_generate_status. "
@@ -96,23 +96,21 @@ VIDEO_GENERATION_DESC = (
 )
 
 VIDEO_GENERATION_PARAM_DESCS = {
-    "prompt": "Describe motion, setting and camera behavior. With subject='self', keep the confirmed face, anatomy and body proportions; styling changes belong in outfit_override and are applied before animation.",
+    "prompt": "Describe the video's scene, ordered motion and camera behavior. Reference images anchor identity and styling; this prompt determines the opening and subsequent content. With subject='self', keep confirmed physical features and put styling changes in outfit_override.",
     "subject": (
         "Set to 'self' for a new depiction of the current character. Their confirmed physical features and the "
-        "selected styling are applied to a first frame generated for the requested setting and opening pose. "
-        "A supplied first_frame_image keeps its visible "
-        "styling unless outfit_override explicitly changes it. To animate an "
-        "existing image unchanged, omit subject, even if it depicts this character. Describe the scene, pose and "
+        "selected styling are supplied directly as video references. An optional reference_image supplies "
+        "styling while the confirmed character image remains the identity reference; outfit_override takes "
+        "precedence over styling references. Omit subject to use only reference_image for the depicted subject. Describe the scene, pose and "
         "action without reconstructing appearance from memory."
     ),
     "duration": "Clip length in seconds, default 6. This tool accepts integers from 4 to 15; MiniMax-H3 and Grok support this tool's full range.",
-    "resolution": "Output resolution, default 768P. Choose only a value supported by the configured provider: MiniMax-H3 768P/2K; Grok 1080P only; Qwen any listed value.",
-    "first_frame_image": "An actual first-frame image (i2v mode): the url field of an image result from this conversation's media tools, a data URL, or a public http(s) image URL. Never invent a URL; images the user attached have no address this tool can use.",
-    "aspect_ratio": "Requested output aspect ratio; the provider may derive it from the first-frame image in i2v mode. Required for text-to-video on MiniMax-H3; optional on Grok.",
+    "resolution": "Output resolution, default 768P. MiniMax-H3 supports 768P/2K; Grok reference mode supports 512P/768P (mapped to 480p/720p), and text-only mode also supports 1080P; Qwen accepts all listed values.",
+    "reference_image": "An image used as a visual reference, not a pinned opening frame: the url field of an image result from this conversation's media tools, a data URL, or a public http(s) image URL. Never invent a URL; user attachments have no address this tool can use. With subject='self', it supplies styling; otherwise it anchors the depicted subject's identity and styling.",
+    "aspect_ratio": "Requested output aspect ratio, default 9:16. The video uses this ratio independently of the reference image's framing.",
     "outfit_override": (
         _SELF_MEDIA_OUTFIT_OVERRIDE_DESC
-        + " The outfit is applied during first-frame preparation and kept throughout the clip. "
-        "Do not use it when animating an existing image unchanged."
+        + " The description governs styling throughout the clip and replaces styling image references."
     ),
 }
 

@@ -56,7 +56,6 @@ from services.infrastructure.llm import (
 )
 from services.infrastructure.video_processing import VideoToolUnavailableError, probe_video, sample_key_frames
 
-from .avatar_service import load_avatar_bytes_as_data_uri
 from .identity_review import score_character_frames
 from .media_chain import (
     FrozenMediaProvider,
@@ -79,6 +78,7 @@ _BG = TaskBag("media.video_jobs")
 _TERMINAL_STATUSES = ("succeeded", "failed", "result_unknown", "review_pending", "discarded")
 # 供应商任务可能仍在进行或已计费，终态记为 result_unknown 而非可重试的失败。
 _RESULT_UNKNOWN_REASONS = frozenset({"result_unknown", "submit_result_unknown", "timeout"})
+_RESOLUTION_RANK = {"480P": 0, "720P": 1, "768P": 1, "1080P": 2, "2K": 3}
 
 
 class _VideoJobParams(BaseModel):
@@ -88,13 +88,11 @@ class _VideoJobParams(BaseModel):
 
     duration: int
     resolution: str
-    first_frame_image: str | None
+    reference_images: tuple[str, ...] = ()
     aspect_ratio: str | None
     identity_reference_path: str | None
     identity_snapshot: CharacterCardSnapshot | None
-    identity_reference: str | None
-    # 老任务沿用原路径，新增任务冻结随机ID，避免恢复后数据库序列与旧文件重名。
-    asset_generation_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    asset_generation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     channel_source: ChannelTurnSource | None = None
 
 
@@ -179,7 +177,7 @@ async def _score_self_video(
     video_url: str,
     identity_path: str | None,
     *,
-    identity_uri: str | None = None,
+    identity_uri: str | None,
     identity_text: str = "",
     channel_source: ChannelTurnSource | None = None,
 ) -> tuple[str, int | None]:
@@ -207,10 +205,7 @@ async def _score_self_video(
         return "undecodable", None
     if not identity_path:
         return "unavailable", None
-    try:
-        identity_uri = identity_uri or await asyncio.to_thread(load_avatar_bytes_as_data_uri, identity_path)
-    except Exception:
-        logger.warning("chat video identity reference unavailable", extra={"user_id": user_id}, exc_info=True)
+    if not identity_uri:
         return "unavailable", None
     try:
         frames = await asyncio.to_thread(sample_key_frames, local)
@@ -297,15 +292,22 @@ async def get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoGenJob | 
 def _compatible_video_configs(
     chain: list[ProviderConfig],
     *,
-    first_frame: bool,
+    reference_images: bool,
     duration: int,
     resolution: str,
 ) -> list[ProviderConfig]:
     compatible = []
     for config in chain:
         provider = build_provider(config, VideoGenProvider)
-        if first_frame and not provider.supports_first_frame:
+        if reference_images and not provider.supports_reference_images:
             continue
+        if reference_images:
+            maximum = provider.max_resolution(duration=duration, reference_images=True)
+            native = provider.native_resolution(resolution)
+            maximum_rank = _RESOLUTION_RANK.get((maximum or "").upper(), -1)
+            native_rank = _RESOLUTION_RANK.get((native or "").upper(), -1)
+            if native_rank < 0 or native_rank > maximum_rank:
+                continue
         if provider.durations is not None and duration not in provider.durations:
             continue
         if provider.resolutions is not None and resolution.lower() not in {
@@ -319,38 +321,42 @@ def _compatible_video_configs(
 async def ensure_video_capability(
     user_id: int,
     *,
-    first_frame: bool,
+    reference_images: bool,
     duration: int,
     resolution: str,
     allowed_durations: Collection[int] | None = None,
     allowed_resolutions: Collection[str] | None = None,
 ) -> None:
-    """付费生成首帧之前确认视频供应商链里有能接单的：首帧、时长与分辨率提交前才核对，首帧图已经花了钱却发现没有供应商能用。不满足时抛 MissingLlmConfigError，并在调用方允许的取值内说明可选的时长与分辨率。"""
+    """占用视频名额前核对参考模式、时长与分辨率，并在调用方允许的范围内给出可用档位。"""
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen")
     if not chain:
         raise MissingLlmConfigError("视频生成服务未配置")
-    if _compatible_video_configs(chain, first_frame=first_frame, duration=duration, resolution=resolution):
+    if _compatible_video_configs(chain, reference_images=reference_images, duration=duration, resolution=resolution):
         return
     providers = [build_provider(config, VideoGenProvider) for config in chain]
-    candidates = [p for p in providers if p.supports_first_frame or not first_frame]
+    candidates = [p for p in providers if p.supports_reference_images or not reference_images]
     if not candidates:
-        raise MissingLlmConfigError("已配置的视频供应商都不支持以首帧图生成视频")
+        raise MissingLlmConfigError("已配置的视频供应商都不支持角色参考生视频")
     hints = []
     if not any(p.durations is None or duration in p.durations for p in candidates):
         options = sorted({d for p in candidates for d in p.durations or () if d in (allowed_durations or (d,))})
         hints.append("可选时长（秒）：" + "、".join(map(str, options)))
-    if not any(
-        p.resolutions is None or resolution.lower() in {value.lower() for value in p.resolutions} for p in candidates
-    ):
-        options = sorted(
-            {
-                v.upper()
-                for p in candidates
-                for v in p.resolutions or ()
-                if v.upper() in (allowed_resolutions or (v.upper(),))
-            },
-        )
+    options = sorted(
+        {
+            value.upper()
+            for provider in candidates
+            for value in provider.resolutions or ()
+            if value.upper() in (allowed_resolutions or (value.upper(),))
+            and _compatible_video_configs(
+                chain,
+                reference_images=reference_images,
+                duration=duration,
+                resolution=value,
+            )
+        },
+    )
+    if options and resolution.upper() not in options:
         hints.append("可选分辨率：" + "、".join(options))
     detail = "；".join(hints) or "同一供应商不同时支持所选时长与分辨率，请调整其一"
     raise MissingLlmConfigError(f"已配置的视频供应商不支持本次的时长或分辨率（{detail}）")
@@ -359,7 +365,7 @@ async def ensure_video_capability(
 async def select_video_resolution(
     user_id: int,
     *,
-    first_frame: bool,
+    reference_images: bool,
     duration: int,
     preferred: Sequence[str],
 ) -> str | None:
@@ -367,7 +373,12 @@ async def select_video_resolution(
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen")
     for resolution in preferred:
-        compatible = _compatible_video_configs(chain, first_frame=first_frame, duration=duration, resolution=resolution)
+        compatible = _compatible_video_configs(
+            chain,
+            reference_images=reference_images,
+            duration=duration,
+            resolution=resolution,
+        )
         if compatible:
             declared = build_provider(compatible[0], VideoGenProvider).resolutions or ()
             return next((value for value in declared if value.lower() == resolution.lower()), resolution)
@@ -382,8 +393,8 @@ async def enqueue_video_job(
     prompt: str,
     duration: int,
     resolution: str,
-    first_frame_image: str | None,
     aspect_ratio: str | None,
+    reference_images: tuple[str, ...] = (),
     identity_reference_path: str | None = None,
     identity: CharacterCardSnapshot | None = None,
     structured_reply: bool = False,
@@ -391,30 +402,27 @@ async def enqueue_video_job(
     channel_source: ChannelTurnSource | None = None,
 ) -> "VideoGenJob":
     """冻结能力链并提交首个任务；轮询绑定实际接单供应商，低分才推进链尾。"""
+    if identity is not None and (not identity_reference_path or not reference_images):
+        raise ValueError("Self video requires an identity reference and snapshot")
     chain = await resolve_provider_chain(db, user_id, "video_gen")
     compatible = _compatible_video_configs(
         chain,
-        first_frame=bool(first_frame_image),
+        reference_images=bool(reference_images),
         duration=duration,
         resolution=resolution,
     )
     if not compatible:
-        raise MissingLlmConfigError("未配置支持本次首帧、时长和分辨率的视频供应商")
+        raise MissingLlmConfigError("未配置支持本次参考输入、时长和分辨率的视频供应商")
     state = MediaChainState(providers=[FrozenMediaProvider.from_config(config) for config in compatible])
     params = _VideoJobParams(
         duration=duration,
         resolution=resolution,
-        first_frame_image=first_frame_image,
+        reference_images=reference_images,
         aspect_ratio=aspect_ratio,
         identity_reference_path=identity_reference_path,
         identity_snapshot=identity,
         asset_generation_id=state.generation_id,
         channel_source=channel_source,
-        identity_reference=(
-            await asyncio.to_thread(load_avatar_bytes_as_data_uri, identity_reference_path)
-            if identity_reference_path
-            else None
-        ),
     )
     job = VideoGenJob(
         user_id=user_id,
@@ -585,7 +593,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
             user_id,
             candidate,
             params.identity_reference_path,
-            identity_uri=params.identity_reference,
+            identity_uri=params.reference_images[0] if snapshot is not None else None,
             identity_text=render_character_identity(snapshot) if snapshot else "",
             channel_source=params.channel_source,
         )
@@ -695,7 +703,7 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             prompt=prompt,
             duration=params.duration,
             resolution=params.resolution,
-            first_frame_image=params.first_frame_image,
+            reference_images=params.reference_images,
             aspect_ratio=params.aspect_ratio,
         )
 
@@ -953,7 +961,7 @@ async def _download_and_store(
     user_id: int,
     job_id: int,
     attempt: int,
-    generation_id: str | None,
+    generation_id: str,
 ) -> str:
     """有界重试下载供应商成品并原子写入确定性路径，返回裸存储路径。只对传输错误与服务端 5xx 退避重试，超限、4xx 与过期地址等确定性失败直接上抛。慢速大文件读取超时放宽到 10 分钟，上限 ``video_gen_download_max_bytes``。"""
     if not download_url:

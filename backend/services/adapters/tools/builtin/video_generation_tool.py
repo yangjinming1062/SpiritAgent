@@ -7,7 +7,7 @@ from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
 from modules.channels import ChannelTurnSource
 from modules.media import VideoGenJob
 from prompts.generation import (
-    IMAGE_ANIMATION_TEMPLATE,
+    VIDEO_REFERENCE_TEMPLATE,
 )
 from prompts.tools import (
     VIDEO_GENERATION_DESC,
@@ -18,20 +18,18 @@ from prompts.tools import (
 
 from services.application.generation import (
     AvatarGenerationError,
-    ImageGenerationError,
     apply_outfit_override,
     build_self_video_prompt,
     enqueue_video_job,
     ensure_video_capability,
     get_job,
     load_self_visual_context,
-    prepare_self_video_reference,
-    require_video_generation_call,
+    self_video_references,
 )
 from services.contracts import MediaArtifact, MediaTurnState
 from services.domains.conversation import apply_video_status
 from services.infrastructure.assets import asset_store
-from services.infrastructure.llm import LlmCallBlockedError, MissingLlmConfigError, VisualReasoningError
+from services.infrastructure.llm import MissingLlmConfigError, VisualReasoningError
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 logger = get_logger(__name__)
@@ -42,7 +40,7 @@ _ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
 _SUBMIT_UNKNOWN_ERROR = "视频提交结果未核实，请勿重复提交"
 
 
-def _first_frame_reference(reference: str, user_id: int) -> str | None:
+def _video_reference(reference: str, user_id: int) -> str | None:
     """本人资产路径读为 data URI；data URI 与 http(s) 地址原样交给供应商链，其余值无效。"""
     if reference.startswith(("data:image/", "http://", "https://")):
         return reference
@@ -73,8 +71,8 @@ async def _submit_video(
     prompt: str,
     duration: int,
     resolution: str,
-    first_frame_image: str | None,
-    aspect_ratio: str | None,
+    reference_image: str | None,
+    aspect_ratio: str,
     *,
     user_id: int,
     parent_session_id: str,
@@ -86,23 +84,17 @@ async def _submit_video(
 ) -> tuple[dict[str, object], VideoGenJob | None]:
     """提交已校验请求，返回 (工具结果, 最近读取的任务行)；结构化回复直接交付任务，文本渠道有界等待。"""
     visual = None
+    references = (reference_image,) if reference_image else ()
     if subject == "self":
         try:
             visual = await load_self_visual_context(user_id)
             plan = apply_outfit_override(visual, outfit_override)
-            first_frame_image = await prepare_self_video_reference(
-                plan,
-                user_id,
-                first_frame_image,
-                prompt=prompt,
-                aspect_ratio=aspect_ratio,
-                before_submit=lambda: require_video_generation_call(user_id, channel_source),
-            )
-        except (AvatarGenerationError, VisualReasoningError, ImageGenerationError, LlmCallBlockedError) as e:
+            references = self_video_references(plan, reference_image)
+        except (AvatarGenerationError, VisualReasoningError) as e:
             return {"success": False, "error": str(e)}, None
-        prompt = build_self_video_prompt(visual.identity, prompt)
-    elif first_frame_image:
-        prompt = IMAGE_ANIMATION_TEMPLATE.format(prompt=prompt)
+        prompt = build_self_video_prompt(plan, prompt, has_outfit_reference=len(references) > 1)
+    elif references:
+        prompt = VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
 
     try:
         async with SESSION_LOCAL() as db:
@@ -113,7 +105,7 @@ async def _submit_video(
                 prompt=prompt,
                 duration=duration,
                 resolution=resolution,
-                first_frame_image=first_frame_image,
+                reference_images=references,
                 aspect_ratio=aspect_ratio,
                 identity_reference_path=visual.reference_path if visual is not None else None,
                 identity=visual.identity if visual is not None else None,
@@ -173,8 +165,8 @@ async def video_generation_tool(
     prompt: str,
     duration: int = 6,
     resolution: str = "768P",
-    first_frame_image: str | None = None,
-    aspect_ratio: str | None = None,
+    reference_image: str | None = None,
+    aspect_ratio: str = "9:16",
     subject: str | None = None,
     outfit_override: str | None = None,
     *,
@@ -188,16 +180,19 @@ async def video_generation_tool(
         return tool_error("视频分辨率无效")
     if aspect_ratio and aspect_ratio not in _ASPECT_RATIOS:
         return tool_error("视频画幅无效")
-    if first_frame_image:
+    if subject not in (None, "self") or (outfit_override and subject != "self"):
+        return tool_error("出镜角色使用 subject='self'，造型覆盖仅用于本次角色出镜")
+    if reference_image:
         # 模型只看得到产物的裸存储路径；在占用本轮视频名额前转为供应商可读的 data URI，无法读取时按参数错误返回。
-        first_frame_image = await asyncio.to_thread(_first_frame_reference, first_frame_image, media_turn.user_id)
-        if first_frame_image is None:
-            return tool_error("first_frame_image 须为本会话图片工具返回的地址，或可公开访问的 http(s) 图片地址")
+        if not isinstance(reference_image, str):
+            return tool_error("reference_image 须为图片地址")
+        reference_image = await asyncio.to_thread(_video_reference, reference_image, media_turn.user_id)
+        if reference_image is None:
+            return tool_error("reference_image 须为本会话图片工具返回的地址，或可公开访问的 http(s) 图片地址")
     try:
-        # 出镜视频与带首帧的请求都会先付费生成首帧图：供应商链放不下本次时长或分辨率时，在花钱和占用本轮视频名额前就报错。
         await ensure_video_capability(
             media_turn.user_id,
-            first_frame=bool(first_frame_image) or subject == "self",
+            reference_images=bool(reference_image) or subject == "self",
             duration=duration,
             resolution=resolution,
             allowed_durations=_DURATIONS,
@@ -229,8 +224,8 @@ async def video_generation_tool(
             prompt,
             duration,
             resolution,
-            first_frame_image,
-            aspect_ratio,
+            reference_image,
+            aspect_ratio or "9:16",
             user_id=media_turn.user_id,
             parent_session_id=media_turn.session_id,
             subject=subject,
@@ -321,9 +316,9 @@ VIDEO_GENERATION_SCHEMA = {
                 "enum": ["512P", "768P", "1080P", "2K"],
                 "description": VIDEO_GENERATION_PARAM_DESCS["resolution"],
             },
-            "first_frame_image": {
+            "reference_image": {
                 "type": "string",
-                "description": VIDEO_GENERATION_PARAM_DESCS["first_frame_image"],
+                "description": VIDEO_GENERATION_PARAM_DESCS["reference_image"],
             },
             "aspect_ratio": {
                 "type": "string",

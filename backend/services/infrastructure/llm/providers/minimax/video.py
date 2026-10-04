@@ -29,10 +29,10 @@ _MAX_PROMPT_CHARS = 7000
 def _build_content(req: VideoGenRequest) -> list[dict]:
     """组装文本与首尾帧；参考素材与首尾帧是互斥模式。"""
     if req.reference_images:
-        raise ProviderError(
-            "MiniMax adapter does not implement reference media mode; it cannot be mixed with frames",
-            status_code=400,
-        )
+        if req.first_frame_image or req.last_frame_image:
+            raise ProviderError("MiniMax reference images cannot be mixed with first/last frames", status_code=400)
+        if len(req.reference_images) > 9:
+            raise ProviderError("MiniMax accepts at most nine reference images", status_code=400)
     if not req.prompt.strip():
         raise ProviderError("MiniMax requires a non-empty prompt", status_code=400)
     if len(req.prompt) > _MAX_PROMPT_CHARS:
@@ -41,6 +41,9 @@ def _build_content(req: VideoGenRequest) -> list[dict]:
             status_code=400,
         )
     content: list[dict] = [{"type": "text", "text": req.prompt}]
+    content.extend(
+        {"type": "image_url", "image_url": {"url": image}, "role": "reference_image"} for image in req.reference_images
+    )
     if req.first_frame_image:
         content.append({"type": "image_url", "image_url": {"url": req.first_frame_image}, "role": "first_frame"})
     if req.last_frame_image:
@@ -66,6 +69,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     DEFAULT_MODEL: ClassVar[str] = "MiniMax-H3"
     supports_first_frame = True
     supports_loop_frames = True
+    supports_reference_images = True
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
@@ -81,7 +85,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         reference_images: bool = False,
     ) -> str | None:
         durations, resolutions = self.durations, self.resolutions
-        if duration not in durations or reference_images:
+        if duration not in durations or (reference_images and (first_frame or last_frame)):
             return None
         return resolutions[-1]
 
@@ -114,7 +118,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             "resolution": req.resolution,
         }
         # 文生视频须指定具体比例；图生视频由输入帧决定比例。
-        if req.first_frame_image or req.last_frame_image:
+        if req.first_frame_image or req.last_frame_image or req.reference_images and not req.aspect_ratio:
             payload["ratio"] = "adaptive"
         elif req.aspect_ratio in ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9"):
             payload["ratio"] = req.aspect_ratio

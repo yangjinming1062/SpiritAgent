@@ -51,9 +51,9 @@ from services.application.generation import (
     optional_outfit_image_reference,
     post_video_asset,
     post_video_ready,
-    prepare_self_video_reference,
     query_post_video_job,
     select_video_resolution,
+    self_video_references,
     video_generation_wait_seconds,
 )
 from services.domains.companion import (
@@ -103,7 +103,7 @@ _VIDEO_DURATIONS: tuple[int, ...] = get_args(PostPlan.model_fields["duration"].a
 
 
 class _VideoUnsupportedError(PostError):
-    """供应商链放不下本次视频的首帧、时长或分辨率；付费生成首帧之前抛出。"""
+    """供应商链不支持本次视频的参考模式、时长或分辨率，提交前阻止。"""
 
 
 async def available_types(user_id: int, *, autonomous: bool) -> list[str]:
@@ -132,7 +132,7 @@ async def _video_supported(user_id: int) -> bool:
         for duration in _VIDEO_DURATIONS:
             if await select_video_resolution(
                 user_id,
-                first_frame=False,
+                reference_images=False,
                 duration=duration,
                 preferred=_VIDEO_RESOLUTIONS,
             ):
@@ -404,24 +404,20 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     else:
         job_id = progress.get("job_id")
         if job_id is None:
+            references, prompt = (), plan.prompt
+            if visual is not None:
+                visual_plan = apply_outfit_override(visual, None)
+                references = self_video_references(visual_plan)
+                prompt = build_self_video_prompt(visual_plan, prompt, has_outfit_reference=len(references) > 1)
             resolution = await select_video_resolution(
                 row.user_id,
-                first_frame=visual is not None,
+                reference_images=bool(references),
                 duration=plan.duration,
                 preferred=_VIDEO_RESOLUTIONS,
             )
             if resolution is None:
                 raise _VideoUnsupportedError
             await _save(row.id, phase="video_submitting", **progress)
-            first_frame, prompt = None, plan.prompt
-            if visual is not None:
-                first_frame = await prepare_self_video_reference(
-                    apply_outfit_override(visual, None),
-                    row.user_id,
-                    prompt=prompt,
-                    aspect_ratio=plan.aspect_ratio,
-                )
-                prompt = build_self_video_prompt(identity, prompt)
             async with SESSION_LOCAL() as db:
                 job = await enqueue_video_job(
                     db,
@@ -430,7 +426,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     prompt=prompt,
                     duration=plan.duration,
                     resolution=resolution,
-                    first_frame_image=first_frame,
+                    reference_images=references,
                     aspect_ratio=plan.aspect_ratio,
                     identity_reference_path=visual.reference_path if visual else None,
                     identity=identity,

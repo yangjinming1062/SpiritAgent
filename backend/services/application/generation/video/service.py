@@ -1204,7 +1204,7 @@ def _action_resolution(
         duration=seconds,
         first_frame=True,
         last_frame=needs_loop_frames,
-        reference_images=provider.supports_reference_images,
+        reference_images=False,
     )
 
 
@@ -1933,7 +1933,6 @@ async def _run_action_attempt(
                 if not job.pose_path or not _artifact_abs_path(job.pose_path).is_file():
                     raise VideoPackError("动作起始姿态图不可读，请恢复原素材")
                 pose_uri = await _process_thread(_action_video_frame_uri, _artifact_abs_path(job.pose_path))
-                reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
 
                 async def submit(current: VideoGenProvider) -> VideoJobStatus:
                     await _require_new_paid_step(pack, context)
@@ -1944,7 +1943,6 @@ async def _run_action_attempt(
                             resolution=resolution,
                             first_frame_image=pose_uri,
                             last_frame_image=pose_uri if entry.clip_kind == "loop" else None,
-                            reference_images=(reference_uri,) if current.supports_reference_images else (),
                         ),
                     )
                     if not status.task_id:

@@ -1,6 +1,7 @@
 from typing import ClassVar
 
 from components import get_logger
+from prompts.generation import VIDEO_REFERENCE_IMAGE_LABELS
 
 from ..base import ProviderConfig, ProviderError, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
 from ..http import ProviderResultUnknownError, get_http
@@ -26,6 +27,7 @@ _MAX_PROMPT_CHARS = 7000
 _SUPPORTED_DURATIONS = tuple(range(1, 16))  # 1..15 inclusive
 # 文档规定分辨率为小写（如 "720p"、"1080p"），同时接受大写以屏蔽大小写差异。
 _SUPPORTED_RESOLUTIONS = ("480p", "720p", "1080p")
+_RESOLUTION_TO_API = {"512p": "480p", "768p": "720p", **{value: value for value in _SUPPORTED_RESOLUTIONS}}
 
 
 class GrokVideoGenProvider(VideoGenProvider):
@@ -35,9 +37,9 @@ class GrokVideoGenProvider(VideoGenProvider):
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
     DEFAULT_MODEL: ClassVar[str] = "grok-imagine-video-1.5"
 
-    # 能力声明（与 submit 校验一致）；分辨率按成本升序，键取规范小写。
+    # 能力声明与 submit 校验一致，分辨率含工具档位映射。
     durations = _SUPPORTED_DURATIONS
-    resolutions = ("480p", "720p", "1080p")
+    resolutions = tuple(_RESOLUTION_TO_API)
     supports_first_frame = True
 
     def __init__(self, config: ProviderConfig) -> None:
@@ -45,6 +47,9 @@ class GrokVideoGenProvider(VideoGenProvider):
         self._client = get_http(config.base_url, config.api_key)
         self.supports_loop_frames = (config.model or self.DEFAULT_MODEL) == "grok-imagine-video-1.5"
         self.supports_reference_images = self.supports_loop_frames
+
+    def native_resolution(self, resolution: str) -> str | None:
+        return _RESOLUTION_TO_API.get(resolution.lower())
 
     def max_resolution(
         self,
@@ -54,7 +59,7 @@ class GrokVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
     ) -> str | None:
-        if duration not in _SUPPORTED_DURATIONS:
+        if duration not in _SUPPORTED_DURATIONS or (reference_images and (first_frame or last_frame)):
             return None
         if last_frame or reference_images:
             return "720p" if self.supports_loop_frames else None
@@ -63,6 +68,8 @@ class GrokVideoGenProvider(VideoGenProvider):
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = self.config.model
 
+        if req.reference_images and (req.first_frame_image or req.last_frame_image):
+            raise ProviderError("Reference images cannot be combined with first/last frames", status_code=400)
         if len(req.prompt) > _MAX_PROMPT_CHARS:
             raise ProviderError(f"prompt exceeds xAI limit ({_MAX_PROMPT_CHARS} chars)", status_code=400)
         if req.duration not in _SUPPORTED_DURATIONS:
@@ -70,8 +77,8 @@ class GrokVideoGenProvider(VideoGenProvider):
                 f"{model} requires duration in {_SUPPORTED_DURATIONS}, got {req.duration!r}",
                 status_code=400,
             )
-        resolution = req.resolution.lower()
-        if resolution not in _SUPPORTED_RESOLUTIONS:
+        resolution = self.native_resolution(req.resolution)
+        if resolution is None:
             raise ProviderError(
                 f"{model} requires resolution in {_SUPPORTED_RESOLUTIONS}, got {req.resolution!r}",
                 status_code=400,
@@ -84,7 +91,7 @@ class GrokVideoGenProvider(VideoGenProvider):
             payload["image"] = {"url": req.first_frame_image, "type": "image_url"}
 
         if req.last_frame_image or req.reference_images:
-            if model != "grok-imagine-video-1.5" or req.resolution.lower() not in ("480p", "720p"):
+            if model != "grok-imagine-video-1.5" or resolution not in ("480p", "720p"):
                 raise ProviderError(
                     "Grok reference/first-last frame mode requires grok-imagine-video-1.5 at up to 720p",
                     status_code=400,
@@ -95,6 +102,15 @@ class GrokVideoGenProvider(VideoGenProvider):
                 payload["last_frame"] = {"url": req.last_frame_image}
             if req.reference_images:
                 payload["reference_images"] = [{"url": image} for image in req.reference_images]
+                payload["prompt"] = (
+                    VIDEO_REFERENCE_IMAGE_LABELS.format(
+                        labels="；".join(f"图 {i + 1} = <IMAGE_{i}>" for i in range(len(req.reference_images))),
+                    )
+                    + "\n"
+                    + req.prompt
+                )
+                if len(payload["prompt"]) > _MAX_PROMPT_CHARS:
+                    raise ProviderError(f"prompt exceeds xAI limit ({_MAX_PROMPT_CHARS} chars)", status_code=400)
 
         resp = await self._client.post("/videos/generations", json=payload)
         body = raise_for_grok_response(resp)

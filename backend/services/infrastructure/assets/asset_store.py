@@ -192,14 +192,13 @@ async def save_companion_asset_async(data: bytes, *, user_id: int, label: str, e
         raise
 
 
-def video_job_asset_path(user_id: int, job_id: int, attempt: int, *, generation_id: str | None = None) -> str:
+def video_job_asset_path(user_id: int, job_id: int, attempt: int, *, generation_id: str) -> str:
     """视频任务每次已知提交对应唯一落盘位置，供崩溃后按任务恢复。"""
     if user_id <= 0 or job_id <= 0 or attempt < 0:
         raise ValueError("invalid video job asset key")
-    if generation_id is not None and not _is_generation_id(generation_id):
+    if not _is_generation_id(generation_id):
         raise ValueError("invalid video generation ID")
-    suffix = f"_{generation_id}" if generation_id else ""
-    return f"companion-assets/{user_id}/chat_video_job_{job_id}{suffix}_a{attempt}.mp4"
+    return f"companion-assets/{user_id}/chat_video_job_{job_id}_{generation_id}_a{attempt}.mp4"
 
 
 def _save_generation_asset(data: bytes, user_id: int, bare_path: str) -> str:
@@ -229,7 +228,7 @@ async def save_video_job_asset_async(
     user_id: int,
     job_id: int,
     attempt: int,
-    generation_id: str | None = None,
+    generation_id: str,
 ) -> str:
     return await _save_generation_asset_async(
         data,

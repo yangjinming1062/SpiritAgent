@@ -1,37 +1,28 @@
 """出镜媒体共用的固定身份、本次生成造型及视频参考准备。造型来源统一命名（衣柜已启用外观 / 当前场景可见穿着 / 本次生成造型）；`outfit_override` 只作用于本次产物，不改衣柜或场景。"""
 
 import asyncio
-import io
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from components import SESSION_LOCAL, get_logger
+from components import SESSION_LOCAL
 from modules.companion import AvatarAsset, CharacterCardSnapshot, CompanionOutfit
-from PIL import Image
 from prompts.generation import (
     CHARACTER_ALIGNMENT_REFERENCES,
-    CHARACTER_FRAME_ALIGN,
     CHARACTER_REFERENCE_ALIGN,
     CHARACTER_VISUAL_STYLE,
     SELF_IMAGE_CURRENT_OUTFIT,
     SELF_IMAGE_OUTFIT_DESCRIPTION,
     SELF_IMAGE_OUTFIT_REFERENCE,
     SELF_IMAGE_REFERENCE_TEMPLATE,
-    SELF_VIDEO_FIRST_FRAME,
-    SELF_VIDEO_KEEP_OUTFIT,
     SELF_VIDEO_REFERENCE_TEMPLATE,
 )
 from sqlalchemy import select
 
 from services.domains.companion import render_character_identity, require_character_snapshot
-from services.infrastructure.assets import unlink_companion_asset
-from services.infrastructure.llm import ASPECT_RATIOS, LlmCallBlockedError, resolve_reference_bytes
 
-from .avatar_service import FULLBODY_ASPECT, FULLBODY_SIZE, AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
+from .avatar_service import FULLBODY_SIZE, AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
 from .character_images import ImageChainState, ImageProgressWriter, generate_character_images
-from .image_generation import ImageGenerationError, resolve_image_gen_chain
-
-logger = get_logger(__name__)
+from .image_generation import resolve_image_gen_chain
 
 
 @dataclass(frozen=True)
@@ -103,7 +94,11 @@ def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_ref
 
 async def optional_outfit_image_reference(plan: SelfVisualPlan, user_id: int) -> str | None:
     """双图供应商可用时才附衣柜图；固定身份始终由全身种子提供。"""
-    if plan.override_outfit_description or not plan.context.outfit_reference:
+    if (
+        plan.override_outfit_description
+        or not plan.context.outfit_reference
+        or plan.context.outfit_reference == plan.context.reference_image
+    ):
         return None
     async with SESSION_LOCAL() as db:
         chain, _ = await resolve_image_gen_chain(db, user_id, has_reference=True, multiple_references=True)
@@ -116,39 +111,17 @@ async def align_character_reference(
     identity: CharacterCardSnapshot,
     outfit_description: str,
     *,
-    preserve_frame: bool = False,
     identity_reference: str,
     state: ImageChainState | None = None,
     save_progress: ImageProgressWriter | None = None,
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
     """返回本次生成独有的持久参考；调用者承担保存或回收，不改变原图。"""
-    size = FULLBODY_SIZE
-    aspect = FULLBODY_ASPECT
-    if preserve_frame:
-
-        def frame_aspect(raw: bytes) -> str:
-            with Image.open(io.BytesIO(raw)) as image:
-                ratio = image.width / image.height
-            return min(ASPECT_RATIOS, key=lambda key: abs(ASPECT_RATIOS[key] - ratio))
-
-        try:
-            raw, _ = await resolve_reference_bytes(reference_image)
-            aspect = size = await asyncio.to_thread(frame_aspect, raw)
-        except Exception as exc:
-            # 下载、协议、大小和图片解码失败尚未产生任何付费请求，都是首帧参数问题。
-            logger.warning("explicit first frame unreadable", extra={"user_id": user_id}, exc_info=True)
-            raise ImageGenerationError(
-                "首帧图片无法读取，请换一张可访问的图片",
-                internal=f"{type(exc).__name__}: {exc}",
-            ) from exc
     separate_reference = reference_image != identity_reference
-    template = CHARACTER_FRAME_ALIGN if preserve_frame else CHARACTER_REFERENCE_ALIGN
     paths = await generate_character_images(
         (CHARACTER_ALIGNMENT_REFERENCES + "\n" if separate_reference else "")
-        + template.format(
+        + CHARACTER_REFERENCE_ALIGN.format(
             target_reference="图 2" if separate_reference else "输入图",
-            aspect=aspect,
             identity=render_character_identity(identity),
             outfit=outfit_description or "沿用原图可见造型",
         )
@@ -157,7 +130,7 @@ async def align_character_reference(
         user_id=user_id,
         reference_image=identity_reference,
         secondary_reference_image=reference_image if separate_reference else None,
-        size=size,
+        size=FULLBODY_SIZE,
         image_edit=not separate_reference,
         identity_reference=identity_reference,
         identity_text=render_character_identity(identity),
@@ -168,67 +141,27 @@ async def align_character_reference(
     return paths[0]
 
 
-async def prepare_self_video_reference(
-    plan: SelfVisualPlan,
-    user_id: int,
-    frame: str | None = None,
-    *,
-    prompt: str,
-    aspect_ratio: str | None = None,
-    before_submit: Callable[[], Awaitable[None]] | None = None,
-) -> str:
-    """新视频先生成符合要求的起始画面；显式首帧仅校准身份与明确的造型覆盖。"""
-    context = plan.context
-    try:
-        if frame is None:
-            outfit_reference = await optional_outfit_image_reference(plan, user_id)
-            paths = await generate_character_images(
-                build_self_image_prompt(
-                    plan,
-                    SELF_VIDEO_FIRST_FRAME.format(prompt=prompt),
-                    has_outfit_reference=bool(outfit_reference),
-                ),
-                user_id=user_id,
-                reference_image=context.reference_image,
-                secondary_reference_image=outfit_reference,
-                identity_reference=context.reference_image,
-                identity_text=render_character_identity(context.identity),
-                size=aspect_ratio or "9:16",
-                before_submit=before_submit,
-            )
-            path = paths[0]
-        else:
-            path = await align_character_reference(
-                user_id,
-                frame,
-                context.identity,
-                plan.override_outfit_description,
-                preserve_frame=True,
-                identity_reference=context.reference_image,
-                before_submit=before_submit,
-            )
-    except (ImageGenerationError, LlmCallBlockedError):
-        raise
-    except Exception as exc:
-        # 起始画面阶段尚未提交视频；图片链内的下载、转存失败是确定的失败，不能按提交结果未知处理。
-        logger.warning("video first frame generation failed", extra={"user_id": user_id}, exc_info=True)
-        raise ImageGenerationError(
-            "视频起始画面生成失败，请稍后重试",
-            internal=f"{type(exc).__name__}: {exc}",
-        ) from exc
-    try:
-        result = await asyncio.to_thread(load_avatar_bytes_as_data_uri, path)
-        if not result:
-            raise ImageGenerationError("无法读取视频起始画面")
-        return result
-    finally:
-        unlink_companion_asset(path)
+def self_video_references(plan: SelfVisualPlan, reference_image: str | None = None) -> tuple[str, ...]:
+    """身份与选定造型分别提供参考；相同图只发送一次，造型覆盖只消费文字。"""
+    outfit = None if plan.override_outfit_description else reference_image or plan.context.outfit_reference
+    identity = plan.context.reference_image
+    return (identity, outfit) if outfit and outfit != identity else (identity,)
 
 
-def build_self_video_prompt(identity: CharacterCardSnapshot, prompt: str) -> str:
-    """视频阶段保持首帧造型，固定身份条款在同一位置装配。"""
+def build_self_video_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_reference: bool) -> str:
+    outfit = plan.override_outfit_description or plan.context.outfit_description
+    if has_outfit_reference:
+        outfit_instructions = SELF_IMAGE_OUTFIT_REFERENCE.format(outfit="未提供")
+    elif outfit:
+        outfit_instructions = SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=outfit)
+    else:
+        outfit_instructions = SELF_IMAGE_CURRENT_OUTFIT
     return (
-        SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt, outfit=SELF_VIDEO_KEEP_OUTFIT)
+        SELF_VIDEO_REFERENCE_TEMPLATE.format(
+            reference="图 1" if has_outfit_reference else "参考图",
+            outfit=outfit_instructions,
+            prompt=prompt,
+        )
         + "\n"
-        + render_character_identity(identity)
+        + render_character_identity(plan.context.identity)
     )

@@ -201,7 +201,11 @@ class VideoGenProvider(BaseProvider):
     resolutions: tuple[str, ...] | None = None  # 可接受的分辨率档，可能包含兼容别名
     supports_first_frame: bool = False  # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商
     supports_loop_frames: bool = False
-    supports_reference_images: bool = False  # 消费 reference_images 身份参考；False 时编排层省略该字段，不排除该供应商
+    supports_reference_images: bool = False  # 身份参考模式；普通出镜视频据此筛选，动作视频另走首帧模式
+
+    def native_resolution(self, resolution: str) -> str | None:
+        """把输入档位映射为供应商原生档位，用于提交及模式上限检查。"""
+        return next((value for value in self.resolutions or () if value.lower() == resolution.lower()), None)
 
     def max_resolution(
         self,
