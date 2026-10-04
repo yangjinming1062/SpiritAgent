@@ -7,7 +7,8 @@ import { app, type BrowserWindow, dialog, type IpcMain, shell, type WebContents 
 
 import { atomicWriteFile, createSerialQueue, safeReadJson, sendToWindow } from '../shared/utils'
 
-import { createWindowsAppCatalog } from './windows-app-catalog'
+import { type CatalogApplication, createWindowsAppCatalog } from './windows-app-catalog'
+import { isPackagedAppTarget, launchPackagedApplication } from './windows-installed-apps'
 
 interface SavedDockEntry {
   id: string
@@ -18,6 +19,24 @@ interface SavedDockEntry {
 interface SavedDock {
   version: 1
   entries: SavedDockEntry[]
+}
+
+type DockSelection = Pick<SavedDockEntry, 'target' | 'name'>
+
+function fileSelection(target: string): DockSelection {
+  return { target, name: path.basename(target, path.extname(target)) }
+}
+
+function targetIdentity(target: string): string {
+  if (path.extname(target).toLowerCase() === '.lnk') {
+    try {
+      return shell.readShortcutLink(target).target.toLowerCase()
+    } catch {
+      // 失效快捷方式保留原路径，仍可显示和修复。
+    }
+  }
+
+  return target.toLowerCase()
 }
 
 function isSavedEntry(raw: unknown): raw is SavedDockEntry {
@@ -31,12 +50,12 @@ function isSavedEntry(raw: unknown): raw is SavedDockEntry {
     typeof item.id === 'string' &&
     typeof item.name === 'string' &&
     typeof item.target === 'string' &&
-    path.isAbsolute(item.target) &&
-    ['.exe', '.lnk'].includes(path.extname(item.target).toLowerCase())
+    (isPackagedAppTarget(item.target) ||
+      (path.isAbsolute(item.target) && ['.exe', '.lnk'].includes(path.extname(item.target).toLowerCase())))
   )
 }
 
-async function validateTarget(target: string): Promise<void> {
+async function validateFileTarget(target: string): Promise<void> {
   if (!path.isAbsolute(target) || !['.exe', '.lnk'].includes(path.extname(target).toLowerCase())) {
     throw new Error('请选择程序或程序快捷方式。')
   }
@@ -54,10 +73,7 @@ async function validateTarget(target: string): Promise<void> {
   }
 }
 
-/**
- * Windows 的 `getFileIcon` 不解析 .lnk，直接读快捷方式只会得到通用快捷方式图标，
- * 因此先按解析出的目标程序取图标，读不到再退回快捷方式本身。
- */
+// Windows 不解析 .lnk 图标，先读取目标程序，失败再回退。
 async function readTargetIcon(target: string): Promise<string> {
   if (path.extname(target).toLowerCase() === '.lnk') {
     try {
@@ -94,12 +110,39 @@ export function registerDesktopDock(options: {
     }
   }
 
+  async function requirePackagedApplication(target: string): Promise<CatalogApplication> {
+    const scan = await catalog.get()
+    const identity = target.toLowerCase()
+    const item = scan.items.find(application => application.target.toLowerCase() === identity)
+
+    if (!item) {
+      if (scan.sources.some(source => source.key === 'apps-folder' && !source.ok)) {
+        throw new Error('Windows 应用列表读取失败，请重新扫描。')
+      }
+
+      throw Object.assign(new Error('程序已卸载或不可用，请重新选择程序。'), { code: 'ENOENT' })
+    }
+
+    return item
+  }
+
+  async function validateTarget(target: string): Promise<CatalogApplication | null> {
+    if (isPackagedAppTarget(target)) {
+      return requirePackagedApplication(target)
+    }
+
+    await validateFileTarget(target)
+
+    return null
+  }
+
   async function project(entry: SavedDockEntry): Promise<DockEntry> {
     let status: DockEntry['status'] = 'ready'
     let error: string | undefined
+    let application: CatalogApplication | null = null
 
     try {
-      await validateTarget(entry.target)
+      application = await validateTarget(entry.target)
     } catch (cause) {
       status = (cause as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid'
       error = cause instanceof Error ? cause.message : '程序不可用。'
@@ -109,8 +152,13 @@ export function registerDesktopDock(options: {
 
     if (icon === null && status === 'ready') {
       try {
-        icon = await readTargetIcon(entry.target)
-        icons.set(entry.target, icon)
+        icon = application
+          ? (await catalog.icons([application.id]))[application.id]
+          : await readTargetIcon(entry.target)
+
+        if (icon !== null) {
+          icons.set(entry.target, icon)
+        }
       } catch {
         /* 图标失败保留程序启动能力。 */
       }
@@ -141,22 +189,25 @@ export function registerDesktopDock(options: {
     return state
   }
 
-  async function add(paths: string[]): Promise<DockState> {
-    if (paths.length > 100) {
+  async function add(selections: DockSelection[]): Promise<DockState> {
+    if (selections.length > 100) {
       throw new Error('一次最多添加 100 个程序。')
     }
 
     const next = [...entries]
+    const registered = new Set(next.map(entry => targetIdentity(entry.target)))
 
-    for (const target of paths) {
-      await validateTarget(target)
+    for (const selection of selections) {
+      await validateTarget(selection.target)
+      const identity = targetIdentity(selection.target)
 
-      if (!next.some(entry => entry.target.toLowerCase() === target.toLowerCase())) {
-        next.push({ id: randomUUID(), target, name: path.basename(target, path.extname(target)) })
+      if (!registered.has(identity)) {
+        registered.add(identity)
+        next.push({ id: randomUUID(), ...selection })
       }
     }
 
-    return commit(next)
+    return next.length === entries.length ? snapshot() : commit(next)
   }
 
   async function pickApplications(sender: WebContents, multiple: boolean): Promise<string[]> {
@@ -177,30 +228,29 @@ export function registerDesktopDock(options: {
     return result.canceled ? [] : result.filePaths
   }
 
-  // 目录条目以主进程句柄下发；渲染层无法自造路径，重扫后旧句柄立即失效。
-  function resolveCatalogTarget(id: unknown): string {
+  function resolveCatalogSelection(id: unknown): DockSelection {
     const item = typeof id === 'string' ? catalog.resolve(id) : null
 
     if (!item) {
       throw new Error('应用列表已更新，请重新选择。')
     }
 
-    return item.shortcutPath
+    return { target: item.launchTarget, name: item.name }
   }
 
   async function catalogState(force: boolean): Promise<DockCatalog> {
     const scan = force ? await catalog.refresh() : await catalog.get()
-    const registered = new Set(entries.map(entry => entry.target.toLowerCase()))
+    const registered = new Set(entries.map(entry => targetIdentity(entry.target)))
 
     return {
       revision: scan.revision,
       sources: scan.sources,
-      items: scan.items.map(item => ({
+      // 仅限制下发列表；保存条目的校验仍使用完整扫描结果。
+      items: scan.items.slice(0, 1000).map(item => ({
         id: item.id,
         name: item.name,
         detail: item.detail,
-        // 条目既可能登记为快捷方式，也可能直接登记为程序本身，两种都要识别为已在 Dock。
-        inDock: registered.has(item.shortcutPath.toLowerCase()) || registered.has(item.target.toLowerCase())
+        inDock: registered.has(item.target.toLowerCase())
       }))
     }
   }
@@ -215,22 +265,15 @@ export function registerDesktopDock(options: {
     return entry
   }
 
-  function commitRepair(entry: SavedDockEntry, target: string): Promise<DockState> {
-    return commit(
-      entries.map(item =>
-        item === entry ? { ...entry, target, name: path.basename(target, path.extname(target)) } : item
-      )
-    )
-  }
+  async function repairTo(entry: SavedDockEntry, selection: DockSelection): Promise<DockState> {
+    await validateTarget(selection.target)
+    const identity = targetIdentity(selection.target)
 
-  async function repairTo(entry: SavedDockEntry, target: string): Promise<DockState> {
-    await validateTarget(target)
-
-    if (entries.some(item => item.id !== entry.id && item.target.toLowerCase() === target.toLowerCase())) {
+    if (entries.some(item => item.id !== entry.id && targetIdentity(item.target) === identity)) {
       throw new Error('该程序已在 Dock 中。')
     }
 
-    return commitRepair(entry, target)
+    return commit(entries.map(item => (item === entry ? { ...entry, ...selection } : item)))
   }
 
   options.ipcMain.handle(IPC.invoke.dockGetState, event => {
@@ -262,9 +305,9 @@ export function registerDesktopDock(options: {
 
     return serial(async () => {
       assertSender(event.sender)
-      const targets = raw.map(resolveCatalogTarget)
+      const selections = raw.map(resolveCatalogSelection)
 
-      return targets.length ? add(targets) : snapshot()
+      return selections.length ? add(selections) : snapshot()
     })
   })
   options.ipcMain.handle(IPC.invoke.dockAddFromFiles, event => {
@@ -273,7 +316,7 @@ export function registerDesktopDock(options: {
     return serial(async () => {
       const paths = await pickApplications(event.sender, true)
 
-      return paths.length ? add(paths) : snapshot()
+      return paths.length ? add(paths.map(fileSelection)) : snapshot()
     })
   })
   options.ipcMain.handle(IPC.invoke.dockRepairWithCatalog, (event, entryId: unknown, catalogId: unknown) => {
@@ -282,7 +325,7 @@ export function registerDesktopDock(options: {
     return serial(async () => {
       assertSender(event.sender)
 
-      return repairTo(requireEntry(entryId), resolveCatalogTarget(catalogId))
+      return repairTo(requireEntry(entryId), resolveCatalogSelection(catalogId))
     })
   })
   options.ipcMain.handle(IPC.invoke.dockRepairWithFiles, (event, entryId: unknown) => {
@@ -292,20 +335,20 @@ export function registerDesktopDock(options: {
       const entry = requireEntry(entryId)
       const [target] = await pickApplications(event.sender, false)
 
-      return target ? repairTo(entry, target) : snapshot()
+      return target ? repairTo(entry, fileSelection(target)) : snapshot()
     })
   })
   options.ipcMain.handle(IPC.invoke.dockAddDropped, (event, raw: unknown) => {
     assertSender(event.sender)
 
-    if (!Array.isArray(raw) || !raw.every(item => typeof item === 'string')) {
+    if (!Array.isArray(raw) || !raw.every(item => typeof item === 'string' && !isPackagedAppTarget(item))) {
       throw new Error('无效程序文件。')
     }
 
     return serial(() => {
       assertSender(event.sender)
 
-      return add(raw)
+      return add(raw.map(fileSelection))
     })
   })
   options.ipcMain.handle(IPC.invoke.dockLaunch, (event, id: unknown) => {
@@ -313,21 +356,26 @@ export function registerDesktopDock(options: {
 
     return serial(async () => {
       assertSender(event.sender)
-      const entry = entries.find(item => item.id === id)
-
-      if (!entry) {
-        throw new Error('Dock 项目不存在。')
-      }
+      const entry = requireEntry(id)
 
       try {
         await validateTarget(entry.target)
-        const error = await shell.openPath(entry.target)
 
-        if (error) {
-          throw new Error(error)
+        if (isPackagedAppTarget(entry.target)) {
+          await launchPackagedApplication(entry.target)
+        } else {
+          const error = await shell.openPath(entry.target)
+
+          if (error) {
+            throw new Error(error)
+          }
         }
       } catch (error) {
-        // 程序可能在上次快照后被移动，刷新失效状态以提供修复入口。
+        // 移动或卸载后刷新状态，保留修复入口。
+        if (isPackagedAppTarget(entry.target)) {
+          await catalog.refresh()
+        }
+
         revision += 1
         sendToWindow(options.getDesktopWindow(), IPC.event.dockChanged, await snapshot())
         throw error

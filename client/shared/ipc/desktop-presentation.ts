@@ -71,8 +71,14 @@ export interface DockState {
   entries: DockEntry[]
 }
 
-/** 应用目录来源：开始菜单（当前用户／All Users）与桌面（用户／OneDrive 重定向／公共）。 */
-export type DockCatalogSourceKey = 'start-user' | 'start-all' | 'desktop-user' | 'desktop-onedrive' | 'desktop-public'
+export type DockCatalogSourceKey =
+  | 'start-user'
+  | 'start-all'
+  | 'desktop-user'
+  | 'desktop-onedrive'
+  | 'desktop-public'
+  | 'app-paths'
+  | 'apps-folder'
 
 export interface DockCatalogSource {
   key: DockCatalogSourceKey
@@ -80,7 +86,7 @@ export interface DockCatalogSource {
   ok: boolean
 }
 
-/** 目录条目只带主进程句柄；真实 `.lnk` 与目标路径不出主进程。 */
+/** 目录条目只带主进程句柄；真实启动目标不出主进程。 */
 export interface DockCatalogItem {
   id: string
   name: string

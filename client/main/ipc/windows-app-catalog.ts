@@ -4,40 +4,33 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import type { DockCatalogSourceKey } from '@ipc/contracts'
-import { app, shell } from 'electron'
+import type { DockCatalogSource, DockCatalogSourceKey } from '@ipc/contracts'
+import { app, nativeImage, shell } from 'electron'
+import log from 'electron-log/main'
 
 import { createSerialQueue } from '../shared/utils'
 
-/** 开始菜单下最多递归的层数；再深的分组对挑选没有帮助。 */
+import { readRegisteredApplications, readShellApplications } from './windows-installed-apps'
+
 const MAX_DEPTH = 4
-/** 单次扫描收集的快捷方式上限，触发即停止收集，避免异常目录拖垮主进程。 */
 const MAX_SHORTCUTS = 1000
-/** 目录缓存时长：装完新程序后短时间内复用旧结果，逾期由下次读取重扫。 */
 const CACHE_TTL_MS = 60_000
-/** 单次图标请求的条目上限，与渲染层每批请求的条数对应。 */
 const MAX_ICON_BATCH = 64
 const ICON_CONCURRENCY = 4
-const ICON_CACHE_LIMIT = 512
 
-export interface CatalogShortcut {
+export interface CatalogApplication {
   id: string
-  shortcutPath: string
+  launchTarget: string
   target: string
   name: string
   detail: string
-}
-
-export interface CatalogSourceReport {
-  key: DockCatalogSourceKey
-  items: number
-  ok: boolean
+  iconPath?: string | null
 }
 
 export interface CatalogScan {
   revision: number
-  sources: CatalogSourceReport[]
-  items: CatalogShortcut[]
+  sources: DockCatalogSource[]
+  items: CatalogApplication[]
 }
 
 function userAppData(): string {
@@ -66,7 +59,10 @@ function sourceRoots(): { key: DockCatalogSourceKey; dir: string }[] {
       key: 'desktop-onedrive',
       dir: oneDrive && path.resolve(oneDrive) !== path.resolve(desktopUser) ? oneDrive : ''
     },
-    { key: 'desktop-public', dir: process.env.PUBLIC || path.join(systemData(), 'Public Desktop') }
+    {
+      key: 'desktop-public',
+      dir: path.join(process.env.PUBLIC || path.join(path.dirname(homeDir()), 'Public'), 'Desktop')
+    }
   ]
 
   return roots.filter(root => Boolean(root.dir))
@@ -88,7 +84,6 @@ async function isFile(target: string): Promise<boolean> {
   }
 }
 
-/** 递归收集 `.lnk`；单个目录读不到不影响其余分支，触顶即停止。 */
 async function collectShortcuts(dir: string, depth: number, out: string[]): Promise<void> {
   if (depth > MAX_DEPTH) {
     return
@@ -117,13 +112,24 @@ async function collectShortcuts(dir: string, depth: number, out: string[]): Prom
   }
 }
 
-/**
- * Windows 的 `getFileIcon` 不解析 .lnk，直接读快捷方式只会得到通用快捷方式图标，
- * 因此优先读目标程序，失败才退回快捷方式本身。
- */
-async function readShortcutIcon(item: CatalogShortcut): Promise<string | null> {
-  for (const source of [item.target, item.shortcutPath]) {
+// 清单图标优先；.lnk 先读取目标程序，失败再回退。
+async function readApplicationIcon(item: CatalogApplication): Promise<string | null> {
+  for (const source of new Set([item.iconPath, item.target, item.launchTarget])) {
+    if (!source || !path.isAbsolute(source)) {
+      continue
+    }
+
     try {
+      if (path.extname(source).toLowerCase() === '.png') {
+        const icon = nativeImage.createFromPath(source)
+
+        if (!icon.isEmpty()) {
+          return icon.toDataURL()
+        }
+
+        continue
+      }
+
       return (await app.getFileIcon(source, { size: 'normal' })).toDataURL()
     } catch {
       // 目标图标读不到时继续尝试下一个来源。
@@ -133,7 +139,7 @@ async function readShortcutIcon(item: CatalogShortcut): Promise<string | null> {
   return null
 }
 
-function toShortcut(file: string, rootDir: string, target: string): CatalogShortcut | null {
+function toShortcut(file: string, rootDir: string, target: string): CatalogApplication | null {
   const name = path.basename(file, path.extname(file))
 
   if (!name) {
@@ -144,7 +150,7 @@ function toShortcut(file: string, rootDir: string, target: string): CatalogShort
 
   return {
     id: randomUUID(),
-    shortcutPath: file,
+    launchTarget: file,
     target,
     name,
     detail: [folder && folder !== '.' ? folder : '', path.basename(target)].filter(Boolean).join(' · ')
@@ -155,10 +161,10 @@ async function scanSource(
   key: DockCatalogSourceKey,
   dir: string,
   budget: { left: number }
-): Promise<{ report: CatalogSourceReport; items: CatalogShortcut[] }> {
+): Promise<{ report: DockCatalogSource; items: CatalogApplication[] }> {
   const found: string[] = []
   await collectShortcuts(dir, 0, found)
-  const items: CatalogShortcut[] = []
+  const items: CatalogApplication[] = []
 
   for (const file of found) {
     if (budget.left <= 0) {
@@ -176,7 +182,6 @@ async function scanSource(
       continue
     }
 
-    // 只收录目标为现存 `.exe` 的条目：网页快捷方式、管理工具与「此电脑」这类虚拟 shell 项自然被排除。
     if (path.extname(target).toLowerCase() !== '.exe' || !(await isFile(target))) {
       continue
     }
@@ -191,27 +196,24 @@ async function scanSource(
   return { report: { key, items: items.length, ok: true }, items }
 }
 
-/**
- * 开始菜单与桌面的快捷方式目录。条目在主进程持有随机句柄与真实路径，
- * 渲染层只能拿句柄回传，无法自造路径。
- */
 export function createWindowsAppCatalog(): {
   get(): Promise<CatalogScan>
   refresh(): Promise<CatalogScan>
-  resolve(id: string): CatalogShortcut | null
+  resolve(id: string): CatalogApplication | null
   icons(ids: string[]): Promise<Record<string, string | null>>
 } {
   const serial = createSerialQueue()
   const iconCache = new Map<string, string | null>()
-  let handles = new Map<string, CatalogShortcut>()
+  let handles = new Map<string, CatalogApplication>()
   let cached: CatalogScan | null = null
   let scannedAt = 0
   let revision = 0
 
   async function scan(): Promise<CatalogScan> {
-    const sources: CatalogSourceReport[] = []
-    const collected: CatalogShortcut[][] = []
+    const sources: DockCatalogSource[] = []
+    const collected: CatalogApplication[] = []
     const budget = { left: MAX_SHORTCUTS }
+    const installed = Promise.allSettled([readRegisteredApplications(), readShellApplications()])
 
     for (const root of sourceRoots()) {
       if (budget.left <= 0) {
@@ -229,23 +231,35 @@ export function createWindowsAppCatalog(): {
         const result = await scanSource(root.key, root.dir, budget)
 
         sources.push(result.report)
-        collected.push(result.items)
+        collected.push(...result.items)
       } catch {
         sources.push({ key: root.key, items: 0, ok: false })
       }
     }
 
-    const items: CatalogShortcut[] = []
+    const installedResults = await installed
+
+    for (const [index, key] of (['app-paths', 'apps-folder'] as const).entries()) {
+      const result = installedResults[index]
+
+      if (result.status === 'rejected') {
+        log.warn(`[Dock] ${key} application discovery failed:`, result.reason)
+        sources.push({ key, items: 0, ok: false })
+
+        continue
+      }
+
+      sources.push({ key, items: result.value.length, ok: true })
+      collected.push(...result.value.map(item => ({ ...item, id: randomUUID(), launchTarget: item.target })))
+    }
+
+    const items: CatalogApplication[] = []
     const seen = new Set<string>()
 
-    for (const group of collected) {
-      for (const item of group) {
-        const key = item.target.toLowerCase()
+    for (const item of collected) {
+      const key = item.target.toLowerCase()
 
-        if (seen.has(key)) {
-          continue
-        }
-
+      if (!seen.has(key)) {
         seen.add(key)
         items.push(item)
       }
@@ -256,9 +270,7 @@ export function createWindowsAppCatalog(): {
     scannedAt = Date.now()
     cached = { revision, sources, items }
 
-    if (iconCache.size > ICON_CACHE_LIMIT) {
-      iconCache.clear()
-    }
+    iconCache.clear()
 
     return cached
   }
@@ -283,11 +295,10 @@ export function createWindowsAppCatalog(): {
               return
             }
 
-            try {
-              iconCache.set(id, await readShortcutIcon(item))
-            } catch {
-              // 图标失败保留默认占位，不影响条目本身可选。
-              iconCache.set(id, null)
+            const icon = await readApplicationIcon(item)
+
+            if (handles.has(id)) {
+              iconCache.set(id, icon)
             }
           })
         )
@@ -296,7 +307,7 @@ export function createWindowsAppCatalog(): {
       const result: Record<string, string | null> = {}
 
       for (const id of ids) {
-        result[id] = iconCache.get(id) ?? null
+        result[id] = handles.has(id) ? (iconCache.get(id) ?? null) : null
       }
 
       return result

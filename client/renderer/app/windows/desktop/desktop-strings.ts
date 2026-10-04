@@ -33,7 +33,7 @@ const zh = {
   moveLeft: '向左移动',
   moveRight: '向右移动',
   missing: '程序不可用，请重新选择程序',
-  dockHint: '从开始菜单或桌面图标选择程序，拖入程序或快捷方式也可添加',
+  dockHint: '从已安装应用中选择程序，拖入程序或快捷方式也可添加',
   pickAdd: '添加程序',
   pickRepair: '重新选择程序',
   pickSearch: '搜索程序名称',
@@ -49,7 +49,9 @@ const zh = {
     'start-all': '所有用户开始菜单',
     'desktop-user': '桌面',
     'desktop-onedrive': 'OneDrive 桌面',
-    'desktop-public': '公共桌面'
+    'desktop-public': '公共桌面',
+    'app-paths': '已登记程序',
+    'apps-folder': 'Windows 应用'
   },
   pickSourceFailed: '以下位置未能读取',
   minimize: '最小化',
@@ -102,7 +104,7 @@ const en: typeof zh = {
   moveLeft: 'Move left',
   moveRight: 'Move right',
   missing: 'App unavailable. Choose it again.',
-  dockHint: 'Pick apps from the Start menu or desktop, or drop an app or shortcut onto the Dock',
+  dockHint: 'Pick an installed app, or drop an app or shortcut onto the Dock',
   pickAdd: 'Add app',
   pickRepair: 'Choose app again',
   pickSearch: 'Search apps',
@@ -118,7 +120,9 @@ const en: typeof zh = {
     'start-all': 'All users start menu',
     'desktop-user': 'Desktop',
     'desktop-onedrive': 'OneDrive desktop',
-    'desktop-public': 'Public desktop'
+    'desktop-public': 'Public desktop',
+    'app-paths': 'Registered apps',
+    'apps-folder': 'Windows apps'
   },
   pickSourceFailed: 'Could not read',
   minimize: 'Minimize',
