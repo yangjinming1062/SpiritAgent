@@ -1,4 +1,4 @@
-import { type VideoActionKey, videoActionNames } from '@/modules/character'
+import { type SystemActionKey, systemActionNames } from '@/modules/character'
 import { ChatMediaCard } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
 import { SECTION_TITLE } from '@/shared/panel'
@@ -8,14 +8,14 @@ interface PendingMediaReview {
   id: number
   media_type: 'image' | 'video'
   media_url: string
-  system_slot: '' | VideoActionKey
+  system_slot: '' | SystemActionKey
   title: string
 }
 
 export function MediaReviewQueue(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona
-  const slotNames = videoActionNames(dict.living.appearance)
+  const slotNames = systemActionNames(dict.living.appearance)
 
   const { data, error, reload, setData } = useAsyncLoader(() =>
     window.spiritagent.api<PendingMediaReview[]>({

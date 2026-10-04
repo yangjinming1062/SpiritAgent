@@ -449,12 +449,7 @@ export function DesktopRoot(): React.JSX.Element {
         </div>
         <nav aria-label={t.title} className={styles.mainMenu}>
           {MENU.map(id => (
-            <button
-              data-current={activeWindow === id}
-              key={id}
-              onClick={() => activatePanel(id)}
-              type="button"
-            >
+            <button data-current={activeWindow === id} key={id} onClick={() => activatePanel(id)} type="button">
               {t[id]}
             </button>
           ))}

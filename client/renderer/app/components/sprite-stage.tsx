@@ -27,7 +27,7 @@ import {
   updateDragPosition,
   useSpriteBodyGesture
 } from '@/modules/character'
-import { useVideoPixelHitTest } from '@/modules/character/rendering/video'
+import { useMediaPixelHitTest } from '@/modules/character/rendering/video'
 import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -103,7 +103,7 @@ export function SpriteStage({
   const peek = useStore($spatialPeek)
   const expressionBoost = useStore($expressionBoost)
   const content = useStore($spriteContentRect)
-  const stageHitTest = useVideoPixelHitTest(windowId)
+  const stageHitTest = useMediaPixelHitTest(windowId)
 
   const lastDomPointer = useRef<{ x: number; y: number } | null>(null)
   const domProbeFrame = useRef<number | null>(null)

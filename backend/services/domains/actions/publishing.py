@@ -4,9 +4,10 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from typing import Annotated, Literal
 from uuid import uuid4
 
-from components import SETTINGS, safe_json_loads
+from components import SETTINGS
 from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack, PeekGeometry, parse_content_rect
 from modules.ws import emit_ws_event
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -18,31 +19,41 @@ from .asset_retirement import retire_action_assets
 from .materials import accepted_action_asset
 from .repository import StaleCatalogError, list_pack_actions, publish_catalog
 
-MANIFEST_SCHEMA = "spiritagent.action.pack"
-
 _STORAGE_PATH_RE = re.compile(r"^companion-assets/\d+/[A-Za-z0-9._-]+$")
 _PUBLISH_ATTEMPTS = 3
 
 
-class ActionClipSpec(BaseModel):
-    """目录 clip：可验证素材与播放技术参数；动作语义（运动描述、适用与避免条件）不进入目录。"""
+class _ActionClipSpec(BaseModel):
+    """目录素材共同参数；动作语义不进入目录。"""
 
     model_config = ConfigDict(extra="forbid")
 
+    media_type: Literal["image", "video"]
     action_id: int
     asset_revision: int = 1
     system_slot: str = ""
-    video_ref: str
-    duration_ms: int = Field(gt=0)
-    frames: int = Field(gt=0)
+    media_ref: str
     width: int = Field(gt=0)
     height: int = Field(gt=0)
-    loopable: bool = False
     hitmask_ref: str | None = None
     hitmask_grid: tuple[int, int] | None = None
-    hitmask_fps: int = Field(gt=0, le=60)
     peek_geometry: PeekGeometry | None = None
     content_rect: tuple[float, float, float, float] | None = None
+
+
+class ActionImageSpec(_ActionClipSpec):
+    media_type: Literal["image"] = "image"
+
+
+class ActionVideoSpec(_ActionClipSpec):
+    media_type: Literal["video"] = "video"
+    duration_ms: int = Field(gt=0)
+    frames: int = Field(gt=0)
+    loopable: bool
+    hitmask_fps: int = Field(gt=0, le=60)
+
+
+ActionClipSpec = Annotated[ActionImageSpec | ActionVideoSpec, Field(discriminator="media_type")]
 
 
 class ActionPackCanvas(BaseModel):
@@ -50,13 +61,11 @@ class ActionPackCanvas(BaseModel):
 
     width: int = Field(gt=0)
     height: int = Field(gt=0)
-    fps: int = Field(gt=0, le=60)
 
 
 class ActionCatalogManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: str = MANIFEST_SCHEMA
     pack_id: int
     outfit_id: int | None = None
     catalog_version: int = Field(gt=0)
@@ -68,16 +77,6 @@ class ActionCatalogManifest(BaseModel):
 
 class CatalogValidationError(ValueError):
     """manifest 未通过发布校验；str 为公开文案。"""
-
-
-def _clip_size(result_json: str | None) -> tuple[int, int]:
-    """处理结果中的片段像素尺寸；缺失或非法时拒绝发布。"""
-    result = safe_json_loads(result_json or "", default=None)
-    clip = result.get("clip") if isinstance(result, dict) else None
-    width, height = (clip.get("width"), clip.get("height")) if isinstance(clip, dict) else (None, None)
-    if type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
-        raise CatalogValidationError("动作素材缺少有效的片段尺寸，请重新制作该动作")
-    return width, height
 
 
 def _require_pack_asset(path: str, user_id: int) -> None:
@@ -98,7 +97,6 @@ async def build_catalog_manifest(
     canvas = ActionPackCanvas(
         width=canvas_data.get("width", 512),
         height=canvas_data.get("height", 512),
-        fps=canvas_data.get("fps", 24),
     )
 
     actions = await list_pack_actions(db, pack.id, enabled_only=True, refresh=refresh_actions)
@@ -114,30 +112,35 @@ async def build_catalog_manifest(
         peek_geometry = PeekGeometry.from_stored_json(material.peek_geometry_json)
         content_rect = parse_content_rect(material.content_rect_json)
 
-        duration_ms, frames = material.actual_duration_ms, material.frames
-        width, height = _clip_size(material.result_json)
+        result_clip = material.parse_result().clip
 
         try:
-            clip = ActionClipSpec(
-                action_id=action.id,
-                asset_revision=material.metadata_revision,
-                system_slot=action.system_slot or "",
-                video_ref=material.video_path,
-                duration_ms=max(duration_ms, 1),
-                frames=max(frames, 1),
-                width=width,
-                height=height,
-                loopable=material.loopable,
-                hitmask_ref=material.hitmask_path,
-                hitmask_grid=(
+            values = {
+                "action_id": action.id,
+                "asset_revision": material.metadata_revision,
+                "system_slot": action.system_slot or "",
+                "media_ref": material.media_path,
+                "width": result_clip.width,
+                "height": result_clip.height,
+                "hitmask_ref": material.hitmask_path,
+                "hitmask_grid": (
                     (material.hitmask_grid_w, material.hitmask_grid_h)
                     if material.hitmask_grid_w and material.hitmask_grid_h
                     else None
                 ),
-                hitmask_fps=material.hitmask_fps or 24,
-                peek_geometry=peek_geometry,
-                content_rect=content_rect,
-            )
+                "peek_geometry": peek_geometry,
+                "content_rect": content_rect,
+            }
+            if material.media_type == "video":
+                clip = ActionVideoSpec(
+                    **values,
+                    duration_ms=material.actual_duration_ms,
+                    frames=material.frames,
+                    loopable=material.loopable,
+                    hitmask_fps=material.hitmask_fps,
+                )
+            else:
+                clip = ActionImageSpec(**values)
         except ValidationError as exc:
             raise CatalogValidationError("动作素材参数不合法，请重新制作该动作") from exc
         clips.append(clip)
@@ -149,7 +152,7 @@ async def build_catalog_manifest(
     if any(slot not in slots_present for slot in REQUIRED_SYSTEM_SLOTS):
         return None
     for clip in clips:
-        _require_pack_asset(clip.video_ref, pack.user_id)
+        _require_pack_asset(clip.media_ref, pack.user_id)
         if clip.hitmask_ref is not None:
             _require_pack_asset(clip.hitmask_ref, pack.user_id)
     if cover_path is not None:

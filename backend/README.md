@@ -82,7 +82,7 @@
 
 用户偏好 `user_settings` 同样按点键逐值 JSON 编码（桌面配置同步与服务端写入如时区共用同一格式），只经 [modules/settings](modules/settings/values.py) 读写，读取即得解码后的原值，消费方不自行解析。
 
-启动执行 Alembic 升级。未部署时可调整 baseline，部署后追加迁移；迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，部分唯一、向量和全文索引均在 ORM 模型声明；autogenerate 比对名称、唯一性与列表达式，`WHERE`、索引方法与操作符类仍须人工核对。生成迁移中被写成 `%%` 的百分号须还原为 `%`。数据库版本要求见 [Docker Compose 部署](#docker-compose-部署)。
+启动执行 Alembic 升级，当前结构由 [0001 基线](alembic/versions/0001_baseline.py)完整定义。迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，部分唯一、向量和全文索引均在 ORM 模型声明；autogenerate 比对名称、唯一性与列表达式，`WHERE`、索引方法与操作符类仍须人工核对。生成迁移中被写成 `%%` 的百分号须还原为 `%`。数据库版本要求见 [Docker Compose 部署](#docker-compose-部署)。
 
 ### 装配与启停
 
@@ -91,7 +91,7 @@
 | 阶段 | 顺序与归属 |
 |---|---|
 | 启动 | 配置检查 → 迁移 → 配置水合与目录准备 → 调度器 → 事件回路 → 渠道桥 → 任务恢复 |
-| 恢复 | 动态发布与评论、聊天与动态视频任务、视频包生成/导入、动作提案评审、角色卡提取、场景、初始外观 |
+| 恢复 | 动态发布与评论、聊天与动态视频任务、动作包生成/导入、动作提案评审、角色卡提取、场景、初始外观 |
 | 停止 | 关闭清理任务与调度入口 → 停渠道桥 → 停事件回路 → 收敛模块任务 → 释放数据库、Web 供应商及 LLM 连接池 |
 
 `MANAGER`、`REGISTRY`、`SETTINGS` 与用户锁遵守单进程边界。bootstrap 管装配，不另建通用依赖注入容器。
@@ -180,7 +180,7 @@ docker compose --profile monitoring up -d
 
 后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。后端代码和依赖均打入镜像，修改后在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。构建上下文为仓库根，仅根 `.dockerignore` 生效。
 
-动作素材处理还须在数据卷 `models/<matting_model>.onnx` 放置 ISNet 模型（默认 `isnet-general-use.onnx`），运行路径由 [matting.py](services/infrastructure/video_processing/matting.py) 决定；镜像不自动下载。每个动作都需要模型，缺失时在新付费制作前拒绝并保留进度。
+动作素材生成还须在数据卷 `models/<matting_model>.onnx` 放置 ISNet 模型（默认 `isnet-general-use.onnx`），运行路径由 [matting.py](services/infrastructure/video_processing/matting.py) 决定；镜像不自动下载。生成动作保留原生 alpha，必要时本地抠像；缺失模型时在新付费制作前拒绝并保留进度。上传透明图片或视频不调用生成模型；静态图片处理见 [image.py](services/infrastructure/video_processing/image.py)。
 
 ### 本地供应商
 

@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { CompanionEgg, useCompanionPresentation } from '@/app/components/companion-presentation'
 import { SpriteStage } from '@/app/components/sprite-stage'
 import { $defaultScale, hydrateActionCatalog, hydrateVideoPack, setDefaultScale } from '@/modules/character'
-import { VideoStage } from '@/modules/character/rendering/video'
+import { MediaStage } from '@/modules/character/rendering/video'
 import { pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { EyeOff } from '@/shared/lib/icons'
@@ -99,8 +99,8 @@ export function DesktopCompanion({
         }}
         windowId={1}
       >
-        {presentation.renderer === 'video' ? (
-          <VideoStage />
+        {presentation.renderer === 'media' ? (
+          <MediaStage />
         ) : (
           <CompanionEgg presentation={presentation} size="90%" windowId={1} />
         )}

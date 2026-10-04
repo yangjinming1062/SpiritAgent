@@ -28,14 +28,14 @@ function fallback(
   }
 }
 
-/** 视频就绪挂视频层；否则落蛋形，并区分准备中 / 生成中 / 失败 / 尚未就绪。 */
+/** 目录就绪挂媒体层；否则落蛋形，并区分准备中 / 生成中 / 失败 / 尚未就绪。 */
 export function resolveCompanionPresentation(opts: {
   catalogStatus: ActionCatalogStatus
   generationState: 'idle' | 'generating' | 'failed'
   generationStage?: VideoGenStage | null
 }): CompanionPresentation {
   if (opts.catalogStatus === 'ready') {
-    return { renderer: 'video' }
+    return { renderer: 'media' }
   }
 
   const appearance = getStrings().living.appearance

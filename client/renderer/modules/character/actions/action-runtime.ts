@@ -1,4 +1,4 @@
-/** 动作播放运行时：播放实例、抢占、回执。基础状态仍是表现优先级真源，本模块只管理数据化表达请求（play_id + epoch + TTL），由 VideoStage 消费；同一动作再次播放用新 play_id 从头播放。 */
+/** 动作播放运行时：播放实例、抢占、回执。基础状态仍是表现优先级真源，本模块只管理数据化表达请求（play_id + epoch + TTL），由 MediaStage 消费；同一动作再次播放用新 play_id 从头播放。 */
 
 import { clamp } from '@runtime'
 import { atom } from 'nanostores'
@@ -8,7 +8,7 @@ import { trimOldest } from '@/shared/lib/trim-oldest'
 
 import { endTransientState, setSpriteState } from '../companion-store'
 
-import type { ActionPlaybackStatus, ActionPlayCommand, ActionPlayInstance } from './action-types'
+import type { ActionClipEntry, ActionPlaybackStatus, ActionPlayCommand, ActionPlayInstance } from './action-types'
 
 /** 当前生效播放实例；null 表示无表达请求，回退基础状态机。 */
 export const $activePlayInstance = atom<ActionPlayInstance | null>(null)
@@ -51,7 +51,7 @@ export function resetActionPlayback(): void {
 /** 受理已由主进程认领的播放指令：校验包与外观代次/素材/TTL/play_id 去重，生成播放实例；不能受理时上报 rejected（避免账本停留在 queued）；拖拽等更高优先级交互由调度器在调用前裁决。 */
 export function acceptPlayCommand(
   command: ActionPlayCommand,
-  clip: ActionPlayInstance['clip'] | null,
+  clip: ActionClipEntry | null,
   rendered: { readonly packId: number; readonly appearanceEpoch: number | null }
 ): void {
   // 外观代次随每次激活递增：他包或旧代次（含换装后再穿回同一包）的请求不在当前外观执行。
@@ -64,6 +64,12 @@ export function acceptPlayCommand(
   // 同代次目录已移除该动作或推进了素材版本。
   if (clip === null) {
     void reportReceipt(command, 'rejected', 'clip unavailable')
+
+    return
+  }
+
+  if (clip.media_type !== 'video') {
+    void reportReceipt(command, 'rejected', 'image is state driven')
 
     return
   }

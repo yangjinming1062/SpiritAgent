@@ -1,4 +1,4 @@
-/** 双 video 保留旧画面直到新帧就绪；位置与播放实例分别由 spatial、actions 管理。 */
+/** 双缓冲保留旧画面直到图片解码或视频首帧就绪；位置与播放实例分别由 spatial、actions 管理。 */
 
 import { useStore } from '@nanostores/react'
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -32,18 +32,18 @@ import {
   peekMaskRects,
   resolveActionClipUrl,
   resolveHitmask,
-  resolveVideoAction,
+  resolveSystemAction,
   restorePeekAfterExpression,
   settlePlayInstance,
   shouldStartInstance,
-  type VideoActionKey
+  type SystemActionKey
 } from '@/modules/character'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 
-import { $videoHitTest } from './video-hit-test'
+import { $mediaHitTest } from './media-hit-test'
 
-function useCurrentAction(): VideoActionKey {
+function useCurrentAction(): SystemActionKey {
   const [deltaXSign, setDeltaXSign] = useState(0)
   const locomotion = useStore($spatialLocomotion)
   const activePeek = useStore($spatialPeek)
@@ -65,12 +65,12 @@ function useCurrentAction(): VideoActionKey {
     return () => window.clearTimeout(timer)
   }, [])
 
-  return resolveVideoAction({ locomotion, deltaXSign, peekAction: activePeek?.action ?? preparation?.action ?? null })
+  return resolveSystemAction({ locomotion, deltaXSign, peekAction: activePeek?.action ?? preparation?.action ?? null })
 }
 
 type Presentation =
   | { kind: 'expression'; instance: ActionPlayInstance; mountKey: string }
-  | { kind: 'base'; action: VideoActionKey; mountKey: string }
+  | { kind: 'base'; action: SystemActionKey; mountKey: string }
 
 function settleReplacedInstance(previous: ActionPlayInstance | null): void {
   if (previous === null) {
@@ -95,7 +95,7 @@ function shouldStartVisibleInstance(instance: ActionPlayInstance): boolean {
 }
 
 function resolvePresentation(
-  baseAction: VideoActionKey,
+  baseAction: SystemActionKey,
   instance: ActionPlayInstance | null,
   deferExpression = false
 ): Presentation {
@@ -164,6 +164,52 @@ async function loadVideo(el: HTMLVideoElement, url: string, signal: AbortSignal)
   })
 }
 
+async function loadImage(el: HTMLImageElement, url: string, signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+
+    const finish = (error?: Error): void => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      window.clearTimeout(timer)
+      el.removeEventListener('load', ready)
+      el.removeEventListener('error', failed)
+      signal.removeEventListener('abort', aborted)
+
+      if (error) {
+        reject(error)
+      } else {
+        resolve()
+      }
+    }
+
+    const ready = (): void => {
+      void el.decode().then(
+        () => finish(),
+        () => finish(new Error('Image decode failed'))
+      )
+    }
+
+    const failed = (): void => finish(new Error('Image load failed'))
+    const aborted = (): void => finish(new Error('Image load cancelled'))
+    const timer = window.setTimeout(() => finish(new Error('Image load timed out')), 15000)
+    el.addEventListener('load', ready, { once: true })
+    el.addEventListener('error', failed, { once: true })
+    signal.addEventListener('abort', aborted, { once: true })
+
+    if (signal.aborted) {
+      aborted()
+
+      return
+    }
+
+    el.src = url
+  })
+}
+
 function prepareFirstFrame(el: HTMLVideoElement, signal: AbortSignal): Promise<boolean> {
   return new Promise(resolve => {
     let settled = false
@@ -219,6 +265,7 @@ interface MountedClip {
 }
 
 interface DisplayedClip {
+  mediaType: 'image' | 'video'
   bounds: NormalizedRect
   headBounds: NormalizedRect | null
   height: number
@@ -239,7 +286,9 @@ function hitmaskContentRect(hitmask: ActionHitmask | null, region = FULL_CONTENT
   let right = 0
   let bottom = 0
 
-  for (const frame of hitmask.frames) {
+  const samples = hitmask.media_type === 'image' ? [hitmask.rows] : hitmask.frames
+
+  for (const frame of samples) {
     for (let y = Math.floor(region[1] * gridHeight); y < Math.ceil(region[3] * gridHeight); y += 1) {
       for (let x = Math.floor(region[0] * gridWidth); x < Math.ceil(region[2] * gridWidth); x += 1) {
         if (((frame[y] ?? 0) & (1 << x)) !== 0) {
@@ -257,7 +306,7 @@ function hitmaskContentRect(hitmask: ActionHitmask | null, region = FULL_CONTENT
     : null
 }
 
-function surfaceVideoStyle(
+function surfaceMediaStyle(
   displayed: DisplayedClip | null,
   stage: { height: number; width: number },
   align: 'left' | 'right'
@@ -291,7 +340,7 @@ function canCompleteInstance(instance: ActionPlayInstance, mounted: MountedClip 
   )
 }
 
-export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' } = {}): React.JSX.Element {
+export function MediaStage({ contentAlign }: { contentAlign?: 'left' | 'right' } = {}): React.JSX.Element {
   const catalog = useStore($actionCatalog)
   const playInstance = useStore($activePlayInstance)
   const viewport = useStore($viewport)
@@ -299,9 +348,10 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
   const spatialPeek = useStore($spatialPeek)
   const peekPreparation = useStore($peekPreparation)
   const videos = useRef<[HTMLVideoElement | null, HTMLVideoElement | null]>([null, null])
+  const images = useRef<[HTMLImageElement | null, HTMLImageElement | null]>([null, null])
   const front = useRef<number | null>(null)
-  const [visible, setVisible] = useState<number | null>(null)
-  const [visibleGeometry, setVisibleGeometry] = useState<DisplayedClip | null>(null)
+  const [visible, setVisible] = useState<{ slot: number; geometry: DisplayedClip } | null>(null)
+  const visibleGeometry = visible?.geometry ?? null
   const mounted = useRef<MountedClip | null>(null)
   const peekExitGeneration = useRef<number | null>(null)
   const hitmaskRef = useRef<ActionHitmask | null>(null)
@@ -351,9 +401,11 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
     }
 
     const stage = baseSpriteSize(viewport.height)
-    const contain = Math.min(stage.width / canvas.width, stage.height / canvas.height)
-    const drawW = (canvas.width * contain) / stage.width
-    const drawH = (canvas.height * contain) / stage.height
+    const width = visibleGeometry?.width ?? canvas.width
+    const height = visibleGeometry?.height ?? canvas.height
+    const contain = Math.min(stage.width / width, stage.height / height)
+    const drawW = (width * contain) / stage.width
+    const drawH = (height * contain) / stage.height
 
     return {
       left: (1 - drawW) / 2,
@@ -361,7 +413,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
       right: (1 + drawW) / 2,
       bottom: (1 + drawH) / 2
     }
-  }, [canvas, viewport.height])
+  }, [canvas, viewport.height, visibleGeometry])
 
   const deferExpressionForPeek = playInstance !== null && (spatialPeek !== null || peekPreparation !== null)
 
@@ -403,7 +455,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
       : null
 
   // 包、素材版本和播放请求均参与切换键，同一路径的新请求也须重播。
-  const clipSwitchKey = clip ? `${clip.video_ref}@${clip.asset_revision}` : 'none'
+  const clipSwitchKey = clip ? `${clip.media_ref}@${clip.asset_revision}` : 'none'
   const stableMountKey = `${presentation.mountKey}|${catalog?.packId ?? 0}|${clipSwitchKey}`
   const preparationKey = preparationForClip ? `|prepare:${preparationForClip.generation}` : ''
   const mountKey = `${stableMountKey}${preparationKey}`
@@ -429,15 +481,21 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
       return
     }
 
-    // 表达实例：loop 仅当素材可循环且请求了多次；基础动作持续循环。
-    const loop = presentation.kind === 'base' || (clip.loopable && presentation.instance.repeatCount > 1)
+    // 视频基础动作持续循环，表达仅在素材可循环且请求了多次时循环。
+    const loop =
+      clip.media_type === 'video' &&
+      (presentation.kind === 'base' || (clip.loopable && presentation.instance.repeatCount > 1))
+
     const instance = presentation.kind === 'expression' ? presentation.instance : null
     const controller = new AbortController()
     let pauseTimer = 0
 
     const slot = front.current === 0 ? 1 : 0
     const elements = videos.current
-    const el = elements[slot]
+    const imageElements = images.current
+    const video = elements[slot]
+    const image = imageElements[slot]
+    const el = clip.media_type === 'image' ? image : video
 
     void (async () => {
       if (!el) {
@@ -452,11 +510,25 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
         }
 
         if (!url) {
-          throw new Error('Video asset unavailable')
+          throw new Error('Action asset unavailable')
         }
 
-        el.loop = loop
-        const [, hitmask] = await Promise.all([loadVideo(el, url, controller.signal), resolveHitmask(clip)])
+        if (video) {
+          video.pause()
+        }
+
+        if (clip.media_type === 'video' && video) {
+          video.loop = loop
+        }
+
+        const mediaLoad =
+          clip.media_type === 'image' && image
+            ? loadImage(image, url, controller.signal)
+            : video
+              ? loadVideo(video, url, controller.signal)
+              : Promise.reject(new Error('Media element unavailable'))
+
+        const [, hitmask] = await Promise.all([mediaLoad, resolveHitmask(clip)])
 
         if (controller.signal.aborted) {
           return
@@ -464,7 +536,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
 
         // 表达实例从头播放；真实可见后才上报 started（备用播放器预热不计）。
         if (instance !== null) {
-          if (!(await prepareFirstFrame(el, controller.signal))) {
+          if (!video || !(await prepareFirstFrame(video, controller.signal))) {
             throw new Error('First video frame unavailable')
           }
 
@@ -489,10 +561,12 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
           ])
 
           const geometry = {
+            mediaType: clip.media_type,
             bounds,
             headBounds,
-            height: el.videoHeight,
-            width: el.videoWidth
+            height:
+              clip.media_type === 'image' ? (image?.naturalHeight ?? clip.height) : (video?.videoHeight ?? clip.height),
+            width: clip.media_type === 'image' ? (image?.naturalWidth ?? clip.width) : (video?.videoWidth ?? clip.width)
           }
 
           displayedClips.current[slot] = geometry
@@ -504,8 +578,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
           hitmaskRef.current = hitmask
           // 遮挡与播放器同一帧提交，不把淡出的完整身体套进探身蒙版。
           flushSync(() => {
-            setVisible(slot)
-            setVisibleGeometry(geometry)
+            setVisible({ slot, geometry })
           })
 
           if (instance !== null) {
@@ -533,12 +606,15 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
             !(await commitPeekPreparation(
               preparationForClip.action,
               preparationForClip.generation,
-              () => prepareFirstFrame(el, controller.signal),
+              () =>
+                video && clip.media_type === 'video'
+                  ? prepareFirstFrame(video, controller.signal)
+                  : Promise.resolve(true),
               showFirstFrame
             ))
           ) {
             if (!controller.signal.aborted) {
-              el.pause()
+              video?.pause()
             }
           }
         } else {
@@ -549,7 +625,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
           return
         }
 
-        log.warn('video-stage', 'Could not play action', error)
+        log.warn('media-stage', 'Could not present action', error)
 
         if (instance !== null) {
           settlePlayInstance(instance, 'rejected', 'load failed')
@@ -569,6 +645,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
       for (let index = 0; index < elements.length; index += 1) {
         if (index !== front.current) {
           elements[index]?.pause()
+          imageElements[index]?.removeAttribute('src')
         }
       }
     }
@@ -669,7 +746,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
       return
     }
 
-    // 轮廓与头部锚点共用视频等比适配后的舞台坐标。
+    // 轮廓与头部锚点共用媒体等比适配后的舞台坐标。
     const drawW = canvasRect.right - canvasRect.left
     const drawH = canvasRect.bottom - canvasRect.top
 
@@ -694,8 +771,11 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
   )
 
   useEffect(() => {
-    $videoHitTest.set((px, py) => {
-      const el = front.current === null ? null : videos.current[front.current]
+    $mediaHitTest.set((px, py) => {
+      const slot = front.current
+      const geometry = slot === null ? null : displayedClips.current[slot]
+      const video = slot === null ? null : videos.current[slot]
+      const el = slot === null ? null : geometry?.mediaType === 'image' ? images.current[slot] : video
       const hitmask = hitmaskRef.current
       const rect = el?.getBoundingClientRect()
 
@@ -714,13 +794,13 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
         return false
       }
 
-      if (!el || !rect || !el.videoWidth || !el.videoHeight) {
+      if (!el || !rect || !geometry?.width || !geometry.height) {
         return contentAlignRef.current ? false : null
       }
 
-      const scale = Math.min(rect.width / el.videoWidth, rect.height / el.videoHeight)
-      const width = el.videoWidth * scale
-      const height = el.videoHeight * scale
+      const scale = Math.min(rect.width / geometry.width, rect.height / geometry.height)
+      const width = geometry.width * scale
+      const height = geometry.height * scale
       const nx = (px - rect.left - (rect.width - width) / 2) / width
       const ny = (py - rect.top - (rect.height - height) / 2) / height
 
@@ -728,8 +808,8 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
         return false
       }
 
-      if (!hitmask || !hitmask.frames.length) {
-        const bounds = front.current === null ? null : displayedClips.current[front.current]?.bounds
+      if (!hitmask) {
+        const bounds = geometry.bounds
 
         return contentAlignRef.current && bounds
           ? nx >= bounds[0] && nx < bounds[2] && ny >= bounds[1] && ny < bounds[3]
@@ -739,14 +819,20 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
       const [gw, gh] = hitmask.grid
       const col = Math.floor(nx * gw)
       const row = Math.floor(ny * gh)
-      const sample = hitmask.frames[Math.min(hitmask.frames.length - 1, Math.floor(el.currentTime * hitmask.fps))]
+
+      const sample =
+        hitmask.media_type === 'image'
+          ? hitmask.rows
+          : hitmask.frames[Math.min(hitmask.frames.length - 1, Math.floor((video?.currentTime ?? 0) * hitmask.fps))]
 
       return ((sample?.[row] ?? 0) & (1 << col)) !== 0
     })
-    const elements = videos.current
+    // React 卸载时先清空 callback refs，保留元素快照才能释放仍在加载的媒体。
+    const elements = [...videos.current]
+    const imageElements = [...images.current]
 
     return () => {
-      $videoHitTest.set(null)
+      $mediaHitTest.set(null)
 
       for (const el of elements) {
         if (!el) {
@@ -757,30 +843,46 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
         el.removeAttribute('src')
         el.load()
       }
+
+      for (const el of imageElements) {
+        el?.removeAttribute('src')
+      }
     }
   }, [])
 
   return (
     <div className="relative h-full w-full" ref={rootRef}>
       {[0, 1].map(slot => {
-        const layout = contentAlign ? surfaceVideoStyle(displayedClips.current[slot], stageSize, contentAlign) : null
+        const layout = contentAlign ? surfaceMediaStyle(displayedClips.current[slot], stageSize, contentAlign) : null
+        const className = contentAlign ? 'absolute object-contain' : 'absolute inset-0 h-full w-full object-contain'
+
+        const style = {
+          ...(contentAlign ? (layout ?? { height: '100%', inset: 0, width: '100%' }) : {}),
+          transition: spatialPeek || peekPreparation ? 'none' : 'opacity 120ms linear'
+        }
 
         return (
-          <video
-            className={contentAlign ? 'absolute object-contain' : 'absolute inset-0 h-full w-full object-contain'}
-            key={slot}
-            muted
-            playsInline
-            preload="auto"
-            ref={el => {
-              videos.current[slot] = el
-            }}
-            style={{
-              ...(contentAlign ? (layout ?? { height: '100%', inset: 0, width: '100%' }) : {}),
-              opacity: visible === slot ? 1 : 0,
-              transition: spatialPeek || peekPreparation ? 'none' : 'opacity 120ms linear'
-            }}
-          />
+          <React.Fragment key={slot}>
+            <video
+              className={className}
+              muted
+              playsInline
+              preload="auto"
+              ref={el => {
+                videos.current[slot] = el
+              }}
+              style={{ ...style, opacity: visible?.slot === slot && visible.geometry.mediaType === 'video' ? 1 : 0 }}
+            />
+            <img
+              alt=""
+              className={className}
+              draggable={false}
+              ref={el => {
+                images.current[slot] = el
+              }}
+              style={{ ...style, opacity: visible?.slot === slot && visible.geometry.mediaType === 'image' ? 1 : 0 }}
+            />
+          </React.Fragment>
         )
       })}
     </div>

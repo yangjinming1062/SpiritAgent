@@ -190,7 +190,7 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     }
 
     case 'companion.action.play_requested': {
-      // 播放指令：经统一调度器裁决（安全控制/拖拽优先，表达仅在 idle 时生效——由 VideoStage 的 resolvePresentation 完成）；此处只校验目录、包与外观代次后受理。可见舞台由主进程最终认领。
+      // 播放指令：经统一调度器裁决（安全控制/拖拽优先，表达仅在 idle 时生效——由 MediaStage 的 resolvePresentation 完成）；此处只校验目录、包与外观代次后受理。可见舞台由主进程最终认领。
       const identity = $auth.get()
 
       if (identity.kind !== 'authenticated' || !isActionStageVisible()) {

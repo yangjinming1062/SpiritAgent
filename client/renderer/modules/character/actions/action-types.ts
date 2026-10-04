@@ -1,24 +1,34 @@
-/** 动作模块类型：播放指令、回执、目录条目与视频包响应。IPC 契约类型仍归 shared/ipc；此处仅模块内类型。 */
+/** 动作模块类型：播放指令、回执、目录条目与动作包响应。IPC 契约类型仍归 shared/ipc；此处仅模块内类型。 */
 
 export type NormalizedRect = readonly [left: number, top: number, right: number, bottom: number]
 
-/** manifest 中单个动作片段（spiritagent.action.pack 的 clip）。 */
-export interface ActionClipEntry {
+interface ActionClipBase {
   readonly action_id: number
   readonly asset_revision: number
   readonly system_slot: string
-  readonly video_ref: string
-  readonly duration_ms: number
-  readonly frames: number
+  readonly media_ref: string
   readonly width: number
   readonly height: number
-  readonly loopable: boolean
   readonly hitmask_ref: string | null
   readonly hitmask_grid: readonly [number, number] | null
-  readonly hitmask_fps: number
   readonly peek_geometry?: PeekGeometry | null
   readonly content_rect?: NormalizedRect | null
 }
+
+export interface ImageActionClipEntry extends ActionClipBase {
+  readonly media_type: 'image'
+}
+
+export interface VideoActionClipEntry extends ActionClipBase {
+  readonly media_type: 'video'
+  readonly duration_ms: number
+  readonly frames: number
+  readonly loopable: boolean
+  readonly hitmask_fps: number
+}
+
+/** 图片不携带播放时间和逐帧参数。 */
+export type ActionClipEntry = ImageActionClipEntry | VideoActionClipEntry
 
 export interface PeekGeometry {
   readonly side: 'left' | 'right'
@@ -26,13 +36,12 @@ export interface PeekGeometry {
   readonly focus_rect: NormalizedRect
 }
 
-/** 目录 manifest（spiritagent.action.pack）。 */
+/** 动作目录 manifest。 */
 export interface ActionCatalogManifest {
-  readonly schema_version: 'spiritagent.action.pack'
   readonly pack_id: number
   readonly outfit_id: number | null
   readonly catalog_version: number
-  readonly canvas: { readonly width: number; readonly height: number; readonly fps: number }
+  readonly canvas: { readonly width: number; readonly height: number }
   readonly clips: readonly ActionClipEntry[]
   readonly cover_path: string | null
   readonly default_action: string
@@ -56,33 +65,33 @@ export type ActionPlaybackStatus = 'started' | 'completed' | 'interrupted' | 're
 /** 统一调度器裁决后的播放实例。 */
 export interface ActionPlayInstance {
   readonly playId: string
-  readonly clip: ActionClipEntry
+  readonly clip: VideoActionClipEntry
   readonly repeatCount: number
   readonly expiresAtMs: number | null
   /** 世代：每受理一条播放指令递增；旧实例回调凭它失效。 */
   readonly generation: number
 }
 
-/** 视频包中的单个动作。 */
-export interface VideoActionWire {
+interface ActionWireBase {
   action: string
   name: string
   status: string
   stage: string
   error: string | null
-  clip_url: string | null
-  motion_prompt: string
+  media_url: string | null
   feedback?: string
   peek_geometry?: PeekGeometry | null
 }
 
-/** 视频包响应（`/api/companion/video-packs`：列表取 `packs`，generate / retry 返回单个包）。 */
-export interface VideoPackWire {
+export type ActionWire = ActionWireBase & ({ media_type: 'image' } | { media_type: 'video'; motion_prompt: string })
+
+/** 动作包响应（`/api/companion/video-packs`：列表取 `packs`，generate / retry 返回单个包）。 */
+export interface ActionPackWire {
   id: number
   pack_version: number
   outfit_id: number | null
   error: string | null
-  actions: VideoActionWire[]
+  actions: ActionWire[]
   status: string
   active: boolean
   identity_review: 'none' | 'pass' | 'review' | 'accepted'

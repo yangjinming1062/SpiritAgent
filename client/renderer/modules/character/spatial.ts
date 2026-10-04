@@ -1925,7 +1925,7 @@ export function initSpatial(): () => void {
       const before = action ? previous?.clipsBySlot.get(action) : null
       const after = action ? catalog?.clipsBySlot.get(action) : null
 
-      if (before && after && before.asset_revision === after.asset_revision && before.video_ref === after.video_ref) {
+      if (before && after && before.asset_revision === after.asset_revision && before.media_ref === after.media_ref) {
         return
       }
 

@@ -13,9 +13,9 @@ import { resetActionPlayback } from './action-runtime'
 import type {
   ActionCatalogManifest,
   ActionClipEntry,
+  ActionPackWire,
   NormalizedRect,
-  PeekGeometry,
-  VideoPackWire
+  PeekGeometry
 } from './action-types'
 
 export interface ActiveActionCatalog {
@@ -56,16 +56,56 @@ const EMPTY_PERSISTED_CATALOG: PersistedActionCatalog = {
 function isActionCatalogManifest(val: unknown): val is ActionCatalogManifest {
   return (
     isRecord(val) &&
-    val.schema_version === 'spiritagent.action.pack' &&
+    isRecord(val.canvas) &&
+    [val.canvas.width, val.canvas.height].every(isPositiveInteger) &&
+    !('fps' in val.canvas) &&
+    isPositiveInteger(val.pack_id) &&
+    isPositiveInteger(val.catalog_version) &&
+    (val.outfit_id === null || isPositiveInteger(val.outfit_id)) &&
+    (val.cover_path === null || typeof val.cover_path === 'string') &&
+    typeof val.default_action === 'string' &&
+    val.default_action.length > 0 &&
     Array.isArray(val.clips) &&
-    val.clips.every(
-      clip =>
-        isRecord(clip) &&
-        [clip.width, clip.height].every(
-          dimension => typeof dimension === 'number' && Number.isSafeInteger(dimension) && dimension > 0
-        )
-    ) &&
-    typeof val.pack_id === 'number'
+    val.clips.every(isActionClipEntry) &&
+    val.clips.some(clip => clip.system_slot === val.default_action)
+  )
+}
+
+function isPositiveInteger(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+function isHitmaskGrid(value: unknown): value is readonly [number, number] {
+  return Array.isArray(value) && value.length === 2 && value.every(isPositiveInteger) && value[0] <= 32
+}
+
+function isActionClipEntry(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    ![value.width, value.height, value.action_id, value.asset_revision].every(isPositiveInteger) ||
+    typeof value.system_slot !== 'string' ||
+    typeof value.media_ref !== 'string' ||
+    !value.media_ref ||
+    !(value.hitmask_ref === null || (typeof value.hitmask_ref === 'string' && value.hitmask_ref.length > 0)) ||
+    !(value.hitmask_grid === null || isHitmaskGrid(value.hitmask_grid))
+  ) {
+    return false
+  }
+
+  if (value.media_type === 'image') {
+    return ['duration_ms', 'frames', 'fps', 'loopable', 'repeat_count', 'hitmask_fps'].every(key => !(key in value))
+  }
+
+  return (
+    value.media_type === 'video' &&
+    typeof value.duration_ms === 'number' &&
+    Number.isFinite(value.duration_ms) &&
+    value.duration_ms > 0 &&
+    isPositiveInteger(value.frames) &&
+    typeof value.loopable === 'boolean' &&
+    typeof value.hitmask_fps === 'number' &&
+    Number.isFinite(value.hitmask_fps) &&
+    value.hitmask_fps > 0
   )
 }
 
@@ -75,7 +115,9 @@ function isPersistableCatalog(val: unknown): val is PersistedActionCatalog {
     typeof val.packId === 'number' &&
     typeof val.catalogVersion === 'number' &&
     (val.appearanceEpoch === undefined || typeof val.appearanceEpoch === 'number') &&
-    isActionCatalogManifest(val.manifest)
+    isActionCatalogManifest(val.manifest) &&
+    val.packId === val.manifest.pack_id &&
+    val.catalogVersion === val.manifest.catalog_version
   )
 }
 
@@ -166,7 +208,7 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
         return !terminal
       }
 
-      const listed = await authedApi<{ packs?: VideoPackWire[] }>({ path: '/api/companion/video-packs' })
+      const listed = await authedApi<{ packs?: ActionPackWire[] }>({ path: '/api/companion/video-packs' })
 
       if (!isCurrent()) {
         return false
@@ -452,7 +494,11 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
         return
       }
 
-      if (!isActionCatalogManifest(manifest)) {
+      if (
+        !isActionCatalogManifest(manifest) ||
+        manifest.pack_id !== res.value.pack_id ||
+        (res.value.catalog_version !== undefined && manifest.catalog_version !== res.value.catalog_version)
+      ) {
         log.warn('action-store', 'invalid catalog manifest')
         markUnavailableIfEmpty()
 
@@ -520,7 +566,7 @@ export async function resolveActionClipUrl(
 
   const epoch = currentClearEpoch()
 
-  const load = resolveUrl(clip.video_ref).then(url => {
+  const load = resolveUrl(clip.media_ref).then(url => {
     if (!url || epoch !== currentClearEpoch()) {
       if (catalog.clipUrls.get(key) === load) {
         catalog.clipUrls.delete(key)
@@ -537,12 +583,15 @@ export async function resolveActionClipUrl(
   return load
 }
 
-/** 逐帧 alpha 命中遮罩：独立可缓存资源（hitmask_ref 指向 JSON）。 */
-export interface ActionHitmask {
-  readonly grid: readonly [number, number]
-  readonly fps: number
-  readonly frames: readonly (readonly number[])[]
-}
+/** 图片保存静态行位图，视频保存逐帧行位图；hitmask_ref 指向独立 JSON。 */
+export type ActionHitmask =
+  | { readonly media_type: 'image'; readonly grid: readonly [number, number]; readonly rows: readonly number[] }
+  | {
+      readonly media_type: 'video'
+      readonly grid: readonly [number, number]
+      readonly fps: number
+      readonly frames: readonly (readonly number[])[]
+    }
 
 const hitmaskCache = new Map<string, Promise<ActionHitmask | null>>()
 
@@ -550,32 +599,26 @@ registerStorageClearHandler(() => {
   hitmaskCache.clear()
 })
 
-/** 遮罩 payload 为 `[frame][row]` 列位行；网格与帧率取自目录元数据，列数须能落入 32 位行。 */
+/** 遮罩 payload 为图片的 `[row]` 或视频的 `[frame][row]`；列数须能落入 32 位行。 */
 function parseHitmask(raw: unknown, clip: ActionClipEntry): ActionHitmask | null {
   const grid = clip.hitmask_grid ?? [32, 32]
-  const frameRate = clip.hitmask_fps
 
-  if (
-    !Number.isInteger(grid[0]) ||
-    grid[0] < 1 ||
-    grid[0] > 32 ||
-    !Number.isInteger(grid[1]) ||
-    grid[1] < 1 ||
-    !Number.isFinite(frameRate) ||
-    frameRate <= 0 ||
-    !Array.isArray(raw) ||
-    raw.length === 0 ||
-    !raw.every(
-      frame =>
-        Array.isArray(frame) &&
-        frame.length === grid[1] &&
-        frame.every(row => Number.isInteger(row) && row >= 0 && row <= 0xffffffff)
-    )
-  ) {
+  if (!isHitmaskGrid(grid) || !Array.isArray(raw)) {
     return null
   }
 
-  return { frames: raw as number[][], fps: frameRate, grid: [grid[0], grid[1]] }
+  const validRows = (rows: unknown): rows is number[] =>
+    Array.isArray(rows) &&
+    rows.length === grid[1] &&
+    rows.every(row => Number.isInteger(row) && row >= 0 && row <= 0xffffffff)
+
+  if (clip.media_type === 'image') {
+    return validRows(raw) ? { media_type: 'image', rows: raw, grid: [grid[0], grid[1]] } : null
+  }
+
+  return raw.length > 0 && raw.every(validRows) && Number.isFinite(clip.hitmask_fps) && clip.hitmask_fps > 0
+    ? { media_type: 'video', frames: raw, fps: clip.hitmask_fps, grid: [grid[0], grid[1]] }
+    : null
 }
 
 /** 按需加载命中遮罩；非法或失败返回 null（命中降级为容器/内容边界）。 */
@@ -585,7 +628,8 @@ export async function resolveHitmask(clip: ActionClipEntry): Promise<ActionHitma
   }
 
   const ref = clip.hitmask_ref
-  const cached = hitmaskCache.get(ref)
+  const key = `${clip.media_type}:${ref}:${clip.hitmask_grid?.join(',') ?? '32,32'}${clip.media_type === 'video' ? `:${clip.hitmask_fps}` : ''}`
+  const cached = hitmaskCache.get(key)
 
   if (cached) {
     return cached
@@ -604,15 +648,15 @@ export async function resolveHitmask(clip: ActionClipEntry): Promise<ActionHitma
       return null
     }
   })().then(hitmask => {
-    if (!hitmask && hitmaskCache.get(ref) === load) {
-      hitmaskCache.delete(ref)
+    if (!hitmask && hitmaskCache.get(key) === load) {
+      hitmaskCache.delete(key)
     }
 
     return hitmask
   })
 
   // 在途请求与结果共用缓存；清理后旧请求不会重新写入。
-  hitmaskCache.set(ref, load)
+  hitmaskCache.set(key, load)
 
   return load
 }

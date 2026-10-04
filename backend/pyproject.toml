@@ -26,6 +26,6 @@ dependencies = [
     "prometheus-client>=0.20.0",
     "pycryptodome>=3.20.0",
     "mutagen>=1.48.1",
-    # 视频动作素材处理：每个动作均需 ISNet ONNX 抠像模型
+    # 动作素材透明化的本地 ISNet ONNX 抠像模型
     "onnxruntime>=1.20.0",
 ]

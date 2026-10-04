@@ -8,6 +8,7 @@ export {
   type ActionHitmask,
   type ActionPlayCommand,
   type ActionPlayInstance,
+  type ActionWire,
   hydrateActionCatalog,
   isActionStageVisible,
   markPlayInstanceStarted,
@@ -17,8 +18,7 @@ export {
   resolveActionClipUrl,
   resolveHitmask,
   settlePlayInstance,
-  shouldStartInstance,
-  type VideoActionWire
+  shouldStartInstance
 } from './actions'
 export { $screenLocked, applyStageActivity, reportInteractionStat, startActivityMonitor } from './activity'
 export { startAutonomyProvision, stopAutonomyProvision } from './autonomy'
@@ -111,11 +111,11 @@ export {
 } from './prefs'
 export {
   resolveCompanionPresentation,
-  resolveVideoAction,
-  VIDEO_ACTION_KEYS,
-  VIDEO_GEN_STAGE_TEXT_KEYS,
-  type VideoActionKey,
-  videoActionNames
+  resolveSystemAction,
+  SYSTEM_ACTION_KEYS,
+  type SystemActionKey,
+  systemActionNames,
+  VIDEO_GEN_STAGE_TEXT_KEYS
 } from './presentation'
 export { bindProactiveLineSpeaker } from './proactive-speak'
 export { handleDragEndInteraction } from './reactions/reaction-audio'

@@ -130,10 +130,15 @@ def clear_action_attempt(action: CompanionAction) -> None:
     action.result_json = None
     action.peek_geometry_json = None
     action.content_rect_json = None
-    action.video_path = ""
-    action.video_hash = ""
+    action.media_path = ""
+    action.media_hash = ""
     action.cover_path = None
     action.hitmask_path = None
+    action.actual_duration_ms = None
+    action.frames = None
+    action.hitmask_grid_w = None
+    action.hitmask_grid_h = None
+    action.hitmask_fps = None
 
 
 async def publish_catalog(

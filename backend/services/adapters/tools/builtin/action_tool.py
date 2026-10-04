@@ -142,7 +142,7 @@ async def action_inspect_tool(
                     "kind": "action",
                     "id": action.id,
                     "name": action.name,
-                    "status": "ready" if (action.status == "succeeded" and action.video_path) else action.status,
+                    "status": "ready" if (action.status == "succeeded" and action.media_path) else action.status,
                     "enabled": action.enabled,
                     "stage": action.stage,
                     "error": action.error,

@@ -28,7 +28,7 @@ REVIEW_ASSET_RETENTION = timedelta(days=7)
 logger = get_logger(__name__)
 _LEGACY_ACTION_ASSET = re.compile(
     r"^(?:action-catalog-.+\.json|action_[a-f0-9]{32}_a\d+\.(?:mp4|webm|mov|mkv)|"
-    r"action_pose_[a-f0-9]{32}\.png|video_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+\.(?:webm|png|jpg|jpeg|webp|gif|json))$",
+    r"action_pose_[a-f0-9]{32}\.png|action_image_[A-Za-z0-9_-]+\.(?:png|webp|json)|video_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+\.(?:webm|png|jpg|jpeg|webp|gif|json))$",
 )
 
 
@@ -78,7 +78,7 @@ def action_asset_paths(action: CompanionAction) -> set[str]:
             for field in (
                 "artifact_path",
                 "pose_path",
-                "video_path",
+                "media_path",
                 "cover_path",
                 "hitmask_path",
                 "result_json",

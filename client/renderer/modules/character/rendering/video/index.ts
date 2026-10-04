@@ -1,3 +1,3 @@
-export { useVideoPixelHitTest } from './video-hit-test'
+export { useMediaPixelHitTest } from './media-hit-test'
+export { MediaStage } from './MediaStage'
 export type { VideoGenStage } from './video-pack-store'
-export { VideoStage } from './VideoStage'

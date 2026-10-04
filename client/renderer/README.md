@@ -64,7 +64,7 @@ Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/deskt
 
 ### 状态、动作与回执
 
-[companion-store.ts](modules/character/companion-store.ts)维护表现状态优先级，视频系统动作键定义于 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用；系统动作的界面名称由 [action-names.ts](modules/character/presentation/action-names.ts) 的 `videoActionNames` 按字典生成，外观页与复核队列共用。
+[companion-store.ts](modules/character/companion-store.ts)维护表现状态优先级，系统动作键定义于 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用；系统动作的界面名称由 [action-names.ts](modules/character/presentation/action-names.ts) 的 `systemActionNames` 按字典生成，外观页与复核队列共用。
 
 - 瞬态保存恢复目标，旧计时器不得覆盖持续状态，重复瞬态不嵌套目标；语音准备与播放分开，尾随点播不切 speaking，完成聊天不触发 emotional。
 - [actions](modules/character/actions/)的 `acceptPlayCommand` 按 play_id 去重并校验包、外观代次、素材与有效期，不符即回执 rejected；换包或外观代次变化作废在播实例。强制刷新目录（同包旧代次除外）、主进程认领，以及认领后目录缺失或舞台不可用的 rejected 回执在 [character-events.ts](app/runtime/handlers/character-events.ts)；开播时过期与加载失败由播放器回执。动态动作不新增表现状态，表达真实可见（上报 started）期间以 emotional 瞬态呈现、收尾即恢复；判定与回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
@@ -171,15 +171,15 @@ Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/deskt
 - 参考图、外部制作与上传共用创建任务状态，重生成独立跟踪且不使成品失效。
 - 保存、启用与失败呈现见 [DESIGN](../../docs/DESIGN.md#场景与当前环境)。
 
-## 视频渲染
+## 动作素材呈现
 
-- 视频层消费 manifest 与透明 WebM；片段字节经 `apiAsset`（`preferCache`）走主进程磁盘缓存，同目录、同素材版本共用在途读取和成功结果，双 video 待新帧就绪后替换旧画面。
+- 媒体层消费 manifest 中按 `media_type` 分型的图片与透明视频；网络目录与持久缓存均校验公共结构、默认动作与遮罩网格，并核对包 ID、`catalog_version` 和缓存元数据，非法目录保留已有可用画面。素材字节经 `apiAsset`（`preferCache`）走主进程磁盘缓存，同目录、同素材版本共用在途读取和成功结果，双缓冲待图片解码或视频首帧就绪后替换旧画面。
 - 目录与遮罩 JSON 经 `apiAssetBuffer` 直接解码；同一遮罩共用在途请求和解析结果，片段与遮罩加载失败不保留结果，账户清理使旧请求失效。
-- 完整入口的侧边视频按整段动作的内容轮廓适配侧栏宽高并贴近内容面板，桌面精灵沿用自身的舞台比例；缺少 `content_rect` 时的回退与遮罩格式见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)，实现见 [VideoStage.tsx](modules/character/rendering/video/VideoStage.tsx)。
-- 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白；侧边缺少遮罩时只在已知内容边界内命中。
+- 完整入口的侧边伙伴按动作素材的内容轮廓适配侧栏宽高并贴近内容面板，桌面精灵沿用自身的舞台比例；缺少 `content_rect` 时的回退与遮罩格式见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)，实现见 [MediaStage.tsx](modules/character/rendering/video/MediaStage.tsx)。
+- 图片使用静态 alpha 遮罩，视频按实际播放时间查询逐帧遮罩；两者均扣除等比显示留白，侧边缺少遮罩时只在已知内容边界内命中。
 - 桌面气泡用 alpha 遮罩上部轮廓作为头部锚点，缺少遮罩时回落内容边界；轮廓按整段素材合并以免逐帧抖动，气泡和轻语都订阅素材轮廓变化，按实际宽高避让屏幕边缘。
-- 移动与拖拽由容器位移表达，播放不驱动嘴部或视线。
-- `presentation/render-resolver` 按动作目录和生成状态选择 video 或 [fallback](modules/character/rendering/fallback/)，并提供对应的本地化状态；包未就绪或加载失败不空挂视频元素，蛋上区分准备中、生成中、失败与尚未就绪。
+- 图片只随基础动作状态呈现，不带时长、帧率、帧数或循环参数；动态表达仅接受视频。拖拽结束后切回当前基础动作。移动与拖拽由容器位移表达，播放不驱动嘴部或视线。
+- `presentation/render-resolver` 按动作目录和生成状态选择 media 或 [fallback](modules/character/rendering/fallback/)，并提供对应的本地化状态；包未就绪或加载失败不空挂媒体元素，蛋上区分准备中、生成中、失败与尚未就绪。
 - 渲染层不得经生成 store 触发付费；缺失动作由显式服务流程统一鉴权、去重、记账。
 
 ## 主题与玻璃效果

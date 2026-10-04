@@ -12,7 +12,7 @@
 |---|---|---|
 | `chat.py` | 预设体骨架（陪伴 / 工作 / 自动化）、四职业双语头部、系统提示词块、陪伴回复格式与修复及媒体气泡规则、标题生成、上下文压缩 | `services/application/chat/`（prompt_blocks、prompt_presets、system_prompt、streaming、title_generator、context_compressor） |
 | `companion.py` | 心情、空闲表达、空间行为、动态性格标签、角色设定字段与外形资料标签、当前着装标题、初次见面与低频问候意图、陪伴回合尾部资料标注 | `services/domains/companion/`、`services/application/automation/companion_turns.py`、`services/adapters/scheduler/cron.py`、`services/application/chat/orchestrator.py` |
-| `generation.py` | 角色、外观、场景与出镜媒体的图像及视频提示词，以及身份评审与评分、角色卡提取、服装与场景描述等视觉理解指令，和造型命名描述、审核拒绝后改写等文本指令；共享风格机制见 [PIPELINE](../../docs/PIPELINE.md#提示词与供应商输入) | `services/application/generation/`（`appearance_prompts.py` 与各功能装配器）、`services/application/posts/`、`services/adapters/tools/builtin/`、`services/domains/companion/character_card.py` |
+| `generation.py` | 角色、外观、场景、动作与出镜媒体的图像及视频提示词，以及身份评审与评分、角色卡提取、服装与场景描述等视觉理解指令，和造型命名描述、审核拒绝后改写等文本指令；共享风格机制见 [PIPELINE](../../docs/PIPELINE.md#提示词与供应商输入) | `services/application/generation/`（`appearance_prompts.py` 与各功能装配器）、`services/application/posts/`、`services/adapters/tools/builtin/`、`services/domains/companion/character_card.py` |
 | `memory.py` | 记忆维护政策（`MEMORY_POLICY`）、审查指令、用户资料上下文标签、记忆块标题与依据标签 | `services/domains/memory/`（memory_review、memory_bootstrap、memory_format）、`services/adapters/tools/memory.py` |
 | `actions.py` | 动作检索、设计提案、状态检查与播放工具描述及独立评审指令 | `services/adapters/tools/builtin/action_tool.py`、`services/application/actions/`（review、context） |
 | `nightly.py` | 夜间规划、次日联系事项模板、夜间叙事事实、每日检查点及其标题、自主日记发布、关系与相处方式的夜间反思 | `services/application/nightly/` |
@@ -31,7 +31,7 @@
 
 - 对话工具说明 → `application/actions/context.py` 动态资料 → 工具结果续轮；工具关闭不等于没有动作资料或能力。
 - 夜间规划先受理提案，再由后台独立评审；受理成功只表示申请，不表示已制作或已表演。
-- 独立评审使用冻结参考图，批准后由 `VIDEO_ACTION_SCRIPT_INSTRUCTIONS` 生成姿态和运动描述；探身脚本与定位由 [video/script.py](../services/application/generation/video/script.py) 消费。内置、动态、探身和空闲动作分别按 [PIPELINE](../../docs/PIPELINE.md#评审与制作) 的制作与播放契约消费。
+- 图片动作由 `ACTION_IMAGE_DESCRIPTION_INSTRUCTIONS` 描述单张静态姿态，视频动作由 `VIDEO_ACTION_SCRIPT_INSTRUCTIONS` 生成起始姿态和运动描述；动态动作先经独立评审。描述装配与探身定位见 [video/script.py](../services/application/generation/video/script.py)，制作见 [PIPELINE](../../docs/PIPELINE.md#评审与制作)，播放见 [PROTOCOL](../../docs/PROTOCOL.md#动作目录与播放)。
 
 完整外观链路及各分支的审查导航见 [完整提示词链检查入口](../../docs/PIPELINE.md#完整提示词链检查入口)。
 

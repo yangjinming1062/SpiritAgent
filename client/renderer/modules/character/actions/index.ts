@@ -20,12 +20,14 @@ export {
 export type { ActionCatalogStatus, ActionHitmask, ActiveActionCatalog } from './action-store'
 export type {
   ActionClipEntry,
+  ActionPackWire,
   ActionPlaybackStatus,
   ActionPlayCommand,
   ActionPlayInstance,
+  ActionWire,
+  ImageActionClipEntry,
   NormalizedRect,
   PeekGeometry,
-  VideoActionWire,
-  VideoPackWire
+  VideoActionClipEntry
 } from './action-types'
 export { isActionStageVisible, observeActionStageVisibility } from './action-visibility'

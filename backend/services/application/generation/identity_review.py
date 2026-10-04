@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 
 from components import get_logger, parse_llm_json
 from prompts.generation import (
+    CHARACTER_ACTION_IMAGE_REVIEW,
     CHARACTER_ACTION_VIDEO_REVIEW,
     CHARACTER_MEDIA_IMAGE_SCORE,
     CHARACTER_MEDIA_VIDEO_SCORE,
@@ -104,16 +105,23 @@ async def review_character_frames(
     frame_uris: tuple[str, ...],
     *,
     pack_wide: bool = False,
+    image: bool = False,
     identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[str, str]:
     if not identity_uri or not frame_uris:
-        return "review", "参考形象或视频画面无法读取，请预览确认"
+        return "review", "参考形象或动作画面无法读取，请预览确认"
+    if pack_wide:
+        prompt = CHARACTER_VIDEO_PACK_REVIEW
+    elif image:
+        prompt = CHARACTER_ACTION_IMAGE_REVIEW
+    else:
+        prompt = CHARACTER_ACTION_VIDEO_REVIEW
     try:
         raw = await vision_chat(
             user_id,
-            CHARACTER_VIDEO_PACK_REVIEW if pack_wide else CHARACTER_ACTION_VIDEO_REVIEW,
-            json.dumps({"frame_count": len(frame_uris), "identity": identity_text}, ensure_ascii=False),
+            prompt,
+            json.dumps({"image_count": len(frame_uris) + 1, "identity": identity_text}, ensure_ascii=False),
             reference_images=(identity_uri, *frame_uris),
             before_submit=before_submit,
         )
@@ -122,7 +130,7 @@ async def review_character_frames(
             reason = str(payload.get("reason") or "").strip()[:500]
             return payload["verdict"], reason or "角色外形可能有变化，请预览确认"
         logger.warning(
-            "character video review output invalid",
+            "character action review output invalid",
             extra={
                 "user_id": user_id,
                 "category": "non_json" if payload is None else "invalid_verdict",
@@ -132,5 +140,5 @@ async def review_character_frames(
     except LlmCallBlockedError:
         raise
     except Exception:
-        logger.warning("character video review failed", extra={"user_id": user_id}, exc_info=True)
+        logger.warning("character action review failed", extra={"user_id": user_id}, exc_info=True)
     return "review", "自动检查未完成，请预览确认"

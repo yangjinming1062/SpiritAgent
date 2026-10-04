@@ -3,7 +3,12 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
-import { $livingSettingsSection, LIVING_SETTINGS_SECTIONS, type LivingSettingsSection, setLivingSettingsSection } from '@/app/features/living/living-store'
+import {
+  $livingSettingsSection,
+  LIVING_SETTINGS_SECTIONS,
+  type LivingSettingsSection,
+  setLivingSettingsSection
+} from '@/app/features/living/living-store'
 import { AboutPage } from '@/app/features/living/settings/about-page'
 import { InteractionPage } from '@/app/features/living/settings/interaction-page'
 import { PersonaPage } from '@/app/features/living/settings/persona-page'
@@ -16,7 +21,18 @@ import { SkillsToolsTabs } from '@/app/features/workbench/station/skills-tools-t
 import { PAGE_INSET_X } from '@/shared/layout/page-inset'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { normalizeHashPath } from '@/shared/lib/hash-route'
-import { Brain, Cpu, type IconComponent, Info, Keyboard, Palette, SlidersHorizontal, Sparkles, Users, Volume2 } from '@/shared/lib/icons'
+import {
+  Brain,
+  Cpu,
+  type IconComponent,
+  Info,
+  Keyboard,
+  Palette,
+  SlidersHorizontal,
+  Sparkles,
+  Users,
+  Volume2
+} from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { CapsuleTabs } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'

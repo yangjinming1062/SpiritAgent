@@ -140,4 +140,5 @@ async def consume_create_slot(
 
 def is_expression_action(action: CompanionAction) -> bool:
     """模型可点播的表达动作：已启用、素材就绪且不占系统产品槽位。"""
-    return action.enabled and not action.system_slot and accepted_action_asset(action) is not None
+    material = accepted_action_asset(action)
+    return action.enabled and not action.system_slot and material is not None and material.media_type == "video"

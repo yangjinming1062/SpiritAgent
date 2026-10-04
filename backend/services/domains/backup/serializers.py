@@ -196,6 +196,16 @@ async def serialize_rows(
             break
         for row in rows:
             payload = {col: getattr(row, col) for col in columns}
+            if table == "companion_actions" and row.media_type == "image":
+                for field in (
+                    "kind",
+                    "target_duration_seconds",
+                    "actual_duration_ms",
+                    "frames",
+                    "loopable",
+                    "hitmask_fps",
+                ):
+                    payload.pop(field, None)
             for col, value in payload.items():
                 if isinstance(value, datetime):
                     payload[col] = ensure_utc(value).isoformat()

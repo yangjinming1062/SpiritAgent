@@ -2,10 +2,13 @@
 
 import json
 from collections.abc import Awaitable, Callable
+from typing import Annotated, Literal
 
 from components import get_logger, parse_llm_json
 from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS, CharacterCardSnapshot, PeekGeometry
 from prompts.generation import (
+    ACTION_IMAGE_DESCRIPTION_INSTRUCTIONS,
+    ACTION_IMAGE_TEMPLATE,
     VIDEO_ACTION_POSE_TEMPLATE,
     VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
     VIDEO_PEEK_ACTION_DESCRIPTION,
@@ -15,7 +18,7 @@ from prompts.generation import (
     VIDEO_PROMPT_ONCE_CYCLE,
     VIDEO_PROMPT_SKELETON,
 )
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 from services.domains.companion import (
     render_character_identity,
@@ -46,13 +49,12 @@ SYSTEM_ACTION_SEMANTICS: dict[str, str] = {
     "peek_left": VIDEO_PEEK_ACTION_DESCRIPTION.format(direction="左", opposite="右"),
     "peek_right": VIDEO_PEEK_ACTION_DESCRIPTION.format(direction="右", opposite="左"),
     "drag": (
-        "从起始时刻就呈被上方无形力量轻轻拎起的松弛悬垂姿态，提拉处在躯干上部，其余身体受重力向下垂落，全程离地。"
+        "呈被上方无形力量轻轻拎起的松弛悬垂姿态，提拉处在躯干上部，其余身体受重力向下垂落，身体与衣物均离地。"
         "按已有结构表现受力：有肩背时肩部略提、躯干微前倾；有手臂时双臂沿体侧松垂，肘腕放松；"
         "有腿脚时双腿不承重，膝盖自然弯曲，小腿稍向后垂、脚尖朝下，双脚略有高低差；"
         "有头颈时保持自然比例并放松，可轻歪头、抬眼。"
         "已有衣物及柔软附属部分顺重力向下收拢垂坠，不铺地或横向展开。"
-        "从起始到片尾持续保持这一姿态，提拉处与躯干主体稳定，仅下垂末端有极轻微的被动随动，首尾自然连续；"
-        "不保持站姿、主动摇身、整体上下起伏、蹬腿或挥臂，不新增肢体、提拉道具或外来手掌"
+        "提拉处与躯干主体形成明确受力关系，不以承重站姿表达悬垂，不新增肢体、提拉道具或外来手掌"
     ),
 }
 
@@ -67,8 +69,8 @@ def _validate_duration(value: float) -> float:
     return value
 
 
-class ActionSpec(BaseModel):
-    """开放动作规格：一次演绎的目标。系统动作 slot 非空；动态动作 slot 为空。"""
+class _ActionSpec(BaseModel):
+    """动作的共同需求；媒体制作规格由对应类型定义。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -79,18 +81,38 @@ class ActionSpec(BaseModel):
     use_when: list[str] = Field(default_factory=list)
     avoid_when: list[str] = Field(default_factory=list)
     feedback: str = ""
-    duration_seconds: float
-    clip_kind: str = Field(pattern="^(loop|once)$")
-
-    _spec_duration = field_validator("duration_seconds")(_validate_duration)
 
     def semantics_or(self) -> str:
         return self.semantics or SYSTEM_ACTION_SEMANTICS.get(self.system_slot or self.action, self.name)
 
 
-class ActionScriptEntry(BaseModel):
+class ImageActionSpec(_ActionSpec):
+    media_type: Literal["image"] = "image"
+
+
+class VideoActionSpec(_ActionSpec):
+    media_type: Literal["video"] = "video"
+    duration_seconds: float
+    clip_kind: str = Field(pattern="^(loop|once)$")
+
+    _spec_duration = field_validator("duration_seconds")(_validate_duration)
+
+
+type ActionSpec = ImageActionSpec | VideoActionSpec
+
+
+class ImageActionScriptEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    media_type: Literal["image"] = "image"
+    action: str
+    image_prompt: str = Field(min_length=10, max_length=400)
+
+
+class VideoActionScriptEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_type: Literal["video"] = "video"
     action: str
     pose_prompt: str = Field(min_length=10, max_length=400)
     motion_prompt: str = Field(min_length=10, max_length=600)
@@ -98,7 +120,7 @@ class ActionScriptEntry(BaseModel):
     duration_seconds: float = 0
     clip_kind: str = ""
 
-    def with_spec(self, spec: ActionSpec) -> "ActionScriptEntry":
+    def with_spec(self, spec: VideoActionSpec) -> "VideoActionScriptEntry":
         return self.model_copy(
             update={
                 "duration_seconds": _validate_duration(spec.duration_seconds),
@@ -107,10 +129,86 @@ class ActionScriptEntry(BaseModel):
         )
 
 
+type ActionScriptEntry = Annotated[ImageActionScriptEntry | VideoActionScriptEntry, Field(discriminator="media_type")]
+
+_SCRIPT_ENTRY_ADAPTER = TypeAdapter(ActionScriptEntry)
+
+
+def parse_action_script_entry(raw: str) -> ActionScriptEntry:
+    return _SCRIPT_ENTRY_ADAPTER.validate_json(raw)
+
+
 class ActionScript(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    actions: list[ActionScriptEntry]
+    actions: list[VideoActionScriptEntry]
+
+
+class ImageActionDescriptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actions: list[ImageActionScriptEntry]
+
+
+async def compose_action_image_descriptions(
+    user_id: int,
+    *,
+    reference_image: str,
+    identity: CharacterCardSnapshot,
+    persona_definition: dict[str, str],
+    personality_tags: list[str],
+    outfit_description: str,
+    specs: list[ImageActionSpec],
+    feedback: str = "",
+    before_submit: Callable[[], Awaitable[None]] | None = None,
+) -> ImageActionDescriptions:
+    payload = {
+        "persona": persona_definition,
+        "personality_tags": personality_tags,
+        "outfit_description": outfit_description,
+        "feedback": feedback,
+        "actions": [
+            {
+                "action": spec.action,
+                "name": spec.name,
+                "description": spec.semantics_or(),
+                "use_when": spec.use_when,
+                "avoid_when": spec.avoid_when,
+                "feedback": spec.feedback,
+            }
+            for spec in specs
+        ],
+    }
+    wanted = [spec.action for spec in specs]
+    last_error = "缺少有效动作图片描述"
+    for _attempt in range(2):
+        raw = await vision_chat(
+            user_id,
+            ACTION_IMAGE_DESCRIPTION_INSTRUCTIONS + "\n" + render_character_profile(identity),
+            json.dumps(payload, ensure_ascii=False),
+            reference_images=(reference_image,),
+            before_submit=before_submit,
+        )
+        try:
+            result = ImageActionDescriptions.model_validate(parse_llm_json(raw))
+            keys = [entry.action for entry in result.actions]
+            if len(keys) != len(wanted) or set(keys) != set(wanted):
+                raise VideoScriptError("动作集合与请求不符")
+            order = {key: index for index, key in enumerate(wanted)}
+            result.actions.sort(key=lambda entry: order[entry.action])
+            return result
+        except (ValidationError, ValueError, VideoScriptError) as exc:
+            last_error = str(exc)
+            payload["validation_error"] = last_error
+    raise VideoScriptError("动作图片描述生成失败，请重试") from ValueError(last_error)
+
+
+def build_action_image_prompt(entry: ImageActionScriptEntry, identity: CharacterCardSnapshot) -> str:
+    return (
+        ACTION_IMAGE_TEMPLATE.format(pose=entry.image_prompt, margin_percent=ACTION_FRAME_MARGIN * 100)
+        + "\n"
+        + render_character_identity(identity)
+    )
 
 
 async def compose_action_script(
@@ -121,7 +219,7 @@ async def compose_action_script(
     persona_definition: dict[str, str],
     personality_tags: list[str],
     outfit_description: str,
-    specs: list[ActionSpec],
+    specs: list[VideoActionSpec],
     feedback: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> ActionScript:
@@ -205,7 +303,7 @@ async def inspect_peek_geometry(
         return None
 
 
-def build_video_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot) -> str:
+def build_video_prompt(entry: VideoActionScriptEntry, identity: CharacterCardSnapshot) -> str:
     is_loop = entry.clip_kind == "loop"
     prompt = VIDEO_PROMPT_SKELETON.format(
         motion=entry.motion_prompt,
@@ -216,7 +314,7 @@ def build_video_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot
     return prompt + "\n" + render_character_video_identity(identity)
 
 
-def build_pose_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot) -> str:
+def build_pose_prompt(entry: VideoActionScriptEntry, identity: CharacterCardSnapshot) -> str:
     return (
         VIDEO_ACTION_POSE_TEMPLATE.format(
             action=entry.motion_prompt,

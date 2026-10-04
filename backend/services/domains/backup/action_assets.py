@@ -10,10 +10,18 @@ from uuid import uuid4
 
 from components import SETTINGS
 from modules.companion import CharacterCardSnapshot, CompanionAction, CompanionActionPack, make_action_reference_hash
+from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions import AcceptedActionAsset, accepted_action_asset, build_catalog_manifest
+from services.domains.actions import (
+    AcceptedActionAsset,
+    AcceptedImageActionAsset,
+    AcceptedVideoActionAsset,
+    accepted_action_asset,
+    build_catalog_manifest,
+    parse_accepted_action_asset_json,
+)
 from services.infrastructure.assets import build_data_uri, compute_file_sha256, image_mime_for_extension
 
 from .file_packing import UrlRewriter
@@ -35,8 +43,9 @@ def restore_action_payload(
     # 已清理的中间文件不在复制清单中，仍须迁移引用，避免后续清理触及源用户目录。
     payload.update(UrlRewriter(asset_paths).rewrite(payload))
     if table == "companion_actions":
+        _validate_action_media_type(payload)
         if payload.get("accepted_asset_json"):
-            payload["accepted_asset_json"] = AcceptedActionAsset.model_validate_json(
+            payload["accepted_asset_json"] = parse_accepted_action_asset_json(
                 payload["accepted_asset_json"],
             ).model_dump_json()
         if payload.get("pack_id") is None:
@@ -66,12 +75,45 @@ def restore_action_payload(
         payload["context_json"] = json.dumps(context, ensure_ascii=False)
     if payload.get("status") == "processing":
         payload["status"] = "failed"
-        payload["error"] = "恢复的视频任务需要手动处理"
+        payload["error"] = "恢复的动作任务需要手动处理"
     if payload.get("status") != "ready":
         payload["active"] = False
     payload["manifest_path"] = ""
     payload["catalog_version"] = 0
     payload["content_hash"] = ""
+
+
+def _validate_action_media_type(row: dict[str, Any]) -> None:
+    if row.get("media_type") not in {"image", "video"}:
+        raise ValueError("Action media type is invalid")
+    if row["media_type"] == "image" and any(
+        row.get(field) is not None
+        for field in ("kind", "target_duration_seconds", "actual_duration_ms", "frames", "loopable", "hitmask_fps")
+    ):
+        raise ValueError("Static action image cannot contain video parameters")
+
+
+def _backup_accepted_asset(row: dict[str, Any]) -> AcceptedActionAsset | None:
+    _validate_action_media_type(row)
+    if row.get("accepted_asset_json"):
+        return parse_accepted_action_asset_json(row["accepted_asset_json"])
+    if row.get("status") != "succeeded":
+        return None
+    model = AcceptedImageActionAsset if row["media_type"] == "image" else AcceptedVideoActionAsset
+    return model.model_validate({field: row.get(field) for field in model.model_fields})
+
+
+def _validate_image_asset(path: Path, asset: AcceptedImageActionAsset) -> None:
+    clip = asset.parse_result().clip
+    try:
+        with Image.open(path) as image:
+            if image.format not in {"PNG", "WEBP"} or getattr(image, "is_animated", False):
+                raise ValueError("Action image must be a static PNG or WebP")
+            if image.size != (clip.width, clip.height):
+                raise ValueError("Action image dimensions do not match its metadata")
+            image.load()
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError("Action image cannot be decoded") from exc
 
 
 def _json_object(row: dict[str, Any], field: str) -> dict[str, Any]:
@@ -164,21 +206,20 @@ def validate_action_files(
             # 中间候选可能已清理；仍须限制恢复后重试、删除等操作的路径归属。
             for path in _asset_references(row):
                 effective_file(path)
-            accepted: dict[str, Any] | None = None
+            accepted: AcceptedActionAsset | None = None
             if table == "companion_actions":
-                if row.get("accepted_asset_json"):
-                    accepted = AcceptedActionAsset.model_validate_json(row["accepted_asset_json"]).model_dump()
-                elif row.get("status") == "succeeded":
-                    accepted = row
+                accepted = _backup_accepted_asset(row)
             if accepted is not None:
-                video = effective_file(accepted.get("video_path"))
-                if not video.is_file():
-                    raise ValueError("Action video is missing from backup and destination")
-                if accepted.get("video_hash") and compute_file_sha256(video) != accepted["video_hash"]:
-                    raise ValueError("Action video does not match its content hash")
-                if accepted.get("hitmask_path") and not effective_file(accepted["hitmask_path"]).is_file():
+                media = effective_file(accepted.media_path)
+                if not media.is_file():
+                    raise ValueError("Action media is missing from backup and destination")
+                if accepted.media_hash and compute_file_sha256(media) != accepted.media_hash:
+                    raise ValueError("Action media does not match its content hash")
+                if accepted.media_type == "image":
+                    _validate_image_asset(media, accepted)
+                if accepted.hitmask_path and not effective_file(accepted.hitmask_path).is_file():
                     raise ValueError("Action hitmask is missing from backup and destination")
-                if accepted.get("cover_path") and not effective_file(accepted["cover_path"]).is_file():
+                if accepted.cover_path and not effective_file(accepted.cover_path).is_file():
                     raise ValueError("Action cover is missing from backup and destination")
             if (
                 table == "companion_action_packs"
@@ -228,12 +269,14 @@ async def restore_action_catalogs(
                             job.reference_hash = pack.reference_hash
             for job in jobs:
                 if (accepted := accepted_action_asset(job)) is not None:
-                    video = _asset_file(accepted.video_path, user_id)
+                    media = _asset_file(accepted.media_path, user_id)
                     if (
-                        accepted.video_hash
-                        and await asyncio.to_thread(compute_file_sha256, video) != accepted.video_hash
+                        accepted.media_hash
+                        and await asyncio.to_thread(compute_file_sha256, media) != accepted.media_hash
                     ):
-                        raise ValueError("Restored action video does not match its content hash")
+                        raise ValueError("Restored action media does not match its content hash")
+                    if accepted.media_type == "image":
+                        await asyncio.to_thread(_validate_image_asset, media, accepted)
                     if accepted.hitmask_path:
                         _asset_file(accepted.hitmask_path, user_id)
                     if accepted.cover_path:

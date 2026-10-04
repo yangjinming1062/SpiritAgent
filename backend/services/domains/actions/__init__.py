@@ -7,7 +7,15 @@ from .asset_retirement import (
     pack_asset_paths,
     retire_action_assets,
 )
-from .materials import AcceptedActionAsset, accept_action_asset, accepted_action_asset, preserve_action_asset
+from .materials import (
+    AcceptedActionAsset,
+    AcceptedImageActionAsset,
+    AcceptedVideoActionAsset,
+    accept_action_asset,
+    accepted_action_asset,
+    parse_accepted_action_asset_json,
+    preserve_action_asset,
+)
 from .policy import (
     DEFERRED_PLAY_INTENT_TTL_SECONDS,
     DEFERRED_PROPOSAL_WINDOW,
@@ -47,6 +55,9 @@ from .usage import (
 __all__ = [
     "ACTION_PROMPT_KEYS",
     "AcceptedActionAsset",
+    "AcceptedImageActionAsset",
+    "AcceptedVideoActionAsset",
+    "parse_accepted_action_asset_json",
     "ActionNameConflictError",
     "get_action_by_name",
     "normalize_action_name",

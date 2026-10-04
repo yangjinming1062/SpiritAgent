@@ -19,6 +19,8 @@ from services.domains.actions import (
     retire_action_assets,
 )
 
+from .media_chain import MediaChainState
+
 
 class MediaReviewStateError(RuntimeError):
     """复核项对应的素材或目录状态已变化。"""
@@ -92,6 +94,15 @@ async def list_pending_media_reviews(user_id: int) -> list[CompanionMediaReview]
         return list(rows)
 
 
+def _is_current_review_asset(action: CompanionAction, media_url: str) -> bool:
+    if action.media_path == media_url:
+        return True
+    if not action.generation_state_json:
+        return False
+    state = MediaChainState.model_validate_json(action.generation_state_json)
+    return any(candidate.path == media_url and candidate.result_json for candidate in state.candidates)
+
+
 async def _accept_reviewed_action(
     db: AsyncSession,
     user_id: int,
@@ -99,7 +110,7 @@ async def _accept_reviewed_action(
     action_id: int,
     media_url: str,
 ) -> bool:
-    """采纳已核对的动态动作，并在同一事务发布可播放目录、兑现制作期间保存的表达意图；动作或成品已失效（含成品被替换）时返回 False，成品仍在保存时抛 MediaReviewStateError。"""
+    """采纳已核对的动作素材，并在同一事务发布可播放目录、兑现制作期间保存的表达意图；动作或成品已失效（含成品被替换）时返回 False，成品仍在保存时抛 MediaReviewStateError。"""
     pack = await db.get(CompanionActionPack, pack_id)
     job = await db.get(CompanionAction, action_id)
     if (
@@ -112,20 +123,22 @@ async def _accept_reviewed_action(
     ):
         return False
     if job.status in ("queued", "processing"):
-        # 复核项先于动作成品落库登记，此时成品尚在保存：不是失效，复核项保持待确认。
-        raise MediaReviewStateError("动作视频仍在保存，请稍后重试")
-    if job.status not in ("review", "succeeded") or not job.result_json or job.video_path != media_url:
+        if not _is_current_review_asset(job, media_url):
+            return False
+        # 复核登记与任务收尾分两次提交，保存期间不能结束当前成品的复核。
+        raise MediaReviewStateError("动作素材仍在保存，请稍后重试")
+    if job.status not in ("review", "succeeded") or not job.result_json or job.media_path != media_url:
         return False
     previous = accepted_action_asset(job)
     await retire_action_assets(db, user_id, previous.paths() if previous else [])
     job.status = "succeeded"
     accept_action_asset(job)
     await db.flush()
+    try:
+        await publish_action_catalog(db, pack)
+    except (CatalogValidationError, StaleCatalogError) as exc:
+        raise MediaReviewStateError(str(exc) or "动作目录尚未就绪，请稍后重试") from exc
     if pack.active:
-        try:
-            await publish_action_catalog(db, pack)
-        except (CatalogValidationError, StaleCatalogError) as exc:
-            raise MediaReviewStateError(str(exc) or "动作目录尚未就绪，请稍后重试") from exc
         emit_catalog_changed(db, pack)
     # 制作期间保存的意图按播放契约兑现：补发指令晚于目录变更事件，包已不再激活的记为 rejected。
     await fulfill_deferred_play_intents(db, action_id)
@@ -134,14 +147,14 @@ async def _accept_reviewed_action(
 
 async def has_pending_action_review(db: AsyncSession, action: CompanionAction) -> bool:
     """动作当前成品是否仍有待用户确认的复核项。"""
-    if not action.video_path:
+    if not action.media_path:
         return False
     review_id = await db.scalar(
         select(CompanionMediaReview.id)
         .where(
             CompanionMediaReview.user_id == action.user_id,
-            CompanionMediaReview.media_type == "video",
-            CompanionMediaReview.media_url == action.video_path,
+            CompanionMediaReview.media_type == action.media_type,
+            CompanionMediaReview.media_url == action.media_path,
             CompanionMediaReview.status == "pending",
         )
         .limit(1),
@@ -155,7 +168,7 @@ async def reject_pending_action_reviews(db: AsyncSession, action: CompanionActio
         select(CompanionMediaReview)
         .where(
             CompanionMediaReview.user_id == action.user_id,
-            CompanionMediaReview.media_type == "video",
+            CompanionMediaReview.media_type == action.media_type,
             CompanionMediaReview.status == "pending",
         )
         # 先锁复核行再改动作行，与采纳、拒绝的顺序一致，避免并发时死锁。
@@ -169,11 +182,18 @@ async def reject_pending_action_reviews(db: AsyncSession, action: CompanionActio
 
 async def _reject_reviewed_action(db: AsyncSession, user_id: int, action_id: int, media_url: str) -> None:
     job = await db.get(CompanionAction, action_id)
+    if (
+        job is not None
+        and job.user_id == user_id
+        and job.status in ("queued", "processing")
+        and _is_current_review_asset(job, media_url)
+    ):
+        raise MediaReviewStateError("动作素材仍在保存，请稍后重试")
     # 复核项只对应生成它的成品；动作已换成别的成品时，拒绝只结束复核项本身。
-    if job is not None and job.user_id == user_id and job.status == "review" and job.video_path == media_url:
+    if job is not None and job.user_id == user_id and job.status == "review" and job.media_path == media_url:
         await retire_action_assets(db, user_id, action_asset_paths(job))
         job.status = "failed"
-        job.error = "用户未采纳该动作视频"
+        job.error = "用户未采纳该动作素材"
         # 未采纳成品连同生成进度一并作废，之后的重做是独立新尝试；复核链已收尾无待续句柄，文件保留供该记录查看。
         clear_action_attempt(job)
         emit_ws_event(

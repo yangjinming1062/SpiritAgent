@@ -1,4 +1,4 @@
-/** 视频包生成流程 store：衣柜页发起生成、进度状态与包列表；可播清单与播放实例由 actions 维护；渲染层不得经本 store 触发付费（缺失动作由显式服务流程统一鉴权、去重、记账）。 */
+/** 动作包生成流程 store：衣柜页发起生成、进度状态与包列表；可用清单与播放实例由 actions 维护；渲染层不得经本 store 触发付费（缺失动作由显式服务流程统一鉴权、去重、记账）。 */
 
 import { atom } from 'nanostores'
 
@@ -9,9 +9,9 @@ import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/sto
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
 
-import type { VideoPackWire } from '../../actions'
+import type { ActionPackWire } from '../../actions'
 
-export const $videoPacks = atom<VideoPackWire[]>([])
+export const $videoPacks = atom<ActionPackWire[]>([])
 
 /** 生成/失败归属：按着装与动作包隔离展示，避免 A 的错误串到 B。 */
 export interface VideoGenScope {
@@ -101,7 +101,7 @@ function eventScope(scope: Partial<VideoGenScope>): VideoGenScope {
   return { outfitId: scope.outfitId ?? null, packId: scope.packId ?? null }
 }
 
-/** 视频包就绪 / 激活事件：生成态收敛为空闲，归属取事件载荷。 */
+/** 动作包就绪 / 激活事件：生成态收敛为空闲，归属取事件载荷。 */
 export function videoGenReady(scope: Partial<VideoGenScope>): void {
   videoPackEventReceived()
   $videoGenState.set('idle')
@@ -164,7 +164,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
 
   const read = (async (): Promise<boolean> => {
     try {
-      const res = await authedApi<{ packs?: VideoPackWire[] }>({ path: '/api/companion/video-packs' })
+      const res = await authedApi<{ packs?: ActionPackWire[] }>({ path: '/api/companion/video-packs' })
 
       if (epoch !== currentClearEpoch() || revision !== generationRevision) {
         return false
@@ -182,7 +182,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
       $videoPacks.set(packs)
       const scope = $videoGenScope.get()
 
-      const matchesScope = (p: VideoPackWire): boolean => videoGenScopeMatches(scope, p.outfit_id, p.id)
+      const matchesScope = (p: ActionPackWire): boolean => videoGenScopeMatches(scope, p.outfit_id, p.id)
 
       const processing =
         packs.find(p => p.status === 'processing' && matchesScope(p)) ?? packs.find(p => p.status === 'processing')
@@ -232,7 +232,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
   return load
 }
 
-/** 发起按参考生成（LLM 演绎脚本 → i2v → 服务端处理），进度与结果经 companion.video 事件回流；请求被拒绝时把后端公开文案写入失败态，不进入 generating。 */
+/** 发起按参考生成（图片姿态或视频演绎 → 服务端处理），进度与结果经 companion.video 事件回流；请求被拒绝时把后端公开文案写入失败态，不进入 generating。 */
 export async function generateVideoPack(
   opts: {
     force?: boolean
@@ -258,7 +258,7 @@ export async function generateVideoPack(
   const revision = generationRevision
   requestingGeneration = true
 
-  const res = await authedApi<VideoPackWire>({
+  const res = await authedApi<ActionPackWire>({
     body: {
       force: opts.force === true,
       outfit_id: opts.outfitId,

@@ -182,7 +182,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 |---|---|
 | 对话、引导、工具同步、记忆管理、命令 | [桌面 handlers](../backend/services/adapters/desktop/handlers.py) |
 | 会话 REST 与传输结构 | [会话端点](../backend/api/v1/sessions.py)、[schema](../backend/modules/conversation/schemas.py) |
-| 伙伴资料、头像与全身、角色卡、衣柜、视频包、媒体复核与资产读取 | [伙伴端点](../backend/api/v1/companion.py)、[伙伴 schema](../backend/modules/companion/schemas.py)、[视频包 schema](../backend/modules/companion/schemas_video.py) |
+| 伙伴资料、头像与全身、角色卡、衣柜、动作包、媒体复核与资产读取 | [伙伴端点](../backend/api/v1/companion.py)、[伙伴 schema](../backend/modules/companion/schemas.py)、[动作包 schema](../backend/modules/companion/schemas_video.py) |
 | 场景 | [场景端点](../backend/api/v1/companion_scenes.py)、[场景 schema](../backend/modules/companion/schemas_scene.py) |
 | 动态 | [动态端点](../backend/api/v1/companion_posts.py)、[schema](../backend/modules/companion/schemas_posts.py) |
 | 日记 | [日记端点](../backend/api/v1/companion_journal.py)、[schema](../backend/modules/companion/schemas_journal.py) |
@@ -246,9 +246,11 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 ### 媒体复核与激活
 
-视频包按核查状态自动激活，疑点保留预览与手动启用，准备期间继续播放旧包；评分见 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
+动作包按核查状态自动激活，疑点保留预览与手动启用，准备期间继续播放旧包；评分见 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
 
-就绪包上单独制作的动作（动态动作、探身补齐、系统动作原位重做）复核存疑时建复核项，经 `/api/companion/media-reviews` 列表、单项 GET、accept/reject 管理，用户采纳后才入可播目录；拒绝即作废该次生成，之后的同名重做为独立的新生成。复核项只对应生成它的那次成品：系统动作原位重做视为不采纳仍待确认的成品，其复核项随之结束；动作素材已被替换时，采纳失败并结束该复核项，拒绝只结束该复核项、不改动作。复核项响应中动态动作以设计名称作 `title`，系统动作无名称、以 `system_slot` 标识，由客户端按槽位本地化显示。日常聊天、场景、动态、夜间媒体不建人工复核项。视频下载、评估与重生成凭句柄/落盘资产恢复，未知提交不重发。
+就绪包上单独制作的动作（动态动作、探身补齐、系统动作原位重做）复核存疑时建复核项，经 `/api/companion/media-reviews` 列表、单项 GET、accept/reject 管理。采纳在同一事务更新所属就绪包的目录；包未激活也更新自身目录而不激活，仅当前激活包广播目录变更。拒绝作废该次生成，之后的同名重做为独立的新生成。
+
+复核项只作用于生成它的成品；当前成品仍在收尾保存时，采纳和拒绝均保持 `pending` 并提示稍后重试。系统动作原位重做结束仍待确认的旧复核项；素材已被替换时，采纳失败并结束该项，拒绝只结束该项、不改动作。响应中动态动作以设计名称作 `title`，系统动作以 `system_slot` 供客户端本地化；`media_type` 决定图片或视频预览。日常聊天、场景、动态、夜间媒体不建人工复核项。下载、评估与重生成凭句柄/落盘资产恢复，未知提交不重发。
 
 ### 动态与日记
 
@@ -282,7 +284,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 新包版本须重新读取描述符和相关资源；本机缓存按后端与用户隔离，登出和换号保留，明确移除账户才清理该账户的数据。换号后的迟到结果不得写入新账户，移除后的旧写入不得恢复已删除缓存，具体生命周期见 [Client 缓存](../client/README.md#资产与历史缓存)。对话生成图片和视频保存为永久资产并在交付时生成访问路径，不沿用临时文件过期语义。
 
-动作目录的 `video_ref`、`hitmask_ref` 保存 `companion-assets/<user_id>/<filename>` 裸路径；客户端动作加载器将其转换为 `/api/companion/asset/<user_id>/<filename>`，经携带当前身份的资产桥下载。目录本身的签名 URL 直接交给资产桥，短时签名不写入持久化目录。
+动作目录的 `media_ref`、`hitmask_ref` 保存 `companion-assets/<user_id>/<filename>` 裸路径；客户端动作加载器将其转换为 `/api/companion/asset/<user_id>/<filename>`，经携带当前身份的资产桥下载。目录本身的签名 URL 直接交给资产桥，短时签名不写入持久化目录。
 
 图片附件可随 `prompt.submit` 以内联 data URL 或 HTTP(S) URL 提交，URL 由供应商拉取。视频先经 `POST /api/media/videos` 上传，再提交本会话附件 URL；视频拒绝 data URL、跨会话引用和第三方绝对 URL（公网模式须带 `public_base_url` 前缀）；文件已被配额剔除或清理的附件 URL 同样拒绝，须重新上传。公开读取端点 `/api/media/videos/...` 与临时媒体 `/api/media/files/...` 使用不可猜测文件标识，属于供供应商读取的例外，不应描述为所有媒体都要求 Bearer。
 
@@ -292,17 +294,18 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 `action_design` 制作冻结外观包内的可复用能力，`video_generate` 交付一次性作品。接口与字段见 [actions API](../backend/api/v1/companion_actions.py)、[schema](../backend/modules/companion/schemas_actions.py)。
 
-- LLM 使用 `action_search` / `action_design` / `action_inspect` / `action_play`；source、用户、额度窗口、系统槽位和目标包由服务端绑定，`expected_pack_id` 只作并发守卫。用户聊天工具与 REST 设计按用户请求（user_requested）计额，主动回合及夜间提案按自主（autonomous）计额，并受自主创建开关约束。提案立即返回受理，不等评审/视频，也不进入聊天视频送达链。
+- 合法系统槽位可上传透明图片或视频；自动制作按动作规格选择类型，当前仅 drag 为图片。图片是单张静态成品，没有时长、帧数、帧率、循环或重复规格，由基础状态决定显示与切换；动态表达当前仅接受视频。共享处理结果见 [schema](../backend/modules/companion/schemas_video.py) 的 `ActionResult`。
+- LLM 使用 `action_search` / `action_design` / `action_inspect` / `action_play`；source、用户、额度窗口、系统槽位和目标包由服务端绑定，`expected_pack_id` 只作并发守卫。用户聊天工具与 REST 设计按用户请求（user_requested）计额，主动回合及夜间提案按自主（autonomous）计额，并受自主创建开关约束。提案立即返回受理，不等评审/制作，也不进入聊天视频送达链。
 - 动态动作制作额度按滚动 24 小时由独立账本记录，批准新制作及受理同名独立重做时强制，续查询、下载与发布不重复计额，删除包不返额；不设评审日限额；额度数值不进入模型上下文，超限转 deferred 的理由经动作快照与 `action_inspect` 可见，用户可经 `GET /api/companion/actions/budget` 查看。无手动播放入口；陪伴预设每次调用模型前刷新动作快照（就绪、在途和近期拒绝信息），见[动作编排](../backend/services/application/actions/README.md#模块入口)。
 - 所有动态呈现汇入 `companion.action.play_requested`，目录和任务事件仅更新资源。Client 按 `play_id` 去重，按 `pack_id` 与 `appearance_epoch` 校验归属和代次，遵守 TTL / `repeat_count`。
-- `appearance_epoch` 是服务端维护的视频包激活代次：每次激活（含换装后再穿回同一包）写入该用户已有最大代次加一；目录接口与 `catalog_changed` 携带包的当前代次，播放指令与账本记录受理时的代次。制作中保存的意图在动作就绪后（含复核项经用户采纳后就绪），仅当意图未过期、所属包仍激活且代次未变才补发并重新计算即时有效期；未过期但包或代次失效记 rejected；已过期（不论包是否失效）或动作已停用、未就绪时保持 queued、不补发。补发只针对本轮制作完成的动作，不重发其他动作未执行的即时请求。
+- `appearance_epoch` 是服务端维护的动作包激活代次：每次激活（含换装后再穿回同一包）写入该用户已有最大代次加一；目录接口与 `catalog_changed` 携带包的当前代次，播放指令与账本记录受理时的代次。制作中保存的意图在动作就绪后（含复核项经用户采纳后就绪），仅当意图未过期、所属包仍激活且代次未变才补发并重新计算即时有效期；未过期但包或代次失效记 rejected；已过期（不论包是否失效）或动作已停用、未就绪时保持 queued、不补发。补发只针对本轮制作完成的动作，不重发其他动作未执行的即时请求。
 - Client 比较指令与本地目录代次：同包旧代次说明该包已重新激活，直接认领并回执 rejected；其他不能直接播放的指令先强制刷新目录（覆盖恢复保留备份中的代次，新包代次可能低于本地旧包）。刷新后指令仍较新则不认领，交由已加载新代次的舞台或 TTL 收尾；较旧或包不同则认领后回执 rejected。本地快照未记录代次时，网络校准前不受理；换包或代次变化时作废旧播放实例。
 - 播放回执按 `play_id` 幂等，同一请求只由一台可见设备执行；queued 不算完成，认领后不能播放报 rejected，抢占报 interrupted，表演事实只来自播放器回执。
 - Client 主进程按 `play_id` 在本机可见舞台之间唯一认领，认领记录保留到请求过期；完整入口侧边伙伴可接收播放。收起、最小化、最大化、切窗或锁屏时中断播放并作废在途加载，恢复后回到待机，不补播旧请求。持续可见时换侧不中断；同包目录刷新不替换已受理实例的素材版本，迟到媒体事件不得生成第二种终态回执。
 - 动作 REST 管目录、设计、启停、删除、额度与回执。系统动作重做走 `POST /api/companion/video-packs/generate`（`source_pack_id` + `action`）：就绪包原位重做、同包推进素材版本，失败包生成复用冻结参考的新包版本。失败、取消或用户未采纳的动态动作以同名设计原位重做，未采纳的成品已作废，重做为独立的新生成；成品待用户确认时同名设计只返回等待状态。动作目录即当前包可播清单，换装随包切换，不跨包引用。已采纳素材与制作尝试分开保存，重做中、待复核及拒绝新候选时旧素材持续可播，通过检查或明确采纳后原子切换。单动作反馈按本次提交替换并回显，空串或省略反馈字段均清除。动态动作衣柜页仅显示状态，重做沿用同名设计入口。
-- manifest 的 `canvas` 定义包统一的逻辑宽高比与帧率；clip 的必填 `width`、`height` 表示实际像素尺寸，同包可包含不同像素尺寸的片段，但宽高比一致。播放器布局以媒体解码宽高为准，不将逻辑画布当作成品分辨率。
-- clip 可选携带 `peek_geometry`（遮挡线及需保留的识别区域）和 `content_rect`（内容轮廓），坐标归一化到最终视频画布；clip 与目录结构见 [publishing](../backend/services/domains/actions/publishing.py) 的 `ActionClipSpec` / `ActionCatalogManifest`（客户端镜像为 [action-types.ts](../client/renderer/modules/character/actions/action-types.ts)），`PeekGeometry` 与 `content_rect` 解析见 [schema](../backend/modules/companion/schemas_actions.py)。缺少有效探身定位时不启用遮挡；侧边伙伴与桌面精灵缺少内容轮廓时优先从 alpha 遮罩推导，仍缺失按完整画布适配与落位。
-- `hitmask_ref` 指向的 JSON 为逐帧行位数组（`[frame][row]`，行整数按位表示列占用），网格与采样帧率由目录 `hitmask_grid`、`hitmask_fps` 提供，生成见 [build_hitmask](../backend/services/infrastructure/video_processing/process.py)。
+- manifest 的 `catalog_version` 标识已发布目录快照，每次发布推进，并用于目录响应、变更事件与资源缓存校验；`canvas` 只定义包统一的逻辑宽高比。clip 通过 `media_type` 区分图片与视频，共享 `media_ref`、实际像素 `width` / `height` 及命中信息。同包素材像素尺寸可不同，宽高比一致，布局以媒体解码尺寸为准；`duration_ms`、`frames`、`loopable`、`hitmask_fps` 只属于视频条目。
+- clip 可选携带 `peek_geometry`（遮挡线及需保留的识别区域）和 `content_rect`（内容轮廓），坐标归一化到最终媒体画布；clip 与目录结构见 [publishing](../backend/services/domains/actions/publishing.py) 的 `ActionClipSpec` / `ActionCatalogManifest`（客户端镜像为 [action-types.ts](../client/renderer/modules/character/actions/action-types.ts)），`PeekGeometry` 与 `content_rect` 解析见 [schema](../backend/modules/companion/schemas_actions.py)。缺少有效探身定位时不启用遮挡；侧边伙伴与桌面精灵缺少内容轮廓时优先从 alpha 遮罩推导，仍缺失按完整画布适配与落位。
+- `hitmask_ref` 指向行整数按位表示列占用的 JSON，网格由 `hitmask_grid` 提供：图片是静态 `[row]`，视频是逐帧 `[frame][row]`，视频另带 `hitmask_fps`。生成见 [图片处理](../backend/services/infrastructure/video_processing/image.py)与 [视频处理](../backend/services/infrastructure/video_processing/process.py)。drag 图片在拖拽结束时切回当前基础动作，不进入播放计时或媒体结束事件逻辑；有限播放请求若指向图片须拒绝。
 - [探身补齐接口](../backend/api/v1/companion.py)的输入见 [schema](../backend/modules/companion/schemas_video.py)。仅当前激活且具有可读冻结参考的包可补齐；按包和槽位复用任务，素材成功但目录缺失时只重试发布。失败或未知结果不自动重新付费，由衣柜显式处理；无冻结参考的导入包不自动重建。
 - 窗口快照与仪式目标换算见 [IPC 类型](../client/shared/ipc/contracts.ts)：仅精灵宿主可读取快照、换算目标和请求跟随目标跨屏；主进程将 Runner 原生几何转换为 DIP，快照提供精灵视口原点由渲染层换算视口内位置，目标换算直接返回视口内坐标。绑定包含窗口标识、进程身份和 Runner 实例标识，重启使旧绑定失效；这些本机数据不进入云端自主上下文。
 
@@ -506,7 +509,7 @@ flowchart TD
     Restore --> Report[报告失败类别、数量与原因]
 ```
 
-导出固定为全量数据包（含会话与消息），不提供导出侧裁剪；备份当前没有独立格式版本。导出在同一只读数据库快照中读取全部数据行，并发写入不会让会话与消息等关联表相互错位；用户文件在快照之后按资产目录、快照内的会话和行内引用收集，不属于该快照；打包期间文件消失时返回可重试错误并清理半包。整包校验通过后，按导入时选择的分组恢复兼容数据类。分组映射见 [serializers](../backend/services/domains/backup/serializers.py) 的 `BACKUP_SECTIONS`：`identity`（人设、头像、全身图与角色卡）、`conversations`、`memories`、`posts`、`diary`、`wardrobe`、`scenes`、`automation`、`settings`。未勾选类别不写入、不清理目标已有数据；基础身份等成组类别缺表时整组不恢复。`identity` 只恢复包内基础身份资料，角色卡按已有资料恢复为就绪或可重试失败，不承诺完成引导或可播放；音色需选择 `settings`，视频包与场景需选择各自分组，恢复不自动付费补齐。
+导出固定为全量数据包（含会话与消息），不提供导出侧裁剪；备份当前没有独立格式版本。导出在同一只读数据库快照中读取全部数据行，并发写入不会让会话与消息等关联表相互错位；用户文件在快照之后按资产目录、快照内的会话和行内引用收集，不属于该快照；打包期间文件消失时返回可重试错误并清理半包。整包校验通过后，按导入时选择的分组恢复兼容数据类。分组映射见 [serializers](../backend/services/domains/backup/serializers.py) 的 `BACKUP_SECTIONS`：`identity`（人设、头像、全身图与角色卡）、`conversations`、`memories`、`posts`、`diary`、`wardrobe`、`scenes`、`automation`、`settings`。未勾选类别不写入、不清理目标已有数据；基础身份等成组类别缺表时整组不恢复。`identity` 只恢复包内基础身份资料，角色卡按已有资料恢复为就绪或可重试失败，不承诺完成引导或可播放；音色需选择 `settings`，动作包与场景需选择各自分组，恢复不自动付费补齐。
 
 旧包中的 `companion_moments` / `companion_moment_comments` 等已废弃表静默跳过，不视为失败；其后继的动态表缺失也静默处理，等同于备份没有动态；保留该兼容读取以支持历史备份，只有明确停止支持这些备份后才可移除。显式勾选子集时，所选类别在包内不存在会列入失败；全量导入对历史缺表保持静默。
 
@@ -522,9 +525,9 @@ flowchart TD
 
 只复制勾选且通过恢复校验的数据行引用的文件，临时媒体正文与元数据成对复制，校验归属、路径、大小、类型与时间，并为恢复副本分配新标识；缺正文时不复制元数据。未选类别的文件不写入目标。文件恢复按目标相对路径处理：目标文件已存在时跳过复制，并将备份中的引用映射到该文件；导入不会覆盖同名文件或另建冲突副本。会话附件仅在会话类别被勾选且会话恢复成功时映射；未勾选会话时不写附件，也不计入失败。
 
-视频包与动作记录成对备份、预检及覆盖，重映射身份、外观、生成上下文及参考指纹；就绪包按新 ID 和资源路径重建播放清单与哈希。已采纳素材快照保留，制作尝试未完成或待复核时旧采纳版本仍参与目录重建；已确认外观的排队或处理中描述转为可手动重试失败。未完成及待人工复核的任务转为待手动处理的失败状态，保留供应商句柄、未知提交标记及已有产物，不触发付费生成。缺少必需动作的包恢复为未启用的失败状态，成功片段可在手动重做时复用。
+动作包与动作记录成对备份、预检及覆盖，重映射身份、外观、生成上下文及参考指纹；就绪包按新 ID 和资源路径重建播放清单与哈希。已采纳素材快照保留，制作尝试未完成或待复核时旧采纳版本仍参与目录重建；已确认外观的排队或处理中描述转为可手动重试失败。未完成及待人工复核的任务转为待手动处理的失败状态，保留供应商句柄、未知提交标记及已有产物，不触发付费生成。图片及视频按 `media_type` 校验并恢复，图片不填充视频参数。缺少必需动作的包恢复为未启用的失败状态，成功素材可在手动重做时复用。
 
-覆盖前检查路径归属、可播文件及视频哈希。视频数据不兼容、缺少动作记录或引用的身份、外观无法安全覆盖时，报告失败并保留目标已有视频包及其引用的头像、外观；仅有磁盘视频不代表可播状态已恢复。
+覆盖前检查路径归属、引用文件与素材哈希；图片另须为可解码的 PNG 或静态 WebP，尺寸与处理结果一致。动作数据不兼容、缺少动作记录或引用的身份、外观无法安全覆盖时，报告失败并保留目标已有动作包及其引用的头像、外观；仅有磁盘素材不代表可呈现状态已恢复。
 
 导入前进入用户维护态，拒绝新操作并等待已进入操作、可中断任务及已提交付费任务按规则收敛，再写入数据。维护期间只收敛已提交任务和本地落盘，禁止下一次付费提交或评分；结束后由各任务所有者重读持久状态和适用门禁再恢复安全排队项，已计额任务不重复计额；备份恢复的未完成任务仍需手动处理，删除用户时不恢复。结束后清理旧运行镜像并从数据库恢复，Client 重新挂载会话，不能继续使用已删除 ID。细节见 [Backend](../backend/README.md#数据与运行可靠性)。
 

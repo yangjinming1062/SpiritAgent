@@ -131,6 +131,7 @@ from services.infrastructure.assets import (
     client_asset_url,
     resolve_companion_asset_path,
     serve_ranged_file,
+    sniff_media_ext,
     validate_image_bytes,
     verify_signed_asset_request,
 )
@@ -188,7 +189,10 @@ async def post_visual_media_review_accept(review_id: int, user: CurrentUser) -> 
 
 @router.post("/media-reviews/{review_id}/reject", response_model=MediaReviewResponse)
 async def post_visual_media_review_reject(review_id: int, user: CurrentUser) -> MediaReviewResponse:
-    row = await reject_media_review(user.id, review_id)
+    try:
+        row = await reject_media_review(user.id, review_id)
+    except MediaReviewStateError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
     if row is None:
         raise HTTPException(status_code=404, detail={"error": "待确认动作不存在"})
     if row.status == "accepted":
@@ -823,20 +827,37 @@ def _pack_summary(pack: CompanionActionPack) -> VideoPackResponse:
     )
 
 
-_ALLOWED_CLIP_MIME_TYPES = {"video/webm", "video/mp4", "video/quicktime", "video/x-matroska"}
+_CLIP_MIME_BY_EXT = {
+    "png": "image/png",
+    "webp": "image/webp",
+    "webm": "video/webm",
+    "mp4": "video/mp4",
+    "mov": "video/quicktime",
+    "mkv": "video/x-matroska",
+}
 
 
-def _decode_clip_upload(data_b64: str, content_type: str | None) -> tuple[bytes, str]:
-    """base64 片段解码；仅接受四种视频 MIME，损坏数据拒绝。"""
-    normalized = (content_type or "video/webm").split(";")[0].strip().lower()
-    if normalized not in _ALLOWED_CLIP_MIME_TYPES:
-        raise HTTPException(status_code=415, detail={"error": "仅支持 WebM / MP4 / MOV / MKV 片段"})
+def _decode_clip_upload(data_b64: str, content_type: str | None, media_type: str) -> tuple[bytes, str]:
+    """解码动作媒体并核对声明类型与文件格式；像素及透明门禁由处理入口负责。"""
+    normalized = content_type.split(";")[0].strip().lower() if content_type else None
+    if normalized is not None and (
+        normalized not in _CLIP_MIME_BY_EXT.values() or not normalized.startswith(f"{media_type}/")
+    ):
+        raise HTTPException(status_code=415, detail={"error": "动作媒体类型与格式不符"})
     try:
         raw = base64.b64decode(data_b64, validate=True)
     except ValueError:
         raise HTTPException(status_code=400, detail={"error": "片段数据无效"})
     if not raw:
         raise HTTPException(status_code=400, detail={"error": "片段数据为空"})
+    ext = sniff_media_ext(raw)
+    detected = _CLIP_MIME_BY_EXT.get(ext)
+    if detected is None or not detected.startswith(f"{media_type}/"):
+        raise HTTPException(status_code=415, detail={"error": "动作文件格式与媒体类型不符"})
+    normalized = normalized or detected
+    # EBML 签名同时用于 WebM 与 Matroska，后处理按实际容器解码。
+    if normalized != detected and not (ext == "webm" and normalized == "video/x-matroska"):
+        raise HTTPException(status_code=415, detail={"error": "动作文件格式与媒体类型不符"})
     return raw, normalized
 
 
@@ -857,9 +878,9 @@ async def post_video_pack(
     for clip in body.clips:
         if clip.action in clips:
             raise HTTPException(status_code=400, detail={"error": f"动作片段重复：{clip.action}"})
-        raw, content_type = _decode_clip_upload(clip.data, clip.content_type)
+        raw, content_type = _decode_clip_upload(clip.data, clip.content_type, clip.media_type)
         clips[clip.action] = (raw, content_type)
-        if clip.start_seconds is not None and clip.end_seconds is not None:
+        if clip.media_type == "video" and clip.start_seconds is not None and clip.end_seconds is not None:
             ranges[clip.action] = (clip.start_seconds, clip.end_seconds)
     try:
         pack = await create_video_pack_from_clips(

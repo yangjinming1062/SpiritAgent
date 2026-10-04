@@ -12,7 +12,7 @@ import {
   hydrateVideoPack,
   SpriteVfxOverlay
 } from '@/modules/character'
-import { useVideoPixelHitTest, VideoStage } from '@/modules/character/rendering/video'
+import { MediaStage, useMediaPixelHitTest } from '@/modules/character/rendering/video'
 import { useInteractiveRegion } from '@/shared'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
@@ -31,13 +31,13 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
   const lifecycle = useStore($companionLifecycle)
   const strings = useStrings()
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const videoHitTest = useVideoPixelHitTest(1)
+  const mediaHitTest = useMediaPixelHitTest(1)
 
   const presentation = useCompanionPresentation()
 
   const hitTest = useCallback(
-    (x: number, y: number): boolean => state.visible && presentation.renderer === 'video' && videoHitTest(x, y),
-    [presentation.renderer, state.visible, videoHitTest]
+    (x: number, y: number): boolean => state.visible && presentation.renderer === 'media' && mediaHitTest(x, y),
+    [presentation.renderer, state.visible, mediaHitTest]
   )
 
   useInteractiveRegion('surface-companion', wrapperRef, undefined, hitTest, 1)
@@ -78,7 +78,7 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
   return (
     <aside className={styles.slot} style={{ order: state.preference.side === 'left' ? -1 : 1, width: slotWidth }}>
       <div
-        className={cn(styles.wrapper, presentation.renderer === 'video' && styles.videoWrapper)}
+        className={cn(styles.wrapper, presentation.renderer === 'media' && styles.videoWrapper)}
         onContextMenu={event => event.preventDefault()}
         ref={wrapperRef}
         title={strings.common.companionControl.dragTitle(strings.brand.name)}
@@ -88,7 +88,7 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
             (presentation.renderer === 'fallback' ? (
               <CompanionEgg presentation={presentation} size="min(280px, 92%)" windowId={1} />
             ) : (
-              <VideoStage contentAlign={state.preference.side === 'right' ? 'left' : 'right'} />
+              <MediaStage contentAlign={state.preference.side === 'right' ? 'left' : 'right'} />
             ))}
           {state.visible && <SpriteVfxOverlay />}
         </div>

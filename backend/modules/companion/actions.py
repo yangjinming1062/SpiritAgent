@@ -2,10 +2,12 @@
 
 import hashlib
 from datetime import datetime
+from typing import Literal
 
 from common import ModelBase, TimestampMixin
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -22,6 +24,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag", "walk_left", "walk_right", "peek_left", "peek_right")
 # 发布与激活的必需槽位；缺失时不得 ready。
 REQUIRED_SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag")
+SYSTEM_ACTION_MEDIA_TYPES: dict[str, Literal["image", "video"]] = {
+    slot: "image" if slot == "drag" else "video" for slot in SYSTEM_SLOTS
+}
 
 
 def make_action_reference_hash(
@@ -83,6 +88,12 @@ class CompanionAction(ModelBase, TimestampMixin):
     __tablename__ = "companion_actions"
     __table_args__ = (
         UniqueConstraint("pack_id", "key", name="uq_companion_actions_pack_key"),
+        CheckConstraint("media_type IN ('image', 'video')", name="ck_companion_actions_media_type"),
+        CheckConstraint(
+            "media_type = 'video' OR (kind IS NULL AND target_duration_seconds IS NULL "
+            "AND actual_duration_ms IS NULL AND frames IS NULL AND loopable IS NULL AND hitmask_fps IS NULL)",
+            name="ck_companion_actions_image_parameters",
+        ),
         Index(
             "uq_companion_actions_pack_slot",
             "pack_id",
@@ -100,7 +111,8 @@ class CompanionAction(ModelBase, TimestampMixin):
     key: Mapped[str] = mapped_column(String(32))
     name: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     system_slot: Mapped[str] = mapped_column(String(16), default="", server_default=text("''"))
-    kind: Mapped[str] = mapped_column(String(8), default="once", server_default=text("'once'"))
+    media_type: Mapped[str] = mapped_column(String(8), default="video", server_default=text("'video'"))
+    kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
     motion_description: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     use_when: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     avoid_when: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
@@ -131,12 +143,12 @@ class CompanionAction(ModelBase, TimestampMixin):
     # 动态动作的设计规格冻结；系统动作为空。
     source_design_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    video_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    video_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
-    target_duration_seconds: Mapped[float] = mapped_column(Float, default=2.0, server_default=text("2.0"))
-    actual_duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    frames: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    loopable: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
+    media_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    media_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
+    target_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    actual_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frames: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    loopable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     cover_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     hitmask_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     hitmask_grid_w: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -24,7 +24,7 @@ import {
   setCompanionVoiceId,
   startActivityMonitor
 } from '@/modules/character'
-import { VideoStage } from '@/modules/character/rendering/video'
+import { MediaStage } from '@/modules/character/rendering/video'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack, requestGateway } from '@/shared'
@@ -207,8 +207,8 @@ export function SpriteWindow(): React.JSX.Element {
         onDoubleTap={onDoubleTap}
         onTap={onTap}
       >
-        {showOnboarding ? null : presentation.renderer === 'video' ? (
-          <VideoStage />
+        {showOnboarding ? null : presentation.renderer === 'media' ? (
+          <MediaStage />
         ) : (
           <CompanionEgg presentation={presentation} />
         )}

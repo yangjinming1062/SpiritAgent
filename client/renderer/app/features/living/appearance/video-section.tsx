@@ -9,14 +9,14 @@ import {
   $videoGenStage,
   $videoGenState,
   $videoPacks,
+  type ActionWire,
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
-  VIDEO_ACTION_KEYS,
+  SYSTEM_ACTION_KEYS,
+  type SystemActionKey,
+  systemActionNames,
   VIDEO_GEN_STAGE_TEXT_KEYS,
-  type VideoActionKey,
-  videoActionNames,
-  type VideoActionWire,
   videoGenScopeMatches
 } from '@/modules/character'
 import { useResolvedMediaSrc } from '@/modules/media'
@@ -33,34 +33,31 @@ interface ActionEntry {
   label: string
   status: string
   error: string | null
-  clipUrl: string | null
+  mediaUrl: string | null
+  mediaType: 'image' | 'video' | null
   motionPrompt: string
   feedback: string
-  peekGeometry: VideoActionWire['peek_geometry']
+  peekGeometry: ActionWire['peek_geometry']
 }
 
 function isActionInProgress(status: string): boolean {
   return ACTION_IN_PROGRESS.has(status)
 }
 
-function isVideoActionKey(key: string): key is VideoActionKey {
-  return (VIDEO_ACTION_KEYS as readonly string[]).includes(key)
+function isSystemActionKey(key: string): key is SystemActionKey {
+  return (SYSTEM_ACTION_KEYS as readonly string[]).includes(key)
 }
 
-function ActionPreview({ url }: { url: string }): React.JSX.Element {
-  const media = useResolvedMediaSrc({ type: 'video', url })
+function ActionPreview({ type, url }: { type: 'image' | 'video'; url: string }): React.JSX.Element {
+  const media = useResolvedMediaSrc({ type, url })
+  const className = 'aspect-[2/3] h-full max-h-full w-auto max-w-full object-contain'
+  const src = media.status === 'ready' ? media.src : undefined
 
-  return (
-    <video
-      className="aspect-[2/3] h-full max-h-full w-auto max-w-full object-contain"
-      controls
-      loop
-      muted
-      playsInline
-      preload="metadata"
-      src={media.status === 'ready' ? media.src : undefined}
-    />
-  )
+  if (type === 'image') {
+    return <img alt="" className={className} draggable={false} src={src} />
+  }
+
+  return <video className={className} controls loop muted playsInline preload="metadata" src={src} />
 }
 
 interface VideoSectionProps {
@@ -101,7 +98,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   // 列表加载失败不能按“尚未生成”展示，避免网络错误引导用户重复发起付费生成。
   const packsLoadFailed = packsStatus === 'failed' && !!selectedOutfit && !selectedPack
 
-  const actionNames = videoActionNames(t)
+  const actionNames = systemActionNames(t)
 
   const actions: ActionEntry[] = []
   const seenKeys = new Set<string>()
@@ -115,19 +112,20 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     actions.push({
       key: entry.action,
       label:
-        (isVideoActionKey(entry.action) ? actionNames[entry.action] : '') ||
+        (isSystemActionKey(entry.action) ? actionNames[entry.action] : '') ||
         entry.name ||
         entry.action.replace(/_/g, ' '),
       status: entry.status,
       error: entry.error,
-      clipUrl: entry.clip_url,
-      motionPrompt: entry.motion_prompt,
+      mediaUrl: entry.media_url,
+      mediaType: entry.media_type,
+      motionPrompt: entry.media_type === 'video' ? entry.motion_prompt : '',
       feedback: entry.feedback ?? '',
       peekGeometry: entry.peek_geometry
     })
   }
 
-  for (const slot of VIDEO_ACTION_KEYS) {
+  for (const slot of SYSTEM_ACTION_KEYS) {
     if (!seenKeys.has(slot)) {
       actions.push({
         key: slot,
@@ -135,7 +133,8 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
         status: 'missing',
         feedback: '',
         error: null,
-        clipUrl: null,
+        mediaUrl: null,
+        mediaType: null,
         motionPrompt: '',
         peekGeometry: null
       })
@@ -184,7 +183,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     }
 
     if (selectedPack?.status === 'ready') {
-      return t.videoReady(selectedPack.pack_version, selectedPack.actions.filter(action => !!action.clip_url).length)
+      return t.videoReady(selectedPack.pack_version, selectedPack.actions.filter(action => !!action.media_url).length)
     }
 
     if (selectedOutfit) {
@@ -241,7 +240,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     if (
       !selectedPack ||
       !selectedAction ||
-      !isVideoActionKey(selectedAction.key) ||
+      !isSystemActionKey(selectedAction.key) ||
       !selectedPack.can_regenerate ||
       globalBusy
     ) {
@@ -275,7 +274,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
       return { label: t.videoActionReview, hint: t.videoActionReviewHint, className: 'bg-amber-400' }
     }
 
-    if ((action.key === 'peek_left' || action.key === 'peek_right') && action.clipUrl && !action.peekGeometry) {
+    if ((action.key === 'peek_left' || action.key === 'peek_right') && action.mediaUrl && !action.peekGeometry) {
       return { label: t.videoPeekCalibrationFailed, hint: t.videoPeekCalibrationFailedHint, className: 'bg-amber-400' }
     }
 
@@ -283,7 +282,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
       return { label: t.videoActionFailed, hint: action.error ?? undefined, className: 'bg-danger-fg' }
     }
 
-    if (action.clipUrl) {
+    if (action.mediaUrl) {
       return { label: t.videoActionReady, className: 'bg-success' }
     }
 
@@ -299,7 +298,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   const canGenerateAction =
     !!selectedPack?.can_regenerate &&
     !!selectedAction &&
-    isVideoActionKey(selectedAction.key) &&
+    isSystemActionKey(selectedAction.key) &&
     !globalBusy &&
     !actionIsGenerating
 
@@ -474,8 +473,8 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                 </div>
 
                 <div className="mt-3 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-fill-trough">
-                  {selectedAction.clipUrl ? (
-                    <ActionPreview url={selectedAction.clipUrl} />
+                  {selectedAction.mediaUrl && selectedAction.mediaType ? (
+                    <ActionPreview type={selectedAction.mediaType} url={selectedAction.mediaUrl} />
                   ) : (
                     <div className="max-w-md px-5 text-center">
                       <p className="text-xs text-body">
@@ -519,11 +518,11 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                         onClick={() => requestActionGeneration(editing.feedback)}
                         type="button"
                       >
-                        {selectedAction.clipUrl ? t.videoRedoAction : t.videoGenMissingAction}
+                        {selectedAction.mediaUrl ? t.videoRedoAction : t.videoGenMissingAction}
                       </button>
                     </div>
                   </div>
-                ) : actionRetryWaiting && isVideoActionKey(selectedAction.key) ? (
+                ) : actionRetryWaiting && isSystemActionKey(selectedAction.key) ? (
                   <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                     <span className="text-[10px] text-muted" id="video-action-retry-wait-hint" role="status">
                       {t.videoActionRetryWaitHint}
@@ -544,7 +543,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                       onClick={() => setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })}
                       type="button"
                     >
-                      {selectedAction.clipUrl ? t.videoRedoAction : t.videoGenMissingAction}
+                      {selectedAction.mediaUrl ? t.videoRedoAction : t.videoGenMissingAction}
                     </button>
                   </div>
                 ) : null}

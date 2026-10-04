@@ -18,7 +18,7 @@ Array = NDArray[np.float32]
 def require_matting_model() -> Path:
     path = Path(SETTINGS.data_dir) / "models" / f"{SETTINGS.matting_model}.onnx"
     if not path.is_file():
-        raise VideoProcessError("抠像模型未就绪，请配置后再生成视频", internal=f"missing {path}")
+        raise VideoProcessError("抠像模型未就绪，请配置后再生成动作", internal=f"missing {path}")
     return path
 
 

@@ -1,9 +1,9 @@
 import type { Dictionary } from '@/shared/strings'
 
-import type { VideoActionKey } from './types'
+import type { SystemActionKey } from './types'
 
 /** 系统动作键的界面名称；组件传入 useStrings() 的字典以随语言切换重渲染。 */
-export function videoActionNames(appearance: Dictionary['living']['appearance']): Record<VideoActionKey, string> {
+export function systemActionNames(appearance: Dictionary['living']['appearance']): Record<SystemActionKey, string> {
   return {
     idle: appearance.videoIdle,
     walk_left: appearance.videoWalkLeft,

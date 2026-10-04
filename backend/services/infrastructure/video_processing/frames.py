@@ -1,4 +1,4 @@
-"""动作关键帧：保留原生 alpha，仅对不透明图抠像，并在视频提交前统一留白。"""
+"""动作姿态图：保留原生 alpha，仅对不透明图抠像，并按交付类型准备留白。"""
 
 from io import BytesIO
 from math import ceil
@@ -14,8 +14,17 @@ logger = get_logger(__name__)
 ACTION_FRAME_MARGIN = 0.08
 
 
-def prepare_action_frame(data: bytes) -> bytes:
+def _margin_canvas_size(size: int) -> int:
+    target = ceil(size / (1 - 2 * ACTION_FRAME_MARGIN))
+    while (target - size) // 2 < ceil(target * ACTION_FRAME_MARGIN):
+        target += 1
+    return target
+
+
+def prepare_action_frame(data: bytes, *, preserve_resolution: bool = False) -> bytes:
     with Image.open(BytesIO(data)) as source:
+        if getattr(source, "is_animated", False):
+            raise ActionMaterialRejectedError("动作姿态图必须为单张静态图片")
         image = source.convert("RGBA")
     alpha_min, alpha_max = image.getchannel("A").getextrema()
     if alpha_max < 128:
@@ -35,13 +44,21 @@ def prepare_action_frame(data: bytes) -> bytes:
     margin_x, margin_y = ceil(width * ACTION_FRAME_MARGIN), ceil(height * ACTION_FRAME_MARGIN)
     left, top, right, bottom = bounds
     if left < margin_x or top < margin_y or right > width - margin_x or bottom > height - margin_y:
-        foreground = image.crop(bounds)
-        foreground.thumbnail((width - 2 * margin_x, height - 2 * margin_y), Image.Resampling.LANCZOS)
-        image = Image.new("RGBA", (width, height))
-        image.alpha_composite(foreground, ((width - foreground.width) // 2, (height - foreground.height) // 2))
+        if preserve_resolution:
+            # 静态成品保留主体像素，留白不足时扩透明画布。
+            target_w = _margin_canvas_size(width) if left < margin_x or right > width - margin_x else width
+            target_h = _margin_canvas_size(height) if top < margin_y or bottom > height - margin_y else height
+            padded = Image.new("RGBA", (target_w, target_h))
+            padded.paste(image, ((target_w - width) // 2, (target_h - height) // 2))
+            image = padded
+        else:
+            foreground = image.crop(bounds)
+            foreground.thumbnail((width - 2 * margin_x, height - 2 * margin_y), Image.Resampling.LANCZOS)
+            image = Image.new("RGBA", (width, height))
+            image.alpha_composite(foreground, ((width - foreground.width) // 2, (height - foreground.height) // 2))
     output = BytesIO()
     image.save(output, format="PNG")
-    logger.info("action frame prepared", extra={"method": method, "width": width, "height": height})
+    logger.info("action frame prepared", extra={"method": method, "width": image.width, "height": image.height})
     return output.getvalue()
 
 

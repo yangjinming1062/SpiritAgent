@@ -218,7 +218,8 @@ def upgrade() -> None:
         sa.Column("key", sa.String(length=32), nullable=False),
         sa.Column("name", sa.String(length=64), server_default=sa.text("''"), nullable=False),
         sa.Column("system_slot", sa.String(length=16), server_default=sa.text("''"), nullable=False),
-        sa.Column("kind", sa.String(length=8), server_default=sa.text("'once'"), nullable=False),
+        sa.Column("media_type", sa.String(length=8), server_default=sa.text("'video'"), nullable=False),
+        sa.Column("kind", sa.String(length=8), nullable=True),
         sa.Column("motion_description", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("use_when", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
         sa.Column("avoid_when", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
@@ -240,12 +241,12 @@ def upgrade() -> None:
         sa.Column("result_json", sa.Text(), nullable=True),
         sa.Column("accepted_asset_json", sa.Text(), nullable=True),
         sa.Column("source_design_json", sa.Text(), nullable=True),  # 提案设计规格冻结。
-        sa.Column("video_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("video_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
-        sa.Column("target_duration_seconds", sa.Float(), server_default=sa.text("2.0"), nullable=False),
-        sa.Column("actual_duration_ms", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("frames", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("loopable", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("media_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("media_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("target_duration_seconds", sa.Float(), nullable=True),
+        sa.Column("actual_duration_ms", sa.Integer(), nullable=True),
+        sa.Column("frames", sa.Integer(), nullable=True),
+        sa.Column("loopable", sa.Boolean(), nullable=True),
         sa.Column("cover_path", sa.String(length=2048), nullable=True),
         sa.Column("hitmask_path", sa.String(length=2048), nullable=True),
         sa.Column("hitmask_grid_w", sa.Integer(), nullable=True),
@@ -260,6 +261,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("pack_id", "key", name="uq_companion_actions_pack_key"),
+        sa.CheckConstraint("media_type IN ('image', 'video')", name="ck_companion_actions_media_type"),
+        sa.CheckConstraint(
+            "media_type = 'video' OR (kind IS NULL AND target_duration_seconds IS NULL "
+            "AND actual_duration_ms IS NULL AND frames IS NULL AND loopable IS NULL AND hitmask_fps IS NULL)",
+            name="ck_companion_actions_image_parameters",
+        ),
     )
     op.create_index(
         "uq_companion_actions_pack_slot",
@@ -993,7 +1000,7 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("active"),
     )
-    # 每用户一个激活视频包：先停用后激活的翻转由此兜底。
+    # 每用户一个激活动作包：先停用后激活的翻转由此兜底。
     op.create_index(
         "uq_companion_action_packs_one_active",
         "companion_action_packs",

@@ -1,6 +1,6 @@
 # 动作编排
 
-负责提案受理、异步评审与播放协调，调用 `generation/video` 制作素材（生成收尾经 `domains/actions/publishing` 发布目录）。播放指令与账本同事务写 outbox，跨端契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。
+负责提案受理、异步评审与播放协调，调用 `generation/video` 按动作规格制作图片或视频（生成收尾经 `domains/actions/publishing` 发布目录）。动态表达当前仅制作和点播视频，系统槽位图片随客户端基础状态呈现。播放指令与账本同事务写 outbox，跨端契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。
 
 ## 提案处理
 
