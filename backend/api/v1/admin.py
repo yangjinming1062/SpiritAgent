@@ -68,7 +68,7 @@ from services.domains.backup import (
     write_backup_archive,
 )
 from services.domains.configuration import prepare_ai_config, public_ai_config
-from services.domains.conversation import SYSTEM_PRESET_CATALOG, ensure_system_conversations_for_user
+from services.domains.conversation import ensure_system_conversations_for_user
 from services.infrastructure.assets import delete_user_assets
 from services.infrastructure.llm import providers_supporting
 from sqlalchemy import select, update
@@ -199,13 +199,6 @@ async def update_system_settings(payload: dict[str, Any], db: DbSession) -> dict
     return get_system_settings_for_admin()
 
 
-def _nightly_log_item(row: NightlyActivityLog) -> NightlyActivityLogItem:
-    item = NightlyActivityLogItem.model_validate(row)
-    preset = SYSTEM_PRESET_CATALOG.get(row.system_preset_id)
-    item.system_preset_name = preset.name if preset else None
-    return item
-
-
 @router.get("/nightly-activity-logs", response_model=NightlyActivityLogListResponse)
 async def list_nightly_activity_logs(
     db: DbSession,
@@ -219,7 +212,7 @@ async def list_nightly_activity_logs(
     if target_date is not None:
         stmt = stmt.where(NightlyActivityLog.target_date == target_date)
     rows = (await db.execute(stmt)).scalars().all()
-    return NightlyActivityLogListResponse(items=[_nightly_log_item(row) for row in rows])
+    return NightlyActivityLogListResponse(items=[NightlyActivityLogItem.model_validate(row) for row in rows])
 
 
 @router.put("/{user_id}/model-config")

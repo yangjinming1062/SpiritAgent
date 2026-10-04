@@ -738,7 +738,6 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_intents_expires_at"), "companion_intents", ["expires_at"], unique=False)
     op.create_table(
         "nightly_activity_logs",
-        sa.Column("system_preset_id", sa.String(32), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("target_date", sa.Date(), nullable=False),
         sa.Column("status", sa.String(length=32), server_default=sa.text("'running'"), nullable=False),
@@ -749,7 +748,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "system_preset_id", "target_date", name="uq_nightly_activity_logs_scope_date"),
+        sa.UniqueConstraint("user_id", "target_date", name="uq_nightly_activity_logs_user_date"),
     )
     op.create_index(op.f("ix_nightly_activity_logs_user_id"), "nightly_activity_logs", ["user_id"], unique=False)
     op.create_index(

@@ -47,6 +47,7 @@ from services.domains.companion import (
     note_outreach_throttle,
     queue_companion_intent,
 )
+from services.domains.conversation import COMPANION_PRESET_ID, user_authored_conversation
 from services.domains.memory import list_memory_review_scopes, memory_review_backed_off, review_memories
 from services.infrastructure.desktop import MANAGER
 from services.infrastructure.event_store import run_outbox_gc
@@ -477,54 +478,55 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
     async with session_scope() as db:
         rows = (
             await db.execute(
-                select(Conversation.user_id, Conversation.system_preset_id, UserSetting.setting_value)
-                .join(User, User.id == Conversation.user_id)
+                select(User.id, UserSetting.setting_value)
                 .join(UserSetting, UserSetting.user_id == User.id)
                 .where(
                     User.is_active.is_(True),
-                    Conversation.is_automation.is_(False),
                     UserSetting.setting_key == "timezone",
-                )
-                .distinct(),
+                    or_(
+                        select(Conversation.id)
+                        .where(
+                            Conversation.user_id == User.id,
+                            Conversation.system_preset_id == COMPANION_PRESET_ID,
+                            user_authored_conversation(),
+                        )
+                        .exists(),
+                        select(Persona.id).where(Persona.user_id == User.id, Persona.is_complete.is_(True)).exists(),
+                    ),
+                ),
             )
         ).all()
-        companion_rows = (
-            await db.execute(
-                select(User.id, UserSetting.setting_value)
-                .join(Persona, Persona.user_id == User.id)
-                .join(UserSetting, UserSetting.user_id == User.id)
-                .where(User.is_active.is_(True), Persona.is_complete.is_(True), UserSetting.setting_key == "timezone"),
-            )
-        ).all()
-        known_scopes = {(uid, preset) for uid, preset, _ in rows}
-        rows = [
-            *rows,
-            *((uid, "companion", tz) for uid, tz in companion_rows if (uid, "companion") not in known_scopes),
-        ]
-        unfinished: dict[MemoryScope, list[NightlyActivityLog]] = {}
+        if not rows:
+            return
+        unfinished: dict[int, list[NightlyActivityLog]] = {}
         for log in await db.scalars(
             select(NightlyActivityLog)
-            .where(NightlyActivityLog.status.in_(("running", "failed")))
+            .where(
+                NightlyActivityLog.user_id.in_([user_id for user_id, _ in rows]),
+                NightlyActivityLog.status.in_(("running", "failed")),
+            )
             .order_by(NightlyActivityLog.target_date.desc()),
         ):
-            unfinished.setdefault(MemoryScope(log.user_id, log.system_preset_id), []).append(log)
-        for user_id, preset, timezone_name in rows:
+            unfinished.setdefault(log.user_id, []).append(log)
+        for user_id, timezone_name in rows:
             if is_user_in_maintenance(user_id):
                 continue
-            scope = MemoryScope(user_id, preset)
             zone = parse_timezone(decode_setting_value(timezone_name))
             if zone is None:
                 continue
+            scope = MemoryScope(user_id, COMPANION_PRESET_ID)
             local_now = now.astimezone(zone)
+            latest_date = local_now.date() - timedelta(days=1)
             recover = None
-            for log in unfinished.get(scope, ()):
-                if log.target_date < local_now.date() - timedelta(days=1) or recover is not None:
-                    if log.status == "running":
-                        log.status = "completed_with_errors"
-                        log.summary = "已超过恢复窗口或有更新日期优先恢复，未确认动作不再重放"
+            for log in unfinished.get(user_id, ()):
+                if log.target_date > latest_date:
+                    continue
+                if log.target_date < latest_date:
+                    log.status = "completed_with_errors"
+                    log.summary = "已超过恢复窗口，未确认动作不再重放"
                 else:
                     recover = log.target_date
-            target = recover or local_now.date() - timedelta(days=1)
+            target = recover or latest_date
             if recover is None and not _in_nightly_window(
                 local_now.hour,
                 SETTINGS.nightly_window_start_hour,

@@ -2312,8 +2312,6 @@ const LOG_STATUS = Object.freeze({
     skipped: ['跳过', 'muted'],
 });
 
-function logPresetLabel(r) { return r.system_preset_name || r.system_preset_id; }
-
 function renderLogs(data) {
     renderTable('#logList', 'logCount', data, {
         unit: '条记录', cols: 6, empty: '暂无夜间活动记录', emptyHint: '当夜间流水线运行后会在此展示',
@@ -2321,7 +2319,7 @@ function renderLogs(data) {
             const [statusLabel, statusTone] = Object.hasOwn(LOG_STATUS, r.status) ? LOG_STATUS[r.status] : [r.status, 'muted'];
             return `<tr style="cursor:pointer" onclick="openLogDetail(${r.id})">
                 <td class="td-id">${r.id}</td>
-                <td><div class="cell-strong">${esc(String(r.user_id))} · ${esc(logPresetLabel(r))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
+                <td><div class="cell-strong">用户 ${esc(String(r.user_id))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
                 <td>${esc(r.target_date)}</td>
                 <td>${pill(statusLabel, statusTone)}</td>
                 <td>${fmtDate(r.updated_at || r.created_at)}</td>
@@ -2335,7 +2333,7 @@ async function openLogDetail(id) {
     const items = tabCache.logs?.items ?? [];
     const item = items.find(r => r.id === id);
     if (!item) return;
-    $('#logDetailTitle').textContent = `日志 #${item.id} · 用户 ${item.user_id} · ${logPresetLabel(item)} · ${item.target_date}`;
+    $('#logDetailTitle').textContent = `日志 #${item.id} · 用户 ${item.user_id} · ${item.target_date}`;
     $('#logDetailBody').textContent = JSON.stringify(item, null, 2);
     openModal('logDetailModal');
 }

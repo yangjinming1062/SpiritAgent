@@ -27,6 +27,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import load_persona_definition
 from services.domains.conversation import (
+    COMPANION_PRESET_ID,
     UI_ONLY_SUBTYPES,
     message_text,
     user_authored_conversation,
@@ -223,7 +224,9 @@ async def _write_action_memory(
 
 
 async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
-    """为单作用域整理 target_date（用户本地日）：陪伴域额外执行自主规划与日记。每次执行（含跳过）写入一条 nightly_activity_logs 行供管理员查看。"""
+    """整理陪伴域的一个本地日，复用当日日志和已完成阶段。"""
+    if scope.system_preset_id != COMPANION_PRESET_ID:
+        raise ValueError(f"Nightly pipeline only runs for the companion preset, got {scope.system_preset_id!r}")
     user_id = scope.user_id
     validate_memory_scope(scope)
     try:
@@ -232,7 +235,6 @@ async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
                 await db.execute(
                     select(NightlyActivityLog).where(
                         NightlyActivityLog.user_id == user_id,
-                        NightlyActivityLog.system_preset_id == scope.system_preset_id,
                         NightlyActivityLog.target_date == target_date,
                     ),
                 )
@@ -241,7 +243,6 @@ async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
                 log = NightlyActivityLog(
                     user_id=user_id,
                     target_date=target_date,
-                    system_preset_id=scope.system_preset_id,
                     status="running",
                 )
                 db.add(log)
@@ -309,11 +310,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     except Exception as exc:
         logger.exception("nightly memory review failed", extra={"user_id": user_id})
         stages.append({"stage": "memory_review", "status": "error", "error": str(exc)})
-
-    if scope.system_preset_id != "companion":
-        has_errors = any(stage["status"] == "error" for stage in stages)
-        await _update_log(log_id, status="failed" if has_errors else "completed", payload={"stages": stages})
-        return not has_errors
 
     local_date_str = target_date.isoformat()
     # 当日对话与 7 天基线共用同一会话范围（本预设下用户本人的对话，含 IM），活动统计才可比较。
