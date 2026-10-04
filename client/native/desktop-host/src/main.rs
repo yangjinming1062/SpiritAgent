@@ -16,7 +16,7 @@ mod windows;
 type Result<T> = std::result::Result<T, String>;
 
 #[cfg(windows)]
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Bounds {
     x: i32,
@@ -27,6 +27,13 @@ struct Bounds {
 
 #[cfg(windows)]
 impl Bounds {
+    fn within_tolerance(self, other: Self, tolerance: u32) -> bool {
+        self.x.abs_diff(other.x) <= tolerance
+            && self.y.abs_diff(other.y) <= tolerance
+            && self.width.abs_diff(other.width) <= tolerance
+            && self.height.abs_diff(other.height) <= tolerance
+    }
+
     fn valid(&self) -> bool {
         self.width > 0
             && self.height > 0
@@ -43,6 +50,24 @@ impl Bounds {
 struct WindowSpec {
     handle: String,
     bounds: Bounds,
+    role: WindowRole,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WindowRole {
+    #[default]
+    Background,
+    Overlay,
+    Companion,
+}
+
+#[cfg(windows)]
+impl WindowRole {
+    fn is_topmost(self, companion_always_on_top: bool) -> bool {
+        self == Self::Overlay || (self == Self::Companion && companion_always_on_top)
+    }
 }
 
 #[cfg(windows)]
@@ -54,6 +79,8 @@ enum Command {
         parent_pid: u32,
         takeover: bool,
         windows: Vec<WindowSpec>,
+        work_area: Bounds,
+        companion_always_on_top: bool,
     },
     Heartbeat {
         id: u32,
@@ -61,6 +88,10 @@ enum Command {
     Focus {
         id: u32,
         handle: String,
+    },
+    CompanionLayer {
+        id: u32,
+        always_on_top: bool,
     },
     Stop {
         id: u32,
@@ -74,6 +105,7 @@ impl Command {
             Self::Start { id, .. }
             | Self::Heartbeat { id }
             | Self::Focus { id, .. }
+            | Self::CompanionLayer { id, .. }
             | Self::Stop { id } => *id,
         }
     }

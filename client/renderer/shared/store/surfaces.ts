@@ -35,7 +35,7 @@ export const $surfaceCompanions = atom<Record<SurfaceId, SurfaceCompanionState>>
   }
 })
 
-export type SurfaceRole = 'living' | 'workbench' | 'sprite' | 'desktop'
+export type SurfaceRole = 'living' | 'workbench' | 'sprite' | 'desktop' | 'desktop-companion'
 export const $surfaceRole = atom<SurfaceRole | null>(null)
 
 export function setSurfaceRole(role: SurfaceRole): void {
@@ -46,11 +46,11 @@ export function setSurfaceRole(role: SurfaceRole): void {
 export function isSpriteStageShown(): boolean {
   const presentation = $presentation.get()
 
-  if ($surfaceRole.get() === 'desktop') {
+  if ($surfaceRole.get() === 'desktop-companion') {
     return (
       presentation.stageOwner === 'desktop' &&
       presentation.status === 'active' &&
-      presentation.foreground &&
+      presentation.stageAvailable &&
       presentation.stageVisible
     )
   }
@@ -70,7 +70,11 @@ export function isCompanionStageVisible(): boolean {
 
   const role = $surfaceRole.get()
 
-  if (role === 'sprite' || role === 'desktop') {
+  if (role === 'desktop') {
+    return false
+  }
+
+  if (role === 'sprite' || role === 'desktop-companion') {
     return isSpriteStageShown()
   }
 

@@ -22,5 +22,5 @@ export {
   toggleVoiceBar
 } from './voice-bar'
 export { VoiceProviderBadge } from './voice-provider-badge'
-export { $voicePreparing } from './voice-state'
+export { $voicePreparing, setDesktopVoicePreparing } from './voice-state'
 export { checkVoiceValidity } from './voice-validity'

@@ -14,6 +14,13 @@ export interface PresentationState {
   failureReason: string | null
   supported: boolean
   foreground: boolean
+  stageAvailable: boolean
+  fullscreen: boolean
+  companionAlwaysOnTop: boolean
+  stageInsets: DesktopStageInsets
+  compatibilityWarning: string | null
+  companionActivity: DesktopCompanionActivityState
+  voicePreparing: boolean
   displayId: number | null
   displays: PresentationDisplay[]
   stageOwner: 'sprite' | 'desktop'
@@ -21,6 +28,29 @@ export interface PresentationState {
   stageEpoch: number
   revision: number
 }
+
+export type DesktopCompanionActivityState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'working' | 'disconnected'
+
+export const DESKTOP_COMPANION_ACTIVITY_PRIORITY: Record<DesktopCompanionActivityState, number> = {
+  idle: 10,
+  listening: 40,
+  thinking: 50,
+  speaking: 60,
+  working: 70,
+  disconnected: 100
+}
+
+export interface DesktopStageInsets {
+  top: number
+  bottom: number
+  left: number
+  right: number
+}
+
+export type DesktopCompanionInteraction =
+  | { kind: 'toggle-whisper' | 'hide' }
+  | { kind: 'menu'; x: number; y: number }
+  | { kind: 'drop'; paths: string[] }
 
 export interface DesktopBackground {
   image: string | null

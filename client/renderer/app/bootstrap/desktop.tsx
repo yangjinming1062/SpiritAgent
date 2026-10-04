@@ -2,17 +2,18 @@ import '../../styles.css'
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { StrictMode, useEffect } from 'react'
+import { StrictMode, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 
 import { ProxyGatewayPump } from '@/app/runtime/proxy-runtime'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
+import { useDesktopCompanionActivityPublisher } from '@/app/workflows/desktop-companion-activity'
 import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { NotificationStack } from '@/shared/components/notifications'
 import { initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
-import { CaptureWindowIdContext } from '@/shared/lib/interactive-regions'
+import { CaptureWindowIdContext, useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { log } from '@/shared/lib/log'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
@@ -24,10 +25,14 @@ import { AccountScopedRoot } from './account-scoped'
 import { initRenderer } from './init-renderer'
 
 function DesktopLifecycle(): null {
+  useDesktopCompanionActivityPublisher()
   useAccountLifecycle()
   const auth = useStore($auth)
 
   useEffect(() => initGlassBudgetGuard(), [])
+  useWindowMouseCapture(1, {
+    setIgnoreMouseEvents: payload => window.spiritagent.presentation.setIgnoreMouseEvents(payload)
+  })
 
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
@@ -48,8 +53,18 @@ function DesktopLifecycle(): null {
   return null
 }
 
-export function bootstrapDesktop(RootComponent: React.ComponentType): void {
-  setSurfaceRole('desktop')
+function DesktopNotifications(): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  useInteractiveRegion('desktop-notifications', ref)
+
+  return <NotificationStack regionRef={ref} />
+}
+
+export function bootstrapDesktop(
+  RootComponent: React.ComponentType,
+  role: 'desktop' | 'desktop-companion' = 'desktop'
+): void {
+  setSurfaceRole(role)
   initRenderer()
   setPrimaryGateway(new IpcGatewayProxy())
   const offUpdate = installUpdateBridge()
@@ -73,7 +88,7 @@ export function bootstrapDesktop(RootComponent: React.ComponentType): void {
               <DesktopLifecycle />
               <ProxyGatewayPump />
               <AccountScopedRoot RootComponent={RootComponent} />
-              <NotificationStack />
+              {role === 'desktop' && <DesktopNotifications />}
             </HashRouter>
           </HapticsProvider>
         </ErrorBoundary>

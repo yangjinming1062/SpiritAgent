@@ -161,7 +161,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
 
         if (findTarget && stage.stageOwner === 'desktop') {
           try {
-            const rect = p.headless || !stage.stageVisible || !stage.foreground ? null : await findTarget()
+            const rect = p.headless || !stage.stageVisible || !stage.stageAvailable ? null : await findTarget()
 
             if (rect && !call.cancelled) {
               const completed = await window.spiritagent.presentation.requestRitual({ callId, rect })
@@ -173,7 +173,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
                 !call.cancelled &&
                 currentStage.stageOwner === 'desktop' &&
                 currentStage.stageVisible &&
-                currentStage.foreground &&
+                currentStage.stageAvailable &&
                 currentStage.stageEpoch === stage.stageEpoch
               ) {
                 await window.spiritagent.runnerInvoke('system.click_at', {

@@ -107,7 +107,7 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
 
     if (
       !(await (
-        $surfaceRole.get() === 'desktop'
+        $surfaceRole.get() === 'desktop-companion'
           ? window.spiritagent.presentation.claimPlay
           : window.spiritagent.surface.claimPlay
       )({ playId: command.play_id, expiresAt: command.expires_at }))

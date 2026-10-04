@@ -1,7 +1,10 @@
 import type {
   DesktopAccount,
   DesktopBackground,
+  DesktopCompanionActivityState,
+  DesktopCompanionInteraction,
   DesktopNavigation,
+  DesktopStageInsets,
   DockCatalog,
   DockState,
   PresentationMode,
@@ -9,10 +12,14 @@ import type {
   StageActivity,
   StageRitualRequest
 } from './desktop-presentation'
+export { DESKTOP_COMPANION_ACTIVITY_PRIORITY } from './desktop-presentation'
 export type {
   DesktopAccount,
   DesktopBackground,
+  DesktopCompanionActivityState,
+  DesktopCompanionInteraction,
   DesktopNavigation,
+  DesktopStageInsets,
   DockCatalog,
   DockCatalogItem,
   DockCatalogSource,
@@ -392,9 +399,17 @@ export interface DesktopGatewayRpcResponse {
 
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {
+  'spiritagent:presentation:companion-activity': (activity: {
+    state: DesktopCompanionActivityState
+    voicePreparing: boolean
+    authSessionId: string
+  }) => void
   'spiritagent:presentation:ritual-cancel': (callId: string) => void
   'spiritagent:presentation:get-stage-activity': () => StageActivity
-  'spiritagent:presentation:set-stage-visible': (visible: boolean) => void
+  'spiritagent:presentation:set-stage-layout': (layout: { visible: boolean; insets: DesktopStageInsets }) => void
+  'spiritagent:presentation:set-companion-topmost': (enabled: boolean) => Promise<PresentationState>
+  'spiritagent:presentation:set-ignore-mouse-events': (payload: { ignore: boolean; forward?: boolean }) => void
+  'spiritagent:presentation:companion-interaction': (interaction: DesktopCompanionInteraction) => void
   'spiritagent:presentation:get-state': () => Promise<PresentationState>
   'spiritagent:presentation:set-mode': (mode: PresentationMode) => Promise<PresentationState>
   'spiritagent:presentation:set-display': (id: number) => Promise<PresentationState>
@@ -593,6 +608,7 @@ export interface IpcInvokeContract {
 
 // 2. 主进程向渲染进程推送事件（通过 webContents.send / ipcRenderer.on）
 export interface IpcEventContract {
+  'spiritagent:presentation:companion-interaction': [payload: DesktopCompanionInteraction]
   'spiritagent:presentation:ritual-cancelled': [payload: { callId: string; epoch: number }]
   'spiritagent:presentation:changed': [payload: PresentationState]
   'spiritagent:dock:changed': [payload: DockState]
@@ -637,9 +653,13 @@ type IpcSendChannel = keyof IpcSendContract
 // 运行时 channel 常量。用扁平键(camelCase)避免 `Record<string, Record<string, ...>>` 守卫无法适配混合扁平/嵌套 channel 名的结构问题。每个叶子字符串都必须是对应契约接口的合法 key,任何拼写错误立即在 `satisfies` 检查处报错。在 main + preload 中以 `IPC.invoke.authActivate` 等方式使用,完全消除字面量字符串。
 export const IPC = {
   invoke: {
+    presentationCompanionActivity: 'spiritagent:presentation:companion-activity',
     presentationRitualCancel: 'spiritagent:presentation:ritual-cancel',
     presentationGetStageActivity: 'spiritagent:presentation:get-stage-activity',
-    presentationSetStageVisible: 'spiritagent:presentation:set-stage-visible',
+    presentationSetStageLayout: 'spiritagent:presentation:set-stage-layout',
+    presentationSetCompanionTopmost: 'spiritagent:presentation:set-companion-topmost',
+    presentationSetIgnoreMouseEvents: 'spiritagent:presentation:set-ignore-mouse-events',
+    presentationCompanionInteraction: 'spiritagent:presentation:companion-interaction',
     presentationGetState: 'spiritagent:presentation:get-state',
     presentationSetMode: 'spiritagent:presentation:set-mode',
     presentationSetDisplay: 'spiritagent:presentation:set-display',
@@ -736,6 +756,7 @@ export const IPC = {
     updateGetState: 'spiritagent:update:get-state'
   } as const satisfies Record<string, IpcChannel>,
   event: {
+    companionInteraction: 'spiritagent:presentation:companion-interaction',
     presentationRitualCancelled: 'spiritagent:presentation:ritual-cancelled',
     presentationChanged: 'spiritagent:presentation:changed',
     dockChanged: 'spiritagent:dock:changed',

@@ -55,21 +55,23 @@
 
 [伙伴偏好](lifecycle/surface-companion.ts)在创建窗口前读取，独立保存在本机，不经云同步；原子保存失败向调用方报告，内存继续保留原值。侧边伙伴的偏好与实际可见状态、桌面精灵窗的实际显隐 `spriteVisible`（窗口存在、未隐藏且未最小化）都经 [IPC 快照](../shared/ipc/contracts.ts)传递，渲染层不得用迟到快照覆盖较新版本。精灵窗每次创建都经 [tray.ts](lifecycle/tray.ts) 的 `installCloseInterceptor` 在显示、隐藏、最小化与还原时发布快照，托盘、快捷键与右键隐藏无需各自发布；精灵窗关闭了后台节流，页面可见性 API 不反映隐藏。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
 
-[sprite.ts](ipc/sprite.ts)管理精灵窗位置（保存为 Home 下的 `companion-position.json`）、窗口场景快照、目标换算与跨屏移动。场景快照与目标换算接受精灵宿主或交互桌面 sender，使用当前舞台窗口的坐标；跟随目标跨屏（`moveToDisplay`）仅允许精灵窗拥有舞台时执行。拖拽跨屏（`moveToCursorDisplay`）与精灵位置读写保持原入口。默认显示比例经它广播到各窗口。
+[sprite.ts](ipc/sprite.ts)管理精灵窗位置（保存为 Home 下的 `companion-position.json`）、窗口场景快照、目标换算与跨屏移动。场景快照与目标换算接受精灵宿主或桌面精灵舞台 sender，使用当前舞台窗口的坐标；跟随目标跨屏（`moveToDisplay`）仅允许精灵窗拥有舞台时执行。拖拽跨屏（`moveToCursorDisplay`）与精灵位置读写保持原入口。默认显示比例经它广播到各窗口。
 
 [快捷键](ipc/shortcuts.ts)返回注册冲突与失败。Windows 关窗隐藏到托盘，macOS 保留 Dock；多屏、透明命中见 [Client](../README.md#窗口与主题)，用户行为见 [DESIGN](../../docs/DESIGN.md#窗口与会话)。
 
 ## 桌面承载与恢复
 
-[desktop-presentation.ts](lifecycle/desktop-presentation.ts)管理统一 desktop 生命周期、交互显示器、舞台所有权与受控 IPC；原 living／workbench 枚举只代表窗口入口。主屏使用完整 preload，副屏使用 [preload-background.ts](preload-background.ts)，只接收主屏取得的背景，不具备鉴权、配置、启动器或网关能力。desktop 可调用配置与安装更新，网关票及 Runner 派发仍只授予精灵宿主。
+[desktop-presentation.ts](lifecycle/desktop-presentation.ts)管理 desktop 生命周期、交互屏、舞台所有权与受控 IPC；living／workbench 只代表窗口入口。交互界面与精灵舞台使用完整 preload，账户、配置、更新与启动器仅授权交互界面；各屏背景使用 [preload-background.ts](preload-background.ts)，只接收背景数据。网关票及 Runner 派发仍只授予精灵宿主。
 
 呈现切换 IPC 允许精灵宿主、生活空间、工作台和交互桌面，副屏不具有切换能力；托盘复用主进程同一串行切换入口，菜单按实际模式与准备状态更新。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
 
-[explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../native/desktop-host/README.md)。全部主副屏先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
+[explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../native/desktop-host/README.md)。界面、精灵舞台及全部背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
 
-挂载成功后用 `showInactive()` 同步 Electron 可见状态。输入焦点只由真实主指针释放请求；主进程在自身和 helper 队列执行时核对交互窗口、账户、舞台代次与锁屏，原生侧复核当前系统前台。前台广播不自动抢焦点，渲染层手势判断不能代替权限校验；焦点请求超时终止 host 并异常恢复，防止迟到请求继续改动焦点。
+桌面窗口固定页面缩放，使顶栏和 Dock 的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。挂载后用 `showInactive()` 同步 Electron 可见状态；原生层级、几何复验与工作区恢复由 [helper](../native/desktop-host/README.md#工作区与层级)负责。
 
-账户失效、呈现切换、显示器变化、渲染器失败与退出都先恢复系统，再销毁桌面窗口。准备期间的换号、退出、拔屏或 renderer 失败立即使当前接管失效；界面就绪与页面加载共享限时预算。失去前台取消仪式，迟到回执不能恢复执行资格。休眠或唤醒时恢复窗口模式并保留桌面偏好，须由用户重新选择桌面模式，避免接管 guardian 已恢复的系统窗口。
+输入焦点只由真实主指针释放或精灵交互请求；主进程在自身和 helper 队列执行时核对窗口、账户、舞台代次与锁屏，原生侧复核系统前台。前台广播不自动抢焦点，渲染层手势判断不能代替权限校验。焦点请求超时终止 host 并恢复，防止迟到请求继续改动焦点；视图资格与状态同步见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+
+账户失效、呈现切换、显示器变化、渲染器失败与退出都先恢复系统，再销毁桌面窗口。准备期间的换号、退出、拔屏或 renderer 失败立即使当前接管失效；界面就绪与页面加载共享限时预算。舞台失去执行资格时取消仪式，迟到回执不能恢复资格。休眠或唤醒时恢复窗口模式并保留桌面偏好，须由用户重新选择桌面模式，避免接管 guardian 已恢复的系统窗口。
 
 启动时先处理遗留恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号、兼容与限制见 [helper](../native/desktop-host/README.md#恢复)。
 

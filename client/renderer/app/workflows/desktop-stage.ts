@@ -31,10 +31,6 @@ export function useDesktopStage({
   }, [top, bottom, left, right])
 
   useEffect(() => {
-    void window.spiritagent.presentation.setStageVisible(visible).catch(error => log.warn('desktop-stage', error))
-  }, [visible])
-
-  useEffect(() => {
     if (!enabled) {
       return
     }
@@ -68,12 +64,12 @@ export function useDesktopStage({
   }, [enabled])
 
   useEffect(() => {
-    if (!enabled || !visible || !presentation.foreground) {
+    if (!enabled || !visible || !presentation.stageAvailable) {
       return
     }
 
     return startAutonomyProvision()
-  }, [enabled, visible, presentation.foreground, presentation.stageEpoch])
+  }, [enabled, visible, presentation.stageAvailable, presentation.stageEpoch])
 
   useEffect(() => {
     if (!enabled) {
@@ -117,7 +113,7 @@ export function useDesktopStage({
           Promise.resolve(
             prepared &&
               !controller.signal.aborted &&
-              $presentation.get().foreground &&
+              $presentation.get().stageAvailable &&
               $presentation.get().stageEpoch === epoch
           ),
         {

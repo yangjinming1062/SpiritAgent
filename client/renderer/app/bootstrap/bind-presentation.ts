@@ -10,9 +10,11 @@ import {
   bindProactiveLineSpeaker,
   setSpriteState
 } from '@/modules/character'
+import { setConversationVoiceSink } from '@/modules/conversation'
 import { openMediaViewer } from '@/modules/media'
 import { speakScripted } from '@/modules/speech'
 import { bindPresentationPorts } from '@/shared/presentation-ports'
+import { $surfaceRole } from '@/shared/store/surfaces'
 
 // 端口与工作流装配：每个 renderer 入口在渲染前显式调用一次。角色与语音实现经呈现端口注入，会话语音投影由会话×语音工作流接手。
 export function bindPresentation(): void {
@@ -27,8 +29,18 @@ export function bindPresentation(): void {
     speakScripted
   })
 
-  bindConversationSpeech()
-  bindConversationActivity()
+  if ($surfaceRole.get() === 'desktop-companion') {
+    // 共享模块的账户清理仍会回收默认 runtime；舞台不装配会话语音和活动投影。
+    setConversationVoiceSink({
+      cancel: () => undefined,
+      enqueue: () => undefined,
+      setVisible: () => undefined,
+      setRecording: () => undefined
+    })
+  } else {
+    bindConversationSpeech()
+    bindConversationActivity()
+  }
 
   // 仪式行走等角色行为的主动性台词经工作流送达（角色模块不依赖应用层）。
   bindProactiveLineSpeaker(speakProactive)

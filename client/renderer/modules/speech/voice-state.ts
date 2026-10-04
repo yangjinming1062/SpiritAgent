@@ -1,8 +1,17 @@
-import { atom } from 'nanostores'
+import { atom, computed } from 'nanostores'
 
-// 跨 companion renderer 共享的语音准备状态。引用计数持有：begin/end 成对调用，仅在计数归零时发出 false ——直接 set(true) 会让订阅者误判为「永远在准备」。
+// 本地准备状态以引用计数管理，与主进程镜像的状态合并。
 
-export const $voicePreparing = atom<boolean>(false)
+const $localVoicePreparing = atom(false)
+const $desktopVoicePreparing = atom(false)
+export const $voicePreparing = computed(
+  [$localVoicePreparing, $desktopVoicePreparing],
+  (local, desktop) => local || desktop
+)
+
+export function setDesktopVoicePreparing(preparing: boolean): void {
+  $desktopVoicePreparing.set(preparing)
+}
 
 let activeCount = 0
 
@@ -10,7 +19,7 @@ export function beginVoicePreparing(): void {
   activeCount++
 
   if (activeCount === 1) {
-    $voicePreparing.set(true)
+    $localVoicePreparing.set(true)
   }
 }
 
@@ -22,6 +31,6 @@ export function endVoicePreparing(): void {
   activeCount--
 
   if (activeCount === 0) {
-    $voicePreparing.set(false)
+    $localVoicePreparing.set(false)
   }
 }

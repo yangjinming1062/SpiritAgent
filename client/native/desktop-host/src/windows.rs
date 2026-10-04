@@ -1,4 +1,4 @@
-use crate::{Bounds, Command, Result, WindowSpec, commands, emit};
+use crate::{Bounds, Command, Result, WindowRole, WindowSpec, commands, emit};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs::{self, File};
@@ -27,7 +27,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 const MAX_JOURNAL_BYTES: u64 = 1_048_576;
 const LEASE_DURATION: Duration = Duration::from_secs(10);
+const OVERLAY_GEOMETRY_TIMEOUT: Duration = Duration::from_secs(2);
 const HOTKEY_ID: i32 = 0x5341;
+
+mod workspace;
+use workspace::{RestoreWorkArea, Workspace};
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -303,6 +307,8 @@ struct RestoreWindow {
     style: i64,
     ex_style: i64,
     bounds: Bounds,
+    #[serde(default)]
+    role: WindowRole,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -333,6 +339,8 @@ struct Journal {
     host_created: u64,
     shell: Vec<Identity>,
     windows: Vec<RestoreWindow>,
+    #[serde(default)]
+    work_area: Option<RestoreWorkArea>,
 }
 
 fn sidecar(path: &Path, suffix: &str) -> PathBuf {
@@ -399,7 +407,7 @@ fn read_journal(path: &Path) -> Result<Option<Journal>> {
 }
 
 fn validate_journal(journal: &Journal) -> Result<()> {
-    if journal.version != 1
+    if ![1, 2].contains(&journal.version)
         || journal.windows.is_empty()
         || journal.windows.len() > 32
         || journal.shell.len() > 128
@@ -407,6 +415,9 @@ fn validate_journal(journal: &Journal) -> Result<()> {
         return Err("unsupported desktop journal".into());
     }
     let mut handles = std::collections::HashSet::new();
+    if let Some(area) = &journal.work_area {
+        area.validate()?;
+    }
     if journal.session.is_empty()
         || journal.session.len() > 128
         || journal.windows.iter().any(|entry| {
@@ -514,15 +525,8 @@ fn per_monitor_wallpaper() -> bool {
         }
         let mut monitor = null_mut();
         let subkey = String::from_utf16_lossy(&name[..length as usize]);
-        if unsafe {
-            RegOpenKeyExW(
-                settings,
-                wide(&subkey).as_ptr(),
-                0,
-                KEY_READ,
-                &mut monitor,
-            )
-        } == 0
+        if unsafe { RegOpenKeyExW(settings, wide(&subkey).as_ptr(), 0, KEY_READ, &mut monitor) }
+            == 0
         {
             let _close = OwnedKey(monitor);
             let mut value = [0u16; 256];
@@ -572,7 +576,10 @@ fn refresh_wallpaper() {
     {
         return;
     }
-    let end = source.iter().position(|&unit| unit == 0).unwrap_or(MAX_WALLPAPER);
+    let end = source
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(MAX_WALLPAPER);
     let path = PathBuf::from(String::from_utf16_lossy(&source[..end]));
     if slideshow_wallpaper() || per_monitor_wallpaper() || !path.is_absolute() || !path.is_file() {
         return;
@@ -716,12 +723,7 @@ fn monitor_bounds(requested: Bounds) -> Result<Bounds> {
             .checked_sub(info.rcMonitor.top)
             .ok_or("invalid monitor height")?,
     };
-    if !bounds.valid()
-        || bounds.x.abs_diff(requested.x) > 2
-        || bounds.y.abs_diff(requested.y) > 2
-        || bounds.width.abs_diff(requested.width) > 2
-        || bounds.height.abs_diff(requested.height) > 2
-    {
+    if !bounds.valid() || !bounds.within_tolerance(requested, 2) {
         return Err("desktop bounds must cover one complete physical monitor".into());
     }
     Ok(bounds)
@@ -816,6 +818,8 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
     }
     let window = saved.identity.window();
     let layer = worker.window();
+    let mouse_passthrough =
+        unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as u32 & WS_EX_TRANSPARENT;
     let original_dpi = unsafe { GetWindowDpiAwarenessContext(window) };
     if original_dpi.is_null()
         || unsafe {
@@ -833,7 +837,8 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
     set_long(
         window,
         GWL_EXSTYLE,
-        (saved.ex_style as u32 & !(WS_EX_APPWINDOW | WS_EX_TOPMOST)) as isize,
+        ((saved.ex_style as u32 & !(WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT))
+            | mouse_passthrough) as isize,
     )?;
     set_parent(window, layer)?;
     if unsafe { AreDpiAwarenessContextsEqual(original_dpi, GetWindowDpiAwarenessContext(window)) }
@@ -920,6 +925,43 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
     Ok(())
 }
 
+fn raise_window(saved: &RestoreWindow, bounds: Bounds) -> Result<()> {
+    if !saved.identity.valid() {
+        return Err("desktop window identity changed".into());
+    }
+    let window = saved.identity.window();
+    let mouse_passthrough =
+        unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as u32 & WS_EX_TRANSPARENT;
+    set_long(
+        window,
+        GWL_STYLE,
+        (saved.style as u32 & !WS_CHILD | WS_POPUP) as isize,
+    )?;
+    set_parent(window, null_mut())?;
+    set_long(
+        window,
+        GWL_EXSTYLE,
+        ((saved.ex_style as u32 & !(WS_EX_APPWINDOW | WS_EX_TRANSPARENT))
+            | WS_EX_TOOLWINDOW
+            | mouse_passthrough) as isize,
+    )?;
+    if unsafe {
+        SetWindowPos(
+            window,
+            HWND_TOPMOST,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+    } == 0
+    {
+        return Err(failure("raise desktop window"));
+    }
+    Ok(())
+}
+
 fn restore(path: &Path, expected_session: Option<&str>) -> Result<bool> {
     let _lock = MutexGuard::restoration()?;
     restore_locked(path, expected_session)
@@ -935,6 +977,11 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
     let mut failures = Vec::new();
     let mut hosted = false;
     if !matches!(journal.phase, JournalPhase::Prepared) {
+        if let Some(area) = &journal.work_area {
+            if let Err(error) = area.restore() {
+                failures.push(error);
+            }
+        }
         // 先恢复系统界面，避免应用窗口复位阻断桌面可用性。
         for item in &journal.shell {
             if !item.valid()
@@ -1111,7 +1158,10 @@ struct Session {
     path: PathBuf,
     last_heartbeat: Instant,
     lease_number: u64,
-    foreground: Option<bool>,
+    foreground: Option<(bool, bool, bool)>,
+    overlay_geometry_pending: Vec<Option<Instant>>,
+    workspace: Workspace,
+    companion_always_on_top: bool,
     takeover: bool,
     last_shell_scan: Instant,
     stopped: bool,
@@ -1134,13 +1184,39 @@ impl Drop for InputAttachment {
 }
 
 impl Session {
-    fn start(path: &Path, parent_pid: u32, takeover: bool, specs: &[WindowSpec]) -> Result<Self> {
+    fn start(
+        path: &Path,
+        parent_pid: u32,
+        takeover: bool,
+        specs: &[WindowSpec],
+        work_area: Bounds,
+        companion_always_on_top: bool,
+    ) -> Result<Self> {
         if actual_parent()? != parent_pid {
             return Err("desktop windows must belong to the helper's real parent process".into());
         }
         if specs.is_empty() || specs.len() > 32 {
             return Err("desktop requires between 1 and 32 windows".into());
         }
+        if specs
+            .iter()
+            .filter(|w| w.role == WindowRole::Overlay)
+            .count()
+            != 1
+            || specs
+                .iter()
+                .filter(|w| w.role == WindowRole::Companion)
+                .count()
+                != 1
+            || !specs.iter().any(|w| w.role == WindowRole::Background)
+        {
+            return Err("desktop requires backgrounds, one overlay and one companion".into());
+        }
+        let overlay = specs
+            .iter()
+            .find(|spec| spec.role == WindowRole::Overlay)
+            .ok_or("desktop overlay is missing")?;
+        let mut workspace = Workspace::prepare(work_area, overlay.bounds, parent_pid, takeover)?;
         if read_journal(path)?.is_some() {
             return Err("an unrecovered desktop journal exists".into());
         }
@@ -1185,11 +1261,12 @@ impl Session {
                 style: unsafe { GetWindowLongPtrW(window, GWL_STYLE) } as i64,
                 ex_style: unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as i64,
                 bounds: rectangle(window)?,
+                role: spec.role,
             });
         }
         let worker = worker()?;
         let mut journal = Journal {
-            version: 1,
+            version: 2,
             phase: JournalPhase::Prepared,
             session: format!(
                 "{host_pid}-{}",
@@ -1208,6 +1285,7 @@ impl Session {
                 Vec::new()
             },
             windows,
+            work_area: takeover.then(|| workspace.original.clone()),
         };
         let restoring = RestoringSignal::new(&journal)?;
         if let Some(directory) = path.parent() {
@@ -1300,7 +1378,18 @@ impl Session {
             journal.phase = JournalPhase::Attaching;
             journal.save(path)?;
             for (saved, target) in journal.windows.iter().zip(&targets) {
-                attach(saved, &worker, *target)?;
+                if saved.role != WindowRole::Overlay {
+                    if saved.role == WindowRole::Companion && companion_always_on_top {
+                        raise_window(saved, *target)?;
+                    } else {
+                        attach(saved, &worker, *target)?;
+                    }
+                }
+            }
+            for (saved, target) in journal.windows.iter().zip(&targets) {
+                if saved.role == WindowRole::Overlay {
+                    raise_window(saved, *target)?;
+                }
             }
             if takeover {
                 for item in &journal.shell {
@@ -1309,6 +1398,7 @@ impl Session {
                     }
                     visibility(item, false)?;
                 }
+                workspace.activate()?;
             }
             journal.phase = JournalPhase::Active;
             journal.save(path)?;
@@ -1319,6 +1409,7 @@ impl Session {
             let restored = restore(path, Some(&journal.session));
             return Err(finish_failed_start(error, restored, &mut guardian, false));
         }
+        let overlay_geometry_pending = vec![None; targets.len()];
         Ok(Self {
             journal,
             worker,
@@ -1328,6 +1419,9 @@ impl Session {
             last_heartbeat: Instant::now(),
             lease_number: 0,
             foreground: None,
+            overlay_geometry_pending,
+            workspace,
+            companion_always_on_top,
             takeover,
             last_shell_scan: Instant::now(),
             stopped: false,
@@ -1344,8 +1438,24 @@ impl Session {
             format!("{}:{}", self.journal.session, self.lease_number).as_bytes(),
         )?;
         self.last_heartbeat = Instant::now();
-        self.foreground = None;
         Ok(())
+    }
+
+    fn companion_layer(&mut self, always_on_top: bool) -> Result<()> {
+        let _transaction = MutexGuard::restoration()?;
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
+            if saved.role == WindowRole::Companion {
+                if always_on_top {
+                    raise_window(saved, *target)?;
+                } else {
+                    attach(saved, &self.worker, *target)?;
+                }
+            }
+        }
+        self.companion_always_on_top = always_on_top;
+        self.foreground = None;
+        self.poll()
     }
 
     fn focus(&self, handle: &str) -> Result<()> {
@@ -1368,7 +1478,12 @@ impl Session {
             if !self.takeover
                 || !saved.identity.valid()
                 || !self.worker.valid()
-                || unsafe { GetParent(window) } != self.worker.window()
+                || unsafe { GetParent(window) }
+                    != if saved.role.is_topmost(self.companion_always_on_top) {
+                        null_mut()
+                    } else {
+                        self.worker.window()
+                    }
                 || unsafe { IsWindowVisible(window) } == 0
             {
                 return Err("desktop focus target is no longer an active stage".into());
@@ -1439,6 +1554,9 @@ impl Session {
             keys_up()?;
             unsafe {
                 SetLastError(0);
+                if saved.role == WindowRole::Overlay && SetForegroundWindow(window) == 0 {
+                    return Err(failure("activate desktop interface"));
+                }
                 SetFocus(window);
             }
             let focus = unsafe { GetFocus() };
@@ -1450,7 +1568,8 @@ impl Session {
         drop(attached);
         focused?;
         validate()?;
-        if unsafe { GetGUIThreadInfo(foreground_thread, &mut info) } == 0 {
+        let active_thread = unsafe { GetWindowThreadProcessId(GetForegroundWindow(), null_mut()) };
+        if unsafe { GetGUIThreadInfo(active_thread, &mut info) } == 0 {
             return Err(failure("desktop focus verification"));
         }
         if info.hwndFocus != window && unsafe { IsChild(window, info.hwndFocus) } == 0 {
@@ -1490,10 +1609,17 @@ impl Session {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
-                attach(saved, &replacement, *target)?;
+                if !saved.role.is_topmost(self.companion_always_on_top) {
+                    attach(saved, &replacement, *target)?;
+                }
             }
             self.refresh_shell()?;
             self.worker = replacement;
+        }
+        {
+            let _transaction = MutexGuard::restoration()?;
+            require_session(&self.path, &self.journal.session, &self.restoring)?;
+            self.workspace.poll()?;
         }
         if self.takeover && self.last_shell_scan.elapsed() >= Duration::from_secs(1) {
             let _transaction = MutexGuard::restoration()?;
@@ -1501,15 +1627,120 @@ impl Session {
             self.refresh_shell()?;
         }
         let foreground = unsafe { GetForegroundWindow() };
-        let active = (foreground == self.worker.window()
+        let desktop_active = (foreground == self.worker.window()
             && (self.takeover || self.worker.class != "Progman"))
             || self.journal.windows.iter().any(|saved| {
-                foreground == saved.identity.window()
-                    || unsafe { IsChild(saved.identity.window(), foreground) } != 0
+                saved.role != WindowRole::Overlay
+                    && (foreground == saved.identity.window()
+                        || unsafe { IsChild(saved.identity.window(), foreground) } != 0)
             });
-        if self.foreground != Some(active) {
-            self.foreground = Some(active);
-            emit(json!({ "event": "foreground", "active": active }));
+        let active = self.journal.windows.iter().any(|saved| {
+            saved.role == WindowRole::Overlay
+                && (foreground == saved.identity.window()
+                    || unsafe { GetAncestor(foreground, GA_ROOTOWNER) } == saved.identity.window())
+        });
+        let fullscreen = self.workspace.fullscreen(foreground);
+        let stage_available =
+            !fullscreen && (self.companion_always_on_top || desktop_active || active);
+        let state = (active && !fullscreen, stage_available, fullscreen);
+        // 显示与位置消息会交错；跨轮复验异步校正的结果，沿用显示器的两像素 DPI 容差。
+        let mut overlays_changed = self.foreground.map(|value| value.2) != Some(fullscreen);
+        for ((saved, target), pending) in self
+            .journal
+            .windows
+            .iter()
+            .zip(&self.targets)
+            .zip(&mut self.overlay_geometry_pending)
+        {
+            if !saved.role.is_topmost(self.companion_always_on_top) {
+                *pending = None;
+                continue;
+            }
+            overlays_changed |=
+                (unsafe { IsWindowVisible(saved.identity.window()) } != 0) == fullscreen;
+            if fullscreen || unsafe { IsIconic(saved.identity.window()) } != 0 {
+                *pending = None;
+                continue;
+            }
+            let actual = rectangle(saved.identity.window())?;
+            if actual.within_tolerance(*target, 2) {
+                *pending = None;
+            } else {
+                if pending.get_or_insert_with(Instant::now).elapsed() >= OVERLAY_GEOMETRY_TIMEOUT {
+                    return Err(format!(
+                        "desktop overlay geometry did not settle: actual {actual:?}, expected {target:?}"
+                    ));
+                }
+                overlays_changed = true;
+            }
+        }
+        if overlays_changed {
+            let _transaction = MutexGuard::restoration()?;
+            require_session(&self.path, &self.journal.session, &self.restoring)?;
+            for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
+                if saved.role.is_topmost(self.companion_always_on_top) {
+                    visibility(&saved.identity, !fullscreen)?;
+                    if !fullscreen
+                        && unsafe {
+                            SetWindowPos(
+                                saved.identity.window(),
+                                HWND_TOPMOST,
+                                target.x,
+                                target.y,
+                                target.width,
+                                target.height,
+                                SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+                            )
+                        } == 0
+                    {
+                        return Err(failure("restore desktop overlay layer"));
+                    }
+                }
+            }
+        }
+        if !fullscreen && self.companion_always_on_top {
+            let overlay = self
+                .journal
+                .windows
+                .iter()
+                .find(|saved| saved.role == WindowRole::Overlay)
+                .ok_or("desktop overlay is missing")?
+                .identity
+                .window();
+            let companion = self
+                .journal
+                .windows
+                .iter()
+                .find(|saved| saved.role == WindowRole::Companion)
+                .ok_or("desktop companion is missing")?
+                .identity
+                .window();
+            if (foreground == companion || unsafe { IsChild(companion, foreground) } != 0)
+                && unsafe { GetWindow(companion, GW_HWNDPREV) } != overlay
+            {
+                let _transaction = MutexGuard::restoration()?;
+                require_session(&self.path, &self.journal.session, &self.restoring)?;
+                if unsafe {
+                    SetWindowPos(
+                        companion,
+                        overlay,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    )
+                } == 0
+                {
+                    return Err(failure("order desktop companion below interface"));
+                }
+            }
+        }
+        if self.foreground != Some(state) {
+            self.foreground = Some(state);
+            emit(
+                json!({ "event": "foreground", "active": state.0, "stage_available": state.1, "fullscreen": state.2 }),
+            );
         }
         Ok(())
     }
@@ -1567,6 +1798,13 @@ pub fn host(path: &Path) -> Result<()> {
     let mut session: Option<Session> = None;
     emit(json!({ "event": "host_ready" }));
     loop {
+        let mut message: MSG = unsafe { zeroed() };
+        while unsafe { PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
+            unsafe {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
         match receiver.recv_timeout(Duration::from_millis(200)) {
             Ok(Ok(command)) => {
                 let id = command.id();
@@ -1576,12 +1814,22 @@ pub fn host(path: &Path) -> Result<()> {
                         parent_pid,
                         takeover,
                         windows,
+                        work_area,
+                        companion_always_on_top,
                         ..
                     } => {
                         if session.is_some() {
                             Err("desktop host is already running".into())
                         } else {
-                            Session::start(path, parent_pid, takeover, &windows).map(|started| {
+                            Session::start(
+                                path,
+                                parent_pid,
+                                takeover,
+                                &windows,
+                                work_area,
+                                companion_always_on_top,
+                            )
+                            .map(|started| {
                                 session = Some(started);
                             })
                         }
@@ -1594,6 +1842,10 @@ pub fn host(path: &Path) -> Result<()> {
                         .as_ref()
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(|active| active.focus(&handle)),
+                    Command::CompanionLayer { always_on_top, .. } => session
+                        .as_mut()
+                        .ok_or("desktop host is not running".into())
+                        .and_then(|active| active.companion_layer(always_on_top)),
                     Command::Stop { .. } => {
                         exiting = true;
                         session.as_mut().map_or(Ok(()), Session::stop)

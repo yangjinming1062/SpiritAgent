@@ -299,11 +299,13 @@ presentation = createDesktopPresentation({
   closeSurfaces: () => surfaces?.closeSurface() ?? Promise.resolve(),
   restoreSprite: () => {
     if (!appQuit.isQuitting()) {
+      zoomPersistence.restorePersistedZoomLevel(getMainWindow())
       showMainWindow()
     }
   },
   authenticated: () => Boolean(sessionRuntime.ensureBackendSession().getSession()?.hasToken),
   authIdentity: () => sessionRuntime.ensureBackendSession().getSession()?.sessionId ?? null,
+  lockZoom: zoomPersistence.lockZoom,
   installWindowHandlers: windowHandlers.installSurfaceWindowHandlers,
   log: rememberLog,
   onModeChanged: rebuildTrayMenu
@@ -487,8 +489,8 @@ registerSpriteIpc({
     getRunnerBridge: () => runnerHost.getBridge(),
     getSpriteWindow: getMainWindow,
     getStageWindow: () =>
-      presentation?.getState().effectiveMode === 'desktop' ? presentation.getWindow() : getMainWindow(),
-    isDesktopSender: sender => presentation?.isDesktopSender(sender) ?? false,
+      presentation?.getState().effectiveMode === 'desktop' ? presentation.getStageWindow() : getMainWindow(),
+    isDesktopSender: sender => presentation?.isStageSender(sender) ?? false,
     getUserDataDir: () => app.getPath('userData'),
     log: rememberLog,
     screen

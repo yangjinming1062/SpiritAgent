@@ -25,6 +25,8 @@ interface ZoomPersistenceOptions {
 }
 
 export function createZoomPersistence({ app, rememberLog }: ZoomPersistenceOptions) {
+  const fixedZoomWindows = new WeakSet<BrowserWindow>()
+
   function readPersistedZoomLevel(): number | null {
     const parsed = safeReadJson<{ zoomLevel?: unknown }>(path.join(app.getPath('userData'), ZOOM_FILE))
 
@@ -49,14 +51,41 @@ export function createZoomPersistence({ app, rememberLog }: ZoomPersistenceOptio
       return
     }
 
+    if (fixedZoomWindows.has(targetWin)) {
+      targetWin.webContents.setZoomLevel(0)
+
+      return
+    }
+
     const next = clampZoomLevel(zoomLevel)
     targetWin.webContents.setZoomLevel(next)
     writePersistedZoomLevel(next)
   }
 
   return {
+    lockZoom(targetWin: BrowserWindow): void {
+      fixedZoomWindows.add(targetWin)
+
+      const reset = (): void => {
+        if (!targetWin.isDestroyed()) {
+          targetWin.webContents.setZoomLevel(0)
+          void targetWin.webContents
+            .setVisualZoomLevelLimits(1, 1)
+            .catch(error => rememberLog(`[zoom] desktop limits: ${errorMessage(error)}`))
+        }
+      }
+
+      targetWin.webContents.on('did-finish-load', reset)
+      reset()
+    },
     restorePersistedZoomLevel(targetWin: BrowserWindow | null): void {
       if (!targetWin || targetWin.isDestroyed()) {
+        return
+      }
+
+      if (fixedZoomWindows.has(targetWin)) {
+        targetWin.webContents.setZoomLevel(0)
+
         return
       }
 

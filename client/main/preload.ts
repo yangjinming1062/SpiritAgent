@@ -73,11 +73,21 @@ function subscribe<C extends IpcEventChannel>(channel: C, callback: EventCallbac
 
 contextBridge.exposeInMainWorld('spiritagent', {
   presentation: {
+    companionActivity: (activity: InvokePayload<typeof IPC.invoke.presentationCompanionActivity>) =>
+      invoke(IPC.invoke.presentationCompanionActivity, activity),
     cancelRitual: (callId: string) => invoke(IPC.invoke.presentationRitualCancel, callId),
     onRitualCancelled: (cb: EventCallback<typeof IPC.event.presentationRitualCancelled>) =>
       subscribe(IPC.event.presentationRitualCancelled, cb),
     getStageActivity: () => invoke(IPC.invoke.presentationGetStageActivity),
-    setStageVisible: (visible: boolean) => invoke(IPC.invoke.presentationSetStageVisible, visible),
+    setStageLayout: (layout: InvokePayload<typeof IPC.invoke.presentationSetStageLayout>) =>
+      invoke(IPC.invoke.presentationSetStageLayout, layout),
+    setCompanionAlwaysOnTop: (enabled: boolean) => invoke(IPC.invoke.presentationSetCompanionTopmost, enabled),
+    setIgnoreMouseEvents: (payload: InvokePayload<typeof IPC.invoke.presentationSetIgnoreMouseEvents>) =>
+      invoke(IPC.invoke.presentationSetIgnoreMouseEvents, payload),
+    companionInteraction: (interaction: InvokePayload<typeof IPC.invoke.presentationCompanionInteraction>) =>
+      invoke(IPC.invoke.presentationCompanionInteraction, interaction),
+    onCompanionInteraction: (cb: EventCallback<typeof IPC.event.companionInteraction>) =>
+      subscribe(IPC.event.companionInteraction, cb),
     getState: () => invoke(IPC.invoke.presentationGetState),
     setMode: (mode: InvokePayload<typeof IPC.invoke.presentationSetMode>) =>
       invoke(IPC.invoke.presentationSetMode, mode),

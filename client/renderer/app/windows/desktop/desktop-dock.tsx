@@ -14,6 +14,7 @@ import {
   Settings,
   Shirt
 } from '@/shared/lib/icons'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { notifyError } from '@/shared/store/notifications'
 
 import { DesktopDockPicker, type DockPickerMode } from './desktop-dock-picker'
@@ -55,6 +56,9 @@ export function DesktopDock({
   const [menu, setMenu] = useState<{ id: string; x: number } | null>(null)
   const [picker, setPicker] = useState<DockPickerMode | null>(null)
   const dockRef = useRef<HTMLElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useInteractiveRegion('desktop-dock', dockRef)
+  useInteractiveRegion('desktop-dock-menu', menuRef)
   const triggerRef = useRef<HTMLElement | null>(null)
   const [draggingOver, setDraggingOver] = useState(false)
   const draggedId = useRef<string | null>(null)
@@ -304,6 +308,7 @@ export function DesktopDock({
           <div
             className={styles.dockMenu}
             onPointerDown={event => event.stopPropagation()}
+            ref={menuRef}
             role="menu"
             style={{ left: menu.x }}
           >

@@ -1,9 +1,10 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { $userPreferredTier, setDisturbanceTier } from '@/modules/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { notifyError } from '@/shared/store/notifications'
 
 import { useDesktopStrings } from './desktop-strings'
@@ -25,9 +26,11 @@ export function DesktopSettings({
 }): React.JSX.Element {
   const t = useDesktopStrings()
   const preferredTier = useStore($userPreferredTier)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useInteractiveRegion('desktop-settings-popup', menuRef)
 
   return (
-    <div className={styles.menuContent}>
+    <div className={styles.menuContent} ref={menuRef}>
       <strong>{t.desktopSettings}</strong>
       <label className={styles.displaySelect}>
         {t.display}
@@ -66,6 +69,19 @@ export function DesktopSettings({
       <button onClick={onSpriteToggle} type="button">
         {spriteVisible ? t.hideCompanion : t.showCompanion}
       </button>
+      <label className={styles.displaySelect}>
+        {t.companionAlwaysOnTop}
+        <input
+          checked={presentation?.companionAlwaysOnTop ?? false}
+          onChange={event =>
+            void window.spiritagent.presentation
+              .setCompanionAlwaysOnTop(event.target.checked)
+              .catch(error => notifyError(error, t.companionAlwaysOnTop))
+          }
+          type="checkbox"
+        />
+      </label>
+      {presentation?.compatibilityWarning && <span role="status">{presentation.compatibilityWarning}</span>}
       <button onClick={onSettings} type="button">
         {t.settings}
       </button>
@@ -94,6 +110,8 @@ export function DesktopAccounts(): React.JSX.Element {
   const [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0)
   const beginAsync = useAsyncGuard()
+  const menuRef = useRef<HTMLDivElement>(null)
+  useInteractiveRegion('desktop-accounts-popup', menuRef)
 
   useEffect(() => {
     let disposed = false
@@ -135,7 +153,7 @@ export function DesktopAccounts(): React.JSX.Element {
   }
 
   return (
-    <div className={styles.menuContent}>
+    <div className={styles.menuContent} ref={menuRef}>
       <strong>{t.accounts}</strong>
       {accounts === null && !failed && <span>{t.accountLoading}</span>}
       {failed && (

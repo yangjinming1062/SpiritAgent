@@ -54,6 +54,7 @@ export {
   QUIET_MINUTES,
   reportUserActivity,
   setCompanionLifecycle,
+  setDesktopCompanionActivity,
   setDisturbanceTier,
   setSpriteState,
   startQuiet

@@ -176,18 +176,3 @@ html[class~='no-blur'] .backdropImage.kenBurns,
 html[class~='no-blur'] .backdropImage[data-baked='true'].kenBurns {
   animation-name: ken-burns-baked;
 }
-
-.desktop {
-  border-radius: 0;
-  clip-path: none;
-}
-
-html[data-effect] .desktop .backdropImage {
-  filter: none;
-  transform: none;
-  background-position: center;
-}
-
-html[data-effect] .desktop .kenBurns {
-  animation-name: ken-burns;
-}

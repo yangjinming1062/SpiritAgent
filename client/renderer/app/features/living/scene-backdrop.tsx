@@ -13,7 +13,7 @@ import { useStrings } from '@/shared/strings'
 import { useBakedScene } from './baked-backdrop'
 import styles from './scene-backdrop.module.css'
 
-export function SceneBackdrop({ desktop = false }: { desktop?: boolean }): React.JSX.Element {
+export function SceneBackdrop(): React.JSX.Element {
   const taskStatus = useStore($sceneTaskStatus)
   const backdrop = useStore($activeScene)
   const theme = useStore($theme)
@@ -45,10 +45,10 @@ export function SceneBackdrop({ desktop = false }: { desktop?: boolean }): React
   const status = bgUrl ? 'ready' : taskStatus === 'pending' ? 'pending' : 'none'
   const showKenBurns = !reducedMotion && status === 'ready'
 
-  const baked = useBakedScene(noBlur || desktop ? null : bgUrl, viewport.width, viewport.height, theme)
+  const baked = useBakedScene(noBlur ? null : bgUrl, viewport.width, viewport.height, theme)
 
   return (
-    <div aria-hidden="true" className={cn(styles.root, desktop && styles.desktop)} ref={rootRef}>
+    <div aria-hidden="true" className={styles.root} ref={rootRef}>
       <div
         className={cn(styles.backdropImage, showKenBurns && styles.kenBurns, styles[`status_${status}`])}
         data-baked={baked ? 'true' : undefined}

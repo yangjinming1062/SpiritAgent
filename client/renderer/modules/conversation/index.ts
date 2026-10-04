@@ -100,6 +100,7 @@ export { useChatInput } from './use-chat-input'
 
 export { useIsReadOnlySession } from './use-is-read-only-session'
 export {
+  $voiceBarPlayingId,
   activeVoiceMessageId,
   setConversationVoiceSink,
   setVoiceBarControl,

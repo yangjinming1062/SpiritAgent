@@ -50,7 +50,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ## 统一桌面装配
 
-[desktop](app/windows/desktop/)以单个 renderer 装配共享 [features](app/features/)及内部窗口；原生活空间和工作台仍独立装配这些业务页。[ConversationViewProvider](modules/conversation/conversation-view.tsx)持有视图状态，[chat-store](modules/conversation/chat-store.ts)登记和回收按会话隔离的 [runtime](modules/conversation/chat-runtime.ts)。共享与隔离语义见[桌面呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+[desktop](app/windows/desktop/)的交互界面以单个 renderer 装配共享 [features](app/features/)及内部窗口；独立精灵舞台只装配角色与空间逻辑、订阅角色事件和网关状态，不恢复或保存会话历史。各窗分别登记交互区域，[desktop-companion-activity](app/workflows/desktop-companion-activity.ts)负责活动镜像。生活空间和工作台仍独立装配业务页。[ConversationViewProvider](modules/conversation/conversation-view.tsx)持有视图状态，[chat-store](modules/conversation/chat-store.ts)登记和回收按会话隔离的 [runtime](modules/conversation/chat-runtime.ts)；共享与隔离语义见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 首次历史水合也须保留在途回合，历史修改使较早回包失效；缓存语义见 [Client 历史同步](../README.md#历史同步)。视图切换保留各自草稿与附件；录音资格失效后，旧麦克风等待或转写结果不能因视图再次活动而恢复。
 

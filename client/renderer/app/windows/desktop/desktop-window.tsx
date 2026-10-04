@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from 'react'
 
 import { PanelActivityProvider } from '@/shared/context/panel-activity'
 import { X } from '@/shared/lib/icons'
+import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 
 import { type DesktopRect, type DesktopWindowState, fitRect } from './desktop-layout'
 import { useDesktopStrings } from './desktop-strings'
@@ -33,6 +34,11 @@ export function DesktopWindow({
   onChange
 }: Props): React.JSX.Element {
   const t = useDesktopStrings()
+  const windowRef = useRef<HTMLElement>(null)
+  const releaseCapture = useRef<(() => void) | null>(null)
+  useInteractiveRegion(`desktop-window-${item.id}`, windowRef, element =>
+    element.hidden ? null : element.getBoundingClientRect()
+  )
 
   const drag = useRef<{
     x: number
@@ -59,6 +65,7 @@ export function DesktopWindow({
 
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
+    releaseCapture.current = holdWindowMouseCapture(1)
     drag.current = {
       x: event.clientX,
       y: event.clientY,
@@ -70,6 +77,8 @@ export function DesktopWindow({
   }
 
   const finish = useCallback((): void => {
+    releaseCapture.current?.()
+    releaseCapture.current = null
     const current = drag.current
     drag.current = null
 
@@ -126,6 +135,7 @@ export function DesktopWindow({
       hidden={item.minimized}
       onFocusCapture={onActivate}
       onPointerDownCapture={onActivate}
+      ref={windowRef}
       style={{ left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height, zIndex: index + 1 }}
     >
       <header

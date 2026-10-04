@@ -4,6 +4,7 @@ import path from 'node:path'
 
 export interface ExplorerDesktopWindow {
   handle: Buffer
+  role: 'background' | 'overlay' | 'companion'
   /** 使用 screen.dipToScreenRect 转换完整显示器边界；helper 校正最多两像素的舍入。 */
   bounds: { x: number; y: number; width: number; height: number }
 }
@@ -13,11 +14,19 @@ interface HostOptions {
   journalPath: string
   log: (message: string) => void
   onFailure: (reason: string) => void
-  onForegroundChanged?: (active: boolean) => void
+  onForegroundChanged?: (state: { active: boolean; stageAvailable: boolean; fullscreen: boolean }) => void
+  onWarning?: (reason: string) => void
 }
 
 export interface ExplorerDesktopHost {
-  start: (options: { windows: ExplorerDesktopWindow[]; parentPid: number; takeover: boolean }) => Promise<void>
+  start: (options: {
+    windows: ExplorerDesktopWindow[]
+    parentPid: number
+    takeover: boolean
+    workArea: ExplorerDesktopWindow['bounds']
+    companionAlwaysOnTop: boolean
+  }) => Promise<void>
+  setCompanionAlwaysOnTop: (enabled: boolean) => Promise<void>
   heartbeat: () => Promise<void>
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   stop: () => Promise<void>
@@ -55,7 +64,11 @@ function encodeHandle(buffer: Buffer): string {
   return handle.toString(16)
 }
 
-function encodeWindow(window: ExplorerDesktopWindow): { handle: string; bounds: ExplorerDesktopWindow['bounds'] } {
+function encodeWindow(window: ExplorerDesktopWindow): {
+  handle: string
+  role: ExplorerDesktopWindow['role']
+  bounds: ExplorerDesktopWindow['bounds']
+} {
   const handle = encodeHandle(window.handle)
   const bounds = window.bounds
 
@@ -71,7 +84,7 @@ function encodeWindow(window: ExplorerDesktopWindow): { handle: string; bounds: 
     throw new Error('Desktop native window handle or physical bounds are invalid')
   }
 
-  return { bounds: { ...bounds }, handle }
+  return { bounds: { ...bounds }, handle, role: window.role }
 }
 
 export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktopHost {
@@ -277,8 +290,20 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
             resolve()
           } else if (message.event === 'failure' && typeof message.reason === 'string') {
             fail(message.reason)
-          } else if (message.event === 'foreground' && typeof message.active === 'boolean') {
-            options.onForegroundChanged?.(message.active)
+          } else if (
+            message.event === 'foreground' &&
+            typeof message.active === 'boolean' &&
+            typeof message.stage_available === 'boolean' &&
+            typeof message.fullscreen === 'boolean'
+          ) {
+            options.onForegroundChanged?.({
+              active: message.active,
+              stageAvailable: message.stage_available,
+              fullscreen: message.fullscreen
+            })
+          } else if (message.event === 'warning' && typeof message.reason === 'string') {
+            options.log(`[desktop] ${message.reason}`)
+            options.onWarning?.(message.reason)
           } else if (
             Number.isInteger(message.id) &&
             typeof message.id === 'number' &&
@@ -451,6 +476,14 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
   }
 
   return {
+    setCompanionAlwaysOnTop: enabled =>
+      serialize(async () => {
+        if (state !== 'running') {
+          throw new Error('Desktop host is not running')
+        }
+
+        await request({ command: 'companion_layer', always_on_top: enabled }, 4_000, true)
+      }),
     focus: (handle, eligible = () => true) => {
       const currentGeneration = generation
 
@@ -507,7 +540,17 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
 
         try {
           await spawnHost()
-          await request({ command: 'start', parent_pid: input.parentPid, takeover: input.takeover, windows }, 15_000)
+          await request(
+            {
+              command: 'start',
+              parent_pid: input.parentPid,
+              takeover: input.takeover,
+              windows,
+              work_area: input.workArea,
+              companion_always_on_top: input.companionAlwaysOnTop
+            },
+            15_000
+          )
           state = 'running'
           heartbeatTimer = setInterval(() => {
             void request({ command: 'heartbeat' }, 4_000).catch(error => {

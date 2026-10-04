@@ -6,9 +6,7 @@ import { AppearancePage } from '@/app/features/living/appearance/appearance-page
 import { ChannelsPage } from '@/app/features/living/channels-page'
 import { DiaryPage } from '@/app/features/living/diary-page'
 import { PostsPage } from '@/app/features/living/posts-page'
-import { SceneBackdrop } from '@/app/features/living/scene-backdrop'
 import { ScenePage } from '@/app/features/living/scene-page'
-import { useDesktopStage } from '@/app/workflows/desktop-stage'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait, SpriteStatusBadge } from '@/modules/character'
 import {
   ensureCompanionSession,
@@ -23,6 +21,7 @@ import { hydratePostsUnread } from '@/modules/posts'
 import { $activeScene, hydrateScene } from '@/modules/scene'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { ArrowLeft, ArrowRight, ChevronDown, MessageCircle, Settings, Wifi, WifiOff, X } from '@/shared/lib/icons'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
@@ -35,7 +34,7 @@ import { $theme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
 
 import { DesktopChat, DesktopWhisper } from './desktop-chat'
-import { DesktopCompanion } from './desktop-companion'
+import { DesktopCompanionMenu } from './desktop-companion'
 import { DesktopDock } from './desktop-dock'
 import { type DesktopApp, useDesktopLayout } from './desktop-layout'
 import { DesktopPreferences } from './desktop-preferences'
@@ -71,22 +70,50 @@ export function DesktopRoot(): React.JSX.Element {
   const scene = useStore($activeScene)
   const pending = useStore(pendingMessages.$atom)
   const [clock, setClock] = useState(() => new Date())
+  const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
   const [companionSessionId, setCompanionSessionId] = useState<string | null>(null)
   const [focusedConversation, setFocusedConversation] = useState<'main' | 'whisper' | null>('whisper')
   const [accountOpen, setAccountOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dockOverlayOpen, setDockOverlayOpen] = useState(false)
-  const [companionMenuOpen, setCompanionMenuOpen] = useState(false)
+  const [companionMenu, setCompanionMenu] = useState<{ x: number; y: number } | null>(null)
+  const companionMenuOpen = companionMenu !== null
   const [area, setArea] = useState({ width: 1000, height: 700, left: 16, top: 60 })
   const initialized = useRef(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
+  const topbarRef = useRef<HTMLElement>(null)
+  const whisperRef = useRef<HTMLElement>(null)
+  const whisperTabRef = useRef<HTMLButtonElement>(null)
+  useInteractiveRegion('desktop-topbar', topbarRef)
+  useInteractiveRegion('desktop-account-menu', menuRef)
+  useInteractiveRegion('desktop-settings-menu', settingsRef)
+  useInteractiveRegion('desktop-whisper', whisperRef, element =>
+    element.hidden ? null : element.getBoundingClientRect()
+  )
+  useInteractiveRegion('desktop-whisper-tab', whisperTabRef)
   const { layout, setLayout, activate, updateWindow, close } = useDesktopLayout()
-  const desktopVisible = presentation?.effectiveMode === 'desktop' && presentation.status === 'active' && !screenLocked
-  const foreground = desktopVisible && presentation.foreground
+
+  const desktopVisible =
+    presentation?.effectiveMode === 'desktop' &&
+    presentation.status === 'active' &&
+    !presentation.fullscreen &&
+    !screenLocked
+
+  const foreground = desktopVisible && presentation.foreground && windowFocused
+  useEffect(() => {
+    const update = (): void => setWindowFocused(document.hasFocus())
+    window.addEventListener('focus', update)
+    window.addEventListener('blur', update)
+
+    return () => {
+      window.removeEventListener('focus', update)
+      window.removeEventListener('blur', update)
+    }
+  }, [])
   const activeWindow = layout.windows.findLast(item => !item.minimized)?.id
 
   const panelsEnabled = foreground && !accountOpen && !settingsOpen && !dockOverlayOpen && !companionMenuOpen
@@ -148,16 +175,37 @@ export function DesktopRoot(): React.JSX.Element {
 
   useEffect(() => () => $desktopChatActive.set(false), [])
 
-  useDesktopStage({
-    enabled: auth.kind === 'authenticated',
-    visible: desktopVisible && layout.spriteVisible,
-    insets: {
-      top: 48,
-      bottom: 96,
-      left: layout.whisperOpen && layout.whisperSide === 'left' ? 396 : 16,
-      right: layout.whisperOpen && layout.whisperSide === 'right' ? 396 : 16
-    }
-  })
+  useEffect(() => {
+    void window.spiritagent.presentation
+      .setStageLayout({
+        visible: layout.spriteVisible,
+        insets: {
+          top: 48,
+          bottom: 96,
+          left: layout.whisperOpen && layout.whisperSide === 'left' ? 396 : 16,
+          right: layout.whisperOpen && layout.whisperSide === 'right' ? 396 : 16
+        }
+      })
+      .catch(error => log.warn('desktop', 'stage layout failed', error))
+  }, [layout.spriteVisible, layout.whisperOpen, layout.whisperSide])
+
+  useEffect(
+    () =>
+      window.spiritagent.presentation.onCompanionInteraction(interaction => {
+        if (interaction.kind === 'hide') {
+          setLayout(current => ({ ...current, spriteVisible: false }))
+        } else if (interaction.kind === 'toggle-whisper') {
+          setLayout(current => ({ ...current, whisperOpen: !current.whisperOpen }))
+          setFocusedConversation('whisper')
+        } else if (interaction.kind === 'menu') {
+          setCompanionMenu({ x: interaction.x, y: interaction.y })
+        } else if (interaction.kind === 'drop') {
+          pushExternalAttachment(interaction.paths)
+          openWhisper()
+        }
+      }),
+    [setLayout, openWhisper]
+  )
 
   useEffect(
     () =>
@@ -215,11 +263,20 @@ export function DesktopRoot(): React.JSX.Element {
   }, [auth.kind, layout.whisperOpen, layout.whisperSide])
 
   useEffect(() => {
-    if (!foreground) {
+    const closeMenus = (): void => {
       setAccountOpen(false)
       setSettingsOpen(false)
+      setCompanionMenu(null)
     }
-  }, [foreground])
+
+    window.addEventListener('blur', closeMenus)
+
+    if (!desktopVisible) {
+      closeMenus()
+    }
+
+    return () => window.removeEventListener('blur', closeMenus)
+  }, [desktopVisible])
 
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
@@ -431,9 +488,7 @@ export function DesktopRoot(): React.JSX.Element {
 
   return (
     <div className={styles.desktop} data-whisper={layout.whisperOpen ? layout.whisperSide : 'closed'} ref={rootRef}>
-      <SceneBackdrop desktop />
-      <div className={styles.backgroundTint} />
-      <header className={styles.topbar}>
+      <header className={styles.topbar} ref={topbarRef}>
         <div className={styles.avatarMenu} ref={menuRef}>
           <button
             aria-expanded={accountOpen}
@@ -516,14 +571,8 @@ export function DesktopRoot(): React.JSX.Element {
           </DesktopWindow>
         ))}
       </main>
-      {layout.spriteVisible && desktopVisible && (
-        <DesktopCompanion
-          menuEnabled={foreground && !accountOpen && !settingsOpen && !dockOverlayOpen}
-          onHide={toggleSprite}
-          onMenuOpenChange={setCompanionMenuOpen}
-          onOpenWhisper={openWhisper}
-          onToggleWhisper={toggleWhisper}
-        />
+      {companionMenu && (
+        <DesktopCompanionMenu onClose={() => setCompanionMenu(null)} onHide={toggleSprite} position={companionMenu} />
       )}
       <aside
         aria-label={t.whisper}
@@ -532,6 +581,7 @@ export function DesktopRoot(): React.JSX.Element {
         hidden={!layout.whisperOpen}
         onFocusCapture={() => setFocusedConversation('whisper')}
         onPointerDownCapture={() => setFocusedConversation('whisper')}
+        ref={whisperRef}
       >
         <header className={styles.whisperHeader}>
           <strong>{t.whisper}</strong>
@@ -564,6 +614,7 @@ export function DesktopRoot(): React.JSX.Element {
           className={styles.whisperTab}
           data-side={layout.whisperSide}
           onClick={toggleWhisper}
+          ref={whisperTabRef}
           title={t.showWhisper}
           type="button"
         >
@@ -573,7 +624,7 @@ export function DesktopRoot(): React.JSX.Element {
         </button>
       )}
       <DesktopDock
-        menuEnabled={foreground && !accountOpen && !settingsOpen && !companionMenuOpen}
+        menuEnabled={desktopVisible && !accountOpen && !settingsOpen && !companionMenuOpen}
         onActivate={activatePanel}
         onMenuOpenChange={setDockOverlayOpen}
         windows={layout.windows}

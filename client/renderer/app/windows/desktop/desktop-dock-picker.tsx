@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { Check, FolderOpen, Monitor, RefreshCw, Search, X } from '@/shared/lib/icons'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 
@@ -47,6 +48,31 @@ export function DesktopDockPicker({
   const [activeId, setActiveId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const listRef = useRef<HTMLUListElement>(null)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const browsingRef = useRef(false)
+  useInteractiveRegion('desktop-dock-picker', pickerRef)
+
+  useEffect(() => {
+    const outside = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !pickerRef.current?.contains(event.target)) {
+        onClose()
+      }
+    }
+
+    const blur = (): void => {
+      if (!browsingRef.current) {
+        onClose()
+      }
+    }
+
+    window.addEventListener('pointerdown', outside, true)
+    window.addEventListener('blur', blur)
+
+    return () => {
+      window.removeEventListener('pointerdown', outside, true)
+      window.removeEventListener('blur', blur)
+    }
+  }, [onClose])
 
   const trimmed = query.trim().toLowerCase()
 
@@ -188,10 +214,17 @@ export function DesktopDockPicker({
   const browse = (): void => {
     // 取消文件对话框时配置未变，保留面板让用户改从列表挑选。
     void run(
-      () =>
-        mode.kind === 'add'
-          ? window.spiritagent.dock.addFromFiles()
-          : window.spiritagent.dock.repairWithFiles(mode.entryId),
+      async () => {
+        browsingRef.current = true
+
+        try {
+          return await (mode.kind === 'add'
+            ? window.spiritagent.dock.addFromFiles()
+            : window.spiritagent.dock.repairWithFiles(mode.entryId))
+        } finally {
+          browsingRef.current = false
+        }
+      },
       next => next.revision !== dockRevision
     )
   }
@@ -212,18 +245,11 @@ export function DesktopDockPicker({
   const status = catalog === null ? (failed ? t.pickLoadFailed : t.pickLoading) : null
 
   return (
-    <div
-      className={styles.dockPickerScrim}
-      onPointerDown={event => {
-        if (event.target === event.currentTarget) {
-          onClose()
-        }
-      }}
-    >
+    <div className={styles.dockPickerScrim}>
       <div
         aria-label={mode.kind === 'add' ? t.pickAdd : t.pickRepair}
-        aria-modal="true"
         className={styles.dockPicker}
+        ref={pickerRef}
         role="dialog"
       >
         <header className={styles.dockPickerHeader}>

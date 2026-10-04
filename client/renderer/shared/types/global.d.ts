@@ -27,10 +27,15 @@ declare global {
     }
     spiritagent: {
       presentation: {
+        companionActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:companion-activity']>
         cancelRitual: AsyncIpc<IpcInvokeContract['spiritagent:presentation:ritual-cancel']>
         onRitualCancelled: EventSubscription<'spiritagent:presentation:ritual-cancelled'>
         getStageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-stage-activity']>
-        setStageVisible: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-stage-visible']>
+        setStageLayout: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-stage-layout']>
+        setCompanionAlwaysOnTop: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-companion-topmost']>
+        setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-ignore-mouse-events']>
+        companionInteraction: AsyncIpc<IpcInvokeContract['spiritagent:presentation:companion-interaction']>
+        onCompanionInteraction: EventSubscription<'spiritagent:presentation:companion-interaction'>
         getState: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-state']>
         setMode: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-mode']>
         setDisplay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-display']>

@@ -23,7 +23,7 @@ flowchart LR
 
 - Backend 运行于 Linux Docker；Client、Runner、Installer 支持 Windows 与 macOS 原生运行。底层库的跨平台能力不等于产品平台支持。
 - 主进程保管桌面身份并桥接本机执行；精灵宿主承载唯一聊天 WS，其他窗口经主进程代理。Runner 不持后端凭据，反向模型请求通道经 Client 转交 Backend（当前内置工具未使用），内部连接图见 [Client](../client/README.md#进程与代码边界)。
-- Windows 桌面模式由 Client 的交互主屏和只读副屏背景承载，独立 Rust helper 接入 Explorer；guardian 负责主进程或宿主异常时恢复系统界面。后台精灵 renderer 保留唯一聊天 WS 与 Runner 派发权限。
+- Windows 桌面模式由各屏的只读背景、交互屏的透明置顶界面与独立精灵舞台承载，独立 Rust helper 接入 Explorer 并临时设置交互屏工作区；guardian 负责主进程或宿主异常时恢复系统界面。后台精灵 renderer 保留唯一聊天 WS 与 Runner 派发权限。
 - 进程拆分隔离职责与凭据，不构成完整安全沙箱。
 
 ## 模块职责

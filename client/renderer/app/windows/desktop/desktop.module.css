@@ -5,7 +5,7 @@
   height: 100vh;
   overflow: hidden;
   position: relative;
-  background: var(--ui-app-bg);
+  background: transparent;
   isolation: isolate;
 }
 
@@ -25,12 +25,6 @@
 .desktop select:focus-visible {
   outline: 2px solid var(--ui-accent);
   outline-offset: 3px;
-}
-.backgroundTint {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgb(0 0 0 / 0.08), transparent 25%, rgb(0 0 0 / 0.12));
 }
 .topbar {
   height: var(--desktop-bar);
@@ -639,9 +633,10 @@ html.no-blur .dockPicker {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgb(0 0 0 / 0.28);
+  pointer-events: none;
 }
 .dockPicker {
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   width: min(520px, 100%);
