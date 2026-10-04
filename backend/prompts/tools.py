@@ -61,9 +61,9 @@ MEDIA_INSPECTION_INSTRUCTIONS = (
 _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
     "Optional complete outfit for this generation only (clothing, colors, hairstyle and hair color, makeup, "
     "footwear, accessories). Use with subject='self'. It replaces the default outfit for this output only, "
-    "without changing the default outfit or the scene. When the user asks to keep the current scene's visible clothing, "
-    "compose it from the actual scene description; do not pass the original scene requirements or invent full "
-    "garments from insufficient details. For partial revisions, merge the confirmed base look with the changed "
+    "without changing the wardrobe or the scene. Scenes describe the background; your current clothing "
+    "comes from the wardrobe. Do not treat other depicted subjects' clothing as yours. For partial revisions, merge "
+    "the confirmed current outfit with the changed "
     "dimensions into one complete description."
 )
 
@@ -79,8 +79,8 @@ IMAGE_GENERATION_PARAM_DESCS = {
     "subject": (
         "Set to 'self' when the current character appears in the image. Their reference image, confirmed physical "
         "features and the default outfit description are supplied automatically; describe the scene, pose, "
-        "and action without reconstructing appearance from memory. To wear what is visible in the current scene "
-        "instead, organize the actually visible clothing into outfit_override."
+        "and action without reconstructing appearance from memory. Current clothing comes from the wardrobe; "
+        "the scene describes the background, not your clothing."
     ),
     "outfit_override": _SELF_MEDIA_OUTFIT_OVERRIDE_DESC,
 }
@@ -127,8 +127,8 @@ VIDEO_STATUS_PARAM_DESCS = {
 SCENE_TOOL_DESCRIPTIONS = {
     "scene_list": "分页查询已就绪场景，query 搜索标题和描述。先检查已有场景，适合就复用；明确需要新设计或已有不合适再创建。返回当前环境与待完成切换。",
     "scene_get": "查询场景详情和任务状态。生成、描述分析或失败都不是到达；只以 environment.current 为当前地点。",
-    "scene_create": "根据当前情景自主设计包含伙伴的场景图片并保存到场景库，保持固定身份。notes 描述环境与活动；outfit_description 是本次完整着装设计（服装、配色、发型发色、妆容、鞋履与配饰），未提要求时省略。先用 scene_list 检查已有场景。默认只创建保存、当前环境不变；自主决定申请切换时才传 auto_activate=true 并通过政策校验。接受任务仅表示正在准备；以 environment.current 确认当前环境。受政策与新增额度限制，每回合最多一次创建、一次切换。",
-    "scene_activate": "根据当前情景自主切换到已有的完整场景，不消耗生图额度。成功后 environment.current 记录所在环境、活动与穿着。锁定时禁止自主切换，每回合最多一次切换。",
+    "scene_create": "根据当前情景自主设计环境壁纸并保存到场景库。notes 描述地点、陈设、光线、氛围与需要的画风，不描绘你本人；其他人物、动物、肖像和雕像可以按环境需要出现。先用 scene_list 检查已有场景。默认只创建保存、当前环境不变；自主决定申请切换时才传 auto_activate=true 并通过政策校验。接受任务仅表示正在准备；以 environment.current 确认当前环境。受政策与新增额度限制，每回合最多一次创建、一次切换。",
+    "scene_activate": "根据当前情景自主切换到已有的完整场景，不消耗生图额度。成功后 environment.current 记录所在环境，不提供你自身的活动或穿着事实。锁定时禁止自主切换，每回合最多一次切换。",
 }
 
 _POST_PUBLICATION_RESULT_DESC = (

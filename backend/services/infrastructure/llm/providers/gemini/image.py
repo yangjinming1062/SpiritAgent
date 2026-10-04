@@ -15,6 +15,7 @@ class GeminiImageGenProvider(ImageGenProvider):
     DEFAULT_BASE_URL: ClassVar[str] = "https://generativelanguage.googleapis.com"
     DEFAULT_MODEL: ClassVar[str] = "gemini-3-pro-image"
     supports_reference_image: ClassVar[bool] = True
+    supports_environment_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
     # inlineData + 文本触发原生图像编辑（增量重绘、保留未提及区域），多轮迭代可无状态地把上一轮输出再喂回。
     supports_image_edit: ClassVar[bool] = True
@@ -38,7 +39,7 @@ class GeminiImageGenProvider(ImageGenProvider):
             "contents": [{"parts": parts}],
             "generationConfig": {
                 "responseModalities": ["TEXT", "IMAGE"],
-                "imageConfig": {"aspectRatio": aspect, "imageSize": "2K"},
+                "imageConfig": {"aspectRatio": aspect, "imageSize": req.resolution or "2K"},
             },
         }
 

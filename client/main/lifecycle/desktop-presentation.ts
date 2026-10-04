@@ -125,19 +125,26 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   })
 
   function snapshot(): PresentationState {
-    const displays = app.isReady()
-      ? screen.getAllDisplays().map(display => ({
-          id: display.id,
-          label: display.label || `显示器 ${display.id}`,
-          width: display.bounds.width,
-          height: display.bounds.height
-        }))
-      : []
+    const allDisplays = app.isReady() ? screen.getAllDisplays() : []
+
+    const displays = allDisplays.map(display => ({
+      id: display.id,
+      label: display.label || `显示器 ${display.id}`,
+      width: display.bounds.width,
+      height: display.bounds.height
+    }))
 
     const preferred = preferences.get()
 
     const actual =
-      interactive && !interactive.isDestroyed() ? screen.getDisplayMatching(interactive.getBounds()).id : null
+      effectiveMode === 'desktop' && interactive && !interactive.isDestroyed()
+        ? screen.getDisplayMatching(interactive.getBounds())
+        : null
+
+    const targetDisplay =
+      actual ??
+      allDisplays.find(display => display.id === preferred.displayId) ??
+      (app.isReady() ? screen.getPrimaryDisplay() : null)
 
     const desktopUnlocked =
       (foreground || stageAvailable) && effectiveMode === 'desktop' && powerMonitor.getSystemIdleState(1) !== 'locked'
@@ -160,8 +167,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
           ? activityBySource.host.state
           : activityBySource.desktop.state,
       voicePreparing: activityBySource.host.voicePreparing || activityBySource.desktop.voicePreparing,
-      displayId: actual ?? preferred.displayId,
+      displayId: targetDisplay?.id ?? null,
       displays,
+      wallpaperTarget: targetDisplay
+        ? {
+            width: Math.round(targetDisplay.bounds.width * targetDisplay.scaleFactor),
+            height: Math.round(targetDisplay.bounds.height * targetDisplay.scaleFactor)
+          }
+        : null,
       stageOwner: effectiveMode === 'desktop' ? 'desktop' : 'sprite',
       stageVisible,
       stageEpoch,

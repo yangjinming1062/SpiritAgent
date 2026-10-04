@@ -36,6 +36,10 @@ class MiniMaxImageGenProvider(ImageGenProvider):
             "response_format": "base64" if req.response_format == "b64" else "url",
             "n": req.n,
         }
+        if req.exact_size and req.size:
+            width, height = (int(value) for value in req.size.lower().split("x", 1))
+            payload.pop("aspect_ratio")
+            payload.update(width=width, height=height)
         if req.reference_image:
             payload["subject_reference"] = [{"type": "character", "image_file": req.reference_image}]
 

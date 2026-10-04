@@ -31,16 +31,20 @@ export function captureAuthScope(): (() => boolean) | null {
 
 export async function authedApi<T>(opts: SpiritAgentApiRequest): Promise<AuthedApiResult<T>> {
   // 请求结果只属于发起时的鉴权会话和清理代次。
+  const auth = $auth.get()
   const isCurrent = captureAuthScope()
 
-  if (!isCurrent) {
+  if (!isCurrent || auth.kind !== 'authenticated') {
     return { ok: false, reason: 'unauth' }
   }
 
   let result: AuthedApiResult<T>
 
   try {
-    result = { ok: true, value: (await window.spiritagent.api<T>(opts)) as T | null }
+    result = {
+      ok: true,
+      value: (await window.spiritagent.api<T>({ ...opts, authSessionId: auth.snapshot.sessionId })) as T | null
+    }
   } catch (error) {
     result = { error, ok: false, reason: 'err' }
   }

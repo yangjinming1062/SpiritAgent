@@ -162,6 +162,7 @@ class LocalImageGenProvider(ImageGenProvider):
     DEFAULT_MODEL: ClassVar[str] = "qwen"
     requires_api_key: ClassVar[bool] = False  # 本地 ComfyUI 无鉴权；api_key 可为空，仅占位
     supports_reference_image: ClassVar[bool] = True
+    supports_environment_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
     supports_image_edit: ClassVar[bool] = True
     supports_transparent_background: ClassVar[bool] = True

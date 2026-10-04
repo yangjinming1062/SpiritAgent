@@ -18,6 +18,7 @@ class GrokImageGenProvider(ImageGenProvider):
     DEFAULT_MODEL: ClassVar[str] = "grok-imagine-image-2.0"
     # xAI /images/edits 原生消费 reference_image，工具层可直接透传，无需回退到视觉模型描述。
     supports_reference_image: ClassVar[bool] = True
+    supports_environment_reference_image: ClassVar[bool] = True
     # /images/edits 是真图像编辑端点：增量重绘、保留未提及区域，官方支持多轮编辑（上一轮输出作下一轮输入）。
     supports_image_edit: ClassVar[bool] = True
 
@@ -30,7 +31,7 @@ class GrokImageGenProvider(ImageGenProvider):
             "model": self.config.model,
             "prompt": req.prompt,
             "n": req.n,
-            "resolution": "2k",
+            "resolution": req.resolution or "2k",
             "quality": "medium",
         }
         if req.reference_image:

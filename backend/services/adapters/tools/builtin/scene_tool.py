@@ -57,7 +57,6 @@ async def scene_create_tool(
     notes: str,
     user_id: int,
     scene_turn: SceneTurnState,
-    outfit_description: str | None = None,
     auto_activate: bool = False,
     **_: Any,
 ) -> str:
@@ -75,7 +74,6 @@ async def scene_create_tool(
                 user_id,
                 origin=SceneOrigin.LLM.value,
                 notes=notes,
-                outfit_description=outfit_description,
                 auto_activate=auto_activate,
             )
         except SceneError as exc:
@@ -136,11 +134,7 @@ def register(registry: ToolsRegistry) -> None:
             {
                 "notes": {
                     "type": "string",
-                    "description": "场景的环境与活动设计，非空：写清地点、氛围，以及你在一个可见瞬间正在做的事和必要的接触、支撑关系；不重新设计外貌，着装写入 outfit_description。",
-                },
-                "outfit_description": {
-                    "type": "string",
-                    "description": "本次自主设计的完整造型，包括服装、配色、发型发色、妆容、鞋履与配饰；无需指定造型时省略，沿用默认外观。",
+                    "description": "环境壁纸设计，非空：写清地点、陈设、光线、氛围与需要的画风，不描绘你本人；其他人物、动物、肖像或雕像可以按环境需要出现。",
                 },
                 "auto_activate": {
                     "type": "boolean",

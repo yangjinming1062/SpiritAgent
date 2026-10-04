@@ -82,7 +82,7 @@
 
 用户偏好 `user_settings` 同样按点键逐值 JSON 编码（桌面配置同步与服务端写入如时区共用同一格式），只经 [modules/settings](modules/settings/values.py) 读写，读取即得解码后的原值，消费方不自行解析。
 
-启动执行 Alembic 升级，当前结构由 [0001 基线](alembic/versions/0001_baseline.py)完整定义。迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，部分唯一、向量和全文索引均在 ORM 模型声明；autogenerate 比对名称、唯一性与列表达式，`WHERE`、索引方法与操作符类仍须人工核对。生成迁移中被写成 `%%` 的百分号须还原为 `%`。数据库版本要求见 [Docker Compose 部署](#docker-compose-部署)。
+启动执行 Alembic 升级，结构由 [0001 基线](alembic/versions/0001_baseline.py)定义。迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，部分唯一、向量和全文索引均在 ORM 模型声明；autogenerate 比对名称、唯一性与列表达式，`WHERE`、索引方法与操作符类仍须人工核对。生成迁移中被写成 `%%` 的百分号须还原为 `%`。数据库版本要求见 [Docker Compose 部署](#docker-compose-部署)。
 
 ### 装配与启停
 

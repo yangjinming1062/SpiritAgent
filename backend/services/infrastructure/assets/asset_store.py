@@ -284,6 +284,16 @@ def image_chain_asset_path(user_id: int, generation_id: str, attempt: int, slot:
     return f"companion-assets/{user_id}/image_{generation_id}_a{attempt}_s{slot}.{ext}"
 
 
+def scene_wallpaper_asset_path(user_id: int, generation_id: str) -> str:
+    if user_id <= 0 or not _is_generation_id(generation_id):
+        raise ValueError("invalid scene wallpaper asset key")
+    return f"companion-assets/{user_id}/scene_wallpaper_{generation_id}.png"
+
+
+async def save_scene_wallpaper_asset_async(data: bytes, *, user_id: int, generation_id: str) -> str:
+    return await _save_generation_asset_async(data, user_id, scene_wallpaper_asset_path(user_id, generation_id))
+
+
 async def save_image_chain_asset_async(
     data: bytes,
     *,

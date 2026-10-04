@@ -19,6 +19,7 @@ export const $presentation = atom<PresentationState>({
   voicePreparing: false,
   displayId: null,
   displays: [],
+  wallpaperTarget: null,
   stageOwner: 'sprite',
   stageVisible: true,
   stageEpoch: 0,

@@ -180,13 +180,25 @@ export function registerConnectionIpc({
   ipcMain.handle(IPC.invoke.api, async (event, request: SpiritAgentApiRequest) => {
     assertApiRequestAllowed(request?.path, request?.method)
 
-    return callBackend(event.sender, connection =>
-      fetchJson(`${connection.baseUrl}${request.path}`, connection.token || undefined, {
+    const auth = getCurrentAuth()
+
+    if (request?.authSessionId !== undefined && request.authSessionId !== auth?.sessionId) {
+      throw new Error('API authentication changed before dispatch')
+    }
+
+    return callBackend(event.sender, connection => {
+      const current = getCurrentAuth()
+
+      if (current?.sessionId !== auth?.sessionId || connection.token !== (current?.token ?? null)) {
+        throw new Error('API authentication changed while resolving backend')
+      }
+
+      return fetchJson(`${connection.baseUrl}${request.path}`, connection.token || undefined, {
         body: request?.body,
         method: request?.method,
         timeoutMs: resolvePathTimeoutMs(request?.path, request?.method, defaultFetchTimeoutMs)
       })
-    )
+    })
   })
 
   ipcMain.handle(

@@ -1,8 +1,8 @@
 import json
 import re
 
-from components import resolve_language, resolve_prompt_text
-from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, OUTFIT_SOURCE_TEXTS, SCENE_CONTEXT_GUIDANCES, VOLATILE_LABELS
+from components import resolve_prompt_text
+from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, SCENE_CONTEXT_GUIDANCES, VOLATILE_LABELS
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.actions import build_action_context
@@ -24,18 +24,9 @@ def build_system_prompt(config: AgentPromptConfig, *, preset_id: str, delegated:
 async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, language: str) -> str:
     state = await get_scene_state(db, user_id)
     parts: list[str] = []
-    # 此刻着装：有场景时以场景成品描述中的可见造型为准，无场景才注入当前着装；两种来源都附着装与表现相称的说明。
-    source = "scene" if state.active is not None else None
-    if source is None and (outfit := await build_outfit_extras(db, user_id, language=language)):
+    if outfit := await build_outfit_extras(db, user_id, language=language):
         parts.append(outfit)
-        source = "outfit"
-    if source is not None:
-        parts.append(
-            resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language).replace(
-                "{source}",
-                OUTFIT_SOURCE_TEXTS[resolve_language(language)][source],
-            ),
-        )
+        parts.append(resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language))
     parts.extend(
         [
             resolve_prompt_text(SCENE_CONTEXT_GUIDANCES, language),

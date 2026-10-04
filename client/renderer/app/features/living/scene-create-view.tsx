@@ -2,13 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
-import {
-  $avatarSeeds,
-  hydrateAvatarSeeds,
-  pickAvatarImage,
-  type PickedImage,
-  SelfSourceImageFlow
-} from '@/modules/character'
+import { pickAvatarImage, type PickedImage, SelfSourceImageFlow } from '@/modules/character'
 import { $pendingScene, $sceneTaskSlow, $sceneTaskStatus, hydrateScene } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowLeft, FileImage, Loader2, Plus, Sparkles } from '@/shared/lib/icons'
@@ -16,11 +10,11 @@ import { errorMessage } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard } from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
+import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
 
 export interface SceneCreateDraft {
   notes: string
-  outfitDescription: string
   reference: PickedImage | null
 }
 
@@ -47,10 +41,11 @@ export function SceneCreateView({
   onFetchPrompt,
   onUseAi
 }: SceneCreateViewProps): React.JSX.Element {
-  const seeds = useStore($avatarSeeds)
+  const { wallpaperTarget } = useStore($presentation)
   const pending = useStore($pendingScene)
   const taskStatus = useStore($sceneTaskStatus)
   const slow = useStore($sceneTaskSlow)
+  const targetSize = pending?.target_size ?? wallpaperTarget
   const strings = useStrings()
   const t = strings.living.scene
   const tToasts = strings.living.toasts
@@ -128,15 +123,6 @@ export function SceneCreateView({
     await runSaving(() => onAdopt(result.image))
   }
 
-  const openSelfSource = async (): Promise<void> => {
-    const isLive = begin()
-    await hydrateAvatarSeeds()
-
-    if (isLive()) {
-      setSelfSourceOpen(true)
-    }
-  }
-
   const cancelWaitingTask = async (): Promise<void> => {
     if (!pending || saving || selecting) {
       return
@@ -156,6 +142,7 @@ export function SceneCreateView({
       </div>
 
       <p className="text-[11px] leading-relaxed text-faint">{t.intro}</p>
+      {targetSize ? <p className={HINT_TEXT}>{t.targetSize(targetSize.width, targetSize.height)}</p> : null}
 
       {pending ? (
         <SettingCard>
@@ -210,26 +197,16 @@ export function SceneCreateView({
               />
             </label>
           </div>
-          <label className="block space-y-1.5 text-xs text-body">
-            <span>{t.outfitLabel}</span>
-            <textarea
-              className={INPUT_CLASS}
-              disabled={formBusy}
-              maxLength={500}
-              onChange={event => onChange({ outfitDescription: event.target.value })}
-              placeholder={t.outfitPlaceholder}
-              rows={3}
-              value={draft.outfitDescription}
-            />
-            <span className={HINT_TEXT}>{t.outfitHint}</span>
-          </label>
-
           <div className="space-y-2 border-t border-line-hairline pt-3">
             <p className={HINT_TEXT}>{t.referenceHint}</p>
             <div className="flex flex-wrap items-center gap-2">
               {draft.reference ? (
                 <div className="relative h-20 w-28 overflow-hidden rounded-lg border border-line-hairline">
-                  <img alt={t.referenceLabel} className="h-full w-full object-cover" src={draft.reference.previewUrl} />
+                  <img
+                    alt={t.referenceLabel}
+                    className="h-full w-full object-contain"
+                    src={draft.reference.previewUrl}
+                  />
                 </div>
               ) : null}
               <button className={BTN_SUBTLE} disabled={formBusy} onClick={() => void chooseReference()} type="button">
@@ -252,7 +229,7 @@ export function SceneCreateView({
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line-hairline pt-3">
             <p className={HINT_TEXT}>{t.savedHint}</p>
             <div className="flex shrink-0 items-center gap-2">
-              <button className={BTN_SUBTLE} disabled={formBusy} onClick={() => void openSelfSource()} type="button">
+              <button className={BTN_SUBTLE} disabled={formBusy} onClick={() => setSelfSourceOpen(true)} type="button">
                 <FileImage className="size-3.5" />
                 <span>{strings.selfSource.open}</span>
               </button>
@@ -277,14 +254,12 @@ export function SceneCreateView({
       <SelfSourceImageFlow
         adopt={onAdopt}
         fetchPrompt={onFetchPrompt}
+        hint={t.uploadHint}
         onClose={() => setSelfSourceOpen(false)}
         onUseAi={onUseAi}
         open={selfSourceOpen}
-        referenceImages={
-          seeds.fullbodySeedUrl
-            ? [{ label: strings.selfSource.refs.fullbodySeed, url: seeds.fullbodySeedUrl }]
-            : undefined
-        }
+        referenceImages={draft.reference ? [{ label: t.referenceLabel, url: draft.reference.previewUrl }] : undefined}
+        referenceRequired={false}
         title={`${t.generateButton} · ${strings.selfSource.open}`}
       />
     </section>

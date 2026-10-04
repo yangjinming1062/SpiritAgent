@@ -63,6 +63,8 @@
 
 [desktop-presentation.ts](lifecycle/desktop-presentation.ts)管理 desktop 生命周期、交互屏、舞台所有权与受控 IPC；living／workbench 只代表窗口入口。交互界面与精灵舞台使用完整 preload，账户、配置、更新与启动器仅授权交互界面；各屏背景使用 [preload-background.ts](preload-background.ts)，只接收背景数据。网关票及 Runner 派发仍只授予精灵宿主。
 
+呈现快照为壁纸生成提供目标屏幕尺寸，选择与账户同步契约见 [场景任务](../../docs/PROTOCOL.md#场景任务与原位换图)。
+
 呈现切换 IPC 允许精灵宿主、生活空间、工作台和交互桌面，副屏不具有切换能力；托盘复用主进程同一串行切换入口，菜单按实际模式与准备状态更新。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
 
 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../native/desktop-host/README.md)。界面、精灵舞台及全部背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。

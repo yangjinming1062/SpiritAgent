@@ -1,3 +1,4 @@
+from ._image_canvas import ImageCanvas, select_image_canvas
 from .error_classifier import (
     ClassifiedError,
     FailoverReason,
@@ -85,6 +86,7 @@ __all__ = [
     "ImageGenProvider",
     "ImageGenRequest",
     "ImageGenResult",
+    "ImageCanvas",
     "IncompleteLlmResponseError",
     "LLMRuntimeError",
     "LlmCallBlockedError",
@@ -130,6 +132,7 @@ __all__ = [
     "resolve_vision_chain",
     "rotate_http_clients",
     "scale_temperature",
+    "select_image_canvas",
     "speech_performance_schema",
     "speech_style_guidance",
     "validate_speech_style",

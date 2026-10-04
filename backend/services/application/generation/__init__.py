@@ -40,10 +40,11 @@ from .character_card import (
     resume_user_character_extraction,
     schedule_character_extraction,
 )
-from .character_images import generate_character_images
+from .character_images import generate_character_images, generate_scene_images
 from .chat_images import ImageBatch, generate_chat_images, inspect_chat_image, regenerate_chat_image
 from .image_generation import (
     ImageGenerationError,
+    ImageReviewUnavailableError,
     generate_images,
     resolve_image_gen_chain,
 )
@@ -101,6 +102,7 @@ from .scene_service import (
     scene_generation_wait_seconds,
     schedule_scene_generation,
     schedule_scene_prompt,
+    set_scene_display_target,
     set_scene_policy,
 )
 from .video import (
@@ -190,6 +192,7 @@ __all__ = [
     "resume_user_character_extraction",
     "schedule_scene_generation",
     "schedule_scene_prompt",
+    "set_scene_display_target",
     "set_scene_policy",
     "load_self_visual_context",
     "optional_outfit_image_reference",
@@ -218,6 +221,7 @@ __all__ = [
     "VideoPackNotFoundError",
     "VideoPackStateError",
     "ImageGenerationError",
+    "ImageReviewUnavailableError",
     "ImageSealedError",
     "OutfitDraftExpiredError",
     "OutfitError",
@@ -258,6 +262,7 @@ __all__ = [
     "generate_fullbody_reference",
     "generate_images",
     "generate_character_images",
+    "generate_scene_images",
     "scene_generation_wait_seconds",
     "video_generation_wait_seconds",
     "get_active_avatar",

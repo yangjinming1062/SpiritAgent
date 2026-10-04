@@ -25,7 +25,7 @@
 
 - `chat.py::SCENE_TOOL_GUIDANCES` / `tools.py::SCENE_TOOL_DESCRIPTIONS` 负责自主创建与启用的决策和结果语义，由 `scene_tool.py` 执行；手动操作走独立客户端路径，契约见 [场景启用与授权](../../docs/PROTOCOL.md#场景启用与授权)。
 - `generation.py::SELF_IMAGE_*` / `SELF_VIDEO_*` 装配本次出镜要求，图片由 `visual_identity.py::build_self_image_prompt` 共用于聊天和动态。
-- `generation.py` 的场景模板与参考规则由 `scene_prompt.py` 装配，`SCENE_DESCRIBE_SYSTEM` 由 `scene_service.py` 的视觉分析入口装配；创建、重绘和 JSON 结构分别遵循 [参考输入](../../docs/PIPELINE.md#身份造型与参考输入) 与 `SceneDescriptionRequest`。初始场景默认文案在 `scene_service.py::_INITIAL_SCENE_DEFAULT_NOTES`。
+- `generation.py` 的壁纸模板与环境参考规则由 `scene_prompt.py` 装配；`SCENE_IMAGE_REVIEW_SYSTEM` 由独立 `scene_image_review.py` 对照伙伴与候选，`SCENE_DESCRIBE_SYSTEM` 由场景服务分析成品。各输入用途与描述归属见 [场景输入](../../docs/PIPELINE.md#场景创建与描述)。初始场景默认文案在 `scene_service.py::_INITIAL_SCENE_DEFAULT_NOTES`。
 
 **动作**
 

@@ -1,5 +1,10 @@
 export type PresentationMode = 'window' | 'desktop'
 
+export interface PixelSize {
+  width: number
+  height: number
+}
+
 export interface PresentationDisplay {
   id: number
   label: string
@@ -23,6 +28,7 @@ export interface PresentationState {
   voicePreparing: boolean
   displayId: number | null
   displays: PresentationDisplay[]
+  wallpaperTarget: PixelSize | null
   stageOwner: 'sprite' | 'desktop'
   stageVisible: boolean
   stageEpoch: number

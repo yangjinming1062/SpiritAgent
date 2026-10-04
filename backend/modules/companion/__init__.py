@@ -38,6 +38,7 @@ from .models_loop import COMPANION_CRON_SOURCE_PREFIX, CompanionIntent, companio
 from .posts import CompanionPost, CompanionPostComment, PostCommentRole, PostContentType, PostPublication
 from .scene import (
     CompanionScene,
+    SceneDisplayTarget,
     SceneGenerationAttempt,
     SceneOrigin,
     ScenePolicy,
@@ -126,10 +127,13 @@ from .schemas_scene import (
     SceneActivateRequest,
     SceneDescriptionRequest,
     SceneGenerateRequest,
+    SceneImageDimensions,
+    SceneImageSize,
     SceneListResponse,
     ScenePolicyRequest,
     ScenePolicyResponse,
     ScenePromptRequest,
+    SceneRegenerateRequest,
     SceneResponse,
     SceneStateResponse,
 )
@@ -170,6 +174,10 @@ __all__ = [
     "PostPublicationRecoveryList",
     "ABSOLUTE_MAX_DURATION_SECONDS",
     "SceneGenerationAttempt",
+    "SceneDisplayTarget",
+    "SceneImageSize",
+    "SceneImageDimensions",
+    "SceneRegenerateRequest",
     "BodyFeatures",
     "CharacterCardExtract",
     "CharacterCardResponse",

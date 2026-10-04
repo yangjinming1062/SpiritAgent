@@ -19,6 +19,8 @@ _ASPECT_TO_SIZE: dict[str, str] = {
 
 
 def _resolve_size(req: ImageGenRequest) -> str | None:
+    if req.exact_size:
+        return req.size.replace("x", "*").replace("X", "*") if req.size else None
     if size := _ASPECT_TO_SIZE.get(req.aspect_ratio or ""):
         return size
     # 未登记画幅时按请求像素串（1024x1792 或 宽*高）规范化。
@@ -32,6 +34,7 @@ class QwenImageGenProvider(ImageGenProvider):
     DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/api/v1"
     DEFAULT_MODEL: ClassVar[str] = "qwen-image-3.0-pro"
     supports_reference_image: ClassVar[bool] = True
+    supports_environment_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
     supports_image_edit: ClassVar[bool] = True
     max_images_per_request: ClassVar[int | None] = 6

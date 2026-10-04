@@ -3,9 +3,33 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .scene import SceneOrigin, ScenePolicy, SceneSource, SceneStatus
+
+
+class SceneImageDimensions(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    width: int = Field(gt=0, strict=True)
+    height: int = Field(gt=0, strict=True)
+
+
+class SceneImageSize(SceneImageDimensions):
+    width: int = Field(gt=0, le=16384, strict=True)
+    height: int = Field(gt=0, le=16384, strict=True)
+
+    @model_validator(mode="after")
+    def bounded_pixels(self) -> "SceneImageSize":
+        if self.width * self.height > 64 * 1024 * 1024:
+            raise ValueError("壁纸尺寸超过总像素上限")
+        return self
+
+
+class SceneRegenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_size: SceneImageSize | None = None
 
 
 class SceneRegenerationResponse(BaseModel):
@@ -21,15 +45,14 @@ class SceneResponse(BaseModel):
     stage: str
     origin: SceneOrigin
     source: SceneSource
+    target_size: SceneImageSize | None = None
+    source_size: SceneImageDimensions | None = None
+    image_size: SceneImageDimensions | None = None
     title: str = ""
     description: str = ""
     requirements: str = ""
-    outfit_description: str = ""
     prompt: str = ""
     url: str = ""
-    seed_portrait_media_id: str = ""
-    identity_review: Literal["none", "pass", "review", "accepted", "auto_selected"] = "none"
-    identity_review_reason: str = ""
     auto_activate: bool = False
     switch_version: int = 0
     error: str | None = None
@@ -61,7 +84,7 @@ class SceneGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     notes: str | None = Field(default=None, max_length=500)
-    outfit_description: str | None = Field(default=None, max_length=500)
+    target_size: SceneImageSize | None = None
     image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
     # 客户端声明的类型只做入口约束；场景服务按图片实际格式编码。
     content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
@@ -71,7 +94,7 @@ class ScenePromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     notes: str | None = Field(default=None, max_length=500)
-    outfit_description: str | None = Field(default=None, max_length=500)
+    target_size: SceneImageSize | None = None
 
 
 class SceneActivateRequest(BaseModel):

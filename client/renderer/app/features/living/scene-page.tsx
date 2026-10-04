@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import { hydrateAvatarSeeds, type PickedImage } from '@/modules/character'
+import type { PickedImage } from '@/modules/character'
 import {
   $activeScene,
   $pendingScene,
@@ -50,7 +50,7 @@ interface ImageZoom {
   url: string
 }
 
-const INITIAL_CREATE_DRAFT: SceneCreateDraft = { notes: '', outfitDescription: '', reference: null }
+const INITIAL_CREATE_DRAFT: SceneCreateDraft = { notes: '', reference: null }
 
 export function ScenePage(): React.JSX.Element {
   const library = useStore($sceneLibrary)
@@ -80,7 +80,6 @@ export function ScenePage(): React.JSX.Element {
   const detail = view.kind === 'detail' ? (details[view.sceneId] ?? null) : null
 
   useEffect(() => {
-    void hydrateAvatarSeeds()
     void hydrateScene()
     void loadSceneLibrary()
 
@@ -190,7 +189,6 @@ export function ScenePage(): React.JSX.Element {
 
     const created = await createScene({
       notes: createDraft.notes.trim() || undefined,
-      outfit_description: createDraft.outfitDescription.trim() || undefined,
       ...(createDraft.reference
         ? { image: createDraft.reference.base64, content_type: createDraft.reference.contentType }
         : {})
@@ -282,11 +280,7 @@ export function ScenePage(): React.JSX.Element {
     }
   }
 
-  const handleCreatePrompt = (): Promise<string> =>
-    prepareScenePrompt({
-      notes: createDraft.notes.trim() || undefined,
-      outfit_description: createDraft.outfitDescription.trim() || undefined
-    })
+  const handleCreatePrompt = (): Promise<string> => prepareScenePrompt({ notes: createDraft.notes.trim() || undefined })
 
   const changeEditDraft = (sceneId: string, next: Partial<SceneEditDraft>): void => {
     setEditDrafts(current => ({ ...current, [sceneId]: { ...current[sceneId], ...next } }))

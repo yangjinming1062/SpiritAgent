@@ -1,8 +1,10 @@
-"""身份保持图片：每个输出位置按冻结供应商链择优，后台调用可持久化进度。"""
+"""图片链：角色图按身份评分择优，场景独立核查是否重复桌面伙伴。"""
 
 import asyncio
 import io
+import json
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 import httpx
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger
@@ -18,6 +20,7 @@ from services.infrastructure.llm import (
     ServiceType,
     resolve,
     resolve_reference_bytes,
+    select_image_canvas,
 )
 
 from .identity_review import score_character_image
@@ -29,6 +32,7 @@ from .media_chain import (
     media_failure_reason,
     resolve_frozen_media_provider,
 )
+from .scene_image_review import review_scene_image
 
 logger = get_logger(__name__)
 
@@ -39,6 +43,7 @@ _SIZE_ASPECT_TOLERANCE = 0.02
 class CharacterImageInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    purpose: Literal["character"] = "character"
     prompt: str
     size: str
     n: int = Field(ge=1)
@@ -48,33 +53,85 @@ class CharacterImageInput(BaseModel):
     identity_reference: str
     identity_text: str = ""
     max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
-    # 画幅机械门禁（分功能启用）：目前仅生活空间场景（背景铺满）要求严格 16:9。
     size_enforced: bool = False
     prefer_transparent_background: bool = False
 
 
+class SceneImageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: Literal["scene"] = "scene"
+    prompt: str
+    size: str
+    n: int = Field(default=1, ge=1, le=1)
+    target_width: int = Field(gt=0)
+    target_height: int = Field(gt=0)
+    reference_image: str | None = None
+    max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
+    size_enforced: bool = True
+
+
 class ImageChainState(MediaChainState):
-    inputs: CharacterImageInput | None = None
+    inputs: CharacterImageInput | SceneImageInput | None = Field(default=None, discriminator="purpose")
     pending_urls: list[str] = Field(default_factory=list)
     pending_slots: list[int] = Field(default_factory=list)
     pending_path: str | None = None
     remaining_slots: list[int] = Field(default_factory=list)
     size_rejected: int = 0
 
+    def best(self, slot: int = 0) -> MediaCandidate | None:
+        if isinstance(self.inputs, SceneImageInput):
+            return next(
+                (
+                    candidate
+                    for candidate in self.candidates
+                    if candidate.slot == slot and candidate.evaluated and candidate.accepted is True
+                ),
+                None,
+            )
+        return super().best(slot)
+
+    def needs_next(self, slot: int = 0) -> bool:
+        if isinstance(self.inputs, SceneImageInput):
+            return not self.stop_reason and self.next_index < len(self.providers) and self.best(slot) is None
+        return super().needs_next(slot)
+
+    def finish(self, slots: int = 1) -> None:
+        if isinstance(self.inputs, SceneImageInput):
+            if not self.stop_reason:
+                self.stop_reason = (
+                    "accepted" if all(self.best(slot) is not None for slot in range(slots)) else "exhausted"
+                )
+            self.phase = "complete"
+        else:
+            super().finish(slots)
+
     def stored_paths(self) -> set[str]:
         """已落盘的候选与未登记完成的转存路径，供所有者清理。"""
-        return {self.pending_path or "", *(candidate.path for candidate in self.candidates)} - {""}
+        return {
+            self.pending_path or "",
+            *(candidate.path for candidate in self.candidates),
+            *(path for candidate in self.candidates for path in candidate.artifacts),
+        } - {""}
 
 
 ImageProgressWriter = Callable[[ImageChainState], Awaitable[None]]
 
 
-def _expected_aspect_ratio(size: str) -> float | None:
+def _expected_aspect_ratio(size: str, *, exact_size: bool = False) -> float | None:
     """请求 size（像素串或画幅标签）的目标宽高比；无法解析时不启用核对。"""
     text = size.strip()
     if text in ASPECT_RATIOS:
         return ASPECT_RATIOS[text]
-    mapped = SIZE_TO_ASPECT.get(text)
+    if ":" in text:
+        try:
+            width_s, height_s = text.split(":", 1)
+            width, height = float(width_s), float(height_s)
+            if width > 0 and height > 0:
+                return width / height
+        except ValueError:
+            return None
+    mapped = SIZE_TO_ASPECT.get(text) if not exact_size else None
     if mapped:
         return ASPECT_RATIOS[mapped]
     if "x" in text.lower():
@@ -88,8 +145,8 @@ def _expected_aspect_ratio(size: str) -> float | None:
     return None
 
 
-def _size_matches_request(size: str, width: int, height: int) -> bool:
-    expected = _expected_aspect_ratio(size)
+def _size_matches_request(size: str, width: int, height: int, *, exact_size: bool = False) -> bool:
+    expected = _expected_aspect_ratio(size, exact_size=exact_size)
     if expected is None or width <= 0 or height <= 0:
         return True
     actual = width / height
@@ -101,6 +158,7 @@ def _validate_image(
     *,
     size: str | None = None,
     size_enforced: bool = False,
+    exact_size: bool = False,
     require_transparency: bool = False,
 ) -> str:
     ext = asset_store.sniff_media_ext(data)
@@ -115,9 +173,9 @@ def _validate_image(
         raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
     if alpha_range is not None and (alpha_range[0] > 8 or alpha_range[1] < 128):
         raise ImageGenerationError("供应商未返回有效透明背景图片", can_fallback=True)
-    if size_enforced and size and not _size_matches_request(size, width, height):
+    if size_enforced and size and not _size_matches_request(size, width, height, exact_size=exact_size):
         logger.info(
-            "character image size gate rejected candidate",
+            "image size gate rejected candidate",
             extra={"width": width, "height": height, "requested_size": size},
         )
         raise ImageGenerationError(
@@ -171,13 +229,18 @@ async def _complete_images(
             )
         if state.size_rejected:
             raise ImageGenerationError("生成图片画幅不符合要求")
+        if isinstance(state.inputs, SceneImageInput) and any(candidate.evaluated for candidate in state.candidates):
+            raise ImageGenerationError("场景生成未通过内容检查，请调整环境描述后重试")
         raise ImageGenerationError("图片生成失败，未取得可用候选")
     state.finish(state.inputs.n)
     await _save_progress(state, writer)
-    for path in state.stored_paths() - set(selected):
+    retained = set(selected) | {
+        path for candidate in state.candidates if candidate.path in selected for path in candidate.artifacts
+    }
+    for path in state.stored_paths() - retained:
         await asyncio.to_thread(asset_store.unlink_companion_asset, path)
     logger.info(
-        "character image chain selected",
+        "image chain selected",
         extra={"selected": selected, "attempts": state.next_index, "stop_reason": state.stop_reason},
     )
     return selected
@@ -247,7 +310,92 @@ async def generate_character_images(
                 provider.background = "transparent"
         configs = dict(enumerate(chain))
         await _save_progress(state, save_progress)
+    if not isinstance(state.inputs, CharacterImageInput):
+        raise ImageGenerationError("图片任务类型与角色生成不符")
+    return await _run_image_chain(
+        state,
+        user_id=user_id,
+        configs=configs,
+        save_progress=save_progress,
+        store_attempts=store_attempts,
+        before_submit=before_submit,
+    )
+
+
+async def generate_scene_images(
+    prompt: str,
+    *,
+    user_id: int,
+    target_width: int,
+    target_height: int,
+    reference_image: str | None = None,
+    state: ImageChainState | None = None,
+    save_progress: ImageProgressWriter | None = None,
+    store_attempts: int = 3,
+    before_submit: Callable[[], Awaitable[None]] | None = None,
+    max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
+) -> list[str]:
+    """返回通过伙伴重复出镜检查的原始用户资产；画布和每家尝试随任务冻结。"""
+    state = state if state is not None else ImageChainState()
+    configs: dict[int, ProviderConfig] = {}
+    if state.inputs is None:
+        state.inputs = SceneImageInput(
+            prompt=prompt,
+            size=f"{target_width}x{target_height}",
+            target_width=target_width,
+            target_height=target_height,
+            reference_image=reference_image,
+            max_image_bytes=max_image_bytes,
+        )
+        async with SESSION_LOCAL() as db:
+            chain, error = await resolve_image_gen_chain(
+                db,
+                user_id,
+                has_reference=bool(reference_image),
+                prompt_chars=len(prompt),
+                environment_reference=True,
+            )
+        if error or not chain:
+            raise ImageGenerationError(error or "图片生成服务未配置")
+        for config in chain:
+            provider = FrozenMediaProvider.from_config(config)
+            provider.max_images_per_request = resolve(
+                ServiceType.image_gen,
+                config.provider_name,
+            ).max_images_per_request
+            canvas = select_image_canvas(config, target_width, target_height)
+            provider.image_size = canvas.size
+            provider.image_aspect_ratio = canvas.aspect_ratio
+            provider.image_resolution = canvas.resolution
+            provider.image_exact_size = canvas.exact_size
+            state.providers.append(provider)
+        configs = dict(enumerate(chain))
+        await _save_progress(state, save_progress)
+    if not isinstance(state.inputs, SceneImageInput):
+        raise ImageGenerationError("图片任务类型与场景生成不符")
+    return await _run_image_chain(
+        state,
+        user_id=user_id,
+        configs=configs,
+        save_progress=save_progress,
+        store_attempts=store_attempts,
+        before_submit=before_submit,
+    )
+
+
+async def _run_image_chain(
+    state: ImageChainState,
+    *,
+    user_id: int,
+    configs: dict[int, ProviderConfig],
+    save_progress: ImageProgressWriter | None,
+    store_attempts: int,
+    before_submit: Callable[[], Awaitable[None]] | None,
+) -> list[str]:
     inputs = state.inputs
+    if inputs is None:
+        raise ImageGenerationError("图片任务缺少生成输入")
+    scene = isinstance(inputs, SceneImageInput)
     if state.phase == "submitting":
         state.stop_reason = "result_unknown"
         await _save_progress(state, save_progress)
@@ -270,13 +418,14 @@ async def generate_character_images(
                                 else state.pending_urls[0]
                             )
                             data, _ = await image_asset_bytes(source, max_bytes=inputs.max_image_bytes)
+                            provider = state.providers[state.active_index or 0]
                             ext = await asyncio.to_thread(
                                 _validate_image,
                                 data,
-                                size=inputs.size,
+                                size=(provider.image_size or provider.image_aspect_ratio) if scene else inputs.size,
                                 size_enforced=inputs.size_enforced,
-                                require_transparency=state.providers[state.active_index or 0].background
-                                == "transparent",
+                                exact_size=scene,
+                                require_transparency=provider.background == "transparent",
                             )
                             state.pending_path = asset_store.image_chain_asset_path(
                                 user_id,
@@ -337,18 +486,24 @@ async def generate_character_images(
                         continue
                     data, mime = await image_asset_bytes(candidate.path)
                     uri = await asyncio.to_thread(build_data_uri, data, mime)
-                    score = (
-                        None
-                        if state.stop_reason == "score_unavailable"
-                        else await score_character_image(
-                            user_id,
-                            inputs.identity_reference,
-                            uri,
-                            identity_text=inputs.identity_text,
-                            before_submit=before_submit,
+                    if isinstance(inputs, SceneImageInput):
+                        accepted, reason = await review_scene_image(user_id, uri, before_submit=before_submit)
+                        candidate.accepted = accepted
+                        candidate.evaluated = True
+                        candidate.result_json = json.dumps({"accepted": accepted, "reason": reason}, ensure_ascii=False)
+                    else:
+                        score = (
+                            None
+                            if state.stop_reason == "score_unavailable"
+                            else await score_character_image(
+                                user_id,
+                                inputs.identity_reference,
+                                uri,
+                                identity_text=inputs.identity_text,
+                                before_submit=before_submit,
+                            )
                         )
-                    )
-                    state.accept_score(candidate, score)
+                        state.accept_score(candidate, score)
                     await _save_progress(state, save_progress)
                 state.phase = "ready"
                 await _save_progress(state, save_progress)
@@ -381,20 +536,26 @@ async def generate_character_images(
             state.begin(index)
             await _save_progress(state, save_progress)
             try:
-                background = state.providers[index].background
+                provider = state.providers[index]
+                background = provider.background
                 prompt = inputs.prompt
-                if inputs.prefer_transparent_background:
+                if isinstance(inputs, CharacterImageInput) and inputs.prefer_transparent_background:
                     prompt += "\n" + (IMAGE_TRANSPARENT_BACKGROUND if background else IMAGE_OPAQUE_BACKGROUND)
                 urls = await generate_images(
                     prompt,
-                    size=inputs.size,
+                    size=provider.image_size or inputs.size,
                     n=len(slots),
                     user_id=user_id,
                     reference_image=inputs.reference_image,
-                    secondary_reference_image=inputs.secondary_reference_image,
-                    image_edit=inputs.image_edit,
+                    secondary_reference_image=inputs.secondary_reference_image
+                    if isinstance(inputs, CharacterImageInput)
+                    else None,
+                    image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,
                     provider_config=config,
                     background=background,
+                    aspect_ratio=provider.image_aspect_ratio,
+                    resolution=provider.image_resolution,
+                    exact_size=provider.image_exact_size,
                 )
             except ImageGenerationError as exc:
                 reason, can_continue = media_failure_reason(exc)

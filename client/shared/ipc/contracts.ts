@@ -26,6 +26,7 @@ export type {
   DockCatalogSourceKey,
   DockEntry,
   DockState,
+  PixelSize,
   PresentationDisplay,
   PresentationMode,
   PresentationState,
@@ -319,6 +320,7 @@ export interface DesktopAuthBroadcast {
 }
 
 export interface SpiritAgentApiRequest {
+  authSessionId?: string
   body?: unknown
   method?: string
   path: string

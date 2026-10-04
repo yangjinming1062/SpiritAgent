@@ -123,7 +123,6 @@ class SceneActivateArgs(_ActionArgs):
 
 class SceneCreateArgs(_ActionArgs):
     notes: str = Field(min_length=1)
-    outfit_description: str | None = None
 
 
 class PostPublishArgs(_ActionArgs):
@@ -190,6 +189,7 @@ class PlanningProviders(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     image_reference: bool = False
+    image_text: bool = False
     video: bool = False
 
 
@@ -302,7 +302,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         name="scene.activate",
         phase=20,
         description="启用 scene.library 中适合的已有场景，不消耗生图额度；已是当前场景的无需重复启用。"
-        "场景画面中的穿着保持该场景创建时的样子，换装动作不会改变它，因此不依赖换装动作。",
+        "场景与换装相互独立，不依赖换装动作。",
         arguments={
             "scene_id": "integer：scene.library 中实际存在且可启用的场景 id，不填名称或自造 id。",
             "reason": "string（可选）：该场景适合当前安排的具体理由。",
@@ -312,12 +312,10 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="scene.create",
         phase=20,
-        description="已有场景不适合时创建并启用新场景。notes 描述地点、环境与活动，必须非空；"
-        "场景穿着只由 outfit_description 决定：填写本次明确的完整着装设计，无着装要求时省略并沿用创建时的当前外观；"
-        "不通过依赖换装动作表达场景穿着。",
+        description="已有场景不适合时创建并启用环境壁纸。notes 描述地点、陈设、光线、氛围与需要的画风，必须非空；"
+        "不描绘你本人，其他人物、动物、肖像或雕像可以按环境需要出现；不依赖换装动作。",
         arguments={
-            "notes": "string（非空）：地点、环境和角色活动，描述一个可见瞬间及必要的接触、支撑关系；不重新设计角色外貌，着装写入 outfit_description。",
-            "outfit_description": "string（可选）：本次完整造型，涵盖服装、配色及所需发型、妆容、鞋履和配饰；局部修改先合并为完整描述，无着装要求时省略，沿用创建时的当前外观。",
+            "notes": "string（非空）：环境壁纸的地点、陈设、光线、氛围与需要的画风；不描绘你本人，其他人物、动物、肖像或雕像可按环境需要安排。",
             "reason": "string（可选）：已有场景不合适、需要新建场景的依据。",
         },
         exclusive_group="scene",
@@ -423,17 +421,19 @@ async def _provider_available(
         return False
 
 
-async def _reference_image_provider_available(
+async def _image_provider_available(
     db: AsyncSession,
     user_id: int,
+    *,
+    has_reference: bool,
 ) -> bool:
     try:
-        chain, _ = await resolve_image_gen_chain(db, user_id, has_reference=True)
+        chain, _ = await resolve_image_gen_chain(db, user_id, has_reference=has_reference)
         return bool(chain)
     except Exception:
         logger.warning(
-            "nightly reference-image capability check failed",
-            extra={"user_id": user_id},
+            "nightly image capability check failed",
+            extra={"user_id": user_id, "has_reference": has_reference},
             exc_info=True,
         )
         return False
@@ -453,8 +453,8 @@ def _capability_availability(
         "outfit.create": (providers.image_reference and persona_ready, "换装已锁定或形象/生图不可用"),
         "scene.activate": (bool(context.scene.library), "场景已锁定或没有可用场景"),
         "scene.create": (
-            providers.image_reference and persona_ready and not context.scene.generation_pending,
-            "场景已锁定、形象/生图不可用或已有场景正在生成",
+            providers.image_text and persona_ready and not context.scene.generation_pending,
+            "场景已锁定、人设/生图不可用或已有场景正在生成",
         ),
         "post.publish": (
             bool(context.post_types) and post_quota_available,
@@ -500,7 +500,8 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         ).all()
         character = await load_character_snapshot(db, user_id)
         settings = await load_user_settings(db, user_id, ("language",))
-        reference_image_available = await _reference_image_provider_available(db, user_id)
+        reference_image_available = await _image_provider_available(db, user_id, has_reference=True)
+        text_image_available = await _image_provider_available(db, user_id, has_reference=False)
         video_available = await _provider_available(db, user_id, "video_gen")
         recent_actions = (
             await db.scalars(
@@ -530,6 +531,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         policies=_policies(persona),
         providers=PlanningProviders(
             image_reference=reference_image_available,
+            image_text=text_image_available,
             video=video_available,
         ),
         language=language,
@@ -541,7 +543,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         scene=SceneContext(
             environment=scene_environment(scene),
             library=[{"id": row.id, "title": row.title, "description": row.description} for row in scene_rows],
-            generation_pending=scene.pending is not None,
+            generation_pending=scene.pending is not None or scene.regenerating is not None,
         ),
         wardrobe=[
             WardrobeItem(
@@ -750,7 +752,8 @@ async def _runtime_block_reason(user_id: int, capability: str, resume: dict[str,
                 select(CompanionScene.id)
                 .where(
                     CompanionScene.user_id == user_id,
-                    CompanionScene.status == SceneStatus.PENDING.value,
+                    (CompanionScene.status == SceneStatus.PENDING.value)
+                    | (CompanionScene.regeneration_status == "pending"),
                 )
                 .limit(1),
             )
@@ -877,7 +880,6 @@ async def _execute_scene_create(run: _ActionRun, args: dict[str, Any]) -> Action
             run.user_id,
             origin=SceneOrigin.NIGHTLY.value,
             notes=parsed_args.notes,
-            outfit_description=parsed_args.outfit_description or None,
             auto_activate=True,
         )
         scene_id = row.id
@@ -1075,7 +1077,7 @@ async def _execute_persisted_action(
     if illegal_deps := arguments.get("illegal_outfit_deps"):
         return ActionExecutionResult(
             status="failed",
-            reason="场景穿着不随换装改变，不能依赖换装动作表达场景穿着；把完整造型写入 outfit_description",
+            reason="场景与换装相互独立，场景动作不能依赖换装动作",
             dependencies=illegal_deps,
         )
     # 依赖要求前置动作整项成功；部分成功不解锁。

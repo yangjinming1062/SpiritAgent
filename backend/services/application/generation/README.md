@@ -12,11 +12,11 @@
 | [initial_appearance.py](initial_appearance.py) | 首个动作包启动（含补排默认外观描述）；首个动作包与初始场景的重启恢复（初始场景由角色卡就绪后经 `scene_service.schedule_initial_scene` 启动） |
 | [visual_identity.py](visual_identity.py) | 出镜身份与本次造型（`SelfVisualPlan`），共用 `build_self_image_prompt` 与 `build_self_video_prompt` |
 | [outfit_service.py](outfit_service.py) | 衣柜外观草稿、重绘、自备图、确认、穿着、删除（同事务删除已停稳的关联动作包）、替换策略与后台命名；描述失败经 `description/retry` 手动补全 |
-| [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与场景提示词装配 |
+| [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与环境壁纸提示词装配 |
 | [chat_images.py](chat_images.py) | 聊天图片批次登记、实际验图、版本与一次重做预算；工具入口见 [image_generation_tool.py](../../adapters/tools/builtin/image_generation_tool.py) |
-| [scene_service.py](scene_service.py) | 场景创建、描述分析、图片重生成与切换版本 |
+| [scene_service.py](scene_service.py) / [scene_image_review.py](scene_image_review.py) | 场景创建、描述、重生成与切换版本；伙伴参考仅用于独立检查 |
 | [video/](video/) / [video_jobs.py](video_jobs.py) | 图片与视频动作包（script、state、service）及聊天、动态视频任务；视频供应商轮询 `poll_video_task` 共用，聊天工具入口见 [video_generation_tool.py](../../adapters/tools/builtin/video_generation_tool.py) |
-| [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链择优、身份保持图片、评分与严格复核 |
+| [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链与进度、身份保持图片及环境壁纸、身份评分与严格复核 |
 | [media_review.py](media_review.py) | 用户复核项的创建、查询、采纳与拒绝；所属动作以 `MediaReviewPublication` 落库，复核项只作用于生成它的成品（失效语义见 [PROTOCOL](../../../../docs/PROTOCOL.md#媒体复核与激活)），原位重做同事务结束动作仍待确认的复核项；采纳动作时同事务发布所属包目录，包仍激活时广播目录变更并兑现有效表达意图，拒绝时作废该次生成尝试；同一素材只复用仍待确认的复核项 |
 | [response_builders.py](response_builders.py) | 头像/外观响应装配 |
 
@@ -24,7 +24,7 @@
 
 所有形象、衣柜、角色卡和动作包任务共用 `avatar_service.get_avatar_job_lock` 用户级锁；角色卡编辑使用数据库行锁与预期修订，场景另用 `scene_service` 的场景锁。任务按“冻结资料 → 事务外等待供应商 → 校验身份、状态和源路径 → 状态和事件同事务提交”执行，迟到结果不得覆盖新任务，候选与正式资产分开清理。头像生成、基于图片重绘、自备图采纳与提示词入口由服务重读 persona 校验引导完成和身份锁定，不接受调用方在锁外读到的快照；API 的锁外检查只作快速拒绝。
 
-已保存场景和已就绪动作包启用时只核对身份图：场景比对头像记录的全身图路径，动作包比对冻结全身身份图与当前全身图字节；在途任务的自动启用还要核对角色卡修订。角色卡文字修订不阻止已保存资产启用，完整规则见 [PIPELINE](../../../../docs/PIPELINE.md#角色卡与并发写入)。
+已就绪动作包启用时比对冻结全身身份图与当前全身图字节，在途任务自动启用还要核对角色卡修订；角色卡文字修订不阻止已保存动作包启用。场景壁纸不绑定角色身份，按账户、任务与切换版本守卫提交。完整规则见 [PIPELINE](../../../../docs/PIPELINE.md#角色卡与并发写入) 与 [场景契约](../../../../docs/PROTOCOL.md#场景启用与授权)。
 
 ### 全身候选与草稿
 
@@ -50,10 +50,10 @@
 | 用户操作 | [scene-page.tsx](../../../../client/renderer/app/features/living/scene-page.tsx)、[scene-detail-view.tsx](../../../../client/renderer/app/features/living/scene-detail-view.tsx) | 保存描述、重生成、取消与旧图呈现 |
 | 状态与事件 | [scene-store.ts](../../../../client/renderer/modules/scene/scene-store.ts) 的 `regenerateScene` / `onSceneEvent` | POST 后水合、版本与换号守卫；当前背景见 [scene-backdrop.tsx](../../../../client/renderer/app/features/living/scene-backdrop.tsx) |
 | API 与结构 | [companion_scenes.py](../../../api/v1/companion_scenes.py) 的 `post_scene_regenerate`、[schemas_scene.py](../../../modules/companion/schemas_scene.py) | 响应状态、创建任务与重生成任务的区分 |
-| 执行与持久化 | [scene_service.py](scene_service.py) 的 `regenerate_scene` / `_run_scene_regeneration` / `resume_scene_jobs`，模型 [scene.py](../../../modules/companion/scene.py) | 单任务互斥、身份快照、原位提交与恢复 |
-| 提示词与供应商 | [scene_prompt.py](scene_prompt.py)、[character_images.py](character_images.py) | 创建和重生成输入不同；质量门禁与未知提交不重发 |
+| 执行与持久化 | [scene_service.py](scene_service.py) 的 `regenerate_scene` / `_run_scene_regeneration` / `resume_scene_jobs`，模型 [scene.py](../../../modules/companion/scene.py) | 单任务互斥、尺寸冻结、原位提交与恢复 |
+| 提示词与供应商 | [scene_prompt.py](scene_prompt.py)、[character_images.py](character_images.py) | 创建和重生成的环境输入；独立重复伙伴检查、尺寸适配与未知提交不重发 |
 
-验收至少核对：成功原位换图而不改变启用关系；取消/失败保留旧图；身份变化拒绝晚到产物；重启复用冻结输入；换号后旧响应失效。
+场景验收覆盖屏幕尺寸、重复伙伴与无关主体、分析恢复和换号，清单见 [PIPELINE](../../../../docs/PIPELINE.md#验收范围)。
 
 ## 图像输入与装配
 

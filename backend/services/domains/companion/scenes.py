@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from typing import Any
 
-from modules.companion import CompanionScene, Persona, ScenePolicy, SceneResponse, SceneStatus
+from modules.companion import (
+    CompanionScene,
+    Persona,
+    SceneImageDimensions,
+    SceneImageSize,
+    ScenePolicy,
+    SceneResponse,
+    SceneStatus,
+)
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -127,15 +135,19 @@ def response_for_scene(row: CompanionScene) -> SceneResponse:
             "stage": row.stage,
             "origin": row.origin,
             "source": row.source,
+            **{
+                key: schema.model_validate_json(value) if value else None
+                for key, value, schema in (
+                    ("target_size", row.target_size_json, SceneImageSize),
+                    ("source_size", row.source_size_json, SceneImageDimensions),
+                    ("image_size", row.image_size_json, SceneImageDimensions),
+                )
+            },
             "title": row.title,
             "description": row.description,
             "requirements": row.requirements,
-            "outfit_description": row.outfit_description,
             "prompt": row.prompt,
             "url": (asset_store.signed_companion_asset_url(row.media_path) or "") if row.media_path else "",
-            "seed_portrait_media_id": row.seed_portrait_media_id,
-            "identity_review": row.identity_review,
-            "identity_review_reason": row.identity_review_reason,
             "error": row.error,
             "auto_activate": row.auto_activate,
             "switch_version": row.switch_version,
@@ -165,7 +177,6 @@ def scene_environment(state: SceneState) -> dict[str, Any]:
         "pending_switch": {
             "id": pending.id,
             "requirements": pending.requirements,
-            "outfit_description": pending.outfit_description,
             "stage": pending.stage,
         }
         if pending and pending.auto_activate and pending.switch_version == state.switch_version

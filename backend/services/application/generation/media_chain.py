@@ -65,6 +65,10 @@ class FrozenMediaProvider(BaseModel):
     model_overridden: bool = False
     max_images_per_request: int | None = Field(default=None, ge=1)
     background: Literal["transparent"] | None = None
+    image_size: str | None = None
+    image_aspect_ratio: str | None = None
+    image_resolution: str | None = None
+    image_exact_size: bool = False
     video_resolution: str | None = Field(default=None, min_length=1)
 
     @classmethod
@@ -85,6 +89,7 @@ class MediaCandidate(BaseModel):
     slot: int = 0
     score: int | None = Field(default=None, ge=0, le=100)
     evaluated: bool = False
+    accepted: bool | None = None
     artifacts: list[str] = Field(default_factory=list)
     result_json: str | None = None
 

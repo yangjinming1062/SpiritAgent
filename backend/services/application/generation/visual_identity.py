@@ -1,4 +1,4 @@
-"""出镜媒体共用的固定身份、本次生成造型及视频参考准备。造型来源统一命名（衣柜已启用外观 / 当前场景可见穿着 / 本次生成造型）；`outfit_override` 只作用于本次产物，不改衣柜或场景。"""
+"""出镜媒体共用的固定身份、本次生成造型及视频参考准备。衣柜已启用外观提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改衣柜或场景。"""
 
 import asyncio
 from collections.abc import Awaitable, Callable

@@ -24,7 +24,7 @@ from services.domains.actions import (
 class ActionContextSnapshot:
     pack_id: int | None = None
     catalog_version: int = 0
-    # 动作素材中的着装；有场景时它可能与场景里的穿着不同，设计新动作以它为准。
+    # 动作素材中的着装，设计新动作以它为准。
     outfit_description: str = ""
     ready_actions: list[dict[str, Any]] = field(default_factory=list)
     in_flight_proposals: list[dict[str, Any]] = field(default_factory=list)

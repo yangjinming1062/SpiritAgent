@@ -1,3 +1,4 @@
+import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
@@ -8,6 +9,7 @@ import { ArrowLeft, Loader2, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/share
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard } from '@/shared/panel'
+import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
 
 export interface SceneEditDraft {
@@ -56,6 +58,7 @@ export function SceneDetailView({
   onSaveAndRegenerate,
   onZoom
 }: SceneDetailViewProps): React.JSX.Element {
+  const { wallpaperTarget } = useStore($presentation)
   const t = useStrings().living.scene
   const tToasts = useStrings().living.toasts
   const [actionBusy, setActionBusy] = useState(false)
@@ -79,6 +82,14 @@ export function SceneDetailView({
     )
 
   const canActivate = detail?.status === 'ready' && Boolean(detail.url) && Boolean(detail.description.trim())
+
+  const canRetryAnalysis = Boolean(
+    detail &&
+    (((detail.status === 'description_failed' || detail.status === 'cancelled') && detail.url) ||
+      (detail.status === 'failed' && detail.stage === 'review_failed') ||
+      (detail.regeneration?.status === 'failed' &&
+        (detail.regeneration.stage === 'analyze' || detail.regeneration.stage === 'review_failed')))
+  )
 
   const runAction = async (action: (isLive: () => boolean) => Promise<void>): Promise<void> => {
     if (actionBusy) {
@@ -164,11 +175,15 @@ export function SceneDetailView({
           {detail.url ? (
             <button
               aria-label={t.viewOriginal}
-              className="group relative block aspect-video w-full cursor-zoom-in bg-fill-trough"
+              className="group relative block w-full cursor-zoom-in bg-fill-trough"
               onClick={() => onZoom(detail.url, detail.title || t.historyAltFallback)}
               type="button"
             >
-              <img alt={detail.title || t.historyAltFallback} className="h-full w-full object-cover" src={detail.url} />
+              <img
+                alt={detail.title || t.historyAltFallback}
+                className="block h-auto max-h-[65vh] w-full object-contain"
+                src={detail.url}
+              />
               <span className="absolute bottom-2 right-2 rounded-full bg-black/50 p-1.5 text-white opacity-80 transition group-hover:opacity-100">
                 <ZoomIn className="size-4" />
               </span>
@@ -180,7 +195,14 @@ export function SceneDetailView({
               ) : null}
             </button>
           ) : (
-            <div className="grid aspect-video place-items-center bg-fill-trough text-xs text-faint">
+            <div
+              className="grid max-h-[65vh] place-items-center bg-fill-trough text-xs text-faint"
+              style={{
+                aspectRatio: detail.target_size
+                  ? `${detail.target_size.width} / ${detail.target_size.height}`
+                  : '16 / 9'
+              }}
+            >
               <div className="flex items-center gap-2">
                 {generating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                 {detail.stage === 'waiting_upload' ? t.waitingUploadOverlay : t.noScene}
@@ -190,6 +212,17 @@ export function SceneDetailView({
         </div>
 
         <div className="min-w-0">
+          {detail.image_size || detail.source_size || detail.target_size ? (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 pt-3 text-[10px] text-faint sm:px-5">
+              {detail.image_size ? <span>{t.imageSize(detail.image_size.width, detail.image_size.height)}</span> : null}
+              {detail.source_size ? (
+                <span>{t.sourceSize(detail.source_size.width, detail.source_size.height)}</span>
+              ) : null}
+              {detail.target_size ? (
+                <span>{t.generationTargetSize(detail.target_size.width, detail.target_size.height)}</span>
+              ) : null}
+            </div>
+          ) : null}
           {draft ? (
             <div className="space-y-4 p-4 sm:p-5">
               <label className="block space-y-1.5 text-xs text-body">
@@ -243,7 +276,7 @@ export function SceneDetailView({
               {t.historyDeleteLabel}
             </button>
           ) : null}
-          {(detail.status === 'description_failed' || detail.status === 'cancelled') && detail.url ? (
+          {canRetryAnalysis ? (
             <button
               className={BTN_SUBTLE}
               disabled={actionBusy || busy}
@@ -339,6 +372,11 @@ export function SceneDetailView({
         </div>
         {detail.status === 'description_failed' ? (
           <p className={cn(HINT_TEXT, 'px-4 pb-4 sm:px-5')}>{t.needsDescription}</p>
+        ) : null}
+        {!generating && wallpaperTarget ? (
+          <p className={cn(HINT_TEXT, 'px-4 pb-4 sm:px-5')}>
+            {t.regenerationTargetSize(wallpaperTarget.width, wallpaperTarget.height)}
+          </p>
         ) : null}
       </SettingCard>
     </section>

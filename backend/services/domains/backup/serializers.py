@@ -14,7 +14,6 @@ from modules.auth import User, UserModelConfig
 from modules.companion import (
     COMPANION_CRON_SOURCE_PREFIX,
     AvatarAsset,
-    CharacterCardSnapshot,
     CharacterFeatures,
     CharacterOverrides,
     CompanionAction,
@@ -34,6 +33,8 @@ from modules.companion import (
     PostContentType,
     PostContext,
     SceneDescriptionRequest,
+    SceneImageDimensions,
+    SceneImageSize,
     companion_cron_source_key,
 )
 from modules.conversation import CompanionReply, Conversation, MediaBubble, Message
@@ -102,7 +103,7 @@ ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
 # 预检时身份三表成组写入的顺序：先头像，再角色卡与人设。
 IDENTITY_GROUP: tuple[str, ...] = ("avatar_assets", "companion_character_cards", "personas")
 IDENTITY_INCOMPLETE_REASON = "基础身份必须同时包含人设、头像与角色卡。"
-IDENTITY_BLOCKED_REASON = "目标现有场景、动作包等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
+IDENTITY_BLOCKED_REASON = "目标现有动作包等仍引用身份，无法安全覆盖基础身份；请一并恢复这些类别，或先处理引用。"
 IDENTITY_DEPENDENT_REASON = "缺少可映射的基础身份，无法恢复此类别。"
 CONVERSATION_MERGE_CONFLICT_REASON = "固定会话已有历史，或任一侧上下文已清理，无法合并；请取消会话恢复或使用覆盖模式。"
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
@@ -124,7 +125,7 @@ UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
 # 运行期状态不导出；恢复时取模型默认值（必填列在 _build_payload 中显式置空）。
 _EXCLUDED_COLUMNS: dict[str, frozenset[str]] = {
     "messages": frozenset({"dedup_key"}),
-    "companion_scenes": frozenset({"generation_state_json", "regeneration_state_json", "secondary_reference_image"}),
+    "companion_scenes": frozenset({"generation_state_json", "regeneration_state_json", "reference_image"}),
     "companion_character_cards": frozenset(
         {
             "portrait_result_json",
@@ -529,11 +530,13 @@ def _build_payload(
             )
             if not payload.get("media_path"):
                 raise ValueError("Ready scene image is missing from backup")
-        snapshot = CharacterCardSnapshot.model_validate_json(payload["character_card_json"])
-        avatar_id = id_map.get("avatar_assets", {}).get(str(snapshot.avatar_id))
-        if avatar_id is None:
-            raise ValueError("Scene character reference is missing from backup")
-        payload["character_card_json"] = snapshot.model_copy(update={"avatar_id": int(avatar_id)}).model_dump_json()
+        for field, schema in (
+            ("target_size_json", SceneImageSize),
+            ("source_size_json", SceneImageDimensions),
+            ("image_size_json", SceneImageDimensions),
+        ):
+            if payload.get(field):
+                payload[field] = schema.model_validate_json(payload[field]).model_dump_json()
         payload["auto_activate"] = False
         payload["regeneration_status"] = None
         payload["regeneration_stage"] = None

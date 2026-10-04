@@ -54,7 +54,6 @@ BACKUP_RESTORE_ORDER: tuple[str, ...] = (
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
     "avatar_assets": (
         ("companion_character_cards", "avatar_id"),
-        ("companion_scenes", None),
         ("companion_action_packs", "avatar_id"),
     ),
     "companion_outfits": (("companion_action_packs", "outfit_id"),),
@@ -514,9 +513,9 @@ async def _clear_compatible_rows(
                 )
                 _drop_identity(IDENTITY_BLOCKED_REASON)
 
-    # 身份未能写入时先摘掉依赖头像映射的类别，保留目标已有场景/视频包，也不在清理阶段误删。
+    # 身份未能写入时先摘掉依赖头像映射的动作类别，避免在清理阶段误删。
     if IDENTITY_TABLES & set(compatible_rows) and not set(remaining) >= IDENTITY_TABLES:
-        for table in ("companion_scenes", "companion_action_packs", "companion_actions"):
+        for table in ("companion_action_packs", "companion_actions"):
             if table not in remaining:
                 continue
             remaining.pop(table)

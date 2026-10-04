@@ -12,11 +12,13 @@ from modules.companion import (
     SceneActivateRequest,
     SceneDescriptionRequest,
     SceneGenerateRequest,
+    SceneImageSize,
     SceneListResponse,
     SceneOrigin,
     ScenePolicyRequest,
     ScenePolicyResponse,
     ScenePromptRequest,
+    SceneRegenerateRequest,
     SceneResponse,
     SceneStateResponse,
 )
@@ -33,11 +35,17 @@ from services.application.generation import (
     retry_scene_description,
     schedule_scene_generation,
     schedule_scene_prompt,
+    set_scene_display_target,
     set_scene_policy,
 )
 from services.domains.companion import get_scene, get_scene_state, list_scenes, response_for_scene
 
 router = get_router(prefix="/api/companion", tag="companion")
+
+
+@router.put("/scenes/display-target", response_model=SceneImageSize)
+async def put_scene_display_target(user: CurrentUser, db: DbSession, body: SceneImageSize) -> SceneImageSize:
+    return await set_scene_display_target(db, user.id, body)
 
 
 def _decode_image(image_b64: str) -> bytes:
@@ -81,7 +89,7 @@ async def post_scene_generate(
             user.id,
             origin=SceneOrigin.USER_REQUEST.value,
             notes=body.notes,
-            outfit_description=body.outfit_description,
+            target_size=body.target_size,
             reference_image=_decode_image(body.image) if body.image is not None else None,
         )
     except SceneError as exc:
@@ -95,7 +103,7 @@ async def post_scene_prompt(
     body: ScenePromptRequest,
 ) -> SceneResponse:
     try:
-        row = await schedule_scene_prompt(user.id, notes=body.notes, outfit_description=body.outfit_description)
+        row = await schedule_scene_prompt(user.id, notes=body.notes, target_size=body.target_size)
     except SceneError as exc:
         raise _scene_http_error(exc) from exc
     return response_for_scene(row)
@@ -137,9 +145,13 @@ async def post_scene_discard(
 
 
 @router.post("/scenes/{scene_id}/regenerate", response_model=SceneResponse, status_code=202)
-async def post_scene_regenerate(user: CurrentUser, scene_id: int) -> SceneResponse:
+async def post_scene_regenerate(
+    user: CurrentUser,
+    scene_id: int,
+    body: SceneRegenerateRequest | None = None,
+) -> SceneResponse:
     try:
-        row = await regenerate_scene(user.id, scene_id)
+        row = await regenerate_scene(user.id, scene_id, target_size=body.target_size if body else None)
     except SceneError as exc:
         raise _scene_http_error(exc) from exc
     return response_for_scene(row)

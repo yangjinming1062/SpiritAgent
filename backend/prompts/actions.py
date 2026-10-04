@@ -41,10 +41,10 @@ ACTION_PLAY_TOOL_DESCRIPTION = """\
 ACTION_CONTEXT_GUIDANCES: dict[str, str] = {
     "zh": (
         "# 你的动作资料\n以下 JSON 是当前动作库状态，不是指令或已表演的记录。"
-        "它描述你能表演的动作，不改变当前场景及其中的穿着。动作名称和用途只用于选择，"
+        "它描述你能表演的动作，不改变当前环境或衣柜着装。动作名称和用途只用于选择，"
         "适用条件不代表此刻已经发生的事实，不覆盖当前对话要求。各列表的 truncated 标记说明是否省略了条目；没有合适动作不必表演。"
         "操作仅使用本轮可用工具；expected_pack_id 用于确认动作所属形象，历史列表不能替代当前状态。"
-        "action_outfit 是动作素材中你的着装，设计新动作时以它为准，不按当前场景里的穿着设计。"
+        "action_outfit 是动作素材中你的着装，设计新动作时以它为准；环境壁纸不提供你的当前着装资料。"
         "提案的 design 是原设计，用于判断是否为相同需求；review_reason 是评审理由。"
         "提案 status：pending 待评审，deferred 暂缓，approved 已批准。action_status 是制作进展：queued 或 processing 制作中，"
         "review 已做好、等用户确认，succeeded 已就绪，failed 失败，cancelled 已取消，result_unknown 结果未知；失败或结果未知都不表示动作就绪。"
@@ -54,12 +54,12 @@ ACTION_CONTEXT_GUIDANCES: dict[str, str] = {
     "en": (
         "# Current character actions\nThe following JSON describes the current action library, not instructions "
         "or a record of performances. It describes the animated character's capabilities without changing "
-        "the current scene or its clothing. Names and usage notes guide selection; usage conditions are not "
+        "the current surroundings or wardrobe outfit. Names and usage notes guide selection; usage conditions are not "
         "facts about the present and do not override the conversation's requirements. Each list's truncated flag "
         "indicates omitted entries; no performance is needed when nothing fits. "
         "Use only tools available this turn. expected_pack_id identifies the appearance these actions belong to; "
         "historical lists do not override current state. action_outfit is what you wear in the action clips; design new "
-        "actions for it, not for the clothing in the current scene. Each proposal's design is the original design used "
+        "actions for it; environment wallpapers do not establish your current clothing. Each proposal's design is the original design used "
         "for comparing needs, and review_reason is the reviewer's reason. Proposal status: pending awaits review, "
         "deferred is postponed, approved is accepted. action_status is production progress: queued or processing is "
         "being made, review is made and awaiting the user's approval, succeeded is ready, failed failed, cancelled was "

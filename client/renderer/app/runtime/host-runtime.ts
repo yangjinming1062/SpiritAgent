@@ -23,6 +23,7 @@ import {
   syncSessionHistory
 } from '@/modules/conversation'
 import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
+import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { reconnectBackoffMs } from '@/shared/lib/reconnect'
@@ -40,6 +41,8 @@ import { isDeviceCommandEvent } from './gateway-event-util'
 
 // 1008 停止重连；会话过期由主进程的鉴权失败通知确认。
 const WS_CLOSE_POLICY_VIOLATION = 1008
+// 宿主换号或重挂载后仍串行发送，防止旧尺寸比新尺寸更晚落到同一账户。
+let sceneTargetSyncTail: Promise<void> = Promise.resolve()
 
 // 取消计时器并返回 null，供调用方复位持有它的变量。
 function clearTimer(timer: ReturnType<typeof setTimeout> | null): null {
@@ -108,6 +111,9 @@ export function useGatewayBoot(sessionId: string): void {
   useEffect(() => {
     let cancelled = false
     let toolsSyncGeneration = 0
+    let targetSyncGeneration = 0
+    let lastTargetKey: string | null = null
+    const isAuthCurrent = captureAuthScope()
     const desktop = window.spiritagent
 
     if (!desktop) {
@@ -126,6 +132,49 @@ export function useGatewayBoot(sessionId: string): void {
     let reconnectErrorNotified = false
 
     const gatewayOpen = () => gateway.connectionState === 'open'
+
+    const syncSceneTarget = (force = false): void => {
+      const target = $presentation.get().wallpaperTarget
+
+      if (!target || cancelled || !isAuthCurrent?.() || !gatewayOpen()) {
+        return
+      }
+
+      const key = `${target.width}x${target.height}`
+
+      if (!force && key === lastTargetKey) {
+        return
+      }
+
+      lastTargetKey = key
+      const generation = ++targetSyncGeneration
+
+      sceneTargetSyncTail = sceneTargetSyncTail
+        .then(async () => {
+          if (cancelled || !isAuthCurrent() || !gatewayOpen() || generation !== targetSyncGeneration) {
+            return
+          }
+
+          const result = await authedApi({
+            path: '/api/companion/scenes/display-target',
+            method: 'PUT',
+            body: target
+          })
+
+          if (cancelled || !isAuthCurrent() || generation !== targetSyncGeneration) {
+            return
+          }
+
+          if (!result.ok && result.reason === 'err') {
+            log.warn('gateway-boot', 'Scene display target sync failed', result.error)
+          }
+        })
+        .catch(error => {
+          if (!cancelled && isAuthCurrent() && generation === targetSyncGeneration) {
+            log.warn('gateway-boot', 'Scene display target sync failed', error)
+          }
+        })
+    }
 
     const syncTools = (revoke: boolean = false): Promise<void> => {
       const generation = ++toolsSyncGeneration
@@ -212,6 +261,8 @@ export function useGatewayBoot(sessionId: string): void {
     setPrimaryGateway(gateway)
 
     const offStageOwner = $presentation.listen(state => {
+      syncSceneTarget()
+
       if (state.stageOwner === 'sprite' && gatewayOpen()) {
         startAutonomyProvision()
       } else {
@@ -240,6 +291,7 @@ export function useGatewayBoot(sessionId: string): void {
         // 重推打扰档位与本地时区，覆盖离线期间尚未上云的变化。
         syncDisturbanceTier()
         syncTimezone(gateway)
+        syncSceneTarget(true)
         void fetchSlashCommandMeta()
 
         if ($presentation.get().stageOwner === 'sprite') {

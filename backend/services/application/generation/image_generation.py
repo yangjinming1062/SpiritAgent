@@ -45,6 +45,10 @@ class ImageGenerationError(Exception):
         self.classified: ClassifiedError | None = None
 
 
+class ImageReviewUnavailableError(ImageGenerationError):
+    """已保存候选尚未完成场景内容核查；仅重试分析，不重新提交生图。"""
+
+
 async def resolve_image_gen_chain(
     db: AsyncSession,
     user_id: int,
@@ -53,6 +57,7 @@ async def resolve_image_gen_chain(
     image_edit: bool = False,
     multiple_references: bool = False,
     prompt_chars: int = 0,
+    environment_reference: bool = False,
 ) -> tuple[list[ProviderConfig], str | None]:
     """按参考图/图像编辑能力过滤 image_gen 链；给出 ``prompt_chars`` 时跳过提示词放不下的供应商。"""
     full = await resolve_provider_chain(db, user_id, "image_gen")
@@ -65,6 +70,8 @@ async def resolve_image_gen_chain(
         cls = resolve(ServiceType.image_gen, name)
         if not has_reference:
             return True
+        if environment_reference and not cls.supports_environment_reference_image:
+            return False
         if image_edit and not cls.supports_image_edit:
             return False
         if not image_edit and not cls.supports_reference_image:
@@ -83,7 +90,15 @@ async def resolve_image_gen_chain(
     if not capable:
         # 可选供应商按能力声明列出，随注册与能力位变化，不手写名单。
         names = " / ".join(name for name in providers_supporting(ServiceType.image_gen) if _capable(name))
-        action = "分别输入两张参考图" if multiple_references else "图像编辑" if image_edit else "以图生图"
+        action = (
+            "环境参考图"
+            if environment_reference
+            else "分别输入两张参考图"
+            if multiple_references
+            else "图像编辑"
+            if image_edit
+            else "以图生图"
+        )
         hint = f"请启用 {names} 其中之一" if names else "请配置具备该能力的供应商"
         return capable, f"当前图片生成供应商均不支持{action}，{hint}"
     return capable, None
@@ -108,6 +123,9 @@ async def generate_images(
     image_edit: bool = False,
     provider_config: ProviderConfig | None = None,
     background: str | None = None,
+    aspect_ratio: str | None = None,
+    resolution: str | None = None,
+    exact_size: bool = False,
 ) -> list[str]:
     """走 image_gen 链生成图片，成功返回地址列表。``persist_user_assets=True`` 转存为用户资产返回裸路径，否则返回供应商 URL/data URI；``image_edit`` 以 reference_image 为底图且不接受双参考（同给即报错）；``background="transparent"`` 只随 ``provider_config`` 使用，该家须已验证 alpha 输出。"""
     if image_edit and secondary_reference_image:
@@ -147,15 +165,21 @@ async def generate_images(
         if err:
             logger.warning("image generation chain error", extra={"error": err, "user_id": user_id})
             raise ImageGenerationError(err, internal=err)
-        active_provider: list[str] = []
+        active_provider: str | None = None
+        request_aspect = aspect_ratio
+        if request_aspect is None and not exact_size:
+            request_aspect = size if ":" in size else SIZE_TO_ASPECT.get(size)
 
         async def _generate_call(p: ImageGenProvider) -> ImageGenResult:
-            active_provider.append(p.config.provider_name)
+            nonlocal active_provider
+            active_provider = p.config.provider_name
             return await p.generate(
                 ImageGenRequest(
                     prompt=prompt,
                     size=size,
-                    aspect_ratio=size if ":" in size else SIZE_TO_ASPECT.get(size),
+                    aspect_ratio=request_aspect,
+                    resolution=resolution,
+                    exact_size=exact_size,
                     n=n,
                     reference_image=reference_image,
                     secondary_reference_image=secondary_reference_image,
@@ -212,9 +236,8 @@ async def generate_images(
         raise ImageGenerationError("生成图片无法保存，请稍后重试", internal=str(exc)) from exc
     if not urls:
         raise ImageGenerationError("图片生成服务返回空结果", can_fallback=True)
-    used_provider = active_provider[-1] if active_provider else None
     logger.info(
         "Generated images",
-        extra={"image_count": len(urls), "prompt_chars": len(prompt), "provider": used_provider, "user_id": user_id},
+        extra={"image_count": len(urls), "prompt_chars": len(prompt), "provider": active_provider, "user_id": user_id},
     )
     return urls

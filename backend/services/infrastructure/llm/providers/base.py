@@ -135,6 +135,8 @@ class ImageGenRequest:
     background: Literal["transparent"] | None = (
         None  # transparent 请求原生透明 PNG，仅发给 supports_transparent_background 链；None 不加字段
     )
+    resolution: str | None = None
+    exact_size: bool = False  # 已按模型能力冻结的像素尺寸，不再用通用画幅表覆盖
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,7 @@ class ImageGenProvider(BaseProvider):
     supports_reference_image: ClassVar[bool] = (
         False  # 原生消费 reference_image（图生图）；False 则对参考图请求跳过，避免图→文→图
     )
+    supports_environment_reference_image: ClassVar[bool] = False  # 能按文字将参考图仅用于环境、构图与画风
     supports_multiple_reference_images: ClassVar[bool] = (
         False  # 同时消费 secondary_reference_image；False 时调用链会过滤掉
     )

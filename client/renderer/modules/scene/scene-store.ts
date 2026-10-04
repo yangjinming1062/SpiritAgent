@@ -1,6 +1,7 @@
+import type { PixelSize } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
@@ -21,7 +22,6 @@ export interface ActiveScene {
   title: string
   description: string
   requirements: string
-  outfit_description: string
   prompt: string
   url: string
   thumbnailUrl: string
@@ -29,6 +29,9 @@ export interface ActiveScene {
   stage: string
   source: string
   origin: string
+  target_size: PixelSize | null
+  source_size: PixelSize | null
+  image_size: PixelSize | null
   error: string | null
   regeneration: SceneRegeneration | null
 }
@@ -51,7 +54,6 @@ interface SceneListWire {
 }
 export interface SceneGenerationInput {
   notes?: string
-  outfit_description?: string
   image?: string
   content_type?: string
 }
@@ -79,7 +81,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollCount = 0
 
 function toScene(row: SceneWire, url: string): ActiveScene {
-  return { ...row, id: String(row.id), url, thumbnailUrl: url, regeneration: row.regeneration ?? null }
+  return { ...row, id: String(row.id), url, thumbnailUrl: url }
 }
 
 /** 把场景图片解析为可用 src；失败抛出，由调用方决定保留旧图还是占位。 */
@@ -365,6 +367,17 @@ async function mutate<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body
   return value
 }
 
+async function withSceneTarget<T>(request: (input: { target_size: PixelSize }) => Promise<T>): Promise<T> {
+  const isCurrent = captureAuthScope()
+  const target = (await window.spiritagent.presentation.getState()).wallpaperTarget
+
+  if (!isCurrent?.()) {
+    throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
+  }
+
+  return request({ target_size: target ?? { width: 1920, height: 1080 } })
+}
+
 export async function createScene(input: SceneGenerationInput = {}): Promise<ActiveScene | null> {
   if (submitting || $sceneTaskStatus.get() !== 'none' || $sceneRegenerating.get() !== null) {
     return null
@@ -375,7 +388,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
   submitting = true
 
   try {
-    const row = await sceneRequest<SceneWire>('/generate', 'POST', input)
+    const row = await withSceneTarget(target => sceneRequest<SceneWire>('/generate', 'POST', { ...input, ...target }))
 
     if (version === startVersion) {
       $pendingScene.set(toScene(row, row.url || ''))
@@ -406,10 +419,8 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
   }
 }
 
-export async function prepareScenePrompt(
-  input: Pick<SceneGenerationInput, 'notes' | 'outfit_description'>
-): Promise<string> {
-  const row = await mutate<SceneWire>('/prompt', 'POST', input)
+export async function prepareScenePrompt(input: Pick<SceneGenerationInput, 'notes'>): Promise<string> {
+  const row = await withSceneTarget(target => mutate<SceneWire>('/prompt', 'POST', { ...input, ...target }))
 
   return row.prompt
 }
@@ -450,7 +461,7 @@ export async function editScene(sceneId: string, title: string, description: str
 }
 
 export async function regenerateScene(sceneId: string): Promise<void> {
-  await mutate(`/${sceneId}/regenerate`, 'POST')
+  await withSceneTarget(target => mutate(`/${sceneId}/regenerate`, 'POST', target))
 }
 
 export async function analyzeScene(sceneId: string): Promise<void> {
