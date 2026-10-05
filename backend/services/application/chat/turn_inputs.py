@@ -301,6 +301,11 @@ def _history_to_responses_context(
                 user_local_tz,
                 lang,
             )
+            if msg.role == "user" and msg.created_at is not None:
+                clock = format_time_anchor(msg.created_at, last_user_at, user_local_tz, lang)
+                if clock:
+                    context["input"].append(user_text_item(clock))
+                last_user_at = msg.created_at
         items = db_message_to_response_items(msg)
         if msg.subtype in CHECKPOINT_SUBTYPES:
             context["checkpoint_indices"].extend(range(len(context["input"]), len(context["input"]) + len(items)))
@@ -316,11 +321,6 @@ def _history_to_responses_context(
                         "output": tool_error(INTERRUPTED_RUNNING_ERROR),
                     },
                 )
-        if inject_time_perception and msg.role == "user" and msg.created_at is not None:
-            clock = format_time_anchor(msg.created_at, last_user_at, user_local_tz, lang)
-            if clock:
-                context["input"].append(user_text_item(clock))
-            last_user_at = msg.created_at
         source_id = msg.summary_through_message_id if msg.subtype in CHECKPOINT_SUBTYPES else msg.id
         if source_id is None:
             raise ValueError("Conversation summary requires an original message boundary")

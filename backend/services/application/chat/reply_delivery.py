@@ -1,6 +1,9 @@
 import json
 import re
+from copy import deepcopy
+from typing import Annotated, Literal
 
+from components import resolve_prompt_text
 from modules.conversation import (
     CompanionReply,
     CompanionReplyInput,
@@ -9,11 +12,38 @@ from modules.conversation import (
     TextBubble,
     VoiceBubble,
 )
-from pydantic import ValidationError
+from prompts.chat import COMPANION_DIALOGUE_FIELD_GUIDANCES
+from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError
 
 from services.contracts import MediaTurnState
 from services.domains.conversation import resolve_reply_media
 from services.infrastructure.llm import ProviderConfig, speech_performance_schema, validate_speech_style
+
+
+class _ReplyEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class _PreserveReply(_ReplyEdit):
+    action: Literal["preserve"]
+
+
+class _DialogueEdit(_ReplyEdit):
+    action: Literal["dialogue"]
+    bubbles: CompanionReplyInput
+
+
+class _WrittenEdit(_ReplyEdit):
+    action: Literal["written"]
+    text: str
+
+
+_ReplyEditDecision = RootModel[Annotated[_PreserveReply | _DialogueEdit | _WrittenEdit, Field(discriminator="action")]]
+
+
+def _dialogue_text_pattern(language: str) -> str:
+    endings = "。！？!?" + ("." if language == "en" else "")
+    return rf"^[^\r\n\\（）()*{endings}]*[{endings}]?$"
 
 
 def normalize_companion_reply_content(raw: str) -> str:
@@ -36,7 +66,13 @@ def _invalid_performance(index: int, path: tuple[str | int, ...], message: str) 
     )
 
 
-def companion_reply_schema(speech_config: ProviderConfig | None, *, allow_silence: bool, allow_media: bool) -> dict:
+def companion_reply_schema(
+    speech_config: ProviderConfig | None,
+    *,
+    language: str,
+    allow_silence: bool,
+    allow_media: bool,
+) -> dict:
     schema = CompanionReplyInput.model_json_schema()
     schema["minItems"] = 0 if allow_silence else 1
     definitions = schema["$defs"]
@@ -50,7 +86,89 @@ def companion_reply_schema(speech_config: ProviderConfig | None, *, allow_silenc
     if speech_config is not None:
         performance = speech_performance_schema(speech_config.provider_name, speech_config.model)
         schema["$defs"].update({**performance.pop("$defs", {}), "SpeechPerformance": performance})
+    for name in ("TextBubble", "VoiceBubbleInput"):
+        if name in schema["$defs"]:
+            schema["$defs"][name]["properties"]["text"]["description"] = resolve_prompt_text(
+                COMPANION_DIALOGUE_FIELD_GUIDANCES,
+                language,
+            )
     return schema
+
+
+def _can_preserve_written_reply(draft: str) -> bool:
+    values = json.loads(draft)
+    if len(values) != 1:
+        return False
+    try:
+        TextBubble.model_validate(values[0])
+    except ValueError:
+        return False
+    return True
+
+
+def companion_reply_edit_schema(schema: dict, draft: str, *, language: str) -> dict:
+    """编辑决定单独校验，只有日常台词分支使用句子边界约束。"""
+    edit_schema = _ReplyEditDecision.model_json_schema()
+    definitions = edit_schema["$defs"]
+    if not _can_preserve_written_reply(draft):
+        edit_schema["oneOf"] = [item for item in edit_schema["oneOf"] if item["$ref"] != "#/$defs/_PreserveReply"]
+        del edit_schema["discriminator"]["mapping"]["preserve"]
+        del definitions["_PreserveReply"]
+    definitions.update(deepcopy(schema["$defs"]))
+    definitions["CompanionReplyInput"] = {key: value for key, value in schema.items() if key != "$defs"}
+    definitions["_WrittenEdit"]["properties"]["text"] = {
+        key: value for key, value in definitions["TextBubble"]["properties"]["text"].items() if key != "description"
+    }
+    for name in ("TextBubble", "VoiceBubbleInput"):
+        if name in definitions:
+            definitions[name]["properties"]["text"] = {
+                **definitions[name]["properties"]["text"],
+                "pattern": _dialogue_text_pattern(language),
+            }
+    return edit_schema
+
+
+def can_edit_companion_reply(raw: str) -> bool:
+    try:
+        values = json.loads(raw)
+    except ValueError:
+        return False
+    return (
+        isinstance(values, list)
+        and bool(values)
+        and all(
+            isinstance(value, dict) and value.get("type") in {"text", "voice"} and isinstance(value.get("text"), str)
+            for value in values
+        )
+    )
+
+
+def apply_companion_reply_edit(raw: str, draft: str, *, language: str) -> str:
+    decision = _ReplyEditDecision.model_validate_json(raw).root
+    if isinstance(decision, _PreserveReply):
+        if not _can_preserve_written_reply(draft):
+            raise ValueError("Preserving a written reply requires one valid text bubble")
+        return draft
+    original = json.loads(draft)
+    if isinstance(decision, _WrittenEdit):
+        if any(bubble["type"] != "text" for bubble in original):
+            raise ValueError("A written edit cannot remove voice or media bubbles")
+        if re.sub(r"\s+", "", decision.text) != re.sub(r"\s+", "", "".join(b["text"] for b in original)):
+            raise ValueError("A written edit must preserve the draft's words and punctuation")
+        values = [TextBubble(type="text", text=decision.text).model_dump()]
+    else:
+        values = json.loads(raw)["bubbles"]
+        if any(
+            not re.fullmatch(_dialogue_text_pattern(language), bubble["text"])
+            for bubble in values
+            if bubble["type"] in {"text", "voice"}
+        ):
+            raise ValueError("Each edited dialogue bubble requires one sentence without line breaks")
+    if [(b["type"], b["media_id"]) for b in values if "media_id" in b] != [
+        (b["type"], b["media_id"]) for b in original if "media_id" in b
+    ]:
+        raise ValueError("A reply edit must preserve media references and order")
+    return json.dumps(values, ensure_ascii=False)
 
 
 def parse_companion_reply(

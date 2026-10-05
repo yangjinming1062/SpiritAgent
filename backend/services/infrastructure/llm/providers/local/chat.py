@@ -1,7 +1,12 @@
+import asyncio
 from dataclasses import replace
 from typing import ClassVar
+from urllib.parse import urlsplit, urlunsplit
+
+import httpx
 
 from ..base import ChatProvider, ProviderConfig
+from ..http import get_http
 
 
 class LocalChatProvider(ChatProvider):
@@ -21,3 +26,37 @@ class LocalChatProvider(ChatProvider):
         if not config.api_key:
             config = replace(config, api_key="local")
         super().__init__(config)
+        self._llama_cpp: bool | None = None
+
+    async def companion_reply_options(self, schema: dict, *, allow_tools: bool) -> dict:
+        # llama.cpp 的自定义输出语法不能与工具语法混用；工具阶段仍由提示词约束，恢复阶段不执行工具。
+        if self._llama_cpp is None:
+            url = urlsplit(self.config.base_url)
+            path = url.path.rstrip("/").removesuffix("/v1") + "/props"
+            props_url = urlunsplit(url._replace(path=path))
+            try:
+                response = await asyncio.wait_for(get_http(self.config.base_url, self.config.api_key).get(props_url), 2)
+                response.raise_for_status()
+                props = response.json()
+                self._llama_cpp = (
+                    isinstance(props, dict)
+                    and isinstance(props.get("build_info"), str)
+                    and all(
+                        isinstance(props.get(key), dict)
+                        for key in ("default_generation_settings", "chat_template_caps")
+                    )
+                )
+            except (TimeoutError, httpx.HTTPError, ValueError):
+                self._llama_cpp = False
+        self.review_companion_dialogue = self._llama_cpp is True
+        if not self._llama_cpp or allow_tools:
+            return {}
+        # 该服务的 Responses 接口沿用 Chat Completions 的 response_format；text.format 不生效。
+        return {
+            "extra_body": {
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {"name": "companion_reply", "strict": True, "schema": schema},
+                },
+            },
+        }

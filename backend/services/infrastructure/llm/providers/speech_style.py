@@ -64,7 +64,7 @@ def _choices(mapping: dict[str, str]) -> str:
     return ", ".join(f"{key} ({meaning})" for key, meaning in mapping.items())
 
 
-def speech_style_guidance(provider: str, model: str) -> str:
+def speech_style_guidance(provider: str, model: str, *, language: str) -> str:
     if provider == "mimo":
         example: dict = {
             "styles": [],
@@ -73,7 +73,7 @@ def speech_style_guidance(provider: str, model: str) -> str:
                 "scene": "the current exchange",
                 "guidance": "natural delivery; add emphasis only where the words support it",
             },
-            "cues": [{"before": "phrase from this bubble's text", "tag": "sound or delivery change"}],
+            "cues": [],
         }
         capabilities = _MIMO_GUIDANCE + _CUE_RULE
         capabilities += (
@@ -89,7 +89,7 @@ def speech_style_guidance(provider: str, model: str) -> str:
         example = {
             "emotion": None,
             "speed": 1,
-            "cues": [{"before": "phrase from this bubble's text", "tag": "tag key"}] if cues_supported else [],
+            "cues": [],
             "pauses": [],
         }
         capabilities = (
@@ -111,7 +111,15 @@ def speech_style_guidance(provider: str, model: str) -> str:
         "\n## Speech performance for voice bubbles\n"
         "Each voice bubble nests its speech object as shown; text bubbles have no speech. Do not include provider or "
         "model identifiers. Choose delivery for this bubble's words and context.\n"
-        + json.dumps({"type": "voice", "text": "spoken words", "speech": example}, ensure_ascii=False)
+        + json.dumps(
+            [
+                {"type": "voice", "text": text, "speech": example}
+                for text in (
+                    ("我听着呢。", "你慢慢说。") if language == "zh" else ("I'm listening.", "Take your time.")
+                )
+            ],
+            ensure_ascii=False,
+        )
         + "\n"
         + capabilities
         + "Use natural delivery by default. All direction stays in speech; text contains only the words actually spoken.\n"

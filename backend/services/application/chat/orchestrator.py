@@ -57,6 +57,7 @@ from .persistence import (
 )
 from .streaming import (
     _assign_tool_call_ids,
+    _CompanionDialogueReview,
     _generate_llm_response,
     _IncompleteResponseError,
     _InvalidCompanionReplyError,
@@ -475,6 +476,7 @@ async def _run_chat_turn(
                             on_response_started=set_response_started,
                             reasoning_effort=inference.reasoning_effort,
                             temperature=inference.temperature,
+                            turn_request=req.message.content,
                             user_local_tz=inputs.user_local_tz,
                             lang=inputs.language,
                             speech_config=inputs.speech_config if companion_reply else None,
@@ -486,6 +488,7 @@ async def _run_chat_turn(
                             pace_bubbles=has_viewer and not headless,
                             final_reply_only=final_reply_only,
                             allow_voice_fallback=not retry_available,
+                            allow_dialogue_edit=retry_available,
                         )
                     except _IncompleteResponseError as exc:
                         del current_context["input"][input_length:]
@@ -499,7 +502,10 @@ async def _run_chat_turn(
                             raise
                         retry_available = False
                         reply_format_error = exc
-                        logger.warning("Retrying final companion reply after format validation failed")
+                        if isinstance(exc, _CompanionDialogueReview):
+                            logger.info("Editing companion dialogue before delivery")
+                        else:
+                            logger.warning("Retrying final companion reply after format validation failed")
 
             try:
                 async with session_scope() as db:
