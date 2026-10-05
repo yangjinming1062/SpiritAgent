@@ -26,7 +26,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope, MemorySource
-from services.domains.companion import build_system_prompt_extras, get_disturbance_tier, load_character_snapshot
+from services.domains.companion import (
+    build_system_prompt_extras,
+    get_disturbance_tier,
+    load_character_snapshot,
+    load_persona_definition,
+    render_extras,
+)
 from services.domains.configuration import DEFAULT_CONFIG
 from services.domains.conversation import (
     CHECKPOINT_SUBTYPES,
@@ -96,6 +102,7 @@ class TurnInputs:
     speech_config: ProviderConfig | None
     response_preference: Literal["text", "voice"]
     speech_voice: str
+    reply_persona: str
 
 
 async def load_memory_query_text(db: AsyncSession, conv: Conversation, req: ChatRequest, *, use_request: bool) -> str:
@@ -495,6 +502,9 @@ async def build_turn_inputs(
         language=session_lang,
         speech_config=speech_config,
         speech_voice=speech_voice,
+        reply_persona=render_extras(load_persona_definition(persona), language=session_lang)
+        if persona is not None and persona.is_complete
+        else "",
         response_preference=req.response_preference
         or ("voice" if user_settings.get("companion.response_preference") == "voice" else "text"),
     )

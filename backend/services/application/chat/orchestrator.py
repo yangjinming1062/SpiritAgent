@@ -480,6 +480,7 @@ async def _run_chat_turn(
                             lang=inputs.language,
                             speech_config=inputs.speech_config if companion_reply else None,
                             reply_preference=inputs.response_preference if companion_reply else None,
+                            reply_persona=inputs.reply_persona,
                             voice_id=inputs.speech_voice,
                             allow_silence=ephemeral and companion_reply,
                             reply_format_error=reply_format_error,

@@ -11,8 +11,6 @@ from components import TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, 
 from modules.conversation import CompanionReply
 from prompts.chat import (
     COMPANION_MEDIA_REPLY_GUIDANCES,
-    COMPANION_REPAIR_COMPOSE_GUIDANCES,
-    COMPANION_REPAIR_SILENCE_GUIDANCES,
     COMPANION_REPLY_CLOSING_GUIDANCES,
     COMPANION_REPLY_EDIT_GUIDANCES,
     COMPANION_REPLY_GUIDANCES,
@@ -176,39 +174,30 @@ async def _generate_llm_response(
     reply_format_error: _InvalidCompanionReplyError | None,
     media_turn: MediaTurnState,
     pace_bubbles: bool,
+    reply_persona: str = "",
     final_reply_only: bool = False,
     allow_voice_fallback: bool = False,
 ) -> _LLMTurnResult:
     """单次 LLM 调用与正文交付；完整响应或流式首事件到达时锁定供应商，陪伴终端对象校验后交付气泡数组。"""
     resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
     reasoning = {"effort": resolved_effort} if resolved_effort else None
-    instructions = refresh_volatile_header_in_prompt(
-        context["instructions"],
-        user_local_tz=user_local_tz,
-        lang=lang,
-    )
     reply_repair = reply_preference is not None and reply_format_error is not None
-    if reply_repair:
-        instructions = ""
+    instructions = (
+        resolve_prompt_text(COMPANION_REPLY_EDIT_GUIDANCES, lang)
+        if reply_repair
+        else refresh_volatile_header_in_prompt(context["instructions"], user_local_tz=user_local_tz, lang=lang)
+    )
     final_only = final_reply_only or reply_format_error is not None
     reference_texts = (
         reply_reference_texts(context["input"], turn_request, user_input_indices=context.get("user_input_indices", []))
         if reply_preference is not None
         else ()
     )
-    request_input = _reply_repair_history(context["input"]) if final_only else context["input"]
+    request_input = _reply_repair_history(context["input"]) if final_only and not reply_repair else context["input"]
     if final_reply_only and not reply_repair:
         instructions += resolve_prompt_text(FINAL_REPLY_RETRY_GUIDANCES, lang)
     reply_options: dict = {}
     if reply_preference is not None:
-        delivery_guidance = resolve_prompt_text(
-            COMPANION_VOICE_REPLY_GUIDANCES if speech_config else COMPANION_TEXT_REPLY_GUIDANCES,
-            lang,
-        ).replace("{preference}", reply_preference)
-        reply_guidance = resolve_prompt_text(COMPANION_REPLY_GUIDANCES, lang).replace(
-            "{delivery}",
-            delivery_guidance,
-        )
         capability_guidance = resolve_prompt_text(COMPANION_REPLY_INTEGRITY_GUIDANCES, lang)
         if speech_config:
             capability_guidance += speech_style_guidance(
@@ -240,6 +229,7 @@ async def _generate_llm_response(
             language=lang,
             allow_silence=allow_silence,
             allow_media=bool(media_turn.artifacts),
+            repair=reply_repair,
         )
         reply_options = await provider.companion_reply_options(
             schema,
@@ -253,31 +243,10 @@ async def _generate_llm_response(
         # 部分供应商只允许首条系统消息，回复和修复指令都并入 instructions。
         instructions += capability_guidance
         if reply_repair:
-            instructions += delivery_guidance
-            instructions += resolve_prompt_text(COMPANION_REPLY_EDIT_GUIDANCES, lang).replace(
-                "{no_dialogue}",
-                resolve_prompt_text(
-                    COMPANION_REPAIR_SILENCE_GUIDANCES if allow_silence else COMPANION_REPAIR_COMPOSE_GUIDANCES,
-                    lang,
-                ),
-            )
+            # 编辑对象只有未交付响应；人设单独传递，不随历史压缩或截断丢失。
             draft = reply_format_error.raw_reply
             with contextlib.suppress(ValueError):
                 draft = json.loads(draft)
-            # 仅保留本轮工具事实，格式修正不回灌整段历史或执行协议。
-            current_start = next(
-                (
-                    index + 1
-                    for index in range(len(context["input"]) - 1, -1, -1)
-                    if context["input"][index].get("role") == "user"
-                ),
-                0,
-            )
-            tool_history = [
-                _tool_history_entry(item)
-                for item in context["input"][current_start:]
-                if item.get("type") in {"function_call", "function_call_output"}
-            ]
             request_input = [
                 {
                     "role": "user",
@@ -286,10 +255,9 @@ async def _generate_llm_response(
                             "type": "input_text",
                             "text": json.dumps(
                                 {
-                                    "user_request": turn_request,
                                     "draft": draft,
+                                    "speaker_background": reply_persona,
                                     "validation_errors": reply_format_error.validation_errors,
-                                    "tool_history": tool_history,
                                 },
                                 ensure_ascii=False,
                             ),
@@ -298,7 +266,14 @@ async def _generate_llm_response(
                 },
             ]
         else:
-            instructions += reply_guidance
+            delivery_guidance = resolve_prompt_text(
+                COMPANION_VOICE_REPLY_GUIDANCES if speech_config else COMPANION_TEXT_REPLY_GUIDANCES,
+                lang,
+            ).replace("{preference}", reply_preference)
+            instructions += resolve_prompt_text(COMPANION_REPLY_GUIDANCES, lang).replace(
+                "{delivery}",
+                delivery_guidance,
+            )
             if not final_only and active_schemas:
                 instructions += resolve_prompt_text(COMPANION_REPLY_TOOL_GUIDANCES, lang)
             instructions += resolve_prompt_text(COMPANION_REPLY_CLOSING_GUIDANCES, lang)
@@ -317,7 +292,7 @@ async def _generate_llm_response(
     # 只记录含图片的输入项数量：Vertex beta API 400 ``INVALID_ARGUMENT`` 多为代理未能转译 ``inline_data``，据此可确认请求是否带图而无需抓包。
     image_items = [
         item
-        for item in context["input"]
+        for item in request_input
         if isinstance(item.get("content"), list)
         and any(isinstance(part, dict) and part.get("type") == "input_image" for part in item["content"])
     ]

@@ -13,7 +13,11 @@ from modules.conversation import (
     TextBubble,
     VoiceBubble,
 )
-from prompts.chat import COMPANION_DIALOGUE_FIELD_GUIDANCES, COMPANION_WRITTEN_FIELD_GUIDANCES
+from prompts.chat import (
+    COMPANION_DIALOGUE_FIELD_GUIDANCES,
+    COMPANION_REPAIR_TEXT_FIELD_GUIDANCES,
+    COMPANION_WRITTEN_FIELD_GUIDANCES,
+)
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from services.contracts import MediaTurnState
@@ -103,6 +107,7 @@ def companion_reply_schema(
     language: str,
     allow_silence: bool,
     allow_media: bool,
+    repair: bool = False,
 ) -> dict:
     schema = _ReplyEnvelope.model_json_schema()
     definitions = CompanionReplyInput.model_json_schema()["$defs"]
@@ -114,12 +119,21 @@ def companion_reply_schema(
     definitions = schema["$defs"] = {name: definitions[name] for name in bubble_types}
     schema["properties"]["bubbles"] = {
         "type": "array",
-        "minItems": 0 if allow_silence else 1,
+        # 空修正表示无可恢复内容，交付时仍使用实际回合的沉默权限。
+        "minItems": 0 if allow_silence or repair else 1,
         "items": {"anyOf": [{"$ref": f"#/$defs/{name}"} for name in bubble_types]},
     }
     if speech_config is not None:
         performance = speech_performance_schema(speech_config.provider_name, speech_config.model)
         schema["$defs"].update({**performance.pop("$defs", {}), "SpeechPerformance": performance})
+    if repair:
+        for name in ("TextBubble", "VoiceBubbleInput"):
+            if name in definitions:
+                definitions[name]["properties"]["text"]["description"] = resolve_prompt_text(
+                    COMPANION_REPAIR_TEXT_FIELD_GUIDANCES,
+                    language,
+                )
+        return schema
     if "VoiceBubbleInput" in definitions:
         definitions["VoiceBubbleInput"]["properties"]["text"]["description"] = resolve_prompt_text(
             COMPANION_DIALOGUE_FIELD_GUIDANCES,
