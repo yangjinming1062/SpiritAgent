@@ -32,7 +32,7 @@ from sqlalchemy import DateTime, bindparam, delete, or_, select, text, tuple_
 from sqlalchemy.engine import Row
 
 from services.application.automation import execute_standard_turn
-from services.application.nightly import run_nightly_pipeline
+from services.application.nightly import in_nightly_window, run_nightly_pipeline
 from services.application.posts import scan_autonomous_posts
 from services.contracts import MemoryScope
 from services.domains.automation import STANDARD_CRON_KIND, compute_next_run_at
@@ -517,40 +517,31 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
             scope = MemoryScope(user_id, COMPANION_PRESET_ID)
             local_now = now.astimezone(zone)
             latest_date = local_now.date() - timedelta(days=1)
-            recover = None
             for log in unfinished.get(user_id, ()):
-                if log.target_date > latest_date:
-                    continue
                 if log.target_date < latest_date:
                     log.status = "completed_with_errors"
                     log.summary = "已超过恢复窗口，未确认动作不再重放"
-                else:
-                    recover = log.target_date
-            target = recover or latest_date
-            if recover is None and not _in_nightly_window(
-                local_now.hour,
-                SETTINGS.nightly_window_start_hour,
-                SETTINGS.nightly_window_end_hour,
-            ):
+            if not in_nightly_window(now, zone):
                 continue
-            if _LAST_NIGHTLY_RUN.get(scope) == target:
+            if _LAST_NIGHTLY_RUN.get(scope) == latest_date:
                 continue
-            eligible.append((scope, target))
+            eligible.append((scope, latest_date))
         await db.commit()
     for scope, target in eligible:
         _spawn_scope_task("nightly_activity", scope, partial(_run_nightly_activity, scope, target))
-
-
-def _in_nightly_window(hour: int, start: int, end: int) -> bool:
-    if start < end:
-        return start <= hour < end
-    return start != end and (hour >= start or hour < end)
 
 
 async def _run_nightly_activity(scope: MemoryScope, target: date) -> None:
     async with session_scope() as db:
         if not await db.scalar(select(User.is_active).where(User.id == scope.user_id)):
             return
+        zone = parse_timezone(await get_user_setting(db, scope.user_id, "timezone"))
+    if zone is None:
+        return
+    # 扫描与实际启动之间可能跨过窗口或本地午夜。
+    now = utc_now()
+    if target != now.astimezone(zone).date() - timedelta(days=1) or not in_nightly_window(now, zone):
+        return
     if await run_nightly_pipeline(scope, target) is True:
         _LAST_NIGHTLY_RUN[scope] = target
 

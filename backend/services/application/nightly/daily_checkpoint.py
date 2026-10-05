@@ -1,6 +1,7 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from components import LLM_MAX_OUTPUT_TOKENS, get_logger, parse_llm_json, resolve_prompt_text, session_scope
+from components import LLM_MAX_OUTPUT_TOKENS, get_logger, parse_llm_json, resolve_prompt_text, session_scope, utc_now
 from modules.conversation import Conversation, Message
 from prompts.nightly import CHECKPOINT_SUMMARY_INSTRUCTIONS, CHECKPOINT_SUMMARY_TITLE_TEXTS
 from sqlalchemy import func, select
@@ -15,6 +16,8 @@ from services.domains.conversation import (
 )
 from services.domains.media import prune_videos_in_range
 from services.infrastructure.llm import UserLlmConfig, call_llm_once
+
+from .window import in_nightly_window
 
 logger = get_logger(__name__)
 
@@ -36,7 +39,7 @@ async def run_daily_checkpoint(
     # 读、写两阶段各自持有短 session——中间 LLM 调用不能 pin 连接池（backend/README.md「数据与运行可靠性」）。
     async with session_scope() as db:
         inputs = await _collect_inputs(db, user_id, utc_start, utc_end, user_timezone=user_timezone)
-    if inputs is None:
+    if inputs is None or not in_nightly_window(utc_now(), ZoneInfo(user_timezone)):
         return False
     conv_id, chat_content, prev_summary_text, through_id, clear_watermark = inputs
 

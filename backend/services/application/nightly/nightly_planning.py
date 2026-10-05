@@ -65,6 +65,8 @@ from services.domains.memory import MemoryListItem
 from services.domains.posts import PostBlockedError, publication_quota_remaining
 from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_provider_chain
 
+from .window import in_nightly_window
+
 logger = get_logger(__name__)
 
 _SCENE_WAIT_SECONDS = 15 * 60
@@ -131,7 +133,7 @@ class PostPublishArgs(_ActionArgs):
 
 
 class OutreachScheduleArgs(_ActionArgs):
-    name: str = Field(default="主动问候", max_length=100)
+    name: str = Field(default="主动联系", max_length=100)
     # 规划给出用户本地时刻，时区换算由代码完成。
     local_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     prompt: str = Field(min_length=1, max_length=4000)
@@ -335,11 +337,14 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="outreach.schedule",
         phase=40,
-        description="安排次日主动联系；从计划时间起等待用户在线，最晚保留到用户本地次日结束。",
+        description="为次日保留有具体缘由的联系意图，触发时结合最新情境决定是否开口及如何表达；"
+        "从计划时间起等待用户在线，最晚保留到用户本地次日结束。",
         arguments={
-            "name": "string（可选，最多 100 字符）：主动联系任务的简短名称，省略时为主动问候。",
+            "name": "string（可选，最多 100 字符）：主动联系任务的简短名称，省略时为主动联系。",
             "local_time": "string（非空，HH:MM，24 小时制）：用户本地时间，在 tomorrow_date 当天这一时刻开始等待用户在线；时区换算由系统完成。",
-            "prompt": "string（非空，最多 4000 字符）：触发时交给角色的独立任务说明，写清联系缘由、交流目标和必要背景；不依赖本轮规划上下文，不把尚未完成的准备描述为既成事实。",
+            "prompt": "string（非空，最多 4000 字符）：面向届时主动回合的自包含任务说明，交代有依据的背景、联系目的、"
+            "需要交流或核实的事项，以及必要的时效和不联系条件，有时效的内容用给定日期标明；可说明语气，不写问候正文或示例台词，"
+            "不预设届时用户状态或把未完成活动写成事实。",
         },
         exclusive_group="outreach",
     ),
@@ -919,6 +924,7 @@ async def _execute_post_publish(run: _ActionRun, args: dict[str, Any]) -> Action
                 intent=parsed.intent,
                 requested_type=parsed.content_type,
                 activity_date=date.fromisoformat(run.date_context.source_date),
+                companion_activity_facts=tuple(run.facts),
             )
         except PostBlockedError as exc:
             return ActionExecutionResult(status="blocked", reason=str(exc))
@@ -983,7 +989,7 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
             scope=scope,
             prompt=prompt,
             schedule=schedule,
-            name=parsed_args.name or "主动问候",
+            name=parsed_args.name or "主动联系",
             one_shot=True,
             kind="special",
             expires_at=expires_at,
@@ -1099,6 +1105,10 @@ async def _execute_persisted_action(
     try:
         if blocked_reason := await _runtime_block_reason(user_id, row.capability, resume):
             return ActionExecutionResult(status="blocked", reason=blocked_reason)
+        progress_key = _PROGRESS_KEYS.get(row.capability)
+        submitted = progress_key is not None and resume.get(progress_key) is not None
+        if not submitted and not in_nightly_window(utc_now(), ZoneInfo(date_context.user_timezone)):
+            return ActionExecutionResult(status="blocked", reason="nightly window ended")
         await _set_action_state(row.id, "running")
         return await _EXECUTORS[row.capability](run, arguments.get("values", {}))
     except Exception as exc:
@@ -1183,9 +1193,12 @@ async def run_nightly_planning(
     *,
     log_id: int,
 ) -> PlanningResult:
-    context = await _collect_context(user_id, ZoneInfo(date_context.user_timezone))
+    timezone = ZoneInfo(date_context.user_timezone)
+    context = await _collect_context(user_id, timezone)
     plan = await _stored_plan(log_id)
     if plan is None:
+        if not in_nightly_window(utc_now(), timezone):
+            return PlanningResult(rationale="夜间窗口已结束")
         payload = {
             "plan_limits": {
                 "max_actions": _MAX_ACTIONS,
@@ -1199,6 +1212,7 @@ async def run_nightly_planning(
             "today_conversations": today_conversations,
             **({"post_interactions": post_interactions} if post_interactions else {}),
             "autonomous_context": context.model_dump(exclude_none=True),
+            "current_time": utc_now().astimezone(timezone).isoformat(),
             **date_context.model_dump(),
             **anomaly_stats,
         }

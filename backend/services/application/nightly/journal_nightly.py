@@ -2,8 +2,9 @@
 
 from datetime import date
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
-from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, SETTINGS, parse_llm_json, resolve_prompt_text
+from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, SETTINGS, parse_llm_json, resolve_prompt_text, utc_now
 from modules.companion import DIARY_BODY_MAX_CHARS, DiaryContent
 from prompts.nightly import JOURNAL_DIARY_TEXTS
 from pydantic import ValidationError
@@ -15,6 +16,7 @@ from services.domains.posts import PostInteractions
 from services.infrastructure.llm import UserLlmConfig, call_llm_once
 
 from .stage_state import load_narrative_result, save_narrative_result
+from .window import in_nightly_window
 
 
 async def project_today(
@@ -30,6 +32,7 @@ async def project_today(
     language: str,
     contextual_memories: dict[str, str],
     background_memories: dict[str, str],
+    user_timezone: str,
 ) -> bool:
     """True 已发布，False 正常跳过；模型调用或输出失败时抛出。"""
     previous_reflection = None
@@ -54,6 +57,8 @@ async def project_today(
         if result:
             await backfill_diary_embeddings(user_id)
         return result
+    if not in_nightly_window(utc_now(), ZoneInfo(user_timezone)):
+        return False
     composed = await _compose_diary(
         llm_cfg,
         messages,

@@ -170,6 +170,7 @@ async def _freeze_input(
     requested_type: str,
     user_message: str,
     requested: bool,
+    companion_activity_facts: tuple[str, ...],
 ) -> dict:
     ctx = await load_companion_prompt_context(user_id)
     if ctx is None:
@@ -202,6 +203,7 @@ async def _freeze_input(
         "environment": environment,
         "available_types": types,
         "recent_posts": [{"title": t, "body": b} for t, b in recent],
+        **({"companion_activity_facts": list(companion_activity_facts)} if companion_activity_facts else {}),
     }
 
 
@@ -262,6 +264,7 @@ async def request_publication(
     user_message: str = "",
     autonomous: bool = True,
     activity_date: date | None = None,
+    companion_activity_facts: tuple[str, ...] = (),
 ) -> PostPublicationResult:
     async with SESSION_LOCAL() as db:
         existing = await db.scalar(
@@ -284,6 +287,7 @@ async def request_publication(
         requested_type=requested_type,
         user_message=user_message,
         requested=requested,
+        companion_activity_facts=companion_activity_facts,
     )
     async with SESSION_LOCAL() as db:
         row = await reserve_publication(

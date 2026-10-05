@@ -14,6 +14,7 @@ from components import (
     resolve_language,
     resolve_prompt_text,
     session_scope,
+    utc_now,
 )
 from modules.auth import User
 from modules.companion import Persona
@@ -50,6 +51,7 @@ from .daily_checkpoint import run_daily_checkpoint
 from .journal_nightly import project_today
 from .nightly_planning import ActionExecutionResult, DateContext, load_terminal_action_results, run_nightly_planning
 from .stage_state import load_narrative_result, save_narrative_result
+from .window import in_nightly_window
 
 logger = get_logger(__name__)
 
@@ -98,6 +100,8 @@ async def _stage_4_reflection(
     persona: dict[str, str],
     language: str,
     log_id: int,
+    *,
+    user_timezone: str,
 ) -> bool:
     async with session_scope() as db:
         previous_result = await load_narrative_result(db, log_id, "reflection")
@@ -126,6 +130,8 @@ async def _stage_4_reflection(
     }
     instructions = resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language)
     for attempt in range(2):
+        if not in_nightly_window(utc_now(), ZoneInfo(user_timezone)):
+            return False
         raw = await call_llm_once(
             llm_cfg,
             instructions + (resolve_prompt_text(REFLECTION_REPAIR_TEXTS, language) if attempt else ""),
@@ -304,12 +310,15 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
 
     # 各阶段顺序执行，失败域相互隔离；每个阶段的结果汇入 stages 给末尾日志。
     stages: list[dict[str, Any]] = []
-    try:
-        await review_memories(scope, llm_config=llm_cfg)
-        stages.append({"stage": "memory_review", "status": "ok"})
-    except Exception as exc:
-        logger.exception("nightly memory review failed", extra={"user_id": user_id})
-        stages.append({"stage": "memory_review", "status": "error", "error": str(exc)})
+    if in_nightly_window(utc_now(), ZoneInfo(tz_str)):
+        try:
+            await review_memories(scope, llm_config=llm_cfg)
+            stages.append({"stage": "memory_review", "status": "ok"})
+        except Exception as exc:
+            logger.exception("nightly memory review failed", extra={"user_id": user_id})
+            stages.append({"stage": "memory_review", "status": "error", "error": str(exc)})
+    else:
+        stages.append({"stage": "memory_review", "status": "skipped", "reason": "夜间窗口已结束"})
 
     local_date_str = target_date.isoformat()
     # 当日对话与 7 天基线共用同一会话范围（本预设下用户本人的对话，含 IM），活动统计才可比较。
@@ -380,7 +389,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     background_memories = {str(r.id): r.content for r in recall_rows if r.usage == "background"}
 
     action_results: dict[str, ActionExecutionResult] = {}
-    if user.nightly_activity_enabled:
+    if user.nightly_activity_enabled and in_nightly_window(utc_now(), ZoneInfo(tz_str)):
         try:
             planning_result = await run_nightly_planning(
                 llm_cfg,
@@ -409,7 +418,8 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             except Exception:
                 logger.exception("nightly_activity: action ledger unavailable", extra={"user_id": user_id})
     else:
-        stages.append({"stage": "planning", "status": "skipped", "reason": "夜间自主规划已关闭"})
+        reason = "夜间窗口已结束" if user.nightly_activity_enabled else "夜间自主规划已关闭"
+        stages.append({"stage": "planning", "status": "skipped", "reason": reason})
         action_results = await load_terminal_action_results(log_id)
 
     # 刷新本轮新发布的动态，并在下面排除重复的动作事实。
@@ -451,6 +461,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 persona,
                 user_language,
                 log_id,
+                user_timezone=tz_str,
             )
             stages.append({"stage": "reflection", "status": "ok" if reflection_ok else "skipped"})
         except Exception as exc:
@@ -481,6 +492,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 log_id=log_id,
                 contextual_memories=contextual_memories,
                 background_memories=background_memories,
+                user_timezone=tz_str,
                 messages=clean_messages,
                 llm_cfg=llm_cfg,
                 nightly_actions=action_facts,
