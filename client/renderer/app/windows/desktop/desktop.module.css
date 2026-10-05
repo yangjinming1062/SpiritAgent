@@ -530,7 +530,7 @@
   color: var(--ui-text-muted);
   font-weight: 500;
 }
-.menuContent button {
+.menuContent > button {
   border: 0;
   border-radius: 6px;
   padding: 9px;
@@ -539,7 +539,7 @@
   text-align: left;
   background: transparent;
 }
-.menuContent button:hover {
+.menuContent > button:hover {
   background: var(--ui-fill-hover);
 }
 .displaySelect {
@@ -549,13 +549,6 @@
   gap: 8px;
   border-block: 1px solid var(--ui-line-hairline);
   margin-bottom: 5px;
-}
-.displaySelect select {
-  width: 100%;
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 5px;
-  padding: 6px;
-  background: var(--ui-fill-faint);
 }
 .waiting {
   width: 100vw;

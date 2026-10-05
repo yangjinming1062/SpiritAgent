@@ -56,6 +56,8 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/desktop-dock-picker.tsx)）是 Dock 的兄弟节点：`.dock` 的 backdrop-filter 会成为 fixed 元素的包含块。面板与条目菜单共用开启态上报，打开期间停用面板活动与精灵右键菜单；条目只持有主进程句柄，图标按可见条目分批取回。「已添加」标记仅随固定配置版本刷新，窗口与图标更新不重取目录。交互规则见[桌面模式](../../docs/DESIGN.md#桌面模式)。
 
+桌面设置的下拉框使用 [PanelSelect](shared/panel/components.tsx)，列表保留在设置弹层的 DOM 和交互区域内；原生 `select` 的独立弹窗会与失焦收起和原生焦点激活冲突。
+
 [desktop-stage](app/workflows/desktop-stage.ts)接入主进程舞台代次、宿主活动镜像和可取消的仪式请求；工具派发始终由宿主负责。内部面板的活动资格由 [panel-activity](shared/context/panel-activity.tsx)向子组件和 Portal 传递，子面板不能覆盖父级的禁用状态；聊天媒体查看器归打开它的视图，失活时隐藏并暂停媒体，不能抢占其他面板的焦点与 Escape。桌面布局和角色位置按账户保存，防抖写入须守卫清理代次。
 
 桌面角色的普通落位、移动与实际缩放受顶栏、Dock 和展开轻语的可用区域约束，并为情绪放大及其退出过渡预留范围；布局、视口及角色内容边界变化时重新约束，保存的默认比例不随临时空间限制改写。窗口模式保留原有缩放与探身规则，空间实现见 [spatial.ts](modules/character/spatial.ts)。

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { $userPreferredTier, setDisturbanceTier } from '@/modules/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { PanelSelect } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 
 import { useDesktopStrings } from './desktop-strings'
@@ -32,40 +33,38 @@ export function DesktopSettings({
   return (
     <div className={styles.menuContent} ref={menuRef}>
       <strong>{t.desktopSettings}</strong>
-      <label className={styles.displaySelect}>
-        {t.display}
-        <select
-          onChange={event =>
-            void window.spiritagent.presentation
-              .setDisplay(Number(event.target.value))
-              .catch(error => notifyError(error, t.display))
+      <div className={styles.displaySelect}>
+        <span>{t.display}</span>
+        <PanelSelect
+          ariaLabel={t.display}
+          disabled={!presentation?.displays.length}
+          onChange={value =>
+            void window.spiritagent.presentation.setDisplay(Number(value)).catch(error => notifyError(error, t.display))
           }
-          value={presentation?.displayId ?? ''}
-        >
-          {presentation?.displays.map(display => (
-            <option key={display.id} value={display.id}>
-              {display.label} · {display.width} × {display.height}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className={styles.displaySelect}>
-        {t.disturbance}
-        <select
-          onChange={event => {
-            const value = event.target.value
-
-            if (value === 'still' || value === 'normal' || value === 'autonomous') {
-              setDisturbanceTier(value)
-            }
-          }}
+          options={
+            presentation?.displays.map(display => ({
+              value: String(display.id),
+              label: `${display.label} · ${display.width} × ${display.height}`
+            })) ?? []
+          }
+          value={String(presentation?.displayId ?? '')}
+          widthClass="w-full"
+        />
+      </div>
+      <div className={styles.displaySelect}>
+        <span>{t.disturbance}</span>
+        <PanelSelect
+          ariaLabel={t.disturbance}
+          onChange={setDisturbanceTier}
+          options={[
+            { value: 'still', label: t.still },
+            { value: 'normal', label: t.normal },
+            { value: 'autonomous', label: t.autonomous }
+          ]}
           value={preferredTier}
-        >
-          <option value="still">{t.still}</option>
-          <option value="normal">{t.normal}</option>
-          <option value="autonomous">{t.autonomous}</option>
-        </select>
-      </label>
+          widthClass="w-full"
+        />
+      </div>
       <button onClick={onSpriteToggle} type="button">
         {spriteVisible ? t.hideCompanion : t.showCompanion}
       </button>
