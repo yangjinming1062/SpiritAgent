@@ -10,4 +10,5 @@ class GrokChatProvider(ChatProvider):
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
     DEFAULT_MODEL: ClassVar[str] = "grok-4.5"
     CONTEXT_TOKENS: ClassVar[int] = 500_000
+    supports_json_object: ClassVar[bool] = True
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high", "xhigh"})

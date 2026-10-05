@@ -2,14 +2,13 @@ import asyncio
 import contextlib
 import json
 import random
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from components import TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, resolve_prompt_text
-from modules.conversation import CompanionReply, TextBubble, VoiceBubble
+from modules.conversation import CompanionReply
 from prompts.chat import (
     COMPANION_MEDIA_REPLY_GUIDANCES,
     COMPANION_REPAIR_COMPOSE_GUIDANCES,
@@ -17,7 +16,6 @@ from prompts.chat import (
     COMPANION_REPLY_CLOSING_GUIDANCES,
     COMPANION_REPLY_EDIT_GUIDANCES,
     COMPANION_REPLY_GUIDANCES,
-    COMPANION_REPLY_REPAIR_GUIDANCES,
     COMPANION_REPLY_SCHEMA_GUIDANCES,
     COMPANION_REPLY_TOOL_GUIDANCES,
     COMPANION_TEXT_REPLY_GUIDANCES,
@@ -42,13 +40,12 @@ from .bubble import BubbleEvent, BubbleSplitter
 from .chat_emitter import Emitter
 from .message_sanitization import replace_media_parts
 from .reply_delivery import (
-    apply_companion_reply_edit,
-    can_edit_companion_reply,
-    companion_reply_edit_schema,
     companion_reply_schema,
+    decode_companion_reply,
     fallback_companion_voice_reply,
     normalize_companion_reply_content,
     parse_companion_reply,
+    validate_companion_reply_repair,
 )
 from .system_prompt import refresh_volatile_header_in_prompt
 
@@ -84,29 +81,6 @@ class _InvalidCompanionReplyError(RuntimeError):
             else [{"type": "value_error", "loc": (), "msg": str(error)}]
         )
         super().__init__("Invalid companion reply format")
-
-
-class _CompanionDialogueReview(_InvalidCompanionReplyError):
-    def __init__(self, raw_reply: str, bubble_indexes: list[int]) -> None:
-        super().__init__(ValueError("Companion dialogue requires format editing"), raw_reply)
-        self.bubble_indexes = bubble_indexes
-
-
-def _dialogue_review_indexes(reply: CompanionReply) -> list[int]:
-    # 结构线索只触发模型判断，不由代码认定括号语义或改写台词。
-    return [
-        index
-        for index, bubble in enumerate(reply.bubbles)
-        if isinstance(bubble, (TextBubble, VoiceBubble))
-        and (
-            "\n" in bubble.text
-            or "\\n" in bubble.text
-            or ("（" in bubble.text and "）" in bubble.text)
-            or ("(" in bubble.text and ")" in bubble.text)
-            or bubble.text.count("*") >= 2
-            or len(re.findall(r"[。！？!?]+|\.(?=\s|$)", bubble.text)) > 1
-        )
-    ]
 
 
 @dataclass
@@ -202,9 +176,8 @@ async def _generate_llm_response(
     pace_bubbles: bool,
     final_reply_only: bool = False,
     allow_voice_fallback: bool = False,
-    allow_dialogue_edit: bool = True,
 ) -> _LLMTurnResult:
-    """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。``reply_preference`` 非空即陪伴终端回复：非流式取完整数组并按气泡协议校验。"""
+    """单次 LLM 调用与正文交付；完整响应或流式首事件到达时锁定供应商，陪伴终端对象校验后交付气泡数组。"""
     resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
     reasoning = {"effort": resolved_effort} if resolved_effort else None
     instructions = refresh_volatile_header_in_prompt(
@@ -212,19 +185,12 @@ async def _generate_llm_response(
         user_local_tz=user_local_tz,
         lang=lang,
     )
-    dialogue_edit = (
-        reply_format_error is not None
-        and provider.review_companion_dialogue
-        and (
-            isinstance(reply_format_error, _CompanionDialogueReview)
-            or can_edit_companion_reply(reply_format_error.raw_reply)
-        )
-    )
-    if dialogue_edit:
+    reply_repair = reply_preference is not None and reply_format_error is not None
+    if reply_repair:
         instructions = ""
     final_only = final_reply_only or reply_format_error is not None
     request_input = _reply_repair_history(context["input"]) if final_only else context["input"]
-    if final_reply_only and not dialogue_edit:
+    if final_reply_only and not reply_repair:
         instructions += resolve_prompt_text(FINAL_REPLY_RETRY_GUIDANCES, lang)
     reply_options: dict = {}
     if reply_preference is not None:
@@ -268,11 +234,10 @@ async def _generate_llm_response(
             allow_silence=allow_silence,
             allow_media=bool(media_turn.artifacts),
         )
-        if dialogue_edit:
-            schema = companion_reply_edit_schema(schema, reply_format_error.raw_reply, language=lang)
         reply_options = await provider.companion_reply_options(
             schema,
             allow_tools=not final_only and bool(active_schemas),
+            repair=reply_repair,
         )
         capability_guidance += resolve_prompt_text(COMPANION_REPLY_SCHEMA_GUIDANCES, lang).replace(
             "{schema}",
@@ -280,8 +245,32 @@ async def _generate_llm_response(
         )
         # 部分供应商只允许首条系统消息，回复和修复指令都并入 instructions。
         instructions += capability_guidance
-        if dialogue_edit:
-            instructions += resolve_prompt_text(COMPANION_REPLY_EDIT_GUIDANCES, lang)
+        if reply_repair:
+            instructions += delivery_guidance
+            instructions += resolve_prompt_text(COMPANION_REPLY_EDIT_GUIDANCES, lang).replace(
+                "{no_dialogue}",
+                resolve_prompt_text(
+                    COMPANION_REPAIR_SILENCE_GUIDANCES if allow_silence else COMPANION_REPAIR_COMPOSE_GUIDANCES,
+                    lang,
+                ),
+            )
+            draft = reply_format_error.raw_reply
+            with contextlib.suppress(ValueError):
+                draft = json.loads(draft)
+            # 仅保留本轮工具事实，格式修正不回灌整段历史或执行协议。
+            current_start = next(
+                (
+                    index + 1
+                    for index in range(len(context["input"]) - 1, -1, -1)
+                    if context["input"][index].get("role") == "user"
+                ),
+                0,
+            )
+            tool_history = [
+                _tool_history_entry(item)
+                for item in context["input"][current_start:]
+                if item.get("type") in {"function_call", "function_call_output"}
+            ]
             request_input = [
                 {
                     "role": "user",
@@ -291,10 +280,9 @@ async def _generate_llm_response(
                             "text": json.dumps(
                                 {
                                     "user_request": turn_request,
-                                    "draft": json.loads(reply_format_error.raw_reply),
-                                    "review_hints": reply_format_error.bubble_indexes
-                                    if isinstance(reply_format_error, _CompanionDialogueReview)
-                                    else reply_format_error.validation_errors,
+                                    "draft": draft,
+                                    "validation_errors": reply_format_error.validation_errors,
+                                    "tool_history": tool_history,
                                 },
                                 ensure_ascii=False,
                             ),
@@ -302,40 +290,11 @@ async def _generate_llm_response(
                     ],
                 },
             ]
-        elif reply_format_error is None:
+        else:
             instructions += reply_guidance
             if not final_only and active_schemas:
                 instructions += resolve_prompt_text(COMPANION_REPLY_TOOL_GUIDANCES, lang)
             instructions += resolve_prompt_text(COMPANION_REPLY_CLOSING_GUIDANCES, lang)
-        else:
-            instructions += reply_guidance
-            # 格式恢复不提供工具；主动回合的恢复仍允许沉默，不能把修复变成一次新的联系。
-            instructions += resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang).replace(
-                "{no_dialogue}",
-                resolve_prompt_text(
-                    COMPANION_REPAIR_SILENCE_GUIDANCES if allow_silence else COMPANION_REPAIR_COMPOSE_GUIDANCES,
-                    lang,
-                ),
-            )
-            # 修复资料和阶段指令仅属于本次请求，不进入持久历史或下一轮工具上下文。
-            request_input = [
-                *request_input,
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": json.dumps(
-                                {
-                                    "invalid_reply": reply_format_error.raw_reply,
-                                    "validation_errors": reply_format_error.validation_errors,
-                                },
-                                ensure_ascii=False,
-                            ),
-                        },
-                    ],
-                },
-            ]
     kwargs = build_responses_kwargs(
         model=model_name,
         instructions=instructions,
@@ -344,7 +303,7 @@ async def _generate_llm_response(
         tool_choice="none" if final_only else None,
         stream=delivery != "complete",
         reasoning=reasoning,
-        temperature=provider.scale_temperature(0.0 if dialogue_edit else temperature),
+        temperature=provider.scale_temperature(0.0 if reply_repair else temperature),
     )
     kwargs.update(reply_options)
 
@@ -360,7 +319,8 @@ async def _generate_llm_response(
 
     turn_start_time = time.monotonic()
     # 请求失败交给编排层处理回退，避免先向客户端报错又交付下一供应商的正文。
-    response = await call_with_retry(provider.raw_client(), context_length=ctx_length, **kwargs)
+    client = provider.companion_reply_client(repair=reply_repair)
+    response = await call_with_retry(client, context_length=ctx_length, **kwargs)
 
     turn_parts: list[str] = []
     bubble_parts: list[str] = []
@@ -450,6 +410,13 @@ async def _generate_llm_response(
             raise RuntimeError(
                 getattr(response.error, "message", None) or f"LLM response not completed: {response.status}",
             )
+        if any(
+            getattr(part, "type", None) == "refusal"
+            for item in response.output
+            if getattr(item, "type", None) == "message"
+            for part in getattr(item, "content", ())
+        ):
+            raise _IncompleteResponseError("content_filter", text_emitted=False)
         # 必须先检查全部输出项；完整响应也可能同时包含正文和工具调用。
         for item in response.output:
             await _collect_output_item(item)
@@ -522,12 +489,27 @@ async def _generate_llm_response(
     if delivery != "stream" and not tool_calls_list:
         text = "".join(pending_text)
         if reply_preference is not None:
-            text = normalize_companion_reply_content(text)
-            if dialogue_edit:
+            raw_reply = normalize_companion_reply_content(text)
+            try:
+                text, kind = decode_companion_reply(raw_reply, allow_voice_fallback=allow_voice_fallback)
+            except ValueError as exc:
+                speech_errors = reply_format_error.validation_errors if reply_format_error is not None else []
+                if (
+                    not allow_voice_fallback
+                    or not speech_errors
+                    or not all(
+                        len(path := error["loc"]) >= 3 and path[1:3] == ("voice", "speech") for error in speech_errors
+                    )
+                ):
+                    raise invalid_reply(exc, raw_reply) from exc
+                # 原草稿仅演绎无效时可保留完整台词；正文、媒体与修正保护仍按同一路径校验。
                 try:
-                    text = apply_companion_reply_edit(text, reply_format_error.raw_reply, language=lang)
-                except ValueError as exc:
-                    raise invalid_reply(exc, text) from exc
+                    text, kind = decode_companion_reply(
+                        normalize_companion_reply_content(reply_format_error.raw_reply),
+                        allow_voice_fallback=True,
+                    )
+                except ValueError:
+                    raise invalid_reply(exc, raw_reply) from exc
             pending_text = [text]
             try:
                 reply = parse_companion_reply(
@@ -540,26 +522,18 @@ async def _generate_llm_response(
                 )
             except ValueError as exc:
                 if not allow_voice_fallback:
-                    raise invalid_reply(exc, text) from exc
-                candidates = [text]
-                if reply_format_error is not None and not dialogue_edit:
-                    # 恢复输出也可能损坏；原草稿中已成功生成的台词仍可完整校验后交付。
-                    candidates.append(normalize_companion_reply_content(reply_format_error.raw_reply))
-                for candidate in candidates:
-                    try:
-                        text, reply = fallback_companion_voice_reply(
-                            candidate,
-                            speech_config=speech_config,
-                            voice_id=voice_id,
-                            language=lang,
-                            allow_silence=allow_silence,
-                            media_turn=media_turn,
-                        )
-                        break
-                    except ValueError:
-                        continue
-                else:
-                    raise invalid_reply(exc, text) from exc
+                    raise invalid_reply(exc, raw_reply) from exc
+                try:
+                    text, reply = fallback_companion_voice_reply(
+                        text,
+                        speech_config=speech_config,
+                        voice_id=voice_id,
+                        language=lang,
+                        allow_silence=allow_silence,
+                        media_turn=media_turn,
+                    )
+                except ValueError:
+                    raise invalid_reply(exc, raw_reply) from exc
                 pending_text = [text]
                 logger.warning(
                     "Companion voice performance unavailable; delivering dialogue as text",
@@ -569,14 +543,11 @@ async def _generate_llm_response(
                         "response_id": getattr(completed_response, "id", None),
                     },
                 )
-            if (
-                reply is not None
-                and reply_format_error is None
-                and allow_dialogue_edit
-                and provider.review_companion_dialogue
-                and (indexes := _dialogue_review_indexes(reply))
-            ):
-                raise _CompanionDialogueReview(text, indexes)
+            if reply_repair:
+                try:
+                    validate_companion_reply_repair(text, kind, reply_format_error.raw_reply, media_turn=media_turn)
+                except ValueError as exc:
+                    raise invalid_reply(exc, raw_reply) from exc
         else:
             await _emit_bubble_events(bubbles.feed(text))
             await _emit_bubble_events(bubbles.flush())

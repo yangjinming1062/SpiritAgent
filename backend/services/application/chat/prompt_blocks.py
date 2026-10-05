@@ -218,7 +218,7 @@ def _message_timestamps_block(config: AgentPromptConfig) -> str:
         )
         return (
             "## 时间感知\n"
-            "每天首条消息前的日期分界线标明本地日，用户消息后的时间提示标明时刻与距上一轮的间隔。"
+            "每天首条消息前的日期分界线标明本地日，用户消息前的时间提示标明该次发言的时刻与距上一轮的间隔。"
             f"它们是系统元数据，不是用户发言；发言方以消息角色为准。{tz_note}\n"
             "用这些线索区分连续聊天与隔段时间后的重逢，避免每轮重新问候。"
             "间隔只能说明时间经过，不能据此认定用户的经历、作息或离开原因。"
@@ -230,8 +230,8 @@ def _message_timestamps_block(config: AgentPromptConfig) -> str:
     )
     return (
         "## Time Perception\n"
-        "A date divider before the first message of each local day gives the date; notes following user "
-        "messages give clock time and elapsed interval. These are system metadata, not user speech; "
+        "A date divider before the first message of each local day gives the date; notes preceding user "
+        "messages give that utterance's clock time and elapsed interval. These are system metadata, not user speech; "
         f"identify speakers by message role.{tz_note}\n"
         "Use these cues to distinguish an ongoing exchange from reconnecting after time apart, without "
         "greeting anew every turn. An interval shows elapsed time, not the user's experiences, habits, "

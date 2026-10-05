@@ -16,6 +16,7 @@ from .llm_debug import (
     summarize_llm_response,
     truncate_for_log,
 )
+from .providers import ChatSchemaResponsesClient
 from .responses import approx_responses_tokens
 
 logger = get_logger(__name__)
@@ -118,7 +119,7 @@ async def _guarded_stream(
 
 
 async def call_with_retry(
-    client: AsyncOpenAI,
+    client: AsyncOpenAI | ChatSchemaResponsesClient,
     *,
     context_length: int = 200000,
     **create_kwargs: Any,

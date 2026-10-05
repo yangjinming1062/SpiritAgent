@@ -28,7 +28,9 @@ class LocalChatProvider(ChatProvider):
         super().__init__(config)
         self._llama_cpp: bool | None = None
 
-    async def companion_reply_options(self, schema: dict, *, allow_tools: bool) -> dict:
+    async def companion_reply_options(self, schema: dict, *, allow_tools: bool, repair: bool = False) -> dict:
+        if repair:
+            return await super().companion_reply_options(schema, allow_tools=allow_tools, repair=True)
         # llama.cpp 的自定义输出语法不能与工具语法混用；工具阶段仍由提示词约束，恢复阶段不执行工具。
         if self._llama_cpp is None:
             url = urlsplit(self.config.base_url)
@@ -48,7 +50,6 @@ class LocalChatProvider(ChatProvider):
                 )
             except (TimeoutError, httpx.HTTPError, ValueError):
                 self._llama_cpp = False
-        self.review_companion_dialogue = self._llama_cpp is True
         if not self._llama_cpp or allow_tools:
             return {}
         # 该服务的 Responses 接口沿用 Chat Completions 的 response_format；text.format 不生效。

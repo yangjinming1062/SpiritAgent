@@ -1,7 +1,8 @@
 import json
 import re
+from collections import Counter
 from copy import deepcopy
-from typing import Annotated, Literal
+from typing import Literal
 
 from components import resolve_prompt_text
 from modules.conversation import (
@@ -12,50 +13,78 @@ from modules.conversation import (
     TextBubble,
     VoiceBubble,
 )
-from prompts.chat import COMPANION_DIALOGUE_FIELD_GUIDANCES
-from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError
+from prompts.chat import COMPANION_DIALOGUE_FIELD_GUIDANCES, COMPANION_WRITTEN_FIELD_GUIDANCES
+from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from services.contracts import MediaTurnState
 from services.domains.conversation import resolve_reply_media
 from services.infrastructure.llm import ProviderConfig, speech_performance_schema, validate_speech_style
 
 
-class _ReplyEdit(BaseModel):
+class _ReplyEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    kind: Literal["dialogue", "written"]
+    bubbles: list[dict[str, JsonValue]]
 
 
-class _PreserveReply(_ReplyEdit):
-    action: Literal["preserve"]
-
-
-class _DialogueEdit(_ReplyEdit):
-    action: Literal["dialogue"]
-    bubbles: CompanionReplyInput
-
-
-class _WrittenEdit(_ReplyEdit):
-    action: Literal["written"]
-    text: str
-
-
-_ReplyEditDecision = RootModel[Annotated[_PreserveReply | _DialogueEdit | _WrittenEdit, Field(discriminator="action")]]
-
-
-def _dialogue_text_pattern(language: str) -> str:
-    endings = "。！？!?" + ("." if language == "en" else "")
-    return rf"^[^\r\n\\（）()*{endings}]*[{endings}]?$"
+# 英文句点还可用于小数、缩写和省略号，交付前单独检查句界。
+_ENDING_CHARACTERS = r"[ \t~～…♡♥❤\"'”’」』☀-➿🇦-🫿\uFE0F\u200D]"
+_END_DECORATION = _ENDING_CHARACTERS + "*"
+_ENDING_SUFFIX = re.compile(_END_DECORATION)
+_DIALOGUE_TEXT_PATTERN = r"^[^\r\n\\（）()*。！？!?]*[。！？!?]*" + _END_DECORATION + "$"
+_SENTENCE_END = re.compile(r"[。！？!?]+|(?<!\.)\.(?!\.)(?=" + _ENDING_CHARACTERS + r"|\s|$)")
+_ABBREVIATION = re.compile(r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e|(?:[A-Z]\.)+[A-Z])\.$", re.IGNORECASE)
 
 
 def normalize_companion_reply_content(raw: str) -> str:
-    """归一完整 JSON 的外层表示；内容与字段仍由气泡模型严格校验。"""
+    """只恢复完整响应的 JSON 外层与闭合符，不改字符串内容或抽取夹在正文中的 JSON。"""
     fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```", raw.strip(), flags=re.IGNORECASE)
     content = fenced[1] if fenced else raw
     try:
-        value = json.loads(content)
+        json.loads(content)
     except ValueError:
-        return content
-    if isinstance(value, dict) and value.get("type") in ("text", "voice", "image", "video"):
-        return f"[{content}]"
+        stripped = content.strip()
+        if not stripped.startswith("{") or not stripped.endswith("}"):
+            return content
+        closers: list[str] = []
+        output: list[str] = []
+        in_string = escaped = False
+        for index, char in enumerate(stripped):
+            if in_string:
+                output.append(char)
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+                output.append(char)
+            elif char in "{[":
+                closers.append("}" if char == "{" else "]")
+                output.append(char)
+            elif char == "," and closers and closers[-1] == "}" and "]" in closers:
+                if stripped[index + 1 :].lstrip().startswith("{"):
+                    while closers[-1] != "]":
+                        output.append(closers.pop())
+                output.append(char)
+            elif char in "}]":
+                if not closers or char not in closers:
+                    return content
+                while closers[-1] != char:
+                    output.append(closers.pop())
+                output.append(closers.pop())
+            else:
+                output.append(char)
+        if in_string or closers:
+            return content
+        repaired = "".join(output)
+        try:
+            json.loads(repaired)
+        except ValueError:
+            return content
+        return repaired
     return content
 
 
@@ -73,102 +102,200 @@ def companion_reply_schema(
     allow_silence: bool,
     allow_media: bool,
 ) -> dict:
-    schema = CompanionReplyInput.model_json_schema()
-    schema["minItems"] = 0 if allow_silence else 1
-    definitions = schema["$defs"]
+    schema = _ReplyEnvelope.model_json_schema()
+    definitions = CompanionReplyInput.model_json_schema()["$defs"]
     bubble_types = ["TextBubble"]
     if allow_media:
         bubble_types.append("MediaBubbleInput")
     if speech_config is not None:
         bubble_types.append("VoiceBubbleInput")
-    schema["items"] = {"oneOf": [{"$ref": f"#/$defs/{name}"} for name in bubble_types]}
-    schema["$defs"] = {name: definitions[name] for name in bubble_types}
+    definitions = schema["$defs"] = {name: definitions[name] for name in bubble_types}
+    schema["properties"]["bubbles"] = {
+        "type": "array",
+        "minItems": 0 if allow_silence else 1,
+        "items": {"anyOf": [{"$ref": f"#/$defs/{name}"} for name in bubble_types]},
+    }
     if speech_config is not None:
         performance = speech_performance_schema(speech_config.provider_name, speech_config.model)
         schema["$defs"].update({**performance.pop("$defs", {}), "SpeechPerformance": performance})
-    for name in ("TextBubble", "VoiceBubbleInput"):
-        if name in schema["$defs"]:
-            schema["$defs"][name]["properties"]["text"]["description"] = resolve_prompt_text(
-                COMPANION_DIALOGUE_FIELD_GUIDANCES,
-                language,
-            )
+    if "VoiceBubbleInput" in definitions:
+        definitions["VoiceBubbleInput"]["properties"]["text"]["description"] = resolve_prompt_text(
+            COMPANION_DIALOGUE_FIELD_GUIDANCES,
+            language,
+        )
+    definitions["TextBubble"]["properties"]["text"]["description"] = (
+        "kind=dialogue: "
+        + resolve_prompt_text(COMPANION_DIALOGUE_FIELD_GUIDANCES, language)
+        + " kind=written: "
+        + resolve_prompt_text(COMPANION_WRITTEN_FIELD_GUIDANCES, language)
+    )
     return schema
 
 
-def _can_preserve_written_reply(draft: str) -> bool:
-    values = json.loads(draft)
-    if len(values) != 1:
-        return False
+def _draft_bubbles(raw: str) -> list[dict] | None:
     try:
-        TextBubble.model_validate(values[0])
+        values = json.loads(normalize_companion_reply_content(raw))
     except ValueError:
-        return False
-    return True
+        return None
+    if isinstance(values, dict):
+        values = values.get("bubbles", [values] if "type" in values else None)
+    return values if isinstance(values, list) and all(isinstance(value, dict) for value in values) else None
 
 
-def companion_reply_edit_schema(schema: dict, draft: str, *, language: str) -> dict:
-    """编辑决定单独校验，只有日常台词分支使用句子边界约束。"""
-    edit_schema = _ReplyEditDecision.model_json_schema()
-    definitions = edit_schema["$defs"]
-    if not _can_preserve_written_reply(draft):
-        edit_schema["oneOf"] = [item for item in edit_schema["oneOf"] if item["$ref"] != "#/$defs/_PreserveReply"]
-        del edit_schema["discriminator"]["mapping"]["preserve"]
-        del definitions["_PreserveReply"]
-    definitions.update(deepcopy(schema["$defs"]))
-    definitions["CompanionReplyInput"] = {key: value for key, value in schema.items() if key != "$defs"}
-    definitions["_WrittenEdit"]["properties"]["text"] = {
-        key: value for key, value in definitions["TextBubble"]["properties"]["text"].items() if key != "description"
-    }
-    for name in ("TextBubble", "VoiceBubbleInput"):
-        if name in definitions:
-            definitions[name]["properties"]["text"] = {
-                **definitions[name]["properties"]["text"],
-                "pattern": _dialogue_text_pattern(language),
-            }
-    return edit_schema
+def _sentence_parts(text: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    for match in _SENTENCE_END.finditer(text):
+        if match[0] == "." and _ABBREVIATION.search(text[: match.end()]):
+            continue
+        end = _ENDING_SUFFIX.match(text, match.end()).end()
+        if part := text[start:end].strip():
+            parts.append(part)
+        start = end
+    if part := text[start:].strip():
+        parts.append(part)
+    return parts or [text]
 
 
-def can_edit_companion_reply(raw: str) -> bool:
-    try:
-        values = json.loads(raw)
-    except ValueError:
-        return False
-    return (
-        isinstance(values, list)
-        and bool(values)
-        and all(
-            isinstance(value, dict) and value.get("type") in {"text", "voice"} and isinstance(value.get("text"), str)
-            for value in values
-        )
-    )
+def _split_dialogue_bubble(bubble: dict[str, JsonValue], index: int) -> list[dict[str, JsonValue]]:
+    if bubble.get("type") not in {"text", "voice"} or not isinstance(bubble.get("text"), str):
+        return [bubble]
+    parts = _sentence_parts(bubble["text"])
+    if len(parts) == 1:
+        return [bubble]
+    bubbles = [{**deepcopy(bubble), "text": part} for part in parts]
+    speech = bubble.get("speech")
+    if bubble["type"] == "voice" and isinstance(speech, dict):
+        performances = [deepcopy(speech) for _ in parts]
+        # 锚点随原台词进入所属句子；跨句、无效或落在新气泡开头的停顿交给模型修正。
+        for field in ("cues", "pauses"):
+            anchors = speech.get(field)
+            if not isinstance(anchors, list):
+                continue
+            selected: list[list[JsonValue]] = [[] for _ in parts]
+            for anchor_index, anchor in enumerate(anchors):
+                if not isinstance(anchor, dict) or not isinstance(anchor.get("before"), str):
+                    raise _invalid_performance(index, (field, anchor_index, "before"), "Use a phrase from this bubble")
+                matching = [i for i, part in enumerate(parts) if part.count(anchor["before"]) == 1]
+                if len(matching) != 1 or (field == "pauses" and parts[matching[0]].startswith(anchor["before"])):
+                    raise _invalid_performance(
+                        index,
+                        (field, anchor_index, "before"),
+                        "Anchor must match a unique phrase in one split sentence; adjust or omit this optional control",
+                    )
+                selected[matching[0]].append(anchor)
+            for performance, anchors in zip(performances, selected, strict=True):
+                performance[field] = anchors
+        for value, performance in zip(bubbles, performances, strict=True):
+            value["speech"] = performance
+    return bubbles
 
 
-def apply_companion_reply_edit(raw: str, draft: str, *, language: str) -> str:
-    decision = _ReplyEditDecision.model_validate_json(raw).root
-    if isinstance(decision, _PreserveReply):
-        if not _can_preserve_written_reply(draft):
-            raise ValueError("Preserving a written reply requires one valid text bubble")
-        return draft
-    original = json.loads(draft)
-    if isinstance(decision, _WrittenEdit):
-        if any(bubble["type"] != "text" for bubble in original):
-            raise ValueError("A written edit cannot remove voice or media bubbles")
-        if re.sub(r"\s+", "", decision.text) != re.sub(r"\s+", "", "".join(b["text"] for b in original)):
-            raise ValueError("A written edit must preserve the draft's words and punctuation")
-        values = [TextBubble(type="text", text=decision.text).model_dump()]
+def _fallback_speech_bubbles(values: object, error: ValidationError) -> list[dict]:
+    paths = [item["loc"] for item in error.errors()]
+    if (
+        not isinstance(values, list)
+        or not paths
+        or not all(len(path) >= 3 and isinstance(path[0], int) and path[1:3] == ("voice", "speech") for path in paths)
+    ):
+        raise error
+    values = list(values)
+    for index in {path[0] for path in paths}:
+        bubble = values[index]
+        if not isinstance(bubble, dict) or bubble.get("type") != "voice":
+            raise error
+        values[index] = {"type": "text", "text": bubble.get("text")}
+    return values
+
+
+def decode_companion_reply(
+    raw: str,
+    *,
+    allow_voice_fallback: bool = False,
+) -> tuple[str, Literal["dialogue", "written"]]:
+    """模型类型标记只用于交付校验；持久化继续使用原气泡数组契约。"""
+    # 演绎与媒体在数组协议中校验，保留按 speech 字段降级的边界。
+    draft = _ReplyEnvelope.model_validate_json(raw)
+    values = draft.bubbles
+    if draft.kind == "written":
+        if not values:
+            raise ValueError("A written work requires text content")
+        for value in values:
+            TextBubble.model_validate(value)
+        if len(values) > 1:
+            values = [{"type": "text", "text": "\n\n".join(value["text"] for value in values)}]
+            TextBubble.model_validate(values[0])
     else:
-        values = json.loads(raw)["bubbles"]
-        if any(
-            not re.fullmatch(_dialogue_text_pattern(language), bubble["text"])
-            for bubble in values
-            if bubble["type"] in {"text", "voice"}
-        ):
-            raise ValueError("Each edited dialogue bubble requires one sentence without line breaks")
-    if [(b["type"], b["media_id"]) for b in values if "media_id" in b] != [
-        (b["type"], b["media_id"]) for b in original if "media_id" in b
-    ]:
-        raise ValueError("A reply edit must preserve media references and order")
-    return json.dumps(values, ensure_ascii=False)
+        values = []
+        for index, bubble in enumerate(draft.bubbles):
+            try:
+                parts = _split_dialogue_bubble(bubble, index)
+            except ValidationError as exc:
+                if not allow_voice_fallback:
+                    raise
+                fallback = _fallback_speech_bubbles(draft.bubbles, exc)
+                parts = _split_dialogue_bubble(fallback[index], index)
+            values.extend(parts)
+        errors = []
+        for index, bubble in enumerate(values):
+            if bubble.get("type") not in {"text", "voice"} or not isinstance(bubble.get("text"), str):
+                continue
+            text = bubble["text"]
+            endings = [
+                match
+                for match in _SENTENCE_END.finditer(text)
+                if match[0] != "." or not _ABBREVIATION.search(text[: match.end()])
+            ]
+            if not re.fullmatch(_DIALOGUE_TEXT_PATTERN, text) or len(endings) > 1:
+                errors.append(
+                    {
+                        "type": "value_error",
+                        "loc": ("bubbles", index, bubble["type"], "text"),
+                        "ctx": {
+                            "error": ValueError(
+                                "Use one spoken sentence per bubble without line breaks or narration markers",
+                            ),
+                        },
+                    },
+                )
+        if errors:
+            raise ValidationError.from_exception_data("CompanionDialogue", errors)
+    return json.dumps(values, ensure_ascii=False), draft.kind
+
+
+def validate_companion_reply_repair(
+    content: str,
+    kind: Literal["dialogue", "written"],
+    draft: str,
+    *,
+    media_turn: MediaTurnState,
+) -> None:
+    original = _draft_bubbles(draft)
+    if original is None:
+        return
+    values = json.loads(content)
+    if (
+        kind == "written"
+        and original
+        and all(b.get("type") == "text" and isinstance(b.get("text"), str) for b in original)
+        and re.sub(r"\s+", "", values[0]["text"]) != re.sub(r"\s+", "", "".join(b["text"] for b in original))
+    ):
+        raise ValueError("A written repair must preserve the draft's words and punctuation")
+    references: dict[tuple[str, str], str] = {}
+    for bubble in original:
+        if bubble.get("type") not in {"image", "video"} or not isinstance(bubble.get("media_id"), str):
+            continue
+        try:
+            media = resolve_reply_media(media_turn, bubble["media_id"], bubble["type"])
+        except ValueError:
+            continue
+        references[bubble["type"], bubble["media_id"]] = media.goal_id
+    goal_counts = Counter(references.values())
+    required = [key for key, goal in references.items() if goal_counts[goal] == 1]
+    preserved = [(b["type"], b["media_id"]) for b in values if (b.get("type"), b.get("media_id")) in references]
+    preserved = [key for key in preserved if key in required]
+    if preserved != required:
+        raise ValueError("A reply repair must preserve valid media references and order")
 
 
 def parse_companion_reply(
@@ -273,14 +400,5 @@ def fallback_companion_voice_reply(
                 media_turn=media_turn,
             )
         except ValidationError as exc:
-            paths = [error["loc"] for error in exc.errors()]
-            if not isinstance(values, list) or not all(
-                len(path) >= 3 and isinstance(path[0], int) and path[1:3] == ("voice", "speech") for path in paths
-            ):
-                raise
-            for index in {path[0] for path in paths}:
-                bubble = values[index]
-                if not isinstance(bubble, dict) or bubble.get("type") != "voice":
-                    raise
-                values[index] = {"type": "text", "text": bubble.get("text")}
+            values = _fallback_speech_bubbles(values, exc)
             raw = json.dumps(values, ensure_ascii=False)

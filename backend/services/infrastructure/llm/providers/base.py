@@ -8,6 +8,7 @@ from components import get_logger
 from modules.media import SpeechStyle
 from openai import AsyncOpenAI
 
+from ._companion_format import ChatSchemaResponsesClient
 from .http import get_async_client
 
 logger = get_logger(__name__)
@@ -102,10 +103,7 @@ class ChatProvider(BaseProvider):
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high"})
     TEMPERATURE_MIN: ClassVar[float] = 0.0
     TEMPERATURE_MAX: ClassVar[float] = 2.0
-    # 是否已验证 json_object 模式也接受顶层数组；只支持对象的模式不能约束陪伴回复
-    supports_json_array: ClassVar[bool] = False
     supports_json_object: ClassVar[bool] = False
-    review_companion_dialogue: bool = False
     supports_vision: ClassVar[bool] = False  # 接受 input_image 部件；文本模型需配合 DEFAULT_VISION_MODEL
     # 接受 Responses 形状的 input_video 部件；仅 chat.completions 支持视频的供应商（如 mimo）不能声明
     supports_video: ClassVar[bool] = False
@@ -122,9 +120,25 @@ class ChatProvider(BaseProvider):
     def raw_client(self) -> AsyncOpenAI:
         return self._client
 
-    async def companion_reply_options(self, schema: dict, *, allow_tools: bool) -> dict:
+    def companion_reply_client(self, *, repair: bool) -> AsyncOpenAI | ChatSchemaResponsesClient:
+        if repair:
+            return ChatSchemaResponsesClient(self.raw_client())
+        return self.raw_client()
+
+    async def companion_reply_options(self, schema: dict, *, allow_tools: bool, repair: bool = False) -> dict:
         """供应商实际支持的陪伴结构输出参数；schema 仍由应用层统一校验。"""
-        return {"text": {"format": {"type": "json_object"}}} if self.supports_json_array else {}
+        if repair:
+            return {
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "companion_reply",
+                        "strict": True,
+                        "schema": {**schema, "type": "object"},
+                    },
+                },
+            }
+        return {"text": {"format": {"type": "json_object"}}} if self.supports_json_object else {}
 
 
 @dataclass(frozen=True)

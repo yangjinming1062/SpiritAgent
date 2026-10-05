@@ -11,6 +11,4 @@ class QwenChatProvider(ChatProvider):
     DEFAULT_MODEL: ClassVar[str] = "qwen3.8-max"
     CONTEXT_TOKENS: ClassVar[int] = 256_000
     supports_vision: ClassVar[bool] = True
-    supports_json_object: ClassVar[bool] = True
-    supports_json_array: ClassVar[bool] = True
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high", "xhigh", "max"})

@@ -51,7 +51,7 @@
 - [媒体气泡](../services/application/chat/streaming.py)——本轮有可引用产物时，`chat.py::COMPANION_MEDIA_REPLY_GUIDANCES` 与可信产物清单装配到正常和恢复请求；`tools.py` 的批次生成、验图与重做说明对应 [chat_images.py](../services/application/generation/chat_images.py)。
 - [工具域目录](../services/infrastructure/tool_runtime/domains.py)——根据当前实际可用工具重写 `search_tools` 描述，预设与调用方排除后在对话装配中再次计算。
 - [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。
-- [初次见面意图](../services/domains/companion/first_greeting.py)——`companion.py::FIRST_MEETING_INTENT_TEXTS` 按用户语言写入意图记录，由[主动回合](../services/application/automation/companion_turns.py)作为资料消息与 `chat.py::COMPANION_PROACTIVE_GUIDANCES` 一同装配；两者对开口与沉默（`[]`）的约定须一致。
+- [初次见面意图](../services/domains/companion/first_greeting.py)——`companion.py::FIRST_MEETING_INTENT_TEXTS` 按用户语言写入意图记录，由[主动回合](../services/application/automation/companion_turns.py)作为资料消息与 `chat.py::COMPANION_PROACTIVE_GUIDANCES` 一同装配；开口与沉默遵循[回复契约](../../docs/PROTOCOL.md#结构化回复与终端交付)。
 - [陪伴小推理资料](../services/domains/companion/prompt_runtime.py)——心情、空闲表达、空间行为与动态使用人设和相关记忆，不附加完整视觉形象资料；当前时间是带时区偏移的用户本地时间，近期对话保留原始角色、时间和截断标记，旧请求不自动成为当前触发条件。
 - 音色设计说明：[MiniMax](../services/infrastructure/llm/providers/minimax/tts.py)、[MiMo](../services/infrastructure/llm/providers/mimo/tts.py) 等各供应商 TTS 模块的 `VOICE_DESIGN_GUIDE`——供应商支持的描述维度，供用户创建音色；不能混入逐条语音的正文。
 - 数据库 `AvatarAsset.prompt_json` 等审计字段是生成时快照，不是定义源。

@@ -57,7 +57,6 @@ from .persistence import (
 )
 from .streaming import (
     _assign_tool_call_ids,
-    _CompanionDialogueReview,
     _generate_llm_response,
     _IncompleteResponseError,
     _InvalidCompanionReplyError,
@@ -488,7 +487,6 @@ async def _run_chat_turn(
                             pace_bubbles=has_viewer and not headless,
                             final_reply_only=final_reply_only,
                             allow_voice_fallback=not retry_available,
-                            allow_dialogue_edit=retry_available,
                         )
                     except _IncompleteResponseError as exc:
                         del current_context["input"][input_length:]
@@ -502,10 +500,7 @@ async def _run_chat_turn(
                             raise
                         retry_available = False
                         reply_format_error = exc
-                        if isinstance(exc, _CompanionDialogueReview):
-                            logger.info("Editing companion dialogue before delivery")
-                        else:
-                            logger.warning("Retrying final companion reply after format validation failed")
+                        logger.warning("Editing final companion reply after format validation failed")
 
             try:
                 async with session_scope() as db:

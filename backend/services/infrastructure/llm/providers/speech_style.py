@@ -48,14 +48,15 @@ MiMo accepts open-ended natural-language delivery controls.
 - direction is required. role contains only voice-relevant persona traits and the listener relationship (max 500
   characters); scene contains the situation established by this exchange and your attitude, without invented facts
   (max 500); guidance contains the few important choices of pace, pauses, emphasis, and emotional progression (max
-  1500). Keep all three concise.
+  1500). Use brief phrases for each; direction already conveys tone and scene, so styles and cues are optional.
 Preserve the selected voice and one-speaker persona. styles, cues, and direction must agree without repeating the same
 instruction in every field or escalating drama beyond the dialogue. Do not include brackets in style or cue values.
 """
 # 句内标记在 styled_speech_text 中插到 before 短语之前，校验只接受本气泡台词中唯一出现的短语。
 _CUE_RULE = (
     "Each cue is an object {before, tag}: the tag is performed immediately before its before phrase, which must occur "
-    "exactly once in this bubble's text. Use at most eight cues, and never add dialogue merely to create an anchor.\n"
+    "exactly once in this bubble's text. Copy that phrase verbatim; omit a cue when its anchor cannot match. "
+    "Use at most eight cues, and never add dialogue merely to create an anchor.\n"
 )
 
 
@@ -110,14 +111,18 @@ def speech_style_guidance(provider: str, model: str, *, language: str) -> str:
     return (
         "\n## Speech performance for voice bubbles\n"
         "Each voice bubble nests its speech object as shown; text bubbles have no speech. Do not include provider or "
-        "model identifiers. Choose delivery for this bubble's words and context.\n"
+        "model identifiers. Write this bubble's spoken sentence first, then its matching performance. "
+        "Use only controls that contribute to the intended delivery; optional cues and pauses need not appear.\n"
         + json.dumps(
-            [
-                {"type": "voice", "text": text, "speech": example}
-                for text in (
-                    ("我听着呢。", "你慢慢说。") if language == "zh" else ("I'm listening.", "Take your time.")
-                )
-            ],
+            {
+                "kind": "dialogue",
+                "bubbles": [
+                    {"type": "voice", "text": text, "speech": example}
+                    for text in (
+                        ("我听着呢。", "你慢慢说。") if language == "zh" else ("I'm listening.", "Take your time.")
+                    )
+                ],
+            },
             ensure_ascii=False,
         )
         + "\n"

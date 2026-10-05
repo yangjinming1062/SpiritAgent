@@ -1,3 +1,4 @@
+from ._companion_format import ChatSchemaResponsesClient
 from ._reference import resolve_reference_bytes
 from ._size_aspect import ASPECT_RATIOS, SIZE_TO_ASPECT
 from .base import (
@@ -41,6 +42,7 @@ __all__ = [
     "PRODUCT_REASONING_EFFORTS",
     "BaseProvider",
     "ChatProvider",
+    "ChatSchemaResponsesClient",
     "EmbeddingProvider",
     "ImageAsset",
     "ImageGenProvider",
