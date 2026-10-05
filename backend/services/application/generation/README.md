@@ -30,6 +30,7 @@
 
 - 身份确认前，全身生成和自备图直接替换草稿；`confirm_fullbody_seed` 锁定身份、登记角色卡并保存默认外观快照。确认后先写 `FullbodyCandidate`，分析可重试，采纳时校验原图与角色卡修订并同事务更新；未采纳候选可清理，已采纳旧图留给历史任务。完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
 - 草稿转存失败可重试，只有全部图片过期的头像行才清理，不连带正式参考。服务内部和 ORM 使用裸路径（草稿为 `temp-media/`，正式资产为 `companion-assets/{user_id}/`），URL 只在响应出口签名，客户端地址只在确认入口还原比对。
+- 全身与衣柜生成、微调、自备图共用 [`prepare_transparent_image`](../../infrastructure/video_processing/image.py)：有效 alpha 原样保留，其余对已有产物本地抠图后再验收；成品 PNG 保持原尺寸与构图。生成前检查模型，换装先透明化再评分，确认与候选采纳再次验收；失败不安装产物。完整交付与背景规则见 [PIPELINE](../../../../docs/PIPELINE.md#全身与着装透明成品)。
 - 角色卡和全身候选共用 `extract_card_features`；头像、全身和换装共用 `generate_with_moderation_retry`，审核命中只改写提示词重试一次，结果未知不重试。
 - 外观的生成来源、已接受反馈与身份修订守卫存于 `CompanionOutfit.source_json`，一律经 [`OutfitSource`](../../../modules/companion/models.py) 读写：损坏或类型异常的字段按缺省处理，遗留未知键原样保留；动作包据其中的身份全身图路径判断冻结参考是否需要校准。
 

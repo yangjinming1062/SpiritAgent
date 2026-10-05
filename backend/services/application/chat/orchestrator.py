@@ -39,6 +39,7 @@ from services.infrastructure.llm import (
     MissingLlmConfigError,
     UserLlmConfig,
     execute_with_fallback,
+    generation_timeout_scope,
     resolve_context_tokens,
     scale_temperature,
 )
@@ -166,32 +167,33 @@ async def run_chat_turn(
     turn_timeout_seconds: float | None = None,
     channel_source: ChannelTurnSource | None = None,
 ) -> None:
-    """所有入口共享会话互斥和整体预算；渠道撤权在模型与工具派发边界复核。"""
+    """所有入口共享会话互斥和执行预算；渠道撤权在模型与工具派发边界复核。"""
     async with conversation_lock(req.session_id):
         if authorization_check is not None and not await authorization_check():
             raise asyncio.CancelledError("The channel authorization was revoked")
         timeout = asyncio.timeout(turn_timeout_seconds or SETTINGS.agent_turn_timeout_seconds)
         try:
             async with timeout:
-                await _run_chat_turn(
-                    req,
-                    llm_config,
-                    user_id,
-                    emitter,
-                    session_client_context,
-                    track_task,
-                    session_settings=session_settings,
-                    precursor_user_message_ids=precursor_user_message_ids,
-                    persisted_message_id=persisted_message_id,
-                    final_reply_only=final_reply_only,
-                    ephemeral=ephemeral,
-                    headless=headless,
-                    has_viewer=has_viewer,
-                    excluded_tool_names=excluded_tool_names,
-                    max_loop_turns=max_loop_turns,
-                    authorization_check=authorization_check,
-                    channel_source=channel_source,
-                )
+                with generation_timeout_scope(timeout):
+                    await _run_chat_turn(
+                        req,
+                        llm_config,
+                        user_id,
+                        emitter,
+                        session_client_context,
+                        track_task,
+                        session_settings=session_settings,
+                        precursor_user_message_ids=precursor_user_message_ids,
+                        persisted_message_id=persisted_message_id,
+                        final_reply_only=final_reply_only,
+                        ephemeral=ephemeral,
+                        headless=headless,
+                        has_viewer=has_viewer,
+                        excluded_tool_names=excluded_tool_names,
+                        max_loop_turns=max_loop_turns,
+                        authorization_check=authorization_check,
+                        channel_source=channel_source,
+                    )
         except TimeoutError:
             if not timeout.expired():
                 raise

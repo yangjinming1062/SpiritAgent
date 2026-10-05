@@ -2,7 +2,12 @@
 
 import json
 
-from prompts.generation import CHARACTER_VISUAL_STYLE, FULLBODY_REFERENCE_TEMPLATE, FULLBODY_SECONDARY_REFERENCE
+from prompts.generation import (
+    CHARACTER_VISUAL_STYLE,
+    FULLBODY_REFERENCE_TEMPLATE,
+    FULLBODY_SECONDARY_REFERENCE,
+    IMAGE_TRANSPARENT_BACKGROUND,
+)
 
 
 def build_fullbody_reference_prompt(
@@ -16,9 +21,10 @@ def build_fullbody_reference_prompt(
     body_baseline: dict[str, str] | None = None,
     outfit_description: str = "",
     canvas_aspect: str | None = None,
+    require_transparent_background: bool = False,
 ) -> str:
     """AI 与自备图共用头像扩展语义；自备图通过 canvas_aspect 告知画幅，AI 由请求 size 传达。"""
-    return FULLBODY_REFERENCE_TEMPLATE.format(
+    prompt = FULLBODY_REFERENCE_TEMPLATE.format(
         style=CHARACTER_VISUAL_STYLE,
         body_direction=body_direction,
         portrait_reference="参考图 1" if has_user_reference else "参考图",
@@ -36,3 +42,6 @@ def build_fullbody_reference_prompt(
             ensure_ascii=False,
         ),
     )
+    if require_transparent_background:
+        prompt += "\n\n" + IMAGE_TRANSPARENT_BACKGROUND
+    return prompt

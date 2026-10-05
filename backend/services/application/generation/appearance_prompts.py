@@ -19,6 +19,7 @@ from prompts.generation import (
     FULLBODY_PRESERVE_CHARACTER,
     GARMENT_DESCRIBE_SYSTEM,
     IMAGE_EDIT_TEMPLATE,
+    IMAGE_TRANSPARENT_BACKGROUND,
     OUTFIT_BACKGROUND,
     OUTFIT_BODY_DIRECTION_TEMPLATE,
     OUTFIT_CHANGE_LEAD,
@@ -141,6 +142,7 @@ async def build_outfit_prompt(
     previous_feedback: list[str] | None = None,
     personality: str = "",
     canvas_aspect: str | None = None,
+    require_transparent_background: bool = False,
 ) -> str:
     """换装与自备图共用动态身体判断；固定统一视觉风格与身份、画幅边界。"""
     direction = await describe_character_form(
@@ -153,7 +155,7 @@ async def build_outfit_prompt(
         outfit_description=requirement,
         reference_images=(reference_image,),
     )
-    return "\n".join(
+    prompt = "\n".join(
         (
             OUTFIT_CHANGE_LEAD,
             FULLBODY_PRESERVE_CHARACTER,
@@ -174,6 +176,9 @@ async def build_outfit_prompt(
             OUTFIT_BACKGROUND,
         ),
     )
+    if require_transparent_background:
+        prompt += "\n\n" + IMAGE_TRANSPARENT_BACKGROUND
+    return prompt
 
 
 async def describe_garment_image(

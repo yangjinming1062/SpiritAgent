@@ -41,18 +41,30 @@ def _check_common_gates(min_coverage: float, max_coverage: float, max_border_cov
         raise ActionMaterialRejectedError("画面边缘仍有不透明内容，可能是角色贴边或背景残留。")
 
 
-def validate_action_image(image: Image.Image) -> None:
-    """单张图片与视频共用主体、背景和贴边门禁，保留独立的静态 alpha 校验。"""
+def validate_transparent_image(image: Image.Image) -> None:
+    """真实透明角色图：可见前景、足量透明背景及干净边缘。"""
     alpha_channel = image.getchannel("A")
     alpha_min, alpha_max = alpha_channel.getextrema()
-    if alpha_min > 8 or alpha_max < 240:
-        raise ActionMaterialRejectedError("动作图片缺少有效前景或透明背景")
+    if alpha_min > 8 or alpha_max < 128:
+        raise ActionMaterialRejectedError("图片缺少有效前景或透明背景")
     scale = min(96 / image.width, 1024 / image.height)
     width, height = max(2, round(image.width * scale)), max(2, round(image.height * scale))
     alpha = np.asarray(alpha_channel.resize((width, height), Image.Resampling.BILINEAR), dtype=np.float32) / 255
+    if float((alpha <= 8 / 255).mean()) < 0.15:
+        raise ActionMaterialRejectedError("图片缺少足够的透明背景")
     coverage = float((alpha > 0.5).mean())
     border = np.concatenate((alpha[:2].ravel(), alpha[-2:].ravel(), alpha[:, :2].ravel(), alpha[:, -2:].ravel()))
-    _check_common_gates(coverage, coverage, float((border > 0.5).mean()))
+    if not 0.025 <= coverage <= 0.85:
+        raise ActionMaterialRejectedError("图片缺少可见角色或背景未去干净")
+    if float((border > 0.5).mean()) > 0.04:
+        raise ActionMaterialRejectedError("图片边缘仍有不透明内容，可能是角色贴边或背景残留")
+
+
+def validate_action_image(image: Image.Image) -> None:
+    """动作图片复用角色透明图门禁。"""
+    if image.getchannel("A").getextrema()[1] < 240:
+        raise ActionMaterialRejectedError("动作图片缺少有效前景")
+    validate_transparent_image(image)
 
 
 def validate_action_clip(src: Path) -> None:

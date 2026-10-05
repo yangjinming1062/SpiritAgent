@@ -2,6 +2,7 @@ import asyncio
 import base64
 
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger
+from prompts.generation import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import asset_store, save_companion_asset_async, sniff_media_ext
@@ -21,6 +22,7 @@ from services.infrastructure.llm import (
     resolve,
     resolve_provider_chain,
 )
+from services.infrastructure.video_processing import VideoProcessError, require_matting_model
 
 logger = get_logger(__name__)
 
@@ -123,11 +125,12 @@ async def generate_images(
     image_edit: bool = False,
     provider_config: ProviderConfig | None = None,
     background: str | None = None,
+    prefer_transparent_background: bool = False,
     aspect_ratio: str | None = None,
     resolution: str | None = None,
     exact_size: bool = False,
 ) -> list[str]:
-    """走 image_gen 链生成图片，成功返回地址列表。``persist_user_assets=True`` 转存为用户资产返回裸路径，否则返回供应商 URL/data URI；``image_edit`` 以 reference_image 为底图且不接受双参考（同给即报错）；``background="transparent"`` 只随 ``provider_config`` 使用，该家须已验证 alpha 输出。"""
+    """按供应商能力生成图片；透明优先请求的实际 alpha 由消费方校验和处理。"""
     if image_edit and secondary_reference_image:
         raise ImageGenerationError(
             "图像编辑不支持附加参考图，请改用重新生成",
@@ -136,6 +139,13 @@ async def generate_images(
     try:
         if secondary_reference_image and not reference_image:
             raise ImageGenerationError("第二参考图需要同时提供身份参考图")
+
+        def _provider_prompt(provider_name: str) -> str:
+            if not prefer_transparent_background:
+                return prompt
+            native_alpha = resolve(ServiceType.image_gen, provider_name).supports_transparent_background
+            return prompt + "\n" + (IMAGE_TRANSPARENT_BACKGROUND if native_alpha else IMAGE_OPAQUE_BACKGROUND)
+
         if provider_config is not None:
             provider_cls = resolve(ServiceType.image_gen, provider_config.provider_name)
             if background == "transparent" and not provider_cls.supports_transparent_background:
@@ -145,10 +155,11 @@ async def generate_images(
                 )
             # 冻结链在调用前才补全提示词（如背景说明），按实际发送的长度核对该家上限，超出时可换下一家。
             limit = provider_cls.max_prompt_chars
-            if limit is not None and len(prompt) > limit:
+            prompt_chars = len(_provider_prompt(provider_config.provider_name))
+            if limit is not None and prompt_chars > limit:
                 raise ImageGenerationError(
                     "提示词超过当前图片生成供应商的长度上限",
-                    internal=f"{provider_config.provider_name} prompt {len(prompt)} chars > {limit}",
+                    internal=f"{provider_config.provider_name} prompt {prompt_chars} chars > {limit}",
                     can_fallback=True,
                 )
             chain, err = [provider_config], None
@@ -162,6 +173,20 @@ async def generate_images(
                     multiple_references=bool(secondary_reference_image),
                     prompt_chars=len(prompt),
                 )
+            if not err and chain and prefer_transparent_background:
+                chain = [
+                    config
+                    for config in chain
+                    if (limit := resolve(ServiceType.image_gen, config.provider_name).max_prompt_chars) is None
+                    or len(_provider_prompt(config.provider_name)) <= limit
+                ]
+                if not chain:
+                    err = "提示词超过当前图片生成供应商的长度上限，请缩短描述或启用其他供应商"
+                chain.sort(
+                    key=lambda config: (
+                        not resolve(ServiceType.image_gen, config.provider_name).supports_transparent_background
+                    ),
+                )
         if err:
             logger.warning("image generation chain error", extra={"error": err, "user_id": user_id})
             raise ImageGenerationError(err, internal=err)
@@ -173,9 +198,16 @@ async def generate_images(
         async def _generate_call(p: ImageGenProvider) -> ImageGenResult:
             nonlocal active_provider
             active_provider = p.config.provider_name
+            request_background = background
+            if prefer_transparent_background:
+                try:
+                    await asyncio.to_thread(require_matting_model)
+                except VideoProcessError as exc:
+                    raise ImageGenerationError(str(exc), internal=exc.internal) from exc
+                request_background = "transparent" if p.supports_transparent_background else None
             return await p.generate(
                 ImageGenRequest(
-                    prompt=prompt,
+                    prompt=_provider_prompt(p.config.provider_name),
                     size=size,
                     aspect_ratio=request_aspect,
                     resolution=resolution,
@@ -185,7 +217,7 @@ async def generate_images(
                     secondary_reference_image=secondary_reference_image,
                     image_edit=image_edit,
                     response_format="b64" if persist_user_assets else "url",
-                    background="transparent" if background == "transparent" else None,
+                    background="transparent" if request_background == "transparent" else None,
                 ),
             )
 

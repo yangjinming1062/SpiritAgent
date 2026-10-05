@@ -44,6 +44,7 @@ from services.infrastructure.assets import build_data_uri, unlink_companion_asse
 from services.infrastructure.llm import (
     chat,
 )
+from services.infrastructure.video_processing import VideoProcessError, prepare_transparent_image, require_matting_model
 
 from .appearance_prompts import (
     build_image_edit_prompt,
@@ -62,6 +63,7 @@ from .avatar_service import (
     persist_portrait_bytes,
     persist_portrait_or_draft,
     read_portrait_bytes,
+    validate_transparent_portrait,
 )
 from .character_images import generate_character_images, image_asset_bytes
 from .image_generation import ImageGenerationError
@@ -88,6 +90,22 @@ class OutfitStateError(OutfitError):
 
 class OutfitDraftExpiredError(OutfitError):
     """草稿立绘的 temp-media 文件已过期，需重新生成。"""
+
+
+async def _require_outfit_matting(user_id: int) -> None:
+    try:
+        await asyncio.to_thread(require_matting_model)
+    except VideoProcessError as exc:
+        logger.warning("outfit matting unavailable", extra={"user_id": user_id}, exc_info=True)
+        raise OutfitError(str(exc)) from exc
+
+
+async def _prepare_outfit_upload(user_id: int, data: bytes) -> bytes:
+    try:
+        return await asyncio.to_thread(prepare_transparent_image, data)
+    except VideoProcessError as exc:
+        logger.warning("outfit image transparency failed", extra={"user_id": user_id}, exc_info=True)
+        raise OutfitError(str(exc)) from exc
 
 
 async def _require_fullbody_seed_readable(avatar: AvatarAsset) -> str:
@@ -120,14 +138,17 @@ async def _get_outfit(
     db: AsyncSession,
     user_id: int,
     outfit_id: int,
+    *,
+    lock: bool = False,
 ) -> CompanionOutfit | None:
-    return (
-        await db.execute(
-            select(CompanionOutfit)
-            .where(CompanionOutfit.id == outfit_id, CompanionOutfit.user_id == user_id)
-            .execution_options(populate_existing=True),
-        )
-    ).scalar_one_or_none()
+    statement = (
+        select(CompanionOutfit)
+        .where(CompanionOutfit.id == outfit_id, CompanionOutfit.user_id == user_id)
+        .execution_options(populate_existing=True)
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return (await db.execute(statement)).scalar_one_or_none()
 
 
 def _draft_ttl() -> timedelta:
@@ -251,6 +272,7 @@ async def _generate_outfit_fullbody(
             identity_text=render_character_identity(identity),
             size=FULLBODY_SIZE,
             image_edit=image_edit,
+            prefer_transparent_background=True,
         )
 
     try:
@@ -262,8 +284,11 @@ async def _generate_outfit_fullbody(
         logger.warning("outfit image generation failed", extra={"user_id": user_id}, exc_info=True)
         raise AvatarGenerationError("生成结果下载失败，请稍后重试", internal=f"{type(exc).__name__}: {exc}") from exc
     try:
-        data, mime = await image_asset_bytes(paths[0])
-        return await persist_portrait_or_draft(data, user_id, mime, persist=False)
+        data, _mime = await image_asset_bytes(paths[0])
+        await asyncio.to_thread(validate_transparent_portrait, data)
+        return await persist_portrait_or_draft(data, user_id, "image/png", persist=False)
+    except VideoProcessError as exc:
+        raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
     except ImageGenerationError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
     except OSError as exc:
@@ -303,6 +328,7 @@ async def create_outfit_draft(
     avatar, species, identity, personality = await _outfit_generation_context(db, user_id)
     identity_uri = await _require_fullbody_seed_readable(avatar)
     await db.commit()
+    await _require_outfit_matting(user_id)
 
     source = OutfitSource(
         description=effective_description,
@@ -339,31 +365,29 @@ async def create_outfit_draft(
         identity=identity,
     )
 
-    async with get_avatar_job_lock(user_id):
-        if not await character_snapshot_is_current(db, user_id, identity):
-            delete_portrait_file(draft_url)
-            raise OutfitStateError("角色卡已更新，请重新生成外观")
-        ref_path: str | None = None
+    ref_path: str | None = None
+    try:
         if image is not None:
-            # 参考图转存为用户资产（temp-media 会过期，重新生成还要复用）；外观行未提交时随即删除。
             ref_path = await persist_portrait_bytes(user_id, image, content_type or "image/png")
             source.reference_image_path = ref_path
-        outfit = CompanionOutfit(
-            user_id=user_id,
-            name="新外观",
-            fullbody_url=draft_url,
-            status="draft",
-            source_json=source.dump(),
-        )
-        db.add(outfit)
-        try:
+        async with get_avatar_job_lock(user_id):
+            if not await character_snapshot_is_current(db, user_id, identity):
+                raise OutfitStateError("角色卡已更新，请重新生成外观")
+            outfit = CompanionOutfit(
+                user_id=user_id,
+                name="新外观",
+                fullbody_url=draft_url,
+                status="draft",
+                source_json=source.dump(),
+            )
+            db.add(outfit)
             await db.commit()
-        except BaseException:
-            await db.rollback()
-            for path in (ref_path, draft_url):
-                delete_portrait_file(path)
-            raise
-        await db.refresh(outfit)
+    except BaseException:
+        await db.rollback()
+        for path in (ref_path, draft_url):
+            delete_portrait_file(path)
+        raise
+    await db.refresh(outfit)
     return outfit
 
 
@@ -392,10 +416,11 @@ async def regenerate_outfit_draft(
 
     source = OutfitSource.load(outfit.source_json)
     await db.commit()
+    await _require_outfit_matting(user_id)
 
     if mode == "edit":
         source_identity = source.identity_reference_path
-        if source_identity and source_identity != avatar.seed_fullbody_url:
+        if not source_identity or source_identity != avatar.seed_fullbody_url:
             raise OutfitStateError("全身形象已变化，请按当前形象重新生成外观")
         # 编辑保持上一版图像的身份与造型；独立评分仍比较当前全身身份图。
         reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, original_url)
@@ -431,34 +456,33 @@ async def regenerate_outfit_draft(
         image_edit=mode == "edit",
     )
 
-    async with get_avatar_job_lock(user_id):
-        # 生图期间可能已确认重试或被另一轮重绘替换，锁内刷新持久状态后再核对原始版本。
-        outfit = await _get_outfit(db, user_id, outfit_id)
-        if outfit is None or outfit.status != original_status or outfit.fullbody_url != original_url:
-            if draft_url != original_url:
-                delete_portrait_file(draft_url)
-            raise OutfitStateError("外观已发生变化，请刷新后重试")
-        if not await character_snapshot_is_current(db, user_id, identity):
-            delete_portrait_file(draft_url)
-            raise OutfitStateError("角色卡已更新，请重新生成外观")
-        source.character_card_revision = identity.revision
-        if mode != "edit":
+    try:
+        async with get_avatar_job_lock(user_id):
+            outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
+            if outfit is None or outfit.status != original_status or outfit.fullbody_url != original_url:
+                raise OutfitStateError("外观已发生变化，请刷新后重试")
+            if not await character_snapshot_is_current(db, user_id, identity):
+                raise OutfitStateError("角色卡已更新，请重新生成外观")
+            source.character_card_revision = identity.revision
             source.identity_reference_path = avatar.seed_fullbody_url
-        outfit.fullbody_url = draft_url
-        outfit.status = "draft"
-        if effective_feedback:
-            source.feedback_history = [*source.feedback_history, effective_feedback]
-        outfit.source_json = source.dump()
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.outfit.updated",
-            payload={"outfit_id": outfit.id, "worn": False},
-        )
-        await db.commit()
-        if original_url != draft_url:
-            delete_portrait_file(original_url)
-        await db.refresh(outfit)
+            outfit.fullbody_url = draft_url
+            if effective_feedback:
+                source.feedback_history = [*source.feedback_history, effective_feedback]
+            outfit.source_json = source.dump()
+            emit_ws_event(
+                db,
+                user_id=user_id,
+                event_type="companion.outfit.updated",
+                payload={"outfit_id": outfit.id, "worn": False},
+            )
+            await db.commit()
+    except BaseException:
+        await db.rollback()
+        delete_portrait_file(draft_url)
+        raise
+    if original_url != draft_url:
+        delete_portrait_file(original_url)
+    await db.refresh(outfit)
     return outfit
 
 
@@ -467,41 +491,53 @@ async def confirm_outfit(
     user_id: int,
     outfit_id: int,
 ) -> CompanionOutfit:
-    """确认草稿：立绘转正为持久参考图到 ready。确认不触发生成、不自动穿着；描述生成后台进行，穿着由用户启用对应动作包完成。"""
+    """验收透明草稿并转正为 ready；描述后台生成，穿着由动作包启用完成。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
             raise OutfitNotFoundError(f"outfit {outfit_id} not found")
         if outfit.status != "draft":
             raise OutfitStateError("仅草稿可以确认")
-        source = OutfitSource.load(outfit.source_json)
-        revision = source.character_card_revision
-        if revision is not None:
-            card = await get_character_card(db, user_id, lock=True)
-            if card is None or card.revision != revision:
-                raise OutfitStateError("角色卡已更新，请重新生成外观后再确认")
-        if not source.identity_reference_path:
-            avatar = await get_active_avatar(db, user_id)
-            if avatar is None or not avatar.seed_fullbody_url:
-                raise OutfitStateError("全身形象缺失，请先确认角色形象")
-            source.identity_reference_path = avatar.seed_fullbody_url
-        persisted: str | None = None
-        if outfit.fullbody_url.startswith("temp-media/"):
-            draft = await asyncio.to_thread(read_portrait_bytes, outfit.fullbody_url)
-            if draft is None:
-                raise OutfitDraftExpiredError("外观草稿已过期，请重新生成")
-            persisted = await persist_portrait_bytes(user_id, *draft)
-            outfit.fullbody_url = persisted
-        outfit.source_json = source.dump()
-        outfit.status = "ready"
+        original_url = outfit.fullbody_url
+        original_source = outfit.source_json
+        source = OutfitSource.load(original_source)
+        if source.character_card_revision is None or not source.identity_reference_path:
+            raise OutfitStateError("外观缺少身份来源，请重新生成或上传")
+        await db.commit()
+        draft = await asyncio.to_thread(read_portrait_bytes, original_url)
+        if draft is None:
+            raise OutfitDraftExpiredError("外观草稿已过期，请重新生成")
         try:
+            await asyncio.to_thread(validate_transparent_portrait, draft[0])
+        except VideoProcessError as exc:
+            logger.warning("outfit transparency validation failed", extra={"user_id": user_id}, exc_info=True)
+            raise OutfitError(str(exc)) from exc
+        persisted: str | None = None
+        try:
+            if original_url.startswith("temp-media/"):
+                persisted = await persist_portrait_bytes(user_id, draft[0], "image/png")
+            outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
+            if (
+                outfit is None
+                or outfit.status != "draft"
+                or outfit.fullbody_url != original_url
+                or outfit.source_json != original_source
+            ):
+                raise OutfitStateError("外观已发生变化，请刷新后重试")
+            card = await get_character_card(db, user_id, lock=True)
+            if card is None or card.status != "ready" or card.revision != source.character_card_revision:
+                raise OutfitStateError("角色卡已更新，请重新生成外观后再确认")
+            avatar = await get_active_avatar(db, user_id)
+            if avatar is None or avatar.seed_fullbody_url != source.identity_reference_path:
+                raise OutfitStateError("全身形象已变化，请重新生成外观后再确认")
+            outfit.fullbody_url = persisted or original_url
+            outfit.status = "ready"
             await db.commit()
         except BaseException:
             await db.rollback()
             delete_portrait_file(persisted)
             raise
         await db.refresh(outfit)
-
     schedule_outfit_description(user_id, outfit.id)
     return outfit
 
@@ -541,6 +577,7 @@ async def prepare_outfit_prompt(
         identity=render_character_identity(identity),
         personality=personality,
         canvas_aspect=FULLBODY_ASPECT,
+        require_transparent_background=True,
     )
 
 
@@ -577,6 +614,7 @@ async def prepare_outfit_regenerate_prompt(
         identity=render_character_identity(identity),
         personality=personality,
         canvas_aspect=FULLBODY_ASPECT,
+        require_transparent_background=True,
     )
 
 
@@ -588,29 +626,39 @@ async def adopt_outfit_draft_image(
     data: bytes,
     content_type: str | None,
 ) -> CompanionOutfit:
-    """自备图采纳（创建语境）：用户外部生成的立绘按创建草稿语义入库（temp-media 草稿，确认后转正）。"""
-    await _outfit_generation_context(db, user_id)
-    # 用户锁可能被在途生成占用数分钟，等锁前先结束读事务。
+    """透明化自备全身图并创建草稿，确认后转正。"""
+    avatar, _, identity, _ = await _outfit_generation_context(db, user_id)
+    identity_path = avatar.seed_fullbody_url
     await db.commit()
-    effective_description = (description or "").strip()
-    fullbody_url = await persist_portrait_or_draft(
-        data,
-        user_id,
-        content_type or "image/png",
-        persist=False,
-    )
-
-    async with get_avatar_job_lock(user_id):
-        outfit = CompanionOutfit(
-            user_id=user_id,
-            name="新外观",
-            fullbody_url=fullbody_url,
-            status="draft",
-            source_json=OutfitSource(description=effective_description).dump(),
-        )
-        db.add(outfit)
-        await db.commit()
-        await db.refresh(outfit)
+    data = await _prepare_outfit_upload(user_id, data)
+    fullbody_url = await persist_portrait_or_draft(data, user_id, "image/png", persist=False)
+    try:
+        async with get_avatar_job_lock(user_id):
+            current_avatar = await get_active_avatar(db, user_id)
+            if (
+                current_avatar is None
+                or current_avatar.seed_fullbody_url != identity_path
+                or not await character_snapshot_is_current(db, user_id, identity)
+            ):
+                raise OutfitStateError("角色形象或角色卡已更新，请重新上传外观")
+            outfit = CompanionOutfit(
+                user_id=user_id,
+                name="新外观",
+                fullbody_url=fullbody_url,
+                status="draft",
+                source_json=OutfitSource(
+                    description=(description or "").strip(),
+                    character_card_revision=identity.revision,
+                    identity_reference_path=identity_path,
+                ).dump(),
+            )
+            db.add(outfit)
+            await db.commit()
+    except BaseException:
+        await db.rollback()
+        delete_portrait_file(fullbody_url)
+        raise
+    await db.refresh(outfit)
     return outfit
 
 
@@ -622,46 +670,49 @@ async def adopt_outfit_regenerate_image(
     data: bytes,
     content_type: str | None,
 ) -> CompanionOutfit:
-    """自备图采纳（草稿重绘语境）：替换草稿/失败外观的立绘，状态回到草稿；成功发 outfit.updated。"""
+    """透明化自备全身图后替换草稿，成功同事务发送更新事件。"""
     outfit = await _get_outfit(db, user_id, outfit_id)
     if outfit is None:
         raise OutfitNotFoundError(f"outfit {outfit_id} not found")
     if outfit.status != "draft":
         raise OutfitStateError("仅草稿可以微调重绘")
     original_url = outfit.fullbody_url
-    # 用户锁可能被在途生成占用数分钟，等锁前先结束读事务。
+    avatar, _, identity, _ = await _outfit_generation_context(db, user_id)
+    identity_path = avatar.seed_fullbody_url
     await db.commit()
-
-    fullbody_url = await persist_portrait_or_draft(
-        data,
-        user_id,
-        content_type or "image/png",
-        persist=False,
-    )
-
-    async with get_avatar_job_lock(user_id):
-        # 上传期间外观可能已被确认或另一次重绘替换，锁内刷新后按原始版本核对（同 regenerate_outfit_draft）
-        outfit = await _get_outfit(db, user_id, outfit_id)
-        if outfit is None or outfit.status != "draft" or outfit.fullbody_url != original_url:
-            delete_portrait_file(fullbody_url)
-            raise OutfitStateError("外观已发生变化，请刷新后重试")
-        outfit.fullbody_url = fullbody_url
-        outfit.status = "draft"
-        # 上传图不能沿用被替换图片的身份来源标记。
-        source = OutfitSource.load(outfit.source_json)
-        source.character_card_revision = None
-        source.identity_reference_path = None
-        outfit.source_json = source.dump()
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.outfit.updated",
-            payload={"outfit_id": outfit.id, "worn": False},
-        )
-        await db.commit()
-        if original_url != fullbody_url:
-            delete_portrait_file(original_url)
-        await db.refresh(outfit)
+    data = await _prepare_outfit_upload(user_id, data)
+    fullbody_url = await persist_portrait_or_draft(data, user_id, "image/png", persist=False)
+    try:
+        async with get_avatar_job_lock(user_id):
+            outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
+            if outfit is None or outfit.status != "draft" or outfit.fullbody_url != original_url:
+                raise OutfitStateError("外观已发生变化，请刷新后重试")
+            current_avatar = await get_active_avatar(db, user_id)
+            if (
+                current_avatar is None
+                or current_avatar.seed_fullbody_url != identity_path
+                or not await character_snapshot_is_current(db, user_id, identity)
+            ):
+                raise OutfitStateError("角色形象或角色卡已更新，请重新上传外观")
+            outfit.fullbody_url = fullbody_url
+            source = OutfitSource.load(outfit.source_json)
+            source.character_card_revision = identity.revision
+            source.identity_reference_path = identity_path
+            outfit.source_json = source.dump()
+            emit_ws_event(
+                db,
+                user_id=user_id,
+                event_type="companion.outfit.updated",
+                payload={"outfit_id": outfit.id, "worn": False},
+            )
+            await db.commit()
+    except BaseException:
+        await db.rollback()
+        delete_portrait_file(fullbody_url)
+        raise
+    if original_url != fullbody_url:
+        delete_portrait_file(original_url)
+    await db.refresh(outfit)
     return outfit
 
 

@@ -644,8 +644,8 @@ async def post_outfit(
         )
         raise HTTPException(
             status_code=502,
-            detail={"error": "外观生成失败，请稍后重试", "reason": "generation_failed"},
-        )
+            detail={"error": str(exc), "reason": "generation_failed"},
+        ) from exc
     return outfit_response(outfit)
 
 

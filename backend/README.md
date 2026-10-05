@@ -180,7 +180,7 @@ docker compose --profile monitoring up -d
 
 后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。后端代码和依赖均打入镜像，修改后在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。构建上下文为仓库根，仅根 `.dockerignore` 生效。
 
-动作素材生成还须在数据卷 `models/<matting_model>.onnx` 放置 ISNet 模型（默认 `isnet-general-use.onnx`），运行路径由 [matting.py](services/infrastructure/video_processing/matting.py) 决定；镜像不自动下载。生成动作保留原生 alpha，必要时本地抠像；缺失模型时在新付费制作前拒绝并保留进度。上传透明图片或视频不调用生成模型；静态图片处理见 [image.py](services/infrastructure/video_processing/image.py)。
+全身、着装和动作素材生成须在数据卷 `models/<matting_model>.onnx` 放置 ISNet 模型（默认 `isnet-general-use.onnx`），运行路径由 [matting.py](services/infrastructure/video_processing/matting.py) 决定；镜像不自动下载。保留有效原生 alpha，必要时本地抠像；缺失模型时在新付费制作前拒绝，动作任务保留进度。全身与着装上传可本地抠图，动作上传须自带有效透明通道，均不调用生成模型；静态图片处理见 [image.py](services/infrastructure/video_processing/image.py)。
 
 ### 本地供应商
 

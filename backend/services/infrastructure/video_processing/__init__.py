@@ -2,7 +2,7 @@
 
 from .ffmpeg import ActionMaterialRejectedError, VideoProcessError, VideoToolUnavailableError, probe_video
 from .frames import ACTION_FRAME_MARGIN, action_frame_video_input, prepare_action_frame
-from .image import ImageProcessResult, prepare_action_image
+from .image import ImageProcessResult, prepare_action_image, prepare_transparent_image
 from .matting import matte_video, require_matting_model
 from .process import (
     HITMASK_FPS,
@@ -17,7 +17,7 @@ from .process import (
     prepare_action_clip,
     sample_key_frames,
 )
-from .quality import validate_action_clip, validate_action_image
+from .quality import validate_action_clip, validate_action_image, validate_transparent_image
 
 __all__ = [
     "ACTION_FRAME_MARGIN",
@@ -39,9 +39,11 @@ __all__ = [
     "prepare_action_clip",
     "prepare_action_frame",
     "prepare_action_image",
+    "prepare_transparent_image",
     "probe_video",
     "require_matting_model",
     "sample_key_frames",
     "validate_action_clip",
     "validate_action_image",
+    "validate_transparent_image",
 ]

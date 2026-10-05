@@ -70,7 +70,7 @@ class Settings(BaseSettings):
 
     temp_file_ttl_hours: int = Field(default=24, gt=0, validation_alias="TEMP_FILE_TTL_HOURS")
     data_dir: str = Field(default="./data", validation_alias="DATA_DIR")
-    # 抠像 onnx 模型（data_dir/models/<name>.onnx）：背景不纯色时必需，纯色背景走色键不依赖。
+    # 本地 ISNet 抠像模型（data_dir/models/<name>.onnx）。
     matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
 
     companion_asset_signing_key: str = Field(min_length=32)

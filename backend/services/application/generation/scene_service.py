@@ -46,7 +46,7 @@ from services.domains.companion import (
     load_persona_definition,
 )
 from services.infrastructure.assets import asset_store, build_data_uri, validate_image_bytes
-from services.infrastructure.llm import vision_chat
+from services.infrastructure.llm import ServiceType, resolve, vision_chat
 
 from .character_images import ImageChainState, ImageProgressWriter, generate_scene_images
 from .image_generation import ImageGenerationError, ImageReviewUnavailableError
@@ -97,8 +97,15 @@ def scene_generation_wait_seconds(scene: CompanionScene) -> float:
     )
     return max(
         900,
-        len(state.providers)
-        * (2 * SETTINGS.llm_request_timeout_seconds + 120 * max(1, SETTINGS.scene_store_max_attempts))
+        sum(
+            max(
+                SETTINGS.llm_request_timeout_seconds,
+                resolve(ServiceType.image_gen, provider.provider).max_job_wait_seconds or 0,
+            )
+            + SETTINGS.llm_request_timeout_seconds
+            + 120 * max(1, SETTINGS.scene_store_max_attempts)
+            for provider in state.providers
+        )
         + SETTINGS.llm_request_timeout_seconds
         + 90,
     )

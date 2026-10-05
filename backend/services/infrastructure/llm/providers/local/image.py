@@ -7,9 +7,11 @@ import time
 from io import BytesIO
 from typing import Any, ClassVar
 
+import httpx
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, get_logger
 from PIL import Image
 
+from ...wait_budget import accepted_image_job_wait
 from .._reference import resolve_reference_bytes
 from ..base import (
     ImageAsset,
@@ -19,7 +21,7 @@ from ..base import (
     ProviderConfig,
     ProviderError,
 )
-from ..http import get_http
+from ..http import ProviderResultUnknownError, get_http
 
 logger = get_logger(__name__)
 
@@ -40,9 +42,7 @@ _RGBA_WRAP = (
     "The image has an alpha channel and a transparent background."
 )
 
-_POLL_INTERVAL_S = 2.0
-# Mac MPS 单张约 10–12 分钟（25 步）；多参考编辑与 2K 更慢。任务总等待按最坏 1 小时预算；单次 HTTP 由 llm_request_timeout_seconds 约束
-_JOB_TIMEOUT_S = 3600.0
+_POLL_INTERVAL_S = 30.0
 _STEPS = 25
 
 
@@ -57,19 +57,14 @@ def _unet_loader(unet_name: str) -> tuple[str, dict[str, Any]]:
     return "UNETLoader", {"unet_name": unet_name, "weight_dtype": "default"}
 
 
-def _has_transparency(data: bytes) -> bool:
+def _image_asset(data: bytes) -> ImageAsset:
     try:
         with Image.open(BytesIO(data)) as image:
-            if image.format != "PNG" or ("A" not in image.getbands() and "transparency" not in image.info):
-                return False
-            low, high = image.convert("RGBA").getchannel("A").getextrema()
-            return low < 255 and high > 0
-    except Exception:
-        return False
-
-
-def _b64encode(data: bytes) -> str:
-    return base64.b64encode(data).decode("ascii")
+            image.load()
+            mime = Image.MIME.get(image.format or "", "image/png")
+    except Exception as exc:
+        raise ProviderError("local image_gen returned an unreadable image", status_code=400) from exc
+    return ImageAsset(b64=base64.b64encode(data).decode("ascii"), mime=mime)
 
 
 def _resolve_wh(req: ImageGenRequest) -> tuple[int, int]:
@@ -155,7 +150,7 @@ def _graph(
 
 
 class LocalImageGenProvider(ImageGenProvider):
-    """ComfyUI 生图；默认 base_url 指向 localhost。透明请求包装提示词，返回前核验 PNG 含可见透明像素。"""
+    """ComfyUI 生图；透明请求包装提示词，返回可解码图片供消费方校验和处理。"""
 
     provider_name = "local"
     DEFAULT_BASE_URL: ClassVar[str] = "http://127.0.0.1:8188"
@@ -168,6 +163,8 @@ class LocalImageGenProvider(ImageGenProvider):
     supports_transparent_background: ClassVar[bool] = True
     # Mac 16GB 统一内存不宜并行 batch；单次原生请求只出 1 张，多张由调用方或本层顺序重试
     max_images_per_request: ClassVar[int | None] = 1
+    # 本地推理受设备与画幅影响较大；单次 HTTP 仍由 llm_request_timeout_seconds 约束。
+    max_job_wait_seconds: ClassVar[float] = 24 * 60 * 60.0
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
@@ -251,26 +248,19 @@ class LocalImageGenProvider(ImageGenProvider):
         sub = body.get("subfolder") or ""
         return f"{sub}/{name}" if sub else name
 
-    async def _wait_and_fetch(self, prompt_id: str, *, require_transparency: bool) -> list[ImageAsset]:
-        deadline = time.monotonic() + _JOB_TIMEOUT_S
+    async def _wait_and_fetch(self, prompt_id: str) -> list[ImageAsset]:
+        deadline = time.monotonic() + self.max_job_wait_seconds
         history: dict[str, Any] | None = None
         while time.monotonic() < deadline:
-            resp = await self._client.get(f"/history/{prompt_id}")
-            if resp.status_code >= 400:
-                raise ProviderError(
-                    f"local image_gen history failed: {resp.status_code}",
-                    status_code=resp.status_code,
-                )
+            resp = await self._read_job_response(prompt_id, f"/history/{prompt_id}", deadline)
             payload = resp.json()
             entry = payload.get(prompt_id)
             if entry:
                 history = entry
                 break
-            await asyncio.sleep(_POLL_INTERVAL_S)
+            await asyncio.sleep(min(_POLL_INTERVAL_S, max(0.0, deadline - time.monotonic())))
         if history is None:
-            raise ProviderError(
-                f"local image_gen timed out waiting for {prompt_id}",
-            )
+            raise self._result_unknown(prompt_id, f"waiting exceeded {self.max_job_wait_seconds} seconds")
 
         status = history.get("status") or {}
         if status.get("status_str") == "error":
@@ -290,23 +280,48 @@ class LocalImageGenProvider(ImageGenProvider):
                     "subfolder": img.get("subfolder", ""),
                     "type": img.get("type", "output"),
                 }
-                view = await self._client.get("/view", params=params)
-                if view.status_code >= 400:
-                    raise ProviderError(
-                        f"local image_gen view failed: {view.status_code}",
-                        status_code=view.status_code,
-                    )
+                view = await self._read_job_response(prompt_id, "/view", deadline, params=params)
                 # 解码检查与编码都是整图字节运算，放到工作线程避免阻塞事件循环
-                if require_transparency and not await asyncio.to_thread(_has_transparency, view.content):
-                    raise ProviderError(
-                        "local image_gen returned a PNG without transparent pixels",
-                        status_code=400,
-                    )
-                b64 = await asyncio.to_thread(_b64encode, view.content)
-                assets.append(ImageAsset(b64=b64, mime="image/png"))
+                try:
+                    assets.append(await asyncio.to_thread(_image_asset, view.content))
+                except ProviderError as exc:
+                    raise self._result_unknown(prompt_id, "image output could not be decoded") from exc
         return assets
 
-    async def _run_job(self, graph: dict[str, Any], *, require_transparency: bool) -> list[ImageAsset]:
+    async def _read_job_response(
+        self,
+        prompt_id: str,
+        path: str,
+        deadline: float,
+        *,
+        params: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        while time.monotonic() < deadline:
+            try:
+                response = await self._client.get(path, params=params)
+                response.raise_for_status()
+                return response
+            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                if status_code is not None and status_code not in {408, 429} and not 500 <= status_code < 600:
+                    raise
+                logger.warning(
+                    "local image_gen result query failed; retrying same submitted task",
+                    extra={"prompt_id": prompt_id, "error_type": type(exc).__name__, "status_code": status_code},
+                )
+            await asyncio.sleep(min(_POLL_INTERVAL_S, max(0.0, deadline - time.monotonic())))
+        raise self._result_unknown(prompt_id, f"waiting exceeded {self.max_job_wait_seconds} seconds")
+
+    def _result_unknown(self, prompt_id: str | None, detail: str) -> ProviderResultUnknownError:
+        logger.warning(
+            "local image_gen result unavailable after submission",
+            extra={"prompt_id": prompt_id, "detail": detail},
+        )
+        error = ProviderResultUnknownError("POST", self.config.base_url.rstrip("/") + "/prompt")
+        error.add_note(f"local image_gen submitted task: {prompt_id or 'handle unavailable'}; {detail}")
+        return error
+
+    async def _run_job(self, graph: dict[str, Any]) -> list[ImageAsset]:
         resp = await self._client.post("/prompt", json={"prompt": graph})
         if resp.status_code >= 400:
             raise ProviderError(
@@ -314,14 +329,21 @@ class LocalImageGenProvider(ImageGenProvider):
                 status_code=resp.status_code,
                 body={"text": resp.text[:500]},
             )
-        body = resp.json()
-        prompt_id = body.get("prompt_id")
-        if not prompt_id:
-            raise ProviderError(
-                f"local image_gen missing prompt_id: {body}",
-                body=body,
-            )
-        assets = await self._wait_and_fetch(prompt_id, require_transparency=require_transparency)
+        try:
+            body = resp.json()
+        except ValueError as exc:
+            raise self._result_unknown(None, "successful submission returned unreadable JSON") from exc
+        prompt_id = body.get("prompt_id") if isinstance(body, dict) else None
+        if not isinstance(prompt_id, str) or not prompt_id.strip():
+            raise self._result_unknown(None, "successful submission returned no valid task handle")
+        logger.info("local image_gen task accepted", extra={"prompt_id": prompt_id})
+        try:
+            with accepted_image_job_wait():
+                assets = await self._wait_and_fetch(prompt_id)
+        except (ProviderError, ProviderResultUnknownError):
+            raise
+        except Exception as exc:
+            raise self._result_unknown(prompt_id, f"{type(exc).__name__} during result retrieval") from exc
         if not assets:
             raise ProviderError(
                 f"local image_gen returned no images for {prompt_id}",
@@ -355,6 +377,6 @@ class LocalImageGenProvider(ImageGenProvider):
                 clip_name=clip_name,
                 vae_name=vae_name,
             )
-            assets.extend((await self._run_job(graph, require_transparency=require_transparency))[:1])
+            assets.extend((await self._run_job(graph))[:1])
 
         return ImageGenResult(images=assets)

@@ -30,20 +30,21 @@ export const DEFAULT_CSP_POLICY = buildCspPolicy("'self'")
 // Dev-only：Vite 的 React Fast Refresh preamble 以内联脚本注入 HTML，DEFAULT_CSP_POLICY 不允许 inline 会导致白屏（HMR 重试还会烧 CPU）；HMR websocket 已被 connect-src 通配覆盖。生产仍用 DEFAULT_CSP_POLICY 锁紧。
 export const DEV_CSP_POLICY = buildCspPolicy("'self' 'unsafe-inline' 'unsafe-eval'")
 
-// 头像、全身与外观的同步请求包含生图链的供应商回退、下载与落盘，取较长预算；更长等待按结果未知处理。
-const IMAGE_GENERATION_FETCH_TIMEOUT_MS = 15 * 60_000
+// 本地生图任务最多等待 24 小时，同步生成另留提示词、下载、透明化和落盘预算；超时不自动重发。
+const IMAGE_GENERATION_FETCH_TIMEOUT_MS = 25 * 60 * 60_000
+// 外观提示词、上传采纳与确认沿用独立预算，不随生图任务等待时长放宽。
+const IMAGE_PROCESSING_FETCH_TIMEOUT_MS = 15 * 60_000
 // 候选图身体特征分析同步等待视觉模型，后端上限是 avatar_service 的 _CARD_ANALYSIS_TIMEOUT（180 秒），另留读写余量。
 const CANDIDATE_ANALYSIS_FETCH_TIMEOUT_MS = 210_000
 // 提示词整合与自备图采纳涉及模型调用、图片校验与落盘，确认类请求还可能等待用户级形象任务锁，默认 15 秒不够。
 const AVATAR_FETCH_TIMEOUT_MS = 120_000
 
-// 外观提示词涉及模型调用，上传采纳涉及图片校验与落盘，均需放宽超时。
-const OUTFIT_GENERATION_PATH_PATTERN =
-  /^\/api\/companion\/outfits(?:\/(?:prompt|adopt)|\/\d+\/(?:regenerate|prompt|adopt|confirm))?$/i
+const IMAGE_GENERATION_PATH_PATTERN =
+  /^\/api\/companion\/(?:avatar(?:\/from-image|\/\d+\/fullbody\/reference)?|outfits(?:\/\d+\/regenerate)?)$/i
 
-// 头像生成、按图重绘、全身参考生成；全身参考采纳在确认身份后同步做候选分析。
-const AVATAR_GENERATION_PATH_PATTERN =
-  /^\/api\/companion\/avatar(?:\/from-image|\/\d+\/fullbody\/reference(?:\/adopt)?)?$/i
+// 全身参考上传在确认身份后还会同步分析身体特征；外观的采纳、确认和提示词只处理已有图片或文字。
+const IMAGE_PROCESSING_PATH_PATTERN =
+  /^\/api\/companion\/(?:outfits(?:\/(?:prompt|adopt)|\/\d+\/(?:prompt|adopt|confirm))|avatar\/\d+\/fullbody\/reference\/adopt)$/i
 
 const CANDIDATE_ANALYSIS_PATH_PATTERN = /^\/api\/companion\/avatar\/\d+\/fullbody\/candidate\/\d+\/analyze$/i
 
@@ -71,8 +72,12 @@ export function resolvePathTimeoutMs(
 ): number {
   const isPost = String(method || 'GET').toUpperCase() === 'POST' && typeof pathStr === 'string'
 
-  if (isPost && (OUTFIT_GENERATION_PATH_PATTERN.test(pathStr) || AVATAR_GENERATION_PATH_PATTERN.test(pathStr))) {
+  if (isPost && IMAGE_GENERATION_PATH_PATTERN.test(pathStr)) {
     return IMAGE_GENERATION_FETCH_TIMEOUT_MS
+  }
+
+  if (isPost && IMAGE_PROCESSING_PATH_PATTERN.test(pathStr)) {
+    return IMAGE_PROCESSING_FETCH_TIMEOUT_MS
   }
 
   if (isPost && CANDIDATE_ANALYSIS_PATH_PATTERN.test(pathStr)) {

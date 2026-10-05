@@ -202,6 +202,8 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 字段与限长见[伙伴 schema](../backend/modules/companion/schemas.py)。头像 POST 接受可选 feedback，空请求仍可生成；POST 与 `avatar.regenerate` 都不能因断连或空结果自动重发，应读当前头像恢复预览。头像、全身、外观及服装参考的上传图按实际字节校验：须是体积在限内、可完整解码的 PNG / JPEG / WebP / GIF，类型以图片内容为准，不采信客户端声明；GIF、MPO 与其他多帧图片取第一帧归一为 PNG。无法读取或超限返回 400，格式不支持返回 415。
 
+全身和外观的生成、自备图与微调成品均为真实透明 PNG，实际 MIME 和扩展名与内容一致；上传无需预先透明，服务端校验后必要时抠图。确认及全身候选采纳只安装通过透明验收的图片，失败保留原草稿与正式状态。透明处理、背景请求及失败边界见 [PIPELINE](PIPELINE.md#全身与着装透明成品)。
+
 | 操作 | 并发与生效条件 |
 |---|---|
 | `portrait/confirm` | 用户锁内核对 `expected_avatar_id`，冲突返回 409 |

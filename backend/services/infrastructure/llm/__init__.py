@@ -74,6 +74,7 @@ from .tts_service import (
 )
 from .user_config import UserLlmConfig, client_for_config, resolve_user_llm_config
 from .voice_catalog import voices_for_provider
+from .wait_budget import accepted_image_job_wait, generation_timeout_scope
 
 __all__ = [
     "ASPECT_RATIOS",
@@ -104,6 +105,7 @@ __all__ = [
     "VisualReasoningError",
     "VoiceDesignResult",
     "aclose_all",
+    "accepted_image_job_wait",
     "approx_responses_tokens",
     "build_provider",
     "build_responses_kwargs",
@@ -115,6 +117,7 @@ __all__ = [
     "execute_with_fallback",
     "generate_embedding",
     "generate_embeddings",
+    "generation_timeout_scope",
     "is_content_policy_error_message",
     "message_to_response_items",
     "providers_supporting",

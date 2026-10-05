@@ -175,6 +175,7 @@ class ImageGenProvider(BaseProvider):
 
     max_images_per_request: ClassVar[int | None] = None  # 单次原生请求输出上限；None 表示适配器完整透传 n
     max_prompt_chars: ClassVar[int | None] = None  # 提示词字符上限；放不下的请求在链上跳过该供应商，None 表示不限
+    max_job_wait_seconds: ClassVar[float | None] = None  # 已接单任务的等待上限；None 沿用通用请求预算
 
     supports_reference_image: ClassVar[bool] = (
         False  # 原生消费 reference_image（图生图）；False 则对参考图请求跳过，避免图→文→图

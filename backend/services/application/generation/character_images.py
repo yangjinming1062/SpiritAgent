@@ -9,7 +9,6 @@ from typing import Literal
 import httpx
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger
 from PIL import Image
-from prompts.generation import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.infrastructure.assets import asset_store, build_data_uri
@@ -22,6 +21,7 @@ from services.infrastructure.llm import (
     resolve_reference_bytes,
     select_image_canvas,
 )
+from services.infrastructure.video_processing import VideoProcessError, prepare_transparent_image
 
 from .identity_review import score_character_image
 from .image_generation import ImageGenerationError, generate_images, resolve_image_gen_chain
@@ -159,7 +159,6 @@ def _validate_image(
     size: str | None = None,
     size_enforced: bool = False,
     exact_size: bool = False,
-    require_transparency: bool = False,
 ) -> str:
     ext = asset_store.sniff_media_ext(data)
     if ext not in ("png", "jpg", "webp", "gif"):
@@ -168,11 +167,8 @@ def _validate_image(
         with Image.open(io.BytesIO(data)) as image:
             image.load()
             width, height = image.width, image.height
-            alpha_range = image.convert("RGBA").getchannel("A").getextrema() if require_transparency else None
     except Exception as exc:
         raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
-    if alpha_range is not None and (alpha_range[0] > 8 or alpha_range[1] < 128):
-        raise ImageGenerationError("供应商未返回有效透明背景图片", can_fallback=True)
     if size_enforced and size and not _size_matches_request(size, width, height, exact_size=exact_size):
         logger.info(
             "image size gate rejected candidate",
@@ -425,8 +421,10 @@ async def _run_image_chain(
                                 size=(provider.image_size or provider.image_aspect_ratio) if scene else inputs.size,
                                 size_enforced=inputs.size_enforced,
                                 exact_size=scene,
-                                require_transparency=provider.background == "transparent",
                             )
+                            if isinstance(inputs, CharacterImageInput) and inputs.prefer_transparent_background:
+                                data = await asyncio.to_thread(prepare_transparent_image, data)
+                                ext = "png"
                             state.pending_path = asset_store.image_chain_asset_path(
                                 user_id,
                                 state.generation_id,
@@ -445,6 +443,8 @@ async def _run_image_chain(
                             )
                             break
                         except Exception as exc:
+                            if isinstance(exc, VideoProcessError):
+                                raise ImageGenerationError(str(exc), internal=exc.internal) from exc
                             if isinstance(exc, ImageGenerationError) and exc.can_fallback:
                                 if exc.size_mismatch:
                                     state.size_rejected += 1
@@ -538,11 +538,8 @@ async def _run_image_chain(
             try:
                 provider = state.providers[index]
                 background = provider.background
-                prompt = inputs.prompt
-                if isinstance(inputs, CharacterImageInput) and inputs.prefer_transparent_background:
-                    prompt += "\n" + (IMAGE_TRANSPARENT_BACKGROUND if background else IMAGE_OPAQUE_BACKGROUND)
                 urls = await generate_images(
-                    prompt,
+                    inputs.prompt,
                     size=provider.image_size or inputs.size,
                     n=len(slots),
                     user_id=user_id,
@@ -553,6 +550,8 @@ async def _run_image_chain(
                     image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,
                     provider_config=config,
                     background=background,
+                    prefer_transparent_background=isinstance(inputs, CharacterImageInput)
+                    and inputs.prefer_transparent_background,
                     aspect_ratio=provider.image_aspect_ratio,
                     resolution=provider.image_resolution,
                     exact_size=provider.image_exact_size,
