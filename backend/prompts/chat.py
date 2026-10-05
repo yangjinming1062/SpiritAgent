@@ -425,8 +425,16 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
 
 # 仅用于可调用工具的常规请求；格式恢复请求不提供工具，不追加此句。
 COMPANION_REPLY_TOOL_GUIDANCES: dict[str, str] = {
-    "zh": "\n需要工具时正常调用工具，这个 JSON 格式只用于最终回复。",
-    "en": "\nCall tools normally when needed; this JSON format applies only to the final reply.",
+    "zh": (
+        "\n这个 JSON Schema 只描述最终回复当前可交付的内容，工具按各自参数正常调用。"
+        "用户要图片或视频但尚无可引用产物时，先调用本轮可用的生成或查询工具；"
+        "工具返回产物或已受理任务后，再用对应媒体气泡交付。"
+    ),
+    "en": (
+        "\nThis JSON Schema describes what can currently be delivered in the final reply; call tools using their own parameters. "
+        "When the user requests an image or video and no output is available yet, first use the available generation or status tool. "
+        "After it returns an output or an accepted task, deliver it through the corresponding media bubble."
+    ),
 }
 
 COMPANION_REPLY_CLOSING_GUIDANCES: dict[str, str] = {
@@ -835,7 +843,8 @@ MEMORY_TOOL_GUIDANCES: dict[str, str] = {
 MEDIA_GUIDANCES: dict[str, str] = {
     "zh": (
         "# 媒体生成与交付\n"
-        "若尚未解锁媒体工具，先调用 `search_tools(query='media')`。成功后通过 media_id 引用产物。"
+        "直接调用本轮已提供的媒体工具；需要尚未提供的工具时，用 `search_tools(query='media')` 查找。"
+        "成功后通过 media_id 引用产物。"
         "按本轮回复协议交付工具返回的图片与视频；采用气泡数组时用媒体气泡安排顺序，文本渠道由系统附加预览卡片——"
         "不要在文本里粘贴原始媒体 URL 或 Markdown 图片语法；改为简要描述结果。\n"
         "普通媒体生成只产生对话附件，不会改变当前形象、穿着或场景。"
@@ -844,7 +853,8 @@ MEDIA_GUIDANCES: dict[str, str] = {
     ),
     "en": (
         "# Media Generation & Delivery\n"
-        "If media tools are not yet unlocked, call `search_tools(query='media')` first. Refer to results by media_id. "
+        "Call media tools already provided in this turn directly; use `search_tools(query='media')` to find a needed tool "
+        "that has not been provided. Refer to results by media_id. "
         "Deliver generated media using this turn's reply protocol: media bubbles determine order in structured replies; text channels attach preview "
         "cards to your reply — do NOT paste raw media URLs or markdown image "
         "syntax into your text; describe the result briefly instead.\n"
@@ -874,7 +884,8 @@ MEDIA_VIDEO_GUIDANCES: dict[str, str] = {
 
 COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
     "zh": (
-        "用户要求生成或发送图片、自拍、照片时，先调用可用的 image_generate；要求短片或连续动作视频时，先调用可用的 video_generate。"
+        "用户要求生成或发送图片、自拍、照片时，直接调用本轮提供的 image_generate；"
+        "要求短片或连续动作视频时，直接调用本轮提供的 video_generate。"
         "用户追问尚未收到的媒体时，先核对本会话已有产物与任务：有对应产物就交付，已受理任务就查询，确实未生成且工具可用才开始生成。"
         "当画面、表情或动作比说出来更能传达本轮意思时，可以用图片或视频表达，与台词自然搭配；"
         "静态情景适合图片，需要展示连续动作或变化时选择视频，不为每句聊天都生成媒体。"
@@ -887,8 +898,8 @@ COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
         "保持已确认的面容、物种与身体比例。"
     ),
     "en": (
-        "When asked to create or send a picture, selfie, or photo, call the available image_generate tool first; "
-        "for a clip or continuous-motion video, call the available video_generate tool first. "
+        "When asked to create or send a picture, selfie, or photo, call image_generate directly when provided in this turn; "
+        "for a clip or continuous-motion video, call video_generate directly when provided. "
         "When asked about missing media, check this conversation's existing outputs and tasks: deliver a matching output, "
         "query an accepted task, or generate only if no generation has occurred and the tool is available. "
         "When a scene, expression, or action conveys this turn's meaning better than saying it, use an image or "

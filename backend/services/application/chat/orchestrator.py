@@ -55,6 +55,7 @@ from .persistence import (
     _persist_user_message,
     persist_compression_checkpoint,
 )
+from .prompt_presets import COMPANION_MEDIA_TOOL_NAMES
 from .streaming import (
     _assign_tool_call_ids,
     _generate_llm_response,
@@ -391,7 +392,10 @@ async def _run_chat_turn(
         schemas_by_name: dict[str, dict] = {schema_name(s): s for s in inputs.all_schemas}
         # 继承看压缩/截断前的历史，避免摘要窗口丢掉已解锁工具。
         history_unlocked = _history_unlocked_tool_names(inputs.context["input"])
-        active_tool_names = ({"search_tools", "companion_wait"} | history_unlocked) & set(schemas_by_name)
+        initial_tool_names = {"search_tools", "companion_wait"}
+        if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
+            initial_tool_names.update(COMPANION_MEDIA_TOOL_NAMES)
+        active_tool_names = (initial_tool_names | history_unlocked) & set(schemas_by_name)
         turn_reasoning_parts: list[str] = []
 
         # 固定陪伴会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。

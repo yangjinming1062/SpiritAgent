@@ -12,7 +12,7 @@
 |---|---|
 | [orchestrator.py](orchestrator.py) | `run_chat_turn`：轮数预算、交付模式、委派与供应商回退锁定 |
 | [turn_inputs.py](turn_inputs.py) | 回合装配：历史转换、Token 估算、工具开关、推理与会话设置合并 |
-| [prompt_presets.py](prompt_presets.py) / [prompt_blocks.py](prompt_blocks.py) | 预设体与工具排除集合、共享块渲染 |
+| [prompt_presets.py](prompt_presets.py) / [prompt_blocks.py](prompt_blocks.py) | 预设体、默认与排除工具集合、共享块渲染 |
 | [system_prompt.py](system_prompt.py) / [streaming.py](streaming.py) | 系统提示词与每次模型调用前的环境、动作快照；请求装配（日期刷新、回复格式与可用媒体）及流式/非流式调用 |
 | [title_generator.py](title_generator.py) / [context_compressor.py](context_compressor.py) | 标题（请求只取首条用户消息的文字，附件地址不进请求；只有附件时文字为空串，仍依据助手回复生成）、运行时压缩 |
 | [reply_delivery.py](reply_delivery.py) / [bubble.py](bubble.py) | 陪伴气泡 schema 与校验、文本流分泡 |
@@ -65,7 +65,7 @@ Token 估算以最近一条带用量的助手行及其后新增内容为基线�
 
 ### 工具披露与记忆访问
 
-工具渐进披露：先提供搜索元工具及已启用的陪伴等待能力，再按域解锁，未压缩历史保留解锁结果。完整记忆维护策略随 `memory_inspect` 解锁，并与独立审核共用来源；不能省略原始证据和版本检查。
+首轮提供搜索元工具及已启用的陪伴等待能力；非委派的陪伴预设另默认提供图片生成、验图、修订及视频生成、状态查询工具，清单见 [prompt_presets.py](prompt_presets.py) 的 `COMPANION_MEDIA_TOOL_NAMES`。默认集合与本轮允许的 schema 取交集，仍受工具开关、预设与调用方排除限制；其他工具按域解锁，未压缩历史保留解锁结果。完整记忆维护策略随 `memory_inspect` 解锁，并与独立审核共用来源；不能省略原始证据和版本检查。
 
 召回与维护只经[记忆公共入口](../../domains/memory/README.md)，会话种类决定推理设置继承，不以是否有预设标识代替种类判断。
 
