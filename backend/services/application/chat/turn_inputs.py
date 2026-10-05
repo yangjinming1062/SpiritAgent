@@ -286,6 +286,7 @@ def _history_to_responses_context(
         "input": [],
         "source_message_ids": [],
         "checkpoint_indices": [],
+        "user_input_indices": [],
     }
     prev_date_key: str | None = None
     last_user_at: datetime | None = None
@@ -307,6 +308,8 @@ def _history_to_responses_context(
                     context["input"].append(user_text_item(clock))
                 last_user_at = msg.created_at
         items = db_message_to_response_items(msg)
+        if msg.role == "user":
+            context["user_input_indices"].extend(range(len(context["input"]), len(context["input"]) + len(items)))
         if msg.subtype in CHECKPOINT_SUBTYPES:
             context["checkpoint_indices"].extend(range(len(context["input"]), len(context["input"]) + len(items)))
         context["input"].extend(items)

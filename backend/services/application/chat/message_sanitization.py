@@ -184,6 +184,7 @@ def truncate_responses_context(
             keep_start = min(keep_start, call_positions.get(item.get("call_id"), index))
 
     tail = items[keep_start:]
+    kept_indices: list[int | None] = list(range(keep_start, len(items)))
     checkpoint_indices = set(context.get("checkpoint_indices", ()))
     current_start = _trailing_user_start(items)
     # 手动重试时工具结果排在原请求之后，按持久化来源保留原请求的长度预算和附件。
@@ -236,4 +237,10 @@ def truncate_responses_context(
         ]
         prefix.append(marker)
         kept = prefix + kept
-    return {"instructions": context["instructions"], "input": kept}
+        kept_indices = [*retained_indices, None, *kept_indices]
+    user_indices = set(context.get("user_input_indices", ()))
+    return {
+        "instructions": context["instructions"],
+        "input": kept,
+        "user_input_indices": [index for index, original in enumerate(kept_indices) if original in user_indices],
+    }

@@ -20,6 +20,8 @@ from services.contracts import MediaTurnState
 from services.domains.conversation import resolve_reply_media
 from services.infrastructure.llm import ProviderConfig, speech_performance_schema, validate_speech_style
 
+from .reply_links import reference_spans, validate_reply_links
+
 
 class _ReplyEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -145,9 +147,7 @@ def _draft_bubbles(raw: str) -> list[dict] | None:
 def _sentence_parts(text: str) -> list[str]:
     parts: list[str] = []
     start = 0
-    for match in _SENTENCE_END.finditer(text):
-        if match[0] == "." and _ABBREVIATION.search(text[: match.end()]):
-            continue
+    for match in _sentence_endings(text):
         end = _ENDING_SUFFIX.match(text, match.end()).end()
         if part := text[start:end].strip():
             parts.append(part)
@@ -155,6 +155,16 @@ def _sentence_parts(text: str) -> list[str]:
     if part := text[start:].strip():
         parts.append(part)
     return parts or [text]
+
+
+def _sentence_endings(text: str) -> list[re.Match[str]]:
+    references = reference_spans(text)
+    return [
+        match
+        for match in _SENTENCE_END.finditer(text)
+        if not any(start <= match.start() < end for start, end in references)
+        and (match[0] != "." or not _ABBREVIATION.search(text[: match.end()]))
+    ]
 
 
 def _split_dialogue_bubble(bubble: dict[str, JsonValue], index: int) -> list[dict[str, JsonValue]]:
@@ -212,10 +222,13 @@ def decode_companion_reply(
     raw: str,
     *,
     allow_voice_fallback: bool = False,
+    reference_texts: tuple[str, ...] = (),
 ) -> tuple[str, Literal["dialogue", "written"]]:
     """模型类型标记只用于交付校验；持久化继续使用原气泡数组契约。"""
     # 演绎与媒体在数组协议中校验，保留按 speech 字段降级的边界。
     draft = _ReplyEnvelope.model_validate_json(raw)
+    # 分句前核对完整地址，防止查询串中的问号被拆开后丢失校验依据。
+    validate_reply_links(draft.bubbles, kind=draft.kind, reference_texts=reference_texts)
     values = draft.bubbles
     if draft.kind == "written":
         if not values:
@@ -241,12 +254,10 @@ def decode_companion_reply(
             if bubble.get("type") not in {"text", "voice"} or not isinstance(bubble.get("text"), str):
                 continue
             text = bubble["text"]
-            endings = [
-                match
-                for match in _SENTENCE_END.finditer(text)
-                if match[0] != "." or not _ABBREVIATION.search(text[: match.end()])
-            ]
-            if not re.fullmatch(_DIALOGUE_TEXT_PATTERN, text) or len(endings) > 1:
+            plain_text = text
+            for start, end in reversed(reference_spans(text)):
+                plain_text = plain_text[:start] + "URL" + plain_text[end:]
+            if not re.fullmatch(_DIALOGUE_TEXT_PATTERN, plain_text) or len(_sentence_endings(text)) > 1:
                 errors.append(
                     {
                         "type": "value_error",
@@ -269,13 +280,21 @@ def validate_companion_reply_repair(
     draft: str,
     *,
     media_turn: MediaTurnState,
+    reference_texts: tuple[str, ...] = (),
 ) -> None:
     original = _draft_bubbles(draft)
     if original is None:
         return
     values = json.loads(content)
+    preserve_written = True
+    try:
+        validate_reply_links(original, kind=kind, reference_texts=reference_texts)
+    except ValidationError:
+        # 伪造地址不属于需逐字保留的作品内容；媒体顺序保护仍然适用。
+        preserve_written = False
     if (
         kind == "written"
+        and preserve_written
         and original
         and all(b.get("type") == "text" and isinstance(b.get("text"), str) for b in original)
         and re.sub(r"\s+", "", values[0]["text"]) != re.sub(r"\s+", "", "".join(b["text"] for b in original))
@@ -306,8 +325,11 @@ def parse_companion_reply(
     language: str,
     allow_silence: bool,
     media_turn: MediaTurnState,
+    reference_texts: tuple[str, ...] = (),
+    kind: Literal["dialogue", "written"] = "dialogue",
 ) -> CompanionReply | None:
     source = CompanionReplyInput.model_validate_json(raw)
+    validate_reply_links([bubble.model_dump() for bubble in source.root], kind=kind, reference_texts=reference_texts)
     if not source.root:
         if allow_silence and not media_turn.required_goals:
             return None
@@ -386,6 +408,8 @@ def fallback_companion_voice_reply(
     language: str,
     allow_silence: bool,
     media_turn: MediaTurnState,
+    reference_texts: tuple[str, ...] = (),
+    kind: Literal["dialogue", "written"] = "dialogue",
 ) -> tuple[str, CompanionReply | None]:
     """恢复预算耗尽后仅将演绎无效的气泡降级为原台词；正文和媒体仍须通过完整校验。"""
     values = json.loads(raw)
@@ -398,6 +422,8 @@ def fallback_companion_voice_reply(
                 language=language,
                 allow_silence=allow_silence,
                 media_turn=media_turn,
+                reference_texts=reference_texts,
+                kind=kind,
             )
         except ValidationError as exc:
             values = _fallback_speech_bubbles(values, exc)

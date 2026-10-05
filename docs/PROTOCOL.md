@@ -134,7 +134,11 @@ flowchart TD
 
 ### 媒体引用、验图与原位交付
 
+媒体选择先满足本轮明确要求：听说、朗读与声音表达使用可用的 `voice`，静态画面使用图片生成，短片与连续动作画面使用视频生成；文字／语音偏好只影响台词，不替代图片或视频。工具解锁、生成与终端交付分开：没有产物时先使用本轮允许的工具，取得产物后才提供媒体气泡；无工具或失败时如实说明。已有产物优先交付，已受理任务先查状态，不能因用户催问重复提交。
+
 模型只输出 `{type: "image" | "video", media_id: "工具产物标识"}`。执行层生成标识，校验当前用户、会话内已知工具产物、类型及就绪文件；视频可引用已受理任务。未知标识、类型错误、重复引用、遗漏本轮成功图片或已受理视频均进入一次格式恢复，恢复不执行工具。模型不能填写 URL、路径或状态。
+
+终端对象在分句前检查 `text` 和 `voice.text`：常见媒体文件地址（含查询串与 URL 编码）、媒体 data/blob/file 地址及内部资产路径必须原样来自本次上下文中的用户文字或工具返回，助手历史、工具参数和摘要不提供来源。台词中的内部资产路径、Markdown 图片和 HTML 媒体嵌入不能代替媒体气泡；用户明确要求的书面引用可保留资料中已有的地址或完整媒体语法。普通网页链接不受媒体地址检查；来源匹配只证明可引用，不证明生成成功。地址内部标点不参与分句。失败沿用一次格式恢复，纠正伪造地址及完成宣称；仍不合法则不落库、不交付，不通过语音降级绕过。代码见 [reply_links.py](../backend/services/application/chat/reply_links.py)；该检查不判定任意自然语言的真实性或所有无扩展名外链的用途。
 
 `image_generate.requests` 一次提交本轮完整清单，每项指定内容、生成参数和数量；初次生成合计最多 16 张，这是生成预算，不限制回复气泡数。派发前登记整批目标；清单受理后再次调用只返回已有状态，改变 prompt 或 call ID 不重新生成。`media_inspect(media_id)` 读取真实图片，检查原请求并复用身份评分，返回绑定具体版本的检查标识与问题。`image_regenerate(media_id, inspection_id, correction)` 只接受当前版本的有效问题检查，每目标最多重做一次。原图保留，修订版本有新标识但属于同一目标，最终只交付一个版本；文本渠道附加最新成功版本，重做失败保留原图。图片失败不能作为就绪产物发送，结果未知不重复提交。代码入口：批次、验图与重做见 [chat_images.py](../backend/services/application/generation/chat_images.py)，回合媒体状态 `MediaTurnState` 见 [contracts/media.py](../backend/services/contracts/media.py)，单个引用的校验与视频绑定见 [reply_media.py](../backend/services/domains/conversation/reply_media.py)，逐目标唯一与遗漏校验见 [reply_delivery.py](../backend/services/application/chat/reply_delivery.py)，工具定义在 [image_generation_tool.py](../backend/services/adapters/tools/builtin/image_generation_tool.py) 与 [video_generation_tool.py](../backend/services/adapters/tools/builtin/video_generation_tool.py)。
 

@@ -252,6 +252,9 @@ async def compress_history(
         "input": [placeholder, *keep],
         "source_message_ids": [through_id, *kept_ids],
         "checkpoint_indices": [0],
+        "user_input_indices": [
+            index - len(block) + 1 for index in context.get("user_input_indices", ()) if index >= len(block)
+        ],
     }
     logger.info(
         "context_compressor: summarized history into one summary",

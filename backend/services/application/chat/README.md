@@ -16,6 +16,7 @@
 | [system_prompt.py](system_prompt.py) / [streaming.py](streaming.py) | 系统提示词与每次模型调用前的环境、动作快照；请求装配（日期刷新、回复格式与可用媒体）及流式/非流式调用 |
 | [title_generator.py](title_generator.py) / [context_compressor.py](context_compressor.py) | 标题（请求只取首条用户消息的文字，附件地址不进请求；只有附件时文字为空串，仍依据助手回复生成）、运行时压缩 |
 | [reply_delivery.py](reply_delivery.py) / [bubble.py](bubble.py) | 陪伴气泡 schema 与校验、文本流分泡 |
+| [reply_links.py](reply_links.py) | 陪伴回复的媒体地址来源与内嵌媒体检查、地址句界保护 |
 | [tool_dispatch.py](tool_dispatch.py) / [delegation.py](delegation.py) | 工具派发与 `DelegateAction` 执行层接管 |
 | [persistence.py](persistence.py) | 工具调用行与结果落库、同步本回合输入并按 `search_tools` 结果解锁工具（批执行在 tool_dispatch）；终端回复落库、语音合成与 `message.complete` 交付；回合后任务调度；压缩检查点落库 |
 | [message_sanitization.py](message_sanitization.py) | 工具参数 JSON 修复（修复尾逗号、多余或缺失的括号与字符串内的裸控制字符，不改变字符串内容；无法修复或不是对象时返回 `None`）、确定性窗口截断 |
@@ -34,7 +35,7 @@
 - 身份、用户资料、记忆、附件和工具结果都是资料，不扩大权限；陪伴工具续轮继续使用同一完整预设。专业预设只装配职业目标与本域资料，automation 保持独立任务边界。专业预设共用工作预设体，仅靠[预设目录](../../domains/conversation/presets.py)条目和 `PRESET_HEADER_TEXTS`（[prompts/chat.py](../../../prompts/chat.py)）中的双语头部区分，缺少头部时回合装配直接报错；生活空间工具默认只对陪伴预设开放，新增预设无需另行登记工具排除。
 - 主动回合的沉默规则属于系统指令，意图、档位和未兑现等待属于尾部资料；陪伴预设每回合附加未兑现等待意图，并标明其不是用户发言或已完成操作。普通用户回合不注入沉默选项。每次模型调用（含工具续轮）由 `build_companion_environment_prompt` 追加环境、衣柜当前着装与动作快照：场景背景不提供伙伴自身的活动或穿着事实，资料归属见[场景语义](../../../../docs/PIPELINE.md#场景创建与描述)；当前着装附着装与表现相称的说明，动作快照另列动作素材中的着装。常规档主动回合不提供聊天生图、生视频、语音与视觉表达工具，独立动态仍按动态政策执行。
 - 桌面客户端标识与 IM 渠道键换成对应渠道说明，无客户端资料时使用桌面说明，其他自由文本原样作为资料；设备环境带标题单独装配，环境资料和工具指令分别装配，关闭工具不等于没有环境资料。search_tools 的业务域清单在预设与调用方排除后重算。
-- 任务通过 `instructions` 定义，JSON 输入承载资料；生活空间先装配本轮音色、可引用产物与 schema，再追加交付任务和完整对象示例，无产物时不提供媒体气泡。模型内部对象校验后转换为持久气泡数组，失败预算和修正规则见[协议](../../../../docs/PROTOCOL.md#模型失败与重试预算)。格式修正与手动重试不附加调用工具的说明；基础提示词预览不能代表最终请求，修改遵循 [RULES](../../../../RULES.md#提示词设计与修改规范)。
+- 任务通过 `instructions` 定义，JSON 输入承载资料；生活空间先装配媒体真实性、本轮音色、可引用产物与 schema，再追加交付任务和完整对象示例。无产物时不提供媒体气泡，正常请求仍按可用工具说明生成路径；格式恢复保留真实性约束和来源校验。模型内部对象校验后转换为持久气泡数组，失败预算和修正规则见[协议](../../../../docs/PROTOCOL.md#模型失败与重试预算)。格式修正与手动重试不附加调用工具的说明；基础提示词预览不能代表最终请求，修改遵循 [RULES](../../../../RULES.md#提示词设计与修改规范)。
 - 常规请求的结构参数由[供应商适配器](../../infrastructure/llm/providers/base.py)决定，本地服务见 [Backend](../../../README.md#本地供应商)。[reply_delivery.py](reply_delivery.py) 对所有模型执行同一归一化、分泡与校验；独立修正通过[接口兼容层](../../infrastructure/llm/providers/_companion_format.py)调用，不按模型名分流，规则与预算归协议。
 - 推理预算与正文预算共同计算；只解析完成响应的 `output_text`，推理单独保存且不回灌后续回合，失败重试前删除追加的推理项。
 

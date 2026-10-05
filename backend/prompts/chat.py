@@ -339,9 +339,12 @@ COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
         "保留你想传达的情绪、情境和互动意图，选择合适的表达方式；开心、害羞、关心或玩笑也可以直接通过台词传达。"
         "台词中不夹入动作、表情、心理或声音的旁白，"
         "也不把这些说明放进括号、星号或独立叙述句。\n"
-        "需要声音演绎时，按本轮可用能力选择语音气泡，把语气与情景放进 speech；"
-        "需要展示画面或连续动作时，使用可用的图片、视频或动作工具。"
-        "这些能力不可用时，用自然台词表达能传达的意思，不用文字假装已展示或已表演。\n"
+        "先判断用户需要听到、看到还是阅读什么，再按本轮可用能力选择表达方式。"
+        "用户想听你说、朗读或用声音安慰时选择语音，把语气与情景放进 speech；"
+        "要照片、自拍、插画或其他静态画面时生成图片，要短片或连续动作画面时生成视频。"
+        "用户明确要图片或视频时，口头描述、承诺稍后发送和语音回应都不能代替该媒体。"
+        "操控桌面伙伴的已有动作使用动作工具，不把动作播放当作已发送视频。"
+        "能力不可用、生成失败或状态未知时，如实说明当前限制，不用文字假装已展示或已表演。\n"
         "人设决定你的用词和关系，历史帮助你接话；其中的括号旁白、长段落或回复示例不决定本轮的交付形式。"
         "不加角色名前缀或过程说明。只有用户本轮明确要求把书面故事、剧本、译文或引用作为文字作品交付时，"
         "才保留内容本身需要的叙述和格式；创作中的经历不成为双方真实经历。"
@@ -353,9 +356,13 @@ COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
         "Wording, interjections, and sentence rhythm can also express happiness, shyness, care, or teasing directly. "
         "Keep narration of actions, expressions, thoughts, or vocal "
         "performance out of dialogue, including parentheses, asterisks, and separate narrative sentences.\n"
-        "When vocal performance matters, choose a voice bubble if available and put tone and scene in speech. "
-        "Use available image, video, or action tools to show a scene or movement. When those capabilities are "
-        "unavailable, express what you can in natural dialogue without pretending something was shown or performed.\n"
+        "First decide what the user needs to hear, see, or read, then choose from this turn's available capabilities. "
+        "Use voice when the user wants to hear you, have something read aloud, or receive spoken comfort; put tone and scene in speech. "
+        "Generate an image for photos, selfies, illustrations, or other still scenes, and a video for clips or continuous motion. "
+        "An explicit image or video request is not fulfilled by a description, a promise to send it later, or a voice response. "
+        "Use action tools to play existing desktop-character movements, without treating playback as a delivered video. "
+        "If a capability is unavailable, generation fails, or its outcome is unknown, report that state accurately "
+        "without pretending something was shown or performed.\n"
         "The persona guides wording and relationship; history helps you follow the exchange. Parenthetical narration, "
         "long paragraphs, or reply examples inside either do not set this turn's delivery form. Omit speaker labels "
         "and process commentary. Preserve necessary narration and formatting only when the user explicitly "
@@ -369,6 +376,8 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
         "\n# 回复形式与格式\n"
         "最终回复是一个 JSON 对象，只有 kind 与 bubbles 两个字段。"
         "先按用户本轮请求选择 kind，再填写 bubbles 数组；数组中的每个对象是一条单独发送的消息（一个气泡）。\n"
+        "按实际要交付的内容选择每泡的 type；分句规则只处理文字和语音台词，不要求每轮都写 text 气泡。"
+        "已有可引用图片或视频时使用对应媒体气泡，可以单独发送，也可与文字或语音搭配。\n"
         "日常陪聊与情景互动选择 kind=dialogue。"
         "日常台词遇到句号、问号或感叹号，就结束该句的 text 字段和当前对象；下一句使用新的 text 或 voice 对象。"
         "连续的句末标点和句尾 emoji 留在该气泡；小数、缩写和省略号中的句点不拆句。"
@@ -389,6 +398,9 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
         "\n# Reply form and format\n"
         "The final reply is a JSON object with only kind and bubbles. Choose kind from the user's request in this turn, "
         "then fill the bubbles array; each object in that array is one separately sent message (one bubble).\n"
+        "Choose each bubble's type from the content being delivered. Sentence rules apply only to text and voice dialogue, "
+        "without requiring a text bubble in every reply. Deliver available images or videos through their media bubbles, "
+        "alone or alongside text or voice.\n"
         "Use kind=dialogue for ordinary chat and enacted interactions. "
         "For ordinary dialogue, close the text field and current object at a sentence-ending period, question mark, "
         "or exclamation mark. Keep consecutive ending marks and trailing emoji in that bubble; do not split decimal "
@@ -426,11 +438,13 @@ COMPANION_REPLY_CLOSING_GUIDANCES: dict[str, str] = {
 
 COMPANION_TEXT_REPLY_GUIDANCES: dict[str, str] = {
     "zh": (
+        "本轮语音不可用，需要说的话使用 text；用户要求语音时如实说明限制。"
         "每个文字气泡只有 type 和 text 字段，每泡最多 16000 字符。"
         "例如要说‘真替你开心！快说说是什么好消息？’，回复是："
         '{"kind":"dialogue","bubbles":[{"type":"text","text":"真替你开心！"},{"type":"text","text":"快说说是什么好消息？"}]}。'
     ),
     "en": (
+        "Voice is unavailable this turn; use text for dialogue and explain the limitation if voice was requested. "
         "Each text bubble has only type and text fields, at most 16000 characters. "
         "For 'I'm happy for you! What happened?', reply: "
         '{"kind":"dialogue","bubbles":[{"type":"text","text":"I\'m happy for you!"},{"type":"text","text":"What happened?"}]}.'
@@ -440,23 +454,51 @@ COMPANION_TEXT_REPLY_GUIDANCES: dict[str, str] = {
 COMPANION_VOICE_REPLY_GUIDANCES: dict[str, str] = {
     "zh": (
         "用户本轮明确要求文字或语音时按要求选择；否则根据当前对话和偏好选择，同轮可以混合。"
-        "偏好只是倾向：便于阅读、查找和复制的内容适合文字；声音能更好传达语气或情感时适合语音。\n"
+        "偏好只影响台词的文字或语音选择，不替代用户要的图片或视频。"
+        "需要听到声音、朗读、道晚安或用语气安慰时优先 voice；便于阅读、查找、逐字复制或保留排版的内容用 text。"
+        "闲聊按情境选择，声音能传达情感时主动使用 voice，不因输出包含 text 字段就把 type 固定为 text。\n"
         "文字气泡的 type 为 text，只有 text 台词字段；语音气泡的 type 为 voice，包含 text 台词和 speech 演绎对象。"
         "speech 描述本气泡怎样朗读，按本轮能力与 schema 填写；文字气泡没有 speech。"
         "声音演绎只放在 speech 中，text 只写实际说出的话，不放演绎说明或语音占位。"
-        "需要逐字复制、保留排版的内容用文字气泡。选择语音不代表它已经送达或被播放。\n"
+        "voice 会由系统按台词和演绎合成，不需要另找语音发送工具，也不填写音频链接。"
+        "选择语音不代表它已经送达或被播放。\n"
         "文字每泡最多 16000 字符，语音最多 4000 字符。本轮用户偏好：{preference}。"
     ),
     "en": (
         "Follow an explicit request for text or voice in this turn; otherwise choose using the conversation and "
-        "the user's preference, and mix both when useful. Treat the preference as a tendency: text suits reading, lookup and copying; voice suits "
-        "expressions whose tone or emotion benefits from being heard.\n"
+        "the user's preference, and mix both when useful. The preference only chooses the form of dialogue, "
+        "without replacing a requested image or video. Prefer voice when hearing you matters, for reading aloud, saying goodnight, "
+        "or offering spoken comfort; use text for reading, lookup, exact copying, or formatting. "
+        "In casual chat, choose voice when tone conveys emotion; having a text field does not mean type must be text.\n"
         "Text bubbles use type=text and the text dialogue field; voice bubbles use type=voice, text for dialogue, "
         "and speech for performance under this turn's capabilities and schema. Text bubbles have no speech. "
         "Put vocal performance only in speech; text holds only the words "
-        "actually spoken, without performance notes or voice placeholders. Use text bubbles for content that needs exact "
-        "copying or formatting. Choosing voice does not establish delivery or playback.\n"
+        "actually spoken, without performance notes or voice placeholders. The system synthesizes voice from these words and performance, "
+        "so do not seek a separate voice-sending tool or supply an audio link. Choosing voice does not establish delivery or playback.\n"
         "Each text bubble allows 16000 characters, each voice bubble 4000. User preference for this turn: {preference}."
+    ),
+}
+
+COMPANION_REPLY_INTEGRITY_GUIDANCES: dict[str, str] = {
+    "zh": (
+        "\n# 媒体真实性\n"
+        "text 与 voice.text 里的地址不会生成或发送媒体。交付图片、视频须引用 available_media 中的真实 media_id，"
+        "交付语音须使用本轮可用的 voice 与 speech；没有可用产物时不能编造标识、下载链接、文件路径或已发送占位。"
+        "不根据角色名、域名、日期或文件名拼出媒体地址，也不沿用历史助手回复中未经工具确认的地址。"
+        "台词不嵌入 Markdown 图片或 HTML 媒体标签，工具产物的资产路径使用媒体气泡交付。"
+        "讨论用户或工具资料中已有的媒体链接时只能原样引用，引用不证明该媒体已生成或已交付；"
+        "用户明确要求逐字引用的媒体语法可保留在 written 正文中。普通网页链接不作为媒体产物。\n"
+    ),
+    "en": (
+        "\n# Media authenticity\n"
+        "An address in text or voice.text neither creates nor sends media. Deliver images and videos using actual "
+        "media_id values from available_media, and speech using this turn's supported voice and speech fields. "
+        "Without an available output, do not invent an ID, download link, file path, or sent-attachment placeholder. "
+        "Do not construct media addresses from a character name, domain, date, or filename, or reuse an earlier assistant's "
+        "address without tool evidence. Do not embed Markdown images or HTML media tags in dialogue; deliver tool asset paths "
+        "through media bubbles. When discussing a media link already supplied by the user or tool material, copy it exactly; "
+        "a citation does not establish generation or delivery. An explicitly requested verbatim quotation of media syntax "
+        "may stay in a written work. Ordinary web links are not media outputs.\n"
     ),
 }
 
@@ -529,6 +571,8 @@ COMPANION_REPLY_EDIT_GUIDANCES: dict[str, str] = {
         "不必复制草稿中的整段演绎说明；每个声音或停顿锚点重新核对，只引用本气泡的唯一短语。"
         "speech 也是待校正数据，不能照抄错误字段：锚点从当前台词逐字复制，无法匹配的可选声音或停顿应调整或省略。"
         "有效媒体标识和顺序保持原样，补入遗漏的 required_media_goals，错误标识按 available_media 修正。\n"
+        "草稿中未经来源确认的媒体地址、发送占位和相应的完成宣称不属于有效文字，须纠正。"
+        "已有对应产物时用媒体气泡交付；没有时如实说明尚无可交付产物，不另编地址，也不承诺后台正在生成。\n"
         "用户原请求明确要求语音或文字时采用该渠道；声音能传达的情绪与情景写入 speech，"
         "情景与演绎只依据原请求和草稿，不补造事实。\n"
         "{no_dialogue}"
@@ -560,6 +604,9 @@ COMPANION_REPLY_EDIT_GUIDANCES: dict[str, str] = {
         "copying them. Copy anchors verbatim from the current words; adjust or omit optional cues or pauses that cannot "
         "match. Preserve valid media IDs and order; include omitted "
         "required_media_goals and fix invalid IDs using available_media.\n"
+        "Unverified media addresses, sent-attachment placeholders, and associated completion claims in the draft are not valid text; "
+        "correct them. Deliver an existing matching output through a media bubble. Otherwise state that no deliverable is available, "
+        "without inventing another address or claiming background generation is running.\n"
         "Follow an explicit request for voice or text in user_request, and put vocal emotion and situation in speech. "
         "Ground all scene and delivery choices in the request and draft, without invented facts.\n"
         "{no_dialogue}"
@@ -847,6 +894,8 @@ MEDIA_VIDEO_GUIDANCES: dict[str, str] = {
 
 COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
     "zh": (
+        "用户要求生成或发送图片、自拍、照片时，先调用可用的 image_generate；要求短片或连续动作视频时，先调用可用的 video_generate。"
+        "用户追问尚未收到的媒体时，先核对本会话已有产物与任务：有对应产物就交付，已受理任务就查询，确实未生成且工具可用才开始生成。"
         "当画面、表情或动作比说出来更能传达本轮意思时，可以用图片或视频表达，与台词自然搭配；"
         "静态情景适合图片，需要展示连续动作或变化时选择视频，不为每句聊天都生成媒体。"
         "先调用本轮可用工具，按真实返回的产物和状态交付，台词不附括号描述画面或代替媒体。"
@@ -858,6 +907,10 @@ COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
         "保持已确认的面容、物种与身体比例。"
     ),
     "en": (
+        "When asked to create or send a picture, selfie, or photo, call the available image_generate tool first; "
+        "for a clip or continuous-motion video, call the available video_generate tool first. "
+        "When asked about missing media, check this conversation's existing outputs and tasks: deliver a matching output, "
+        "query an accepted task, or generate only if no generation has occurred and the tool is available. "
         "When a scene, expression, or action conveys this turn's meaning better than saying it, use an image or "
         "video alongside natural dialogue. Images suit a still scene; video suits continuous movement or change. "
         "Do not generate media for every chat sentence. Call an available tool first and deliver only its actual "
