@@ -21,7 +21,7 @@ export interface SetSpriteStateOptions {
   force?: boolean
 }
 
-export interface PresentationPorts {
+interface PresentationPorts {
   $activeAvatarId: Atom<number | null>
   $companionVoiceId: Atom<string>
   $portraitUrl: Atom<string | null>

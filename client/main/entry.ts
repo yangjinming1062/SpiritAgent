@@ -24,7 +24,7 @@ import { createBackendHttp, createElectronFetch } from './backend/http'
 import { createBackendSession } from './backend/session'
 import { createSessionRuntime } from './backend/session-runtime'
 import { createAssetDiskCache } from './ipc/asset-disk-cache'
-import { createAuthBroadcaster, registerAuthIpc } from './ipc/auth'
+import { createAuthBroadcaster, registerAuthIpc, registerDesktopAccountIpc } from './ipc/auth'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerConnectionIpc } from './ipc/connection'
 import { registerDesktopDock } from './ipc/desktop-dock'
@@ -505,36 +505,19 @@ registerSpriteIpc({
   ipcMain
 })
 
-const assertDesktopAccountSender = (sender: Electron.WebContents): void => {
-  if (!presentation?.isDesktopSender(sender)) {
-    throw new Error('仅桌面入口允许此操作。')
-  }
-}
-
-ipcMain.handle(IPC.invoke.desktopAccounts, event => {
-  assertDesktopAccountSender(event.sender)
-
-  return sessionRuntime.ensureBackendSession().listAccounts()
-})
-ipcMain.handle(IPC.invoke.desktopSwitchAccount, async (event, id: unknown) => {
-  assertDesktopAccountSender(event.sender)
-
-  if (typeof id !== 'string') {
-    throw new Error('无效账户。')
-  }
-
-  await presentation?.accountChanged()
-  await authActions.switchAccount(id)
-})
-ipcMain.handle(IPC.invoke.desktopAddAccount, async event => {
-  assertDesktopAccountSender(event.sender)
-  await presentation?.accountChanged()
-  showMainWindow()
-  sendToWindow(mainWindow, IPC.event.trayActivate)
-})
-ipcMain.handle(IPC.invoke.desktopQuit, event => {
-  assertDesktopAccountSender(event.sender)
-  app.quit()
+registerDesktopAccountIpc({
+  deps: {
+    ensureBackendSession,
+    isDesktopSender: sender => presentation?.isDesktopSender(sender) ?? false,
+    onLeavingDesktop: () => presentation?.accountChanged() ?? Promise.resolve(),
+    openMainWindow: () => {
+      showMainWindow()
+      sendToWindow(mainWindow, IPC.event.trayActivate)
+    },
+    quitApp: () => app.quit(),
+    switchAccount: authActions.switchAccount
+  },
+  ipcMain
 })
 
 sessionRuntime.rewireAuthToken()

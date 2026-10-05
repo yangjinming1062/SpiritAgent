@@ -233,12 +233,13 @@ function getHomePosition(): { x: number; y: number } {
 // 普通落位约束缩放后的内容像素，透明留白可越界；探身另按露出范围落位。
 function contentBox(scale = $spatialScale.get()): { left: number; top: number; right: number; bottom: number } {
   const r = contentBounds()
+  const { width, height } = baseSpriteSize(window.innerHeight)
 
   return {
-    left: r.left * getBaseSpriteWidth() * scale,
-    top: r.top * getBaseSpriteHeight() * scale,
-    right: r.right * getBaseSpriteWidth() * scale,
-    bottom: r.bottom * getBaseSpriteHeight() * scale
+    left: r.left * width * scale,
+    top: r.top * height * scale,
+    right: r.right * width * scale,
+    bottom: r.bottom * height * scale
   }
 }
 
@@ -280,8 +281,7 @@ export interface PerchPlacement {
 /** 普通栖息选可容纳比例较大的一侧，同等空间优先右侧；低于 MIN_SCALE 时放弃。 */
 export function computePerchPlacement(geom: DesktopScreenRect, maxScale: number): PerchPlacement | null {
   const margin = 8
-  const spriteW = getBaseSpriteWidth()
-  const spriteH0 = getBaseSpriteHeight()
+  const { width: spriteW, height: spriteH0 } = baseSpriteSize(window.innerHeight)
   const content = contentBounds()
   const contentLeft = content.left
   const contentTop = content.top
@@ -563,6 +563,12 @@ function computeTargetScale(): number {
 
 function updateAdaptiveScale(): void {
   setScaleTarget(computeTargetScale())
+}
+
+// 撤销栖息/探身的缩放上限并立即重算缩放；updateAdaptiveScale 同步触发缩放监听，读取落点须在其后。
+function clearPerchScaleLimit(): void {
+  perchScaleLimit = null
+  updateAdaptiveScale()
 }
 
 function applyDefaultScale(scale: number): number | null {
@@ -877,8 +883,7 @@ function clearPeekState(keepPendingWindow = false): SpatialPeek | null {
 
 // 收回 home：撤销缩放上限并按新比例把落点钳回视口后静止；fromHome 时以 home 为落点，否则沿用当前位置。updateAdaptiveScale 会同步触发缩放监听，须先于读取落点。
 function settleHome(fromHome: boolean): { x: number; y: number } {
-  perchScaleLimit = null
-  updateAdaptiveScale()
+  clearPerchScaleLimit()
   const position = clampPosToViewport(fromHome ? $homePosition.get() : $spatialPos.get())
   $spatialLocale.set('home')
   $spatialPos.set(position)
@@ -1058,8 +1063,7 @@ async function tryStartPendingWindowPeek(): Promise<boolean> {
       $peekPreparation.set(null)
       $spatialLocale.set('home')
       $spatialPos.set(clampPosToViewport(previousPeek?.mode === 'window' ? $homePosition.get() : $spatialPos.get()))
-      perchScaleLimit = null
-      updateAdaptiveScale()
+      clearPerchScaleLimit()
     }
 
     $peekPreparation.set({
@@ -1196,8 +1200,7 @@ export function leavePeekForExpression(): boolean {
   }
 
   $spatialLocale.set('home')
-  perchScaleLimit = null
-  updateAdaptiveScale()
+  clearPerchScaleLimit()
   const targetScale = computeTargetScale()
   const activePeek = $spatialPeek.get()
 
@@ -1309,9 +1312,8 @@ export function setSpatialLocale(
 
     abandonPeekMode()
     stopRoam()
-    perchScaleLimit = null
     $spatialLocale.set('home')
-    updateAdaptiveScale()
+    clearPerchScaleLimit()
     const home = clampPosToViewport($homePosition.get(), computeTargetScale())
 
     const returnToEdge = (): void => {
@@ -1478,9 +1480,8 @@ export function startRoam(): void {
 
   roaming = true
   const previousPeek = clearPeekState()
-  perchScaleLimit = null
   $spatialLocale.set('roam')
-  updateAdaptiveScale()
+  clearPerchScaleLimit()
   clampAfterPeek(previousPeek)
   roamStep()
 }
@@ -1578,8 +1579,7 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
 
   setSpriteState('interacting', { durationMs: cancelled ? 0 : 500 })
   $spatialLocale.set('home')
-  perchScaleLimit = null
-  updateAdaptiveScale()
+  clearPerchScaleLimit()
 
   if (side) {
     const yRatio = safe.y / Math.max(1, window.innerHeight)

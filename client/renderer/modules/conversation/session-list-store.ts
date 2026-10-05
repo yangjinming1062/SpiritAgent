@@ -237,8 +237,21 @@ async function patchSession(sessionId: string, body: SessionPatchBody): Promise<
 }
 
 function applyLocalTitle(sessionId: string, title: null | string): void {
-  const patch = (list: SessionInfo[]): SessionInfo[] =>
-    list.some(s => s.id === sessionId) ? list.map(s => (s.id === sessionId ? { ...s, title } : s)) : list
+  const patch = (list: SessionInfo[]): SessionInfo[] => {
+    let found = false
+
+    const next = list.map(s => {
+      if (s.id !== sessionId) {
+        return s
+      }
+
+      found = true
+
+      return { ...s, title }
+    })
+
+    return found ? next : list
+  }
 
   $sessions.set(patch($sessions.get()))
   $archivedSessions.set(patch($archivedSessions.get()))

@@ -13,7 +13,7 @@ import {
 
 import { resolvePortraitUrl } from './avatar-image'
 
-export interface AvatarSeeds {
+interface AvatarSeeds {
   avatarId: number | null
   /** 半身头像展示 URL（asset_url），独立全身参考的自备图参考图。 */
   avatarUrl: string | null

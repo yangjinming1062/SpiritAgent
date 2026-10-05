@@ -9,9 +9,9 @@ import { trimOldest } from '@/shared/lib/trim-oldest'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
-export type SceneStatus = 'cancelled' | 'description_failed' | 'failed' | 'pending' | 'ready'
+type SceneStatus = 'cancelled' | 'description_failed' | 'failed' | 'pending' | 'ready'
 export type ScenePolicy = 'llm_may_replace' | 'locked'
-export interface SceneRegeneration {
+interface SceneRegeneration {
   task_id: string
   status: 'cancelled' | 'failed' | 'pending' | 'ready'
   stage: string
@@ -52,7 +52,7 @@ interface SceneListWire {
   total: number
   version: number
 }
-export interface SceneGenerationInput {
+interface SceneGenerationInput {
   notes?: string
   image?: string
   content_type?: string

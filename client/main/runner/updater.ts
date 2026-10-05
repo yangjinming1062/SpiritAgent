@@ -76,7 +76,7 @@ export class RunnerUpdater {
     this.log = log
   }
 
-  // 阶段 1：在旧版 Electron 进程内预下载。updateBaseUrl 即桌面更新源（`< 后端 >/api/update`），资产路径直接相对它。
+  // 阶段 1：桌面安装包就绪后、重启更新前，在当前运行的 Electron 进程内预下载。updateBaseUrl 即桌面更新源（`< 后端 >/api/update`），资产路径直接相对它。
   async prefetchRunnerAssets({
     publicKeyPath,
     updateBaseUrl,
@@ -153,7 +153,7 @@ export class RunnerUpdater {
     await fsp.writeFile(path.join(home, SENTINEL_FILE), JSON.stringify(sentinel, null, 2), 'utf8')
   }
 
-  // 阶段 2：在新版 Electron 进程内完成安装。
+  // 阶段 2：更新后的 Electron 进程启动时完成安装。
   async installPending(appVersion: string): Promise<{ error?: string; noop?: boolean; ok: boolean }> {
     const home = this.runtime.spiritagentHome
     const sentinelPath = path.join(home, SENTINEL_FILE)
@@ -173,7 +173,7 @@ export class RunnerUpdater {
       return { error: 'sentinel unreadable', ok: false }
     }
 
-    // 下载后未经「立即重启」而是普通重启时仍是旧版桌面：保留暂存，待同版本桌面启动时再装。
+    // 当前运行版本与暂存版本不一致（下载后普通重启、未应用该更新）：保留暂存，待同版本桌面启动时再装。
     if (sentinel.version !== appVersion) {
       this.log?.('info', `[updater] pending runner ${sentinel.version} kept; running desktop is ${appVersion}`)
 

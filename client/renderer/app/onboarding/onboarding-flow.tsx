@@ -275,6 +275,61 @@ const retryTransient = async <T,>(
 
 const DRAG_THRESHOLD = 6
 
+// 可拖拽对话框容器：位置状态与拖拽监听收敛在此，指针移动只重渲染本容器，表单内容经 children 传入不随拖拽重渲染。
+// 注册可见矩形到 interactive-regions，SpriteStage 命中测试只在表单卡片上捕获；卸载时恢复穿透。
+function DraggableDialog({ children }: { children: React.ReactNode }): React.JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const [dialogPos, setDialogPos] = useState<{ x: number; y: number }>(() => {
+    const width = 448
+    const height = 600
+
+    return {
+      x: Math.max(0, Math.round((window.innerWidth - width) / 2)),
+      y: Math.max(0, Math.round((window.innerHeight - height) / 2))
+    }
+  })
+
+  useInteractiveRegion('onboarding', containerRef, interactiveRegionRect)
+
+  // document 级监听让指针离开对话框后仍可拖拽；基准位与实时位移分离，dialogPos 仅松手时提交，避免位移叠到不断重设的 origin 上加速漂移。
+  const { delta: dialogDragDelta, onPointerDown: onRawDialogPointerDown } = usePointerDrag({
+    threshold: DRAG_THRESHOLD,
+    onCommit: ({ dx, dy }) => {
+      setDialogPos(prev => ({ x: prev.x + dx, y: prev.y + dy }))
+    }
+  })
+
+  // 表单控件交由浏览器原生——若起点是按钮/输入框/可编辑元素则不进入拖拽。
+  const onDialogPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const target = e.target as HTMLElement
+
+    if (target.closest('button, input, textarea, [contenteditable="true"]')) {
+      return
+    }
+
+    onRawDialogPointerDown(e)
+  }
+
+  return (
+    <div
+      className="absolute flex max-h-[90vh] w-full max-w-md flex-col items-center gap-4"
+      onPointerDown={onDialogPointerDown}
+      ref={containerRef}
+      style={{
+        left: dialogPos.x + dialogDragDelta.dx,
+        padding: '0 1.5rem',
+        pointerEvents: 'auto',
+        position: 'absolute',
+        top: dialogPos.y + dialogDragDelta.dy,
+        touchAction: 'none'
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 async function savePersona(payload: ReturnType<typeof assemblePersona>): Promise<boolean> {
   try {
     await window.spiritagent.api({
@@ -431,20 +486,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   // 读不到服务端进度时暂停作答，避免新回答覆盖尚未读回的草稿。
   const [resumeState, setResumeState] = useState<'failed' | 'ok' | 'retrying'>('ok')
   const [resumeAttempt, setResumeAttempt] = useState(0)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  const [dialogPos, setDialogPos] = useState<{ x: number; y: number }>(() => {
-    const width = 448
-    const height = 600
-
-    return {
-      x: Math.max(0, Math.round((window.innerWidth - width) / 2)),
-      y: Math.max(0, Math.round((window.innerHeight - height) / 2))
-    }
-  })
-
-  // 注册对话框可见矩形到 interactive-regions，SpriteStage 命中测试只在表单卡片上捕获；卸载时恢复穿透。
-  useInteractiveRegion('onboarding', containerRef, interactiveRegionRect)
 
   useEffect(() => () => stopSpeaking(), [])
 
@@ -452,28 +493,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   useEffect(() => {
     warmAudioContext()
   }, [])
-
-  // document 级监听让指针离开对话框后仍可拖拽；基准位与实时位移分离，dialogPos 仅松手时提交，避免位移叠到不断重设的 origin 上加速漂移。
-  const { delta: dialogDragDelta, onPointerDown: onRawDialogPointerDown } = usePointerDrag({
-    threshold: DRAG_THRESHOLD,
-    onCommit: ({ dx, dy }) => {
-      setDialogPos(prev => ({ x: prev.x + dx, y: prev.y + dy }))
-    }
-  })
-
-  const dialogLeft = dialogPos.x + dialogDragDelta.dx
-  const dialogTop = dialogPos.y + dialogDragDelta.dy
-
-  // 表单控件交由浏览器原生——若起点是按钮/输入框/可编辑元素则不进入拖拽。
-  const onDialogPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
-    const target = e.target as HTMLElement
-
-    if (target.closest('button, input, textarea, [contenteditable="true"]')) {
-      return
-    }
-
-    onRawDialogPointerDown(e)
-  }
 
   const currentList = PHASE_QUESTIONS[phase]
 
@@ -1156,19 +1175,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none" style={{ pointerEvents: 'none' }}>
-      <div
-        className="absolute flex max-h-[90vh] w-full max-w-md flex-col items-center gap-4"
-        onPointerDown={onDialogPointerDown}
-        ref={containerRef}
-        style={{
-          left: dialogLeft,
-          padding: '0 1.5rem',
-          pointerEvents: 'auto',
-          position: 'absolute',
-          top: dialogTop,
-          touchAction: 'none'
-        }}
-      >
+      <DraggableDialog>
         <div className={`w-full rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`} style={{ pointerEvents: 'auto' }}>
           {voicePreparing && <p className="mb-2 text-center text-[10px] text-muted">正在准备声音…</p>}
           {resumeState !== 'ok' && (
@@ -1695,7 +1702,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
           {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">正在保存资料…</p>}
         </div>
-      </div>
+      </DraggableDialog>
     </div>
   )
 }

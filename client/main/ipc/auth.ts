@@ -5,7 +5,7 @@ import {
   type DesktopLogoutPayload,
   IPC
 } from '@ipc/contracts'
-import type { IpcMain } from 'electron'
+import type { IpcMain, WebContents } from 'electron'
 
 import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'
@@ -265,4 +265,51 @@ export function registerAuthIpc({
   ipcMain.handle(IPC.invoke.authGetSession, () => deps.getSessionAfterRestore())
 
   return { removeAccount, switchAccount }
+}
+
+interface DesktopAccountIpcDeps {
+  ensureBackendSession: () => BackendSessionPort
+  /** 桌面模式离开与窗口切换；presentation 由入口晚绑定，读取得在调用时发生。 */
+  onLeavingDesktop: () => Promise<void>
+  /** 打开主窗口并触发与托盘「打开」一致的激活流程。 */
+  openMainWindow: () => void
+  switchAccount: (accountId: string) => Promise<null | SessionSnapshotPort>
+  isDesktopSender: (sender: WebContents) => boolean
+  quitApp: () => void
+}
+
+export function registerDesktopAccountIpc({ deps, ipcMain }: { deps: DesktopAccountIpcDeps; ipcMain: IpcMain }): void {
+  const assertDesktopAccountSender = (sender: WebContents): void => {
+    if (!deps.isDesktopSender(sender)) {
+      throw new Error('仅桌面入口允许此操作。')
+    }
+  }
+
+  ipcMain.handle(IPC.invoke.desktopAccounts, event => {
+    assertDesktopAccountSender(event.sender)
+
+    return deps.ensureBackendSession().listAccounts()
+  })
+
+  ipcMain.handle(IPC.invoke.desktopSwitchAccount, async (event, id: unknown) => {
+    assertDesktopAccountSender(event.sender)
+
+    if (typeof id !== 'string') {
+      throw new Error('无效账户。')
+    }
+
+    await deps.onLeavingDesktop()
+    await deps.switchAccount(id)
+  })
+
+  ipcMain.handle(IPC.invoke.desktopAddAccount, async event => {
+    assertDesktopAccountSender(event.sender)
+    await deps.onLeavingDesktop()
+    deps.openMainWindow()
+  })
+
+  ipcMain.handle(IPC.invoke.desktopQuit, event => {
+    assertDesktopAccountSender(event.sender)
+    deps.quitApp()
+  })
 }

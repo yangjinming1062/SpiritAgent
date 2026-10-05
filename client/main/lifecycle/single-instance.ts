@@ -1,6 +1,6 @@
 import type { App } from 'electron'
 
-export interface SingleInstanceGate {
+interface SingleInstanceGate {
   /** 完整转发器注册后调用：移除早期监听，期间收到过第二实例事件时兑现一次。 */
   replayEarlySecondInstance: (onSecondInstance: () => void) => void
 }

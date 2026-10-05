@@ -5,7 +5,7 @@ import { errorMessage } from '../shared/utils'
 
 import type { ZoomPersistence } from './zoom-persistence'
 
-export interface SpriteWindowDeps {
+interface SpriteWindowDeps {
   app: Pick<App, 'dock' | 'getPath' | 'isPackaged'>
   getAppIconPath: () => null | string
   getMainWindow: () => null | BrowserWindow

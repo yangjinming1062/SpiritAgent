@@ -12,7 +12,7 @@ export interface CreatedSurfaceWindow {
   win: BrowserWindow
 }
 
-export interface SurfaceWindowDeps {
+interface SurfaceWindowDeps {
   appName: string
   app: Pick<App, 'dock' | 'isPackaged'>
   getAppIconPath: () => null | string

@@ -91,7 +91,7 @@ export function bindConversationActivity(): void {
   refresh()
 }
 
-export function disposeConversationActivity(): void {
+function disposeConversationActivity(): void {
   stopListening?.()
   stopListening = undefined
   remoteTools.clear()

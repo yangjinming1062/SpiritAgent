@@ -622,6 +622,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
     }
 
+    // 残留 guardian 在上个主进程退出后才写 .interrupted，且与 recover() 争用同一恢复锁；首次检查可能早于其写入，recover 后须复检。
     interrupted ||= existsSync(interruptedFile) || existsSync(mainInterruptedFile)
     suppressAutoRestore ||= interrupted
 

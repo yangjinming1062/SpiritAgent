@@ -23,7 +23,7 @@ export interface VideoPublicationRecovery {
   can_discard: boolean
 }
 
-export interface VideoPublicationRecoveryList {
+interface VideoPublicationRecoveryList {
   items: VideoPublicationRecovery[]
   next_offset: number | null
 }

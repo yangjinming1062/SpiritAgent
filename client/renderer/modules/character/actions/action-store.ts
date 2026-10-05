@@ -21,7 +21,7 @@ import type {
 export interface ActiveActionCatalog {
   packId: number
   catalogVersion: number
-  /** 服务端外观激活代次；旧版快照未记录时为 null，网络校准前不受理播放指令。 */
+  /** 服务端外观激活代次；快照未记录时为 null，网络校准前不受理播放指令。 */
   appearanceEpoch: number | null
   manifest: ActionCatalogManifest
   /** clip 标识与素材版本 → 在途读取或已就绪的展示 URL；失败后移除。 */
@@ -42,7 +42,7 @@ interface CatalogWireResponse {
 interface PersistedActionCatalog {
   packId: number
   catalogVersion: number
-  /** 旧版快照没有该字段。 */
+  /** 可缺省；未记录的快照按未知（null）恢复。 */
   appearanceEpoch?: number
   manifest: ActionCatalogManifest | null
 }
@@ -472,7 +472,7 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
       }
 
       const samePack = $actionCatalog.get()
-      // 旧版服务端不返回代次，其播放指令代次恒为 0。
+      // 不返回代次的服务端，其播放指令代次恒为 0，缺省按 0 对齐。
       const appearanceEpoch = res.value.appearance_epoch ?? 0
 
       if (samePack && samePack.packId === res.value.pack_id && samePack.catalogVersion === res.value.catalog_version) {
