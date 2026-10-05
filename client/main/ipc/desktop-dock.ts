@@ -52,6 +52,27 @@ function targetIdentity(target: string): string {
   return isPackagedAppTarget(target) ? target.toLowerCase() : path.normalize(target).toLowerCase()
 }
 
+function sameApplicationTarget(first: string, second: string): boolean {
+  if (first === second) {
+    return true
+  }
+
+  if (
+    !path.isAbsolute(first) ||
+    !path.isAbsolute(second) ||
+    path.extname(first) !== '.exe' ||
+    path.basename(first) !== path.basename(second)
+  ) {
+    return false
+  }
+
+  // 同名启动器可能把实际窗口进程放在安装目录的子目录。
+  const firstDirectory = `${path.dirname(first)}${path.sep}`
+  const secondDirectory = `${path.dirname(second)}${path.sep}`
+
+  return firstDirectory.startsWith(secondDirectory) || secondDirectory.startsWith(firstDirectory)
+}
+
 function isSavedEntry(raw: unknown): raw is SavedDockEntry {
   if (!raw || typeof raw !== 'object') {
     return false
@@ -135,11 +156,25 @@ export function registerDesktopDock(options: {
     }
   }
 
+  function findRunningTarget(identity: string): RunningDockApplication | undefined {
+    const applications = [...running.values()].filter(item => sameApplicationTarget(identity, item.key))
+    const application = applications[0]
+
+    if (!application || applications.length === 1) {
+      return application
+    }
+
+    return {
+      ...application,
+      windows: applications.flatMap(item => item.windows).sort((a, b) => b.lastActive - a.lastActive)
+    }
+  }
+
   function findRunningApplication(id: string): RunningDockApplication | undefined {
     const entry = entries.find(item => item.id === id)
 
     return entry
-      ? running.get(projections.get(entry.target)?.identity ?? targetIdentity(entry.target))
+      ? findRunningTarget(projections.get(entry.target)?.identity ?? targetIdentity(entry.target))
       : [...running.values()].find(item => item.id === id)
   }
 
@@ -251,13 +286,13 @@ export function registerDesktopDock(options: {
   }
 
   function snapshot(): DockState {
-    const registered = new Set<string>()
+    const registered: string[] = []
 
     const pinned = entries.map(entry => {
       const base = projection(entry)
       const identity = projections.get(entry.target)?.identity ?? entry.target.toLowerCase()
-      registered.add(identity)
-      const application = running.get(identity)
+      const application = findRunningTarget(identity)
+      registered.push(identity)
       const windows = windowsFor(application)
 
       return { ...base, id: entry.id, name: entry.name, running: windows.length > 0, windows, canPin: false }
@@ -268,7 +303,7 @@ export function registerDesktopDock(options: {
       pinnedRevision,
       entries: pinned,
       runningEntries: [...running.values()]
-        .filter(application => !registered.has(application.key))
+        .filter(application => !registered.some(identity => sameApplicationTarget(identity, application.key)))
         .map(application => ({
           id: application.id,
           name: application.name,
@@ -317,6 +352,7 @@ export function registerDesktopDock(options: {
 
     metadataTask = (async () => {
       const items = new Map((await scan).map(item => [targetIdentity(item.target), item]))
+      const catalogEntries = [...items]
 
       for (let index = 0; index < pending.length; index += 4) {
         let changed = false
@@ -327,7 +363,10 @@ export function registerDesktopDock(options: {
               return
             }
 
-            const item = items.get(application.key)
+            const item =
+              items.get(application.key) ??
+              catalogEntries.find(([identity]) => sameApplicationTarget(identity, application.key))?.[1]
+
             let icon: string | null = null
 
             try {
@@ -389,7 +428,8 @@ export function registerDesktopDock(options: {
       const seen = new Set<string>()
 
       for (const window of next.windows) {
-        let application = running.get(window.appId)
+        let application =
+          running.get(window.appId) ?? [...running.values()].find(item => sameApplicationTarget(window.appId, item.key))
 
         if (!application) {
           application = {
@@ -404,9 +444,9 @@ export function registerDesktopDock(options: {
           running.set(window.appId, application)
         }
 
-        if (!seen.has(window.appId)) {
+        if (!seen.has(application.key)) {
           application.windows = []
-          seen.add(window.appId)
+          seen.add(application.key)
         }
 
         application.windows.push(window)
@@ -417,6 +457,11 @@ export function registerDesktopDock(options: {
           running.delete(key)
         } else {
           application.windows.sort((a, b) => b.lastActive - a.lastActive)
+
+          if (!application.windows.some(window => window.target === application.target)) {
+            application.target = application.windows[0]?.target ?? null
+            application.enriched = false
+          }
         }
       }
     }
@@ -467,14 +512,14 @@ export function registerDesktopDock(options: {
     }
 
     const next = [...entries]
-    const registered = new Set(next.map(entry => targetIdentity(entry.target)))
+    const registered = next.map(entry => targetIdentity(entry.target))
 
     for (const selection of selections) {
       await validateTarget(selection.target)
       const identity = targetIdentity(selection.target)
 
-      if (!registered.has(identity)) {
-        registered.add(identity)
+      if (!registered.some(target => sameApplicationTarget(target, identity))) {
+        registered.push(identity)
         next.push({ id: randomUUID(), ...selection })
       }
     }
@@ -527,18 +572,22 @@ export function registerDesktopDock(options: {
       enrichRunning()
     }
 
-    const registered = new Set(entries.map(entry => targetIdentity(entry.target)))
+    const registered = entries.map(entry => targetIdentity(entry.target))
 
     return {
       revision: scan.revision,
       sources: scan.sources,
       // 仅限制下发列表；保存条目的校验仍使用完整扫描结果。
-      items: scan.items.slice(0, 1000).map(item => ({
-        id: item.id,
-        name: item.name,
-        detail: item.detail,
-        inDock: registered.has(item.target.toLowerCase())
-      }))
+      items: scan.items.slice(0, 1000).map(item => {
+        const identity = targetIdentity(item.target)
+
+        return {
+          id: item.id,
+          name: item.name,
+          detail: item.detail,
+          inDock: registered.some(target => sameApplicationTarget(target, identity))
+        }
+      })
     }
   }
 
@@ -556,7 +605,7 @@ export function registerDesktopDock(options: {
     await validateTarget(selection.target)
     const identity = targetIdentity(selection.target)
 
-    if (entries.some(item => item.id !== entry.id && targetIdentity(item.target) === identity)) {
+    if (entries.some(item => item.id !== entry.id && sameApplicationTarget(targetIdentity(item.target), identity))) {
       throw new Error('该程序已在 Dock 中。')
     }
 
@@ -737,12 +786,12 @@ export function registerDesktopDock(options: {
         throw new Error('程序已关闭或无法识别启动目标，请从应用列表选择。')
       }
 
-      if (entries.some(entry => targetIdentity(entry.target) === application.key)) {
+      if (entries.some(entry => sameApplicationTarget(targetIdentity(entry.target), application.key))) {
         return snapshot()
       }
 
       const scan = await catalog.get()
-      const item = scan.items.find(item => targetIdentity(item.target) === application.key)
+      const item = scan.items.find(item => sameApplicationTarget(targetIdentity(item.target), application.key))
 
       const selection = item
         ? { target: item.launchTarget, name: item.name }
