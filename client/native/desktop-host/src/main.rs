@@ -65,7 +65,7 @@ enum WindowRole {
 
 #[cfg(windows)]
 impl WindowRole {
-    fn is_topmost(self, companion_always_on_top: bool) -> bool {
+    fn is_top_level(self, companion_always_on_top: bool) -> bool {
         self == Self::Overlay || (self == Self::Companion && companion_always_on_top)
     }
 }

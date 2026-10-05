@@ -742,13 +742,27 @@ fn visibility(window: &Identity, visible: bool) -> Result<()> {
         return Ok(());
     }
     if unsafe {
-        ShowWindowAsync(
+        SetWindowPos(
             window.window(),
-            if visible { SW_SHOWNOACTIVATE } else { SW_HIDE },
+            null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER
+                | SWP_NOACTIVATE
+                | SWP_ASYNCWINDOWPOS
+                | if visible {
+                    SWP_SHOWWINDOW
+                } else {
+                    SWP_HIDEWINDOW
+                },
         )
     } == 0
     {
-        return Err(failure("ShowWindowAsync"));
+        return Err(failure("update desktop window visibility"));
     }
     let deadline = Instant::now() + Duration::from_millis(1_500);
     while Instant::now() < deadline {
@@ -970,7 +984,7 @@ fn order_desktop_children(
     Ok(changed)
 }
 
-fn raise_window(saved: &RestoreWindow, bounds: Bounds) -> Result<()> {
+fn set_top_level(saved: &RestoreWindow, bounds: Bounds, topmost: bool) -> Result<()> {
     if !saved.identity.valid() {
         return Err("desktop window identity changed".into());
     }
@@ -986,14 +1000,18 @@ fn raise_window(saved: &RestoreWindow, bounds: Bounds) -> Result<()> {
     set_long(
         window,
         GWL_EXSTYLE,
-        ((saved.ex_style as u32 & !(WS_EX_APPWINDOW | WS_EX_TRANSPARENT))
+        ((saved.ex_style as u32 & !(WS_EX_APPWINDOW | WS_EX_TRANSPARENT | WS_EX_TOPMOST))
             | WS_EX_TOOLWINDOW
             | mouse_passthrough) as isize,
     )?;
     if unsafe {
         SetWindowPos(
             window,
-            HWND_TOPMOST,
+            if topmost {
+                HWND_TOPMOST
+            } else {
+                HWND_NOTOPMOST
+            },
             bounds.x,
             bounds.y,
             bounds.width,
@@ -1002,7 +1020,7 @@ fn raise_window(saved: &RestoreWindow, bounds: Bounds) -> Result<()> {
         )
     } == 0
     {
-        return Err(failure("raise desktop window"));
+        return Err(failure("set desktop top-level window"));
     }
     Ok(())
 }
@@ -1449,17 +1467,10 @@ impl Session {
             journal.phase = JournalPhase::Attaching;
             journal.save(path)?;
             for (saved, target) in journal.windows.iter().zip(&targets) {
-                if saved.role != WindowRole::Overlay {
-                    if saved.role == WindowRole::Companion && companion_always_on_top {
-                        raise_window(saved, *target)?;
-                    } else {
-                        attach(saved, &worker, *target)?;
-                    }
-                }
-            }
-            for (saved, target) in journal.windows.iter().zip(&targets) {
-                if saved.role == WindowRole::Overlay {
-                    raise_window(saved, *target)?;
+                if saved.role.is_top_level(companion_always_on_top) {
+                    set_top_level(saved, *target, saved.role == WindowRole::Companion)?;
+                } else {
+                    attach(saved, &worker, *target)?;
                 }
             }
             if takeover {
@@ -1596,7 +1607,7 @@ impl Session {
         for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
             if saved.role == WindowRole::Companion {
                 if always_on_top {
-                    raise_window(saved, *target)?;
+                    set_top_level(saved, *target, true)?;
                 } else {
                     attach(saved, &self.worker, *target)?;
                 }
@@ -1628,7 +1639,7 @@ impl Session {
                 || !saved.identity.valid()
                 || !self.worker.valid()
                 || unsafe { GetParent(window) }
-                    != if saved.role.is_topmost(self.companion_always_on_top) {
+                    != if saved.role.is_top_level(self.companion_always_on_top) {
                         null_mut()
                     } else {
                         self.worker.window()
@@ -1650,6 +1661,21 @@ impl Session {
         };
         let _transaction = MutexGuard::restoration()?;
         validate()?;
+        if saved.role == WindowRole::Overlay
+            && unsafe {
+                SetWindowPos(
+                    window,
+                    HWND_TOP,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+            } == 0
+        {
+            return Err(failure("bring desktop interface forward"));
+        }
         let foreground = unsafe { GetForegroundWindow() };
         let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, null_mut()) };
         let mut info: GUITHREADINFO = unsafe { zeroed() };
@@ -1657,7 +1683,9 @@ impl Session {
         if unsafe { GetGUIThreadInfo(foreground_thread, &mut info) } == 0 {
             return Err(failure("desktop focus query"));
         }
-        if info.hwndFocus == window || unsafe { IsChild(window, info.hwndFocus) } != 0 {
+        if (info.hwndFocus == window || unsafe { IsChild(window, info.hwndFocus) } != 0)
+            && (saved.role != WindowRole::Overlay || foreground == window)
+        {
             return Ok(());
         }
         let keys_up = || -> Result<()> {
@@ -1717,6 +1745,9 @@ impl Session {
         drop(attached);
         focused?;
         validate()?;
+        if saved.role == WindowRole::Overlay && unsafe { GetForegroundWindow() } != window {
+            return Err("desktop interface did not become foreground".into());
+        }
         let active_thread = unsafe { GetWindowThreadProcessId(GetForegroundWindow(), null_mut()) };
         if unsafe { GetGUIThreadInfo(active_thread, &mut info) } == 0 {
             return Err(failure("desktop focus verification"));
@@ -1758,7 +1789,7 @@ impl Session {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
-                if !saved.role.is_topmost(self.companion_always_on_top) {
+                if !saved.role.is_top_level(self.companion_always_on_top) {
                     attach(saved, &replacement, *target)?;
                 }
             }
@@ -1797,7 +1828,7 @@ impl Session {
             .zip(&self.targets)
             .zip(&mut self.overlay_geometry_pending)
         {
-            if !saved.role.is_topmost(self.companion_always_on_top) {
+            if !saved.role.is_top_level(self.companion_always_on_top) {
                 *pending = None;
                 continue;
             }
@@ -1823,61 +1854,23 @@ impl Session {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
-                if saved.role.is_topmost(self.companion_always_on_top) {
+                if saved.role.is_top_level(self.companion_always_on_top) {
                     visibility(&saved.identity, !fullscreen)?;
                     if !fullscreen
                         && unsafe {
                             SetWindowPos(
                                 saved.identity.window(),
-                                HWND_TOPMOST,
+                                null_mut(),
                                 target.x,
                                 target.y,
                                 target.width,
                                 target.height,
-                                SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+                                SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS,
                             )
                         } == 0
                     {
-                        return Err(failure("restore desktop overlay layer"));
+                        return Err(failure("restore desktop overlay geometry"));
                     }
-                }
-            }
-        }
-        if !fullscreen && self.companion_always_on_top {
-            let overlay = self
-                .journal
-                .windows
-                .iter()
-                .find(|saved| saved.role == WindowRole::Overlay)
-                .ok_or("desktop overlay is missing")?
-                .identity
-                .window();
-            let companion = self
-                .journal
-                .windows
-                .iter()
-                .find(|saved| saved.role == WindowRole::Companion)
-                .ok_or("desktop companion is missing")?
-                .identity
-                .window();
-            if (foreground == companion || unsafe { IsChild(companion, foreground) } != 0)
-                && unsafe { GetWindow(companion, GW_HWNDPREV) } != overlay
-            {
-                let _transaction = MutexGuard::restoration()?;
-                require_session(&self.path, &self.journal.session, &self.restoring)?;
-                if unsafe {
-                    SetWindowPos(
-                        companion,
-                        overlay,
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                    )
-                } == 0
-                {
-                    return Err(failure("order desktop companion below interface"));
                 }
             }
         }

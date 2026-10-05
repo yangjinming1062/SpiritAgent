@@ -370,7 +370,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       hasShadow: false,
       backgroundColor: primary ? '#00000000' : '#111827',
       transparent: primary,
-      alwaysOnTop: role === 'desktop',
       title: role === 'desktop' ? '唤生桌面' : role === 'desktop-companion' ? '唤生伙伴' : '唤生背景',
       webPreferences: {
         preload: primary ? options.preloadPath : options.backgroundPreloadPath,
@@ -1261,6 +1260,19 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
 
       sendToWindow(interactive, IPC.event.desktopNavigate, payload)
+
+      const win = interactive
+      const eligible = captureDesktopEligibility(win.webContents)
+
+      void serial(async () => {
+        if (!eligible() || fullscreen) {
+          return
+        }
+
+        win.focus()
+        win.moveTop()
+        await native.focus(win.getNativeWindowHandle(), () => eligible() && !fullscreen)
+      }).catch(error => options.log(`[desktop] navigation activation: ${errorMessage(error)}`))
 
       return true
     }
