@@ -12,7 +12,8 @@ import {
   Monitor,
   Plus,
   Settings,
-  Shirt
+  Shirt,
+  X
 } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { notifyError } from '@/shared/store/notifications'
@@ -24,6 +25,8 @@ import styles from './desktop.module.css'
 
 type DockState = Awaited<ReturnType<typeof window.spiritagent.dock.getState>>
 type DockEntry = DockState['entries'][number]
+
+type DockMenuTarget = { kind: 'program'; id: string; pinned: boolean } | { kind: 'internal'; id: DesktopApp }
 
 const APP_ICONS: Record<DesktopApp, IconComponent> = {
   chat: MessageCircle,
@@ -46,11 +49,13 @@ function BuiltinAppIcon({ id }: { id: DesktopApp }): React.JSX.Element {
 export function DesktopDock({
   windows,
   onActivate,
+  onClose,
   menuEnabled,
   onMenuOpenChange
 }: {
   windows: DesktopWindowState[]
   onActivate: (id: DesktopApp) => void
+  onClose: (id: DesktopApp) => void
   menuEnabled: boolean
   onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {
@@ -65,7 +70,7 @@ export function DesktopDock({
     runningError: null
   })
 
-  const [menu, setMenu] = useState<{ id: string; pinned: boolean; x: number } | null>(null)
+  const [menu, setMenu] = useState<(DockMenuTarget & { x: number }) | null>(null)
   const [picker, setPicker] = useState<DockPickerMode | null>(null)
   const dockRef = useRef<HTMLElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -196,7 +201,12 @@ export function DesktopDock({
     }
   }
 
-  const openMenu = (id: string, pinned: boolean, button: HTMLElement): void => {
+  const closeWindows = (entry: DockEntry, windowIds: string[]): void => {
+    void run(() => window.spiritagent.dock.closeWindows(entry.id, windowIds), t.closeWindow)
+    setMenu(null)
+  }
+
+  const openMenu = (target: DockMenuTarget, button: HTMLElement): void => {
     if (!menuEnabled) {
       return
     }
@@ -210,17 +220,25 @@ export function DesktopDock({
     const rect = button.getBoundingClientRect()
     const halfWidth = Math.min(120, (window.innerWidth - 32) / 2)
     const center = Math.max(halfWidth + 16, Math.min(rect.left + rect.width / 2, window.innerWidth - halfWidth - 16))
-    setMenu({ id, pinned, x: center - dock.left })
+    setMenu({ ...target, x: center - dock.left })
   }
 
   const menuIndex = state.entries.findIndex(entry => entry.id === menu?.id)
-  const menuEntry = menu?.pinned ? state.entries[menuIndex] : state.runningEntries.find(entry => entry.id === menu?.id)
+
+  const menuEntry =
+    menu?.kind === 'program'
+      ? menu.pinned
+        ? state.entries[menuIndex]
+        : state.runningEntries.find(entry => entry.id === menu.id)
+      : undefined
+
+  const menuWindow = menu?.kind === 'internal' ? windows.find(item => item.id === menu.id) : undefined
 
   useEffect(() => {
-    if (menu && !menuEntry) {
+    if (menu && !menuEntry && !menuWindow) {
       setMenu(null)
     }
-  }, [menu, menuEntry])
+  }, [menu, menuEntry, menuWindow])
 
   const reorder = (from: string, to: string): void => {
     const ids = state.entries.map(entry => entry.id)
@@ -284,7 +302,7 @@ export function DesktopDock({
           onClick={() => void run(() => window.spiritagent.dock.activate(entry.id))}
           onContextMenu={event => {
             event.preventDefault()
-            openMenu(entry.id, pinned, event.currentTarget)
+            openMenu({ kind: 'program', id: entry.id, pinned }, event.currentTarget)
           }}
           onDragEnd={() => {
             draggedItem.current = null
@@ -299,7 +317,7 @@ export function DesktopDock({
           onKeyDown={event => {
             if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
               event.preventDefault()
-              openMenu(entry.id, pinned, event.currentTarget)
+              openMenu({ kind: 'program', id: entry.id, pinned }, event.currentTarget)
             }
           }}
           title={
@@ -389,6 +407,16 @@ export function DesktopDock({
                       data-minimized={item.minimized}
                       key={item.id}
                       onClick={() => onActivate(item.id)}
+                      onContextMenu={event => {
+                        event.preventDefault()
+                        openMenu({ kind: 'internal', id: item.id }, event.currentTarget)
+                      }}
+                      onKeyDown={event => {
+                        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                          event.preventDefault()
+                          openMenu({ kind: 'internal', id: item.id }, event.currentTarget)
+                        }
+                      }}
                       title={label}
                       type="button"
                     >
@@ -411,7 +439,7 @@ export function DesktopDock({
             !
           </span>
         )}
-        {menuEnabled && menu && menuEntry && (
+        {menuEnabled && menu && (menuEntry || menuWindow) && (
           <div
             className={styles.dockMenu}
             onPointerDown={event => event.stopPropagation()}
@@ -419,91 +447,137 @@ export function DesktopDock({
             role="menu"
             style={{ left: menu.x }}
           >
-            {menuEntry.windows.map(runningWindow => (
+            {menuWindow && (
               <button
-                disabled={busy}
-                key={runningWindow.id}
                 onClick={() => {
-                  void run(() => window.spiritagent.dock.activate(menuEntry.id, runningWindow.id))
+                  onClose(menuWindow.id)
                   setMenu(null)
                 }}
                 role="menuitem"
-                title={runningWindow.title}
                 type="button"
               >
-                <span className={styles.dockWindowTitle}>{runningWindow.title}</span>
-                {runningWindow.minimized && <span className={styles.dockWindowState}>{t.minimizedWindow}</span>}
-              </button>
-            ))}
-            {menu?.pinned && (menuEntry.status === 'missing' || menuEntry.status === 'invalid') && (
-              <button
-                disabled={busy}
-                onClick={event => openPicker({ entryId: menuEntry.id, kind: 'repair' }, event.currentTarget)}
-                role="menuitem"
-                type="button"
-              >
-                {t.repairApp}
+                {t.closeWindow}
               </button>
             )}
-            {menu?.pinned ? (
+            {menuEntry && menu.kind === 'program' && (
               <>
-                <button
-                  disabled={menuIndex === 0 || busy}
-                  onClick={() => {
-                    const previous = state.entries[menuIndex - 1]
-
-                    if (previous) {
-                      reorder(menuEntry.id, previous.id)
+                {menuEntry.windows.map(runningWindow => (
+                  <div className={styles.dockWindowRow} key={runningWindow.id}>
+                    <button
+                      className={styles.dockWindowActivate}
+                      disabled={busy}
+                      onClick={() => {
+                        void run(() => window.spiritagent.dock.activate(menuEntry.id, runningWindow.id))
+                        setMenu(null)
+                      }}
+                      role="menuitem"
+                      title={runningWindow.title}
+                      type="button"
+                    >
+                      <span className={styles.dockWindowTitle}>{runningWindow.title}</span>
+                      {runningWindow.minimized && <span className={styles.dockWindowState}>{t.minimizedWindow}</span>}
+                    </button>
+                    {menuEntry.windows.length > 1 && (
+                      <button
+                        aria-label={`${t.closeWindow} · ${runningWindow.title}`}
+                        className={styles.dockWindowClose}
+                        disabled={busy}
+                        onClick={() => closeWindows(menuEntry, [runningWindow.id])}
+                        role="menuitem"
+                        title={t.closeWindow}
+                        type="button"
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {menuEntry.windows.length > 0 && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      closeWindows(
+                        menuEntry,
+                        menuEntry.windows.map(item => item.id)
+                      )
                     }
+                    role="menuitem"
+                    type="button"
+                  >
+                    {menuEntry.windows.length > 1 ? t.closeAllWindows : t.closeWindow}
+                  </button>
+                )}
+                {menu.pinned && (menuEntry.status === 'missing' || menuEntry.status === 'invalid') && (
+                  <button
+                    disabled={busy}
+                    onClick={event => openPicker({ entryId: menuEntry.id, kind: 'repair' }, event.currentTarget)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {t.repairApp}
+                  </button>
+                )}
+                {menu.pinned ? (
+                  <>
+                    <button
+                      disabled={menuIndex === 0 || busy}
+                      onClick={() => {
+                        const previous = state.entries[menuIndex - 1]
 
-                    setMenu(null)
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  {t.moveLeft}
-                </button>
-                <button
-                  disabled={menuIndex === state.entries.length - 1 || busy}
-                  onClick={() => {
-                    const next = state.entries[menuIndex + 1]
+                        if (previous) {
+                          reorder(menuEntry.id, previous.id)
+                        }
 
-                    if (next) {
-                      reorder(menuEntry.id, next.id)
-                    }
+                        setMenu(null)
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      {t.moveLeft}
+                    </button>
+                    <button
+                      disabled={menuIndex === state.entries.length - 1 || busy}
+                      onClick={() => {
+                        const next = state.entries[menuIndex + 1]
 
-                    setMenu(null)
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  {t.moveRight}
-                </button>
-                <button
-                  disabled={busy}
-                  onClick={() => {
-                    void run(() => window.spiritagent.dock.remove(menuEntry.id))
-                    setMenu(null)
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  {t.unpinApp}
-                </button>
+                        if (next) {
+                          reorder(menuEntry.id, next.id)
+                        }
+
+                        setMenu(null)
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      {t.moveRight}
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() => {
+                        void run(() => window.spiritagent.dock.remove(menuEntry.id))
+                        setMenu(null)
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      {t.unpinApp}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    disabled={busy || !menuEntry.canPin}
+                    onClick={() => {
+                      void run(() => window.spiritagent.dock.pin(menuEntry.id))
+                      setMenu(null)
+                    }}
+                    role="menuitem"
+                    title={menuEntry.canPin ? t.pinApp : t.cannotPin}
+                    type="button"
+                  >
+                    {t.pinApp}
+                  </button>
+                )}
               </>
-            ) : (
-              <button
-                disabled={busy || !menuEntry.canPin}
-                onClick={() => {
-                  void run(() => window.spiritagent.dock.pin(menuEntry.id))
-                  setMenu(null)
-                }}
-                role="menuitem"
-                title={menuEntry.canPin ? t.pinApp : t.cannotPin}
-                type="button"
-              >
-                {t.pinApp}
-              </button>
             )}
           </div>
         )}

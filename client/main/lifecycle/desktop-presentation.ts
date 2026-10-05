@@ -1225,6 +1225,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       return serial(() => native.activateExternal(windowId, eligible))
     },
+    closeExternal: (sender: WebContents, windowIds: string[]): Promise<void> => {
+      const eligible = captureDesktopEligibility(sender)
+
+      return serial(() => native.closeExternal(windowIds, eligible))
+    },
     getState: snapshot,
     setMode,
     getWindow: () => interactive,

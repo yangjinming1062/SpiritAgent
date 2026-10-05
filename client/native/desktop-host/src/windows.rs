@@ -1555,6 +1555,19 @@ impl Session {
         self.refresh_applications(false)?;
         let _transaction = MutexGuard::restoration()?;
         require_session(&self.path, &self.journal.session, &self.restoring)?;
+        self.require_external_interaction()?;
+        self.applications.activate(window_id)
+    }
+
+    fn close_external(&mut self, window_ids: &[String]) -> Result<()> {
+        self.refresh_applications(false)?;
+        let _transaction = MutexGuard::restoration()?;
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        self.require_external_interaction()?;
+        self.applications.close_windows(window_ids)
+    }
+
+    fn require_external_interaction(&self) -> Result<()> {
         let foreground = unsafe { GetForegroundWindow() };
         if !self.takeover
             || (foreground != self.worker.window()
@@ -1565,16 +1578,16 @@ impl Session {
                                 == saved.identity.window())
                 }))
         {
-            return Err("外部窗口切换需要当前桌面交互。".into());
+            return Err("外部窗口操作需要当前桌面交互。".into());
         }
         for key in [
             VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON,
         ] {
             if unsafe { GetAsyncKeyState(i32::from(key)) } < 0 {
-                return Err("请释放按键后重新切换窗口。".into());
+                return Err("请释放按键后重新操作窗口。".into());
             }
         }
-        self.applications.activate(window_id)
+        Ok(())
     }
 
     fn companion_layer(&mut self, always_on_top: bool) -> Result<()> {
@@ -1982,6 +1995,10 @@ pub fn host(path: &Path) -> Result<()> {
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(|active| active.activate_external(&window_id)),
+                    Command::CloseExternal { window_ids, .. } => session
+                        .as_mut()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| active.close_external(&window_ids)),
                     Command::CompanionLayer { always_on_top, .. } => session
                         .as_mut()
                         .ok_or("desktop host is not running".into())

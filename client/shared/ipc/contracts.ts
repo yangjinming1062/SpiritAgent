@@ -432,6 +432,7 @@ export interface IpcInvokeContract {
   'spiritagent:dock:add-from-files': () => Promise<DockState>
   'spiritagent:dock:add-dropped': (paths: string[]) => Promise<DockState>
   'spiritagent:dock:activate': (id: string, windowId?: string) => Promise<void>
+  'spiritagent:dock:close-windows': (id: string, windowIds: string[]) => Promise<void>
   'spiritagent:dock:pin': (runningId: string, beforeEntryId?: string) => Promise<DockState>
   'spiritagent:dock:reorder': (ids: string[]) => Promise<DockState>
   'spiritagent:dock:remove': (id: string) => Promise<DockState>
@@ -683,6 +684,7 @@ export const IPC = {
     dockAddFromFiles: 'spiritagent:dock:add-from-files',
     dockAddDropped: 'spiritagent:dock:add-dropped',
     dockActivate: 'spiritagent:dock:activate',
+    dockCloseWindows: 'spiritagent:dock:close-windows',
     dockPin: 'spiritagent:dock:pin',
     dockReorder: 'spiritagent:dock:reorder',
     dockRemove: 'spiritagent:dock:remove',

@@ -634,6 +634,21 @@ html.no-blur .dockPicker {
   gap: 8px;
   min-width: 0;
 }
+.dockWindowRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.dockMenu .dockWindowActivate {
+  flex: 1;
+  min-width: 0;
+}
+.dockMenu .dockWindowClose {
+  width: 32px;
+  flex-shrink: 0;
+  padding: 6px;
+  text-align: center;
+}
 .dockWindowTitle {
   display: block;
   overflow: hidden;

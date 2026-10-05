@@ -426,6 +426,37 @@ impl Applications {
         }
     }
 
+    pub(super) fn close_windows(&self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() || ids.iter().collect::<HashSet<_>>().len() != ids.len() {
+            return Err("无效窗口列表。".into());
+        }
+        let mut targets = Vec::with_capacity(ids.len());
+        for id in ids {
+            let tracked = self
+                .windows
+                .values()
+                .find(|tracked| tracked.value.id == *id)
+                .ok_or("窗口已关闭或桌面已改变，请重新选择。")?;
+            let window = tracked.identity.window();
+            if !tracked.identity.valid() || !self.eligible(window)? {
+                return Err("窗口已关闭或已离开当前桌面。".into());
+            }
+            if unsafe { IsWindowEnabled(window) } == 0 {
+                return Err("该窗口正在等待对话框，请先处理对话框。".into());
+            }
+            targets.push(&tracked.identity);
+        }
+        for identity in targets {
+            if !identity.valid() {
+                return Err("窗口已关闭，请重新选择程序。".into());
+            }
+            if unsafe { PostMessageW(identity.window(), WM_CLOSE, 0, 0) } == 0 {
+                return Err(failure("请求关闭窗口失败"));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn activate(&self, id: &str) -> Result<()> {
         let tracked = self
             .windows

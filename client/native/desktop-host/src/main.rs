@@ -96,6 +96,10 @@ enum Command {
         id: u32,
         window_id: String,
     },
+    CloseExternal {
+        id: u32,
+        window_ids: Vec<String>,
+    },
     CompanionLayer {
         id: u32,
         always_on_top: bool,
@@ -114,6 +118,7 @@ impl Command {
             | Self::Focus { id, .. }
             | Self::RefreshApplications { id }
             | Self::ActivateExternal { id, .. }
+            | Self::CloseExternal { id, .. }
             | Self::CompanionLayer { id, .. }
             | Self::Stop { id } => *id,
         }

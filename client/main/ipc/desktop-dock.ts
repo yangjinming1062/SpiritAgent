@@ -113,6 +113,7 @@ export function registerDesktopDock(options: {
   captureEligibility: (sender: WebContents) => () => boolean
   refreshApplications: (sender: WebContents) => Promise<void>
   activateExternal: (sender: WebContents, windowId: string) => Promise<void>
+  closeExternal: (sender: WebContents, windowIds: string[]) => Promise<void>
 }): void {
   const filename = path.join(options.userData, 'desktop-dock.json')
   const saved = safeReadJson<SavedDock>(filename)
@@ -132,6 +133,40 @@ export function registerDesktopDock(options: {
     if (!options.isDesktopSender(sender) || process.platform !== 'win32') {
       throw new Error('Dock 仅允许桌面入口操作。')
     }
+  }
+
+  function findRunningApplication(id: string): RunningDockApplication | undefined {
+    const entry = entries.find(item => item.id === id)
+
+    return entry
+      ? running.get(projections.get(entry.target)?.identity ?? targetIdentity(entry.target))
+      : [...running.values()].find(item => item.id === id)
+  }
+
+  function withRunningApplications(
+    sender: WebContents,
+    eligible: () => boolean,
+    action: () => Promise<void>
+  ): Promise<void> {
+    return serial(async () => {
+      assertSender(sender)
+
+      if (!eligible()) {
+        throw new Error('桌面已改变，请重新选择程序。')
+      }
+
+      await options.refreshApplications(sender)
+
+      if (!eligible()) {
+        throw new Error('桌面已改变，请重新选择程序。')
+      }
+
+      if (runtime.status !== 'ready') {
+        throw new Error(runtime.error || '运行程序列表暂时不可用，请重试。')
+      }
+
+      await action()
+    })
   }
 
   async function requirePackagedApplication(target: string): Promise<CatalogApplication> {
@@ -614,23 +649,8 @@ export function registerDesktopDock(options: {
       throw new Error('无效程序或窗口。')
     }
 
-    return serial(async () => {
-      assertSender(event.sender)
-      await options.refreshApplications(event.sender)
-
-      if (!eligible()) {
-        throw new Error('桌面已改变，请重新选择程序。')
-      }
-
-      if (runtime.status !== 'ready') {
-        throw new Error(runtime.error || '运行程序列表暂时不可用，请重试。')
-      }
-
-      const entry = entries.find(item => item.id === id)
-
-      const application = entry
-        ? running.get(projections.get(entry.target)?.identity ?? targetIdentity(entry.target))
-        : [...running.values()].find(item => item.id === id)
+    return withRunningApplications(event.sender, eligible, async () => {
+      const application = findRunningApplication(id)
 
       const window =
         windowId === undefined ? application?.windows[0] : application?.windows.find(item => item.id === windowId)
@@ -640,6 +660,8 @@ export function registerDesktopDock(options: {
 
         return
       }
+
+      const entry = entries.find(item => item.id === id)
 
       if (windowId !== undefined || !entry) {
         throw new Error('窗口已关闭，请重新选择程序。')
@@ -671,6 +693,31 @@ export function registerDesktopDock(options: {
         publish()
         throw error
       }
+    })
+  })
+  options.ipcMain.handle(IPC.invoke.dockCloseWindows, (event, id: unknown, windowIds: unknown) => {
+    assertSender(event.sender)
+    const eligible = options.captureEligibility(event.sender)
+
+    if (
+      typeof id !== 'string' ||
+      !Array.isArray(windowIds) ||
+      !windowIds.length ||
+      !windowIds.every(item => typeof item === 'string') ||
+      new Set(windowIds).size !== windowIds.length
+    ) {
+      throw new Error('无效程序或窗口。')
+    }
+
+    return withRunningApplications(event.sender, eligible, async () => {
+      const application = findRunningApplication(id)
+      const currentIds = new Set(application?.windows.map(item => item.id))
+
+      if (!windowIds.every(windowId => currentIds.has(windowId))) {
+        throw new Error('窗口已关闭或程序已改变，请重新选择。')
+      }
+
+      await options.closeExternal(event.sender, windowIds)
     })
   })
   options.ipcMain.handle(IPC.invoke.dockPin, (event, runningId: unknown, beforeEntryId: unknown) => {

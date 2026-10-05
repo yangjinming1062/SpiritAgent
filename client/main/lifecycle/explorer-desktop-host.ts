@@ -57,6 +57,7 @@ export interface ExplorerDesktopHost {
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   refreshApplications: (eligible: () => boolean) => Promise<void>
   activateExternal: (windowId: string, eligible: () => boolean) => Promise<void>
+  closeExternal: (windowIds: string[], eligible: () => boolean) => Promise<void>
   stop: () => Promise<void>
   recover: () => Promise<boolean>
   status: () => 'idle' | 'starting' | 'running' | 'stopping'
@@ -619,6 +620,17 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
         }
 
         await request({ command: 'activate_external', window_id: windowId }, 1_000, true)
+      })
+    },
+    closeExternal: (windowIds, eligible) => {
+      const currentGeneration = generation
+
+      return serialize(async () => {
+        if (state !== 'running' || generation !== currentGeneration || !eligible()) {
+          throw new Error('桌面已改变，请重新选择窗口。')
+        }
+
+        await request({ command: 'close_external', window_ids: windowIds }, 1_000, true)
       })
     },
     heartbeat: async () => {

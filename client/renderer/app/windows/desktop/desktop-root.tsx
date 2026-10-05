@@ -626,6 +626,7 @@ export function DesktopRoot(): React.JSX.Element {
       <DesktopDock
         menuEnabled={desktopVisible && !accountOpen && !settingsOpen && !companionMenuOpen}
         onActivate={activatePanel}
+        onClose={close}
         onMenuOpenChange={setDockOverlayOpen}
         windows={layout.windows}
       />
