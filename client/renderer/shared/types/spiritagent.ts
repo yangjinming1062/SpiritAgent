@@ -118,6 +118,7 @@ export interface SessionResumeResponse {
 }
 
 export interface SessionRuntimeInfo {
+  system_preset_id: string
   is_automation?: boolean
   /** 客户端 IM 守卫与语音入口的权威判定源，避免依赖尚未加载的会话列表。 */
   kind?: 'im' | 'special' | 'standard' | (string & {})

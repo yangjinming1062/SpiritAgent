@@ -844,7 +844,7 @@ export const dict = {
       reasoningHints: {
         high: '深推理，适合复杂方案与证明。',
         low: '短思考，适合简单问答。',
-        medium: '常规推导，适合开发与排错。',
+        medium: '常规推导，适合写作与语言学习。',
         none: '直接作答，响应最快。',
         minimal: '极轻思考，略高于关闭，适合极简问答。',
         xhigh: '超深推理，适合复杂推演与研究级任务。',
@@ -1242,14 +1242,10 @@ export const dict = {
   presets: {
     names: {
       companion: '陪伴',
-      developer: '工程师',
-      product_manager: '产品经理',
       copywriter: '文案秘书',
       language_teacher: '语言老师'
     },
     descriptions: {
-      developer: '技术解释、方案设计、编码调试与代码审查，重视项目约束和验证。',
-      product_manager: '厘清用户问题与目标，权衡方案，形成可执行、可验收的产品需求。',
       copywriter: '起草、润色与整理文案、邮件和会议记录，保留原意，贴合受众与场合。',
       language_teacher: '按水平与目标讲解、纠错和练习，提供忠实自然的翻译。'
     }
@@ -1257,6 +1253,7 @@ export const dict = {
 
   workbench: {
     title: '工作台',
+    selectSession: '请选择左侧对话，或新建对话',
     stationBadge: '工作工位',
     stationSettingsBadge: '工位设置',
     stationSettingsTooltip: '工位环境配置',
@@ -1283,13 +1280,13 @@ export const dict = {
       noMatch: '没有找到匹配会话',
       badgeArchived: '已归档',
       fixedHeading: '固定对话',
-      specialHeading: '专业工作预设',
+      specialHeading: '日常辅助',
       loadingSpecial: '加载预设会话中…',
-      noSpecial: '暂无专业预设会话',
+      noSpecial: '暂无日常辅助会话',
       regularHeading: '常规对话',
       loadingSessions: '加载会话中…',
       noRegular: '暂无常规对话，点击上方新建',
-      specialStationFallback: '专业工位',
+      specialStationFallback: '日常辅助',
       newSessionFallback: '新对话',
       messageCount: (n: number) => `${n} 条消息`,
       sortOptions: {

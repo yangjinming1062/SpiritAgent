@@ -33,7 +33,7 @@
   },
   "bundle": {
     "active": true,
-    "category": "DeveloperTool",
+    "category": "Lifestyle",
     "shortDescription": "唤生",
     "longDescription": "把唤生桌面版安装到本机。由 installer/install.ps1 (Windows) 与 installer/install.sh (macOS) 执行安装流程。",
     "publisher": "唤生",

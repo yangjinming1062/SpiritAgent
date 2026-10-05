@@ -8,7 +8,7 @@ import {
   presetDisplayDescription,
   presetDisplayName
 } from '@/modules/conversation'
-import { Cpu, Globe, type IconComponent, List, MessageCircle, Pencil, Sparkles } from '@/shared/lib/icons'
+import { Globe, type IconComponent, MessageCircle, Pencil, Sparkles } from '@/shared/lib/icons'
 import { BTN_PRIMARY, BTN_SUBTLE, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 import type { SystemPresetSummary } from '@/shared/types/spiritagent'
@@ -16,8 +16,6 @@ import type { SystemPresetSummary } from '@/shared/types/spiritagent'
 // icon_key → Tabler 图标映射，预设选择与会话侧栏共用。新增预设须同步后端 BUILTIN_PRESETS 的 icon_key 与此表。
 const PRESET_ICONS: Record<string, IconComponent> = {
   preset_companion: Sparkles,
-  preset_developer: Cpu,
-  preset_product_manager: List,
   preset_copywriter: Pencil,
   preset_language_teacher: Globe
 }
@@ -39,7 +37,7 @@ interface PresetPickerModalProps {
   onClose: () => void
 }
 
-// 新建会话只列专业预设；固定陪伴由单独入口承载。
+// 新建会话只列日常辅助预设；固定陪伴由单独入口承载。
 export function PresetPickerModal({ presets, loading, onConfirm, onClose }: PresetPickerModalProps): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string>('')
   const fetched = useStore($systemPresetsFetched)

@@ -21,6 +21,7 @@ class SessionRuntimeInfo(BaseModel):
     model: str | None
     provider: str
     running: bool
+    system_preset_id: str
     settings: dict[str, Any] = Field(default_factory=dict)
     context_window: int | None = None
     # 客户端 IM 守卫与语音入口的权威判定源，避免依赖尚未加载的会话列表。
@@ -90,6 +91,8 @@ def build_runtime_info(
     llm_config: UserLlmConfig,
     runtime: RuntimeSession,
     settings: dict[str, Any],
+    *,
+    system_preset_id: str,
 ) -> SessionRuntimeInfo:
     """发给 renderer 的会话运行信息；settings 为会话覆盖叠加生效推理参数。"""
     provider = llm_config.provider_name or "openai"
@@ -97,6 +100,7 @@ def build_runtime_info(
         model=llm_config.model_name,
         provider=provider,
         running=runtime.busy,
+        system_preset_id=system_preset_id,
         settings=settings,
         context_window=resolve_context_tokens(provider),
         kind=runtime.kind,

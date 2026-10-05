@@ -14,7 +14,7 @@ export interface SlashCommandMeta {
   aliases: readonly string[]
   /** 给自动补全弹层与 /帮助 展示的描述。 */
   description: string
-  /** 是否需要前端二次确认弹窗（companion / developer 等预设对话尤其重要）。 */
+  /** 是否需要前端二次确认弹窗（固定预设对话尤其重要）。 */
   requiresConfirmation: boolean
 }
 

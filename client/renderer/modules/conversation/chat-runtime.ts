@@ -180,6 +180,7 @@ export function createConversationRuntime(sessionId: string | null) {
   }
 
   const $chatSessionKind = atom<ChatSessionKind>('standard')
+  const $chatSessionPresetId = atom<string | null>(null)
   const $chatSessionReadOnly = atom(false)
 
   const $pendingPromptBatch = atom<PendingPromptItem[]>([])
@@ -287,6 +288,7 @@ export function createConversationRuntime(sessionId: string | null) {
   }
 
   function hydrateSessionSettings(info: SessionRuntimeInfo): void {
+    $chatSessionPresetId.set(info.system_preset_id ?? null)
     $sessionSettings.set(toSessionSettings(info.settings))
   }
 
@@ -1196,6 +1198,7 @@ export function createConversationRuntime(sessionId: string | null) {
     conversationVoiceSink().cancel($chatSessionId.get())
     $chatMessageList.set([])
     $chatMessageBodies.set({})
+    $chatSessionPresetId.set(null)
     $lastAssistantStreaming.set(false)
     $chatTurnInFlight.set(false)
     $turnHadBubbleBreak.set(false)
@@ -1330,6 +1333,7 @@ export function createConversationRuntime(sessionId: string | null) {
     $chatStreamingTick,
     $chatSessionId,
     $chatSessionKind,
+    $chatSessionPresetId,
     $chatSessionReadOnly,
     $pendingPromptBatch,
     $chatTurnInFlight,

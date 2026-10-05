@@ -13,12 +13,15 @@ import { StationSettings } from '@/app/features/workbench/station-settings'
 import styles from '@/app/features/workbench/workbench.module.css'
 import { SpriteStatusBadge } from '@/modules/character'
 import {
+  $archivedSessions,
   $chatSessionId,
   $currentSessionTitle,
+  $searchResults,
   $sessions,
+  $sessionsLoading,
   ChatPanel,
-  isCompanionSession,
   switchSession,
+  useConversationView,
   useIsReadOnlySession
 } from '@/modules/conversation'
 import { MediaViewerOverlay } from '@/modules/media'
@@ -27,7 +30,7 @@ import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { normalizeHashPath } from '@/shared/lib/hash-route'
 import { ArrowLeft, Home, SlidersHorizontal, Terminal } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { WindowControls } from '@/shared/panel'
+import { EmptyState, LoadingBlock, WindowControls } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 import { requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
@@ -55,37 +58,31 @@ export function WorkbenchRoot(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.workbench
   const sessions = useStore($sessions)
+  const archivedSessions = useStore($archivedSessions)
+  const searchResults = useStore($searchResults)
+  const sessionsLoading = useStore($sessionsLoading)
+  const { runtime } = useConversationView()
+  const mountedPresetId = useStore(runtime.$chatSessionPresetId)
 
   useEffect(() => {
     document.title = `${dict.brand.name} · ${t.title}`
   }, [dict.brand.name, t.title])
+
   const isReadOnlySession = useIsReadOnlySession()
-  const activeSession = sessions.find(session => session.id === currentSessionId)
-  const canShowChat = activeSession !== undefined && !isCompanionSession(activeSession)
+
+  const activeSession =
+    sessions.find(session => session.id === currentSessionId) ??
+    archivedSessions.find(session => session.id === currentSessionId) ??
+    searchResults.find(session => session.id === currentSessionId)
+
+  const presetId = mountedPresetId ?? activeSession?.system_preset_id
+  const canShowChat = Boolean(currentSessionId && presetId && presetId !== 'companion')
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const [settingsOpen, setSettingsOpen] = useState(() => isStationSettingsHash(window.location.hash))
 
   const sessionFromUrlHandledRef = useRef(false)
-
-  // 保证工作台处于有效工作会话下（不处于生活空间的「陪伴」会话下，且空会话时自动定位到开发工位）
-  useEffect(() => {
-    if (gatewayState !== 'open' || sessions.length === 0) {
-      return
-    }
-
-    const current = sessions.find(s => s.id === currentSessionId)
-
-    if (!current || isCompanionSession(current)) {
-      const workTarget =
-        sessions.find(s => s.system_preset_id === 'developer') ?? sessions.find(s => !isCompanionSession(s))
-
-      if (workTarget && workTarget.id !== currentSessionId) {
-        void switchSession(workTarget.id)
-      }
-    }
-  }, [sessions, currentSessionId, gatewayState])
 
   useEffect(() => {
     if (gatewayState !== 'open' || sessionFromUrlHandledRef.current) {
@@ -145,8 +142,11 @@ export function WorkbenchRoot(): React.JSX.Element {
             <Terminal className={styles.titleIcon} size={18} />
             <h1 className={styles.brandTitle}>{t.title}</h1>
             <SpriteStatusBadge />
-            <div className={styles.sessionBadge} title={settingsOpen ? t.stationSettingsTooltip : title}>
-              <span>{settingsOpen ? t.stationSettingsBadge : title || t.stationBadge}</span>
+            <div
+              className={styles.sessionBadge}
+              title={settingsOpen ? t.stationSettingsTooltip : canShowChat ? title : t.stationBadge}
+            >
+              <span>{settingsOpen ? t.stationSettingsBadge : (canShowChat && title) || t.stationBadge}</span>
             </div>
           </div>
 
@@ -189,7 +189,7 @@ export function WorkbenchRoot(): React.JSX.Element {
           </div>
 
           <main className={styles.center}>
-            {canShowChat && (
+            {canShowChat ? (
               <ChatPanel
                 className="flex-1 min-h-0"
                 gatewayState={gatewayState}
@@ -199,6 +199,14 @@ export function WorkbenchRoot(): React.JSX.Element {
                 surfaceClassName={styles.chatSurface}
                 variant="workbench"
               />
+            ) : (
+              <div className="flex flex-1 items-center justify-center">
+                {sessionsLoading ? (
+                  <LoadingBlock label={dict.common.loading} />
+                ) : (
+                  <EmptyState title={t.selectSession} />
+                )}
+              </div>
             )}
           </main>
 

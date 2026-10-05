@@ -330,7 +330,7 @@ export async function archiveSession(sessionId: string, archived: boolean): Prom
   void fetchArchived()
 }
 
-export async function createNewSession(systemPresetId?: string | null): Promise<string | null> {
+export async function createNewSession(systemPresetId: string): Promise<string | null> {
   const epoch = currentClearEpoch()
   const gw = $gateway.get()
 
@@ -341,13 +341,9 @@ export async function createNewSession(systemPresetId?: string | null): Promise<
   const token = ++navigationToken
 
   try {
-    const params: Record<string, unknown> = {}
-
-    if (systemPresetId) {
-      params.system_preset_id = systemPresetId
-    }
-
-    const res = await gw.request<{ session_id: string; info?: SessionResumeResponse['info'] }>('session.create', params)
+    const res = await gw.request<{ session_id: string; info?: SessionResumeResponse['info'] }>('session.create', {
+      system_preset_id: systemPresetId
+    })
 
     if (epoch !== currentClearEpoch() || $gateway.get() !== gw) {
       return null

@@ -733,7 +733,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             llm_config = await resolve_user_llm_config(db, user_id)
         effective = merge_session_settings(user_settings, runtime.settings, conv=conv)
         settings = runtime.settings | asdict(resolve_inference_settings(effective, conv=conv))
-        return build_runtime_info(llm_config, runtime, settings)
+        return build_runtime_info(llm_config, runtime, settings, system_preset_id=conv.system_preset_id)
 
     async def _mounted_history(
         conv: Conversation,
@@ -777,15 +777,12 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("session.get_main", session_get_main)
 
     async def session_create(params: dict) -> dict:
-        raw_preset = params.get("system_preset_id")
-        preset_id: str = "developer"
-        if raw_preset is not None and raw_preset != "":
-            if not isinstance(raw_preset, str) or raw_preset not in SYSTEM_PRESET_CATALOG:
-                raise JsonRpcError(
-                    JSONRPC_INVALID_PARAMS,
-                    f"system_preset_id must be one of {sorted(SYSTEM_PRESET_CATALOG)} or omitted",
-                )
-            preset_id = raw_preset
+        preset_id = params.get("system_preset_id")
+        if not isinstance(preset_id, str) or preset_id not in SYSTEM_PRESET_CATALOG:
+            raise JsonRpcError(
+                JSONRPC_INVALID_PARAMS,
+                f"system_preset_id must be one of {sorted(SYSTEM_PRESET_CATALOG)}",
+            )
         async with SESSION_LOCAL() as db:
             conv = Conversation(user_id=user_id, system_preset_id=preset_id)
             db.add(conv)

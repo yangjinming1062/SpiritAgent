@@ -29,20 +29,6 @@ SYSTEM_PRESET_CATALOG: dict[str, SystemPresetMeta] = {
         icon_key="preset_companion",
         inference_defaults=InferenceDefaults(0.7, 0.7, "low"),
     ),
-    "developer": SystemPresetMeta(
-        id="developer",
-        name="工程师",
-        description="技术解释、方案设计、编码调试与代码审查，重视项目约束和验证。",
-        icon_key="preset_developer",
-        inference_defaults=InferenceDefaults(0.2, 0.85, "high"),
-    ),
-    "product_manager": SystemPresetMeta(
-        id="product_manager",
-        name="产品经理",
-        description="厘清用户问题与目标，权衡方案，形成可执行、可验收的产品需求。",
-        icon_key="preset_product_manager",
-        inference_defaults=InferenceDefaults(0.5, 0.8, "high"),
-    ),
     "copywriter": SystemPresetMeta(
         id="copywriter",
         name="文案秘书",

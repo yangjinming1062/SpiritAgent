@@ -397,7 +397,7 @@ _TERMINAL_SCHEMA_TEMPLATE: dict[str, Any] = {
                 "type": "boolean",
                 "description": (
                     "Run a background command on the local host in a pseudo-terminal (PTY), for interactive "
-                    "CLI tools like Codex, Claude Code, or Python REPL; send input with the process tool. "
+                    "CLI tools such as a Python REPL; send input with the process tool. "
                     "Has no effect on foreground commands or remote hosts. Default: false."
                 ),
                 "default": False,

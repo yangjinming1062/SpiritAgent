@@ -5,7 +5,7 @@ from pathlib import Path
 from .constants import get_skills_dir
 from .credential_files import get_external_skills_dirs
 
-_PRESETS = frozenset({"companion", "developer", "product_manager", "copywriter", "language_teacher"})
+_PRESETS = frozenset({"companion", "copywriter", "language_teacher"})
 
 
 @dataclass(frozen=True, slots=True)

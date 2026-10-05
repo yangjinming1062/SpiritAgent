@@ -901,7 +901,7 @@ export const dict: Dictionary = {
       reasoningHints: {
         high: 'Deep reasoning — suited for complex plans and proofs.',
         low: 'Quick thinking — best for simple Q&A.',
-        medium: 'Standard reasoning — good for development and debugging.',
+        medium: 'Standard reasoning — good for writing and language learning.',
         none: 'Direct answers — fastest response.',
         minimal: 'Barely-there thinking — just above off, for the simplest prompts.',
         xhigh: 'Extra-deep reasoning — for research-grade problems and hard proofs.',
@@ -1319,16 +1319,10 @@ export const dict: Dictionary = {
   presets: {
     names: {
       companion: 'Companion',
-      developer: 'Engineer',
-      product_manager: 'Product manager',
       copywriter: 'Copywriter',
       language_teacher: 'Language teacher'
     },
     descriptions: {
-      developer:
-        'Technical explanations, design, coding, debugging and code review, with attention to project constraints and verification.',
-      product_manager:
-        'Clarifies user problems and goals, weighs options, and turns them into actionable, verifiable product requirements.',
       copywriter:
         'Drafts, polishes and organizes copy, emails and meeting notes, keeping the original meaning and fitting the audience and occasion.',
       language_teacher:
@@ -1338,6 +1332,7 @@ export const dict: Dictionary = {
 
   workbench: {
     title: 'Workbench',
+    selectSession: 'Select a conversation on the left, or create a new one',
     stationBadge: 'Work station',
     stationSettingsBadge: 'Station settings',
     stationSettingsTooltip: 'Workstation environment',
@@ -1364,13 +1359,13 @@ export const dict: Dictionary = {
       noMatch: 'No matching conversations',
       badgeArchived: 'Archived',
       fixedHeading: 'Fixed conversations',
-      specialHeading: 'Professional work presets',
+      specialHeading: 'Everyday assistance',
       loadingSpecial: 'Loading preset conversations…',
-      noSpecial: 'No professional preset conversations',
+      noSpecial: 'No everyday assistance conversations',
       regularHeading: 'Regular conversations',
       loadingSessions: 'Loading conversations…',
       noRegular: 'No regular conversations yet — tap above to create one',
-      specialStationFallback: 'Pro station',
+      specialStationFallback: 'Everyday assistance',
       newSessionFallback: 'New conversation',
       messageCount: (n: number) => `${n} messages`,
       sortOptions: {

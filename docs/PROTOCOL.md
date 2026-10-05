@@ -34,7 +34,9 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 
 `kind` 与 `system_preset_id` 是不同维度，不能互相推断；自动化标记与 `system_preset_id='automation'` 由数据库约束等价。每条会话持久化 `kind` 与非空 `system_preset_id`，预设创建后不可更改，换记忆域须切换或新建会话：固定系统对话为 special，普通及任务会话为 standard，渠道会话为 im。
 
-每用户每预设最多一条固定 special，不可删除或改名。`session.create` 接受目录内任一预设，省略时默认 developer、不回落陪伴域；工作台新建入口只列专业预设。`system.list_presets` 只向客户端返回展示元数据，不下发提示词正文。目录见 [presets](../backend/services/domains/conversation/presets.py)。
+每用户每预设最多一条固定 special，不可删除或改名。`session.create` 必须显式提供目录内有效的 `system_preset_id` 字符串，缺失、空值、非字符串或未知预设返回参数错误；工作台新建入口只列文案秘书和语言老师。`system.list_presets` 只向客户端返回展示元数据，不下发提示词正文。目录见 [presets](../backend/services/domains/conversation/presets.py)。
+
+会话挂载结果的 `info.system_preset_id` 给出服务端确认的预设归属，工作台据此判断会话展示；列表分页或归档不改变已选会话的归属。
 
 | 操作 | 普通会话 | 固定系统对话 | 任务会话 | IM |
 |---|---|---|---|---|

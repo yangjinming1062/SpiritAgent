@@ -117,7 +117,7 @@
       "dist/**"
     ],
     "mac": {
-      "category": "public.app-category.developer-tools",
+      "category": "public.app-category.lifestyle",
       "entitlements": "main/security/entitlements.mac.plist",
       "entitlementsInherit": "main/security/entitlements.mac.inherit.plist",
       "extendInfo": {
