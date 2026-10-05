@@ -20,12 +20,6 @@
   cursor: default;
   opacity: 0.45;
 }
-.desktop button:focus-visible,
-.desktop input:focus-visible,
-.desktop select:focus-visible {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 3px;
-}
 .topbar {
   height: var(--desktop-bar);
   position: absolute;
