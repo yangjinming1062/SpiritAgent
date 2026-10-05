@@ -26,6 +26,7 @@ export type {
   DockCatalogSourceKey,
   DockEntry,
   DockState,
+  DockWindow,
   PixelSize,
   PresentationDisplay,
   PresentationMode,
@@ -430,7 +431,8 @@ export interface IpcInvokeContract {
   'spiritagent:dock:add-from-catalog': (ids: string[]) => Promise<DockState>
   'spiritagent:dock:add-from-files': () => Promise<DockState>
   'spiritagent:dock:add-dropped': (paths: string[]) => Promise<DockState>
-  'spiritagent:dock:launch': (id: string) => Promise<void>
+  'spiritagent:dock:activate': (id: string, windowId?: string) => Promise<void>
+  'spiritagent:dock:pin': (runningId: string, beforeEntryId?: string) => Promise<DockState>
   'spiritagent:dock:reorder': (ids: string[]) => Promise<DockState>
   'spiritagent:dock:remove': (id: string) => Promise<DockState>
   'spiritagent:dock:repair-with-catalog': (entryId: string, catalogId: string) => Promise<DockState>
@@ -680,7 +682,8 @@ export const IPC = {
     dockAddFromCatalog: 'spiritagent:dock:add-from-catalog',
     dockAddFromFiles: 'spiritagent:dock:add-from-files',
     dockAddDropped: 'spiritagent:dock:add-dropped',
-    dockLaunch: 'spiritagent:dock:launch',
+    dockActivate: 'spiritagent:dock:activate',
+    dockPin: 'spiritagent:dock:pin',
     dockReorder: 'spiritagent:dock:reorder',
     dockRemove: 'spiritagent:dock:remove',
     dockRepairWithCatalog: 'spiritagent:dock:repair-with-catalog',

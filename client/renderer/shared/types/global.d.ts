@@ -61,7 +61,8 @@ declare global {
         addDroppedFiles: (
           files: File[]
         ) => Promise<Awaited<ReturnType<IpcInvokeContract['spiritagent:dock:add-dropped']>>>
-        launch: AsyncIpc<IpcInvokeContract['spiritagent:dock:launch']>
+        activate: AsyncIpc<IpcInvokeContract['spiritagent:dock:activate']>
+        pin: AsyncIpc<IpcInvokeContract['spiritagent:dock:pin']>
         reorder: AsyncIpc<IpcInvokeContract['spiritagent:dock:reorder']>
         remove: AsyncIpc<IpcInvokeContract['spiritagent:dock:remove']>
         repairWithCatalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair-with-catalog']>

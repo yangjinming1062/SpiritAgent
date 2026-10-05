@@ -456,13 +456,15 @@
   font-size: 18px;
   font-weight: 600;
 }
-.internalDockItem i {
+.runningDot {
   position: absolute;
   bottom: -6px;
   width: 4px;
   height: 4px;
   border-radius: 50%;
   background: var(--ui-text-muted);
+  left: 50%;
+  transform: translateX(-50%);
 }
 .internalDockItem[data-minimized='true'] {
   opacity: 0.6;
@@ -485,7 +487,10 @@
   bottom: 66px;
   left: 50%;
   transform: translateX(-50%);
-  width: 160px;
+  width: 240px;
+  max-width: calc(100vw - 32px);
+  max-height: min(400px, calc(100vh - 150px));
+  overflow-y: auto;
   padding: 5px;
   border-radius: 9px;
   border: 1px solid var(--ui-line-standard);
@@ -622,6 +627,26 @@ html.no-blur .dockPicker {
   width: max-content;
   gap: 8px;
   align-items: end;
+}
+.dockGroup {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+.dockWindowTitle {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dockWindowState {
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+.dockWarning {
+  align-self: center;
+  color: var(--ui-text-muted);
 }
 
 /* 选择面板是 Dock 的兄弟节点：.dock 的 backdrop-filter 会成为 fixed 子元素的包含块。 */

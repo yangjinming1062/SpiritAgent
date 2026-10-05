@@ -119,7 +119,8 @@ contextBridge.exposeInMainWorld('spiritagent', {
     addFromFiles: () => invoke(IPC.invoke.dockAddFromFiles),
     addDroppedFiles: (files: File[]) =>
       invoke(IPC.invoke.dockAddDropped, files.map(file => webUtils.getPathForFile(file)).filter(Boolean)),
-    launch: (id: string) => invoke(IPC.invoke.dockLaunch, id),
+    activate: (id: string, windowId?: string) => invoke(IPC.invoke.dockActivate, id, windowId),
+    pin: (runningId: string, beforeEntryId?: string) => invoke(IPC.invoke.dockPin, runningId, beforeEntryId),
     reorder: (ids: string[]) => invoke(IPC.invoke.dockReorder, ids),
     remove: (id: string) => invoke(IPC.invoke.dockRemove, id),
     repairWithCatalog: (entryId: string, catalogId: string) =>

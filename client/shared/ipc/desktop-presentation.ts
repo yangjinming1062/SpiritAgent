@@ -64,17 +64,30 @@ export interface DesktopBackground {
   reduceMotion: boolean
 }
 
+export interface DockWindow {
+  id: string
+  title: string
+  minimized: boolean
+}
+
 export interface DockEntry {
   id: string
   name: string
   icon: string | null
-  status: 'ready' | 'missing' | 'invalid'
+  status: 'loading' | 'ready' | 'missing' | 'invalid'
   error?: string
+  running: boolean
+  windows: DockWindow[]
+  canPin: boolean
 }
 
 export interface DockState {
   revision: number
+  pinnedRevision: number
   entries: DockEntry[]
+  runningEntries: DockEntry[]
+  runningStatus: 'inactive' | 'loading' | 'ready' | 'unavailable'
+  runningError: string | null
 }
 
 export type DockCatalogSourceKey =

@@ -28,10 +28,15 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 const MAX_JOURNAL_BYTES: u64 = 1_048_576;
 const LEASE_DURATION: Duration = Duration::from_secs(10);
 const OVERLAY_GEOMETRY_TIMEOUT: Duration = Duration::from_secs(2);
+const DESKTOP_LAYER_TIMEOUT: Duration = Duration::from_secs(2);
 const HOTKEY_ID: i32 = 0x5341;
 
 mod workspace;
 use workspace::{RestoreWorkArea, Workspace};
+mod events;
+use events::WinEvents;
+mod applications;
+use applications::Applications;
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -841,36 +846,21 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
             | mouse_passthrough) as isize,
     )?;
     set_parent(window, layer)?;
+    if saved.role == WindowRole::Background {
+        // SetParent 会添加兄弟裁剪；整屏透明伙伴会将背景表面裁空，须在挂载后清除。
+        let attached_style = unsafe { GetWindowLongPtrW(window, GWL_STYLE) } as u32;
+        set_long(
+            window,
+            GWL_STYLE,
+            (attached_style & !WS_CLIPSIBLINGS) as isize,
+        )?;
+    }
     if unsafe { AreDpiAwarenessContextsEqual(original_dpi, GetWindowDpiAwarenessContext(window)) }
         == 0
     {
         return Err("Electron DPI awareness changed after Explorer attachment".into());
     }
     move_window(window, layer, bounds)?;
-    if worker.class == "Progman" {
-        let view = Identity::capture(child(layer, "SHELLDLL_DefView"))?;
-        if view.pid != worker.pid
-            || view.created != worker.created
-            || unsafe { GetParent(view.window()) } != layer
-        {
-            return Err("Explorer icon view changed before desktop ordering".into());
-        }
-        // 仅调整自有子窗，保留图标视图在上、系统背景 WorkerW 在下的顺序。
-        if unsafe {
-            SetWindowPos(
-                window,
-                view.window(),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-            )
-        } == 0
-        {
-            return Err(failure("desktop child window ordering"));
-        }
-    }
     let mut client: RECT = unsafe { zeroed() };
     if unsafe { GetClientRect(window, &mut client) } == 0 {
         return Err(failure("GetClientRect"));
@@ -923,6 +913,61 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
     }
     visibility(&saved.identity, true)?;
     Ok(())
+}
+
+fn order_desktop_children(
+    windows: &[RestoreWindow],
+    worker: &Identity,
+    companion_always_on_top: bool,
+    takeover: bool,
+) -> Result<bool> {
+    let layer = worker.window();
+    let mut previous = HWND_TOP;
+    if worker.class == "Progman" && !takeover {
+        let view = child(layer, "SHELLDLL_DefView");
+        if view.is_null() || window_pid(view) != worker.pid || unsafe { GetParent(view) } != layer {
+            return Err("Explorer icon view changed before desktop ordering".into());
+        }
+        previous = view;
+    }
+    // 接管时自有子窗连续排列在 Explorer 子窗前方，伙伴保持在背景上方。
+    let children = windows
+        .iter()
+        .filter(|saved| saved.role == WindowRole::Companion && !companion_always_on_top)
+        .chain(
+            windows
+                .iter()
+                .filter(|saved| saved.role == WindowRole::Background),
+        );
+    let mut changed = false;
+    for saved in children {
+        let window = saved.identity.window();
+        if unsafe { GetParent(window) } != layer {
+            return Err("desktop child window left its Explorer layer".into());
+        }
+        if changed || unsafe { GetWindow(window, GW_HWNDPREV) } != previous {
+            if !saved.identity.valid() || !worker.valid() {
+                return Err("desktop child ordering window identity changed".into());
+            }
+            if unsafe {
+                SetWindowPos(
+                    window,
+                    previous,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_ASYNCWINDOWPOS,
+                )
+            } == 0
+            {
+                return Err(failure("desktop child window ordering"));
+            }
+            changed = true;
+        }
+        previous = window;
+    }
+    Ok(changed)
 }
 
 fn raise_window(saved: &RestoreWindow, bounds: Bounds) -> Result<()> {
@@ -1012,7 +1057,29 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
             let result = set_long(window, GWL_STYLE, saved.style as isize)
                 .and_then(|()| set_long(window, GWL_EXSTYLE, saved.ex_style as isize))
                 .and_then(|()| set_parent(window, parent))
-                .and_then(|()| move_window(window, parent, saved.bounds));
+                .and_then(|()| move_window(window, parent, saved.bounds))
+                .and_then(|()| {
+                    // 置顶属性属于层序状态，仅恢复 GWL_EXSTYLE 不能清除其残留。
+                    if unsafe {
+                        SetWindowPos(
+                            window,
+                            if saved.ex_style as u32 & WS_EX_TOPMOST != 0 {
+                                HWND_TOPMOST
+                            } else {
+                                HWND_NOTOPMOST
+                            },
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                        )
+                    } == 0
+                    {
+                        return Err(failure("restore desktop window topmost state"));
+                    }
+                    Ok(())
+                });
             if let Err(error) = result {
                 failures.push(error);
             }
@@ -1160,7 +1227,10 @@ struct Session {
     lease_number: u64,
     foreground: Option<(bool, bool, bool)>,
     overlay_geometry_pending: Vec<Option<Instant>>,
+    child_order_pending: Option<Instant>,
     workspace: Workspace,
+    events: WinEvents,
+    applications: Applications,
     companion_always_on_top: bool,
     takeover: bool,
     last_shell_scan: Instant,
@@ -1195,6 +1265,7 @@ impl Session {
         if actual_parent()? != parent_pid {
             return Err("desktop windows must belong to the helper's real parent process".into());
         }
+        let events = WinEvents::start()?;
         if specs.is_empty() || specs.len() > 32 {
             return Err("desktop requires between 1 and 32 windows".into());
         }
@@ -1400,6 +1471,7 @@ impl Session {
                 }
                 workspace.activate()?;
             }
+            order_desktop_children(&journal.windows, &worker, companion_always_on_top, takeover)?;
             journal.phase = JournalPhase::Active;
             journal.save(path)?;
             Ok(())
@@ -1410,6 +1482,13 @@ impl Session {
             return Err(finish_failed_start(error, restored, &mut guardian, false));
         }
         let overlay_geometry_pending = vec![None; targets.len()];
+        let applications = match Applications::new(&journal.session, parent_pid) {
+            Ok(applications) => applications,
+            Err(error) => {
+                let restored = restore(path, Some(&journal.session));
+                return Err(finish_failed_start(error, restored, &mut guardian, false));
+            }
+        };
         Ok(Self {
             journal,
             worker,
@@ -1420,7 +1499,10 @@ impl Session {
             lease_number: 0,
             foreground: None,
             overlay_geometry_pending,
+            child_order_pending: None,
             workspace,
+            events,
+            applications,
             companion_always_on_top,
             takeover,
             last_shell_scan: Instant::now(),
@@ -1439,6 +1521,60 @@ impl Session {
         )?;
         self.last_heartbeat = Instant::now();
         Ok(())
+    }
+
+    fn refresh_applications(&mut self, force: bool) -> Result<()> {
+        let events = self.events.drain();
+        {
+            let _transaction = MutexGuard::restoration()?;
+            require_session(&self.path, &self.journal.session, &self.restoring)?;
+            if order_desktop_children(
+                &self.journal.windows,
+                &self.worker,
+                self.companion_always_on_top,
+                self.takeover,
+            )? {
+                if self
+                    .child_order_pending
+                    .get_or_insert_with(Instant::now)
+                    .elapsed()
+                    >= DESKTOP_LAYER_TIMEOUT
+                {
+                    return Err("desktop child window ordering did not settle".into());
+                }
+            } else {
+                self.child_order_pending = None;
+            }
+            self.workspace.poll(&events)?;
+        }
+        self.applications.poll(&events, force);
+        Ok(())
+    }
+
+    fn activate_external(&mut self, window_id: &str) -> Result<()> {
+        self.refresh_applications(false)?;
+        let _transaction = MutexGuard::restoration()?;
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        let foreground = unsafe { GetForegroundWindow() };
+        if !self.takeover
+            || (foreground != self.worker.window()
+                && !self.journal.windows.iter().any(|saved| {
+                    saved.identity.valid()
+                        && (foreground == saved.identity.window()
+                            || unsafe { GetAncestor(foreground, GA_ROOTOWNER) }
+                                == saved.identity.window())
+                }))
+        {
+            return Err("外部窗口切换需要当前桌面交互。".into());
+        }
+        for key in [
+            VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON,
+        ] {
+            if unsafe { GetAsyncKeyState(i32::from(key)) } < 0 {
+                return Err("请释放按键后重新切换窗口。".into());
+            }
+        }
+        self.applications.activate(window_id)
     }
 
     fn companion_layer(&mut self, always_on_top: bool) -> Result<()> {
@@ -1616,11 +1752,7 @@ impl Session {
             self.refresh_shell()?;
             self.worker = replacement;
         }
-        {
-            let _transaction = MutexGuard::restoration()?;
-            require_session(&self.path, &self.journal.session, &self.restoring)?;
-            self.workspace.poll()?;
-        }
+        self.refresh_applications(false)?;
         if self.takeover && self.last_shell_scan.elapsed() >= Duration::from_secs(1) {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
@@ -1842,6 +1974,14 @@ pub fn host(path: &Path) -> Result<()> {
                         .as_ref()
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(|active| active.focus(&handle)),
+                    Command::RefreshApplications { .. } => session
+                        .as_mut()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| active.refresh_applications(true)),
+                    Command::ActivateExternal { window_id, .. } => session
+                        .as_mut()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| active.activate_external(&window_id)),
                     Command::CompanionLayer { always_on_top, .. } => session
                         .as_mut()
                         .ok_or("desktop host is not running".into())

@@ -54,7 +54,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 首次历史水合也须保留在途回合，历史修改使较早回包失效；缓存语义见 [Client 历史同步](../README.md#历史同步)。视图切换保留各自草稿与附件；录音资格失效后，旧麦克风等待或转写结果不能因视图再次活动而恢复。
 
-Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/desktop-dock-picker.tsx)）是 Dock 的兄弟节点而非其子节点：`.dock` 的 backdrop-filter 会成为 fixed 元素的包含块。面板与条目右键菜单共用同一个开启态上报，打开期间一并停用面板活动与精灵右键菜单；目录条目只持有主进程句柄，图标按可见条目分批惰性取回，重取目录只为刷新「已添加」标记。
+Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/desktop-dock-picker.tsx)）是 Dock 的兄弟节点：`.dock` 的 backdrop-filter 会成为 fixed 元素的包含块。面板与条目菜单共用开启态上报，打开期间停用面板活动与精灵右键菜单；条目只持有主进程句柄，图标按可见条目分批取回。「已添加」标记仅随固定配置版本刷新，窗口与图标更新不重取目录。交互规则见[桌面模式](../../docs/DESIGN.md#桌面模式)。
 
 [desktop-stage](app/workflows/desktop-stage.ts)接入主进程舞台代次、宿主活动镜像和可取消的仪式请求；工具派发始终由宿主负责。内部面板的活动资格由 [panel-activity](shared/context/panel-activity.tsx)向子组件和 Portal 传递，子面板不能覆盖父级的禁用状态；聊天媒体查看器归打开它的视图，失活时隐藏并暂停媒体，不能抢占其他面板的焦点与 Escape。桌面布局和角色位置按账户保存，防抖写入须守卫清理代次。
 

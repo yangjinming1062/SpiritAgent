@@ -311,11 +311,17 @@ presentation = createDesktopPresentation({
   onModeChanged: rebuildTrayMenu
 })
 presentation.registerIpc(ipcMain)
+const desktopPresentation = presentation
 registerDesktopDock({
   ipcMain,
   userData: SPIRITAGENT_HOME,
   isDesktopSender: sender => presentation?.isDesktopSender(sender) ?? false,
-  getDesktopWindow: () => presentation?.getWindow() ?? null
+  getDesktopWindow: desktopPresentation.getWindow,
+  getRunningApplications: desktopPresentation.getRunningApplications,
+  onRunningApplicationsChanged: desktopPresentation.onRunningApplicationsChanged,
+  captureEligibility: desktopPresentation.captureApplicationEligibility,
+  refreshApplications: desktopPresentation.refreshApplications,
+  activateExternal: desktopPresentation.activateExternal
 })
 
 registerShortcutsIpc({ ipcMain, rememberLog, surfaces, toggleMainWindow })

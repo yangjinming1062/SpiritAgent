@@ -1,13 +1,11 @@
 use super::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
 use windows_sys::Win32::Graphics::Dwm::{
     DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
 };
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFOEXW, MonitorFromWindow,
 };
-use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -126,68 +124,6 @@ impl RestoreWorkArea {
     }
 }
 
-static EVENTS: Mutex<Vec<(u32, usize)>> = Mutex::new(Vec::new());
-
-unsafe extern "system" fn window_event(
-    _: HWINEVENTHOOK,
-    event: u32,
-    hwnd: HWND,
-    object: i32,
-    child: i32,
-    _: u32,
-    _: u32,
-) {
-    if hwnd.is_null() || (event >= EVENT_OBJECT_CREATE && (object != OBJID_WINDOW || child != 0)) {
-        return;
-    }
-    if let Ok(mut queue) = EVENTS.lock() {
-        let item = (event, hwnd as usize);
-        if queue.len() < 512 && !queue.contains(&item) {
-            queue.push(item);
-        }
-    }
-}
-
-struct WinEvents(Vec<HWINEVENTHOOK>);
-impl WinEvents {
-    fn start() -> Result<Self> {
-        let mut hooks = Self(Vec::new());
-        for (start, end) in [
-            (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND),
-            (EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE),
-        ] {
-            let handle = unsafe {
-                SetWinEventHook(
-                    start,
-                    end,
-                    null_mut(),
-                    Some(window_event),
-                    0,
-                    0,
-                    WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-                )
-            };
-            if handle.is_null() {
-                return Err(failure("listen for desktop window changes"));
-            }
-            hooks.0.push(handle);
-        }
-        Ok(hooks)
-    }
-}
-impl Drop for WinEvents {
-    fn drop(&mut self) {
-        for hook in &self.0 {
-            unsafe {
-                UnhookWinEvent(*hook);
-            }
-        }
-        if let Ok(mut queue) = EVENTS.lock() {
-            queue.clear();
-        }
-    }
-}
-
 fn visible_bounds(window: HWND) -> Result<Bounds> {
     let mut rectangle: RECT = unsafe { zeroed() };
     if unsafe {
@@ -231,7 +167,6 @@ pub(super) struct Workspace {
     target: Bounds,
     parent_pid: u32,
     enabled: bool,
-    hooks: Option<WinEvents>,
     moving: HashSet<usize>,
     pending: HashMap<usize, Instant>,
     refused: HashSet<usize>,
@@ -285,7 +220,6 @@ impl Workspace {
             target,
             parent_pid,
             enabled,
-            hooks: None,
             moving: HashSet::new(),
             pending: HashMap::new(),
             refused: HashSet::new(),
@@ -293,7 +227,6 @@ impl Workspace {
     }
 
     pub(super) fn activate(&mut self) -> Result<()> {
-        self.hooks = Some(WinEvents::start()?);
         self.ensure_work_area()?;
         for window in top_windows()? {
             self.constrain(window);
@@ -438,15 +371,17 @@ impl Workspace {
         }
     }
 
-    pub(super) fn poll(&mut self) -> Result<()> {
+    pub(super) fn poll(&mut self, events: &[(u32, usize)]) -> Result<()> {
         self.ensure_work_area()?;
-        let events = EVENTS
-            .lock()
-            .map(|mut queue| std::mem::take(&mut *queue))
-            .unwrap_or_default();
         let mut changed = HashSet::new();
-        for (event, handle) in events {
+        for &(event, handle) in events {
             match event {
+                0 => {
+                    self.moving.clear();
+                    self.pending.clear();
+                    self.refused.clear();
+                    changed.extend(top_windows()?.into_iter().map(|window| window as usize));
+                }
                 EVENT_SYSTEM_MOVESIZESTART => {
                     self.moving.insert(handle);
                     self.pending.remove(&handle);

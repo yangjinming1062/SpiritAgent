@@ -18,6 +18,7 @@ import {
 import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
+import type { RunningApplicationsState } from '../shared/desktop-applications'
 import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, errorMessage, sendToWindow } from '../shared/utils'
 
 import { createExplorerDesktopHost } from './explorer-desktop-host'
@@ -85,6 +86,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let healthTimer: ReturnType<typeof setInterval> | undefined
   let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
   let currentBackground: DesktopBackground = { image: null, theme: 'day-clear', reduceMotion: false }
+  let runningApplications: RunningApplicationsState = { status: 'inactive', error: null, windows: [] }
+  const applicationListeners = new Set<(state: RunningApplicationsState) => void>()
   const claims = new Map<string, number>()
 
   const rituals = new Map<
@@ -115,6 +118,13 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       compatibilityWarning = reason
       publish()
     },
+    onApplicationsChanged: state => {
+      if (status === 'starting' || status === 'active') {
+        setRunningApplications(
+          state.status === 'unavailable' ? { ...state, windows: runningApplications.windows } : state
+        )
+      }
+    },
     onFailure: reason => {
       if (status === 'inactive' || status === 'failed') {
         return
@@ -123,6 +133,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       scheduleRecovery(reason)
     }
   })
+
+  function setRunningApplications(state: RunningApplicationsState): void {
+    runningApplications = state
+
+    for (const listener of applicationListeners) {
+      listener(state)
+    }
+  }
 
   function snapshot(): PresentationState {
     const allDisplays = app.isReady() ? screen.getAllDisplays() : []
@@ -284,6 +302,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     clearInterval(healthTimer)
     healthTimer = undefined
     status = 'recovering'
+    setRunningApplications({ status: 'inactive', error: null, windows: [] })
     clearRituals()
     stageEpoch += 1
     claims.clear()
@@ -484,6 +503,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     status = 'starting'
+    setRunningApplications({ status: 'loading', error: null, windows: [] })
     failureReason = null
     compatibilityWarning = null
     stageEpoch += 1
@@ -684,6 +704,23 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     if (!isDesktopSender(sender)) {
       throw new Error('仅桌面入口允许此操作。')
     }
+  }
+
+  function captureDesktopEligibility(sender: WebContents, epoch = stageEpoch): () => boolean {
+    assertDesktop(sender)
+    const generation = startupGeneration
+    const identity = options.authIdentity()
+
+    return () =>
+      status === 'active' &&
+      effectiveMode === 'desktop' &&
+      generation === startupGeneration &&
+      epoch === stageEpoch &&
+      !lastActivity.locked &&
+      powerMonitor.getSystemIdleState(1) !== 'locked' &&
+      options.authenticated() &&
+      identity === options.authIdentity() &&
+      isDesktopSender(sender)
   }
 
   function assertSettings(sender: WebContents): void {
@@ -996,22 +1033,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error('无效桌面代次。')
       }
 
-      const currentGeneration = startupGeneration
-      const identity = options.authIdentity()
+      const eligible = captureDesktopEligibility(event.sender, epoch)
 
       return serial(async () => {
         assertDesktop(event.sender)
-
-        const eligible = (): boolean =>
-          status === 'active' &&
-          effectiveMode === 'desktop' &&
-          epoch === stageEpoch &&
-          currentGeneration === startupGeneration &&
-          !lastActivity.locked &&
-          powerMonitor.getSystemIdleState(1) !== 'locked' &&
-          options.authenticated() &&
-          identity === options.authIdentity() &&
-          isSenderWindow(event.sender, interactive)
 
         if (!eligible()) {
           return false
@@ -1183,6 +1208,23 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   return {
+    captureApplicationEligibility: captureDesktopEligibility,
+    getRunningApplications: () => runningApplications,
+    onRunningApplicationsChanged: (listener: (state: RunningApplicationsState) => void): (() => void) => {
+      applicationListeners.add(listener)
+
+      return () => applicationListeners.delete(listener)
+    },
+    refreshApplications: (sender: WebContents): Promise<void> => {
+      const eligible = captureDesktopEligibility(sender)
+
+      return serial(() => native.refreshApplications(eligible))
+    },
+    activateExternal: (sender: WebContents, windowId: string): Promise<void> => {
+      const eligible = captureDesktopEligibility(sender)
+
+      return serial(() => native.activateExternal(windowId, eligible))
+    },
     getState: snapshot,
     setMode,
     getWindow: () => interactive,

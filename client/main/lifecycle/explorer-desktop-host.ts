@@ -2,6 +2,31 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
+import type { RunningApplicationsState, RunningApplicationWindow } from '../shared/desktop-applications'
+
+function isRunningWindow(raw: unknown): raw is RunningApplicationWindow {
+  if (!raw || typeof raw !== 'object') {
+    return false
+  }
+
+  const item = raw as Partial<RunningApplicationWindow>
+
+  return (
+    typeof item.id === 'string' &&
+    item.id.length > 0 &&
+    item.id.length <= 256 &&
+    typeof item.appId === 'string' &&
+    item.appId.length > 0 &&
+    (item.target === null || typeof item.target === 'string') &&
+    typeof item.name === 'string' &&
+    typeof item.title === 'string' &&
+    typeof item.minimized === 'boolean' &&
+    Number.isSafeInteger(item.lastActive) &&
+    typeof item.lastActive === 'number' &&
+    item.lastActive >= 0
+  )
+}
+
 export interface ExplorerDesktopWindow {
   handle: Buffer
   role: 'background' | 'overlay' | 'companion'
@@ -16,6 +41,7 @@ interface HostOptions {
   onFailure: (reason: string) => void
   onForegroundChanged?: (state: { active: boolean; stageAvailable: boolean; fullscreen: boolean }) => void
   onWarning?: (reason: string) => void
+  onApplicationsChanged?: (state: RunningApplicationsState) => void
 }
 
 export interface ExplorerDesktopHost {
@@ -29,6 +55,8 @@ export interface ExplorerDesktopHost {
   setCompanionAlwaysOnTop: (enabled: boolean) => Promise<void>
   heartbeat: () => Promise<void>
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
+  refreshApplications: (eligible: () => boolean) => Promise<void>
+  activateExternal: (windowId: string, eligible: () => boolean) => Promise<void>
   stop: () => Promise<void>
   recover: () => Promise<boolean>
   status: () => 'idle' | 'starting' | 'running' | 'stopping'
@@ -100,7 +128,71 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   let operation: Promise<unknown> = Promise.resolve()
   let failureReported = false
+
+  let applicationBatch: {
+    revision: number
+    parts: number
+    nextPart: number
+    bytes: number
+    state: RunningApplicationsState
+  } | null = null
+
   const pending = new Map<number, PendingRequest>()
+
+  function applicationsMessage(message: Record<string, unknown>): void {
+    const { revision, parts, part, windows, status, error } = message
+
+    if (
+      typeof revision !== 'number' ||
+      !Number.isSafeInteger(revision) ||
+      revision < 1 ||
+      typeof parts !== 'number' ||
+      !Number.isSafeInteger(parts) ||
+      parts < 1 ||
+      parts > 128 ||
+      typeof part !== 'number' ||
+      !Number.isSafeInteger(part) ||
+      part < 0 ||
+      part >= parts ||
+      (status !== 'ready' && status !== 'unavailable') ||
+      (error !== null && typeof error !== 'string') ||
+      !Array.isArray(windows) ||
+      !windows.every(isRunningWindow)
+    ) {
+      throw new Error('Desktop helper returned an invalid application snapshot')
+    }
+
+    if (part === 0) {
+      applicationBatch = { revision, parts, nextPart: 0, bytes: 0, state: { status, error, windows: [] } }
+    }
+
+    const batch = applicationBatch
+
+    if (
+      !batch ||
+      batch.revision !== revision ||
+      batch.parts !== parts ||
+      batch.nextPart !== part ||
+      batch.state.status !== status ||
+      batch.state.error !== error
+    ) {
+      throw new Error('Desktop helper application snapshot is incomplete')
+    }
+
+    batch.bytes += Buffer.byteLength(JSON.stringify(message))
+
+    if (batch.bytes > 2 * 1024 * 1024) {
+      throw new Error('Desktop helper application snapshot exceeds 2 MiB')
+    }
+
+    batch.state.windows.push(...windows)
+    batch.nextPart += 1
+
+    if (batch.nextPart === parts) {
+      applicationBatch = null
+      options.onApplicationsChanged?.(batch.state)
+    }
+  }
 
   function serialize<T>(work: () => Promise<T>): Promise<T> {
     const current = operation.then(work, work)
@@ -217,12 +309,6 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
 
       buffer += chunk
 
-      if (Buffer.byteLength(buffer) > 65_536) {
-        fail('Desktop helper output exceeds 64 KiB')
-
-        return
-      }
-
       try {
         for (;;) {
           const newline = buffer.indexOf('\n')
@@ -233,7 +319,16 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
 
           const line = buffer.slice(0, newline)
           buffer = buffer.slice(newline + 1)
+
+          if (Buffer.byteLength(line) > 65_536) {
+            throw new Error('Desktop helper output line exceeds 64 KiB')
+          }
+
           handlers.message(parseMessage(line))
+        }
+
+        if (Buffer.byteLength(buffer) > 65_536) {
+          throw new Error('Desktop helper output line exceeds 64 KiB')
         }
       } catch (error) {
         fail(error instanceof Error ? error.message : String(error))
@@ -304,6 +399,8 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           } else if (message.event === 'warning' && typeof message.reason === 'string') {
             options.log(`[desktop] ${message.reason}`)
             options.onWarning?.(message.reason)
+          } else if (message.event === 'applications') {
+            applicationsMessage(message)
           } else if (
             Number.isInteger(message.id) &&
             typeof message.id === 'number' &&
@@ -456,6 +553,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
     }
 
     ++generation
+    applicationBatch = null
     child = null
     rejectPending(new Error('Desktop helper stopped'))
     state = 'idle'
@@ -501,6 +599,28 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
         return true
       })
     },
+    refreshApplications: eligible => {
+      const currentGeneration = generation
+
+      return serialize(async () => {
+        if (state !== 'running' || generation !== currentGeneration || !eligible()) {
+          throw new Error('桌面已改变，请重新选择程序。')
+        }
+
+        await request({ command: 'refresh_applications' }, 2_000, true)
+      })
+    },
+    activateExternal: (windowId, eligible) => {
+      const currentGeneration = generation
+
+      return serialize(async () => {
+        if (state !== 'running' || generation !== currentGeneration || !eligible()) {
+          throw new Error('桌面已改变，请重新选择窗口。')
+        }
+
+        await request({ command: 'activate_external', window_id: windowId }, 1_000, true)
+      })
+    },
     heartbeat: async () => {
       if (state !== 'running') {
         return
@@ -537,6 +657,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
         const windows = input.windows.map(encodeWindow)
         state = 'starting'
         failureReported = false
+        applicationBatch = null
 
         try {
           await spawnHost()

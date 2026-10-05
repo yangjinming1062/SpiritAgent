@@ -31,7 +31,7 @@ export function DesktopDockPicker({
   onClose,
   onCommitted
 }: {
-  /** Dock 快照版本：变化时只为刷新「已添加」标记重取目录，不重置查询与选中项。 */
+  /** 固定配置版本：窗口与图标更新不触发目录查询。 */
   dockRevision: number
   mode: DockPickerMode
   onClose: () => void
@@ -225,7 +225,7 @@ export function DesktopDockPicker({
           browsingRef.current = false
         }
       },
-      next => next.revision !== dockRevision
+      next => next.pinnedRevision !== dockRevision
     )
   }
 

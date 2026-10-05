@@ -89,6 +89,13 @@ enum Command {
         id: u32,
         handle: String,
     },
+    RefreshApplications {
+        id: u32,
+    },
+    ActivateExternal {
+        id: u32,
+        window_id: String,
+    },
     CompanionLayer {
         id: u32,
         always_on_top: bool,
@@ -105,6 +112,8 @@ impl Command {
             Self::Start { id, .. }
             | Self::Heartbeat { id }
             | Self::Focus { id, .. }
+            | Self::RefreshApplications { id }
+            | Self::ActivateExternal { id, .. }
             | Self::CompanionLayer { id, .. }
             | Self::Stop { id } => *id,
         }
