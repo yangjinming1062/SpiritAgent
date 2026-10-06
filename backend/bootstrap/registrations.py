@@ -30,6 +30,7 @@ from services.infrastructure.tool_runtime import REGISTRY
 def register_providers() -> None:
     register_provider(ServiceType.image_gen, "gemini", gemini.GeminiImageGenProvider)
     register_provider(ServiceType.embedding, "gemini", gemini.GeminiEmbeddingProvider)
+    register_provider(ServiceType.llm, "gemini", gemini.GeminiChatProvider)
     register_provider(ServiceType.llm, "grok", grok.GrokChatProvider)
     register_provider(ServiceType.stt, "grok", grok.GrokSTTProvider)
     register_provider(ServiceType.tts, "grok", grok.GrokTTSProvider)
