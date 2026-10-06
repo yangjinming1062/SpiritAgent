@@ -819,12 +819,26 @@ def upgrade() -> None:
     op.create_index(op.f("ix_user_settings_setting_key"), "user_settings", ["setting_key"], unique=False)
     op.create_index(op.f("ix_user_settings_user_id"), "user_settings", ["user_id"], unique=False)
     op.create_table(
+        "asset_cleanup_pending",
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("path", sa.Text(), nullable=False),
+        sa.Column("requested_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("not_before", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("last_error", sa.Text(), nullable=True),
+        sa.UniqueConstraint("user_id", "path", name="uq_asset_cleanup_pending_user_path"),
+    )
+    op.create_index("ix_asset_cleanup_pending_user_id", "asset_cleanup_pending", ["user_id"], unique=False)
+    op.create_table(
         "video_gen_jobs",
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("session_id", sa.String(length=64), nullable=True),
         sa.Column("structured_reply", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("media_id", sa.String(length=128), nullable=True),
         sa.Column("reply_message_id", sa.Integer(), nullable=True),
+        sa.Column("source_message_id", sa.Integer(), nullable=True),
+        sa.Column("cleanup_requested_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("provider", sa.String(length=64), nullable=False),
         sa.Column("model", sa.String(length=128), nullable=False),
         sa.Column("prompt", sa.Text(), nullable=False),
@@ -851,6 +865,8 @@ def upgrade() -> None:
     op.create_index(op.f("ix_video_gen_jobs_user_id"), "video_gen_jobs", ["user_id"], unique=False)
     op.create_index("ix_video_gen_jobs_user_status", "video_gen_jobs", ["user_id", "status"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_reply_message_id"), "video_gen_jobs", ["reply_message_id"], unique=False)
+    op.create_index("ix_video_gen_jobs_source_message_id", "video_gen_jobs", ["source_message_id"], unique=False)
+    op.create_index("ix_video_gen_jobs_cleanup_requested_at", "video_gen_jobs", ["cleanup_requested_at"], unique=False)
     op.create_table(
         "ws_events",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -921,6 +937,14 @@ def upgrade() -> None:
         "video_gen_jobs",
         "messages",
         ["reply_message_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
+    op.create_foreign_key(
+        "video_gen_jobs_source_message_id_fkey",
+        "video_gen_jobs",
+        "messages",
+        ["source_message_id"],
         ["id"],
         ondelete="SET NULL",
     )
@@ -1112,6 +1136,7 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
     # drop 顺序按外键：子表先于父表；channel_peers/deliveries 后于 bindings；actions/packs 先于 outfits；fullbody 先于 avatar；actions 后于 logs；system_settings 最末。
     for table in (
+        "asset_cleanup_pending",
         "video_gen_jobs",
         "messages",
         "channel_deliveries",

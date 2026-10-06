@@ -72,6 +72,7 @@ class SceneImageInput(BaseModel):
 
 
 class ImageChainState(MediaChainState):
+    storage_directory: str | None = None
     inputs: CharacterImageInput | SceneImageInput | None = Field(default=None, discriminator="purpose")
     pending_urls: list[str] = Field(default_factory=list)
     pending_slots: list[int] = Field(default_factory=list)
@@ -246,6 +247,7 @@ async def generate_character_images(
     prompt: str,
     *,
     user_id: int,
+    storage_directory: str,
     reference_image: str,
     identity_reference: str,
     size: str = "1024x1024",
@@ -263,6 +265,12 @@ async def generate_character_images(
 ) -> list[str]:
     """返回已保存的用户资产；恢复只消费冻结输入、已知结果和未提交的链尾。"""
     state = state if state is not None else ImageChainState()
+    if not storage_directory:
+        raise ValueError("image task requires a storage directory")
+    if state.storage_directory is None:
+        state.storage_directory = storage_directory
+    elif state.storage_directory != storage_directory:
+        raise ImageGenerationError("图片任务存储归属已变化")
     configs: dict[int, ProviderConfig] = {}
     if state.inputs is None:
         if image_edit and secondary_reference_image:
@@ -322,6 +330,7 @@ async def generate_scene_images(
     prompt: str,
     *,
     user_id: int,
+    storage_directory: str,
     target_width: int,
     target_height: int,
     reference_image: str | None = None,
@@ -333,6 +342,12 @@ async def generate_scene_images(
 ) -> list[str]:
     """返回通过伙伴重复出镜检查的原始用户资产；画布和每家尝试随任务冻结。"""
     state = state if state is not None else ImageChainState()
+    if not storage_directory:
+        raise ValueError("image task requires a storage directory")
+    if state.storage_directory is None:
+        state.storage_directory = storage_directory
+    elif state.storage_directory != storage_directory:
+        raise ImageGenerationError("图片任务存储归属已变化")
     configs: dict[int, ProviderConfig] = {}
     if state.inputs is None:
         state.inputs = SceneImageInput(
@@ -431,6 +446,7 @@ async def _run_image_chain(
                                 state.active_index or 0,
                                 state.pending_slots[0],
                                 ext,
+                                directory=state.storage_directory,
                             )
                             await _save_progress(state, save_progress)
                             path = await asset_store.save_image_chain_asset_async(
@@ -440,6 +456,7 @@ async def _run_image_chain(
                                 attempt=state.active_index or 0,
                                 slot=state.pending_slots[0],
                                 ext=ext,
+                                directory=state.storage_directory,
                             )
                             break
                         except Exception as exc:

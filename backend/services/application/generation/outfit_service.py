@@ -27,10 +27,11 @@ from modules.companion import (
 from modules.settings import get_user_setting
 from modules.ws import emit_ws_event
 from prompts.generation import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions import delete_outfit_action_packs, retire_action_assets
+from services.domains.actions import delete_outfit_action_packs
+from services.domains.assets import cleanup_user_assets, enqueue_asset_cleanup
 from services.domains.companion import (
     CharacterCardNotReadyError,
     character_snapshot_is_current,
@@ -40,7 +41,7 @@ from services.domains.companion import (
     render_character_identity,
     require_character_snapshot,
 )
-from services.infrastructure.assets import build_data_uri, unlink_companion_asset
+from services.infrastructure.assets import build_data_uri, outfit_asset_directory, unlink_companion_asset
 from services.infrastructure.llm import (
     chat,
 )
@@ -67,6 +68,7 @@ from .avatar_service import (
 )
 from .character_images import generate_character_images, image_asset_bytes
 from .image_generation import ImageGenerationError
+from .media_chain import spawn_removed_action_task_cancellation
 from .response_builders import outfit_response
 
 logger = get_logger(__name__)
@@ -177,13 +179,13 @@ async def _sweep_stale(db: AsyncSession, user_id: int) -> None:
     )
     if not expired:
         return
-    await db.commit()
     for outfit in expired:
-        _delete_reference_file(outfit)
-
-
-def _delete_reference_file(outfit: CompanionOutfit) -> None:
-    delete_portrait_file(OutfitSource.load(outfit.source_json).reference_image_path)
+        source = OutfitSource.load(outfit.source_json)
+        await enqueue_asset_cleanup(db, user_id, [source.reference_image_path or "", outfit.fullbody_url])
+        source.reference_image_path = ""
+        outfit.source_json = source.dump()
+    await db.commit()
+    await cleanup_user_assets(user_id)
 
 
 async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
@@ -261,12 +263,14 @@ async def _generate_outfit_fullbody(
     reference_image: str,
     identity_reference: str,
     identity: CharacterCardSnapshot,
+    outfit_id: int,
     image_edit: bool = False,
 ) -> str:
     async def generate(text: str) -> list[str]:
         return await generate_character_images(
             text,
             user_id=user_id,
+            storage_directory=outfit_asset_directory(outfit_id),
             reference_image=reference_image,
             identity_reference=identity_reference,
             identity_text=render_character_identity(identity),
@@ -327,6 +331,10 @@ async def create_outfit_draft(
 
     avatar, species, identity, personality = await _outfit_generation_context(db, user_id)
     identity_uri = await _require_fullbody_seed_readable(avatar)
+    # 先领取序列值；生成等待不持有事务，也不暴露尚无图片的空草稿。
+    outfit_id = await db.scalar(select(func.nextval(func.pg_get_serial_sequence("companion_outfits", "id"))))
+    if outfit_id is None:
+        raise OutfitStateError("外观编号分配失败")
     await db.commit()
     await _require_outfit_matting(user_id)
 
@@ -363,17 +371,24 @@ async def create_outfit_draft(
         reference_image=identity_uri,
         identity_reference=identity_uri,
         identity=identity,
+        outfit_id=outfit_id,
     )
 
     ref_path: str | None = None
     try:
         if image is not None:
-            ref_path = await persist_portrait_bytes(user_id, image, content_type or "image/png")
+            ref_path = await persist_portrait_bytes(
+                user_id,
+                image,
+                content_type or "image/png",
+                directory=outfit_asset_directory(outfit_id),
+            )
             source.reference_image_path = ref_path
         async with get_avatar_job_lock(user_id):
             if not await character_snapshot_is_current(db, user_id, identity):
                 raise OutfitStateError("角色卡已更新，请重新生成外观")
             outfit = CompanionOutfit(
+                id=outfit_id,
                 user_id=user_id,
                 name="新外观",
                 fullbody_url=draft_url,
@@ -453,6 +468,7 @@ async def regenerate_outfit_draft(
         reference_image=reference_uri,
         identity_reference=identity_uri,
         identity=identity,
+        outfit_id=outfit_id,
         image_edit=mode == "edit",
     )
 
@@ -475,13 +491,15 @@ async def regenerate_outfit_draft(
                 event_type="companion.outfit.updated",
                 payload={"outfit_id": outfit.id, "worn": False},
             )
+            await enqueue_asset_cleanup(db, user_id, [original_url])
             await db.commit()
     except BaseException:
         await db.rollback()
         delete_portrait_file(draft_url)
         raise
-    if original_url != draft_url:
+    if original_url != draft_url and original_url.startswith("temp-media/"):
         delete_portrait_file(original_url)
+    await cleanup_user_assets(user_id)
     await db.refresh(outfit)
     return outfit
 
@@ -515,7 +533,12 @@ async def confirm_outfit(
         persisted: str | None = None
         try:
             if original_url.startswith("temp-media/"):
-                persisted = await persist_portrait_bytes(user_id, draft[0], "image/png")
+                persisted = await persist_portrait_bytes(
+                    user_id,
+                    draft[0],
+                    "image/png",
+                    directory=outfit_asset_directory(outfit_id),
+                )
             outfit = await _get_outfit(db, user_id, outfit_id, lock=True)
             if (
                 outfit is None
@@ -705,13 +728,15 @@ async def adopt_outfit_regenerate_image(
                 event_type="companion.outfit.updated",
                 payload={"outfit_id": outfit.id, "worn": False},
             )
+            await enqueue_asset_cleanup(db, user_id, [original_url])
             await db.commit()
     except BaseException:
         await db.rollback()
         delete_portrait_file(fullbody_url)
         raise
-    if original_url != fullbody_url:
+    if original_url != fullbody_url and original_url.startswith("temp-media/"):
         delete_portrait_file(original_url)
+    await cleanup_user_assets(user_id)
     await db.refresh(outfit)
     return outfit
 
@@ -762,10 +787,14 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         if outfit.active:
             raise OutfitStateError("穿着中的外观不能删除，请先切换到其他外观")
         try:
-            await delete_outfit_action_packs(db, user_id, outfit.id)
+            removed_tasks = await delete_outfit_action_packs(db, user_id, outfit.id)
         except ValueError as exc:
             raise OutfitStateError(str(exc)) from exc
-        await retire_action_assets(db, user_id, [outfit.fullbody_url])
+        await enqueue_asset_cleanup(
+            db,
+            user_id,
+            [outfit.fullbody_url, OutfitSource.load(outfit.source_json).reference_image_path or ""],
+        )
 
         emit_ws_event(
             db,
@@ -775,8 +804,9 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         )
         await db.delete(outfit)
         await db.commit()
-        # 删除提交后再清理文件；提交失败时外观仍完整可用。
-        _delete_reference_file(outfit)
+        # 删除提交后再清理文件与撤销远端任务；提交失败时外观仍完整可用。
+        spawn_removed_action_task_cancellation(user_id, removed_tasks)
+        await cleanup_user_assets(user_id)
         if outfit.fullbody_url.startswith("temp-media/"):
             delete_portrait_file(outfit.fullbody_url)
 

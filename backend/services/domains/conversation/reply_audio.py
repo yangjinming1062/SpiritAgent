@@ -3,17 +3,25 @@ import io
 import math
 from weakref import WeakValueDictionary
 
-from components import get_logger, session_scope
+from components import get_logger, session_scope, utc_now
 from modules.conversation import CompanionReply, Conversation, MediaBubble, Message, ReplyAudio, VoiceBubble
+from modules.settings import resolve_user_timezone
 from modules.ws import emit_ws_event
 from mutagen import File as AudioFile
 from sqlalchemy import select
 
-from services.infrastructure.assets import asset_store, client_asset_url, save_companion_asset_async
+from services.infrastructure.assets import (
+    asset_store,
+    client_asset_url,
+    dated_asset_directory,
+    save_companion_asset_async,
+    user_asset_lock,
+)
 from services.infrastructure.llm import synthesize_speech
 
 logger = get_logger(__name__)
 _locks: WeakValueDictionary[tuple[int, int], asyncio.Lock] = WeakValueDictionary()
+_tasks: dict[tuple[int, int], set[asyncio.Task[CompanionReply]]] = {}
 
 
 def client_reply_bubbles(reply: CompanionReply) -> list[dict]:
@@ -56,7 +64,7 @@ def _audio_info(data: bytes) -> tuple[float, str]:
     return float(audio.info.length), extension
 
 
-async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, deadline: float) -> ReplyAudio:
+async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, deadline: float, directory: str) -> ReplyAudio:
     async with asyncio.timeout(max(0, min(60, deadline - asyncio.get_running_loop().time()))):
         audio = await synthesize_speech(
             user_id,
@@ -67,17 +75,28 @@ async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, deadline: float)
             preserve_performance=True,
         )
         duration, ext = await asyncio.to_thread(_audio_info, audio.audio)
-        path = await save_companion_asset_async(audio.audio, user_id=user_id, label="chat-voice", ext=ext)
+        path = await save_companion_asset_async(
+            audio.audio,
+            user_id=user_id,
+            label="chat-voice",
+            ext=ext,
+            directory=directory,
+        )
         return ReplyAudio(url=path, duration=duration)
 
 
 async def prepare_reply_audio(user_id: int, reply: CompanionReply) -> None:
     """为尚未接受的主动答复准备音频；调用方负责清理未提交的全部资产。"""
+    async with session_scope() as db:
+        timezone = await resolve_user_timezone(db, user_id) or "UTC"
+    if reply.audio_directory is None:
+        reply.audio_directory = dated_asset_directory(utc_now(), timezone=timezone)
+    directory = reply.audio_directory
     deadline = asyncio.get_running_loop().time() + 120
     for index, bubble in enumerate(reply.bubbles):
         if isinstance(bubble, VoiceBubble) and bubble.audio is None:
             try:
-                bubble.audio = await _synthesize_bubble(user_id, bubble, deadline)
+                bubble.audio = await _synthesize_bubble(user_id, bubble, deadline, directory)
             except Exception:
                 logger.warning("Proactive voice synthesis failed", extra={"bubble_index": index}, exc_info=True)
 
@@ -89,7 +108,7 @@ async def discard_reply_audio(reply: CompanionReply) -> None:
             bubble.audio = None
 
 
-async def synthesize_reply_audio(
+async def _synthesize_reply_audio(
     user_id: int,
     message_id: int,
     *,
@@ -101,14 +120,15 @@ async def synthesize_reply_audio(
     async with asyncio.timeout(30):
         await lock.acquire()
     try:
-        async with session_scope() as db:
+        async with user_asset_lock(user_id), session_scope() as db:
             row = await db.scalar(
                 select(Message)
                 .join(Conversation)
                 .where(
                     Message.id == message_id,
                     Conversation.user_id == user_id,
-                ),
+                )
+                .with_for_update(of=Message),
             )
             if row is None or not row.reply_json:
                 raise LookupError("Reply not found")
@@ -116,6 +136,14 @@ async def synthesize_reply_audio(
             session_id = str(row.conversation_id)
             reply = CompanionReply.model_validate_json(row.reply_json)
             reply.validate_content(row.content or "")
+            if reply.audio_directory is None:
+                reply.audio_directory = dated_asset_directory(
+                    row.created_at,
+                    timezone=await resolve_user_timezone(db, user_id) or "UTC",
+                )
+                row.reply_json = reply.model_dump_json()
+                await db.commit()
+            directory = reply.audio_directory
         if bubble_index is not None and (
             not 0 <= bubble_index < len(reply.bubbles) or reply.bubbles[bubble_index].type != "voice"
         ):
@@ -132,9 +160,9 @@ async def synthesize_reply_audio(
             path: str | None = None
             committed = False
             try:
-                bubble.audio = await _synthesize_bubble(user_id, bubble, deadline)
+                bubble.audio = await _synthesize_bubble(user_id, bubble, deadline, directory)
                 path = bubble.audio.url
-                async with session_scope() as db:
+                async with user_asset_lock(user_id), session_scope() as db:
                     current = await db.scalar(
                         select(Message)
                         .where(
@@ -188,3 +216,33 @@ async def synthesize_reply_audio(
         return reply
     finally:
         lock.release()
+
+
+async def synthesize_reply_audio(
+    user_id: int,
+    message_id: int,
+    *,
+    bubble_index: int | None = None,
+) -> CompanionReply:
+    """每次合成有独立、按消息归属的任务；删除消息只取消对应音频。"""
+    key = (user_id, message_id)
+    task = asyncio.create_task(
+        _synthesize_reply_audio(user_id, message_id, bubble_index=bubble_index),
+        name=f"reply-audio:{user_id}:{message_id}",
+    )
+    owned = _tasks.setdefault(key, set())
+    owned.add(task)
+    try:
+        return await task
+    finally:
+        owned.discard(task)
+        if not owned:
+            _tasks.pop(key, None)
+
+
+async def cancel_reply_audio(user_id: int, message_ids: set[int]) -> None:
+    tasks = {task for message_id in message_ids for task in _tasks.get((user_id, message_id), ())}
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)

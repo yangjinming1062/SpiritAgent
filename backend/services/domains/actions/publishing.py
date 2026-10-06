@@ -2,24 +2,24 @@
 
 import hashlib
 import json
-import re
-from pathlib import Path
 from typing import Annotated, Literal
-from uuid import uuid4
 
-from components import SETTINGS
 from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack, PeekGeometry, parse_content_rect
 from modules.ws import emit_ws_event
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.infrastructure.assets import parse_companion_asset_path
+from services.infrastructure.assets import (
+    pack_asset_directory,
+    parse_companion_asset_path,
+    save_companion_asset_async,
+    unlink_companion_asset,
+)
 
 from .asset_retirement import retire_action_assets
 from .materials import accepted_action_asset
 from .repository import StaleCatalogError, list_pack_actions, publish_catalog
 
-_STORAGE_PATH_RE = re.compile(r"^companion-assets/\d+/[A-Za-z0-9._-]+$")
 _PUBLISH_ATTEMPTS = 3
 
 
@@ -82,7 +82,7 @@ class CatalogValidationError(ValueError):
 def _require_pack_asset(path: str, user_id: int) -> None:
     """目录只引用该包所属用户的正式资产，客户端按此路径拉取素材。"""
     parsed = parse_companion_asset_path(path)
-    if not _STORAGE_PATH_RE.fullmatch(path) or parsed is None or parsed[0] != user_id:
+    if parsed is None or parsed[0] != user_id:
         raise CatalogValidationError(f"资源路径不合法：{path}")
 
 
@@ -177,21 +177,23 @@ async def publish_action_catalog(db: AsyncSession, pack: CompanionActionPack) ->
 
         payload = manifest.model_dump_json()
         content_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        filename = f"action-catalog-{pack.id}-v{manifest.catalog_version}-{uuid4().hex}.json"
-        manifest_path = f"companion-assets/{pack.user_id}/{filename}"
-        file_path = Path(SETTINGS.data_dir) / manifest_path
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path = await save_companion_asset_async(
+            payload.encode("utf-8"),
+            user_id=pack.user_id,
+            directory=pack_asset_directory(pack.outfit_id, pack.id),
+            label=f"action-catalog-{pack.id}-v{manifest.catalog_version}",
+            ext="json",
+        )
         try:
-            file_path.write_text(payload, encoding="utf-8")
             previous = pack.manifest_path
             pack.cover_path = manifest.cover_path
             version = await publish_catalog(db, pack, manifest_path=manifest_path, content_hash=content_hash)
             await retire_action_assets(db, pack.user_id, [previous] if previous else [])
             return version
         except StaleCatalogError:
-            file_path.unlink(missing_ok=True)
+            unlink_companion_asset(manifest_path)
         except BaseException:
-            file_path.unlink(missing_ok=True)
+            unlink_companion_asset(manifest_path)
             raise
         await db.flush()
         await db.refresh(pack, attribute_names=["catalog_version", "manifest_path", "content_hash"])

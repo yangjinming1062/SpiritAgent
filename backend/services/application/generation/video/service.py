@@ -30,12 +30,14 @@ from modules.companion import (
     MediaReviewPublication,
     OutfitSource,
     PeekGeometry,
+    RemovedActionVideoTask,
     VideoActionImageResponse,
     VideoActionVideoResponse,
     VideoClipSpec,
     VideoPackResponse,
     make_action_reference_hash,
     parse_content_rect,
+    removed_video_tasks,
 )
 from modules.ws import emit_ws_event
 from sqlalchemy import ColumnElement, func, select, update
@@ -52,6 +54,7 @@ from services.domains.actions import (
     publish_action_catalog,
     retire_action_assets,
 )
+from services.domains.assets import ACTION_ASSET_FIELDS
 from services.domains.companion import (
     character_snapshot_is_current,
     get_or_create_persona,
@@ -65,6 +68,9 @@ from services.infrastructure.assets import (
     build_data_uri,
     download_media_result,
     image_mime_for_extension,
+    pack_asset_directory,
+    parse_companion_asset_path,
+    resolve_companion_asset_path,
     save_action_pose_asset_async,
     save_action_source_asset_async,
     save_companion_asset_async,
@@ -118,6 +124,7 @@ from ..media_chain import (
     MediaProviderFailedError,
     media_failure_reason,
     resolve_frozen_media_provider,
+    spawn_removed_action_task_cancellation,
     video_failure_message,
     video_provider_failure_reason,
 )
@@ -191,6 +198,10 @@ class _GenerationRowGoneError(Exception):
     """生成中的动作行已删除，或包已离开生成流程；只跳过受影响的目标。"""
 
 
+def _pack_dir(pack: CompanionActionPack) -> str:
+    return pack_asset_directory(pack.outfit_id, pack.id)
+
+
 async def _require_new_paid_step(pack: CompanionActionPack, context: GenerationContext) -> None:
     require_new_generation_call(pack.user_id)
     async with SESSION_LOCAL() as db:
@@ -235,13 +246,61 @@ async def _reference_hash(outfit: CompanionOutfit | None, avatar: AvatarAsset | 
     )
 
 
-async def _copy_portrait_asset(path: str, *, user_id: int, label: str) -> str | None:
+async def _copy_portrait_asset(path: str, *, user_id: int, label: str, directory: str) -> str | None:
     """把头像或外观图复制为本任务独有的冻结资产；源不可读时返回 None。"""
     loaded = await _process_thread(read_portrait_bytes, path)
     if loaded is None:
         return None
     data = loaded[0]
-    return await save_companion_asset_async(data, user_id=user_id, label=label, ext=sniff_media_ext(data) or "png")
+    return await save_companion_asset_async(
+        data,
+        user_id=user_id,
+        label=label,
+        ext=sniff_media_ext(data) or "png",
+        directory=directory,
+    )
+
+
+async def _copy_pack_value(
+    value: object,
+    pack: CompanionActionPack,
+    copied: dict[str, str],
+) -> object:
+    if isinstance(value, list):
+        return [await _copy_pack_value(item, pack, copied) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _pack_dir(pack) if key == "storage_directory" else await _copy_pack_value(item, pack, copied)
+            for key, item in value.items()
+        }
+    if not isinstance(value, str):
+        return value
+    parsed = parse_companion_asset_path(value)
+    if parsed is not None:
+        if parsed[0] != pack.user_id:
+            raise VideoPackStateError("继承素材不属于当前账户")
+        if value not in copied:
+            directory = _pack_dir(pack)
+            resolved = resolve_companion_asset_path(*parsed)
+            if resolved is None:
+                # 进度会预登记尚未落盘的源素材；恢复时仍使用目标包的确定性路径。
+                return f"companion-assets/{pack.user_id}/{directory}/{parsed[1].rsplit('/', 1)[-1]}"
+            else:
+                copied[value] = await save_companion_asset_async(
+                    await _process_thread(resolved[0].read_bytes),
+                    user_id=pack.user_id,
+                    directory=directory,
+                    label=resolved[0].stem,
+                    ext=resolved[0].suffix.lstrip("."),
+                )
+        return copied[value]
+    if value.startswith(("{", "[")):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return json.dumps(await _copy_pack_value(decoded, pack, copied), ensure_ascii=False)
+    return value
 
 
 def _source_ext(content_type: str) -> str:
@@ -513,8 +572,9 @@ async def create_pack_from_reference(
                 and await _newer_ready_pack(db, reusable) is None
             ):
                 await _activate_locked(db, reusable)
-                await _retire_superseded_locked(db, reusable)
+                _, removed = await _retire_superseded_locked(db, reusable)
                 await db.commit()
+                spawn_removed_action_task_cancellation(user_id, removed)
 
                 return reusable
         system_seconds: float | None = None
@@ -525,6 +585,8 @@ async def create_pack_from_reference(
         if not image_chain:
             raise VideoPackStateError(image_error or "请配置图像编辑供应商以生成动作姿态")
         require_action_matting_model()
+        pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
+        directory = _pack_dir(pack)
         previous: dict[str, CompanionAction] = {}
         if source is not None:
             previous = {
@@ -540,11 +602,23 @@ async def create_pack_from_reference(
                 old = _inheritable_job(previous.get(key))
                 if old is not None and accepted_action_asset(old) is None and not _can_resume_job(old):
                     raise VideoPackStateError("请先重做失败的必需动作，再补齐其他动作")
-            reference_path = source.reference_path
-            if not _artifact_abs_path(reference_path).is_file():
+            copied_reference = await _copy_portrait_asset(
+                source.reference_path,
+                user_id=user_id,
+                label="video_reference",
+                directory=directory,
+            )
+            if copied_reference is None:
                 raise VideoPackStateError("该动作包的参考图无法读取")
+            reference_path = copied_reference
+            pending_assets.callback(unlink_companion_asset, reference_path)
         else:
-            copied = await _copy_portrait_asset(outfit.fullbody_url, user_id=user_id, label="video_reference")
+            copied = await _copy_portrait_asset(
+                outfit.fullbody_url,
+                user_id=user_id,
+                label="video_reference",
+                directory=directory,
+            )
             if copied is None:
                 raise VideoPackStateError("外观参考图不可读")
             reference_path = copied
@@ -554,12 +628,24 @@ async def create_pack_from_reference(
             action_feedback = dict(source_context.action_feedback)
             if action is not None:
                 action_feedback[action] = feedback.strip()[:1000]
-            context = source_context.model_copy(
-                update={"action_feedback": action_feedback, "active_outfit_id": active_outfit_id},
-            )
+            copied: dict[str, str] = {source.reference_path: reference_path}
+            try:
+                context = GenerationContext.model_validate(
+                    await _copy_pack_value(source_context.model_dump(), pack, copied),
+                )
+            finally:
+                for path in copied.values():
+                    pending_assets.callback(unlink_companion_asset, path)
+            context.action_feedback = action_feedback
+            context.active_outfit_id = active_outfit_id
         else:
             seed_path = avatar.seed_fullbody_url if avatar else ""
-            identity_reference_path = await _copy_portrait_asset(seed_path, user_id=user_id, label="video_identity")
+            identity_reference_path = await _copy_portrait_asset(
+                seed_path,
+                user_id=user_id,
+                label="video_identity",
+                directory=directory,
+            )
             if identity_reference_path is None:
                 raise VideoPackStateError("全身形象无法读取")
             pending_assets.callback(unlink_companion_asset, identity_reference_path)
@@ -577,7 +663,8 @@ async def create_pack_from_reference(
                 active_outfit_id=outfit.id if initial_only else active_outfit_id,
                 must_actions=[],
             )
-        pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
+        context.storage_directory = directory
+        context.reference_chain.storage_directory = directory
         pack.reference_path = reference_path
         canvas_w, canvas_h = _DEFAULT_CANVAS
         pack.canvas_spec = json.dumps({"width": canvas_w, "height": canvas_h}, ensure_ascii=False)
@@ -620,7 +707,7 @@ async def create_pack_from_reference(
                     _freeze_action_video_plan(job, system_seconds, system_providers)
                 must_actions.add(key)
             else:
-                job = _copy_job_to_pack(old, pack)
+                job = await _copy_job_to_pack(old, pack)
                 job.outfit_id, job.reference_hash = outfit.id, reference_hash
                 if accepted_action_asset(job) is not None:
                     must_actions.add(key)
@@ -837,6 +924,7 @@ async def _prepare_clip(
     start: float | None = None,
     end: float | None = None,
     preserve_resolution: bool = False,
+    directory: str,
 ) -> ActionResult:
     """处理单动作片段并转存片段、封面与命中遮罩；封面/遮罩从最终交付片段读取（libvpx 解码 VP9 alpha），遮罩落盘供 hitmask_ref 按帧查询。"""
     dst = work / f"{action}.{TARGET_EXT}"
@@ -856,6 +944,7 @@ async def _prepare_clip(
     stored = await save_companion_asset_async(
         await _process_thread(dst.read_bytes),
         user_id=user_id,
+        directory=directory,
         label=f"video_{action}",
         ext="webm",
     )
@@ -864,6 +953,7 @@ async def _prepare_clip(
         cover_stored = await save_companion_asset_async(
             cover,
             user_id=user_id,
+            directory=directory,
             label=f"video_{action}_cover",
             ext="webp",
         )
@@ -871,6 +961,7 @@ async def _prepare_clip(
         hitmask_stored = await save_companion_asset_async(
             json.dumps(hitmask).encode("utf-8"),
             user_id=user_id,
+            directory=directory,
             label=f"video_{action}_hitmask",
             ext="json",
         )
@@ -901,6 +992,8 @@ async def _prepare_image(
     user_id: int,
     canvas_w: int,
     canvas_h: int,
+    *,
+    directory: str,
 ) -> ActionResult:
     dst = work / f"{action}.png"
     processed = await _process_thread(prepare_action_image, src, dst, canvas_w=canvas_w, canvas_h=canvas_h)
@@ -909,6 +1002,7 @@ async def _prepare_image(
         stored = await save_companion_asset_async(
             await _process_thread(dst.read_bytes),
             user_id=user_id,
+            directory=directory,
             label=f"action_image_{action}",
             ext="png",
         )
@@ -916,6 +1010,7 @@ async def _prepare_image(
         cover = await save_companion_asset_async(
             processed.cover,
             user_id=user_id,
+            directory=directory,
             label=f"action_image_{action}_cover",
             ext="webp",
         )
@@ -923,6 +1018,7 @@ async def _prepare_image(
         hitmask = await save_companion_asset_async(
             json.dumps(processed.hitmask).encode(),
             user_id=user_id,
+            directory=directory,
             label=f"action_image_{action}_hitmask",
             ext="json",
         )
@@ -1111,6 +1207,7 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
         )
         if published:
             emit_catalog_changed(db, pack)
+        removed_tasks: list[RemovedActionVideoTask] = []
         if (
             published
             and context is not None
@@ -1121,8 +1218,9 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
             and await character_snapshot_is_current(db, pack.user_id, context.identity)
         ):
             await _activate_locked(db, pack)
-            await _retire_superseded_locked(db, pack)
+            _, removed_tasks = await _retire_superseded_locked(db, pack)
         await db.commit()
+        spawn_removed_action_task_cancellation(pack.user_id, removed_tasks)
 
 
 async def _publish_catalog(db: AsyncSession, pack: CompanionActionPack) -> int | None:
@@ -1158,9 +1256,27 @@ async def _build_pack(
                 await _process_thread(src.write_bytes, data)
                 start, end = action_ranges.get(action, (None, None))
                 if content_type.startswith("image/"):
-                    result = await _prepare_image(work, action, src, user_id, canvas_w, canvas_h)
+                    result = await _prepare_image(
+                        work,
+                        action,
+                        src,
+                        user_id,
+                        canvas_w,
+                        canvas_h,
+                        directory=_pack_dir(pack),
+                    )
                 else:
-                    result = await _prepare_clip(work, action, src, user_id, canvas_w, canvas_h, start=start, end=end)
+                    result = await _prepare_clip(
+                        work,
+                        action,
+                        src,
+                        user_id,
+                        canvas_w,
+                        canvas_h,
+                        start=start,
+                        end=end,
+                        directory=_pack_dir(pack),
+                    )
                 results[action] = result
                 async with SESSION_LOCAL() as db:
                     await db.execute(
@@ -1310,6 +1426,7 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
         context.identity,
         "",
         identity_reference=source,
+        storage_directory=_pack_dir(pack),
         state=context.reference_chain,
         save_progress=save_progress,
         before_submit=lambda: _require_new_paid_step(pack, context),
@@ -1596,6 +1713,7 @@ async def _prepare_action_pose(
     paths = await generate_character_images(
         prompt,
         user_id=pack.user_id,
+        storage_directory=_pack_dir(pack),
         reference_image=reference_uri,
         identity_reference=identity_uri,
         identity_text=render_character_profile(context.identity),
@@ -1606,11 +1724,20 @@ async def _prepare_action_pose(
         save_progress=save_pose,
         before_submit=lambda: _require_new_paid_step(pack, context),
     )
-    job.pose_path = action_pose_asset_path(pack.user_id, pose_state.generation_id)
+    job.pose_path = action_pose_asset_path(
+        pack.user_id,
+        pose_state.generation_id,
+        directory=_pack_dir(pack),
+    )
     await _advance_job(job.id, stage="pose", pose_path=job.pose_path)
     pose_data = await _process_thread(_artifact_abs_path(paths[0]).read_bytes)
     prepared = await _process_thread(prepare_action_frame, pose_data, preserve_resolution=entry.media_type == "image")
-    await save_action_pose_asset_async(prepared, user_id=pack.user_id, generation_id=pose_state.generation_id)
+    await save_action_pose_asset_async(
+        prepared,
+        user_id=pack.user_id,
+        generation_id=pose_state.generation_id,
+        directory=_pack_dir(pack),
+    )
 
 
 async def _run_image_pipeline(
@@ -1645,6 +1772,7 @@ async def _run_image_pipeline(
                 pack.user_id,
                 canvas["width"],
                 canvas["height"],
+                directory=_pack_dir(pack),
             )
         values = _clip_row_values(result)
         await _advance_job(job.id, stage="process", **values)
@@ -1979,12 +2107,19 @@ async def _run_action_attempt(
         if ext not in _SOURCE_MEDIA_EXTS:
             raise VideoPackError("供应商返回了不支持的视频格式")
         # 源视频路径先随进度落库，写盘中断后按确定性路径复用。
-        state.source_path = action_source_asset_path(pack.user_id, state.generation_id, attempt, ext)
+        state.source_path = action_source_asset_path(
+            pack.user_id,
+            state.generation_id,
+            attempt,
+            ext,
+            directory=_pack_dir(pack),
+        )
         await _save_action_state(job, state, stage="download")
         source_path = await save_action_source_asset_async(
             data,
             user_id=pack.user_id,
             generation_id=state.generation_id,
+            directory=_pack_dir(pack),
             attempt=attempt,
             ext=ext,
         )
@@ -2005,6 +2140,7 @@ async def _run_action_attempt(
             canvas["width"],
             canvas["height"],
             preserve_resolution=True,
+            directory=_pack_dir(pack),
         )
     return source_path, result
 
@@ -2475,8 +2611,9 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> Compani
         if pack.identity_review == "review":
             pack.identity_review = "accepted"
         await _activate_locked(db, pack)
-        await _retire_superseded_locked(db, pack)
+        _, removed = await _retire_superseded_locked(db, pack)
         await db.commit()
+        spawn_removed_action_task_cancellation(user_id, removed)
         await db.refresh(pack)
 
     return pack
@@ -2522,8 +2659,12 @@ async def _jobs_by_pack(db: AsyncSession, *conditions: ColumnElement[bool]) -> d
     return grouped
 
 
-async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionActionPack]) -> set[str]:
-    """删除目标包及任务行（调用方提交）；返回可回收资产路径。共享资源（冻结参考、复用片段）只在最后一个引用消失才回收。"""
+async def _remove_packs(
+    db: AsyncSession,
+    user_id: int,
+    targets: list[CompanionActionPack],
+) -> tuple[set[str], list[RemovedActionVideoTask]]:
+    """删除目标包及任务行（调用方提交）；返回可回收资产路径和待撤销的远端视频句柄。共享资源（冻结参考、复用片段）只在最后一个引用消失才回收。"""
     packs = (
         (await db.execute(select(CompanionActionPack).where(CompanionActionPack.user_id == user_id))).scalars().all()
     )
@@ -2537,12 +2678,13 @@ async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionA
     for other in packs:
         if other.id not in target_ids:
             candidates -= _pack_assets(other, jobs_by_pack.get(other.id, []))
+    removed = removed_video_tasks(job for pack in targets for job in jobs_by_pack.get(pack.id, []))
     for pack in targets:
         for job in jobs_by_pack.get(pack.id, []):
             await db.delete(job)
         await db.delete(pack)
     await retire_action_assets(db, user_id, candidates)
-    return candidates
+    return candidates, removed
 
 
 def _load_generation_context(pack: CompanionActionPack) -> GenerationContext | None:
@@ -2576,7 +2718,7 @@ def _same_generation_lineage(kept: CompanionActionPack, other: CompanionActionPa
     return kept_ctx is not None and other_ctx is not None and kept_ctx.identity == other_ctx.identity
 
 
-def _copy_job_to_pack(job: CompanionAction, pack: CompanionActionPack) -> CompanionAction:
+async def _copy_job_to_pack(job: CompanionAction, pack: CompanionActionPack) -> CompanionAction:
     clone = CompanionAction(
         user_id=job.user_id,
         pack_id=pack.id,
@@ -2635,6 +2777,15 @@ def _copy_job_to_pack(job: CompanionAction, pack: CompanionActionPack) -> Compan
         else:
             clone.status, clone.stage = "failed", "design"
             clone.error = "待复核候选未迁入此动作包，请在此版本重新制作"
+    copied: dict[str, str] = {}
+    try:
+        # 克隆须改写全部资产字段（与引用扫描同清单），另加设计来源文本。
+        for name in (*ACTION_ASSET_FIELDS, "source_design_json"):
+            setattr(clone, name, await _copy_pack_value(getattr(clone, name), pack, copied))
+    except BaseException:
+        for path in copied.values():
+            unlink_companion_asset(path)
+        raise
     return clone
 
 
@@ -2659,7 +2810,7 @@ async def _carry_incomplete_jobs(
             continue
         if job.key in kept_jobs:
             continue
-        clone = _copy_job_to_pack(job, kept)
+        clone = await _copy_job_to_pack(job, kept)
         db.add(clone)
         kept_jobs[job.key] = clone
         cloned = True
@@ -2673,7 +2824,10 @@ def _has_pending_work(pack_id: int, jobs: Sequence[CompanionAction]) -> bool:
     return pack_id in _GEN_INFLIGHT or any(job.status in ("queued", "processing") for job in jobs)
 
 
-async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack) -> set[str]:
+async def _retire_superseded_locked(
+    db: AsyncSession,
+    kept: CompanionActionPack,
+) -> tuple[set[str], list[RemovedActionVideoTask]]:
     """kept 激活后删除同外观其余历史包。构建中的不动；同血缘包上不可续跑失败记录先迁到 kept；仍有可续跑任务的包保留作续跑入口；有在途或排队制作的包留待制作收尾后退役。"""
     targets = [
         pack
@@ -2688,7 +2842,7 @@ async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack)
         if pack.pack_version < kept.pack_version and pack.status != "processing"
     ]
     if not targets:
-        return set()
+        return set(), []
     jobs_by_pack = await _jobs_by_pack(db, CompanionAction.pack_id.in_([kept.id, *(pack.id for pack in targets)]))
     succeeded = {job.key for job in jobs_by_pack.get(kept.id, []) if accepted_action_asset(job) is not None}
     deletable = [
@@ -2701,7 +2855,7 @@ async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack)
         )
     ]
     if not deletable:
-        return set()
+        return set(), []
     await _carry_incomplete_jobs(db, kept, deletable, jobs_by_pack)
     return await _remove_packs(db, kept.user_id, deletable)
 
@@ -2724,8 +2878,9 @@ async def _retire_after_generation(pack_id: int, user_id: int) -> None:
         )
         if kept is None:
             return
-        await _retire_superseded_locked(db, kept)
+        _, removed = await _retire_superseded_locked(db, kept)
         await db.commit()
+        spawn_removed_action_task_cancellation(user_id, removed)
 
 
 async def delete_pack(db: AsyncSession, user_id: int, pack_id: int) -> None:
@@ -2736,8 +2891,9 @@ async def delete_pack(db: AsyncSession, user_id: int, pack_id: int) -> None:
         jobs = (await _jobs_by_pack(db, CompanionAction.pack_id == pack.id)).get(pack.id, [])
         if pack.active or pack.status == "processing" or _has_pending_work(pack.id, jobs):
             raise VideoPackStateError("使用中或制作中的动作包不能删除")
-        await _remove_packs(db, user_id, [pack])
+        _, removed = await _remove_packs(db, user_id, [pack])
         await db.commit()
+        spawn_removed_action_task_cancellation(user_id, removed)
 
 
 async def _get_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionActionPack | None:

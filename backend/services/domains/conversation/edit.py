@@ -8,8 +8,12 @@ from modules.conversation import Message
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.domains.assets import collect_message_asset_releases
+from services.infrastructure.assets import user_asset_lock
+
 from .formatting import message_text
 from .last_user_message import find_last_user_message
+from .reply_audio import cancel_reply_audio
 
 _ATTACHMENT_DIRECTIVE = re.compile(r"^@(file|folder):", re.IGNORECASE)
 
@@ -55,10 +59,18 @@ async def replace_last_user_message(
         content=content,
         content_type=source.content_type,
     )
-    await db.execute(
-        delete(Message).where(Message.conversation_id == conv.id, Message.id >= source_message_id),
-    )
-    db.add(replacement)
-    # 新 id 使旧快照的 after_id 失效，断线重连必须全量恢复修订后的历史。
-    await db.commit()
+    async with user_asset_lock(user_id):
+        removed = await collect_message_asset_releases(
+            db,
+            user_id,
+            [conv.id],
+            from_message_id=source_message_id,
+        )
+        await db.execute(
+            delete(Message).where(Message.conversation_id == conv.id, Message.id >= source_message_id),
+        )
+        db.add(replacement)
+        # 新 id 使旧快照的 after_id 失效，断线重连必须全量恢复修订后的历史。
+        await db.commit()
+    await cancel_reply_audio(user_id, removed)
     return replacement

@@ -76,10 +76,17 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
     )
 
 
-async def _generate(plan: ImagePlan, user_id: int) -> tuple[str, int | None]:
+async def _generate(plan: ImagePlan, user_id: int, directory: str) -> tuple[str, int | None]:
     identity = CharacterCardSnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
     if identity is None:
-        urls = await generate_images(plan.prompt, size=plan.size, n=1, user_id=user_id, persist_user_assets=True)
+        urls = await generate_images(
+            plan.prompt,
+            size=plan.size,
+            n=1,
+            user_id=user_id,
+            persist_user_assets=True,
+            storage_directory=directory,
+        )
         score = None
     else:
         async with SESSION_LOCAL() as db:
@@ -91,6 +98,7 @@ async def _generate(plan: ImagePlan, user_id: int) -> tuple[str, int | None]:
             size=plan.size,
             n=1,
             user_id=user_id,
+            storage_directory=directory,
             reference_image=plan.reference_image or "",
             secondary_reference_image=plan.secondary_reference_image,
             identity_reference=plan.reference_image or "",
@@ -112,7 +120,7 @@ async def _generate(plan: ImagePlan, user_id: int) -> tuple[str, int | None]:
 
 async def _produce(state: MediaTurnState, artifact: MediaArtifact, plan: ImagePlan) -> None:
     try:
-        artifact.url, artifact.identity_score = await _generate(plan, state.user_id)
+        artifact.url, artifact.identity_score = await _generate(plan, state.user_id, state.asset_directory)
         artifact.status = "ready"
     except asyncio.CancelledError:
         artifact.status = "result_unknown"

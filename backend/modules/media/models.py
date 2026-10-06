@@ -19,6 +19,13 @@ class VideoGenJob(ModelBase):
         nullable=True,
         index=True,
     )
+    source_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # 历史修改先同事务失效；后台只处理撤销和清理，不再制作或交付。
+    cleanup_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     provider: Mapped[str] = mapped_column(String(64))
     model: Mapped[str] = mapped_column(String(128))
     prompt: Mapped[str] = mapped_column(Text)

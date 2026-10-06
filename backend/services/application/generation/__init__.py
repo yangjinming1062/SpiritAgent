@@ -135,6 +135,8 @@ from .video import (
     retry_pack as retry_video_pack,
 )
 from .video_jobs import (
+    cleanup_user_media,
+    cleanup_user_video_jobs,
     discard_post_video_job,
     enqueue_video_job,
     ensure_video_capability,
@@ -158,6 +160,8 @@ from .visual_identity import (
 )
 
 __all__ = [
+    "cleanup_user_media",
+    "cleanup_user_video_jobs",
     "GenerationWorkPaused",
     "require_new_generation_call",
     "require_video_generation_call",

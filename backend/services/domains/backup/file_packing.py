@@ -26,6 +26,9 @@ USER_ASSET_ROOT = "companion-assets"
 _MAX_JSON_DEPTH = 64
 _TEMP_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 _TEMP_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp", "image/tiff"})
+_ASSET_TOKEN = re.compile(
+    r"(?:https?://[^\s<>\"'()]+)?/api/companion/asset/\d+/[A-Za-z0-9._/-]+(?:\?[^\s<>\"'()]*)?|companion-assets/\d+/[A-Za-z0-9._/-]+",
+)
 
 
 def _storage_path(value: str) -> str:
@@ -48,6 +51,7 @@ def _strings(value: Any, depth: int = 0) -> Iterator[str]:
         return
     if isinstance(value, str):
         yield value
+        yield from (match.group().rstrip(".!?，。；！") for match in _ASSET_TOKEN.finditer(value))
         if value.lstrip().startswith(("{", "[")):
             try:
                 parsed = json.loads(value)
@@ -120,6 +124,14 @@ class UrlRewriter:
         self._temp_payloads: dict[str, Path | None] = {}
         self._available_files: dict[str, Path | None] = {}
         self.missing_paths: set[str] = set()
+        self.inserted_rows: set[tuple[str, str]] = set()
+        self.asset_copies: dict[str, str] = {}
+
+    def set_asset_mapping(self, mapping: dict[str, str], copies: dict[str, str]) -> None:
+        self._mapping.update(mapping)
+        self.asset_copies = copies
+        self._available_files.clear()
+        self.missing_paths.clear()
 
     def _temporary_source(self, file_id: str) -> Path | None:
         if not _TEMP_ID_PATTERN.fullmatch(file_id):
@@ -198,7 +210,7 @@ class UrlRewriter:
 
     def require_file(self, original: str) -> None:
         path = _storage_path(original)
-        target = self._owned_target(path)
+        target = self._mapping.get(path, self._owned_target(path))
         if target is None or not target or self._available_file(path, target) is None:
             raise ValueError("必需的身份、场景或已发布媒体不在备份与目标账户中，无法恢复此类别。")
 
@@ -233,9 +245,18 @@ class UrlRewriter:
                 except RecursionError:
                     raise ValueError("备份资料嵌套过深，无法安全校验媒体归属。") from None
                 except ValueError:
-                    return self(value)
-                rewritten = self.rewrite(parsed, depth + 1)
-                return json.dumps(rewritten, ensure_ascii=False) if rewritten != parsed else value
+                    pass
+                else:
+                    rewritten = self.rewrite(parsed, depth + 1)
+                    return json.dumps(rewritten, ensure_ascii=False) if rewritten != parsed else value
+            if _ASSET_TOKEN.search(value):
+
+                def rewrite_token(match: re.Match[str]) -> str:
+                    token = match.group()
+                    reference = token.rstrip(".!?，。；！")
+                    return (self(reference) or "") + token[len(reference) :]
+
+                return _ASSET_TOKEN.sub(rewrite_token, value)
             return self(value)
         return value
 
@@ -284,7 +305,9 @@ def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]
             name = path.removeprefix("temp-media/")
             if "/" not in name and "\\" not in name:
                 files.update(owned_temp_files(PurePosixPath(name).stem, user_id))
-    return sorted(path for path in files if path.resolve().is_relative_to(root))
+    if any(path.resolve() != path or not path.is_relative_to(root) for path in files):
+        raise ValueError("备份资源包含符号链接或越界路径，无法安全导出。")
+    return sorted(files)
 
 
 def _user_asset_target(relative: PurePosixPath, source_uid: int, target_uid: int) -> PurePosixPath | None:
@@ -297,7 +320,7 @@ def _user_asset_target(relative: PurePosixPath, source_uid: int, target_uid: int
 
 def planned_asset_mapping(extract_root: Path, source_uid: int, target_uid: int) -> dict[str, str]:
     """包内账户资产恢复后的路径映射，与 restore_files 同一规则但不复制文件，供预检与写入判断一致。"""
-    source_root = extract_root / "files"
+    source_root = (extract_root / "files").resolve()
     mapping: dict[str, str] = {}
     for source in source_root.rglob("*"):
         if not source.is_file():
@@ -314,7 +337,7 @@ def referenced_backup_files(extract_root: Path, rows: dict[str, list[dict[str, A
     temp_ids = {
         PurePosixPath(path).stem for path in references if path.startswith(("temp-media/", "/api/media/files/"))
     }
-    source_root = extract_root / "files"
+    source_root = (extract_root / "files").resolve()
     return frozenset(
         relative.as_posix()
         for source in source_root.rglob("*")
@@ -332,6 +355,23 @@ def _ensure_running(stop: threading.Event) -> None:
         raise InterruptedError("Backup restore was cancelled")
 
 
+def _stage_copy(source: Path, target: Path, rewriter: UrlRewriter, stop: threading.Event) -> None:
+    """先写隐藏临时文件再硬链接到目标；失败或取消不留下半成品。"""
+    staged = target.with_name(f".{target.name}.restore_{uuid4().hex}")
+    try:
+        shutil.copy2(source, staged)
+        _ensure_running(stop)
+        try:
+            os.link(staged, target)
+        except FileExistsError:
+            if not target.is_file():
+                raise ValueError("Backup destination exists and is not a file")
+        else:
+            rewriter.created.append(target)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
 def restore_files(
     extract_root: Path,
     source_uid: int,
@@ -345,7 +385,7 @@ def restore_files(
 ) -> int:
     """复制备份文件，映射与新建文件记入调用方持有的 rewriter，返回因会话缺失而跳过的附件数；stop 置位后中止。"""
     root = Path(SETTINGS.data_dir).resolve()
-    source_root = extract_root / "files"
+    source_root = (extract_root / "files").resolve()
     skipped_conversation_files = 0
     temp_ids: dict[str, str] = {}
     try:
@@ -359,7 +399,7 @@ def restore_files(
             parts = relative.parts
             user_asset = _user_asset_target(relative, source_uid, target_uid)
             if user_asset is not None:
-                target_relative = user_asset
+                target_relative = PurePosixPath(rewriter._mapping.get(str(relative), str(user_asset)))
             elif parts[0] == "desktop-attachments" and len(parts) >= 3:
                 if not include_conversation_files:
                     continue
@@ -386,20 +426,23 @@ def restore_files(
                 if not target.is_file():
                     raise ValueError("Backup destination exists and is not a file")
             else:
-                staged = target.with_name(f".{target.name}.restore_{uuid4().hex}")
-                try:
-                    shutil.copy2(source, staged)
-                    _ensure_running(stop)
-                    try:
-                        os.link(staged, target)
-                    except FileExistsError:
-                        if not target.is_file():
-                            raise ValueError("Backup destination exists and is not a file")
-                    else:
-                        rewriter.created.append(target)
-                finally:
-                    staged.unlink(missing_ok=True)
+                _stage_copy(source, target, rewriter, stop)
             rewriter._mapping[str(relative)] = target_relative.as_posix()
+        # 共享源素材在不同资产包中各自拥有副本；复制失败仍由 rewriter 统一回滚。
+        for target_relative, source_relative in rewriter.asset_copies.items():
+            _ensure_running(stop)
+            if source_relative not in referenced_files:
+                continue
+            source = source_root / source_relative
+            target = root / target_relative
+            if source.resolve() != source:
+                raise ValueError("Backup source contains symbolic links")
+            if target.resolve() != target or not target.is_relative_to(root):
+                raise ValueError("Backup destination escapes data directory")
+            if not source.is_file() or target.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _stage_copy(source, target, rewriter, stop)
         for old, new in temp_ids.items():
             _ensure_running(stop)
             rewriter._mapping[f"/api/media/files/{old}"] = f"/api/media/files/{new}"

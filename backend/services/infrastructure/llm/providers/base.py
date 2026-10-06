@@ -247,6 +247,10 @@ class VideoGenProvider(BaseProvider):
     @abstractmethod
     async def poll(self, task_id: str) -> VideoJobStatus: ...
 
+    async def cancel(self, task_id: str) -> Literal["cancelled", "finished", "not_cancellable", "unsupported"]:
+        """只撤销指定的已提交任务；不支持时明确返回，传输失败向上传播供持久待办重试。"""
+        return "unsupported"
+
 
 @dataclass(frozen=True)
 class TTSResult:

@@ -5,9 +5,13 @@ from modules.conversation import Conversation, Message, UndoAnchor, UndoAttachme
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.domains.assets import collect_message_asset_releases
+from services.infrastructure.assets import user_asset_lock
+
 from .fork import SourceNotFoundError
 from .history import build_session_messages
 from .main_conversation import IM_KIND, SPECIAL_KIND
+from .reply_audio import cancel_reply_audio
 
 
 class UndoNotAllowedError(Exception):
@@ -97,13 +101,21 @@ async def undo_conversation_to_message(
         )
     ).scalar_one()
 
-    await db.execute(
-        delete(Message).where(
-            Message.conversation_id == conv.id,
-            Message.id >= source_message_id,
-        ),
-    )
-    await db.commit()
+    async with user_asset_lock(conv.user_id):
+        removed = await collect_message_asset_releases(
+            db,
+            conv.user_id,
+            [conv.id],
+            from_message_id=source_message_id,
+        )
+        await db.execute(
+            delete(Message).where(
+                Message.conversation_id == conv.id,
+                Message.id >= source_message_id,
+            ),
+        )
+        await db.commit()
+    await cancel_reply_audio(conv.user_id, removed)
 
     delivered = await build_session_messages(conv.id, db)
 

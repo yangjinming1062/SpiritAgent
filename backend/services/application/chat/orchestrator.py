@@ -13,11 +13,12 @@ from components import (
     resolve_prompt_text,
     safe_json_loads,
     session_scope,
+    utc_now,
 )
 from modules.auth import ChatRequestClientContext
 from modules.channels import ChannelTurnSource
 from modules.conversation import Conversation, Message
-from modules.settings import get_user_setting, load_user_settings
+from modules.settings import get_user_setting, load_user_settings, resolve_user_timezone
 from modules.system import ChatMessageRequest, ChatRequest
 from prompts.companion import PENDING_INTENTIONS_LABELS
 
@@ -33,6 +34,7 @@ from services.domains.conversation import (
 )
 from services.domains.media import inline_video_parts
 from services.domains.memory import embed_memory_text
+from services.infrastructure.assets import asset_write_context, dated_asset_directory
 from services.infrastructure.llm import (
     ChatProvider,
     LLMRuntimeError,
@@ -174,7 +176,7 @@ async def run_chat_turn(
         timeout = asyncio.timeout(turn_timeout_seconds or SETTINGS.agent_turn_timeout_seconds)
         try:
             async with timeout:
-                with generation_timeout_scope(timeout):
+                with generation_timeout_scope(timeout), asset_write_context():
                     await _run_chat_turn(
                         req,
                         llm_config,
@@ -409,6 +411,12 @@ async def _run_chat_turn(
                 structured_reply=companion_reply,
                 request=req.message.content,
                 retry_after_message_id=persisted_message_id if final_reply_only else None,
+            )
+            media_turn.source_message_id = user_message_id
+            source = await db.get(Message, user_message_id) if user_message_id is not None else None
+            media_turn.asset_directory = dated_asset_directory(
+                source.created_at if source is not None else utc_now(),
+                await resolve_user_timezone(db, user_id) or "UTC",
             )
         dispatch_ctx = _ToolDispatchContext(
             user_id=user_id,

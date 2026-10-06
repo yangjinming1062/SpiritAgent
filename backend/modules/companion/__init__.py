@@ -8,7 +8,9 @@ from .actions import (
     ActionProposal,
     CompanionAction,
     CompanionActionPack,
+    RemovedActionVideoTask,
     make_action_reference_hash,
+    removed_video_tasks,
 )
 from .character_card import (
     BodyFeatures,
@@ -215,6 +217,8 @@ __all__ = [
     "CompanionAction",
     "CompanionActionPack",
     "make_action_reference_hash",
+    "RemovedActionVideoTask",
+    "removed_video_tasks",
     "REQUIRED_SYSTEM_SLOTS",
     "SYSTEM_SLOTS",
     "SYSTEM_ACTION_MEDIA_TYPES",

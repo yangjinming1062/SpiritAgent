@@ -85,7 +85,8 @@ async def load_media_turn(
             VideoGenJob.user_id == state.user_id,
             VideoGenJob.session_id == state.session_id,
             VideoGenJob.media_id.is_not(None),
-            VideoGenJob.status.not_in(("succeeded", "failed", "result_unknown")),
+            VideoGenJob.cleanup_requested_at.is_(None),
+            VideoGenJob.status.not_in(("succeeded", "failed", "result_unknown", "discarded")),
         ),
     )
     for job in pending_jobs:
@@ -121,6 +122,7 @@ async def refresh_video_media(db: AsyncSession, state: MediaTurnState) -> None:
                 VideoGenJob.id.in_([a.job_id for a in videos]),
                 VideoGenJob.user_id == state.user_id,
                 VideoGenJob.session_id == state.session_id,
+                VideoGenJob.cleanup_requested_at.is_(None),
             ),
         )
     }

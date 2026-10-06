@@ -9,10 +9,13 @@ from .asset_store import (
     build_data_uri,
     client_asset_url,
     compute_file_sha256,
+    dated_asset_directory,
     delete_user_assets,
     image_chain_asset_path,
     image_mime_for_extension,
     normalize_asset_reference,
+    outfit_asset_directory,
+    pack_asset_directory,
     parse_companion_asset_path,
     read_asset_data_uri,
     resolve_asset_reference,
@@ -23,6 +26,7 @@ from .asset_store import (
     save_companion_asset_async,
     save_image_chain_asset_async,
     save_video_job_asset_async,
+    scene_asset_directory,
     signed_companion_asset_url,
     sniff_media_ext,
     unlink_companion_asset,
@@ -32,8 +36,22 @@ from .asset_store import (
 )
 from .http_range import serve_ranged_file
 from .media_download import VIDEO_DOWNLOAD_ATTEMPTS, download_media_result
+from .write_protection import (
+    asset_write_context,
+    asset_write_in_progress,
+    forget_asset_write,
+    protect_asset_write,
+    prune_completed_asset_writes,
+    user_asset_lock,
+)
 
 __all__ = [
+    "asset_write_context",
+    "asset_write_in_progress",
+    "forget_asset_write",
+    "protect_asset_write",
+    "prune_completed_asset_writes",
+    "user_asset_lock",
     "ImagePixelLimitError",
     "UnsupportedImageFormatError",
     "VIDEO_DOWNLOAD_ATTEMPTS",
@@ -43,6 +61,10 @@ __all__ = [
     "action_source_asset_path",
     "save_action_source_asset_async",
     "asset_store",
+    "dated_asset_directory",
+    "outfit_asset_directory",
+    "pack_asset_directory",
+    "scene_asset_directory",
     "build_data_uri",
     "image_mime_for_extension",
     "normalize_asset_reference",

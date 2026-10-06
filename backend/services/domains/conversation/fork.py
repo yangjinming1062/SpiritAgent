@@ -4,6 +4,8 @@ from modules.conversation import CompanionReply, Conversation, MediaBubble, Mess
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.infrastructure.assets import user_asset_lock
+
 from .context_window import CHECKPOINT_SUBTYPES
 from .history import build_session_messages
 from .main_conversation import IM_KIND, SPECIAL_KIND, STANDARD_KIND, UI_ONLY_SUBTYPES
@@ -18,7 +20,7 @@ class SourceNotFoundError(Exception):
     """源会话不存在 / 不属于该用户 / 源消息不在源会话内。"""
 
 
-async def fork_conversation_from_message(
+async def _fork_conversation_from_message(
     db: AsyncSession,
     user_id: int,
     source_session_id: str,
@@ -133,3 +135,13 @@ async def fork_conversation_from_message(
         "message_count": len(messages),
         "messages": messages,
     }
+
+
+async def fork_conversation_from_message(
+    db: AsyncSession,
+    user_id: int,
+    source_session_id: str,
+    source_message_id: int,
+) -> dict:
+    async with user_asset_lock(user_id):
+        return await _fork_conversation_from_message(db, user_id, source_session_id, source_message_id)

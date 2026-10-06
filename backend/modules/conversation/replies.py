@@ -1,6 +1,8 @@
+from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from components.asset_paths import parse_companion_asset_path
+from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
 from modules.media import SPEECH_STYLE_ADAPTER, SpeechCue, SpeechDirection, SpeechPause, SpeechStyle
 
@@ -49,7 +51,7 @@ class MediaBubbleInput(BaseModel):
 
 class MediaBubble(MediaBubbleInput):
     status: Literal["pending", "ready", "failed", "result_unknown"]
-    url: str | None = Field(default=None, pattern=r"^companion-assets/\d+/[A-Za-z0-9._-]+$")
+    url: str | None = None
     error: str | None = None
     # 服务端绑定，不下发模型也不由客户端决定归属。
     goal_id: str = Field(min_length=1, max_length=128)
@@ -57,6 +59,8 @@ class MediaBubble(MediaBubbleInput):
 
     @model_validator(mode="after")
     def validate_asset_state(self) -> "MediaBubble":
+        if self.url is not None and parse_companion_asset_path(self.url) is None:
+            raise ValueError("Invalid media asset path")
         if (self.status == "ready") != bool(self.url):
             raise ValueError("Ready media requires an asset; unfinished media cannot bind one")
         if self.type == "image" and self.job_id is not None:
@@ -97,9 +101,19 @@ class VoiceBubble(BaseModel):
 class CompanionReply(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # 服务端冻结首次语音制作的本地日期；不进入模型输入或客户端气泡。
+    audio_directory: str | None = Field(default=None, pattern=r"^[0-9]{8}$")
+
     bubbles: list[Annotated[TextBubble | VoiceBubble | MediaBubble, Field(discriminator="type")]] = Field(
         min_length=1,
     )
+
+    @field_validator("audio_directory")
+    @classmethod
+    def validate_audio_directory(cls, value: str | None) -> str | None:
+        if value is not None:
+            date.fromisoformat(value)
+        return value
 
     def validate_content(self, content: str) -> None:
         """原文与交付态须对应同一组气泡；供应商绑定与音频仅存在于交付态。"""

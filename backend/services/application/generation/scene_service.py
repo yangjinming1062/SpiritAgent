@@ -40,6 +40,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.domains.assets import cleanup_user_assets, enqueue_asset_cleanup
 from services.domains.companion import (
     get_pending_scene_task,
     get_scene,
@@ -356,8 +357,9 @@ async def regenerate_scene(user_id: int, scene_id: int, *, target_size: SceneIma
         row.regeneration_task_id = task_id
         row.regeneration_state_json = state.model_dump_json()
         _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
-    await _unlink_unreferenced_assets(user_id, cleanup_paths)
+    await cleanup_user_assets(user_id)
     _launch_task(scene_id, user_id, regeneration_task_id=task_id)
     return row
 
@@ -416,6 +418,7 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
         else:
             raise SceneStateError("该场景没有待取消的任务")
         _event(db, persona, "companion.scene.updated", scene_id)
+        await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
         task = _INFLIGHT_TASKS.get((user_id, scene_id))
         _QUEUED_TASKS.pop((user_id, scene_id), None)
@@ -423,7 +426,7 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
             task.cancel()
     if task:
         await asyncio.gather(task, return_exceptions=True)
-    await _unlink_unreferenced_assets(user_id, cleanup_paths)
+    await cleanup_user_assets(user_id)
     return row
 
 
@@ -446,9 +449,9 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
             paths |= SceneRegenerationState.model_validate_json(row.regeneration_state_json).image_chain.stored_paths()
         await db.delete(row)
         _event(db, persona, "companion.scene.updated", scene_id)
+        await enqueue_asset_cleanup(db, user_id, paths)
         await db.commit()
-    for path in paths:
-        await asyncio.to_thread(asset_store.unlink_companion_asset, path)
+    await cleanup_user_assets(user_id)
 
 
 async def edit_scene_description(user_id: int, scene_id: int, description: SceneDescriptionRequest) -> CompanionScene:
@@ -479,8 +482,9 @@ async def edit_scene_description(user_id: int, scene_id: int, description: Scene
         row.ready_at = row.ready_at or utc_now()
         row.error = None
         _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
-    await _unlink_unreferenced_assets(user_id, cleanup_paths)
+    await cleanup_user_assets(user_id)
     return row
 
 
@@ -522,7 +526,13 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, mime: str) -> Co
     """保存上传图片并转入分析；场景已不在等待中时丢弃图片并返回现状。"""
     ext = {"image/gif": "gif", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}.get(mime, "png")
     size = await asyncio.to_thread(scene_image_size, data)
-    path = await asset_store.save_companion_asset_async(data, user_id=user_id, label="scene", ext=ext)
+    path = await asset_store.save_companion_asset_async(
+        data,
+        user_id=user_id,
+        label="scene",
+        ext=ext,
+        directory=asset_store.scene_asset_directory(scene_id),
+    )
     committed = False
     try:
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
@@ -602,27 +612,20 @@ async def _analyze(user_id: int, scene_id: int) -> None:
             persona.active_scene_id = row.id
             row.activated_at = utc_now()
             _event(db, persona, "companion.scene.activated", scene_id)
+        await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
         SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="ready").inc()
-    await _unlink_unreferenced_assets(user_id, cleanup_paths)
+    await cleanup_user_assets(user_id)
 
 
-async def _unlink_unreferenced_assets(user_id: int, paths: set[str]) -> None:
+async def _reclaim_assets(user_id: int, paths: set[str]) -> None:
+    """未在业务事务内登记的零散路径：登记待办后立即回收。"""
     if not paths:
         return
     async with SESSION_LOCAL() as db:
-        referenced = set(
-            (
-                await db.scalars(
-                    select(CompanionScene.media_path).where(
-                        CompanionScene.user_id == user_id,
-                        CompanionScene.media_path.in_(paths),
-                    ),
-                )
-            ).all(),
-        )
-    for path in paths - referenced:
-        await asyncio.to_thread(asset_store.unlink_companion_asset, path)
+        await enqueue_asset_cleanup(db, user_id, paths)
+        await db.commit()
+    await cleanup_user_assets(user_id)
 
 
 async def _generate_wallpaper(
@@ -633,10 +636,12 @@ async def _generate_wallpaper(
     save_progress: ImageProgressWriter,
     *,
     reference_image: str | None = None,
+    scene_id: int,
 ) -> WallpaperAsset:
     paths = await generate_scene_images(
         prompt,
         user_id=user_id,
+        storage_directory=asset_store.scene_asset_directory(scene_id),
         target_width=target.width,
         target_height=target.height,
         reference_image=reference_image,
@@ -649,12 +654,22 @@ async def _generate_wallpaper(
     best = state.best()
     if best is None:
         raise SceneStateError("场景图片未通过伙伴重复出镜检查")
-    path = asset_store.scene_wallpaper_asset_path(user_id, state.generation_id)
+    path = asset_store.scene_wallpaper_asset_path(
+        user_id,
+        state.generation_id,
+        directory=asset_store.scene_asset_directory(scene_id),
+    )
     if path not in best.artifacts:
         best.artifacts.append(path)
     # 先登记确定的成品路径，取消或重启时仍可保护或回收裁切结果。
     await save_progress(state)
-    return await prepare_scene_wallpaper(user_id, paths[0], generation_id=state.generation_id, target=target)
+    return await prepare_scene_wallpaper(
+        user_id,
+        paths[0],
+        generation_id=state.generation_id,
+        target=target,
+        storage_directory=asset_store.scene_asset_directory(scene_id),
+    )
 
 
 async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> None:
@@ -700,6 +715,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                 frozen.target_size,
                 state,
                 save_progress,
+                scene_id=scene_id,
             )
             frozen.wallpaper_path = wallpaper.path
             frozen.source_size = wallpaper.source_size
@@ -723,6 +739,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             row.regeneration_stage = "complete"
             row.regeneration_error = None
             row.regeneration_state_json = None
+            await enqueue_asset_cleanup(db, user_id, state.stored_paths() | ({old_path} if old_path else set()))
             _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
             await db.commit()
             SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="ready").inc()
@@ -737,7 +754,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                 ),
             )
         if retained is None:
-            await _unlink_unreferenced_assets(user_id, state.stored_paths() | ({old_path} if old_path else set()))
+            await _reclaim_assets(user_id, state.stored_paths() | ({old_path} if old_path else set()))
 
 
 async def _mark_regeneration_failed(
@@ -768,10 +785,11 @@ async def _mark_regeneration_failed(
         row.regeneration_stage = "review_failed" if review_failed else "analyze" if retry_analysis else "failed"
         row.regeneration_error = error
         _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
         SCENE_FAILURES_TOTAL.labels(stage="regenerate").inc()
         SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="failed").inc()
-    await _unlink_unreferenced_assets(user_id, cleanup_paths)
+    await cleanup_user_assets(user_id)
 
 
 async def _run_pipeline(scene_id: int, user_id: int) -> None:
@@ -825,12 +843,13 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
             target,
             state,
             save_progress,
+            scene_id=scene_id,
             reference_image=reference_image,
         )
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
             fresh = await get_scene(db, user_id, scene_id)
             if fresh is None or fresh.status != "pending":
-                await _unlink_unreferenced_assets(user_id, {wallpaper.path})
+                await _reclaim_assets(user_id, {wallpaper.path})
                 return
             fresh.media_path = wallpaper.path
             fresh.target_size_json = target.model_dump_json()

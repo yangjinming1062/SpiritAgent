@@ -969,19 +969,19 @@ async def delete_video_pack_route(pack_id: int, user: CurrentUser, db: DbSession
 
 
 # 文件端点按会话或签名放行，不依赖 CurrentUser。
-@router.get("/asset/{user_id}/{filename}")
+@router.get("/asset/{user_id}/{asset_path:path}")
 async def serve_companion_asset(
     request: Request,
     user_id: int,
-    filename: str,
+    asset_path: str,
     session: OptionalSession,
     expires: int | None = None,
     sig: str | None = None,
 ) -> Response:
     is_authed = session is not None and (session[0].id == user_id)
-    if not is_authed and not verify_signed_asset_request(user_id, filename, expires, sig):
+    if not is_authed and not verify_signed_asset_request(user_id, asset_path, expires, sig):
         raise HTTPException(status_code=403, detail="Invalid or expired signature")
-    result = resolve_companion_asset_path(user_id, filename)
+    result = resolve_companion_asset_path(user_id, asset_path)
     if result is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     path, content_type = result

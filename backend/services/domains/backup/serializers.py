@@ -321,6 +321,7 @@ async def insert_rows(
         db.add(instance)
         await db.flush()
         new_map[str(raw["id"])] = instance.id
+        rewriter.inserted_rows.add((table, str(raw["id"])))
         inserted += 1
         if table == "conversations":
             lineages.append((instance, raw.get("parent_id"), raw.get("forked_from_id"), payload.get("updated_at")))

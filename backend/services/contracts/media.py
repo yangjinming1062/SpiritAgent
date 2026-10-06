@@ -55,6 +55,8 @@ class MediaTurnState:
     session_id: str
     structured_reply: bool = False
     original_request: str = ""
+    source_message_id: int | None = None
+    asset_directory: str = ""
     artifacts: dict[str, MediaArtifact] = field(default_factory=dict)
     plans: dict[str, ImagePlan] = field(default_factory=dict)
     inspections: dict[str, MediaInspection] = field(default_factory=dict)

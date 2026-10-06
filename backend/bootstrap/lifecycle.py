@@ -12,14 +12,17 @@ from components import (
     ENGINE,
     SESSION_LOCAL,
     attachment_root,
+    begin_user_request,
     cleanup_expired,
     database_url,
     drain_user_tasks,
+    end_user_request,
     get_logger,
     insecure_secret_settings,
     setup_logging,
 )
 from fastapi import FastAPI
+from modules.auth import User
 from services.adapters.channels import start_channel_manager, stop_channel_manager
 from services.adapters.desktop import drain as drain_user_sessions
 from services.adapters.scheduler import drain as drain_cron
@@ -27,6 +30,7 @@ from services.adapters.scheduler import start_scheduler, stop_scheduler
 from services.application.actions import drain_proposal_reviews, resume_proposal_reviews
 from services.application.configuration import load_and_apply_system_settings
 from services.application.generation import (
+    cleanup_user_video_jobs,
     drain_character_extractions,
     drain_outfit_descriptions,
     drain_scene_jobs,
@@ -48,11 +52,13 @@ from services.application.posts import (
     resume_replies,
 )
 from services.domains.actions import cleanup_retired_action_assets
+from services.domains.assets import cleanup_assets
 from services.domains.companion import drain_first_greeting, drain_persona_background
 from services.domains.update_releases import recover_update_storage
 from services.infrastructure.event_store import drain_event_tasks, start_event_loop, stop_event_loop
 from services.infrastructure.llm import aclose_all
 from services.infrastructure.web import aclose as aclose_web_providers
+from sqlalchemy import select
 
 logger = get_logger(__name__)
 
@@ -104,6 +110,21 @@ def _run_migrations() -> None:
     command.upgrade(cfg, "head")
 
 
+async def _cleanup_formal_assets(*, discover: bool) -> None:
+    async with SESSION_LOCAL() as db:
+        users = list(await db.scalars(select(User.id)))
+    for user_id in users:
+        if not await begin_user_request(user_id):
+            continue
+        try:
+            await cleanup_user_video_jobs(user_id)
+        except Exception:
+            logger.warning("Abandoned video cleanup failed", extra={"user_id": user_id}, exc_info=True)
+        finally:
+            await end_user_request(user_id)
+    await cleanup_assets(discover=discover)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     cleanup_task: asyncio.Task[None] | None = None
@@ -134,10 +155,19 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         await resume_initial_appearance()
         await resume_publications()
         await resume_replies()
+        await _cleanup_formal_assets(discover=True)
 
         async def _cleanup_loop() -> None:
+            minute = 0
             while True:
-                await asyncio.sleep(3600)
+                await asyncio.sleep(60)
+                minute += 1
+                try:
+                    await _cleanup_formal_assets(discover=minute % 60 == 0)
+                except Exception:
+                    logger.warning("Formal asset cleanup failed", exc_info=True)
+                if minute % 60:
+                    continue
                 try:
                     await asyncio.to_thread(cleanup_expired)
                 except Exception:

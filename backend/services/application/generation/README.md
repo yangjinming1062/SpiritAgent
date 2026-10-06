@@ -29,7 +29,7 @@
 ### 全身候选与草稿
 
 - 身份确认前，全身生成和自备图直接替换草稿；`confirm_fullbody_seed` 锁定身份、登记角色卡并保存默认外观快照。确认后先写 `FullbodyCandidate`，分析可重试，采纳时校验原图与角色卡修订并同事务更新；未采纳候选可清理，已采纳旧图留给历史任务。完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
-- 草稿转存失败可重试，只有全部图片过期的头像行才清理，不连带正式参考。服务内部和 ORM 使用裸路径（草稿为 `temp-media/`，正式资产为 `companion-assets/{user_id}/`），URL 只在响应出口签名，客户端地址只在确认入口还原比对。
+- 草稿转存失败可重试，只有全部图片过期的头像行才清理，不连带正式参考。服务内部和 ORM 使用裸路径（草稿为 `temp-media/`，正式资产位于 `companion-assets/{user_id}/` 下），URL 只在响应出口签名，客户端地址只在确认入口还原比对。目录布局见 [资产访问与缓存](../../../../docs/PROTOCOL.md#资产访问与缓存)。目录归属由写入调用方显式给出；新外观先领取数据库序列 ID 后结束事务，避免生成等待占用连接或暴露空草稿，新包及场景在落盘前取得 ID。
 - 全身与衣柜生成、微调、自备图共用 [`prepare_transparent_image`](../../infrastructure/video_processing/image.py)：有效 alpha 原样保留，其余对已有产物本地抠图后再验收；成品 PNG 保持原尺寸与构图。生成前检查模型，换装先透明化再评分，确认与候选采纳再次验收；失败不安装产物。完整交付与背景规则见 [PIPELINE](../../../../docs/PIPELINE.md#全身与着装透明成品)。
 - 角色卡和全身候选共用 `extract_card_features`；头像、全身和换装共用 `generate_with_moderation_retry`，审核命中只改写提示词重试一次，结果未知不重试。
 - 外观的生成来源、已接受反馈与身份修订守卫存于 `CompanionOutfit.source_json`，一律经 [`OutfitSource`](../../../modules/companion/models.py) 读写：损坏或类型异常的字段按缺省处理，遗留未知键原样保留；动作包据其中的身份全身图路径判断冻结参考是否需要校准。
@@ -60,7 +60,7 @@
 
 [image_generation.py](image_generation.py)的 `resolve_image_gen_chain` 按参考图、编辑、多参考与提示词长度筛选供应商链，不按透明能力过滤（透明优先与回退见[能力筛选](../../../../docs/PIPELINE.md#能力筛选)），`generate_images` 按 `persist_user_assets` 决定返回用户资产、原生 URL 或 data URI；能力位由[供应商基类](../../infrastructure/llm/providers/base.py)声明。提示词按点位选择，头像条款不能直接用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
 
-聊天与动态媒体共用 [visual_identity.py](visual_identity.py) 装配提示词，视频参考通过 `self_video_references` 提供；参考与造型规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频)。没有 `save_progress` 的同步生图调用（如换装草稿）只对结果下载的可恢复传输错误做有界重试，不重新提交生图；最终失败时回收已落盘文件。调用方须把非 `ImageGenerationError` 的失败转为公开错误，不能落成 500 或结果未知。
+聊天与动态媒体共用 [visual_identity.py](visual_identity.py) 装配提示词，视频参考通过 `self_video_references` 提供；参考与造型规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频)。聊天及动态媒体的日期目录与冻结规则见 [资产访问与缓存](../../../../docs/PROTOCOL.md#资产访问与缓存)；图片链持久化 `storage_directory`，视频任务持久化对应目录，恢复和重试不重新按当前日期选目录。没有 `save_progress` 的同步生图调用（如换装草稿）只对结果下载的可恢复传输错误做有界重试，不重新提交生图；最终失败时回收已落盘文件。调用方须把非 `ImageGenerationError` 的失败转为公开错误，不能落成 500 或结果未知。
 
 ## 动作包与媒体质量链
 
@@ -70,9 +70,9 @@
 
 系统规格当前仅 drag 为图片，其余生成动作是视频。图片请求独立整理静态描述，不选择或校验视频链；结果、已采纳快照及目录中的图片不填充时长、帧数、帧率或循环参数。图片基础设施入口为 [`prepare_action_image`](../../infrastructure/video_processing/image.py)，素材与命中结构归 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。
 
-动作的 `accepted_asset_json` 保存已采纳素材和播放版本，当前制作列只属于本次尝试。原位重做、待复核与拒绝候选保留旧已采纳素材，新成品成功或人工采纳时才替换；目录和播放指令消费已采纳版本。跨包继承只迁移已采纳版本，待复核候选仍绑定原动作；缺少已采纳版本时新包明确失败，不复制悬空复核状态。动作反馈每次重做替换本动作字段，空串清除，衣柜回显当前值。确定性素材门禁拒绝记为 `invalid_asset`，不提供重复处理同一素材的“继续”。释放的素材与旧目录同事务登记到 `action_asset_retirements`，24 小时后重查引用再回收；结束的复核保留素材 7 天，之后保留结论并释放文件引用。
+动作的 `accepted_asset_json` 保存已采纳素材和播放版本，当前制作列只属于本次尝试。原位重做、待复核与拒绝候选保留旧已采纳素材，新成品成功或人工采纳时才替换；目录和播放指令消费已采纳版本。跨包继承将可继承版本的素材字节、冻结参考和恢复进度中的资源复制到目标包目录，并重写嵌套路径；待复核候选仍绑定原动作；缺少已采纳版本时新包明确失败，不复制悬空复核状态。动作反馈每次重做替换本动作字段，空串清除，衣柜回显当前值。确定性素材门禁拒绝记为 `invalid_asset`，不提供重复处理同一素材的“继续”。释放的素材与旧目录同事务登记到 `action_asset_retirements`，宽限与保留期见[恢复与历史包](../../../../docs/PIPELINE.md#恢复与历史包)。
 
-历史孤儿回收只扫描可证明属于动作的目录、源视频、姿态图、片段及配套文件；普通图片仅在同生成 ID 的动作姿态图仍存在时可归属。首次确认无引用后另起 24 小时宽限，仍在发布的旧目录中的引用也参与保护；目录不可读时暂停该用户回收。旧引用已丢失、无法证明归属的通用图片保留，避免误删其他生成链的资产。
+正式资产由 [domains/assets](../../../domains/assets/README.md) 汇总业务引用并递归回收，契约见 [资产访问与缓存](../../../../docs/PROTOCOL.md#资产访问与缓存)。
 
 探身补齐由 [video/service.py](video/service.py)编排，定位校准在 [video/script.py](video/script.py)，接口契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。生成任务收尾须兑现新排队动作的唤醒；空队列停止，不循环恢复未知结果任务；队列清空后还须补做因在途制作而推迟的旧版本退役（见[恢复与历史包](../../../../docs/PIPELINE.md#恢复与历史包)）。
 

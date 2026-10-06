@@ -34,7 +34,7 @@ from modules.companion import (
 )
 from modules.media import VideoGenJob
 from modules.scheduler import NightlyActivityAction
-from modules.settings import get_user_setting, load_user_settings
+from modules.settings import get_user_setting, load_user_settings, resolve_user_timezone
 from prompts.posts import POST_PUBLISH_INSTRUCTIONS, POST_REQUEST_CLASSIFICATION
 from sqlalchemy import or_, select, update
 
@@ -56,6 +56,7 @@ from services.application.generation import (
     self_video_references,
     video_generation_wait_seconds,
 )
+from services.domains.assets import cleanup_user_assets, enqueue_asset_cleanup
 from services.domains.companion import (
     character_snapshot_is_current,
     get_scene_state,
@@ -74,11 +75,11 @@ from services.domains.posts import (
     response_for_publication,
 )
 from services.infrastructure.assets import (
+    dated_asset_directory,
     parse_companion_asset_path,
     resolve_companion_asset_path,
     save_companion_asset_async,
     signed_companion_asset_url,
-    unlink_companion_asset,
 )
 from services.infrastructure.llm import (
     ProviderResultUnknownError,
@@ -346,13 +347,14 @@ async def _save(
         row.progress_json = {**row.progress_json, **progress}
         # 阻止或失败的任务不会产生动态（已有动态时上方已返回），其保存的资产随之删除；结果未知的任务保留已有产物。
         discarded = _owned_assets(row.progress_json) if status in ("blocked", "failed") else []
+        await enqueue_asset_cleanup(db, row.user_id, discarded)
+        user_id = row.user_id
         await db.commit()
-    # 终态提交后再删除，提交失败时任务仍可凭已记录的资产恢复。
-    for path in discarded:
-        await asyncio.to_thread(unlink_companion_asset, path)
+    if discarded:
+        await cleanup_user_assets(user_id)
 
 
-async def _voice(task_id: str, user_id: int, text: str, *, phase: str) -> tuple[str, str]:
+async def _voice(task_id: str, user_id: int, text: str, *, phase: str, directory: str) -> tuple[str, str]:
     async with SESSION_LOCAL() as db:
         if not await db.scalar(select(Persona.is_complete).where(Persona.user_id == user_id)):
             raise PostError("伙伴资料尚未就绪")
@@ -366,12 +368,24 @@ async def _voice(task_id: str, user_id: int, text: str, *, phase: str) -> tuple[
     )
     mime = result.mime.lower()
     ext = "wav" if "wav" in mime else "ogg" if "ogg" in mime else "m4a" if "mp4" in mime or "m4a" in mime else "mp3"
-    path = await save_companion_asset_async(result.audio, user_id=user_id, label="post_voice", ext=ext)
+    path = await save_companion_asset_async(
+        result.audio,
+        user_id=user_id,
+        label="post_voice",
+        ext=ext,
+        directory=directory,
+    )
     return path, result.voice or ""
 
 
 async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     progress = dict(row.progress_json)
+    directory = progress.get("storage_directory")
+    if not isinstance(directory, str) or not directory:
+        async with SESSION_LOCAL() as db:
+            directory = dated_asset_directory(row.created_at, await resolve_user_timezone(db, row.user_id) or "UTC")
+        progress["storage_directory"] = directory
+        await _save(row.id, **progress)
     if plan.content_type == PostContentType.TEXT or progress.get("media_url"):
         return progress
     identity = None
@@ -388,13 +402,20 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 build_self_image_prompt(visual_plan, plan.prompt, has_outfit_reference=bool(outfit)),
                 size=plan.size,
                 user_id=row.user_id,
+                storage_directory=directory,
                 reference_image=visual.reference_image,
                 identity_reference=visual.reference_image,
                 secondary_reference_image=outfit,
                 identity_text=render_character_identity(identity),
             )
         else:
-            urls = await generate_images(plan.prompt, size=plan.size, user_id=row.user_id, persist_user_assets=True)
+            urls = await generate_images(
+                plan.prompt,
+                size=plan.size,
+                user_id=row.user_id,
+                persist_user_assets=True,
+                storage_directory=directory,
+            )
         if not urls:
             raise PostError("图片生成未取得可用产物")
         progress["media_url"] = urls[0]
@@ -404,6 +425,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
             row.user_id,
             plan.text,
             phase="voice_submitting",
+            directory=directory,
         )
     else:
         job_id = progress.get("job_id")
@@ -427,6 +449,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     db,
                     user_id=row.user_id,
                     session_id=None,
+                    asset_directory=directory,
                     prompt=prompt,
                     duration=plan.duration,
                     resolution=resolution,
@@ -503,6 +526,7 @@ async def _run_publication(task_id: str) -> None:
                     row.user_id,
                     plan.narration,
                     phase="narration_submitting",
+                    directory=progress["storage_directory"],
                 )
             except Exception:
                 logger.warning("Post narration failed", extra={"publication_id": task_id}, exc_info=True)
@@ -761,14 +785,14 @@ async def discard_publication_video(user_id: int, task_id: str) -> PostPublicati
             row.phase = "complete"
             row.error = "已放弃本次动态，不会自动重新制作或发布"
             row.progress_json = {**row.progress_json, "discard_cleanup_pending": True}
+            await enqueue_asset_cleanup(db, user_id, _owned_assets(row.progress_json))
             await db.commit()
         if job_id is not None:
             try:
                 await discard_post_video_job(user_id, job_id, task_id)
             except ValueError as exc:
                 raise PostError(str(exc)) from exc
-        for path in _owned_assets(row.progress_json):
-            await asyncio.to_thread(unlink_companion_asset, path)
+        await cleanup_user_assets(user_id)
         async with SESSION_LOCAL() as db:
             row = await db.scalar(
                 select(PostPublication)

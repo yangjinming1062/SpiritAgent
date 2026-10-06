@@ -54,6 +54,7 @@ async def prepare_scene_wallpaper(
     source_path: str,
     *,
     generation_id: str,
+    storage_directory: str,
     target: SceneImageSize,
 ) -> WallpaperAsset:
     data, _ = await image_asset_bytes(source_path)
@@ -61,5 +62,10 @@ async def prepare_scene_wallpaper(
         fitted, source_size = await asyncio.to_thread(_fit_wallpaper, data, target)
     except Exception as exc:
         raise ImageGenerationError("场景图片无法适配屏幕尺寸") from exc
-    path = await asset_store.save_scene_wallpaper_asset_async(fitted, user_id=user_id, generation_id=generation_id)
+    path = await asset_store.save_scene_wallpaper_asset_async(
+        fitted,
+        user_id=user_id,
+        generation_id=generation_id,
+        directory=storage_directory,
+    )
     return WallpaperAsset(path=path, source_size=source_size, image_size=target)

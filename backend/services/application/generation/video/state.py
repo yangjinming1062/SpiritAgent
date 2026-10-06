@@ -11,6 +11,7 @@ from ..character_images import ImageChainState
 class GenerationContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    storage_directory: str = ""
     identity: CharacterCardSnapshot
     identity_reference_path: str
     reference_chain: ImageChainState = Field(default_factory=ImageChainState)

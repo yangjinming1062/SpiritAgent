@@ -62,11 +62,13 @@ from services.application.chat import (
 from services.application.generation import (
     AvatarGenerationError,
     avatar_response,
+    cleanup_user_media,
     get_avatar_job_lock,
     raise_if_image_sealed,
     regenerate_avatar,
 )
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
+from services.domains.assets import collect_message_asset_releases
 from services.domains.companion import (
     PersonaValidationError,
     check_idle_expression,
@@ -96,6 +98,7 @@ from services.domains.conversation import (
     SourceNotFoundError,
     UndoNotAllowedError,
     build_session_messages,
+    cancel_reply_audio,
     conversation_memory_scope,
     fork_conversation_from_message,
     get_or_create_special_conversation,
@@ -122,6 +125,7 @@ from services.domains.memory import (
     normalize_recall_context,
     update_memory,
 )
+from services.infrastructure.assets import user_asset_lock
 from services.infrastructure.desktop import MANAGER, JsonRpcDispatcher, JsonRpcError, discard_user, resolve_future
 from services.infrastructure.event_store import interrupt_user_event_tasks
 from services.infrastructure.llm import (
@@ -513,8 +517,15 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[ChatA
 async def _discard_forked_conversation(db: AsyncSession, conv_id: int) -> None:
     """派生后续步骤失败时撤销新会话：删除会话行（消息级联）和已写入的附件目录，不留下半成品。"""
     await db.rollback()
-    await db.execute(delete(Conversation).where(Conversation.id == conv_id))
-    await db.commit()
+    conv = await db.get(Conversation, conv_id)
+    if conv is None:
+        return
+    async with user_asset_lock(conv.user_id):
+        removed = await collect_message_asset_releases(db, conv.user_id, [conv_id])
+        await db.execute(delete(Conversation).where(Conversation.id == conv_id))
+        await db.commit()
+    await cancel_reply_audio(conv.user_id, removed)
+    await cleanup_user_media(conv.user_id)
     try:
         await asyncio.to_thread(attachments_gc_session, str(conv_id))
     except OSError:
@@ -559,18 +570,22 @@ async def _do_clear_history(db: AsyncSession, conv: Conversation) -> dict[str, A
         )
     ).scalar_one()
 
-    # 连同视频附件一并清掉，cleared 之后客户端只看到 status_cleared marker 一条历史行。
+    # 临时上传视频的独立提交先完成，不能提前提交正式资源回收登记。
     await prune_videos_in_range(db, conv.id)
-    await db.execute(delete(Message).where(Message.conversation_id == conv.id))
-
-    marker = Message(
-        conversation_id=conv.id,
-        role="system",
-        content=f"[🧹 会话已清空 — {total} 条消息]",
-        subtype=CLEARED_STATUS_SUBTYPE,
-    )
-    db.add(marker)
-    await db.commit()
+    # 删除业务引用与回收登记同事务；提交以后再取消任务和删除文件。
+    async with user_asset_lock(conv.user_id):
+        removed = await collect_message_asset_releases(db, conv.user_id, [conv.id])
+        await db.execute(delete(Message).where(Message.conversation_id == conv.id))
+        marker = Message(
+            conversation_id=conv.id,
+            role="system",
+            content=f"[🧹 会话已清空 — {total} 条消息]",
+            subtype=CLEARED_STATUS_SUBTYPE,
+        )
+        db.add(marker)
+        await db.commit()
+    await cancel_reply_audio(conv.user_id, removed)
+    await cleanup_user_media(conv.user_id)
 
     delivered = await build_session_messages(conv.id, db)
     return {
@@ -993,6 +1008,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 conv = await resolve_undo_target(db, user_id, session_id, source_message_id)
                 await prune_videos_in_range(db, conv.id, lo=source_message_id)
                 result = await undo_conversation_to_message(db, conv, source_message_id)
+                await cleanup_user_media(user_id)
             except (UndoNotAllowedError, SourceNotFoundError) as e:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(e))
 
@@ -1177,6 +1193,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     )
                 except EditNotAllowedError as exc:
                     raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+                await cleanup_user_media(user_id)
                 persisted_message_id = replacement.id
                 edited_messages = await build_session_messages(runtime.conversation_id, db)
 

@@ -1,6 +1,8 @@
 """动作资产 ORM：pack、action、提案与播放事实。三层身份 outfit_id → pack_id（冻结外观包）→ action_id；系统槽位见 SYSTEM_SLOTS，动态动作不可占用。"""
 
 import hashlib
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
@@ -156,6 +158,30 @@ class CompanionAction(ModelBase, TimestampMixin):
     hitmask_fps: Mapped[int | None] = mapped_column(Integer, nullable=True)
     peek_geometry_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_rect_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+@dataclass(frozen=True)
+class RemovedActionVideoTask:
+    """已删除动作行遗留的远端视频句柄；删除提交后由生成服务尽力撤销。"""
+
+    action_id: int
+    task_id: str
+    generation_state_json: str | None
+    provider: str
+
+
+def removed_video_tasks(jobs: Iterable[CompanionAction]) -> list[RemovedActionVideoTask]:
+    """删除任务行前摘出仍可能在远端运行的句柄；供应商定位沿生成状态冻结值。"""
+    return [
+        RemovedActionVideoTask(
+            action_id=job.id,
+            task_id=job.provider_task_id,
+            generation_state_json=job.generation_state_json,
+            provider=job.provider,
+        )
+        for job in jobs
+        if job.provider_task_id
+    ]
 
 
 class ActionAssetRetirement(ModelBase):

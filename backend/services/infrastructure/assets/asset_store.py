@@ -7,11 +7,16 @@ import os
 import secrets
 import shutil
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlencode, urlsplit
+from zoneinfo import ZoneInfo
 
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SETTINGS, get_file_path, get_logger
+from components.asset_paths import parse_companion_asset_path, valid_asset_relative_path
 from PIL import Image
+
+from .write_protection import asset_write_context, forget_asset_write, protect_asset_write, user_asset_lock
 
 logger = get_logger(__name__)
 
@@ -168,58 +173,131 @@ def _write_atomic(target: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def save_companion_asset(data: bytes, *, user_id: int, label: str, ext: str) -> str:
-    """保存资产并返回裸存储路径；label 仅作文件名前缀，不可当查找键使用。"""
-    safe_label = "".join(c if c.isalnum() or c in "-_" else "_" for c in label)[:48] or "asset"
-    user_dir = _assets_root() / str(user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-    token = secrets.token_urlsafe(8)
-    filename = f"{safe_label}_{token}.{ext}"
-    _write_atomic(user_dir / filename, data)
-    logger.info("Saved companion asset", extra={"user_id": user_id, "label": label, "size": len(data)})
-    return f"companion-assets/{user_id}/{filename}"
+def outfit_asset_directory(outfit_id: int) -> str:
+    if outfit_id <= 0:
+        raise ValueError("invalid outfit ID")
+    return f"outfit{outfit_id}"
 
 
-async def save_companion_asset_async(data: bytes, *, user_id: int, label: str, ext: str) -> str:
-    """在线程写盘；取消时等写盘退出并删除未交接的资产。"""
-    task = asyncio.create_task(asyncio.to_thread(save_companion_asset, data, user_id=user_id, label=label, ext=ext))
+def pack_asset_directory(outfit_id: int | None, pack_id: int) -> str:
+    if pack_id <= 0:
+        raise ValueError("invalid pack ID")
+    prefix = f"{outfit_asset_directory(outfit_id)}/" if outfit_id is not None else ""
+    return f"{prefix}pack{pack_id}"
+
+
+def scene_asset_directory(scene_id: int) -> str:
+    if scene_id <= 0:
+        raise ValueError("invalid scene ID")
+    return f"scene{scene_id}"
+
+
+def dated_asset_directory(created_at: datetime, timezone: str) -> str:
+    value = created_at if created_at.tzinfo is not None else created_at.replace(tzinfo=UTC)
+    return value.astimezone(ZoneInfo(timezone)).strftime("%Y%m%d")
+
+
+def _asset_path(user_id: int, directory: str, filename: str) -> str:
+    if user_id <= 0 or (directory and not valid_asset_relative_path(directory)):
+        raise ValueError("invalid asset directory")
+    relative = f"{directory}/{filename}" if directory else filename
+    if not valid_asset_relative_path(relative):
+        raise ValueError("invalid asset path")
+    return f"companion-assets/{user_id}/{relative}"
+
+
+def _asset_target(user_id: int, relative: str) -> Path:
+    if user_id <= 0 or not valid_asset_relative_path(relative):
+        raise ValueError("invalid asset path")
+    root = _assets_root().resolve()
+    user_root = root / str(user_id)
+    target = user_root / relative
+    # 用户目录自身也不得链接到其他账户；拒绝路径中所有符号链接，读写采用相同边界。
+    if any(path.is_symlink() for path in (target, *target.parents) if path != root and path.is_relative_to(root)):
+        raise ValueError("asset path contains a symbolic link")
+    if not target.resolve().is_relative_to(user_root):
+        raise ValueError("asset path escapes user directory")
+    return target
+
+
+def save_companion_asset(data: bytes, *, user_id: int, label: str, ext: str, directory: str) -> str:
+    """按显式归属保存资产；label 仅作文件名前缀，不可当查找键使用。"""
+    safe_label = "".join(c if c.isascii() and (c.isalnum() or c in "-_") else "_" for c in label)[:48] or "asset"
+    if not ext or not ext.isascii() or not ext.isalnum():
+        raise ValueError("invalid asset extension")
+    filename = f"{safe_label}_{secrets.token_urlsafe(8)}.{ext}"
+    bare = _asset_path(user_id, directory, filename)
+    target = _asset_target(user_id, bare.split("/", 2)[2])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    protect_asset_write(bare)
     try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        result = (await asyncio.gather(task, return_exceptions=True))[0]
-        if isinstance(result, str):
-            await asyncio.to_thread(unlink_companion_asset, result)
+        _write_atomic(target, data)
+    except BaseException:
+        forget_asset_write(bare)
         raise
+    logger.info("Saved companion asset", extra={"user_id": user_id, "label": label, "size": len(data)})
+    return bare
 
 
-def video_job_asset_path(user_id: int, job_id: int, attempt: int, *, generation_id: str) -> str:
+async def save_companion_asset_async(data: bytes, *, user_id: int, label: str, ext: str, directory: str) -> str:
+    """在线程写盘；取消时等写盘退出并删除未交接的资产。"""
+    async with user_asset_lock(user_id):
+        with asset_write_context():
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    save_companion_asset,
+                    data,
+                    user_id=user_id,
+                    label=label,
+                    ext=ext,
+                    directory=directory,
+                ),
+            )
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                result = (await asyncio.gather(task, return_exceptions=True))[0]
+                if isinstance(result, str):
+                    await asyncio.to_thread(unlink_companion_asset, result)
+                raise
+
+
+def video_job_asset_path(user_id: int, job_id: int, attempt: int, *, generation_id: str, directory: str) -> str:
     """视频任务每次已知提交对应唯一落盘位置，供崩溃后按任务恢复。"""
     if user_id <= 0 or job_id <= 0 or attempt < 0:
         raise ValueError("invalid video job asset key")
     if not _is_generation_id(generation_id):
         raise ValueError("invalid video generation ID")
-    return f"companion-assets/{user_id}/chat_video_job_{job_id}_{generation_id}_a{attempt}.mp4"
+    return _asset_path(user_id, directory, f"chat_video_job_{job_id}_{generation_id}_a{attempt}.mp4")
 
 
 def _save_generation_asset(data: bytes, user_id: int, bare_path: str) -> str:
-    user_dir = _assets_root() / str(user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-    target = user_dir / bare_path.rsplit("/", 1)[-1]
-    if target.exists():
-        return bare_path
-    _write_atomic(target, data)
+    parsed = parse_companion_asset_path(bare_path)
+    if parsed is None or parsed[0] != user_id:
+        raise ValueError("invalid generation asset path")
+    target = _asset_target(*parsed)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    protect_asset_write(bare_path)
+    try:
+        if not target.exists():
+            _write_atomic(target, data)
+    except BaseException:
+        forget_asset_write(bare_path)
+        raise
     return bare_path
 
 
 async def _save_generation_asset_async(data: bytes, user_id: int, bare_path: str) -> str:
     """固定路径由任务先行登记；取消时等原子写盘完成，已落盘结果保留给恢复路径，不当作失败清理。"""
-    task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, bare_path))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        # 写盘自身的失败不能顶替取消向上传播
-        await asyncio.gather(task, return_exceptions=True)
-        raise
+    async with user_asset_lock(user_id):
+        with asset_write_context():
+            task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, bare_path))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                # 写盘自身的失败不能顶替取消向上传播
+                await asyncio.gather(task, return_exceptions=True)
+                raise
 
 
 async def save_video_job_asset_async(
@@ -229,11 +307,12 @@ async def save_video_job_asset_async(
     job_id: int,
     attempt: int,
     generation_id: str,
+    directory: str,
 ) -> str:
     return await _save_generation_asset_async(
         data,
         user_id,
-        video_job_asset_path(user_id, job_id, attempt, generation_id=generation_id),
+        video_job_asset_path(user_id, job_id, attempt, generation_id=generation_id, directory=directory),
     )
 
 
@@ -241,10 +320,10 @@ def _is_generation_id(value: str) -> bool:
     return len(value) == 32 and all(char in "0123456789abcdef" for char in value)
 
 
-def action_source_asset_path(user_id: int, generation_id: str, attempt: int, ext: str) -> str:
+def action_source_asset_path(user_id: int, generation_id: str, attempt: int, ext: str, *, directory: str) -> str:
     if user_id <= 0 or attempt < 0 or ext not in {"mp4", "webm", "mov", "mkv"} or not _is_generation_id(generation_id):
         raise ValueError("invalid action source asset key")
-    return f"companion-assets/{user_id}/action_{generation_id}_a{attempt}.{ext}"
+    return _asset_path(user_id, directory, f"action_{generation_id}_a{attempt}.{ext}")
 
 
 async def save_action_source_asset_async(
@@ -254,25 +333,38 @@ async def save_action_source_asset_async(
     generation_id: str,
     attempt: int,
     ext: str,
+    directory: str,
 ) -> str:
     return await _save_generation_asset_async(
         data,
         user_id,
-        action_source_asset_path(user_id, generation_id, attempt, ext),
+        action_source_asset_path(user_id, generation_id, attempt, ext, directory=directory),
     )
 
 
-def action_pose_asset_path(user_id: int, generation_id: str) -> str:
+def action_pose_asset_path(user_id: int, generation_id: str, *, directory: str) -> str:
     if user_id <= 0 or not _is_generation_id(generation_id):
         raise ValueError("invalid action pose asset key")
-    return f"companion-assets/{user_id}/action_pose_{generation_id}.png"
+    return _asset_path(user_id, directory, f"action_pose_{generation_id}.png")
 
 
-async def save_action_pose_asset_async(data: bytes, *, user_id: int, generation_id: str) -> str:
-    return await _save_generation_asset_async(data, user_id, action_pose_asset_path(user_id, generation_id))
+async def save_action_pose_asset_async(data: bytes, *, user_id: int, generation_id: str, directory: str) -> str:
+    return await _save_generation_asset_async(
+        data,
+        user_id,
+        action_pose_asset_path(user_id, generation_id, directory=directory),
+    )
 
 
-def image_chain_asset_path(user_id: int, generation_id: str, attempt: int, slot: int, ext: str) -> str:
+def image_chain_asset_path(
+    user_id: int,
+    generation_id: str,
+    attempt: int,
+    slot: int,
+    ext: str,
+    *,
+    directory: str,
+) -> str:
     if (
         user_id <= 0
         or attempt < 0
@@ -281,17 +373,21 @@ def image_chain_asset_path(user_id: int, generation_id: str, attempt: int, slot:
         or not _is_generation_id(generation_id)
     ):
         raise ValueError("invalid image chain asset key")
-    return f"companion-assets/{user_id}/image_{generation_id}_a{attempt}_s{slot}.{ext}"
+    return _asset_path(user_id, directory, f"image_{generation_id}_a{attempt}_s{slot}.{ext}")
 
 
-def scene_wallpaper_asset_path(user_id: int, generation_id: str) -> str:
+def scene_wallpaper_asset_path(user_id: int, generation_id: str, *, directory: str) -> str:
     if user_id <= 0 or not _is_generation_id(generation_id):
         raise ValueError("invalid scene wallpaper asset key")
-    return f"companion-assets/{user_id}/scene_wallpaper_{generation_id}.png"
+    return _asset_path(user_id, directory, f"scene_wallpaper_{generation_id}.png")
 
 
-async def save_scene_wallpaper_asset_async(data: bytes, *, user_id: int, generation_id: str) -> str:
-    return await _save_generation_asset_async(data, user_id, scene_wallpaper_asset_path(user_id, generation_id))
+async def save_scene_wallpaper_asset_async(data: bytes, *, user_id: int, generation_id: str, directory: str) -> str:
+    return await _save_generation_asset_async(
+        data,
+        user_id,
+        scene_wallpaper_asset_path(user_id, generation_id, directory=directory),
+    )
 
 
 async def save_image_chain_asset_async(
@@ -302,25 +398,21 @@ async def save_image_chain_asset_async(
     attempt: int,
     slot: int,
     ext: str,
+    directory: str,
 ) -> str:
     return await _save_generation_asset_async(
         data,
         user_id,
-        image_chain_asset_path(user_id, generation_id, attempt, slot, ext),
+        image_chain_asset_path(user_id, generation_id, attempt, slot, ext, directory=directory),
     )
 
 
 def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str] | None:
-    # 资产文件名始终是单层路径：先拒绝分隔符、点段和 NUL，再解析并确认不会通过符号链接越出用户目录。
-    if not filename or "/" in filename or "\\" in filename or "\x00" in filename or ".." in Path(filename).parts:
-        return None
     try:
-        user_root = (_assets_root() / str(user_id)).resolve()
-        filepath = user_root / filename
-        resolved = filepath.resolve()
+        resolved = _asset_target(user_id, filename)
     except (OSError, RuntimeError, ValueError):
         return None
-    if not resolved.is_relative_to(user_root) or not resolved.is_file():
+    if not resolved.is_file():
         return None
     ext = resolved.suffix.lstrip(".").lower()
     content_type = {
@@ -342,27 +434,6 @@ def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str
         "flac": "audio/flac",
     }.get(ext, "application/octet-stream")
     return resolved, content_type
-
-
-def parse_companion_asset_path(storage_path: str | None) -> tuple[int, str] | None:
-    """拆分裸存储路径为 (uid, filename)；该结构不允许子目录，多余斜杠会错配导致签名 URL 404。"""
-    if not storage_path or not storage_path.startswith("companion-assets/"):
-        return None
-    parts = storage_path.split("/", 2)
-    if (
-        len(parts) != 3
-        or not parts[2]
-        or parts[2] in {".", ".."}
-        or "/" in parts[2]
-        or "\\" in parts[2]
-        or "\x00" in storage_path
-    ):
-        return None
-    try:
-        user_id = int(parts[1])
-        return (user_id, parts[2]) if user_id > 0 and str(user_id) == parts[1] else None
-    except ValueError:
-        return None
 
 
 def signed_companion_asset_url(storage_path: str) -> str | None:
@@ -396,6 +467,7 @@ def unlink_companion_asset(storage_path: str | None) -> None:
     parsed = parse_companion_asset_path(storage_path)
     if parsed is None:
         return
+    forget_asset_write(storage_path or "")
     resolved = resolve_companion_asset_path(*parsed)
     if resolved is None:
         return

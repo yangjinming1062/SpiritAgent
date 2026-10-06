@@ -37,6 +37,9 @@ APPLICATION_FLOW_EDGES = {
 }
 # domains 跨域单向依赖（理由见 backend/README.md「services 依赖边界」）。
 DOMAIN_FLOW_EDGES = {
+    ("services.domains.backup", "services.domains.assets"),
+    ("services.domains.conversation", "services.domains.assets"),
+    ("services.domains.actions", "services.domains.assets"),
     ("services.domains.backup", "services.domains.actions"),
     ("services.domains.backup", "services.domains.memory"),
     ("services.domains.companion", "services.domains.memory"),

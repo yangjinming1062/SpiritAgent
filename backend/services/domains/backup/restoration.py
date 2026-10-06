@@ -5,20 +5,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from components import get_logger
+from components import SETTINGS, get_logger
 from modules.auth import User, generate_activation_token, hash_activation_token
 from modules.companion import COMPANION_CRON_SOURCE_PREFIX, Persona
 from modules.conversation import Conversation
 from modules.memory import Memory
 from modules.scheduler import CronJob
+from modules.settings import resolve_user_timezone
 from modules.ws import emit_ws_event
 from sqlalchemy import String, cast, delete, or_, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.domains.assets import collect_live_asset_paths, collect_message_asset_releases, enqueue_asset_cleanup
 from services.domains.memory import rebuild_diary_indexes
+from services.infrastructure.assets import user_asset_lock
 
 from .action_assets import restore_action_catalogs, validate_action_files
+from .asset_layout import freeze_asset_directory, plan_asset_layout
 from .file_packing import UrlRewriter, planned_asset_mapping, referenced_backup_files, restore_files, validate_row_files
 from .serializers import (
     ACTION_TABLES,
@@ -428,6 +432,13 @@ async def _has_retained_dependent(
 async def _delete_user_rows(db: AsyncSession, table: str, user_id: int) -> None:
     model = TABLE_MODELS[table]
     stmt = delete(model).where(model.user_id == user_id)
+    if table == "conversations":
+        conversation_ids = list(await db.scalars(select(Conversation.id).where(Conversation.user_id == user_id)))
+        # 与编辑、撤回同序：持用户资产锁完成引用登记与删除，避免与视频入队交错。
+        async with user_asset_lock(user_id):
+            await collect_message_asset_releases(db, user_id, conversation_ids)
+            await db.execute(stmt)
+        return
     if table == "memories":
         stmt = stmt.where(Memory.source_kind != "diary", or_(Memory.context.is_(None), ~Memory.context.like("diary:%")))
     elif table == "companion_diary_entries":
@@ -668,6 +679,7 @@ async def restore_backup_rows(
     ).one_or_none()
     try:
         if mode == "overwrite":
+            await enqueue_asset_cleanup(db, target_user_id, await collect_live_asset_paths(db, target_user_id))
             compatible_rows, clear_failures = await _clear_compatible_rows(db, target_user_id, compatible_rows)
             failures = (*failures, *clear_failures)
         id_map: dict[str, dict[str, int | str]] = {}
@@ -685,6 +697,29 @@ async def restore_backup_rows(
                 import_batch_id=import_batch_id,
                 asset_owner_id=target_user_id,
             )
+        for table in BACKUP_RESTORE_ORDER:
+            if table == "conversations" or table not in compatible_rows:
+                continue
+            id_map[table], imported[table] = await _restore_table(
+                db,
+                table,
+                compatible_rows[table],
+                compatible_rows,
+                target_user_id,
+                rewriter,
+                id_map,
+                mode=mode,
+                import_batch_id=import_batch_id,
+                asset_owner_id=target_user_id,
+            )
+        layout = plan_asset_layout(
+            compatible_rows,
+            source_user_id,
+            target_user_id,
+            await resolve_user_timezone(db, target_user_id) or "UTC",
+            id_map=id_map,
+        )
+        rewriter.set_asset_mapping(layout.mapping, layout.copies)
         skipped_conversation_files = await _copy_backup_files(
             extract_root,
             source_user_id,
@@ -704,21 +739,26 @@ async def restore_backup_rows(
                 ),
             )
         await asyncio.to_thread(rewriter.rewrite, compatible_rows)
-        for table in BACKUP_RESTORE_ORDER:
-            if table == "conversations" or table not in compatible_rows:
-                continue
-            id_map[table], imported[table] = await _restore_table(
-                db,
-                table,
-                compatible_rows[table],
-                compatible_rows,
-                target_user_id,
-                rewriter,
-                id_map,
-                mode=mode,
-                import_batch_id=import_batch_id,
-                asset_owner_id=target_user_id,
-            )
+        for table, original_id in rewriter.inserted_rows:
+            row = await db.get(TABLE_MODELS[table], id_map[table][original_id])
+            mapping = layout.rows.get((table, original_id), layout.mapping)
+            aliases = {
+                old.replace(f"companion-assets/{source_user_id}/", f"companion-assets/{target_user_id}/", 1): new
+                for old, new in mapping.items()
+            }
+            remap = UrlRewriter({**mapping, **aliases})
+            for column in row.__table__.columns:
+                value = getattr(row, column.name)
+                if isinstance(value, str | dict | list):
+                    rewritten = freeze_asset_directory(
+                        table,
+                        column.name,
+                        remap.rewrite(value),
+                        layout.directories[(table, original_id)],
+                    )
+                    if rewritten != value:
+                        setattr(row, column.name, rewritten)
+        await db.flush()
         if ACTION_TABLES.issubset(imported):
             await restore_action_catalogs(
                 db,
@@ -728,6 +768,11 @@ async def restore_backup_rows(
                 rewriter,
                 write_files=True,
             )
+        await enqueue_asset_cleanup(
+            db,
+            target_user_id,
+            {path.resolve().relative_to(Path(SETTINGS.data_dir).resolve()).as_posix() for path in rewriter.created},
+        )
         if imported.get("personas") or imported.get("companion_scenes"):
             persona = await db.scalar(
                 select(Persona).where(Persona.user_id == target_user_id).execution_options(populate_existing=True),

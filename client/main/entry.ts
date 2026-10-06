@@ -366,8 +366,6 @@ const sessionRuntime = createSessionRuntime({
 
 const assetDiskCache = createAssetDiskCache({
   defaultFetchFn: electronFetch,
-  // safeStorage 在 app ready 前不可用；快照须先于开窗和账户操作，但不能在模块装配时解密。
-  initialAccountId: app.whenReady().then(() => sessionRuntime.ensureBackendSession().getSelectedAccountId()),
   spiritagentHome: SPIRITAGENT_HOME
 })
 

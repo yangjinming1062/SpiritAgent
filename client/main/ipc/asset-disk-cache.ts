@@ -29,7 +29,6 @@ export interface CachedAsset {
 
 export interface AssetDiskCacheOptions {
   defaultFetchFn?: typeof globalThis.fetch
-  initialAccountId: Promise<string | null>
   spiritagentHome: string
 }
 
@@ -94,49 +93,15 @@ export function resolveBackendAssetUrl(rawUrl: string, baseUrl?: null | string):
   return `${baseUrl}${pathname}${search}`
 }
 
-export function createAssetDiskCache({
-  defaultFetchFn,
-  initialAccountId,
-  spiritagentHome
-}: AssetDiskCacheOptions): AssetDiskCache {
+export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetDiskCacheOptions): AssetDiskCache {
   const root = path.resolve(spiritagentHome, 'cache', 'assets')
   const accounts = new Map<string, ReturnType<typeof createAccountAssetCache>>()
-  let migration: Promise<void> | null = null
-
-  // 原平铺缓存只归属启动时已选账户；迁移后不再按旧目录回退，避免跨账户命中。
-  async function migrateLegacyCache(): Promise<void> {
-    const accountId = await initialAccountId
-
-    if (!accountId || !isAccountId(accountId)) {
-      return
-    }
-
-    const entries = await fsp.readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') {
-        return []
-      }
-
-      throw error
-    })
-
-    const files = entries.filter(entry => entry.isFile())
-
-    if (files.length > 0) {
-      const target = path.join(root, accountId)
-      await fsp.mkdir(target, { recursive: true })
-
-      for (const file of files) {
-        await fsp.rename(path.join(root, file.name), path.join(target, file.name))
-      }
-    }
-  }
 
   async function forAccount(accountId: string) {
     if (!isAccountId(accountId)) {
       throw new Error('Invalid asset cache account')
     }
 
-    await (migration ??= migrateLegacyCache())
     let cache = accounts.get(accountId)
 
     if (!cache) {

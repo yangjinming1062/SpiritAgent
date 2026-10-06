@@ -1,4 +1,4 @@
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from components import get_logger
 
@@ -161,3 +161,18 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             download_url=download_url,
             error=error_message,
         )
+
+    async def cancel(self, task_id: str) -> Literal["cancelled", "finished", "not_cancellable", "unsupported"]:
+        resp = await self._client.delete(f"/v2/video_generation/{task_id}")
+        if resp.status_code == 404:
+            return "finished"
+        if resp.status_code == 400:
+            # 排队转为运行、已取消等竞争状态不能被记录为已成功撤销。
+            latest = await self.poll(task_id)
+            return "finished" if latest.status in {"succeeded", "failed"} else "not_cancellable"
+        body = raise_for_minimax_response(resp)
+        if body.get("action") == "cancelled" and body.get("status") == "cancelled":
+            return "cancelled"
+        if body.get("action") == "deleted" and body.get("status") == "deleted":
+            return "finished"
+        raise RuntimeError("MiniMax cancellation response did not confirm the operation")

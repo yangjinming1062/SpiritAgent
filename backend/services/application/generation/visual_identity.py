@@ -112,6 +112,7 @@ async def align_character_reference(
     outfit_description: str,
     *,
     identity_reference: str,
+    storage_directory: str,
     state: ImageChainState | None = None,
     save_progress: ImageProgressWriter | None = None,
     before_submit: Callable[[], Awaitable[None]] | None = None,
@@ -128,6 +129,7 @@ async def align_character_reference(
         + "\n"
         + CHARACTER_VISUAL_STYLE,
         user_id=user_id,
+        storage_directory=storage_directory,
         reference_image=identity_reference,
         secondary_reference_image=reference_image if separate_reference else None,
         size=FULLBODY_SIZE,

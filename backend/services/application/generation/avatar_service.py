@@ -39,6 +39,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.domains.assets import cleanup_user_assets, enqueue_asset_cleanup
 from services.domains.companion import (
     CharacterCardNotReadyError,
     character_snapshot_is_current,
@@ -52,10 +53,12 @@ from services.domains.companion import (
 from services.infrastructure.assets import (
     build_data_uri,
     normalize_asset_reference,
+    outfit_asset_directory,
     read_asset_data_uri,
     resolve_asset_reference,
     save_companion_asset_async,
     signed_companion_asset_url,
+    unlink_companion_asset,
 )
 from services.infrastructure.llm import (
     SIZE_TO_ASPECT,
@@ -316,13 +319,16 @@ async def _save_fullbody_candidate(
                 status="pending",
             )
             db.add(row)
+            await enqueue_asset_cleanup(db, user_id, replaced_paths)
             await db.commit()
             candidate_id = row.id
     except BaseException:
         delete_portrait_file(image_url)
         raise
     for path in replaced_paths:
-        delete_portrait_file(path)
+        if path.startswith("temp-media/"):
+            delete_portrait_file(path)
+    await cleanup_user_assets(user_id)
     return await _analyze_fullbody_candidate(user_id, candidate_id, image_url)
 
 
@@ -422,10 +428,10 @@ def get_avatar_job_lock(user_id: int) -> asyncio.Lock:
     return _AVATAR_JOB_LOCKS.setdefault(user_id, asyncio.Lock())
 
 
-async def persist_portrait_bytes(user_id: int, data: bytes, content_type: str) -> str:
+async def persist_portrait_bytes(user_id: int, data: bytes, content_type: str, *, directory: str = "") -> str:
     """写入用户资产目录的永久立绘并返回裸路径。"""
     ext = _UPLOAD_EXTS.get(content_type.split(";", maxsplit=1)[0].strip().lower(), "jpg")
-    return await save_companion_asset_async(data, user_id=user_id, label="portrait", ext=ext)
+    return await save_companion_asset_async(data, user_id=user_id, label="portrait", ext=ext, directory=directory)
 
 
 async def persist_portrait_or_draft(
@@ -547,14 +553,16 @@ async def _write_avatar_step(
                 .values(is_portrait_confirmed=False, portrait_confirmed_at=None),
             )
             db.add(asset)
+            await enqueue_asset_cleanup(db, user_id, [previous_url] if previous_url else [])
             await db.commit()
         except BaseException:
             await db.rollback()
             delete_portrait_file(asset_url)
             raise
 
-    if persist and previous_url is not None:
+    if persist and previous_url is not None and previous_url.startswith("temp-media/"):
         delete_portrait_file(previous_url)
+    await cleanup_user_assets(user_id)
     return asset
 
 
@@ -612,6 +620,9 @@ def load_avatar_bytes_as_data_uri(path: str | None) -> str | None:
 
 def delete_portrait_file(path: str | None) -> None:
     """尽力删除立绘文件：temp-media 草稿或 companion-assets 用户资产。"""
+    if path and path.startswith("companion-assets/"):
+        unlink_companion_asset(path)
+        return
     resolved = _portrait_file(path)
     if resolved is not None:
         with contextlib.suppress(OSError):
@@ -921,12 +932,14 @@ async def _install_fullbody_seed(user_id: int, *, avatar_id: int, url: str, prom
                 payload["fullbody_reference_prompt"] = prompt
             target.prompt_json = json.dumps(payload, ensure_ascii=False)
             target.seed_fullbody_url = url
+            await enqueue_asset_cleanup(session, user_id, [previous_url] if previous_url else [])
             await session.commit()
     except BaseException:
         delete_portrait_file(url)
         raise
-    if previous_url and previous_url != url:
+    if previous_url and previous_url != url and previous_url.startswith("temp-media/"):
         delete_portrait_file(previous_url)
+    await cleanup_user_assets(user_id)
     return target
 
 
@@ -1047,7 +1060,6 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
         try:
             if original_seed_url.startswith("temp-media/"):
                 seed_path = await persist_portrait_bytes(user_id, seed[0], "image/png")
-            outfit_path = await persist_portrait_bytes(user_id, seed[0], "image/png")
             async with SESSION_LOCAL() as db:
                 asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
                 await db.refresh(asset, with_for_update=True)
@@ -1066,7 +1078,7 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
                 outfit = CompanionOutfit(
                     user_id=user_id,
                     name="默认外观",
-                    fullbody_url=outfit_path,
+                    fullbody_url="",
                     status="ready",
                     active=True,
                     is_initial=True,
@@ -1074,6 +1086,13 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
                 )
                 db.add(outfit)
                 await db.flush()
+                outfit_path = await persist_portrait_bytes(
+                    user_id,
+                    seed[0],
+                    "image/png",
+                    directory=outfit_asset_directory(outfit.id),
+                )
+                outfit.fullbody_url = outfit_path
                 emit_ws_event(
                     db,
                     user_id=user_id,

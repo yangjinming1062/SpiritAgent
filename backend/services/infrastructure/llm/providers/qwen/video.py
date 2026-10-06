@@ -1,4 +1,4 @@
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from components import get_logger
 
@@ -123,3 +123,13 @@ class QwenVideoGenProvider(VideoGenProvider):
             download_url=download_url,
             error=output.get("message") or (body.get("message") or None),
         )
+
+    async def cancel(self, task_id: str) -> Literal["cancelled", "finished", "not_cancellable", "unsupported"]:
+        resp = await self._client.post(f"/tasks/{task_id}/cancel")
+        if resp.status_code == 404:
+            return "finished"
+        if resp.status_code == 400 and resp.json().get("code") == "UnsupportedOperation":
+            latest = await self.poll(task_id)
+            return "finished" if latest.status in {"succeeded", "failed"} else "not_cancellable"
+        raise_for_qwen_response(resp)
+        return "cancelled"

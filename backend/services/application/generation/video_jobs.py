@@ -20,25 +20,28 @@ from components import (
     utc_now,
 )
 from modules.channels import ChannelDelivery, ChannelDeliveryPayload, ChannelPeer, ChannelTurnSource
-from modules.companion import AvatarAsset, CharacterCardSnapshot, CompanionAction, CompanionPost, PostPublication
+from modules.companion import AvatarAsset, CharacterCardSnapshot, PostPublication
 from modules.conversation import Conversation, Message
 from modules.media import VideoGenJob
+from modules.settings import resolve_user_timezone
 from modules.ws import emit_ws_event
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.domains.assets import asset_paths, cleanup_user_assets, enqueue_asset_cleanup
 from services.domains.companion import character_snapshot_is_current, render_character_identity
 from services.domains.conversation import MEDIA_FAILURE_SUBTYPE, MEDIA_STATUS_SUBTYPE, update_video_reply
 from services.infrastructure.assets import (
     VIDEO_DOWNLOAD_ATTEMPTS,
     asset_store,
+    asset_write_context,
     build_data_uri,
     client_asset_url,
+    dated_asset_directory,
     download_media_result,
     save_video_job_asset_async,
     sniff_media_ext,
-    unlink_companion_asset,
     video_job_asset_path,
 )
 from services.infrastructure.llm import (
@@ -61,6 +64,7 @@ from .media_chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
+    cancel_frozen_video_task,
     media_failure_reason,
     resolve_frozen_media_provider,
     video_failure_message,
@@ -72,6 +76,7 @@ logger = get_logger(__name__)
 
 _INFLIGHT: set[int] = set()
 _POLL_TASKS: dict[int, asyncio.Task[None]] = {}
+_SUBMIT_TASKS: dict[int, asyncio.Task[VideoJobStatus]] = {}
 _RESULT_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 _BG = TaskBag("media.video_jobs")
@@ -93,7 +98,18 @@ class _VideoJobParams(BaseModel):
     identity_reference_path: str | None
     identity_snapshot: CharacterCardSnapshot | None
     asset_generation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    asset_directory: str
     channel_source: ChannelTurnSource | None = None
+
+
+def _abandoned(job: VideoGenJob) -> bool:
+    """已登记清理的任务不再推进状态。"""
+    return job.cleanup_requested_at is not None
+
+
+def _settled(job: VideoGenJob) -> bool:
+    """已登记清理或已到终态的任务不再接受状态覆写。"""
+    return _abandoned(job) or job.status in _TERMINAL_STATUSES
 
 
 class VideoPollTimeoutError(RuntimeError):
@@ -102,6 +118,20 @@ class VideoPollTimeoutError(RuntimeError):
 
 class _JobSettledError(Exception):
     """轮询期间任务行已删除或已由其他路径终结。"""
+
+
+async def _require_live_job(job_id: int) -> None:
+    async with SESSION_LOCAL() as db:
+        row = await db.get(VideoGenJob, job_id)
+        if row is None or _settled(row):
+            raise _JobSettledError
+
+
+async def _require_not_abandoned(job_id: int) -> None:
+    async with SESSION_LOCAL() as db:
+        row = await db.get(VideoGenJob, job_id)
+        if row is None or _abandoned(row):
+            raise _JobSettledError
 
 
 async def poll_video_task(
@@ -180,6 +210,7 @@ async def _score_self_video(
     identity_uri: str | None,
     identity_text: str = "",
     channel_source: ChannelTurnSource | None = None,
+    job_id: int | None = None,
 ) -> tuple[str, int | None]:
     """核查候选可解码性，出镜时再评分。undecodable 表示成品本身不可解码，可换下一家；文件缺失、探测工具不可用不是成品问题，返回 invalid，仅非出镜视频在工具不可用时返回 unavailable 照常交付。"""
     if identity_path:
@@ -209,12 +240,18 @@ async def _score_self_video(
         return "unavailable", None
     try:
         frames = await asyncio.to_thread(sample_key_frames, local)
+
+        async def before_submit() -> None:
+            if job_id is not None:
+                await _require_live_job(job_id)
+            await require_video_generation_call(user_id, channel_source)
+
         score = await score_character_frames(
             user_id,
             identity_uri,
             tuple(build_data_uri(frame, "image/webp") for frame in frames),
             identity_text=identity_text,
-            before_submit=lambda: require_video_generation_call(user_id, channel_source),
+            before_submit=before_submit,
         )
         async with SESSION_LOCAL() as db:
             latest_seed = await db.scalar(
@@ -226,7 +263,7 @@ async def _score_self_video(
         if latest_seed != identity_path:
             return "stale", None
         return "scored" if score is not None else "unavailable", score
-    except (GenerationWorkPaused, GenerationAuthorizationRevoked):
+    except (GenerationWorkPaused, GenerationAuthorizationRevoked, _JobSettledError):
         raise
     except Exception:
         logger.warning("chat video identity scoring failed", extra={"user_id": user_id}, exc_info=True)
@@ -254,7 +291,7 @@ async def _update_job(job_id: int, **fields: object) -> None:
         job = await db.get(VideoGenJob, job_id, with_for_update=True)
         if job is None:
             return
-        if job.status in _TERMINAL_STATUSES:
+        if _settled(job):
             return
         for k, v in fields.items():
             setattr(job, k, v)
@@ -391,6 +428,8 @@ async def enqueue_video_job(
     user_id: int,
     session_id: str | None,
     prompt: str,
+    source_message_id: int | None = None,
+    asset_directory: str | None = None,
     duration: int,
     resolution: str,
     aspect_ratio: str | None,
@@ -414,8 +453,25 @@ async def enqueue_video_job(
     if not compatible:
         raise MissingLlmConfigError("未配置支持本次参考输入、时长和分辨率的视频供应商")
     state = MediaChainState(providers=[FrozenMediaProvider.from_config(config) for config in compatible])
+    if not asset_directory:
+        # 空串同缺省处理：按任务创建日冻结，不能把空目录写进任务参数落成根目录平铺。
+        asset_directory = dated_asset_directory(utc_now(), await resolve_user_timezone(db, user_id) or "UTC")
+    if source_message_id is not None:
+        source = await db.scalar(
+            select(Message)
+            .where(
+                Message.id == source_message_id,
+                Message.role == "user",
+                Message.conversation.has(Conversation.user_id == user_id),
+                Message.conversation_id == int(session_id or "0"),
+            )
+            .with_for_update(),
+        )
+        if source is None:
+            raise ValueError("Video source message is no longer available")
     params = _VideoJobParams(
         duration=duration,
+        asset_directory=asset_directory,
         resolution=resolution,
         reference_images=reference_images,
         aspect_ratio=aspect_ratio,
@@ -427,6 +483,7 @@ async def enqueue_video_job(
     job = VideoGenJob(
         user_id=user_id,
         session_id=session_id,
+        source_message_id=source_message_id,
         structured_reply=structured_reply,
         media_id=media_id,
         provider=compatible[0].provider_name,
@@ -467,13 +524,18 @@ async def _record_failure(job_id: int, *, reason: str) -> None:
     user_msg = video_failure_message(reason)
     async with SESSION_LOCAL() as db:
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
-        if row is None or row.status in _TERMINAL_STATUSES:
+        if row is None or _settled(row):
             return
         row.status = "result_unknown" if reason in _RESULT_UNKNOWN_REASONS else "failed"
         row.error_reason = reason
         row.error_message = user_msg
-        discarded = (row.candidate_video_url, row.video_url)
+        state = MediaChainState.model_validate_json(row.generation_state_json)
+        discarded = asset_paths([row.candidate_video_url, row.video_url, row.generation_state_json], row.user_id)
         row.candidate_video_url = row.video_url = None
+        state.candidates = []
+        state.source_path = None
+        row.generation_state_json = state.model_dump_json()
+        await enqueue_asset_cleanup(db, row.user_id, discarded)
         session_id = row.session_id
         if row.structured_reply:
             await update_video_reply(db, row)
@@ -504,15 +566,14 @@ async def _record_failure(job_id: int, *, reason: str) -> None:
             )
             await _add_channel_delivery(db, row, text=f"视频生成失败（任务 {job_id}）：{user_msg}", media=[])
         await db.commit()
-    for path in discarded:
-        await asyncio.to_thread(unlink_companion_asset, path)
+    await cleanup_user_assets(row.user_id)
 
 
 async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> None:
     """保存最佳资产与终态；聊天交付同事务提交，重复恢复不再送达。"""
     async with SESSION_LOCAL() as db:
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
-        if row is None or row.status in _TERMINAL_STATUSES:
+        if row is None or _settled(row):
             return
         snapshot = _VideoJobParams.model_validate_json(row.params_json).identity_snapshot
         if snapshot is not None and not await character_snapshot_is_current(db, row.user_id, snapshot):
@@ -576,7 +637,7 @@ async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> No
 async def _evaluate_stored_video(job_id: int) -> str:
     async with SESSION_LOCAL() as db:
         row = await db.get(VideoGenJob, job_id)
-        if row is None or row.status != "evaluating" or not row.candidate_video_url:
+        if row is None or _abandoned(row) or row.status != "evaluating" or not row.candidate_video_url:
             return "invalid"
         candidate = row.candidate_video_url
         params = _VideoJobParams.model_validate_json(row.params_json)
@@ -596,6 +657,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
             identity_uri=params.reference_images[0] if snapshot is not None else None,
             identity_text=render_character_identity(snapshot) if snapshot else "",
             channel_source=params.channel_source,
+            job_id=job_id,
         )
     except GenerationWorkPaused:
         return "paused"
@@ -607,7 +669,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
                 return "stale"
     async with SESSION_LOCAL() as db:
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
-        if row is None or row.status != "evaluating" or row.candidate_video_url != candidate:
+        if row is None or _abandoned(row) or row.status != "evaluating" or row.candidate_video_url != candidate:
             return "invalid"
         if outcome == "stale":
             return "stale"
@@ -624,14 +686,21 @@ async def _evaluate_stored_video(job_id: int) -> str:
             row.candidate_video_url = None
             row.status = "retry_pending"
             state.phase = "ready"
+            if state.source_path == candidate:
+                state.source_path = None
             row.generation_state_json = state.model_dump_json()
+            await enqueue_asset_cleanup(db, user_id, [candidate])
             await db.commit()
-            await asyncio.to_thread(unlink_companion_asset, candidate)
+            await cleanup_user_assets(user_id)
             return "retry"
         entry = MediaCandidate(path=candidate, attempt=row.generation_attempt_index)
         state.candidates.append(entry)
         state.accept_score(entry, score)
         best = state.best()
+        discarded = {entry.path for entry in state.candidates if entry.path != best.path}
+        state.candidates = [best]
+        if state.source_path in discarded:
+            state.source_path = None
         row.video_url = best.path
         row.candidate_video_url = None
         state.phase = "ready"
@@ -639,10 +708,9 @@ async def _evaluate_stored_video(job_id: int) -> str:
         if decision == "retry":
             row.status = "retry_pending"
         row.generation_state_json = state.model_dump_json()
+        await enqueue_asset_cleanup(db, user_id, discarded)
         await db.commit()
-    for entry in state.candidates:
-        if entry.path != best.path:
-            await asyncio.to_thread(unlink_companion_asset, entry.path)
+    await cleanup_user_assets(user_id)
     return decision
 
 
@@ -662,7 +730,7 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             return False
         async with SESSION_LOCAL() as db:
             row = await db.get(VideoGenJob, job_id)
-            if row is None or row.status != "retry_pending":
+            if row is None or _abandoned(row) or row.status != "retry_pending":
                 return False
             state = MediaChainState.model_validate_json(row.generation_state_json)
             params = _VideoJobParams.model_validate_json(row.params_json)
@@ -675,7 +743,7 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
         if config is None:
             async with SESSION_LOCAL() as db:
                 current = await db.get(VideoGenJob, job_id, with_for_update=True)
-                if current is None or current.status != "retry_pending":
+                if current is None or _abandoned(current) or current.status != "retry_pending":
                     return False
                 if MediaChainState.model_validate_json(current.generation_state_json).next_index != index:
                     return False
@@ -686,7 +754,7 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
         state.begin(index)
         async with SESSION_LOCAL() as db:
             current = await db.get(VideoGenJob, job_id, with_for_update=True)
-            if current is None or current.status != "retry_pending":
+            if current is None or _abandoned(current) or current.status != "retry_pending":
                 return False
             if MediaChainState.model_validate_json(current.generation_state_json).next_index != index:
                 return False
@@ -708,14 +776,36 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
         )
 
         async def submit(provider: VideoGenProvider) -> VideoJobStatus:
+            await _require_live_job(job_id)
             await require_video_generation_call(user_id, params.channel_source)
             result = await provider.submit(request)
             if not result.task_id:
                 raise ProviderResultUnknownError("POST", config.base_url)
             return result
 
-        try:
+        async def submit_and_record() -> VideoJobStatus:
             submitted = await execute_with_fallback([config], VideoGenProvider, submit, user_id=user_id)
+            state.phase = "processing"
+            async with SESSION_LOCAL() as submit_db:
+                current = await submit_db.get(VideoGenJob, job_id, with_for_update=True)
+                if current is not None:
+                    # 撤销可能与提交响应交错；句柄仍须保存，供清理任务撤销原请求。
+                    current.provider_task_id = submitted.task_id
+                    current.generation_state_json = state.model_dump_json()
+                    if not _settled(current):
+                        current.status = "processing"
+                    await submit_db.commit()
+            return submitted
+
+        submission = asyncio.create_task(submit_and_record(), name=f"video-submit-{job_id}")
+        _SUBMIT_TASKS[job_id] = submission
+        _BG.add(submission, on_error=_on_video_task_error)
+        track_user_task(user_id, submission, cancel_on_maintenance=False)
+        submission.add_done_callback(lambda _task: _SUBMIT_TASKS.pop(job_id, None))
+        try:
+            await asyncio.shield(submission)
+        except _JobSettledError:
+            return False
         except GenerationAuthorizationRevoked:
             await _fail_or_keep_best(job_id, "authorization_revoked")
             return False
@@ -747,13 +837,6 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             await _update_job(job_id, status="retry_pending", generation_state_json=state.model_dump_json())
             submit_failed = True
             continue
-        state.phase = "processing"
-        await _update_job(
-            job_id,
-            status="processing",
-            provider_task_id=submitted.task_id,
-            generation_state_json=state.model_dump_json(),
-        )
         return True
 
 
@@ -767,18 +850,30 @@ async def _pinned_video_provider(user_id: int, state: MediaChainState) -> VideoG
 
 async def _fail_or_keep_best(job_id: int, reason: str) -> None:
     async with SESSION_LOCAL() as db:
-        row = await db.get(VideoGenJob, job_id)
-    if row is not None and row.video_url:
-        state = MediaChainState.model_validate_json(row.generation_state_json)
-        state.stop_reason = state.stop_reason or reason
-        await _update_job(job_id, generation_state_json=state.model_dump_json(), candidate_video_url=None)
-        await asyncio.to_thread(unlink_companion_asset, row.candidate_video_url)
+        row = await db.get(VideoGenJob, job_id, with_for_update=True)
+        if row is None or _settled(row):
+            return
+        keep_best = bool(row.video_url)
+        user_id = row.user_id
+        if keep_best:
+            state = MediaChainState.model_validate_json(row.generation_state_json)
+            state.stop_reason = state.stop_reason or reason
+            discarded = asset_paths([row.candidate_video_url, row.generation_state_json], user_id) - {row.video_url}
+            state.candidates = [entry for entry in state.candidates if entry.path == row.video_url]
+            if state.source_path in discarded:
+                state.source_path = None
+            row.generation_state_json = state.model_dump_json()
+            row.candidate_video_url = None
+            await enqueue_asset_cleanup(db, user_id, discarded)
+            await db.commit()
+    if keep_best:
         warning = (
             f"{video_failure_message(reason)}；已保留此前最佳视频"
             if reason in {"result_unknown", "submit_result_unknown", "content_policy_blocked", "timeout"}
             else "自动重生成未能完成，已保留此前最佳视频"
         )
         await _finalize_best_video(job_id, warning=warning)
+        await cleanup_user_assets(user_id)
     else:
         await _record_failure(job_id, reason=reason)
 
@@ -790,22 +885,33 @@ async def _poll_and_finalize(job_id: int) -> None:
         return
     _INFLIGHT.add(job_id)
     try:
-        await _poll_and_finalize_locked(job_id)
+        with asset_write_context(inherit=False):
+            await _poll_and_finalize_locked(job_id)
     finally:
         _INFLIGHT.discard(job_id)
 
 
 async def _poll_and_finalize_locked(job_id: int) -> None:
+    submission = _SUBMIT_TASKS.get(job_id)
+    if submission is not None:
+        try:
+            await asyncio.shield(submission)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 活提交失败后沿持久状态收尾；只有没有活句柄响应可等时才判定提交未知。
+            logger.warning("Video submission ended before polling", extra={"job_id": job_id}, exc_info=True)
     async with SESSION_LOCAL() as db:
         job = await db.get(VideoGenJob, job_id)
         if job is None:
             return
         # 幂等护栏：上一次已终结的行不再重复下载/发事件；``_update_job`` 内部的终态检查是双保险。
-        if job.status in _TERMINAL_STATUSES:
+        if _settled(job):
             logger.info("skipping already-finalized job", extra={"job_id": job_id, "status": job.status})
             return
         user_id = job.user_id
         provider_task_id = job.provider_task_id or ""
+        params = _VideoJobParams.model_validate_json(job.params_json)
 
     try:
         if job.status == "submitting":
@@ -829,7 +935,8 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     user_id,
                     job_id,
                     job.generation_attempt_index,
-                    generation_id=_VideoJobParams.model_validate_json(job.params_json).asset_generation_id,
+                    generation_id=params.asset_generation_id,
+                    directory=params.asset_directory,
                 )
                 if _stored_asset_file(user_id, candidate_path) is None:
                     candidate_path = None
@@ -860,7 +967,8 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     user_id=user_id,
                     job_id=job_id,
                     attempt=job.generation_attempt_index,
-                    generation_id=_VideoJobParams.model_validate_json(job.params_json).asset_generation_id,
+                    generation_id=params.asset_generation_id,
+                    directory=params.asset_directory,
                 )
             except Exception:
                 logger.warning("known video result awaits download recovery", extra={"job_id": job_id}, exc_info=True)
@@ -895,7 +1003,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
             # 感知并发终态（如行被删除、其他 worker 已终结）后停止轮询。
             async with SESSION_LOCAL() as db:
                 row = await db.get(VideoGenJob, job_id)
-            if row is None or row.status in _TERMINAL_STATUSES:
+            if row is None or _settled(row):
                 raise _JobSettledError
 
         try:
@@ -917,7 +1025,11 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     claimed = (
                         await db.execute(
                             update(VideoGenJob)
-                            .where(VideoGenJob.id == job_id, VideoGenJob.status == "processing")
+                            .where(
+                                VideoGenJob.id == job_id,
+                                VideoGenJob.status == "processing",
+                                VideoGenJob.cleanup_requested_at.is_(None),
+                            )
                             .values(status="downloading", generation_state_json=state.model_dump_json()),
                         )
                     ).rowcount
@@ -935,17 +1047,21 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                 await _poll_and_finalize_locked(job_id)
             return
         await _fail_or_keep_best(job_id, video_provider_failure_reason(status.error))
+    except _JobSettledError:
+        return
     except Exception:
         logger.exception("unhandled exception in video poll worker", extra={"job_id": job_id})
         try:
             async with SESSION_LOCAL() as db:
                 latest = await db.get(VideoGenJob, job_id)
             if latest is not None and latest.status in ("downloading", "evaluating"):
+                latest_params = _VideoJobParams.model_validate_json(latest.params_json)
                 candidate = latest.candidate_video_url or video_job_asset_path(
                     user_id,
                     job_id,
                     latest.generation_attempt_index,
-                    generation_id=_VideoJobParams.model_validate_json(latest.params_json).asset_generation_id,
+                    generation_id=latest_params.asset_generation_id,
+                    directory=latest_params.asset_directory,
                 )
                 if _stored_asset_file(user_id, candidate) is not None:
                     logger.warning("stored video awaits recovery", extra={"job_id": job_id, "path": candidate})
@@ -962,11 +1078,14 @@ async def _download_and_store(
     job_id: int,
     attempt: int,
     generation_id: str,
+    directory: str,
 ) -> str:
     """有界重试下载供应商成品并原子写入确定性路径，返回裸存储路径。只对传输错误与服务端 5xx 退避重试，超限、4xx 与过期地址等确定性失败直接上抛。慢速大文件读取超时放宽到 10 分钟，上限 ``video_gen_download_max_bytes``。"""
     if not download_url:
         raise RuntimeError("video result has no download url")
+    await _require_not_abandoned(job_id)
     data = await download_media_result(download_url, max_bytes=SETTINGS.video_gen_download_max_bytes, timeout=600.0)
+    await _require_not_abandoned(job_id)
     if sniff_media_ext(data) != "mp4":
         raise RuntimeError("provider returned a payload that is not an mp4 stream")
     return await save_video_job_asset_async(
@@ -975,6 +1094,7 @@ async def _download_and_store(
         job_id=job_id,
         attempt=attempt,
         generation_id=generation_id,
+        directory=directory,
     )
 
 
@@ -985,6 +1105,7 @@ async def resume_pending_video_jobs() -> None:
         jobs = (
             await db.execute(
                 select(VideoGenJob.id, VideoGenJob.user_id).where(
+                    VideoGenJob.cleanup_requested_at.is_(None),
                     VideoGenJob.status.in_(
                         ("processing", "downloading", "evaluating", "retry_pending", "submitting"),
                     ),
@@ -1005,6 +1126,7 @@ async def resume_user_video_jobs(user_id: int) -> None:
                 await db.scalars(
                     select(VideoGenJob.id).where(
                         VideoGenJob.user_id == user_id,
+                        VideoGenJob.cleanup_requested_at.is_(None),
                         VideoGenJob.status.in_(("processing", "downloading", "evaluating", "retry_pending")),
                     ),
                 )
@@ -1016,6 +1138,76 @@ async def resume_user_video_jobs(user_id: int) -> None:
 
 def _result_lock(job_id: int) -> asyncio.Lock:
     return _RESULT_LOCKS.setdefault(job_id, asyncio.Lock())
+
+
+async def cleanup_user_video_jobs(user_id: int) -> None:
+    """处理已失去所属历史的作业；外部撤销失败保留任务供下一次补偿，绝不重新生成。"""
+    async with SESSION_LOCAL() as db:
+        ids = list(
+            await db.scalars(
+                select(VideoGenJob.id).where(
+                    VideoGenJob.user_id == user_id,
+                    VideoGenJob.cleanup_requested_at.is_not(None),
+                ),
+            ),
+        )
+    for job_id in ids:
+        async with _result_lock(job_id):
+            task = _POLL_TASKS.get(job_id)
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            submission = _SUBMIT_TASKS.get(job_id)
+            if submission is not None and not submission.done():
+                # 提交响应中的句柄仍需落库；停止轮询不等于撤销供应商已接收的请求。
+                continue
+            async with SESSION_LOCAL() as db:
+                row = await db.get(VideoGenJob, job_id)
+                if row is None or row.user_id != user_id or row.cleanup_requested_at is None:
+                    continue
+                params = _VideoJobParams.model_validate_json(row.params_json)
+                state = MediaChainState.model_validate_json(row.generation_state_json)
+            if row.provider_task_id and row.status not in {"succeeded", "review_pending"}:
+                try:
+                    async with asyncio.timeout(15):
+                        outcome = await cancel_frozen_video_task(
+                            user_id,
+                            state,
+                            row.provider_task_id,
+                            provider_name=row.provider,
+                        )
+                except Exception:
+                    logger.warning("Abandoned video cancellation will retry", extra={"job_id": job_id}, exc_info=True)
+                    continue
+                logger.info("Abandoned video cancellation", extra={"job_id": job_id, "outcome": outcome})
+                if outcome == "unavailable":
+                    # 原端点已不可用时保留任务供下一次补偿，不向新地址发送旧句柄。
+                    continue
+            paths = asset_paths([row.video_url, row.candidate_video_url, row.generation_state_json], user_id)
+            attempts = {row.generation_attempt_index, *(entry.attempt for entry in state.candidates)}
+            paths.update(
+                video_job_asset_path(
+                    user_id,
+                    job_id,
+                    attempt,
+                    generation_id=params.asset_generation_id,
+                    directory=params.asset_directory,
+                )
+                for attempt in attempts
+            )
+            async with SESSION_LOCAL() as db:
+                current = await db.get(VideoGenJob, job_id, with_for_update=True)
+                if current is None or current.user_id != user_id or current.cleanup_requested_at is None:
+                    continue
+                await enqueue_asset_cleanup(db, user_id, paths)
+                await db.delete(current)
+                await db.commit()
+
+
+async def cleanup_user_media(user_id: int) -> None:
+    """历史变更提交后的统一收尾：先回收失效视频任务（含远端撤销），再删除无引用文件。"""
+    await cleanup_user_video_jobs(user_id)
+    await cleanup_user_assets(user_id)
 
 
 def post_video_ready(job: VideoGenJob) -> bool:
@@ -1047,6 +1239,7 @@ async def query_post_video_job(user_id: int, job_id: int) -> VideoGenJob:
                 job_id,
                 row.generation_attempt_index,
                 generation_id=params.asset_generation_id,
+                directory=params.asset_directory,
             )
         )
         local = _stored_asset_file(user_id, candidate)
@@ -1054,7 +1247,7 @@ async def query_post_video_job(user_id: int, job_id: int) -> VideoGenJob:
             await asyncio.to_thread(probe_video, local)
             async with SESSION_LOCAL() as db:
                 current = await db.get(VideoGenJob, job_id, with_for_update=True)
-                if current is None or current.status == "discarded":
+                if current is None or _abandoned(current) or current.status == "discarded":
                     raise ValueError("视频任务已放弃")
                 state.source_path = candidate
                 current.candidate_video_url = candidate
@@ -1089,6 +1282,7 @@ async def query_post_video_job(user_id: int, job_id: int) -> VideoGenJob:
             job_id=job_id,
             attempt=row.generation_attempt_index,
             generation_id=params.asset_generation_id,
+            directory=params.asset_directory,
         )
         local = _stored_asset_file(user_id, stored)
         if local is None:
@@ -1143,127 +1337,37 @@ async def post_video_asset(db: AsyncSession, user_id: int, job_id: int) -> str:
 
 
 async def discard_post_video_job(user_id: int, job_id: int, publication_id: str) -> None:
-    """停止原任务并清理它独占的成品；保留外部任务句柄，不声称远端操作已撤销。"""
-    async with _result_lock(job_id):
-        async with SESSION_LOCAL() as db:
-            initial = await get_job(db, job_id, user_id)
-            if initial is None:
-                return
-            if initial.session_id is not None or initial.reply_message_id is not None:
-                raise ValueError("该视频任务仍用于会话，不能作为动态成品放弃")
-            shared = await db.scalar(
-                select(PostPublication.id)
-                .where(
-                    PostPublication.id != publication_id,
-                    PostPublication.status != "discarded",
-                    PostPublication.progress_json["job_id"].as_string() == str(job_id),
-                )
-                .limit(1),
+    """失效与回收登记先提交，再撤销原任务；共享业务引用由统一回收器保护。"""
+    async with _result_lock(job_id), SESSION_LOCAL() as db:
+        row = await db.scalar(
+            select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id).with_for_update(),
+        )
+        if row is None:
+            return
+        if row.session_id is not None or row.reply_message_id is not None:
+            raise ValueError("该视频任务仍用于会话，不能作为动态成品放弃")
+        shared = await db.scalar(
+            select(PostPublication.id)
+            .where(
+                PostPublication.id != publication_id,
+                PostPublication.status != "discarded",
+                PostPublication.progress_json["job_id"].as_string() == str(job_id),
             )
-            if shared is not None:
-                return
-        task = _POLL_TASKS.get(job_id)
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        async with SESSION_LOCAL() as db:
-            row = await db.scalar(
-                select(VideoGenJob).where(VideoGenJob.id == job_id, VideoGenJob.user_id == user_id).with_for_update(),
-            )
-            if row is None:
-                return
-            if row.session_id is not None or row.reply_message_id is not None:
-                raise ValueError("该视频任务仍用于会话，不能作为动态成品放弃")
-            state = MediaChainState.model_validate_json(row.generation_state_json)
-            params = _VideoJobParams.model_validate_json(row.params_json)
-            paths = {
-                path
-                for path in (
-                    row.video_url,
-                    row.candidate_video_url,
-                    state.source_path,
-                    *(entry.path for entry in state.candidates),
-                )
-                if isinstance(path, str) and path
-            }
-            owned_paths = {
-                video_job_asset_path(user_id, job_id, entry.attempt, generation_id=params.asset_generation_id)
-                for entry in state.candidates
-            }
-            owned_paths.add(
-                video_job_asset_path(
-                    user_id,
-                    job_id,
-                    row.generation_attempt_index,
-                    generation_id=params.asset_generation_id,
-                ),
-            )
-            paths.update(path for path in owned_paths if _stored_asset_file(user_id, path) is not None)
-            discarded: list[str] = []
-            for path in paths & owned_paths:
-                referenced = await db.scalar(
-                    select(CompanionPost.id)
-                    .where(or_(CompanionPost.media_url == path, CompanionPost.audio_url == path))
-                    .limit(1),
-                )
-                referenced = referenced or await db.scalar(
-                    select(PostPublication.id)
-                    .where(
-                        PostPublication.id != publication_id,
-                        PostPublication.status != "discarded",
-                        or_(
-                            PostPublication.progress_json["job_id"].as_string() == str(job_id),
-                            PostPublication.progress_json["media_url"].as_string() == path,
-                        ),
-                    )
-                    .limit(1),
-                )
-                referenced = referenced or await db.scalar(
-                    select(Message.id)
-                    .where(
-                        or_(
-                            Message.media_json.contains(path, autoescape=True),
-                            Message.reply_json.contains(path, autoescape=True),
-                            Message.content.contains(path, autoescape=True),
-                        ),
-                    )
-                    .limit(1),
-                )
-                referenced = referenced or await db.scalar(
-                    select(CompanionAction.id)
-                    .where(CompanionAction.result_json.contains(path, autoescape=True))
-                    .limit(1),
-                )
-                referenced = referenced or await db.scalar(
-                    select(VideoGenJob.id)
-                    .where(
-                        VideoGenJob.id != job_id,
-                        or_(VideoGenJob.video_url == path, VideoGenJob.candidate_video_url == path),
-                    )
-                    .limit(1),
-                )
-                if referenced is None:
-                    discarded.append(path)
-            row.status = "discarded"
-            row.error_reason = "user_discarded"
-            row.error_message = "视频已放弃；远端任务可能仍在运行，未重新提交"
-            state.stop_reason = "user_discarded"
-            state.phase = "complete"
-            row.generation_state_json = state.model_dump_json()
-            await db.commit()
-        for path in discarded:
-            await asyncio.to_thread(unlink_companion_asset, path)
-        async with SESSION_LOCAL() as db:
-            row = await db.get(VideoGenJob, job_id, with_for_update=True)
-            if row is None or row.status != "discarded":
-                return
-            state = MediaChainState.model_validate_json(row.generation_state_json)
-            if row.video_url in discarded:
-                row.video_url = None
-            if row.candidate_video_url in discarded:
-                row.candidate_video_url = None
-            if state.source_path in discarded:
-                state.source_path = None
-            state.candidates = [entry for entry in state.candidates if entry.path not in discarded]
-            row.generation_state_json = state.model_dump_json()
-            await db.commit()
+            .limit(1),
+        )
+        if shared is not None:
+            return
+        row.cleanup_requested_at = utc_now()
+        row.status = "discarded"
+        row.error_reason = "user_discarded"
+        row.error_message = "视频已放弃；远端取消结果由清理任务核实，不会重新提交"
+        await enqueue_asset_cleanup(
+            db,
+            user_id,
+            asset_paths(
+                [row.video_url, row.candidate_video_url, row.generation_state_json],
+                user_id,
+            ),
+        )
+        await db.commit()
+    await cleanup_user_media(user_id)

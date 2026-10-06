@@ -25,15 +25,19 @@ from modules.conversation import (
     VoiceBubbleView,
 )
 from services.adapters.http import limiter
+from services.application.generation import cleanup_user_media
+from services.domains.assets import collect_message_asset_releases
 from services.domains.conversation import (
     IM_KIND,
     SPECIAL_KIND,
     SYSTEM_PRESET_CATALOG,
+    cancel_reply_audio,
     client_reply_bubbles,
     message_contains_text,
     resolve_preset_meta,
     synthesize_reply_audio,
 )
+from services.infrastructure.assets import user_asset_lock
 from services.infrastructure.turn_ownership import conversation_is_running, conversation_lock
 from sqlalchemy import String, asc, case, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -320,7 +324,6 @@ async def delete_session(
     conv = await _get_conversation_or_404(db, user, session_id)
     if conv.kind == SPECIAL_KIND or not conv.is_deletable:
         raise HTTPException(status_code=403, detail="System preset conversations cannot be modified or deleted")
-    deleted_id = conv.id
     descendants = select(Conversation.id).where(Conversation.parent_id == conv.id).cte("descendants", recursive=True)
     descendants = descendants.union(
         select(Conversation.id).join(descendants, Conversation.parent_id == descendants.c.id),
@@ -333,11 +336,16 @@ async def delete_session(
             if conversation_is_running(str(sid)):
                 raise HTTPException(status_code=409, detail="请先停止当前任务，再删除会话")
             await locks.enter_async_context(conversation_lock(str(sid)))
-        await db.delete(conv)
-        await db.commit()
+        async with user_asset_lock(user.id):
+            removed = await collect_message_asset_releases(db, user.id, subtree)
+            await db.delete(conv)
+            await db.commit()
+    await cancel_reply_audio(user.id, removed)
+    await cleanup_user_media(user.id)
     # 级联清理远端模式附件，尽力而为——文件系统错误（权限、磁盘满）不能让已删除会话行残留，日志记录后吞掉；gc_session 校验 session_id 形态并拒绝路径穿越，rmtree 仅作用于 SETTINGS.data_dir/desktop-attachments/。
-    try:
-        await asyncio.to_thread(attachments_gc_session, str(deleted_id))
-    except Exception:
-        logger.warning("attachments_gc_session failed for session %s", deleted_id, exc_info=True)
+    for deleted_id in subtree:
+        try:
+            await asyncio.to_thread(attachments_gc_session, str(deleted_id))
+        except OSError:
+            logger.warning("attachments_gc_session failed for session %s", deleted_id, exc_info=True)
     return DesktopSessionOperationResponse(ok=True)

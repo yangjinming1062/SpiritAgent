@@ -6,6 +6,7 @@ import hashlib
 import time
 from io import BytesIO
 from typing import Any, ClassVar
+from uuid import uuid4
 
 import httpx
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, get_logger
@@ -322,7 +323,17 @@ class LocalImageGenProvider(ImageGenProvider):
         return error
 
     async def _run_job(self, graph: dict[str, Any]) -> list[ImageAsset]:
-        resp = await self._client.post("/prompt", json={"prompt": graph})
+        request_id = str(uuid4())
+        submission = asyncio.create_task(self._client.post("/prompt", json={"prompt": graph, "prompt_id": request_id}))
+        try:
+            resp = await asyncio.shield(submission)
+        except asyncio.CancelledError:
+            cancellation = asyncio.create_task(self._cancel_submission(submission, request_id))
+            try:
+                await asyncio.shield(cancellation)
+            except asyncio.CancelledError:
+                await asyncio.gather(cancellation, return_exceptions=True)
+            raise
         if resp.status_code >= 400:
             raise ProviderError(
                 f"local image_gen submit failed: {resp.status_code} {resp.text[:400]}",
@@ -340,6 +351,14 @@ class LocalImageGenProvider(ImageGenProvider):
         try:
             with accepted_image_job_wait():
                 assets = await self._wait_and_fetch(prompt_id)
+        except asyncio.CancelledError:
+            # 只操作本次 prompt；旧服务器缺少定向运行取消时只能移除本任务的排队项。
+            cancellation = asyncio.create_task(self._cancel_job(prompt_id))
+            try:
+                await asyncio.shield(cancellation)
+            except asyncio.CancelledError:
+                await asyncio.gather(cancellation, return_exceptions=True)
+            raise
         except (ProviderError, ProviderResultUnknownError):
             raise
         except Exception as exc:
@@ -349,6 +368,48 @@ class LocalImageGenProvider(ImageGenProvider):
                 f"local image_gen returned no images for {prompt_id}",
             )
         return assets
+
+    async def _cancel_submission(self, submission: asyncio.Task[httpx.Response], request_id: str) -> None:
+        prompt_id = request_id
+        try:
+            async with asyncio.timeout(15):
+                response = await asyncio.shield(submission)
+            if response.is_success:
+                body = response.json()
+                returned_id = body.get("prompt_id") if isinstance(body, dict) else None
+                if isinstance(returned_id, str) and returned_id:
+                    prompt_id = returned_id
+        except Exception:
+            logger.warning(
+                "Local image submission handle was not confirmed",
+                extra={"prompt_id": request_id},
+                exc_info=True,
+            )
+        finally:
+            if not submission.done():
+                submission.cancel()
+            await asyncio.gather(submission, return_exceptions=True)
+        await self._cancel_job(prompt_id)
+
+    async def _cancel_job(self, prompt_id: str) -> None:
+        try:
+            async with asyncio.timeout(10):
+                response = await self._client.post(f"/api/jobs/{prompt_id}/cancel", json={})
+                if response.status_code in (404, 405):
+                    response = await self._client.post("/queue", json={"delete": [prompt_id]})
+                    response.raise_for_status()
+                    logger.info("Local image queue cancellation requested", extra={"prompt_id": prompt_id})
+                    return
+                response.raise_for_status()
+                body = response.json()
+                if not isinstance(body, dict) or type(body.get("cancelled")) is not bool:
+                    raise ValueError("Local image cancellation response is invalid")
+                logger.info(
+                    "Local image cancellation completed",
+                    extra={"prompt_id": prompt_id, "cancelled": body["cancelled"]},
+                )
+        except Exception:
+            logger.warning("Local image cancellation was not confirmed", extra={"prompt_id": prompt_id}, exc_info=True)
 
     async def generate(self, req: ImageGenRequest) -> ImageGenResult:
         unet_name, clip_name, vae_name = await self._resolve_model_files()

@@ -1,15 +1,20 @@
 """媒体质量链的无凭据快照、尝试游标和候选选择。"""
 
+import asyncio
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Literal
 from uuid import uuid4
 
-from components import SESSION_LOCAL, get_logger
+from components import SESSION_LOCAL, get_logger, track_user_task
+from modules.companion import RemovedActionVideoTask
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.infrastructure.llm import (
     FailoverReason,
     ProviderConfig,
+    VideoGenProvider,
+    build_provider,
     classify_api_error,
     is_content_policy_error_message,
     resolve_provider_chain,
@@ -171,6 +176,65 @@ async def resolve_frozen_media_provider(
     )
     return (
         replace(current, model=frozen.model, model_overridden=frozen.model_overridden) if current is not None else None
+    )
+
+
+async def cancel_frozen_video_task(user_id: int, state: MediaChainState, task_id: str, provider_name: str = "") -> str:
+    """按提交时冻结的端点撤销远端任务；端点变更后不向新地址发送旧句柄，无法撤销时如实返回原因。"""
+    pinned = (
+        state.providers[state.active_index]
+        if state.active_index is not None and 0 <= state.active_index < len(state.providers)
+        else None
+    )
+    frozen_list = (
+        [pinned]
+        if pinned is not None
+        else [frozen for frozen in state.providers if not provider_name or frozen.provider == provider_name]
+    )
+    for frozen in frozen_list:
+        config = await resolve_frozen_media_provider(user_id, "video_gen", frozen)
+        if config is None:
+            continue
+        provider = build_provider(config, VideoGenProvider)
+        return await provider.cancel(task_id)
+    return "unavailable"
+
+
+async def cancel_removed_action_video_tasks(user_id: int, tasks: Sequence[RemovedActionVideoTask]) -> None:
+    """删除提交后尽力撤销远端视频任务；不能远端撤销时停止本地后续并如实记录，不影响已完成的删除。"""
+    for task in tasks:
+        try:
+            state = (
+                MediaChainState.model_validate_json(task.generation_state_json)
+                if task.generation_state_json
+                else MediaChainState()
+            )
+        except ValueError:
+            state = MediaChainState()
+        try:
+            async with asyncio.timeout(15):
+                outcome = await cancel_frozen_video_task(user_id, state, task.task_id, provider_name=task.provider)
+        except Exception:
+            logger.warning(
+                "Removed action task cancellation failed",
+                extra={"user_id": user_id, "action_id": task.action_id},
+                exc_info=True,
+            )
+            continue
+        logger.info(
+            "Removed action task cancellation",
+            extra={"user_id": user_id, "action_id": task.action_id, "outcome": outcome},
+        )
+
+
+def spawn_removed_action_task_cancellation(user_id: int, tasks: Sequence[RemovedActionVideoTask]) -> None:
+    """删除事务提交后调度撤销；任务登记到用户名下自然落地，失败只记录。"""
+    if not tasks:
+        return
+    track_user_task(
+        user_id,
+        asyncio.create_task(cancel_removed_action_video_tasks(user_id, tasks)),
+        cancel_on_maintenance=False,
     )
 
 

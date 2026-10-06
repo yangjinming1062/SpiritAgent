@@ -53,6 +53,7 @@
 | 特殊依赖 | 业务理由 |
 |---|---|
 | 各领域 → conversation | 会话底座 |
+| conversation / actions / backup → assets | 正式资产引用检查、事务性释放及统一回收 |
 | companion / journal → memory | 陪伴读取记忆，日记发布时同步派生召回索引 |
 | companion → actions | 只读当前包动作目录快照 |
 | backup → actions | 恢复动作资产后重建目录并复用发布校验 |
@@ -108,7 +109,7 @@
 
 图片与视频等大字节处理与落盘卸载到工作线程。正式资产写入有两种取消语义：随机命名资产（`save_companion_asset_async`）取消时删除未交接文件；任务预登记固定路径的生成资产（视频任务、动作素材与图片链候选）取消时等待原子写完并保留，供恢复复用。
 
-资产引用列保存 `companion-assets/{user_id}/...` 裸路径；响应出口改写为 Bearer 鉴权的 `/api/companion/asset/...`（`client_asset_url`）或短时签名 URL（`signed_companion_asset_url`），签名 URL 不入库。
+资产引用列保存 `companion-assets/{user_id}/...` 裸路径；目录分层及引用回收统一见 [资产访问与缓存](../docs/PROTOCOL.md#资产访问与缓存)。响应出口改写为 Bearer 鉴权的 `/api/companion/asset/...`（`client_asset_url`）或短时签名 URL（`signed_companion_asset_url`），签名 URL 不入库。
 
 本机派发先注册等待对象，再发送并检查入队结果；直接持对象等待，避免极速返回后查表丢失。桌面离线以业务错误结束等待，不能一律抛取消异常而使 IM 回合静默退出。
 

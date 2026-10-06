@@ -22,7 +22,13 @@ from .memory_scope import (
     validate_memory_scope,
 )
 from .presets import COMPANION_PRESET_ID, SYSTEM_PRESET_CATALOG, InferenceDefaults, resolve_preset_meta
-from .reply_audio import client_reply_bubbles, discard_reply_audio, prepare_reply_audio, synthesize_reply_audio
+from .reply_audio import (
+    cancel_reply_audio,
+    client_reply_bubbles,
+    discard_reply_audio,
+    prepare_reply_audio,
+    synthesize_reply_audio,
+)
 from .reply_media import (
     apply_video_status,
     bind_reply_videos,
@@ -35,6 +41,7 @@ from .retry import ReplyRetryNotAllowedError, get_reply_retry_message
 from .undo import UndoNotAllowedError, resolve_undo_target, undo_conversation_to_message
 
 __all__ = [
+    "cancel_reply_audio",
     "ReplyRetryNotAllowedError",
     "get_reply_retry_message",
     "companion_context_content",

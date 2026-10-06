@@ -106,11 +106,11 @@ async def resolve_image_gen_chain(
     return capable, None
 
 
-async def _persist_user_asset_async(data: bytes, user_id: int) -> str:
+async def _persist_user_asset_async(data: bytes, user_id: int, directory: str) -> str:
     ext = sniff_media_ext(data)
     if ext not in ("png", "jpg", "webp", "gif"):
         raise ImageGenerationError("图片生成服务返回了无效的图片数据，请重试")
-    return await save_companion_asset_async(data, user_id=user_id, label="chat_image", ext=ext)
+    return await save_companion_asset_async(data, user_id=user_id, label="chat_image", ext=ext, directory=directory)
 
 
 async def generate_images(
@@ -122,6 +122,7 @@ async def generate_images(
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
     persist_user_assets: bool = False,
+    storage_directory: str | None = None,
     image_edit: bool = False,
     provider_config: ProviderConfig | None = None,
     background: str | None = None,
@@ -131,6 +132,11 @@ async def generate_images(
     exact_size: bool = False,
 ) -> list[str]:
     """按供应商能力生成图片；透明优先请求的实际 alpha 由消费方校验和处理。"""
+    persist_directory = ""
+    if persist_user_assets:
+        if not storage_directory:
+            raise ValueError("persisted image requires a storage directory")
+        persist_directory = storage_directory
     if image_edit and secondary_reference_image:
         raise ImageGenerationError(
             "图像编辑不支持附加参考图，请改用重新生成",
@@ -246,7 +252,7 @@ async def generate_images(
                 if persist_user_assets:
                     # 供应商地址短时效：下载→魔数校验→转存正式资产，失败即本轮报错重试，不把短效 URL 落库。
                     data = await download_capped(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=360.0)
-                    urls.append(await _persist_user_asset_async(data, user_id))
+                    urls.append(await _persist_user_asset_async(data, user_id, persist_directory))
                 else:
                     urls.append(asset.url)
             elif asset.b64 is not None:
@@ -255,7 +261,7 @@ async def generate_images(
                     continue
                 if persist_user_assets:
                     data = await asyncio.to_thread(base64.b64decode, asset.b64)
-                    urls.append(await _persist_user_asset_async(data, user_id))
+                    urls.append(await _persist_user_asset_async(data, user_id, persist_directory))
                 else:
                     urls.append(f"data:{asset.mime or 'image/jpeg'};base64,{asset.b64}")
     except BaseException as exc:

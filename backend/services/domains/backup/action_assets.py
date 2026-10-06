@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
 
@@ -22,7 +22,13 @@ from services.domains.actions import (
     build_catalog_manifest,
     parse_accepted_action_asset_json,
 )
-from services.infrastructure.assets import build_data_uri, compute_file_sha256, image_mime_for_extension
+from services.infrastructure.assets import (
+    build_data_uri,
+    compute_file_sha256,
+    image_mime_for_extension,
+    pack_asset_directory,
+    parse_companion_asset_path,
+)
 
 from .file_packing import UrlRewriter
 
@@ -37,9 +43,9 @@ def restore_action_payload(
     for path in _asset_references(payload):
         if not isinstance(path, str):
             raise ValueError("Invalid action asset path")
-        parts = Path(path).parts
-        if len(parts) == 3 and parts[0] == "companion-assets":
-            asset_paths[path] = f"companion-assets/{user_id}/{parts[-1]}"
+        parts = PurePosixPath(path).parts
+        if len(parts) >= 3 and parts[0] == "companion-assets":
+            asset_paths[path] = PurePosixPath("companion-assets", str(user_id), *parts[2:]).as_posix()
     # 已清理的中间文件不在复制清单中，仍须迁移引用，避免后续清理触及源用户目录。
     payload.update(UrlRewriter(asset_paths).rewrite(payload))
     if table == "companion_actions":
@@ -127,7 +133,8 @@ def _asset_path(path: str, user_id: int, root: Path) -> Path:
     if not isinstance(path, str) or not path or "\\" in path or ".." in path:
         raise ValueError("Invalid action asset path")
     relative = Path(path)
-    allowed = len(relative.parts) == 3 and relative.parts[:2] == ("companion-assets", str(user_id))
+    parsed = parse_companion_asset_path(path)
+    allowed = parsed is not None and parsed[0] == user_id
     target = root / relative
     if not allowed or target.resolve() != target:
         raise ValueError("Action asset is outside its user scope")
@@ -184,17 +191,18 @@ def validate_action_files(
     source_user_id: int,
     target_user_id: int,
 ) -> None:
-    """清理目标行前验证路径和可播素材；同名文件按实际恢复规则检查目标内容。"""
+    """清理目标行前验证路径和可播素材；根目录资产在目标已有同名文件时按恢复规则检查其内容。"""
     source_root = (extract_root / "files").resolve()
     target_root = Path(SETTINGS.data_dir).resolve()
 
     def effective_file(path: str) -> Path:
         source = _asset_path(path, source_user_id, source_root)
         relative = source.relative_to(source_root)
-        if relative.parts[0] == "companion-assets":
-            relative = Path("companion-assets", str(target_user_id), relative.name)
-        target = _asset_path(relative.as_posix(), target_user_id, target_root)
-        return target if target.exists() else source
+        if relative.parts[0] == "companion-assets" and len(relative.parts) == 3:
+            # 只有根目录资产与来源同名稳定可探测目标已有文件；分层目录按重新分配的 ID 落位，不按来源旧位置探测。
+            target = _asset_path(f"companion-assets/{target_user_id}/{relative.name}", target_user_id, target_root)
+            return target if target.is_file() else source
+        return source
 
     outfits = {str(row["id"]): row for row in rows.get("companion_outfits", [])}
     for pack in rows.get("companion_action_packs", []):
@@ -295,12 +303,13 @@ async def restore_action_catalogs(
             _asset_file(manifest.cover_path, user_id)
         payload = manifest.model_dump_json()
         filename = f"action-catalog-{pack.id}-restored-{uuid4().hex}.json"
-        path = Path(SETTINGS.data_dir) / "companion-assets" / str(user_id) / filename
+        directory = pack_asset_directory(pack.outfit_id, pack.id)
+        path = Path(SETTINGS.data_dir) / "companion-assets" / str(user_id) / directory / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("x", encoding="utf-8") as output:
             rewriter.created.append(path)
             output.write(payload)
-        pack.manifest_path = f"companion-assets/{user_id}/{filename}"
+        pack.manifest_path = f"companion-assets/{user_id}/{directory}/{filename}"
         pack.catalog_version = manifest.catalog_version
         pack.content_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     await db.flush()
