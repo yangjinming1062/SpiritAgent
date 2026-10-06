@@ -325,7 +325,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 `action_design` 制作冻结外观包内的可复用能力，`video_generate` 交付一次性作品。接口与字段见 [actions API](../backend/api/v1/companion_actions.py)、[schema](../backend/modules/companion/schemas_actions.py)。
 
-- 合法系统槽位可上传透明图片或视频；自动制作按动作规格选择类型，当前仅 drag 为图片。图片是单张静态成品，没有时长、帧数、帧率、循环或重复规格，由基础状态决定显示与切换；动态表达当前仅接受视频。共享处理结果见 [schema](../backend/modules/companion/schemas_video.py) 的 `ActionResult`。
+- 合法系统槽位可上传透明图片或视频；自动制作按动作规格选择类型，drag 与左右探身为图片。图片是单张静态成品，没有时长、帧数、帧率、循环或重复规格，由基础状态决定显示与切换；动态表达当前仅接受视频。共享处理结果见 [schema](../backend/modules/companion/schemas_video.py) 的 `ActionResult`。
 - LLM 使用 `action_search` / `action_design` / `action_inspect` / `action_play`；source、用户、额度窗口、系统槽位和目标包由服务端绑定，`expected_pack_id` 只作并发守卫。用户聊天工具与 REST 设计按用户请求（user_requested）计额，主动回合及夜间提案按自主（autonomous）计额，并受自主创建开关约束。提案立即返回受理，不等评审/制作，也不进入聊天视频送达链。
 - 动态动作制作额度按滚动 24 小时由独立账本记录，批准新制作及受理同名独立重做时强制，续查询、下载与发布不重复计额，删除包不返额；不设评审日限额；额度数值不进入模型上下文，超限转 deferred 的理由经动作快照与 `action_inspect` 可见，用户可经 `GET /api/companion/actions/budget` 查看。无手动播放入口；陪伴预设每次调用模型前刷新动作快照（就绪、在途和近期拒绝信息），见[动作编排](../backend/services/application/actions/README.md#模块入口)。
 - 所有动态呈现汇入 `companion.action.play_requested`，目录和任务事件仅更新资源。Client 按 `play_id` 去重，按 `pack_id` 与 `appearance_epoch` 校验归属和代次，遵守 TTL / `repeat_count`。

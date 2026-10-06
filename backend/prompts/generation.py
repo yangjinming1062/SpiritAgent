@@ -234,23 +234,23 @@ VIDEO_ACTION_SCRIPT_INSTRUCTIONS = (
     '"motion_prompt":"一段动作描述"}]}。不得输出额外字段、Markdown 或解释；时长与 clip_kind 不输出。'
 )
 
-VIDEO_PEEK_ACTION_DESCRIPTION = (
-    "从第一帧起保持向画面{direction}侧倾斜的探身姿态。"
+PEEK_ACTION_POSE_DESCRIPTION = (
+    "呈向画面{direction}侧倾斜的探身姿态。"
     "按已有身体结构，让头部或主要识别部位明显偏向画面{direction}侧，身体主体留在画面{opposite}侧。"
     "有头肩结构时，仅少量肩部随头部侧探；有腰腿时收拢在身体主体一侧；有眼睛时自然看向观看者。"
-    "全片保持这一位置和朝向，仅做符合身体结构的轻微自然活动，首尾连续。"
+    "定格为这一位置和朝向，神态自然。"
 )
 
-VIDEO_PEEK_GEOMETRY_INSTRUCTIONS = (
-    "为角色探身视频确定一条竖直遮挡线：露出完整头部或主要识别部位及少量相连部位，藏住躯干主体、腰腿或对应的身体后部。"
-    "图 1 是身份参考，仅用于辨认角色；图 2–4 依次为成品视频的首、中、末采样帧，坐标只从这三帧估计。"
+PEEK_GEOMETRY_INSTRUCTIONS = (
+    "为角色探身图片确定一条竖直遮挡线：露出完整头部或主要识别部位及少量相连部位，藏住躯干主体、腰腿或对应的身体后部。"
+    "图 1 是身份参考，仅用于辨认角色；图 2 为成品图片，坐标只从图 2 估计。"
     "输入 JSON 的 expected_side 指要露出的画面一侧：left 为左，right 为右，另一侧将被遮住。\n\n"
-    "所有坐标以完整采样图左上角为原点，宽高归一化到 0–1。返回字段如下："
+    "所有坐标以成品图片左上角为原点，宽高归一化到 0–1。返回字段如下："
     "side 等于 expected_side；cut_x 为遮挡线横坐标，满足 0.1 < cut_x < 0.9；"
-    "focus_rect 为覆盖三帧中完整头部或主要识别部位的外接矩形，顺序为 [left, top, right, bottom]，"
+    "focus_rect 为覆盖图中完整头部或主要识别部位的外接矩形，顺序为 [left, top, right, bottom]，"
     "满足 0 ≤ left < right ≤ 1、0 ≤ top < bottom ≤ 1。"
     "识别区域与遮挡线之间须留有余量：side=left 时 right < cut_x，side=right 时 left > cut_x。\n\n"
-    "只有同一组坐标在三帧中均满足上述要求时，才返回 usable=true。方向不符、识别部位不完整、"
+    "坐标满足上述要求时，才返回 usable=true。方向不符、识别部位不完整、"
     "身体主体无法遮住或图像不足以判断时，返回 usable=false。"
     "只输出一个 JSON 对象：可用时仅含 usable、side、cut_x、focus_rect，坐标均为数值；"
     '不可用时返回 {"usable":false}。'

@@ -68,7 +68,7 @@
 
 上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）按素材类型调用图片或视频处理并共用发布；[video/state.py](video/state.py)保存冻结生成上下文，单动作结果共用 [schema](../../../modules/companion/schemas_video.py) 的 `ActionResult`，上传包没有可重做的冻结参考。任务按 `status × stage` 持久化，图片处理及 FFmpeg 在工作线程执行，新包失败不清空旧激活包；供应商成品下载共用有界重试，只重试传输错误和 5xx，不重新提交制作；供应商句柄提交后立即落库，重启只续轮询，不重复付费提交。
 
-系统规格当前仅 drag 为图片，其余生成动作是视频。图片请求独立整理静态描述，不选择或校验视频链；结果、已采纳快照及目录中的图片不填充时长、帧数、帧率或循环参数。图片基础设施入口为 [`prepare_action_image`](../../infrastructure/video_processing/image.py)，素材与命中结构归 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。
+系统规格中 drag 与左右探身为图片，其余生成动作是视频。图片请求独立整理静态描述，不选择或校验视频链；结果、已采纳快照及目录中的图片不填充时长、帧数、帧率或循环参数。图片基础设施入口为 [`prepare_action_image`](../../infrastructure/video_processing/image.py)，素材与命中结构归 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。
 
 动作的 `accepted_asset_json` 保存已采纳素材和播放版本，当前制作列只属于本次尝试。原位重做、待复核与拒绝候选保留旧已采纳素材，新成品成功或人工采纳时才替换；目录和播放指令消费已采纳版本。跨包继承将可继承版本的素材字节、冻结参考和恢复进度中的资源复制到目标包目录，并重写嵌套路径；待复核候选仍绑定原动作；缺少已采纳版本时新包明确失败，不复制悬空复核状态。动作反馈每次重做替换本动作字段，空串清除，衣柜回显当前值。确定性素材门禁拒绝记为 `invalid_asset`，不提供重复处理同一素材的“继续”。释放的素材与旧目录同事务登记到 `action_asset_retirements`，宽限与保留期见[恢复与历史包](../../../../docs/PIPELINE.md#恢复与历史包)。
 

@@ -113,7 +113,7 @@ Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/deskt
 - [spatial.ts](modules/character/spatial.ts)拥有位置与异步意图生命周期，[spatial-peek.ts](modules/character/spatial-peek.ts)计算探身落位及绘制、命中共用的遮挡矩形，[autonomy.ts](modules/character/autonomy.ts)解释云端意图。
 - 衣柜页修改默认比例后经主进程同步到精灵窗，并沿用平滑缩放路径即时生效。
 - 拖拽、换包和卸载撤销探身准备；自主请求返回时重验可见性、档位、锁屏、智能开关和服务代次。栖息交互见 [DESIGN](../../docs/DESIGN.md#位置移动与缩放)，坐标与兼容见 [PROTOCOL](../../docs/PROTOCOL.md#动作目录与播放)。
-- 探身位置、遮挡和命中随解码首帧一起生效，失败保留旧画面。表演移出遮挡后才上报 `started`，结束时重验返回目标。
+- 探身位置、遮挡和命中随素材就绪（图片加载完成或视频首帧解码）一起生效，失败保留旧画面。表演移出遮挡后才上报 `started`，结束时重验返回目标。
 - stay 或推理失败不触发本地漫游；本地空间规则仅在智能关闭时生效。
 - 本地漫游需真实空闲信号，未知则不动；位置适配不足时放弃，不缩成不可辨识大小。
 - 精灵窗隐藏或最小化与完整入口收起同样暂停走位、漫游与探身（含计时器与窗口跟踪），重新显示后收回栖身、恢复贴边并重新裁决。

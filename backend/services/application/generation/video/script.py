@@ -9,10 +9,10 @@ from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS, CharacterCardSnapsh
 from prompts.generation import (
     ACTION_IMAGE_DESCRIPTION_INSTRUCTIONS,
     ACTION_IMAGE_TEMPLATE,
+    PEEK_ACTION_POSE_DESCRIPTION,
+    PEEK_GEOMETRY_INSTRUCTIONS,
     VIDEO_ACTION_POSE_TEMPLATE,
     VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
-    VIDEO_PEEK_ACTION_DESCRIPTION,
-    VIDEO_PEEK_GEOMETRY_INSTRUCTIONS,
     VIDEO_PROMPT_LOOP_CYCLE,
     VIDEO_PROMPT_LOOP_TAIL,
     VIDEO_PROMPT_ONCE_CYCLE,
@@ -46,8 +46,8 @@ SYSTEM_ACTION_SEMANTICS: dict[str, str] = {
         "身体及已有头部持续侧向画面右侧，以符合实际结构的步态、游动、蠕动或振翅原地循环表现向右移动；"
         "躯干中心不平移，不正对镜头横向跨步，不转身或回头"
     ),
-    "peek_left": VIDEO_PEEK_ACTION_DESCRIPTION.format(direction="左", opposite="右"),
-    "peek_right": VIDEO_PEEK_ACTION_DESCRIPTION.format(direction="右", opposite="左"),
+    "peek_left": PEEK_ACTION_POSE_DESCRIPTION.format(direction="左", opposite="右"),
+    "peek_right": PEEK_ACTION_POSE_DESCRIPTION.format(direction="右", opposite="左"),
     "drag": (
         "呈被上方无形力量轻轻拎起的松弛悬垂姿态，提拉处在躯干上部，其余身体受重力向下垂落，身体与衣物均离地。"
         "按已有结构表现受力：有肩背时肩部略提、躯干微前倾；有手臂时双臂沿体侧松垂，肘腕放松；"
@@ -273,20 +273,20 @@ async def inspect_peek_geometry(
     user_id: int,
     action: str,
     identity_uri: str,
-    frame_uris: tuple[str, ...],
+    image_uri: str,
     *,
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> PeekGeometry | None:
-    """定位成品采样帧的遮挡线；不可用时返回 None。"""
-    if action not in ("peek_left", "peek_right") or not identity_uri or len(frame_uris) != 3:
+    """定位成品图片的遮挡线；不可用时返回 None。"""
+    if action not in ("peek_left", "peek_right") or not identity_uri or not image_uri:
         return None
     expected_side = "left" if action == "peek_left" else "right"
     try:
         raw = await vision_chat(
             user_id,
-            VIDEO_PEEK_GEOMETRY_INSTRUCTIONS,
+            PEEK_GEOMETRY_INSTRUCTIONS,
             json.dumps({"expected_side": expected_side}),
-            reference_images=(identity_uri, *frame_uris),
+            reference_images=(identity_uri, image_uri),
             before_submit=before_submit,
         )
         payload = parse_llm_json(raw)

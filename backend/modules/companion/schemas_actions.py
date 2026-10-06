@@ -9,7 +9,7 @@ ABSOLUTE_MAX_DURATION_SECONDS = 15.0
 
 
 class PeekGeometry(BaseModel):
-    """成品画布中的遮挡线与覆盖各采样帧的识别区域。"""
+    """成品画布中的遮挡线与识别区域。"""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -757,7 +757,7 @@ export function cancelPeekPreparation(action: 'peek_left' | 'peek_right', genera
   }
 }
 
-/** 首帧就绪后同步提交探身位置、遮挡与播放器。 */
+/** 素材就绪后同步提交探身位置、遮挡与播放器。 */
 export async function commitPeekPreparation(
   action: 'peek_left' | 'peek_right',
   generation: number,

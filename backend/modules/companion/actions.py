@@ -27,7 +27,7 @@ SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag", "walk_left", "walk_right", "pee
 # 发布与激活的必需槽位；缺失时不得 ready。
 REQUIRED_SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag")
 SYSTEM_ACTION_MEDIA_TYPES: dict[str, Literal["image", "video"]] = {
-    slot: "image" if slot == "drag" else "video" for slot in SYSTEM_SLOTS
+    slot: "image" if slot in ("drag", "peek_left", "peek_right") else "video" for slot in SYSTEM_SLOTS
 }
 
 

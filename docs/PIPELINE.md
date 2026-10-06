@@ -247,9 +247,9 @@ flowchart LR
 
 系统槽位、必需项与默认素材类型见 [动作定义](../backend/modules/companion/actions.py)，视频供应商计划见[动作编排](../backend/services/application/generation/video/service.py)，各槽位的动作语义见 [video/script.py](../backend/services/application/generation/video/script.py) 的 `SYSTEM_ACTION_SEMANTICS`。新整包只制作必需槽位（待机、拖拽）；左右行走经单动作请求补齐，左右探身在栖息需要时经探身补齐接口补齐。系统槽位不经提案与评审。动态动作有稳定 `action_id`，名称与用途开放，不占系统槽位，由 LLM 提案并经独立评审后生成。
 
-drag 生成一张静态图片，其余系统动作及动态动作生成视频；图片与视频规格的区分见[动作契约](PROTOCOL.md#动作目录与播放)。视频系统动作以 2 秒为设计起点，动态动作保留提案中的预计时长。视频制作前按配置的 `video_gen` 链顺序，选择首个满足帧输入、声明最高原生分辨率且能提供不短于设计时长的模型，取其最小可用整秒档；随后只保留支持该确定时长的后续模型。每家模型按实际首尾帧与片长取最高可用档，不以工具分辨率别名判断清晰度，不为提高分辨率省略循环尾帧。目标时长、供应商链及各家分辨率在脚本生成前冻结到视频动作任务，脚本与提交共用。
+drag 与左右探身生成静态图片，其余系统动作及动态动作生成视频；图片与视频规格的区分见[动作契约](PROTOCOL.md#动作目录与播放)。视频系统动作以 2 秒为设计起点，动态动作保留提案中的预计时长。视频制作前按配置的 `video_gen` 链顺序，选择首个满足帧输入、声明最高原生分辨率且能提供不短于设计时长的模型，取其最小可用整秒档；随后只保留支持该确定时长的后续模型。每家模型按实际首尾帧与片长取最高可用档，不以工具分辨率别名判断清晰度，不为提高分辨率省略循环尾帧。目标时长、供应商链及各家分辨率在脚本生成前冻结到视频动作任务，脚本与提交共用。
 
-左右探身分别制作，保留两侧外观差异；完整透明角色从首帧保持侧倾，只做轻微自然活动。视觉模型用成品首、中、末帧校准遮挡线和识别区域，alpha 遮罩提供内容轮廓；校准失败时素材照常进入目录但不带 `peek_geometry`，客户端不启用遮挡，需显式单动作重做。客户端对缺少定位或轮廓字段的处理见[动作契约](PROTOCOL.md#动作目录与播放)。
+左右探身分别制作，保留两侧外观差异；完整透明角色呈向对应侧倾的静态探身姿态。视觉模型用成品图片校准遮挡线和识别区域，alpha 遮罩提供内容轮廓；校准失败时素材照常进入目录但不带 `peek_geometry`，客户端不启用遮挡，需显式单动作重做。客户端对缺少定位或轮廓字段的处理见[动作契约](PROTOCOL.md#动作目录与播放)。
 
 拖拽图片表现躯干上部被提起、其余身体随重力松弛下垂的悬空姿态，按角色已有结构适配；神态、受力与衣物关系共同表达被提起的单个瞬间。姿态与衣物均不承地。显示生命周期归[动作契约](PROTOCOL.md#动作目录与播放)。
 
@@ -270,7 +270,7 @@ drag 生成一张静态图片，其余系统动作及动态动作生成视频；
 
 | 类型 | 图像与视频 | 后处理 |
 |---|---|---|
-| drag 图片 | 按静态图片描述生成完整姿态图 | 透明 PNG、静态命中遮罩与单张身份复核 |
+| drag／左右探身图片 | 按静态图片描述生成完整姿态图 | 透明 PNG、静态命中遮罩与单张身份复核；探身另做单图定位校准 |
 | 系统 idle 视频 | 经图像编辑准备透明关键帧，沿用冻结参考中的基本待机姿态 | 按视频规格处理 |
 | 其他视频动作 | 经图像编辑派生透明起始姿态图 | 按视频规格处理 |
 | loop 视频 | 供应商须支持首末帧且同锚，首尾连续 | 保留完整片段，只过机械门禁，不选段或重造接点 |
@@ -278,7 +278,7 @@ drag 生成一张静态图片，其余系统动作及动态动作生成视频；
 
 #### 图片交付
 
-- 图片动作仅依赖视觉描述、图像生成与透明处理能力，单独重做 drag 不选择、校验或调用视频供应商。生成图片经身份评分、透明处理和共同画面门禁后，按单张成品严格身份复核；制作尝试、人工复核与已采纳素材的交接规则与视频相同。
+- 图片动作仅依赖视觉描述、图像生成与透明处理能力，单独重做图片动作（drag、探身）不选择、校验或调用视频供应商。生成图片经身份评分、透明处理和共同画面门禁后，按单张成品严格身份复核；制作尝试、人工复核与已采纳素材的交接规则与视频相同。
 - [图片处理](../backend/services/infrastructure/video_processing/image.py)接收 PNG 或静态 WebP 的真实 alpha；上传图片须自带有效透明背景并通过主体与贴边门禁，不调用生图或付费抠像。生成图可经[姿态图准备](../backend/services/infrastructure/video_processing/frames.py)保留 alpha 或本地抠像，并以透明补边补足留白。
 - 图片按包宽高比扩出容纳源像素的最小透明画布，水平居中、底边对齐，不缩小或放大主体；输出 PNG 成品、无损透明 WebP 封面、静态 alpha 命中遮罩及内容轮廓。
 
@@ -337,7 +337,7 @@ manifest 只含按素材类型分支的数据、共同画布与视频播放技�
 | 出镜图片 | [聊天工具说明](../backend/prompts/tools.py)经 [chat_images.py](../backend/services/application/generation/chat_images.py) 冻结每张图的计划，或[动态发布](../backend/services/application/posts/publication.py) → [共用身份与造型装配](../backend/services/application/generation/visual_identity.py) → 图片评分选择 → 对话／动态；聊天另有验图与一次带修正资料的重做 | 默认造型、仅造型图、显式覆盖、缺图、生成前后身份修订、单／双参考、验图与重做 |
 | 出镜视频 | [视频工具](../backend/services/adapters/tools/builtin/video_generation_tool.py)或[动态发布](../backend/services/application/posts/publication.py) → 身份与造型参考装配 → [视频任务](../backend/services/application/generation/video_jobs.py) → 身份抽帧评分 → 对话／动态 | 同图去重、显式造型图、文字覆盖、参考模式能力与分辨率、后台恢复 |
 | 动态发布与评论 | 发布意图、伙伴背景、当前环境与近期动态 → [独立创作](../backend/services/application/posts/publication.py) → 正文与媒体制作计划 → 发布；本动态、目标评论、截至目标的线程资料及共享伙伴背景 → [回复](../backend/services/application/posts/replies.py) → 原线程评论 | 三类发布入口、四种内容类型、主对话隔离、连续评论、删除与重试 |
-| 动作图片与视频 | 动态动作：提案与冻结身份／着装 → [独立评审](../backend/services/application/actions/review.py)；系统槽位由建包、原位重做或探身补齐直接排入 → [逐动作描述](../backend/services/application/generation/video/script.py) → 姿态图 → 图片成品或视频 → 机械门禁与严格身份复核 → 动作目录 | drag 图片无视频规格及运动脚本；idle／左右行走／左右探身／动态动作视频、loop／once、单动作反馈、结构重试、冻结包快照 |
+| 动作图片与视频 | 动态动作：提案与冻结身份／着装 → [独立评审](../backend/services/application/actions/review.py)；系统槽位由建包、原位重做或探身补齐直接排入 → [逐动作描述](../backend/services/application/generation/video/script.py) → 姿态图 → 图片成品或视频 → 机械门禁与严格身份复核 → 动作目录 | drag／左右探身图片无视频规格及运动脚本（探身另有单图定位校准）；idle／左右行走／动态动作视频、loop／once、单动作反馈、结构重试、冻结包快照 |
 | 公共回退 | 完整提示词 → [审核改写](../backend/services/application/generation/avatar_service.py)（仅头像、全身与换装）、[图片质量链](../backend/services/application/generation/character_images.py)与[身份评分](../backend/services/application/generation/identity_review.py) → 保存最佳候选或明确失败 | 安全改写空值、可见身份冲突、证据不足、低分、评分不可用、未知付费结果、恢复冻结输入 |
 
 ### 验收范围

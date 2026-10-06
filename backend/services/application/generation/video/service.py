@@ -328,7 +328,7 @@ def _artifact_abs_path(stored: str) -> Path:
 
 
 async def _clip_frame_uris(clip: VideoClipSpec) -> tuple[str, ...]:
-    """交付片段的首、中、末帧 data URI，供身份评分、复核与探身定位。"""
+    """交付片段的首、中、末帧 data URI，供身份评分与复核。"""
     frames = await _process_thread(sample_key_frames, _artifact_abs_path(clip.path))
     return tuple(build_data_uri(frame, "image/webp") for frame in frames)
 
@@ -1779,6 +1779,17 @@ async def _run_image_pipeline(
         for key, value in values.items():
             setattr(job, key, value)
         job.stage = "process"
+    if job.system_slot in ("peek_left", "peek_right"):
+        identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+        sample_uri = await _process_thread(_image_data_uri, _artifact_abs_path(result.clip.path))
+        geometry = await inspect_peek_geometry(
+            pack.user_id,
+            job.system_slot,
+            identity_uri,
+            sample_uri,
+            before_submit=lambda: _require_new_paid_step(pack, context),
+        )
+        result = result.model_copy(update={"clip": result.clip.model_copy(update={"peek_geometry": geometry})})
     review_id = None
     if pack.status == "ready":
         identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
@@ -1950,24 +1961,11 @@ async def _run_action_pipeline(
     spec = result.clip
     review_id = None
     frames: tuple[str, ...] = ()
-    if job.system_slot in ("peek_left", "peek_right") or pack.status == "ready":
+    if pack.status == "ready":
         try:
             frames = await _clip_frame_uris(spec)
         except Exception:
             logger.warning("video action frame sampling failed", extra={"action_id": job.id}, exc_info=True)
-
-    if job.system_slot in ("peek_left", "peek_right"):
-        geometry = await inspect_peek_geometry(
-            pack.user_id,
-            job.system_slot,
-            identity_uri,
-            frames,
-            before_submit=lambda: _require_new_paid_step(pack, context),
-        )
-        spec = spec.model_copy(update={"peek_geometry": geometry})
-        result = result.model_copy(update={"clip": spec})
-
-    if pack.status == "ready":
         try:
             if not frames:
                 raise VideoPackError("动作视频画面无法读取")
@@ -2511,11 +2509,6 @@ async def ensure_system_action(
         if job is None or job.status == "queued" or (job.status == "processing" and pack.id not in _GEN_INFLIGHT):
             require_action_matting_model()
             if job is None:
-                seconds, providers = await _resolve_action_video_plan(
-                    user_id,
-                    needs_loop_frames=True,
-                    duration_seconds=_SYSTEM_ACTION_SECONDS,
-                )
                 job = CompanionAction(
                     user_id=user_id,
                     pack_id=pack.id,
@@ -2523,13 +2516,11 @@ async def ensure_system_action(
                     key=action,
                     name="",
                     system_slot=action,
-                    kind="loop",
+                    media_type=SYSTEM_ACTION_MEDIA_TYPES[action],
                     status="queued",
                     stage="design",
-                    target_duration_seconds=seconds,
                     reference_hash=pack.reference_hash,
                 )
-                _freeze_action_video_plan(job, seconds, providers)
                 db.add(job)
                 await db.flush()
             kick_action_id = job.id
