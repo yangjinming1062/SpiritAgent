@@ -51,21 +51,12 @@ function WhisperOverlayContent(): React.JSX.Element {
   const sessionId = useStore($chatSessionId)
   const companionSessionId = useStore($companionSessionId)
   const gatewayState = useStore($gatewayState)
-  const pos = useStore($spatialPos)
-  const scale = useStore($spatialScale)
-  const viewport = useStore($viewport)
-  const contentRect = useStore($spriteContentRect)
-  const peek = useStore($spatialPeek)
   const pending = useStore(pendingMessages.$atom)
-  const baseOffset = useStore($whisperOffset) ?? { dx: 0, dy: 0 }
 
-  const containerRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const isReadOnlySession = useIsReadOnlySession()
   const input = useChatInput({ gatewayState, isReadOnlySession })
-
-  useInteractiveRegion('whisper-overlay', containerRef)
 
   // 轻语和生活空间一样加载唯一的陪伴会话——未加载或当前不在陪伴会话时定位到主陪伴会话。
   useEffect(() => {
@@ -84,6 +75,37 @@ function WhisperOverlayContent(): React.JSX.Element {
       consumePendingMessages(sessionId)
     }
   }, [sessionId, pending])
+
+  return (
+    <WhisperPositioner onDrop={input.handleDrop}>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <ConversationSurface scrollRef={scrollRef} variant="living" />
+      </div>
+      <div className="shrink-0">
+        <ConversationInput {...input.inputProps} variant="living" />
+      </div>
+    </WhisperPositioner>
+  )
+}
+
+// 定位层只订阅空间 atoms 与拖拽 delta；children 由内容层创建，引用稳定即跳过对话子树重渲染。
+function WhisperPositioner({
+  children,
+  onDrop
+}: {
+  children: React.ReactNode
+  onDrop: (e: React.DragEvent) => void
+}): React.JSX.Element {
+  const pos = useStore($spatialPos)
+  const scale = useStore($spatialScale)
+  const viewport = useStore($viewport)
+  const contentRect = useStore($spriteContentRect)
+  const peek = useStore($spatialPeek)
+  const baseOffset = useStore($whisperOffset) ?? { dx: 0, dy: 0 }
+
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useInteractiveRegion('whisper-overlay', containerRef)
 
   const anchor = computeOverlayAnchorBesideSprite({
     gap: WHISPER_GAP,
@@ -114,7 +136,7 @@ function WhisperOverlayContent(): React.JSX.Element {
       onDragOver={e => {
         e.preventDefault()
       }}
-      onDrop={input.handleDrop}
+      onDrop={onDrop}
       ref={containerRef}
       style={{
         height: `${WHISPER_HEIGHT}px`,
@@ -140,12 +162,7 @@ function WhisperOverlayContent(): React.JSX.Element {
           <X className="size-3.5" />
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ConversationSurface scrollRef={scrollRef} variant="living" />
-      </div>
-      <div className="shrink-0">
-        <ConversationInput {...input.inputProps} variant="living" />
-      </div>
+      {children}
     </div>
   )
 }

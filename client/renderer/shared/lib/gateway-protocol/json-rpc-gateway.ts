@@ -30,7 +30,6 @@ type PendingCall = {
 interface JsonRpcFrame {
   error?: { code?: number; data?: unknown; message?: string }
   id?: null | number | string
-  jsonrpc?: string
   method?: string
   params?: {
     payload?: unknown
@@ -40,7 +39,6 @@ interface JsonRpcFrame {
     [key: string]: unknown
   }
   result?: unknown
-  seq?: number
 }
 
 /** 字段缺省或类型符合。 */
@@ -51,12 +49,7 @@ function optionalType(obj: Record<string, unknown>, key: string, type: 'number' 
 function parseJsonRpcFrame(raw: string): JsonRpcFrame | null {
   const v = safeJsonParse<unknown>(raw, null)
 
-  if (
-    !isRecord(v) ||
-    !optionalType(v, 'jsonrpc', 'string') ||
-    !optionalType(v, 'method', 'string') ||
-    !optionalType(v, 'seq', 'number')
-  ) {
+  if (!isRecord(v) || !optionalType(v, 'method', 'string')) {
     return null
   }
 
@@ -390,7 +383,7 @@ export class JsonRpcGatewayClient {
       return
     }
 
-    const seq = frame.params?.seq ?? frame.seq
+    const seq = frame.params?.seq
 
     if (typeof seq === 'number') {
       if (seq < this._lastReceivedSeq) {

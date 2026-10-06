@@ -62,11 +62,7 @@ export function PresetPickerModal({ presets, loading, onConfirm, onClose }: Pres
           <button
             className={BTN_PRIMARY}
             disabled={!canSubmit}
-            onClick={() => {
-              if (canSubmit) {
-                onConfirm(selectedId)
-              }
-            }}
+            onClick={() => onConfirm(selectedId)}
             title={!canSubmit ? dict.chat.presetPicker.pickOne : undefined}
             type="button"
           >

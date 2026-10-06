@@ -19,6 +19,7 @@ import { MediaViewerOverlay } from '@/modules/media'
 import { hydrateDiaryUnread } from '@/modules/memory'
 import { hydratePostsUnread } from '@/modules/posts'
 import { $activeScene, hydrateScene } from '@/modules/scene'
+import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { ArrowLeft, ArrowRight, ChevronDown, MessageCircle, Settings, Wifi, WifiOff, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -36,14 +37,12 @@ import { useStrings } from '@/shared/strings'
 import { DesktopChat, DesktopWhisper } from './desktop-chat'
 import { DesktopCompanionMenu } from './desktop-companion'
 import { DesktopDock } from './desktop-dock'
-import { type DesktopApp, useDesktopLayout } from './desktop-layout'
+import { DESKTOP_APPS, type DesktopApp, useDesktopLayout } from './desktop-layout'
 import { DesktopPreferences } from './desktop-preferences'
 import { DesktopAccounts, DesktopSettings } from './desktop-settings'
 import { useDesktopStrings } from './desktop-strings'
 import { DesktopWindow } from './desktop-window'
 import styles from './desktop.module.css'
-
-const MENU: DesktopApp[] = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'settings']
 
 // 顶栏是两个独立状态：绿点只说伙伴在不在忙，网络用图标说，免得两个同色圆点指代不清。
 type ConnectionTone = 'offline' | 'online' | 'pending'
@@ -216,7 +215,7 @@ export function DesktopRoot(): React.JSX.Element {
         const target: DesktopApp =
           view !== undefined && ['inference', 'runner', 'skills', 'station'].includes(view)
             ? 'settings'
-            : view && (MENU as readonly string[]).includes(view)
+            : view && (DESKTOP_APPS as readonly string[]).includes(view)
               ? (view as DesktopApp)
               : 'chat'
 
@@ -390,34 +389,8 @@ export function DesktopRoot(): React.JSX.Element {
     }
   }, [scene?.url, theme])
 
-  useEffect(() => {
-    const onPointer = (event: PointerEvent): void => {
-      if (event.target instanceof Node) {
-        if (!menuRef.current?.contains(event.target)) {
-          setAccountOpen(false)
-        }
-
-        if (!settingsRef.current?.contains(event.target)) {
-          setSettingsOpen(false)
-        }
-      }
-    }
-
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setAccountOpen(false)
-        setSettingsOpen(false)
-      }
-    }
-
-    window.addEventListener('pointerdown', onPointer)
-    window.addEventListener('keydown', onKey)
-
-    return () => {
-      window.removeEventListener('pointerdown', onPointer)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [])
+  useDismissOnOutside(menuRef, accountOpen, () => setAccountOpen(false))
+  useDismissOnOutside(settingsRef, settingsOpen, () => setSettingsOpen(false))
 
   const toggleWhisper = (): void => {
     if (layout.whisperOpen) {
@@ -503,7 +476,7 @@ export function DesktopRoot(): React.JSX.Element {
           {accountOpen && <DesktopAccounts />}
         </div>
         <nav aria-label={t.title} className={styles.mainMenu}>
-          {MENU.map(id => (
+          {DESKTOP_APPS.map(id => (
             <button data-current={activeWindow === id} key={id} onClick={() => activatePanel(id)} type="button">
               {t[id]}
             </button>

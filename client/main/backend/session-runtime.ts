@@ -10,7 +10,6 @@ export interface SessionRuntime {
   /** 当前会话 ID 与 token；任一缺失时为 null。 */
   getCurrentAuth: () => null | { sessionId: string; token: string }
   getSessionAfterRestore: () => Promise<null | SessionSnapshotPort>
-  rewireAuthToken: () => void
 }
 
 export interface SessionRuntimeDeps {
@@ -24,7 +23,6 @@ export interface SessionRuntimeDeps {
   }) => BackendSessionPort
   desktopVersion: () => string
   fetchImpl: (url: string, options?: RequestInit) => Promise<Response>
-  getTokenSetter: (fn: () => string | null) => void
   log: (chunk: string) => void
   onRestored: (snapshot: null | SessionSnapshotPort) => void
   readStoredBackendUrl: () => null | string
@@ -33,7 +31,7 @@ export interface SessionRuntimeDeps {
   userDataDir: string
 }
 
-/** 懒创建并缓存后端会话；首次 ensure 触发 restore，结果经 `onRestored` 交回装配层。`rewireAuthToken` 把主进程动态 token 读取接到当前会话实例。 */
+/** 懒创建并缓存后端会话；首次 ensure 触发 restore，结果经 `onRestored` 交回装配层。 */
 export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   let session: null | BackendSessionPort = null
   let restorePromise: Promise<void> = Promise.resolve()
@@ -82,9 +80,6 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
 
       return sessionId && token ? { sessionId, token } : null
     },
-    getSessionAfterRestore,
-    rewireAuthToken: () => {
-      deps.getTokenSetter(() => ensureBackendSession().getToken())
-    }
+    getSessionAfterRestore
   }
 }

@@ -145,6 +145,21 @@ interface PersistedAtomResult<T> {
   get: () => T
 }
 
+interface PersistedBooleanOptions {
+  key: string
+  fallback: boolean
+  preserveOnLogout?: boolean
+}
+
+interface PersistedBooleanResult {
+  $atom: WritableAtom<boolean>
+  set: (next: boolean) => void
+  reset: () => void
+  /** 按本地存储重读并写入 atom（不回写存储）：其他窗口改动后同步用。 */
+  reload: () => void
+  get: () => boolean
+}
+
 interface PersistedEnumOptions<T extends string> {
   key: string
   allowed: readonly T[]
@@ -235,6 +250,20 @@ export function definePersistedAtom<T extends object>(options: PersistedAtomOpti
     reset: base.reset,
     set: next => base.set(next as T)
   }
+}
+
+/** 统一定义持久化布尔：与 definePersistedEnum 同构的单一来源注册与登出生命周期绑定。 */
+export function definePersistedBoolean(options: PersistedBooleanOptions): PersistedBooleanResult {
+  const { fallback, key, preserveOnLogout = false } = options
+
+  return createPersisted<boolean>({
+    apply: (_current, next) => next,
+    fallback,
+    key,
+    load: () => storedBoolean(key, fallback),
+    persist: val => persistBoolean(key, val),
+    preserveOnLogout
+  })
 }
 
 /** 统一定义持久化枚举：严格字面量类型校验、单一来源注册与登出生命周期绑定。 */

@@ -1,7 +1,5 @@
 // 视图通过 hash 与 localStorage 持久化，重开生活空间时恢复。
 
-import { atom } from 'nanostores'
-
 import { normalizeHashPath } from '@/shared/lib/hash-route'
 import { definePersistedEnum } from '@/shared/lib/storage'
 
@@ -50,23 +48,25 @@ const sectionStore = definePersistedEnum<LivingSettingsSection>({
   key: 'da.living.settings.section'
 })
 
-export const $livingView = atom<LivingView>(parseLivingViewFromHash() ?? viewStore.get())
-export const $livingSettingsSection = atom<LivingSettingsSection>(
-  parseLivingSettingsSectionFromHash() ?? sectionStore.get()
-)
+// 直接导出持久化 store 的 atom，账户切换的 clear/restore 与展示同源。
+export const $livingView = viewStore.$atom
+export const $livingSettingsSection = sectionStore.$atom
 
-function commitView(view: LivingView): void {
-  viewStore.set(view)
-  $livingView.set(view)
+// 启动时 hash 深链优先于持久值展示，但只覆盖 atom 不落盘。
+const hashView = parseLivingViewFromHash()
+
+if (hashView) {
+  $livingView.set(hashView)
 }
 
-function commitSection(section: LivingSettingsSection): void {
-  sectionStore.set(section)
-  $livingSettingsSection.set(section)
+const hashSection = parseLivingSettingsSectionFromHash()
+
+if (hashSection) {
+  $livingSettingsSection.set(hashSection)
 }
 
 export function setLivingView(view: LivingView): void {
-  commitView(view)
+  viewStore.set(view)
 
   if (view === 'settings') {
     replaceHash(`#/settings/${$livingSettingsSection.get()}`)
@@ -76,22 +76,23 @@ export function setLivingView(view: LivingView): void {
 }
 
 export function setLivingSettingsSection(section: LivingSettingsSection): void {
-  commitView('settings')
-  commitSection(section)
+  viewStore.set('settings')
+  sectionStore.set(section)
   replaceHash(`#/settings/${section}`)
 }
 
+// 只同步状态不回写 hash，保留用户深链原样。
 function onHashChange(): void {
   const view = parseLivingViewFromHash()
 
   if (view && $livingView.get() !== view) {
-    commitView(view)
+    viewStore.set(view)
   }
 
   const section = parseLivingSettingsSectionFromHash()
 
   if (section && $livingSettingsSection.get() !== section) {
-    commitSection(section)
+    sectionStore.set(section)
   }
 }
 

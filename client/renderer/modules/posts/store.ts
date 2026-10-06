@@ -1,8 +1,9 @@
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
 import { isRecord } from '@/shared/lib/is-record'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import { createUnreadMirror } from '@/shared/lib/unread-mirror'
 
 export type PostContentType = 'text' | 'image' | 'video' | 'audio'
 type ReplyStatus = 'none' | 'pending' | 'running' | 'completed' | 'failed'
@@ -59,10 +60,6 @@ interface ListWire {
   unread_post_ids: string[]
 }
 
-interface UnreadWire {
-  has_unread: boolean
-}
-
 export const $posts = atom<PostEntry[]>([])
 export const $postsHasUnread = atom(false)
 export const $postsLoading = atom(false)
@@ -70,98 +67,18 @@ export const $postsHasMore = atom(false)
 export const $postsLoadingMore = atom(false)
 let cursor: string | null = null
 let revision = 0
-let unreadRevision = 0
-let unreadRequest: Promise<boolean> | null = null
 const deletedComments = new Set<string>()
 
-function isUnreadState(value: unknown): value is UnreadWire {
-  return isRecord(value) && typeof value.has_unread === 'boolean'
-}
+const postsUnread = createUnreadMirror({
+  scope: 'posts',
+  unreadPath: '/api/companion/posts/unread',
+  readPath: '/api/companion/posts/read',
+  idField: 'post_ids',
+  $hasUnread: $postsHasUnread
+})
 
-export function hydratePostsUnread(): Promise<boolean> {
-  unreadRevision++
-
-  if (unreadRequest) {
-    return unreadRequest
-  }
-
-  const isCurrent = captureAuthScope()
-
-  if (!isCurrent) {
-    return Promise.resolve(false)
-  }
-
-  let version = unreadRevision
-
-  // 同轮信号合并后查询；在途期间的新信号由请求结束后的补查处理。
-  const request = Promise.resolve()
-    .then(async () => {
-      if (!isCurrent()) {
-        return false
-      }
-
-      version = unreadRevision
-      const result = await authedApi<UnreadWire>({ path: '/api/companion/posts/unread' })
-
-      if (!isCurrent() || version !== unreadRevision) {
-        return false
-      }
-
-      if (!apiSucceeded(result, 'posts', 'unread failed') || !isUnreadState(result.value)) {
-        return false
-      }
-
-      $postsHasUnread.set(result.value.has_unread)
-
-      return true
-    })
-    .finally(() => {
-      if (unreadRequest === request) {
-        unreadRequest = null
-
-        if (isCurrent() && version !== unreadRevision) {
-          void hydratePostsUnread()
-        }
-      }
-    })
-
-  unreadRequest = request
-
-  return request
-}
-
-export async function markPostsRead(postIds: string[]): Promise<boolean> {
-  const isCurrent = captureAuthScope()
-
-  if (!isCurrent) {
-    return false
-  }
-
-  if (postIds.length === 0) {
-    return true
-  }
-
-  // 作废确认前的查询；发布或其他窗口的事件会再次推进代次。
-  const version = ++unreadRevision
-
-  const result = await authedApi<UnreadWire>({
-    method: 'POST',
-    path: '/api/companion/posts/read',
-    body: { post_ids: postIds }
-  })
-
-  if (!isCurrent() || !apiSucceeded(result, 'posts', 'read failed') || !isUnreadState(result.value)) {
-    return false
-  }
-
-  if (version === unreadRevision) {
-    $postsHasUnread.set(result.value.has_unread)
-  } else {
-    void hydratePostsUnread()
-  }
-
-  return true
-}
+export const hydratePostsUnread = postsUnread.hydrate
+export const markPostsRead = postsUnread.markRead
 
 function comment(w: CommentWire): PostCommentEntry {
   return {
@@ -387,12 +304,9 @@ export function onPostEvent(event: { type: string; payload?: unknown }): void {
 
 registerStorageClearHandler(() => {
   revision++
-  unreadRevision++
-  unreadRequest = null
   cursor = null
   deletedComments.clear()
   $posts.set([])
-  $postsHasUnread.set(false)
   $postsLoading.set(false)
   $postsLoadingMore.set(false)
   $postsHasMore.set(false)

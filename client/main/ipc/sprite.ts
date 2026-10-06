@@ -9,7 +9,7 @@ import {
   SPRITE_SCALE_LIMITS
 } from '@ipc/contracts'
 import { clamp } from '@runtime'
-import type { BrowserWindow, IpcMain, Rectangle, Screen } from 'electron'
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, Rectangle, Screen } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import {
@@ -113,15 +113,22 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
 
   ipcMain.handle(IPC.invoke.spriteGetPosition, () => readRestPosition(getUserDataDir()))
 
-  ipcMain.handle(IPC.invoke.spriteGetWindowScene, async (event): Promise<DesktopWindowSceneSnapshot | null> => {
+  // 取窗与 sender 门禁共用；sender 判定始终对精灵窗口而非解析出的舞台窗口。
+  const stageWindowFor = (event: IpcMainInvokeEvent): BrowserWindow | null => {
     const win = deps.getStageWindow?.() ?? getSpriteWindow()
+
+    if (!isSenderWindow(event.sender, getSpriteWindow()) && !deps.isDesktopSender?.(event.sender)) {
+      return null
+    }
+
+    return win ?? null
+  }
+
+  ipcMain.handle(IPC.invoke.spriteGetWindowScene, async (event): Promise<DesktopWindowSceneSnapshot | null> => {
+    const win = stageWindowFor(event)
     const bridge = getRunnerBridge()
 
-    if (
-      (!isSenderWindow(event.sender, getSpriteWindow()) && !deps.isDesktopSender?.(event.sender)) ||
-      !win ||
-      !bridge
-    ) {
+    if (!win || !bridge) {
       return null
     }
 
@@ -197,13 +204,9 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
 
   // 仪式行走目标：原生屏幕矩形换算为精灵视口内坐标，与窗口快照同一换算。
   ipcMain.handle(IPC.invoke.spriteMapScreenRect, async (event, rect?: unknown): Promise<DesktopScreenRect | null> => {
-    const win = deps.getStageWindow?.() ?? getSpriteWindow()
+    const win = stageWindowFor(event)
 
-    if (
-      (!isSenderWindow(event.sender, getSpriteWindow()) && !deps.isDesktopSender?.(event.sender)) ||
-      !win ||
-      !isScreenRect(rect)
-    ) {
+    if (!win || !isScreenRect(rect)) {
       return null
     }
 

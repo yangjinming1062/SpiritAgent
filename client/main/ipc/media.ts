@@ -421,7 +421,7 @@ export function registerMediaIpc({
       return await pending
     }
 
-    const task = ttsQueue.enqueue(async () => {
+    const task = (async () => {
       if (persist) {
         const hit = await diskCache.read({ language, text, voice })
 
@@ -435,44 +435,46 @@ export function registerMediaIpc({
       }
 
       // 云端间隔只约束真实出网请求；磁盘命中不占云端额度。
-      await ttsQueue.throttleCloud()
+      return ttsQueue.enqueue(async () => {
+        await ttsQueue.throttleCloud()
 
-      const result = await callBackend(event.sender, connection =>
-        ttsViaBackend({ connection, fetchImpl, language, text, voice })
-      )
+        const result = await callBackend(event.sender, connection =>
+          ttsViaBackend({ connection, fetchImpl, language, text, voice })
+        )
 
-      const value = { dataUrl: dataUrlFromBuffer(result.buffer, result.mimeType), mimeType: result.mimeType }
-      setCachedTts(cacheKey, value)
-      let persisted = false
+        const value = { dataUrl: dataUrlFromBuffer(result.buffer, result.mimeType), mimeType: result.mimeType }
+        setCachedTts(cacheKey, value)
+        let persisted = false
 
-      if (persist) {
-        try {
-          persisted = await diskCache.write({
-            buffer: result.buffer,
-            language,
-            mimeType: result.mimeType,
-            text,
-            voice
-          })
+        if (persist) {
+          try {
+            persisted = await diskCache.write({
+              buffer: result.buffer,
+              language,
+              mimeType: result.mimeType,
+              text,
+              voice
+            })
 
-          if (!persisted) {
-            ttsLog('persist_skipped', { mime: result.mimeType })
+            if (!persisted) {
+              ttsLog('persist_skipped', { mime: result.mimeType })
+            }
+          } catch (error) {
+            ttsLog('persist_failed', { error: errorMessage(error) })
           }
-        } catch (error) {
-          ttsLog('persist_failed', { error: errorMessage(error) })
         }
-      }
 
-      ttsLog('done', {
-        mime: result.mimeType,
-        ms: Date.now() - startedAt,
-        persisted,
-        route: 'cloud',
-        voice_out: result.voiceOut || null
+        ttsLog('done', {
+          mime: result.mimeType,
+          ms: Date.now() - startedAt,
+          persisted,
+          route: 'cloud',
+          voice_out: result.voiceOut || null
+        })
+
+        return value
       })
-
-      return value
-    })
+    })()
 
     inflightTts.set(cacheKey, task)
 

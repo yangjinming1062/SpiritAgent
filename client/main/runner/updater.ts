@@ -207,8 +207,7 @@ export class RunnerUpdater {
 
     try {
       if (!fs.existsSync(venvPython)) {
-        stopResult = await stopIfBridged()
-
+        // 无法安装：只记安装失败，不启停 Runner。
         return await fail('venv-missing')
       }
 

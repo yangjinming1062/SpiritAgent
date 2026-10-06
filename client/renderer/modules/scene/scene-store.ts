@@ -72,6 +72,9 @@ export const $scenePage = atom(0)
 export const $sceneQuery = atom('')
 export const PAGE_SIZE = 24
 const detailCache = new Map<string, SceneAsset>()
+// 场景图 URL 的签名 query 会轮换，同路径即同内容（资产名带随机后缀）：按去 query 路径缓存解析结果，避免轮询期重复取整图。
+const MAX_SCENE_SRC_ENTRIES = 48
+const sceneSrcCache = new Map<string, string>()
 let stateRequest = 0
 let listRequest = 0
 let version = -1
@@ -89,7 +92,21 @@ async function resolveSceneUrl(row: SceneWire): Promise<string> {
   const url = row.url || ''
 
   if (url && !url.startsWith('data:') && !url.startsWith('http:') && !url.startsWith('https:')) {
-    return (await window.spiritagent?.apiAsset({ url })) || url
+    const key = url.split(/[?#]/)[0]
+    const cached = sceneSrcCache.get(key)
+
+    if (cached) {
+      return cached
+    }
+
+    const dataUrl = await window.spiritagent?.apiAsset({ url, preferCache: true })
+
+    if (dataUrl) {
+      sceneSrcCache.set(key, dataUrl)
+      trimOldest(sceneSrcCache, MAX_SCENE_SRC_ENTRIES)
+    }
+
+    return dataUrl || url
   }
 
   return url
@@ -166,6 +183,7 @@ registerStorageClearHandler(() => {
   $sceneRegenerating.set(null)
   $sceneLibrary.set([])
   detailCache.clear()
+  sceneSrcCache.clear()
   $sceneDetails.set({})
   $sceneLibraryStatus.set('idle')
   $sceneTaskStatus.set('none')
@@ -236,7 +254,8 @@ export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | nul
   return scene
 }
 
-export async function hydrateScene(): Promise<void> {
+/** 刷新场景状态并在尾部重刷列表；skipLibraryRefresh 只供首屏已并行 loadSceneLibrary 的调用方消去冗余刷新，其余刷新时机不得跳过。 */
+export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {}): Promise<void> {
   const request = ++stateRequest
   const epoch = currentClearEpoch()
   const isCurrent = (): boolean => request === stateRequest && epoch === currentClearEpoch()
@@ -247,8 +266,9 @@ export async function hydrateScene(): Promise<void> {
   }
 
   const state = result.value
+  const stale = (): boolean => !isCurrent() || state.version < Math.max(version, eventVersion)
 
-  if (state.version < Math.max(version, eventVersion)) {
+  if (stale()) {
     return
   }
 
@@ -271,7 +291,7 @@ export async function hydrateScene(): Promise<void> {
     const pending = state.pending ? await resolveScene(state.pending) : null
     const regenerating = state.regenerating ? await resolveScene(state.regenerating) : null
 
-    if (!isCurrent() || state.version < Math.max(version, eventVersion)) {
+    if (stale()) {
       return
     }
 
@@ -320,7 +340,7 @@ export async function hydrateScene(): Promise<void> {
       }
     }
 
-    if (isCurrent()) {
+    if (isCurrent() && !options.skipLibraryRefresh) {
       await loadSceneLibrary()
     }
   } catch (error) {

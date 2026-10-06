@@ -3,6 +3,7 @@
 import { atom, computed } from 'nanostores'
 
 import { $chatMessageBodies, $chatMessageList } from '@/modules/conversation'
+import { deepEqual } from '@/shared/lib/deep-equal'
 
 export interface ToolStep {
   name: string
@@ -26,6 +27,10 @@ export interface RailArtifact {
 
 export const $isRailOpen = atom<boolean>(true)
 
+// computed 每次重算都产出新对象；结构化全等未变则复用旧引用，nanostores 引用比较不通知，避免流式期间整树重渲染。
+let lastArtifacts: RailArtifact[] = []
+let lastRound: RunRound | null = null
+
 // 本轮：会话尾部最近一条已有正文的 assistant 消息；只看这一条，不同回合的输出不在右栏展示。
 export const $runRound = computed([$chatMessageList, $chatMessageBodies], (list, bodies) => {
   const round = list.findLast(item => item.role === 'assistant' && bodies[item.id])
@@ -43,7 +48,16 @@ export const $runRound = computed([$chatMessageList, $chatMessageBodies], (list,
     name
   }))
 
-  return { active: running, steps } satisfies RunRound | null
+  const next = { active: running, steps }
+  const cached = lastRound
+
+  if (cached !== null && deepEqual(cached, next)) {
+    return cached
+  }
+
+  lastRound = next
+
+  return lastRound
 })
 
 // 本会话工件：所有 assistant 消息携带的媒体，按时间倒序去重；不区分当前轮次——右栏「本会话工件」按会话维度累积。
@@ -75,6 +89,14 @@ export const $artifacts = computed([$chatMessageList, $chatMessageBodies], (list
       })
     }
   }
+
+  const cached = lastArtifacts
+
+  if (deepEqual(cached, artifacts)) {
+    return cached
+  }
+
+  lastArtifacts = artifacts
 
   return artifacts
 })

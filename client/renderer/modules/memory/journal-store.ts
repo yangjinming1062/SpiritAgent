@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { isRecord } from '@/shared/lib/is-record'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { createUnreadMirror } from '@/shared/lib/unread-mirror'
 
 export interface DiaryEntry {
   body: string
@@ -31,16 +32,10 @@ interface DiaryListWire {
   unread_diary_ids: string[]
 }
 
-interface UnreadWire {
-  has_unread: boolean
-}
-
 export const $diaryByDate = atom<Record<string, DiaryEntry>>({})
 export const $diaryLoading = atom(false)
 export const $diaryHasUnread = atom(false)
 let diaryRevision = 0
-let unreadRevision = 0
-let unreadRequest: Promise<boolean> | undefined
 let eventRevision = 0
 const entryRevisions = new Map<string, number>()
 const deletedIds = new Set<string>()
@@ -58,93 +53,16 @@ function toDiary(w: DiaryWire): DiaryEntry {
   }
 }
 
-function isUnreadWire(value: unknown): value is UnreadWire {
-  return isRecord(value) && typeof value.has_unread === 'boolean'
-}
+const diaryUnread = createUnreadMirror({
+  scope: 'journal',
+  unreadPath: '/api/companion/diary/unread',
+  readPath: '/api/companion/diary/read',
+  idField: 'diary_ids',
+  $hasUnread: $diaryHasUnread
+})
 
-export function hydrateDiaryUnread(): Promise<boolean> {
-  unreadRevision++
-
-  if (unreadRequest !== undefined) {
-    return unreadRequest
-  }
-
-  const isCurrent = captureAuthScope()
-
-  if (!isCurrent) {
-    return Promise.resolve(false)
-  }
-
-  let version = unreadRevision
-
-  const request = Promise.resolve()
-    .then(async () => {
-      if (!isCurrent()) {
-        return false
-      }
-
-      version = unreadRevision
-      const result = await authedApi<UnreadWire>({ path: '/api/companion/diary/unread' })
-
-      if (
-        !isCurrent() ||
-        version !== unreadRevision ||
-        !apiSucceeded(result, 'journal', 'unread failed') ||
-        !isUnreadWire(result.value)
-      ) {
-        return false
-      }
-
-      $diaryHasUnread.set(result.value.has_unread)
-
-      return true
-    })
-    .finally(() => {
-      if (unreadRequest === request) {
-        unreadRequest = undefined
-
-        if (isCurrent() && version !== unreadRevision) {
-          void hydrateDiaryUnread()
-        }
-      }
-    })
-
-  unreadRequest = request
-
-  return request
-}
-
-export async function markDiaryRead(diaryIds: string[]): Promise<boolean> {
-  const isCurrent = captureAuthScope()
-
-  if (!isCurrent) {
-    return false
-  }
-
-  if (diaryIds.length === 0) {
-    return true
-  }
-
-  const version = ++unreadRevision
-
-  const result = await authedApi<UnreadWire>({
-    method: 'POST',
-    path: '/api/companion/diary/read',
-    body: { diary_ids: diaryIds }
-  })
-
-  if (!isCurrent() || !apiSucceeded(result, 'journal', 'read failed') || !isUnreadWire(result.value)) {
-    return false
-  }
-
-  if (version === unreadRevision) {
-    $diaryHasUnread.set(result.value.has_unread)
-  } else {
-    void hydrateDiaryUnread()
-  }
-
-  return true
-}
+export const hydrateDiaryUnread = diaryUnread.hydrate
+export const markDiaryRead = diaryUnread.markRead
 
 export async function hydrateDiary(opts: { from?: string; to?: string } = {}): Promise<string[] | null> {
   const isCurrent = captureAuthScope()
@@ -261,12 +179,9 @@ export function onJournalEvent(event: { payload?: unknown; type: string }): void
 
 registerStorageClearHandler(() => {
   diaryRevision++
-  unreadRevision++
-  unreadRequest = undefined
   eventRevision++
   entryRevisions.clear()
   deletedIds.clear()
   $diaryByDate.set({})
   $diaryLoading.set(false)
-  $diaryHasUnread.set(false)
 })

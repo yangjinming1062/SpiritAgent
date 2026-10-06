@@ -114,22 +114,41 @@ export function useVoiceRecorder({
       })
   }, [])
 
-  const cancelAutoStop = () => {
+  const cancelAutoStop = useCallback(() => {
     if (autoStopRef.current) {
       clearTimeout(autoStopRef.current)
       autoStopRef.current = null
     }
-  }
+  }, [])
 
   // 结束录音态；卸载后不再回写语音链路。
-  const endRecording = () => {
+  const endRecording = useCallback(() => {
     setRecording(false)
 
     if (recordingOwner === ownerToken.current) {
       recordingOwner = null
       conversationVoiceSink().setRecording(false)
     }
-  }
+  }, [])
+
+  // 中止录音并释放录制器与麦克风；operation 递增作废在途转写与等待中的 start。
+  const abortRecording = useCallback(() => {
+    operationRef.current++
+    const recorder = recordingRef.current?.recorder
+    recordingRef.current = null
+
+    if (recorder) {
+      recorder.ondataavailable = null
+      stopTracks(recorder.stream)
+
+      if (recorder.state !== 'inactive') {
+        recorder.stop()
+      }
+    }
+
+    cancelAutoStop()
+    endRecording()
+  }, [cancelAutoStop, endRecording])
 
   const transcribe = useCallback(
     async (blob: Blob, operation: number): Promise<string | null> => {
@@ -275,7 +294,9 @@ export function useVoiceRecorder({
     pushUserMessage,
     schedulePendingFlush,
     isCurrent,
-    transcribe
+    transcribe,
+    cancelAutoStop,
+    endRecording
   ])
 
   stopRef.current = stop
@@ -352,29 +373,15 @@ export function useVoiceRecorder({
       }
     })()
     startPendingRef.current = pending
-  }, [isReadOnlySession, markAssistantTerminal, isCurrent])
+  }, [isReadOnlySession, markAssistantTerminal, isCurrent, endRecording])
 
   useEffect(() => {
     if (eligible) {
       return
     }
 
-    operationRef.current++
-    const recorder = recordingRef.current?.recorder
-    recordingRef.current = null
-
-    if (recorder) {
-      recorder.ondataavailable = null
-      stopTracks(recorder.stream)
-
-      if (recorder.state !== 'inactive') {
-        recorder.stop()
-      }
-    }
-
-    cancelAutoStop()
-    endRecording()
-  }, [eligible])
+    abortRecording()
+  }, [eligible, abortRecording])
 
   // `recording` 切换驱动一个全局 mouseup 监听器，用户可在屏幕任意位置松开按钮即可停止录音。
   useEffect(() => {
@@ -396,33 +403,12 @@ export function useVoiceRecorder({
   // 卸载清理：关闭音轨，避免 OS 级别麦克风指示灯保持亮起。
   useEffect(() => {
     unmountedRef.current = false
-    const token = ownerToken.current
-    const operations = operationRef
 
     return () => {
       unmountedRef.current = true
-      operations.current++
-      cancelAutoStop()
-      const recorder = recordingRef.current?.recorder
-      recordingRef.current = null
-
-      if (recorder) {
-        recorder.ondataavailable = null
-        stopTracks(recorder.stream)
-
-        if (recorder.state !== 'inactive') {
-          recorder.stop()
-        }
-      }
-
-      setRecording(false)
-
-      if (recordingOwner === token) {
-        recordingOwner = null
-        conversationVoiceSink().setRecording(false)
-      }
+      abortRecording()
     }
-  }, [runtime])
+  }, [runtime, abortRecording])
 
   return { recording, start, stop }
 }

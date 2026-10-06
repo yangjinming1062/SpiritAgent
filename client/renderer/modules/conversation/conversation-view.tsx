@@ -169,12 +169,6 @@ export function useConversationView(): ConversationViewState {
   )
 }
 
-export function isConversationVisible(sessionId: string | null): boolean {
-  return $conversationViews
-    .get()
-    .some(view => view.runtime.$chatSessionId.get() === sessionId && view.visible && view.foreground)
-}
-
 export function isConversationActive(sessionId: string | null): boolean {
   return $conversationViews.get().some(view => view.runtime.$chatSessionId.get() === sessionId && view.eligible)
 }

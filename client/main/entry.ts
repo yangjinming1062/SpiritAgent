@@ -102,7 +102,6 @@ let mainWindow: BrowserWindow | null = null
 const getMainWindow = (): BrowserWindow | null => mainWindow
 let surfaces: null | SurfacesManager = null
 let presentation: DesktopPresentation | null = null
-let getAuthToken = (): string | null => null
 // sessionRuntime 在下方创建；各端口晚绑定读取。
 const ensureBackendSession = (): BackendSessionPort => sessionRuntime.ensureBackendSession()
 
@@ -142,7 +141,7 @@ const { ensureBackend, resetBackendCache } = createEnsureBackend({
   appName: APP_NAME,
   backendHttp,
   logBootStep: message => rememberLog(`[boot] ${message}`),
-  getAuthToken: () => getAuthToken(),
+  getAuthToken: () => sessionRuntime.ensureBackendSession().getToken(),
   getCurrentBaseUrl: () => ensureBackendSession().getSession()?.baseUrl ?? null
 })
 
@@ -346,16 +345,13 @@ registerOnboardingAudioIpc({
   ipcMain
 })
 
-// 会话懒创建与 token 重接在 session-runtime，Runner 桥的持有、自动启停与 IPC 在 runner host；登录恢复经 authBroadcaster 广播后接回 host.autoStart。onRestored 异步回调里才调用，先占位避免 session/runtime 互相前置。
+// onRestored 在异步回调里才调用，先占位避免 session/runtime 互相前置。
 let runnerHost: ReturnType<typeof createRunnerHost>
 
 const sessionRuntime = createSessionRuntime({
   createSession: createBackendSession,
   desktopVersion: () => app.getVersion(),
   fetchImpl: electronFetch,
-  getTokenSetter: fn => {
-    getAuthToken = fn
-  },
   log: rememberLog,
   onRestored: snapshot => authBroadcaster.onSessionRestored(snapshot),
   readStoredBackendUrl: () => readStoredBackendUrl(SPIRITAGENT_HOME),
@@ -517,8 +513,6 @@ registerDesktopAccountIpc({
   },
   ipcMain
 })
-
-sessionRuntime.rewireAuthToken()
 
 void app.whenReady().then(async () => {
   if (appQuit.isQuitting()) {

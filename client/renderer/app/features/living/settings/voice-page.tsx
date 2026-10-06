@@ -169,23 +169,13 @@ export function VoicePage(): React.ReactElement {
                 <p className={SETTINGS_ROW_DESC}>{v.tags.join(' · ')}</p>
               </div>
               <div className="flex shrink-0 gap-1.5">
-                <button
-                  className="rounded-lg px-2.5 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong"
-                  onClick={() =>
+                <VoiceActions
+                  inUse={inUse}
+                  onPreview={() =>
                     void speakScripted(sampleLine(persona?.name ?? ''), selectionId || undefined, 'voice.preview')
                   }
-                  type="button"
-                >
-                  {t.preview}
-                </button>
-                <button
-                  className={cn(BTN_SUBTLE, 'h-7 px-3', inUse && 'border-accent-line text-accent font-medium')}
-                  disabled={inUse}
-                  onClick={() => setCompanionVoiceId(selectionId)}
-                  type="button"
-                >
-                  {inUse ? t.inUse : t.use}
-                </button>
+                  selectionId={selectionId}
+                />
               </div>
             </div>
           )
@@ -217,27 +207,11 @@ export function VoicePage(): React.ReactElement {
                 {designing ? t.designGenerating : t.designGenerate}
               </button>
               {designPreview && (
-                <>
-                  <button
-                    className="rounded-lg px-2.5 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong"
-                    onClick={() => void playDataUrl(designPreview.trialAudioDataUrl)}
-                    type="button"
-                  >
-                    {t.preview}
-                  </button>
-                  <button
-                    className={cn(
-                      BTN_SUBTLE,
-                      'h-7 px-3',
-                      currentVoice === designPreview.voiceId && 'border-accent-line text-accent font-medium'
-                    )}
-                    disabled={currentVoice === designPreview.voiceId}
-                    onClick={() => setCompanionVoiceId(designPreview.voiceId)}
-                    type="button"
-                  >
-                    {currentVoice === designPreview.voiceId ? t.inUse : t.use}
-                  </button>
-                </>
+                <VoiceActions
+                  inUse={currentVoice === designPreview.voiceId}
+                  onPreview={() => void playDataUrl(designPreview.trialAudioDataUrl)}
+                  selectionId={designPreview.voiceId}
+                />
               )}
             </div>
             {designHint && <p className="mt-2 text-xs text-amber-300/90">{designHint}</p>}
@@ -245,5 +219,38 @@ export function VoicePage(): React.ReactElement {
         </section>
       )}
     </div>
+  )
+}
+
+// 目录行与设计预览共用的「试听/使用」按钮组：试听动作由调用方给出，使用统一写 companion 音色。
+function VoiceActions({
+  inUse,
+  onPreview,
+  selectionId
+}: {
+  inUse: boolean
+  onPreview: () => void
+  selectionId: string
+}): React.ReactElement {
+  const t = useStrings().settings.voice
+
+  return (
+    <>
+      <button
+        className="rounded-lg px-2.5 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong"
+        onClick={onPreview}
+        type="button"
+      >
+        {t.preview}
+      </button>
+      <button
+        className={cn(BTN_SUBTLE, 'h-7 px-3', inUse && 'border-accent-line text-accent font-medium')}
+        disabled={inUse}
+        onClick={() => setCompanionVoiceId(selectionId)}
+        type="button"
+      >
+        {inUse ? t.inUse : t.use}
+      </button>
+    </>
   )
 }

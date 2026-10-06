@@ -54,7 +54,9 @@ export function createAccountQueue(): AccountQueue {
       fsp.rm(dir, { force: true, recursive: true })
     )
 
-    clearing.set(accountId, task)
+    // 与 tails 同理只存吞掉失败的门闩：enqueue 等清理完成但不继承拒绝，clear 调用方仍收原始失败。
+    const gated = task.catch(() => {})
+    clearing.set(accountId, gated)
 
     return task
   }

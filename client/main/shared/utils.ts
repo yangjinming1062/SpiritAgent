@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import type { IpcEventChannel, IpcEventContract } from '@ipc/contracts'
+import type { IpcEventChannel, IpcEventContract, SurfacePlaybackClaim } from '@ipc/contracts'
 import { BrowserWindow, type WebContents } from 'electron'
 
 export function fileExists(filePath: string): boolean {
@@ -152,6 +152,46 @@ export function createSerialQueue(): <T>(task: () => Promise<T> | T) => Promise<
     tail = next.catch(() => {})
 
     return next
+  }
+}
+
+/** SurfacePlaybackClaim 认领表：解析、过期剪枝、去重与写入单点定义；窗口/舞台等资格门槛由调用方先行判定。 */
+export function createPlaybackClaims(): { claim: (raw: unknown) => boolean; reset: () => void } {
+  const claims = new Map<string, number>()
+
+  return {
+    claim: raw => {
+      const claim = raw as Partial<SurfacePlaybackClaim> | null
+      const playId = claim?.playId
+
+      const expiresAt =
+        claim?.expiresAt === null ? Infinity : typeof claim?.expiresAt === 'string' ? Date.parse(claim.expiresAt) : NaN
+
+      const now = Date.now()
+
+      for (const [id, deadline] of claims) {
+        if (deadline < now) {
+          claims.delete(id)
+        }
+      }
+
+      if (
+        typeof playId !== 'string' ||
+        !/^[a-f0-9]{32}$/i.test(playId) ||
+        Number.isNaN(expiresAt) ||
+        expiresAt < now ||
+        claims.has(playId)
+      ) {
+        return false
+      }
+
+      claims.set(playId, expiresAt)
+
+      return true
+    },
+    reset: () => {
+      claims.clear()
+    }
   }
 }
 

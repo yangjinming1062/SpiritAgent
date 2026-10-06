@@ -4,16 +4,9 @@ import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
-export interface PersonaDefinition {
-  name: string
-  personality: string
-  speakingStyle: string
-  relationship?: string
-  biological_type?: string
-  gender?: string
-}
+import type { PersonaPayload } from './persona'
 
-export const $persona = atom<PersonaDefinition | null>(null)
+export const $persona = atom<PersonaPayload | null>(null)
 export const $personalityTags = atom<string[]>([])
 export const $companionMood = atom<string | null>(null)
 
@@ -73,13 +66,14 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
   const parsed = safeJsonParse<Record<string, string>>(p.definition_json, {})
 
+  // user_* 即使残留在 definition_json 里也不属于伙伴人设，不映射进 $persona。
   $persona.set({
     biological_type: parsed.biological_type,
     gender: parsed.gender,
     name: parsed.name ?? '',
     personality: parsed.personality ?? '',
     relationship: parsed.relationship,
-    speakingStyle: parsed.speaking_style ?? ''
+    speaking_style: parsed.speaking_style ?? ''
   })
 
   $personalityTags.set(p.personality_tags ?? [])

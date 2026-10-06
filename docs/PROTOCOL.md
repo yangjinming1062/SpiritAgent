@@ -536,7 +536,7 @@ Electron 使用自身更新与平台校验链，不等同于 Runner 清单验签
 - 重启安装只接受生活空间请求，且须处于已校验状态；更新退出确实开始（`before-quit-for-update`）时置退出标志，使窗口关闭不被拦截，再沿用退出时有界等待 Runner 的收尾。安装器未能启动时不退出，托盘常驻不受影响。
 - macOS 发布只产出 DMG，没有更新清单；检查如实报告失败，不视为已是最新。
 
-Runner 资产先预取并校验，再停止 Runner、检查现有 venv、安装并启动；校验失败不进入安装。待装资产只在版本一致的新桌面进程启动时安装，未经更新重启、仍是旧版时保留暂存。venv 路径保持不变，安装失败只做有限重试，不承诺原子切换或自动回滚；环境损坏由安装器修复。Installer 与更新器使用一致健康探针，不能只看完成标记。
+Runner 资产先预取并校验，校验失败不进入安装。安装先检查现有 venv：缺失只记安装失败、不触碰 Runner；否则停止 Runner、安装并启动。待装资产只在版本一致的新桌面进程启动时安装，未经更新重启、仍是旧版时保留暂存。venv 路径保持不变，安装失败只做有限重试，不承诺原子切换或自动回滚；环境损坏由安装器修复。Installer 与更新器使用一致健康探针，不能只看完成标记。
 
 实现见 [update IPC](../client/main/ipc/update.ts)、[auto-updater](../client/main/lifecycle/auto-updater.ts) 与 [updater](../client/main/runner/updater.ts)；更新源服务端见 [update.py](../backend/api/v1/update.py)：管理端上传更新 ZIP，须含 Windows 安装包、`runner/` 下的同版本 wheel 与 `server.py`、同版本 `latest-runner.yml`。解压及校验在暂存目录完成，通过后换入正式版本目录并写库；取消或强杀可能留下残留目录；启动时回收 `.upload_*`，未登记的合法版本目录隔离到 `.quarantine` 并记录诊断，管理员重传处理，不自动登记或发布。按库存版本生成 `latest.yml` / `latest-mac.yml`（缺少对应平台资产时 404），原样提供构建时签名的 `latest-runner.yml`。密钥管理见 [release-keys](../scripts/release-keys/README.md)。
 

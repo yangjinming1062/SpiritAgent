@@ -351,6 +351,30 @@ async function savePersona(payload: ReturnType<typeof assemblePersona>): Promise
   }
 }
 
+// 引导进度 wire 结构：REST /api/companion/onboarding/state 与网关 onboarding.get_state 同构。
+interface OnboardingResumeState {
+  answers?: Record<string, string>
+  next_field?: string | null
+  complete?: boolean
+}
+
+// 进度读取 REST 优先，抛错降级网关；两路都失败返回 null。
+const fetchOnboardingResumeState = async (): Promise<OnboardingResumeState | null> => {
+  try {
+    return await window.spiritagent.api<OnboardingResumeState>({
+      path: '/api/companion/onboarding/state'
+    })
+  } catch (error) {
+    log.warn('onboarding', 'resume state REST failed', error)
+
+    return requestGateway<OnboardingResumeState>('onboarding.get_state', {}).catch((gatewayError: unknown) => {
+      log.warn('onboarding', 'resume state gateway failed', gatewayError)
+
+      return null
+    })
+  }
+}
+
 interface OnboardingFlowProps {
   onCompleted: () => void
 }
@@ -752,6 +776,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPhase('portrait-avatar')
   }
 
+  // 形象封存后落到音色描述题：四写须同批提交，漏一会停在错误阶段。
+  const enterVoiceDescribe = (): void => {
+    setImageSealed(true)
+    setPhase('voice')
+    setVoiceStage('describe')
+    setQIndex(0)
+  }
+
   // 网关连通后拉回未答草稿，支持中断后从下一未答题继续；成功后不重复，读取失败暂停作答待重试。
   const onCompletedRef = useLatestRef(onCompleted)
 
@@ -775,32 +807,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           setRefImage(cachedRef)
         }
 
-        let state: {
-          answers?: Record<string, string>
-          next_field?: string | null
-          complete?: boolean
-        } | null = null
-
-        try {
-          state = await window.spiritagent.api<{
-            answers?: Record<string, string>
-            next_field?: string | null
-            complete?: boolean
-          }>({
-            path: '/api/companion/onboarding/state'
-          })
-        } catch (error) {
-          log.warn('onboarding', 'resume state REST failed', error)
-          state = await requestGateway<{
-            answers?: Record<string, string>
-            next_field?: string | null
-            complete?: boolean
-          }>('onboarding.get_state', {}).catch((gatewayError: unknown) => {
-            log.warn('onboarding', 'resume state gateway failed', gatewayError)
-
-            return null
-          })
-        }
+        const state = await fetchOnboardingResumeState()
 
         // 没读到服务端进度不能当作新引导，否则新回答会覆盖已保存的草稿。
         if (!state) {
@@ -878,10 +885,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             }
           } else if (nextField === 'voice') {
             // next_field==='voice' 意味着描述句本身还没回答——落在 describe 上，而不是 catalog。
-            setImageSealed(true)
-            setPhase('voice')
-            setVoiceStage('describe')
-            setQIndex(0)
+            enterVoiceDescribe()
           } else if (nextField && POST_CHARACTER_FIELDS.has(nextField)) {
             setImageSealed(true)
             const idx = USER_QUESTIONS.findIndex(q => q.key === nextField)
@@ -1094,10 +1098,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
-    setImageSealed(true)
-    setPhase('voice')
-    setVoiceStage('describe')
-    setQIndex(0)
+    enterVoiceDescribe()
   }
 
   const previewVoice = (next: VoiceOption, context: string): void =>

@@ -7,8 +7,7 @@ import {
   normalizeSurfaceId,
   type SurfaceCompanionPreference,
   type SurfaceCompanionState,
-  type SurfaceId,
-  type SurfacePlaybackClaim
+  type SurfaceId
 } from '@ipc/contracts'
 import { clamp } from '@runtime'
 import {
@@ -23,7 +22,13 @@ import {
 
 import { isSenderWindow } from '../security/ipc-trust'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows, createSerialQueue, isWindowShown, setWindowIgnoreMouseEvents } from '../shared/utils'
+import {
+  broadcastToAllWindows,
+  createPlaybackClaims,
+  createSerialQueue,
+  isWindowShown,
+  setWindowIgnoreMouseEvents
+} from '../shared/utils'
 
 import { companionSlot, outerBounds, PANEL_SIZES, panelBounds, parseCompanionPreference } from './surface-companion'
 import type { CreatedSurfaceWindow } from './surface-window'
@@ -92,7 +97,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   let screenLocked = false
   let stateRevision = 0
 
-  const claimedPlayIds = new Map<string, number>()
+  const playbackClaims = createPlaybackClaims()
 
   function findSurfaceWindow(win: BrowserWindow | null): SurfaceWindowState | undefined {
     for (const surface of windows.values()) {
@@ -565,10 +570,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     screen.on('display-metrics-changed', () => refreshCompanionGeometry())
   }
 
-  const resetPlaybackClaims = (): void => {
-    claimedPlayIds.clear()
-  }
-
   const registerIpcHandlers = ({ ipcMain }: { ipcMain: IpcMain }): void => {
     ipcMain.handle(IPC.invoke.surfaceOpen, (_event, payload: unknown) => {
       const { sessionId, surface, view } = (payload ?? {}) as { sessionId?: unknown; surface?: unknown; view?: unknown }
@@ -636,28 +637,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       })
     )
     ipcMain.handle(IPC.invoke.surfaceClaimPlay, (event, raw: unknown) => {
-      const claim = raw as Partial<SurfacePlaybackClaim> | null
-      const playId = claim?.playId
-
-      const expiresAt =
-        claim?.expiresAt === null ? Infinity : typeof claim?.expiresAt === 'string' ? Date.parse(claim.expiresAt) : NaN
-
-      const now = Date.now()
-
-      for (const [id, deadline] of claimedPlayIds) {
-        if (deadline < now) {
-          claimedPlayIds.delete(id)
-        }
-      }
-
-      if (
-        typeof playId !== 'string' ||
-        !/^[a-f0-9]{32}$/i.test(playId) ||
-        Number.isNaN(expiresAt) ||
-        expiresAt < now ||
-        screenLocked ||
-        claimedPlayIds.has(playId)
-      ) {
+      if (screenLocked) {
         return false
       }
 
@@ -672,9 +652,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
         return false
       }
 
-      claimedPlayIds.set(playId, expiresAt)
-
-      return true
+      return playbackClaims.claim(raw)
     })
   }
 
@@ -689,7 +667,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     openSurface,
     publishSpriteVisibility: publish,
     registerIpcHandlers,
-    resetPlaybackClaims,
+    resetPlaybackClaims: playbackClaims.reset,
     toggleMaximizeWindow,
     toggleSurface,
     watchSystemEvents

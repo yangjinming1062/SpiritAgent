@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 
 import type { RunningApplicationsState, RunningApplicationWindow } from '../shared/desktop-applications'
+import { createSerialQueue } from '../shared/utils'
 
 function isRunningWindow(raw: unknown): raw is RunningApplicationWindow {
   if (!raw || typeof raw !== 'object') {
@@ -53,14 +54,12 @@ export interface ExplorerDesktopHost {
     companionAlwaysOnTop: boolean
   }) => Promise<void>
   setCompanionAlwaysOnTop: (enabled: boolean) => Promise<void>
-  heartbeat: () => Promise<void>
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   refreshApplications: (eligible: () => boolean) => Promise<void>
   activateExternal: (windowId: string, eligible: () => boolean) => Promise<void>
   closeExternal: (windowIds: string[], eligible: () => boolean) => Promise<void>
   stop: () => Promise<void>
   recover: () => Promise<boolean>
-  status: () => 'idle' | 'starting' | 'running' | 'stopping'
 }
 
 interface PendingRequest {
@@ -121,13 +120,13 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
     throw new Error('Desktop helper and journal paths must be absolute')
   }
 
-  let state: ReturnType<ExplorerDesktopHost['status']> = 'idle'
+  let state: 'idle' | 'starting' | 'running' | 'stopping' = 'idle'
   let child: ChildProcessWithoutNullStreams | null = null
   let recoveryProcess: ChildProcessWithoutNullStreams | null = null
   let nextId = 1
   let generation = 0
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
-  let operation: Promise<unknown> = Promise.resolve()
+  const serialize = createSerialQueue()
   let failureReported = false
 
   let applicationBatch: {
@@ -193,13 +192,6 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
       applicationBatch = null
       options.onApplicationsChanged?.(batch.state)
     }
-  }
-
-  function serialize<T>(work: () => Promise<T>): Promise<T> {
-    const current = operation.then(work, work)
-    operation = current.catch(() => undefined)
-
-    return current
   }
 
   function clearHeartbeat(): void {
@@ -633,13 +625,6 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
         await request({ command: 'close_external', window_ids: windowIds }, 1_000, true)
       })
     },
-    heartbeat: async () => {
-      if (state !== 'running') {
-        return
-      }
-
-      await request({ command: 'heartbeat' }, 4_000)
-    },
     recover: () =>
       serialize(async () => {
         if (state !== 'idle') {
@@ -703,7 +688,6 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           throw error
         }
       }),
-    status: () => state,
     stop: () => serialize(stopHost)
   }
 }

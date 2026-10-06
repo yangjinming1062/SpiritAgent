@@ -19,7 +19,7 @@ import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { notifyError } from '@/shared/store/notifications'
 
 import { DesktopDockPicker, type DockPickerMode } from './desktop-dock-picker'
-import { type DesktopApp, type DesktopWindowState } from './desktop-layout'
+import { DESKTOP_APPS, type DesktopApp, type DesktopWindowState } from './desktop-layout'
 import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
@@ -37,8 +37,6 @@ const APP_ICONS: Record<DesktopApp, IconComponent> = {
   channels: Globe,
   settings: Settings
 }
-
-const APP_ORDER = Object.keys(APP_ICONS)
 
 function BuiltinAppIcon({ id }: { id: DesktopApp }): React.JSX.Element {
   const Icon = APP_ICONS[id]
@@ -396,7 +394,7 @@ export function DesktopDock({
             {(windows.length > 0 || state.runningEntries.length > 0) && <span className={styles.dockDivider} />}
             <div aria-label={t.runningApps} className={styles.dockGroup} role="group">
               {windows
-                .toSorted((a, b) => APP_ORDER.indexOf(a.id) - APP_ORDER.indexOf(b.id))
+                .toSorted((a, b) => DESKTOP_APPS.indexOf(a.id) - DESKTOP_APPS.indexOf(b.id))
                 .map(item => {
                   const label = `${t[item.id]} · ${t.running}${item.minimized ? ` · ${t.minimizedWindow}` : ''}`
 

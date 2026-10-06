@@ -12,14 +12,20 @@ import {
   type PresentationMode,
   type PresentationState,
   type StageActivity,
-  type StageRitualRequest,
-  type SurfacePlaybackClaim
+  type StageRitualRequest
 } from '@ipc/contracts'
 import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import type { RunningApplicationsState } from '../shared/desktop-applications'
-import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, errorMessage, sendToWindow } from '../shared/utils'
+import {
+  atomicWriteFile,
+  broadcastToAllWindows,
+  createPlaybackClaims,
+  createSerialQueue,
+  errorMessage,
+  sendToWindow
+} from '../shared/utils'
 
 import { createExplorerDesktopHost } from './explorer-desktop-host'
 import { createPresentationPreferences } from './presentation-preferences'
@@ -37,7 +43,7 @@ interface DesktopPresentationOptions {
   restoreSprite: () => void
   authenticated: () => boolean
   authIdentity: () => string | null
-  installWindowHandlers: (win: BrowserWindow) => void
+  installWindowHandlers: (win: BrowserWindow, options?: { reloadOnCrash?: boolean }) => void
   lockZoom: (win: BrowserWindow) => void
   log: (message: string) => void
   onModeChanged?: () => void
@@ -88,7 +94,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let currentBackground: DesktopBackground = { image: null, theme: 'day-clear', reduceMotion: false }
   let runningApplications: RunningApplicationsState = { status: 'inactive', error: null, windows: [] }
   const applicationListeners = new Set<(state: RunningApplicationsState) => void>()
-  const claims = new Map<string, number>()
+  const playbackClaims = createPlaybackClaims()
 
   const rituals = new Map<
     string,
@@ -305,7 +311,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     setRunningApplications({ status: 'inactive', error: null, windows: [] })
     clearRituals()
     stageEpoch += 1
-    claims.clear()
+    playbackClaims.reset()
     publish()
 
     const recording = reason
@@ -403,7 +409,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     })
 
     if (primary) {
-      options.installWindowHandlers(win)
+      // 桌面崩溃保持崩溃态直至 leave 销毁，不走共享 reload 恢复。
+      options.installWindowHandlers(win, { reloadOnCrash: false })
       const expected = new URL(options.rendererUrlFor(role))
 
       const guardNavigation = (event: Electron.Event, url: string): void => {
@@ -1113,34 +1120,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     })
     ipcMain.handle(IPC.invoke.presentationClaimPlay, (event, raw: unknown) => {
       assertStage(event.sender)
-      const claim = raw as Partial<SurfacePlaybackClaim> | null
 
-      if (!canUseStage() || typeof claim?.playId !== 'string' || !/^[a-f0-9]{32}$/i.test(claim.playId)) {
+      if (!canUseStage()) {
         return false
       }
 
-      const expires =
-        claim.expiresAt === null ? Infinity : typeof claim.expiresAt === 'string' ? Date.parse(claim.expiresAt) : NaN
-
-      const now = Date.now()
-
-      if (Number.isNaN(expires) || expires < now) {
-        return false
-      }
-
-      for (const [key, deadline] of claims) {
-        if (deadline < now) {
-          claims.delete(key)
-        }
-      }
-
-      if (claims.has(claim.playId)) {
-        return false
-      }
-
-      claims.set(claim.playId, expires)
-
-      return true
+      return playbackClaims.claim(raw)
     })
     ipcMain.handle(IPC.invoke.presentationStageActivity, (event, activity: StageActivity) => {
       if (!isSenderWindow(event.sender, options.getSpriteWindow())) {

@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
-import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { triggerHaptic } from '@/shared/lib/haptics'
+import { backendDetailMessage, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
 
@@ -81,10 +82,18 @@ function summarizeErrorMessage(message: string, fallback: string): string {
 }
 
 function readableError(error: unknown, fallback: string): { message: string; detail?: string } {
-  const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : fallback
-  const unwrapped = unwrapIpcErrorMessage(raw)
-  const cleaned = cleanErrorText(unwrapped)
-  const detail = cleaned.match(/"detail"\s*:\s*"([^"]+)"/)?.[1] ?? cleaned
+  let detail: string
+
+  if (error instanceof Error) {
+    // 先 cleanErrorText 再走共享的全文 JSON 解析取 detail 公开文案；解析不了保留清洗后的原文，纯文案错误不退化为兜底。
+    const raw = cleanErrorText(unwrapIpcErrorMessage(error))
+    detail = backendDetailMessage(raw, raw)
+  } else if (typeof error === 'string') {
+    detail = error
+  } else {
+    detail = fallback
+  }
+
   const summary = summarizeErrorMessage(detail, fallback)
 
   return { message: summary, detail: detail === summary ? undefined : detail }
@@ -92,6 +101,12 @@ function readableError(error: unknown, fallback: string): { message: string; det
 
 export function notify(input: NotificationInput): void {
   const kind = input.kind ?? 'info'
+
+  // 触感在通知创建时触发一次；info 静默，不随渲染或 dismiss 重复触发。
+  if (kind !== 'info') {
+    triggerHaptic(kind)
+  }
+
   const id = `${Date.now()}-${notificationCounter++}`
 
   const notification: AppNotification = {

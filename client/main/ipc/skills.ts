@@ -36,7 +36,7 @@ async function toggleDisabled({
     return { error: 'invalid enabled', ok: false }
   }
 
-  // 读取与修改都在写锁内，不能按锁外快照跳过排队中的反向操作。
+  // 读取与修改都在串行写任务内，不能按队列外快照跳过排队中的反向操作。
   const result = await store.mutate(config => {
     const slot = (config[section] as { disabled?: unknown } | undefined) ?? {}
     const next = store.getDisabledSet(section)

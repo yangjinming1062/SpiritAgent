@@ -1,10 +1,6 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
-import type { ReadableStream } from 'node:stream/web'
 
 import { sleep } from '@runtime'
 
@@ -136,10 +132,6 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     return path.join(cacheDir, `${key}.meta.json`)
   }
 
-  function getPartialPath(key: string): string {
-    return path.join(cacheDir, `${key}.partial`)
-  }
-
   async function readMeta(key: string): Promise<AssetMeta | null> {
     try {
       const raw = await fsp.readFile(getMetaPath(key), 'utf8')
@@ -216,7 +208,6 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
 
     const key = normalizeAssetKey(rawUrl, contentHash)
     const binPath = getBinPath(key)
-    const partialPath = getPartialPath(key)
     const localCached = await readCached(rawUrl, contentHash)
     cancellation.throwIfAborted()
 
@@ -264,23 +255,25 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
       }
     }
 
+    // 网络/正文/落盘失败统一降级本地旧缓存；未命中或已取消则抛给调用方。
+    const serveStaleOrThrow = (err: unknown, label: string): CachedAsset => {
+      cancellation.throwIfAborted()
+
+      if (localCached) {
+        console.warn(`[asset-disk-cache] ${label} for ${assetPath}; serving local stale cache fallback:`, err)
+
+        return localCached
+      }
+
+      throw err
+    }
+
     let res: Response
 
     try {
       res = await executeFetch()
     } catch (networkErr) {
-      cancellation.throwIfAborted()
-
-      if (localCached) {
-        console.warn(
-          `[asset-disk-cache] Network fetch failed for ${assetPath}; serving local stale cache fallback:`,
-          networkErr
-        )
-
-        return localCached
-      }
-
-      throw networkErr
+      return serveStaleOrThrow(networkErr, 'Network fetch failed')
     }
 
     cancellation.throwIfAborted()
@@ -306,39 +299,15 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     const rawSha = res.headers.get('x-content-sha256')
     const etag = rawSha || (rawEtag ? rawEtag.replace(/"/g, '') : undefined)
 
+    let body: Buffer
+
     try {
-      const writeStream = fs.createWriteStream(partialPath)
-      const bodyStream = res.body
-      let readableNodeStream: Readable
-
-      if (bodyStream && typeof (bodyStream as { getReader?: unknown }).getReader === 'function') {
-        readableNodeStream = Readable.fromWeb(bodyStream as unknown as ReadableStream)
-      } else if (bodyStream && Symbol.asyncIterator in bodyStream) {
-        readableNodeStream = Readable.from(bodyStream)
-      } else {
-        const arrayBuf = await res.arrayBuffer()
-        readableNodeStream = Readable.from(Buffer.from(arrayBuf))
-      }
-
-      await pipeline(readableNodeStream, writeStream, { signal })
-    } catch (streamErr) {
-      await fsp.unlink(partialPath).catch(() => {})
-      cancellation.throwIfAborted()
-
-      if (localCached) {
-        console.warn(`[asset-disk-cache] Stream error for ${assetPath}; serving local stale cache fallback:`, streamErr)
-
-        return localCached
-      }
-
-      throw streamErr
+      body = Buffer.from(await res.arrayBuffer())
+    } catch (bodyErr) {
+      return serveStaleOrThrow(bodyErr, 'Body error')
     }
 
-    const stat = await fsp.stat(partialPath).catch(() => null)
-
-    if (!stat?.isFile() || stat.size <= 0) {
-      await fsp.unlink(partialPath).catch(() => {})
-
+    if (body.byteLength <= 0) {
       if (localCached) {
         return localCached
       }
@@ -348,18 +317,21 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
 
     cancellation.throwIfAborted()
 
-    await fsp.rename(partialPath, binPath)
+    try {
+      await atomicWriteFile(binPath, body)
 
-    await atomicWriteFile(
-      getMetaPath(key),
-      JSON.stringify({ contentHash, etag, key, mime, size: stat.size } satisfies AssetMeta)
-    )
+      await atomicWriteFile(
+        getMetaPath(key),
+        JSON.stringify({ contentHash, etag, key, mime, size: body.byteLength } satisfies AssetMeta)
+      )
+    } catch (writeErr) {
+      return serveStaleOrThrow(writeErr, 'Write error')
+    }
 
-    const buffer = await fsp.readFile(binPath)
     cancellation.throwIfAborted()
 
     return {
-      buffer,
+      buffer: body,
       mime
     }
   }

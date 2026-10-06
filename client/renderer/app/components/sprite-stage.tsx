@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { type PointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef } from 'react'
 
 import { openWhisper } from '@/app/workflows/session-delivery'
 import {
@@ -45,7 +45,6 @@ interface SpriteStageProps {
   windowId?: number
   allowDisplaySwitch?: boolean
   onDropFiles?: (files: FileList) => void
-  domHitPassthrough?: boolean
 }
 
 // 12px 是为了避免触控板微抖动被误判为拖拽、把双击吞掉。
@@ -69,8 +68,7 @@ export function SpriteStage({
   hidden = false,
   windowId = 0,
   allowDisplaySwitch = true,
-  onDropFiles,
-  domHitPassthrough = false
+  onDropFiles
 }: SpriteStageProps): React.JSX.Element {
   const mountRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -104,87 +102,6 @@ export function SpriteStage({
   const expressionBoost = useStore($expressionBoost)
   const content = useStore($spriteContentRect)
   const stageHitTest = useMediaPixelHitTest(windowId)
-
-  const lastDomPointer = useRef<{ x: number; y: number } | null>(null)
-  const domProbeFrame = useRef<number | null>(null)
-
-  const probeDomPointer = useCallback((): boolean => {
-    const node = mountRef.current
-
-    if (!domHitPassthrough || !node) {
-      return false
-    }
-
-    const point = lastDomPointer.current
-    const rect = node.getBoundingClientRect()
-
-    const inside =
-      point !== null && point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom
-
-    const capture = !hidden && (dragRef.current !== null || (inside && stageHitTest(point.x, point.y)))
-    const next = capture ? 'auto' : 'none'
-
-    if (node.style.pointerEvents !== next) {
-      node.style.pointerEvents = next
-    }
-
-    return inside && !hidden
-  }, [domHitPassthrough, hidden, stageHitTest])
-
-  // 桌面内透明像素透给下层 DOM；窗口精灵仍沿用原生窗口捕获。
-  useEffect(() => {
-    if (!domHitPassthrough) {
-      return
-    }
-
-    const tick = (): void => {
-      domProbeFrame.current = null
-
-      if (probeDomPointer() && document.hasFocus()) {
-        domProbeFrame.current = requestAnimationFrame(tick)
-      }
-    }
-
-    const update = (event: globalThis.PointerEvent): void => {
-      lastDomPointer.current = { x: event.clientX, y: event.clientY }
-      probeDomPointer()
-
-      if (domProbeFrame.current === null) {
-        tick()
-      }
-    }
-
-    const pause = (): void => {
-      if (domProbeFrame.current !== null) {
-        cancelAnimationFrame(domProbeFrame.current)
-        domProbeFrame.current = null
-      }
-    }
-
-    const resume = (): void => {
-      if (domProbeFrame.current === null) {
-        tick()
-      }
-    }
-
-    window.addEventListener('blur', pause)
-    window.addEventListener('focus', resume)
-    document.addEventListener('pointermove', update, true)
-    document.addEventListener('pointerover', update, true)
-
-    return () => {
-      window.removeEventListener('blur', pause)
-      window.removeEventListener('focus', resume)
-      document.removeEventListener('pointermove', update, true)
-      document.removeEventListener('pointerover', update, true)
-
-      pause()
-    }
-  }, [domHitPassthrough, probeDomPointer])
-
-  useLayoutEffect(() => {
-    probeDomPointer()
-  }, [probeDomPointer, pos, scale, peek, content])
 
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null)
   const dragRafRef = useRef<number | null>(null)

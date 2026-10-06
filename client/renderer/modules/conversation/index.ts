@@ -51,7 +51,6 @@ export {
   $conversationViews,
   ConversationViewProvider,
   isConversationActive,
-  isConversationVisible,
   useConversationView
 } from './conversation-view'
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'

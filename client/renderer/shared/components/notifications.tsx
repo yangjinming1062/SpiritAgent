@@ -1,10 +1,11 @@
 import { useStore } from '@nanostores/react'
-import { type Ref, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, Copy, type IconComponent, Info, X } from '@/shared/lib/icons'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
 import {
   $notifications,
@@ -26,33 +27,21 @@ const tone: Record<NotificationKind, { icon: IconComponent; iconClass: string }>
 const STACK_SURFACE =
   'pointer-events-auto rounded-xl border border-line-standard bg-glass text-strong shadow-xl backdrop-blur-glass'
 
-// regionRef 交给挂载方：透明窗口按各自的捕获窗口 ID 把 toast 矩形登记为交互区域，否则点击会穿透。
-export function NotificationStack({ regionRef }: { regionRef?: Ref<HTMLDivElement> }): React.JSX.Element | null {
+// 透明窗口点击会穿透：toast 自行登记交互区域（ID 经 CaptureWindowIdContext 继承），登记在 early return 之前，空通知 getRect 为 null 自然退出。
+export function NotificationStack(): React.JSX.Element | null {
   const notifications = useStore($notifications)
   const t = useStrings()
-  const lastNotificationIdRef = useRef<string | null>(null)
+  const regionRef = useRef<HTMLDivElement>(null)
   const [expanded, setExpanded] = useState(false)
   const copy = t.notifications
+
+  useInteractiveRegion('notification-stack', regionRef)
 
   useEffect(() => {
     if (notifications.length <= 1) {
       setExpanded(false)
     }
   }, [notifications.length])
-
-  useEffect(() => {
-    const latest = notifications[0]
-
-    if (!latest || latest.id === lastNotificationIdRef.current) {
-      return
-    }
-
-    lastNotificationIdRef.current = latest.id
-
-    if (latest.kind !== 'info') {
-      triggerHaptic(latest.kind)
-    }
-  }, [notifications])
 
   if (notifications.length === 0) {
     return null

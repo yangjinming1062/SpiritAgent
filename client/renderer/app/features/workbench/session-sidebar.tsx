@@ -163,8 +163,9 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
     })
 
   // 用户常规会话（支持置顶与非置顶）
-  const pinnedRegularSessions = workbenchSessions.filter(s => !isSpecialSession(s) && s.pinned)
-  const unpinnedRegularSessions = workbenchSessions.filter(s => !isSpecialSession(s) && !s.pinned)
+  const regularSessions = workbenchSessions.filter(s => !isSpecialSession(s))
+  const pinnedRegularSessions = regularSessions.filter(s => s.pinned)
+  const unpinnedRegularSessions = regularSessions.filter(s => !s.pinned)
 
   const visibleSearchResults = searchResults.filter(s => includeCompanion || !isCompanionSession(s))
 
@@ -271,9 +272,9 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
             <div className="pt-1">
               <div className="mb-1.5 flex items-center justify-between px-1.5 text-[11px] font-semibold text-muted tracking-wider">
                 <span>{t.regularHeading}</span>
-                {pinnedRegularSessions.length + unpinnedRegularSessions.length > 0 && (
+                {regularSessions.length > 0 && (
                   <span className="rounded bg-fill-faint px-1 py-0.2 text-[10px] text-muted">
-                    {pinnedRegularSessions.length + unpinnedRegularSessions.length}
+                    {regularSessions.length}
                   </span>
                 )}
               </div>

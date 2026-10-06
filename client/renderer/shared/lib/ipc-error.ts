@@ -26,10 +26,11 @@ export function isClientErrorIpc(error: unknown): boolean {
   return status !== null && status >= 400 && status < 500
 }
 
-// 主进程错误形如 `NNN /api/path: {"detail":{"error":"..."}}`：剥掉状态码与路径后取 detail 里的公开文案；解析不了就用调用方兜底。各后端错误展示点共用，避免各自维护解析副本。
+// 解析主进程错误 detail 的公开文案（形如 `NNN /api/path: {"detail":{"error":...}}` 或 `{"detail":...}`，对象取 error）；解析不了用调用方兜底。
 export function backendDetailMessage(error: unknown, fallback: string): string {
   const raw = unwrapIpcErrorMessage(error).replace(/^\d{3}\s+(?:\/[^\s]*:\s*)?/, '')
-  const detail = safeJsonParse<{ detail?: { error?: unknown } }>(raw, {}).detail?.error
+  const detail = safeJsonParse<{ detail?: { error?: unknown } | string }>(raw, {}).detail
+  const message = typeof detail === 'string' ? detail : detail?.error
 
-  return typeof detail === 'string' && detail ? detail : fallback
+  return typeof message === 'string' && message ? message : fallback
 }

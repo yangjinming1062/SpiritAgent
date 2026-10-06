@@ -28,7 +28,7 @@ function draftOf(persona: ReturnType<typeof $persona.get>): PersonaDraft {
     name: persona?.name ?? '',
     personality: persona?.personality ?? '',
     relationship: persona?.relationship ?? '',
-    speakingStyle: persona?.speakingStyle ?? ''
+    speakingStyle: persona?.speaking_style ?? ''
   }
 }
 
@@ -42,6 +42,8 @@ export function PersonaSection(): React.JSX.Element {
   const [draft, setDraft] = useState(() => draftOf(persona))
   const [saving, setSaving] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
+  // 查看态降级提示与编辑态 hint 分槽：hydrate 失败提示不能串进编辑校验文案，反之亦然。
+  const [staleHint, setStaleHint] = useState<string | null>(null)
 
   const fields: readonly PersonaField[] = [
     { key: 'name', label: t.nameLabel, placeholder: t.namePlaceholder },
@@ -122,10 +124,8 @@ export function PersonaSection(): React.JSX.Element {
 
     const result = await hydratePersona({ silent: true })
 
-    if (!result.ok) {
-      // 后端已经有人设但本地副本没刷出来：给一条更温和的提示，让用户知道下次 hydrate 之前（下一次保存、重启等）看到的是旧值。
-      setHint(t.hintHydrateFailed)
-    }
+    // 本地副本未刷出时给查看态降级提示：当前展示的是旧值，下次保存或重启后更新。
+    setStaleHint(result.ok ? null : t.hintHydrateFailed)
 
     setEditing(false)
     setSaving(false)
@@ -167,6 +167,7 @@ export function PersonaSection(): React.JSX.Element {
               ) : (
                 <p className="mt-1 text-[13px] leading-relaxed text-body">{t.noPersonality}</p>
               )}
+              {staleHint && <p className="mt-2 text-xs text-amber-300/90">{staleHint}</p>}
             </div>
             <button className={cn(BTN_GHOST, 'shrink-0 whitespace-nowrap')} onClick={startEdit} type="button">
               {t.editAction}
@@ -205,7 +206,10 @@ export function PersonaSection(): React.JSX.Element {
           <button
             className={cn(BTN_SUBTLE, 'flex-1')}
             disabled={saving}
-            onClick={() => setEditing(false)}
+            onClick={() => {
+              setHint(null)
+              setEditing(false)
+            }}
             type="button"
           >
             {dict.common.cancel}

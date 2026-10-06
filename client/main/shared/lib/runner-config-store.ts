@@ -2,7 +2,7 @@ import path from 'node:path'
 
 import log from 'electron-log/main'
 
-import { atomicWriteFile, errorMessage, RunnerNotConnectedError, safeReadJson } from '../utils'
+import { atomicWriteFile, createSerialQueue, errorMessage, RunnerNotConnectedError, safeReadJson } from '../utils'
 
 const FILENAME = 'desktop-settings.json'
 
@@ -11,8 +11,8 @@ let storePath: null | string = null
 let config: Record<string, unknown> = {}
 let loaded = false
 
-// 写锁：串行化各写入入口的内存修改、落盘与推送。
-let writeLock: null | Promise<unknown> = null
+// 串行化各写入入口的内存修改、落盘与推送。
+const enqueue = createSerialQueue()
 
 // 同步协调：由 Runner host 设置的 pushTarget，以及 config-sync.ts 的 cloudSync 委托。
 let pushTarget: null | ((config: Record<string, unknown>) => Promise<unknown> | void) = null
@@ -57,21 +57,6 @@ export function setCloudSync(delegate: null | { onLocalChange: (config: Record<s
   cloudSync = delegate
 }
 
-async function runLocked<T>(task: () => Promise<T>): Promise<T> {
-  while (writeLock) {
-    await writeLock.catch(() => {})
-  }
-
-  const inflight = task()
-  writeLock = inflight
-
-  try {
-    return await inflight
-  } finally {
-    writeLock = null
-  }
-}
-
 // notifyCloud: false 用于云端水合与账户隔离写入，不通知云同步，防止回环。
 async function persistAndPush({
   notifyCloud = true,
@@ -97,9 +82,9 @@ async function persistAndPush({
   }
 }
 
-/** 在写锁内修改并落盘；change 抛错或落盘失败时恢复原镜像并重新抛出：调用方已收到失败，未保存的修改不能随后续写入悄悄生效。 */
+/** 串行修改并落盘；change 抛错或落盘失败时恢复原镜像并重新抛出：调用方已收到失败，未保存的修改不能随后续写入悄悄生效。 */
 function changeLocked<T>(change: (config: Record<string, unknown>) => T, pushRunner = true): Promise<T> {
-  return runLocked(async () => {
+  return enqueue(async () => {
     load()
     const previous = structuredClone(config)
 
@@ -125,7 +110,7 @@ export async function applyCloudMirror(
     return
   }
 
-  await runLocked(async () => {
+  await enqueue(async () => {
     if (!isCurrent()) {
       return
     }
@@ -157,7 +142,7 @@ export async function patch(
   return { ok: true }
 }
 
-/** fn 在写锁内变更配置；fn 抛错或落盘失败时恢复原镜像并返回失败，与 `patch` 一致。`pushRunner: false` 时只落盘、不推送 Runner。 */
+/** fn 串行变更配置；fn 抛错或落盘失败时恢复原镜像并返回失败，与 `patch` 一致。`pushRunner: false` 时只落盘、不推送 Runner。 */
 export async function mutate<T>(
   fn: (config: Record<string, unknown>) => T,
   { pushRunner = true }: { pushRunner?: boolean } = {}
@@ -179,7 +164,7 @@ export async function clearSyncedMirror(
   stamp: Record<string, unknown>,
   isCurrent: () => boolean = () => true
 ): Promise<void> {
-  await runLocked(async () => {
+  await enqueue(async () => {
     if (!isCurrent()) {
       return
     }

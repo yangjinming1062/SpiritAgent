@@ -126,8 +126,15 @@ export interface DesktopAccount {
   active: boolean
 }
 
+// 入口面：互斥的两个 BrowserWindow；都未打开时以 null 表示。
+export type SurfaceId = 'living' | 'workbench'
+
+export function normalizeSurfaceId(raw: unknown): SurfaceId {
+  return raw === 'workbench' ? 'workbench' : 'living'
+}
+
 export interface DesktopNavigation {
-  surface: 'living' | 'workbench'
+  surface: SurfaceId
   view?: string
   sessionId?: string
 }

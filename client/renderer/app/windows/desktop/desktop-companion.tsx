@@ -17,6 +17,7 @@ import {
   setDefaultScale
 } from '@/modules/character'
 import { MediaStage } from '@/modules/character/rendering/video'
+import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { EyeOff } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -91,28 +92,8 @@ export function DesktopCompanionMenu({
   const scale = useStore($defaultScale)
   const ref = useRef<HTMLDivElement>(null)
   useInteractiveRegion('desktop-companion-menu', ref)
-  useEffect(() => {
-    const pointer = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !ref.current?.contains(event.target)) {
-        onClose()
-      }
-    }
-
-    const key = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      }
-    }
-
-    window.addEventListener('pointerdown', pointer)
-    window.addEventListener('keydown', key)
-
-    return () => {
-      window.removeEventListener('pointerdown', pointer)
-      window.removeEventListener('keydown', key)
-    }
-  }, [onClose])
+  // 菜单仅在打开时由父级挂载，挂载期间 open 恒为 true。
+  useDismissOnOutside(ref, true, onClose)
 
   return (
     <div

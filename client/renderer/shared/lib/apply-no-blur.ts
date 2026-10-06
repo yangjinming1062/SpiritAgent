@@ -2,32 +2,23 @@
 
 import { atom } from 'nanostores'
 
-import {
-  persistBoolean,
-  registerCompanionStorageKey,
-  registerStorageClearHandler,
-  registerStorageRestoreHandler,
-  storedBoolean
-} from '@/shared/lib/storage'
+import { definePersistedBoolean } from '@/shared/lib/storage'
 
-const PREF_KEY = registerCompanionStorageKey('da.companion.reduceTransparency')
 const BUDGET_FRAME_MS = 1000 / 45
 const DEGRADE_WINDOW_MS = 2000
 const RECOVER_WINDOW_MS = 10000
 
-export const $manualReduceTransparency = atom<boolean>(storedBoolean(PREF_KEY, false))
+const manualReduceTransparency = definePersistedBoolean({
+  fallback: false,
+  key: 'da.companion.reduceTransparency'
+})
+
+export const $manualReduceTransparency = manualReduceTransparency.$atom
 export const $noBlur = atom<boolean>(false)
 const $autoGlassDegraded = atom<boolean>(false)
 
 let wired = false
 let isIntegratedGpuResult = false
-
-registerStorageClearHandler(() => {
-  $manualReduceTransparency.set(false)
-})
-registerStorageRestoreHandler(() => {
-  $manualReduceTransparency.set(storedBoolean(PREF_KEY, false))
-})
 
 function applyNoBlur(degraded: boolean): void {
   document.documentElement.classList.toggle('no-blur', degraded)
@@ -65,8 +56,7 @@ export function setManualReduceTransparency(value: boolean): void {
 
 /** 水合与跨窗口回声只更新缓存，不重复上传或在登出清理时写入旧用户偏好。 */
 export function hydrateManualReduceTransparency(value: boolean): void {
-  $manualReduceTransparency.set(value)
-  persistBoolean(PREF_KEY, value)
+  manualReduceTransparency.set(value)
 }
 
 function prefersReducedTransparency(): boolean {

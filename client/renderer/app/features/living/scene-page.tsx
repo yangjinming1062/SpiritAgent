@@ -80,7 +80,8 @@ export function ScenePage(): React.JSX.Element {
   const detail = view.kind === 'detail' ? (details[view.sceneId] ?? null) : null
 
   useEffect(() => {
-    void hydrateScene()
+    // 首屏并行拉列表并跳过其尾部同刻重复刷新；state 失败时此路是列表唯一来源。
+    void hydrateScene({ skipLibraryRefresh: true })
     void loadSceneLibrary()
 
     return registerStorageClearHandler(() => {

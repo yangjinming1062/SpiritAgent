@@ -1,5 +1,6 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 
+import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { AlertCircle, Check, Pencil, RefreshCw, X } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
@@ -157,27 +158,31 @@ export function ShortcutRecorder({
   const [recording, setRecording] = useState(false)
   const [heldModifiers, setHeldModifiers] = useState<string[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
+  const onChangeRef = useLatestRef(onChange)
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (!recording) {
-        return
-      }
+  useEffect(() => {
+    if (!recording) {
+      return
+    }
 
+    const stop = (): void => {
+      setRecording(false)
+      setHeldModifiers([])
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
 
       if (e.key === 'Escape') {
-        setRecording(false)
-        setHeldModifiers([])
+        stop()
 
         return
       }
 
       if ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
-        onChange('')
-        setRecording(false)
-        setHeldModifiers([])
+        onChangeRef.current('')
+        stop()
 
         return
       }
@@ -201,36 +206,18 @@ export function ShortcutRecorder({
       const isFunctionKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(baseKey)
 
       if (parts.length > 1 || isFunctionKey) {
-        const accelerator = parts.join('+')
-        onChange(accelerator)
-        setRecording(false)
-        setHeldModifiers([])
+        onChangeRef.current(parts.join('+'))
+        stop()
       }
-    },
-    [recording, onChange]
-  )
+    }
 
-  const handleKeyUp = useCallback(
-    (e: KeyboardEvent) => {
-      if (!recording) {
-        return
-      }
-
-      const currentHeld = modifiersFromEvent(e)
-      setHeldModifiers(currentHeld)
-    },
-    [recording]
-  )
-
-  useEffect(() => {
-    if (!recording) {
-      return
+    const handleKeyUp = (e: KeyboardEvent) => {
+      setHeldModifiers(modifiersFromEvent(e))
     }
 
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setRecording(false)
-        setHeldModifiers([])
+        stop()
       }
     }
 
@@ -243,7 +230,7 @@ export function ShortcutRecorder({
       window.removeEventListener('keyup', handleKeyUp, true)
       window.removeEventListener('mousedown', handleClickOutside, true)
     }
-  }, [recording, handleKeyDown, handleKeyUp])
+  }, [recording, onChangeRef])
 
   const tokens = parseAcceleratorTokens(value)
   const isCustomized = defaultValue !== undefined && value !== defaultValue

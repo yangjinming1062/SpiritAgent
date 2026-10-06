@@ -171,10 +171,13 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
 
   preparationTimer = setTimeout(() => fireDone('failed'), 30000)
 
+  // 本次播放仍有效：未结算、未被新代次抢占、仍持有播放元素。
+  const alive = (): boolean => !fired && isLatestGen(gen) && current === audio
+
   const prepare = async (): Promise<void> => {
     await Promise.race([metadata, playbackEnded])
 
-    if (fired || !isLatestGen(gen) || current !== audio) {
+    if (!alive()) {
       return
     }
 
@@ -183,13 +186,13 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
     audio.currentTime = position
     await connectPlaybackGraph(audio, gen)
 
-    if (fired || !isLatestGen(gen) || current !== audio) {
+    if (!alive()) {
       return
     }
 
     await audio.play()
 
-    if (!fired && isLatestGen(gen) && current === audio) {
+    if (alive()) {
       started = true
       clearTimeout(preparationTimer)
       options.onStarted?.()

@@ -8,7 +8,9 @@ import {
   storedJson
 } from '@/shared/lib/storage'
 
-export type DesktopApp = 'chat' | 'posts' | 'diary' | 'scene' | 'appearance' | 'channels' | 'settings'
+export const DESKTOP_APPS = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'settings'] as const
+
+export type DesktopApp = (typeof DESKTOP_APPS)[number]
 
 export interface DesktopRect {
   x: number
@@ -31,7 +33,6 @@ interface DesktopLayout {
   spriteVisible: boolean
 }
 
-const APPS: readonly string[] = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'settings']
 const LAYOUT_KEY = registerCompanionStorageKey('da.desktop.layout')
 
 function validRect(value: unknown): value is DesktopRect {
@@ -57,12 +58,12 @@ function isLayout(value: unknown): value is DesktopLayout {
 
   return (
     Array.isArray(layout.windows) &&
-    layout.windows.length <= APPS.length &&
+    layout.windows.length <= DESKTOP_APPS.length &&
     layout.windows.every(
       item =>
         item &&
         typeof item === 'object' &&
-        APPS.includes(item.id) &&
+        DESKTOP_APPS.includes(item.id) &&
         validRect(item.bounds) &&
         typeof item.minimized === 'boolean' &&
         typeof item.maximized === 'boolean'

@@ -29,7 +29,7 @@ import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack, requestGateway } from '@/shared'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
-import { useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
+import { useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
@@ -45,9 +45,6 @@ import { toggleWhisper, WhisperOverlay } from './whisper'
 
 export function SpriteWindow(): React.JSX.Element {
   useWindowMouseCapture()
-  // toast 的关闭/展开按钮需要真实可点——透明窗口把它的矩形注册进交互区域。
-  const notificationStackRef = useRef<HTMLDivElement>(null)
-  useInteractiveRegion('notification-stack', notificationStackRef)
   const auth = useStore($auth)
   const gatewayState = useStore($gatewayState)
   const surfaceOpen = useStore($surfaceOpen)
@@ -222,7 +219,7 @@ export function SpriteWindow(): React.JSX.Element {
       <ProactiveBubble />
       <WhisperOverlay />
       {authed && <MediaViewerOverlay />}
-      <NotificationStack regionRef={notificationStackRef} />
+      <NotificationStack />
       <BootFailureOverlay />
       <DeveloperOverlay />
     </>

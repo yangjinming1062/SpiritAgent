@@ -13,6 +13,11 @@ import { useStrings } from '@/shared/strings'
 import { useBakedScene } from './baked-backdrop'
 import styles from './scene-backdrop.module.css'
 
+// 拖拽改尺寸按 64px 网格重烘焙，停稳后吸附回精确尺寸，终态烘焙无偏差。
+const BAKE_SIZE_GRID = 64
+const RESIZE_SETTLE_MS = 200
+const reducedMotionMql = typeof window !== 'undefined' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
+
 export function SceneBackdrop(): React.JSX.Element {
   const taskStatus = useStore($sceneTaskStatus)
   const backdrop = useStore($activeScene)
@@ -22,7 +27,7 @@ export function SceneBackdrop(): React.JSX.Element {
   const [viewport, setViewport] = useState({ height: 0, width: 0 })
   const rootRef = useRef<HTMLDivElement>(null)
 
-  // 烘焙尺寸按容器：root 撑满窗口，用 ResizeObserver 跟踪（最大化切换也覆盖）。
+  // 烘焙尺寸按容器 ResizeObserver 跟踪（最大化切换也覆盖），量化与吸附见 BAKE_SIZE_GRID。
   useEffect(() => {
     const el = rootRef.current
 
@@ -30,16 +35,36 @@ export function SceneBackdrop(): React.JSX.Element {
       return
     }
 
+    let settleTimer: number | undefined
+
     const ro = new ResizeObserver(() => {
-      setViewport({ height: el.clientHeight, width: el.clientWidth })
+      const height = el.clientHeight
+      const width = el.clientWidth
+
+      const quantized = {
+        height: height - (height % BAKE_SIZE_GRID),
+        width: width - (width % BAKE_SIZE_GRID)
+      }
+
+      setViewport(previous =>
+        previous.height === quantized.height && previous.width === quantized.width ? previous : quantized
+      )
+
+      window.clearTimeout(settleTimer)
+      settleTimer = window.setTimeout(() => {
+        setViewport({ height, width })
+      }, RESIZE_SETTLE_MS)
     })
 
     ro.observe(el)
 
-    return () => ro.disconnect()
+    return () => {
+      window.clearTimeout(settleTimer)
+      ro.disconnect()
+    }
   }, [])
 
-  const reducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const reducedMotion = reducedMotionMql?.matches ?? false
 
   const bgUrl = backdrop?.url ?? null
   const status = bgUrl ? 'ready' : taskStatus === 'pending' ? 'pending' : 'none'

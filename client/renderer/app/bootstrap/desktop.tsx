@@ -2,7 +2,7 @@ import '../../styles.css'
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { StrictMode, useEffect, useRef } from 'react'
+import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 
@@ -13,7 +13,7 @@ import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { NotificationStack } from '@/shared/components/notifications'
 import { initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
-import { CaptureWindowIdContext, useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
+import { CaptureWindowIdContext, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { log } from '@/shared/lib/log'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
@@ -53,13 +53,6 @@ function DesktopLifecycle(): null {
   return null
 }
 
-function DesktopNotifications(): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  useInteractiveRegion('desktop-notifications', ref)
-
-  return <NotificationStack regionRef={ref} />
-}
-
 export function bootstrapDesktop(
   RootComponent: React.ComponentType,
   role: 'desktop' | 'desktop-companion' = 'desktop'
@@ -88,7 +81,7 @@ export function bootstrapDesktop(
               <DesktopLifecycle />
               <ProxyGatewayPump />
               <AccountScopedRoot RootComponent={RootComponent} />
-              {role === 'desktop' && <DesktopNotifications />}
+              {role === 'desktop' && <NotificationStack />}
             </HashRouter>
           </HapticsProvider>
         </ErrorBoundary>

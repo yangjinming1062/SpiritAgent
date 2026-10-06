@@ -81,50 +81,57 @@ export function UserProfileSection({
   const loadIdRef = useRef(0)
   const mountedRef = useRef(true)
 
-  const load = useCallback(async (): Promise<void> => {
-    if (!mountedRef.current) {
-      return
-    }
-
-    const id = ++loadIdRef.current
-    setLoading(true)
-    setHint(null)
-
-    try {
-      const res = await requestGateway<ProfileListResponse>('memory.list', {
-        kind: 'user_profile',
-        status: 'active',
-        system_preset_id: PROFILE_PRESET_ID
-      })
-
-      if (!mountedRef.current || loadIdRef.current !== id || res.system_preset_id !== PROFILE_PRESET_ID) {
+  // background 静默刷新用于写后对账，不把表单切成 loading 占位。
+  const load = useCallback(
+    async (background = false): Promise<void> => {
+      if (!mountedRef.current) {
         return
       }
 
-      setRows(res.memories)
-      onCount(res.counts.user_profile)
-    } catch (err) {
-      if (!mountedRef.current || loadIdRef.current !== id) {
-        return
+      const id = ++loadIdRef.current
+
+      if (!background) {
+        setLoading(true)
       }
 
-      setHint(t.loadFailedHint)
-      notifyError(err, t.loadFailedToast)
-    } finally {
-      if (mountedRef.current && loadIdRef.current === id) {
-        setLoading(false)
+      setHint(null)
+
+      try {
+        const res = await requestGateway<ProfileListResponse>('memory.list', {
+          kind: 'user_profile',
+          status: 'active',
+          system_preset_id: PROFILE_PRESET_ID
+        })
+
+        if (!mountedRef.current || loadIdRef.current !== id || res.system_preset_id !== PROFILE_PRESET_ID) {
+          return
+        }
+
+        setRows(res.memories)
+        onCount(res.counts.user_profile)
+      } catch (err) {
+        if (!mountedRef.current || loadIdRef.current !== id) {
+          return
+        }
+
+        setHint(t.loadFailedHint)
+        notifyError(err, t.loadFailedToast)
+      } finally {
+        if (mountedRef.current && loadIdRef.current === id) {
+          setLoading(false)
+        }
       }
-    }
-  }, [onCount, t.loadFailedHint, t.loadFailedToast])
+    },
+    [onCount, t.loadFailedHint, t.loadFailedToast]
+  )
 
   useEffect(() => {
     mountedRef.current = true
-    const requestRef = loadIdRef
     void load()
 
     return () => {
       mountedRef.current = false
-      requestRef.current++
+      loadIdRef.current += 1
     }
   }, [load])
 
@@ -182,7 +189,7 @@ export function UserProfileSection({
         onCount(previous => (previous === null ? previous : previous + 1))
       }
 
-      await load()
+      await load(true)
     })
   }
 
@@ -207,7 +214,7 @@ export function UserProfileSection({
 
       setDrafts(previous => ({ ...previous, [key]: updated.content ?? value }))
       setRows(previous => previous.map(entry => (entry.id === row.id ? updated : entry)))
-      await load()
+      await load(true)
     })
   }
 
@@ -222,7 +229,7 @@ export function UserProfileSection({
       setDrafts(previous => ({ ...previous, [key]: '' }))
       setRows(previous => previous.filter(row => row.id !== memoryId))
       onCount(previous => (previous === null ? previous : Math.max(0, previous - 1)))
-      await load()
+      await load(true)
     })
   }
 

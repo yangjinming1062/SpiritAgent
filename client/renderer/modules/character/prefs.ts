@@ -1,5 +1,5 @@
 import type { DesktopPrefsHydrated } from '@ipc/contracts'
-import { atom, onMount, type WritableAtom } from 'nanostores'
+import { atom, type WritableAtom } from 'nanostores'
 
 import { hydrateManualReduceTransparency } from '@/shared/lib/apply-no-blur'
 import {
@@ -39,19 +39,6 @@ const responsePreferencePersisted = definePersistedEnum<ResponsePreference>({
 })
 
 export const $responsePreference = responsePreferencePersisted.$atom
-
-// 音色与回应偏好在生活空间设置，轻语共用同一组云端偏好。各窗口内存独立，借 storage 事件把其他窗口的写入热同步进 atom。
-onMount($companionVoiceId, () => {
-  const refresh = (event: StorageEvent): void => {
-    if (event.key === accountStorageKey(COMPANION_VOICE_ID_STORAGE_KEY)) {
-      $companionVoiceId.set(event.newValue ?? '')
-    }
-  }
-
-  window.addEventListener('storage', refresh)
-
-  return () => window.removeEventListener('storage', refresh)
-})
 
 export function setCompanionVoiceId(voice: string): void {
   $companionVoiceId.set(voice)
@@ -119,6 +106,10 @@ const HYDRATED_BOOLEAN_PREFS = [
 // 云端水合应用：只接受类型匹配的键，坏值静默跳过（fail-open）。借道既有 setter 落 localStorage + atom；回写的 prefs:set 上报在主进程侧与最近一次成功上云内容比对后消解，不会形成回环。
 export function initCompanionPrefsSync(): () => void {
   const onStorage = (event: StorageEvent): void => {
+    if (event.key === accountStorageKey(COMPANION_VOICE_ID_STORAGE_KEY) || event.key === null) {
+      $companionVoiceId.set(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
+    }
+
     if (event.key === accountStorageKey(AUTOPLAY_VOICE_STORAGE_KEY) || event.key === null) {
       $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
     }

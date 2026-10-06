@@ -134,11 +134,10 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
   )
 
   useEffect(() => {
-    const requestRef = loadIdRef
     void load(tab)
 
     return () => {
-      requestRef.current++
+      loadIdRef.current += 1
     }
   }, [tab, load])
 

@@ -7,6 +7,7 @@ import {
 import { clamp } from '@runtime'
 import { atom, computed } from 'nanostores'
 
+import { deepEqual } from '@/shared/lib/deep-equal'
 import { log } from '@/shared/lib/log'
 import {
   persistString,
@@ -927,6 +928,15 @@ function leaveWindowPeek(): void {
   }
 }
 
+// 跟踪写入前与当前 store 值全等才跳过：不能比对上次应用结果，setSpatialInsets 钳制等外部回写须触发重写自愈。
+function isWindowPeekLayoutCurrent(layout: WindowPeekLayout): boolean {
+  return (
+    deepEqual($spatialPeek.get(), layout.peek) &&
+    deepEqual($spatialPos.get(), layout.position) &&
+    $spatialScale.get() === layout.scale
+  )
+}
+
 async function updateWindowPeek(): Promise<void> {
   if (windowSnapshotPending || $spatialPeek.get()?.mode !== 'window') {
     return
@@ -973,6 +983,10 @@ async function updateWindowPeek(): Promise<void> {
     if (!layout) {
       leaveWindowPeek()
 
+      return
+    }
+
+    if (isWindowPeekLayoutCurrent(layout)) {
       return
     }
 

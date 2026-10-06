@@ -41,7 +41,7 @@ export interface ConfigSyncDeps {
 }
 
 export interface ConfigSync {
-  /** runner-config-store 的本地变更委托；在 store 写锁内同步调用，必须非阻塞。 */
+  /** runner-config-store 的本地变更委托；在 store 串行写任务内同步调用，必须非阻塞。 */
   onLocalChange: (config: Record<string, unknown>) => void
   /** 用户身份变化（登录/登出/换号）；跨后端同号也须视为不同身份。 */
   handleAuthUserChanged: (accountId: null | string) => Promise<void>

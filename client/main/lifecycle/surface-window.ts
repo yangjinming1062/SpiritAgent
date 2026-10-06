@@ -2,7 +2,13 @@ import type { DesktopSurfaceOpenPayload, SurfaceCompanionPreference, SurfaceId }
 import { clamp } from '@runtime'
 import { type App, BrowserWindow, screen } from 'electron'
 
-import { outerBounds, PANEL_SIZES, preferredCompanionWidth } from './surface-companion'
+import {
+  companionSlotMinimum,
+  companionSlotWidth,
+  outerBounds,
+  PANEL_SIZES,
+  preferredCompanionWidth
+} from './surface-companion'
 import type { SurfacesManager } from './surfaces'
 import type { ZoomPersistence } from './zoom-persistence'
 
@@ -55,10 +61,10 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
     const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
     const initialHeight = clamp(defaults.height, defaults.minHeight, wa.height - 16)
     const desiredSlot = preference.enabled ? preferredCompanionWidth(initialHeight) : 0
-    const minSlot = Math.ceil(desiredSlot * 0.65)
+    const minSlot = companionSlotMinimum(desiredSlot)
     const panelWidth = clamp(defaults.width, defaults.minWidth, wa.width - 16 - minSlot)
     const availableSlot = Math.max(0, wa.width - 16 - panelWidth)
-    const slotWidth = availableSlot >= minSlot ? Math.min(desiredSlot, availableSlot) : 0
+    const slotWidth = companionSlotWidth(desiredSlot, availableSlot)
     const outerWidth = panelWidth + slotWidth
 
     const panel = {

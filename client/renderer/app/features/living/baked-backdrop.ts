@@ -1,4 +1,4 @@
-// 预模糊的生活空间背景位图：把 CSS blur 烘焙进一次性离屏 canvas，Ken Burns 只变换已烘焙的静态层——否则合成器要对被模糊的层逐帧重采样。烘焙分辨率取窗口 CSS 尺寸的 1/2，缓存当前 URL、尺寸与主题的结果。
+// 把 CSS blur 烘焙进一次性离屏 canvas，Ken Burns 只变换静态层，避免合成器逐帧重采样被模糊层；分辨率取窗口 CSS 尺寸 1/2。
 
 import { getUiEffect, getUiPalette, type SpiritAgentUiTheme } from '@ipc/contracts'
 import { useEffect, useState } from 'react'
@@ -15,6 +15,30 @@ interface BakedScene {
   width: number
 }
 
+// 烘焙源按 URL 单条记忆：拖拽改尺寸的多次重烘焙不重走资源桥。
+let lastResolvedSource: { source: string; url: string } | null = null
+
+async function resolveBakeSource(url: string): Promise<string | null> {
+  // 主进程资源桥返回可读的 data URL，远端签名图不依赖 CDN 的 canvas CORS 配置。
+  if (!/^https?:/.test(url) || !window.spiritagent?.apiAsset) {
+    return url
+  }
+
+  if (lastResolvedSource?.url === url) {
+    return lastResolvedSource.source
+  }
+
+  const source = await window.spiritagent.apiAsset({ preferCache: true, url })
+
+  if (!source) {
+    return null
+  }
+
+  lastResolvedSource = { source, url }
+
+  return source
+}
+
 async function bakeScene(
   url: string,
   width: number,
@@ -22,12 +46,7 @@ async function bakeScene(
   theme: SpiritAgentUiTheme
 ): Promise<BakedScene | null> {
   const img = new Image()
-
-  // 主进程资源桥返回可读的 data URL，远端签名图不依赖 CDN 的 canvas CORS 配置。
-  const source =
-    /^https?:/.test(url) && window.spiritagent?.apiAsset
-      ? await window.spiritagent.apiAsset({ preferCache: true, url })
-      : url
+  const source = await resolveBakeSource(url)
 
   if (!source) {
     return null
@@ -61,7 +80,7 @@ async function bakeScene(
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.82), url, theme, height, width }
 }
 
-/** 返回烘焙位图；url/尺寸变化时重烘焙，失败（解码失败/无 2D 上下文）返回 null 由调用方回退。 */
+/** 返回烘焙位图；url/主题变化精确重烘焙，尺寸变化的重烘焙结果到达前沿用旧图，失败（解码失败/无 2D 上下文）清空并返回 null 由调用方回退 CSS blur。 */
 export function useBakedScene(
   url: string | null,
   width: number,
@@ -96,5 +115,6 @@ export function useBakedScene(
     }
   }, [url, width, height, theme])
 
-  return baked?.url === url && baked.width === width && baked.height === height && baked.theme === theme ? baked : null
+  // 尺寸不参与有效性：拖拽改尺寸期间沿用旧烘焙，避免掉回被模糊层逐帧合成。
+  return baked?.url === url && baked.theme === theme ? baked : null
 }

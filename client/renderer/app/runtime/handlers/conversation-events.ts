@@ -5,7 +5,6 @@ import {
   $chatDraftFromUndo,
   chatDisplayText,
   type ConversationRuntime,
-  getConversationRuntime,
   invalidateSessionHistory,
   rememberFullHistory,
   removeVoicePlayback,
@@ -22,7 +21,7 @@ import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 export function handleConversationEvent(
   event: GatewayEvent,
   ctx: EventRouteContext,
-  runtime: ConversationRuntime = getConversationRuntime(event.session_id ?? null)
+  runtime: ConversationRuntime
 ): void {
   if (!runtime.isCurrent()) {
     return

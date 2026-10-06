@@ -113,15 +113,8 @@ export function useChatSubmit({
     [controller, controllerEpoch]
   )
 
-  // 通过 ref 转发最新值给 send（避免 useCallback 依赖列表频繁变更）。
-  const textRef = useRef(text)
-  const pendingRef = useRef(pending)
-  const sendingRef = useRef(sending)
   // externalPaths 已是值类型，但仍走 ref：send 是异步的，期间用户继续拖入文件会改变 externalPaths 的引用。回调创建时闭包里的快照已过期，必须读 ref 才能拿到发送瞬间的最新列表。
   const externalPathsRef = useRef(externalPaths)
-  textRef.current = text
-  pendingRef.current = pending
-  sendingRef.current = sending
   externalPathsRef.current = externalPaths
 
   const send = useCallback(async (): Promise<void> => {
@@ -143,9 +136,9 @@ export function useChatSubmit({
     }
 
     const edit = $chatEditDraft.get()
-    const currentText = edit?.text ?? textRef.current
-    const currentPending = edit ? null : pendingRef.current
-    const currentSending = sendingRef.current
+    const currentText = edit?.text ?? controller.$text.get()
+    const currentPending = edit ? null : controller.$pending.get()
+    const currentSending = controller.$sending.get()
 
     if (isReadOnlySession) {
       return
@@ -190,7 +183,6 @@ export function useChatSubmit({
         return
       }
 
-      sendingRef.current = true
       setSending(true)
       $chatTurnInFlight.set(true)
       conversationVoiceSink().cancel($chatSessionId.get())
@@ -218,7 +210,6 @@ export function useChatSubmit({
           notifyError(err, getStrings().chat.edit.failed)
         }
       } finally {
-        sendingRef.current = false
         setSending(false)
       }
 
@@ -256,7 +247,6 @@ export function useChatSubmit({
     }
 
     setSending(true)
-    sendingRef.current = true
     conversationVoiceSink().cancel($chatSessionId.get())
 
     let id: string | null = null
@@ -342,28 +332,32 @@ export function useChatSubmit({
       onClearExternalPaths()
 
       // 展示层：媒体卡即内容，纯附件消息不留占位文案；仅附件与正文全空时兜底。
-      const displayPlaceholder = displayAttachments.length
-        ? ''
-        : currentPending?.type === 'video'
-          ? submit.displayVideo
-          : currentPending?.type === 'image'
-            ? submit.displayImage
-            : currentPending?.type === 'file'
-              ? submit.displayFile(currentPending.fileName)
-              : currentPending?.type === 'folder'
-                ? submit.displayFolder(currentPending.folderName)
-                : ''
+      const placeholderFor = (attachment: PendingAttachment | null): { display: string; prompt: string } => {
+        if (!attachment) {
+          return { display: '', prompt: '' }
+        }
 
-      const promptFallback =
-        currentPending?.type === 'video'
-          ? submit.promptVideo
-          : currentPending?.type === 'image'
-            ? submit.promptImage
-            : currentPending?.type === 'file'
-              ? submit.promptFile(currentPending.path)
-              : currentPending?.type === 'folder'
-                ? submit.promptFolder(currentPending.path)
-                : ''
+        switch (attachment.type) {
+          case 'video':
+            return { display: submit.displayVideo, prompt: submit.promptVideo }
+
+          case 'image':
+            return { display: submit.displayImage, prompt: submit.promptImage }
+
+          case 'file':
+            return { display: submit.displayFile(attachment.fileName), prompt: submit.promptFile(attachment.path) }
+
+          case 'folder':
+            return {
+              display: submit.displayFolder(attachment.folderName),
+              prompt: submit.promptFolder(attachment.path)
+            }
+        }
+      }
+
+      const placeholder = placeholderFor(currentPending)
+      const displayPlaceholder = displayAttachments.length ? '' : placeholder.display
+      const promptFallback = placeholder.prompt
 
       target.pushUserMessage(fullText || displayPlaceholder, displayAttachments.length ? displayAttachments : undefined)
       setText('')
@@ -391,7 +385,6 @@ export function useChatSubmit({
         setPending(null)
       }
     } finally {
-      sendingRef.current = false
       setSending(false)
     }
   }, [
@@ -468,7 +461,7 @@ export function useChatSubmit({
 
   return {
     cancelEdit: () => {
-      if (!sendingRef.current) {
+      if (!controller.$sending.get()) {
         $chatEditDraft.set(null)
       }
     },

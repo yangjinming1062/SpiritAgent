@@ -54,15 +54,17 @@ function voiceProjection(): VoiceBarProjection {
 }
 
 function isVoiceSurfaceVisible(messageId?: string): boolean {
+  if (recording || $auth.get().kind !== 'authenticated' || presentationPorts().$screenLocked.get()) {
+    return false
+  }
+
   const scopedVisible = projection?.isVisible?.(messageId)
 
   if (scopedVisible !== undefined) {
-    return (
-      scopedVisible && !recording && $auth.get().kind === 'authenticated' && !presentationPorts().$screenLocked.get()
-    )
+    return scopedVisible
   }
 
-  if (!mounted || recording || $auth.get().kind !== 'authenticated' || presentationPorts().$screenLocked.get()) {
+  if (!mounted) {
     return false
   }
 

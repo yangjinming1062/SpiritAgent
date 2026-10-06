@@ -19,6 +19,17 @@ export function preferredCompanionWidth(height: number): number {
   return Math.round((height * 0.58 * 125) / 275)
 }
 
+export function companionSlotMinimum(desired: number): number {
+  return Math.ceil(desired * 0.65)
+}
+
+/** 可用宽度内取陪伴栏宽度，不足收纳阈值时收为 0。 */
+export function companionSlotWidth(desired: number, available: number): number {
+  const width = Math.min(desired, Math.max(0, Math.floor(available)))
+
+  return width >= companionSlotMinimum(desired) ? width : 0
+}
+
 export function companionSlot(
   panel: Rectangle,
   side: SurfaceCompanionSide,
@@ -33,9 +44,9 @@ export function companionSlot(
 
   const available = side === 'left' ? panel.x - workArea.x : workArea.x + workArea.width - panel.x - panel.width
 
-  const width = Math.min(desired, Math.max(0, Math.floor(available)))
+  const width = companionSlotWidth(desired, available)
 
-  return width >= Math.ceil(desired * 0.65) ? { reason: null, width } : { reason: 'edge', width: 0 }
+  return width > 0 ? { reason: null, width } : { reason: 'edge', width: 0 }
 }
 
 export function outerBounds(panel: Rectangle, side: SurfaceCompanionSide, slotWidth: number): Rectangle {

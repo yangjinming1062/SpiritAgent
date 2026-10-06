@@ -182,6 +182,22 @@ export function useGatewayBoot(sessionId: string): void {
       return syncRunnerTools(gateway, () => !cancelled && generation === toolsSyncGeneration && gatewayOpen(), revoke)
     }
 
+    const connectOnce = async (): Promise<void> => {
+      const wsUrl = await desktop.getGatewayWsUrl()
+
+      if (cancelled) {
+        return
+      }
+
+      await gateway.connect(wsUrl)
+
+      if (cancelled) {
+        return
+      }
+
+      void syncTools()
+    }
+
     const attemptReconnect = async () => {
       if (cancelled || reconnecting || gatewayOpen() || gateway.lastCloseCode === WS_CLOSE_POLICY_VIOLATION) {
         return
@@ -190,19 +206,7 @@ export function useGatewayBoot(sessionId: string): void {
       reconnecting = true
 
       try {
-        const wsUrl = await desktop.getGatewayWsUrl()
-
-        if (cancelled) {
-          return
-        }
-
-        await gateway.connect(wsUrl)
-
-        if (cancelled) {
-          return
-        }
-
-        void syncTools()
+        await connectOnce()
       } catch (error) {
         if (cancelled) {
           return
@@ -308,76 +312,7 @@ export function useGatewayBoot(sessionId: string): void {
           }
         }
 
-        // 恢复服务端会话并同步历史；失败仅回退仍被选中的会话。
-        const sid = $chatSessionId.get()
-
-        const syncMountSeq = (res: { current_seq?: number }) => {
-          if (typeof res.current_seq === 'number') {
-            gateway.resetSeq(res.current_seq)
-          }
-        }
-
-        if (sid) {
-          void (async () => {
-            try {
-              const local = await loadLocalSessionHistory(sid)
-
-              if (cancelled || $chatSessionId.get() !== sid) {
-                return
-              }
-
-              const hasMessages = $chatMessageList.get().length > 0
-
-              // 本地秒开：先渲染缓存再后台增量追上。网关 seq 不重置到缓存值——后端重启后 seq 从低值重新增长，陈旧高水位会把实时帧当重复丢弃。
-              if (local && !hasMessages) {
-                hydrateChatMessages(local.messages, local.info)
-              }
-
-              // last_seq 只在聊天列表是活数据（重连）时发；缓存不追踪实时回合，冷启动一律走 after_id 增量，否则服务端按陈旧水位重放会重复追加。
-              const synced = await syncSessionHistory({
-                lastSeq: hasMessages && gateway.lastReceivedSeq > 0 ? gateway.lastReceivedSeq : undefined,
-                sessionId: sid,
-                request: body => gateway.request<SessionResumeResponse>('session.resume', { session_id: sid, ...body })
-              })
-
-              if (cancelled || $chatSessionId.get() !== sid) {
-                return
-              }
-
-              if (synced.currentSeq > 0) {
-                gateway.resetSeq(synced.currentSeq)
-              }
-
-              const liveHasMessages = $chatMessageList.get().length > 0
-
-              if (!liveHasMessages || synced.kind !== 'noop') {
-                hydrateChatMessages(synced.messages, synced.info)
-
-                // 历史水合会重置流式气泡，也要同步独立的服务端回合状态。
-                if (typeof synced.info?.running === 'boolean') {
-                  $chatTurnInFlight.set(synced.info.running)
-                }
-              } else if (synced.info) {
-                hydrateSessionSettings(synced.info)
-              }
-            } catch (error) {
-              if (cancelled || $chatSessionId.get() !== sid) {
-                return
-              }
-
-              if (error instanceof SessionHistoryChangedError) {
-                log.warn('gateway-boot', 'History is changing; keeping current session:', error)
-
-                return
-              }
-
-              setChatSession(null)
-              void openMainSession(syncMountSeq)
-            }
-          })()
-        } else {
-          void openMainSession(syncMountSeq)
-        }
+        void resumeSessionHistory()
       } else if (bootCompleted && (st === 'closed' || st === 'error')) {
         // 断连的回合不会再收到 complete/error ——正在合成/播放的语音条在此中止并释放。
         cancelVoiceBar()
@@ -437,21 +372,85 @@ export function useGatewayBoot(sessionId: string): void {
       }
     })
 
+    // 恢复服务端会话并同步历史；失败仅回退仍被选中的会话。
+    async function resumeSessionHistory(): Promise<void> {
+      const sid = $chatSessionId.get()
+
+      const syncMountSeq = (res: { current_seq?: number }) => {
+        if (typeof res.current_seq === 'number') {
+          gateway.resetSeq(res.current_seq)
+        }
+      }
+
+      if (sid) {
+        try {
+          const local = await loadLocalSessionHistory(sid)
+
+          if (cancelled || $chatSessionId.get() !== sid) {
+            return
+          }
+
+          const hasMessages = $chatMessageList.get().length > 0
+
+          // 本地秒开：先渲染缓存再后台增量追上；网关 seq 不重置到缓存值，否则后端重启后的低 seq 会被陈旧高水位当重复丢弃。
+          if (local && !hasMessages) {
+            hydrateChatMessages(local.messages, local.info)
+          }
+
+          // last_seq 只在聊天列表是活数据（重连）时发；缓存不追踪实时回合，冷启动一律走 after_id 增量，否则服务端按陈旧水位重放会重复追加。
+          const synced = await syncSessionHistory({
+            lastSeq: hasMessages && gateway.lastReceivedSeq > 0 ? gateway.lastReceivedSeq : undefined,
+            sessionId: sid,
+            request: body => gateway.request<SessionResumeResponse>('session.resume', { session_id: sid, ...body })
+          })
+
+          if (cancelled || $chatSessionId.get() !== sid) {
+            return
+          }
+
+          if (synced.currentSeq > 0) {
+            gateway.resetSeq(synced.currentSeq)
+          }
+
+          const liveHasMessages = $chatMessageList.get().length > 0
+
+          if (!liveHasMessages || synced.kind !== 'noop') {
+            hydrateChatMessages(synced.messages, synced.info)
+
+            // 历史水合会重置流式气泡，也要同步独立的服务端回合状态。
+            if (typeof synced.info?.running === 'boolean') {
+              $chatTurnInFlight.set(synced.info.running)
+            }
+          } else if (synced.info) {
+            hydrateSessionSettings(synced.info)
+          }
+        } catch (error) {
+          if (cancelled || $chatSessionId.get() !== sid) {
+            return
+          }
+
+          if (error instanceof SessionHistoryChangedError) {
+            log.warn('gateway-boot', 'History is changing; keeping current session:', error)
+
+            return
+          }
+
+          setChatSession(null)
+          void openMainSession(syncMountSeq)
+        }
+      } else {
+        void openMainSession(syncMountSeq)
+      }
+    }
+
     async function boot(): Promise<void> {
       try {
-        const wsUrl = await desktop.getGatewayWsUrl()
+        await connectOnce()
 
         if (cancelled) {
           return
         }
 
-        await gateway.connect(wsUrl)
-
-        if (cancelled) {
-          return
-        }
-
-        void syncTools()
         clearDesktopBootFailure()
         bootCompleted = true
       } catch (err) {

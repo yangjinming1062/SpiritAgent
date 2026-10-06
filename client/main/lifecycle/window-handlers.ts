@@ -184,8 +184,8 @@ export function createWindowHandlers({
     })
   }
 
-  function installSurfaceWindowHandlers(win: BrowserWindow): void {
-    installStandardWindowHandlers(win)
+  function installSurfaceWindowHandlers(win: BrowserWindow, options?: { reloadOnCrash?: boolean }): void {
+    installStandardWindowHandlers(win, options)
     installZoomShortcuts(win)
     installContextMenu(win)
   }
@@ -238,7 +238,7 @@ export function createWindowHandlers({
     })
   }
 
-  function installStandardWindowHandlers(win: BrowserWindow): void {
+  function installStandardWindowHandlers(win: BrowserWindow, options?: { reloadOnCrash?: boolean }): void {
     installDevToolsShortcut(win)
 
     win.webContents.setWindowOpenHandler(details => {
@@ -258,6 +258,11 @@ export function createWindowHandlers({
 
     win.webContents.on('render-process-gone', (_event, details) => {
       rememberLog(`[renderer] render-process-gone reason=${details?.reason} exitCode=${details?.exitCode}`)
+
+      // reloadOnCrash: false 时只记日志不自动 reload（桌面窗口保持崩溃态直至销毁），不占共享 reload 预算。
+      if (options?.reloadOnCrash === false) {
+        return
+      }
 
       if (details?.reason === 'crashed' || details?.reason === 'oom') {
         const now = Date.now()

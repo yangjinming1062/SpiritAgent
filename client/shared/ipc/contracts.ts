@@ -10,9 +10,10 @@ import type {
   PresentationMode,
   PresentationState,
   StageActivity,
-  StageRitualRequest
+  StageRitualRequest,
+  SurfaceId
 } from './desktop-presentation'
-export { DESKTOP_COMPANION_ACTIVITY_PRIORITY } from './desktop-presentation'
+export { DESKTOP_COMPANION_ACTIVITY_PRIORITY, normalizeSurfaceId } from './desktop-presentation'
 export type {
   DesktopAccount,
   DesktopBackground,
@@ -32,7 +33,8 @@ export type {
   PresentationMode,
   PresentationState,
   StageActivity,
-  StageRitualRequest
+  StageRitualRequest,
+  SurfaceId
 } from './desktop-presentation'
 
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
@@ -166,13 +168,6 @@ export function normalizeUiTheme(raw: unknown): SpiritAgentUiTheme {
 
 /** 入口 HTML 播种参数名：主进程 loadURL 前把镜像里的主题写进查询串，渲染层首帧前消费。 */
 export const UI_THEME_URL_PARAM = 'ui_theme'
-
-// 入口面：互斥的两个 BrowserWindow；都未打开时以 null 表示。
-export type SurfaceId = 'living' | 'workbench'
-
-export function normalizeSurfaceId(raw: unknown): SurfaceId {
-  return raw === 'workbench' ? 'workbench' : 'living'
-}
 
 export interface DesktopSurfaceOpenPayload {
   sessionId?: string

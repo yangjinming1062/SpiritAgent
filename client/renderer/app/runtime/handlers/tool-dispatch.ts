@@ -2,12 +2,7 @@ import type { DesktopScreenRect, MemoryToolScope, RunnerCallOutcome } from '@ipc
 
 import { holdRemoteToolActivity, syncConversationActivity } from '@/app/workflows/conversation-activity'
 import { findWindowByKeyword, performRitualWalk } from '@/modules/character'
-import {
-  $chatSessionId,
-  type ConversationRuntime,
-  findConversationRuntime,
-  getConversationRuntime
-} from '@/modules/conversation'
+import { type ConversationRuntime, findConversationRuntime } from '@/modules/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { trimOldest } from '@/shared/lib/trim-oldest'
@@ -66,10 +61,7 @@ function markToolCallSeen(callId: string): boolean {
   return true
 }
 
-export function handleToolStart(
-  event: GatewayEvent,
-  runtime: ConversationRuntime = getConversationRuntime($chatSessionId.get())
-): void {
+export function handleToolStart(event: GatewayEvent, runtime: ConversationRuntime): void {
   const p = decodePayload<{ name?: string }>(event.payload)
 
   runtime.setAssistantTool(p.name ?? getStrings().chat.tools.genericName)
@@ -246,7 +238,7 @@ export function handleToolCancel(event: GatewayEvent, ctx: EventRouteContext): v
   }
 }
 
-export function handleToolComplete(runtime: ConversationRuntime = getConversationRuntime($chatSessionId.get())): void {
+export function handleToolComplete(runtime: ConversationRuntime): void {
   runtime.setAssistantTool(null)
   syncConversationActivity()
 }

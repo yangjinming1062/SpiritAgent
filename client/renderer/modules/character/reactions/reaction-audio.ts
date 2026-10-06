@@ -64,17 +64,11 @@ function pickReaction(bucket: ReactionBucket, companionTags: string[]): Reaction
   return candidates[Math.floor(Math.random() * candidates.length)]
 }
 
-/** 本地反应池入口（DESIGN「拖拽与直接交互」 离线/机械降级）。首次播放合成一次并落盘，之后每次触发都是本地读盘。换音色或改台词会让缓存键失效，自动重新生成。 */
-async function playReactionAudio(entry: ReactionEntry | null): Promise<boolean> {
-  if (!entry) {
-    return false
-  }
-
-  return await presentationPorts().speakScripted(entry.text, undefined, 'reaction')
-}
-
+/** 本地反应池入口（DESIGN「拖拽与直接交互」 离线/机械降级）；合成落盘与缓存契约见 speakScripted 文档。 */
 export function handleDragEndInteraction(): void {
   const entry = pickReaction('drag', $personalityTags.get())
 
-  void playReactionAudio(entry)
+  if (entry) {
+    void presentationPorts().speakScripted(entry.text, undefined, 'reaction')
+  }
 }
