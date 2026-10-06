@@ -90,13 +90,6 @@ from .functions import (
 from .hashing import sha256_hex, sha512_b64
 from .logger import get_logger, set_request_user_id, setup_logging
 from .network import download_capped, is_safe_outbound, safe_outbound_async_client, safe_outbound_async_transport
-from .observability import (
-    SCENE_FAILURES_TOTAL,
-    SCENE_IMAGES_TOTAL,
-    SCENE_LLM_TRIGGERS_TOTAL,
-    render_metrics_response,
-    rpc_metrics,
-)
 from .paid_calls import log_paid_call
 from .redact import redact_sensitive_text
 from .temp_files import cleanup_expired, get_file_path, owned_temp_files, save_file
@@ -152,9 +145,6 @@ __all__ = [
     "ProviderCard",
     "ProviderCardUpdate",
     "SCENE_DOWNLOAD_MAX_BYTES",
-    "SCENE_FAILURES_TOTAL",
-    "SCENE_IMAGES_TOTAL",
-    "SCENE_LLM_TRIGGERS_TOTAL",
     "SEARCH_INPUT_MAX_LEN",
     "SESSION_LOCAL",
     "SESSION_PREVIEW_MAX_CHARS",
@@ -214,11 +204,9 @@ __all__ = [
     "parse_llm_json",
     "parse_timezone",
     "redact_sensitive_text",
-    "render_metrics_response",
     "resolve_language",
     "purge_user_temp_files",
     "resolve_prompt_text",
-    "rpc_metrics",
     "safe_json_loads",
     "strip_outer_code_fence",
     "safe_outbound_async_client",

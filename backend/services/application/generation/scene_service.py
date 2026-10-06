@@ -7,8 +7,6 @@ from uuid import uuid4
 
 from components import (
     SCENE_DOWNLOAD_MAX_BYTES,
-    SCENE_FAILURES_TOTAL,
-    SCENE_IMAGES_TOTAL,
     SESSION_LOCAL,
     SETTINGS,
     get_logger,
@@ -614,7 +612,6 @@ async def _analyze(user_id: int, scene_id: int) -> None:
             _event(db, persona, "companion.scene.activated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
-        SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="ready").inc()
     await cleanup_user_assets(user_id)
 
 
@@ -699,7 +696,6 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                 fresh.regeneration_stage != "submitting" or current.image_chain.active_index != progress.active_index
             ):
                 fresh.attempt_count += 1
-                SCENE_IMAGES_TOTAL.labels(origin=fresh.origin, result="attempt").inc()
             frozen.image_chain = progress
             fresh.regeneration_state_json = frozen.model_dump_json()
             fresh.regeneration_stage = "analyze" if frozen.wallpaper_path else progress.phase
@@ -742,7 +738,6 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             await enqueue_asset_cleanup(db, user_id, state.stored_paths() | ({old_path} if old_path else set()))
             _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
             await db.commit()
-            SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="ready").inc()
     finally:
         async with SESSION_LOCAL() as db:
             retained = await db.scalar(
@@ -787,8 +782,6 @@ async def _mark_regeneration_failed(
         _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
-        SCENE_FAILURES_TOTAL.labels(stage="regenerate").inc()
-        SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="failed").inc()
     await cleanup_user_assets(user_id)
 
 
@@ -830,7 +823,6 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
                         await _consume_llm_quota(db, user_id)
                     db.add(SceneGenerationAttempt(user_id=user_id, scene_id=scene_id))
                 fresh.attempt_count += 1
-                SCENE_IMAGES_TOTAL.labels(origin=fresh.origin, result="attempt").inc()
             fresh.generation_state_json = progress.model_dump_json()
             fresh.stage = "analyze" if progress.phase == "complete" else progress.phase
             _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
@@ -873,8 +865,6 @@ async def _mark_failed(user_id: int, scene_id: int, error: str, *, review_failed
             row.stage = "review_failed"
         _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
         await db.commit()
-        SCENE_FAILURES_TOTAL.labels(stage=row.stage).inc()
-        SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="failed").inc()
 
 
 def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | None = None) -> None:

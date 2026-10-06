@@ -1,0 +1,5 @@
+# TLS 入口：复制本文件为 Caddyfile（已被 Git 忽略），把域名替换为实际对外域名。
+# 80/443 放行后 Caddy 自动签发并续期证书；WebSocket 升级由 reverse_proxy 透传。
+your.domain {
+	reverse_proxy backend:10620
+}

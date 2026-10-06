@@ -23,7 +23,6 @@ dependencies = [
     "numpy>=2.0",
     "pgvector>=0.5.0",
     "alembic>=1.19.1",
-    "prometheus-client>=0.20.0",
     "pycryptodome>=3.20.0",
     "mutagen>=1.48.1",
     # 动作素材透明化的本地 ISNet ONNX 抠像模型

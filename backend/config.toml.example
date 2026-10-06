@@ -14,6 +14,9 @@
 [runtime]
 # FastAPI / OpenAPI 文档标题
 app_name = "SpiritAgent Backend"
+# 对外基础地址（如 https://your.domain）：预填激活码 baseUrl、视频附件走公网绝对 URL；
+# 留空为本地模式（视频内联发送，单文件 50MB 上限）
+public_base_url = ""
 
 [database]
 # 数据库连接 URL（SQLAlchemy 格式）。在 Docker Compose 环境中服务名为 postgres（端口 5432）
@@ -35,9 +38,3 @@ admin_password = "spiritagent@admin123"
 [storage]
 # 后端磁盘数据与产物存储根目录（支持相对或绝对路径）
 data_dir = "./data"
-
-[observability]
-# 是否开启 Prometheus 指标端点（冷启动挂载）
-metrics_enabled = true
-# 指标采集暴露路径
-metrics_path = "/metrics"

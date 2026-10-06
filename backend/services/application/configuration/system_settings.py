@@ -30,8 +30,6 @@ STARTUP_ONLY_KEYS: frozenset[str] = frozenset(
         "admin_password",
         "companion_asset_signing_key",
         "data_dir",
-        "metrics_enabled",
-        "metrics_path",
         "app_name",
     },
 )
@@ -41,7 +39,6 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
     {
         "brave_search_api_key",
         "tavily_api_key",
-        "metrics_auth_token",
     },
 )
 

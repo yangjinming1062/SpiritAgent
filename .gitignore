@@ -30,6 +30,7 @@
 .env.test
 config.toml
 config.toml.local
+Caddyfile
 
 # ---------------------------------------------------------------------------
 # Python Runtime

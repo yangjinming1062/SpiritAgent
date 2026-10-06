@@ -5,9 +5,8 @@ from components import (
     SETTINGS,
     correlated_exception_response,
     correlation_id_middleware,
-    render_metrics_response,
 )
-from fastapi import FastAPI, Header, Response
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from services.adapters.http import (
     BodyLimitMiddleware,
@@ -45,16 +44,6 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exception_handler)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-if SETTINGS.metrics_enabled:
-
-    @app.get(SETTINGS.metrics_path)
-    def metrics_endpoint(
-        authorization: str | None = Header(default=None, alias="Authorization"),
-        x_metrics_token: str | None = Header(default=None, alias="X-Metrics-Token"),
-    ) -> Response:
-        return render_metrics_response(auth_header=authorization, token_header=x_metrics_token)
 
 
 for _router in ROUTERS:

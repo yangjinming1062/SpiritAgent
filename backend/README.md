@@ -169,15 +169,22 @@ iLink 长轮询 `getupdates` 返回 `-14` 即清除登录凭据并将绑定置�
 
 ```bash
 docker compose up -d
-# 同时启动监控
-docker compose --profile monitoring up -d
 ```
 
 数据库须为 PostgreSQL 16 及以上并安装 pgvector，compose 使用 `pgvector/pgvector:pg16`，外部数据库同样适用。会话搜索与记忆证据检索使用 `IS JSON` 谓词与 `pg_input_is_valid`，没有启动期版本检查，低版本只会让这两处查询报错。
 
-容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。`/metrics` 默认无需鉴权；配置 `metrics_auth_token` 后须以 `Authorization: Bearer <令牌>` 或 `X-Metrics-Token` 访问。
+容器与卷见 [docker-compose.yml](docker-compose.yml)。Backend 不参与桌面安装包构建。
 
-使用随附 Prometheus 时在 `backend/.env` 设置 `METRICS_AUTH_TOKEN`，Backend 经 `env_file` 读取，Prometheus 经 compose 注入同一令牌文件；未设置时后端不校验。compose 不会因令牌变化自动重建容器，修改后执行 `docker compose --profile monitoring up -d --force-recreate backend prometheus`。管理后台保存或清除令牌会即时更新 Backend 的 `system_settings`；数据库中的动态值在启动时优先于 `.env`，只改文件不能覆盖已保存值；启用 Prometheus 时须同步管理后台与 `.env`。Backend 不参与桌面安装包构建。
+### HTTPS 与公网访问
+
+`caddy` 服务（`--profile public` 启用）监听 80/443，把 HTTPS 与 WebSocket 流量反代到 backend，证书自动签发与续期；backend 的明文 10620 仅绑定 `127.0.0.1`，不暴露公网。公网部署步骤：
+
+1. 域名 A 记录指向服务器 IP，防火墙/安全组放行 80 与 443（80 用于 Let's Encrypt HTTP-01 验证与续期）。
+2. 复制 [Caddyfile.example](Caddyfile.example) 为 `Caddyfile`（已被 Git 忽略），把域名替换为实际域名。
+3. 在 `config.toml` 设置 `public_base_url = "https://<域名>"`：管理端创建账号时预填激活码的 baseUrl，视频附件以绝对 URL 发送供应商（上限放宽到会话配额）。
+4. 执行 `docker compose --profile public up -d` 后，客户端用 `https://<域名>` 激活，管理端为 `https://<域名>/admin/`。
+
+仅本机测试不需要域名，直接访问 `http://127.0.0.1:10620`。
 
 后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。后端代码和依赖均打入镜像，修改后在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。构建上下文为仓库根，仅根 `.dockerignore` 生效。
 

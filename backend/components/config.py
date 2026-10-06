@@ -245,10 +245,6 @@ class Settings(BaseSettings):
         validation_alias="ATTACHMENT_SESSION_QUOTA_BYTES",
     )
 
-    metrics_enabled: bool = Field(default=True, validation_alias="METRICS_ENABLED")
-    metrics_path: str = Field(default="/metrics", validation_alias="METRICS_PATH")
-    metrics_auth_token: str = Field(default="", validation_alias="METRICS_AUTH_TOKEN")
-
     channels_turn_queue_max: int = Field(default=20, ge=0, validation_alias="CHANNELS_TURN_QUEUE_MAX")
     channels_inbound_rate_per_minute: int = Field(
         default=20,

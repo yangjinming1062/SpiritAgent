@@ -29,8 +29,9 @@ services:
     env_file:
       - path: .env
         required: false
+    # 仅绑定本机回环：明文 HTTP 不暴露公网，公网 TLS 由 caddy（--profile public）终止。
     ports:
-      - "10620:10620"
+      - "127.0.0.1:10620:10620"
     volumes:
       - ./config.toml:/app/config.toml:ro
       - ./updates:/app/updates
@@ -41,32 +42,25 @@ services:
       timeout: 3s
       retries: 5
 
-  # Optional Prometheus metrics observability platform (--profile monitoring)
-  prometheus:
-    image: prom/prometheus:v2.51.0
-    container_name: spiritagent-prometheus
+  # 公网 HTTPS 入口（--profile public）：需先按 Caddyfile.example 准备 Caddyfile。
+  caddy:
+    image: caddy:2
+    container_name: spiritagent-caddy
     restart: unless-stopped
     profiles:
-      - monitoring
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    configs:
-      - source: metrics_auth_token
-        target: /etc/prometheus/metrics_auth_token
+      - public
     depends_on:
       backend:
         condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   postgres_data:
-  prometheus_data:
-
-configs:
-  # Prometheus 抓取 /metrics 的令牌，与 backend 经 .env 读取的 METRICS_AUTH_TOKEN 同源；未设置时后端不校验。
-  # 保留块标量的末尾换行：内容为空时 compose 会改为绑定挂载项目目录。
-  metrics_auth_token:
-    content: |
-      ${METRICS_AUTH_TOKEN:-}
+  caddy_data:
+  caddy_config:

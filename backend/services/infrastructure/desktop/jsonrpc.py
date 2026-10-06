@@ -13,7 +13,6 @@ from components import (
     JSONRPC_PARSE_ERROR,
     get_logger,
     redact_sensitive_text,
-    rpc_metrics,
 )
 
 from .buffer import BufferedFrame, ReplayBuffer
@@ -231,8 +230,7 @@ class JsonRpcDispatcher:
             return
 
         try:
-            async with rpc_metrics(method):
-                result = await handler(params)
+            result = await handler(params)
         except JsonRpcError as e:
             if is_notification:
                 logger.warning("jsonrpc notification rejected", extra={"method": method, "code": e.code})

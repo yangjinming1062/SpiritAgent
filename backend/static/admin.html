@@ -2066,7 +2066,6 @@ const SETTINGS_SECTIONS = [
                 num('access_token_expire_minutes', '登录令牌有效期 (用户与管理端，分钟)', 1, { min: 1, max: 5256000 }),
                 sel('log_level', '日志输出级别', ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map(v => [v, v])),
                 sel('log_format', '日志格式', [['json', 'json'], ['text', 'text']]),
-                secret('metrics_auth_token', '指标采集鉴权 Token'),
             ]],
             ['field', bool('llm_debug_logging', '开启 LLM Debug 面包屑追踪日志')],
             ['field', { ...num('llm_debug_max_chars', 'LLM Debug 单字段截断字符数', 1, { min: 0 }), narrow: true }],

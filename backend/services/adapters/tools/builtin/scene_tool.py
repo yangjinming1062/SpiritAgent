@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from components import SCENE_LLM_TRIGGERS_TOTAL, SESSION_LOCAL, tool_error
+from components import SESSION_LOCAL, tool_error
 from modules.companion import CompanionScene, SceneOrigin
 from prompts.tools import SCENE_TOOL_DESCRIPTIONS
 
@@ -77,12 +77,10 @@ async def scene_create_tool(
                 auto_activate=auto_activate,
             )
         except SceneError as exc:
-            SCENE_LLM_TRIGGERS_TOTAL.labels(outcome="rejected").inc()
             return tool_error(str(exc))
         scene_turn.create_claimed = True
         if auto_activate:
             scene_turn.switch_claimed = True
-        SCENE_LLM_TRIGGERS_TOTAL.labels(outcome="accepted").inc()
         return await _result(
             user_id,
             accepted=True,
