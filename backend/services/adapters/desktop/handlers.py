@@ -397,7 +397,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                 raise
             except Exception:
                 logger.exception("jsonrpc dispatch failed", extra={"user_id": user_id})
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
         # 仍是该用户当前连接时才进入宽限期：已被新连接替换或已注销的旧连接不改动网关会话。
