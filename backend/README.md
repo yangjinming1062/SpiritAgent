@@ -150,7 +150,7 @@ iLink 长轮询 `getupdates` 返回 `-14` 即清除登录凭据并将绑定置�
 - 幂等方法、显式幂等键或确认未发送的连接失败才可自动重试；请求体须可重放。
 - 非幂等请求在写入或读取响应阶段断线按结果未知处理，不能直接换供应商再提交。
 - 后台单次文本调用、标题和网页摘要使用完整配置链，每家重算模型、推理档位、温度、结构输出与窗口预算；嵌入仍保持模型一致性，不套用文本回退。
-- 通用链 [execute_with_fallback](services/infrastructure/llm/llm_fallback.py)（LLM、STT、TTS、立绘与非本人聊天图片）换家只看 [错误分类](services/infrastructure/llm/error_classifier.py) 的 `should_fallback`：确定性失败，以及本家传输层重试耗尽后的超时 / 过载；结果未知或流已开始时不换家。媒体质量链（视频任务、动作素材、角色 / 场景 / 衣柜图片）逐家单独调用，由 [media_failure_reason](services/application/generation/media_chain.py) 判定：结果未知优先且不换家，其余接受产物校验声明的可回退错误或 `should_fallback`。
+- 通用链 [execute_with_fallback](services/infrastructure/llm/llm_fallback.py)（LLM、STT、TTS、立绘与非本人聊天图片）换家只看 [错误分类](services/infrastructure/llm/error_classifier.py) 的 `should_fallback`：不区分错误类型，只要供应商报错（4xx/5xx、超时、异常）均自动回退到下一家以保障体验；结果未知或流已开始时不换家。媒体质量链（视频任务、动作素材、角色 / 场景 / 衣柜图片）逐家单独调用，由 [media_failure_reason](services/application/generation/media_chain.py) 判定：结果未知优先且不换家，其余接受产物校验声明的可回退错误或 `should_fallback`。
 
 - 出站 SSRF 守卫默认关闭（`SSRF_GUARD_ENABLED`，管理后台可热切换）：关闭时不做保留网段与黑名单校验，避免 DNS 污染 / fake-ip 代理环境误拦正常出站，内网访问风险由部署者自担。实现见 [components/network.py](components/network.py)。
 - 开启后默认拒绝保留网段；显式 fake-IP 豁免（`SSRF_ALLOWED_CIDRS`）不取消域名、协议、HTTPS 降级、云元数据与 CGNAT 检查。

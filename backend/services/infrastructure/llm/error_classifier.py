@@ -24,32 +24,16 @@ class FailoverReason(enum.Enum):
     server_error = "server_error"  # 500/502 内部错误
     timeout = "timeout"  # 连接/读取超时或断连
     result_unknown = "result_unknown"  # 非幂等请求可能已生效 —— 禁止自动重试或回退
-    context_overflow = "context_overflow"  # 上下文超限 —— 换家无效
+    context_overflow = "context_overflow"  # 上下文超限
     payload_too_large = "payload_too_large"  # 413
     image_too_large = "image_too_large"  # 单图超出供应商限制
     model_not_found = "model_not_found"  # 模型无效或不接受图像/视频输入
-    provider_policy_blocked = "provider_policy_blocked"  # 聚合商账号级数据策略屏蔽唯一端点，换家同样被拦
+    provider_policy_blocked = "provider_policy_blocked"  # 聚合商账号级数据策略屏蔽唯一端点
     content_policy_blocked = "content_policy_blocked"  # 供应商安全过滤拒绝该 prompt，对同一请求确定
     format_error = "format_error"  # 请求畸形，重试结果相同
     attachment_fetch_failed = "attachment_fetch_failed"  # 供应商拉取 image_url 失败，需提示用户
     empty_result = "empty_result"  # 成功响应但无产物（如零张图）
     unknown = "unknown"
-
-
-# 可切换到链中下一家的原因：确定性失败换家可能成功；超时/过载在本家传输层重试耗尽后才到这里。server_error 通常是供应商特定行为、unknown 无信号，均不级联。
-_FALLBACK_REASONS = frozenset(
-    {
-        FailoverReason.auth,
-        FailoverReason.billing,
-        FailoverReason.rate_limit,
-        FailoverReason.overloaded,
-        FailoverReason.timeout,
-        FailoverReason.model_not_found,
-        FailoverReason.content_policy_blocked,
-        FailoverReason.format_error,
-        FailoverReason.empty_result,
-    },
-)
 
 
 @dataclass(frozen=True)
@@ -60,7 +44,8 @@ class ClassifiedError:
 
     @property
     def should_fallback(self) -> bool:
-        return self.reason in _FALLBACK_REASONS
+        # 简化回退策略：不区分错误类型，只要非结果未知（非幂等任务未决）即可切换到下一家以保障用户体验。
+        return self.reason != FailoverReason.result_unknown
 
 
 class LLMRuntimeError(Exception):
@@ -82,6 +67,9 @@ _BILLING_PATTERNS = (
     "exceeded your current quota",
     "plan does not include",
     "key limit exceeded",
+    "token plan",
+    "用量上限",
+    "购买积分",
 )
 
 _RATE_LIMIT_MESSAGE_PATTERNS = (
@@ -345,6 +333,8 @@ def _by_status(s: _Signals) -> FailoverReason | None:
             # 部分网关以 5xx 返回请求校验错误，按确定性格式错误处理以免重试风暴
             if s.has(REQUEST_VALIDATION_PATTERNS) or s.error_code in _REQUEST_VALIDATION_ERROR_CODES:
                 return FailoverReason.format_error
+            if s.has(_BILLING_PATTERNS) or s.error_code in _BILLING_ERROR_CODES or s.error_code == "2056":
+                return FailoverReason.billing
             return FailoverReason.server_error
         case 503 | 529:
             return FailoverReason.overloaded
