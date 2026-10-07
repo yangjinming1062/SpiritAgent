@@ -292,7 +292,9 @@ def _history_to_responses_context(
         "instructions": system_prompt,
         "input": [],
         "source_message_ids": [],
+        "dialogue_message_ids": [],
         "checkpoint_indices": [],
+        "time_context_indices": [],
         "user_input_indices": [],
     }
     prev_date_key: str | None = None
@@ -314,7 +316,10 @@ def _history_to_responses_context(
                 if clock:
                     context["input"].append(user_text_item(clock))
                 last_user_at = msg.created_at
+        context["time_context_indices"].extend(range(item_start, len(context["input"])))
         items = db_message_to_response_items(msg)
+        if items and msg.role in {"user", "assistant"} and not msg.tool_calls:
+            context["dialogue_message_ids"].append(msg.id)
         if msg.role == "user":
             context["user_input_indices"].extend(range(len(context["input"]), len(context["input"]) + len(items)))
         if msg.subtype in CHECKPOINT_SUBTYPES:
@@ -343,6 +348,7 @@ def _history_to_responses_context(
         clock = format_time_anchor(now, None, user_local_tz, lang)
         if clock:
             context["input"].append(user_text_item(clock))
+        context["time_context_indices"].extend(range(item_start, len(context["input"])))
         context["source_message_ids"].extend([None] * (len(context["input"]) - item_start))
 
     return context

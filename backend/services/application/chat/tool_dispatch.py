@@ -52,6 +52,7 @@ class _ToolDispatchContext:
     user_message: str
     authorization_check: Callable[[], Awaitable[bool]] | None = None
     channel_source: ChannelTurnSource | None = None
+    unavailable_tool_names: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -93,6 +94,45 @@ def matched_tool_names(output: object) -> list[str]:
     if not isinstance(parsed, dict) or not isinstance(parsed.get("matched_tools"), list):
         return []
     return [str(tool["name"]) for tool in parsed["matched_tools"] if isinstance(tool, dict) and tool.get("name")]
+
+
+def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> list[dict]:
+    """按真实图片与验图状态披露工具，参数只接受可用产物标识。"""
+    ready_images = {
+        artifact.media_id: artifact
+        for artifact in state.artifacts.values()
+        if artifact.type == "image" and artifact.status == "ready" and artifact.url
+    }
+    corrections = {
+        media_id: inspection.inspection_id
+        for media_id, inspection in state.inspections.items()
+        if media_id in ready_images
+        and inspection.verdict == "revise"
+        and state.current_versions.get(ready_images[media_id].goal_id) == media_id
+        and ready_images[media_id].goal_id in state.plans
+        and ready_images[media_id].goal_id not in state.regenerated_goals
+    }
+    available = []
+    for schema in schemas:
+        name = schema["name"]
+        if name not in {"media_inspect", "image_regenerate"}:
+            available.append(schema)
+            continue
+        media_ids = ready_images if name == "media_inspect" else corrections
+        if not media_ids:
+            continue
+        parameters = schema["parameters"]
+        properties = {
+            **parameters["properties"],
+            "media_id": {**parameters["properties"]["media_id"], "enum": sorted(media_ids)},
+        }
+        if name == "image_regenerate":
+            properties["inspection_id"] = {
+                **properties["inspection_id"],
+                "enum": sorted(corrections.values()),
+            }
+        available.append({**schema, "parameters": {**parameters, "properties": properties}})
+    return available
 
 
 def _redact_tool_payload(result_str: str) -> str | list:
@@ -154,7 +194,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
     await ctx.emitter.send_json({"type": "tool_start", "name": name, "call_id": tc["call_id"]})
 
     try:
-        if name in ctx.excluded_tool_names:
+        if name in ctx.excluded_tool_names or name in ctx.unavailable_tool_names:
             return make_tool_result_message(
                 name,
                 tool_error(f"Tool is unavailable in this execution mode: {name}"),
@@ -191,7 +231,10 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
                     llm_config=ctx.llm_config,
                     user_settings=ctx.user_settings,
                     parent_session_id=ctx.session_id,
-                    excluded_tool_names=ctx.excluded_tool_names,
+                    # 媒体状态限制只作用于当前回合与搜索披露，不作为子 Agent 的永久工具限制。
+                    excluded_tool_names=ctx.excluded_tool_names | ctx.unavailable_tool_names
+                    if name == "search_tools"
+                    else ctx.excluded_tool_names,
                     scene_turn=ctx.scene_turn,
                     media_turn=ctx.media_turn,
                     memory_scope=ctx.memory_scope,

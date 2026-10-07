@@ -2,7 +2,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any
 
@@ -46,7 +46,11 @@ from services.infrastructure.llm import (
     resolve_context_tokens,
     scale_temperature,
 )
-from services.infrastructure.tool_runtime import ToolCallGuardrailController, schema_name
+from services.infrastructure.tool_runtime import (
+    ToolCallGuardrailController,
+    apply_search_tools_catalog,
+    schema_name,
+)
 from services.infrastructure.turn_ownership import conversation_lock
 
 from .chat_emitter import Emitter
@@ -69,7 +73,7 @@ from .streaming import (
     _reply_repair_history,
 )
 from .system_prompt import build_companion_environment_prompt
-from .tool_dispatch import _ToolDispatchContext, matched_tool_names
+from .tool_dispatch import _ToolDispatchContext, available_media_tool_schemas, matched_tool_names
 from .turn_errors import emit_conversation_unavailable, emit_llm_error, emit_llm_unavailable, emit_turn_limit
 from .turn_inputs import (
     build_turn_inputs,
@@ -121,6 +125,7 @@ async def compress_session_history(
         temperature=_compression_temperature(inputs.provider_name, effective_settings),
         language=inputs.language,
         context_length=inputs.ctx_length,
+        companion=conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None,
     )
     if info is None:
         return ManualCompressionResult(
@@ -374,6 +379,7 @@ async def _run_chat_turn(
                     temperature=_compression_temperature(inputs.provider_name, effective_settings),
                     language=inputs.language,
                     context_length=inputs.ctx_length,
+                    companion=conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None,
                 )
             except CompressionFailedError:
                 # 自动压缩失败不阻断本轮，按原上下文继续。
@@ -475,7 +481,15 @@ async def _run_chat_turn(
 
             if not buffer_text:
                 await emitter.send_json({"type": "message.start"})
-            active_schemas = [schemas_by_name[n] for n in active_tool_names if n in schemas_by_name]
+            available_schemas = apply_search_tools_catalog(
+                available_media_tool_schemas(list(schemas_by_name.values()), media_turn),
+            )
+            available_by_name = {schema_name(schema): schema for schema in available_schemas}
+            dispatch_ctx = replace(
+                dispatch_ctx,
+                unavailable_tool_names=frozenset(schemas_by_name.keys() - available_by_name.keys()),
+            )
+            active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
             # 供应商链按顺序尝试，仅在流式首事件或完整响应到达前允许回退；每个槽位使用自己的模型与窗口。
             response_started = False
 

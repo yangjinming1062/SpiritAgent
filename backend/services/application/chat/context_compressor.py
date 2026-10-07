@@ -9,7 +9,11 @@ from components import (
     get_logger,
     resolve_prompt_text,
 )
-from prompts.chat import COMPRESSION_CHECKPOINT_TITLE_TEXTS, CONTEXT_SUMMARY_PROMPTS
+from prompts.chat import (
+    COMPANION_CONTEXT_SUMMARY_PROMPTS,
+    COMPRESSION_CHECKPOINT_TITLE_TEXTS,
+    CONTEXT_SUMMARY_PROMPTS,
+)
 
 from services.infrastructure.llm import (
     approx_responses_tokens,
@@ -40,6 +44,8 @@ def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """摘要仅接收文字与媒体引用，不把未提供视觉内容的 base64 当作文字资料。"""
     items = []
     for item in block:
+        if item.get("type") == "reasoning":
+            continue
         # 多模态工具结果的媒体在 function_call_output 的 output。
         key = "output" if item.get("type") == "function_call_output" else "content"
         content = item.get(key)
@@ -95,7 +101,13 @@ def _pick_compressible_block(
     return rest[:keep_start], rest[keep_start:]
 
 
-def _summary_input(block: list[dict[str, Any]], target_tokens: int) -> list[dict[str, Any]]:
+def _summary_input(
+    block: list[dict[str, Any]],
+    target_tokens: int,
+    included_indices: set[int] | None,
+) -> list[dict[str, Any]]:
+    if included_indices is not None:
+        block = [item for index, item in enumerate(block) if index in included_indices]
     return [
         {
             "role": "user",
@@ -119,12 +131,12 @@ def _fit_summary_block(
     *,
     context_length: int,
     target_tokens: int,
-    language: str,
+    instructions: str,
+    included_indices: set[int] | None,
 ) -> list[dict[str, Any]]:
     """只总结预算内的完整原消息前缀；超长单条保留原文，不把截断资料当作完整覆盖。"""
     output_budget = max(LLM_MAX_OUTPUT_TOKENS, target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR)
     input_budget = context_length - output_budget - max(1024, context_length // 20)
-    instructions = resolve_prompt_text(CONTEXT_SUMMARY_PROMPTS, language)
     pending_calls: set[str] = set()
     boundaries = []
     for index, item in enumerate(block):
@@ -139,7 +151,10 @@ def _fit_summary_block(
     lo, hi = 0, len(boundaries)
     while lo < hi:
         mid = (lo + hi) // 2
-        tokens = approx_responses_tokens(instructions, _summary_input(block[: boundaries[mid]], target_tokens))
+        tokens = approx_responses_tokens(
+            instructions,
+            _summary_input(block[: boundaries[mid]], target_tokens, included_indices),
+        )
         if tokens <= input_budget:
             lo = mid + 1
         else:
@@ -156,14 +171,15 @@ async def _summarize_block(
     model: str,
     target_tokens: int,
     temperature: float,
-    language: str,
+    instructions: str,
+    included_indices: set[int] | None,
     context_length: int,
 ) -> tuple[str, bool, int, int]:
     """通过 Responses API 对输入项生成摘要；响应未完成时保留原上下文。"""
     request = build_responses_kwargs(
         model=model,
-        instructions=resolve_prompt_text(CONTEXT_SUMMARY_PROMPTS, language),
-        input_items=_summary_input(block, target_tokens),
+        instructions=instructions,
+        input_items=_summary_input(block, target_tokens, included_indices),
         temperature=temperature,
         max_output_tokens=max(LLM_MAX_OUTPUT_TOKENS, target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR),
     )
@@ -199,6 +215,7 @@ async def compress_history(
     temperature: float,
     language: str,
     context_length: int,
+    companion: bool = False,
 ) -> tuple[dict[str, Any], CompressionInfo | None]:
     """压缩可总结的历史前缀；成功返回压缩后的 Responses 上下文，无可压缩内容返回原上下文；摘要调用失败、未完成或为空时抛 CompressionFailedError，历史不变。"""
     target = SETTINGS.context_summary_target_tokens
@@ -206,12 +223,31 @@ async def compress_history(
     block, keep = _pick_compressible_block(context["input"], source_message_ids=source_ids)
     if not block:
         return context, None
+    dialogue_ids = set(context["dialogue_message_ids"])
+    included_indices = (
+        {
+            index
+            for index, source_id in enumerate(source_ids[: len(block)])
+            if source_id in dialogue_ids or index in context.get("checkpoint_indices", ())
+        }
+        if companion
+        else None
+    )
+    if included_indices is not None:
+        if not included_indices:
+            return context, None
+        included_indices.update(context.get("time_context_indices", ()))
+    instructions = resolve_prompt_text(
+        COMPANION_CONTEXT_SUMMARY_PROMPTS if companion else CONTEXT_SUMMARY_PROMPTS,
+        language,
+    )
     bounded = _fit_summary_block(
         block,
         source_ids,
         context_length=context_length,
         target_tokens=target,
-        language=language,
+        instructions=instructions,
+        included_indices=included_indices,
     )
     keep = [*block[len(bounded) :], *keep]
     block = bounded
@@ -224,7 +260,8 @@ async def compress_history(
             model=model,
             target_tokens=target,
             temperature=temperature,
-            language=language,
+            instructions=instructions,
+            included_indices=included_indices,
             context_length=context_length,
         )
     except Exception as exc:
@@ -242,16 +279,21 @@ async def compress_history(
         logger.warning("context_compressor: LLM returned empty summary; leaving history unchanged")
         raise CompressionFailedError("summary response was empty")
 
-    replaced_count = len(set(source_ids[: len(block)]))
+    replaced_count = len(dialogue_ids.intersection(source_ids[: len(block)]))
     title = resolve_prompt_text(COMPRESSION_CHECKPOINT_TITLE_TEXTS, language).format(count=replaced_count)
     checkpoint_text = f"{title}\n{summary}"
     placeholder = {"role": "user", "content": [{"type": "input_text", "text": checkpoint_text}]}
     kept_ids = source_ids[len(block) :]
+    kept_dialogue_ids = dialogue_ids.intersection(kept_ids)
     compressed: dict[str, Any] = {
         "instructions": context["instructions"],
         "input": [placeholder, *keep],
         "source_message_ids": [through_id, *kept_ids],
+        "dialogue_message_ids": [mid for mid in context["dialogue_message_ids"] if mid in kept_dialogue_ids],
         "checkpoint_indices": [0],
+        "time_context_indices": [
+            index - len(block) + 1 for index in context.get("time_context_indices", ()) if index >= len(block)
+        ],
         "user_input_indices": [
             index - len(block) + 1 for index in context.get("user_input_indices", ()) if index >= len(block)
         ],
