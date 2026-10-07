@@ -286,6 +286,7 @@ presentation = createDesktopPresentation({
   helperPath: IS_PACKAGED
     ? path.join(process.resourcesPath, 'desktop-host.exe')
     : path.join(APP_ROOT, 'build', process.arch, 'desktop-host.exe'),
+  developmentPreparationError: IS_PACKAGED ? undefined : process.env.SPIRITAGENT_DESKTOP_DEV_PREPARATION_ERROR,
   rendererUrlFor,
   seedTheme: seedUiTheme,
   getSpriteWindow: getMainWindow,

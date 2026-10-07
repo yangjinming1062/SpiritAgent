@@ -65,9 +65,6 @@ function prepareDevelopmentElectron(originalPath) {
       if (!fs.existsSync(prepared) || !fs.existsSync(marker)) throw error
     }
   } finally {
-    const relative = path.relative(cacheRoot, staging)
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
-      throw new Error('Invalid Electron cache path')
     fs.rmSync(staging, { recursive: true, force: true })
   }
   console.log(`[launch-dev-electron] prepared ${arch} Electron with ${awareness} DPI awareness`)

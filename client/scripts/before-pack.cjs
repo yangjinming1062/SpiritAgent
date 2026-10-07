@@ -1,7 +1,9 @@
 'use strict'
 
 const fs = require('node:fs')
-const { buildDesktopHost, targets } = require('./build-desktop-host.cjs')
+const path = require('node:path')
+const { checkDistBuilt } = require('./assert-dist-built.cjs')
+const { buildDesktopHost, targets, windowsArchFromBuilder } = require('./build-desktop-host.cjs')
 
 function cleanStaleAppOutDir(appOutDir) {
   if (!appOutDir || typeof appOutDir !== 'string') {
@@ -16,9 +18,10 @@ function cleanStaleAppOutDir(appOutDir) {
 }
 
 exports.default = async function beforePack(context) {
+  const result = checkDistBuilt(path.join(context.packager.projectDir, 'dist'))
+  if (!result.ok) throw new Error(`[before-pack] ${result.error}; run pnpm build before packaging`)
   if (context.electronPlatformName === 'win32') {
-    const arch = { 1: 'x64', 3: 'arm64' }[context.arch]
-    if (!arch) throw new Error(`Unsupported Windows desktop architecture: ${context.arch}`)
+    const arch = windowsArchFromBuilder(context.arch)
     buildDesktopHost(targets[arch])
   }
   const appOutDir = context && context.appOutDir

@@ -3,31 +3,31 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFile } = require('node:child_process')
 
-function run(command, args) {
+function run(command, args, { timeout = 10 * 60_000, secrets = [] } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, (error, stdout, stderr) => {
+    const env = { ...process.env }
+    delete env.APPLE_API_KEY
+    delete env.APPLE_APP_SPECIFIC_PASSWORD
+    execFile(command, args, { timeout, env }, (error, stdout, stderr) => {
       if (error) {
-        reject(new Error(`${command} ${args.join(' ')} failed: ${stderr?.trim() || stdout?.trim() || error.message}`))
+        const detail = error.killed
+          ? `timed out after ${timeout / 60_000} minutes`
+          : stderr?.trim() || stdout?.trim() || error.code || error.message
+        const safeDetail = secrets.reduce((message, secret) => message.split(secret).join('[redacted]'), String(detail))
+        reject(new Error(`${command} failed: ${safeDetail}`))
         return
       }
-      resolve({ stdout, stderr })
+      resolve()
     })
   })
 }
 
-function inlineKeyLooksValid(value) {
-  return value.includes('BEGIN PRIVATE KEY') && value.includes('END PRIVATE KEY')
-}
-
-function resolveApiKeyPath(rawValue) {
-  const value = String(rawValue || '').trim()
-  if (!value) return { keyPath: '', cleanup: () => {} }
-
+function resolveApiKeyPath(value) {
   if (fs.existsSync(value)) {
-    return { keyPath: value, cleanup: () => {} }
+    return { keyPath: value }
   }
 
-  if (!inlineKeyLooksValid(value)) {
+  if (!value.includes('BEGIN PRIVATE KEY') || !value.includes('END PRIVATE KEY')) {
     throw new Error('APPLE_API_KEY must be a file path or inline .p8 key content')
   }
 
@@ -45,6 +45,35 @@ function resolveApiKeyPath(rawValue) {
   }
 }
 
+function resolveCredentials() {
+  const profile = String(process.env.APPLE_NOTARY_PROFILE || '').trim()
+  const appleId = String(process.env.APPLE_ID || '').trim()
+  const password = String(process.env.APPLE_APP_SPECIFIC_PASSWORD || '').trim()
+  const teamId = String(process.env.APPLE_TEAM_ID || '').trim()
+  if (!profile && (appleId || password)) {
+    if (!appleId || !password || !teamId)
+      throw new Error('APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must all be configured')
+    return { args: ['--apple-id', appleId, '--password', password, '--team-id', teamId], secrets: [password] }
+  }
+
+  const rawApiKey = String(process.env.APPLE_API_KEY || '').trim()
+  const keyId = String(process.env.APPLE_API_KEY_ID || '').trim()
+  const issuer = String(process.env.APPLE_API_ISSUER || '').trim()
+  if (!profile && (rawApiKey || keyId || issuer)) {
+    if (!rawApiKey || !keyId || !issuer)
+      throw new Error('APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER must all be configured')
+    const { keyPath, cleanup } = resolveApiKeyPath(rawApiKey)
+    return { args: ['--key', keyPath, '--key-id', keyId, '--issuer', issuer], secrets: [rawApiKey], cleanup }
+  }
+
+  const keychainProfile = profile || String(process.env.APPLE_KEYCHAIN_PROFILE || '').trim()
+  if (!keychainProfile) return null
+  const keychain = String(process.env.APPLE_KEYCHAIN || '').trim()
+  const args = ['--keychain-profile', keychainProfile]
+  if (keychain) args.push('--keychain', keychain)
+  return { args, secrets: [] }
+}
+
 exports.default = async function notarize(context) {
   const { electronPlatformName, appOutDir, packager } = context
   if (electronPlatformName !== 'darwin') return
@@ -55,53 +84,27 @@ exports.default = async function notarize(context) {
     throw new Error(`Cannot notarize missing app bundle: ${appPath}`)
   }
 
-  const profile = String(process.env.APPLE_NOTARY_PROFILE || '').trim()
-  if (profile) {
-    const zipPath = path.join(appOutDir, `${appName}.zip`)
-    await run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, zipPath])
-    await run('xcrun', ['notarytool', 'submit', zipPath, '--keychain-profile', profile, '--wait'])
-    await run('xcrun', ['stapler', 'staple', '-v', appPath])
-    try {
-      fs.rmSync(zipPath, { force: true })
-    } catch {
-      // Best-effort cleanup.
-    }
+  const credentials = resolveCredentials()
+  if (!credentials) {
+    console.log('Skipping notarization: no Apple notarization credentials are configured.')
     return
   }
 
-  const keyId = String(process.env.APPLE_API_KEY_ID || '').trim()
-  const issuer = String(process.env.APPLE_API_ISSUER || '').trim()
-  const rawApiKey = process.env.APPLE_API_KEY
-  if (!rawApiKey || !keyId || !issuer) {
-    console.log(
-      'Skipping notarization: APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER are not fully configured.'
-    )
-    return
-  }
-
-  const { keyPath, cleanup } = resolveApiKeyPath(rawApiKey)
   const zipPath = path.join(appOutDir, `${appName}.zip`)
+  const runOptions = { secrets: credentials.secrets }
   try {
-    await run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, zipPath])
-    await run('xcrun', [
-      'notarytool',
-      'submit',
-      zipPath,
-      '--key',
-      keyPath,
-      '--key-id',
-      keyId,
-      '--issuer',
-      issuer,
-      '--wait'
-    ])
-    await run('xcrun', ['stapler', 'staple', '-v', appPath])
+    await run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, zipPath], runOptions)
+    await run('xcrun', ['notarytool', 'submit', zipPath, ...credentials.args, '--wait'], {
+      ...runOptions,
+      timeout: 60 * 60_000
+    })
+    await run('xcrun', ['stapler', 'staple', '-v', appPath], runOptions)
   } finally {
     try {
       fs.rmSync(zipPath, { force: true })
-    } catch {
-      // Best-effort cleanup.
+    } catch (error) {
+      console.warn(`[notarize] could not remove temporary archive ${zipPath}: ${error.message}`)
     }
-    cleanup()
+    credentials.cleanup?.()
   }
 }

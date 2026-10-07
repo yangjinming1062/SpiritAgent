@@ -52,9 +52,9 @@ pnpm --dir client build:native
 
 目标参数及门禁见 [build-desktop-host.cjs](../scripts/build-desktop-host.cjs)。产物在 `client/build/<arch>/desktop-host.exe`，开发和打包均须匹配 Electron 架构，随包路径为 `resources/desktop-host.exe`。helper 静态链接 C++ 运行库，普通及延迟导入含额外 VC／UCRT 依赖时拒绝复制或复用。`cargo check --locked` 不能替代链接与打包验证。
 
-Windows `pnpm dev` 自动准备 helper，仅复用架构和源码时效检查通过的产物。开发入口使用独立 Electron 缓存副本，Windows 打包在签名前写入相同的 `PerMonitorV2, PerMonitor` manifest；保留其他应用元数据及原版开发 Electron。准备失败提示原因并继续窗口模式；补齐工具链并执行 `build:native` 后须重启开发客户端。
+Windows `pnpm dev` 自动准备 helper，仅复用架构、源码时效和运行库检查通过的产物。开发入口使用独立 Electron 缓存副本，Windows 打包在签名前写入相同的 `PerMonitorV2, PerMonitor` manifest；保留其他应用元数据及原版开发 Electron。helper 或 DPI 准备失败时向主进程传递原因并阻止启用桌面模式，旧 helper 仍可用于遗留恢复；补齐工具链并执行 `build:native` 后须重启开发客户端。
 
-主进程和两种 preload 重编译均走正常退出链，先恢复桌面再重启；60 秒超时仅停止自有 Electron 主进程，guardian 负责异常恢复。开发启动与 manifest 入口分别见 [launch-dev-electron.cjs](../scripts/launch-dev-electron.cjs)、[windows-dpi-manifest.cjs](../scripts/windows-dpi-manifest.cjs)。
+开发 launcher 独立持有 Electron，`concurrently` 只管理 Vite 与 tsup。主进程和两种 preload 重编译均走正常退出链，先恢复桌面再重启；取消开发或构建工具退出时，launcher 先请求 Electron 恢复桌面，等待退出后清理其余开发工具。60 秒超时仅停止自有 Electron 主进程，guardian 负责异常恢复。开发启动与 manifest 入口分别见 [launch-dev-electron.cjs](../scripts/launch-dev-electron.cjs)、[windows-dpi-manifest.cjs](../scripts/windows-dpi-manifest.cjs)。
 
 ### 安全运行检查
 

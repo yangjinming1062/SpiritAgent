@@ -6,6 +6,12 @@ const path = require('node:path')
 
 const targets = { x64: 'x86_64-pc-windows-msvc', arm64: 'aarch64-pc-windows-msvc' }
 
+function windowsArchFromBuilder(arch) {
+  const windowsArch = { 1: 'x64', 3: 'arm64' }[arch]
+  if (!windowsArch) throw new Error(`Unsupported Windows desktop architecture: ${arch}`)
+  return windowsArch
+}
+
 function readWindowsExecutableArch(filePath) {
   const file = fs.openSync(filePath, 'r')
   try {
@@ -170,7 +176,7 @@ function buildDesktopHost(target = targets[process.arch], { ifNeeded = false } =
   return packaged
 }
 
-module.exports = { assertStaticRuntime, buildDesktopHost, readWindowsExecutableArch, targets }
+module.exports = { assertStaticRuntime, buildDesktopHost, readWindowsExecutableArch, targets, windowsArchFromBuilder }
 
 if (require.main === module) {
   try {

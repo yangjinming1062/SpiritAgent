@@ -45,13 +45,13 @@ repos:
         exclude: ^(RULES\.md|AGENTS\.md|CHANGELOG.*|\.git.*)
       - id: client-eslint-fix
         name: client eslint fix
-        entry: pnpm --dir client exec eslint renderer/ main/ --fix
+        entry: pnpm --dir client exec eslint renderer/ main/ shared/ scripts/ --fix
         language: system
-        files: ^client/(renderer|main)/.*\.(ts|tsx|js|cjs|mjs)$
+        files: ^client/(renderer|main|shared|scripts)/.*\.(ts|tsx|js|cjs|mjs)$
         pass_filenames: false
       - id: client-fmt
         name: client prettier format
-        entry: pnpm --dir client exec prettier --write "renderer/**/*.{ts,tsx}" "main/**/*.{ts,tsx}"
+        entry: pnpm --dir client exec prettier --write "renderer/**/*.{ts,tsx}" "main/**/*.{ts,tsx}" "shared/**/*.{ts,tsx}" "scripts/**/*.{cjs,mjs,ts}"
         language: system
         files: ^client/.*\.(ts|tsx|js|cjs|mjs|json|css)$
         pass_filenames: false

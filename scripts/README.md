@@ -79,6 +79,14 @@ uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --prese
 
 预制音频的文案、tag、生成和静态校验见 [专项说明](onboarding-audio/README.md)。合成会调用供应商并覆盖产物；`--check` 不合成，也不能代替试听。
 
+## Client 开发与打包脚本
+
+[`client/scripts`](../client/scripts/) 由 [Client 命令与打包配置](../client/package.json)调用：依赖守卫检查开发环境，构建戳记录提交来源，产物守卫检查六个页面的本地脚本与样式资源，开发 launcher 管理工具与 Electron，打包钩子准备 Windows helper 和 DPI manifest。开发退出、降级与 helper 门禁见 [桌面宿主构建](../client/desktop-host/README.md#构建)。这些脚本纳入 Client lint 与提交前检查。
+
+`build` 收尾与 `beforePack` 均校验渲染产物；直接调用 `builder` 仍须先准备完整的构建产物。Windows 架构与运行库门禁失败中止打包。
+
+macOS 公证由 [notarize.cjs](../client/scripts/notarize.cjs) 的 `afterSign` 统一执行，关闭 electron-builder 内建公证。支持 keychain profile、Apple ID 和路径或内联 API key，认证参数与优先级见脚本；未配置时跳过，部分配置时报错。外部命令有超时，成功或失败均清理临时 ZIP 与 API key 文件。真实签名与公证须在 macOS 执行。
+
 ## 构建安装器
 
 构建入口 [build.py](build.py)依次构建 Runner wheel、Client、暂存 payload 和 Tauri Installer；正式暂存执行精确版本与导入面门禁。`--target` 指定 mac / win（默认按宿主推断），`--skip-runner` / `--skip-desktop` 跳过对应构建但仍要求已有同版本产物，`--output` 指定输出目录。共享步骤在 [build_helpers.py](lib/build_helpers.py)，其中 `set_version` 把版本写入 Client、Installer（含 Tauri 配置与 Cargo.toml）和 Runner 的清单。

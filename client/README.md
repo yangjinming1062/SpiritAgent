@@ -30,6 +30,7 @@ flowchart LR
 | `main` | 身份、窗口、Runner、缓存与更新 |
 | `renderer` | 交互与呈现，各物理窗口独立运行；桌面内部面板共享运行时 |
 | [`desktop-host`](desktop-host/README.md) | 独立 Rust 进程，负责 Windows 桌面挂载、运行窗口观察与异常恢复 |
+| `scripts` | 开发启动、构建校验与打包钩子；操作与验证见 [Scripts](../scripts/README.md#client-开发与打包脚本) |
 | `shared/ipc` | 跨进程通道与载荷 |
 | `shared/runtime.ts`（`@runtime`）、`shared/speech-text.ts` | 两个进程共用的运行时原语与朗读文本清理 |
 

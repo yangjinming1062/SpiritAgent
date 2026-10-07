@@ -35,6 +35,7 @@ interface DesktopPresentationOptions {
   preloadPath: string
   backgroundPreloadPath: string
   helperPath: string
+  developmentPreparationError?: string
   rendererUrlFor: (role: 'desktop' | 'desktop-background' | 'desktop-companion', theme?: string) => string
   seedTheme: () => string | undefined
   getSpriteWindow: () => BrowserWindow | null
@@ -484,6 +485,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     if (!options.authenticated() || !hostReady) {
       throw new Error('请先完成账户激活与伙伴准备。')
+    }
+
+    if (options.developmentPreparationError) {
+      throw new Error(`Windows 桌面组件准备失败，请修复工具链并重启开发客户端：${options.developmentPreparationError}`)
     }
 
     if (!existsSync(options.helperPath)) {
