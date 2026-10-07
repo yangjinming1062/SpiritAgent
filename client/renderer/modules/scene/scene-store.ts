@@ -75,6 +75,7 @@ const detailCache = new Map<string, SceneAsset>()
 // 场景图 URL 的签名 query 会轮换，同路径即同内容（资产名带随机后缀）：按去 query 路径缓存解析结果，避免轮询期重复取整图。
 const MAX_SCENE_SRC_ENTRIES = 48
 const sceneSrcCache = new Map<string, string>()
+const sceneSrcRequests = new Map<string, Promise<string | null>>()
 let stateRequest = 0
 let listRequest = 0
 let version = -1
@@ -99,14 +100,32 @@ async function resolveSceneUrl(row: SceneWire): Promise<string> {
       return cached
     }
 
-    const dataUrl = await window.spiritagent?.apiAsset({ url, preferCache: true })
+    const pending = sceneSrcRequests.get(key)
 
-    if (dataUrl) {
-      sceneSrcCache.set(key, dataUrl)
-      trimOldest(sceneSrcCache, MAX_SCENE_SRC_ENTRIES)
+    if (pending !== undefined) {
+      return (await pending) || url
     }
 
-    return dataUrl || url
+    const epoch = currentClearEpoch()
+
+    const request = (async (): Promise<string | null> => {
+      const dataUrl = await window.spiritagent?.apiAsset({ url, preferCache: true })
+
+      if (dataUrl && epoch === currentClearEpoch()) {
+        sceneSrcCache.set(key, dataUrl)
+        trimOldest(sceneSrcCache, MAX_SCENE_SRC_ENTRIES)
+      }
+
+      return dataUrl || null
+    })().finally(() => {
+      if (sceneSrcRequests.get(key) === request) {
+        sceneSrcRequests.delete(key)
+      }
+    })
+
+    sceneSrcRequests.set(key, request)
+
+    return (await request) || url
   }
 
   return url
@@ -184,6 +203,7 @@ registerStorageClearHandler(() => {
   $sceneLibrary.set([])
   detailCache.clear()
   sceneSrcCache.clear()
+  sceneSrcRequests.clear()
   $sceneDetails.set({})
   $sceneLibraryStatus.set('idle')
   $sceneTaskStatus.set('none')

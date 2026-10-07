@@ -114,7 +114,12 @@ export function setSpatialInsets(insets: { top: number; bottom: number; left: nu
     }
   }
 
-  $spatialPos.set(clampPosToViewport($spatialPos.get()))
+  const current = $spatialPos.get()
+  const next = clampPosToViewport(current)
+
+  if (next.x !== current.x || next.y !== current.y) {
+    $spatialPos.set(next)
+  }
 }
 
 const REST_MARGIN = 24

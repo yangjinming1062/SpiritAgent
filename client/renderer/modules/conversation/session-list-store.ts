@@ -73,6 +73,7 @@ let sessionsToken = 0
 let archivedToken = 0
 let searchToken = 0
 let presetsToken = 0
+let presetsLoad: { gateway: SpiritAgentGatewayLike; epoch: number; promise: Promise<void> } | null = null
 // 会话跳转（切换、打开主对话、新建、派生）共用：只有最后发起的跳转可以改写当前会话视图。
 let navigationToken = 0
 
@@ -383,35 +384,49 @@ export async function createNewSession(systemPresetId: string): Promise<string |
   }
 }
 
-/** 拉取系统预设元数据；已拉取过则跳过。 */
-export async function fetchSystemPresets(): Promise<void> {
+/** 拉取系统预设元数据；同网关共用在途请求，已拉取过则跳过。 */
+export function fetchSystemPresets(): Promise<void> {
   const gw = $gateway.get()
+  const epoch = currentClearEpoch()
 
-  if (!gw) {
-    return
+  if (!gw || $systemPresetsFetched.get()) {
+    return Promise.resolve()
   }
 
-  if ($systemPresetsFetched.get()) {
-    return
+  if (presetsLoad?.gateway === gw && presetsLoad.epoch === epoch) {
+    return presetsLoad.promise
   }
 
   const token = ++presetsToken
+  const isCurrent = (): boolean => token === presetsToken && epoch === currentClearEpoch() && $gateway.get() === gw
   $systemPresetsLoading.set(true)
 
-  try {
-    const res = await gw.request<SystemPresetListResponse>('system.list_presets', {})
+  const load = Promise.resolve()
+    .then(() => gw.request<SystemPresetListResponse>('system.list_presets', {}))
+    .then(res => {
+      if (isCurrent()) {
+        $systemPresets.set(res.presets || [])
+        $systemPresetsFetched.set(true)
+      }
+    })
+    .catch(err => {
+      if (isCurrent()) {
+        log.error('session-list', 'Failed to fetch system presets:', err)
+      }
+    })
+    .finally(() => {
+      if (token === presetsToken) {
+        $systemPresetsLoading.set(false)
+      }
 
-    if (token === presetsToken) {
-      $systemPresets.set(res.presets || [])
-      $systemPresetsFetched.set(true)
-    }
-  } catch (err) {
-    log.error('session-list', 'Failed to fetch system presets:', err)
-  } finally {
-    if (token === presetsToken) {
-      $systemPresetsLoading.set(false)
-    }
-  }
+      if (presetsLoad?.promise === load) {
+        presetsLoad = null
+      }
+    })
+
+  presetsLoad = { gateway: gw, epoch, promise: load }
+
+  return load
 }
 
 // session.fork 不返回列表条目，先按派生规则用源会话信息补齐；列表刷新后以服务端条目为准，标题带副本后缀。
@@ -833,6 +848,7 @@ registerStorageClearHandler(() => {
   archivedToken++
   searchToken++
   presetsToken++
+  presetsLoad = null
   navigationToken++
   openMainPromise = null
   openMainGateway = null

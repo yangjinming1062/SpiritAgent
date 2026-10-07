@@ -271,11 +271,13 @@ export function pushEffectiveDisturbanceTier(tier: DisturbanceTier): void {
 function runOnce(key: string, fn: () => Promise<unknown>): Promise<unknown> {
   let task = inFlightHydrations.get(key)
 
-  if (!task) {
+  if (task === undefined) {
     task = (async () => {
       return await fn()
     })().finally(() => {
-      inFlightHydrations.delete(key)
+      if (inFlightHydrations.get(key) === task) {
+        inFlightHydrations.delete(key)
+      }
     })
     inFlightHydrations.set(key, task)
   }

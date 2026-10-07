@@ -50,20 +50,19 @@ function useCurrentAction(): SystemActionKey {
   const preparation = useStore($peekPreparation)
 
   useEffect(() => {
-    let timer = 0
-    let lastX = $spatialPos.get().x
+    setDeltaXSign(0)
 
-    const tick = (): void => {
-      const x = $spatialPos.get().x
-      setDeltaXSign(Math.sign(x - lastX))
-      lastX = x
-      timer = window.setTimeout(tick, 120)
+    if (locomotion !== 'walk') {
+      return
     }
 
-    tick()
+    let lastX = $spatialPos.get().x
 
-    return () => window.clearTimeout(timer)
-  }, [])
+    return $spatialPos.listen(({ x }) => {
+      setDeltaXSign(Math.sign(x - lastX))
+      lastX = x
+    })
+  }, [locomotion])
 
   return resolveSystemAction({ locomotion, deltaXSign, peekAction: activePeek?.action ?? preparation?.action ?? null })
 }
@@ -275,28 +274,53 @@ interface DisplayedClip {
 const FULL_CONTENT_RECT: NormalizedRect = [0, 0, 1, 1]
 const HEAD_HEIGHT_RATIO = 0.15
 
-function hitmaskContentRect(hitmask: ActionHitmask | null, region = FULL_CONTENT_RECT): NormalizedRect | null {
+interface HitmaskOutline {
+  readonly grid: readonly [number, number]
+  readonly rows: readonly number[]
+}
+
+function mergeHitmaskRows(hitmask: ActionHitmask | null): HitmaskOutline | null {
   if (!hitmask) {
     return null
   }
 
-  const [gridWidth, gridHeight] = hitmask.grid
+  if (hitmask.media_type === 'image') {
+    return hitmask
+  }
+
+  const rows = new Array<number>(hitmask.grid[1]).fill(0)
+
+  for (const frame of hitmask.frames) {
+    for (let y = 0; y < rows.length; y += 1) {
+      rows[y] |= frame[y] ?? 0
+    }
+  }
+
+  return { grid: hitmask.grid, rows }
+}
+
+function hitmaskContentRect(outline: HitmaskOutline | null, region = FULL_CONTENT_RECT): NormalizedRect | null {
+  if (!outline) {
+    return null
+  }
+
+  const {
+    grid: [gridWidth, gridHeight],
+    rows
+  } = outline
+
   let left = gridWidth
   let top = gridHeight
   let right = 0
   let bottom = 0
 
-  const samples = hitmask.media_type === 'image' ? [hitmask.rows] : hitmask.frames
-
-  for (const frame of samples) {
-    for (let y = Math.floor(region[1] * gridHeight); y < Math.ceil(region[3] * gridHeight); y += 1) {
-      for (let x = Math.floor(region[0] * gridWidth); x < Math.ceil(region[2] * gridWidth); x += 1) {
-        if (((frame[y] ?? 0) & (1 << x)) !== 0) {
-          left = Math.min(left, x)
-          top = Math.min(top, y)
-          right = Math.max(right, x + 1)
-          bottom = Math.max(bottom, y + 1)
-        }
+  for (let y = Math.floor(region[1] * gridHeight); y < Math.ceil(region[3] * gridHeight); y += 1) {
+    for (let x = Math.floor(region[0] * gridWidth); x < Math.ceil(region[2] * gridWidth); x += 1) {
+      if (((rows[y] ?? 0) & (1 << x)) !== 0) {
+        left = Math.min(left, x)
+        top = Math.min(top, y)
+        right = Math.max(right, x + 1)
+        bottom = Math.max(bottom, y + 1)
       }
     }
   }
@@ -548,12 +572,13 @@ export function MediaStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
         const showFirstFrame = (): void => {
           const previous = front.current
           front.current = slot
-          const silhouette = hitmaskContentRect(hitmask)
+          const outline = mergeHitmaskRows(hitmask)
+          const silhouette = hitmaskContentRect(outline)
           const bounds = clip.content_rect ?? silhouette ?? FULL_CONTENT_RECT
           const headRegion = silhouette ?? bounds
 
           // 取轮廓上部的 alpha 范围，避免裙摆和张开的手臂把头边气泡推远；整段共用以免逐帧抖动。
-          const headBounds = hitmaskContentRect(hitmask, [
+          const headBounds = hitmaskContentRect(outline, [
             headRegion[0],
             headRegion[1],
             headRegion[2],

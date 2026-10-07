@@ -41,6 +41,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 账户切换释放旧账户的内存资料、会话与通知并按 `accountId` 重挂载；持久索引按账户隔离，切回时恢复，只在明确移除账户时删除。重置期间不回写持久索引，云端偏好广播等所属账户的存储切换完成后再应用。桌面精灵按目标账户状态自动进入未完成的 onboarding。完整入口开关状态由主进程维护。
 - 引导答题逐字段增量持久化（[onboarding-flow.tsx](app/onboarding/onboarding-flow.tsx) fire-and-forget，网关未打开前空操作）；网关连通后拉回服务端草稿按 `next_field` 续答，本地非空编辑优先，读取失败暂停待重试且不得当作新引导覆盖草稿，成功后不重复。
 - 鉴权请求仅接受发起会话仍有效的结果。
+- [Runner 状态镜像](shared/store/runner-status.ts)先订阅事件再读取快照，同一账户清理代次共用在途读取，迟到快照不能覆盖新事件或新账户状态。
 - `tool.call` / `tool.cancel` 只由宿主执行，按 call_id 去重与撤回，不受可见会话过滤；其他会话过程受会话守卫。
 - headless 不显示工作态，非当前会话的可见调用自行以引用计数持有工作态，只释放自身仍拥有的状态。
 - 消息入列与提醒分开：已提交陪伴消息按 ID 合并，提醒受可见性等条件控制；自动化系统通知不套陪伴打扰闸门。精灵旁的提示气泡与主动台词只在精灵舞台可见时出现（[proactive-delivery.ts](app/workflows/proactive-delivery.ts) 的 `isSpriteOverlayVisible`），不可见时主动消息仍记入未读，重新可见后由待读气泡承接。
@@ -132,6 +133,7 @@ Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/deskt
 - 撤回把锚点草稿（正文与图片，契约见 [PROTOCOL](../../docs/PROTOCOL.md#会话种类与历史修改)）退回输入框；待发送附件是单槽，多张图片只回填第一张，其余未恢复的提示只在发起撤回的窗口显示。
 - 会话参数显示后端生效值，只接受当前会话最新保存结果；恢复默认删除覆盖。
 - 系统预设与固定预设会话（`kind=special`）的显示名、预设说明按界面语言取字典 `presets`，经 [preset-labels.ts](modules/conversation/preset-labels.ts) 显示；后端目录只有中文，中文字典须与其同步，未知预设回落目录值。
+- 系统预设目录在同一网关与账户清理代次内共用在途查询，失败可重试，成功结果缓存在当前 renderer 中。
 - 会话只读状态消费历史水合的 `info.kind` 与 `info.is_automation`，IM 和任务会话均只读；`system_preset_id` 标识陪伴预设归属，唯一陪伴主会话仍由服务端 `session.get_main` 确定。
 - 斜杠命令元数据权威在服务端注册表，本地副本只服务自动补全与确认弹窗，dispatch 仍以服务端为准。
 - `$companionSessionId` 在 [conversation-state](modules/conversation/conversation-state.ts)统一持有并按账户持久化；主会话加载、列表与 `companion.message` 校准同一份归属。
@@ -170,6 +172,7 @@ Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/deskt
 ### 场景状态与背景
 
 - [scene-store.ts](modules/scene/scene-store.ts)分别维护当前环境、创建任务、图片重生成状态与分页场景库；水合按后端版本、请求代次和账号清理代次丢弃旧结果。
+- 场景图片按不可变资产路径共享在途读取和成功解析结果，失败可重试，账户清理使旧缓存回写失效。
 - 生活空间场景页以场景库为入口，详情按场景 ID 单独读取，离开详情后保留会话内编辑草稿。
 - 当前环境的替换图预加载成功后才切换背景；图片加载失败保留旧图，任务与政策仍按后端状态刷新。
 - 参考图、外部制作与上传共用创建任务状态，重生成独立跟踪且不使成品失效。
