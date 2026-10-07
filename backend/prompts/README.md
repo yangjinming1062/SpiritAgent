@@ -11,6 +11,7 @@
 | 模块 | 内容 | 渲染与装配 |
 |---|---|---|
 | `chat.py` | 预设体骨架（陪伴 / 工作 / 自动化）、文案秘书与语言老师的双语头部、系统提示词块、陪伴回复格式与修复及媒体气泡规则、标题生成、上下文压缩 | `services/application/chat/`（prompt_blocks、prompt_presets、system_prompt、streaming、title_generator、context_compressor） |
+| `speech.py` | 陪伴语音的自然朗读、整句指导与段内控制语义 | `services/infrastructure/llm/providers/speech_style.py`，按实际供应商与模型追加能力和示例 |
 | `companion.py` | 心情、空闲表达、空间行为、动态性格标签、角色设定字段与外形资料标签、当前着装标题、初次见面与低频问候意图、陪伴回合尾部资料标注 | `services/domains/companion/`、`services/application/automation/companion_turns.py`、`services/adapters/scheduler/cron.py`、`services/application/chat/orchestrator.py` |
 | `generation.py` | 角色、外观、场景、动作与出镜媒体的图像及视频提示词，以及身份评审与评分、角色卡提取、服装与场景描述等视觉理解指令，和造型命名描述、审核拒绝后改写等文本指令；共享风格机制见 [PIPELINE](../../docs/PIPELINE.md#提示词与供应商输入) | `services/application/generation/`（`appearance_prompts.py` 与各功能装配器）、`services/application/posts/`、`services/adapters/tools/builtin/`、`services/domains/companion/character_card.py` |
 | `memory.py` | 记忆维护政策（`MEMORY_POLICY`）、审查指令、用户资料上下文标签、记忆块标题与依据标签 | `services/domains/memory/`（memory_review、memory_bootstrap、memory_format）、`services/adapters/tools/memory.py` |
@@ -47,7 +48,7 @@
 ## 服务层动态提示词
 
 - [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，字段说明包含类型、用途及必要的可选性、长度和取值约束；说明供规划模型阅读，实际校验由参数模型与执行器负责。动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
-- [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商与模型装配能力和 JSON 示例，附加到陪伴终端请求；MiMo 用导演指令（user 消息）加句内分段标记（segments，还原台词原文并标记音频标签落点），MiniMax 用 emotion/speed 加同结构 segments，检查正文规则时一并核对。
+- [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商与模型装配能力和独立 JSON 示例，附加到陪伴终端及格式修复请求；朗读语义集中于 `speech.py`，输出与位置契约见 [结构化回复](../../docs/PROTOCOL.md#结构化回复与终端交付)。
 - [媒体气泡](../services/application/chat/streaming.py)——本轮有可引用产物时，`chat.py::COMPANION_MEDIA_REPLY_GUIDANCES` 与可信产物清单装配到正常和恢复请求；`tools.py` 的批次生成、验图与重做说明对应 [chat_images.py](../services/application/generation/chat_images.py)。
 - [工具域目录](../services/infrastructure/tool_runtime/domains.py)——根据当前实际可用工具重写 `search_tools` 描述，预设与调用方排除后在对话装配中再次计算。
 - [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。

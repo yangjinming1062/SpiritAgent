@@ -118,8 +118,7 @@ class MiMoTTSProvider(TTSProvider):
         model = self.model_for_voice(voice)
         instruction = ""
         if isinstance(speech_style, MiMoSpeechStyle) and speech_style_matches(speech_style, self.provider_name, model):
-            direction = speech_style.direction
-            instruction = f"角色：{direction.role}\n场景：{direction.scene}\n指导：{direction.guidance}"
+            instruction = speech_style.instruction or ""
             text = styled_speech_text(text, speech_style)
         if voice.startswith(VOICEDESIGN_PREFIX):
             design_prompt = voice[len(VOICEDESIGN_PREFIX) :]

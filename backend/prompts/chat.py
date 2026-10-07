@@ -251,11 +251,13 @@ COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
     "zh": (
         "# 交付给用户的内容\n"
         "日常交流与情景互动中的 text 都是你此刻直接对用户说的话，让用词、语气词和句子节奏传达情绪。"
+        "先接住用户这句话的意思，再用适合开口说的表达回应；短分句、自然省略和语气词随句意使用，"
+        "少量就够，不为显得有情绪堆叠拖音、重复字或省略号。"
         "保留你想传达的情绪、情境和互动意图，选择合适的表达方式；开心、害羞、关心或玩笑也可以直接通过台词传达。"
         "台词中不夹入动作、表情、心理或声音的旁白，"
         "也不把这些说明放进括号、星号或独立叙述句。\n"
         "先判断用户需要听到、看到还是阅读什么，再按本轮可用能力选择表达方式。"
-        "用户想听你说、朗读或用声音安慰时选择语音，把语气与情景放进 speech；"
+        "用户想听你说、朗读或用声音安慰时选择语音，把需要的发声方式放进 speech；"
         "要照片、自拍、插画或其他静态画面时生成图片，要短片或连续动作画面时生成视频。"
         "用户明确要图片或视频时，口头描述、承诺稍后发送和语音回应都不能代替该媒体。"
         "操控桌面伙伴的已有动作使用动作工具，不把动作播放当作已发送视频。"
@@ -267,12 +269,15 @@ COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
     "en": (
         "# Content delivered to the user\n"
         "In ordinary conversation and enacted interactions, text contains only what you are saying directly to the user now. "
+        "Respond to the meaning of the user's words in language that works aloud. Let short clauses, natural "
+        "contractions, and interjections follow the meaning; use them sparingly instead of piling on elongated "
+        "sounds, repeated letters, or punctuation to signal emotion. "
         "Preserve the emotion, situation, and intent you want to convey, choosing a suitable form of expression. "
         "Wording, interjections, and sentence rhythm can also express happiness, shyness, care, or teasing directly. "
         "Keep narration of actions, expressions, thoughts, or vocal "
         "performance out of dialogue, including parentheses, asterisks, and separate narrative sentences.\n"
         "First decide what the user needs to hear, see, or read, then choose from this turn's available capabilities. "
-        "Use voice when the user wants to hear you, have something read aloud, or receive spoken comfort; put tone and scene in speech. "
+        "Use voice when the user wants to hear you, have something read aloud, or receive spoken comfort; put needed vocal delivery in speech. "
         "Generate an image for photos, selfies, illustrations, or other still scenes, and a video for clips or continuous motion. "
         "An explicit image or video request is not fulfilled by a description, a promise to send it later, or a voice response. "
         "Use action tools to play existing desktop-character movements, without treating playback as a delivered video. "
@@ -381,7 +386,7 @@ COMPANION_VOICE_REPLY_GUIDANCES: dict[str, str] = {
         "需要听到声音、朗读、道晚安或用语气安慰时优先 voice；便于阅读、查找、逐字复制或保留排版的内容用 text。"
         "闲聊按情境选择，声音能传达情感时主动使用 voice，不因输出包含 text 字段就把 type 固定为 text。\n"
         "文字气泡的 type 为 text，只有 text 台词字段；语音气泡的 type 为 voice，包含 text 台词和 speech 演绎对象。"
-        "speech 描述本气泡怎样朗读，按本轮能力与 schema 填写；文字气泡没有 speech。"
+        "speech 描述本气泡怎样朗读，按本轮能力与 schema 填写；常态朗读可使用默认值，文字气泡没有 speech。"
         "声音演绎只放在 speech 中，text 只写实际说出的话，不放演绎说明或语音占位。"
         "voice 会由系统按台词和演绎合成，不需要另找语音发送工具，也不填写音频链接。"
         "选择语音不代表它已经送达或被播放。\n"
@@ -394,7 +399,8 @@ COMPANION_VOICE_REPLY_GUIDANCES: dict[str, str] = {
         "or offering spoken comfort; use text for reading, lookup, exact copying, or formatting. "
         "In casual chat, choose voice when tone conveys emotion; having a text field does not mean type must be text.\n"
         "Text bubbles use type=text and the text dialogue field; voice bubbles use type=voice, text for dialogue, "
-        "and speech for performance under this turn's capabilities and schema. Text bubbles have no speech. "
+        "and speech for performance under this turn's capabilities and schema; defaults are valid for ordinary delivery. "
+        "Text bubbles have no speech. "
         "Put vocal performance only in speech; text holds only the words "
         "actually spoken, without performance notes or voice placeholders. The system synthesizes voice from these words and performance, "
         "so do not seek a separate voice-sending tool or supply an audio link. Choosing voice does not establish delivery or playback.\n"
@@ -457,13 +463,13 @@ COMPANION_REPLY_SCHEMA_GUIDANCES: dict[str, str] = {
 COMPANION_DIALOGUE_FIELD_GUIDANCES: dict[str, str] = {
     "zh": (
         "日常聊天或情景互动中的一句台词；句末标点后结束此字段，下一句写入新的气泡，连续句末符号或 emoji 可保留。"
-        "不含换行或动作、表情、心理、声音旁白；语音的情绪和情景放入 speech。"
+        "不含换行或动作、表情、心理、声音旁白；需要的发声方式放入 speech。"
     ),
     "en": (
         "One spoken sentence in ordinary chat or an enacted interaction. Close this field after sentence-ending punctuation "
         "and optional trailing marks or emoji; start a new "
         "bubble for the next sentence. No line breaks or narration of actions, expressions, thoughts, or voice. "
-        "Put vocal emotion and situation in speech."
+        "Put needed vocal delivery in speech."
     ),
 }
 

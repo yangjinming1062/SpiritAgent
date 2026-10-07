@@ -51,7 +51,7 @@ def _companion_context_items(message: Message, *, dialogue_only: bool) -> list[d
     return [
         {**bubble.model_dump(), "status": media[bubble.media_id].status}
         if isinstance(bubble, MediaBubbleInput)
-        else bubble.model_dump(include={"type", "text"} if dialogue_only else None)
+        else bubble.model_dump(include={"type", "text"} if dialogue_only else None, exclude_unset=True)
         for bubble in source.root
     ]
 

@@ -13,12 +13,13 @@ from modules.conversation import (
     TextBubble,
     VoiceBubble,
 )
+from modules.media import SpeechSegment
 from prompts.chat import (
     COMPANION_DIALOGUE_FIELD_GUIDANCES,
     COMPANION_REPAIR_TEXT_FIELD_GUIDANCES,
     COMPANION_WRITTEN_FIELD_GUIDANCES,
 )
-from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
 from services.contracts import MediaTurnState
 from services.domains.conversation import resolve_reply_media
@@ -40,6 +41,7 @@ _ENDING_SUFFIX = re.compile(_END_DECORATION)
 _DIALOGUE_TEXT_PATTERN = r"^[^\r\n\\（）()*。！？!?]*[。！？!?]*" + _END_DECORATION + "$"
 _SENTENCE_END = re.compile(r"[。！？!?]+|(?<!\.)\.(?!\.)(?=" + _ENDING_CHARACTERS + r"|\s|$)")
 _ABBREVIATION = re.compile(r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e|(?:[A-Z]\.)+[A-Z])\.$", re.IGNORECASE)
+_SPEECH_SEGMENTS_ADAPTER = TypeAdapter(list[SpeechSegment])
 
 
 def normalize_companion_reply_content(raw: str) -> str:
@@ -199,10 +201,17 @@ def _split_segments_by_sentence(
     index: int,
 ) -> list[list[dict[str, JsonValue]]]:
     """句内标记按分句重新分组：段起点所在句获得其标记，跨句段在句界切开，段间与句末空白不归入任何句。"""
-    for segment in segments:
-        if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
-            raise _invalid_performance(index, ("segments",), "Each segment is an object with a text string")
-    if "".join(segment["text"] for segment in segments) != text:
+    try:
+        source = _SPEECH_SEGMENTS_ADAPTER.validate_python(segments)
+    except ValidationError as exc:
+        raise ValidationError.from_exception_data(
+            "CompanionReplyInput",
+            [
+                {**error, "loc": (index, "voice", "speech", "segments", *error["loc"])}
+                for error in exc.errors(include_url=False)
+            ],
+        ) from exc
+    if "".join(segment.text for segment in source) != text:
         raise _invalid_performance(
             index,
             ("segments",),
@@ -211,24 +220,26 @@ def _split_segments_by_sentence(
     grouped: list[list[dict[str, JsonValue]]] = [[] for _ in positions]
     offset = 0
     sentence_index = 0
-    for segment in segments:
-        start, end = offset, offset + len(segment["text"])
-        while sentence_index + 1 < len(positions) and positions[sentence_index + 1][0] <= start:
+    for segment in source:
+        start, end = offset, offset + len(segment.text)
+        while sentence_index + 1 < len(positions) and positions[sentence_index][1] <= start:
             sentence_index += 1
+        if start == end and (segment.tag is not None or segment.pause is not None):
+            grouped[sentence_index].append(segment.model_dump(exclude_unset=True))
         cursor = start
         first = True
         while cursor < end:
             sentence_start, sentence_end = positions[sentence_index]
             cut = min(end, sentence_end)
             piece = text[max(cursor, sentence_start) : cut]
-            marked = first and (segment.get("tag") is not None or segment.get("pause") is not None)
+            marked = first and (segment.tag is not None or segment.pause is not None)
             if piece or marked:
                 child: dict[str, JsonValue] = {"text": piece}
                 if marked:
-                    if segment.get("tag") is not None:
-                        child["tag"] = segment["tag"]
-                    if segment.get("pause") is not None:
-                        child["pause"] = segment["pause"]
+                    if segment.tag is not None:
+                        child["tag"] = segment.tag
+                    if segment.pause is not None:
+                        child["pause"] = segment.pause
                 grouped[sentence_index].append(child)
             first = False
             cursor = cut
@@ -253,11 +264,13 @@ def _split_dialogue_bubble(bubble: dict[str, JsonValue], index: int) -> list[dic
         segments = speech.get("segments") or []
         if not isinstance(segments, list):
             raise _invalid_performance(index, ("segments",), "Voice reply requires a segments array")
-        grouped = (
-            _split_segments_by_sentence(bubble["text"], segments, _sentence_positions(bubble["text"], parts), index)
-            if segments
-            else [[] for _ in parts]
-        )
+        if segments:
+            grouped = _split_segments_by_sentence(
+                bubble["text"],
+                segments,
+                _sentence_positions(bubble["text"], parts),
+                index,
+            )
     bubbles = []
     for position, part in enumerate(parts):
         child = {**deepcopy(bubble), "text": part}
@@ -421,8 +434,6 @@ def parse_companion_reply(
             continue
         if speech_config is None:
             raise _invalid_performance(index, (), "Voice is unavailable; deliver this dialogue as text")
-        if not bubble.speech.model_fields_set:
-            raise _invalid_performance(index, (), "Voice reply requires per-bubble performance")
         try:
             style = bubble.speech.bind(speech_config.provider_name, speech_config.model)
             validate_speech_style(style, speech_config.provider_name, speech_config.model)
@@ -434,7 +445,7 @@ def parse_companion_reply(
                     for error in exc.errors(include_url=False)
                 ],
             ) from exc
-        if "".join(segment.text for segment in style.segments) != bubble.text:
+        if style.segments and "".join(segment.text for segment in style.segments) != bubble.text:
             raise _invalid_performance(
                 index,
                 ("segments",),

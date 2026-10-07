@@ -9,17 +9,8 @@ class SpeechSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=0, max_length=4000)
-    # tag 是单个音频/语气变化标记；含逗号等分隔符即为多条指令混入，应拆开或写进 direction。
-    tag: str | None = Field(default=None, max_length=80, pattern=r"^[^\[\]()<>，,、;；\r\n]+$")
+    tag: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[^\[\]()<>，,、;；\r\n]+$")
     pause: float | None = Field(default=None, ge=0.01, le=99.99, multiple_of=0.01)
-
-
-class SpeechDirection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    role: str = Field(min_length=1, max_length=500)
-    scene: str = Field(min_length=1, max_length=500)
-    guidance: str = Field(min_length=1, max_length=1500)
 
 
 class MiMoSpeechStyle(BaseModel):
@@ -31,7 +22,7 @@ class MiMoSpeechStyle(BaseModel):
         default_factory=list,
         max_length=4,
     )
-    direction: SpeechDirection
+    instruction: str | None = Field(default=None, min_length=1, max_length=500)
     segments: list[SpeechSegment] = Field(default_factory=list, max_length=12)
 
 
