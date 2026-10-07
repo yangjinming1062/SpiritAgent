@@ -1,89 +1,78 @@
 # 生成服务
 
-编排形象、外观、场景和媒体生成，管理任务互斥、提交、落库与激活；供应商传输归 infrastructure。输入语义、产物和跨端恢复见 [PIPELINE](../../../../docs/PIPELINE.md)。
+编排形象、衣柜、场景、动作素材及聊天/动态媒体，管理任务、提交、采纳与激活。参考优先级、供应商能力、产物及恢复的完整定义归 [PIPELINE](../../../../docs/PIPELINE.md)，跨端状态归 PROTOCOL；本文列代码入口和本模块内部约束。
 
 ## 关键入口
 
 | 入口 | 职责 |
 |---|---|
-| [appearance_prompts.py](appearance_prompts.py) | 头像、衣柜、身体结构与服装参考提示词装配；Persona 读取由公共模型辅助完成，文本与视觉调用走 LLM 公共入口，显式输出预算与未完成响应按失败处理 |
-| [avatar_service.py](avatar_service.py) / [fullbody_reference_prompt.py](fullbody_reference_prompt.py) | 头像、全身草稿与候选、全身确认（锁定身份并建默认外观）、立绘裸路径读写与响应签名；全身参考提示词与自备图画幅 |
-| [character_card.py](character_card.py) | 角色卡分析任务 |
-| [initial_appearance.py](initial_appearance.py) | 首个动作包启动（含补排默认外观描述）；首个动作包与初始场景的重启恢复（初始场景由角色卡就绪后经 `scene_service.schedule_initial_scene` 启动） |
-| [visual_identity.py](visual_identity.py) | 出镜身份与本次造型（`SelfVisualPlan`），共用 `build_self_image_prompt` 与 `build_self_video_prompt` |
-| [outfit_service.py](outfit_service.py) | 衣柜外观草稿、重绘、自备图、确认、穿着、删除（同事务删除已停稳的关联动作包）、替换策略与后台命名；描述失败经 `description/retry` 手动补全 |
-| [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与环境壁纸提示词装配 |
-| [chat_images.py](chat_images.py) | 聊天图片批次登记、实际验图、版本与一次重做预算；工具入口见 [image_generation_tool.py](../../adapters/tools/builtin/image_generation_tool.py) |
-| [scene_service.py](scene_service.py) / [scene_image_review.py](scene_image_review.py) | 场景创建、描述、重生成与切换版本；伙伴参考仅用于独立检查 |
-| [video/](video/) / [video_jobs.py](video_jobs.py) | 图片与视频动作包（script、state、service）及聊天、动态视频任务；视频供应商轮询 `poll_video_task` 共用，聊天工具入口见 [video_generation_tool.py](../../adapters/tools/builtin/video_generation_tool.py) |
-| [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链与进度、身份保持图片及环境壁纸、身份评分与严格复核 |
-| [media_review.py](media_review.py) | 用户复核项的创建、查询、采纳与拒绝；所属动作以 `MediaReviewPublication` 落库，复核项只作用于生成它的成品（失效语义见 [PROTOCOL](../../../../docs/PROTOCOL.md#媒体复核与激活)），原位重做同事务结束动作仍待确认的复核项；采纳动作时同事务发布所属包目录，包仍激活时广播目录变更并兑现有效表达意图，拒绝时作废该次生成尝试；同一素材只复用仍待确认的复核项 |
-| [response_builders.py](response_builders.py) | 头像/外观响应装配 |
+| [appearance_prompts.py](appearance_prompts.py)、[fullbody_reference_prompt.py](fullbody_reference_prompt.py) | 头像、身体结构、服装参考和全身提示词装配 |
+| [avatar_service.py](avatar_service.py) | 头像、全身草稿/候选、确认身份和默认外观；角色卡特征提取及审核改写 |
+| [character_card.py](character_card.py)、[initial_appearance.py](initial_appearance.py) | 分部角色卡提取与初始动作包/场景衔接、重启恢复 |
+| [outfit_service.py](outfit_service.py) | 外观草稿、编辑、自备图、确认、穿着、删除、命名与描述补全 |
+| [scene_service.py](scene_service.py)、[scene_prompt.py](scene_prompt.py)、[scene_image_review.py](scene_image_review.py) | 场景任务、环境提示词、重复伙伴检查、描述和原位重生成 |
+| [visual_identity.py](visual_identity.py)、[image_generation.py](image_generation.py) | 出镜身份与造型的共享装配、图像能力筛选与生成出口 |
+| [chat_images.py](chat_images.py) | 聊天图片批次、验图、版本与一次重做预算 |
+| [video_jobs.py](video_jobs.py) | 聊天与动态视频任务，句柄轮询、交付和原任务核查 |
+| [video/service.py](video/service.py)、[state.py](video/state.py)、[script.py](video/script.py) | 动作包与单动作制作、冻结上下文、静态描述/视频脚本、探身定位 |
+| [media_chain.py](media_chain.py)、[character_images.py](character_images.py)、[identity_review.py](identity_review.py) | 无凭据链快照、质量进度、候选与身份评分 |
+| [media_review.py](media_review.py) | 成品复核、采纳和拒绝；采纳动作时事务内发布目录 |
+| [response_builders.py](response_builders.py) | 头像和外观响应装配 |
 
 ## 事务与任务所有权
 
-所有形象、衣柜、角色卡和动作包任务共用 `avatar_service.get_avatar_job_lock` 用户级锁；角色卡编辑使用数据库行锁与预期修订，场景另用 `scene_service` 的场景锁。任务按“冻结资料 → 事务外等待供应商 → 校验身份、状态和源路径 → 状态和事件同事务提交”执行，迟到结果不得覆盖新任务，候选与正式资产分开清理。头像生成、基于图片重绘、自备图采纳与提示词入口由服务重读 persona 校验引导完成和身份锁定，不接受调用方在锁外读到的快照；API 的锁外检查只作快速拒绝。
+形象、衣柜、角色卡和动作包共用 `avatar_service.get_avatar_job_lock` 用户锁；场景使用独立场景锁。角色卡编辑另用数据库行锁与预期修订。头像生成、重绘、自备图采纳及提示词入口在服务锁内重读 persona，API 锁外检查只作快速拒绝。
 
-已就绪动作包启用时比对冻结全身身份图与当前全身图字节，在途任务自动启用还要核对角色卡修订；角色卡文字修订不阻止已保存动作包启用。场景壁纸不绑定角色身份，按账户、任务与切换版本守卫提交。完整规则见 [PIPELINE](../../../../docs/PIPELINE.md#角色卡与并发写入) 与 [场景契约](../../../../docs/PROTOCOL.md#场景启用与授权)。
+任务冻结资料后在事务外调用供应商，写回重核任务、身份、源路径和状态，业务更新与事件同事务提交。正式路径存裸路径，响应出口签名；落盘前取得外观、包或场景 ID，不能在等待供应商期间保留空草稿事务。随机临时草稿和任务固定路径有各自取消清理语义，不混用。
 
 ### 全身候选与草稿
 
-- 身份确认前，全身生成和自备图直接替换草稿；`confirm_fullbody_seed` 锁定身份、登记角色卡并保存默认外观快照。确认后先写 `FullbodyCandidate`，分析可重试，采纳时校验原图与角色卡修订并同事务更新；未采纳候选可清理，已采纳旧图留给历史任务。完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
-- 草稿转存失败可重试，只有全部图片过期的头像行才清理，不连带正式参考。服务内部和 ORM 使用裸路径（草稿为 `temp-media/`，正式资产位于 `companion-assets/{user_id}/` 下），URL 只在响应出口签名，客户端地址只在确认入口还原比对。目录布局见 [资产访问与缓存](../../../../docs/PROTOCOL.md#资产访问与缓存)。目录归属由写入调用方显式给出；新外观先领取数据库序列 ID 后结束事务，避免生成等待占用连接或暴露空草稿，新包及场景在落盘前取得 ID。
-- 全身与衣柜生成、微调、自备图共用 [`prepare_transparent_image`](../../infrastructure/video_processing/image.py)：有效 alpha 原样保留，其余对已有产物本地抠图后再验收；成品 PNG 保持原尺寸与构图。生成前检查模型，换装先透明化再评分，确认与候选采纳再次验收；失败不安装产物。完整交付与背景规则见 [PIPELINE](../../../../docs/PIPELINE.md#全身与着装透明成品)。
-- 角色卡和全身候选共用 `extract_card_features`；头像、全身和换装共用 `generate_with_moderation_retry`，审核命中只改写提示词重试一次，结果未知不重试。
-- 外观的生成来源、已接受反馈与身份修订守卫存于 `CompanionOutfit.source_json`，一律经 [`OutfitSource`](../../../modules/companion/models.py) 读写：损坏或类型异常的字段按缺省处理，遗留未知键原样保留；动作包据其中的身份全身图路径判断冻结参考是否需要校准。
+确认身份前直接更新草稿；`confirm_fullbody_seed` 同事务锁定身份、登记角色卡和默认外观。确认后结果保存为 `FullbodyCandidate`，分析与采纳分开，采纳重核原图和角色卡修订；未采纳候选可回收，历史任务仍持有已采纳参考。
+
+- 全身与换装共用 `prepare_transparent_image`，确认或采纳前再次校验；候选转存失败可重试，只清理全部图片均过期的草稿行，不连带正式参考。
+- 全身候选和角色卡共用 `extract_card_features`；头像、全身和换装共用 `generate_with_moderation_retry`，不在不同入口另写审核策略。
+- `CompanionOutfit.source_json` 只经 [OutfitSource](../../../modules/companion/models.py) 读写，保存生成来源、接受反馈及身份守卫；异常字段按缺省处理，未知旧键保留。动作包从其身份参考路径判断是否需校准。
 
 ### 后台任务与初始资产
 
-场景、角色卡和动作包在用户维护期间保存已付费结果，但暂停尚未提交的后继模型调用；显式取消和进程停止仍可取消。动作包上传导入不涉及付费，维护中断即按失败落库，只能重新提交。动作包在每次脚本、图片或视频提交、评分与复核调用前核对维护边界和当前身份；维护时保留进度，只续已有句柄、下载和本地处理，不启动新的付费步骤。维护结束时 `resume_user_dynamic_actions`、`resume_user_scene_jobs`、`resume_user_character_extraction` 分别恢复持久任务，用户已被删除则无行可续；失效身份的已有素材继续保留，新付费步骤明确失败。
+维护期间场景、角色卡和动作任务收敛已提交制作，保存源结果，暂停后继付费调用；上传导入没有付费句柄，维护、重启或停机中断后按失败处理。任务恢复由 `resume_user_dynamic_actions`、`resume_user_scene_jobs`、`resume_user_character_extraction` 重读状态，删除用户后不恢复。
 
-视觉调用的业务守卫随请求传到 `vision_chat`，每次实际供应商调用（含回退）前重查；维护、撤权或身份失效不降级为评分不可用，也不被此前供应商错误覆盖。IM 视频提交与评分共用原对端授权守卫；同一 HTTP 请求的内部重试仍由既有供应商传输策略管理。
+视觉业务守卫传至 `vision_chat`，每次实际调用及供应商回退前重查。维护、撤权和身份失效不能降级成评分不可用；IM 视频沿原对端授权守卫收敛。
 
-默认外观、启动标记与错误用 ORM 字段，标记与首动作包同事务写入。外观描述按用户/外观合并在途任务，命名先读取实际采纳图再转写，回写核对路径。失败或重启中断保留原名与已完成描述，持久化失败原因，由衣柜手动补全，不隐式重复付费。空描述的新包在首次模型调用前有界等待已受理的描述任务，再原子冻结描述及评审快照；等待耗尽或描述失败时按参考图兜底，既有冻结包不回填新描述。
+初始默认外观的启动标记与首动作包同事务写入，删除任务不撤销已启动事实。角色卡就绪后启动初始场景，重启由 `resume_initial_appearance` 分别补查首包和场景。
+
+外观描述按用户/外观合并在途任务，以实际采纳图片命名，写回核对路径；失败或重启中断保留原名、已完成描述和诊断，由衣柜手动补全，不隐式重复付费。无描述的新包仅在首次模型调用前有界等待已有描述任务，然后原子冻结快照；超时或失败按参考图继续，既有包不回填后来描述。
 
 ## 场景改动链
 
-创建、描述分析、图片重生成和启用是不同操作，先读[任务与原位换图](../../../../docs/PROTOCOL.md#场景任务与原位换图)、[输入冻结](../../../../docs/PIPELINE.md#场景图片重绘)。
+创建、描述分析、图片重生成和启用分别管理。状态、尺寸、原位替换与恢复语义归 PROTOCOL / PIPELINE，改动沿下表核对：
 
-| 环节 | 定位入口 | 修改时联动 |
+| 环节 | 入口 | 联动 |
 |---|---|---|
-| 用户操作 | [scene-page.tsx](../../../../client/renderer/app/features/living/scene-page.tsx)、[scene-detail-view.tsx](../../../../client/renderer/app/features/living/scene-detail-view.tsx) | 保存描述、重生成、取消与旧图呈现 |
-| 状态与事件 | [scene-store.ts](../../../../client/renderer/modules/scene/scene-store.ts) 的 `regenerateScene` / `onSceneEvent` | POST 后水合、版本与换号守卫；当前背景见 [scene-backdrop.tsx](../../../../client/renderer/app/features/living/scene-backdrop.tsx) |
-| API 与结构 | [companion_scenes.py](../../../api/v1/companion_scenes.py) 的 `post_scene_regenerate`、[schemas_scene.py](../../../modules/companion/schemas_scene.py) | 响应状态、创建任务与重生成任务的区分 |
-| 执行与持久化 | [scene_service.py](scene_service.py) 的 `regenerate_scene` / `_run_scene_regeneration` / `resume_scene_jobs`，模型 [scene.py](../../../modules/companion/scene.py) | 单任务互斥、尺寸冻结、原位提交与恢复 |
-| 提示词与供应商 | [scene_prompt.py](scene_prompt.py)、[character_images.py](character_images.py) | 创建和重生成的环境输入；独立重复伙伴检查、尺寸适配与未知提交不重发 |
-
-场景验收覆盖屏幕尺寸、重复伙伴与无关主体、分析恢复和换号，清单见 [PIPELINE](../../../../docs/PIPELINE.md#验收范围)。
+| 用户操作 | [scene-page.tsx](../../../../client/renderer/app/features/living/scene-page.tsx)、[scene-detail-view.tsx](../../../../client/renderer/app/features/living/scene-detail-view.tsx) | 保存描述、重生成、取消和旧图呈现 |
+| 状态与背景 | [scene-store.ts](../../../../client/renderer/modules/scene/scene-store.ts)、[scene-backdrop.tsx](../../../../client/renderer/app/features/living/scene-backdrop.tsx) | POST 后水合、版本与账户守卫 |
+| API 与数据 | [companion_scenes.py](../../../api/v1/companion_scenes.py)、[schemas_scene.py](../../../modules/companion/schemas_scene.py)、[scene.py](../../../modules/companion/scene.py) | 创建/重生成任务区分与响应状态 |
+| 执行 | `scene_service.regenerate_scene`、`_run_scene_regeneration`、`resume_scene_jobs` | 单任务互斥、冻结尺寸和原位提交 |
+| 模型链 | `scene_prompt`、`character_images`、`scene_image_review` | 环境参考、尺寸适配、独立重复伙伴检查 |
 
 ## 图像输入与装配
 
-[image_generation.py](image_generation.py)的 `resolve_image_gen_chain` 按参考图、编辑、多参考与提示词长度筛选供应商链，不按透明能力过滤（透明优先与回退见[能力筛选](../../../../docs/PIPELINE.md#能力筛选)），`generate_images` 按 `persist_user_assets` 决定返回用户资产、原生 URL 或 data URI；能力位由[供应商基类](../../infrastructure/llm/providers/base.py)声明。提示词按点位选择，头像条款不能直接用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
+`resolve_image_gen_chain` 按编辑、多参考及提示词长度过滤，不在公共筛选器按透明能力过滤；透明优先由具体质量链处理。`generate_images` 按 `persist_user_assets` 返回正式资产、原生 URL 或 data URI，能力位由供应商基类声明。
 
-聊天与动态媒体共用 [visual_identity.py](visual_identity.py) 装配提示词，视频参考通过 `self_video_references` 提供；参考与造型规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频)。聊天及动态媒体的日期目录与冻结规则见 [资产访问与缓存](../../../../docs/PROTOCOL.md#资产访问与缓存)；图片链持久化 `storage_directory`，视频任务持久化对应目录，恢复和重试不重新按当前日期选目录。没有 `save_progress` 的同步生图调用（如换装草稿）只对结果下载的可恢复传输错误做有界重试，不重新提交生图；最终失败时回收已落盘文件。调用方须把非 `ImageGenerationError` 的失败转为公开错误，不能落成 500 或结果未知。
+聊天与动态共用 `SelfVisualPlan` 和出镜装配。图片进度的 `storage_directory`、视频任务目录在受理时冻结，恢复不按当前日期重选。无 `save_progress` 的同步调用只对产物下载作有界重试，不重新提交生成，最终失败回收已落盘文件；调用方须转换公开错误，避免泄露异常原文或误报结果未知。
 
 ## 动作包与媒体质量链
 
-聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。视频任务的固定文件名包含冻结的生成 ID，避免恢复后数据库序列与旧媒体文件重名。没有目标会话的视频任务只保存结果，由[动态应用](../posts/README.md)接收，不执行聊天交付。
+聊天工具共享 `MediaTurnState`，视频终态由 conversation 领域原位更新结构化气泡；其他会话追加媒体状态消息。无目标会话的视频只交给动态发布，不执行聊天交付。视频固定文件名包含冻结生成 ID，避免恢复与旧文件重名。
 
-上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）按素材类型调用图片或视频处理并共用发布；[video/state.py](video/state.py)保存冻结生成上下文，单动作结果共用 [schema](../../../modules/companion/schemas_video.py) 的 `ActionResult`，上传包没有可重做的冻结参考。任务按 `status × stage` 持久化，图片处理及 FFmpeg 在工作线程执行，新包失败不清空旧激活包；供应商成品下载共用有界重试，只重试传输错误和 5xx，不重新提交制作；供应商句柄提交后立即落库，重启只续轮询，不重复付费提交。
+- `create_pack_from_clips` 和 `create_pack_from_reference` 按图片/视频分型处理，共用目录发布；任务保存 `status × stage`，图片处理和 FFmpeg 在线程中执行。上传包没有可重做的冻结参考。
+- 动作已采纳版本存于 `accepted_asset_json`，制作列只代表当前尝试。重做、失败或待复核不撤销旧已采纳素材；目录与播放只消费已采纳版本。反馈每次替换本动作字段，空串清除。
+- 跨包继承复制素材、冻结参考和恢复资源并重写嵌套路径；待复核候选仍属于原动作，不复制悬空复核状态。没有可继承素材时明确失败。确定性门禁拒绝使用 `invalid_asset`，不能对同一坏素材反复继续。
+- 系统 drag 和左右探身独立整理静态描述，不选择视频链，结果不填视频时长、帧数或循环字段。探身定位由 `script.py` 执行；图像与视频交付规格统一归 PIPELINE。
+- 新付费步骤重查 `require_action_matting_model`，已有句柄继续查询下载，源素材保留供恢复。队列收尾须兑现新动作唤醒和推迟的旧包退役；空队列停止，不循环恢复未知结果。
 
-系统规格中 drag 与左右探身为图片，其余生成动作是视频。图片请求独立整理静态描述，不选择或校验视频链；结果、已采纳快照及目录中的图片不填充时长、帧数、帧率或循环参数。图片基础设施入口为 [`prepare_action_image`](../../infrastructure/video_processing/image.py)，素材与命中结构归 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。
-
-动作的 `accepted_asset_json` 保存已采纳素材和播放版本，当前制作列只属于本次尝试。原位重做、待复核与拒绝候选保留旧已采纳素材，新成品成功或人工采纳时才替换；目录和播放指令消费已采纳版本。跨包继承将可继承版本的素材字节、冻结参考和恢复进度中的资源复制到目标包目录，并重写嵌套路径；待复核候选仍绑定原动作；缺少已采纳版本时新包明确失败，不复制悬空复核状态。动作反馈每次重做替换本动作字段，空串清除，衣柜回显当前值。确定性素材门禁拒绝记为 `invalid_asset`，不提供重复处理同一素材的“继续”。释放的素材与旧目录同事务登记到 `action_asset_retirements`，宽限与保留期见[恢复与历史包](../../../../docs/PIPELINE.md#恢复与历史包)。
-
-正式资产由 [domains/assets](../../../domains/assets/README.md) 汇总业务引用并递归回收，契约见 [资产访问与缓存](../../../../docs/PROTOCOL.md#资产访问与缓存)。
-
-探身补齐由 [video/service.py](video/service.py)编排，定位校准在 [video/script.py](video/script.py)，接口契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。生成任务收尾须兑现新排队动作的唤醒；空队列停止，不循环恢复未知结果任务；队列清空后还须补做因在途制作而推迟的旧版本退役（见[恢复与历史包](../../../../docs/PIPELINE.md#恢复与历史包)）。
-
-- 生成动作保留有效原生 alpha，其余由本地模型抠像。整包、就绪包重做、失败包续跑和探身补齐在请求时检查抠像模型，动态动作在提案受理时检查；后台制作在每个新的付费步骤前再查 `require_action_matting_model`。缺失时在付费前失败并保留进度，模型恢复后沿用同名重做或失败包续跑；已有可用候选时不再追加提交，按最佳候选收尾。已有供应商句柄只续查与下载，抠像失败保留源素材，结果未知不重发。上传素材要求真实透明背景，处理不调用付费模型。
-
-图片成品、姿态图留白及视频透明化边界见 [图片交付](../../../../docs/PIPELINE.md#图片交付)与 [视频与交付](../../../../docs/PIPELINE.md#视频与交付)。
-
-[media_chain.py](media_chain.py)保存无凭据供应商快照、游标和候选；`character_images.py`、`identity_review.py`、`media_review.py`分别负责身份图链、评分和人工复核。图片、视频分别持久化质量进度；动作包还独立冻结全身身份图，复用已选姿态图和成功动作。恢复与清理见 [恢复规则](../../../../docs/PIPELINE.md#持久化与恢复)。
-
-聊天与动作视频共用 `media_chain.py` 的失败分类和 `video_failure_message` 文案；审核拒绝与结果未知保留独立原因，供应商原文不进入用户提示。
+正式文件引用与回收使用 [assets 公共入口](../../domains/assets/README.md)。`media_chain` 保存候选、游标与选择，`identity_review` 做评分，`media_review` 做人工采纳；失败文案统一经 `video_failure_message`，供应商原文不进入用户提示。
 
 ## 验证入口
 
-检查命令见 [Backend](../../../README.md#契约与验证)，生成与恢复验收见 [PIPELINE](../../../../docs/PIPELINE.md#验证)。
+命令归 [Scripts](../../../../scripts/README.md)，参考、真实 alpha、身份、候选采纳、并发与恢复按 PIPELINE 的完整链验收。文档变更只核查事实与链接，不重新付费生成。

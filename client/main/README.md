@@ -1,19 +1,19 @@
 # Client 主进程
 
-可信主进程持有凭据、窗口、Runner、配置镜像、磁盘缓存与更新。渲染层通过 `window.spiritagent` 和 `spiritagentWebUtils.getPathForFile` 使用受控能力。跨窗口协作见 [Client](../README.md)，通道类型见 [shared/ipc](../shared/ipc/)。
+主进程通过 `entry.ts` 装配桌面能力，通过 `preload.ts` 暴露受控桥。本文维护内部生命周期、准入和原生承载；共享缓存归 Client README，跨端契约归 PROTOCOL。
 
 ## 包边界
 
-| 包或入口     | 职责                                                                          |
-| ------------ | ----------------------------------------------------------------------------- |
-| `entry.ts`   | 唯一组合根，显式装配，不展开业务逻辑                                          |
-| `preload.ts` | 沙盒 preload，向渲染层暴露 `window.spiritagent`                               |
-| `backend`    | 多账户凭据、会话与 HTTP                                                       |
-| `runner`     | 进程、端点与本地 RPC 桥、反向模型代理、Runner 更新                            |
-| `lifecycle`  | 窗口、托盘、退出与桌面更新                                                    |
-| `ipc`        | 按能力注册通道，也持有资产、历史快照与 TTS 合成音频三类磁盘缓存及 Runner 宿主 |
-| `security`   | sender、路径与能力准入                                                        |
-| `shared`     | 叶子层，经装配层注入结构端口，不导入 backend / runner 实现                    |
+| 包或入口 | 职责 |
+|---|---|
+| `entry.ts` | 唯一组合根，显式装配，不展开业务逻辑 |
+| `preload.ts` | 沙盒 preload，暴露 `window.spiritagent` |
+| `backend` | 多账户凭据、会话与 HTTP |
+| `runner` | 进程、本地 RPC、反向模型代理及 Runner 更新 |
+| `lifecycle` | 窗口、托盘、退出与桌面更新 |
+| `ipc` | 注册能力通道，装配 Runner 宿主及资产、历史、语音缓存 |
+| `security` | sender、路径与能力准入 |
+| `shared` | 叶子层，经组合根注入端口，不导入 backend／runner 实现 |
 
 主进程产物为 ESM `entry.js`，沙盒 preload 为 CJS `preload.cjs`；混入 ESM import 会使 preload 桥失效。`main/shared` 与跨进程契约包 `client/shared` 分层独立。
 
@@ -79,21 +79,43 @@
 
 启动时先处理遗留恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号、兼容与限制见 [helper](../desktop-host/README.md#恢复)。
 
-[desktop-dock.ts](ipc/desktop-dock.ts)持有固定配置与投影缓存，运行窗口由呈现模块注入。窗口更新只合并内存快照；元数据仅广播实际变化，桌面结束或目录重扫后废弃迟到结果。[windows-app-catalog.ts](ipc/windows-app-catalog.ts)合并快捷方式与 [Windows 应用登记](ipc/windows-installed-apps.ts)，按句柄提供图标，不认识 Dock 状态。权限、数据和失败语义见[桌面呈现与本机启动器](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
-
 真实平台门禁见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)，挂载探测入口见 [helper](../desktop-host/README.md#原生验收)。
+
+## Dock 与应用目录
+
+[desktop-dock.ts](ipc/desktop-dock.ts) 合并固定配置、运行快照与图标投影；[windows-app-catalog.ts](ipc/windows-app-catalog.ts) 只负责目录和图标，[windows-installed-apps.ts](ipc/windows-installed-apps.ts) 负责系统查询。原生窗口采集归 helper，渲染层只接收不透明条目与窗口 ID。
+
+- 普通应用以规范化 exe 路径归并，快捷方式解析目标；同名 exe 的父子安装目录关联启动器与窗口进程，无关目录保持独立。固定去重、目录已添加标记和运行显示复用此规则，打包应用以 AUMID 归并。
+- 固定时优先保留目录快捷方式及参数，无目录的普通程序使用已验证 exe；打包应用保存 `shell:AppsFolder\AUMID`，激活前在完整系统目录核验。v1 `desktop-dock.json` 只保存固定项，运行状态不落盘。
+- 添加、修复和启动均复核目标；修复保留 ID 和顺序，取消不写配置。投影或启动失败保留条目，写盘失败保留原配置。运行查询失败保留最近快照，并报告不可用状态。
+- `revision` 覆盖投影变化，`pinnedRevision` 只随固定配置变化；运行和图标刷新不重取选择面板目录。桌面结束或目录重扫使在途元数据失效。
+- 目录合并开始菜单、桌面快捷方式、App Paths 与 AppsFolder，按 exe 或 AUMID 去重、快捷方式优先；排除非现存 exe、网页快捷方式、`.msc`、虚拟和隐藏入口。各来源独立限时并报告失败；展示上限不限制已保存应用核验。
+- 目录随机句柄仅本次扫描有效，重扫废弃句柄与图标缓存。图标按已登记句柄分批读取，打包应用优先用清单图标，失败回落默认图标。目录与产品账户无关，不上云。
+
+激活、关闭和启动的授权与结果边界统一归 [本机启动器契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 ## 配置镜像
 
-[runner-config.ts](ipc/runner-config.ts)只接受工作台或交互桌面 sender，读取整份配置、按路径修改字段；[配置存储](shared/lib/runner-config-store.ts)串行落盘与推送 Runner，云同步防抖、水合写入抑制回环；在途 flush 以 `flushQueued` 补跑防丢编辑，换号以 `authEpoch` 丢弃旧账户上云；`patch` 另拒绝触及原型链的路径与非 JSON 值；`patch` 与 `mutate` 修改抛错或落盘失败时回滚内存镜像，云端水合 `applyCloudMirror` 与账户隔离清理 `clearSyncedMirror` 落盘失败保留内存结果并抛出，理由见配置契约。其他写入方各走带校验的通道：[prefs.ts](ipc/prefs.ts) 只接受 `companion.*` 点键；快捷键、托盘语言与上次完整入口经 `patch`，主题与技能、工具集开关经 `mutate`，云端水合经 `applyCloudMirror` 整节写入，账户隔离清理经 `clearSyncedMirror`。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
+[runner-config.ts](ipc/runner-config.ts) 的整份配置与路径修改只接受工作台或交互桌面；其他入口使用窄通道。`prefs.ts` 只允许 `companion.*` 点键，主题、技能与工具集走 `mutate`，云端水合走 `applyCloudMirror`，账户隔离清理走 `clearSyncedMirror`。
+
+[runner-config-store.ts](shared/lib/runner-config-store.ts) 串行落盘与推送；`patch` 拒绝原型链路径和非 JSON 值。普通修改失败回滚内存，云端水合与账户隔离清理即使落盘失败仍保留新内存值。云同步以 `flushQueued` 补跑在途编辑、`authEpoch` 隔离旧账户并抑制水合回环。白名单、所有权与冲突语义归 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
 ## Runner 生命周期
 
-[ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。[bridge.ts](runner/bridge.ts) 串行完成握手与运行中配置推送、`get_tools`；连接探活用 WS 层 ping（Runner 协议自动 pong），不用 JSON-RPC 通知。握手强制推送完整配置；运行中以 Runner 已成功应用的配置比较，忽略仅桌面消费的 `ui`、`shortcuts`、`companion`、`language`、`sync` 节，未知节仍参与比较。实际推送成功后读取清单，变化时随就绪事件发送给宿主；读取失败保留原清单，下次保存重试，断连与停止废弃旧连接的成功快照。模型派发调用经 `ipc/runner.ts` 带 `call_id` 发出，按 Runner 回复分类为完成、明确失败、未执行或结果未知后交回宿主；取消只按该调用记录的 RPC `req_id` 作用于指定调用，由宿主收到 `tool.cancel` 时发起。窗口查询等直调不带 `call_id`。`tools.sync` 与撤销由渲染层宿主发起，见 [Client](../README.md#连接与设备就绪)。
+[ipc/runner.ts](ipc/runner.ts) 持有端点、桥与自动启停，token 经环境变量传递。[bridge.ts](runner/bridge.ts) 用同一队列完成握手、配置推送与工具清单读取；连接探活用 WS ping/pong。可执行就绪与工具撤销统一遵循 [握手契约](../../docs/PROTOCOL.md#握手与工具同步)。
 
-就绪只由桥管理，完整配置与工具清单均成功后才发布，未就绪时新执行返回未执行；取消与结果查询仍可收尾。完整握手最多三次尝试，配置 RPC 单次 5 秒、工具查询单次 10 秒，启动等待上限 60 秒。握手耗尽或运行中配置推送失败立即撤销新执行资格，保留已连接进程供后续配置保存、`runner_ready` 或 `autoStart` 原位重试；WS 或进程启动失败、初次等待超时则收尾资源。重连未报告 `runner_ready` 时保持可重新启动的停止状态。停止需等待在途启动及其回滚收尾，再允许重启；旧启动不得清理新实例的资源。
+| 路径 | 桥内处理 |
+|---|---|
+| 首次或重新握手 | 强制 full config，成功读取清单才就绪；最多三次尝试，配置 RPC 5 秒、清单 RPC 10 秒，启动等待 60 秒 |
+| 运行中保存配置 | 比对 Runner 最近成功应用的快照；忽略仅桌面消费的 `ui`、`shortcuts`、`companion`、`language`、`sync`，未知节仍参与 |
+| 推送成功、清单刷新失败 | 保留原清单和就绪状态，留下 `toolsRefreshPending`，下次保存继续读清单 |
+| 握手耗尽或运行期配置推送失败 | 撤销新执行资格，保留连接供保存配置、`runner_ready` 或 `autoStart` 原位重试 |
+| WS／进程启动失败、初次等待超时 | 收尾端点、连接和进程；断连废弃旧清单，重连未报告 ready 时可重新启动 |
+| 停止与重启 | 等待在途启动及回滚完成，操作代次阻断旧启动清理新实例 |
 
-[session-runtime.ts](backend/session-runtime.ts)负责懒创建及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 的广播器直接广播，不进鉴权操作队列，广播后仍是当前会话才自动启动 Runner；另有应用就绪后 200 ms 的定时入口检查会话，已有 token 即自动启动。无 call_id 不记日志，限制见[调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
+派发入口透传 `call_id` 并分类结果；取消定位该调用的 RPC `req_id`，窗口等直调不带 `call_id`。`tools.sync` 归 renderer 宿主，不由桥发送。取消、日志恢复和结果未知的定义归 [调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
+
+[session-runtime.ts](backend/session-runtime.ts)负责懒创建及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 广播器直接广播，仍是当前会话才自动启动 Runner；应用就绪后另有 200 ms 定时入口，须与恢复路径共同保持幂等。
 
 [更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。待装资产由 [auto-updater.ts](lifecycle/auto-updater.ts) 在创建精灵窗前安装。wheel 与 `server.py` 的导入面一致性由构建期 [check_runner_facade.py](../../scripts/check_runner_facade.py) 门禁，验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
 
@@ -103,27 +125,24 @@
 
 - electron-updater 的 error 事件不带来源，阶段按最近发起的检查、下载或安装归属；新增触发入口须同步设置阶段。
 - 更新源在每次检查和下载前按保存的后端地址核对，不锁定首个地址；Runner 预取使用发现该版本时的更新源。
-- 安装包下载完成只广播 `preparing`，预取校验通过才广播 `downloaded`；重启安装只认该状态与生活空间或交互桌面 sender。
+- 安装包下载完成先广播 `preparing`，Runner 预取校验通过才广播 `downloaded`；入口只接受生活空间或交互桌面 sender。
 - 安装入口先等待桌面恢复，再调用 `quitAndInstall`；Windows updater 会先启动安装器再发退出事件，不能仅靠退出钩子保证恢复顺序。
 - 更新状态广播给全部窗口，不假定主窗口存在；实际消费方由渲染层 `update-bridge` 挂载位置决定。
 
 ## 网络与缓存
 
-字节缓存键与落盘范围见 [Client](../README.md#资产与历史缓存)。下载、写盘和回调均须遵守取消与用户代次。
+字节缓存键与落盘范围见 [Client](../README.md#资产与历史缓存)。账户隔离及取消由缓存各自的所有者实施。
 
 资产入口共用下载与鉴权处理，缓存返回字节和 MIME；仅 `apiAsset` 在返回时编码 data URL，`apiAssetBuffer` 直接返回字节。
 
 收听记录由 [voice-playback.ts](ipc/voice-playback.ts) 校验鉴权会话与载荷，[voice-playback-store.ts](ipc/voice-playback-store.ts) 串行原子写盘并单向合并已听状态；跨窗口广播仅携带当前账户的记录，清理代次阻断旧写入。记录独立于历史快照，缓存生命周期见 [Client](../README.md#资产与历史缓存)；两者的账户代次与按会话串行写入由 [account-queue.ts](ipc/account-queue.ts) 共用。
-移除账户时先取消并等待该账户的下载与写入，再删除其目录；同账户新请求等待清理结束，其他账户不受影响。下载超时覆盖响应体读取。
-
-`cacheOnly` 只查询本地缓存，不请求 Backend；资产未命中返回 `null`，由调用方按缺少本地副本处理。
+移除账户先等待旧下载与写入再删目录，同账户新请求等待清理；下载超时覆盖响应体读取。
 
 [hardening.ts](security/hardening.ts)按路径和方法配置请求等待，同步生成入口有更长超时：头像、全身参考与外观的生图链取长预算以覆盖供应商回退，候选身体特征分析按后端分析时限，提示词整合、采纳与确认类入口及语音重试各有较长超时。新增入口须核对后端该入口的同步时限与可能的用户锁等待。超时不代表后端任务已停；401 按结构化状态处理，不匹配错误文案。
 
 ### 语音与附件
 
 - STT / TTS 经 [媒体入口](ipc/media.ts)调用云端，使用有界队列、并发和速率控制；TTS 内存与在途合并、磁盘命中不入队（即时返回），仅云端调用与落盘走队列，缓存命中不耗云端额度。
-- 窗口不复制这套限制。
 - 图片附件按[文件入口](ipc/files.ts)的尺寸与字节上限降采样。
 
 ## 构建产物

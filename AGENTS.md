@@ -1,6 +1,6 @@
 # Agent 阅读入口
 
-修改前读 [RULES.md](RULES.md)。初次了解项目读 [ARCHITECTURE](docs/ARCHITECTURE.md)；具体任务按下表进入相关章节和模块 README，再沿入口核对代码、消费方与验证要求，无需通读所有主题文档。已读且未变化的内容不重复加载。
+修改前读 [RULES.md](RULES.md)。初次了解项目读 [ARCHITECTURE](docs/ARCHITECTURE.md)；具体任务按下表进入相关全局定义与模块代码入口，再核对生产方、消费方、恢复和验证要求。全局定义留在 `docs/`，模块 README 只展开内部约束与操作；无需为重复描述往返阅读。已读且未变化的内容不重复加载。
 
 | 要修改的功能 | 先读的语义 | 代码与联动入口 |
 |---|---|---|
@@ -13,6 +13,7 @@
 | 动态与日记 | [动态体验](docs/DESIGN.md#生活动态)、[日记体验](docs/DESIGN.md#第一人称日记)、[契约](docs/PROTOCOL.md#动态与日记) | [Backend 任务入口](backend/README.md#任务入口) |
 | IM 配对、消息与本机能力 | [IM 契约](docs/PROTOCOL.md#im-通道) | [Backend IM](backend/README.md#im-渠道)、[Runner](runner/README.md#任务入口) |
 | 窗口、拖拽、主题、多屏 | [窗口与会话](docs/DESIGN.md#窗口与会话)、[主题](docs/DESIGN.md#主题与图片查看)、[桌面表现](docs/DESIGN.md#桌面表现与移动) | [Client 任务入口](client/README.md#任务入口)、[窗口与主题约束](client/README.md#窗口与主题) |
+| Windows 桌面模式、Dock 与异常恢复 | [桌面体验](docs/DESIGN.md#桌面模式)、[呈现与启动器](docs/PROTOCOL.md#桌面呈现与本机启动器) | [主进程](client/main/README.md#桌面承载与恢复)、[原生宿主](client/desktop-host/README.md)、[实机验收](scripts/README.md#windows-桌面验收) |
 | 工具、能力同步、执行取消 | [本机工具契约](docs/PROTOCOL.md#本机工具) | [Runner 任务入口](runner/README.md#任务入口)、[Client 主进程](client/main/README.md#runner-生命周期) |
 | 激活、账户切换、凭据、配置与更新 | [信任边界](docs/ARCHITECTURE.md#信任边界与安全)、[账户体验](docs/DESIGN.md#激活与账户切换)、[安全契约](docs/PROTOCOL.md#安全更新与备份) | [Client](client/README.md#任务入口)、[Backend 任务入口](backend/README.md#任务入口) |
 | 首次安装、修复与内置技能 | [安装与修复](installer/README.md#安装与修复) | [Installer 任务入口](installer/README.md#任务入口)、[内置技能文档](installer/README.md#内置技能文档) |

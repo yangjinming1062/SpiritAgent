@@ -1,107 +1,83 @@
 # 对话编排
 
-组织桌面、IM、Cron、主动陪伴与子 Agent 回合的上下文、模型、工具和交付。领域层管理业务，基础设施负责供应商传输；依赖见 [Backend](../../../README.md#services-依赖边界)，输出契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#结构化回复与终端交付)。
-
-## 回合流程
-
-装配入口资料 → 模型调用 → 工具派发/委派与续轮 → 按场景校验、保存和交付终端回复。循环在得到无工具调用的终端回复或调用失败时结束；轮数上限默认 `agent_max_loop_turns`，执行时限由 `agent_turn_timeout_seconds` 限制，调用方可显式覆盖，预算耗尽时发 error 帧。已接单的本地生图等待经 [`wait_budget`](../../infrastructure/llm/wait_budget.py)暂停回合执行计时，取得结果后恢复剩余预算，批次逐张等待不挤占后续执行；供应商等待上限、显式取消、渠道撤权及主动意图到期仍独立生效，本地等待规则见 [PIPELINE](../../../../docs/PIPELINE.md#本地-comfyui)。取消收尾必须落完工具调用及结果，再释放所有入口共用的会话锁，不能留下后台写库任务。无进展守卫不终止循环，只在工具结果后追加换策略提示。上下文刷新与失败规则见下文。
+桌面、IM、Cron、主动陪伴与子 Agent 共用的回合执行层：装配上下文、调用模型、派发工具、保存和交付回复。会话及交付语义归 [PROTOCOL](../../../../docs/PROTOCOL.md#会话与消息)，媒体等待与恢复归 PIPELINE；本页维护内部装配、历史边界和任务所有权。
 
 ## 关键入口
 
 | 入口 | 职责 |
 |---|---|
-| [orchestrator.py](orchestrator.py) | `run_chat_turn`：轮数预算、交付模式、委派与供应商回退锁定 |
-| [turn_inputs.py](turn_inputs.py) | 回合装配：历史转换、Token 估算、工具开关、推理与会话设置合并 |
-| [prompt_presets.py](prompt_presets.py) / [prompt_blocks.py](prompt_blocks.py) | 预设体、默认与排除工具集合、共享块渲染 |
-| [system_prompt.py](system_prompt.py) / [streaming.py](streaming.py) | 系统提示词与每次模型调用前的环境、动作快照；请求装配（日期刷新、回复格式与可用媒体）及流式/非流式调用 |
-| [title_generator.py](title_generator.py) / [context_compressor.py](context_compressor.py) | 标题（请求只取首条用户消息的文字，附件地址不进请求；只有附件时文字为空串，仍依据助手回复生成）、运行时压缩 |
-| [reply_delivery.py](reply_delivery.py) / [bubble.py](bubble.py) | 陪伴气泡 schema 与校验、文本流分泡 |
-| [reply_links.py](reply_links.py) | 陪伴回复的媒体地址来源与内嵌媒体检查、地址句界保护 |
-| [tool_dispatch.py](tool_dispatch.py) / [delegation.py](delegation.py) | 工具派发与 `DelegateAction` 执行层接管 |
-| [persistence.py](persistence.py) | 工具调用行与结果落库、同步本回合输入并按 `search_tools` 结果解锁工具（批执行在 tool_dispatch）；终端回复落库、语音合成与 `message.complete` 交付；回合后任务调度；压缩检查点落库 |
-| [message_sanitization.py](message_sanitization.py) | 工具参数 JSON 修复（修复尾逗号、多余或缺失的括号与字符串内的裸控制字符，不改变字符串内容；无法修复或不是对象时返回 `None`）、确定性窗口截断 |
-| [chat_emitter.py](chat_emitter.py) | 事件发射接口与捕获全部帧的 `HeadlessEmitter` |
-| [turn_errors.py](turn_errors.py) | 回合失败的 `error` 帧：面向用户的本地化 `message` 与英文诊断串 `detail` |
-| [native_memory.py](native_memory.py) / [background_review.py](background_review.py) | 模型记忆工具执行（参数先校验；校验失败与已脱敏的 LLM 失败原因交给模型，数据库及其他异常的原文只进日志，工具结果仅返回通用失败）、回合后记忆审阅 |
+| [orchestrator.py](orchestrator.py) | `run_chat_turn`：会话互斥、轮数与时限、委派、回退锁定及终态 |
+| [turn_inputs.py](turn_inputs.py) | 会话设置、历史转换、工具集合、资料域和 Token 估算 |
+| [prompt_presets.py](prompt_presets.py)、[prompt_blocks.py](prompt_blocks.py)、[system_prompt.py](system_prompt.py) | 预设体、排除集合、共享块与每次调用前的环境/动作快照 |
+| [streaming.py](streaming.py) | 实际请求、日期与语音/媒体能力、流式和缓冲调用、回复恢复 |
+| [reply_delivery.py](reply_delivery.py)、[bubble.py](bubble.py)、[reply_links.py](reply_links.py) | 回复 schema、语音分句与校验、文本分泡、媒体地址来源 |
+| [tool_dispatch.py](tool_dispatch.py)、[delegation.py](delegation.py) | 工具批执行与 `DelegateAction` 接管 |
+| [persistence.py](persistence.py) | 调用与结果、终端回复、音频、压缩检查点及回合后任务 |
+| [context_compressor.py](context_compressor.py)、[message_sanitization.py](message_sanitization.py) | 模型摘要、确定性窗口截断、工具参数 JSON 修复 |
+| [title_generator.py](title_generator.py) | 首条用户文字与助手回复生成标题，不发送附件地址 |
+| [native_memory.py](native_memory.py)、[background_review.py](background_review.py) | 即时记忆提案与回合后异步审阅 |
+| [chat_emitter.py](chat_emitter.py)、[turn_errors.py](turn_errors.py) | 交付接口、`HeadlessEmitter` 与脱敏错误帧 |
 
-`run_chat_turn` 的调用方：桌面 `prompt.submit`（[handlers](../../adapters/desktop/handlers.py)）；IM（[bridge](../../adapters/channels/bridge.py)，复用已落库的入站消息，`headless`）；定时任务（[standard_turns](../automation/standard_turns.py)，`headless`）；主动陪伴（[companion_turns](../automation/companion_turns.py)，`ephemeral` 与 `headless`，排除发消息与委派工具，轮数上限为 `companion_max_loop_turns`）；子 Agent 委派（[delegation](delegation.py)，传入 `HeadlessEmitter`，沿用父回合的 `headless`，并以 `has_viewer=False` 缓冲交付、不做气泡停顿）。
-
-子 Agent 使用任务汇报指令，保留父预设资料域与用户设置及本轮工具排除，继承渠道授权复核和异步媒体的原对端归属；不装配陪伴人格、等待意图或实时环境/动作快照。
-
-提示词主体文本集中在 [prompts](../../../prompts/README.md)。
+调用方分别为桌面 `prompt.submit`、渠道 `bridge`、`standard_turns`、`companion_turns` 和委派。已落库的编辑输入及 IM 入站行通过 `persisted_message_id` 复用，不能再次插入。
 
 ## 提示词与运行时数据
 
-- 身份、用户资料、记忆、附件和工具结果都是资料，不扩大权限；陪伴工具续轮继续使用同一完整预设。专业预设只装配职业目标与本域资料，automation 保持独立任务边界。专业预设共用工作预设体，仅靠[预设目录](../../domains/conversation/presets.py)条目和 `PRESET_HEADER_TEXTS`（[prompts/chat.py](../../../prompts/chat.py)）中的双语头部区分，缺少头部时回合装配直接报错；生活空间工具默认只对陪伴预设开放，新增预设无需另行登记工具排除。
-- 主动回合的沉默规则属于系统指令，意图、档位和未兑现等待属于尾部资料；陪伴预设每回合附加未兑现等待意图，并标明其不是用户发言或已完成操作。普通用户回合不注入沉默选项。每次模型调用（含工具续轮）由 `build_companion_environment_prompt` 追加环境、衣柜当前着装与动作快照：场景背景不提供伙伴自身的活动或穿着事实，资料归属见[场景语义](../../../../docs/PIPELINE.md#场景创建与描述)；当前着装附着装与表现相称的说明，动作快照另列动作素材中的着装。常规档主动回合不提供聊天生图、生视频、语音与视觉表达工具，独立动态仍按动态政策执行。
-- 桌面客户端标识与 IM 渠道键换成对应渠道说明，无客户端资料时使用桌面说明，其他自由文本原样作为资料；设备环境带标题单独装配，环境资料和工具指令分别装配，关闭工具不等于没有环境资料。search_tools 的业务域清单在预设与调用方排除后重算。
-- 任务通过 `instructions` 定义，JSON 输入承载资料；生活空间先装配媒体真实性、本轮音色、可引用产物与 schema，再追加交付任务和完整对象示例。无产物时不提供媒体气泡，正常请求仍按可用工具说明生成路径；格式恢复保留真实性约束和来源校验，仅编辑未交付助手响应，人设通过 `TurnInputs.reply_persona` 独立传递，不随历史压缩或截断丢失。模型内部对象校验后转换为持久气泡数组，输入边界、失败预算和修正规则见[协议](../../../../docs/PROTOCOL.md#模型失败与重试预算)。格式修正与手动重试不附加调用工具的说明；基础提示词预览不能代表最终请求，修改遵循 [RULES](../../../../RULES.md#提示词设计与修改规范)。
-- 常规请求的结构参数由[供应商适配器](../../infrastructure/llm/providers/base.py)决定，本地服务见 [Backend](../../../README.md#本地供应商)。[reply_delivery.py](reply_delivery.py) 对所有模型执行同一归一化、分泡与校验；独立修正通过[接口兼容层](../../infrastructure/llm/providers/_companion_format.py)调用，不按模型名分流，规则与预算归协议。
-- 推理预算与正文预算共同计算；只解析完成响应的 `output_text`，推理单独保存且不回灌后续回合，失败重试前删除追加的推理项。
+预设和记忆域由会话决定，工具排除由预设、用户开关和本轮限制共同形成；装配、搜索解锁和派发共用同一集合。陪伴、自动化和委派有独立预设体，专业预设共用工作体并追加预设目录对应的双语头部，缺少登记或头部明确失败。
+
+- `build_companion_environment_prompt` 在每次模型调用前读取当前场景、着装和动作；子 Agent 不装配陪伴人格、等待意图或实时环境。专业与自动化的工具边界由 `prompt_presets.py` 统一声明。
+- 日期行发送前按用户本地日刷新；陪伴历史按原消息时间重建跨日标记和发言时刻，时刻资料位于对应发言之前，不写入正文。实时环境、等待及本轮资料留在尾部，不进入历史摘要。
+- 正常请求按当前音色与可信产物装配回复结构；`TurnInputs.reply_persona` 单独保存修复所需人设，避免压缩或截断丢失。修复与手动重试的资料范围和预算由 PROTOCOL 统一定义。
+- 推理与最终输出分开保存，推理不回灌历史；只解析完成响应的 `output_text`，失败重试前移除追加的推理项。
+
+文本定义见 [prompts](../../../prompts/README.md)，检查实际请求还须核对供应商原生参数。
 
 ## 上下文与记忆
 
 ### 摘要边界与原始证据
 
-- 运行时压缩与每日摘要共用[上下文读入口](../../domains/conversation/context_window.py)，原历史保留。摘要用 `Message.summary_through_message_id` 指向实际覆盖边界，`context_order` 只用于 IM 消费排序；缺少有效边界时明确失败，不按插入时间推断。
-- 分叉须重映射覆盖边界，压缩不能拆开同一消息展开项或并行工具调用与结果；摘要请求按模型窗口预留输出与余量，只覆盖能容纳的完整历史前缀，超预算单条本地失败并保留原文；备份恢复见 [PROTOCOL](../../../../docs/PROTOCOL.md#备份校验与覆盖恢复)。
-- 自动压缩的总闸门和偏好优先级归 [PROTOCOL](../../../../docs/PROTOCOL.md#slash-命令)，固定与 IM 会话的阈值同样受系统配置影响。
-- 压缩检查点只由 [context_compressor.py](context_compressor.py) 生成，正文与持久化行逐字一致；来源逐项记录，当前时间、待办快照和临时请求留在本轮尾部，不进入摘要。
-- 摘要只保留媒体引用和内容未提供标记，不把图片、视频 base64 当成文字资料；部分压缩清理已覆盖内容时，保留原文或待消费的 IM 消息不能再引用被清理视频。
+运行时压缩和每日摘要共用 [context_window.py](../../domains/conversation/context_window.py)。`summary_through_message_id` 指定真实覆盖边界，`context_order` 仅用于 IM 消费排序；边界无效时失败，不能按插入时间猜测。
 
-### 每日摘要
-
-每日摘要按截止本地日和消息时间归属事件，覆盖截止日前已有终端回复，只合并最新摘要及未覆盖原文；保留取消、纠正、授权范围和结果不明的操作。它记录用户 / 伙伴事实而非第一人称日记，回灌只作为历史资料，不产生新发言或授权；跨日未完成回合、等待期间新消息和覆盖边界失效时都保留原文或放弃快照。
+- 压缩不拆开同一消息的展开项、并行调用和结果。按模型窗口预留输出与余量，只摘要能容纳的完整前缀；超预算单条保留原文并失败。
+- 检查点只由 `context_compressor.py` 生成，交付正文与保存内容一致；分叉和恢复重映射覆盖边界。
+- 每日摘要按截止本地日和消息时间取已完成历史，合并最新摘要与未覆盖原文。跨日未完成回合、等待期间的新消息或失效边界不被摘要吞掉。
+- 摘要只保存媒体引用与内容未提供标记，不把 base64 当文字；清理已覆盖历史时，未覆盖原文和待消费 IM 输入仍须保持媒体可用。
 
 ### 窗口预算与截断
 
-Token 估算以最近一条带用量的助手行及其后新增内容为基线；无基线、偏差超过 20% 且大于 200 token，或本轮带主动请求 / 等待意图等尾部资料时改用全量估算。历史始终保留原始工具调用与结果帧，发送前再做窗口和单项截断；陪伴的日期分界与用户发言时刻按消息时间重建，时刻资料放在对应发言之前，不写入消息正文；系统提示只保留发送前按本地日刷新的日期行，不逐轮改写。
+Token 估算以最近带用量的助手行和其后增量为基线；无基线、与全量差异超过 `max(200, 20%)` 或本轮有额外尾部资料时改用全量估算。
 
-- 确定性窗口截断保留每日摘要与压缩检查点，再保留最近输入尾部，按 `call_id` 向前扩展到对应调用和并行批次的全部结果。
-- 正常请求按截断、视频内联后实际保留的媒体选供应商链（包含工具结果）；恢复最终回复按去除媒体后的请求选链，摘要只用文字链。仍含媒体但无对应能力时明确失败。
-- 多模态工具结果（截图等）按 `multimodal_v1` 落库并读回为输出数组，与用户附件一样只有最近条目携带媒体，更早条目、摘要与格式恢复只留占位。调用行已落库而缺结果行（如进程在保存前退出）时，装配补记结果未知，避免孤立调用使供应商拒绝整个请求。
-- 单项字符上限只约束历史条目；末尾连续的用户消息（本轮输入与运行时资料）按上下文窗口的四分之一放宽，超长粘贴不被历史上限截断，超出时截断处带原长度标记。手动重试按原用户消息 ID 保留同样的长度预算与附件。
-- 删除提示和窗口前最近一条非时间元数据的用户输入只作前缀，不能替换尾部；日期和系统时间不能代替用户请求。
+- 确定性截断优先保留摘要和检查点，再保留最近输入，按 `call_id` 向前扩展到整批调用及结果。历史单项上限不约束末尾连续用户输入，后者以窗口四分之一作为较大预算，截断带原长度标记；手动重试沿原输入使用同一预算。
+- 正常请求在截断和视频内联后按实际保留媒体选择能力链；格式恢复移除媒体后选链，摘要只用文字链。不能发送保留了媒体却无对应能力的请求。
+- 多模态工具结果以 `multimodal_v1` 存储并还原为数组，仅近期条目保留媒体，旧历史留占位。调用已保存而结果缺失时补记结果未知，避免孤立调用破坏整条请求。
+- 删除提示与最近用户锚点只能作补充前缀，日期和时间元数据不能代替当前请求。
 
 ### 工具披露与记忆访问
 
-首轮提供搜索元工具及已启用的陪伴等待能力；非委派的陪伴预设另默认提供图片生成、验图、修订及视频生成、状态查询工具，清单见 [prompt_presets.py](prompt_presets.py) 的 `COMPANION_MEDIA_TOOL_NAMES`。默认集合与本轮允许的 schema 取交集，仍受工具开关、预设与调用方排除限制；其他工具按域解锁，未压缩历史保留解锁结果。完整记忆维护策略随 `memory_inspect` 解锁，并与独立审核共用来源；不能省略原始证据和版本检查。
-
-召回与维护只经[记忆公共入口](../../domains/memory/README.md)，会话种类决定推理设置继承，不以是否有预设标识代替种类判断。
+首轮提供搜索元工具和已启用的等待能力；非委派陪伴回合默认披露 `COMPANION_MEDIA_TOOL_NAMES` 中本轮允许的基础媒体工具，其余按域解锁，未压缩历史保留解锁结果。完整维护政策随 `memory_inspect` 解锁，与独立审核共用文本。召回和提交只经[记忆公共入口](../../domains/memory/README.md)，不直接写记录。
 
 ## 回合执行与交付
 
-### 派发、委派与资源关闭
+`run_chat_turn` 的会话锁覆盖整个回合和取消收尾。默认轮数、执行预算运行时读取 Settings，调用方可覆盖；[wait_budget.py](../../infrastructure/llm/wait_budget.py) 只暂停已接单本地生图等待期间的执行计时，取消、渠道撤权和外层有效期仍生效。无进展守卫追加换策略提示，不自行终止循环。
 
-[orchestrator.py](orchestrator.py)按轮数上限循环，委派由执行层接管 `DelegateAction`，工具处理器不反向调用聊天入口。整批调用只有在全为只读白名单或目标路径互不重叠的文件操作时才并发；工具开关每回合重读：用户已禁用工具集中的 backend/memory 工具与会话预设、调用方排除项并入同一排除集合，装配、`search_tools` 解锁和派发层共用，模型调用未提供 schema 的已禁用工具时同样被拒绝。参数无法修复为 JSON 对象时不派发，向模型返回参数错误并计入无进展守卫，`tool.start` 与 `tool.complete` 照常成对发出；参数含用户数据与凭据，修复日志只记录长度。
+- 全批只读白名单调用或互不重叠的文件操作才并发。工具参数先修复并校验为 JSON 对象，失败不派发，仍成对发出工具开始/完成并返回参数错误；日志只记长度，不记录参数中的用户数据。
+- 工具调用行与结果的写入任务必须在取消时等待落完，再释放会话锁，不能把写库留在后台。资产写入保护覆盖工具返回到父回合提交的间隔。
+- `ephemeral` 仅用于主动陪伴，请求留作尾部资料，压缩检查点仍保存；`headless` 决定本机执行的桌面工作态，`has_viewer` 决定缓冲与气泡停顿，两者分别处理。
+- `special + companion` 使用完整结构校验；其他有观看者的回合可流式交付，无头、IM 和无观看者回合缓冲正文。文本流只按代码围栏外的 Markdown `---` 分泡，跨 chunk 保留候选前缀和原空行。
+- 委派在父会话下建子会话，继承预设、用户设置与限制；`HeadlessEmitter` 捕获事件，最终结果作为工具结果返回。生活空间和进一步委派工具由执行层排除；子会话消息不作为用户事实证据。
+- 成功、异常及取消均关闭响应流，缓冲正文在连接释放后交付；回退锁定独立于是否已向用户展示文字。
 
-预设、工具排除、记忆域和回合后整理由会话决定（`is_automation` 与 `system_preset_id='automation'` 等价），调用方只追加本轮排除项。`ephemeral` 只用于主动陪伴：请求作为尾部资料、不落库、允许沉默，压缩检查点仍保存并通过 outbox 通知；`ephemeral` 与自动化回合都不计用户接触。
-
-交付模式由会话、`headless` 与 `has_viewer` 决定：`special + companion` 会话非流式校验完整回复；无头、IM 或无观看者（`has_viewer=False`，子 Agent 委派）的回合缓冲正文，其余流式推送。气泡停顿只在有观看者且非无头时发生；`headless` 另决定本机工具调用是否显示桌面工作态，不表示有无观看者。
-
-[delegation.py](delegation.py)为每次委派在发起会话下新建子会话（`parent_id`），继承预设与自动化归属；子回合事件由 `HeadlessEmitter` 捕获、不推送到会话流，最终结果作为工具结果返回。子会话的列表与删除语义见 [PROTOCOL](../../../../docs/PROTOCOL.md#会话种类与历史修改)。
-
-供应商回退锁定独立于正文缓冲，不能因用户尚未看到文字就认为请求尚未开始；成功、异常和取消都关闭响应流，缓冲正文在连接释放后交付。终端正文、重试、分气泡和 TTS 幂等见 [PROTOCOL](../../../../docs/PROTOCOL.md#结构化回复与终端交付)。
-
-回合失败的 `error` 帧由 [turn_errors.py](turn_errors.py) 构造（回复格式错误帧除外，由 orchestrator 内联发出，不带 `detail`）：`message` 的约定见 [PROTOCOL](../../../../docs/PROTOCOL.md#会话种类与历史修改)，模型配置缺失按链为空与会话带视频却没有视频理解模型分别给出引导语；`detail` 保留英文诊断串，只供无头消费者（`HeadlessEmitter.error`：委派结果、主动回合失败原因）与 IM 日志读取，不下发客户端。Responses 流内的 `error` 事件按供应商错误分类，以 `LLMRuntimeError` 结束本轮。装配阶段的模型配置缺失在用户消息已落库时同样发带 `retry_message_id` 的帧；主动回合没有用户消息，仍以异常交调用方记录。
-
-格式校验失败的常规日志记录供应商、模型、响应 ID、完成状态、用量、错误类型、脱敏路径与是否为恢复尝试；不记录可能含原文的错误消息和未知字段名。原始请求和响应预览仅走显式启用的 [LLM 调试日志](../../../README.md#llm-调试日志)。
+`turn_errors.py` 的 `message` 是用户文案，英文 `detail` 只供无头结果和 IM 日志消费。格式错误另由编排入口构造。常规日志保留模型、响应 ID、状态、用量、错误类型和脱敏定位，原始请求/响应只走显式 LLM 调试。
 
 ### 消息与媒体
 
-编辑入口在会话锁内原子替换历史并先发修订事件，编排复用已持久化的新用户行，不能重复插入。桌面陪伴回复以数组对象为气泡边界，正文与交付态分别保存，见[回复契约](../../../../docs/PROTOCOL.md#结构化回复与终端交付)。文本流只按 Markdown `---` 分隔线拆泡，代码围栏内的 `---` 是代码内容不拆，空行保留在正文中；跨 chunk 保留候选前缀。
-
-- [reply_media.py](../../domains/conversation/reply_media.py)负责可信媒体恢复、引用校验和视频绑定；用户上传视频的配额清理同步替换输入消息引用，见 [chat_videos.py](../../domains/media/chat_videos.py)。
-- [reply_delivery.py](reply_delivery.py)校验同次响应的气泡类型和逐泡演绎，分句保留段内标记与空文本声音段；普通朗读不需要重复台词分段，演绎及语音重试契约见[结构化回复](../../../../docs/PROTOCOL.md#结构化回复与终端交付)与[语音保存与重试](../../../../docs/PROTOCOL.md#语音保存与重试)。
-- 推理过程独立保存，不回灌后续回合；只有符合条件的桌面陪伴回合在终端落库并完成事件送出后调度心情更新。
+可信媒体引用与视频绑定由 [reply_media.py](../../domains/conversation/reply_media.py) 管理，上传视频配额和清理由 [chat_videos.py](../../domains/media/chat_videos.py) 管理。终端持久化合并最新媒体状态；只有符合条件的桌面陪伴回合在终端提交、完成事件送出后调度心情更新。
 
 ### 语音资产
 
-- [reply_audio.py](../../domains/conversation/reply_audio.py)校验消息归属并按消息加锁、同消息内并发合成后按气泡顺序提交，固定已保存的供应商、模型和音色；配置不可用时保留失败，不替换演绎。
-- 用户回合的陪伴回复先落库，再有界并发合成语音，气泡保持原顺序逐个经 `message.bubble` 交付，`message.complete` 收尾；合成期间取消或发现消息被改删（LookupError）时回复行已保存，已交付气泡保留，未提交音频清理。主动回合先合成语音，再由 `finish_companion_intent` 落库并以 `companion.message` 投递，未投递时删除音频。
-- 合成不占用数据库事务，写回锁定消息并核对原文与对应语音语义，合并最新媒体状态，避免删除、恢复及视频并发完成后的迟到覆盖。
-- `mutagen` 读取音频格式和真实时长，拒绝无法识别、时长无效或不支持的音频；资产与更新事件提交前后分别处理取消和清理。
+[reply_audio.py](../../domains/conversation/reply_audio.py) 按消息加锁，固定已保存的供应商、模型和音色，同消息并发合成并按气泡序提交。合成期间不持事务，写回重核原文、语音语义与消息存在性，合并最新媒体状态，避免迟到音频覆盖删除或视频更新。
+
+用户回合先保存回复再合成；主动回合先合成，再由意图终态事务保存与投递。取消保留已保存正文并清理未交接音频。`mutagen` 核查真实格式和时长，拒绝无法识别或无效产物。
 
 ## 验证入口
 
-命令与预览见 [Scripts](../../../../scripts/README.md#提示词调试)。检查实际请求及动态语音协议，覆盖工具续轮、终态失败、取消、回退锁定与资源关闭。
+命令和请求预览归 [Scripts](../../../../scripts/README.md#提示词调试)。修改本模块重点核对上下文完整批次、工具续轮、禁用工具、格式恢复、取消写库、回退锁定与连接关闭；语音和媒体须检查实际交付，不能只验证解析成功。

@@ -1,101 +1,95 @@
 # Runner
 
-执行本机终端、文件、浏览器、代码、进程、多模态、系统感知与 Skills 工具，并探测实际能力。不装配人格或管理对话，不持 Backend 登录凭据。
+本机工具执行的工程入口。模块职责与信任边界归 [ARCHITECTURE](../docs/ARCHITECTURE.md)，传输、工具同步与调用恢复归 [本机工具契约](../docs/PROTOCOL.md#本机工具)；本文维护工具实现、执行环境与资源生命周期。
 
 ## 任务入口
 
-| 改动 | 起点与必须联动 |
+| 改动 | 起点与联动 |
 |---|---|
-| 新增或禁用工具 | [registry.py](tools/registry.py)、[工具集 catalog](tools/toolsets/catalog.py) → [跨端同步契约](../docs/PROTOCOL.md#握手与工具同步) |
-| RPC、能力与取消 | [server.py](server.py)、[call_journal.py](utils/call_journal.py)、[capabilities.py](utils/capabilities.py)；Client 侧握手与能力见 [bridge.ts](../client/main/runner/bridge.ts)，传输见 [rpc-ws.ts](../client/main/runner/rpc-ws.ts)，配置快照推送函数（握手时由 bridge 调用）、`execute_tool` / `execute_scoped_tool` 派发（透传 `call_id`）与取消见 [ipc/runner.ts](../client/main/ipc/runner.ts)，`call_id` 去重在渲染层 [tool-dispatch.ts](../client/renderer/app/runtime/handlers/tool-dispatch.ts) |
-| 本地与 SSH 执行 | [环境工厂](envs/factory.py)、[终端工具](tools/terminal/terminal_tool.py)、[清理](envs/cleanup.py) |
-| 文件读写与补丁 | [file_tools.py](tools/files/file_tools.py)（本机操作见 [native_ops.py](tools/files/native_ops.py)，SSH 操作与补丁解析、应用见 [helpers.py](tools/files/helpers.py)，模糊匹配见 [fuzzy_match.py](tools/files/fuzzy_match.py)）；读写禁区分在 [file_safety.py](utils/file_safety.py)（凭据文件、写禁区与安全写根）与 file_tools.py（设备路径、系统与用户凭据目录、设置文件） |
-| 后台进程与代码执行 | [process_tool.py](tools/process/process_tool.py)、[code_execution_tool.py](tools/execute_code/code_execution_tool.py) |
-| 浏览器或桌面操作 | 浏览器工具在 [tools/browser/tools](tools/browser/tools/)，CDP 会话由 [supervisor](tools/browser/supervisor.py) 管理，后端优先级为 `browser.cdp_url` → `browser.camofox.url` → 本机 Chromium：Camofox 由 [camofox.py](tools/browser/camofox.py) 的 `is_camofox_mode` 判定并在各工具内分支，CDP 连接或本机启动见 [_common.py](tools/browser/tools/_common.py) 的 `ensure_supervisor`；[桌面工具](tools/multimodal/cu_tool.py)（`key` 拦截的组合键与 `type` 拦截的命令正则在文件内）、[图像理解](tools/multimodal/vision_tool.py)；真实应用状态验证 |
-| 桌面情境与窗口快照 | [activity.py](tools/system/activity.py)、`system.*` 工具注册见 [activity_tools.py](tools/system/activity_tools.py) → [Client 窗口桥](../client/main/ipc/sprite.ts)；坐标与绑定见 [动作契约](../docs/PROTOCOL.md#动作目录与播放) |
-| 学习技能 | [skills_tool.py](tools/skills/skills_tool.py)、[skill_manager_tool.py](tools/skills/skill_manager_tool.py)、作用域 [memory_scope.py](utils/memory_scope.py)；检查平台与作用域 |
+| 新增、禁用或探测工具 | [registry.py](tools/registry.py)、[catalog.py](tools/toolsets/catalog.py)；跨端工具集枚举按握手契约同步 |
+| RPC、配置与取消 | [server.py](server.py)、[call_journal.py](utils/call_journal.py)、[capabilities.py](utils/capabilities.py) → [Client bridge](../client/main/runner/bridge.ts)、[派发入口](../client/main/ipc/runner.ts)、[宿主派发](../client/renderer/app/runtime/handlers/tool-dispatch.ts) |
+| 本地与 SSH 执行 | [factory.py](envs/factory.py)、[terminal_tool.py](tools/terminal/terminal_tool.py)、[cleanup.py](envs/cleanup.py) |
+| 文件与补丁 | [file_tools.py](tools/files/file_tools.py)、本机 [native_ops.py](tools/files/native_ops.py)、SSH 与补丁 [helpers.py](tools/files/helpers.py)、[fuzzy_match.py](tools/files/fuzzy_match.py)、路径准入 [file_safety.py](utils/file_safety.py) |
+| 后台进程与代码 | [process_tool.py](tools/process/process_tool.py)、[code_execution_tool.py](tools/execute_code/code_execution_tool.py) |
+| 浏览器 | [tools/browser/tools](tools/browser/tools/)、[supervisor.py](tools/browser/supervisor.py)、[session.py](tools/browser/session.py)、[camofox.py](tools/browser/camofox.py) |
+| 桌面操作与图像 | [cu_tool.py](tools/multimodal/cu_tool.py)、[vision_tool.py](tools/multimodal/vision_tool.py)；实际应用效果须后续核实 |
+| 系统活动与窗口 | [activity.py](tools/system/activity.py)、[activity_tools.py](tools/system/activity_tools.py) → [Client 坐标桥](../client/main/ipc/sprite.ts) |
+| 学习技能 | [skills_tool.py](tools/skills/skills_tool.py)、[skill_manager_tool.py](tools/skills/skill_manager_tool.py)、[memory_scope.py](utils/memory_scope.py) |
 
-## 设计意图
+## 代码边界与注册
 
-- 工具共享环境生命周期，各能力通过公共基础设施协作。
-- macOS 情境探测使用 PyObjC；平台依赖见 [pyproject.toml](pyproject.toml)。
-- Windows 窗口快照使用 [DWM 可见边界](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect)，避免 DPI 虚拟化和透明边框干扰；排除最小化和 cloaked 窗口。
-- 当前是高信任执行模式：对端准入和工具集开关构成执行授权，通用终端与文件工具保留本机访问能力。
-- 网络、路径检查降低风险；不提供逐次裁决或通用强隔离沙箱。
-- `system_awareness` 单列工具集：焦点窗口 / 工作区 / 屏幕坐标 / 全屏 / 屏幕锁 / 空闲时长等侧信道探测可整组关闭，不影响其余 `system.*`。
-- 能力探测（`registry.is_tool_available`）惰性执行，相同探测函数共享 30s 缓存；最近一次成功后 60s 内的瞬时失败仍判可用，避免一次抖动把工具从会话中途摘掉。完整配置推送清除缓存，旧探测不得回填新配置的缓存。
-- 文件模糊匹配：非 exact 命中后按 old_string 把 new_string 缩进重锚到文件（保留相对嵌套）；序列化转义漂移（`\'`/`\"`）在写入前拦截。实现见 [fuzzy_match.py](tools/files/fuzzy_match.py)。
+`server.py → tools → envs → utils` 逐层依赖；环境清理与活跃进程检查经回调衔接。`server.py` 启动时拒绝 Windows、macOS 以外的宿主，并在 Windows 显式初始化 Job Object 管理进程树；依赖和平台 marker 归 [pyproject.toml](pyproject.toml)，不在运行时补装。
 
-## 代码边界
-
-`server.py → tools → envs → utils`：连接派发、工具能力、环境与基础设施逐层依赖，底层不反向导入。环境清理与活跃进程检查经回调衔接。
-
-## 连接、配置与能力
-
-- Runner 主动连接 Client 的 OS IPC，重连前重读端点和 token。
-- 配置仅保存在内存，由 Client 在执行前推送完整快照；传输和调用语义见 [PROTOCOL](../docs/PROTOCOL.md#本机工具)。
-- 工具模块导入早于首次推送配置：依赖配置的工具说明以无参工厂注册，每次 `get_tools` 按当前配置生成。Client 在握手和运行中每次配置推送成功后读取清单，变化时重新同步，见[握手与工具同步](../docs/PROTOCOL.md#握手与工具同步)。
-- 配置推送与工具清单装配串行，阻塞探测在线程执行，不占用主事件循环。已创建的工具资源通过注册中心关闭回调在 Runner 主循环退出时释放。
-- 能力须实际探测系统 API，不以依赖可导入代替可用性。当前屏幕捕获在 macOS 只检查 `screencapture` 存在，麦克风在各平台只枚举输入设备，均不代表已获系统授权。
-- 进程启动生成唯一 `run_generation`，重连不轮换；周期探测变化才通知，异常撤销相应能力。
-- Client 的消费限制见 [能力与进程代次](../docs/PROTOCOL.md#能力与进程代次)。
-- 保留经 Client 代理的 `request_llm` 反向模型通道，当前内置工具不使用；启用时同时受 Client 累计预算与 Runner 单连接预算（重连只重置后者）限制，见[反向模型请求](../docs/PROTOCOL.md#反向模型请求)。
-- 工作线程等待主循环，超时取消等待。
-- 图片工具结果直接交付主回合，不先调用另一模型转写；图像理解与浏览器截图超限时缩图，`computer_use` 超限则省略图片并提示缩小捕获范围。
+- 工具导入早于首次配置推送，依赖配置的说明用无参工厂注册；每次 `get_tools` 根据当前配置生成。
+- 配置推送与清单装配共用 `_CONFIG_LOCK`，阻塞探测在线程执行；资源向注册中心登记 shutdown hook，主循环退出时释放。
+- 可用性按探测函数共享缓存：失败结果缓存 30 秒，成功结果保留 60 秒；full config 使缓存失效，旧探测不回填新配置。依赖可导入不等于 OS API 可用。
+- `system_awareness` 单独控制活动、焦点、锁屏、空闲、窗口和屏幕坐标等工具，不连带禁用其他工具集。
+- 能力快照的麦克风探测只枚举设备，macOS 截图只检查 `screencapture`，不证明系统授权。周期通知与 Client 当前消费限制归 [能力与进程代次](../docs/PROTOCOL.md#能力与进程代次)。
+- `request_llm` 保留为 Client 代理通道，当前内置工具未使用；工作线程通过主循环等待，超时取消等待。图片工具结果直接交付主回合；图像理解和浏览器截图超限缩图，`computer_use` 超限省略图片并提示缩小范围。
 
 ## 执行环境
 
 ### 网络与路径
 
-HTTP 统一使用 `httpx[socks]`。图像理解的远程下载经 `create_safe_async_client` 在 URL 预检和实际建连时均校验：连接已检查 IP，保留原 Host、TLS SNI 和证书校验，每跳重定向重新检查，DNS 解析移出事件循环。浏览器预检工具给出的 URL，仅 CDP 后端的 `browser_navigate` 复核跳转落点（新标签、下载与 Camofox 不复核），页内跳转、脚本与原始 CDP 命令不经校验。浏览器另读 `browser.allow_private_urls`（不影响图像下载）；隐藏的全局 `security.allow_private_urls` 同时放开图像下载与浏览器，云元数据地址始终拦截。实现见 [url_safety.py](utils/url_safety.py)。
+HTTP 统一使用 `httpx[socks]`。[url_safety.py](utils/url_safety.py) 的图像下载在预检、实际建连及每跳重定向检查地址，连接已核验 IP 并保留 Host、TLS SNI 与证书校验，DNS 解析移出事件循环。
 
-Windows 在启动阶段加入 Job Object 管理进程树，不在模块导入时产生此副作用。真实路径经句柄规范化，处理短名、链接、联接点和未创建后缀，比较忽略大小写；备用数据流按基础路径判定是否受保护，受保护目录自身的数据流写入同样拒绝。
+浏览器只预检工具传入的 URL，CDP `browser_navigate` 另复核落点；新标签、下载、Camofox、页内跳转、脚本和原始 CDP 命令不提供相同复核。`browser.allow_private_urls` 只影响浏览器，隐藏的 `security.allow_private_urls` 也影响图像下载，云元数据地址始终阻断。`security.website_blocklist` 支持域名和共享规则文件，但规则加载失败会记录诊断并放行，不能作为强隔离边界。
+
+文件读写禁区分别由 `file_safety.py` 和 `file_tools.py` 校验。Windows 真实路径经句柄规范化，处理短名、链接、联接点和未创建后缀，比较忽略大小写；备用数据流按基础路径判定，保护目录自身的数据流写入同样拒绝。
 
 ### 终端与子进程
 
-- 终端说明随当前 `terminal.env_type`：本地按 Git Bash / Darwin-BSD 说明环境约束并拦截不适用的 Linux 管理命令；SSH 说明目标为远端主机，不套本机命令拦截。
-- 终端、文件与代码工具共用每个 task 的执行环境（[factory.py](envs/factory.py)），创建时记录创建参数（类型、cwd、超时与 SSH 目标凭据）。工具在 `use_environment` 内持有环境执行，每次取用时在该 task 的创建锁内比对当前配置：一致则复用；不一致且环境空闲（无持有、无前台命令、无活跃后台进程）时经与空闲回收相同的路径停止旧环境再按新配置重建；仍在使用时，若执行目标（类型或 SSH 主机 / 用户 / 端口 / 凭据）已变则拒绝该次调用并提示等待或用进程工具停止后台进程，仅 cwd/超时变化则沿用到空闲。后台进程记录各自所属环境，其列出、轮询与终止不依赖取得新环境。
-- SSH 密码经临时 askpass 与 `SSH_ASKPASS_REQUIRE=force` 传递（需 OpenSSH ≥ 8.4，Windows 版 ≥ 8.9；代码不检测版本，也不处理版本不足，askpass 可能不被调用，表现为认证失败或连接超时），密钥优先，脚本随环境清理；密码和私钥路径作为本机机密处理。
-- SSH 上传使用暂存副本的实际内容 hash 与上传前源文件版本建立基线；上传期间源文件变化由下一次同步补传，远端未修改的内容不覆盖本机晚改。远端确有修改时写回仍按现有 last-write-wins 处理。
-- 后台进程 stdin 写入和关闭按 session 串行；管道写入使用非阻塞 I/O，等待锁和写入共用 5 秒预算并检查取消，`bytes_written` 报告实际 UTF-8 字节数。远端终止核对探活与命令结果，无法确认停止时保留 session 并报告错误。
+终端说明随 `terminal.env_type` 生成：本地按 Windows Git Bash 或 macOS BSD 环境约束并拦截不适用的 Linux 管理命令；SSH 描述远端，不套本机拦截。
 
-代码执行每次生成一次性能力 token：本机经 UDS（Windows 为回环 TCP）首帧鉴权，SSH 远端文件 RPC 在每个请求中携带并校验。依赖与平台 marker 显式声明，不在运行期补装，也不以可选导入掩盖漏依赖。
+[factory.py](envs/factory.py) 按 task 持有执行环境，终端和文件工具通过 `use_environment` 取得租约；创建参数包含类型、cwd、超时与 SSH 目标。配置变化处理如下：
+
+| 旧环境状态 | 新调用 |
+|---|---|
+| 参数一致 | 复用 |
+| 无租约、前台命令和活跃后台进程 | 停止旧环境，按新配置重建 |
+| 仍在使用，仅 cwd／超时变化 | 沿用到空闲 |
+| 仍在使用，执行类型或 SSH 目标／凭据变化 | 拒绝调用，等待结束；停止后台进程须由实际任务授权 |
+
+后台进程记录所属环境，列出、轮询和终止不依赖取得新环境。stdin 写入和关闭按 session 串行，非阻塞 I/O 与等锁共用 5 秒预算并检查取消；`bytes_written` 为实际 UTF-8 字节数。SSH 后台进程不支持 stdin，终止无法确认时保留 session 并报告错误。
+
+SSH 密码通过临时 askpass 和 `SSH_ASKPASS_REQUIRE=force` 传递，密钥优先；需要 OpenSSH ≥ 8.4（Windows ≥ 8.9），代码不检测版本，版本不足可能认证失败或超时。askpass 随环境清理。文件上传以暂存副本 hash 和上传前源版本建基线，本机并发修改下轮补传；远端未变时不覆盖本机晚改，双方均变时仍按远端覆盖处理。
+
+### 代码执行
+
+[execute_code](tools/execute_code/code_execution_tool.py) 每次启动独立 Python 子进程，经一次性 token 调用父进程工具；本机使用 UDS（Windows 回环 TCP）首帧鉴权，SSH 使用逐请求鉴权的文件 RPC。导入帮助函数不解锁禁用工具，`retry` 只重试异常，不判断副作用是否安全。
+
+本机默认 `code_execution.mode=project`，采用终端当前 cwd，并优先可用的项目 Python；`strict` 使用暂存目录和 Runner Python。模式控制解释器、目录与环境传递，不构成强沙箱；SSH 仍在远端执行。脚本输出有头尾裁切和工具调用预算，参数定义以源码为准。
 
 ### 浏览器与桌面生命周期
 
-CDP 会话按 task 串行启动、重建和停止，工具调用持有期间不作空闲回收，结束后重新计时。失联主管仍有其他调用持有时拒绝重建；清理按实例身份核对，避免关闭同 task 的新主管。启动失败释放本次资源。
+浏览器后端优先级为 `browser.cdp_url` → `browser.camofox.url` → 本机 Chromium。CDP 会话按 task 串行启停，工具持有期间不作空闲回收，结束重新计时；失联主管仍有其他调用持有时拒绝重建，清理核对实例身份，启动失败释放本次资源。
 
-Windows Chromium 启动器正常退出并重启主进程时，只接管本次创建且可执行文件、独立 profile 均匹配的进程，存活检测与停止使用实际主进程。profile 中残留的 `lockfile` 不代表仍被占用，以独占打开结果判断。
+Windows Chromium 启动器重启时只接管本次创建且 exe、独立 profile 匹配的实际主进程；profile 锁以独占打开判断，不以残留 `lockfile` 判断占用。
 
-切换标签或当前页导航后须重新获取元素 ref；后台标签导航不改变当前页。关闭最后一页后，下一次导航会创建新页。输入先确认目标可编辑，空字符串会清空内容，失败不向其他聚焦元素发送替代输入。下载事件在浏览器连接上启用，按本次触发时间匹配结果；等待开始和完成共用 timeout，取消或超时后下载仍可能完成，不把旧下载结果交付给后续调用。
+- 切换标签或当前页导航后重取元素 ref，后台标签导航不改变当前页；关闭最后一页后导航创建新页。
+- 输入先核对可编辑目标，空字符串清空内容，失败不向其他焦点补发。JS 弹窗由 `browser_dialog` 应答；打开弹窗的动作已经执行，不应重复该动作。
+- 下载按触发时间匹配，等待开始与完成共用预算；取消或超时后仍可能完成，后续调用不领取旧下载。
+- Windows 键盘输入要求所选窗口在前台，同进程其他窗口不满足；非 ASCII 粘贴后尽力恢复剪贴板，失败也走恢复路径。桌面后端退出前等待当前动作收尾，关闭后不再创建。
+- 系统窗口快照使用 DWM 可见边界并排除最小化、cloaked 窗口。桌面工具的后台支持依平台和动作，全局输入可能影响前台。
 
-Windows 键盘输入只允许当前选定的目标窗口处于前台，同进程其他窗口不满足此条件；非 ASCII 粘贴后尽力恢复原剪贴板，粘贴失败也走恢复路径。桌面后端在 Runner 退出时等待当前动作收尾后停止，关闭后不再创建。
+### 文件结果与补丁
 
-### 工具结果与实际效果
+`security.redact_secrets` 默认开启；文件读取、搜索及部分工具结果通过模式识别掩码疑似凭据，磁盘原文保持不变，可关闭且不保证识别所有秘密。整文件覆盖若包含原文被掩码改写的行，`write_file` 拒绝写入，避免用占位符替换真实凭据；局部修改走 `patch`。
 
-- 工具说明随实际能力使用：文件工具不可用或无法访问目标环境时可用终端；代码工具的导入帮助函数不解锁被禁用的能力，`retry` 只重试异常、不判断副作用是否安全。
-- 文件读取与搜索结果经脱敏，凭据在模型视图中显示为 `***`，磁盘文件保持原样。整文件覆盖时若新内容含有原文脱敏后改写过的行，`write_file` 拒绝写入（[file_tools.py](tools/files/file_tools.py)），避免占位符替换真实凭据；局部修改走 `patch`。
-- 桌面操作的后台支持取决于平台与动作，全局键盘和坐标操作可能影响前台；工具返回调用结果，实际应用效果须由后续状态核实。
+非 exact 补丁命中按 old_string 将 new_string 缩进重锚到文件，保留相对嵌套；写入前拒绝序列化转义漂移。模糊匹配不能绕过路径准入。
 
 ## 调用日志与取消
 
-- `utils.call_journal` 管原子认领、参数指纹、持有者和终态。
-- 取消发生在认领线程未结束时，先等待认领收尾再记录未知结果；完成与取消写入串行，未持有认领凭据不得补写终态。
-- 已保存结果重放不再次裁切，也不执行工具。
-- 日志不可写、无调用标识、保留期及 unknown 的处理见 [PROTOCOL](../docs/PROTOCOL.md#调用日志与未知结果)；任务取消不证明线程或外部副作用已停止。
+[call_journal.py](utils/call_journal.py) 持有原子认领、参数指纹、持有者与终态。取消发生在认领线程未结束时，先等待认领再记未知结果；完成与取消写入串行，无认领凭据不能补写终态。保存结果重放不再次执行或裁切。保留期、日志不可写和结果未知的恢复边界统一归 [调用日志契约](../docs/PROTOCOL.md#调用日志与未知结果)。
 
 ## 按预设学习技能
 
-`ContextVar` 固定调用作用域并在结束时恢复；作用域只接受 [memory_scope.py](utils/memory_scope.py) 中登记的预设 id，Backend 新增或改名预设须同步。学习技能保存在 `$SPIRITAGENT_HOME/learned-skills/<user_id>/<system_preset_id>`，读取按本域、静态技能、`skills.external_dirs` 的顺序合并，先匹配者优先。
+`ContextVar` 固定调用域并在结束恢复；允许预设在 [memory_scope.py](utils/memory_scope.py) 登记，Backend 新增或改名须同步。目录与隔离契约归 [学习作用域](../docs/PROTOCOL.md#预设记忆与学习作用域)，读取依次合并本域、静态技能和 `skills.external_dirs`。
 
-读取与管理使用相同的候选定位：首个有匹配的根优先，同根裸名歧义拒绝猜选，可用 `category/skill-name` 定位。创建技能仍使用单段名称，frontmatter 的 description 必须是字符串。
+读取与管理共用候选定位：首个有匹配的根优先，同根裸名歧义拒绝猜选，可用 `category/skill-name` 定位；创建仍用单段名称，frontmatter description 必须是字符串。
 
-修改静态技能在写入前一刻复制到当前域，复制或后续修改失败时撤回本次新建副本，删除只影响本域副本；管理操作串行，路径和符号链接不得跨域。学习技能写入只做名称、frontmatter、路径与大小校验；写入与 `skill_view` 读取均不做内容威胁扫描：高信任模式下终端与文件工具同样能读写技能目录，单一入口的扫描不构成边界。平台过滤与学习作用域分别校验，见 [PROTOCOL](../docs/PROTOCOL.md#skills-平台过滤)。
-
-## 已知限制
-
-通用终端保留本机权限，网络与路径校验不构成强沙箱；副作用恢复限制集中在 [调用日志契约](../docs/PROTOCOL.md#调用日志与未知结果)，不能以取消或查无记录证明操作未发生。
+修改共享技能前复制到当前域，复制或修改失败撤回本次新副本，删除只影响本域；管理操作串行，路径和符号链接不得跨域。写入仅检查名称、frontmatter、路径与大小，写入及 `skill_view` 不扫描内容威胁。技能平台过滤与学习域独立生效，不扩大授权。
 
 ## 契约与验证
 
-静态与 wheel 检查见 [Scripts](../scripts/README.md#按改动选择验证)。OS API、路径、终端和进程树在对应宿主验证，SSH 单独验证；调用修改覆盖取消、日志重放与作用域隔离。
+静态与 wheel 检查归 [Scripts](../scripts/README.md#按改动选择验证)。OS API、文件路径、终端、进程树和桌面效果在对应宿主验证，SSH 单独验证；调用修改覆盖取消、日志重放、资源退出与作用域隔离。
