@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 
-import { type DockCatalog, type DockEntry, type DockState, IPC } from '@ipc/contracts'
 import { app, type BrowserWindow, dialog, type IpcMain, shell, type WebContents } from 'electron'
 import log from 'electron-log/main'
+
+import { type DockCatalog, type DockEntry, type DockState, IPC } from '@ipc/contracts'
 
 import type { RunningApplicationsState, RunningApplicationWindow } from '../shared/desktop-applications'
 import { atomicWriteFile, createSerialQueue, safeReadJson, sendToWindow } from '../shared/utils'

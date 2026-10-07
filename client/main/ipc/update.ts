@@ -1,9 +1,10 @@
-import { type DesktopUpdateEvent, type DesktopUpdateInfo, type DesktopUpdatePhase, IPC } from '@ipc/contracts'
 import { type App, autoUpdater as electronAutoUpdater, type IpcMain, type WebContents } from 'electron'
 import log from 'electron-log/main'
 // 产物为 ESM：electron-updater 是 CJS 包，只能静态 default import 后解构 autoUpdater。
 import electronUpdaterPkg from 'electron-updater'
 import type { ProgressInfo } from 'electron-updater'
+
+import { type DesktopUpdateEvent, type DesktopUpdateInfo, type DesktopUpdatePhase, IPC } from '@ipc/contracts'
 
 import * as store from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows, createSerialQueue, errorMessage } from '../shared/utils'

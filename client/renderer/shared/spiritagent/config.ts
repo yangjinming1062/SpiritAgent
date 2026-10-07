@@ -1,4 +1,4 @@
-import type { SpiritAgentConfigResponse } from '@/shared/types/spiritagent'
+import type { SpiritAgentConfigResponse } from '@protocol'
 
 export async function getSpiritAgentConfig(): Promise<SpiritAgentConfigResponse> {
   const { config } = await window.spiritagent.api<{ config: SpiritAgentConfigResponse }>({ path: '/api/config' })

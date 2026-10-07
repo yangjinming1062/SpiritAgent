@@ -55,3 +55,15 @@ repos:
         language: system
         files: ^client/.*\.(ts|tsx|js|cjs|mjs|json|css)$
         pass_filenames: false
+      - id: remote-eslint-fix
+        name: remote eslint fix
+        entry: pnpm --dir remote exec eslint . --fix
+        language: system
+        files: ^(remote|shared)/.*\.(ts|tsx|js|mjs)$
+        pass_filenames: false
+      - id: remote-fmt
+        name: remote prettier format
+        entry: pnpm --dir remote exec prettier --config .prettierrc --write "*.{ts,tsx,css,html,mjs,json}" ../shared/protocol.ts
+        language: system
+        files: ^(remote|shared)/.*\.(ts|tsx|js|mjs|json|css|html)$
+        pass_filenames: false

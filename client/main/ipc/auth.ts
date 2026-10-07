@@ -1,3 +1,5 @@
+import type { IpcMain, WebContents } from 'electron'
+
 import {
   type DesktopActivatePayload,
   type DesktopAuthBroadcast,
@@ -5,7 +7,6 @@ import {
   type DesktopLogoutPayload,
   IPC
 } from '@ipc/contracts'
-import type { IpcMain, WebContents } from 'electron'
 
 import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'

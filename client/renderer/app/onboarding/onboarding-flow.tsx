@@ -1,5 +1,4 @@
 import { useStore } from '@nanostores/react'
-import { sleep } from '@runtime'
 import * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -64,6 +63,7 @@ import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import { Chip, DatePicker, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
+import { sleep } from '@runtime'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
 import { type OnboardingAudioTag, playOnboardingAudio } from './onboarding-audio'

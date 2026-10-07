@@ -1,5 +1,3 @@
-import type { StageActivity } from '@ipc/contracts'
-import type { DesktopScreenRect } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
@@ -9,6 +7,8 @@ import { $gateway } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $runnerPhase } from '@/shared/store/runner-status'
 import { isCompanionStageVisible } from '@/shared/store/surfaces'
+import type { StageActivity } from '@ipc/contracts'
+import type { DesktopScreenRect } from '@ipc/contracts'
 
 import {
   $effectiveTier,

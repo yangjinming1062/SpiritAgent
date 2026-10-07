@@ -1,6 +1,5 @@
 /** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；账户快照先恢复再网络校准，失败保留已有目录。 */
 
-import { sleep } from '@runtime'
 import { atom } from 'nanostores'
 
 import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
@@ -8,6 +7,7 @@ import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
+import { sleep } from '@runtime'
 
 import { resetActionPlayback } from './action-runtime'
 import type {

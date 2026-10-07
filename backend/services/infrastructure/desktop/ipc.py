@@ -24,7 +24,7 @@ _DESKTOP_GONE_ERROR = _outcome_unknown_result(
 async def dispatch_device_call(user_id: int, call_id: str, payload: dict[str, Any]) -> str | None:
     """向用户桌面派发 tool.call 并等待 tool.result；桌面无 dispatcher 或入队失败时返回 None。等待对象先于派发登记（毫秒级工具结果可能早于入队返回），之后直接持对象等待。"""
     dispatcher = MANAGER.get_dispatcher(user_id)
-    if dispatcher is None:
+    if dispatcher is None or not MANAGER.is_connected(user_id):
         return None
     key = (user_id, call_id)
     fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
@@ -44,12 +44,12 @@ async def dispatch_device_call(user_id: int, call_id: str, payload: dict[str, An
                 "automatically; check its effects or ask the user first.",
             )
     except asyncio.CancelledError:
-        # 回合被中断（停止对话、IM 回合中止等）时请桌面取消这次调用；取消只是请求，不撤销已发生的本机副作用。
+        # 回合被中断（停止对话等）时请桌面取消这次调用；取消只是请求，不撤销已发生的本机副作用。
         if (current := MANAGER.get_dispatcher(user_id)) is not None:
             await current.enqueue_event("tool.cancel", {"call_id": call_id})
         raise
     finally:
-        # 覆盖成功 / 未入队 / 超时 / 外部取消（如 IM 侧中止）：不清理会在 _PENDING 里留下永久句柄。
+        # 覆盖成功 / 未入队 / 超时 / 外部取消：不清理会在 _PENDING 里留下永久句柄。
         if _PENDING.get(key) is fut:
             del _PENDING[key]
 

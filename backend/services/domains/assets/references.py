@@ -7,7 +7,6 @@ from datetime import timedelta
 from pathlib import Path
 
 from components import utc_now
-from modules.channels import ChannelBinding, ChannelDelivery
 from modules.companion import (
     ActionAssetRetirement,
     AvatarAsset,
@@ -156,15 +155,6 @@ async def collect_live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
             [job.video_url, job.candidate_video_url, job.params_json, job.generation_state_json],
             user_id,
         )
-    for delivery in await db.scalars(
-        select(ChannelDelivery)
-        .join(ChannelBinding)
-        .where(
-            ChannelBinding.user_id == user_id,
-            ChannelDelivery.status == "pending",
-        ),
-    ):
-        referenced |= asset_paths(delivery.payload_json, user_id)
     for retirement in await db.scalars(
         select(ActionAssetRetirement).where(
             ActionAssetRetirement.user_id == user_id,

@@ -11,6 +11,8 @@
 | 文档 | 事实、相对路径、锚点、图表分支与渲染；`git diff --check` 只检查空白 |
 | Python | 提交前 hook；Backend 依赖变化另跑分层检查 |
 | Client | `pnpm --dir client lint`、`pnpm --dir client typecheck` |
+| 手机远程页面 | `pnpm --dir remote lint`、`pnpm --dir remote typecheck`、`pnpm --dir remote build`；扫码、麦克风和后台恢复须在 iOS Safari、Android Chrome 实机验收 |
+| 共享协议 `shared/` | 同时执行 Client 与 Remote 的 lint、typecheck 和构建 |
 | Windows 桌面 helper | 在 Windows 执行 `pnpm --dir client build:native`，或在 `client/desktop-host/` 做对应目标的 `cargo check --locked`；交互与恢复另做实机验收 |
 | preload、构建入口或资源 | `pnpm --dir client build` 并核对实际产物 |
 | Installer 前端与编排 | `pnpm --dir installer build`，以及完整载荷下的目标平台 Tauri 构建和安装验收 |
@@ -86,6 +88,12 @@ uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --prese
 `build` 收尾与 `beforePack` 均校验渲染产物，直接调用 `builder` 仍须先完成构建；Windows helper 的架构或静态运行库门禁失败会中止打包。开发准备见 [桌面宿主构建](../client/desktop-host/README.md#构建)。
 
 macOS `afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，electron-builder 内建公证关闭。支持 keychain profile、Apple ID 及 API key，参数与优先级见脚本；未配置时跳过，部分配置报错。外部命令有超时，临时 ZIP 和内联 key 文件在结束时清理；真实签名与公证须在 macOS 验证。
+
+## 手机远程页面构建
+
+`pnpm --dir remote build` 编译独立浏览器入口，产物位于 `remote/dist/`。Backend 在 `/remote/` 同源提供页面；开发可运行 `pnpm --dir remote dev`，但 Secure Cookie 和手机录音仍要求 HTTPS 同源环境。
+
+[Backend Dockerfile](../backend/Dockerfile) 先使用 Remote 独立锁定的 Node.js / pnpm 依赖构建网页，再复制到 Python 镜像的 `static/remote/`；构建上下文仍为仓库根。[.dockerignore](../.dockerignore) 只允许必要的 Remote 与共享协议构建源进入上下文，排除桌面产物、运行数据和凭据。部署时配置公网 HTTPS 地址，反向代理须保留 WS 升级及请求 Origin。
 
 ## 构建安装器
 

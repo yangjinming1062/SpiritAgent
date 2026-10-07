@@ -1,7 +1,7 @@
-import type { DesktopGatewayEvent, DesktopGatewayState } from '@ipc/contracts'
-
 import { isRecord } from '@/shared/lib/is-record'
+import { log } from '@/shared/lib/log'
 import { safeJsonParse } from '@/shared/lib/safe-json'
+import type { DesktopGatewayEvent, DesktopGatewayState } from '@ipc/contracts'
 
 /** Slash 命令结果 payload：与 docs/PROTOCOL.md「事件路由」 `command.result` 事件载荷一致。 */
 export interface SlashCommandResultPayload {
@@ -34,6 +34,7 @@ interface JsonRpcFrame {
   params?: {
     payload?: unknown
     seq?: number
+    stream_id?: string
     session_id?: string
     type: string
     [key: string]: unknown
@@ -72,7 +73,8 @@ function parseJsonRpcFrame(raw: string): JsonRpcFrame | null {
       !isRecord(params) ||
       typeof params.type !== 'string' ||
       !optionalType(params, 'seq', 'number') ||
-      !optionalType(params, 'session_id', 'string')
+      !optionalType(params, 'session_id', 'string') ||
+      !optionalType(params, 'stream_id', 'string')
     ) {
       return null
     }
@@ -107,6 +109,24 @@ export class SpiritAgentRpcError extends Error {
   }
 }
 
+const SNAPSHOT_METHODS = new Set(['session.resume', 'session.get_main', 'session.create', 'session.fork'])
+
+// 这些事件已由历史和在途快照表达；设备指令与未持久化终态必须继续交付。
+const SNAPSHOT_EVENTS = new Set([
+  'session.state',
+  'message.start',
+  'message.delta',
+  'message.reasoning.delta',
+  'message.break',
+  'message.bubble',
+  'message.persisted',
+  'message.complete',
+  'message.edited',
+  'message.deleted',
+  'tool.start',
+  'tool.complete'
+])
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 // 休眠唤醒后重连不得永久卡在 'connecting'（会禁用输入框并卡住 "Starting SpiritAgent..."）；握手超时应落到 'error' 让调用方重试。
 const CONNECT_TIMEOUT_MS = 15_000
@@ -126,6 +146,11 @@ export class JsonRpcGatewayClient {
   private state: ConnectionState = 'idle'
   private _lastCloseCode: number | null = null
   private _lastReceivedSeq = 0
+  private _streamId = ''
+  private eventHolds = 0
+  private heldEvents: GatewayEvent[] = []
+  private flushEventsTimer: ReturnType<typeof setTimeout> | null = null
+  private snapshotPositions = new Map<string, { streamId: string; seq: number }>()
   private _ackTimer: ReturnType<typeof setTimeout> | null = null
   private _lastMessageAt = 0
   private _heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -146,8 +171,83 @@ export class JsonRpcGatewayClient {
     return this._lastReceivedSeq
   }
 
-  resetSeq(seq = 0): void {
-    this._lastReceivedSeq = seq
+  get streamId(): string {
+    return this._streamId
+  }
+
+  resetSeq(seq = 0, streamId = this._streamId): void {
+    if (streamId !== this._streamId) {
+      this._streamId = streamId
+      this._lastReceivedSeq = 0
+      this.snapshotPositions.clear()
+    }
+
+    this._lastReceivedSeq = Math.max(this._lastReceivedSeq, seq)
+  }
+
+  private finishEventHold(): void {
+    this.eventHolds -= 1
+
+    if (this.eventHolds !== 0 || this.flushEventsTimer !== null) {
+      return
+    }
+
+    // 先让等待 RPC 的调用方同步水合，再处理快照之后的新帧。
+    this.flushEventsTimer = setTimeout(() => {
+      this.flushEventsTimer = null
+
+      if (this.eventHolds !== 0) {
+        return
+      }
+
+      const events = this.heldEvents
+      this.heldEvents = []
+
+      for (const event of events) {
+        const position = event.session_id ? this.snapshotPositions.get(event.session_id) : undefined
+        const commandResult = event.type === 'command.result' && isRecord(event.payload) ? event.payload.result : null
+
+        const replacesHistory =
+          isRecord(commandResult) && commandResult.status === 'ok' && commandResult.hydrate === true
+
+        if (
+          position &&
+          event.stream_id === position.streamId &&
+          typeof event.seq === 'number' &&
+          event.seq <= position.seq &&
+          (SNAPSHOT_EVENTS.has(event.type) || replacesHistory)
+        ) {
+          continue
+        }
+
+        this.dispatchEvent(event)
+      }
+
+      this.scheduleAck()
+    }, 0)
+  }
+
+  private acceptSnapshot(value: unknown): void {
+    if (!isRecord(value) || typeof value.stream_id !== 'string' || typeof value.current_seq !== 'number') {
+      return
+    }
+
+    this.resetSeq(value.current_seq, value.stream_id)
+
+    if (!value.resumed && typeof value.session_id === 'string' && Array.isArray(value.messages)) {
+      const previous = this.snapshotPositions.get(value.session_id)
+      this.snapshotPositions.set(value.session_id, {
+        streamId: value.stream_id,
+        seq: Math.max(previous?.seq ?? 0, value.current_seq)
+      })
+      // 宿主与所有 IPC 代理都应用同一快照，才能安全丢弃快照内已有的旧回合帧。
+      this.dispatchEvent({
+        type: 'session.snapshot',
+        session_id: value.session_id,
+        stream_id: value.stream_id,
+        payload: value
+      })
+    }
   }
 
   ackSeq(seq = this._lastReceivedSeq): void {
@@ -157,13 +257,16 @@ export class JsonRpcGatewayClient {
   }
 
   private scheduleAck(): void {
-    if (this._ackTimer !== null) {
+    if (this._ackTimer !== null || this.eventHolds > 0 || this.flushEventsTimer !== null) {
       return
     }
 
     this._ackTimer = setTimeout(() => {
       this._ackTimer = null
-      this.ackSeq()
+
+      if (this.eventHolds === 0 && this.flushEventsTimer === null) {
+        this.ackSeq()
+      }
     }, 1000)
   }
 
@@ -191,6 +294,7 @@ export class JsonRpcGatewayClient {
       }
 
       this.stopHeartbeat()
+      this.heldEvents = []
       this._lastCloseCode = event.code
       this.socket = null
       this.setState('closed')
@@ -261,6 +365,13 @@ export class JsonRpcGatewayClient {
   }
 
   close(): void {
+    this.heldEvents = []
+
+    if (this.flushEventsTimer !== null) {
+      clearTimeout(this.flushEventsTimer)
+      this.flushEventsTimer = null
+    }
+
     if (this._ackTimer !== null) {
       clearTimeout(this._ackTimer)
       this._ackTimer = null
@@ -298,17 +409,46 @@ export class JsonRpcGatewayClient {
     }
 
     const id = ++this.nextId
+    const snapshot = SNAPSHOT_METHODS.has(method)
+
+    if (snapshot) {
+      this.eventHolds += 1
+    }
+
+    if (method === 'session.resume' && params.last_seq && !params.stream_id && this._streamId) {
+      params = { ...params, stream_id: this._streamId }
+    }
 
     return new Promise<T>((resolve, reject) => {
       const pending: PendingCall = {
-        reject,
-        resolve: value => resolve(value as T)
+        reject: error => {
+          reject(error)
+
+          if (snapshot) {
+            this.finishEventHold()
+          }
+        },
+        resolve: value => {
+          try {
+            if (snapshot) {
+              this.acceptSnapshot(value)
+            }
+
+            resolve(value as T)
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)))
+          } finally {
+            if (snapshot) {
+              this.finishEventHold()
+            }
+          }
+        }
       }
 
       if (timeoutMs > 0) {
         pending.timer = setTimeout(() => {
           if (this.pending.delete(id)) {
-            reject(new Error(`request timed out: ${method}`))
+            pending.reject(new Error(`request timed out: ${method}`))
           }
         }, timeoutMs)
       }
@@ -326,7 +466,7 @@ export class JsonRpcGatewayClient {
         )
       } catch (error) {
         this.clearPending(id)
-        reject(error instanceof Error ? error : new Error(String(error)))
+        pending.reject(error instanceof Error ? error : new Error(String(error)))
       }
     })
   }
@@ -383,6 +523,12 @@ export class JsonRpcGatewayClient {
       return
     }
 
+    const streamId = frame.params?.stream_id
+
+    if (typeof streamId === 'string' && streamId !== this._streamId) {
+      this.resetSeq(0, streamId)
+    }
+
     const seq = frame.params?.seq
 
     if (typeof seq === 'number') {
@@ -425,7 +571,11 @@ export class JsonRpcGatewayClient {
     }
 
     if (frame.method === 'event' && frame.params?.type) {
-      this.dispatchEvent(frame.params)
+      if (this.eventHolds > 0 || this.flushEventsTimer !== null) {
+        this.heldEvents.push(frame.params)
+      } else {
+        this.dispatchEvent(frame.params)
+      }
     }
   }
 
@@ -441,7 +591,11 @@ export class JsonRpcGatewayClient {
 
   private dispatchEvent(event: GatewayEvent): void {
     for (const handler of this.eventHandlers) {
-      handler(event)
+      try {
+        handler(event)
+      } catch (error) {
+        log.error('gateway', 'Event consumer failed', error)
+      }
     }
   }
 

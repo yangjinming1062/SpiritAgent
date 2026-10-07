@@ -2,8 +2,9 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import type { IpcEventChannel, IpcEventContract, SurfacePlaybackClaim } from '@ipc/contracts'
 import { BrowserWindow, type WebContents } from 'electron'
+
+import type { IpcEventChannel, IpcEventContract, SurfacePlaybackClaim } from '@ipc/contracts'
 
 export function fileExists(filePath: string): boolean {
   try {

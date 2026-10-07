@@ -1,10 +1,10 @@
 /** 动作播放运行时：播放实例、抢占、回执。基础状态仍是表现优先级真源，本模块只管理数据化表达请求（play_id + epoch + TTL），由 MediaStage 消费；同一动作再次播放用新 play_id 从头播放。 */
 
-import { clamp } from '@runtime'
 import { atom } from 'nanostores'
 
 import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
 import { trimOldest } from '@/shared/lib/trim-oldest'
+import { clamp } from '@runtime'
 
 import { endTransientState, setSpriteState } from '../companion-store'
 

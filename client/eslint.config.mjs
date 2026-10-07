@@ -138,7 +138,8 @@ export default [
         {
           groups: ['side-effect', 'builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
           order: 'asc',
-          type: 'natural'
+          type: 'natural',
+          internalPattern: ['^@protocol$', '^@runtime$', '^@ipc/', '^@/', '^@shared/', '^@client-shared/']
         }
       ],
       'perfectionist/sort-jsx-props': ['error', { order: 'asc', type: 'natural' }],

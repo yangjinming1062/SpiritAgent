@@ -1,4 +1,3 @@
-import { sleep } from '@runtime'
 import { atom, computed, map } from 'nanostores'
 
 import { SpiritAgentRpcError, SpiritAgentRpcErrorCode } from '@/shared/lib/gateway-protocol'
@@ -9,14 +8,18 @@ import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type {
+  ActiveTurnSnapshot,
   ChatAttachment,
   ChatMediaItem,
   CompanionBubble,
   CompanionMediaBubble,
+  PromptSubmissionResult,
   ReplyAudio,
   SessionMessage,
+  SessionResumeResponse,
   SessionRuntimeInfo
-} from '@/shared/types/spiritagent'
+} from '@protocol'
+import { sleep } from '@runtime'
 
 import { chatDisplayText } from './chat-display-text'
 import { $companionSessionId, DEFAULT_CONTEXT_LIMIT, FLUSH_DEBOUNCE_MS, nextChatMessageId } from './conversation-state'
@@ -43,13 +46,12 @@ export interface ChatMessageBody {
   text: string
   reasoning?: string
   streaming?: boolean
-  queued?: boolean
-  discarded?: boolean
   toolName?: string | null
   tools?: string[]
   error?: string
   retryMessageId?: number
   cancelled?: boolean
+  requestId?: string
   attachments?: ChatAttachment[]
   media?: ChatMediaItem[]
 }
@@ -61,8 +63,8 @@ export interface ConversationHistorySync {
   bodies: Record<string, ChatMessageBody>
 }
 
-// IM 守卫与语音入口的权威 kind 源，由 hydrate 注入服务端 info.kind（special / standard / im）。
-export type ChatSessionKind = 'im' | 'special' | 'standard'
+// 会话权限由 hydrate 注入服务端 kind 和自动化标记。
+export type ChatSessionKind = 'special' | 'standard'
 
 export interface PendingPromptItem {
   text: string
@@ -169,6 +171,12 @@ export function createConversationRuntime(sessionId: string | null) {
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   // 最近一次已提交批对应的用户气泡 id（工作台合并后只剩首条）；message.persisted 只按本集合绑定，失败回合孤儿气泡不会被下一轮错绑。
   let submittedBubbleIds: Set<string> = new Set()
+  let submittedRequestId: string | null = null
+  let activeRequestId: string | null = null
+  let settledRequestId: string | null = null
+  let submissionRecovery: Promise<void> | null = null
+  let snapshotPosition: { streamId: string; seq: number } | null = null
+  let unconfirmedSubmission: { params: Record<string, unknown>; fingerprint: string; requestId: string } | null = null
   let historyEditRevision = 0
   let historyReplacementRevision = 0
 
@@ -179,7 +187,7 @@ export function createConversationRuntime(sessionId: string | null) {
   const $chatSessionId = atom<string | null>(sessionId)
 
   function normalizeChatSessionKind(raw: unknown): ChatSessionKind {
-    return raw === 'im' || raw === 'special' || raw === 'standard' ? raw : 'standard'
+    return raw === 'special' || raw === 'standard' ? raw : 'standard'
   }
 
   const $chatSessionKind = atom<ChatSessionKind>('standard')
@@ -243,18 +251,24 @@ export function createConversationRuntime(sessionId: string | null) {
     conversationVoiceSink().cancel($chatSessionId.get())
 
     try {
-      await gateway.request('prompt.submit', {
-        session_id: sessionId,
-        retry_message_id: body.retryMessageId,
-        response_preference: presentationPorts().getResponsePreference()
-      })
+      acceptPromptSubmission(
+        await gateway.request<PromptSubmissionResult>(
+          'prompt.submit',
+          preparePromptSubmission({
+            session_id: sessionId,
+            retry_message_id: body.retryMessageId,
+            response_preference: presentationPorts().getResponsePreference()
+          })
+        )
+      )
     } catch (error) {
       // 已收到开始/完成事件时请求已被接受，迟到的 RPC 失败不能覆盖新回复。
       if (
         isCurrent() &&
         epoch === currentClearEpoch() &&
         $chatSessionId.get() === sessionId &&
-        $chatMessageBodies.get()[messageId] === body
+        $chatMessageBodies.get()[messageId] === body &&
+        unconfirmedSubmission !== null
       ) {
         $chatTurnInFlight.set(false)
         notifyError(error, getStrings().chat.sendFailed)
@@ -465,8 +479,6 @@ export function createConversationRuntime(sessionId: string | null) {
           toolName: m.tool_name ?? null,
           tools: m.tool_name ? [m.tool_name] : undefined,
           streaming: false,
-          queued: m.role === 'user' && m.queued,
-          discarded: m.role === 'user' && m.discarded,
           attachments: index === 0 ? attachments : undefined,
           ...(!companionBubbles && index === segments.length - 1 && m.media?.length ? { media: m.media } : {})
         }
@@ -481,9 +493,9 @@ export function createConversationRuntime(sessionId: string | null) {
 
     if (info) {
       hydrateSessionSettings(info)
-      // 缺字段/未知值回落 standard 以免 IM 守卫误判；无 info 的本会话内操作（撤回/清空/压缩重水合）沿用当前 kind，重置会解除 IM 只读。
+      // 无 info 的本会话历史修改沿用权限，完整水合使用服务端判定。
       $chatSessionKind.set(normalizeChatSessionKind(info.kind))
-      $chatSessionReadOnly.set(info.kind === 'im' || info.is_automation === true)
+      $chatSessionReadOnly.set(info.is_automation === true)
     }
 
     // 估算 Token 占用（~3 字符/Token）；分项清零避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
@@ -551,7 +563,10 @@ export function createConversationRuntime(sessionId: string | null) {
   // 先写 body 再入列：列表订阅者据 id 取 body 时必须已存在。
   function appendMessage(item: Omit<ChatMessageListItem, 'id' | 'timestamp'>, body: ChatMessageBody): string {
     const id = nextChatMessageId()
-    $chatMessageBodies.setKey(id, body)
+    $chatMessageBodies.setKey(
+      id,
+      item.role === 'assistant' && !item.subtype && activeRequestId ? { ...body, requestId: activeRequestId } : body
+    )
     const list = $chatMessageList.get()
     const next = { id, ...item, timestamp: Date.now() }
 
@@ -642,8 +657,12 @@ export function createConversationRuntime(sessionId: string | null) {
     $chatMessageList.set(merged)
   }
 
-  function bindTrailingUserMessageIds(ids: number[]): void {
-    // 只绑本次提交的气泡，失败回合孤儿气泡不被下一轮错绑（错绑会让撤回截断别人的消息）；连发拆泡时超出 id 数的气泡挂最后一个 id，与 hydrate 同行同 id 语义一致。
+  function bindTrailingUserMessageIds(ids: number[], requestId?: string): void {
+    if (!requestId || requestId !== submittedRequestId) {
+      return
+    }
+
+    // 只绑定本批气泡；拆泡超出消息 ID 数时沿用最后一个 ID，与历史水合一致。
     const validIds = ids.filter(isPositiveInt)
 
     if (validIds.length === 0) {
@@ -674,6 +693,348 @@ export function createConversationRuntime(sessionId: string | null) {
     }
 
     reconcilePersistedMessages(next, new Set(unboundIndexes.map(index => next[index].id)))
+  }
+
+  function preparePromptSubmission(params: Record<string, unknown>, bubbleIds: string[] = []): Record<string, unknown> {
+    const fingerprint = JSON.stringify(params)
+
+    const requestId =
+      unconfirmedSubmission?.fingerprint === fingerprint ? unconfirmedSubmission.requestId : crypto.randomUUID()
+
+    submittedRequestId = requestId
+    activeRequestId = requestId
+    submittedBubbleIds = new Set(bubbleIds)
+    const prepared = { ...params, request_id: requestId }
+    unconfirmedSubmission = { params: prepared, fingerprint, requestId }
+
+    return prepared
+  }
+
+  function mergePersistedUserMessages(
+    messages: SessionMessage[],
+    requestId?: string,
+    ids: number[] = [],
+    trackActive = true
+  ): void {
+    bindTrailingUserMessageIds(ids, requestId)
+
+    if (requestId) {
+      if (trackActive) {
+        activeRequestId = requestId
+      }
+
+      if (unconfirmedSubmission?.requestId === requestId) {
+        unconfirmedSubmission = null
+      }
+    }
+
+    const original = $chatMessageList.get()
+    const seen = new Set(original.map(item => item.backendMessageId))
+    const added: ChatMessageListItem[] = []
+
+    for (const message of messages) {
+      if (message.role !== 'user' || !isPositiveInt(message.id) || seen.has(message.id)) {
+        continue
+      }
+
+      seen.add(message.id)
+      const content = extractMessageContent(message)
+      const segments = splitUserBubblesEnabled() ? content.text.split(/\n\s*\n/).filter(Boolean) : [content.text]
+
+      for (const [index, text] of (segments.length ? segments : ['']).entries()) {
+        const id = nextChatMessageId()
+        $chatMessageBodies.setKey(id, {
+          text,
+          editableText: content.text,
+          attachments: index === 0 ? content.attachments : undefined,
+          streaming: false,
+          toolName: null
+        })
+        added.push({ id, role: 'user', backendMessageId: message.id, timestamp: message.timestamp })
+      }
+    }
+
+    if (added.length) {
+      const pendingIndex = original.findIndex(item => item.role === 'user' && item.backendMessageId === undefined)
+      const index = pendingIndex < 0 ? original.length : pendingIndex
+      $chatMessageList.set([...original.slice(0, index), ...added, ...original.slice(index)])
+    }
+  }
+
+  function applySessionState(state: {
+    request_id?: string
+    running?: boolean
+    status?: string
+    error?: string | null
+  }): void {
+    if (
+      state.request_id &&
+      ((activeRequestId && state.request_id !== activeRequestId) ||
+        (state.running && state.request_id === settledRequestId))
+    ) {
+      return
+    }
+
+    if (state.running) {
+      activeRequestId = state.request_id ?? activeRequestId
+      $chatTurnInFlight.set(true)
+
+      return
+    }
+
+    const unfinished = $chatTurnInFlight.get() || $lastAssistantStreaming.get()
+
+    if (unfinished && (state.status === 'cancelled' || state.status === 'interrupted')) {
+      markAssistantTerminal({ cancelled: true })
+    } else if (unfinished && state.status === 'failed') {
+      markAssistantTerminal({ error: state.error || getStrings().chat.sendFailed })
+    }
+
+    $chatTurnInFlight.set(false)
+
+    if (state.request_id === activeRequestId) {
+      settledRequestId = state.request_id
+      activeRequestId = null
+    }
+
+    if (state.request_id === unconfirmedSubmission?.requestId) {
+      unconfirmedSubmission = null
+    }
+  }
+
+  function acceptPromptSubmission(result: PromptSubmissionResult): void {
+    if (!isCurrent() || result.request_id !== submittedRequestId) {
+      return
+    }
+
+    if (result.message_ids?.length || result.messages?.length) {
+      mergePersistedUserMessages(
+        result.messages ?? [],
+        result.request_id,
+        result.message_ids ?? [],
+        result.status === 'accepted' || result.status === 'running'
+      )
+    }
+
+    if (result.status !== 'accepted' && result.status !== 'running') {
+      applySessionState({ ...result, running: false })
+    }
+  }
+
+  async function recoverUnconfirmedSubmission(): Promise<void> {
+    if (submissionRecovery) {
+      return submissionRecovery
+    }
+
+    const pending = unconfirmedSubmission
+    const gateway = $gateway.get()
+
+    if (
+      !pending ||
+      !gateway ||
+      !isCurrent() ||
+      gateway.connectionState !== 'open' ||
+      ($chatTurnInFlight.get() && activeRequestId !== pending.requestId)
+    ) {
+      return
+    }
+
+    activeRequestId = pending.requestId
+    $chatTurnInFlight.set(true)
+
+    const recovery = (async (): Promise<void> => {
+      try {
+        const result = await gateway.request<PromptSubmissionResult>('prompt.submit', pending.params)
+
+        if (isCurrent() && unconfirmedSubmission === pending) {
+          acceptPromptSubmission(result)
+        }
+      } catch (error) {
+        if (isCurrent() && unconfirmedSubmission === pending && activeRequestId === pending.requestId) {
+          $chatTurnInFlight.set(false)
+          notifyError(error, getStrings().chat.sendFailed)
+        }
+      }
+    })()
+
+    submissionRecovery = recovery
+
+    try {
+      await recovery
+    } finally {
+      if (submissionRecovery === recovery) {
+        submissionRecovery = null
+      }
+    }
+  }
+
+  function acceptsTurnEvent(requestId?: string): boolean {
+    return !requestId || (requestId !== settledRequestId && (!activeRequestId || activeRequestId === requestId))
+  }
+
+  function isPromptUnconfirmed(requestId: unknown): boolean {
+    return typeof requestId === 'string' && unconfirmedSubmission?.requestId === requestId
+  }
+
+  function applyRemoteSnapshot(
+    snapshot: Partial<SessionResumeResponse>,
+    historySync?: ConversationHistorySync
+  ): boolean {
+    if (
+      !isCurrent() ||
+      !Array.isArray(snapshot.messages) ||
+      (historySync && historySync.historyRevision !== historyReplacementRevision)
+    ) {
+      return false
+    }
+
+    if (snapshot.resumed) {
+      if (snapshot.info) {
+        hydrateSessionSettings(snapshot.info)
+      }
+
+      if (snapshot.replayed_count === 0 && snapshot.active_turn?.running && !$chatTurnInFlight.get()) {
+        restoreActiveTurn(snapshot.active_turn)
+      }
+
+      return true
+    }
+
+    if (snapshot.stream_id && typeof snapshot.current_seq === 'number') {
+      if (snapshotPosition?.streamId === snapshot.stream_id && snapshot.current_seq <= snapshotPosition.seq) {
+        if (snapshot.current_seq === snapshotPosition.seq && snapshot.info) {
+          hydrateSessionSettings(snapshot.info)
+        }
+
+        return true
+      }
+
+      snapshotPosition = { streamId: snapshot.stream_id, seq: snapshot.current_seq }
+    }
+
+    if (snapshot.incremental) {
+      const original = $chatMessageList.get()
+      const originalBodies = $chatMessageBodies.get()
+      const incomingIds = new Set(snapshot.messages.map(message => message.id))
+      replaceChatMessages(snapshot.messages, snapshot.info, false)
+      const incoming = $chatMessageList.get()
+      const incomingBodies = $chatMessageBodies.get()
+
+      const persisted = [
+        ...original.filter(item => item.backendMessageId !== undefined && !incomingIds.has(item.backendMessageId)),
+        ...incoming
+      ]
+
+      persisted.sort((a, b) => (a.backendMessageId ?? 0) - (b.backendMessageId ?? 0))
+      const drafts = original.filter(item => item.backendMessageId === undefined)
+      const merged = [...persisted, ...drafts]
+      $chatMessageBodies.set(
+        Object.fromEntries(merged.map(item => [item.id, incomingBodies[item.id] ?? originalBodies[item.id]]))
+      )
+      $chatMessageList.set(merged)
+    } else if (!hydrateSyncedChatMessages(snapshot.messages, snapshot.info, historySync ?? captureHistorySync())) {
+      return false
+    }
+
+    restoreActiveTurn(snapshot.active_turn, snapshot.info?.running)
+    const last = snapshot.last_submission
+
+    if (last && !['accepted', 'running'].includes(last.status)) {
+      settledRequestId = last.request_id
+    }
+
+    if (!$chatTurnInFlight.get() && last && ['failed', 'cancelled', 'interrupted'].includes(last.status)) {
+      const latestUser = $chatMessageList
+        .get()
+        .findLast(item => item.role === 'user' && item.backendMessageId !== undefined)
+
+      if (latestUser?.backendMessageId && last.message_ids?.includes(latestUser.backendMessageId)) {
+        bindTrailingUserMessageIds(last.message_ids, last.request_id)
+
+        if (unconfirmedSubmission?.requestId === last.request_id) {
+          unconfirmedSubmission = null
+        }
+
+        activeRequestId = last.request_id
+        markAssistantTerminal(
+          last.status === 'cancelled'
+            ? { cancelled: true, beforePending: true }
+            : {
+                beforePending: true,
+                error: last.error || getStrings().chat.connectionInterrupted,
+                retryMessageId: last.retry_message_id ?? undefined
+              }
+        )
+        activeRequestId = null
+      }
+    }
+
+    return true
+  }
+
+  function restoreActiveTurn(snapshot?: ActiveTurnSnapshot | null, running = false): void {
+    if (!isCurrent()) {
+      return
+    }
+
+    const bodies = $chatMessageBodies.get()
+    const previousRequestId = activeRequestId
+
+    const keep = $chatMessageList.get().filter(item => {
+      const body = bodies[item.id]
+
+      return !(
+        item.role === 'assistant' &&
+        item.backendMessageId === undefined &&
+        (body?.streaming ||
+          body?.error === getStrings().chat.connectionInterrupted ||
+          (body?.requestId && (body.requestId === previousRequestId || body.requestId === snapshot?.request_id)))
+      )
+    })
+
+    $chatMessageList.set(keep)
+    $chatMessageBodies.set(Object.fromEntries(keep.map(item => [item.id, bodies[item.id]])))
+    $lastAssistantStreaming.set(false)
+    inflightReply = null
+    activeRequestId = snapshot?.request_id ?? null
+    $chatTurnInFlight.set(snapshot?.running ?? running)
+
+    if (!snapshot) {
+      return
+    }
+
+    mergePersistedUserMessages(snapshot.messages ?? [], snapshot.request_id, snapshot.message_ids)
+    const endedBubbles = snapshot.bubbles.filter(bubble => bubble.type === 'text')
+
+    for (const bubble of endedBubbles) {
+      beginAssistantMessage()
+      appendAssistantDelta(bubble.text)
+      finalizeAssistantMessage()
+    }
+
+    $turnHadBubbleBreak.set(endedBubbles.length > 0)
+
+    if (snapshot.text || snapshot.reasoning || snapshot.tools.length) {
+      beginAssistantMessage()
+
+      if (snapshot.text) {
+        appendAssistantDelta(snapshot.text)
+      }
+
+      if (snapshot.reasoning) {
+        appendAssistantReasoningDelta(snapshot.reasoning)
+      }
+
+      for (const tool of snapshot.tools) {
+        if (tool.name) {
+          setAssistantTool(tool.name)
+        }
+      }
+
+      if (!snapshot.tools.some(tool => tool.status === 'running')) {
+        setAssistantTool(null)
+      }
+    }
   }
 
   function bindTrailingAssistantMessageId(messageId: number): void {
@@ -817,16 +1178,19 @@ export function createConversationRuntime(sessionId: string | null) {
       }
     }
 
-    const batchPayload = {
-      session_id: sessionId,
-      response_preference: presentationPorts().getResponsePreference(),
-      batch: [
-        {
-          text: promptText,
-          ...(attachments.length ? { attachments: attachments.map(a => ({ file_url: a.url, type: a.type })) } : {})
-        }
-      ]
-    }
+    const batchPayload = preparePromptSubmission(
+      {
+        session_id: sessionId,
+        response_preference: presentationPorts().getResponsePreference(),
+        batch: [
+          {
+            text: promptText,
+            ...(attachments.length ? { attachments: attachments.map(a => ({ file_url: a.url, type: a.type })) } : {})
+          }
+        ]
+      },
+      [...submittedBubbleIds]
+    )
 
     const submittedRevision = historyEditRevision
     const submittedGeneration = submissionGeneration
@@ -834,7 +1198,13 @@ export function createConversationRuntime(sessionId: string | null) {
 
     // 失败只收尾本批所属runtime；断连或账户清理后不再回写。
     const failSubmit = (err?: unknown): void => {
-      if (!isCurrent() || epoch !== currentClearEpoch() || submittedGeneration !== submissionGeneration) {
+      if (
+        !isCurrent() ||
+        epoch !== currentClearEpoch() ||
+        submittedGeneration !== submissionGeneration ||
+        !isPromptUnconfirmed(batchPayload.request_id) ||
+        (activeRequestId !== null && activeRequestId !== batchPayload.request_id)
+      ) {
         return
       }
 
@@ -862,7 +1232,7 @@ export function createConversationRuntime(sessionId: string | null) {
 
       try {
         presentationPorts().setSpriteState('thinking')
-        await g.request('prompt.submit', batchPayload)
+        acceptPromptSubmission(await g.request<PromptSubmissionResult>('prompt.submit', batchPayload))
       } catch (err: unknown) {
         const turnBusy = err instanceof SpiritAgentRpcError && err.code === SpiritAgentRpcErrorCode.TurnBusy
 
@@ -904,7 +1274,12 @@ export function createConversationRuntime(sessionId: string | null) {
     const last = lastAssistantMessage()
 
     if (last?.body.error && last.body.retryMessageId) {
-      $chatMessageBodies.setKey(last.item.id, { text: '', streaming: true, toolName: null })
+      $chatMessageBodies.setKey(last.item.id, {
+        text: '',
+        streaming: true,
+        toolName: null,
+        requestId: activeRequestId ?? undefined
+      })
       $lastAssistantStreaming.set(true)
 
       return
@@ -920,7 +1295,10 @@ export function createConversationRuntime(sessionId: string | null) {
       finalizeAssistantMessage()
     }
 
-    appendMessage({ role: 'assistant' }, { text: '', streaming: true, toolName: null })
+    appendMessage(
+      { role: 'assistant' },
+      { text: '', streaming: true, toolName: null, requestId: activeRequestId ?? undefined }
+    )
     $lastAssistantStreaming.set(true)
   }
 
@@ -1302,21 +1680,45 @@ export function createConversationRuntime(sessionId: string | null) {
   function markAssistantTerminal({
     error,
     cancelled,
-    retryMessageId
+    retryMessageId,
+    beforePending = false
   }: {
     error?: string
     cancelled?: boolean
     retryMessageId?: number
+    beforePending?: boolean
   } = {}): void {
     inflightReply = null
     conversationVoiceSink().cancel($chatSessionId.get())
 
+    const list = $chatMessageList.get()
+
+    const existing = activeRequestId
+      ? list.findLast(item => $chatMessageBodies.get()[item.id]?.requestId === activeRequestId)
+      : undefined
+
     const last = lastAssistantMessage()
 
     const terminal = {
+      ...(activeRequestId && { requestId: activeRequestId }),
       ...(error !== undefined && { error }),
       ...(cancelled && { cancelled: true }),
       ...(retryMessageId !== undefined && { retryMessageId })
+    }
+
+    if (existing && !$chatMessageBodies.get()[existing.id]?.streaming) {
+      $chatMessageBodies.setKey(existing.id, { ...$chatMessageBodies.get()[existing.id], ...terminal })
+
+      return
+    }
+
+    if (
+      last &&
+      !last.body.streaming &&
+      ((error !== undefined && last.body.error === error && last.body.retryMessageId === retryMessageId) ||
+        (cancelled && last.body.cancelled))
+    ) {
+      return
     }
 
     if (last?.body.streaming) {
@@ -1333,7 +1735,18 @@ export function createConversationRuntime(sessionId: string | null) {
       return
     }
 
-    appendMessage({ role: 'assistant' }, { text: '', ...terminal, streaming: false, toolName: null })
+    const id = appendMessage({ role: 'assistant' }, { text: '', ...terminal, streaming: false, toolName: null })
+    const updated = $chatMessageList.get()
+    const pendingIndex = updated.findIndex(item => item.role === 'user' && item.backendMessageId === undefined)
+
+    if (beforePending && pendingIndex >= 0) {
+      const terminalRow = updated.find(item => item.id === id)
+
+      if (terminalRow) {
+        $chatMessageList.set([...updated.slice(0, pendingIndex), terminalRow, ...updated.slice(pendingIndex, -1)])
+      }
+    }
+
     $lastAssistantStreaming.set(false)
   }
 
@@ -1457,7 +1870,6 @@ export function createConversationRuntime(sessionId: string | null) {
     submissionGeneration++
     const unfinished = $chatTurnInFlight.get() || $lastAssistantStreaming.get() || $pendingPromptBatch.get().length > 0
     cancelPendingFlush()
-    clearPendingPrompts()
 
     if (unfinished) {
       markAssistantTerminal({ error: getStrings().chat.connectionInterrupted })
@@ -1500,6 +1912,15 @@ export function createConversationRuntime(sessionId: string | null) {
     pushMediaMessage,
     pushUserMessage,
     bindTrailingUserMessageIds,
+    preparePromptSubmission,
+    isPromptUnconfirmed,
+    applyRemoteSnapshot,
+    acceptsTurnEvent,
+    acceptPromptSubmission,
+    mergePersistedUserMessages,
+    applySessionState,
+    restoreActiveTurn,
+    recoverUnconfirmedSubmission,
     bindTrailingAssistantMessageId,
     pushStatusPill,
     pushPendingPrompt,

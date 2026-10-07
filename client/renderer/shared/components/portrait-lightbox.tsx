@@ -1,9 +1,9 @@
-import { clamp } from '@runtime'
 import { type ReactNode, type RefObject, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { Copy, Download } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
+import { clamp } from '@runtime'
 
 import { usePanelActivity } from '../context/panel-activity'
 import { useEscapeKey } from '../hooks/use-escape-key'

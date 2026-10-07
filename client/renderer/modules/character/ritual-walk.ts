@@ -1,8 +1,7 @@
-import type { DesktopScreenRect } from '@ipc/contracts'
-import { sleep } from '@runtime'
-
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
+import type { DesktopScreenRect } from '@ipc/contracts'
+import { sleep } from '@runtime'
 
 import { isActionStageVisible, observeActionStageVisibility } from './actions'
 import { setSpriteState } from './companion-store'

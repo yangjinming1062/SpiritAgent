@@ -8,7 +8,7 @@ import {
   storedJson
 } from '@/shared/lib/storage'
 
-export const DESKTOP_APPS = ['chat', 'posts', 'diary', 'scene', 'appearance', 'channels', 'settings'] as const
+export const DESKTOP_APPS = ['chat', 'posts', 'diary', 'scene', 'appearance', 'remote', 'settings'] as const
 
 export type DesktopApp = (typeof DESKTOP_APPS)[number]
 

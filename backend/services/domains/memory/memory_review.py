@@ -145,7 +145,6 @@ async def _review_batches(
                         .where(
                             Conversation.user_id == scope.user_id,
                             Conversation.system_preset_id == scope.system_preset_id,
-                            Message.discarded.is_(False),
                         ),
                     )
                     or 0

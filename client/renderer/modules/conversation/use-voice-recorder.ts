@@ -6,7 +6,7 @@ import { presentationPorts } from '@/shared/presentation-ports'
 import { getSpiritAgentConfig } from '@/shared/spiritagent'
 import { getStrings } from '@/shared/strings'
 
-import { IM_VOICE_BAR_AUDIO_CONSTRAINTS } from './audio-constraints'
+import { CHAT_AUDIO_CONSTRAINTS } from './audio-constraints'
 import { convertBlobToWav } from './audio-wav'
 import { blobToDataUrl } from './blob-data-url'
 import type { ConversationRuntime } from './chat-runtime'
@@ -320,7 +320,7 @@ export function useVoiceRecorder({
       let stream: MediaStream | null = null
 
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: IM_VOICE_BAR_AUDIO_CONSTRAINTS })
+        stream = await navigator.mediaDevices.getUserMedia({ audio: CHAT_AUDIO_CONSTRAINTS })
 
         // 等待麦克风期间失去资格，即使重新活动也不能恢复旧录音。
         if (!isCurrent() || operation !== operationRef.current) {

@@ -2,11 +2,16 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from modules.remote import RemoteSession
+
 from .deps import (
+    authenticate_remote_session,
     get_current_admin_token,
+    get_current_remote_session,
     get_current_session,
     get_current_user,
     get_optional_current_session,
+    is_remote_session_active,
 )
 from .models import LoginRecord, User, UserModelConfig, lock_user_row
 from .schemas import (
@@ -42,7 +47,8 @@ from .security import (
 CurrentAdmin = Annotated[str, Depends(get_current_admin_token)]
 CurrentSession = Annotated[tuple[User, LoginRecord], Depends(get_current_session)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
-OptionalSession = Annotated[tuple[User, LoginRecord] | None, Depends(get_optional_current_session)]
+CurrentRemoteSession = Annotated[tuple[User, RemoteSession], Depends(get_current_remote_session)]
+OptionalSession = Annotated[tuple[User, LoginRecord | RemoteSession] | None, Depends(get_optional_current_session)]
 
 __all__ = [
     "ActivateRequest",
@@ -51,6 +57,7 @@ __all__ = [
     "ChatRequestClientContext",
     "CurrentAdmin",
     "CurrentSession",
+    "CurrentRemoteSession",
     "CurrentUser",
     "LoginRecord",
     "OptionalSession",
@@ -68,6 +75,7 @@ __all__ = [
     "UserModelConfigRequest",
     "UserResponse",
     "UserUpdate",
+    "authenticate_remote_session",
     "consume_ws_ticket",
     "create_access_token",
     "create_admin_token",
@@ -79,5 +87,6 @@ __all__ = [
     "get_current_admin_token",
     "get_current_session",
     "hash_activation_token",
+    "is_remote_session_active",
     "lock_user_row",
 ]

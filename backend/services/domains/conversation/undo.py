@@ -10,12 +10,12 @@ from services.infrastructure.assets import user_asset_lock
 
 from .fork import SourceNotFoundError
 from .history import build_session_messages
-from .main_conversation import IM_KIND, SPECIAL_KIND
+from .main_conversation import SPECIAL_KIND
 from .reply_audio import cancel_reply_audio
 
 
 class UndoNotAllowedError(Exception):
-    """会话 kind 不可撤回（special / im）。"""
+    """会话 kind 不可撤回（special）。"""
 
 
 async def resolve_undo_target(
@@ -29,7 +29,7 @@ async def resolve_undo_target(
     if conv is None:
         raise SourceNotFoundError(f"会话不存在或不属于当前用户: {session_id!r}")
 
-    if conv.is_automation or conv.kind in (SPECIAL_KIND, IM_KIND):
+    if conv.is_automation or conv.kind == SPECIAL_KIND:
         raise UndoNotAllowedError(f"该类型会话不可撤回 (kind={conv.kind!r})")
 
     anchor_row = (

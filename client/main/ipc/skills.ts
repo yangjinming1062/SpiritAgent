@@ -1,7 +1,8 @@
 import path from 'node:path'
 
-import { IPC, type IpcInvokeContract } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
+
+import { IPC, type IpcInvokeContract } from '@ipc/contracts'
 
 import * as store from '../shared/lib/runner-config-store'
 import { buildSkillSummaries } from '../shared/lib/skill-index'

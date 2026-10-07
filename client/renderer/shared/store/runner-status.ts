@@ -1,8 +1,8 @@
-import type { DesktopRunnerPhase } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch } from '@/shared/lib/storage'
+import type { DesktopRunnerPhase } from '@ipc/contracts'
 
 // Runner 状态镜像；先订阅再读取快照，迟到快照不能覆盖更新的状态事件。
 export const $runnerPhase = atom<DesktopRunnerPhase>('idle')

@@ -1,4 +1,3 @@
-import type { SkillItem } from '@ipc/contracts'
 import { useMemo, useState } from 'react'
 
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
@@ -18,6 +17,7 @@ import {
 import { refreshSession } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
+import type { SkillItem } from '@ipc/contracts'
 
 const EMPTY_SKILLS: SkillItem[] = []
 

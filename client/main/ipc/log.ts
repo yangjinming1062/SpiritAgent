@@ -1,5 +1,6 @@
-import { IPC, type IpcInvokeContract } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
+
+import { IPC, type IpcInvokeContract } from '@ipc/contracts'
 
 type RendererLogPayload = Parameters<IpcInvokeContract['spiritagent:log:emit']>[0]
 

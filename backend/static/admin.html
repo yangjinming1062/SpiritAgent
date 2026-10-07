@@ -2048,17 +2048,8 @@ const SETTINGS_SECTIONS = [
         ],
     },
     {
-        title: '外部渠道与系统运行时', hint: 'IM 渠道参数、公网地址与日志调优',
+        title: '远程与系统运行时', hint: '公网地址与日志调优',
         blocks: [
-            ['sub', '微信 iLink 外部 IM 渠道'],
-            ['grid', [
-                num('channels_turn_queue_max', '在途排队入站消息上限', 1, { min: 0 }),
-                num('channels_inbound_rate_per_minute', '入站限速频次 (/分钟)', 1, { min: 1 }),
-                num('channels_restart_backoff_seconds', '守卫重试退避时间 (秒)', 1, { min: 1 }),
-                num('weixin_reply_max_chars', '微信回复单条分片上限 (字)'),
-                num('weixin_ilink_poll_timeout_seconds', '长轮询客户端超时 (秒)', 1, { min: 1 }),
-                num('channels_delivery_max_attempts', '回复投递最大尝试次数', 1, { min: 1 }),
-            ]],
             ['sub', '运行时与日志调优'],
             ['grid', [
                 text('public_base_url', '公网访问基础地址 (public_base_url)', 'https://example.com'),

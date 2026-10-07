@@ -1,5 +1,6 @@
 from components import SETTINGS, session_scope, utc_now
 from modules.memory import USER_PROFILE_MAX_CONTENT_CHARS, Memory
+from modules.ws import emit_ws_event
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,7 +79,13 @@ async def list_memories(
     return [_list_item(row) for row in rows]
 
 
-async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> MemoryListItem | None:
+async def update_memory(
+    scope: MemoryScope,
+    memory_id: int,
+    *,
+    content: str,
+    expected_version: int,
+) -> MemoryListItem | None:
     """人工编辑重新生效；伙伴自身记录保留表达主体，不转为用户事实。"""
     content = (content or "").strip()
     if not content:
@@ -88,6 +95,8 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
         row = await get_memory(db, scope, memory_id)
         if row is None:
             return None
+        if row.content_version != expected_version:
+            raise ValueError("这条记忆已在其他设备更新，请刷新后再保存。")
         if (row.context or "").startswith("diary:"):
             raise ValueError("Published diary memories are read-only")
         cap = (
@@ -115,6 +124,12 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
         )
         row.source_kind, row.source_refs = "manual", {}
         row.updated_at = utc_now()
+        emit_ws_event(
+            db,
+            user_id=scope.user_id,
+            event_type="memory.changed",
+            payload={"system_preset_id": scope.system_preset_id, "memory_id": row.id},
+        )
         await db.commit()
         result = _list_item(row)
         embedding_item = (

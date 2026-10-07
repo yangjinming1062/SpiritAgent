@@ -1,5 +1,7 @@
 """FastAPI 应用装配：中间件、异常处理、路由与静态目录；注册在导入期显式完成。"""
 
+from pathlib import Path
+
 from api import ROUTERS
 from components import (
     SETTINGS,
@@ -10,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from services.adapters.http import (
     BodyLimitMiddleware,
+    RemoteStaticFiles,
     limiter,
     rate_limit_exception_handler,
     stash_user_id_middleware,
@@ -23,7 +26,7 @@ register_all()
 
 app = FastAPI(title=SETTINGS.app_name, lifespan=lifespan)
 app.add_middleware(BodyLimitMiddleware)
-# CORS 通配：鉴权走 Bearer token（非 cookie），跨域请求不会带凭据，FastAPI 会拒绝 `*` + credentials 组合。
+# 跨域仅供 Bearer 客户端；远程 Cookie 身份要求同源，CORS 不开放凭据跨域。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,3 +51,9 @@ def health() -> dict[str, str]:
 
 for _router in ROUTERS:
     app.include_router(_router)
+
+
+_remote_root = Path(__file__).resolve().parents[1] / "static" / "remote"
+if not _remote_root.exists():
+    _remote_root = Path(__file__).resolve().parents[2] / "remote" / "dist"
+app.mount("/remote", RemoteStaticFiles(directory=_remote_root, html=True, check_dir=False), name="remote")

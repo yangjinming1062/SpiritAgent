@@ -1,9 +1,8 @@
-import type { SessionHistorySnapshot } from '@ipc/contracts'
-
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
-import type { SessionMessage, SessionRuntimeInfo } from '@/shared/types/spiritagent'
+import type { SessionHistorySnapshot } from '@ipc/contracts'
+import type { SessionMessage, SessionResumeResponse, SessionRuntimeInfo } from '@protocol'
 
 const PERSIST_DEBOUNCE_MS = 800
 
@@ -217,28 +216,16 @@ function mergeIncrementalHistory(
 /** 本地秒开后用服务端增量/全量追上：锚点走 after_id；last_seq 只能由调用方以活动聊天列表的水位（gateway.lastReceivedSeq）传入——缓存不追踪实时回合，拿缓存 currentSeq 当 last_seq 会让服务端对陈旧水位重放帧，活列表上重复追加。 */
 export async function syncSessionHistory(params: {
   lastSeq?: number
+  streamId?: string
   sessionId: string
-  request: (body: { after_id?: number; last_seq?: number }) => Promise<{
-    current_seq?: number
-    incremental?: boolean
-    info?: SessionRuntimeInfo
-    messages?: SessionMessage[]
-    next_cursor?: null | string
-    resumed?: boolean
-    truncated?: boolean
-  }>
-}): Promise<{
-  currentSeq: number
-  info?: SessionRuntimeInfo
-  kind: 'full' | 'incremental' | 'noop'
-  messages: SessionMessage[]
-}> {
+  request: (body: { after_id?: number; last_seq?: number; stream_id?: string }) => Promise<SessionResumeResponse>
+}): Promise<SessionResumeResponse & { current_seq: number; kind: 'full' | 'incremental' | 'noop' }> {
   const epoch = currentClearEpoch()
   const authSessionId = currentAuthSessionId()
   const local = memoryBySession.get(params.sessionId)
   let invalidation = invalidations.get(params.sessionId)
   let historyRevision = historyRevisions.get(params.sessionId)
-  const body: { after_id?: number; last_seq?: number } = {}
+  const body: { after_id?: number; last_seq?: number; stream_id?: string } = {}
 
   // 离线期间的视频完成事件可能已过重放窗口，增量锚点无法发现原等待卡片的变化。
   const hasPendingMedia = local?.messages.some(message =>
@@ -251,6 +238,7 @@ export async function syncSessionHistory(params: {
 
   if (!invalidation && params.lastSeq && params.lastSeq > 0) {
     body.last_seq = params.lastSeq
+    body.stream_id = params.streamId
   }
 
   let res = await params.request(body)
@@ -283,49 +271,26 @@ export async function syncSessionHistory(params: {
   const currentSeq = typeof res.current_seq === 'number' ? res.current_seq : (local?.currentSeq ?? 0)
   const info = res.info ?? local?.info
 
+  let messages = Array.isArray(res.messages) ? res.messages : []
+  let kind: 'full' | 'incremental' | 'noop' = 'full'
+
   if (res.resumed) {
-    if (typeof res.current_seq === 'number') {
-      updateHistorySeq(params.sessionId, res.current_seq, res.info)
-    }
-
-    return {
+    updateHistorySeq(params.sessionId, currentSeq, res.info)
+    messages = local ? [...local.messages] : []
+    kind = 'noop'
+  } else if (res.incremental) {
+    messages = mergeIncrementalHistory(params.sessionId, messages, { currentSeq, info }) ?? messages
+    kind = 'incremental'
+  } else {
+    rememberFullHistory(params.sessionId, messages, {
       currentSeq,
       info,
-      kind: 'noop',
-      messages: local ? [...local.messages] : []
-    }
+      nextCursor: res.next_cursor,
+      truncated: res.truncated
+    })
   }
 
-  const incoming = Array.isArray(res.messages) ? res.messages : []
-
-  if (res.incremental) {
-    const merged =
-      mergeIncrementalHistory(params.sessionId, incoming, {
-        currentSeq: res.current_seq,
-        info: res.info
-      }) ?? incoming
-
-    return {
-      currentSeq,
-      info,
-      kind: 'incremental',
-      messages: merged
-    }
-  }
-
-  rememberFullHistory(params.sessionId, incoming, {
-    currentSeq: res.current_seq,
-    info: res.info,
-    nextCursor: res.next_cursor,
-    truncated: res.truncated
-  })
-
-  return {
-    currentSeq: typeof res.current_seq === 'number' ? res.current_seq : 0,
-    info: res.info,
-    kind: 'full',
-    messages: incoming
-  }
+  return { ...res, current_seq: currentSeq, info, messages, message_count: messages.length, incremental: false, kind }
 }
 
 function cancelPersist(sessionId: string): void {

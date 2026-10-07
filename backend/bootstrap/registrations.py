@@ -1,8 +1,6 @@
-"""显式装配注册：供应商、工具、渠道、事件与域钩子在此集中登记；导入业务包无注册副作用，注册表覆盖式幂等。"""
+"""显式装配注册：供应商、工具、事件与域钩子在此集中登记；导入业务包无注册副作用，注册表覆盖式幂等。"""
 
 from modules.ws import COMPANION_TURN_EVENT
-from services.adapters.channels import register as register_channel
-from services.adapters.channels.adapters import WeixinIlinkAdapter
 from services.adapters.tools import agent_delegate, cronjob_tool, search_tools_tool
 from services.adapters.tools import memory as memory_tools
 from services.adapters.tools.builtin import (
@@ -71,10 +69,6 @@ def register_tools() -> None:
     agent_delegate.register_delegate_tool(REGISTRY)
 
 
-def register_channel_adapters() -> None:
-    register_channel("weixin_ilink", WeixinIlinkAdapter)
-
-
 def register_internal_event_handlers() -> None:
     register_internal_event_handler(COMPANION_TURN_EVENT, execute_companion_turn)
 
@@ -87,6 +81,5 @@ def wire_domain_hooks() -> None:
 def register_all() -> None:
     register_providers()
     register_tools()
-    register_channel_adapters()
     register_internal_event_handlers()
     wire_domain_hooks()

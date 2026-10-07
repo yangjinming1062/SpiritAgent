@@ -1,10 +1,10 @@
-import { clamp } from '@runtime'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
+import { clamp } from '@runtime'
 
 import { INPUT_CLASS } from './palette'
 

@@ -1,9 +1,9 @@
-import type { SpiritAgentApiRequest } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import type { SpiritAgentApiRequest } from '@ipc/contracts'
 
 import { $activeAvatarId } from './portrait-store'
 

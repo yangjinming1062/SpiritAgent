@@ -7,8 +7,9 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 
-import { sleep } from '@runtime'
 import YAML from 'yaml'
+
+import { sleep } from '@runtime'
 
 import type { BackendSessionLike } from '../shared/backend-port'
 import { errorMessage } from '../shared/utils'

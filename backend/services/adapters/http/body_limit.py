@@ -3,9 +3,9 @@
 import re
 
 from components import SESSION_LOCAL, SETTINGS, STT_MAX_AUDIO_BYTES
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
-from modules.auth import get_current_admin_token, get_current_session
+from modules.auth import authenticate_remote_session, get_current_admin_token, get_current_session
 from starlette.datastructures import Headers
 from starlette.formparsers import MultiPartException
 from starlette.responses import JSONResponse
@@ -53,8 +53,9 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
     return _DEFAULT_MAX_BYTES, None
 
 
-async def _authenticate_upload(headers: Headers, *, admin_only: bool) -> None:
-    auth = headers.get("authorization", "")
+async def _authenticate_upload(scope: Scope, *, admin_only: bool) -> None:
+    request = Request(scope)
+    auth = request.headers.get("authorization", "")
     scheme, _, token = auth.partition(" ")
     credentials = (
         HTTPAuthorizationCredentials(scheme=scheme, credentials=token.strip())
@@ -64,8 +65,10 @@ async def _authenticate_upload(headers: Headers, *, admin_only: bool) -> None:
     async with SESSION_LOCAL() as db:
         if admin_only:
             await get_current_admin_token(credentials, db)
-        else:
+        elif credentials is not None:
             await get_current_session(credentials, db)
+        else:
+            await authenticate_remote_session(request, db, content_only=True)
 
 
 class BodyLimitMiddleware:
@@ -93,7 +96,7 @@ class BodyLimitMiddleware:
             return
         if admin_only is not None:
             try:
-                await _authenticate_upload(headers, admin_only=admin_only)
+                await _authenticate_upload(scope, admin_only=admin_only)
             except HTTPException as exc:
                 await JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)(
                     scope,

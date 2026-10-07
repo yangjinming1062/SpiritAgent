@@ -1,5 +1,6 @@
-import { type DesktopBackground, IPC } from '@ipc/contracts'
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+
+import { type DesktopBackground, IPC } from '@ipc/contracts'
 
 contextBridge.exposeInMainWorld('desktopBackground', {
   ready: () => ipcRenderer.invoke(IPC.invoke.backgroundReady),

@@ -1,5 +1,4 @@
 import { useStore } from '@nanostores/react'
-import { clamp } from '@runtime'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -9,7 +8,8 @@ import { cn } from '@/shared/lib/utils'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { SessionRuntimeInfo } from '@/shared/types/spiritagent'
+import type { SessionRuntimeInfo } from '@protocol'
+import { clamp } from '@runtime'
 
 import {
   type CompressContextResponse,
@@ -237,7 +237,7 @@ export function ChatParamsPanel({
   const gateway = useStore($gateway)
   const gatewayState = useStore($gatewayState)
   const canEdit = gatewayState === 'open' && sessionId !== null
-  // IM 会话由通道桥接维护，桌面端不能手动压缩（服务端同样拒绝）；参数覆盖仍作用于桥接回合。
+  // 自动化会话的历史由任务维护，手动压缩沿用只读权限。
   const isReadOnlySession = useIsReadOnlySession()
   const contextStatus = useContextStatus()
   const [compressing, setCompressing] = useState(false)

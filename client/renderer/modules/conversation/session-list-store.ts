@@ -9,13 +9,11 @@ import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type {
   SessionInfo,
-  SessionMessage,
   SessionResumeResponse,
-  SessionRuntimeInfo,
   SystemPresetListResponse,
   SystemPresetSummary,
   UndoResponse
-} from '@/shared/types/spiritagent'
+} from '@protocol'
 
 import type { ConversationHistorySync, ConversationRuntime } from './chat-runtime'
 import {
@@ -344,6 +342,28 @@ export async function archiveSession(sessionId: string, archived: boolean): Prom
   void fetchArchived()
 }
 
+export function onSessionListChanged(payload: { session_id?: string; deleted?: boolean }): void {
+  if (payload.deleted && payload.session_id) {
+    forgetSessionHistory(payload.session_id)
+    removeVoicePlayback(payload.session_id)
+
+    if ($chatSessionId.get() === payload.session_id) {
+      setChatSession(null)
+      void openMainSession()
+    }
+  }
+
+  void fetchSessions()
+
+  if ($archiveOpen.get()) {
+    void fetchArchived()
+  }
+
+  if ($sessionSearch.get().trim()) {
+    void runSessionSearch($sessionSearch.get())
+  }
+}
+
 export async function createNewSession(systemPresetId: string): Promise<string | null> {
   const epoch = currentClearEpoch()
   const gw = $gateway.get()
@@ -594,13 +614,10 @@ export async function ensureCompanionSession(): Promise<string | null> {
       setCompanionSessionId(result.session_id)
       const runtime = getConversationRuntime(result.session_id)
 
-      const accepted = runtime.hydrateSyncedChatMessages(
-        result.messages || [],
-        result.info,
-        knownRuntime === runtime ? snapshot : undefined
-      )
+      const accepted = runtime.applyRemoteSnapshot(result, knownRuntime === runtime ? snapshot : undefined)
 
       if (accepted) {
+        void runtime.recoverUnconfirmedSubmission()
         rememberFullHistory(result.session_id, result.messages || [], {
           currentSeq: result.current_seq,
           info: result.info,
@@ -635,17 +652,19 @@ export async function ensureCompanionSession(): Promise<string | null> {
 }
 
 // 挂载服务端快照：快照已挂上同一会话时不再重置，保留展示快照期间入列的待发消息；回合状态以服务端 running 为准。
-function mountSyncedSession(
-  sessionId: string,
-  messages: SessionMessage[],
-  info?: SessionRuntimeInfo,
-  snapshot?: ConversationHistorySync
-): boolean {
-  if ($chatSessionId.get() !== sessionId) {
-    setChatSession(sessionId)
+function mountSyncedSession(result: SessionResumeResponse, historySync?: ConversationHistorySync): boolean {
+  if ($chatSessionId.get() !== result.session_id) {
+    setChatSession(result.session_id)
   }
 
-  return getConversationRuntime(sessionId).hydrateSyncedChatMessages(messages, info, snapshot)
+  const runtime = getConversationRuntime(result.session_id)
+  const accepted = runtime.applyRemoteSnapshot(result, historySync)
+
+  if (accepted) {
+    void runtime.recoverUnconfirmedSubmission()
+  }
+
+  return accepted
 }
 
 export async function switchSession(sessionId: string): Promise<void> {
@@ -688,7 +707,7 @@ export async function switchSession(sessionId: string): Promise<void> {
       return
     }
 
-    mountSyncedSession(sessionId, synced.messages, synced.info, snapshot)
+    mountSyncedSession(synced, snapshot)
   } catch (err) {
     if (isCurrent()) {
       log.error('session-list', 'Failed to switch session:', err)
@@ -758,16 +777,10 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
             // 同步期间已切到其他会话时不覆盖其视图。
             if (isLatest() && $chatSessionId.get() === knownCompanionId) {
-              mountSyncedSession(knownCompanionId, synced.messages, synced.info, snapshot)
+              mountSyncedSession(synced, snapshot)
             }
 
-            onMounted?.({
-              current_seq: synced.currentSeq,
-              info: synced.info,
-              message_count: synced.messages.length,
-              messages: synced.messages,
-              session_id: knownCompanionId
-            })
+            onMounted?.(synced)
 
             return knownCompanionId
           } catch (error) {
@@ -798,15 +811,14 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
       setCompanionSessionId(res.session_id)
 
+      const runtime = getConversationRuntime(res.session_id)
+
       const accepted = isLatest()
-        ? mountSyncedSession(res.session_id, res.messages || [], res.info, snapshots.get(res.session_id))
-        : getConversationRuntime(res.session_id).hydrateSyncedChatMessages(
-            res.messages || [],
-            res.info,
-            snapshots.get(res.session_id)
-          )
+        ? mountSyncedSession(res, snapshots.get(res.session_id))
+        : runtime.applyRemoteSnapshot(res, snapshots.get(res.session_id))
 
       if (accepted) {
+        void runtime.recoverUnconfirmedSubmission()
         rememberFullHistory(res.session_id, res.messages || [], {
           currentSeq: res.current_seq,
           info: res.info,

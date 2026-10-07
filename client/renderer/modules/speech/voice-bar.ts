@@ -1,5 +1,3 @@
-import type { VoicePlaybackRecord } from '@ipc/contracts'
-
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
@@ -12,7 +10,8 @@ import {
   $surfaceSpriteVisible,
   isSpriteStageShown
 } from '@/shared/store/surfaces'
-import type { ReplyAudio } from '@/shared/types/spiritagent'
+import type { VoicePlaybackRecord } from '@ipc/contracts'
+import type { ReplyAudio } from '@protocol'
 
 import { type AudioPlaybackOptions, playDataUrl, stopAudio } from './audio-track'
 

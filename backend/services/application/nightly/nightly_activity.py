@@ -321,12 +321,11 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         stages.append({"stage": "memory_review", "status": "skipped", "reason": "夜间窗口已结束"})
 
     local_date_str = target_date.isoformat()
-    # 当日对话与 7 天基线共用同一会话范围（本预设下用户本人的对话，含 IM），活动统计才可比较。
+    # 当日对话与 7 天基线共用同一会话范围（本预设下用户本人的对话），活动统计才可比较。
     companion_messages = (
         Conversation.user_id == user_id,
         Conversation.system_preset_id == scope.system_preset_id,
         Message.id > Conversation.context_after_message_id,
-        Message.discarded.is_(False),
         user_authored_conversation(),
         Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
     )

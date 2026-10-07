@@ -1,3 +1,6 @@
+import { atom } from 'nanostores'
+
+import { persistString, storedString } from '@/shared/lib/storage'
 import {
   getUiEffect,
   getUiPalette,
@@ -5,9 +8,6 @@ import {
   type SpiritAgentUiTheme,
   UI_THEME_URL_PARAM
 } from '@ipc/contracts'
-import { atom } from 'nanostores'
-
-import { persistString, storedString } from '@/shared/lib/storage'
 
 const THEME_STORAGE_KEY = 'da.ui.theme'
 

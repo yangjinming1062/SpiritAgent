@@ -1,3 +1,5 @@
+import { globalShortcut, type IpcMain } from 'electron'
+
 import {
   DEFAULT_SHORTCUTS,
   type DesktopShortcutsConfig,
@@ -6,7 +8,6 @@ import {
   IPC,
   type SurfaceId
 } from '@ipc/contracts'
-import { globalShortcut, type IpcMain } from 'electron'
 
 import * as store from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows, errorMessage } from '../shared/utils'

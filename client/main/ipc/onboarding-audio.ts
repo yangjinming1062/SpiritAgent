@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { IPC } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
+
+import { IPC } from '@ipc/contracts'
 
 import { resolveReadableFileForIpc } from '../security/hardening'
 import { dataUrlFromBuffer, mimeTypeForPath } from '../shared/mime'

@@ -1,6 +1,5 @@
 import asyncio
 import json
-from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import date, datetime
@@ -124,7 +123,6 @@ UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
 }
 # 运行期状态不导出；恢复时取模型默认值（必填列在 _build_payload 中显式置空）。
 _EXCLUDED_COLUMNS: dict[str, frozenset[str]] = {
-    "messages": frozenset({"dedup_key"}),
     "companion_scenes": frozenset({"generation_state_json", "regeneration_state_json", "reference_image"}),
     "companion_character_cards": frozenset(
         {
@@ -442,10 +440,6 @@ def _build_payload(
     if table == "messages" and payload.get("conversation_id") is None:
         raise ValueError("Message conversation is missing from backup")
     if table == "messages":
-        if payload.get("queued"):
-            # IM 配对授权不随备份迁移，未消费的旧输入只能保留为不可执行历史。
-            payload["queued"] = False
-            payload["discarded"] = True
         through_id = payload.get("summary_through_message_id")
         if payload.get("subtype") in CHECKPOINT_SUBTYPES:
             if type(through_id) is not int or through_id <= 0:
@@ -600,13 +594,6 @@ async def restore_conversation_context(
         ordered_messages = by_conversation[original_id]
         original_ids = [int(message["id"]) for message in ordered_messages]
         mapped_ids = [int(id_map["messages"][str(mid)]) for mid in original_ids]
-        for message, mapped_id in zip(ordered_messages, mapped_ids, strict=True):
-            if (order := message.get("context_order")) is None:
-                continue
-            # 消费位置可能落在两个接收 id 之间；保留其相对次序，不沿用导入前的数值。
-            position = bisect_left(original_ids, order)
-            restored = await db.get(Message, mapped_id)
-            restored.context_order = mapped_ids[position] if position < len(mapped_ids) else mapped_ids[-1] + 1
         watermark = raw["context_after_message_id"]
         if watermark:
             conv = await db.get(Conversation, int(id_map["conversations"][original_id]))
@@ -662,13 +649,7 @@ async def restore_memory_context(
                     conv = conversations.get(str(message["conversation_id"])) if message else None
                     if conv and conv["system_preset_id"] != raw["system_preset_id"]:
                         raise ValueError("Memory evidence belongs to a different preset")
-                    if (
-                        not message
-                        or not conv
-                        or str(mid) not in id_map.get("messages", {})
-                        or message.get("discarded")
-                        or message.get("queued")
-                    ):
+                    if not message or not conv or str(mid) not in id_map.get("messages", {}):
                         entry.pop("message_id", None)
                         entry.pop("session_id", None)
                         entry["source_unavailable"] = True

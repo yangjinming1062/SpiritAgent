@@ -1,9 +1,8 @@
-import type { SpiritAgentSelectPathsOptions } from '@ipc/contracts'
-
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
+import type { SpiritAgentSelectPathsOptions } from '@ipc/contracts'
 
 import { basename } from './chat-path'
 import type { ConversationRuntime } from './chat-runtime'

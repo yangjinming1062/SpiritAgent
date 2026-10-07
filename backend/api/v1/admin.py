@@ -38,16 +38,18 @@ from modules.auth import (
     generate_activation_token,
     get_current_admin_token,
     hash_activation_token,
+    lock_user_row,
 )
 from modules.companion import Persona
 from modules.conversation import Conversation
+from modules.remote import revoke_remote_grants
 from modules.scheduler import (
     NightlyActivityLog,
     NightlyActivityLogItem,
     NightlyActivityLogListResponse,
 )
 from modules.system import MessageResponse
-from services.adapters.desktop import terminate_user_gateway
+from services.adapters.desktop import terminate_remote_sessions, terminate_user_gateway
 from services.adapters.maintenance import user_maintenance
 from services.application.configuration import get_system_settings_for_admin, save_system_settings
 from services.domains.backup import (
@@ -108,6 +110,7 @@ async def create_user(payload: UserCreate, db: DbSession) -> UserResponse:
 
 @router.patch("/users/{user_id}", response_model=UserResponse)
 async def update_user(user_id: int, payload: UserUpdate, db: DbSession) -> UserResponse:
+    await lock_user_row(db, user_id)
     user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
     if payload.regenerate_token or payload.base_url:
         # 激活码只由 create_user 生成；改地址保留原 token，重发则换新 token。
@@ -117,7 +120,11 @@ async def update_user(user_id: int, payload: UserUpdate, db: DbSession) -> UserR
             user.activation_token_hash = hash_activation_token(raw_token)
         user.activation_code = encode_activation_code(payload.base_url or base_url, raw_token)
     apply_partial(user, payload, exclude={"regenerate_token", "base_url"})
+    if payload.regenerate_token or not user.is_active:
+        await revoke_remote_grants(db, user_id)
     await db.commit()
+    if payload.regenerate_token or not user.is_active:
+        await terminate_remote_sessions(user_id)
     return UserResponse.model_validate(user)
 
 
@@ -149,9 +156,11 @@ async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
 
 @router.patch("/users/{user_id}/toggle-active", response_model=UserResponse)
 async def toggle_user_active(user_id: int, db: DbSession) -> UserResponse:
+    await lock_user_row(db, user_id)
     user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
     user.is_active = not user.is_active
     if not user.is_active:
+        await revoke_remote_grants(db, user_id)
         await db.execute(
             update(LoginRecord)
             .where(LoginRecord.user_id == user_id, LoginRecord.is_active.is_(True))
@@ -159,6 +168,7 @@ async def toggle_user_active(user_id: int, db: DbSession) -> UserResponse:
         )
     await db.commit()
     if not user.is_active:
+        await terminate_remote_sessions(user_id)
         await terminate_user_gateway(user_id)
     return UserResponse.model_validate(user)
 

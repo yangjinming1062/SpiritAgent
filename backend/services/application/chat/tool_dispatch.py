@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from components import get_logger, redact_sensitive_text, safe_json_loads, tool_error
-from modules.channels import ChannelTurnSource
 
 from services.contracts import DelegateAction, MediaTurnState, MemoryScope, SceneTurnState
 from services.infrastructure.desktop import MANAGER, dispatch_device_call
@@ -51,7 +50,6 @@ class _ToolDispatchContext:
     proactive_turn: bool
     user_message: str
     authorization_check: Callable[[], Awaitable[bool]] | None = None
-    channel_source: ChannelTurnSource | None = None
     unavailable_tool_names: frozenset[str] = frozenset()
 
 
@@ -189,7 +187,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
     name = tc["name"]
 
     if ctx.authorization_check is not None and not await ctx.authorization_check():
-        raise asyncio.CancelledError("The channel authorization was revoked")
+        raise asyncio.CancelledError("The turn authorization was revoked")
 
     await ctx.emitter.send_json({"type": "tool_start", "name": name, "call_id": tc["call_id"]})
 
@@ -219,7 +217,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
 
         tool_location = REGISTRY.get_location(ctx.user_id, name)
         if ctx.authorization_check is not None and not await ctx.authorization_check():
-            raise asyncio.CancelledError("The channel authorization was revoked")
+            raise asyncio.CancelledError("The turn authorization was revoked")
         progress.started.add(tc["call_id"])
         match tool_location:
             case "backend":
@@ -241,7 +239,6 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
                     tool_call_id=tc["call_id"],
                     proactive_turn=ctx.proactive_turn,
                     user_message=ctx.user_message,
-                    channel_source=ctx.channel_source,
                 )
                 result_str = (
                     await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)

@@ -7,8 +7,6 @@ from .presets import resolve_preset_meta
 
 # ``SPECIAL_KIND`` 对应系统预设对话：每用户按 ``SYSTEM_PRESET_CATALOG`` 各一条，system_preset_id 标注具体预设；主陪伴会话即 ``system_preset_id='companion'``。
 SPECIAL_KIND = "special"
-# 外部 IM 渠道桥接的会话：统一一种 kind，每渠道一条专属对话由 channel_bindings.conversation_id 唯一外键锚定（services/adapters/channels/conversation.py 工厂）；prompt.submit 拒写，桌面端只读旁观。
-IM_KIND = "im"
 STANDARD_KIND = "standard"
 
 # /clear 留下的清空标记：只供界面展示清空记录。

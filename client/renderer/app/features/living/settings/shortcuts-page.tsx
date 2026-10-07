@@ -1,4 +1,3 @@
-import { DEFAULT_SHORTCUTS, type DesktopShortcutsConfig, type DesktopShortcutsState } from '@ipc/contracts'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
@@ -6,6 +5,7 @@ import { RefreshCw, Sparkles } from '@/shared/lib/icons'
 import { BTN_SUBTLE, HINT_TEXT, SettingCard, SettingsSectionIntro, ShortcutRecorder } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
+import { DEFAULT_SHORTCUTS, type DesktopShortcutsConfig, type DesktopShortcutsState } from '@ipc/contracts'
 
 const INITIAL_STATE: DesktopShortcutsState = {
   config: { ...DEFAULT_SHORTCUTS },

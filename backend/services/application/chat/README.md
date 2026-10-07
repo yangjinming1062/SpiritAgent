@@ -1,6 +1,6 @@
 # 对话编排
 
-桌面、IM、Cron、主动陪伴与子 Agent 共用的回合执行层：装配上下文、调用模型、派发工具、保存和交付回复。会话及交付语义归 [PROTOCOL](../../../../docs/PROTOCOL.md#会话与消息)，媒体等待与恢复归 PIPELINE；本页维护内部装配、历史边界和任务所有权。
+桌面、远程网页、Cron、主动陪伴与子 Agent 共用的回合执行层：装配上下文、调用模型、派发工具、保存和交付回复。会话及交付语义归 [PROTOCOL](../../../../docs/PROTOCOL.md#会话与消息)，媒体等待与恢复归 PIPELINE；本页维护内部装配、历史边界和任务所有权。
 
 ## 关键入口
 
@@ -13,12 +13,13 @@
 | [reply_delivery.py](reply_delivery.py)、[bubble.py](bubble.py)、[reply_links.py](reply_links.py) | 回复 schema、语音分句与校验、文本分泡、媒体地址来源 |
 | [tool_dispatch.py](tool_dispatch.py)、[delegation.py](delegation.py) | 工具批执行与 `DelegateAction` 接管 |
 | [persistence.py](persistence.py) | 调用与结果、终端回复、音频、压缩检查点及回合后任务 |
+| [submissions.py](submissions.py) | 用户提交幂等账本、输入原子保存与重启中断标记 |
 | [context_compressor.py](context_compressor.py)、[message_sanitization.py](message_sanitization.py) | 模型摘要、确定性窗口截断、工具参数 JSON 修复 |
 | [title_generator.py](title_generator.py) | 首条用户文字与助手回复生成标题，不发送附件地址 |
 | [native_memory.py](native_memory.py)、[background_review.py](background_review.py) | 即时记忆提案与回合后异步审阅 |
 | [chat_emitter.py](chat_emitter.py)、[turn_errors.py](turn_errors.py) | 交付接口、`HeadlessEmitter` 与脱敏错误帧 |
 
-调用方分别为桌面 `prompt.submit`、渠道 `bridge`、`standard_turns`、`companion_turns` 和委派。已落库的编辑输入及 IM 入站行通过 `persisted_message_id` 复用，不能再次插入。
+调用方分别为桌面与远程网页 `prompt.submit`、`standard_turns`、`companion_turns` 和委派。传入 `persisted_message_id` 时，由调用方保存并发布用户输入，本层不重复插入或通知。
 
 ## 提示词与运行时数据
 
@@ -35,13 +36,13 @@
 
 ### 摘要边界与原始证据
 
-运行时压缩和每日摘要共用 [context_window.py](../../domains/conversation/context_window.py)。`summary_through_message_id` 指定真实覆盖边界，`context_order` 仅用于 IM 消费排序；边界无效时失败，不能按插入时间猜测。
+运行时压缩和每日摘要共用 [context_window.py](../../domains/conversation/context_window.py)。`summary_through_message_id` 指定真实覆盖边界，历史按 `Message.id` 升序读取；边界无效时失败，不能按插入时间猜测。
 
 - 压缩不拆开同一消息的展开项、并行调用和结果。按模型窗口预留输出与余量，只摘要能容纳的完整前缀；超预算单条保留原文并失败。
 - 检查点只由 `context_compressor.py` 生成，交付正文与保存内容一致；分叉和恢复重映射覆盖边界。
 - 检查点数量只统计本次覆盖的用户发言和助手最终回复，不计工具调用、结果、推理、时间资料或既有摘要。陪伴摘要只接收实际对话、相关时间和既有摘要；日期分界独立保留，不随工具记录一起过滤。工作及自动化摘要保留工具执行证据。预算仍按完整调用/结果批次确定覆盖边界。
 - 每日摘要按截止本地日和消息时间取已完成历史，合并最新摘要与未覆盖原文。跨日未完成回合、等待期间的新消息或失效边界不被摘要吞掉。
-- 摘要只保存媒体引用与内容未提供标记，不把 base64 当文字；清理已覆盖历史时，未覆盖原文和待消费 IM 输入仍须保持媒体可用。
+- 摘要只保存媒体引用与内容未提供标记，不把 base64 当文字；清理已覆盖历史时，未覆盖原文仍须保持媒体可用。
 
 ### 窗口预算与截断
 
@@ -58,16 +59,16 @@ Token 估算以最近带用量的助手行和其后增量为基线；无基线�
 
 ## 回合执行与交付
 
-`run_chat_turn` 的会话锁覆盖整个回合和取消收尾。默认轮数、执行预算运行时读取 Settings，调用方可覆盖；[wait_budget.py](../../infrastructure/llm/wait_budget.py) 只暂停已接单本地生图等待期间的执行计时，取消、渠道撤权和外层有效期仍生效。无进展守卫追加换策略提示，不自行终止循环。
+`run_chat_turn` 的会话锁覆盖整个回合和取消收尾。默认轮数、执行预算运行时读取 Settings，调用方可覆盖；[wait_budget.py](../../infrastructure/llm/wait_budget.py) 只暂停已接单本地生图等待期间的执行计时，取消、设备撤权和外层有效期仍生效。无进展守卫追加换策略提示，不自行终止循环。
 
 - 全批只读白名单调用或互不重叠的文件操作才并发。工具参数先修复并校验为 JSON 对象，失败不派发，仍成对发出工具开始/完成并返回参数错误；日志只记长度，不记录参数中的用户数据。
 - 工具调用行与结果的写入任务必须在取消时等待落完，再释放会话锁，不能把写库留在后台。资产写入保护覆盖工具返回到父回合提交的间隔。
 - `ephemeral` 仅用于主动陪伴，请求留作尾部资料，压缩检查点仍保存；`headless` 决定本机执行的桌面工作态，`has_viewer` 决定缓冲与气泡停顿，两者分别处理。
-- `special + companion` 使用完整结构校验；其他有观看者的回合可流式交付，无头、IM 和无观看者回合缓冲正文。文本流只按代码围栏外的 Markdown `---` 分泡，跨 chunk 保留候选前缀和原空行。
+- `special + companion` 使用完整结构校验；其他有观看者的回合可流式交付，无头和无观看者回合缓冲正文。文本流只按代码围栏外的 Markdown `---` 分泡，跨 chunk 保留候选前缀和原空行。
 - 委派在父会话下建子会话，继承预设、用户设置与限制；`HeadlessEmitter` 捕获事件，最终结果作为工具结果返回。生活空间和进一步委派工具由执行层排除；子会话消息不作为用户事实证据。
 - 成功、异常及取消均关闭响应流，缓冲正文在连接释放后交付；回退锁定独立于是否已向用户展示文字。
 
-`turn_errors.py` 的 `message` 是用户文案，英文 `detail` 只供无头结果和 IM 日志消费。格式错误另由编排入口构造。常规日志保留模型、响应 ID、状态、用量、错误类型和脱敏定位，原始请求/响应只走显式 LLM 调试。
+`turn_errors.py` 的 `message` 是用户文案，英文 `detail` 只供无头结果和诊断日志消费。格式错误另由编排入口构造。常规日志保留模型、响应 ID、状态、用量、错误类型和脱敏定位，原始请求/响应只走显式 LLM 调试。
 
 ### 消息与媒体
 

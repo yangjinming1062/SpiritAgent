@@ -10,7 +10,7 @@ import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/inte
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
-import type { ChatMediaItem } from '@/shared/types/spiritagent'
+import type { ChatMediaItem } from '@protocol'
 
 import { InlineMedia } from './inline-media'
 import { useResolvedMediaSrc } from './media-src'

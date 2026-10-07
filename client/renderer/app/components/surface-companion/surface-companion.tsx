@@ -1,4 +1,3 @@
-import type { SurfaceId } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
@@ -19,6 +18,7 @@ import { cn } from '@/shared/lib/utils'
 import { $auth } from '@/shared/store/auth'
 import { $surfaceCompanions } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
+import type { SurfaceId } from '@ipc/contracts'
 
 import { CompanionEgg, useCompanionPresentation } from '../companion-presentation'
 

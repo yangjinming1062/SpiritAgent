@@ -3,9 +3,9 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AppearancePage } from '@/app/features/living/appearance/appearance-page'
-import { ChannelsPage } from '@/app/features/living/channels-page'
 import { DiaryPage } from '@/app/features/living/diary-page'
 import { PostsPage } from '@/app/features/living/posts-page'
+import { RemotePage } from '@/app/features/living/remote-page'
 import { ScenePage } from '@/app/features/living/scene-page'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait, SpriteStatusBadge } from '@/modules/character'
 import {
@@ -435,8 +435,8 @@ export function DesktopRoot(): React.JSX.Element {
       case 'appearance':
         return <AppearancePage />
 
-      case 'channels':
-        return <ChannelsPage />
+      case 'remote':
+        return <RemotePage />
 
       case 'settings':
         return <DesktopPreferences />

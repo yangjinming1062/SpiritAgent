@@ -1,7 +1,8 @@
 // 把 CSS blur 烘焙进一次性离屏 canvas，Ken Burns 只变换静态层，避免合成器逐帧重采样被模糊层；分辨率取窗口 CSS 尺寸 1/2。
 
-import { getUiEffect, getUiPalette, type SpiritAgentUiTheme } from '@ipc/contracts'
 import { useEffect, useState } from 'react'
+
+import { getUiEffect, getUiPalette, type SpiritAgentUiTheme } from '@ipc/contracts'
 
 const BAKE_SCALE = 0.5
 // 烘焙画布外扩 12%：补偿 Ken Burns 放大与 blur 边缘收缩，避免动画帧露出未覆盖区。

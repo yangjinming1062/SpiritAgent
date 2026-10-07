@@ -4,7 +4,7 @@ export type ImageReviseMode = 'edit' | 'regenerate'
 export interface SessionInfo {
   archived?: boolean
   pinned?: boolean
-  /** 服务端是自由字符串；一级值有 'special'、'standard' 与 'im'（IM 桥接会话，桌面端只读）。 */
+  /** 服务端是自由字符串；一级值有 'special' 与 'standard'。 */
   kind?: string
   id: string
   input_tokens: number
@@ -66,14 +66,12 @@ export type CompanionBubble =
 interface SessionMessageFields {
   content: unknown
   context?: unknown
-  /** 后端 DB row id（build_session_messages(include_id=True) 下发）；用于 fork / undo 按钮回传给后端的 source_message_id。 */
+  /** 数据库消息 ID，供编辑、派生与撤回定位。 */
   id?: number
   media?: ChatMediaItem[]
   name?: string
   reasoning?: null | string
   role: 'assistant' | 'system' | 'tool' | 'user'
-  queued?: boolean
-  discarded?: boolean
   subtype?: string
   text?: unknown
   timestamp?: number
@@ -84,7 +82,11 @@ interface SessionMessageFields {
 
 export type SessionMessage = SessionMessageFields &
   (
-    | { content_type: 'companion_reply'; bubbles: CompanionBubble[]; role: 'assistant' }
+    | {
+        content_type: 'companion_reply'
+        bubbles: CompanionBubble[]
+        role: 'assistant'
+      }
     | { content_type: 'multimodal_v1' | 'text'; bubbles?: never }
   )
 
@@ -105,7 +107,36 @@ export interface UndoResponse {
   messages: SessionMessage[]
 }
 
+export interface ActiveTurnSnapshot {
+  request_id: string
+  origin_kind: string
+  message_ids: number[]
+  messages?: SessionMessage[]
+  text: string
+  reasoning: string
+  bubbles: CompanionBubble[]
+  tools: { name?: string; call_id?: string; status?: string }[]
+  running: boolean
+}
+
+export interface PromptSubmissionState {
+  request_id: string
+  status: string
+  error?: string | null
+  message_ids?: number[]
+  retry_message_id?: number | null
+}
+
+export interface PromptSubmissionResult extends PromptSubmissionState {
+  queued?: boolean
+  messages?: SessionMessage[]
+}
+
 export interface SessionResumeResponse {
+  last_submission?: PromptSubmissionState | null
+  incremental?: boolean
+  stream_id?: string
+  active_turn?: ActiveTurnSnapshot | null
   info?: SessionRuntimeInfo
   message_count: number
   messages: SessionMessage[]
@@ -120,8 +151,8 @@ export interface SessionResumeResponse {
 export interface SessionRuntimeInfo {
   system_preset_id: string
   is_automation?: boolean
-  /** 客户端 IM 守卫与语音入口的权威判定源，避免依赖尚未加载的会话列表。 */
-  kind?: 'im' | 'special' | 'standard' | (string & {})
+  /** 客户端会话权限与语音入口的权威判定源，避免依赖尚未加载的会话列表。 */
+  kind?: 'special' | 'standard' | (string & {})
   model?: string
   provider?: string
   running?: boolean
@@ -151,42 +182,18 @@ export interface SpiritAgentConfigResponse {
   }
 }
 
-/** IM 通道桥（/api/channels）——绑定状态视图；凭据字段服务端永不回显。 */
-export interface ChannelBindingInfo {
-  status: string
-  account_ref: string
-  account_name: string
-  conversation_id: number | null
-  last_error: string | null
-  updated_at: string | null
+/** 手机网页的一次性扫码授权；url 仅在创建响应提供。 */
+export interface RemotePairing {
+  id: number
+  url?: string
+  expires_at: string
+  state: 'pending' | 'paired' | 'cancelled' | 'expired'
 }
 
-export interface ChannelInfo {
-  channel: string
-  title: string
-  binding: ChannelBindingInfo | null
+export interface RemoteDevice {
+  id: number
+  name: string
+  expires_at: string
+  last_seen_at: string
+  created_at: string
 }
-
-export interface ChannelListResponse {
-  items: ChannelInfo[]
-}
-
-/** 扫码登录轮询：state ∈ wait|scaned|confirmed|expired|error|login_required|connected；error 文本只由客户端在轮询超时或连续失败时本地写入，服务端不返回。 */
-export interface ChannelLoginState {
-  state: string
-  qr_image?: string | null
-  error?: string | null
-}
-
-export interface ChannelPeerInfo {
-  peer_id: string
-  peer_name: string
-  status: 'allowed' | 'blocked' | 'pending'
-  last_message_at: string | null
-}
-
-export interface ChannelPeersResponse {
-  items: ChannelPeerInfo[]
-}
-
-export type ChannelPeerAction = 'approve' | 'block' | 'delete'

@@ -145,10 +145,10 @@ def assemble_debug_prompt(
     tools = [tool for tool in tools if schema_name(tool) not in excluded_tools]
     valid_tool_names = [schema_name(s) for s in tools]
 
-    # 桌面端不带渠道提示时用桌面默认说明；IM 适配器以渠道键声明平台。
+    # 未提供平台提示时使用桌面默认说明；远程网页显式提供浏览器环境。
     client_ctx = ChatRequestClientContext(
         environment_hints=f"OS: {sys.platform}; Workspace: {REPO_ROOT.as_posix()}",
-        platform_hints={"desktop": None, "wechat": "weixin"}[platform],
+        platform_hints={"desktop": None, "remote": "SpiritAgentRemote mobile browser"}[platform],
     )
 
     agent_config = AgentPromptConfig(
@@ -281,9 +281,9 @@ def main() -> int:
     parser.add_argument("--language", choices=["zh", "en"], default="zh", help="回复语言")
     parser.add_argument(
         "--platform",
-        choices=["desktop", "wechat"],
+        choices=["desktop", "remote"],
         default="desktop",
-        help="交互平台标识 (desktop, wechat)",
+        help="交互平台标识 (desktop, remote)",
     )
     parser.add_argument("--without-tools", action="store_true", help="禁用工具注入")
 

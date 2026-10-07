@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { trimOldest } from '@/shared/lib/trim-oldest'
-import type { ChatMediaItem } from '@/shared/types/spiritagent'
+import type { ChatMediaItem } from '@protocol'
 
 // 图片结果与在途读取分别缓存，淘汰旧图片不影响仍在等待的消费者。
 const MAX_IMAGE_SRC_ENTRIES = 80

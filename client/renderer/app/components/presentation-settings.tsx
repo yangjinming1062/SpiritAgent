@@ -1,4 +1,3 @@
-import type { PresentationMode } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useRef, useState } from 'react'
@@ -9,6 +8,7 @@ import { SettingCard, SettingRow } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
+import type { PresentationMode } from '@ipc/contracts'
 
 export function usePresentationModeSwitch() {
   const state = useStore($presentation)

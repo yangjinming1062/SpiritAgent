@@ -1,5 +1,3 @@
-import { voicePlaybackKey } from '@ipc/contracts'
-
 import { $autoplayVoice } from '@/modules/character'
 import {
   $conversationViews,
@@ -29,7 +27,8 @@ import {
 } from '@/modules/speech'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
-import type { CompanionBubble } from '@/shared/types/spiritagent'
+import { voicePlaybackKey } from '@ipc/contracts'
+import type { CompanionBubble } from '@protocol'
 
 let dispose: (() => void) | undefined
 

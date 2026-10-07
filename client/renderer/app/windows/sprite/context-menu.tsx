@@ -1,4 +1,3 @@
-import type { SurfaceId } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import { IconRotateClockwise, IconVolume, IconVolumeOff } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef } from 'react'
@@ -26,6 +25,7 @@ import { SURFACE_OVERLAY } from '@/shared/panel/palette'
 import { $auth } from '@/shared/store/auth'
 import { requestCloseSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
+import type { SurfaceId } from '@ipc/contracts'
 
 interface ContextMenuProps {
   onOpenActivation?: () => void

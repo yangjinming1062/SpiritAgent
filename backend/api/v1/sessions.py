@@ -24,11 +24,11 @@ from modules.conversation import (
     Message,
     VoiceBubbleView,
 )
+from modules.ws import emit_ws_event
 from services.adapters.http import limiter
 from services.application.generation import cleanup_user_media
 from services.domains.assets import collect_message_asset_releases
 from services.domains.conversation import (
-    IM_KIND,
     SPECIAL_KIND,
     SYSTEM_PRESET_CATALOG,
     cancel_reply_audio,
@@ -297,9 +297,6 @@ async def patch_session(
     if conv.kind == SPECIAL_KIND or not conv.is_renamable:
         raise HTTPException(status_code=403, detail="System preset conversations cannot be modified or deleted")
     if body.title is not None:
-        # IM 会话标题由渠道适配器生成，桌面端只读。
-        if conv.kind == IM_KIND:
-            raise HTTPException(status_code=403, detail="IM conversations cannot be renamed")
         conv.title = body.title
     if body.pinned is not None:
         if body.pinned and conv.archived_at is not None:
@@ -311,6 +308,7 @@ async def patch_session(
             conv.archived_at = func.now()
         else:
             conv.archived_at = None
+    emit_ws_event(db, user_id=user.id, event_type="session.list_changed", payload={"session_id": str(conv.id)})
     await db.commit()
     return DesktopSessionOperationResponse(ok=True)
 
@@ -338,6 +336,12 @@ async def delete_session(
         async with user_asset_lock(user.id):
             removed = await collect_message_asset_releases(db, user.id, subtree)
             await db.delete(conv)
+            emit_ws_event(
+                db,
+                user_id=user.id,
+                event_type="session.list_changed",
+                payload={"session_id": session_id, "deleted": True},
+            )
             await db.commit()
     await cancel_reply_audio(user.id, removed)
     await cleanup_user_media(user.id)

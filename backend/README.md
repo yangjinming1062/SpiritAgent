@@ -1,6 +1,6 @@
 # Backend
 
-云端业务入口：对话、角色与记忆、资产制作、调度、IM 和持久化。模块分工、状态权威与部署限制归 [ARCHITECTURE](../docs/ARCHITECTURE.md)，跨端行为归 [PROTOCOL](../docs/PROTOCOL.md)，媒体制作归 [PIPELINE](../docs/PIPELINE.md)。本文维护代码导航、后端内部约束与部署操作。
+云端业务入口：对话、角色与记忆、资产制作、调度、远程网页和持久化。模块分工、状态权威与部署限制归 [ARCHITECTURE](../docs/ARCHITECTURE.md)，跨端行为归 [PROTOCOL](../docs/PROTOCOL.md)，媒体制作归 [PIPELINE](../docs/PIPELINE.md)。本文维护代码导航、后端内部约束与部署操作。
 
 ## 任务入口
 
@@ -12,7 +12,7 @@
 | 动作提案、评审、目录与播放 | [动作编排](services/application/actions/README.md)、[动作领域](services/domains/actions/README.md) |
 | Cron、主动陪伴与夜间 | [cron.py](services/adapters/scheduler/cron.py)、[业务调度](#业务调度) |
 | 动态与日记 | [动态编排](services/application/posts/README.md)、[journal_service.py](services/domains/journal/journal_service.py)；REST 在 `api/v1/companion_posts.py`、`companion_journal.py` |
-| IM 配对、消息与投递 | [IM 渠道](#im-渠道)、[channels.py](api/v1/channels.py) |
+| 手机扫码与远程访问 | [远程网页](#远程网页)、[remote.py](api/v1/remote.py) |
 | 激活、登录、WS 票据与凭据 | [user.py](api/v1/user.py)、[page.py](api/v1/page.py)、[modules/auth](modules/auth/) |
 | 管理后台、配置与用户维护 | [admin.py](api/v1/admin.py)、[static/admin.html](static/admin.html)、[配置与迁移](#配置与迁移) |
 | 供应商与能力链 | [registrations.py](bootstrap/registrations.py)、[providers/base.py](services/infrastructure/llm/providers/base.py)、[llm_client.py](services/infrastructure/llm/llm_client.py) |
@@ -29,7 +29,7 @@
 |---|---|
 | `main.py` / `bootstrap` | 薄入口、显式注册、启停与恢复 |
 | `api` | 鉴权、限流、DTO 与服务调用 |
-| `services/adapters` | HTTP、桌面 WS、IM、调度器和工具协议适配 |
+| `services/adapters` | HTTP、桌面与远程 WS、调度器和工具协议适配 |
 | `services/application` | 回合、生成、动态、夜间等跨域流程 |
 | `services/domains` | 业务状态、策略与持久化 |
 | `services/infrastructure` / `contracts` | 供应商、传输、文件等基础能力 / 跨层值对象 |
@@ -75,11 +75,11 @@
 
 ### 装配与启停
 
-[registrations.py](bootstrap/registrations.py) 是供应商、工具、渠道、内部事件和域钩子的装配入口；导入业务包不注册能力，未登记能力明确失败。
+[registrations.py](bootstrap/registrations.py) 是供应商、工具、内部事件和域钩子的装配入口；导入业务包不注册能力，未登记能力明确失败。
 
-[lifecycle.py](bootstrap/lifecycle.py) 的启动顺序为：安全配置检查与迁移 → 配置水合、目录和更新存储恢复 → 描述中断标记与清理 → 调度器、事件回路、渠道桥 → 视频、动作、提案、角色卡、场景、初始资产、动态及评论恢复 → 正式资产核查。
+[lifecycle.py](bootstrap/lifecycle.py) 的启动顺序为：安全配置检查与迁移 → 配置水合、目录和更新存储恢复 → 描述中断标记与清理 → 调度器、事件回路 → 视频、动作、提案、角色卡、场景、初始资产、动态及评论恢复 → 正式资产核查。
 
-停机先关闭清理任务、调度、渠道与事件入口，再并发收敛各模块任务，最后释放数据库、Web 供应商和 LLM 连接池。后台任务须登记所有者与用户归属，纳入停机和账户维护；`MANAGER`、用户锁及等待表遵守单进程部署边界。
+停机先关闭清理任务、调度与事件入口，再并发收敛各模块任务，最后释放数据库、Web 供应商和 LLM 连接池。后台任务须登记所有者与用户归属，纳入停机和账户维护；`MANAGER`、用户锁及等待表遵守单进程部署边界。
 
 ### 事件与交付
 
@@ -93,7 +93,7 @@
 
 大字节处理、FFmpeg 和文件复制卸载到工作线程。随机命名正式资产取消时删除未交接文件；预登记固定路径的生成资产取消时等待原子写完并保留，交由任务恢复。裸路径、签名、引用和回收由资产领域统一处理。
 
-本机派发先注册等待对象，再发送并检查入队结果；直接持对象等待，避免极速返回后查表丢失。桌面离线以业务错误结束等待，不能用统一取消异常使 IM 回合静默退出。
+本机派发先注册等待对象，再发送并检查入队结果；直接持对象等待，避免极速返回后查表丢失。桌面离线以业务错误结束等待，不能用统一取消异常使对话回合静默退出。
 
 覆盖恢复和删除用户先经 `maintenance.py` 阻止新操作并收敛在途任务，完成后重读持久状态恢复可继续任务。用户文件只落正式资产 `companion-assets/{user_id}/`、会话附件 `desktop-attachments/{session_id}/`、带用户元数据的 `temp-media/`；新增路径须同时纳入删除和备份。删除正式资产或会话附件失败保留用户行供重试，临时文件另由逐文件和过期清理兜底。备份类别、密钥范围及覆盖规则统一见 PROTOCOL。
 
@@ -107,17 +107,15 @@
 
 [companion/intents.py](services/domains/companion/intents.py) 管理条件、认领与原子终态；[companion_turns.py](services/application/automation/companion_turns.py) 管理有界回合和提交；普通任务由 [standard_turns.py](services/application/automation/standard_turns.py) 串行执行。交付和副作用恢复归 [Cron 双轨](../docs/PROTOCOL.md#cron-双轨)。
 
-### IM 渠道
+### 远程网页
 
-[manager.py](services/adapters/channels/manager.py) 管绑定生命周期，[bridge.py](services/adapters/channels/bridge.py) 管入站、回合和补发，[weixin_ilink.py](services/adapters/channels/adapters/weixin_ilink.py) 管微信协议与媒体转换。
-
-REST 直接驱动绑定启停，守卫循环自愈，不做周期对账。接收锁保证落库与排队顺序，投递锁避免并发补发；登录、入站、回合、typing 与补发均属于绑定实例，退出或重建前取消并等待整棵任务树。凭据整体严格解析，损坏按无凭据处理并要求重新扫码；日志不记录令牌。配对、撤权、限流和回复上下文规则见 [IM 通道](../docs/PROTOCOL.md#im-通道)。
+[remote.py](api/v1/remote.py) 管理扫码授权与设备会话；独立 [Remote](../remote/README.md) 网页直接复用账户内容接口和对话编排。设备会话独立于桌面登录，本机工具仍由桌面 Runner 执行。身份、撤权与多端恢复契约见 [远程访问](../docs/PROTOCOL.md#远程访问)。
 
 ## 供应商与网络错误
 
 通用回退、安全重试与结果未知归 [模型失败与重试预算](../docs/PROTOCOL.md#模型失败与重试预算)。实现分别在 [llm_fallback.py](services/infrastructure/llm/llm_fallback.py)、[error_classifier.py](services/infrastructure/llm/error_classifier.py)、[providers/http.py](services/infrastructure/llm/providers/http.py)；媒体质量链由 [media_chain.py](services/application/generation/media_chain.py) 管理，选材与恢复归 PIPELINE。
 
-出站网络层见 [components/network.py](components/network.py)。模型、媒体下载、Tavily、Brave 和微信 HTTP 请求按协议读取 `HTTP_PROXY` / `HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于 `.env`。`NO_PROXY` 支持域名、IP、端口、`*` 和 IPv4 / IPv6 CIDR，网段只匹配 URL 中的 IP；模板已排除内网和 Tailscale，短名称或自定义域名需自行添加。DDGS 的显式代理使用 `DDGS_PROXY`。
+出站网络层见 [components/network.py](components/network.py)。模型、媒体下载、Tavily、Brave HTTP 请求按协议读取 `HTTP_PROXY` / `HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于 `.env`。`NO_PROXY` 支持域名、IP、端口、`*` 和 IPv4 / IPv6 CIDR，网段只匹配 URL 中的 IP；模板已排除内网和 Tailscale，短名称或自定义域名需自行添加。DDGS 的显式代理使用 `DDGS_PROXY`。
 
 `SSRF_GUARD_ENABLED` 默认关闭以适配 DNS 污染 / fake-IP 代理，可后台热切换。开启后拒绝保留网段，`SSRF_ALLOWED_CIDRS` 不能豁免域名黑名单、云元数据及 CGNAT。代理地址也受守卫检查，目标另做本地 DNS 校验；代理实际建连须由代理端限制。`NO_PROXY` 不取消守卫，下载的大小、协议和 HTTPS 降级检查始终生效。
 
@@ -137,13 +135,13 @@ Compose 和后端共用 `.env` 的 PostgreSQL 凭据，后端默认连接 `postg
 
 宿主机代理使用 `http://host.docker.internal:<端口>`，须允许 Docker 网桥访问。修改 `.env` 后执行 `docker compose up -d --force-recreate backend`，`restart` 不更新容器环境。
 
-后端代码与依赖打入镜像，修改后执行 `docker compose up -d --build backend`。构建上下文为仓库根，仅根 `.dockerignore` 生效；镜像内含 FFmpeg 与 ffprobe，Backend 不参与桌面安装包构建。
+后端代码与依赖打入镜像，修改后执行 `docker compose up -d --build backend`。构建上下文为仓库根，仅根 `.dockerignore` 生效；镜像构建包含独立手机网页并托管 `/remote/`，另含 FFmpeg 与 ffprobe；Backend 不参与桌面安装包构建。
 
 ### HTTPS 与公网访问
 
 1. 域名解析到服务器，放行 80/443。
 2. 复制 [Caddyfile.example](Caddyfile.example) 为 `Caddyfile` 并填写域名。
-3. 配置 `public_base_url = "https://<域名>"`，用于激活码地址及供应商读取视频附件。
+3. 配置 `public_base_url = "https://<域名>"`，用于激活码地址、手机扫码入口及供应商读取视频附件。
 4. 执行 `docker compose --profile public up -d`，以 `https://<域名>` 激活，管理端位于 `/admin/`。
 
 Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 仅绑定宿主回环。本机测试可直接使用 `http://127.0.0.1:10620`。

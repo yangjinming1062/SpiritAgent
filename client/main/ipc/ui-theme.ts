@@ -1,5 +1,6 @@
-import { IPC, SPIRITAGENT_UI_THEMES, type SpiritAgentUiTheme } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
+
+import { IPC, SPIRITAGENT_UI_THEMES, type SpiritAgentUiTheme } from '@ipc/contracts'
 
 import * as store from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows } from '../shared/utils'

@@ -14,8 +14,7 @@ from components import (
 )
 from modules.ws import COMPANION_TURN_EVENT
 
-from services.adapters.channels import MANAGER as CHANNEL_MANAGER
-from services.adapters.desktop import terminate_user_gateway
+from services.adapters.desktop import terminate_remote_sessions, terminate_user_gateway
 from services.adapters.scheduler import invalidate_user_scheduler_state
 from services.application.actions import resume_proposal_reviews
 from services.application.generation import (
@@ -36,10 +35,10 @@ logger = get_logger(__name__)
 
 
 async def _stop_user_runtime(user_id: int) -> None:
-    """并行停稳网关、渠道、主动回合与用户任务；全部收敛后再抛出首个失败。"""
+    """并行停稳网关、主动回合与用户任务；全部收敛后再抛出首个失败。"""
     results = await asyncio.gather(
         terminate_user_gateway(user_id),
-        CHANNEL_MANAGER.pause_user_bindings(user_id),
+        terminate_remote_sessions(user_id),
         interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT),
         cancel_user_tasks(user_id),
         return_exceptions=True,
@@ -66,7 +65,7 @@ def _invalidate_runtime_caches(user_id: int) -> None:
 
 @asynccontextmanager
 async def user_maintenance(user_id: int) -> AsyncIterator[None]:
-    """阻止新用户请求，停稳该用户的运行时任务，并在退出时从数据库真源恢复渠道与被维护挡下的动作制作。"""
+    """阻止新用户请求，停稳该用户的运行时任务，并在退出时从数据库真源恢复被维护挡下的资产制作。"""
     async with user_maintenance_lock(user_id):
         await mark_user_maintenance(user_id)
         try:
@@ -79,11 +78,6 @@ async def user_maintenance(user_id: int) -> AsyncIterator[None]:
                 logger.exception("failed to invalidate user runtime caches", extra={"user_id": user_id})
             finally:
                 await clear_user_maintenance(user_id)
-
-            try:
-                await CHANNEL_MANAGER.resume_user_bindings(user_id)
-            except Exception:
-                logger.exception("failed to resume user channels after maintenance", extra={"user_id": user_id})
 
             try:
                 await resume_user_dynamic_actions(user_id)

@@ -1,4 +1,3 @@
-import { type DesktopCompanionInteraction, SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
@@ -25,6 +24,7 @@ import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
+import { type DesktopCompanionInteraction, SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 
 import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'

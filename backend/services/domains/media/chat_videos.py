@@ -250,27 +250,21 @@ async def prune_videos_in_range(
     *,
     lo: int = 0,
     hi: int | None = None,
-    preserve_queued: bool = False,
 ) -> None:
-    """清理 ``[lo, hi)`` 区间用户行引用的视频文件并改写 part。摘要按实际覆盖范围清理并保留未消费的 IM 消息，历史撤回按删除范围清理；区间外仍有引用的文件保留，区间内引用改写为占位。有文件要删时先提交当前事务中的改写再删除文件，提交失败不会留下死链。"""
+    """清理 ``[lo, hi)`` 区间用户行引用的视频文件并改写 part。摘要按实际覆盖范围清理，历史撤回按删除范围清理；区间外仍有引用的文件保留，区间内引用改写为占位。有文件要删时先提交当前事务中的改写再删除文件，提交失败不会留下死链。"""
     session_id = str(conversation_id)
     conditions = [*_video_messages(conversation_id), Message.id >= lo]
     if hi is not None:
         conditions.append(Message.id < hi)
-    if preserve_queued:
-        conditions.append(Message.queued.is_(False))
     rows = (await db.execute(select(Message.id, Message.content).where(*conditions))).all()
     file_ids = {file_id for _message_id, content in rows for file_id in _referenced_file_ids(content, session_id)}
     if not file_ids:
         return
     outside = (Message.id < lo) | (Message.id >= hi) if hi is not None else Message.id < lo
-    if preserve_queued:
-        outside = outside | Message.queued.is_(True)
     for content in await db.scalars(select(Message.content).where(*_video_messages(conversation_id), outside)):
         file_ids -= _referenced_file_ids(content, session_id)
     if not file_ids:
         return
-    # 保留的排队行引用的文件已从 file_ids 剔除，区间内待改写行即上面已查出的 rows。
     rewritten = await _rewrite_rows(db, rows, file_ids, session_id)
     await db.commit()
     root = session_dir(session_id).resolve()

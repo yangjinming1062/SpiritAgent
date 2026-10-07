@@ -1,4 +1,3 @@
-import { IPC, type IpcEventChannel, type IpcEventContract, type PresentationMode, type SurfaceId } from '@ipc/contracts'
 import type { dialog } from 'electron'
 import {
   type App,
@@ -9,6 +8,8 @@ import {
   screen,
   type Tray
 } from 'electron'
+
+import { IPC, type IpcEventChannel, type IpcEventContract, type PresentationMode, type SurfaceId } from '@ipc/contracts'
 
 import type { BackendSessionPort } from '../shared/backend-port'
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'

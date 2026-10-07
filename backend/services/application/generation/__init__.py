@@ -79,7 +79,7 @@ from .outfit_service import (
     retry_outfit_description,
     set_outfit_policy,
 )
-from .paid_work import GenerationWorkPaused, require_new_generation_call, require_video_generation_call
+from .paid_work import GenerationWorkPaused, require_new_generation_call
 from .response_builders import (
     avatar_response,
     outfit_response,
@@ -164,7 +164,6 @@ __all__ = [
     "cleanup_user_video_jobs",
     "GenerationWorkPaused",
     "require_new_generation_call",
-    "require_video_generation_call",
     "require_action_matting_model",
     "require_pack_generation_identity",
     "build_avatar_reference_prompt",

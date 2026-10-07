@@ -1,5 +1,6 @@
-import type { PresentationState } from '@ipc/contracts'
 import { atom } from 'nanostores'
+
+import type { PresentationState } from '@ipc/contracts'
 
 import { log } from '../lib/log'
 

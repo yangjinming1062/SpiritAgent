@@ -190,6 +190,12 @@ async def delete_memory(db: AsyncSession, scope: MemoryScope, memory_id: int) ->
                 payload={"diary_id": diary_id, "entry_date": entry_date.isoformat()},
             )
     forget_record(row)
+    emit_ws_event(
+        db,
+        user_id=scope.user_id,
+        event_type="memory.changed",
+        payload={"system_preset_id": scope.system_preset_id, "memory_id": row.id},
+    )
     await db.commit()
     return True
 

@@ -1,6 +1,8 @@
 import { existsSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 
+import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
+
 import {
   DESKTOP_COMPANION_ACTIVITY_PRIORITY,
   type DesktopBackground,
@@ -14,7 +16,6 @@ import {
   type StageActivity,
   type StageRitualRequest
 } from '@ipc/contracts'
-import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import type { RunningApplicationsState } from '../shared/desktop-applications'

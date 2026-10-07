@@ -126,15 +126,7 @@ export const dict: Dictionary = {
       view: 'View',
       scheduledTask: 'Scheduled task',
       imageReady: 'Image ready — click to view',
-      videoReady: 'Video ready — click to view',
-      channelLabel: 'IM channel',
-      channelWeixin: 'WeChat',
-      channelConnected: (label: string) => `${label} connected`,
-      channelReconnecting: (label: string) => `${label} connection is unavailable; reconnecting`,
-      channelLoginRequired: (label: string) => `${label} login expired — rescan in Settings`,
-      channelError: (label: string, detail?: string) => `${label} channel error${detail ? `: ${detail}` : ''}`,
-      channelPeerRequest: (label: string, name: string) =>
-        `${name || 'A new contact'} on ${label} wants to chat with the companion — approve it in Chat channels`
+      videoReady: 'Video ready — click to view'
     }
   },
 
@@ -186,55 +178,39 @@ export const dict: Dictionary = {
       defaultLabel: 'Default',
       empty: 'Not set'
     },
-    channels: {
-      heading: 'Chat channels',
+    remote: {
+      heading: 'Remote',
       intro:
-        'Let the same companion chat with you on WeChat and other IM apps — personality and memory are shared with the desktop, and the desktop can review but not reply.',
-      loadFailed: 'Failed to load channel status',
-      statusLabels: {
-        connected: 'Connected',
-        reconnecting: 'Reconnecting',
-        login_pending: 'Waiting for scan',
-        login_required: 'Login required',
-        error: 'Error',
-        disabled: 'Disabled'
-      } as Record<string, string>,
-      weixin: {
-        title: 'WeChat',
-        intro:
-          'Scan to log in with your personal WeChat account (official ClawBot channel). The companion can only reply, never initiate.',
-        loginAction: 'Scan to log in',
-        retryAction: 'Refresh QR code',
-        logoutAction: 'Log out',
-        logoutConfirmTitle: 'Log out of WeChat?',
-        logoutConfirmDescription:
-          'After logging out, the companion will no longer reply on WeChat. Re-logging in requires scanning again.',
-        loginStartFailed: 'Login failed to start',
-        loginSuccess: 'WeChat connected',
-        logoutSuccess: 'Logged out of WeChat',
-        logoutFailed: 'Logout failed',
-        qrPrompt: 'Open WeChat and scan',
-        scanedPrompt: 'Scanned — please confirm on your phone',
-        expiredPrompt: 'QR code expired, please refresh',
-        loginTimeout: 'Login timed out. Get a new QR code.',
-        qrAlt: 'WeChat login QR code',
-        connectedAs: (name: string) => `Connected${name ? `: ${name}` : ''}`,
-        reconnecting: 'Connection unavailable. Reconnecting automatically; no new QR scan is needed.'
-      },
-      peers: {
-        title: 'Peer approvals',
-        intro:
-          'Unknown peers get a pairing prompt the first time they message. Once approved, they can chat with the companion and have it perform actions on this computer. Messages from blocked peers are silently ignored.',
-        empty: 'No peer records yet',
-        approve: 'Approve',
-        block: 'Block',
-        remove: 'Remove',
-        pendingLabel: 'Pending',
-        allowedLabel: 'Approved',
-        blockedLabel: 'Blocked',
-        actionFailed: 'Action failed',
-        loadFailed: "Couldn't load peers"
-      }
+        'Scan with your phone to open your personal page. Chat, read updates and manage your companion. Local tools are available while the computer is online.',
+      connect: 'Connect phone',
+      refreshCode: 'New QR code',
+      cancelCode: 'Cancel QR code',
+      copyLink: 'Copy link',
+      copied: 'Copied',
+      copyFailed: 'Could not copy the link',
+      connectFailed: 'Could not create a QR code',
+      cancelFailed: 'Could not cancel the QR code',
+      qrPrompt: 'Scan with your phone camera and open in the browser',
+      expiry: (seconds: number) =>
+        `QR code expires in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`,
+      expired: 'QR code expired. Create a new one.',
+      paired: 'Phone connected',
+      cancelled: 'QR code cancelled',
+      pollFailed: 'Connection status unavailable. Please retry.',
+      devices: 'Authorized devices',
+      devicesIntro: 'Authorization lasts 30 days. Revoking it signs the device out immediately.',
+      empty: 'No phones connected yet',
+      refresh: 'Refresh',
+      loadFailed: 'Could not load devices',
+      lastSeen: 'Last seen',
+      expires: 'Expires',
+      revoke: 'Revoke access',
+      revokeAll: 'Revoke all access',
+      revokeTitle: 'Revoke device access?',
+      revokeAllTitle: 'Revoke access for all devices?',
+      revokeDescription:
+        'Phones will be signed out and their active conversations and local calls stopped. Completed actions will remain.',
+      revokeFailed: 'Could not revoke access'
     },
     about: {
       heading: (brandFullName: string) => brandFullName,
@@ -686,8 +662,6 @@ export const dict: Dictionary = {
     defaultSessionTitle: 'Daily chat',
     inputPlaceholder: 'Say something, or drag a file over',
     typing: 'Typing...',
-    queued: 'Received, waiting to be processed',
-    discarded: 'Authorization revoked; not executed',
     openMainSessionFailed: 'Could not open daily chat',
 
     filesReceived: (count: number) => `${count} file${count === 1 ? '' : 's'} received`,
@@ -810,7 +784,7 @@ export const dict: Dictionary = {
 
     input: {
       workbenchPlaceholder: 'Type a command, ask a question, or drag a file in…',
-      readOnlyHint: 'IM conversation · read-only',
+      readOnlyHint: 'Task conversation · read-only',
       addAttachment: 'Add attachment',
       addFile: 'Add file',
       addFolder: 'Add folder',
@@ -1023,7 +997,7 @@ export const dict: Dictionary = {
       diary: 'Diary',
       unread: 'Unread content',
       wardrobe: 'Wardrobe',
-      channels: 'Channels',
+      remote: 'Remote',
       scene: 'Scene',
       settings: 'Settings',
       companionFallback: 'Companion',

@@ -5,7 +5,7 @@ import { backendDetailMessage, ipcErrorStatus, unwrapIpcErrorMessage } from '@/s
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
-import type { ImageReviseMode } from '@/shared/types/spiritagent'
+import type { ImageReviseMode } from '@protocol'
 
 import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
 

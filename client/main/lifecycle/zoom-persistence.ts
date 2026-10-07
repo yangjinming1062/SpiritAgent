@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { clamp } from '@runtime'
 import type { App, BrowserWindow } from 'electron'
+
+import { clamp } from '@runtime'
 
 import { errorMessage, safeReadJson } from '../shared/utils'
 

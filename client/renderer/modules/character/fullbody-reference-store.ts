@@ -11,7 +11,7 @@ import {
   storedJson
 } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
-import type { ImageReviseMode } from '@/shared/types/spiritagent'
+import type { ImageReviseMode } from '@protocol'
 
 import { parseImageDataUrl, type PickedImage, resolvePortraitUrl } from './avatar-image'
 import { patchAvatarSeeds } from './avatar-seeds-store'

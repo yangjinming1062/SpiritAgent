@@ -10,7 +10,7 @@ import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagen
 import { $gateway } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { SessionRuntimeInfo, SpiritAgentConfigResponse } from '@/shared/types/spiritagent'
+import type { SessionRuntimeInfo, SpiritAgentConfigResponse } from '@protocol'
 
 import { AgentDefaultsSection, type AgentFormState } from './inference/agent-defaults-section'
 import { type ChatFormState, ContextCompressionSection } from './inference/context-compression-section'

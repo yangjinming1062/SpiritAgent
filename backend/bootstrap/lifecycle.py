@@ -23,11 +23,11 @@ from components import (
 )
 from fastapi import FastAPI
 from modules.auth import User
-from services.adapters.channels import start_channel_manager, stop_channel_manager
 from services.adapters.desktop import drain as drain_user_sessions
 from services.adapters.scheduler import drain as drain_cron
 from services.adapters.scheduler import start_scheduler, stop_scheduler
 from services.application.actions import drain_proposal_reviews, resume_proposal_reviews
+from services.application.chat import recover_interrupted_submissions
 from services.application.configuration import load_and_apply_system_settings
 from services.application.generation import (
     cleanup_user_video_jobs,
@@ -142,10 +142,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         await cleanup_retired_action_assets()
         await gc_autonomous_publications()
 
+        await recover_interrupted_submissions()
         start_scheduler()
         # LISTEN 专线：event_store 内部直连 + 断线 5s 重连；asyncpg 只接受纯 postgresql:// URL。
         start_event_loop(database_url("postgresql"))
-        await start_channel_manager()  # IM 通道桥：拉起各用户已启用的渠道绑定，回合不依赖用户 WS。
         await resume_pending_video_jobs()
         # 视频包凭持久化句柄续跑，不重复提交付费任务；中断的上传导入包按失败落库并广播。
         await resume_video_generation_jobs()
@@ -191,7 +191,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
         # 先停所有任务生产入口再 drain，避免收敛期间派生的新任务逃过快照。
         await _best_effort_shutdown("scheduler", stop_scheduler())
-        await _best_effort_shutdown("channel manager", stop_channel_manager())
         await _best_effort_shutdown("event loop", stop_event_loop())
 
         # 释放引擎前先 drain 模块级任务集合，避免 SIGTERM 把持有连接池的协程留在 commit 中途。

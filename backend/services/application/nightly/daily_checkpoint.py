@@ -84,7 +84,7 @@ async def run_daily_checkpoint(
         )
         wdb.add(checkpoint)
         await wdb.commit()
-        await prune_videos_in_range(wdb, conv_id, hi=through_id + 1, preserve_queued=True)
+        await prune_videos_in_range(wdb, conv_id, hi=through_id + 1)
     logger.info("daily_checkpoint: created summary", extra={"user_id": user_id, "date": local_date_str})
     return True
 

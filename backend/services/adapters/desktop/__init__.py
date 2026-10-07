@@ -1,5 +1,17 @@
-"""桌面 WS 适配层：连接鉴权、会话生命周期与 JSON-RPC 方法注册。"""
+"""桌面与手机 WS 适配层：独立连接身份、共享会话与受限 JSON-RPC。"""
 
-from .handlers import drain, handle_chat_websocket, terminate_user_gateway
+from .handlers import (
+    drain,
+    handle_chat_websocket,
+    handle_remote_websocket,
+    terminate_remote_sessions,
+    terminate_user_gateway,
+)
 
-__all__ = ["drain", "handle_chat_websocket", "terminate_user_gateway"]
+__all__ = [
+    "drain",
+    "handle_chat_websocket",
+    "handle_remote_websocket",
+    "terminate_remote_sessions",
+    "terminate_user_gateway",
+]

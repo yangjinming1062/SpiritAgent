@@ -1,4 +1,3 @@
-import { SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
@@ -14,6 +13,7 @@ import {
 import { Slider } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
+import { SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 
 import { OutfitSection } from './outfit-section'
 import { VideoSection } from './video-section'

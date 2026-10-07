@@ -9,7 +9,7 @@ import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
-import type { ImageReviseMode } from '@/shared/types/spiritagent'
+import type { ImageReviseMode } from '@protocol'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
 import { $avatarSeeds, hydrateAvatarSeeds } from './avatar-seeds-store'

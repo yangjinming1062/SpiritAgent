@@ -38,7 +38,6 @@ from services.domains.configuration import DEFAULT_CONFIG
 from services.domains.conversation import (
     CHECKPOINT_SUBTYPES,
     COMPANION_PRESET_ID,
-    IM_KIND,
     SPECIAL_KIND,
     InferenceDefaults,
     companion_context_content,
@@ -117,7 +116,7 @@ def memory_query_text(req: ChatRequest, history: Sequence[Message], *, use_reque
 def resolve_inference_settings(settings: dict[str, Any], *, conv: Conversation) -> InferenceDefaults:
     defaults = (
         resolve_preset_meta(conv.system_preset_id).inference_defaults
-        if conv.kind in {SPECIAL_KIND, IM_KIND}
+        if conv.kind == SPECIAL_KIND
         else InferenceDefaults(
             DEFAULT_CONFIG["agent"]["temperature"],
             SETTINGS.context_compression_threshold,
@@ -144,7 +143,7 @@ def merge_session_settings(
     conv: Conversation,
 ) -> dict[str, Any]:
     """特殊会话使用场景默认值，普通会话继承工作台设置；最后合并会话覆盖。推理参数由 ``resolve_inference_settings`` 从结果解析。"""
-    isolated = conv.kind in {SPECIAL_KIND, IM_KIND}
+    isolated = conv.kind == SPECIAL_KIND
     merged = {
         key: value for key, value in user_settings.items() if not isolated or not key.startswith(("agent.", "chat."))
     }

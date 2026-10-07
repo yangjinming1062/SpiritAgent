@@ -1,4 +1,3 @@
-import type { DesktopUpdatePhase } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect } from 'react'
 import type React from 'react'
@@ -11,6 +10,7 @@ import { BTN_PRIMARY, BTN_SUBTLE, SettingCard, SettingsSectionIntro, Spinner } f
 import { $updateStatus, setUpdateStatus, type UpdateStatus } from '@/shared/store/update'
 import { $desktopVersion, refreshDesktopVersion } from '@/shared/store/version'
 import { type Dictionary, useStrings } from '@/shared/strings'
+import type { DesktopUpdatePhase } from '@ipc/contracts'
 
 type AboutStrings = Dictionary['settings']['about']
 

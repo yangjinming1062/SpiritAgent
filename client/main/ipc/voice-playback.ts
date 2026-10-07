@@ -1,3 +1,5 @@
+import type { IpcMain } from 'electron'
+
 import {
   IPC,
   type VoicePlaybackRemoval,
@@ -5,7 +7,6 @@ import {
   type VoicePlaybackSnapshot,
   type VoicePlaybackUpdate
 } from '@ipc/contracts'
-import type { IpcMain } from 'electron'
 
 import type { BackendSessionPort } from '../shared/backend-port'
 import { broadcastToAllWindows } from '../shared/utils'

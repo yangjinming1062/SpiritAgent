@@ -1,5 +1,7 @@
 import path from 'node:path'
 
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, Rectangle, Screen } from 'electron'
+
 import {
   type DesktopScreenRect,
   type DesktopSpritePosition,
@@ -9,7 +11,6 @@ import {
   SPRITE_SCALE_LIMITS
 } from '@ipc/contracts'
 import { clamp } from '@runtime'
-import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, Rectangle, Screen } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import {

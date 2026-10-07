@@ -1,9 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import type { SkillItem } from '@ipc/contracts'
 import log from 'electron-log/main'
 import yaml from 'yaml'
+
+import type { SkillItem } from '@ipc/contracts'
 
 interface RawSkillItem {
   category: string

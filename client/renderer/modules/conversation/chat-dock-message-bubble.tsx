@@ -1,4 +1,3 @@
-import { voicePlaybackKey } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { memo, useState } from 'react'
@@ -7,6 +6,7 @@ import { ChevronDown, RefreshCw, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
+import { voicePlaybackKey } from '@ipc/contracts'
 
 import { stripAttachmentDirectives } from './chat-display-text'
 import { ChatMediaCard } from './chat-media-card'
@@ -213,7 +213,6 @@ function MessageBubbleWithBody({
     !editing &&
     !turnInFlight &&
     !body.streaming &&
-    !body.queued &&
     !body.error &&
     !body.cancelled &&
     !body.toolName
@@ -364,8 +363,6 @@ function MessageBubbleWithBody({
               ))}
             </div>
           ) : null}
-          {isUser && body.discarded ? <span className="mt-1 text-[11px] text-faint">{dict.chat.discarded}</span> : null}
-          {isUser && body.queued ? <span className="mt-1 text-[11px] text-faint">{dict.chat.queued}</span> : null}
         </div>
         {hasActions && (
           <MessageActionCluster

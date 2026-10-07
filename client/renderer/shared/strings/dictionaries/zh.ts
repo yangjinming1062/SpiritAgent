@@ -119,15 +119,7 @@ export const dict = {
       view: '查看',
       scheduledTask: '定时任务',
       imageReady: '图片已生成，点击查看',
-      videoReady: '视频已生成，点击查看',
-      channelLabel: 'IM 通道',
-      channelWeixin: '微信',
-      channelConnected: (label: string) => `${label}已连接`,
-      channelReconnecting: (label: string) => `${label}连接暂时不可用，正在重新连接`,
-      channelLoginRequired: (label: string) => `${label}登录已过期，请到设置重新扫码`,
-      channelError: (label: string, detail?: string) => `${label}通道异常${detail ? `：${detail}` : ''}`,
-      channelPeerRequest: (label: string, name: string) =>
-        `${label}${name ? `联系人「${name}」` : '新联系人'}请求与伙伴对话，请到「聊天通道」审批`
+      videoReady: '视频已生成，点击查看'
     }
   },
 
@@ -178,52 +170,37 @@ export const dict = {
       defaultLabel: '默认',
       empty: '未设置'
     },
-    channels: {
-      heading: '聊天通道',
-      intro: '让同一个伙伴在微信等 IM 上陪聊——人设与记忆和桌面共享，桌面端可回看但不可代答。',
-      loadFailed: '通道状态加载失败',
-      statusLabels: {
-        connected: '已连接',
-        reconnecting: '重连中',
-        login_pending: '等待扫码',
-        login_required: '需重新登录',
-        error: '异常',
-        disabled: '未启用'
-      } as Record<string, string>,
-      weixin: {
-        title: '微信',
-        intro: '扫码登录你的微信个人号（官方 ClawBot 通道）。伙伴只能回复消息，不能主动发起。',
-        loginAction: '扫码登录',
-        retryAction: '重新获取二维码',
-        logoutAction: '退出登录',
-        logoutConfirmTitle: '退出微信登录？',
-        logoutConfirmDescription: '退出后伙伴将不再回复微信消息，重新登录需要再次扫码。',
-        loginStartFailed: '登录启动失败',
-        loginSuccess: '微信已连接',
-        logoutSuccess: '已退出微信登录',
-        logoutFailed: '退出失败',
-        qrPrompt: '打开微信扫一扫',
-        scanedPrompt: '已扫码，请在手机上确认',
-        expiredPrompt: '二维码已过期，请重新获取',
-        loginTimeout: '登录超时，请重新获取二维码',
-        qrAlt: '微信登录二维码',
-        connectedAs: (name: string) => `已连接${name ? `：${name}` : ''}`,
-        reconnecting: '连接暂时不可用，正在自动重连；无需重新扫码。'
-      },
-      peers: {
-        title: '对端审批',
-        intro:
-          '陌生对端首次来信会收到配对提示。批准后，对方可以与伙伴对话，并能让伙伴在这台电脑上执行操作；被拉黑者的消息会被静默忽略。',
-        empty: '暂无对端记录',
-        approve: '批准',
-        block: '拉黑',
-        remove: '删除',
-        pendingLabel: '待审批',
-        allowedLabel: '已批准',
-        blockedLabel: '已拉黑',
-        actionFailed: '操作失败',
-        loadFailed: '对端列表加载失败'
-      }
+    remote: {
+      heading: '远程',
+      intro: '用手机扫码打开你的专属页面，随时与伙伴聊天、查看动态和管理生活空间。电脑在线时还可以调用本机工具。',
+      connect: '连接手机',
+      refreshCode: '重新生成二维码',
+      cancelCode: '取消二维码',
+      copyLink: '复制链接',
+      copied: '已复制',
+      copyFailed: '链接复制失败',
+      connectFailed: '无法生成二维码',
+      cancelFailed: '取消二维码失败',
+      qrPrompt: '用手机相机扫码，在浏览器打开',
+      expiry: (seconds: number) =>
+        `二维码将在 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} 后失效`,
+      expired: '二维码已过期，请重新生成',
+      paired: '手机已连接',
+      cancelled: '二维码已取消',
+      pollFailed: '连接状态暂不可用，请重试',
+      devices: '已授权设备',
+      devicesIntro: '设备授权有效期为 30 天。撤销后，该设备将立即退出登录。',
+      empty: '还没有连接手机',
+      refresh: '刷新',
+      loadFailed: '设备列表加载失败',
+      lastSeen: '最近访问',
+      expires: '授权到期',
+      revoke: '撤销授权',
+      revokeAll: '撤销全部授权',
+      revokeTitle: '撤销设备授权？',
+      revokeAllTitle: '撤销全部设备授权？',
+      revokeDescription: '手机将退出登录，其发起的在途对话和本机调用将停止。已执行的操作不会撤回。',
+      revokeFailed: '撤销授权失败'
     },
     about: {
       heading: (brandFullName: string) => brandFullName,
@@ -630,8 +607,6 @@ export const dict = {
     defaultSessionTitle: '日常对话',
     inputPlaceholder: '跟它说，或把文件拖过来',
     typing: '正在输入...',
-    queued: '已接收，等待处理',
-    discarded: '授权已撤销，未执行',
     openMainSessionFailed: '无法打开日常对话',
 
     filesReceived: (count: number) => `收到 ${count} 个文件`,
@@ -753,7 +728,7 @@ export const dict = {
 
     input: {
       workbenchPlaceholder: '输入指令、提问，或将文件拖入…',
-      readOnlyHint: 'IM 对话 · 只读',
+      readOnlyHint: '任务会话 · 只读',
       addAttachment: '添加附件',
       addFile: '添加文件',
       addFolder: '添加文件夹',
@@ -963,7 +938,7 @@ export const dict = {
       diary: '日记',
       unread: '有未读信息',
       wardrobe: '衣柜',
-      channels: '通道',
+      remote: '远程',
       scene: '场景',
       settings: '设置',
       companionFallback: '伙伴',

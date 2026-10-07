@@ -1,5 +1,3 @@
-import type { DesktopScreenRect, MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
-
 import { holdRemoteToolActivity, syncConversationActivity } from '@/app/workflows/conversation-activity'
 import { findWindowByKeyword, performRitualWalk } from '@/modules/character'
 import { type ConversationRuntime, findConversationRuntime } from '@/modules/conversation'
@@ -9,6 +7,7 @@ import { trimOldest } from '@/shared/lib/trim-oldest'
 import { $gateway } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { getStrings } from '@/shared/strings'
+import type { DesktopScreenRect, MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 

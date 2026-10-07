@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 
 
 def _user_key(request: Request) -> str:
-    """主键按 user_id，无 JWT 时降级按 IP 兜底，避免未认证请求绕过每用户配额。"""
+    """鉴权依赖提供账户标识；未认证请求按 IP 限流。"""
     user_id = getattr(request.state, "user_id", None)
     if user_id is not None:
         return f"user:{user_id}"
@@ -42,7 +42,7 @@ limiter = DynamicLimiter(
 
 
 async def stash_user_id_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-    """尽力解析 Bearer JWT 并把 user_id 暂存到 request.state，供限流 key 使用；仅校验签名不做 DB 校验，鉴权失败由 handler 的 Depends 兜底。"""
+    """提前标记 Bearer 身份；Cookie 身份由端点鉴权依赖提供。"""
     if not request.url.path.startswith("/api/"):
         return await call_next(request)
     auth = request.headers.get("authorization")

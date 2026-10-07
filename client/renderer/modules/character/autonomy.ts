@@ -1,8 +1,7 @@
-import { clamp } from '@runtime'
-
 import { log } from '@/shared/lib/log'
 import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
+import { clamp } from '@runtime'
 
 import { $activePlayInstance, isActionStageVisible, observeActionStageVisibility } from './actions'
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'

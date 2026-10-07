@@ -1,6 +1,5 @@
-import type { SpiritAgentApiRequest } from '@ipc/contracts'
-
 import { $auth } from '@/shared/store/auth'
+import type { SpiritAgentApiRequest } from '@ipc/contracts'
 
 import { log } from './log'
 import { currentClearEpoch } from './storage'

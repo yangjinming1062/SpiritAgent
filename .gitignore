@@ -121,3 +121,6 @@ installer/payload/*
 
 # Backend runtime data (generated media/logs from tests + runs, never tracked)
 data/
+
+# Mobile browser build output
+remote/dist/

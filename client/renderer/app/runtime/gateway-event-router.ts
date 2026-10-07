@@ -2,7 +2,8 @@ import {
   $chatSessionId,
   findConversationRuntime,
   getConversationRuntime,
-  invalidateSessionHistory
+  invalidateSessionHistory,
+  onSessionListChanged
 } from '@/modules/conversation'
 import { onJournalEvent } from '@/modules/memory'
 import { onPostEvent } from '@/modules/posts'
@@ -17,6 +18,18 @@ import { handleCharacterEvent } from './handlers/character-events'
 import { handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
 import { handleToolCall, handleToolCancel, handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
+
+const TURN_EVENTS = new Set([
+  'message.start',
+  'message.delta',
+  'message.reasoning.delta',
+  'message.break',
+  'message.bubble',
+  'message.complete',
+  'error',
+  'tool.start',
+  'tool.complete'
+])
 
 // 网关事件路由：只保留分派、窗口角色校验与公共守卫；各能力状态更新在 handlers/，跨模块后续动作进 app/workflows。精灵窗宿主与代理窗口共用；宿主专属 Runner 分发在 handlers/tool-dispatch。
 
@@ -36,9 +49,26 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       ? findConversationRuntime(event.session_id)
       : getConversationRuntime($chatSessionId.get())
 
+  if (
+    runtime &&
+    TURN_EVENTS.has(event.type) &&
+    !runtime.acceptsTurnEvent(decodePayload<{ request_id?: string }>(event.payload).request_id)
+  ) {
+    return
+  }
+
   const ctx: EventRouteContext = { isProxy: $gateway.get()?.isProxy ?? false }
 
   switch (event.type) {
+    case 'session.list_changed':
+      onSessionListChanged(decodePayload<{ session_id?: string; deleted?: boolean }>(event.payload))
+
+      break
+
+    case 'session.snapshot':
+
+    case 'session.state':
+
     case 'message.start':
 
     case 'message.delta':
@@ -140,10 +170,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'video_gen.completed':
 
     case 'video_gen.failed':
-
-    case 'channel.status':
-
-    case 'channel.peer_request':
       handleDeliveryEvent(event)
 
       break

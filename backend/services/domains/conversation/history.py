@@ -30,14 +30,22 @@ async def build_session_messages(
     db: AsyncSession,
     *,
     after_id: int | None = None,
+    before_id: int | None = None,
     latest: int | None = None,
+    only_ids: list[int] | None = None,
 ) -> list[dict]:
     """按时间正序重建会话消息列表；``after_id`` 只取其后的消息，``latest`` 只取最近的若干条，二者互斥。"""
     if after_id is not None and latest is not None:
         raise ValueError("after_id and latest are mutually exclusive")
+    if after_id is not None and before_id is not None:
+        raise ValueError("after_id and before_id are mutually exclusive")
     stmt = select(Message).where(Message.conversation_id == conv_id)
     if after_id is not None:
         stmt = stmt.where(Message.id > after_id)
+    if before_id is not None:
+        stmt = stmt.where(Message.id < before_id)
+    if only_ids is not None:
+        stmt = stmt.where(Message.id.in_(only_ids))
     stmt = stmt.order_by(Message.id.desc()).limit(latest) if latest is not None else stmt.order_by(Message.id)
     messages = list((await db.execute(stmt)).scalars().all())
     # 降序取最近若干条后翻回正序：前向重建要求工具调用先于其结果处理
@@ -50,11 +58,6 @@ async def build_session_messages(
         item: dict = {"role": msg.role, "content": msg.content, "content_type": msg.content_type}
         if msg.subtype:
             item["subtype"] = msg.subtype
-        # IM 入站已接收未消费（queued）的消息在水合中如实呈现，刷新后排队状态可见。
-        if msg.queued:
-            item["queued"] = True
-        if msg.discarded:
-            item["discarded"] = True
         if msg.media_json:
             media = safe_json_loads(msg.media_json, default=None)
             if isinstance(media, list) and media:

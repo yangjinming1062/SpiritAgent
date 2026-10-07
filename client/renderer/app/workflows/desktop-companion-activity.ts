@@ -1,4 +1,3 @@
-import type { DesktopCompanionActivityState } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 
@@ -10,6 +9,7 @@ import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceRole } from '@/shared/store/surfaces'
+import type { DesktopCompanionActivityState } from '@ipc/contracts'
 
 export function useDesktopCompanionActivityPublisher(): void {
   const auth = useStore($auth)

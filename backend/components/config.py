@@ -280,32 +280,6 @@ class Settings(BaseSettings):
         validation_alias="ATTACHMENT_SESSION_QUOTA_BYTES",
     )
 
-    channels_turn_queue_max: int = Field(default=20, ge=0, validation_alias="CHANNELS_TURN_QUEUE_MAX")
-    channels_inbound_rate_per_minute: int = Field(
-        default=20,
-        gt=0,
-        validation_alias="CHANNELS_INBOUND_RATE_PER_MINUTE",
-    )
-    channels_restart_backoff_seconds: float = Field(
-        default=10.0,
-        gt=0,
-        validation_alias="CHANNELS_RESTART_BACKOFF_SECONDS",
-    )
-    channels_delivery_max_attempts: int = Field(default=3, gt=0, validation_alias="CHANNELS_DELIVERY_MAX_ATTEMPTS")
-    channels_failure_threshold: int = Field(default=3, ge=1, validation_alias="CHANNELS_FAILURE_THRESHOLD")
-    channels_failure_grace_seconds: float = Field(
-        default=120.0,
-        ge=0,
-        validation_alias="CHANNELS_FAILURE_GRACE_SECONDS",
-    )
-    # 小于等于 0 表示回复不分片，因此不设下界。
-    weixin_reply_max_chars: int = Field(default=2000, validation_alias="WEIXIN_REPLY_MAX_CHARS")
-    weixin_ilink_poll_timeout_seconds: float = Field(
-        default=40.0,
-        gt=0,
-        validation_alias="WEIXIN_ILINK_POLL_TIMEOUT_SECONDS",
-    )
-
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
         default="INFO",
         validation_alias="LOG_LEVEL",

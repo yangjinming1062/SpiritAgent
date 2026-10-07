@@ -23,13 +23,6 @@ async def find_last_user_message(
         .order_by(Message.id.desc())
         .limit(1),
     )
-    if (
-        source is None
-        or source.id != source_message_id
-        or source.subtype
-        or source.queued
-        or source.discarded
-        or source.id <= conv.context_after_message_id
-    ):
+    if source is None or source.id != source_message_id or source.subtype or source.id <= conv.context_after_message_id:
         return conv, None
     return conv, source

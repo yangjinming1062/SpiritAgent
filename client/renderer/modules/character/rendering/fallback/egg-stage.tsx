@@ -1,10 +1,10 @@
 import { useStore } from '@nanostores/react'
-import { clamp } from '@runtime'
 import { useCallback, useEffect, useRef } from 'react'
 
 import { useInteractiveRegion } from '@/shared'
 import { $surfaceOpen } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
+import { clamp } from '@runtime'
 
 import type { CompanionFallbackStatus } from '../../presentation'
 import { openContextMenu } from '../../sprite/context-menu-store'

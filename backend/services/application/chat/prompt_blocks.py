@@ -44,9 +44,8 @@ from prompts.chat import (
 logger = logging.getLogger(__name__)
 
 PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]{2,40})\}\}")
-# IM 适配器以渠道键声明平台（见 channels.base.platform_hint）；桌面客户端传入 ``SpiritAgentDesktop/<版本> (...)`` 标识，按桌面说明处理。
-_CHANNEL_HINT_KEYS = {"weixin": "wechat"}
 _DESKTOP_CLIENT_PREFIX = "spiritagentdesktop/"
+_REMOTE_CLIENT_PREFIX = "spiritagentremote"
 
 
 @dataclass(frozen=True)
@@ -186,21 +185,22 @@ def _environment_hints_block(config: AgentPromptConfig) -> str | None:
     return f"{resolve_prompt_text(ENVIRONMENT_HINTS_LABELS, config.language)}\n{ctx.environment_hints}"
 
 
-def _channel_hints(config: AgentPromptConfig, desktop_hints: dict[str, str]) -> str:
+def _platform_hints(config: AgentPromptConfig, desktop_hints: dict[str, str]) -> str:
     hints = config.client_context.platform_hints if config.client_context else None
     normalized = (hints or "").strip().lower()
     if not normalized or normalized.startswith(_DESKTOP_CLIENT_PREFIX):
         return resolve_prompt_text(desktop_hints, config.language)
-    key = _CHANNEL_HINT_KEYS.get(normalized)
-    return resolve_prompt_text(PLATFORM_HINTS_TEXTS[key], config.language) if key else hints or ""
+    if normalized.startswith(_REMOTE_CLIENT_PREFIX):
+        return resolve_prompt_text(PLATFORM_HINTS_TEXTS["remote"], config.language)
+    return hints or ""
 
 
 def _platform_hints_block(config: AgentPromptConfig) -> str:
-    return _channel_hints(config, PLATFORM_HINTS_TEXTS["desktop"])
+    return _platform_hints(config, PLATFORM_HINTS_TEXTS["desktop"])
 
 
 def _companion_platform_hints_block(config: AgentPromptConfig) -> str:
-    return _channel_hints(config, COMPANION_DESKTOP_HINTS)
+    return _platform_hints(config, COMPANION_DESKTOP_HINTS)
 
 
 def _agent_identity_block(config: AgentPromptConfig) -> str:

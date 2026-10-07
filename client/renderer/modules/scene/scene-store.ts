@@ -1,4 +1,3 @@
-import type { PixelSize } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
@@ -8,6 +7,7 @@ import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/sto
 import { trimOldest } from '@/shared/lib/trim-oldest'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
+import type { PixelSize } from '@ipc/contracts'
 
 type SceneStatus = 'cancelled' | 'description_failed' | 'failed' | 'pending' | 'ready'
 export type ScenePolicy = 'llm_may_replace' | 'locked'

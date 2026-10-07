@@ -1,10 +1,3 @@
-import {
-  type DesktopScreenRect,
-  type DesktopSpriteScalePayload,
-  type DesktopWindowSceneSnapshot,
-  SPRITE_SCALE_LIMITS
-} from '@ipc/contracts'
-import { clamp } from '@runtime'
 import { atom, computed } from 'nanostores'
 
 import { deepEqual } from '@/shared/lib/deep-equal'
@@ -17,6 +10,13 @@ import {
 } from '@/shared/lib/storage'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceOpen, $surfaceRole, $surfaceSpriteVisible, isSpriteStageShown } from '@/shared/store/surfaces'
+import {
+  type DesktopScreenRect,
+  type DesktopSpriteScalePayload,
+  type DesktopWindowSceneSnapshot,
+  SPRITE_SCALE_LIMITS
+} from '@ipc/contracts'
+import { clamp } from '@runtime'
 
 import { $actionCatalog, $activePlayInstance, ensurePeekAction } from './actions'
 import type { PeekGeometry } from './actions'

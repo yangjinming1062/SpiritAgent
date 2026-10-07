@@ -1,3 +1,5 @@
+import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from 'electron'
+
 import {
   type AttachmentVideoUploadPayload,
   type DesktopActivatePayload,
@@ -33,7 +35,6 @@ import {
   type SurfaceCompanionPreference,
   type SurfacePlaybackClaim
 } from '@ipc/contracts'
-import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from 'electron'
 
 type InvokeChannel = keyof IpcInvokeContract
 type InvokePayload<C extends InvokeChannel> = Parameters<IpcInvokeContract[C]>[0]

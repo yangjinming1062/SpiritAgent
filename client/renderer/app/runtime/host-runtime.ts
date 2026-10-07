@@ -13,9 +13,8 @@ import {
 import {
   $chatMessageList,
   $chatSessionId,
-  $chatTurnInFlight,
+  getConversationRuntime,
   hydrateChatMessages,
-  hydrateSessionSettings,
   loadLocalSessionHistory,
   openMainSession,
   SessionHistoryChangedError,
@@ -34,7 +33,7 @@ import { reportPrimaryGatewayState, setPrimaryGateway, tearDownPrimaryGateway } 
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { getStrings } from '@/shared/strings'
-import type { SessionResumeResponse } from '@/shared/types/spiritagent'
+import type { SessionResumeResponse } from '@protocol'
 
 import { clearDesktopBootFailure, failDesktopBoot } from './boot-store'
 import { handleGatewayEvent } from './gateway-event-router'
@@ -401,9 +400,9 @@ export function useGatewayBoot(sessionId: string): void {
     async function resumeSessionHistory(): Promise<void> {
       const sid = $chatSessionId.get()
 
-      const syncMountSeq = (res: { current_seq?: number }) => {
+      const syncMountSeq = (res: { current_seq?: number; stream_id?: string }) => {
         if (typeof res.current_seq === 'number') {
-          gateway.resetSeq(res.current_seq)
+          gateway.resetSeq(res.current_seq, res.stream_id)
         }
       }
 
@@ -423,7 +422,11 @@ export function useGatewayBoot(sessionId: string): void {
           }
 
           // last_seq 只在聊天列表是活数据（重连）时发；缓存不追踪实时回合，冷启动一律走 after_id 增量，否则服务端按陈旧水位重放会重复追加。
+          const runtime = getConversationRuntime(sid)
+          const snapshot = runtime.captureHistorySync()
+
           const synced = await syncSessionHistory({
+            streamId: gateway.streamId,
             lastSeq: hasMessages && gateway.lastReceivedSeq > 0 ? gateway.lastReceivedSeq : undefined,
             sessionId: sid,
             request: body => gateway.request<SessionResumeResponse>('session.resume', { session_id: sid, ...body })
@@ -433,21 +436,14 @@ export function useGatewayBoot(sessionId: string): void {
             return
           }
 
-          if (synced.currentSeq > 0) {
-            gateway.resetSeq(synced.currentSeq)
-          }
+          gateway.resetSeq(synced.current_seq, synced.stream_id)
 
-          const liveHasMessages = $chatMessageList.get().length > 0
+          runtime.applyRemoteSnapshot(synced, snapshot)
 
-          if (!liveHasMessages || synced.kind !== 'noop') {
-            hydrateChatMessages(synced.messages, synced.info)
+          void runtime.recoverUnconfirmedSubmission()
 
-            // 历史水合会重置流式气泡，也要同步独立的服务端回合状态。
-            if (typeof synced.info?.running === 'boolean') {
-              $chatTurnInFlight.set(synced.info.running)
-            }
-          } else if (synced.info) {
-            hydrateSessionSettings(synced.info)
+          if (!runtime.$chatTurnInFlight.get()) {
+            runtime.submitPendingBatch()
           }
         } catch (error) {
           if (cancelled || $chatSessionId.get() !== sid) {

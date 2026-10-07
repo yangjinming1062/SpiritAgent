@@ -1,5 +1,6 @@
-import { IPC } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
+
+import { IPC } from '@ipc/contracts'
 
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as store from '../shared/lib/runner-config-store'

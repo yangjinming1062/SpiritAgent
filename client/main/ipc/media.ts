@@ -1,5 +1,7 @@
 import path from 'node:path'
 
+import type { IpcMain } from 'electron'
+
 import {
   type AttachmentVideoUploadPayload,
   type AttachmentVideoUploadResult,
@@ -8,7 +10,6 @@ import {
   type MediaTtsPayload
 } from '@ipc/contracts'
 import { sleep } from '@runtime'
-import type { IpcMain } from 'electron'
 
 import { speechText } from '../../shared/speech-text'
 import { readUserSelectedFile } from '../security/hardening'

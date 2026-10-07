@@ -50,7 +50,8 @@ export default defineConfig({
       '@shared': path.resolve(__dirname, './renderer/shared'),
       '@client-shared': path.resolve(__dirname, './shared'),
       '@ipc/contracts': path.resolve(__dirname, './shared/ipc/contracts'),
-      '@runtime': path.resolve(__dirname, './shared/runtime')
+      '@runtime': path.resolve(__dirname, './shared/runtime'),
+      '@protocol': path.resolve(__dirname, '../shared/protocol')
     },
     dedupe: ['react', 'react-dom']
   },

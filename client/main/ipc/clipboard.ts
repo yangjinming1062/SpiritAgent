@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-import { IPC } from '@ipc/contracts'
 import type { BrowserWindow, Clipboard, Dialog, IpcMain, NativeImage } from 'electron'
+
+import { IPC } from '@ipc/contracts'
 
 import { assertUserSelectedPath } from '../security/user-selected-paths'
 import { extensionForMimeType, mimeTypeForPath, parseDataUrl } from '../shared/mime'

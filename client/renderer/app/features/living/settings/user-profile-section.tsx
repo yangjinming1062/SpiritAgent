@@ -1,10 +1,16 @@
+import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { MAX_USER_TEXT } from '@/modules/character'
 import { requestGateway } from '@/shared'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
+import { isRecord } from '@/shared/lib/is-record'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, DatePicker, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import { SpiritAgentGateway } from '@/shared/spiritagent'
+import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -19,8 +25,55 @@ interface ProfileField {
 
 interface ProfileMemoryRow {
   id: number
+  content_version: number
   context: string | null
   content: string | null
+}
+
+export interface MemoryDraft {
+  content: string
+  baseContent: string
+  baseVersion: number | null
+}
+
+export function editMemoryDraft(
+  previous: MemoryDraft | undefined,
+  content: string,
+  row?: { content: string | null; content_version: number }
+): MemoryDraft | undefined {
+  const baseContent = previous?.baseContent ?? row?.content ?? ''
+
+  return content === baseContent
+    ? undefined
+    : { content, baseContent, baseVersion: previous ? previous.baseVersion : (row?.content_version ?? null) }
+}
+
+export function useMemoryChanged(presetId: string, refresh: () => Promise<void>): void {
+  const gateway = useStore($gateway)
+  const beginGuard = useAsyncGuard()
+
+  useEffect(() => {
+    if (!gateway) {
+      return
+    }
+
+    const isLive = beginGuard()
+
+    const onEvent = (event: GatewayEvent): void => {
+      if (
+        isLive() &&
+        event.type === 'memory.changed' &&
+        isRecord(event.payload) &&
+        event.payload.system_preset_id === presetId
+      ) {
+        void refresh()
+      }
+    }
+
+    return gateway instanceof SpiritAgentGateway
+      ? gateway.onEvent(onEvent)
+      : window.spiritagent.onGatewayEvent(({ event }) => onEvent(event))
+  }, [beginGuard, gateway, presetId, refresh])
 }
 
 interface ProfileListResponse {
@@ -76,18 +129,15 @@ export function UserProfileSection({
   const [rows, setRows] = useState<ProfileMemoryRow[]>([])
   const [loading, setLoading] = useState(true)
   const [hint, setHint] = useState<string | null>(null)
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [drafts, setDrafts] = useState<Record<string, MemoryDraft | undefined>>({})
   const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({})
   const loadIdRef = useRef(0)
-  const mountedRef = useRef(true)
+  const beginGuard = useAsyncGuard()
 
   // background 静默刷新用于写后对账，不把表单切成 loading 占位。
   const load = useCallback(
     async (background = false): Promise<void> => {
-      if (!mountedRef.current) {
-        return
-      }
-
+      const isLive = beginGuard()
       const id = ++loadIdRef.current
 
       if (!background) {
@@ -103,37 +153,38 @@ export function UserProfileSection({
           system_preset_id: PROFILE_PRESET_ID
         })
 
-        if (!mountedRef.current || loadIdRef.current !== id || res.system_preset_id !== PROFILE_PRESET_ID) {
+        if (!isLive() || loadIdRef.current !== id || res.system_preset_id !== PROFILE_PRESET_ID) {
           return
         }
 
         setRows(res.memories)
         onCount(res.counts.user_profile)
       } catch (err) {
-        if (!mountedRef.current || loadIdRef.current !== id) {
+        if (!isLive() || loadIdRef.current !== id) {
           return
         }
 
         setHint(t.loadFailedHint)
         notifyError(err, t.loadFailedToast)
       } finally {
-        if (mountedRef.current && loadIdRef.current === id) {
+        if (isLive() && loadIdRef.current === id) {
           setLoading(false)
         }
       }
     },
-    [onCount, t.loadFailedHint, t.loadFailedToast]
+    [beginGuard, onCount, t.loadFailedHint, t.loadFailedToast]
   )
 
   useEffect(() => {
-    mountedRef.current = true
     void load()
 
     return () => {
-      mountedRef.current = false
       loadIdRef.current += 1
     }
   }, [load])
+
+  const refresh = useCallback(() => load(true), [load])
+  useMemoryChanged(PROFILE_PRESET_ID, refresh)
 
   const setBusy = (key: string, busy: boolean): void => {
     setBusyKeys(previous => ({ ...previous, [key]: busy }))
@@ -143,19 +194,20 @@ export function UserProfileSection({
   const guarded = async (
     key: string,
     failure: { hint: string; toast: string },
-    action: () => Promise<void>
+    action: (isLive: () => boolean) => Promise<void>
   ): Promise<void> => {
+    const isLive = beginGuard()
     setBusy(key, true)
 
     try {
-      await action()
+      await action(isLive)
     } catch (err) {
-      if (mountedRef.current) {
+      if (isLive()) {
         setHint(failure.hint)
         notifyError(err, failure.toast)
       }
     } finally {
-      if (mountedRef.current) {
+      if (isLive()) {
         setBusy(key, false)
       }
     }
@@ -166,27 +218,30 @@ export function UserProfileSection({
 
   const saveKnown = async (field: ProfileField): Promise<void> => {
     const row = rowOf(field)
-    const value = pendingValue(drafts[field.key] ?? row?.content ?? '', row?.content)
+    const draft = drafts[field.key]
+    const value = pendingValue(draft?.content ?? row?.content ?? '', draft?.baseContent ?? row?.content)
 
     if (!value) {
       return
     }
 
-    await guarded(field.key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async () => {
-      await requestGateway('onboarding.submit', { field: field.key, value })
+    await guarded(field.key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async isLive => {
+      await requestGateway('onboarding.submit', {
+        field: field.key,
+        value,
+        expected_version: draft?.baseVersion ?? 0
+      })
 
-      if (!mountedRef.current) {
+      if (!isLive()) {
         return
       }
 
-      setDrafts(previous => ({ ...previous, [field.key]: value }))
+      setDrafts(previous => ({ ...previous, [field.key]: undefined }))
 
       if (row) {
         setRows(previous =>
           previous.map(entry => (entry.context === field.context ? { ...entry, content: value } : entry))
         )
-      } else {
-        onCount(previous => (previous === null ? previous : previous + 1))
       }
 
       await load(true)
@@ -195,41 +250,40 @@ export function UserProfileSection({
 
   const saveExtra = async (row: ProfileMemoryRow): Promise<void> => {
     const key = row.context ?? String(row.id)
-    const value = pendingValue(drafts[key] ?? row.content ?? '', row.content)
+    const draft = drafts[key]
+    const value = pendingValue(draft?.content ?? row.content ?? '', draft?.baseContent ?? row.content)
 
-    if (!value) {
+    if (!value || draft?.baseVersion === undefined || draft.baseVersion === null) {
       return
     }
 
-    await guarded(key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async () => {
+    await guarded(key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async isLive => {
       const updated = await requestGateway<ProfileMemoryRow>('memory.update', {
         memory_id: row.id,
         content: value,
+        expected_version: draft.baseVersion,
         system_preset_id: PROFILE_PRESET_ID
       })
 
-      if (!mountedRef.current) {
+      if (!isLive()) {
         return
       }
 
-      setDrafts(previous => ({ ...previous, [key]: updated.content ?? value }))
+      setDrafts(previous => ({ ...previous, [key]: undefined }))
       setRows(previous => previous.map(entry => (entry.id === row.id ? updated : entry)))
-      await load(true)
     })
   }
 
   const remove = async (key: string, memoryId: number): Promise<void> => {
-    await guarded(key, { hint: t.deleteFailedHint, toast: t.deleteFailedToast }, async () => {
+    await guarded(key, { hint: t.deleteFailedHint, toast: t.deleteFailedToast }, async isLive => {
       await requestGateway('memory.delete', { memory_id: memoryId, system_preset_id: PROFILE_PRESET_ID })
 
-      if (!mountedRef.current) {
+      if (!isLive()) {
         return
       }
 
-      setDrafts(previous => ({ ...previous, [key]: '' }))
+      setDrafts(previous => ({ ...previous, [key]: undefined }))
       setRows(previous => previous.filter(row => row.id !== memoryId))
-      onCount(previous => (previous === null ? previous : Math.max(0, previous - 1)))
-      await load(true)
     })
   }
 
@@ -247,19 +301,25 @@ export function UserProfileSection({
         <div className="space-y-2.5">
           {PROFILE_FIELDS.map(field => {
             const row = rowOf(field)
-            const draft = drafts[field.key] ?? row?.content ?? ''
+            const edit = drafts[field.key]
+            const draft = edit?.content ?? row?.content ?? ''
 
             return (
               <ProfileEntryEditor
                 busy={!!busyKeys[field.key]}
                 date={field.date}
-                dirty={pendingValue(draft, row?.content) !== null}
+                dirty={pendingValue(draft, edit?.baseContent ?? row?.content) !== null}
                 inputId={`profile-${field.key}`}
                 key={field.key}
                 label={`${p.fields[field.key]} · ${row ? p.set : p.unset}`}
                 maxLength={MAX_USER_TEXT}
                 multiline={field.multiline}
-                onChange={value => setDrafts(previous => ({ ...previous, [field.key]: value }))}
+                onChange={value =>
+                  setDrafts(previous => ({
+                    ...previous,
+                    [field.key]: editMemoryDraft(previous[field.key], value, row)
+                  }))
+                }
                 onDelete={row ? () => void remove(field.key, row.id) : undefined}
                 onSave={() => void saveKnown(field)}
                 persisted={!!row}
@@ -269,17 +329,20 @@ export function UserProfileSection({
           })}
           {extraRows.map(row => {
             const key = row.context ?? String(row.id)
-            const draft = drafts[key] ?? row.content ?? ''
+            const edit = drafts[key]
+            const draft = edit?.content ?? row.content ?? ''
 
             return (
               <ProfileEntryEditor
                 busy={!!busyKeys[key]}
-                dirty={pendingValue(draft, row.content) !== null}
+                dirty={pendingValue(draft, edit?.baseContent ?? row.content) !== null}
                 inputId={`profile-memory-${row.id}`}
                 key={row.id}
                 label={row.context?.replace(USER_PROFILE_CONTEXT_PREFIX, '') || '—'}
                 multiline
-                onChange={value => setDrafts(previous => ({ ...previous, [key]: value }))}
+                onChange={value =>
+                  setDrafts(previous => ({ ...previous, [key]: editMemoryDraft(previous[key], value, row) }))
+                }
                 onDelete={() => void remove(key, row.id)}
                 onSave={() => void saveExtra(row)}
                 persisted

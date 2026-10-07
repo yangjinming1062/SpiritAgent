@@ -12,17 +12,11 @@ import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
-import type { ChatMediaItem, CompanionBubble } from '@/shared/types/spiritagent'
+import type { ChatMediaItem, CompanionBubble } from '@protocol'
 
 import { decodePayload } from '../gateway-event-util'
 
-// 主动消息与通知投递：companion.message / system.notification / 视频任务完成 / IM 通道提醒。提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
-
-function channelLabel(channel: string | undefined): string {
-  const sys = getStrings().notifications.system
-
-  return channel === 'weixin_ilink' ? sys.channelWeixin : sys.channelLabel
-}
+// 主动消息与通知投递：companion.message / system.notification / 视频任务完成。提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
 
 export function handleDeliveryEvent(event: GatewayEvent): void {
   switch (event.type) {
@@ -156,54 +150,6 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
 
       if (p.error && !$screenLocked.get()) {
         notify({ kind: 'warning', message: p.error })
-      }
-
-      break
-    }
-
-    case 'channel.status': {
-      // IM 通道绑定状态变化（outbox；Hub 设置页以 REST 为真相源，这里只做桌面提醒）。
-      const p = decodePayload<{ channel?: string; status?: string; error?: string }>(event.payload)
-      const sys = getStrings().notifications.system
-      const label = channelLabel(p.channel)
-
-      const text =
-        p.status === 'connected'
-          ? sys.channelConnected(label)
-          : p.status === 'reconnecting'
-            ? sys.channelReconnecting(label)
-            : p.status === 'login_required'
-              ? sys.channelLoginRequired(label)
-              : p.status === 'error'
-                ? sys.channelError(label, p.error)
-                : null
-
-      if (text && !$screenLocked.get()) {
-        notify({
-          kind: p.status === 'error' ? 'error' : p.status === 'reconnecting' ? 'warning' : 'info',
-          message: text
-        })
-      }
-
-      break
-    }
-
-    case 'channel.peer_request': {
-      // 陌生对端首次来信（outbox）：提示主人到设置「聊天通道」审批。
-      const p = decodePayload<{ channel?: string; peer_id?: string; peer_name?: string; preview?: string }>(
-        event.payload
-      )
-
-      const sys = getStrings().notifications.system
-      const label = channelLabel(p.channel)
-      const name = p.peer_name || p.peer_id || ''
-
-      if (!$screenLocked.get()) {
-        notify({
-          kind: 'info',
-          message: sys.channelPeerRequest(label, name),
-          detail: p.preview
-        })
       }
 
       break

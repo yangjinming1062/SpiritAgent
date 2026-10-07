@@ -1,9 +1,3 @@
-import {
-  voicePlaybackKey,
-  type VoicePlaybackRecord,
-  type VoicePlaybackScope,
-  type VoicePlaybackSnapshot
-} from '@ipc/contracts'
 import { map } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
@@ -11,6 +5,12 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
+import {
+  voicePlaybackKey,
+  type VoicePlaybackRecord,
+  type VoicePlaybackScope,
+  type VoicePlaybackSnapshot
+} from '@ipc/contracts'
 
 function createPlaybackStore() {
   const $voicePlaybackRecords = map<Record<string, VoicePlaybackRecord>>({})

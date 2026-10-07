@@ -4,7 +4,6 @@ from datetime import timedelta
 from uuid import uuid4
 
 from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
-from modules.channels import ChannelTurnSource
 from modules.media import VideoGenJob
 from prompts.generation import (
     VIDEO_REFERENCE_TEMPLATE,
@@ -75,9 +74,8 @@ async def _submit_video(
     media_id: str,
     subject: str | None,
     outfit_override: str | None,
-    channel_source: ChannelTurnSource | None,
 ) -> tuple[dict[str, object], VideoGenJob | None]:
-    """提交已校验请求，返回 (工具结果, 最近读取的任务行)；结构化回复直接交付任务，文本渠道有界等待。"""
+    """提交已校验请求，返回 (工具结果, 最近读取的任务行)；结构化回复直接交付任务，文本回复有界等待。"""
     visual = None
     references = (reference_image,) if reference_image else ()
     if subject == "self":
@@ -108,7 +106,6 @@ async def _submit_video(
                 identity=visual.identity if visual is not None else None,
                 structured_reply=structured_reply,
                 media_id=media_id,
-                channel_source=channel_source,
             )
     except MissingLlmConfigError:
         # 任务行写入前抛出，确定未提交；其余异常可能发生在任务行提交、供应商受理之后，交给调用方按结果未知处理。
@@ -168,7 +165,6 @@ async def video_generation_tool(
     outfit_override: str | None = None,
     *,
     media_turn: MediaTurnState,
-    channel_source: ChannelTurnSource | None = None,
     **_: object,
 ) -> str:
     if not isinstance(prompt, str) or not prompt.strip() or type(duration) is not int or duration not in _DURATIONS:
@@ -231,7 +227,6 @@ async def video_generation_tool(
             outfit_override=outfit_override,
             structured_reply=media_turn.structured_reply,
             media_id=media_id,
-            channel_source=channel_source,
         )
     except Exception:
         # 任务行可能已提交、供应商可能已受理：按结果未知告知模型，不能当作失败重试。

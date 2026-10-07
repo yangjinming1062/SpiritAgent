@@ -376,6 +376,7 @@ export interface AttachmentVideoUploadResult {
 export type DesktopGatewayState = 'closed' | 'connecting' | 'error' | 'idle' | 'open'
 
 export interface DesktopGatewayEvent<P = unknown> {
+  stream_id?: string
   payload?: P
   seq?: number
   session_id?: string

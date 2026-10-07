@@ -1,4 +1,6 @@
-"""会话派生服务。`special` / `im` 语义上不可分叉，仅 `kind='standard'` 可派生——这是协议约束故抛业务异常，不走 HTTP 边界。"""
+"""复制可派生历史与摘要边界；资产复制和客户端挂载由调用方完成。"""
+
+from dataclasses import dataclass
 
 from modules.conversation import CompanionReply, Conversation, MediaBubble, Message
 from sqlalchemy import select
@@ -7,17 +9,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.infrastructure.assets import user_asset_lock
 
 from .context_window import CHECKPOINT_SUBTYPES
-from .history import build_session_messages
-from .main_conversation import IM_KIND, SPECIAL_KIND, STANDARD_KIND, UI_ONLY_SUBTYPES
+from .main_conversation import SPECIAL_KIND, STANDARD_KIND, UI_ONLY_SUBTYPES
 from .memory_scope import conversation_memory_scope
 
 
 class ForkNotAllowedError(Exception):
-    """源会话 kind 不可派生（special / im）。"""
+    """源会话 kind 不可派生（special）。"""
 
 
 class SourceNotFoundError(Exception):
     """源会话不存在 / 不属于该用户 / 源消息不在源会话内。"""
+
+
+@dataclass(frozen=True)
+class ForkResult:
+    session_id: str
+    message_count: int
 
 
 async def _fork_conversation_from_message(
@@ -25,15 +32,14 @@ async def _fork_conversation_from_message(
     user_id: int,
     source_session_id: str,
     source_message_id: int,
-) -> dict:
-    """派生新会话：复制源会话中 ``id <= source_message_id`` 且不属于 ``UI_ONLY_SUBTYPES`` 的全部消息及历史元数据，复制行按已发送历史对待。返回精简版 ``SessionResumeResult``（不含 info）；runtime 挂载与 info 由 handler 补。"""
+) -> ForkResult:
     src = await Conversation.by_session_id(db, source_session_id, user_id=user_id)
     if src is None:
         raise SourceNotFoundError(f"源会话不存在或不属于当前用户: {source_session_id!r}")
 
     conversation_memory_scope(src, user_id)
 
-    if src.is_automation or src.kind in (SPECIAL_KIND, IM_KIND):
+    if src.is_automation or src.kind == SPECIAL_KIND:
         raise ForkNotAllowedError(f"该类型会话不可派生 (kind={src.kind!r})")
 
     src_msg = (
@@ -128,13 +134,7 @@ async def _fork_conversation_from_message(
 
     await db.commit()
 
-    messages = await build_session_messages(new_conv.id, db)
-
-    return {
-        "session_id": str(new_conv.id),
-        "message_count": len(messages),
-        "messages": messages,
-    }
+    return ForkResult(session_id=str(new_conv.id), message_count=len(rows))
 
 
 async def fork_conversation_from_message(
@@ -142,6 +142,6 @@ async def fork_conversation_from_message(
     user_id: int,
     source_session_id: str,
     source_message_id: int,
-) -> dict:
+) -> ForkResult:
     async with user_asset_lock(user_id):
         return await _fork_conversation_from_message(db, user_id, source_session_id, source_message_id)

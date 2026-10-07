@@ -58,7 +58,7 @@ Runner 握手、配置与清单读取归 [主进程桥](main/README.md#runner-�
 
 ### 历史同步
 
-[session-history-cache.ts](renderer/modules/conversation/session-history-cache.ts) 先显示账户与会话快照，再以末条消息 ID 请求增量；锚点失效改为全量，IM 全量更新 queued 状态。快照不保存实时回合，不能用旧 seq 请求帧重放；重连 `last_seq` 只用于仍保有实时数据的列表。
+[session-history-cache.ts](renderer/modules/conversation/session-history-cache.ts) 先显示账户与会话快照，再以末条消息 ID 请求增量；锚点失效改为全量。快照不保存实时回合，不能用旧 seq 请求帧重放；重连 `last_seq` 只用于仍保有实时数据的列表。
 
 | 变化 | 本地处理 |
 |---|---|
@@ -73,3 +73,9 @@ Runner 握手、配置与清单读取归 [主进程桥](main/README.md#runner-�
 ## 契约与验证
 
 `shared/ipc` 是通道与字段真源，`IPC` 使用扁平 camelCase 键以约束叶子通道。改动同步类型、preload、[global.d.ts](renderer/shared/types/global.d.ts)、主进程及消费方，并覆盖换号、断连和迟到结果。命令与真实平台验收归 [Scripts](../scripts/README.md#按改动选择验证)。
+
+## 远程网页
+
+桌面 [remote-page.tsx](renderer/app/features/living/remote-page.tsx) 提供扫码与授权设备管理；窗口和导航标识统一为 `remote`。二维码轮询及设备查询按组件生命周期和账户代次守卫，查询失败显示实际状态，不用旧结果覆盖当前账户。
+
+手机应用归独立 [Remote](../remote/README.md)，桌面与其仅共用根 `shared/protocol.ts` 的纯协议类型。授权与恢复规则见 [远程访问](../docs/PROTOCOL.md#远程访问)。

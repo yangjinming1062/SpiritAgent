@@ -1,5 +1,6 @@
-import { IPC, type SessionHistorySnapshot } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
+
+import { IPC, type SessionHistorySnapshot } from '@ipc/contracts'
 
 import type { BackendSessionPort } from '../shared/backend-port'
 

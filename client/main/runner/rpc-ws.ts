@@ -3,9 +3,10 @@ import fs from 'node:fs'
 import http from 'node:http'
 import type { Socket } from 'node:net'
 
-import { sleep } from '@runtime'
 import type WebSocket from 'ws'
 import { WebSocketServer } from 'ws'
+
+import { sleep } from '@runtime'
 
 import { errorMessage, isFiniteNumber, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
 

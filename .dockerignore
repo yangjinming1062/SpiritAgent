@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------------------
 # Build context root is the repo root (docker-compose context: ..).
-# The backend image only needs backend/.
+# The backend image builds the mobile browser entry alongside backend/.
 # ---------------------------------------------------------------------------
 
 # Python virtual envs & caches (the .venv\lib64 symlink breaks Docker on Windows)
@@ -43,8 +43,20 @@ backend/updates/
 **/config.toml
 **/config.toml.local
 
-# Desktop client, runner & installer (not needed in the backend image)
+# The browser is independent from the desktop Client.
 client/
+remote/*
+!remote/package.json
+!remote/pnpm-lock.yaml
+!remote/pnpm-workspace.yaml
+!remote/tsconfig.json
+!remote/vite.config.ts
+!remote/index.html
+!remote/*.ts
+!remote/*.tsx
+!remote/style.css
+shared/*
+!shared/protocol.ts
 runner/
 installer/
 docs/

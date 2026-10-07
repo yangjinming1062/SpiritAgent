@@ -1,7 +1,6 @@
-import { speechText } from '@client-shared/speech-text'
-
 import { log } from '@/shared/lib/log'
 import { presentationPorts } from '@/shared/presentation-ports'
+import { speechText } from '@client-shared/speech-text'
 
 import { isLatestGen, nextGen, playDataUrl, stopAudio } from './audio-track'
 import { beginVoicePreparing, endVoicePreparing } from './voice-state'

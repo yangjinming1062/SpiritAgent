@@ -86,6 +86,7 @@ export {
   fetchSessions,
   fetchSystemPresets,
   isCompanionSession,
+  onSessionListChanged,
   openMainSession,
   pinSession,
   renameSession,

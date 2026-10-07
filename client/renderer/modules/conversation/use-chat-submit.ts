@@ -12,7 +12,8 @@ import { presentationPorts } from '@/shared/presentation-ports'
 import { $gateway } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
-import type { ChatAttachment } from '@/shared/types/spiritagent'
+import type { ChatAttachment } from '@protocol'
+import type { PromptSubmissionResult } from '@protocol'
 
 import { basename } from './chat-path'
 import type { ConversationRuntime } from './chat-runtime'
@@ -187,13 +188,15 @@ export function useChatSubmit({
       $chatTurnInFlight.set(true)
       conversationVoiceSink().cancel($chatSessionId.get())
 
+      const submission = controller.preparePromptSubmission({
+        session_id: edit.sessionId,
+        edit_message_id: edit.sourceMessageId,
+        response_preference: presentationPorts().getResponsePreference(),
+        text: trimmed
+      })
+
       try {
-        await requestGateway('prompt.submit', {
-          session_id: edit.sessionId,
-          edit_message_id: edit.sourceMessageId,
-          response_preference: presentationPorts().getResponsePreference(),
-          text: trimmed
-        })
+        controller.acceptPromptSubmission(await requestGateway<PromptSubmissionResult>('prompt.submit', submission))
 
         if ($chatEditDraft.get() === edit) {
           $chatEditDraft.set(null)
@@ -204,7 +207,8 @@ export function useChatSubmit({
           requestCurrent() &&
           controller.isCurrent() &&
           $chatSessionId.get() === edit.sessionId &&
-          $chatEditDraft.get() === edit
+          $chatEditDraft.get() === edit &&
+          controller.isPromptUnconfirmed(submission.request_id)
         ) {
           $chatTurnInFlight.set(false)
           notifyError(err, getStrings().chat.edit.failed)

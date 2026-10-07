@@ -8,6 +8,7 @@ from components import get_logger, redact_sensitive_text, tool_error
 from sqlalchemy.exc import SQLAlchemyError
 
 from services.contracts import DelegateAction
+from services.infrastructure.desktop import MANAGER
 
 from .domains import apply_search_tools_catalog
 from .toolsets import disabled_backend_tool_names
@@ -39,7 +40,6 @@ RESERVED_KEYS = frozenset(
         "parent_session_id",
         "excluded_tool_names",
         "skill_scope",
-        "channel_source",
     },
 )
 
@@ -84,7 +84,7 @@ class ToolsRegistry:
             logger.info("Cleared runner tools", extra={"user_id": user_id})
 
     def has_runner_tools(self, user_id: int) -> bool:
-        return bool(self._runner_tools.get(user_id))
+        return MANAGER.is_connected(user_id) and bool(self._runner_tools.get(user_id))
 
     def get_all_schemas(self, user_id: int, user_settings: dict[str, Any]) -> list[dict[str, Any]]:
         # 谓词抛错则隐藏该工具（fail-closed），避免一个 bug 把整次调用拖到 500。toolsets.disabled 对 backend/memory 桶生效；runner 桶在客户端 get_tools 源头已按同一键过滤
@@ -99,7 +99,8 @@ class ToolsRegistry:
             except Exception as e:
                 logger.warning("availability_check raised; hiding tool", extra={"tool_name": name, "error_msg": str(e)})
         schemas.extend(schema for name, schema in self._memory_tools.items() if name not in excluded)
-        schemas.extend(self._runner_tools.get(user_id, {}).values())
+        if MANAGER.is_connected(user_id):
+            schemas.extend(self._runner_tools.get(user_id, {}).values())
         return apply_search_tools_catalog(schemas)
 
     def _lookup(self, user_id: int, tool_name: str) -> tuple[ToolLocation, dict[str, Any]] | None:

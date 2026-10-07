@@ -16,7 +16,6 @@ from components import (
 from modules.conversation import Conversation, MediaBubble, Message
 from modules.system import ChatAttachment, ChatMessageRequest
 from modules.ws import emit_ws_event
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
@@ -142,33 +141,6 @@ async def persist_extra_user_messages(db: AsyncSession, conv_id: int, items: lis
     return [row.id for row in rows]
 
 
-async def persist_queued_inbound_message(
-    db: AsyncSession,
-    conv_id: int,
-    *,
-    text: str,
-    attachments: list[ChatAttachment] | None = None,
-    dedup_key: str | None = None,
-    channel_peer_id: str | None = None,
-) -> Message | None:
-    """IM 入站消息先持久化再确认接收：queued 落为会话行。接收顺序即行 id 序，回合消费时整批清标记；dedup_key 命中已有行时返回 None，调用方不再入队。"""
-    db_content, db_content_type = _build_persisted_content(text, attachments)
-    stmt = insert(Message).values(
-        conversation_id=conv_id,
-        role="user",
-        content=db_content,
-        content_type=db_content_type,
-        queued=True,
-        dedup_key=dedup_key,
-        channel_peer_id=channel_peer_id,
-    )
-    row = (
-        await db.execute(stmt.on_conflict_do_nothing(index_elements=[Message.dedup_key]).returning(Message))
-    ).scalar_one_or_none()
-    await db.commit()
-    return row
-
-
 async def _persist_user_message(db: AsyncSession, conv_id: int, message: ChatMessageRequest) -> int:
     """插入 user 角色 Message 行并提交，返回行 id。"""
     db_content, db_content_type = _build_persisted_content(message.content, message.attachments)
@@ -211,7 +183,7 @@ async def persist_compression_checkpoint(
         )
     await db.commit()
     if info.prune_before_message_id:
-        await prune_videos_in_range(db, conv_id, hi=info.prune_before_message_id, preserve_queued=True)
+        await prune_videos_in_range(db, conv_id, hi=info.prune_before_message_id)
         await db.commit()
     return checkpoint
 
@@ -283,7 +255,7 @@ async def _persist_assistant_no_tool_turn(
     persist: bool,
     track_task: TrackTask | None,
 ) -> None:
-    """保存终端答复与媒体，交付气泡，并调度回合后任务。结构化回复只出现在固定陪伴会话；文本渠道的媒体附件与结构化回复互斥。"""
+    """保存终端答复与媒体，交付气泡，并调度回合后任务。结构化回复只出现在固定陪伴会话；文本回复的媒体附件与结构化回复互斥。"""
     reply = result.reply
     turn_content = result.turn_content
     assistant_message_id: int | None = None

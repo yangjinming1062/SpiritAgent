@@ -5,7 +5,7 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
-import type { ChatMediaItem } from '@/shared/types/spiritagent'
+import type { ChatMediaItem } from '@protocol'
 
 import { useConversationView } from './conversation-view'
 

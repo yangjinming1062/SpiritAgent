@@ -8,7 +8,7 @@ import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $gateway, reportPrimaryGatewayState, setPrimaryGateway } from '@/shared/store/gateway'
 import { $surfaceRole } from '@/shared/store/surfaces'
-import type { SessionResumeResponse } from '@/shared/types/spiritagent'
+import type { SessionResumeResponse } from '@protocol'
 
 import { handleGatewayEvent } from './gateway-event-router'
 import { isDeviceCommandEvent } from './gateway-event-util'
@@ -65,7 +65,13 @@ export function ProxyGatewayPump(): null {
               return
             }
 
-            runtime.hydrateSyncedChatMessages(result.messages, result.info, snapshot)
+            runtime.applyRemoteSnapshot(result, snapshot)
+
+            void runtime.recoverUnconfirmedSubmission()
+
+            if (!runtime.$chatTurnInFlight.get()) {
+              runtime.submitPendingBatch()
+            }
           })
           .catch(error => {
             if (isCurrent() && generation === syncGeneration) {

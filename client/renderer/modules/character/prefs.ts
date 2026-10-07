@@ -1,4 +1,3 @@
-import type { DesktopPrefsHydrated } from '@ipc/contracts'
 import { atom, type WritableAtom } from 'nanostores'
 
 import { hydrateManualReduceTransparency } from '@/shared/lib/apply-no-blur'
@@ -14,6 +13,7 @@ import {
   storedString
 } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
+import type { DesktopPrefsHydrated } from '@ipc/contracts'
 
 import { setDisturbanceTier, syncDisturbanceFromStorage } from './companion-store'
 

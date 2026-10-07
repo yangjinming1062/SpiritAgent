@@ -1,5 +1,5 @@
 import type { Dictionary } from '@/shared/strings'
-import type { SessionInfo, SystemPresetSummary } from '@/shared/types/spiritagent'
+import type { SessionInfo, SystemPresetSummary } from '@protocol'
 
 // 系统预设的界面名称与说明：后端目录只有中文，已知预设按当前界面语言取字典，未知预设回落目录值。组件传入 useStrings() 的字典以随语言切换重渲染，store 传入 getStrings()。
 

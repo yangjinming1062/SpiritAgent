@@ -6,7 +6,7 @@ import {
 import { errorMessage } from '@/shared/lib/ipc-error'
 import type { SlashCommandMeta } from '@/shared/lib/slash-commands'
 import { getStrings } from '@/shared/strings'
-import type { SessionMessage } from '@/shared/types/spiritagent'
+import type { SessionMessage } from '@protocol'
 
 import type { ConversationRuntime } from './chat-runtime'
 import { activeConversationRuntime, type PendingAttachment } from './chat-store'

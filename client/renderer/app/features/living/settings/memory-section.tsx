@@ -5,13 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $systemPresets, fetchSystemPresets, presetDisplayName } from '@/modules/conversation'
 import { requestGateway } from '@/shared'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS, PanelSelect } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import { UserProfileSection } from './user-profile-section'
+import { editMemoryDraft, type MemoryDraft, useMemoryChanged, UserProfileSection } from './user-profile-section'
 
 type MemoryTab = 'active' | 'candidate' | 'invalidated' | 'expired'
 
@@ -22,6 +23,7 @@ const $memoryBrowserTab = atom<MemoryTab>('active')
 
 interface MemoryRow {
   id: number
+  content_version: number
   basis: 'explicit' | 'inferred' | 'observed' | 'system'
   usage: 'contextual' | 'background'
   reason: string
@@ -87,18 +89,31 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
   const [userProfileCount, setUserProfileCount] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [hint, setHint] = useState<string | null>(null)
-  const [draftById, setDraftById] = useState<Record<number, string>>({})
+  const [draftById, setDraftById] = useState<Record<number, MemoryDraft | undefined>>({})
   const [savingById, setSavingById] = useState<Record<number, boolean>>({})
-  // 每次调用 ``load`` 时递增；``load`` 发起更新版本之后才返回的旧响应被丢弃，防止慢响应覆盖已切换到新 tab 的快响应。
+  const beginGuard = useAsyncGuard()
   const loadIdRef = useRef(0)
+  const scopeRef = useRef(0)
+
+  const beginScopeGuard = useCallback(() => {
+    const isLive = beginGuard()
+    const scope = scopeRef.current
+
+    return () => isLive() && scope === scopeRef.current
+  }, [beginGuard])
 
   const load = useCallback(
-    async (nextTab: MemoryTab) => {
+    async (nextTab: MemoryTab, background = false): Promise<void> => {
+      const isLive = beginScopeGuard()
       const id = ++loadIdRef.current
-      setLoading(true)
-      setRows([])
-      setDraftById({})
-      setSavingById({})
+
+      if (!background) {
+        setLoading(true)
+        setRows([])
+        setDraftById({})
+        setSavingById({})
+      }
+
       setHint(null)
 
       try {
@@ -108,7 +123,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
           system_preset_id: presetId
         })
 
-        if (loadIdRef.current !== id || res.system_preset_id !== presetId) {
+        if (!isLive() || loadIdRef.current !== id || res.system_preset_id !== presetId) {
           return
         }
 
@@ -116,21 +131,20 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         setRows(list)
         setCounts(res.counts ?? null)
         setUserProfileCount(current => current ?? res.counts?.user_profile ?? null)
-        setDraftById(Object.fromEntries(list.map(r => [r.id, r.content ?? ''])))
       } catch (err) {
-        if (loadIdRef.current !== id) {
+        if (!isLive() || loadIdRef.current !== id) {
           return
         }
 
         setHint(t.loadFailedHint)
         notifyError(err, t.loadFailedToast)
       } finally {
-        if (loadIdRef.current === id) {
+        if (isLive() && loadIdRef.current === id) {
           setLoading(false)
         }
       }
     },
-    [presetId, t.loadFailedHint, t.loadFailedToast]
+    [beginScopeGuard, presetId, t.loadFailedHint, t.loadFailedToast]
   )
 
   useEffect(() => {
@@ -138,44 +152,48 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
 
     return () => {
       loadIdRef.current += 1
+      scopeRef.current += 1
     }
   }, [tab, load])
 
-  // rows 只在成功后改写；失败回滚只还原 draftById[id]，取点击时闭包捕获的 `rows` 快照里的已存内容。
+  const refresh = useCallback(() => load(tab, true), [load, tab])
+  useMemoryChanged(presetId, refresh)
+
+  // 编辑期间固定原版本；后台刷新不能让旧草稿覆盖其他设备的新内容。
   const saveRecall = useCallback(
     async (id: number) => {
-      const requestId = loadIdRef.current
-      const draft = draftById[id] ?? ''
-      const prevContent = rows.find(r => r.id === id)?.content ?? ''
+      const isLive = beginScopeGuard()
+      const draft = draftById[id]
+
+      if (!draft || draft.baseVersion === null) {
+        return
+      }
+
       setSavingById(s => ({ ...s, [id]: true }))
 
       try {
         const updated = await requestGateway<MemoryRow>('memory.update', {
           memory_id: id,
-          content: draft,
+          content: draft.content,
+          expected_version: draft.baseVersion,
           system_preset_id: presetId
         })
 
-        if (requestId !== loadIdRef.current) {
+        if (!isLive()) {
           return
         }
 
         setRows(prev => (tab === 'active' ? prev.map(r => (r.id === id ? updated : r)) : prev.filter(r => r.id !== id)))
-        setDraftById(prev => ({ ...prev, [id]: updated.content ?? '' }))
-
-        if (tab !== 'active') {
-          setCounts(prev => (prev ? { ...prev, [tab]: Math.max(0, prev[tab] - 1), active: prev.active + 1 } : prev))
-        }
+        setDraftById(prev => ({ ...prev, [id]: undefined }))
       } catch (err) {
-        if (requestId !== loadIdRef.current) {
+        if (!isLive()) {
           return
         }
 
-        setDraftById(d => ({ ...d, [id]: prevContent }))
         setHint(t.saveFailedHint)
         notifyError(err, t.saveFailedToast)
       } finally {
-        if (requestId === loadIdRef.current) {
+        if (isLive()) {
           setSavingById(s => {
             const next = { ...s }
             delete next[id]
@@ -185,35 +203,35 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         }
       }
     },
-    [presetId, draftById, rows, t.saveFailedHint, t.saveFailedToast, tab]
+    [beginScopeGuard, presetId, draftById, t.saveFailedHint, t.saveFailedToast, tab]
   )
 
   const del = useCallback(
     async (id: number) => {
-      const requestId = loadIdRef.current
+      const isLive = beginScopeGuard()
       setSavingById(prev => ({ ...prev, [id]: true }))
 
       try {
         await requestGateway('memory.delete', { memory_id: id, system_preset_id: presetId })
 
-        if (requestId === loadIdRef.current) {
+        if (isLive()) {
           setRows(prev => prev.filter(r => r.id !== id))
-          setCounts(prev => (prev ? { ...prev, [tab]: Math.max(0, prev[tab] - 1) } : prev))
+          setDraftById(prev => ({ ...prev, [id]: undefined }))
         }
       } catch (err) {
-        if (requestId !== loadIdRef.current) {
+        if (!isLive()) {
           return
         }
 
         setHint(t.deleteFailedHint)
         notifyError(err, t.deleteFailedToast)
       } finally {
-        if (requestId === loadIdRef.current) {
+        if (isLive()) {
           setSavingById(prev => ({ ...prev, [id]: false }))
         }
       }
     },
-    [presetId, t.deleteFailedHint, t.deleteFailedToast, tab]
+    [beginScopeGuard, presetId, t.deleteFailedHint, t.deleteFailedToast]
   )
 
   const switchTab = (next: MemoryTab): void => {
@@ -252,8 +270,9 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         <div className="space-y-2.5">
           {rows.map(r => {
             const tags = parseTags(r.tags)
-            const draft = draftById[r.id] ?? ''
-            const dirty = draft !== (r.content ?? '')
+            const edit = draftById[r.id]
+            const draft = edit?.content ?? r.content ?? ''
+            const dirty = edit !== undefined
             const saving = !!savingById[r.id]
 
             return (
@@ -282,7 +301,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
                 <textarea
                   className={cn(INPUT_CLASS, 'resize-none')}
                   disabled={saving}
-                  onChange={e => setDraftById(d => ({ ...d, [r.id]: e.target.value }))}
+                  onChange={e => setDraftById(d => ({ ...d, [r.id]: editMemoryDraft(d[r.id], e.target.value, r) }))}
                   rows={3}
                   value={draft}
                 />

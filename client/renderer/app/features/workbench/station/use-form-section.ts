@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 
-import type { SpiritAgentConfigResponse } from '@/shared/types/spiritagent'
+import type { SpiritAgentConfigResponse } from '@protocol'
 
 interface FormSection<T> {
   isDirty: boolean

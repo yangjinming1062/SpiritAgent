@@ -1,6 +1,7 @@
+import { type App, BrowserWindow, screen } from 'electron'
+
 import type { DesktopSurfaceOpenPayload, SurfaceCompanionPreference, SurfaceId } from '@ipc/contracts'
 import { clamp } from '@runtime'
-import { type App, BrowserWindow, screen } from 'electron'
 
 import {
   companionSlotMinimum,

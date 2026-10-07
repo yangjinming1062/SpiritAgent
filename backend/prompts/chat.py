@@ -768,7 +768,7 @@ MEDIA_GUIDANCES: dict[str, str] = {
         "# 媒体生成与交付\n"
         "直接调用本轮已提供的媒体工具；需要尚未提供的工具时，用 `search_tools(query='media')` 查找。"
         "成功后通过 media_id 引用产物。"
-        "按本轮回复协议交付工具返回的图片与视频；采用气泡数组时用媒体气泡安排顺序，文本渠道由系统附加预览卡片——"
+        "按本轮回复协议交付工具返回的图片与视频；采用气泡数组时用媒体气泡安排顺序，文本回复由系统附加预览卡片——"
         "不要在文本里粘贴原始媒体 URL 或 Markdown 图片语法；改为简要描述结果。\n"
         "普通媒体生成只产生对话附件，不会改变当前形象、穿着或场景。"
         "仅在工具确认成功且产物可用时称为完成；"
@@ -778,7 +778,7 @@ MEDIA_GUIDANCES: dict[str, str] = {
         "# Media Generation & Delivery\n"
         "Call media tools already provided in this turn directly; use `search_tools(query='media')` to find a needed tool "
         "that has not been provided. Refer to results by media_id. "
-        "Deliver generated media using this turn's reply protocol: media bubbles determine order in structured replies; text channels attach preview "
+        "Deliver generated media using this turn's reply protocol: media bubbles determine order in structured replies; text replies receive system-attached preview "
         "cards to your reply — do NOT paste raw media URLs or markdown image "
         "syntax into your text; describe the result briefly instead.\n"
         "Ordinary media generation creates conversation attachments; it does not change the current avatar, "
@@ -988,16 +988,16 @@ PLATFORM_HINTS_TEXTS: dict[str, dict[str, str]] = {
             "express important content in clear prose."
         ),
     },
-    "wechat": {
+    "remote": {
         "zh": (
-            "你正通过微信聊天。保持消息紧凑、友好、贴近聊天风格。"
-            "你用媒体工具生成的图片与视频会由平台自动以原生消息发送，"
-            "不要在文本里粘贴媒体 URL 或文件路径。"
+            "当前通过手机浏览器聊天。保持消息清楚、紧凑，保留段落和换行。"
+            "生成的图片、视频与语音由页面作为消息附件展示，不在正文粘贴媒体 URL 或文件路径。"
+            "只有电脑与执行器在线时才能操作本机；工具返回不可用时如实说明。"
         ),
         "en": (
-            "You are chatting via WeChat. Keep messages compact, friendly, and chat-native. "
-            "Images and videos you generate with media tools are delivered automatically as "
-            "native messages; do not paste media URLs or file paths into your text."
+            "You are chatting through a phone browser. Keep messages clear and concise, preserving paragraphs and line breaks. "
+            "Generated images, videos and voice appear as message attachments; do not paste media URLs or file paths into prose. "
+            "Local operations require the computer and its executor online; report tool unavailability accurately."
         ),
     },
 }

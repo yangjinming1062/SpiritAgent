@@ -1,8 +1,8 @@
-import type { DesktopActivatePayload, DesktopAuthBroadcast, DesktopAuthSnapshot } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { setStorageAccount } from '@/shared/lib/storage'
+import type { DesktopActivatePayload, DesktopAuthBroadcast, DesktopAuthSnapshot } from '@ipc/contracts'
 
 import { tearDownPrimaryGateway } from './gateway'
 

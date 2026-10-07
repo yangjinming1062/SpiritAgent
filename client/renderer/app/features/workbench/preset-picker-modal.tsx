@@ -11,7 +11,7 @@ import {
 import { Globe, type IconComponent, MessageCircle, Pencil, Sparkles } from '@/shared/lib/icons'
 import { BTN_PRIMARY, BTN_SUBTLE, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
-import type { SystemPresetSummary } from '@/shared/types/spiritagent'
+import type { SystemPresetSummary } from '@protocol'
 
 // icon_key → Tabler 图标映射，预设选择与会话侧栏共用。新增预设须同步后端 BUILTIN_PRESETS 的 icon_key 与此表。
 const PRESET_ICONS: Record<string, IconComponent> = {

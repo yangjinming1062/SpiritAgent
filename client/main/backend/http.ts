@@ -1,5 +1,6 @@
-import { sleep } from '@runtime'
 import type { Net } from 'electron'
+
+import { sleep } from '@runtime'
 
 import { resolveTimeoutMs } from '../security/hardening'
 import { resolveNormalizedBackendUrl } from '../shared/config'

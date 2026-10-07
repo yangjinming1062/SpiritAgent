@@ -1,6 +1,16 @@
 // 入口面互斥管理器：生活空间与工作台同一时刻最多一个窗口可见。
 
 import {
+  BrowserWindow,
+  type IpcMain,
+  type IpcMainInvokeEvent,
+  powerMonitor,
+  type Rectangle,
+  screen,
+  type WebContents
+} from 'electron'
+
+import {
   type DesktopSurfaceChangedEvent,
   type DesktopSurfaceOpenPayload,
   IPC,
@@ -10,15 +20,6 @@ import {
   type SurfaceId
 } from '@ipc/contracts'
 import { clamp } from '@runtime'
-import {
-  BrowserWindow,
-  type IpcMain,
-  type IpcMainInvokeEvent,
-  powerMonitor,
-  type Rectangle,
-  screen,
-  type WebContents
-} from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'

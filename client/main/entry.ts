@@ -1,7 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { IPC } from '@ipc/contracts'
 import {
   app,
   type BrowserWindow,
@@ -17,6 +16,8 @@ import {
   session,
   Tray
 } from 'electron'
+
+import { IPC } from '@ipc/contracts'
 
 import { createBackendClient, isRetryableBackendError } from './backend/client'
 import { createEnsureBackend } from './backend/ensure-backend'

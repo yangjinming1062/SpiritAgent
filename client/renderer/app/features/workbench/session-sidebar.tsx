@@ -49,7 +49,7 @@ import {
 import { cn } from '@/shared/lib/utils'
 import { INPUT_CLASS, SearchField } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
-import type { SessionInfo } from '@/shared/types/spiritagent'
+import type { SessionInfo } from '@protocol'
 
 import { presetIcon, PresetPickerModal } from './preset-picker-modal'
 
@@ -417,7 +417,7 @@ function SessionRow({
   badge?: string
   onSwitch: (id: string) => Promise<void> | void
 }): React.JSX.Element {
-  const canRename = !isSpecial && session.kind !== 'im'
+  const canRename = !isSpecial
   const [editing, setEditing] = useState(false)
   const presets = useStore($systemPresets)
   const dict = useStrings()

@@ -1,4 +1,3 @@
-import type { SurfaceCompanionPreference, SurfaceId } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useLayoutEffect, useRef, useState } from 'react'
@@ -9,6 +8,7 @@ import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 import { $surfaceCompanions, setSurfaceCompanion } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
+import type { SurfaceCompanionPreference, SurfaceId } from '@ipc/contracts'
 
 import styles from './companion-menu.module.css'
 

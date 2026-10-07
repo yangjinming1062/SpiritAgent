@@ -1,3 +1,6 @@
+import { atom } from 'nanostores'
+
+import { log } from '@/shared/lib/log'
 // 渲染层入口面 store：当前哪个 surface 开着。主进程是状态权威（持有 BrowserWindow 引用与互斥锁），本 store 只是镜像。启动期 hydrateSurfaces 主动拉一次 getState，之后订阅 onChanged 维持一致；requestOpenSurface 先更新本地意图再交给主进程，本地意图用于 UI 立即反馈。
 import type {
   DesktopSurfaceChangedEvent,
@@ -6,9 +9,6 @@ import type {
   SurfaceCompanionState,
   SurfaceId
 } from '@ipc/contracts'
-import { atom } from 'nanostores'
-
-import { log } from '@/shared/lib/log'
 
 import { $presentation } from './presentation'
 

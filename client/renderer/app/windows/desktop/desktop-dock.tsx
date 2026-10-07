@@ -34,7 +34,7 @@ const APP_ICONS: Record<DesktopApp, IconComponent> = {
   diary: BookOpen,
   scene: ImageIcon,
   appearance: Shirt,
-  channels: Globe,
+  remote: Globe,
   settings: Settings
 }
 

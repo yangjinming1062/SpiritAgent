@@ -132,7 +132,6 @@ def _review_message_filter() -> ColumnElement[bool]:
         user_authored_conversation(),
         Message.id > Conversation.context_after_message_id,
         Message.role.in_(("user", "assistant")),
-        Message.discarded.is_(False),
         Message.subtype.is_(None),
     )
 
@@ -318,7 +317,6 @@ async def apply_memory_decisions(
                     .where(
                         Message.id.in_(quoted_ids),
                         Message.role == "user",
-                        Message.discarded.is_(False),
                         Message.subtype.is_(None),
                         Conversation.user_id == scope.user_id,
                         Conversation.system_preset_id == scope.system_preset_id,

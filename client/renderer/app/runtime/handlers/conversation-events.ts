@@ -12,7 +12,7 @@ import {
 } from '@/modules/conversation'
 import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
-import type { ChatMediaItem, CompanionBubble, SessionMessage, UndoAnchor } from '@/shared/types/spiritagent'
+import type { ChatMediaItem, CompanionBubble, SessionMessage, SessionResumeResponse, UndoAnchor } from '@protocol'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
@@ -36,7 +36,9 @@ export function handleConversationEvent(
     appendCompanionBubble,
     beginAssistantMessage,
     bindTrailingAssistantMessageId,
-    bindTrailingUserMessageIds,
+    mergePersistedUserMessages,
+    applySessionState,
+    recoverUnconfirmedSubmission,
     clearPendingPrompts,
     finalizeAssistantMessage,
     finalizeCompanionReply,
@@ -151,11 +153,50 @@ export function handleConversationEvent(
     }
 
     case 'message.persisted': {
-      const p = decodePayload<{ role?: string; message_ids?: unknown }>(event.payload)
+      const p = decodePayload<{
+        role?: string
+        request_id?: string
+        messages?: SessionMessage[]
+        message_ids?: unknown
+      }>(event.payload)
 
       if (p.role === 'user' && Array.isArray(p.message_ids)) {
-        bindTrailingUserMessageIds(p.message_ids.filter((id): id is number => typeof id === 'number'))
+        mergePersistedUserMessages(
+          p.messages ?? [],
+          p.request_id,
+          p.message_ids.filter((id): id is number => typeof id === 'number')
+        )
       }
+
+      break
+    }
+
+    case 'session.snapshot': {
+      const snapshot = decodePayload<SessionResumeResponse>(event.payload)
+
+      if (Array.isArray(snapshot.messages)) {
+        runtime.applyRemoteSnapshot(snapshot)
+
+        syncConversationActivity()
+      }
+
+      break
+    }
+
+    case 'session.state': {
+      const payload = decodePayload<{ running?: boolean; request_id?: string; status?: string; error?: string | null }>(
+        event.payload
+      )
+
+      applySessionState(payload)
+
+      void recoverUnconfirmedSubmission()
+
+      if (!$chatTurnInFlight.get()) {
+        submitPendingBatch()
+      }
+
+      syncConversationActivity()
 
       break
     }
@@ -223,7 +264,12 @@ export function handleConversationEvent(
 
       // in-flight 回合结束——清标记并冲刷回合期间排队的消息（合并为单次批量提交）。
       $chatTurnInFlight.set(false)
-      submitPendingBatch()
+      void recoverUnconfirmedSubmission()
+
+      if (!$chatTurnInFlight.get()) {
+        submitPendingBatch()
+      }
+
       syncConversationActivity()
 
       break

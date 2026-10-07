@@ -75,7 +75,7 @@ class MediaTurnState:
         ]
 
     def text_reply_media(self) -> list[dict[str, str]]:
-        """文本渠道每个交付目标只附加最新成功版本，重做失败时保留原图。"""
+        """文本回复每个交付目标只附加最新成功版本，重做失败时保留原图。"""
         selected: dict[str, dict[str, str]] = {}
         for artifact in self.artifacts.values():
             if artifact.goal_id in self.required_goals and artifact.status == "ready" and artifact.url:

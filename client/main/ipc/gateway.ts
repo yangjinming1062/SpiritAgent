@@ -1,3 +1,5 @@
+import { BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from 'electron'
+
 import {
   type DesktopGatewayEvent,
   type DesktopGatewayRpcResponse,
@@ -7,7 +9,6 @@ import {
   type IpcEventChannel,
   type IpcEventContract
 } from '@ipc/contracts'
-import { BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import { sendToWindow } from '../shared/utils'

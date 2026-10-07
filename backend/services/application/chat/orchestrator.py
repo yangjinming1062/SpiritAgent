@@ -16,7 +16,6 @@ from components import (
     utc_now,
 )
 from modules.auth import ChatRequestClientContext
-from modules.channels import ChannelTurnSource
 from modules.conversation import Conversation, Message
 from modules.settings import get_user_setting, load_user_settings, resolve_user_timezone
 from modules.system import ChatMessageRequest, ChatRequest
@@ -26,7 +25,6 @@ from services.contracts import SceneTurnState
 from services.domains.companion import list_companion_intents, user_turn_activity
 from services.domains.conversation import (
     COMPANION_PRESET_ID,
-    IM_KIND,
     SPECIAL_KIND,
     conversation_memory_scope,
     load_context_messages,
@@ -170,7 +168,6 @@ async def run_chat_turn(
     track_task: TrackTask | None = None,
     *,
     session_settings: dict | None = None,
-    precursor_user_message_ids: list[int] | None = None,
     persisted_message_id: int | None = None,
     final_reply_only: bool = False,
     ephemeral: bool = False,
@@ -180,12 +177,11 @@ async def run_chat_turn(
     max_loop_turns: int | None = None,
     authorization_check: Callable[[], Awaitable[bool]] | None = None,
     turn_timeout_seconds: float | None = None,
-    channel_source: ChannelTurnSource | None = None,
 ) -> None:
-    """所有入口共享会话互斥和执行预算；渠道撤权在模型与工具派发边界复核。"""
+    """所有入口共享会话互斥和执行预算；账户授权在模型与工具派发边界复核。"""
     async with conversation_lock(req.session_id):
         if authorization_check is not None and not await authorization_check():
-            raise asyncio.CancelledError("The channel authorization was revoked")
+            raise asyncio.CancelledError("The turn authorization was revoked")
         timeout = asyncio.timeout(turn_timeout_seconds or SETTINGS.agent_turn_timeout_seconds)
         try:
             async with timeout:
@@ -198,7 +194,6 @@ async def run_chat_turn(
                         session_client_context,
                         track_task,
                         session_settings=session_settings,
-                        precursor_user_message_ids=precursor_user_message_ids,
                         persisted_message_id=persisted_message_id,
                         final_reply_only=final_reply_only,
                         ephemeral=ephemeral,
@@ -207,7 +202,6 @@ async def run_chat_turn(
                         excluded_tool_names=excluded_tool_names,
                         max_loop_turns=max_loop_turns,
                         authorization_check=authorization_check,
-                        channel_source=channel_source,
                     )
         except TimeoutError:
             if not timeout.expired():
@@ -233,7 +227,6 @@ async def _run_chat_turn(
     track_task: TrackTask | None = None,
     *,
     session_settings: dict | None = None,
-    precursor_user_message_ids: list[int] | None = None,
     persisted_message_id: int | None = None,
     final_reply_only: bool = False,
     ephemeral: bool = False,
@@ -242,7 +235,6 @@ async def _run_chat_turn(
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
     authorization_check: Callable[[], Awaitable[bool]] | None = None,
-    channel_source: ChannelTurnSource | None = None,
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
     # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量。
@@ -267,27 +259,21 @@ async def _run_chat_turn(
             turn_scope.enter_context(user_turn_activity(user_id, enabled=not ephemeral and not conv.is_automation))
 
             if not ephemeral:
-                # 用户行先落库再跑 LLM：失败路径也要把 id 回给活路径，否则撤回/派生一直点不了。
+                # 已持久化输入由调用方发布；本层只发布自己新增的用户行。
                 if persisted_message_id is not None:
                     persisted = await db.get(Message, persisted_message_id)
-                    if (
-                        persisted is None
-                        or persisted.conversation_id != conv.id
-                        or persisted.role != "user"
-                        or persisted.queued
-                        or persisted.discarded
-                    ):
+                    if persisted is None or persisted.conversation_id != conv.id or persisted.role != "user":
                         raise ValueError("Persisted user message does not belong to this turn")
                     user_message_id = persisted_message_id
                 else:
                     user_message_id = await _persist_user_message(db, conv.id, req.message)
-                await emitter.send_json(
-                    {
-                        "type": "message.persisted",
-                        "role": "user",
-                        "message_ids": [*(precursor_user_message_ids or []), user_message_id],
-                    },
-                )
+                    await emitter.send_json(
+                        {
+                            "type": "message.persisted",
+                            "role": "user",
+                            "message_ids": [user_message_id],
+                        },
+                    )
 
             # 回合起点重读 user_settings（PUT /api/config 后下一回合即生效）；会话级覆写再覆盖其上，只构建一次供门控与派发共用。
             effective_settings = merge_session_settings(
@@ -444,14 +430,13 @@ async def _run_chat_turn(
             native_memory=inputs.native_memory,
             guardrails=ToolCallGuardrailController(),
             emitter=emitter,
-            # 子 Agent 回合沿用本回合的无头标志：IM、定时任务等无头回合委派出的本机调用同样不显示桌面工作态。
+            # 子 Agent 回合沿用本回合的无头标志：定时任务等无头回合委派出的本机调用同样不显示桌面工作态。
             delegate_executor=partial(
                 run_delegated_turn,
                 run_turn=partial(
                     run_chat_turn,
                     headless=headless,
                     authorization_check=authorization_check,
-                    channel_source=channel_source,
                 ),
                 inherited_excluded_tool_names=inputs.excluded_tool_names,
             ),
@@ -462,17 +447,16 @@ async def _run_chat_turn(
             user_message=memory_query if not ephemeral else "",
             media_turn=media_turn,
             authorization_check=authorization_check,
-            channel_source=channel_source,
         )
 
-        buffer_text = companion_reply or headless or not has_viewer or conv.kind == IM_KIND or final_reply_only
+        buffer_text = companion_reply or headless or not has_viewer or final_reply_only
         delivery = "complete" if companion_reply else "buffered" if buffer_text else "stream"
         if buffer_text:
             await emitter.send_json({"type": "message.start"})
         base_instructions = current_context["instructions"]
         for _ in range(max_loop_turns):
             if authorization_check is not None and not await authorization_check():
-                raise asyncio.CancelledError("The channel authorization was revoked")
+                raise asyncio.CancelledError("The turn authorization was revoked")
             async with session_scope() as db:
                 await refresh_video_media(db, media_turn)
                 if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:

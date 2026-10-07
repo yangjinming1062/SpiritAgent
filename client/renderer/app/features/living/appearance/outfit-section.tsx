@@ -27,7 +27,7 @@ import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Spinner, Toggle } from '@/shared/panel'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { ImageReviseMode } from '@/shared/types/spiritagent'
+import type { ImageReviseMode } from '@protocol'
 
 // 列表卡 hover 操作钮：浮在立绘上，深色半透明底保证任何画面下可读。
 const CARD_ACTION_CLASS =

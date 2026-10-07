@@ -1,4 +1,3 @@
-import { DESKTOP_COMPANION_ACTIVITY_PRIORITY, type DesktopCompanionActivityState } from '@ipc/contracts'
 import { atom, computed } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
@@ -10,6 +9,7 @@ import {
   storedString
 } from '@/shared/lib/storage'
 import type { SetSpriteStateOptions, SpriteStateName } from '@/shared/presentation-ports'
+import { DESKTOP_COMPANION_ACTIVITY_PRIORITY, type DesktopCompanionActivityState } from '@ipc/contracts'
 
 // 渲染层按 unauthed → onboarding（向导进行中）→ ready（向导完成后）流转。
 export type CompanionLifecycle = 'unauthed' | 'onboarding' | 'ready'

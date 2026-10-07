@@ -1,6 +1,7 @@
+import type { BrowserWindow, IpcMain } from 'electron'
+
 import { type DesktopRunnerState, IPC, type RunnerCallOutcome, type RunnerCallRequest } from '@ipc/contracts'
 import { sleep } from '@runtime'
-import type { BrowserWindow, IpcMain } from 'electron'
 
 import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
 import type { CreateRunnerProcessOptions, RunnerProcess } from '../runner/process'
@@ -294,7 +295,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       async (): Promise<DesktopRunnerState> => ({ phase: runnerBridge?.getStatus().phase ?? 'idle' })
     )
 
-    // 只取消指定调用：后端中断回合时逐个下发 tool.cancel，其他会话、IM 与定时任务的在途调用不受影响。
+    // 只取消指定调用：后端中断回合时逐个下发 tool.cancel，其他会话与定时任务的在途调用不受影响。
     ipcMain.handle(IPC.invoke.runnerCancel, async (event, callId: string) => {
       assertGatewayHost(event.sender, options.getMainWindow(), 'runner:cancel')
 

@@ -1,4 +1,4 @@
-"""回合失败的 error 帧：``message`` 面向用户，按会话语言本地化且不含内部枚举；``detail`` 是英文诊断串，只供无头消费者（委派、主动回合、IM）与日志使用，不下发客户端。"""
+"""回合失败的 error 帧：``message`` 面向用户，按会话语言本地化且不含内部枚举；``detail`` 是英文诊断串，只供无头消费者（委派、主动回合）与日志使用，不下发客户端。"""
 
 from components import resolve_prompt_text
 

@@ -1,4 +1,3 @@
-import type { ToolsetItem } from '@ipc/contracts'
 import { useMemo, useState } from 'react'
 
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
@@ -6,6 +5,7 @@ import { TOOLSET_CATALOG, type ToolsetCatalogEntry } from '@/shared/lib/toolset-
 import { EmptyState, LoadingBlock, Pill, SearchField, SettingCard, Toggle } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
+import type { ToolsetItem } from '@ipc/contracts'
 
 type ToolsetView = {
   catalog: ToolsetCatalogEntry

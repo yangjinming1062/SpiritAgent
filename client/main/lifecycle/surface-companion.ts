@@ -1,7 +1,8 @@
 import path from 'node:path'
 
-import type { SurfaceCompanionPreference, SurfaceCompanionSide, SurfaceId } from '@ipc/contracts'
 import type { App, Rectangle } from 'electron'
+
+import type { SurfaceCompanionPreference, SurfaceCompanionSide, SurfaceId } from '@ipc/contracts'
 
 import { atomicWriteFile, safeReadJson } from '../shared/utils'
 

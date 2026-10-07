@@ -6,7 +6,6 @@ from .formatting import companion_context_content, format_messages_compact, mess
 from .history import build_session_messages, client_media_entries
 from .main_conversation import (
     CLEARED_STATUS_SUBTYPE,
-    IM_KIND,
     MEDIA_FAILURE_SUBTYPE,
     MEDIA_STATUS_SUBTYPE,
     SPECIAL_KIND,
@@ -62,7 +61,6 @@ __all__ = [
     "CHECKPOINT_SUBTYPES",
     "CLEARED_STATUS_SUBTYPE",
     "COMPANION_PRESET_ID",
-    "IM_KIND",
     "MEDIA_STATUS_SUBTYPE",
     "MEDIA_FAILURE_SUBTYPE",
     "SPECIAL_KIND",

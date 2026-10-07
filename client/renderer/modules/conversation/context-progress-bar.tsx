@@ -1,12 +1,12 @@
 import { useStore } from '@nanostores/react'
-import { clamp } from '@runtime'
 import type React from 'react'
 
 import { Brain, Thermometer } from '@/shared/lib/icons'
 import { REASONING_EFFORT_VALUES, type ReasoningEffort, resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
-import type { SessionMessage } from '@/shared/types/spiritagent'
+import type { SessionMessage } from '@protocol'
+import { clamp } from '@runtime'
 
 import { useConversationView } from './conversation-view'
 

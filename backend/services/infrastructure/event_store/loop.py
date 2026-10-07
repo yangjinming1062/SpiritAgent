@@ -11,9 +11,9 @@ from typing import Any
 import asyncpg
 from components import BackgroundTask, begin_local_scope, get_logger, safe_json_loads, session_scope, utc_now
 from modules.ws import WSEvent
-from sqlalchemy import Row, select, update
+from sqlalchemy import Row, and_, or_, select, update
 
-from services.infrastructure.desktop import MANAGER, set_event_loop_hooks
+from services.infrastructure.desktop import MANAGER, REMOTE_EVENT_PREFIXES, set_event_loop_hooks
 
 logger = get_logger(__name__)
 
@@ -121,7 +121,13 @@ async def _claim_pending_events(local_user_ids: list[int]) -> list[Row]:
         subq = (
             select(WSEvent.id)
             .where(
-                WSEvent.user_id.in_(local_user_ids),
+                or_(
+                    WSEvent.user_id.in_(MANAGER.local_user_ids()),
+                    and_(
+                        WSEvent.user_id.in_(local_user_ids),
+                        or_(*(WSEvent.event_type.startswith(prefix) for prefix in REMOTE_EVENT_PREFIXES)),
+                    ),
+                ),
                 WSEvent.status == "PENDING",
                 WSEvent.next_retry_at <= now,
             )
@@ -190,12 +196,11 @@ async def _mark_event_failure(event_id: int, current_retries: int, error: str) -
 async def _flush_gateway_delivered() -> None:
     """将所有已由 writer 成功送达客户端的 Outbox 事件批量标记为 DELIVERED。"""
     all_delivered: list[int] = []
-    for user_id in MANAGER.local_user_ids():
-        d = MANAGER.get_dispatcher(user_id)
-        if d is not None:
-            all_delivered.extend(d.drain_delivered_ids())
+    for user_id in MANAGER.event_user_ids():
+        for dispatcher in MANAGER.event_dispatchers(user_id):
+            all_delivered.extend(dispatcher.drain_delivered_ids())
     if all_delivered:
-        await _mark_events_delivered(all_delivered)
+        await _mark_events_delivered(list(set(all_delivered)))
 
 
 async def _periodic_flusher_loop() -> None:
@@ -298,7 +303,7 @@ async def _process_events(seen: int) -> int:
 
 async def _dispatch_claimed_batch() -> tuple[int, bool]:
     """认领并派发一批待投递事件，返回认领数量与是否有事件未能交给用户派发器。"""
-    local_user_ids = MANAGER.local_user_ids()
+    local_user_ids = MANAGER.event_user_ids()
     if not local_user_ids:
         return 0, False
     claimed = await _claim_pending_events(local_user_ids)
@@ -322,13 +327,9 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
             handled_delivered_ids.append(event_id)
             continue
 
-        dispatcher = MANAGER.get_dispatcher(user_id)
-        if dispatcher is None:
-            backpressure = True
-            await _mark_event_failure(event_id, retry_count, error=f"User {user_id} dispatcher not available")
-            continue
         try:
-            enqueued = await dispatcher.enqueue_event(
+            enqueued = await MANAGER.publish_event(
+                user_id,
                 event_type,
                 payload,
                 event_id=event_id,

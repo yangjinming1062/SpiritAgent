@@ -246,21 +246,31 @@ async def submit_onboarding_field(
     user_id: int,
     field: str,
     value: str | None,
+    *,
+    expected_version: int | None = None,
 ) -> OnboardingStateResponse:
     """写入一条引导回答；is_complete 之后仅 user_*/voice 可改，角色字段须走 PUT /persona。"""
     if field not in ONBOARDING_FIELDS:
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)
+    if expected_version is not None and (
+        type(expected_version) is not int or expected_version < 0 or not field.startswith("user_")
+    ):
+        raise PersonaValidationError("expected_version must be a non-negative int for user profile fields", field)
     if field == "user_birthday":
         _validate_birthday(value)
     persona = await get_or_create_persona(db, user_id)
     if persona.is_complete:
         if field.startswith("user_"):
             if value and value.strip():
-                await record_user_profile(
-                    db,
-                    MemoryScope(user_id, "companion"),
-                    {field: value.strip()[:_ONBOARDING_MAX_LEN]},
-                )
+                try:
+                    await record_user_profile(
+                        db,
+                        MemoryScope(user_id, "companion"),
+                        {field: value.strip()[:_ONBOARDING_MAX_LEN]},
+                        expected_versions={field: expected_version} if expected_version is not None else None,
+                    )
+                except ValueError as exc:
+                    raise PersonaValidationError(str(exc), field) from exc
                 await db.commit()
             # 传空值不动 Memory 行：清除 user_* 条目通过记忆管理删除
             return _state(load_persona_definition(persona), None, True)

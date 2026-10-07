@@ -32,6 +32,9 @@ class ReplayBuffer:
         entry = self._buffer.get(seq)
         return entry is not None and entry.sent
 
+    def contains(self, seq: int) -> bool:
+        return seq in self._buffer
+
     def mark_sent(self, seq: int) -> None:
         """将单帧标记为已发送（不删除：ack 是唯一删除路径，重放窗口内未确认帧仍可补发）。"""
         if (f := self._buffer.get(seq)) is not None:

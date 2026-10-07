@@ -19,7 +19,6 @@ from components import (
     track_user_task,
     utc_now,
 )
-from modules.channels import ChannelDelivery, ChannelDeliveryPayload, ChannelPeer, ChannelTurnSource
 from modules.companion import AvatarAsset, CharacterCardSnapshot, PostPublication
 from modules.conversation import Conversation, Message
 from modules.media import VideoGenJob
@@ -70,7 +69,7 @@ from .media_chain import (
     video_failure_message,
     video_provider_failure_reason,
 )
-from .paid_work import GenerationAuthorizationRevoked, GenerationWorkPaused, require_video_generation_call
+from .paid_work import GenerationWorkPaused, require_new_generation_call
 
 logger = get_logger(__name__)
 
@@ -99,7 +98,6 @@ class _VideoJobParams(BaseModel):
     identity_snapshot: CharacterCardSnapshot | None
     asset_generation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     asset_directory: str
-    channel_source: ChannelTurnSource | None = None
 
 
 def _abandoned(job: VideoGenJob) -> bool:
@@ -209,7 +207,6 @@ async def _score_self_video(
     *,
     identity_uri: str | None,
     identity_text: str = "",
-    channel_source: ChannelTurnSource | None = None,
     job_id: int | None = None,
 ) -> tuple[str, int | None]:
     """核查候选可解码性，出镜时再评分。undecodable 表示成品本身不可解码，可换下一家；文件缺失、探测工具不可用不是成品问题，返回 invalid，仅非出镜视频在工具不可用时返回 unavailable 照常交付。"""
@@ -244,7 +241,7 @@ async def _score_self_video(
         async def before_submit() -> None:
             if job_id is not None:
                 await _require_live_job(job_id)
-            await require_video_generation_call(user_id, channel_source)
+            require_new_generation_call(user_id)
 
         score = await score_character_frames(
             user_id,
@@ -263,7 +260,7 @@ async def _score_self_video(
         if latest_seed != identity_path:
             return "stale", None
         return "scored" if score is not None else "unavailable", score
-    except (GenerationWorkPaused, GenerationAuthorizationRevoked, _JobSettledError):
+    except (GenerationWorkPaused, _JobSettledError):
         raise
     except Exception:
         logger.warning("chat video identity scoring failed", extra={"user_id": user_id}, exc_info=True)
@@ -296,27 +293,6 @@ async def _update_job(job_id: int, **fields: object) -> None:
         for k, v in fields.items():
             setattr(job, k, v)
         await db.commit()
-
-
-async def _add_channel_delivery(
-    db: AsyncSession,
-    job: VideoGenJob,
-    *,
-    text: str,
-    media: list[dict[str, str]],
-) -> None:
-    source = _VideoJobParams.model_validate_json(job.params_json).channel_source
-    if source is None or not await ChannelPeer.authorizes(db, job.user_id, source, lock=True):
-        return
-    db.add(
-        ChannelDelivery(
-            binding_id=source.binding_id,
-            peer_id=source.peer_id,
-            payload_json=ChannelDeliveryPayload.model_validate(
-                {"text": text, "media": media, "channel_source": source},
-            ).model_dump_json(),
-        ),
-    )
 
 
 async def get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoGenJob | None:
@@ -438,7 +414,6 @@ async def enqueue_video_job(
     identity: CharacterCardSnapshot | None = None,
     structured_reply: bool = False,
     media_id: str | None = None,
-    channel_source: ChannelTurnSource | None = None,
 ) -> "VideoGenJob":
     """冻结能力链并提交首个任务；轮询绑定实际接单供应商，低分才推进链尾。"""
     if identity is not None and (not identity_reference_path or not reference_images):
@@ -478,7 +453,6 @@ async def enqueue_video_job(
         identity_reference_path=identity_reference_path,
         identity_snapshot=identity,
         asset_generation_id=state.generation_id,
-        channel_source=channel_source,
     )
     job = VideoGenJob(
         user_id=user_id,
@@ -564,7 +538,6 @@ async def _record_failure(job_id: int, *, reason: str) -> None:
                     "status_text": status_message.content if status_message is not None else None,
                 },
             )
-            await _add_channel_delivery(db, row, text=f"视频生成失败（任务 {job_id}）：{user_msg}", media=[])
         await db.commit()
     await cleanup_user_assets(row.user_id)
 
@@ -630,7 +603,6 @@ async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> No
                 **({"warning": warning} if warning else {}),
             },
         )
-        await _add_channel_delivery(db, row, text=f"视频已生成（任务 {job_id}）", media=media)
         await db.commit()
 
 
@@ -656,13 +628,10 @@ async def _evaluate_stored_video(job_id: int) -> str:
             params.identity_reference_path,
             identity_uri=params.reference_images[0] if snapshot is not None else None,
             identity_text=render_character_identity(snapshot) if snapshot else "",
-            channel_source=params.channel_source,
             job_id=job_id,
         )
     except GenerationWorkPaused:
         return "paused"
-    except GenerationAuthorizationRevoked:
-        return "revoked"
     if snapshot is not None:
         async with SESSION_LOCAL() as db:
             if not await character_snapshot_is_current(db, user_id, snapshot):
@@ -777,7 +746,7 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
 
         async def submit(provider: VideoGenProvider) -> VideoJobStatus:
             await _require_live_job(job_id)
-            await require_video_generation_call(user_id, params.channel_source)
+            require_new_generation_call(user_id)
             result = await provider.submit(request)
             if not result.task_id:
                 raise ProviderResultUnknownError("POST", config.base_url)
@@ -805,9 +774,6 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
         try:
             await asyncio.shield(submission)
         except _JobSettledError:
-            return False
-        except GenerationAuthorizationRevoked:
-            await _fail_or_keep_best(job_id, "authorization_revoked")
             return False
         except GenerationWorkPaused:
             state.phase = "ready"
@@ -944,9 +910,6 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                 await _update_job(job_id, status="evaluating", candidate_video_url=candidate_path)
                 decision = await _evaluate_stored_video(job_id)
                 if decision == "paused":
-                    return
-                if decision == "revoked":
-                    await _record_failure(job_id, reason="authorization_revoked")
                     return
                 if decision == "complete":
                     await _finalize_best_video(job_id)

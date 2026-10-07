@@ -22,7 +22,8 @@
       "@shared/*": ["./renderer/shared/*"],
       "@client-shared/*": ["./shared/*"],
       "@ipc/contracts": ["./shared/ipc/contracts"],
-      "@runtime": ["./shared/runtime"]
+      "@runtime": ["./shared/runtime"],
+      "@protocol": ["../shared/protocol"]
     }
   },
   "include": ["renderer", "shared"],

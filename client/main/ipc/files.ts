@@ -1,8 +1,9 @@
 import path from 'node:path'
 
-import { IPC, type SpiritAgentSelectPathsOptions } from '@ipc/contracts'
 import { nativeImage } from 'electron'
 import type { BrowserWindow, Dialog, IpcMain } from 'electron'
+
+import { IPC, type SpiritAgentSelectPathsOptions } from '@ipc/contracts'
 
 import { DATA_URL_READ_MAX_BYTES, readUserSelectedFile } from '../security/hardening'
 import { registerUserSelectedPaths } from '../security/user-selected-paths'

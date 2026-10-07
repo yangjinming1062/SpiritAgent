@@ -1,7 +1,6 @@
-import type { DesktopUpdateEvent } from '@ipc/contracts'
-
 import { log } from '@/shared/lib/log'
 import { setUpdateStatus } from '@/shared/store/update'
+import type { DesktopUpdateEvent } from '@ipc/contracts'
 
 type UpdateHandlerMap = {
   [E in DesktopUpdateEvent as E['type']]: (event: E) => void

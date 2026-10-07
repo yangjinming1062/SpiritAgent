@@ -1,4 +1,3 @@
-import { SPIRITAGENT_UI_THEMES } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
@@ -10,6 +9,7 @@ import { cn } from '@/shared/lib/utils'
 import { SECTION_TITLE, SettingCard, SettingRow, SettingsSectionIntro, Toggle } from '@/shared/panel'
 import { $theme, setUiTheme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
+import { SPIRITAGENT_UI_THEMES } from '@ipc/contracts'
 
 export function ThemePage(): React.JSX.Element {
   const dict = useStrings()

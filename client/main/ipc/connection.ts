@@ -1,5 +1,6 @@
-import { IPC, type IpcInvokeContract, type SpiritAgentApiRequest } from '@ipc/contracts'
 import type { BrowserWindow, IpcMain, WebContents } from 'electron'
+
+import { IPC, type IpcInvokeContract, type SpiritAgentApiRequest } from '@ipc/contracts'
 
 import { assertApiRequestAllowed } from '../security/api-allowlist'
 import { assertGatewayHost } from '../security/ipc-trust'

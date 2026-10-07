@@ -4,9 +4,10 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import type { DockCatalogSource, DockCatalogSourceKey } from '@ipc/contracts'
 import { app, nativeImage, shell } from 'electron'
 import log from 'electron-log/main'
+
+import type { DockCatalogSource, DockCatalogSourceKey } from '@ipc/contracts'
 
 import { createSerialQueue } from '../shared/utils'
 

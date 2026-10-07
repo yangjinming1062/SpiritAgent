@@ -38,7 +38,7 @@ class Conversation(ModelBase, TimestampMixin):
         nullable=True,
         index=True,
     )
-    # special=系统预设（system_preset_id 区分）/ standard=用户创建或任务型 Cron / im=外部 IM。
+    # special=系统预设（system_preset_id 区分）/ standard=用户创建或任务型 Cron。
     kind: Mapped[str] = mapped_column(String(32), default="standard", server_default=text("'standard'"))
     system_preset_id: Mapped[str] = mapped_column(String(32), index=True)
     memory_reviewed_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -119,17 +119,8 @@ class Message(ModelBase):
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     # content=模型气泡数组；reply_json=语音绑定、音频及媒体交付态。
     reply_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 摘要实际覆盖到的原消息 id，与摘要插入位置及 IM 消费排序分开。
+    # 摘要实际覆盖到的原消息 id，与摘要插入位置分开。
     summary_through_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # IM 入站先落库再确认；queued=True 表示已接收未被回合消费，消费时整批清除；接收顺序即 id 序。
-    queued: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
-    # IM 接收来源独立于去重哈希；撤权后未消费输入保留为丢弃历史，不再进入回合上下文。
-    channel_peer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    discarded: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
-    # IM 消费批的上下文排序位置；排队输入在上一轮工具与回复之后进入上下文。
-    context_order: Mapped[int | None] = mapped_column(nullable=True)
-    # 渠道重投去重标识（绑定 + 对端 + 消息标识的 sha256）。
-    dedup_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")

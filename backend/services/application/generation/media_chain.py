@@ -43,7 +43,6 @@ _VIDEO_FAILURE_COPY: dict[str, str] = {
     "worker_failed": "视频生成服务异常，请稍后重试",
     "identity_changed": "角色外形已更新，旧参考生成的视频未交付",
     "quality_failed": "视频文件无法完成质量核查，请稍后重试",
-    "authorization_revoked": "原通道授权已撤销，未继续制作或投递",
 }
 
 

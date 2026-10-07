@@ -23,7 +23,8 @@ const baseOptions = {
     options.alias = {
       ...options.alias,
       '@ipc/contracts': './shared/ipc/contracts',
-      '@runtime': './shared/runtime'
+      '@runtime': './shared/runtime',
+      '@protocol': '../shared/protocol'
     }
   }
 }
