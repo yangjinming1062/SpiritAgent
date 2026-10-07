@@ -18,10 +18,13 @@ from modules.companion import (
     PostPublication,
     PostPublicationResult,
     PostResponse,
+    has_unread,
+    mark_read,
+    unread_ids,
 )
 from modules.ws import emit_ws_event
 from pydantic import TypeAdapter
-from sqlalchemy import func, or_, select, tuple_, update
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -86,43 +89,15 @@ async def get_post(db: AsyncSession, user_id: int, post_id: str) -> CompanionPos
 
 
 async def unread_post_ids(db: AsyncSession, user_id: int) -> list[str]:
-    return list(
-        (
-            await db.scalars(
-                select(CompanionPost.id).where(CompanionPost.user_id == user_id, CompanionPost.is_read.is_(False)),
-            )
-        ).all(),
-    )
+    return await unread_ids(db, user_id, CompanionPost)
 
 
 async def has_unread_posts(db: AsyncSession, user_id: int) -> bool:
-    return bool(
-        await db.scalar(
-            select(
-                select(CompanionPost.id)
-                .where(CompanionPost.user_id == user_id, CompanionPost.is_read.is_(False))
-                .exists(),
-            ),
-        ),
-    )
+    return await has_unread(db, user_id, CompanionPost)
 
 
 async def mark_posts_read(db: AsyncSession, user_id: int, post_ids: Sequence[str]) -> bool:
-    await lock_user_row(db, user_id)
-    result = await db.execute(
-        update(CompanionPost)
-        .where(
-            CompanionPost.user_id == user_id,
-            CompanionPost.id.in_(post_ids),
-            CompanionPost.is_read.is_(False),
-        )
-        .values(is_read=True),
-    )
-    if result.rowcount:
-        emit_ws_event(db, user_id=user_id, event_type="companion.posts.read", payload={})
-    has_unread = await has_unread_posts(db, user_id)
-    await db.commit()
-    return has_unread
+    return await mark_read(db, user_id, CompanionPost, post_ids, "companion.posts.read")
 
 
 async def list_posts(

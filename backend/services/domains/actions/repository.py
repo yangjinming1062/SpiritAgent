@@ -76,20 +76,6 @@ async def get_playback(db: AsyncSession, play_id: str) -> ActionPlayback | None:
     return (await db.execute(select(ActionPlayback).where(ActionPlayback.play_id == play_id))).scalar_one_or_none()
 
 
-async def get_action_by_key(
-    db: AsyncSession,
-    pack_id: int,
-    key: str,
-) -> CompanionAction | None:
-    row = await db.execute(
-        select(CompanionAction).where(
-            CompanionAction.pack_id == pack_id,
-            CompanionAction.key == key,
-        ),
-    )
-    return row.scalar_one_or_none()
-
-
 async def create_action(
     db: AsyncSession,
     *,

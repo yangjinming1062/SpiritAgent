@@ -329,10 +329,9 @@ async def delete_session(
         select(Conversation.id).join(descendants, Conversation.parent_id == descendants.c.id),
     )
     subtree = sorted({conv.id, *await db.scalars(select(descendants.c.id))})
-    if any(conversation_is_running(str(sid)) for sid in subtree):
-        raise HTTPException(status_code=409, detail="请先停止当前任务，再删除会话")
     async with AsyncExitStack() as locks:
         for sid in subtree:
+            # 取锁前发现回合在跑则直接 409，不排队等回合结束再删
             if conversation_is_running(str(sid)):
                 raise HTTPException(status_code=409, detail="请先停止当前任务，再删除会话")
             await locks.enter_async_context(conversation_lock(str(sid)))

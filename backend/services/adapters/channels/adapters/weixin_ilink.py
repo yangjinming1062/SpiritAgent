@@ -73,25 +73,23 @@ def _random_wechat_uin() -> str:
 
 def _decode_aes_key(raw: str) -> bytes | None:
     """iLink aes_key 三种编码（hex 32 / base64-of-hex / base64-of-raw）；base64-of-hex 是 omp-wechat 验证可解密的唯一稳定形态（base64-of-raw 会 CDN 403/丢文件），hex 形式尝试兜底。"""
-    if not raw:
+    val = (raw or "").strip()
+    if not val:
         return None
-    candidates: list[bytes] = []
-    for val in (raw, raw.strip()):
-        # hex 32
-        if len(val) == 32:
-            with contextlib.suppress(binascii.Error, ValueError):
-                candidates.append(binascii.unhexlify(val))
-        try:
-            decoded = base64.b64decode(val, validate=True)
-            if len(decoded) == 16:
-                candidates.append(decoded)
-                continue
-            if len(decoded) == 32:
-                with contextlib.suppress(binascii.Error, ValueError):
-                    candidates.append(binascii.unhexlify(decoded.decode()))
-        except (binascii.Error, ValueError):
-            pass
-    return candidates[0] if candidates else None
+    # hex 32
+    if len(val) == 32:
+        with contextlib.suppress(binascii.Error, ValueError):
+            return binascii.unhexlify(val)
+    try:
+        decoded = base64.b64decode(val, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if len(decoded) == 16:
+        return decoded
+    if len(decoded) == 32:
+        with contextlib.suppress(binascii.Error, ValueError):
+            return binascii.unhexlify(decoded.decode())
+    return None
 
 
 def _aes_ecb_decrypt(ciphertext: bytes, key: bytes) -> bytes:
@@ -574,13 +572,13 @@ class WeixinIlinkAdapter(ChannelAdapter):
             f"{CDN_BASE_URL}/upload?encrypted_query_param={upload_meta.get('upload_param', '')}&filekey={filekey}"
         )
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as c:
-            resp = await c.post(
-                upload_url,
-                content=ciphertext,
-                headers={"Content-Type": "application/octet-stream"},
-            )
-            resp.raise_for_status()
+        resp = await self._ensure_client().post(
+            upload_url,
+            content=ciphertext,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
+        resp.raise_for_status()
         encrypt_query_param = resp.headers.get("x-encrypted-param") or upload_meta.get("upload_param")
         # omp-wechat 注释明确：base64-of-hex 是唯一可解密形态。
         aes_key_b64 = base64.b64encode(aeskey_hex.encode("utf-8")).decode("ascii")

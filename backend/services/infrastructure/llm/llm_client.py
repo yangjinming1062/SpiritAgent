@@ -222,7 +222,11 @@ async def _embed(
         call_site=__name__,
         user_id=user_id,
     )
-    log(phase="request", text_preview=truncate_for_log(texts[0])[0], num_texts=len(texts))
+    log(
+        phase="request",
+        text_preview=truncate_for_log(texts[0])[0] if SETTINGS.llm_debug_logging else None,
+        num_texts=len(texts),
+    )
     if provider is None:
         log(phase="response", status="skipped", reason="no_provider", latency_ms=0)
         return None

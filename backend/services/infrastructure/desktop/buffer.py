@@ -20,7 +20,6 @@ class ReplayBuffer:
     def __init__(self) -> None:
         self._buffer: dict[int, BufferedFrame] = {}
         self._current_seq: int = 0
-        self._max_sent_seq: int = 0
 
     @property
     def max_seq(self) -> int:
@@ -33,17 +32,10 @@ class ReplayBuffer:
         entry = self._buffer.get(seq)
         return entry is not None and entry.sent
 
-    def mark_sent_through(self, max_seq: int) -> None:
-        """将 seq <= max_seq 的帧标记为已发送（不删除：ack 是唯一删除路径，重放窗口内未确认帧仍可补发）；max_sent_seq 水位让已发帧跳过遍历。"""
-        target_seq = min(max_seq, self._current_seq)
-        if target_seq <= self._max_sent_seq:
-            return
-        for f in self._buffer.values():
-            if f.seq > target_seq:
-                break
-            if f.seq > self._max_sent_seq:
-                f.sent = True
-        self._max_sent_seq = target_seq
+    def mark_sent(self, seq: int) -> None:
+        """将单帧标记为已发送（不删除：ack 是唯一删除路径，重放窗口内未确认帧仍可补发）。"""
+        if (f := self._buffer.get(seq)) is not None:
+            f.sent = True
 
     def append(self, frame: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """为事件帧分配单调递增的 seq（写入 ``params.seq``）并入缓冲。"""

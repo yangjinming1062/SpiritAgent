@@ -71,6 +71,17 @@ class SceneImageInput(BaseModel):
     size_enforced: bool = True
 
 
+# 参考图字段与冻结标签（字段名 → 标签）：清理清单与冻结映射共用，新增参考字段只改这里。
+_REFERENCE_FIELDS: dict[type, tuple[tuple[str, str], ...]] = {
+    SceneImageInput: (("reference_image", "ref"),),
+    CharacterImageInput: (
+        ("reference_image", "ref"),
+        ("secondary_reference_image", "ref2"),
+        ("identity_reference", "identity"),
+    ),
+}
+
+
 class ImageChainState(MediaChainState):
     storage_directory: str | None = None
     inputs: CharacterImageInput | SceneImageInput | None = Field(default=None, discriminator="purpose")
@@ -108,11 +119,14 @@ class ImageChainState(MediaChainState):
             super().finish(slots)
 
     def stored_paths(self) -> set[str]:
-        """已落盘的候选与未登记完成的转存路径，供所有者清理。"""
+        """已落盘的候选、未登记完成的转存与冻结输入路径，供所有者清理。"""
+        fields = _REFERENCE_FIELDS.get(type(self.inputs), ()) if self.inputs is not None else ()
+        frozen = [getattr(self.inputs, attr) for attr, _label in fields]
         return {
             self.pending_path or "",
             *(candidate.path for candidate in self.candidates),
             *(path for candidate in self.candidates for path in candidate.artifacts),
+            *(path for path in frozen if path and asset_store.parse_companion_asset_path(path) is not None),
         } - {""}
 
 
@@ -204,6 +218,46 @@ async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD
     if len(data) > max_bytes:
         raise ImageGenerationError("生成图片超过大小限制", can_fallback=True)
     return data, mime
+
+
+async def _materialize_reference(value: str | None, *, max_bytes: int) -> str | None:
+    """提交与评分前把冻结路径还原为 data URI；空值与已是 data URI 的输入原样返回。"""
+    if not value or value.startswith("data:"):
+        return value
+    data, mime = await image_asset_bytes(value, max_bytes=max_bytes)
+    return await asyncio.to_thread(build_data_uri, data, mime)
+
+
+async def _freeze_input_references(
+    inputs: CharacterImageInput | SceneImageInput,
+    *,
+    user_id: int,
+    generation_id: str,
+    storage_directory: str,
+) -> None:
+    """落库链的参考图在冻结时落为链资产，状态只存裸路径；相同原值只落一份。"""
+    fields = _REFERENCE_FIELDS[type(inputs)]
+    frozen: dict[str, str] = {}
+    for attr, label in fields:
+        value = getattr(inputs, attr)
+        if not value or value in frozen or asset_store.parse_companion_asset_path(value) is not None:
+            continue
+        data, _ = await image_asset_bytes(value, max_bytes=inputs.max_image_bytes)
+        ext = asset_store.sniff_media_ext(data)
+        if ext not in {"png", "jpg", "webp", "gif"}:
+            raise ImageGenerationError("生成图片无法读取")
+        frozen[value] = await asset_store.save_image_chain_input_asset_async(
+            data,
+            user_id=user_id,
+            generation_id=generation_id,
+            label=label,
+            ext=ext,
+            directory=storage_directory,
+        )
+    for attr, _label in fields:
+        value = getattr(inputs, attr)
+        if value:
+            setattr(inputs, attr, frozen.get(value, value))
 
 
 async def _save_progress(state: ImageChainState, writer: ImageProgressWriter | None) -> None:
@@ -313,6 +367,13 @@ async def generate_character_images(
             if prefer_transparent_background and provider_cls.supports_transparent_background:
                 provider.background = "transparent"
         configs = dict(enumerate(chain))
+        if save_progress is not None:
+            await _freeze_input_references(
+                state.inputs,
+                user_id=user_id,
+                generation_id=state.generation_id,
+                storage_directory=storage_directory,
+            )
         await _save_progress(state, save_progress)
     if not isinstance(state.inputs, CharacterImageInput):
         raise ImageGenerationError("图片任务类型与角色生成不符")
@@ -381,6 +442,13 @@ async def generate_scene_images(
             provider.image_exact_size = canvas.exact_size
             state.providers.append(provider)
         configs = dict(enumerate(chain))
+        if save_progress is not None:
+            await _freeze_input_references(
+                state.inputs,
+                user_id=user_id,
+                generation_id=state.generation_id,
+                storage_directory=storage_directory,
+            )
         await _save_progress(state, save_progress)
     if not isinstance(state.inputs, SceneImageInput):
         raise ImageGenerationError("图片任务类型与场景生成不符")
@@ -413,6 +481,18 @@ async def _run_image_chain(
         return await _complete_images(state, save_progress)
     if state.phase == "complete":
         return await _complete_images(state, save_progress)
+    # 参考图在链运行内不变：物化一次供提交与评分复用，避免逐候选重复读盘/解码。
+    reference_uri = await _materialize_reference(inputs.reference_image, max_bytes=inputs.max_image_bytes)
+    secondary_uri = (
+        await _materialize_reference(inputs.secondary_reference_image, max_bytes=inputs.max_image_bytes)
+        if isinstance(inputs, CharacterImageInput)
+        else None
+    )
+    identity_uri = (
+        await _materialize_reference(inputs.identity_reference, max_bytes=inputs.max_image_bytes)
+        if isinstance(inputs, CharacterImageInput)
+        else None
+    )
     try:
         while True:
             if state.phase == "storing":
@@ -514,7 +594,7 @@ async def _run_image_chain(
                             if state.stop_reason == "score_unavailable"
                             else await score_character_image(
                                 user_id,
-                                inputs.identity_reference,
+                                identity_uri,
                                 uri,
                                 identity_text=inputs.identity_text,
                                 before_submit=before_submit,
@@ -560,10 +640,8 @@ async def _run_image_chain(
                     size=provider.image_size or inputs.size,
                     n=len(slots),
                     user_id=user_id,
-                    reference_image=inputs.reference_image,
-                    secondary_reference_image=inputs.secondary_reference_image
-                    if isinstance(inputs, CharacterImageInput)
-                    else None,
+                    reference_image=reference_uri,
+                    secondary_reference_image=secondary_uri if isinstance(inputs, CharacterImageInput) else None,
                     image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,
                     provider_config=config,
                     background=background,

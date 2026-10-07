@@ -878,7 +878,7 @@ async def post_video_pack(
     for clip in body.clips:
         if clip.action in clips:
             raise HTTPException(status_code=400, detail={"error": f"动作片段重复：{clip.action}"})
-        raw, content_type = _decode_clip_upload(clip.data, clip.content_type, clip.media_type)
+        raw, content_type = await asyncio.to_thread(_decode_clip_upload, clip.data, clip.content_type, clip.media_type)
         clips[clip.action] = (raw, content_type)
         if clip.media_type == "video" and clip.start_seconds is not None and clip.end_seconds is not None:
             ranges[clip.action] = (clip.start_seconds, clip.end_seconds)

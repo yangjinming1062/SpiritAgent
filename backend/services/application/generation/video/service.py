@@ -156,6 +156,8 @@ logger = get_logger(__name__)
 # 上传导入的默认像素画布；生成包仅取其比例。
 _DEFAULT_CANVAS = (512, 768)
 _SYSTEM_ACTION_SECONDS = 2.0
+# 同包动作管线并发上限，可按供应商限流与计费节奏调整
+_ACTION_PIPELINE_CONCURRENCY = 2
 _SOURCE_EXT_BY_MIME = {
     "image/png": ".png",
     "image/webp": ".webp",
@@ -913,6 +915,49 @@ def _kick_build(
     track_user_task(user_id, task)
 
 
+async def _save_action_materials(
+    user_id: int,
+    directory: str,
+    *,
+    label_prefix: str,
+    media_ext: str,
+    media: bytes,
+    cover: bytes,
+    hitmask: list[int] | list[list[int]],
+) -> tuple[str, str, str]:
+    """按 media→cover→hitmask 顺序落盘三件套；任一步失败或取消时删除已存路径。"""
+    saved: list[str] = []
+    try:
+        stored = await save_companion_asset_async(
+            media,
+            user_id=user_id,
+            directory=directory,
+            label=label_prefix,
+            ext=media_ext,
+        )
+        saved.append(stored)
+        cover_stored = await save_companion_asset_async(
+            cover,
+            user_id=user_id,
+            directory=directory,
+            label=f"{label_prefix}_cover",
+            ext="webp",
+        )
+        saved.append(cover_stored)
+        hitmask_stored = await save_companion_asset_async(
+            json.dumps(hitmask).encode("utf-8"),
+            user_id=user_id,
+            directory=directory,
+            label=f"{label_prefix}_hitmask",
+            ext="json",
+        )
+    except BaseException:
+        for path in saved:
+            unlink_companion_asset(path)
+        raise
+    return stored, cover_stored, hitmask_stored
+
+
 async def _prepare_clip(
     work: Path,
     action: str,
@@ -941,34 +986,15 @@ async def _prepare_clip(
     canvas_w, canvas_h = processed.width, processed.height
     hitmask = await _process_thread(build_hitmask, dst, canvas_w=canvas_w, canvas_h=canvas_h)
     cover = await _process_thread(extract_cover, dst, canvas_w=canvas_w, canvas_h=canvas_h)
-    stored = await save_companion_asset_async(
-        await _process_thread(dst.read_bytes),
-        user_id=user_id,
-        directory=directory,
-        label=f"video_{action}",
-        ext="webm",
+    stored, cover_stored, hitmask_stored = await _save_action_materials(
+        user_id,
+        directory,
+        label_prefix=f"video_{action}",
+        media_ext="webm",
+        media=await _process_thread(dst.read_bytes),
+        cover=cover,
+        hitmask=hitmask,
     )
-    saved = [stored]
-    try:
-        cover_stored = await save_companion_asset_async(
-            cover,
-            user_id=user_id,
-            directory=directory,
-            label=f"video_{action}_cover",
-            ext="webp",
-        )
-        saved.append(cover_stored)
-        hitmask_stored = await save_companion_asset_async(
-            json.dumps(hitmask).encode("utf-8"),
-            user_id=user_id,
-            directory=directory,
-            label=f"video_{action}_hitmask",
-            ext="json",
-        )
-    except BaseException:
-        for path in saved:
-            unlink_companion_asset(path)
-        raise
     return ActionResult(
         clip=VideoClipSpec(
             action=action,
@@ -997,36 +1023,15 @@ async def _prepare_image(
 ) -> ActionResult:
     dst = work / f"{action}.png"
     processed = await _process_thread(prepare_action_image, src, dst, canvas_w=canvas_w, canvas_h=canvas_h)
-    saved: list[str] = []
-    try:
-        stored = await save_companion_asset_async(
-            await _process_thread(dst.read_bytes),
-            user_id=user_id,
-            directory=directory,
-            label=f"action_image_{action}",
-            ext="png",
-        )
-        saved.append(stored)
-        cover = await save_companion_asset_async(
-            processed.cover,
-            user_id=user_id,
-            directory=directory,
-            label=f"action_image_{action}_cover",
-            ext="webp",
-        )
-        saved.append(cover)
-        hitmask = await save_companion_asset_async(
-            json.dumps(processed.hitmask).encode(),
-            user_id=user_id,
-            directory=directory,
-            label=f"action_image_{action}_hitmask",
-            ext="json",
-        )
-        saved.append(hitmask)
-    except BaseException:
-        for path in saved:
-            unlink_companion_asset(path)
-        raise
+    stored, cover_stored, hitmask_stored = await _save_action_materials(
+        user_id,
+        directory,
+        label_prefix=f"action_image_{action}",
+        media_ext="png",
+        media=await _process_thread(dst.read_bytes),
+        cover=processed.cover,
+        hitmask=processed.hitmask,
+    )
     return ActionResult(
         clip=ImageClipSpec(
             action=action,
@@ -1036,8 +1041,8 @@ async def _prepare_image(
             height=processed.height,
             content_rect=processed.content_rect,
         ),
-        cover_path=cover,
-        hitmask_path=hitmask,
+        cover_path=cover_stored,
+        hitmask_path=hitmask_stored,
     )
 
 
@@ -1594,16 +1599,27 @@ async def _generate_pack(pack_id: int) -> None:
                 {"packId": pack_id, "outfitId": pack.outfit_id, "stage": "script"},
             )
             await _compose_scripts(pack, context, pending)
-        for job in jobs:
+        sem = asyncio.Semaphore(_ACTION_PIPELINE_CONCURRENCY)
+
+        async def run_one(job: CompanionAction) -> None:
             if job.status in ("succeeded", "failed", "review"):
-                continue
-            try:
-                entry = parse_action_script_entry(job.script_json or "")
-                await _run_action_pipeline(pack, job, entry, context)
-            except GenerationWorkPaused:
-                continue
-            except Exception as exc:  # noqa: BLE001 — 动作失败隔离，其他已请求动作仍可交付并独立重做
-                await _record_action_failure(pack_id, job, exc)
+                return
+            async with sem:
+                try:
+                    entry = parse_action_script_entry(job.script_json or "")
+                    await _run_action_pipeline(pack, job, entry, context)
+                except GenerationWorkPaused:
+                    return
+                except Exception as exc:  # noqa: BLE001 — 动作失败隔离，其他已请求动作仍可交付并独立重做
+                    try:
+                        await _record_action_failure(pack_id, job, exc)
+                    except Exception:  # noqa: BLE001 — 失败记录自身失败不能中断其余在制动作的收敛
+                        logger.exception(
+                            "action failure record failed",
+                            extra={"pack_id": pack_id, "action_id": job.id},
+                        )
+
+        await asyncio.gather(*(run_one(job) for job in jobs))
         async with SESSION_LOCAL() as db:
             rows = (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars().all()
         # 阻塞发布：must_actions（必需 + 本版本必须成功）未完成。继承的其他未知失败不阻塞。
@@ -2314,18 +2330,28 @@ async def _generate_dynamic_actions(
         if context is None:
             await _fail_dynamic_jobs(pack_id, "该动作包的制作资料不完整，请重新生成动作包", action_ids=action_ids)
             return False
-        succeeded = False
-        for job in jobs:
+        sem = asyncio.Semaphore(_ACTION_PIPELINE_CONCURRENCY)
+
+        async def run_one(job: CompanionAction) -> bool:
             # 维护期间不再开始排队动作；已在制作的动作继续收敛。
             if job.status == "queued" and is_user_in_maintenance(pack.user_id):
-                continue
-            try:
-                if await _generate_one_dynamic(pack, job, context):
-                    succeeded = True
-            except GenerationWorkPaused:
-                continue
-            except Exception as exc:  # noqa: BLE001 — 单动作失败隔离，不影响已就绪目录
-                await _record_action_failure(pack_id, job, exc)
+                return False
+            async with sem:
+                try:
+                    return await _generate_one_dynamic(pack, job, context)
+                except GenerationWorkPaused:
+                    return False
+                except Exception as exc:  # noqa: BLE001 — 单动作失败隔离，不影响已就绪目录
+                    try:
+                        await _record_action_failure(pack_id, job, exc)
+                    except Exception:  # noqa: BLE001 — 失败记录自身失败不能中断其余在制动作的收敛
+                        logger.exception(
+                            "action failure record failed",
+                            extra={"pack_id": pack_id, "action_id": job.id},
+                        )
+                    return False
+
+        succeeded = any(await asyncio.gather(*(run_one(job) for job in jobs)))
         # 只有新成功的动作改变目录：发布新目录快照（失败与待复核动作不并入），并兑现这些动作制作期间的表达意图。
         if succeeded:
             await _publish_dynamic_catalog(pack_id)

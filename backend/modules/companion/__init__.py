@@ -38,6 +38,7 @@ from .models import (
 )
 from .models_loop import COMPANION_CRON_SOURCE_PREFIX, CompanionIntent, companion_cron_source_key
 from .posts import CompanionPost, CompanionPostComment, PostCommentRole, PostContentType, PostPublication
+from .read_state import has_unread, mark_read, unread_ids
 from .scene import (
     CompanionScene,
     SceneDisplayTarget,
@@ -292,4 +293,7 @@ __all__ = [
     "VoiceEntry",
     "VoiceMatchResponse",
     "VoicesListResponse",
+    "has_unread",
+    "mark_read",
+    "unread_ids",
 ]

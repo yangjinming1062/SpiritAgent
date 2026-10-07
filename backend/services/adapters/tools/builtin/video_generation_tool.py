@@ -47,14 +47,7 @@ def _video_reference(reference: str, user_id: int) -> str | None:
     parsed = asset_store.parse_companion_asset_path(reference)
     if parsed is None or parsed[0] != user_id:
         return None
-    resolved = asset_store.resolve_companion_asset_path(*parsed)
-    if resolved is None or not resolved[1].startswith("image/"):
-        return None
-    try:
-        data = resolved[0].read_bytes()
-    except OSError:
-        return None
-    return asset_store.build_data_uri(data, resolved[1])
+    return asset_store.read_asset_data_uri(reference)
 
 
 def _result_unknown_payload(task_id: str, job: VideoGenJob) -> dict[str, object]:

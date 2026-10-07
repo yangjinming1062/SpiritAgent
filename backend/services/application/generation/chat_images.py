@@ -76,62 +76,115 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
     )
 
 
-async def _generate(plan: ImagePlan, user_id: int, directory: str) -> tuple[str, int | None]:
-    identity = CharacterCardSnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
-    if identity is None:
-        urls = await generate_images(
+async def _generate_batch(
+    plan: ImagePlan,
+    user_id: int,
+    directory: str,
+    n: int,
+) -> list[tuple[str | None, int | None, str | None]]:
+    """为同 request 的 n 张产出 per-slot (url, score, error)；硬失败整体抛出，由调用方按 request 落状态。"""
+    results: list[tuple[str | None, int | None, str | None]] = [(None, None, None)] * n
+
+    async def request(count: int) -> list[str]:
+        return await generate_images(
             plan.prompt,
             size=plan.size,
-            n=1,
+            n=count,
             user_id=user_id,
             persist_user_assets=True,
             storage_directory=directory,
         )
-        score = None
-    else:
-        async with SESSION_LOCAL() as db:
-            if not await character_snapshot_is_current(db, user_id, identity):
-                raise ImageGenerationError("角色外形已更新，请使用当前形象重新提出生成请求")
-        state = ImageChainState()
-        urls = await generate_character_images(
-            plan.prompt,
-            size=plan.size,
-            n=1,
-            user_id=user_id,
-            storage_directory=directory,
-            reference_image=plan.reference_image or "",
-            secondary_reference_image=plan.secondary_reference_image,
-            identity_reference=plan.reference_image or "",
-            identity_text=render_character_identity(identity),
-            state=state,
-        )
-        best = state.best()
-        score = best.score if best else None
-        async with SESSION_LOCAL() as db:
-            current = await character_snapshot_is_current(db, user_id, identity)
-        if not current:
-            for url in urls:
-                await asyncio.to_thread(asset_store.unlink_companion_asset, url)
-            raise ImageGenerationError("生成期间角色外形已更新，本轮图片未交付")
-    if not urls:
-        raise ImageGenerationError("图片生成服务没有返回图片")
-    return urls[0], score
+
+    identity = CharacterCardSnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
+    if identity is None:
+        urls = await request(n)
+        filled = min(len(urls), n)
+        results[:filled] = [(url, None, None) for url in urls[:filled]]
+        # 供应商单次出图上限不同可能少给（gemini 忽略 n 等）；缺额先批量补齐，批量不可用再逐张兜底。
+        index = filled
+        while index < n:
+            try:
+                retry = await request(n - index)
+            except ImageGenerationError:
+                retry = []
+            got = min(len(retry), n - index)
+            results[index : index + got] = [(url, None, None) for url in retry[:got]]
+            index += got
+            if got == 0:
+                for slot in range(index, n):
+                    try:
+                        single = await request(1)
+                    except ImageGenerationError as exc:
+                        results[slot] = (None, None, str(exc))
+                        continue
+                    results[slot] = (single[0], None, None)
+                break
+        return results
+    async with SESSION_LOCAL() as db:
+        if not await character_snapshot_is_current(db, user_id, identity):
+            raise ImageGenerationError("角色外形已更新，请使用当前形象重新提出生成请求")
+    state = ImageChainState()
+    await generate_character_images(
+        plan.prompt,
+        size=plan.size,
+        n=n,
+        user_id=user_id,
+        storage_directory=directory,
+        reference_image=plan.reference_image or "",
+        secondary_reference_image=plan.secondary_reference_image,
+        identity_reference=plan.reference_image or "",
+        identity_text=render_character_identity(identity),
+        state=state,
+    )
+    delivered: list[str] = []
+    for slot in range(n):
+        best = state.best(slot)
+        if best is None:
+            results[slot] = (None, None, "图片生成失败，未取得可用候选")
+            continue
+        results[slot] = (best.path, best.score, None)
+        delivered.append(best.path)
+    async with SESSION_LOCAL() as db:
+        current = await character_snapshot_is_current(db, user_id, identity)
+    if not current:
+        for url in delivered:
+            await asyncio.to_thread(asset_store.unlink_companion_asset, url)
+        raise ImageGenerationError("生成期间角色外形已更新，本轮图片未交付")
+    return results
+
+
+async def _generate(plan: ImagePlan, user_id: int, directory: str) -> tuple[str, int | None]:
+    url, score, error = (await _generate_batch(plan, user_id, directory, 1))[0]
+    if url is None:
+        raise ImageGenerationError(error or "图片生成服务没有返回图片")
+    return url, score
+
+
+def _artifact_failure(exc: BaseException) -> tuple[str, str]:
+    """异常 → (状态, 文案)：初次合批与单张重做共用同一映射契约。"""
+    if isinstance(exc, asyncio.CancelledError):
+        return "result_unknown", "生成已取消，结果尚未核实；不要重复提交"
+    if isinstance(exc, ImageGenerationError):
+        return ("result_unknown" if exc.result_unknown else "failed"), str(exc)
+    return "result_unknown", "生成结果尚未核实，请勿重复提交"
+
+
+def _fail_all(artifacts: list[MediaArtifact], status: str, error: str) -> None:
+    for artifact in artifacts:
+        artifact.status, artifact.error = status, error
 
 
 async def _produce(state: MediaTurnState, artifact: MediaArtifact, plan: ImagePlan) -> None:
     try:
         artifact.url, artifact.identity_score = await _generate(plan, state.user_id, state.asset_directory)
         artifact.status = "ready"
-    except asyncio.CancelledError:
-        artifact.status = "result_unknown"
-        artifact.error = "生成已取消，结果尚未核实；不要重复提交"
+    except asyncio.CancelledError as exc:
+        artifact.status, artifact.error = _artifact_failure(exc)
         raise
     except ImageGenerationError as exc:
-        artifact.status = "result_unknown" if exc.result_unknown else "failed"
-        artifact.error = str(exc)
-    except Exception:
-        artifact.status = "result_unknown"
-        artifact.error = "生成结果尚未核实，请勿重复提交"
+        artifact.status, artifact.error = _artifact_failure(exc)
+    except Exception as exc:
+        artifact.status, artifact.error = _artifact_failure(exc)
         raise
 
 
@@ -166,14 +219,29 @@ async def generate_chat_images(requests: list[dict], state: MediaTurnState) -> s
             try:
                 plan = await _freeze_plan(request, state.user_id)
             except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as exc:
-                for artifact in artifacts:
-                    artifact.status, artifact.error = "failed", str(exc)
+                _fail_all(artifacts, "failed", str(exc))
                 continue
             for artifact in artifacts:
                 state.plans[artifact.goal_id] = plan
-                await _produce(state, artifact, plan)
-                if artifact.status == "ready":
-                    state.required_goals.add(artifact.goal_id)
+            # 合批后一次失败波及本 request 全部图片，硬失败不再逐张隔离。
+            try:
+                results = await _generate_batch(plan, state.user_id, state.asset_directory, len(artifacts))
+            except asyncio.CancelledError as exc:
+                _fail_all(artifacts, *_artifact_failure(exc))
+                raise
+            except ImageGenerationError as exc:
+                _fail_all(artifacts, *_artifact_failure(exc))
+                continue
+            except Exception as exc:
+                _fail_all(artifacts, *_artifact_failure(exc))
+                raise
+            for artifact, (url, score, error) in zip(artifacts, results):
+                if url is None or error is not None:
+                    artifact.status, artifact.error = "failed", error or "图片生成服务没有返回图片"
+                    continue
+                artifact.url, artifact.identity_score = url, score
+                artifact.status = "ready"
+                state.required_goals.add(artifact.goal_id)
     finally:
         for _, artifacts in entries:
             for artifact in artifacts:

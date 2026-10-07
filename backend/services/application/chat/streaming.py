@@ -46,7 +46,7 @@ from .reply_delivery import (
     parse_companion_reply,
     validate_companion_reply_repair,
 )
-from .reply_links import reply_reference_texts
+from .reply_links import ReplyReferences, reply_reference_texts
 from .system_prompt import refresh_volatile_header_in_prompt
 
 logger = get_logger(__name__)
@@ -471,12 +471,14 @@ async def _generate_llm_response(
     if delivery != "stream" and not tool_calls_list:
         text = "".join(pending_text)
         if reply_preference is not None:
+            # 本回合全部校验共享一次语料扫描；工具轮与失败路径不进入此块，保持零扫描。
+            refs = ReplyReferences.from_texts(reference_texts)
             raw_reply = normalize_companion_reply_content(text)
             try:
                 text, kind = decode_companion_reply(
                     raw_reply,
                     allow_voice_fallback=allow_voice_fallback,
-                    reference_texts=reference_texts,
+                    references=refs,
                 )
             except ValueError as exc:
                 speech_errors = reply_format_error.validation_errors if reply_format_error is not None else []
@@ -493,7 +495,7 @@ async def _generate_llm_response(
                     text, kind = decode_companion_reply(
                         normalize_companion_reply_content(reply_format_error.raw_reply),
                         allow_voice_fallback=True,
-                        reference_texts=reference_texts,
+                        references=refs,
                     )
                 except ValueError:
                     raise invalid_reply(exc, raw_reply) from exc
@@ -506,7 +508,7 @@ async def _generate_llm_response(
                     language=lang,
                     allow_silence=allow_silence,
                     media_turn=media_turn,
-                    reference_texts=reference_texts,
+                    references=refs,
                     kind=kind,
                 )
             except ValueError as exc:
@@ -520,7 +522,7 @@ async def _generate_llm_response(
                         language=lang,
                         allow_silence=allow_silence,
                         media_turn=media_turn,
-                        reference_texts=reference_texts,
+                        references=refs,
                         kind=kind,
                     )
                 except ValueError:
@@ -541,7 +543,7 @@ async def _generate_llm_response(
                         kind,
                         reply_format_error.raw_reply,
                         media_turn=media_turn,
-                        reference_texts=reference_texts,
+                        references=refs,
                     )
                 except ValueError as exc:
                     raise invalid_reply(exc, raw_reply) from exc

@@ -238,6 +238,8 @@ async def insert_rows(
     new_map: dict[str, int | str] = {}
     inserted = 0
     lineages: list[tuple[Conversation, Any, Any, datetime | None]] = []
+    pending: list[tuple[str, ModelBase]] = []
+    # 会话工厂 autoflush=False：任何需看见本批已插入行的 SELECT 前必须显式 flush。
     for raw in sorted(raw_rows, key=lambda row: int(row["id"])) if table == "messages" else raw_rows:
         payload = _build_payload(table, raw, target_user_id, rewriter, id_map)
         if table == "memories":
@@ -278,6 +280,7 @@ async def insert_rows(
                 raise ValueError("Invalid reply status for comment role")
         existing = None
         if mode == "merge" and table in UNIQUE_KEYS:
+            await db.flush()
             existing = await db.scalar(
                 select(model).where(
                     model.user_id == target_user_id,
@@ -289,6 +292,7 @@ async def insert_rows(
             and table == "memories"
             and (payload.get("context") or "").startswith(MEMORY_SLOT_CONTEXT_PREFIXES)
         ):
+            await db.flush()
             existing = await db.scalar(
                 select(Memory).where(
                     Memory.user_id == target_user_id,
@@ -297,6 +301,7 @@ async def insert_rows(
                 ),
             )
         if table == "conversations" and payload.get("kind") == "special" and payload.get("system_preset_id"):
+            await db.flush()
             existing = await db.scalar(
                 select(Conversation).where(
                     Conversation.user_id == target_user_id,
@@ -309,22 +314,22 @@ async def insert_rows(
                 await validate_conversation_merge(db, existing, raw)
             new_map[str(raw["id"])] = existing.id
             continue
-        if (
-            mode == "merge"
-            and payload.get("active")
-            and await db.scalar(
+        if mode == "merge" and payload.get("active"):
+            await db.flush()
+            if await db.scalar(
                 select(model.id).where(model.user_id == target_user_id, model.active.is_(True)).limit(1),
-            )
-        ):
-            payload["active"] = False
+            ):
+                payload["active"] = False
         instance = model(**payload)
         db.add(instance)
-        await db.flush()
-        new_map[str(raw["id"])] = instance.id
+        pending.append((str(raw["id"]), instance))
         rewriter.inserted_rows.add((table, str(raw["id"])))
         inserted += 1
         if table == "conversations":
             lineages.append((instance, raw.get("parent_id"), raw.get("forked_from_id"), payload.get("updated_at")))
+    await db.flush()
+    for raw_id, instance in pending:
+        new_map[raw_id] = instance.id
     if table == "companion_post_comments":
         originals = {str(raw["id"]): raw for raw in raw_rows}
         for raw in raw_rows:

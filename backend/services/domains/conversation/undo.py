@@ -2,7 +2,7 @@
 
 from components import safe_json_loads
 from modules.conversation import Conversation, Message, UndoAnchor, UndoAttachment, UndoResult
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.assets import collect_message_asset_releases
@@ -92,15 +92,6 @@ async def undo_conversation_to_message(
         )
     anchor_content, anchor_content_type = anchor_row
 
-    deleted_count = (
-        await db.execute(
-            select(func.count(Message.id)).where(
-                Message.conversation_id == conv.id,
-                Message.id >= source_message_id,
-            ),
-        )
-    ).scalar_one()
-
     async with user_asset_lock(conv.user_id):
         removed = await collect_message_asset_releases(
             db,
@@ -108,12 +99,13 @@ async def undo_conversation_to_message(
             [conv.id],
             from_message_id=source_message_id,
         )
-        await db.execute(
+        result = await db.execute(
             delete(Message).where(
                 Message.conversation_id == conv.id,
                 Message.id >= source_message_id,
             ),
         )
+        deleted_count = int(result.rowcount)
         await db.commit()
     await cancel_reply_audio(conv.user_id, removed)
 
@@ -121,7 +113,7 @@ async def undo_conversation_to_message(
 
     return UndoResult(
         session_id=str(conv.id),
-        deleted_count=int(deleted_count),
+        deleted_count=deleted_count,
         anchor=_undo_anchor(anchor_content, anchor_content_type),
         messages=delivered,
     )

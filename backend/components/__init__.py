@@ -89,7 +89,7 @@ from .functions import (
 )
 from .hashing import sha256_hex, sha512_b64
 from .logger import get_logger, set_request_user_id, setup_logging
-from .network import download_capped, is_safe_outbound, safe_outbound_async_client, safe_outbound_async_transport
+from .network import download_capped, safe_outbound_async_client, safe_outbound_async_transport
 from .paid_calls import log_paid_call
 from .redact import redact_sensitive_text
 from .temp_files import cleanup_expired, get_file_path, owned_temp_files, save_file
@@ -194,7 +194,6 @@ __all__ = [
     "get_file_path",
     "get_logger",
     "insecure_secret_settings",
-    "is_safe_outbound",
     "is_time_context_text",
     "is_user_in_maintenance",
     "log_paid_call",

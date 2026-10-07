@@ -70,12 +70,9 @@ def owned_temp_files(file_id: str, user_id: int) -> list[Path]:
 
 
 def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> tuple[str, str]:
-    """保存到 temp 存储，返回 (file_id, public_url)；``user_id`` 记录归属供删除用户与备份定位；meta 写失败时 unlink 数据文件避免无 TTL 孤儿。"""
+    """保存到 temp 存储，返回 (file_id, public_url)；``user_id`` 记录归属供删除用户与备份定位；写失败时清理半成品文件避免无 TTL 孤儿。"""
     file_id = secrets.token_urlsafe(16)
     filepath = _media_path(file_id, ext)
-
-    with open(filepath, "wb") as f:
-        f.write(data)
 
     meta = {
         "path": str(filepath),
@@ -85,11 +82,14 @@ def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> tupl
         "size": len(data),
     }
     try:
+        with open(filepath, "wb") as f:
+            f.write(data)
         with open(_meta_path(file_id), "w") as f:
             json.dump(meta, f)
     except OSError as exc:
         _safe_unlink(filepath)
-        logger.warning("temp meta write failed; orphan removed", extra={"file_id": file_id, "error": str(exc)})
+        _safe_unlink(_meta_path(file_id))
+        logger.warning("temp file write failed; partial removed", extra={"file_id": file_id, "error": str(exc)})
         raise
 
     public_url = _build_public_url(file_id)

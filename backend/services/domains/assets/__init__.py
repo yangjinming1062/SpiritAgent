@@ -1,6 +1,12 @@
 """正式资源的业务引用、事务性释放与磁盘回收。"""
 
-from .lifecycle import cleanup_assets, cleanup_user_assets, collect_message_asset_releases, enqueue_asset_cleanup
+from .lifecycle import (
+    cleanup_assets,
+    cleanup_user_assets,
+    collect_message_asset_releases,
+    enqueue_asset_cleanup,
+    enqueue_asset_cleanup_entries,
+)
 from .references import (
     ACTION_ASSET_FIELDS,
     PACK_ASSET_FIELDS,
@@ -20,5 +26,6 @@ __all__ = [
     "collect_live_asset_paths",
     "collect_message_asset_releases",
     "enqueue_asset_cleanup",
+    "enqueue_asset_cleanup_entries",
     "message_asset_paths",
 ]

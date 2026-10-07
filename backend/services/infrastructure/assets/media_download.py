@@ -21,4 +21,3 @@ async def download_media_result(url: str, *, max_bytes: int, timeout: float) -> 
                 raise
             logger.warning("media download retry", extra={"attempt": attempt + 1, "error_type": type(exc).__name__})
             await asyncio.sleep(SETTINGS.video_gen_poll_interval_seconds * 2**attempt)
-    raise RuntimeError("media download attempts exhausted")

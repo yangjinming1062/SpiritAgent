@@ -738,7 +738,7 @@ async def restore_backup_rows(
                     reason="对应会话未能恢复，附件缺少可用的目标会话。",
                 ),
             )
-        await asyncio.to_thread(rewriter.rewrite, compatible_rows)
+        await asyncio.to_thread(rewriter.scan, compatible_rows)
         for table, original_id in rewriter.inserted_rows:
             row = await db.get(TABLE_MODELS[table], id_map[table][original_id])
             mapping = layout.rows.get((table, original_id), layout.mapping)

@@ -157,7 +157,7 @@ class JsonRpcDispatcher:
                             self._record_delivered(seq)
                             continue
                         if await self._send(frame):
-                            self.replay_buffer.mark_sent_through(seq)
+                            self.replay_buffer.mark_sent(seq)
                             self._record_delivered(seq)
                         else:
                             # 不标记 sent，留给重连后的 flush_unsent；outbox 事件由僵尸锁恢复重投
@@ -288,7 +288,7 @@ class JsonRpcDispatcher:
                 self.replay_buffer.discard(seq)
                 self._pending_outbox_events.pop(seq, None)
                 return False
-            self.replay_buffer.mark_sent_through(seq)
+            self.replay_buffer.mark_sent(seq)
             self._record_delivered(seq)
             return True
 
@@ -304,7 +304,7 @@ class JsonRpcDispatcher:
         for f in frames:
             if not await self._send(f.frame):
                 return False
-            f.sent = True
+            self.replay_buffer.mark_sent(f.seq)
             self._record_delivered(f.seq)
         return True
 

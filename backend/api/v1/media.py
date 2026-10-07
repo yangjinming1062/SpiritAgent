@@ -5,7 +5,6 @@ from urllib.parse import quote
 from common import get_router
 from components import (
     ATTACHMENT_VIDEO_EXTENSIONS,
-    ATTACHMENT_VIDEO_MAX_BYTES,
     SETTINGS,
     STT_MAX_AUDIO_BYTES,
     TTS_MAX_TEXT_CHARS,
@@ -123,11 +122,12 @@ async def upload_chat_video(
             },
         )
 
-    # 本地模式 50MB；公网模式（public_base_url）供应商直接拉 URL，上限放宽到会话配额。
-    session_quota = SETTINGS.attachment_session_quota_bytes
-    max_bytes = session_quota if SETTINGS.public_base_url.strip() else ATTACHMENT_VIDEO_MAX_BYTES
-
-    hint = "" if max_bytes == session_quota else "；配置 server.public_base_url 后可经公网 URL 发送更大文件"
+    max_bytes = SETTINGS.video_attachment_max_bytes
+    hint = (
+        ""
+        if max_bytes == SETTINGS.attachment_session_quota_bytes
+        else "；配置 server.public_base_url 后可经公网 URL 发送更大文件"
+    )
     too_large = HTTPException(
         status_code=413,
         detail={

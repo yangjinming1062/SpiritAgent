@@ -23,6 +23,7 @@ from services.domains.assets import (
     asset_paths,
     cleanup_user_assets,
     enqueue_asset_cleanup,
+    enqueue_asset_cleanup_entries,
 )
 from services.infrastructure.assets import parse_companion_asset_path
 
@@ -69,10 +70,14 @@ async def cleanup_retired_action_assets() -> None:
 
 async def _cleanup_user_action_assets(user_id: int) -> None:
     async with SESSION_LOCAL() as db:
-        for retirement in await db.scalars(
-            select(ActionAssetRetirement).where(ActionAssetRetirement.user_id == user_id),
-        ):
-            await enqueue_asset_cleanup(db, user_id, [retirement.path], not_before=retirement.retired_at + ASSET_GRACE)
+        retirements = list(
+            await db.scalars(select(ActionAssetRetirement).where(ActionAssetRetirement.user_id == user_id)),
+        )
+        await enqueue_asset_cleanup_entries(
+            db,
+            user_id,
+            [(row.path, row.retired_at + ASSET_GRACE) for row in retirements],
+        )
         await db.commit()
     await cleanup_user_assets(user_id)
 

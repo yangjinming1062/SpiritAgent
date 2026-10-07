@@ -196,7 +196,7 @@ docker compose up -d
 
 - ComfyUI 图像能力使用固定 Qwen 工作流，模型文件自动匹配，能力卡片不支持独立 API Key 或自选权重名称。
 - LLM 须支持 [Responses API](https://lmstudio.ai/docs/developer/openai-compat/responses)，显式填写已部署模型 ID，加载窗口须覆盖[适配器预算](services/infrastructure/llm/providers/local/chat.py)。
-- 陪伴请求限时读取 `/props` 并在供应商实例内缓存识别结果。确认是 llama.cpp 后，无工具请求通过 `response_format.json_schema` 约束本轮输出；该接口不使用标准 `text.format`。工具阶段不混用自定义输出语法，其他本地服务或探测失败时沿用提示词与应用层校验。
+- 陪伴请求限时读取 `/props` 并按地址带 TTL 缓存识别结果（负结果短期缓存，避免每回合探测）。确认是 llama.cpp 后，无工具请求通过 `response_format.json_schema` 约束本轮输出；该接口不使用标准 `text.format`。工具阶段不混用自定义输出语法，其他本地服务或探测失败时沿用提示词与应用层校验。
 - 能力链是各能力唯一调用信息源，信息库卡片只提供共享密钥与地址。用户未设 embedding 卡片时继承系统链；系统也未设卡片时该能力视为未配置。记忆只使用首个有效配置；链为空、显式链无效或调用失败时降级为[关键词召回](services/domains/memory/README.md#读取召回与恢复)，不自动切换模型。
 
 本地向量校验与维度适配见 [embedding.py](services/infrastructure/llm/providers/local/embedding.py)：仅默认模型允许 [MRL 截断](https://huggingface.co/Qwen/Qwen3-Embedding-4B-GGUF)，短向量归一化后补零，其他超宽向量拒绝。千问默认模型与 Gemini 按记忆库列宽请求输出；宽度不符的向量不入库，记忆按关键词召回，调用失败记录告警。当前记忆未记录模型标识，更换模型不能复用旧向量。

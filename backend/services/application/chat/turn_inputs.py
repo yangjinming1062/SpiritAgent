@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, get_args
@@ -105,11 +106,10 @@ class TurnInputs:
     reply_persona: str
 
 
-async def load_memory_query_text(db: AsyncSession, conv: Conversation, req: ChatRequest, *, use_request: bool) -> str:
+def memory_query_text(req: ChatRequest, history: Sequence[Message], *, use_request: bool) -> str:
     """召回查询取本轮用户输入；主动回合的请求是内部资料，改取历史中最近的用户发言。"""
     if use_request:
         return req.message.content or ""
-    history = await load_context_messages(db, conv)
     # 多模态行的正文是 part 数组 JSON，只取文字部分，不把附件地址送去向量化。
     return next((message_text(m) for m in reversed(history) if m.role == "user"), "")
 
@@ -370,12 +370,14 @@ async def build_turn_inputs(
     proactive_memory_embedding: list[float] | None = None,
     companion_proactive_turn: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
+    history: list[Message] | None = None,
 ) -> TurnInputs:
     """解析身份 prompt、schemas、历史与 LLM client。``memory_scope`` 由调用方经 ``conversation_memory_scope`` 校验；自动化会话没有记忆域。"""
     preset_id = conv.system_preset_id
     delegated = conv.parent_id is not None
     is_companion = preset_id == COMPANION_PRESET_ID and not delegated
-    history = await load_context_messages(db, conv)
+    if history is None:
+        history = await load_context_messages(db, conv)
     first_user_msg = next((m for m in history if m.role == "user"), None)
     # 标题只依据文字：多模态行的正文是 part 数组 JSON，附件地址不进标题请求。
     first_user_msg_content = message_text(first_user_msg) if first_user_msg else None

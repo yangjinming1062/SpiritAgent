@@ -90,18 +90,8 @@ def plan_asset_layout(
             layout.copies[target] = old
             layout.mapping.setdefault(old, target)
             mapping[old] = target
+        # 行内映射指向本行目录副本（生产者）；非生产者 owned 为空，target 取首认领值，与 layout.mapping 恒同。
         layout.rows[key] = mapping
-    # 后处理通用引用，保证早读取的会话等字段也采用已经确定的生产者归属。
-    for key, mapping in layout.rows.items():
-        if key[0] not in {
-            "avatar_assets",
-            "companion_fullbody_candidates",
-            "companion_outfits",
-            "companion_scenes",
-            "companion_action_packs",
-            "companion_actions",
-        }:
-            mapping.update({old: layout.mapping[old] for old in mapping})
     return layout
 
 

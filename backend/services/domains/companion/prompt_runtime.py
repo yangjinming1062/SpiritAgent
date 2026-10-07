@@ -12,6 +12,7 @@ from modules.companion import Persona
 from modules.settings import get_user_setting, resolve_user_timezone
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
 from services.domains.actions import action_prompt_entry, get_active_pack, is_expression_action, list_pack_actions
@@ -29,7 +30,7 @@ logger = get_logger(__name__)
 
 
 class CompanionPromptContext(BaseModel):
-    """供心情、表达和动态使用的人设、心情、记忆与可用动作；不注入视觉生成资料。"""
+    """供心情、表达和动态使用的人设、心情与记忆；不注入视觉生成资料。"""
 
     language: str
     # 带时区偏移的用户本地时间；未设置时区时按 UTC。
@@ -37,8 +38,6 @@ class CompanionPromptContext(BaseModel):
     persona_extras: str
     current_mood: str
     memories_block: str
-    # 每项含 action_id/name/use_when 等；系统产品槽位不进清单。
-    available_actions: list[dict[str, Any]]
 
 
 class PromptOutcome(NamedTuple):
@@ -55,22 +54,26 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         if persona is None or not persona.is_complete:
             return None
         language = resolve_language(await get_user_setting(db, user_id, "language"))
-        # LLM 可点播的表达动作来自当前激活包；系统产品槽位不进清单，动态动作即表达能力。
-        pack = await get_active_pack(db, user_id)
-        available_actions: list[dict[str, Any]] = []
-        if pack is not None:
-            for row in await list_pack_actions(db, pack.id, enabled_only=True):
-                if is_expression_action(row):
-                    available_actions.append(action_prompt_entry(row))
-        available_actions.sort(key=lambda item: item["action_id"])
         return CompanionPromptContext(
             language=language,
             current_time=format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or "",
             persona_extras=render_extras(load_persona_definition(persona), language=language),
             current_mood=persona.current_mood or "",
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion"), language=language),
-            available_actions=available_actions,
         )
+
+
+async def load_available_expression_actions(db: AsyncSession, user_id: int) -> list[dict[str, Any]]:
+    """返回当前激活包中 LLM 可点播的表达动作清单；每项含 action_id/name/use_when 等。系统产品槽位不进清单，动态动作即表达能力。"""
+    pack = await get_active_pack(db, user_id)
+    if pack is None:
+        return []
+    available_actions: list[dict[str, Any]] = []
+    for row in await list_pack_actions(db, pack.id, enabled_only=True):
+        if is_expression_action(row):
+            available_actions.append(action_prompt_entry(row))
+    available_actions.sort(key=lambda item: item["action_id"])
+    return available_actions
 
 
 async def run_prompt_json(

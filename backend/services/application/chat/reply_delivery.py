@@ -24,7 +24,7 @@ from services.contracts import MediaTurnState
 from services.domains.conversation import resolve_reply_media
 from services.infrastructure.llm import ProviderConfig, speech_performance_schema, validate_speech_style
 
-from .reply_links import reference_spans, validate_reply_links
+from .reply_links import ReplyReferences, reference_spans, validate_reply_links
 
 
 class _ReplyEnvelope(BaseModel):
@@ -290,13 +290,13 @@ def decode_companion_reply(
     raw: str,
     *,
     allow_voice_fallback: bool = False,
-    reference_texts: tuple[str, ...] = (),
+    references: ReplyReferences = ReplyReferences(),
 ) -> tuple[str, Literal["dialogue", "written"]]:
     """模型类型标记只用于交付校验；持久化继续使用原气泡数组契约。"""
     # 演绎与媒体在数组协议中校验，保留按 speech 字段降级的边界。
     draft = _ReplyEnvelope.model_validate_json(raw)
     # 分句前核对完整地址，防止查询串中的问号被拆开后丢失校验依据。
-    validate_reply_links(draft.bubbles, kind=draft.kind, reference_texts=reference_texts)
+    validate_reply_links(draft.bubbles, kind=draft.kind, references=references)
     values = draft.bubbles
     if draft.kind == "written":
         if not values:
@@ -348,7 +348,7 @@ def validate_companion_reply_repair(
     draft: str,
     *,
     media_turn: MediaTurnState,
-    reference_texts: tuple[str, ...] = (),
+    references: ReplyReferences = ReplyReferences(),
 ) -> None:
     original = _draft_bubbles(draft)
     if original is None:
@@ -356,7 +356,7 @@ def validate_companion_reply_repair(
     values = json.loads(content)
     preserve_written = True
     try:
-        validate_reply_links(original, kind=kind, reference_texts=reference_texts)
+        validate_reply_links(original, kind=kind, references=references)
     except ValidationError:
         # 伪造地址不属于需逐字保留的作品内容；媒体顺序保护仍然适用。
         preserve_written = False
@@ -368,7 +368,7 @@ def validate_companion_reply_repair(
         and re.sub(r"\s+", "", values[0]["text"]) != re.sub(r"\s+", "", "".join(b["text"] for b in original))
     ):
         raise ValueError("A written repair must preserve the draft's words and punctuation")
-    references: dict[tuple[str, str], str] = {}
+    media_goals: dict[tuple[str, str], str] = {}
     for bubble in original:
         if bubble.get("type") not in {"image", "video"} or not isinstance(bubble.get("media_id"), str):
             continue
@@ -376,10 +376,10 @@ def validate_companion_reply_repair(
             media = resolve_reply_media(media_turn, bubble["media_id"], bubble["type"])
         except ValueError:
             continue
-        references[bubble["type"], bubble["media_id"]] = media.goal_id
-    goal_counts = Counter(references.values())
-    required = [key for key, goal in references.items() if goal_counts[goal] == 1]
-    preserved = [(b["type"], b["media_id"]) for b in values if (b.get("type"), b.get("media_id")) in references]
+        media_goals[bubble["type"], bubble["media_id"]] = media.goal_id
+    goal_counts = Counter(media_goals.values())
+    required = [key for key, goal in media_goals.items() if goal_counts[goal] == 1]
+    preserved = [(b["type"], b["media_id"]) for b in values if (b.get("type"), b.get("media_id")) in media_goals]
     preserved = [key for key in preserved if key in required]
     if preserved != required:
         raise ValueError("A reply repair must preserve valid media references and order")
@@ -393,11 +393,15 @@ def parse_companion_reply(
     language: str,
     allow_silence: bool,
     media_turn: MediaTurnState,
-    reference_texts: tuple[str, ...] = (),
+    references: ReplyReferences = ReplyReferences(),
     kind: Literal["dialogue", "written"] = "dialogue",
 ) -> CompanionReply | None:
     source = CompanionReplyInput.model_validate_json(raw)
-    validate_reply_links([bubble.model_dump() for bubble in source.root], kind=kind, reference_texts=reference_texts)
+    validate_reply_links(
+        [bubble.model_dump(include={"type", "text"}) for bubble in source.root],
+        kind=kind,
+        references=references,
+    )
     if not source.root:
         if allow_silence and not media_turn.required_goals:
             return None
@@ -471,7 +475,7 @@ def fallback_companion_voice_reply(
     language: str,
     allow_silence: bool,
     media_turn: MediaTurnState,
-    reference_texts: tuple[str, ...] = (),
+    references: ReplyReferences = ReplyReferences(),
     kind: Literal["dialogue", "written"] = "dialogue",
 ) -> tuple[str, CompanionReply | None]:
     """恢复预算耗尽后仅将演绎无效的气泡降级为原台词；正文和媒体仍须通过完整校验。"""
@@ -485,7 +489,7 @@ def fallback_companion_voice_reply(
                 language=language,
                 allow_silence=allow_silence,
                 media_turn=media_turn,
-                reference_texts=reference_texts,
+                references=references,
                 kind=kind,
             )
         except ValidationError as exc:

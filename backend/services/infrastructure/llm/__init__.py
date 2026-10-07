@@ -72,7 +72,7 @@ from .tts_service import (
     resolve_reply_voice,
     synthesize_speech,
 )
-from .user_config import UserLlmConfig, client_for_config, resolve_user_llm_config
+from .user_config import UserLlmConfig, resolve_user_llm_config
 from .voice_catalog import voices_for_provider
 from .wait_budget import accepted_image_job_wait, generation_timeout_scope
 
@@ -113,7 +113,6 @@ __all__ = [
     "call_with_retry",
     "chat",
     "classify_api_error",
-    "client_for_config",
     "execute_with_fallback",
     "generate_embedding",
     "generate_embeddings",

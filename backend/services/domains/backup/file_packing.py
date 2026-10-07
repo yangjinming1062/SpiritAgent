@@ -232,12 +232,30 @@ class UrlRewriter:
         return target
 
     def rewrite(self, value: Any, depth: int = 0) -> Any:
+        return self._walk(value, depth, apply=True)
+
+    def scan(self, value: Any, depth: int = 0) -> None:
+        """与 rewrite 同一遍历只收集副作用，不重建容器、不回写 JSON 字符串。"""
+        self._walk(value, depth, apply=False)
+
+    # 单一遍历骨架：rewrite（apply=True）重建容器，scan（apply=False）只收集副作用。
+    def _walk(self, value: Any, depth: int, *, apply: bool) -> Any:
         if depth > _MAX_JSON_DEPTH:
             raise ValueError("备份资料嵌套过深，无法安全校验媒体归属。")
         if isinstance(value, dict):
-            return {key: self.rewrite(item, depth + 1) for key, item in value.items()}
+            result: dict[Any, Any] = {}
+            for key, item in value.items():  # 只扫值，不扫键
+                walked = self._walk(item, depth + 1, apply=apply)
+                if apply:
+                    result[key] = walked
+            return result if apply else None
         if isinstance(value, list):
-            return [self.rewrite(item, depth + 1) for item in value]
+            items: list[Any] = []
+            for item in value:
+                walked = self._walk(item, depth + 1, apply=apply)
+                if apply:
+                    items.append(walked)
+            return items if apply else None
         if isinstance(value, str):
             if value.lstrip().startswith(("{", "[")):
                 try:
@@ -247,7 +265,10 @@ class UrlRewriter:
                 except ValueError:
                     pass
                 else:
-                    rewritten = self.rewrite(parsed, depth + 1)
+                    # JSON 串只递归解析结果，不再落 token/整串分支。
+                    rewritten = self._walk(parsed, depth + 1, apply=apply)
+                    if not apply:
+                        return None
                     return json.dumps(rewritten, ensure_ascii=False) if rewritten != parsed else value
             if _ASSET_TOKEN.search(value):
 
@@ -256,9 +277,12 @@ class UrlRewriter:
                     reference = token.rstrip(".!?，。；！")
                     return (self(reference) or "") + token[len(reference) :]
 
-                return _ASSET_TOKEN.sub(rewrite_token, value)
-            return self(value)
-        return value
+                # sub 逐命中调用 rewrite_token，副作用顺序与 scan 模式一致，仅丢弃替换结果。
+                rewritten = _ASSET_TOKEN.sub(rewrite_token, value)
+                return rewritten if apply else None
+            rewritten = self(value)
+            return rewritten if apply else None
+        return value if apply else None
 
     def rollback(self) -> None:
         for path in reversed(self.created):
@@ -267,7 +291,7 @@ class UrlRewriter:
 
 def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewriter) -> None:
     """预检工作线程核对必需文件；旧历史可保留失效引用，不把身份或发布资产当作已恢复。"""
-    rewriter.rewrite(rows)
+    rewriter.scan(rows)
     for row in rows:
         required: list[Any] = []
         if table == "avatar_assets":

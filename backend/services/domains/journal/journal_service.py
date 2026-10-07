@@ -5,9 +5,16 @@ from datetime import date
 from uuid import uuid4
 
 from modules.auth import lock_user_row
-from modules.companion import CompanionDiaryEntry, DiaryContent, DiaryEntryResponse
+from modules.companion import (
+    CompanionDiaryEntry,
+    DiaryContent,
+    DiaryEntryResponse,
+    has_unread,
+    mark_read,
+    unread_ids,
+)
 from modules.ws import emit_ws_event
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.memory import index_diary_memory
@@ -79,43 +86,12 @@ async def publish_diary(
 
 
 async def unread_diary_ids(db: AsyncSession, user_id: int) -> list[str]:
-    return list(
-        (
-            await db.scalars(
-                select(CompanionDiaryEntry.id).where(
-                    CompanionDiaryEntry.user_id == user_id,
-                    CompanionDiaryEntry.is_read.is_(False),
-                ),
-            )
-        ).all(),
-    )
+    return await unread_ids(db, user_id, CompanionDiaryEntry)
 
 
 async def has_unread_diary(db: AsyncSession, user_id: int) -> bool:
-    return bool(
-        await db.scalar(
-            select(
-                select(CompanionDiaryEntry.id)
-                .where(CompanionDiaryEntry.user_id == user_id, CompanionDiaryEntry.is_read.is_(False))
-                .exists(),
-            ),
-        ),
-    )
+    return await has_unread(db, user_id, CompanionDiaryEntry)
 
 
 async def mark_diary_read(db: AsyncSession, user_id: int, diary_ids: Sequence[str]) -> bool:
-    await lock_user_row(db, user_id)
-    result = await db.execute(
-        update(CompanionDiaryEntry)
-        .where(
-            CompanionDiaryEntry.user_id == user_id,
-            CompanionDiaryEntry.id.in_(diary_ids),
-            CompanionDiaryEntry.is_read.is_(False),
-        )
-        .values(is_read=True),
-    )
-    if result.rowcount:
-        emit_ws_event(db, user_id=user_id, event_type="companion.diary.read", payload={})
-    has_unread = await has_unread_diary(db, user_id)
-    await db.commit()
-    return has_unread
+    return await mark_read(db, user_id, CompanionDiaryEntry, diary_ids, "companion.diary.read")

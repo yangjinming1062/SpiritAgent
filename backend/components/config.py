@@ -10,6 +10,7 @@ from pydantic_settings import (
 )
 
 from .ai_config import AIConfig
+from .constants import ATTACHMENT_VIDEO_MAX_BYTES
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -53,6 +54,11 @@ class Settings(BaseSettings):
     app_name: str = Field(default="SpiritAgent Backend", validation_alias="APP_NAME")
     # 非空时视频附件以绝对 URL 直发供应商（单文件上限=会话配额）；留空走 base64 内联（50MB）。
     public_base_url: str = Field(default="", validation_alias="PUBLIC_BASE_URL")
+
+    @property
+    def video_attachment_max_bytes(self) -> int:
+        """视频附件单文件上限：公网模式（public_base_url 非空）= 会话配额（供应商直拉 URL）；本地模式 = 内联 50MB。"""
+        return self.attachment_session_quota_bytes if self.public_base_url.strip() else ATTACHMENT_VIDEO_MAX_BYTES
 
     database_url: str
 

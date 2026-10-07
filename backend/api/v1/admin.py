@@ -78,7 +78,7 @@ logger = get_logger(__name__)
 
 router = get_router(dependencies=[Depends(get_current_admin_token)])
 
-# 备份 zip 分块读写；update.py 上传用更小的 CHUNK_SIZE，此处独立取 1 MB 减少往返。
+# 备份 zip 分块读写；1 MB 分块减少线程池往返。
 ARCHIVE_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 

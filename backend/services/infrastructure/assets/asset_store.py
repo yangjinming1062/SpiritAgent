@@ -407,6 +407,34 @@ async def save_image_chain_asset_async(
     )
 
 
+def image_chain_input_asset_path(user_id: int, generation_id: str, label: str, ext: str, *, directory: str) -> str:
+    """冻结输入图的独立落盘位；label 取 ref/ref2/identity，不与候选 a{attempt}_s{slot} 撞名。"""
+    if (
+        user_id <= 0
+        or label not in {"ref", "ref2", "identity"}
+        or ext not in {"png", "jpg", "webp", "gif"}
+        or not _is_generation_id(generation_id)
+    ):
+        raise ValueError("invalid image chain input asset key")
+    return _asset_path(user_id, directory, f"image_{generation_id}_in_{label}.{ext}")
+
+
+async def save_image_chain_input_asset_async(
+    data: bytes,
+    *,
+    user_id: int,
+    generation_id: str,
+    label: str,
+    ext: str,
+    directory: str,
+) -> str:
+    return await _save_generation_asset_async(
+        data,
+        user_id,
+        image_chain_input_asset_path(user_id, generation_id, label, ext, directory=directory),
+    )
+
+
 def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str] | None:
     try:
         resolved = _asset_target(user_id, filename)

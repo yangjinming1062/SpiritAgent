@@ -49,14 +49,16 @@ _ASSET_SUFFIXES = {
 }
 
 
-async def enqueue_asset_cleanup(
+async def enqueue_asset_cleanup_entries(
     db: AsyncSession,
     user_id: int,
-    paths: Iterable[str],
-    *,
-    not_before: datetime | None = None,
+    entries: Iterable[tuple[str, datetime | None]],
 ) -> None:
-    owned = {path for path in paths if (parsed := parse_companion_asset_path(path)) and parsed[0] == user_id}
+    owned = {
+        path: not_before
+        for path, not_before in entries
+        if (parsed := parse_companion_asset_path(path)) and parsed[0] == user_id
+    }
     if not owned:
         return
     now = utc_now()
@@ -65,11 +67,21 @@ async def enqueue_asset_cleanup(
         .values(
             [
                 {"user_id": user_id, "path": path, "requested_at": now, "not_before": not_before or now}
-                for path in sorted(owned)
+                for path, not_before in sorted(owned.items())
             ],
         )
         .on_conflict_do_nothing(index_elements=[AssetCleanupPending.user_id, AssetCleanupPending.path]),
     )
+
+
+async def enqueue_asset_cleanup(
+    db: AsyncSession,
+    user_id: int,
+    paths: Iterable[str],
+    *,
+    not_before: datetime | None = None,
+) -> None:
+    await enqueue_asset_cleanup_entries(db, user_id, ((path, not_before) for path in paths))
 
 
 async def collect_message_asset_releases(
@@ -209,11 +221,13 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
         )
         protected_until = {row.path: row.retired_at + _ACTION_GRACE for row in retirements}
         now = utc_now()
+        entries: list[tuple[str, datetime | None]] = []
         for path in released:
             not_before = protected_until.get(path)
             if not_before is None and any(part.startswith("pack") and part[4:].isdigit() for part in Path(path).parts):
                 not_before = now + _ACTION_GRACE
-            await enqueue_asset_cleanup(db, user_id, [path], not_before=not_before)
+            entries.append((path, not_before))
+        await enqueue_asset_cleanup_entries(db, user_id, entries)
         await db.commit()
 
     deleted_ids: list[int] = []

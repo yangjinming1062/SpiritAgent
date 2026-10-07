@@ -56,7 +56,7 @@ async def _guarded_stream(
             events_count += 1
             event_type = str(getattr(chunk, "type", ""))
             delta = getattr(chunk, "delta", None)
-            if isinstance(delta, str):
+            if isinstance(delta, str) and SETTINGS.llm_debug_logging:
                 accumulated_content += delta
             if (
                 event_type == "response.output_item.done"
@@ -85,20 +85,22 @@ async def _guarded_stream(
     finally:
         with contextlib.suppress(Exception):
             await stream.close()
-        preview, original_len = truncate_for_log(accumulated_content)
-        response_summary: dict[str, Any] = {
-            "num_events": events_count,
-            "content_preview": preview,
-            "content_original_chars": original_len,
-            "finish_reason": finish_reason,
-            "function_call_count": function_call_count,
-        }
-        if usage is not None:
-            response_summary["usage"] = {
-                "input_tokens": getattr(usage, "input_tokens", None),
-                "output_tokens": getattr(usage, "output_tokens", None),
-                "total_tokens": getattr(usage, "total_tokens", None),
+        response_summary: dict[str, Any] | None = None
+        if SETTINGS.llm_debug_logging:
+            preview, original_len = truncate_for_log(accumulated_content)
+            response_summary = {
+                "num_events": events_count,
+                "content_preview": preview,
+                "content_original_chars": original_len,
+                "finish_reason": finish_reason,
+                "function_call_count": function_call_count,
             }
+            if usage is not None:
+                response_summary["usage"] = {
+                    "input_tokens": getattr(usage, "input_tokens", None),
+                    "output_tokens": getattr(usage, "output_tokens", None),
+                    "total_tokens": getattr(usage, "total_tokens", None),
+                }
         extras: dict[str, Any] = {"stream": True}
         if first_chunk_at is not None:
             extras["time_to_first_chunk_ms"] = int((first_chunk_at - call_started) * 1000)

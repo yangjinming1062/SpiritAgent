@@ -59,7 +59,9 @@ def _summarize_response_item(item: Any) -> dict[str, Any]:
     return out
 
 
-def summarize_llm_request(kwargs: dict[str, Any]) -> dict[str, Any]:
+def summarize_llm_request(kwargs: dict[str, Any]) -> dict[str, Any] | None:
+    if not SETTINGS.llm_debug_logging:
+        return None
     out: dict[str, Any] = {"model": kwargs.get("model"), "stream": bool(kwargs.get("stream"))}
     if (instructions := kwargs.get("instructions")) is not None:
         out["instructions_preview"] = truncate_for_log(instructions)[0]
@@ -77,7 +79,9 @@ def summarize_llm_request(kwargs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def summarize_llm_response(response: Any) -> dict[str, Any]:
+def summarize_llm_response(response: Any) -> dict[str, Any] | None:
+    if not SETTINGS.llm_debug_logging:
+        return None
     if response is None:
         return {"present": False}
     out: dict[str, Any] = {

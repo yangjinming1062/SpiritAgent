@@ -835,6 +835,7 @@ async def gc_autonomous_publications() -> tuple[int, int]:
             if not rows:
                 break
             cursor = rows[-1].id
+            candidates: list[PostPublication] = []
             for row in rows:
                 try:
                     key = UUID(row.idempotency_key.removeprefix("autonomous:"))
@@ -847,16 +848,32 @@ async def gc_autonomous_publications() -> tuple[int, int]:
                     or ((task := _TASKS.get(row.id)) is not None and not task.done())
                 ):
                     continue
-                reference = await db.scalar(
-                    select(NightlyActivityAction.id)
-                    .where(NightlyActivityAction.result["publication_id"].as_string() == row.id)
-                    .limit(1),
-                )
-                if reference is not None:
+                candidates.append(row)
+            if not candidates:
+                continue
+            ids = [row.id for row in candidates]
+            referenced = set(
+                (
+                    await db.scalars(
+                        select(NightlyActivityAction.result["publication_id"].as_string()).where(
+                            NightlyActivityAction.result["publication_id"].as_string().in_(ids),
+                        ),
+                    )
+                ).all(),
+            )
+            job_ids = [job_id for row in candidates if (job_id := _video_job_id(row)) is not None]
+            jobs: dict[int, VideoGenJob] = {}
+            if job_ids:
+                jobs = {
+                    job.id: job
+                    for job in (await db.scalars(select(VideoGenJob).where(VideoGenJob.id.in_(job_ids)))).all()
+                }
+            for row in candidates:
+                if row.id in referenced:
                     continue
                 job_id = _video_job_id(row)
                 if job_id is not None:
-                    job = await db.get(VideoGenJob, job_id)
+                    job = jobs.get(job_id)
                     if job is not None and job.status not in ("succeeded", "failed", "discarded"):
                         continue
                 keep = {

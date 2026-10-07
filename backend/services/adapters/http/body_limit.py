@@ -2,7 +2,7 @@
 
 import re
 
-from components import ATTACHMENT_VIDEO_MAX_BYTES, SESSION_LOCAL, SETTINGS, STT_MAX_AUDIO_BYTES
+from components import SESSION_LOCAL, SETTINGS, STT_MAX_AUDIO_BYTES
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from modules.auth import get_current_admin_token, get_current_session
@@ -43,10 +43,7 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
         # Client / Runner 的视觉补全载荷预算为 10 MiB。
         return 10 * _MIB + _DEFAULT_MAX_BYTES, False
     if path == "/api/media/videos":
-        limit = (
-            SETTINGS.attachment_session_quota_bytes if SETTINGS.public_base_url.strip() else ATTACHMENT_VIDEO_MAX_BYTES
-        )
-        return limit + _UPLOAD_OVERHEAD_BYTES, False
+        return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
     if path == "/api/media/stt":
         return STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES, False
     if _BACKUP_UPLOAD_PATH.fullmatch(path):

@@ -83,25 +83,6 @@ def _evaluate_hostname(host: str) -> tuple[bool, str]:
     return True, ""
 
 
-def is_safe_outbound(host: str) -> tuple[bool, str]:
-    """完整 SSRF 校验：hostname 黑名单 + 保留段检查 + DNS 解析后评估全部结果；守卫关闭时放行。同步函数，事件循环里请走 asyncio.to_thread 或 `_SafeOutboundAsyncBackend`。"""
-    if not SETTINGS.ssrf_guard_enabled:
-        return True, ""
-    ok, reason = _evaluate_hostname(host)
-    if not ok:
-        return False, reason
-    try:
-        infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        return False, f"DNS resolution failed: {exc}"
-
-    for info in infos:
-        ok, reason = _evaluate_ip(info[4][0])
-        if not ok:
-            return False, reason
-    return True, ""
-
-
 def _resolve_and_validate(host: str, port: int) -> list[tuple[str, int]]:
     """同步 DNS 解析并校验全部结果；返回通过的 (ip, port)。async 路径由调用方移出事件循环。"""
     try:
@@ -217,7 +198,7 @@ async def download_capped(url: str, *, max_bytes: int, timeout: float) -> bytes:
             safe_outbound_async_client(timeout=client_timeout) as client,
             client.stream("GET", current_url) as resp,
         ):
-            if resp.is_redirect or resp.status_code in (301, 302, 303, 307, 308):
+            if resp.is_redirect:
                 redirect_count += 1
                 if redirect_count > _MAX_REDIRECTS:
                     raise RuntimeError(f"too many redirects ({redirect_count} > {_MAX_REDIRECTS})")

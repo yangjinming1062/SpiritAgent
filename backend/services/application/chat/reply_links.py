@@ -1,6 +1,7 @@
 """陪伴台词中的媒体地址只允许引用输入资料；交付产物仍走媒体气泡。"""
 
 import re
+from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import unquote
 
@@ -61,13 +62,25 @@ def _references(text: str) -> set[str]:
     return {text[start:end] for start, end in reference_spans(text)}
 
 
+@dataclass(frozen=True)
+class ReplyReferences:
+    """引用语料及其地址集合；同一回合多次校验共享一次语料扫描。"""
+
+    texts: tuple[str, ...] = ()
+    sources: frozenset[str] = frozenset()
+
+    @classmethod
+    def from_texts(cls, texts: tuple[str, ...]) -> "ReplyReferences":
+        return cls(texts=texts, sources=frozenset(ref for text in texts for ref in _references(text)))
+
+
 def validate_reply_links(
     bubbles: list[dict[str, JsonValue]],
     *,
     kind: Literal["dialogue", "written"],
-    reference_texts: tuple[str, ...],
+    references: ReplyReferences,
 ) -> None:
-    sources = {reference for text in reference_texts for reference in _references(text)}
+    sources = references.sources
     for index, bubble in enumerate(bubbles):
         if bubble.get("type") not in {"text", "voice"} or not isinstance(text := bubble.get("text"), str):
             continue
@@ -88,7 +101,7 @@ def validate_reply_links(
                 error = "Deliver generated assets through image/video bubbles, not asset paths in text"
                 break
         if any(
-            kind != "written" or not any(match[0] in source for source in reference_texts)
+            kind != "written" or not any(match[0] in source for source in references.texts)
             for match in _INLINE_MEDIA.finditer(text)
         ):
             error = "Inline media markup cannot deliver an attachment; use media bubbles or preserve an exact source quotation"

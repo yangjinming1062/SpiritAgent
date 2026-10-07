@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from services.domains.conversation import load_recent_context_window
 from services.infrastructure.llm import UserLlmConfig
 
-from .prompt_runtime import load_companion_prompt_context, run_prompt_json
+from .prompt_runtime import load_available_expression_actions, load_companion_prompt_context, run_prompt_json
 
 logger = get_logger(__name__)
 
@@ -33,10 +33,11 @@ async def check_idle_expression(
     ctx = await load_companion_prompt_context(user_id)
     if ctx is None:
         return IdleExpressionResult(expressed=False, reason="persona not ready")
-    if not ctx.available_actions:
-        return IdleExpressionResult(expressed=False, reason="no available actions")
 
     async with SESSION_LOCAL() as db:
+        available_actions = await load_available_expression_actions(db, user_id)
+        if not available_actions:
+            return IdleExpressionResult(expressed=False, reason="no available actions")
         recent_context = await load_recent_context_window(db, user_id) or ""
 
     parsed, fail_reason = await run_prompt_json(
@@ -48,7 +49,7 @@ async def check_idle_expression(
             "persona": ctx.persona_extras,
             "idle_minutes": round(idle_seconds / 60, 2),
             "local_hour": local_hour if local_hour >= 0 else None,
-            "available_actions": ctx.available_actions,
+            "available_actions": available_actions,
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
             **({"recent_context": recent_context} if recent_context else {}),
         },
@@ -62,7 +63,7 @@ async def check_idle_expression(
         logger.info("idle_expression: skip", extra={"user_id": user_id})
         return IdleExpressionResult(expressed=False)
 
-    allowed_ids = {int(item["action_id"]) for item in ctx.available_actions}
+    allowed_ids = {int(item["action_id"]) for item in available_actions}
     action_id = parsed.get("action_id")
     if type(action_id) is not int:
         return IdleExpressionResult(expressed=False, reason="invalid action_id")

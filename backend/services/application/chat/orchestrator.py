@@ -29,6 +29,7 @@ from services.domains.conversation import (
     IM_KIND,
     SPECIAL_KIND,
     conversation_memory_scope,
+    load_context_messages,
     load_media_turn,
     refresh_video_media,
 )
@@ -72,7 +73,7 @@ from .tool_dispatch import _ToolDispatchContext, matched_tool_names
 from .turn_errors import emit_conversation_unavailable, emit_llm_error, emit_llm_unavailable, emit_turn_limit
 from .turn_inputs import (
     build_turn_inputs,
-    load_memory_query_text,
+    memory_query_text,
     merge_session_settings,
     parse_temperature,
     resolve_context_provider_chain,
@@ -138,12 +139,19 @@ async def compress_session_history(
 
 
 def _history_unlocked_tool_names(input_items: list[dict]) -> set[str]:
-    """历史里调用过或经 ``search_tools`` 解锁的工具。"""
+    """历史里调用过的工具，以及经 ``search_tools`` 结果解锁的工具；与派发侧同门控。"""
     unlocked: set[str] = set()
+    call_names: dict[str, str] = {}
     for item in input_items:
         if item.get("type") == "function_call" and (name := item.get("name")):
-            unlocked.add(str(name))
+            name = str(name)
+            unlocked.add(name)
+            if call_id := item.get("call_id"):
+                call_names[str(call_id)] = name
         elif item.get("type") == "function_call_output":
+            # 只认 search_tools 的结果（与 persistence.py 的解锁门控一致），避免其他工具输出里偶然的 matched_tools 形 JSON 误解锁。
+            if call_names.get(str(item.get("call_id") or "")) != "search_tools":
+                continue
             unlocked.update(matched_tool_names(item.get("output", "")))
     return unlocked
 
@@ -284,11 +292,13 @@ async def _run_chat_turn(
                 else safe_json_loads(conv.settings_json or "", default={}),
                 conv=conv,
             )
-            memory_query = (
-                await load_memory_query_text(db, conv, req, use_request=not ephemeral)
-                if memory_scope is not None
-                else ""
-            )
+            # 主动回合在此一次加载历史：既取最近用户发言，也传给 build_turn_inputs 免二次读取。
+            history: list[Message] | None = None
+            memory_query = ""
+            if memory_scope is not None:
+                if ephemeral:
+                    history = await load_context_messages(db, conv)
+                memory_query = memory_query_text(req, history or [], use_request=not ephemeral)
 
         memory_embedding = await embed_memory_text(user_id, memory_query) if len(memory_query.strip()) > 1 else None
 
@@ -306,6 +316,7 @@ async def _run_chat_turn(
                     proactive_memory_embedding=memory_embedding,
                     companion_proactive_turn=ephemeral,
                     excluded_tool_names=excluded_tool_names,
+                    history=history,
                 )
             except MissingLlmConfigError as exc:
                 # 用户行已落库：配置补齐后可按 retry_message_id 重试，不能以没有重试入口的异常收尾；主动回合没有用户行，异常交由调用方记录。

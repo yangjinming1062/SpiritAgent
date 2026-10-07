@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = get_logger(__name__)
 router = get_router()
 
-CHUNK_SIZE = 8192
+CHUNK_SIZE = 1024 * 1024
 # 版本目录与数据库记录须成对出现：上传与删除在进程内串行（后端单 web 进程部署），避免并发写同一目录或互删。
 _VERSION_LOCK = asyncio.Lock()
 
