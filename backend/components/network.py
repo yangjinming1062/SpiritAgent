@@ -1,3 +1,4 @@
+import asyncio
 import ipaddress
 import socket
 from collections.abc import Iterable
@@ -8,8 +9,10 @@ from urllib.parse import urljoin, urlparse
 import anyio
 import httpcore
 import httpx
+from httpx._utils import URLPattern
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .config import SETTINGS
+from .config import BACKEND_DIR, SETTINGS
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -165,18 +168,132 @@ class _SafeOutboundAsyncTransport(httpx.AsyncHTTPTransport):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._uses_proxy = kwargs.get("proxy") is not None
         # httpcore 私有属性；连接池其余配置（limits / ssl_context）由 super 接管，不重置。
         self._pool._network_backend = _SafeOutboundAsyncBackend()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self._uses_proxy and SETTINGS.ssrf_guard_enabled:
+            # 代理负责目标建连，socket 守卫只能看到代理地址；目标须另行校验。
+            ok, reason = _evaluate_hostname(request.url.host)
+            if not ok:
+                raise httpx.ConnectError(reason, request=request)
+            try:
+                with anyio.fail_after(request.extensions.get("timeout", {}).get("connect")):
+                    await anyio.to_thread.run_sync(
+                        partial(
+                            _resolve_and_validate,
+                            request.url.host,
+                            request.url.port or (443 if request.url.scheme == "https" else 80),
+                        ),
+                        abandon_on_cancel=True,
+                    )
+            except httpcore.ConnectError as exc:
+                raise httpx.ConnectError(str(exc), request=request) from exc
+            except TimeoutError as exc:
+                raise httpx.ConnectTimeout("Proxy target DNS validation timed out", request=request) from exc
+        return await super().handle_async_request(request)
+
+
+class _ProxySettings(BaseSettings):
+    http_proxy: str = ""
+    https_proxy: str = ""
+    all_proxy: str = ""
+    no_proxy: str = ""
+
+    model_config = SettingsConfigDict(
+        env_file=BACKEND_DIR / ".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
+
+
+class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
+    """按环境代理和 NO_PROXY 路由；CIDR 匹配 URL 中的 IP，域名沿用 HTTPX 匹配规则。"""
+
+    def __init__(self, *, trust_env: bool) -> None:
+        proxies = _ProxySettings().model_dump() if trust_env else {}
+        entries = [entry.strip() for entry in proxies.get("no_proxy", "").split(",")]
+        self._bypass_all = "*" in entries
+        self._bypass_patterns: list[URLPattern] = []
+        self._bypass_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for entry in entries:
+            if self._bypass_all:
+                break
+            if not entry:
+                continue
+            if "/" in entry and "://" not in entry:
+                self._bypass_networks.append(ipaddress.ip_network(entry, strict=False))
+                continue
+            if "://" in entry:
+                pattern = entry
+            else:
+                try:
+                    address = ipaddress.ip_address(entry.strip("[]"))
+                except ValueError:
+                    pattern = f"all://{entry if entry.startswith(('*', '[')) else '*' + entry}"
+                else:
+                    self._bypass_networks.append(ipaddress.ip_network(str(address)))
+                    continue
+            pattern_url = httpx.URL(pattern)
+            try:
+                address = ipaddress.ip_address(pattern_url.host)
+            except ValueError:
+                pass
+            else:
+                pattern = str(pattern_url.copy_with(host=str(address)))
+            self._bypass_patterns.append(URLPattern(pattern))
+
+        self._direct = _SafeOutboundAsyncTransport(trust_env=trust_env)
+        self._proxies: dict[str, _SafeOutboundAsyncTransport] = {}
+        if not self._bypass_all:
+            for scheme in ("http", "https", "all"):
+                if proxy := proxies.get(f"{scheme}_proxy"):
+                    proxy = proxy if "://" in proxy else f"http://{proxy}"
+                    self._proxies[scheme] = _SafeOutboundAsyncTransport(proxy=proxy, trust_env=trust_env)
+
+    def _bypass_proxy(self, url: httpx.URL) -> bool:
+        if self._bypass_all:
+            return True
+        try:
+            address = ipaddress.ip_address(url.host)
+        except ValueError:
+            return any(pattern.matches(url) for pattern in self._bypass_patterns)
+        url = url.copy_with(host=str(address))
+        if any(pattern.matches(url) for pattern in self._bypass_patterns):
+            return True
+        addresses = [address]
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            addresses.append(address.ipv4_mapped)
+        return any(candidate in network for candidate in addresses for network in self._bypass_networks)
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        transport = self._direct
+        if not self._bypass_proxy(request.url):
+            transport = self._proxies.get(request.url.scheme) or self._proxies.get("all") or self._direct
+        return await transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        results = await asyncio.gather(
+            *(transport.aclose() for transport in (self._direct, *self._proxies.values())),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
 
 def safe_outbound_async_client(**kwargs: Any) -> httpx.AsyncClient:
     """带建连期 SSRF 守卫的 AsyncClient 工厂；不跟随重定向，``download_capped`` 自行逐跳校验。"""
-    return httpx.AsyncClient(transport=safe_outbound_async_transport(), **kwargs)
+    transport = safe_outbound_async_transport(trust_env=kwargs.get("trust_env", True))
+    return httpx.AsyncClient(transport=transport, **kwargs)
 
 
-def safe_outbound_async_transport() -> httpx.AsyncBaseTransport:
+def safe_outbound_async_transport(*, trust_env: bool = True) -> httpx.AsyncBaseTransport:
     """返回带 SSRF 守卫的 transport（不附带 client）——给需要在 transport 外面再包一层（如重试 / 自定义 pool）的调用方使用。"""
-    return _SafeOutboundAsyncTransport()
+    return _ProxyRoutingAsyncTransport(trust_env=trust_env)
 
 
 _MAX_REDIRECTS = 5

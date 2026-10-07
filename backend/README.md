@@ -117,19 +117,25 @@ REST 直接驱动绑定启停，守卫循环自愈，不做周期对账。接收
 
 通用回退、安全重试与结果未知归 [模型失败与重试预算](../docs/PROTOCOL.md#模型失败与重试预算)。实现分别在 [llm_fallback.py](services/infrastructure/llm/llm_fallback.py)、[error_classifier.py](services/infrastructure/llm/error_classifier.py)、[providers/http.py](services/infrastructure/llm/providers/http.py)；媒体质量链由 [media_chain.py](services/application/generation/media_chain.py) 管理，选材与恢复归 PIPELINE。
 
-出站守卫由 [components/network.py](components/network.py) 管理，`SSRF_GUARD_ENABLED` 默认关闭，可后台热切换，适用于 DNS 污染或 fake-IP 代理环境。开启后拒绝保留网段，可用 `SSRF_ALLOWED_CIDRS` 指定豁免；豁免不取消域名、协议、HTTPS 降级、云元数据及 CGNAT 校验。下载大小、协议白名单与 HTTPS 降级检查不受守卫开关影响。
+出站网络层见 [components/network.py](components/network.py)。模型、媒体下载、Tavily、Brave 和微信 HTTP 请求按协议读取 `HTTP_PROXY` / `HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于 `.env`。`NO_PROXY` 支持域名、IP、端口、`*` 和 IPv4 / IPv6 CIDR，网段只匹配 URL 中的 IP；模板已排除内网和 Tailscale，短名称或自定义域名需自行添加。DDGS 的显式代理使用 `DDGS_PROXY`。
+
+`SSRF_GUARD_ENABLED` 默认关闭以适配 DNS 污染 / fake-IP 代理，可后台热切换。开启后拒绝保留网段，`SSRF_ALLOWED_CIDRS` 不能豁免域名黑名单、云元数据及 CGNAT。代理地址也受守卫检查，目标另做本地 DNS 校验；代理实际建连须由代理端限制。`NO_PROXY` 不取消守卫，下载的大小、协议和 HTTPS 降级检查始终生效。
 
 ## 部署与排障
 
 ### Docker Compose 部署
 
-复制配置模板为 `config.toml`，填写密钥与管理员凭据，在 `backend` 目录运行：
+复制 [配置模板](config.toml.example) 为 `config.toml`，填写密钥与管理员凭据；复制 [.env.example](.env.example) 为 `.env`，填写数据库账号、密码和数据库名，在 `backend` 目录运行：
 
 ```bash
 docker compose up -d
 ```
 
-数据库要求 PostgreSQL 16 及以上和 pgvector，Compose 使用 `pgvector/pgvector:pg16`。会话搜索与记忆证据查询依赖 `IS JSON` 和 `pg_input_is_valid`，没有启动期版本检查；低版本会在查询时失败。Compose 的数据库密码与宿主端口映射见 [docker-compose.yml](docker-compose.yml)，部署时与连接配置一并调整。
+数据库要求 PostgreSQL 16 及以上和 pgvector，Compose 使用 `pgvector/pgvector:pg16`。会话搜索与记忆证据查询依赖 `IS JSON` 和 `pg_input_is_valid`，没有启动期版本检查；低版本会在查询时失败。
+
+Compose 和后端共用 `.env` 的 PostgreSQL 凭据，后端默认连接 `postgres:5432`；显式 `DATABASE_URL` 或旧 `config.toml` 的 `database_url` 优先，删除旧字段后启用自动构造。已有数据卷沿用现有凭据；修改 `.env` 不会修改已初始化的账号、密码或数据库，变更须先在数据库中同步。
+
+宿主机代理使用 `http://host.docker.internal:<端口>`，须允许 Docker 网桥访问。修改 `.env` 后执行 `docker compose up -d --force-recreate backend`，`restart` 不更新容器环境。
 
 后端代码与依赖打入镜像，修改后执行 `docker compose up -d --build backend`。构建上下文为仓库根，仅根 `.dockerignore` 生效；镜像内含 FFmpeg 与 ffprobe，Backend 不参与桌面安装包构建。
 

@@ -3,16 +3,16 @@ services:
     image: pgvector/pgvector:pg16
     container_name: spiritagent-postgres
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: spiritagent
+    environment: &postgres_credentials
+      POSTGRES_USER: ${POSTGRES_USER:?请在 backend/.env 设置 POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 backend/.env 设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?请在 backend/.env 设置 POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "15432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 5s
       timeout: 3s
       retries: 5
@@ -27,8 +27,10 @@ services:
       postgres:
         condition: service_healthy
     env_file:
-      - path: .env
-        required: false
+      - .env
+    environment: *postgres_credentials
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # 仅绑定本机回环：明文 HTTP 不暴露公网，公网 TLS 由 caddy（--profile public）终止。
     ports:
       - "127.0.0.1:10620:10620"
@@ -37,7 +39,7 @@ services:
       - ./updates:/app/updates
       - ./data:/app/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:10620/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://localhost:10620/health', timeout=2)"]
       interval: 10s
       timeout: 3s
       retries: 5

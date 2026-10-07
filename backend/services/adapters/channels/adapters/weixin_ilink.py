@@ -15,6 +15,7 @@ from components import (
     SETTINGS,
     download_capped,
     get_logger,
+    safe_outbound_async_client,
     session_scope,
 )
 from Crypto.Cipher import AES
@@ -234,7 +235,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
 
     def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS))
+            self._client = safe_outbound_async_client(timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS))
         return self._client
 
     def _headers(self) -> dict:

@@ -88,9 +88,10 @@ Windows 另有桌面模式：把场景壁纸、伙伴、轻语、对话与各功
    ```bash
    cd backend
    cp config.toml.example config.toml
+   cp .env.example .env
    ```
 
-   修改 `config.toml` 中的 JWT 密钥、资产签名密钥与管理员密码，三者均不能保留示例值；数据库配置与 Compose 保持一致。
+   修改 `config.toml` 中的 JWT 密钥、资产签名密钥与管理员密码，三者均不能保留示例值；在 `.env` 填写 PostgreSQL 凭据，详见 [后端部署](backend/README.md#docker-compose-部署)。
 2. 在 `backend/` 启动后端与数据库：
 
    ```bash

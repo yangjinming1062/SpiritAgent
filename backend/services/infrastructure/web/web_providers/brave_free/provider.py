@@ -1,5 +1,5 @@
 import httpx
-from components import get_logger
+from components import get_logger, safe_outbound_async_client
 
 from ..base import WebSearchData, WebSearchItem, WebSearchProvider, WebSearchResult
 
@@ -7,7 +7,7 @@ logger = get_logger(__name__)
 
 _BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 # 模块级客户端保持连接池预热——每次新建都要重新走 TLS 握手。
-_HTTP_CLIENT = httpx.AsyncClient(timeout=15)
+_HTTP_CLIENT = safe_outbound_async_client(timeout=15)
 
 
 async def aclose_brave() -> None:

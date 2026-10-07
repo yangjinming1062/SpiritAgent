@@ -8,6 +8,7 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+from sqlalchemy import URL
 
 from .ai_config import AIConfig
 from .constants import ATTACHMENT_VIDEO_MAX_BYTES
@@ -49,6 +50,34 @@ class TomlConfigSource(PydanticBaseSettingsSource):
         return _load_toml_file(_EXAMPLE_CONFIG_PATH) | _load_toml_file(BACKEND_DIR / "config.toml")
 
 
+class _PostgresSettings(BaseSettings):
+    user: str = Field(min_length=1, validation_alias="POSTGRES_USER")
+    password: str = Field(min_length=1, validation_alias="POSTGRES_PASSWORD")
+    database: str = Field(min_length=1, validation_alias="POSTGRES_DB")
+    host: str = Field(default="postgres", min_length=1, validation_alias="POSTGRES_HOST")
+    port: int = Field(default=5432, ge=1, le=65535, validation_alias="POSTGRES_PORT")
+
+    model_config = SettingsConfigDict(
+        env_file=BACKEND_DIR / ".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
+
+
+def _postgres_database_url() -> str:
+    settings = _PostgresSettings()
+    return URL.create(
+        "postgresql+psycopg",
+        username=settings.user,
+        password=settings.password,
+        host=settings.host,
+        port=settings.port,
+        database=settings.database,
+    ).render_as_string(hide_password=False)
+
+
 class Settings(BaseSettings):
     ai_config: AIConfig = Field(default_factory=AIConfig)
     app_name: str = Field(default="SpiritAgent Backend", validation_alias="APP_NAME")
@@ -60,7 +89,7 @@ class Settings(BaseSettings):
         """视频附件单文件上限：公网模式（public_base_url 非空）= 会话配额（供应商直拉 URL）；本地模式 = 内联 50MB。"""
         return self.attachment_session_quota_bytes if self.public_base_url.strip() else ATTACHMENT_VIDEO_MAX_BYTES
 
-    database_url: str
+    database_url: str = Field(default_factory=_postgres_database_url)
 
     jwt_secret_key: str = Field(min_length=16)
     jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
