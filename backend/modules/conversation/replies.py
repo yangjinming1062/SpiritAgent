@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from components.asset_paths import parse_companion_asset_path
 from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
-from modules.media import SPEECH_STYLE_ADAPTER, SpeechCue, SpeechDirection, SpeechPause, SpeechStyle
+from modules.media import SPEECH_STYLE_ADAPTER, SpeechDirection, SpeechSegment, SpeechStyle
 
 
 class SpeechPerformance(BaseModel):
@@ -14,12 +14,11 @@ class SpeechPerformance(BaseModel):
     styles: list[str] | None = None
     emotion: str | None = None
     speed: float | None = None
-    cues: list[SpeechCue] | None = None
-    pauses: list[SpeechPause] | None = None
+    segments: list[SpeechSegment] | None = None
 
     def bind(self, provider: str, model: str) -> SpeechStyle:
         performance = self.model_dump(exclude_unset=True)
-        inactive = {"direction", "styles"} if provider == "minimax" else {"emotion", "speed", "pauses"}
+        inactive = {"direction", "styles"} if provider == "minimax" else {"emotion", "speed"}
         # 通用输入中的空占位不表达演绎；非空的跨供应商字段仍由严格模型拒绝。
         for name in inactive:
             if performance.get(name) in (None, []):

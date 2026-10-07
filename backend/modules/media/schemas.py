@@ -3,18 +3,15 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
-class SpeechCue(BaseModel):
+class SpeechSegment(BaseModel):
+    """句内标记的落点：text 串按序拼回本泡台词，tag/pause 作用于所属段起始处。"""
+
     model_config = ConfigDict(extra="forbid")
 
-    before: str = Field(min_length=1, max_length=80)
-    tag: str = Field(min_length=1, max_length=80, pattern=r"^[^\[\]()<>\r\n]+$")
-
-
-class SpeechPause(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    before: str = Field(min_length=1, max_length=80)
-    seconds: float = Field(ge=0.01, le=99.99, multiple_of=0.01)
+    text: str = Field(min_length=0, max_length=4000)
+    # tag 是单个音频/语气变化标记；含逗号等分隔符即为多条指令混入，应拆开或写进 direction。
+    tag: str | None = Field(default=None, max_length=80, pattern=r"^[^\[\]()<>，,、;；\r\n]+$")
+    pause: float | None = Field(default=None, ge=0.01, le=99.99, multiple_of=0.01)
 
 
 class SpeechDirection(BaseModel):
@@ -35,7 +32,7 @@ class MiMoSpeechStyle(BaseModel):
         max_length=4,
     )
     direction: SpeechDirection
-    cues: list[SpeechCue] = Field(default_factory=list, max_length=8)
+    segments: list[SpeechSegment] = Field(default_factory=list, max_length=12)
 
 
 class MiniMaxSpeechStyle(BaseModel):
@@ -47,8 +44,7 @@ class MiniMaxSpeechStyle(BaseModel):
         Literal["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"] | None
     ) = None
     speed: float = Field(default=1, ge=0.5, le=2)
-    cues: list[SpeechCue] = Field(default_factory=list, max_length=8)
-    pauses: list[SpeechPause] = Field(default_factory=list, max_length=32)
+    segments: list[SpeechSegment] = Field(default_factory=list, max_length=12)
 
 
 SpeechStyle = Annotated[MiMoSpeechStyle | MiniMaxSpeechStyle, Field(discriminator="provider")]

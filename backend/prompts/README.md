@@ -47,7 +47,7 @@
 ## 服务层动态提示词
 
 - [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，字段说明包含类型、用途及必要的可选性、长度和取值约束；说明供规划模型阅读，实际校验由参数模型与执行器负责。动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
-- [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商与模型装配能力和 JSON 示例，附加到陪伴终端请求；检查正文规则时一并核对。
+- [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商与模型装配能力和 JSON 示例，附加到陪伴终端请求；MiMo 用导演指令（user 消息）加句内分段标记（segments，还原台词原文并标记音频标签落点），MiniMax 用 emotion/speed 加同结构 segments，检查正文规则时一并核对。
 - [媒体气泡](../services/application/chat/streaming.py)——本轮有可引用产物时，`chat.py::COMPANION_MEDIA_REPLY_GUIDANCES` 与可信产物清单装配到正常和恢复请求；`tools.py` 的批次生成、验图与重做说明对应 [chat_images.py](../services/application/generation/chat_images.py)。
 - [工具域目录](../services/infrastructure/tool_runtime/domains.py)——根据当前实际可用工具重写 `search_tools` 描述，预设与调用方排除后在对话装配中再次计算。
 - [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。

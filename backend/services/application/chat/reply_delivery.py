@@ -181,37 +181,91 @@ def _sentence_endings(text: str) -> list[re.Match[str]]:
     ]
 
 
+def _sentence_positions(text: str, parts: list[str]) -> list[tuple[int, int]]:
+    """每个分句在原文中的区间；分句是原文的 strip 切片，从上一个终点起定位首次出现。"""
+    positions: list[tuple[int, int]] = []
+    cursor = 0
+    for part in parts:
+        start = text.index(part, cursor)
+        positions.append((start, start + len(part)))
+        cursor = start + len(part)
+    return positions
+
+
+def _split_segments_by_sentence(
+    text: str,
+    segments: list[JsonValue],
+    positions: list[tuple[int, int]],
+    index: int,
+) -> list[list[dict[str, JsonValue]]]:
+    """句内标记按分句重新分组：段起点所在句获得其标记，跨句段在句界切开，段间与句末空白不归入任何句。"""
+    for segment in segments:
+        if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
+            raise _invalid_performance(index, ("segments",), "Each segment is an object with a text string")
+    if "".join(segment["text"] for segment in segments) != text:
+        raise _invalid_performance(
+            index,
+            ("segments",),
+            "Segment texts must concatenate in order to exactly this bubble's text",
+        )
+    grouped: list[list[dict[str, JsonValue]]] = [[] for _ in positions]
+    offset = 0
+    sentence_index = 0
+    for segment in segments:
+        start, end = offset, offset + len(segment["text"])
+        while sentence_index + 1 < len(positions) and positions[sentence_index + 1][0] <= start:
+            sentence_index += 1
+        cursor = start
+        first = True
+        while cursor < end:
+            sentence_start, sentence_end = positions[sentence_index]
+            cut = min(end, sentence_end)
+            piece = text[max(cursor, sentence_start) : cut]
+            marked = first and (segment.get("tag") is not None or segment.get("pause") is not None)
+            if piece or marked:
+                child: dict[str, JsonValue] = {"text": piece}
+                if marked:
+                    if segment.get("tag") is not None:
+                        child["tag"] = segment["tag"]
+                    if segment.get("pause") is not None:
+                        child["pause"] = segment["pause"]
+                grouped[sentence_index].append(child)
+            first = False
+            cursor = cut
+            if cursor >= sentence_end and sentence_index + 1 < len(positions):
+                sentence_index += 1
+            elif cursor < end:
+                # 游标已达末句终点却未到段末：剩余是被 strip 掉的尾部空白，无句可分配，直接消费到段末。
+                break
+        offset = end
+    return grouped
+
+
 def _split_dialogue_bubble(bubble: dict[str, JsonValue], index: int) -> list[dict[str, JsonValue]]:
     if bubble.get("type") not in {"text", "voice"} or not isinstance(bubble.get("text"), str):
         return [bubble]
     parts = _sentence_parts(bubble["text"])
     if len(parts) == 1:
         return [bubble]
-    bubbles = [{**deepcopy(bubble), "text": part} for part in parts]
     speech = bubble.get("speech")
+    grouped: list[list[dict[str, JsonValue]]] | None = None
     if bubble["type"] == "voice" and isinstance(speech, dict):
-        performances = [deepcopy(speech) for _ in parts]
-        # 锚点随原台词进入所属句子；跨句、无效或落在新气泡开头的停顿交给模型修正。
-        for field in ("cues", "pauses"):
-            anchors = speech.get(field)
-            if not isinstance(anchors, list):
-                continue
-            selected: list[list[JsonValue]] = [[] for _ in parts]
-            for anchor_index, anchor in enumerate(anchors):
-                if not isinstance(anchor, dict) or not isinstance(anchor.get("before"), str):
-                    raise _invalid_performance(index, (field, anchor_index, "before"), "Use a phrase from this bubble")
-                matching = [i for i, part in enumerate(parts) if part.count(anchor["before"]) == 1]
-                if len(matching) != 1 or (field == "pauses" and parts[matching[0]].startswith(anchor["before"])):
-                    raise _invalid_performance(
-                        index,
-                        (field, anchor_index, "before"),
-                        "Anchor must match a unique phrase in one split sentence; adjust or omit this optional control",
-                    )
-                selected[matching[0]].append(anchor)
-            for performance, anchors in zip(performances, selected, strict=True):
-                performance[field] = anchors
-        for value, performance in zip(bubbles, performances, strict=True):
-            value["speech"] = performance
+        segments = speech.get("segments") or []
+        if not isinstance(segments, list):
+            raise _invalid_performance(index, ("segments",), "Voice reply requires a segments array")
+        grouped = (
+            _split_segments_by_sentence(bubble["text"], segments, _sentence_positions(bubble["text"], parts), index)
+            if segments
+            else [[] for _ in parts]
+        )
+    bubbles = []
+    for position, part in enumerate(parts):
+        child = {**deepcopy(bubble), "text": part}
+        if grouped is not None:
+            performance = {key: value for key, value in speech.items() if key != "segments"}
+            performance["segments"] = grouped[position] or [{"text": part}]
+            child["speech"] = performance
+        bubbles.append(child)
     return bubbles
 
 
@@ -376,30 +430,25 @@ def parse_companion_reply(
                     for error in exc.errors(include_url=False)
                 ],
             ) from exc
-        for cue_index, cue in enumerate(style.cues):
-            if bubble.text.count(cue.before) != 1:
-                raise _invalid_performance(
-                    index,
-                    ("cues", cue_index, "before"),
-                    "Cue anchor must be an exact phrase occurring once in this bubble's text; choose a unique phrase or omit the cue",
-                )
+        if "".join(segment.text for segment in style.segments) != bubble.text:
+            raise _invalid_performance(
+                index,
+                ("segments",),
+                "Segment texts must concatenate in order to exactly this bubble's text; keep the spoken words verbatim "
+                "and omit markers you cannot place",
+            )
         if style.provider == "minimax":
-            positions: set[int] = set()
-            for pause_index, pause in enumerate(style.pauses):
-                if bubble.text.count(pause.before) != 1:
+            for segment_index, segment in enumerate(style.segments):
+                if segment.pause is not None and (
+                    not "".join(s.text for s in style.segments[:segment_index]).strip()
+                    or (segment.tag is not None and segment.text == "")
+                ):
                     raise _invalid_performance(
                         index,
-                        ("pauses", pause_index, "before"),
-                        "Pause anchor must be an exact phrase occurring once in this bubble's text",
+                        ("segments", segment_index, "pause"),
+                        "A pause must follow spoken words, never the opening word; omit it when punctuation already "
+                        "separates the words",
                     )
-                position = bubble.text.index(pause.before)
-                if not bubble.text[:position].strip() or position in positions:
-                    raise _invalid_performance(
-                        index,
-                        ("pauses", pause_index, "before"),
-                        "Pause must follow spoken words and use a different anchor from other pauses",
-                    )
-                positions.add(position)
         bubbles.append(
             VoiceBubble(
                 type="voice",

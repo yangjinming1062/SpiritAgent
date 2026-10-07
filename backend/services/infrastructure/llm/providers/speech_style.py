@@ -38,25 +38,27 @@ _MINIMAX_EMOTIONS = {
 }
 
 _MIMO_GUIDANCE = """
-MiMo accepts open-ended natural-language delivery controls.
-- styles: zero to four overall labels that genuinely affect the whole utterance. Useful categories include emotion
-  (平静/开心/委屈/释然), tone (温柔/俏皮/严肃/慵懒), voice quality (清亮/磁性/气声), or a supported dialect.
-  These are examples, not a whitelist; do not add a style merely to fill the field.
-- cues: local audible events or delivery changes, such as 轻笑, 叹气, 吸气, 小声, 语速加快, 苦笑, 哽咽,
-  or 咳嗽. Use a precise custom description when needed. A cue must be justified by the adjacent words; it is not
-  a place for visual gestures, inner thoughts, or invented events.
-- direction is required. role contains only voice-relevant persona traits and the listener relationship (max 500
-  characters); scene contains the situation established by this exchange and your attitude, without invented facts
-  (max 500); guidance contains the few important choices of pace, pauses, emphasis, and emotional progression (max
-  1500). Use brief phrases for each; direction already conveys tone and scene, so styles and cues are optional.
-Preserve the selected voice and one-speaker persona. styles, cues, and direction must agree without repeating the same
-instruction in every field or escalating drama beyond the dialogue. Do not include brackets in style or cue values.
+MiMo accepts two complementary delivery controls. Write them per voice bubble, from where the conversation stands in
+this turn: a copied direction makes consecutive lines sound identical, so re-derive it as the exchange moves on.
+- direction is required and is sent as one director instruction covering character, scene, and acting guidance:
+  role contains only voice-relevant persona traits and the listener relationship (max 500 characters); scene contains
+  the situation established by this exchange and your attitude, without invented facts (max 500); guidance contains
+  this sentence's delivery choices - pace, pauses, breath, and emphasis on actual words of this bubble's text (max
+  1500). Match the line's length: a short line needs one or two concrete choices, not an arc that its words cannot
+  carry. Use brief phrases for each; direction already conveys tone and scene, so styles and segment tags are optional.
+- styles: zero to four labels prefixed to the whole utterance that genuinely affect it, such as an emotion
+  (开心/委屈/释然), a tone (温柔/俏皮/慵懒), voice quality (清亮/磁性/气声), or a supported dialect. These are
+  examples, not a whitelist; choose them from this moment's mood and do not attach a label merely to fill the field.
 """
-# 句内标记在 styled_speech_text 中插到 before 短语之前，校验只接受本气泡台词中唯一出现的短语。
-_CUE_RULE = (
-    "Each cue is an object {before, tag}: the tag is performed immediately before its before phrase, which must occur "
-    "exactly once in this bubble's text. Copy that phrase verbatim; omit a cue when its anchor cannot match. "
-    "Use at most eight cues, and never add dialogue merely to create an anchor.\n"
+# 句内标记用 segments 表达位置：各段 text 按序拼接必须逐字还原本气泡台词，标记放在发生位置所属的分段上。
+_SEGMENT_RULE = (
+    "Inline positions are expressed through segments: split this bubble's spoken sentence into consecutive segments "
+    "whose text values concatenate, in order, to exactly this bubble's text. Set tag on a segment only when a control "
+    "starts at that point and leave it null on segments that need none; an initial empty-text segment may carry the "
+    "opening tag. A tag must be justified by the adjacent words, marking an audible or delivery change such as 轻笑, "
+    "叹气, 吸气, 深呼吸, 小声, 微笑, 哽咽, 鼻音, or 语速加快, never a visual gesture, inner thought, invented "
+    "event, or a full delivery description; two to six characters are enough. Never change the dialogue to create a "
+    "segment boundary, and use at most twelve segments.\n"
 )
 
 
@@ -66,45 +68,58 @@ def _choices(mapping: dict[str, str]) -> str:
 
 
 def speech_style_guidance(provider: str, model: str, *, language: str) -> str:
+    examples = (
+        (("我听着呢。", "末尾“呢”字轻轻拖长，带一点笑意，语速从容"), ("你慢慢说。", "“慢慢”二字放轻放缓，像在安抚"))
+        if language == "zh"
+        else (
+            ("I'm listening.", "hold the ending lightly, with a faint smile in the voice, unhurried"),
+            ("Take your time.", "soften and slow the words, reassuring"),
+        )
+    )
     if provider == "mimo":
-        example: dict = {
-            "styles": [],
-            "direction": {
-                "role": "configured persona and voice",
-                "scene": "the current exchange",
-                "guidance": "natural delivery; add emphasis only where the words support it",
-            },
-            "cues": [],
-        }
-        capabilities = _MIMO_GUIDANCE + _CUE_RULE
+
+        def example(text: str, guidance: str) -> dict:
+            return {
+                "styles": [],
+                "direction": {
+                    "role": "configured persona and voice",
+                    "scene": "the current exchange",
+                    "guidance": guidance,
+                },
+                "segments": [{"text": text, "tag": None}],
+            }
+
+        capabilities = _MIMO_GUIDANCE + _SEGMENT_RULE
         capabilities += (
             "Singing styles: 唱歌/sing/singing (put this FIRST in styles; Chinese lyrics work best).\n"
             if model == "mimo-v2.5-tts"
-            else "This model does not support singing; do not request singing in styles, cues or director guidance.\n"
+            else "This model does not support singing; do not request singing in styles, segments, or director guidance.\n"
         )
     elif provider == "minimax":
         emotions = dict(_MINIMAX_EMOTIONS)
         if model in _MINIMAX_EXTENDED_EMOTION_MODELS:
             emotions.update(fluent="生动", whisper="低语")
         cues_supported = model in _MINIMAX_CUE_MODELS
-        example = {
-            "emotion": None,
-            "speed": 1,
-            "cues": [],
-            "pauses": [],
-        }
-        capabilities = (
-            f"emotion: null for automatic delivery, or exactly one of these keys: {_choices(emotions)}.\n"
-            + (
-                f"cues: optional inline sounds; tag must be exactly one of these keys: {_choices(_MINIMAX_CUES)}. "
-                + _CUE_RULE
-                if cues_supported
-                else "cues: this model has no inline sounds; keep cues empty.\n"
-            )
-            + "speed: 0.5 to 2, where 1 is normal. pauses: optional {before, seconds} objects, 0.01 to 99.99 seconds with "
-            "at most two decimal places; each pause is inserted immediately before its before phrase, which must occur "
-            "exactly once and follow some spoken words, never the opening word. Pauses cannot share a position; omit them "
-            "when punctuation already separates the words. This model has no free-form style or director field.\n"
+
+        def example(text: str, _guidance: str) -> dict:
+            segment: dict = {"text": text, "pause": None}
+            if cues_supported:
+                segment["tag"] = None
+            return {"emotion": None, "speed": 1, "segments": [segment]}
+
+        capabilities = f"emotion: null for automatic delivery, or exactly one of these keys: {_choices(emotions)}.\n"
+        if cues_supported:
+            capabilities += f"Each segment tag must be exactly one of these keys: {_choices(_MINIMAX_CUES)}.\n"
+        capabilities += (
+            _SEGMENT_RULE
+            if cues_supported
+            else ("This model has no inline sound tags; every segment sets text only.\n")
+        )
+        capabilities += (
+            "speed: 0.5 to 2, where 1 is normal. A segment may set pause: 0.01 to 99.99 seconds with at most two "
+            "decimal places, performed before that segment's words after some spoken words, never the opening word; "
+            "omit it when punctuation already separates the words. This model has no free-form style or director "
+            "field.\n"
         )
     else:
         return ""
@@ -112,22 +127,20 @@ def speech_style_guidance(provider: str, model: str, *, language: str) -> str:
         "\n## Speech performance for voice bubbles\n"
         "Each voice bubble nests its speech object as shown; text bubbles have no speech. Do not include provider or "
         "model identifiers. Write this bubble's spoken sentence first, then its matching performance. "
-        "Use only controls that contribute to the intended delivery; optional cues and pauses need not appear.\n"
+        "Use only controls that contribute to the intended delivery; optional markers need not appear.\n"
         + json.dumps(
             {
                 "kind": "dialogue",
                 "bubbles": [
-                    {"type": "voice", "text": text, "speech": example}
-                    for text in (
-                        ("我听着呢。", "你慢慢说。") if language == "zh" else ("I'm listening.", "Take your time.")
-                    )
+                    {"type": "voice", "text": text, "speech": example(text, guidance)} for text, guidance in examples
                 ],
             },
             ensure_ascii=False,
         )
         + "\n"
         + capabilities
-        + "Use natural delivery by default. All direction stays in speech; text contains only the words actually spoken.\n"
+        + "Use natural delivery by default; performance stays in speech, and text contains only the words actually "
+        "spoken.\n"
     )
 
 
@@ -139,7 +152,10 @@ def speech_performance_schema(provider: str, model: str) -> dict:
     for field in ("provider", "model"):
         schema["properties"].pop(field)
         schema["required"].remove(field)
-    if provider == "minimax":
+    segment = schema["$defs"]["SpeechSegment"]
+    if provider == "mimo":
+        segment["properties"].pop("pause", None)
+    else:
         emotions = list(_MINIMAX_EMOTIONS)
         if model in _MINIMAX_EXTENDED_EMOTION_MODELS:
             emotions.extend(("fluent", "whisper"))
@@ -147,9 +163,11 @@ def speech_performance_schema(provider: str, model: str) -> dict:
             if variant.get("type") == "string":
                 variant["enum"] = emotions
         if model in _MINIMAX_CUE_MODELS:
-            schema["$defs"]["SpeechCue"]["properties"]["tag"]["enum"] = list(_MINIMAX_CUES)
+            for variant in segment["properties"]["tag"]["anyOf"]:
+                if variant.get("type") == "string":
+                    variant["enum"] = list(_MINIMAX_CUES)
         else:
-            schema["properties"]["cues"]["maxItems"] = 0
+            segment["properties"].pop("tag", None)
     return schema
 
 
@@ -165,20 +183,22 @@ def validate_speech_style(style: SpeechStyle, provider: str, model: str) -> None
         style.provider == "mimo"
         and model != "mimo-v2.5-tts"
         and any(
-            tag.strip().lower() in {"唱歌", "sing", "singing"}
-            for tag in [*style.styles, *(cue.tag for cue in style.cues)]
+            value.strip().lower() in {"唱歌", "sing", "singing"}
+            for value in [*style.styles, *(s.tag for s in style.segments if s.tag)]
         )
     ):
         reject(("styles",), "Singing is not supported by this speech model")
+    if style.provider == "mimo" and any(segment.pause is not None for segment in style.segments):
+        reject(("segments",), "MiMo delivery has no timed pause; describe pacing in direction guidance instead")
     if style.provider == "minimax":
         if style.emotion in {"fluent", "whisper"} and model not in _MINIMAX_EXTENDED_EMOTION_MODELS:
             reject(("emotion",), f"Emotion must be null or one of: {', '.join(_MINIMAX_EMOTIONS)}")
-        if style.cues and model not in _MINIMAX_CUE_MODELS:
-            reject(("cues",), "This speech model requires an empty cues array")
-        elif model in _MINIMAX_CUE_MODELS:
-            for index, cue in enumerate(style.cues):
-                if cue.tag not in _MINIMAX_CUES:
-                    reject(("cues", index, "tag"), f"Cue tag must be one of: {', '.join(_MINIMAX_CUES)}")
+        if model in _MINIMAX_CUE_MODELS:
+            for index, segment in enumerate(style.segments):
+                if segment.tag is not None and segment.tag not in _MINIMAX_CUES:
+                    reject(("segments", index, "tag"), f"Segment tag must be one of: {', '.join(_MINIMAX_CUES)}")
+        elif any(segment.tag is not None for segment in style.segments):
+            reject(("segments",), "This speech model has no inline sound tags")
     if errors:
         raise ValidationError.from_exception_data("SpeechStyle", errors)
 
@@ -192,26 +212,20 @@ def speech_style_matches(style: SpeechStyle, provider: str, model: str) -> bool:
 
 
 def styled_speech_text(text: str, style: SpeechStyle) -> str:
-    """把已匹配当前供应商与模型的演绎标注嵌入朗读文本。"""
-    insertions: dict[int, str] = {}
-    for cue in style.cues:
-        if text.count(cue.before) == 1:
-            position = text.index(cue.before)
-            tag = f"[{cue.tag}]" if style.provider == "mimo" else f"({cue.tag})"
-            insertions[position] = insertions.get(position, "") + tag
-    if style.provider == "minimax":
-        pause_positions: set[int] = set()
-        for pause in style.pauses:
-            if (
-                text.count(pause.before) == 1
-                and (position := text.index(pause.before)) > 0
-                and text[:position].strip()
-                and position not in pause_positions
-            ):
-                insertions[position] = insertions.get(position, "") + f"<#{pause.seconds:g}#>"
-                pause_positions.add(position)
-    for position in sorted(insertions, reverse=True):
-        text = text[:position] + insertions[position] + text[position:]
+    """把已匹配当前供应商与模型的演绎标记嵌入朗读文本。"""
+    parts: list[str] = []
+    for segment in style.segments:
+        if style.provider == "mimo":
+            if segment.tag:
+                parts.append(f"[{segment.tag}]")
+        elif segment.tag:
+            parts.append(f"({segment.tag})")
+        if segment.pause is not None:
+            parts.append(f"<#{segment.pause:g}#>")
+        parts.append(segment.text)
+    rendered = "".join(parts)
+    if rendered:
+        text = rendered
     if style.provider == "mimo" and style.styles:
         text = f"({' '.join(style.styles)}){text}"
     return text
