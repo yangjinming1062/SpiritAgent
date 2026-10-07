@@ -97,8 +97,8 @@ Token 估算以最近一条带用量的助手行及其后新增内容为基线�
 
 ### 语音资产
 
-- [reply_audio.py](../../domains/conversation/reply_audio.py)校验消息归属并按消息串行合成，固定已保存的供应商、模型和音色；配置不可用时保留失败，不替换演绎。
-- 用户回合的陪伴回复先落库，再有界合成语音，之后才发送 `message.complete`；合成期间取消时回复已保存，不再实时交付。主动回合先合成语音，再由 `finish_companion_intent` 落库并以 `companion.message` 投递，未投递时删除音频。
+- [reply_audio.py](../../domains/conversation/reply_audio.py)校验消息归属并按消息加锁、同消息内并发合成后按气泡顺序提交，固定已保存的供应商、模型和音色；配置不可用时保留失败，不替换演绎。
+- 用户回合的陪伴回复先落库，再有界并发合成语音，气泡保持原顺序逐个经 `message.bubble` 交付，`message.complete` 收尾；合成期间取消或发现消息被改删（LookupError）时回复行已保存，已交付气泡保留，未提交音频清理。主动回合先合成语音，再由 `finish_companion_intent` 落库并以 `companion.message` 投递，未投递时删除音频。
 - 合成不占用数据库事务，写回锁定消息并核对原文与对应语音语义，合并最新媒体状态，避免删除、恢复及视频并发完成后的迟到覆盖。
 - `mutagen` 读取音频格式和真实时长，拒绝无法识别、时长无效或不支持的音频；资产与更新事件提交前后分别处理取消和清理。
 

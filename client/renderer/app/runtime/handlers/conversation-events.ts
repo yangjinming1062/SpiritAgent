@@ -33,6 +33,7 @@ export function handleConversationEvent(
     $turnHadBubbleBreak,
     appendAssistantDelta,
     appendAssistantReasoningDelta,
+    appendCompanionBubble,
     beginAssistantMessage,
     bindTrailingAssistantMessageId,
     bindTrailingUserMessageIds,
@@ -84,6 +85,19 @@ export function handleConversationEvent(
       // 后端把回合切成连续气泡——收尾当前气泡，下一条 message.delta 开新气泡（后端已插入 0.5–1.5 秒停顿）。
       setTurnHadBubbleBreak(true)
       finalizeAssistantMessage()
+
+      break
+    }
+
+    case 'message.bubble': {
+      // 结构化回复逐泡交付：按气泡顺序到达，语音泡的音频已就绪（失败时为空，同 message.voice 降级）。
+      const payload = decodePayload<{ message_id?: number; bubble_index?: number; bubble?: CompanionBubble }>(
+        event.payload
+      )
+
+      if (typeof payload.message_id === 'number' && typeof payload.bubble_index === 'number' && payload.bubble) {
+        appendCompanionBubble(payload.message_id, payload.bubble_index, payload.bubble)
+      }
 
       break
     }

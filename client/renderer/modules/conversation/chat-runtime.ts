@@ -141,6 +141,9 @@ export function createConversationRuntime(sessionId: string | null) {
   const mediaUpdates = new Map<string, CompanionMediaBubble>()
   const mediaUpdateKey = (messageId: number, mediaId: string): string => `${messageId}:${mediaId}`
 
+  // 逐泡交付中的回复组（首泡行 id）：后台交付插入与完成帧对账的定位锚点。
+  let inflightReply: { messageId: number; firstId: string } | null = null
+
   function companionBubbleBody(bubble: CompanionBubble, messageId?: number): Partial<ChatMessageBody> {
     if (bubble.type === 'image' || bubble.type === 'video') {
       const current = messageId === undefined ? undefined : mediaUpdates.get(mediaUpdateKey(messageId, bubble.media_id))
@@ -550,12 +553,13 @@ export function createConversationRuntime(sessionId: string | null) {
     const id = nextChatMessageId()
     $chatMessageBodies.setKey(id, body)
     const list = $chatMessageList.get()
-    const last = list.at(-1)
     const next = { id, ...item, timestamp: Date.now() }
 
-    // 后台交付插在活动回复之前，流式增量与完成帧仍以末行定位自己的气泡。
-    const preserveStreaming = item.subtype && last?.role === 'assistant' && $chatMessageBodies.get()[last.id]?.streaming
-    $chatMessageList.set(preserveStreaming ? [...list.slice(0, -1), next, last] : [...list, next])
+    // 后台交付插在活动回复（流式等待气泡或在途逐泡回复组）之前，保持回复组连续。
+    const insertAt = item.subtype ? activeReplyInsertIndex(list) : null
+    $chatMessageList.set(
+      insertAt === null ? [...list, next] : [...list.slice(0, insertAt), next, ...list.slice(insertAt)]
+    )
 
     return id
   }
@@ -896,6 +900,7 @@ export function createConversationRuntime(sessionId: string | null) {
   }
 
   function beginAssistantMessage(): void {
+    inflightReply = null
     const last = lastAssistantMessage()
 
     if (last?.body.error && last.body.retryMessageId) {
@@ -1020,12 +1025,138 @@ export function createConversationRuntime(sessionId: string | null) {
     $lastAssistantStreaming.set(false)
   }
 
+  // 在途回复组位置：流式等待气泡或逐泡交付中回复组的首泡。后台 subtype 行插到其前，保持回复组连续。
+  function activeReplyInsertIndex(list: ChatMessageListItem[]): number | null {
+    const last = list.at(-1)
+
+    if (last?.role === 'assistant' && $chatMessageBodies.get()[last.id]?.streaming) {
+      return list.length - 1
+    }
+
+    const inflight = inflightReply
+
+    if (inflight) {
+      const idx = list.findIndex(item => item.id === inflight.firstId)
+
+      return idx >= 0 ? idx : null
+    }
+
+    return null
+  }
+
+  // 同消息气泡组内按 replyIndex 空位插入（完成帧对账补建）；无组时落到在途回复位置。
+  function companionBubbleInsertAt(list: ChatMessageListItem[], messageId: number, index: number): number {
+    let groupStart = -1
+    let insertAt = -1
+
+    for (let i = 0; i < list.length; i += 1) {
+      const body = $chatMessageBodies.get()[list[i].id]
+
+      if (list[i].backendMessageId !== messageId || body?.replyIndex === undefined) {
+        continue
+      }
+
+      if (groupStart < 0) {
+        groupStart = i
+        insertAt = i - 1
+      }
+
+      if (body.replyIndex < index) {
+        insertAt = i
+      }
+    }
+
+    return groupStart >= 0 ? insertAt + 1 : (activeReplyInsertIndex(list) ?? list.length)
+  }
+
+  function insertCompanionBubbleRow(
+    list: ChatMessageListItem[],
+    messageId: number,
+    index: number,
+    bubble: CompanionBubble,
+    extras?: { reasoning?: string; proactive?: boolean }
+  ): string {
+    const id = nextChatMessageId()
+
+    list.splice(companionBubbleInsertAt(list, messageId, index), 0, {
+      id,
+      role: 'assistant',
+      backendMessageId: messageId,
+      timestamp: Date.now(),
+      ...(extras?.proactive ? { subtype: 'status_proactive' } : {})
+    })
+    $chatMessageBodies.setKey(id, {
+      text: '',
+      ...companionBubbleBody(bubble, messageId),
+      replyIndex: index,
+      streaming: false,
+      toolName: null,
+      ...(extras?.reasoning ? { reasoning: extras.reasoning } : {})
+    })
+
+    return id
+  }
+
+  // 已存在的气泡按补丁处理（与 message.voice 同语义）；返回是否命中。
+  function patchCompanionBubble(messageId: number, index: number, bubble: CompanionBubble): boolean {
+    for (const item of $chatMessageList.get()) {
+      const body = $chatMessageBodies.get()[item.id]
+
+      if (item.backendMessageId !== messageId || body?.replyIndex !== index) {
+        continue
+      }
+
+      if (bubble.type === 'image' || bubble.type === 'video') {
+        updateMediaBubble(messageId, bubble.media_id, bubble)
+      } else {
+        updateVoiceBubble(messageId, index, bubble)
+      }
+
+      return true
+    }
+
+    return false
+  }
+
+  // 逐泡交付（message.bubble）：按到达顺序追加单个气泡，重复到达按补丁处理；首个气泡替换流式等待气泡。
+  function appendCompanionBubble(messageId: number, index: number, bubble: CompanionBubble): void {
+    if (patchCompanionBubble(messageId, index, bubble)) {
+      return
+    }
+
+    const list = $chatMessageList.get()
+    const last = list.at(-1)
+    const streaming = last?.role === 'assistant' && $chatMessageBodies.get()[last.id]?.streaming
+    const next = streaming ? list.slice(0, -1) : [...list]
+
+    if (streaming && last) {
+      $chatMessageBodies.setKey(last.id, undefined)
+    }
+
+    const id = insertCompanionBubbleRow(next, messageId, index, bubble)
+
+    if (!inflightReply || inflightReply.messageId !== messageId) {
+      inflightReply = { messageId, firstId: id }
+    }
+
+    $chatMessageList.set(next)
+    $lastAssistantStreaming.set(false)
+
+    if (bubble.type === 'voice') {
+      conversationVoiceSink().enqueue([id])
+    }
+  }
+
   function finalizeCompanionReply(
     bubbles: CompanionBubble[],
     messageId: number,
     reasoning?: string,
     proactive = false
   ): void {
+    if (inflightReply?.messageId === messageId) {
+      inflightReply = null
+    }
+
     const list = $chatMessageList.get()
 
     if (list.some(item => item.backendMessageId === messageId)) {
@@ -1037,13 +1168,40 @@ export function createConversationRuntime(sessionId: string | null) {
         $lastAssistantStreaming.set(false)
       }
 
+      // 已逐泡交付的气泡按补丁对账；丢帧缺失的下标按 replyIndex 空位补建（PROTOCOL「完整气泡对账」）。
+      const voiceIds: string[] = []
+
       bubbles.forEach((bubble, index) => {
-        if (bubble.type === 'image' || bubble.type === 'video') {
-          updateMediaBubble(messageId, bubble.media_id, bubble)
-        } else {
-          updateVoiceBubble(messageId, index, bubble)
+        if (patchCompanionBubble(messageId, index, bubble)) {
+          return
+        }
+
+        const next = [...$chatMessageList.get()]
+        const id = insertCompanionBubbleRow(next, messageId, index, bubble)
+
+        $chatMessageList.set(next)
+
+        if (bubble.type === 'voice') {
+          voiceIds.push(id)
         }
       })
+
+      conversationVoiceSink().enqueue(voiceIds)
+
+      // 逐泡交付先建气泡、reasoning 随完成帧到达：挂到首个气泡，与整体交付一致。
+      if (reasoning) {
+        const first = $chatMessageList.get().find(item => {
+          const body = $chatMessageBodies.get()[item.id]
+
+          return item.backendMessageId === messageId && body?.replyIndex === 0
+        })
+
+        const body = first ? $chatMessageBodies.get()[first.id] : undefined
+
+        if (first && body && !body.reasoning) {
+          $chatMessageBodies.setKey(first.id, { ...body, reasoning })
+        }
+      }
 
       return
     }
@@ -1059,27 +1217,14 @@ export function createConversationRuntime(sessionId: string | null) {
     }
 
     bubbles.forEach((bubble, index) => {
-      const id = nextChatMessageId()
+      const id = insertCompanionBubbleRow(next, messageId, index, bubble, {
+        proactive,
+        reasoning: index === 0 ? reasoning : undefined
+      })
 
       if (bubble.type === 'voice') {
         voiceIds.push(id)
       }
-
-      next.push({
-        id,
-        role: 'assistant',
-        backendMessageId: messageId,
-        timestamp: Date.now(),
-        ...(proactive ? { subtype: 'status_proactive' } : {})
-      })
-      $chatMessageBodies.setKey(id, {
-        text: '',
-        ...companionBubbleBody(bubble, messageId),
-        replyIndex: index,
-        streaming: false,
-        toolName: null,
-        ...(index === 0 ? { reasoning } : {})
-      })
     })
 
     if (proactive && streaming && last) {
@@ -1163,6 +1308,7 @@ export function createConversationRuntime(sessionId: string | null) {
     cancelled?: boolean
     retryMessageId?: number
   } = {}): void {
+    inflightReply = null
     conversationVoiceSink().cancel($chatSessionId.get())
 
     const last = lastAssistantMessage()
@@ -1195,6 +1341,7 @@ export function createConversationRuntime(sessionId: string | null) {
   function resetChatMessages(): void {
     historyReplacementRevision++
     mediaUpdates.clear()
+    inflightReply = null
     conversationVoiceSink().cancel($chatSessionId.get())
     $chatMessageList.set([])
     $chatMessageBodies.set({})
@@ -1364,6 +1511,7 @@ export function createConversationRuntime(sessionId: string | null) {
     beginAssistantMessage,
     appendAssistantDelta,
     appendAssistantReasoningDelta,
+    appendCompanionBubble,
     setAssistantTool,
     finalizeAssistantMessage,
     finalizeCompanionReply,

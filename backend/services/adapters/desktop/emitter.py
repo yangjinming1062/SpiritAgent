@@ -8,6 +8,7 @@ _TRANSLATED: dict[str, str] = {
     "reasoning.delta": "message.reasoning.delta",
     "message.start": "message.start",
     "bubble.break": "message.break",
+    "bubble.append": "message.bubble",
     "message.complete": "message.complete",
     "message.persisted": "message.persisted",
     "tool_start": "tool.start",
@@ -51,6 +52,13 @@ class JsonRpcEmitter:
             return {
                 "message": redact_message(message) if isinstance(message, str) else message,
                 **({"retry_message_id": data["retry_message_id"]} if type(data.get("retry_message_id")) is int else {}),
+            }
+        if raw_type == "bubble.append":
+            bubble = data.get("bubble")
+            return {
+                **({"message_id": data["message_id"]} if isinstance(data.get("message_id"), int) else {}),
+                **({"bubble_index": data["bubble_index"]} if isinstance(data.get("bubble_index"), int) else {}),
+                **({"bubble": bubble} if isinstance(bubble, dict) else {}),
             }
         if raw_type == "message.complete":
             usage = data.get("usage")

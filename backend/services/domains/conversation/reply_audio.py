@@ -1,6 +1,8 @@
 import asyncio
 import io
 import math
+from collections.abc import Awaitable, Callable
+from typing import Any
 from weakref import WeakValueDictionary
 
 from components import get_logger, session_scope, utc_now
@@ -93,12 +95,26 @@ async def prepare_reply_audio(user_id: int, reply: CompanionReply) -> None:
         reply.audio_directory = dated_asset_directory(utc_now(), timezone=timezone)
     directory = reply.audio_directory
     deadline = asyncio.get_running_loop().time() + 120
+    # TTS 网络调用并发先行、按下标顺序消费赋值；未消费的结果按未提交音频清理。
+    pending: dict[int, asyncio.Task[ReplyAudio]] = {}
     for index, bubble in enumerate(reply.bubbles):
         if isinstance(bubble, VoiceBubble) and bubble.audio is None:
+            pending[index] = asyncio.create_task(
+                _synthesize_bubble(user_id, bubble, deadline, directory),
+                name=f"reply-audio-prepare:{user_id}:{index}",
+            )
+    consumed: set[int] = set()
+    try:
+        for index, bubble in enumerate(reply.bubbles):
+            if index not in pending:
+                continue
             try:
-                bubble.audio = await _synthesize_bubble(user_id, bubble, deadline, directory)
+                bubble.audio = await pending[index]
+                consumed.add(index)
             except Exception:
                 logger.warning("Proactive voice synthesis failed", extra={"bubble_index": index}, exc_info=True)
+    finally:
+        await _discard_unconsumed(pending, consumed)
 
 
 async def discard_reply_audio(reply: CompanionReply) -> None:
@@ -108,13 +124,28 @@ async def discard_reply_audio(reply: CompanionReply) -> None:
             bubble.audio = None
 
 
+async def _discard_unconsumed(pending: dict[int, asyncio.Task[ReplyAudio]], consumed: set[int]) -> None:
+    """排空未消费任务；已成功但未进入消费体的结果属未提交音频，一律清理。"""
+    for task in pending.values():
+        task.cancel()
+    results = await asyncio.gather(*pending.values(), return_exceptions=True)
+    for index, result in zip(pending, results, strict=True):
+        if index not in consumed and isinstance(result, ReplyAudio):
+            await asyncio.to_thread(asset_store.unlink_companion_asset, result.url)
+
+
 async def _synthesize_reply_audio(
     user_id: int,
     message_id: int,
     *,
     bubble_index: int | None = None,
+    on_bubble_ready: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
 ) -> CompanionReply:
-    """按消息串行合成；短事务核对语音语义并合并最新媒体状态，防止迟到覆盖。"""
+    """按消息串行合成；短事务核对语音语义并合并最新媒体状态，防止迟到覆盖。
+
+    TTS 网络调用并发先行、按下标顺序消费提交；on_bubble_ready 在每个气泡就绪后
+    （语音泡为其音频提交后，其余为轮到其顺序时）按气泡顺序回调，供调用方逐泡交付。
+    """
     key = (user_id, message_id)
     lock = _locks.setdefault(key, asyncio.Lock())
     async with asyncio.timeout(30):
@@ -149,71 +180,82 @@ async def _synthesize_reply_audio(
         ):
             raise LookupError("Voice bubble not found")
         deadline = asyncio.get_running_loop().time() + 120
+        pending: dict[int, asyncio.Task[ReplyAudio]] = {}
         for index, bubble in enumerate(reply.bubbles):
-            if (
-                not isinstance(bubble, VoiceBubble)
-                or bubble.audio
-                or bubble_index is not None
-                and index != bubble_index
-            ):
-                continue
-            path: str | None = None
-            committed = False
-            try:
-                bubble.audio = await _synthesize_bubble(user_id, bubble, deadline, directory)
-                path = bubble.audio.url
-                async with user_asset_lock(user_id), session_scope() as db:
-                    current = await db.scalar(
-                        select(Message)
-                        .where(
-                            Message.id == message_id,
-                            Message.conversation.has(Conversation.user_id == user_id),
-                        )
-                        .with_for_update(),
-                    )
-                    if current is None or current.content != original_content or current.reply_json is None:
-                        raise LookupError("Reply changed during synthesis")
-                    latest = CompanionReply.model_validate_json(current.reply_json)
-                    if index >= len(latest.bubbles) or latest.bubbles[index].model_dump(
-                        exclude={"audio"},
-                    ) != bubble.model_dump(exclude={"audio"}):
-                        raise LookupError("Voice bubble changed during synthesis")
-                    latest.bubbles[index] = bubble
-                    reply = latest
-                    current.reply_json = reply.model_dump_json()
-                    emit_ws_event(
-                        db,
-                        user_id=user_id,
-                        event_type="message.voice",
-                        payload={
-                            "session_id": session_id,
-                            "message_id": message_id,
-                            "bubble_index": index,
-                            "bubble": client_reply_bubbles(reply)[index],
-                        },
-                    )
-                    commit_task = asyncio.create_task(db.commit())
-                    try:
-                        await asyncio.shield(commit_task)
-                    except asyncio.CancelledError:
-                        await commit_task
-                        committed = True
-                        raise
-                    committed = True
-            except LookupError:
-                raise
-            except Exception:
-                if not committed:
-                    bubble.audio = None
-                logger.warning(
-                    "Voice bubble synthesis failed",
-                    extra={"message_id": message_id, "bubble_index": index},
-                    exc_info=True,
+            if isinstance(bubble, VoiceBubble) and not bubble.audio and (bubble_index is None or index == bubble_index):
+                pending[index] = asyncio.create_task(
+                    _synthesize_bubble(user_id, bubble, deadline, directory),
+                    name=f"reply-audio:{user_id}:{message_id}:{index}",
                 )
-            finally:
-                if path and not committed:
-                    await asyncio.to_thread(asset_store.unlink_companion_asset, path)
-        return reply
+        consumed: set[int] = set()
+        try:
+            for index, bubble in enumerate(reply.bubbles):
+                if bubble_index is not None and index != bubble_index:
+                    continue
+                if index in pending:
+                    path: str | None = None
+                    committed = False
+                    try:
+                        bubble.audio = await pending[index]
+                        path = bubble.audio.url
+                        # 取到结果才算消费：取消丢弃的结果由排空清理回收。
+                        consumed.add(index)
+                        async with user_asset_lock(user_id), session_scope() as db:
+                            current = await db.scalar(
+                                select(Message)
+                                .where(
+                                    Message.id == message_id,
+                                    Message.conversation.has(Conversation.user_id == user_id),
+                                )
+                                .with_for_update(),
+                            )
+                            if current is None or current.content != original_content or current.reply_json is None:
+                                raise LookupError("Reply changed during synthesis")
+                            latest = CompanionReply.model_validate_json(current.reply_json)
+                            if index >= len(latest.bubbles) or latest.bubbles[index].model_dump(
+                                exclude={"audio"},
+                            ) != bubble.model_dump(exclude={"audio"}):
+                                raise LookupError("Voice bubble changed during synthesis")
+                            latest.bubbles[index] = bubble
+                            reply = latest
+                            current.reply_json = reply.model_dump_json()
+                            emit_ws_event(
+                                db,
+                                user_id=user_id,
+                                event_type="message.voice",
+                                payload={
+                                    "session_id": session_id,
+                                    "message_id": message_id,
+                                    "bubble_index": index,
+                                    "bubble": client_reply_bubbles(reply)[index],
+                                },
+                            )
+                            commit_task = asyncio.create_task(db.commit())
+                            try:
+                                await asyncio.shield(commit_task)
+                            except asyncio.CancelledError:
+                                await commit_task
+                                committed = True
+                                raise
+                            committed = True
+                    except LookupError:
+                        raise
+                    except Exception:
+                        if not committed:
+                            bubble.audio = None
+                        logger.warning(
+                            "Voice bubble synthesis failed",
+                            extra={"message_id": message_id, "bubble_index": index},
+                            exc_info=True,
+                        )
+                    finally:
+                        if path and not committed:
+                            await asyncio.to_thread(asset_store.unlink_companion_asset, path)
+                if on_bubble_ready is not None:
+                    await on_bubble_ready(index, client_reply_bubbles(reply)[index])
+            return reply
+        finally:
+            await _discard_unconsumed(pending, consumed)
     finally:
         lock.release()
 
@@ -223,11 +265,12 @@ async def synthesize_reply_audio(
     message_id: int,
     *,
     bubble_index: int | None = None,
+    on_bubble_ready: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
 ) -> CompanionReply:
     """每次合成有独立、按消息归属的任务；删除消息只取消对应音频。"""
     key = (user_id, message_id)
     task = asyncio.create_task(
-        _synthesize_reply_audio(user_id, message_id, bubble_index=bubble_index),
+        _synthesize_reply_audio(user_id, message_id, bubble_index=bubble_index, on_bubble_ready=on_bubble_ready),
         name=f"reply-audio:{user_id}:{message_id}",
     )
     owned = _tasks.setdefault(key, set())

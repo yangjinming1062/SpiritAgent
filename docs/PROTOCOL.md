@@ -74,6 +74,7 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 | 事件组 | 消费语义 |
 |---|---|
 | `message.start/delta/break/complete` | 开始、正文、分气泡和完成；完成帧补元数据，不重复追加全文 |
+| `message.bubble` | 结构化回复逐泡交付：按气泡原顺序携带 `message_id`、`bubble_index` 与气泡，语音气泡到达时音频已保存（失败则音频为空） |
 | `message.persisted` | 将服务端用户消息 ID 绑定到活路径气泡；助手 ID 随完成帧返回 |
 | `message.voice` | 更新已保存语音气泡的音频，并使对应历史快照失效 |
 | `message.media` | 按消息 ID、媒体标识更新原位视频气泡，并使对应历史快照失效 |
@@ -89,7 +90,7 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 
 - 业务通知面向该用户的桌面交付，不能因目标会话未打开而丢弃。
 - 载荷中的 `session_id` 可用于落卡或跳转，不必然代表会话路由闸门。
-- 回合帧（`message.start/delta/break/complete/persisted`、`message.reasoning.delta`、`tool.start/complete`、`error`、`compress.completed`）的转换见 [emitter](../backend/services/adapters/desktop/emitter.py)；`message.edited/deleted`、`command.result`、`avatar.regenerated` 由 [handlers](../backend/services/adapters/desktop/handlers.py) 直接推送，`tool.call/cancel` 由 [ipc](../backend/services/infrastructure/desktop/ipc.py) 发出；`message.voice/media` 等业务事件经 `emit_ws_event` 写 outbox，载荷由各发射点定义，并与 REST 响应一样按 JSON 模式序列化，时间字段同为 ISO 8601 文本（UTC 以 `Z` 结尾）。客户端分派与消费入口见[渲染层事件路由](../client/renderer/README.md#事件与异步生命周期)。
+- 回合帧（`message.start/delta/break/complete/persisted`、`message.bubble`、`message.reasoning.delta`、`tool.start/complete`、`error`、`compress.completed`）的转换见 [emitter](../backend/services/adapters/desktop/emitter.py)；`message.edited/deleted`、`command.result`、`avatar.regenerated` 由 [handlers](../backend/services/adapters/desktop/handlers.py) 直接推送，`tool.call/cancel` 由 [ipc](../backend/services/infrastructure/desktop/ipc.py) 发出；`message.voice/media` 等业务事件经 `emit_ws_event` 写 outbox，载荷由各发射点定义，并与 REST 响应一样按 JSON 模式序列化，时间字段同为 ISO 8601 文本（UTC 以 `Z` 结尾）。客户端分派与消费入口见[渲染层事件路由](../client/renderer/README.md#事件与异步生命周期)。
 
 `tool.call` 不带 `params.session_id`，但其 `payload` 含 `name`、`args`、`call_id`、信息性 `session_id`、`headless` 与 `skill_scope`（仅学习技能工具非空，见[预设记忆与学习作用域](#预设记忆与学习作用域)）。`headless=true` 照常执行，不显示桌面工作态；IM、后台自动化和其他无头回合须由调用方显式传入，子 Agent 回合沿用父回合的标志，Client 不得靠会话类型猜测这一行为。`tool.cancel` 的 `payload` 只含 `call_id`，语义见[调用日志与未知结果](#调用日志与未知结果)。
 
@@ -132,7 +133,7 @@ flowchart TD
 
 陪伴回合非流式取得最终回复，确认无工具调用后处理、校验；完整响应的单层 JSON 围栏会移除，缺失的内部闭合符只在字符串原样保留、可完整解析时补齐，不抽取其他正文中的 JSON，不消费不完整终态。不能把接收 schema 参数或偶然合法 JSON 当成服务端约束生效。格式错误、取消或异常不交付未确认正文。每回合至多保存一条可见终端消息，工具中间行只保留调用结构。工作台、IM 与自动化继续使用各自文本契约。
 
-缓冲回合只发一次 `message.start`；`message.complete.bubbles` 替换等待气泡，历史使用相同视图。客户端按消息 ID 与气泡索引去重，媒体在自身位置渲染；用量使用终端值，不累加工具循环各轮计数。
+缓冲回合只发一次 `message.start`；结构化回复以 `message.bubble` 按气泡原顺序逐泡交付并替换等待气泡，语音气泡在音频保存后交付，`message.complete` 收尾并以 `message.complete.bubbles` 携带完整气泡对账，历史使用相同视图。客户端按消息 ID 与气泡索引去重，媒体在自身位置渲染；用量使用终端值，不累加工具循环各轮计数。
 
 ### 媒体引用、验图与原位交付
 
@@ -152,7 +153,7 @@ flowchart TD
 
 ### 语音保存与重试
 
-- 后端先保存回复，再有界合成并保存音频，之后才发送 `message.complete`；失败保留语音类型、台词和演绎，音频为空。
+- 后端先保存回复，再有界并行合成并保存音频；气泡保持原顺序逐个经 `message.bubble` 交付，语音气泡在音频保存后交付，失败保留语音类型、台词和演绎，音频为空照常交付；`message.complete` 收尾并携带完整气泡，客户端按消息 ID 与气泡索引对账补建缺失气泡。合成中断（取消或消息被改删）时已交付气泡保留，未提交音频清理。
 - 音频为空的语音气泡在客户端直接显示原台词，不呈现失败语音条或整轮错误；历史与实时交付使用相同降级，后续音频更新到达时恢复语音呈现。
 - 客户端点播或按独立的 `companion.autoplay_voice` 偏好顺序播放，并[缓存音频](../client/README.md#资产与历史缓存)；该偏好仅控制客户端播放，文本没有 TTS 入口。
 - 缺失音频经 `POST /api/sessions/messages/{message_id}/voice/{bubble_index}` 重试，已有音频幂等复用，不重新生成台词或演绎；请求等待覆盖合成预算。

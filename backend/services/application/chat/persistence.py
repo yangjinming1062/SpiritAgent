@@ -308,15 +308,28 @@ async def _persist_assistant_no_tool_turn(
             await db.commit()
             assistant_message_id = row.id
     if reply and assistant_message_id is not None:
+        message_id = assistant_message_id
+
+        async def deliver_bubble(index: int, bubble: dict[str, Any]) -> None:
+            await emitter.send_json(
+                {
+                    "type": "bubble.append",
+                    "message_id": message_id,
+                    "bubble_index": index,
+                    "bubble": bubble,
+                },
+            )
+
         try:
-            reply = await synthesize_reply_audio(user_id, assistant_message_id)
+            # 逐泡交付：语音泡音频提交后、其余按序就绪即交付，保持气泡原顺序。
+            reply = await synthesize_reply_audio(user_id, message_id, on_bubble_ready=deliver_bubble)
         except LookupError:
-            # 消息已被修改或删除时，不能交付旧正文。
+            # 消息已被修改或删除：不再交付后续气泡与完成帧，已逐泡交付的气泡保留（同取消路径），错误卡随后追加。
             raise
         except Exception:
             logger.warning(
                 "Reply audio unavailable; delivering saved dialogue",
-                extra={"message_id": assistant_message_id},
+                extra={"message_id": message_id},
                 exc_info=True,
             )
     reply_bubbles = (

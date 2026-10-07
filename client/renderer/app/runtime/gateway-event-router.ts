@@ -47,6 +47,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'message.break':
 
+    case 'message.bubble':
+
     case 'message.persisted':
 
     case 'message.complete':
