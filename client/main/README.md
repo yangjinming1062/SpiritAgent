@@ -67,19 +67,19 @@
 
 呈现切换 IPC 允许精灵宿主、生活空间、工作台和交互桌面，副屏不具有切换能力；托盘复用主进程同一串行切换入口，菜单按实际模式与准备状态更新。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
 
-[explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../native/desktop-host/README.md)。界面、精灵舞台及全部背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
+[explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../desktop-host/README.md)。界面、精灵舞台及全部背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
 
-桌面窗口固定页面缩放，使顶栏和 Dock 的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。挂载后用 `showInactive()` 同步 Electron 可见状态；原生层级、几何复验与工作区恢复由 [helper](../native/desktop-host/README.md#工作区与层级)负责。
+桌面窗口固定页面缩放，使顶栏和 Dock 的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。挂载后用 `showInactive()` 同步 Electron 可见状态；原生层级、几何复验与工作区恢复由 [helper](../desktop-host/README.md#工作区与层级)负责。
 
 真实主指针释放或精灵交互请求输入焦点；生活／工作显式导航还调用 `focus()`、`moveTop()` 置前，全屏时跳过激活。主进程与 helper 在各自串行队列执行时核对窗口、账户、舞台代次和锁屏。前台广播不抢焦点，渲染层手势不能代替权限校验。焦点请求超时终止 host 并恢复，防止迟到请求继续改动焦点；视图资格与状态同步见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 账户失效、呈现切换、显示器变化、渲染器失败与退出都先恢复系统，再销毁桌面窗口。准备期间的换号、退出、拔屏或 renderer 失败立即使当前接管失效；界面就绪与页面加载共享限时预算。舞台失去执行资格时取消仪式，迟到回执不能恢复资格。休眠或唤醒时恢复窗口模式并保留桌面偏好，须由用户重新选择桌面模式，避免接管 guardian 已恢复的系统窗口。
 
-启动时先处理遗留恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号、兼容与限制见 [helper](../native/desktop-host/README.md#恢复)。
+启动时先处理遗留恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号、兼容与限制见 [helper](../desktop-host/README.md#恢复)。
 
 [desktop-dock.ts](ipc/desktop-dock.ts)持有固定配置与投影缓存，运行窗口由呈现模块注入。窗口更新只合并内存快照；元数据仅广播实际变化，桌面结束或目录重扫后废弃迟到结果。[windows-app-catalog.ts](ipc/windows-app-catalog.ts)合并快捷方式与 [Windows 应用登记](ipc/windows-installed-apps.ts)，按句柄提供图标，不认识 Dock 状态。权限、数据和失败语义见[桌面呈现与本机启动器](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
-真实平台门禁见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)，挂载探测入口见 [helper](../native/desktop-host/README.md#原生验收)。
+真实平台门禁见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)，挂载探测入口见 [helper](../desktop-host/README.md#原生验收)。
 
 ## 配置镜像
 

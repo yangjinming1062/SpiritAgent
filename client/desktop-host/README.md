@@ -10,15 +10,15 @@ Explorer 布局需原生校验：传统布局使用顶层 WorkerW；背景 Worke
 
 附着前核对父进程、窗口身份和完整 DPI context。矩形须对应完整显示器，四项物理几何误差均不超过两像素才按系统边界落位；附着后复验外框和客户区。Electron 须关闭 `frame` 与 `thickFrame`，helper 移除非客户区，恢复时还原原始样式、父窗口、几何和置顶层序。
 
-`focus` 仅接受当前会话登记、身份和父层仍匹配、可见且处于桌面前台的自有窗口。交互界面即使已有焦点也先重新置前；需要转移焦点时，在修饰键与鼠标按钮释放后临时附着线程，最后复验输入焦点及界面实际前台。解除附着失败退出 host，由 guardian 恢复；请求与超时裁决见 [主进程](../../main/README.md#桌面承载与恢复)。
+`focus` 仅接受当前会话登记、身份和父层仍匹配、可见且处于桌面前台的自有窗口。交互界面即使已有焦点也先重新置前；需要转移焦点时，在修饰键与鼠标按钮释放后临时附着线程，最后复验输入焦点及界面实际前台。解除附着失败退出 host，由 guardian 恢复；请求与超时裁决见 [主进程](../main/README.md#桌面承载与恢复)。
 
 ## 运行窗口
 
-[applications.rs](src/windows/applications.rs)独立筛选当前虚拟桌面所有屏幕的普通及最小化窗口，排除系统壳、隐藏窗口、工具浮窗和产品窗口。会话统一持有 WinEvent，分发给观察器与工作区；事件合并处理，每两秒补扫，队列溢出废弃登记后全量校准。COM 接口与监听随会话释放。未变化的枚举不广播；快照按 revision 分批，每行不超过 64 KiB，主进程收齐后应用，代次变化丢弃未完成批次；总量上限见[桥接实现](../../main/lifecycle/explorer-desktop-host.ts)。
+[applications.rs](src/windows/applications.rs)独立筛选当前虚拟桌面所有屏幕的普通及最小化窗口，排除系统壳、隐藏窗口、工具浮窗和产品窗口。会话统一持有 WinEvent，分发给观察器与工作区；每轮命令与轮询前处理系统消息，只合并相邻重复事件并保留移动与销毁顺序；每两秒补扫，队列溢出废弃登记后全量校准。COM 接口与监听随会话释放。未变化的枚举不广播；快照按 revision 分批，每行不超过 64 KiB，主进程收齐后应用，代次变化丢弃未完成批次；总量上限见[桥接实现](../main/lifecycle/explorer-desktop-host.ts)。
 
 `activate_external` 使用登记的会话 ID；切换前处理待分发事件，复核窗口身份、当前虚拟桌面与系统前台，恢复最小化窗口并优先选择所属模态窗口。临时连接桌面前台及目标输入线程，去重并按反序释放，再验证实际前台；已显示窗口也须连接目标线程。
 
-`close_external` 沿用外部窗口交互准入，整批核验通过后逐个投递 `WM_CLOSE`；窗口正在等待模态对话框时拒绝该批请求。关闭回执与状态语义见[启动器契约](../../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+`close_external` 沿用外部窗口交互准入，整批核验通过后逐个投递 `WM_CLOSE`；窗口正在等待模态对话框时拒绝该批请求。关闭回执与状态语义见[启动器契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 隐藏 owner 下的主窗口须保持分支隔离：最近活动与模态激活沿 owner 链关联所选窗口，不能将 `GA_ROOTOWNER` 当作用户窗口。主窗口禁用时查找其分支内可交互的弹窗，避免激活同一隐藏 owner 下的其他主窗口。
 
@@ -50,11 +50,11 @@ journal 区分尚未改动和已开始挂载；缺少阶段的旧记录仍须恢
 pnpm --dir client build:native
 ```
 
-目标参数及门禁见 [build-desktop-host.cjs](../../scripts/build-desktop-host.cjs)。产物在 `client/build/<arch>/desktop-host.exe`，开发和打包均须匹配 Electron 架构，随包路径为 `resources/desktop-host.exe`。helper 静态链接 C++ 运行库，普通及延迟导入含额外 VC／UCRT 依赖时拒绝复制或复用。`cargo check --locked` 不能替代链接与打包验证。
+目标参数及门禁见 [build-desktop-host.cjs](../scripts/build-desktop-host.cjs)。产物在 `client/build/<arch>/desktop-host.exe`，开发和打包均须匹配 Electron 架构，随包路径为 `resources/desktop-host.exe`。helper 静态链接 C++ 运行库，普通及延迟导入含额外 VC／UCRT 依赖时拒绝复制或复用。`cargo check --locked` 不能替代链接与打包验证。
 
 Windows `pnpm dev` 自动准备 helper，仅复用架构和源码时效检查通过的产物。开发入口使用独立 Electron 缓存副本，Windows 打包在签名前写入相同的 `PerMonitorV2, PerMonitor` manifest；保留其他应用元数据及原版开发 Electron。准备失败提示原因并继续窗口模式；补齐工具链并执行 `build:native` 后须重启开发客户端。
 
-主进程和两种 preload 重编译均走正常退出链，先恢复桌面再重启；60 秒超时仅停止自有 Electron 主进程，guardian 负责异常恢复。开发启动与 manifest 入口分别见 [launch-dev-electron.cjs](../../scripts/launch-dev-electron.cjs)、[windows-dpi-manifest.cjs](../../scripts/windows-dpi-manifest.cjs)。
+主进程和两种 preload 重编译均走正常退出链，先恢复桌面再重启；60 秒超时仅停止自有 Electron 主进程，guardian 负责异常恢复。开发启动与 manifest 入口分别见 [launch-dev-electron.cjs](../scripts/launch-dev-electron.cjs)、[windows-dpi-manifest.cjs](../scripts/windows-dpi-manifest.cjs)。
 
 ### 安全运行检查
 
@@ -62,4 +62,4 @@ Windows `desktop-host.exe check-runtime` 验证可执行文件能加载并输出
 
 ## 原生验收
 
-`SPIRITAGENT_DESKTOP_PROBE=1` 下选择桌面模式会挂载 Explorer 子窗口，保留系统图标与任务栏；探测成功不代表交互与恢复已验收。完整矩阵见 [Windows 桌面验收](../../../scripts/README.md#windows-桌面验收)。
+`SPIRITAGENT_DESKTOP_PROBE=1` 下选择桌面模式会挂载 Explorer 子窗口，保留系统图标与任务栏；探测成功不代表交互与恢复已验收。完整矩阵见 [Windows 桌面验收](../../scripts/README.md#windows-桌面验收)。

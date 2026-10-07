@@ -1936,6 +1936,7 @@ pub fn host(path: &Path) -> Result<()> {
     let mut session: Option<Session> = None;
     emit(json!({ "event": "host_ready" }));
     loop {
+        let command = receiver.recv_timeout(Duration::from_millis(200));
         let mut message: MSG = unsafe { zeroed() };
         while unsafe { PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
             unsafe {
@@ -1943,7 +1944,7 @@ pub fn host(path: &Path) -> Result<()> {
                 DispatchMessageW(&message);
             }
         }
-        match receiver.recv_timeout(Duration::from_millis(200)) {
+        match command {
             Ok(Ok(command)) => {
                 let id = command.id();
                 let mut exiting = false;

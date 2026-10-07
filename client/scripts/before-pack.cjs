@@ -1,8 +1,7 @@
 'use strict'
 
 const fs = require('node:fs')
-const path = require('node:path')
-const { execFileSync } = require('node:child_process')
+const { buildDesktopHost, targets } = require('./build-desktop-host.cjs')
 
 function cleanStaleAppOutDir(appOutDir) {
   if (!appOutDir || typeof appOutDir !== 'string') {
@@ -18,16 +17,9 @@ function cleanStaleAppOutDir(appOutDir) {
 
 exports.default = async function beforePack(context) {
   if (context.electronPlatformName === 'win32') {
-    const targets = { 1: 'x86_64-pc-windows-msvc', 3: 'aarch64-pc-windows-msvc' }
-    const target = targets[context.arch]
-    if (!target) throw new Error(`Unsupported Windows desktop architecture: ${context.arch}`)
-    execFileSync(process.execPath, [path.join(__dirname, 'build-desktop-host.cjs'), '--target', target], {
-      stdio: 'inherit',
-      timeout: 11 * 60_000
-    })
-    const arch = context.arch === 3 ? 'arm64' : 'x64'
-    if (!fs.existsSync(path.join(__dirname, '..', 'build', arch, 'desktop-host.exe')))
-      throw new Error('Windows desktop helper is missing')
+    const arch = { 1: 'x64', 3: 'arm64' }[context.arch]
+    if (!arch) throw new Error(`Unsupported Windows desktop architecture: ${context.arch}`)
+    buildDesktopHost(targets[arch])
   }
   const appOutDir = context && context.appOutDir
   try {

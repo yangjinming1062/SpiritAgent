@@ -40,7 +40,8 @@ unsafe extern "system" fn window_event(
             // 溢出时使窗口句柄失效并触发全量校准，不能丢掉销毁事件后继续激活旧窗口。
             queue.push((0, 0));
         }
-        if !queue.contains(&item) {
+        // 只合并相邻重复通知，保留移动边界与窗口销毁的先后顺序。
+        if queue.last() != Some(&item) {
             queue.push(item);
         }
     }

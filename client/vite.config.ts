@@ -60,7 +60,7 @@ export default defineConfig({
     strictPort: true,
     watch: {
       // 构建目录中的 DLL 可能正在复制或被进程占用。
-      ignored: ['**/build/**', '**/dist-electron/**', '**/native/desktop-host/target/**', '**/release/**']
+      ignored: ['**/build/**', '**/dist-electron/**', '**/desktop-host/target/**', '**/release/**']
     }
   },
   preview: {

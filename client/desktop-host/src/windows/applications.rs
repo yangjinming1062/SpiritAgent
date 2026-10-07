@@ -286,7 +286,8 @@ impl Applications {
             {
                 self.windows.remove(&handle);
             }
-            if !self.windows.contains_key(&handle) {
+            let is_new = !self.windows.contains_key(&handle);
+            if is_new {
                 let Ok(identity) = Identity::capture(window) else {
                     continue;
                 };
@@ -322,7 +323,7 @@ impl Applications {
                 .get_mut(&handle)
                 .expect("registered running window");
             // 打包窗口可能先显示框架，随后才挂上实际应用；未识别的宿主不能永久按进程归并。
-            if tracked.value.target.is_none() {
+            if !is_new && tracked.value.target.is_none() {
                 if let Some(target) = application_target(&tracked.identity) {
                     tracked.value.app_id = target.to_lowercase();
                     tracked.value.name = Path::new(&target)

@@ -114,7 +114,7 @@ function buildDesktopHost(target = targets[process.arch], { ifNeeded = false } =
   if (!arch) throw new Error(`Unsupported Windows desktop host target: ${target ?? process.arch}`)
 
   const clientRoot = path.resolve(__dirname, '..')
-  const nativeRoot = path.join(clientRoot, 'native', 'desktop-host')
+  const nativeRoot = path.join(clientRoot, 'desktop-host')
   const targetRoot = path.join(nativeRoot, 'target')
   const packaged = path.join(clientRoot, 'build', arch, 'desktop-host.exe')
 
