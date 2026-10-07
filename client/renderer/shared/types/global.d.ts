@@ -78,9 +78,7 @@ declare global {
         onNavigate: EventSubscription<'spiritagent:desktop:navigate'>
       }
       getGatewayWsUrl: AsyncIpc<IpcInvokeContract['spiritagent:gateway:ws-url']>
-      gatewayRequest: <T = unknown>(
-        payload: Parameters<IpcInvokeContract['spiritagent:gateway:request']>[0]
-      ) => Promise<T>
+      gatewayRequest: AsyncIpc<IpcInvokeContract['spiritagent:gateway:request']>
       gatewayGetState: AsyncIpc<IpcInvokeContract['spiritagent:gateway:get-state']>
       gatewayBroadcastState: (state: DesktopGatewayState) => void
       gatewayBroadcastEvent: (event: DesktopGatewayEvent) => void

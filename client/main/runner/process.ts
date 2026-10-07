@@ -8,7 +8,6 @@ import { errorMessage } from '../shared/utils'
 import { resolveVenvPython } from './venv'
 
 const STOP_GRACE_MS = 4_000
-const DEFAULT_HEALTH_TIMEOUT_MS = 8_000
 
 export interface RunnerProcessState {
   args: null | string[]
@@ -27,7 +26,6 @@ type RunnerProcessEvent =
   | { data: string; type: 'stderr' | 'stdout' }
   | { code: null | number; signal: null | string; type: 'exit' }
   | { error: Error; type: 'error' }
-  | { type: 'ready' }
 
 export interface CreateRunnerProcessOptions {
   spiritagentHome?: null | string
@@ -46,13 +44,11 @@ export interface RunnerProcessStartArgs {
 export interface RunnerProcess {
   getStatus: () => RunnerProcessState
   onEvent: (callback: (event: RunnerProcessEvent) => void) => () => void
-  signalReady: () => void
   start: (args: RunnerProcessStartArgs) => Promise<RunnerProcessState>
   /** `ok` 表示子进程已退出（与退出码无关）；SIGKILL 后仍存活时为 false。 */
   stop: (options?: {
     reason?: string
   }) => Promise<{ code?: null | number; noop?: boolean; ok: boolean; signal?: null | string }>
-  waitForReady: (options?: { timeoutMs?: number }) => Promise<RunnerProcessState>
 }
 
 function resolveRunnerExecutable(options: {
@@ -309,51 +305,10 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     return () => emitter.off('event', callback)
   }
 
-  function waitForReady({
-    timeoutMs = DEFAULT_HEALTH_TIMEOUT_MS
-  }: { timeoutMs?: number } = {}): Promise<RunnerProcessState> {
-    return new Promise((resolve, reject) => {
-      if (!state.running) {
-        reject(new Error('Runner is not running.'))
-
-        return
-      }
-
-      const timer = setTimeout(() => {
-        detach()
-        reject(new Error(`Runner failed to become ready within ${timeoutMs}ms`))
-      }, timeoutMs)
-
-      const onEventHandler = (ev: RunnerProcessEvent) => {
-        if (ev.type === 'ready') {
-          detach()
-          clearTimeout(timer)
-          resolve(getStatus())
-        } else if (ev.type === 'exit') {
-          detach()
-          clearTimeout(timer)
-          reject(new Error(`Runner exited before becoming ready (code=${ev.code}, signal=${ev.signal})`))
-        }
-      }
-
-      function detach() {
-        emitter.off('event', onEventHandler)
-      }
-
-      emitter.on('event', onEventHandler)
-    })
-  }
-
-  function signalReady(): void {
-    emit({ type: 'ready' })
-  }
-
   return {
     getStatus,
     onEvent,
-    signalReady,
     start,
-    stop,
-    waitForReady
+    stop
   }
 }

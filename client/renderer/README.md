@@ -60,6 +60,8 @@ Dock 的应用选择面板（[desktop-dock-picker.tsx](app/windows/desktop/deskt
 
 [desktop-stage](app/workflows/desktop-stage.ts)接入主进程舞台代次、宿主活动镜像和可取消的仪式请求；工具派发始终由宿主负责。内部面板的活动资格由 [panel-activity](shared/context/panel-activity.tsx)向子组件和 Portal 传递，子面板不能覆盖父级的禁用状态；聊天媒体查看器归打开它的视图，失活时隐藏并暂停媒体，不能抢占其他面板的焦点与 Escape。桌面布局和角色位置按账户保存，防抖写入须守卫清理代次。
 
+宿主活动转发合并同一轮的字段更新，只发送变化后的完整载荷；账户或舞台代次变化重新发送，失败允许同值重试。舞台初始化通过 `getStageActivity` 取得主进程保留的最新活动。
+
 桌面角色的普通落位、移动与实际缩放受顶栏、Dock 和展开轻语的可用区域约束，并为情绪放大及其退出过渡预留范围；布局、视口及角色内容边界变化时重新约束，保存的默认比例不随临时空间限制改写。窗口模式保留原有缩放与探身规则，空间实现见 [spatial.ts](modules/character/spatial.ts)。
 
 ## 角色呈现契约

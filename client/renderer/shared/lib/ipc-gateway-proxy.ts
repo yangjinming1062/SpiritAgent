@@ -1,4 +1,4 @@
-import type { ConnectionState } from '@/shared/lib/gateway-protocol'
+import { type ConnectionState, SpiritAgentRpcError } from '@/shared/lib/gateway-protocol'
 import { $gatewayState, type SpiritAgentGatewayLike } from '@/shared/store/gateway'
 
 export class IpcGatewayProxy implements SpiritAgentGatewayLike {
@@ -13,6 +13,18 @@ export class IpcGatewayProxy implements SpiritAgentGatewayLike {
       throw new Error('SpiritAgent desktop IPC is unavailable')
     }
 
-    return await window.spiritagent.gatewayRequest<T>({ method, params })
+    const response = await window.spiritagent.gatewayRequest({ method, params })
+
+    if (response.ok) {
+      return response.result as T
+    }
+
+    const { code, data, message } = response.error
+
+    if (code !== undefined) {
+      throw new SpiritAgentRpcError(code, message, data)
+    }
+
+    throw new Error(message)
   }
 }

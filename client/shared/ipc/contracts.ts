@@ -117,9 +117,9 @@ export type DesktopUpdateEvent =
   | { progress: DesktopUpdateProgress; type: 'progress' }
   | { type: 'checking' }
 
-export interface DesktopRunnerStatusEvent {
-  type: 'error' | 'runner_ready' | 'running' | 'stopped' | 'stopping'
-}
+export type DesktopRunnerStatusEvent =
+  | { tools: Record<string, unknown>[]; type: 'runner_ready' | 'running' }
+  | { type: 'error' | 'stopped' | 'stopping' }
 
 export type DesktopRunnerPhase = 'error' | 'idle' | 'running' | 'starting' | 'stopped' | 'stopping'
 
@@ -388,12 +388,15 @@ export interface DesktopGatewayRpcRequest {
   params?: Record<string, unknown>
 }
 
-export interface DesktopGatewayRpcResponse {
-  error?: string
-  id: number
-  ok: boolean
-  result?: unknown
+export interface DesktopGatewayRpcError {
+  code?: number
+  data?: unknown
+  message: string
 }
+
+export type DesktopGatewayRpcResult = { ok: true; result: unknown } | { error: DesktopGatewayRpcError; ok: false }
+
+export type DesktopGatewayRpcResponse = DesktopGatewayRpcResult & { id: number }
 
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {
@@ -444,7 +447,7 @@ export interface IpcInvokeContract {
   'spiritagent:gateway:request': (payload: {
     method: string
     params?: Record<string, unknown>
-  }) => Promise<unknown> | unknown
+  }) => Promise<DesktopGatewayRpcResult> | DesktopGatewayRpcResult
   'spiritagent:gateway:get-state': () => DesktopGatewayState | Promise<DesktopGatewayState>
 
   // 鉴权

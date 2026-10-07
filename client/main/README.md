@@ -45,11 +45,13 @@
 - 只有宿主可获取网关票 `ws-url`、上报网关状态、注入事件、答复代理 RPC 和派发 Runner 工具，入口核对 sender；`ws-url` 与 Runner 派发、取消经 [assertGatewayHost](security/ipc-trust.ts)。
 - 其他表面只能请求代理能力；`tool.call` 不转发到其他窗口，TypeScript 类型不能代替运行时校验。
 
-[代理等待](ipc/gateway.ts)有超时，网关 closed / error 时统一 reject。[连接缓存](backend/ensure-backend.ts)只保存后端地址与就绪结果，凭据按请求读取；reset 使在途解析失效。票据签发前后核对鉴权会话，拒绝换号后的迟到结果。
+[代理等待](ipc/gateway.ts)有超时，网关 closed / error 时统一 reject；宿主渲染器崩溃、重载或销毁时由主进程同步关闭状态并终止等待，状态仅在变化时广播至代理窗口。代理 RPC 使用结果信封透传业务错误的 `code`、`message` 与 `data`，渲染代理还原错误类型；桥接失败与超时保留普通错误。[连接缓存](backend/ensure-backend.ts)只保存后端地址与就绪结果，凭据按请求读取；reset 使在途解析失效。票据签发前后核对鉴权会话，拒绝换号后的迟到结果。
 
 ## 窗口与几何
 
 [surfaces.ts](lifecycle/surfaces.ts)串行裁决开关，生活空间与工作台最多一个可见；账户身份变化时收起完整入口并显示桌面精灵，避免沿用上个账户的窗口状态。每个窗口与其面板、侧边区域及定时器由同一记录持有。内容面板矩形是几何锚点，侧边区域只调整原生窗口边界；程序调整与最大化还原期间不把中间事件写回面板。显示器变更同时校正还原位置，窗口关闭时清理几何定时器。完整入口移动时桌面精灵窗跟随显示器，渲染状态不传递几何。
+
+入口面快照仅在实际状态变化时增加版本并广播；重复几何与显隐事件不重复发布。`surface:open` 完成或失败仍回灌当前快照，纠正渲染层的乐观意图；新窗口通过 `surface:get-state` 取得当前版本。
 
 [surfaces.ts](lifecycle/surfaces.ts) 另负责播放认领（`surface:claim-play`）与锁屏跟踪：同一 `play_id` 只由一个可见舞台认领，认领随账户变化清空，规则见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
 
@@ -87,9 +89,9 @@
 
 ## Runner 生命周期
 
-[ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。[bridge.ts](runner/bridge.ts) 完成握手、配置推送与 `get_tools`；连接探活用 WS 层 ping（Runner 协议自动 pong），不用 JSON-RPC 通知。运行中配置推送成功后重新读取清单，变化时按重连同样发布。模型派发调用经 `ipc/runner.ts` 带 `call_id` 发出，按 Runner 回复分类为完成、明确失败、未执行或结果未知后交回宿主；取消只按该调用记录的 RPC `req_id` 作用于指定调用，由宿主收到 `tool.cancel` 时发起。窗口查询等直调不带 `call_id`。`tools.sync` 与撤销由渲染层宿主发起，见 [Client](../README.md#连接与设备就绪)。
+[ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。[bridge.ts](runner/bridge.ts) 串行完成握手与运行中配置推送、`get_tools`；连接探活用 WS 层 ping（Runner 协议自动 pong），不用 JSON-RPC 通知。握手强制推送完整配置；运行中以 Runner 已成功应用的配置比较，忽略仅桌面消费的 `ui`、`shortcuts`、`companion`、`language`、`sync` 节，未知节仍参与比较。实际推送成功后读取清单，变化时随就绪事件发送给宿主；读取失败保留原清单，下次保存重试，断连与停止废弃旧连接的成功快照。模型派发调用经 `ipc/runner.ts` 带 `call_id` 发出，按 Runner 回复分类为完成、明确失败、未执行或结果未知后交回宿主；取消只按该调用记录的 RPC `req_id` 作用于指定调用，由宿主收到 `tool.cancel` 时发起。窗口查询等直调不带 `call_id`。`tools.sync` 与撤销由渲染层宿主发起，见 [Client](../README.md#连接与设备就绪)。
 
-停止需等待在途启动及其回滚收尾，再允许重启；旧启动不得清理新实例的资源。
+就绪只由桥管理，完整配置与工具清单均成功后才发布，未就绪时新执行返回未执行；取消与结果查询仍可收尾。完整握手最多三次尝试，配置 RPC 单次 5 秒、工具查询单次 10 秒，启动等待上限 60 秒。握手耗尽或运行中配置推送失败立即撤销新执行资格，保留已连接进程供后续配置保存、`runner_ready` 或 `autoStart` 原位重试；WS 或进程启动失败、初次等待超时则收尾资源。重连未报告 `runner_ready` 时保持可重新启动的停止状态。停止需等待在途启动及其回滚收尾，再允许重启；旧启动不得清理新实例的资源。
 
 [session-runtime.ts](backend/session-runtime.ts)负责懒创建及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 的广播器直接广播，不进鉴权操作队列，广播后仍是当前会话才自动启动 Runner；另有应用就绪后 200 ms 的定时入口检查会话，已有 token 即自动启动。无 call_id 不记日志，限制见[调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
 

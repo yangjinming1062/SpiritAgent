@@ -41,7 +41,7 @@ flowchart LR
 - 宿主每次连接直接请求新票据，签发失败保留原错误，不回落无票连接；REST 与资产请求不签票。重连由宿主运行时管理，业务请求失败后不自动重放。
 - 相同模块不代表共享内存。角色默认显示比例经主进程 IPC 跨窗同步，消费见[渲染层](renderer/README.md#角色呈现契约)。
 
-Runner 握手、配置推送与工具清单读取由主进程完成；`tools.sync` 与撤销由宿主 [host-runtime.ts](renderer/app/runtime/host-runtime.ts) 按 Runner 状态发起，顺序见 [握手与工具同步](../docs/PROTOCOL.md#握手与工具同步)。运行期能力通知和进程代次尚未接入，见[当前限制](../docs/PROTOCOL.md#能力与进程代次)；迟到查询不得恢复已撤销资格。
+Runner 握手、配置推送与工具清单读取由主进程完成；就绪事件携带清单，宿主 [host-runtime.ts](renderer/app/runtime/host-runtime.ts) 直接发起 `tools.sync`，停止或失败事件撤销资格，WS 建立时另读取当前清单以补齐订阅前的就绪状态，顺序见 [握手与工具同步](../docs/PROTOCOL.md#握手与工具同步)。运行期能力通知和进程代次尚未接入，见[当前限制](../docs/PROTOCOL.md#能力与进程代次)；迟到查询不得恢复已撤销资格。
 
 普通会话切换不重置实时事件水位；调用恢复使用原 `call_id`，不能因响应丢失生成新标识重做操作。
 

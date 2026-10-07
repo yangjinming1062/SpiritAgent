@@ -4,8 +4,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { sleep } from '@runtime'
+
 import type { BackendSessionLike } from '../shared/backend-port'
-import { atomicWriteFile, errorMessage, RunnerNotConnectedError } from '../shared/utils'
+import { atomicWriteFile, createSerialQueue, errorMessage, RunnerNotConnectedError } from '../shared/utils'
 
 import type { RunnerProcess, RunnerProcessState } from './process'
 import type { ReverseRpcOptions } from './reverse-rpc'
@@ -20,6 +22,9 @@ import type {
 
 // macOS 的 sun_path 上限为 104 字节；留出余量以确保不超限。
 const MAC_SOCK_PATH_BYTE_LIMIT = 100
+// 三次完整握手最多 45 秒 RPC + 750 ms 退避；外层另留进程启动与调度余量。
+const READY_TIMEOUT_MS = 60_000
+const HANDSHAKE_ATTEMPTS = 3
 
 function computeDesktopEndpoint(spiritagentHome?: null | string): { path: string; transport: string } {
   if (process.platform === 'win32') {
@@ -49,7 +54,7 @@ export interface RunnerBridgeOptions {
   spiritagentHome?: null | string
   log?: (chunk: string) => void
   processFactory: () => RunnerProcess
-  pushConfig: () => Promise<unknown> | void
+  pushConfig: (server: RunnerWsServer, force?: boolean) => Promise<boolean>
   reverseRpcFactory: (options: ReverseRpcOptions) => (method: string, params?: unknown) => Promise<unknown>
   wsServerFactory: (options: CreateRunnerWsServerOptions) => RunnerWsServer
 }
@@ -91,9 +96,9 @@ export interface RunnerBridge {
   getStatus: () => RunnerBridgeStatus
   getTools: () => Record<string, unknown>[]
   onEvent: (callback: (event: RunnerBridgeEvent) => void) => () => void
-  refreshTools: () => Promise<void>
   start: (args?: RunnerBridgeStartOptions) => Promise<RunnerBridgeStatus>
   stop: (options?: { reason?: string }) => Promise<{ errors?: string[]; noop?: boolean; ok: boolean }>
+  syncConfig: () => Promise<void>
 }
 
 export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
@@ -116,6 +121,10 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   let wsServer: null | RunnerWsServer = null
   let cachedTools: Record<string, unknown>[] | null = null
   let toolsGeneration = 0
+  let toolsRefreshPending = false
+  let handshakePending = false
+  let hasBeenReady = false
+  const enqueueConfig = createSerialQueue()
   let subUnsubFns: Array<() => void> = []
   let endpointFilePath: null | string = null
   let starting: Promise<RunnerBridgeStatus> | null = null
@@ -246,6 +255,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   }
 
   async function rollback(reason: string): Promise<void> {
+    toolsGeneration++
+    handshakePending = false
     detachSubs()
     await Promise.allSettled([wsServer?.stop(), runnerProcess?.stop({ reason })])
     cleanupEndpointFile()
@@ -259,7 +270,25 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       return Promise.reject(new Error('Runner bridge is already running.'))
     }
 
-    const task = startRuntime(args)
+    const generation = opGeneration
+
+    const task =
+      handshakePending && wsServer?.getStatus().connected
+        ? syncConfig().then(() => {
+            const status = getStatus()
+
+            if (generation !== opGeneration) {
+              throw new Error('Runner bridge recovery was superseded by stop or restart.')
+            }
+
+            if (status.phase !== 'running') {
+              throw new Error(status.lastError || 'Runner bridge recovery was superseded.')
+            }
+
+            return status
+          })
+        : startRuntime(args)
+
     starting = task
 
     return task.finally(() => {
@@ -277,6 +306,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     }
 
     const gen = ++opGeneration
+    hasBeenReady = false
 
     setState({
       lastError: null,
@@ -296,8 +326,13 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     runnerProcess = processInstance
 
     const offProcess = processInstance.onEvent(ev => {
-      if (ev.type === 'exit') {
-        if (state.phase === 'running') {
+      if (ev.type === 'error' && state.phase !== 'stopping') {
+        handshakePending = false
+        fail('error', ev.error)
+      } else if (ev.type === 'exit') {
+        handshakePending = false
+
+        if (state.phase === 'running' || state.phase === 'stopped') {
           fail('stopped', new Error(`Runner exited (code=${ev.code}, signal=${ev.signal})`))
         } else if (state.phase === 'starting') {
           // 主动 stop 走 stopping，不在此记 error；仅启动期异常退出算 error。
@@ -321,12 +356,32 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
     const offWs = wsInstance.onEvent((ev: RunnerWsEvent) => {
       if (ev.type === 'runner_ready') {
-        void handleRunnerReady(ev)
+        void handleRunnerReady(ev).catch(error => {
+          log(`[runner-bridge] handshake failed: ${errorMessage(error)}`)
+        })
+      } else if (ev.type === 'connected') {
+        if (state.phase === 'stopping') {
+          return
+        }
+
+        toolsGeneration++
+        cachedTools = null
+        handshakePending = false
+
+        const wasRunning = state.phase === 'running'
+        // 初次启动有就绪等待；重连尚未报告 ready 时可由 autoStart 重建。
+        const awaitingStartup = starting !== null && state.phase === 'starting'
+        setState({ phase: awaitingStartup ? 'starting' : 'stopped' })
+
+        if (wasRunning) {
+          publish({ reason: 'Runner connection awaits handshake.', type: 'stopped' })
+        }
       } else if (ev.type === 'disconnected') {
         toolsGeneration++
         cachedTools = null
+        handshakePending = false
 
-        if (state.phase === 'running') {
+        if (state.phase !== 'stopping' && state.phase !== 'error') {
           fail('stopped', new Error('Runner disconnected from WS server.'))
         }
       } else if (ev.type === 'error') {
@@ -347,6 +402,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       }
     }
 
+    let cancelReadyWait: (() => void) | undefined
+
     try {
       await wsInstance.start({ path: endpoint.path })
       log(`[runner-bridge] WS server listening on ${endpoint.transport} ${endpoint.path}`)
@@ -354,23 +411,75 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       assertCurrentStart()
 
       rollbackReason = 'process-start'
+      const readyWait = waitUntilReady(args.readyTimeoutMs ?? READY_TIMEOUT_MS)
+      cancelReadyWait = readyWait.cancel
+      // spawn 失败可能先于 await 就绪，仍须消费等待期间的失败。
+      void readyWait.promise.catch(() => {})
       await processInstance.start({ authToken, endpointPath: endpoint.path })
       assertCurrentStart()
 
       rollbackReason = 'ready-timeout'
-      await processInstance.waitForReady({ timeoutMs: args.readyTimeoutMs })
+      await readyWait.promise
       assertCurrentStart()
     } catch (error) {
+      if (gen !== opGeneration) {
+        throw error
+      }
+
+      // 握手耗尽时保留连接，配置保存、再次 ready 或 autoStart 可原位重试。
+      if (
+        handshakePending &&
+        wsInstance.getStatus().connected &&
+        processInstance.getStatus().running &&
+        state.phase === 'stopped'
+      ) {
+        throw error
+      }
+
       await rollback(rollbackReason)
 
       if (gen === opGeneration) {
+        if (state.phase === 'error' && state.lastError === errorMessage(error)) {
+          throw error
+        }
+
         throw fail('error', error)
       }
 
       throw error
+    } finally {
+      cancelReadyWait?.()
     }
 
     return getStatus()
+  }
+
+  function waitUntilReady(timeoutMs: number): { cancel: () => void; promise: Promise<void> } {
+    let cancel = () => {}
+
+    const promise = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cancel()
+        reject(new Error(`Runner failed to become ready within ${timeoutMs}ms`))
+      }, timeoutMs)
+
+      const off = onEvent(event => {
+        if (event.type === 'running' || event.type === 'runner_ready') {
+          cancel()
+          resolve()
+        } else if (event.type === 'error' || event.type === 'stopping' || event.type === 'stopped') {
+          cancel()
+          reject(event.type === 'error' ? event.error : new Error(event.reason || 'Runner stopped before ready.'))
+        }
+      })
+
+      cancel = () => {
+        clearTimeout(timer)
+        off()
+      }
+    })
+
+    return { cancel, promise }
   }
 
   async function handleRunnerReady(payload: {
@@ -381,76 +490,135 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   }): Promise<void> {
     const server = wsServer
 
-    if (!server || !server.getStatus().connected || state.phase === 'stopping' || state.phase === 'error') {
+    if (!server || !server.getStatus().connected || state.phase === 'stopping') {
       return
     }
 
     const generation = ++toolsGeneration
-    const reconnecting = state.phase !== 'starting'
     log('[runner-bridge] runner_ready received')
-
-    runnerProcess?.signalReady()
+    const wasRunning = state.phase === 'running'
+    cachedTools = null
+    handshakePending = true
 
     setState({
       capabilities: payload.capabilities ?? null,
       capabilitiesHealth: payload.capabilities_health ?? null,
+      phase: 'starting',
       probeFailed: payload.probe_failed ?? null,
       runnerVersion: payload.version ?? null
     })
 
-    try {
-      await pushConfig()
-    } catch (err: unknown) {
-      const msg = errorMessage(err)
-      log(`[runner-bridge] config push failed: ${msg}`)
+    if (wasRunning) {
+      publish({ reason: 'Runner renewed its handshake.', type: 'stopped' })
     }
 
-    if (isStale(server, generation)) {
-      return
-    }
-
-    const tools = await _fetchTools(server)
-
-    if (isStale(server, generation)) {
-      return
-    }
-
-    cachedTools = tools
-    setState({ lastError: null, phase: 'running' })
-    publishReady(reconnecting ? 'runner_ready' : 'running')
+    await enqueueConfig(() => completeHandshake(server, generation))
   }
 
-  // 运行中配置变化后重新读取工具清单（终端等工具的说明随 Runner 当前配置生成）；有变化时按重连同样发布，由宿主重新同步。读取失败保留原清单，不能因一次查询失败撤销执行资格。
-  async function refreshTools(): Promise<void> {
+  async function completeHandshake(server: RunnerWsServer, generation: number): Promise<void> {
+    for (let attempt = 0; attempt < HANDSHAKE_ATTEMPTS; attempt++) {
+      if (isStale(server, generation)) {
+        return
+      }
+
+      try {
+        await pushConfig(server, true)
+
+        if (isStale(server, generation)) {
+          return
+        }
+
+        const tools = await requestTools(server)
+
+        if (isStale(server, generation)) {
+          return
+        }
+
+        cachedTools = tools
+        toolsRefreshPending = false
+        handshakePending = false
+        setState({ lastError: null, phase: 'running' })
+        publishReady(hasBeenReady ? 'runner_ready' : 'running')
+        hasBeenReady = true
+
+        return
+      } catch (error) {
+        if (isStale(server, generation)) {
+          return
+        }
+
+        log(`[runner-bridge] handshake attempt ${attempt + 1} failed: ${errorMessage(error)}`)
+
+        if (attempt + 1 === HANDSHAKE_ATTEMPTS) {
+          throw fail('stopped', error)
+        }
+
+        await sleep(250 * (attempt + 1))
+      }
+    }
+  }
+
+  // 握手与运行中推送、清单读取共用队列；配置已成功但清单失败时，下次保存仍重试清单。
+  function syncConfig(): Promise<void> {
     const server = wsServer
-
-    if (state.phase !== 'running' || !server || !server.getStatus().connected) {
-      return
-    }
-
     const generation = toolsGeneration
-    let tools: Record<string, unknown>[]
 
-    try {
-      tools = await requestTools(server)
-    } catch (error: unknown) {
-      log(`[runner-bridge] get_tools refresh failed: ${errorMessage(error)}`)
+    return enqueueConfig(async () => {
+      if (!server || isStale(server, generation)) {
+        return
+      }
 
-      return
-    }
+      if (handshakePending) {
+        await completeHandshake(server, generation)
 
-    // 期间的断连、停止或新握手以它们自己的清单为准。
-    if (
-      isStale(server, generation) ||
-      state.phase !== 'running' ||
-      JSON.stringify(tools) === JSON.stringify(cachedTools)
-    ) {
-      return
-    }
+        return
+      }
 
-    cachedTools = tools
-    log(`[runner-bridge] tool list changed after config update (${tools.length} tools)`)
-    publishReady('runner_ready')
+      if (state.phase !== 'running') {
+        return
+      }
+
+      let pushed: boolean
+
+      try {
+        pushed = await pushConfig(server)
+      } catch (error) {
+        if (!isStale(server, generation)) {
+          handshakePending = true
+          fail('stopped', error)
+        }
+
+        throw error
+      }
+
+      if (isStale(server, generation) || state.phase !== 'running') {
+        return
+      }
+
+      if (pushed) {
+        toolsRefreshPending = true
+      }
+
+      if (!toolsRefreshPending) {
+        return
+      }
+
+      const tools = await fetchTools(server)
+
+      if (tools === null || isStale(server, generation) || state.phase !== 'running') {
+        return
+      }
+
+      toolsRefreshPending = false
+
+      if (JSON.stringify(tools) === JSON.stringify(cachedTools)) {
+        return
+      }
+
+      cachedTools = tools
+      log(`[runner-bridge] tool list changed after config update (${tools.length} tools)`)
+      publishReady('runner_ready')
+    })
   }
 
   async function requestTools(server: RunnerWsServer): Promise<Record<string, unknown>[]> {
@@ -459,7 +627,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     return result?.tools ?? []
   }
 
-  async function _fetchTools(server: RunnerWsServer): Promise<Record<string, unknown>[]> {
+  async function fetchTools(server: RunnerWsServer): Promise<Record<string, unknown>[] | null> {
     try {
       const tools = await requestTools(server)
       log(`[runner-bridge] got ${tools.length} tools from runner`)
@@ -475,7 +643,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       const msg = errorMessage(error)
       log(`[runner-bridge] get_tools failed: ${msg}`)
 
-      return []
+      return null
     }
   }
 
@@ -502,6 +670,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
     opGeneration++
     toolsGeneration++
+    handshakePending = false
     cachedTools = null
     setState({ phase: 'stopping' })
     publish({ reason, type: 'stopping' })
@@ -558,6 +727,14 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       throw new RunnerNotConnectedError('Runner is not connected.')
     }
 
+    if (
+      method !== 'spiritagent.cancel' &&
+      method !== 'spiritagent.call_result' &&
+      (state.phase !== 'running' || handshakePending || cachedTools === null)
+    ) {
+      throw new RunnerNotConnectedError(`Runner is not ready: ${state.lastError || state.phase}.`)
+    }
+
     return wsServer.call<T>(method, params, opts)
   }
 
@@ -570,8 +747,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     getStatus,
     getTools,
     onEvent,
-    refreshTools,
     start,
-    stop
+    stop,
+    syncConfig
   }
 }

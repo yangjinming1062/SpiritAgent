@@ -38,6 +38,9 @@ const TOOL_CALL_TIMEOUT_MS = 11 * 60_000
 // Runner 已给出确定结局的拒绝：工具报错或执行前被拒（failed）、同一 call_id 的参数冲突、非法标识；其余错误（取消、超时、断连、他处持有、日志判定未知）都不能证明工具没有产生副作用。
 const DEFINITE_FAILURE_DISPOSITIONS = new Set(['conflict', 'failed', 'invalid_call_id'])
 
+// 这些节只由桌面消费；未知配置仍参与比较，新增工具配置不会被遗漏。
+const DESKTOP_CONFIG_SECTIONS = new Set(['companion', 'language', 'shortcuts', 'sync', 'ui'])
+
 function runnerCallOutcomeFromError(error: unknown): RunnerCallOutcome {
   if (error instanceof RunnerNotConnectedError) {
     return { status: 'not_executed' }
@@ -53,6 +56,8 @@ function runnerCallOutcomeFromError(error: unknown): RunnerCallOutcome {
 /** Runner 桥的唯一持有者：懒创建、登录自动启停，并向 IPC 与外部读者暴露窄接口。 */
 export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
   let runnerBridge: null | RunnerBridge = null
+  let appliedConfig: null | string = null
+  let configGeneration = 0
   // 在途的模型派发调用：call_id → 本次 Runner 请求 id，供按调用取消（spiritagent.cancel 的 req_id）。
   const inflightCalls = new Map<string, string>()
   let nextCallRequestId = 1
@@ -62,12 +67,34 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       return runnerBridge
     }
 
-    const pushConfig = () => {
+    const pushConfig = async (server: RunnerWsServer, force = false): Promise<boolean> => {
       if (!runnerBridge) {
-        return Promise.resolve()
+        return false
       }
 
-      return runnerBridge.dispatch('spiritagent.config.update', { config: store.read() })
+      if (force) {
+        configGeneration++
+        appliedConfig = null
+      }
+
+      const config = store.read()
+
+      const nextConfig = JSON.stringify(
+        Object.fromEntries(Object.entries(config).filter(([key]) => !DESKTOP_CONFIG_SECTIONS.has(key)))
+      )
+
+      if (nextConfig === appliedConfig) {
+        return false
+      }
+
+      const generation = configGeneration
+      await server.call('spiritagent.config.update', { config }, { timeoutMs: 5000 })
+
+      if (generation === configGeneration) {
+        appliedConfig = nextConfig
+      }
+
+      return true
     }
 
     runnerBridge = options.createRunnerBridge({
@@ -88,13 +115,16 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     })
 
     // 运行中保存配置后重新读取工具清单；握手时的推送由桥在读取清单前完成。
-    store.setPushTarget(async () => {
-      await pushConfig()
-      await runnerBridge?.refreshTools()
-    })
+    store.setPushTarget(() => runnerBridge?.syncConfig())
 
     runnerBridge.onEvent((ev: RunnerBridgeEvent) => {
-      sendToWindow(options.getMainWindow(), IPC.event.runnerStatus, { type: ev.type })
+      if (ev.type === 'running' || ev.type === 'runner_ready') {
+        sendToWindow(options.getMainWindow(), IPC.event.runnerStatus, { tools: ev.tools ?? [], type: ev.type })
+      } else {
+        configGeneration++
+        appliedConfig = null
+        sendToWindow(options.getMainWindow(), IPC.event.runnerStatus, { type: ev.type })
+      }
     })
 
     return runnerBridge
@@ -122,8 +152,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
     try {
       const next = await bridge.start({
-        backendSession: options.ensureBackendSession(),
-        readyTimeoutMs: 8_000
+        backendSession: options.ensureBackendSession()
       })
 
       return { ok: true, status: next }
@@ -278,7 +307,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
       const status = bridge.getStatus()
 
-      if (status.phase !== 'running' || !status.wsServer?.connected) {
+      if (!status.wsServer?.connected) {
         return { noop: true, ok: true }
       }
 

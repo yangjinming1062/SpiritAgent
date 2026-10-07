@@ -96,6 +96,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   let unbindSurfaceDisplaySync: null | (() => void) = null
   let screenLocked = false
   let stateRevision = 0
+  let lastPublishedState = ''
 
   const playbackClaims = createPlaybackClaims()
 
@@ -160,9 +161,21 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
   }
 
-  function publish(): void {
-    stateRevision += 1
-    broadcastToAllWindows(IPC.event.surfaceChanged, snapshot())
+  function publish(force = false): void {
+    const state = snapshot()
+    const signature = JSON.stringify({ ...state, revision: 0 })
+
+    if (!force && signature === lastPublishedState) {
+      return
+    }
+
+    if (signature !== lastPublishedState) {
+      lastPublishedState = signature
+      stateRevision += 1
+    }
+
+    state.revision = stateRevision
+    broadcastToAllWindows(IPC.event.surfaceChanged, state)
   }
 
   function sameBounds(a: Rectangle, b: Rectangle): boolean {
@@ -403,8 +416,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
   }
 
-  const internalOpen = async (payload: DesktopSurfaceOpenPayload): Promise<void> => {
+  const internalOpen = async (payload: DesktopSurfaceOpenPayload, forcePublish = false): Promise<void> => {
     if (options.routeToDesktop?.(payload)) {
+      publish(forcePublish)
+
       return
     }
 
@@ -427,6 +442,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     // navigate/create 期间用户关窗：窗口已销毁，不能再 show/focus，也不能残留 openSurfaceId。
     if (win.isDestroyed()) {
       onWindowClosed(id, win)
+      publish(forcePublish)
 
       return
     }
@@ -445,16 +461,17 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
     syncSpriteToSurfaceDisplay(win)
 
-    publish()
+    publish(forcePublish)
     await persistLastSurface(id)
   }
 
   const openSurface = (payload: DesktopSurfaceOpenPayload): Promise<void> =>
     withMutex(async () => {
       try {
-        await internalOpen(payload)
+        // open 的调用方先写入本地意图，即使实际状态未变也要回灌权威快照。
+        await internalOpen(payload, true)
       } catch (error) {
-        publish()
+        publish(true)
         throw error
       }
     })

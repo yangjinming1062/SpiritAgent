@@ -3,6 +3,7 @@ import type { DesktopScreenRect } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
+import { $auth } from '@/shared/store/auth'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
@@ -416,28 +417,70 @@ export function startActivityMonitor(): () => void {
 
   monitorGeneration += 1
 
+  let forwardingActive = true
+  let forwardingQueued = false
+  let forwarded: { signature: string } | undefined
+
   const forwardStage = (): void => {
     if ($presentation.get().stageOwner !== 'desktop') {
+      forwarded = undefined
+
       return
     }
 
-    void window.spiritagent.presentation
-      .stageActivity({
+    if (forwardingQueued) {
+      return
+    }
+
+    forwardingQueued = true
+    queueMicrotask(() => {
+      forwardingQueued = false
+      const presentation = $presentation.get()
+      const auth = $auth.get()
+
+      if (!forwardingActive || presentation.stageOwner !== 'desktop' || auth.kind !== 'authenticated') {
+        forwarded = undefined
+
+        return
+      }
+
+      const activity: StageActivity = {
         locked: $screenLocked.get(),
         idleSeconds: $lastIdleSeconds.get(),
         effectiveTier: $effectiveTier.get(),
         focus: $focusContext.get()
+      }
+
+      const signature = JSON.stringify([auth.snapshot.sessionId, presentation.stageEpoch, activity])
+
+      if (forwarded?.signature === signature) {
+        return
+      }
+
+      const current = { signature }
+      forwarded = current
+      void window.spiritagent.presentation.stageActivity(activity).catch(error => {
+        if (forwarded === current) {
+          forwarded = undefined
+        }
+
+        log.warn('activity', 'Desktop activity forwarding failed', error)
       })
-      .catch(error => log.warn('activity', 'Desktop activity forwarding failed', error))
+    })
   }
 
   unsubs.push(
+    () => {
+      forwardingActive = false
+    },
+    $auth.listen(forwardStage),
     $presentation.listen(forwardStage),
     $screenLocked.listen(forwardStage),
     $lastIdleSeconds.listen(forwardStage),
     $focusContext.listen(forwardStage),
     $effectiveTier.listen(forwardStage)
   )
+  forwardStage()
   unsubs.push(
     $effectiveTier.subscribe(tier => {
       if (tier === 'still') {

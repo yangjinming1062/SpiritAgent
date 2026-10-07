@@ -24,6 +24,7 @@ import {
 } from '@/modules/conversation'
 import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
 import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { SpiritAgentRpcError } from '@/shared/lib/gateway-protocol'
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { reconnectBackoffMs } from '@/shared/lib/reconnect'
@@ -78,39 +79,13 @@ function syncTimezone(gateway: SpiritAgentGateway): void {
     .catch(error => log.warn('gateway-boot', 'companion.set_timezone failed', error))
 }
 
-// 空工具表撤销新调用资格，已派发调用仍按原结果与超时规则收尾。
-async function syncRunnerTools(gateway: SpiritAgentGateway, isCurrent: () => boolean, revoke: boolean): Promise<void> {
-  const desktop = window.spiritagent
-
-  if (!desktop?.runnerGetTools) {
-    return
-  }
-
-  try {
-    const tools = revoke ? [] : await desktop.runnerGetTools()
-
-    if (!isCurrent()) {
-      return
-    }
-
-    const hasFileTools = tools.some(tool => tool.name === 'read_file' || tool.name === 'list_directory')
-
-    if (!hasFileTools) {
-      log.warn('gateway-boot', 'tools.sync: LLM will lack file tools in this session')
-    }
-
-    const res = await gateway.request<{ count: number }>('tools.sync', { tools, skill_scope_version: 1 })
-    log.info('gateway-boot', `tools.sync: synced ${res.count} runner tools to gateway (hasFileTools=${hasFileTools})`)
-  } catch (error) {
-    const msg = errorMessage(error)
-    log.error('gateway-boot', `tools.sync failed: ${msg}`)
-  }
-}
-
 export function useGatewayBoot(sessionId: string): void {
   useEffect(() => {
     let cancelled = false
     let toolsSyncGeneration = 0
+    let toolsConnectionEpoch = 0
+    let lastSyncedTools: string | null = null
+    let toolsSyncTail: Promise<void> = Promise.resolve()
     let targetSyncGeneration = 0
     let lastTargetKey: string | null = null
     const isAuthCurrent = captureAuthScope()
@@ -176,10 +151,54 @@ export function useGatewayBoot(sessionId: string): void {
         })
     }
 
-    const syncTools = (revoke: boolean = false): Promise<void> => {
+    // 清单获取不阻塞撤销；发送串行，空清单始终排在已发出的旧清单之后。
+    const syncTools = async (readyTools?: Record<string, unknown>[]): Promise<void> => {
       const generation = ++toolsSyncGeneration
+      const epoch = toolsConnectionEpoch
 
-      return syncRunnerTools(gateway, () => !cancelled && generation === toolsSyncGeneration && gatewayOpen(), revoke)
+      const sameConnection = (): boolean =>
+        !cancelled && epoch === toolsConnectionEpoch && gatewayOpen() && Boolean(isAuthCurrent?.())
+
+      const isCurrent = (): boolean => sameConnection() && generation === toolsSyncGeneration
+
+      try {
+        const tools = readyTools ?? (await desktop.runnerGetTools())
+
+        if (!isCurrent()) {
+          return
+        }
+
+        const signature = JSON.stringify(tools)
+
+        const task = toolsSyncTail.then(async () => {
+          if (!isCurrent() || signature === lastSyncedTools) {
+            return
+          }
+
+          const hasFileTools = tools.some(tool => tool.name === 'read_file' || tool.name === 'list_directory')
+
+          if (!hasFileTools) {
+            log.warn('gateway-boot', 'tools.sync: LLM will lack file tools in this session')
+          }
+
+          const res = await gateway.request<{ count: number }>('tools.sync', { tools, skill_scope_version: 1 })
+
+          // 已交付的成功事实不随较新的意图作废；换连接后才丢弃，避免误跳过后续撤销。
+          if (sameConnection()) {
+            lastSyncedTools = signature
+          }
+
+          log.info(
+            'gateway-boot',
+            `tools.sync: synced ${res.count} runner tools to gateway (hasFileTools=${hasFileTools})`
+          )
+        })
+
+        toolsSyncTail = task.catch(() => {})
+        await task
+      } catch (error) {
+        log.error('gateway-boot', `tools.sync failed: ${errorMessage(error)}`)
+      }
     }
 
     const connectOnce = async (): Promise<void> => {
@@ -281,6 +300,8 @@ export function useGatewayBoot(sessionId: string): void {
 
       if (st !== 'open') {
         toolsSyncGeneration++
+        toolsConnectionEpoch++
+        lastSyncedTools = null
       }
 
       reportPrimaryGatewayState(st)
@@ -348,7 +369,11 @@ export function useGatewayBoot(sessionId: string): void {
           desktop.gatewayRpcReply?.({ id: req.id, ok: true, result })
         } catch (error) {
           const message = errorMessage(error)
-          desktop.gatewayRpcReply?.({ id: req.id, ok: false, error: message })
+          desktop.gatewayRpcReply?.({
+            id: req.id,
+            ok: false,
+            error: error instanceof SpiritAgentRpcError ? { code: error.code, data: error.data, message } : { message }
+          })
         }
       })()
     })
@@ -368,7 +393,7 @@ export function useGatewayBoot(sessionId: string): void {
 
     const offRunnerStatus = desktop.onRunnerStatus?.(ev => {
       if (gateway.connectionState === 'open') {
-        void syncTools(ev.type !== 'running' && ev.type !== 'runner_ready')
+        void syncTools(ev.type === 'running' || ev.type === 'runner_ready' ? ev.tools : [])
       }
     })
 
