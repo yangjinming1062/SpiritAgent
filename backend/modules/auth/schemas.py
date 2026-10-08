@@ -53,6 +53,7 @@ class UserModelConfigListItem(BaseModel):
 class UserModelConfigListResponse(BaseModel):
     items: list[UserModelConfigListItem]
     ai_provider_support: dict[str, list[str]]
+    ai_context_defaults: dict[str, int]
     system_ai_config: AIConfigPublic
 
 

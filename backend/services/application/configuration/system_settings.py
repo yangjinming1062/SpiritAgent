@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.configuration import prepare_ai_config, public_ai_config
-from services.infrastructure.llm import providers_supporting, rotate_http_clients
+from services.infrastructure.llm import provider_context_defaults, providers_supporting, rotate_http_clients
 
 logger = get_logger(__name__)
 _SETTINGS_UPDATE_LOCK = asyncio.Lock()
@@ -115,6 +115,7 @@ def get_system_settings_for_admin() -> dict[str, Any]:
             result[key] = val
 
     result["ai_provider_support"] = {service: providers_supporting(service) for service in CAPABILITY_SERVICES}
+    result["ai_context_defaults"] = provider_context_defaults()
     return result
 
 

@@ -15,7 +15,6 @@ class GeminiChatProvider(ChatProvider):
     provider_name = "gemini"
     DEFAULT_BASE_URL: ClassVar[str] = "https://generativelanguage.googleapis.com"
     DEFAULT_MODEL: ClassVar[str] = "gemini-3.8-flash"
-    CONTEXT_TOKENS: ClassVar[int] = 1_000_000
     supports_json_object: ClassVar[bool] = True
     supports_vision: ClassVar[bool] = True
     # 兼容无鉴权网关；公共 API 仍需在卡片填写密钥，缺失时按鉴权错误失败。

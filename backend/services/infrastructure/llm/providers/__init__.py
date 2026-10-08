@@ -28,6 +28,7 @@ from .http import ProviderResultUnknownError, aclose_all, rotate_http_clients
 from .registry import (
     default_base_url,
     default_model_for,
+    provider_context_defaults,
     provider_requires_api_key,
     providers_supporting,
     register,
@@ -65,6 +66,7 @@ __all__ = [
     "aclose_all",
     "default_base_url",
     "default_model_for",
+    "provider_context_defaults",
     "provider_requires_api_key",
     "providers_supporting",
     "register",

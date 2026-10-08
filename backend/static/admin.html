@@ -1699,12 +1699,14 @@ function showModelConfigForUser(userId) {
     $('#modelModalTitle').textContent = cached ? `编辑凭证 · 用户 #${userId}` : `配置凭证 · 用户 #${userId}`;
     aiEditors.user.config = normalizeAiConfig(cached?.ai_config);
     aiEditors.user.support = tabCache.models?.ai_provider_support ?? {};
+    aiEditors.user.contextDefaults = tabCache.models.ai_context_defaults;
     aiEditors.user.inheritedProviders = tabCache.models?.system_ai_config?.providers ?? [];
     renderAiCards('user');
     openModal('modelModal');
 }
 
 async function saveModelConfig() {
+    if (!validateAiCards('user')) return;
     const userId = $('#modelUserId').value;
     const payload = { ai_config: aiEditors.user.config };
     try {
@@ -1735,8 +1737,8 @@ function normalizeAiConfig(raw) {
     return config;
 }
 const aiEditors = {
-    system: { root: '#aiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: [] },
-    user: { root: '#userAiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: [] },
+    system: { root: '#aiCardSettings', config: emptyAiConfig(), support: {}, contextDefaults: {}, inheritedProviders: [] },
+    user: { root: '#userAiCardSettings', config: emptyAiConfig(), support: {}, contextDefaults: {}, inheritedProviders: [] },
 };
 let aiDrag = null;
 // 点过“清除”的卡片：API Key 留空保持清除，填写后以新密钥为准；卡片对象原样提交（接口禁止额外字段），故不把标记写进卡片。
@@ -1750,6 +1752,37 @@ function aiList(editor, group) {
 
 function aiProviderLabel(provider) {
     return AI_NAMES[provider] ? `${AI_NAMES[provider]} (${provider})` : provider;
+}
+
+function parseAiContextWindow(raw) {
+    const match = String(raw ?? '').trim().match(/^(\d+)(?:\.(\d+))?([km])?$/i);
+    if (!match || (match[2] && !match[3])) return null;
+    const scale = match[3]?.toLowerCase() === 'm' ? 6 : match[3] ? 3 : 0;
+    const fraction = match[2] || '';
+    if (/[1-9]/.test(fraction.slice(scale))) return null;
+    // 拼出整数后再转换，避免小数乘法在大窗口值上丢失精度。
+    const value = Number(match[1] + fraction.slice(0, scale).padEnd(scale, '0'));
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function validateAiCards(editorName) {
+    const editor = aiEditors[editorName];
+    const windows = [];
+    for (const [index, card] of editor.config.capabilities.llm.entries()) {
+        const value = parseAiContextWindow(card.context_window);
+        if (value === null) {
+            const input = $(editor.root).querySelector(`[data-ai-group="llm"] [data-ai-index="${index}"] [data-ai-field="context_window"]`);
+            const message = '请填写有效的上下文窗口，例如 32k、1M 或 32768';
+            toast(message, 'err');
+            input.setCustomValidity(message);
+            input.reportValidity();
+            input.focus();
+            return false;
+        }
+        windows.push(value);
+    }
+    editor.config.capabilities.llm.forEach((card, index) => { card.context_window = windows[index]; });
+    return true;
 }
 
 function aiSource(editor, provider) {
@@ -1825,6 +1858,7 @@ function renderAiCards(editorName) {
 `}
                             <div class="field"><label>Base URL<input type="text" data-ai-field="base_url" value="${esc(card.base_url)}" placeholder="${esc(source?.base_url || '使用供应商官方地址')}"></label></div>
                             ${library || localImage ? '' : `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(card.provider === 'local' && group === 'llm' ? '填写已部署的对话模型 ID' : '使用该能力的默认模型')}"></label></div>`}
+                            ${group === 'llm' ? `<div class="field"><label>上下文窗口（tokens）<input type="text" data-ai-field="context_window" value="${esc(card.context_window)}" placeholder="如 32k、1M 或 32768" required></label><p class="hint">按模型服务实际上下文窗口填写；k = 1000，M = 1000000。</p></div>` : ''}
                         </article>`;
                     }).join('') || `<p class="hint" style="padding:1rem 0">${library ? '尚未添加供应商。可先建立共享信息卡片，再在能力中引用。' : editorName === 'user' ? '该用户继承系统的此项能力链。添加卡片后改为用户专属调用顺序。' : '该能力未配置。点击“添加卡片”选择共享供应商或填写独立配置。'}</p>`}
                 </div>
@@ -1842,6 +1876,7 @@ function renderAiCards(editorName) {
         const index = Number(event.target.closest('[data-ai-index]').dataset.aiIndex);
         const card = aiList(editor, group)[index];
         card[field] = event.target.value;
+        if (field === 'context_window') event.target.setCustomValidity('');
         if (field === 'api_key' && clearedKeyCards.has(card)) card.clear_api_key = !event.target.value.trim();
         if (editorName === 'system') markSettingsDirty();
     };
@@ -1865,9 +1900,11 @@ function renderAiCards(editorName) {
                 toast('该 provider 已存在，名称不能冲突', 'err');
                 return;
             }
-            cards.push(group === 'providers'
+            const card = group === 'providers'
                 ? { provider: value, api_key: '', base_url: '' }
-                : { provider: value, api_key: '', base_url: '', model_name: '' });
+                : { provider: value, api_key: '', base_url: '', model_name: '' };
+            if (group === 'llm') card.context_window = editor.contextDefaults[value];
+            cards.push(card);
         } else if (action === 'remove') {
             cards.splice(index, 1);
         } else if (action === 'clear-key') {
@@ -1932,7 +1969,6 @@ const SETTINGS_SECTIONS = [
                 num('llm_max_retry_attempts', '失败最大重试次数', 1, { min: 0 }),
                 num('llm_base_retry_delay', '初始重试退避 (秒)', 0.5, { min: 0 }),
                 num('llm_max_retry_delay', '最大重试延迟 (秒)', 1, { min: 0 }),
-                num('default_llm_context_tokens', '默认 Token 兜底容量', 1000),
             ]],
             ['sub', '视频生成轮询与下载调优'],
             ['grid', [
@@ -2208,6 +2244,7 @@ function renderSystemSettings(data) {
     if (!data) return;
     aiEditors.system.config = normalizeAiConfig(data.ai_config);
     aiEditors.system.support = data.ai_provider_support;
+    aiEditors.system.contextDefaults = data.ai_context_defaults;
     aiSettingsLoaded = true;
     renderAiCards('system');
     for (const k of SETTING_TEXT_KEYS) {
@@ -2240,6 +2277,7 @@ function renderSystemSettings(data) {
 
 async function saveSystemSettingsForm() {
     if (!aiSettingsLoaded) { toast('请先成功加载系统设置后再保存', 'err'); return; }
+    if (!validateAiCards('system')) return;
     const payload = { ai_config: aiEditors.system.config };
     for (const k of SETTING_TEXT_KEYS) {
         const el = $('#sys_' + k);

@@ -72,7 +72,7 @@ from services.domains.backup import (
 from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.infrastructure.assets import delete_user_assets
-from services.infrastructure.llm import providers_supporting
+from services.infrastructure.llm import provider_context_defaults, providers_supporting
 from sqlalchemy import select, update
 from starlette.background import BackgroundTask
 
@@ -183,6 +183,7 @@ async def list_model_configs(db: DbSession) -> UserModelConfigListResponse:
     return UserModelConfigListResponse(
         items=[_config_list_item(r) for r in (await db.execute(select(UserModelConfig))).scalars().all()],
         ai_provider_support=support,
+        ai_context_defaults=provider_context_defaults(),
         system_ai_config=public_ai_config(SETTINGS.ai_config),
     )
 

@@ -16,7 +16,7 @@ from services.infrastructure.llm import providers_supporting
 def _merge_saved_keys(
     cards: list[ProviderCardUpdate] | list[CapabilityCardUpdate],
     saved: list[ProviderCard] | list[CapabilityCard],
-) -> list[dict[str, str]]:
+) -> list[dict[str, str | int | None]]:
     """留空的 API Key 沿用同一供应商已保存的值，clear_api_key 显式清空。"""
     saved_keys = {card.provider: card.api_key for card in saved}
     return [

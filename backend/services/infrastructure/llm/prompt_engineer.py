@@ -18,7 +18,7 @@ from .providers import (
     resolve_context_tokens,
     resolve_provider_reasoning_effort,
 )
-from .responses import build_responses_kwargs
+from .responses import approx_responses_tokens, build_responses_kwargs
 from .user_config import UserLlmConfig
 
 logger = get_logger(__name__)
@@ -78,6 +78,19 @@ async def _call_text_response(
     return response.output_text
 
 
+def _output_token_budget(
+    context_length: int,
+    instructions: str,
+    input_items: list[dict[str, Any]],
+    max_output_tokens: int,
+) -> int:
+    available = (
+        context_length - approx_responses_tokens(instructions, input_items) - min(1024, max(1, context_length // 20))
+    )
+    # 超长输入保留原样，由供应商返回窗口错误。
+    return min(max_output_tokens, available) if available > 0 else max_output_tokens
+
+
 async def call_llm_once(
     llm_cfg: UserLlmConfig,
     system_prompt: str,
@@ -92,14 +105,16 @@ async def call_llm_once(
     user_content = (
         json.dumps(user_payload, ensure_ascii=False) if isinstance(user_payload, dict | list) else str(user_payload)
     )
+    input_items = [{"role": "user", "content": [{"type": "input_text", "text": user_content}]}]
 
     async def call(provider: ChatProvider) -> str:
+        context_length = resolve_context_tokens(provider.config)
         effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
         request = build_responses_kwargs(
             model=provider.config.model,
             instructions=system_prompt,
-            input_items=[{"role": "user", "content": [{"type": "input_text", "text": user_content}]}],
-            max_output_tokens=max_output_tokens,
+            input_items=input_items,
+            max_output_tokens=_output_token_budget(context_length, system_prompt, input_items, max_output_tokens),
             temperature=provider.scale_temperature(temperature) if temperature is not None else None,
             reasoning={"effort": effort} if effort else None,
             text={"format": {"type": "json_object"}} if json_output and provider.supports_json_object else None,
@@ -107,7 +122,7 @@ async def call_llm_once(
         return await _call_text_response(
             provider,
             request,
-            context_length=resolve_context_tokens(provider.provider_name),
+            context_length=context_length,
         )
 
     return await execute_with_fallback(llm_cfg.chain, ChatProvider, call, user_id=llm_cfg.user_id)
@@ -130,17 +145,25 @@ async def vision_chat(
         raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
     content = [{"type": "input_image", "image_url": uri} for uri in reference_images]
     content.append({"type": "input_text", "text": user_payload})
+    input_items = [{"role": "user", "content": content}]
 
     async def _describe(provider: ChatProvider) -> str:
         if before_submit is not None:
             await before_submit()
+        context_length = resolve_context_tokens(provider.config)
         response = await call_with_retry(
             provider.raw_client(),
+            context_length=context_length,
             **build_responses_kwargs(
                 model=provider.config.model,
                 instructions=system_prompt,
-                input_items=[{"role": "user", "content": content}],
-                max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
+                input_items=input_items,
+                max_output_tokens=_output_token_budget(
+                    context_length,
+                    system_prompt,
+                    input_items,
+                    LLM_MAX_OUTPUT_TOKENS,
+                ),
             ),
         )
         result = strip_outer_code_fence(response.output_text) if response.status == "completed" else ""

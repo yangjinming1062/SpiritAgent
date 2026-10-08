@@ -61,6 +61,7 @@ def _chain_entry(
     api_key: str,
     base_url: str,
     model: str,
+    context_window: int | None,
 ) -> ProviderConfig | None:
     """补齐供应商默认端点与模型；缺少必需密钥、端点或未注册该能力时返回 None。"""
     if provider == "local" and service_type == ServiceType.image_gen and model not in {"", "qwen"}:
@@ -83,6 +84,7 @@ def _chain_entry(
         service_type=service_type,
         provider_name=provider,
         model_overridden=bool(model),
+        context_window=context_window,
     )
 
 
@@ -119,6 +121,7 @@ def _chain_from_ai_config(
             api_key=next((layer.api_key for layer in layers if layer.api_key), ""),
             base_url=base_url,
             model=card.model_name,
+            context_window=card.context_window,
         )
         if entry is not None:
             result.append(entry)

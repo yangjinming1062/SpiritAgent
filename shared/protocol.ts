@@ -157,7 +157,7 @@ export interface SessionRuntimeInfo {
   provider?: string
   running?: boolean
   settings?: Record<string, unknown>
-  context_window?: number
+  context_window?: null | number
 }
 
 /** `/api/config` 读写共用的 config 结构：GET 响应与 PUT 请求都以 `{ config }` 包裹，PUT 只需携带要改的字段。 */

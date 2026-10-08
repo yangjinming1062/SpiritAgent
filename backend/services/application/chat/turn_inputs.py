@@ -499,7 +499,7 @@ async def build_turn_inputs(
         client=provider.raw_client(),
         native_memory=native_memory,
         model_name=provider.config.model,
-        ctx_length=resolve_context_tokens(provider.provider_name),
+        ctx_length=resolve_context_tokens(provider.config),
         all_schemas=all_schemas,
         excluded_tool_names=excluded_tool_names,
         first_user_msg_content=first_user_msg_content,

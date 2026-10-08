@@ -21,6 +21,7 @@ class ProviderCard(BaseModel):
 
 class CapabilityCard(ProviderCard):
     model_name: str = Field(default="", max_length=128)
+    context_window: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
 
 
 class CapabilityChains(BaseModel):
@@ -51,9 +52,15 @@ class AIConfig(BaseModel):
         if len(provider_names) != len(set(provider_names)):
             raise ValueError("同一供应商只能配置一张信息卡片")
         for service in CAPABILITY_SERVICES:
-            capability_names = [card.provider for card in getattr(self.capabilities, service)]
+            cards = getattr(self.capabilities, service)
+            capability_names = [card.provider for card in cards]
             if len(capability_names) != len(set(capability_names)):
                 raise ValueError(f"{service} 中同一供应商只能配置一张卡片")
+            for card in cards:
+                if service == "llm" and card.context_window is None:
+                    raise ValueError("请填写 LLM 的上下文窗口大小（正整数 tokens）")
+                if service != "llm" and card.context_window is not None:
+                    raise ValueError("上下文窗口仅支持 LLM 能力卡片")
         return self
 
 

@@ -48,7 +48,7 @@ async def create_completion(req: CompletionRequest, request: Request, user: Curr
             kwargs["max_output_tokens"] = req.max_output_tokens
         return await call_with_retry(
             provider.raw_client(),
-            context_length=resolve_context_tokens(provider.provider_name),
+            context_length=resolve_context_tokens(provider.config),
             **kwargs,
         )
 

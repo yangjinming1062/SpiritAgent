@@ -153,7 +153,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 `local` 对接 Responses 服务、embedding 和 ComfyUI，默认地址见 [适配器](services/infrastructure/llm/providers/local/)。Base URL 必须从 Backend（含容器）可达；信息库卡片提供共享地址与密钥，能力卡片可覆盖。无鉴权服务可留空密钥；启用 SSRF 守卫时私网地址须加入允许 CIDR，CGNAT 和云元数据地址不可豁免。
 
 - ComfyUI 使用固定 Qwen 工作流，自动匹配权重，不支持能力卡片独立密钥或自选权重。图像能力与长等待归 PIPELINE。
-- LLM 显式填写已部署模型 ID，支持 Responses API，加载窗口至少覆盖 [chat.py](services/infrastructure/llm/providers/local/chat.py) 的预算。适配器按地址缓存 `/props` 探测结果；确认 llama.cpp 后，仅无工具请求追加其 `response_format.json_schema`，其余走提示词与应用校验。
+- LLM 支持 Responses API；能力卡片须填写已部署模型 ID 和模型服务实际加载的上下文窗口（tokens），供压缩、调用预算和会话容量展示使用。适配器按地址缓存 `/props` 探测结果；确认 llama.cpp 后，仅无工具请求追加其 `response_format.json_schema`，其余走提示词与应用校验。
 - embedding 仅使用能力链首个有效配置，不自动换模型；链为空、无效或调用失败时记忆用关键词召回。维度适配见 [embedding.py](services/infrastructure/llm/providers/local/embedding.py)：仅默认模型允许 MRL 截断，短向量归一化补零，其他超宽向量拒绝。记忆未记录向量模型标识，更换模型不能复用旧向量。
 
 ### 运营参数

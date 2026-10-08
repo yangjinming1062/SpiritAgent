@@ -1,8 +1,4 @@
-from components import SETTINGS, get_logger
-
-from .base import BaseProvider, ChatProvider, ServiceType
-
-logger = get_logger(__name__)
+from .base import BaseProvider, ChatProvider, ProviderConfig, ServiceType
 
 # (service_type, provider_name) → 具体类；由 bootstrap 显式注册。
 _REGISTRY: dict[tuple[ServiceType, str], type[BaseProvider]] = {}
@@ -59,14 +55,17 @@ def providers_supporting(service_type: ServiceType | str) -> list[str]:
     return [name for registered_svc, name in _REGISTRY if registered_svc == svc]
 
 
-def resolve_context_tokens(provider: str) -> int:
-    """chat 供应商声明的上下文窗口；未声明时回退到全局默认。"""
-    cls = try_resolve_chat(provider)
-    if cls is not None and cls.CONTEXT_TOKENS > 0:
-        return cls.CONTEXT_TOKENS
-    logger.warning(
-        "resolve_context_tokens: no default published for provider=%r; falling through to global default %d",
-        provider,
-        SETTINGS.default_llm_context_tokens,
-    )
-    return SETTINGS.default_llm_context_tokens
+def provider_context_defaults() -> dict[str, int]:
+    """注册 LLM 供应商的新卡片窗口预填值。"""
+    return {
+        name: cls.DEFAULT_CONTEXT_TOKENS
+        for (service, name), cls in _REGISTRY.items()
+        if service == ServiceType.llm and issubclass(cls, ChatProvider)
+    }
+
+
+def resolve_context_tokens(config: ProviderConfig) -> int:
+    """调用窗口以能力卡片为准。"""
+    if config.context_window is None:
+        raise ValueError("LLM 能力卡片缺少上下文窗口配置")
+    return config.context_window

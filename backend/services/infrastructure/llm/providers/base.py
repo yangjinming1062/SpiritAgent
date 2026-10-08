@@ -66,6 +66,7 @@ class ProviderConfig:
     service_type: ServiceType
     provider_name: str
     model_overridden: bool = False
+    context_window: int | None = None
 
 
 class BaseProvider(ABC):
@@ -97,8 +98,8 @@ class ChatProvider(BaseProvider):
 
     service_type: ServiceType = ServiceType.llm
 
-    # 0 表示未声明，由 resolve_context_tokens 回退到全局默认
-    CONTEXT_TOKENS: ClassVar[int] = 0
+    # 新卡片的预填窗口，实际调用始终读取卡片配置。
+    DEFAULT_CONTEXT_TOKENS: ClassVar[int] = 1_000_000
     DEFAULT_VISION_MODEL: ClassVar[str] = ""  # 与 DEFAULT_MODEL 不同的视觉模型；空表示文本与视觉共用
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high"})
     TEMPERATURE_MIN: ClassVar[float] = 0.0

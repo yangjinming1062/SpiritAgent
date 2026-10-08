@@ -143,7 +143,7 @@ def build_runtime_info(
         running=runtime.busy,
         system_preset_id=system_preset_id,
         settings=settings,
-        context_window=resolve_context_tokens(provider),
+        context_window=resolve_context_tokens(llm_config.config) if llm_config.config else None,
         kind=runtime.kind,
         is_automation=runtime.is_automation,
     )

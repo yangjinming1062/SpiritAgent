@@ -129,14 +129,12 @@ def _fit_summary_block(
     block: list[dict[str, Any]],
     source_ids: list[int | None],
     *,
-    context_length: int,
+    input_budget: int,
     target_tokens: int,
     instructions: str,
     included_indices: set[int] | None,
 ) -> list[dict[str, Any]]:
     """只总结预算内的完整原消息前缀；超长单条保留原文，不把截断资料当作完整覆盖。"""
-    output_budget = max(LLM_MAX_OUTPUT_TOKENS, target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR)
-    input_budget = context_length - output_budget - max(1024, context_length // 20)
     pending_calls: set[str] = set()
     boundaries = []
     for index, item in enumerate(block):
@@ -170,6 +168,7 @@ async def _summarize_block(
     client: Any,
     model: str,
     target_tokens: int,
+    output_budget: int,
     temperature: float,
     instructions: str,
     included_indices: set[int] | None,
@@ -181,7 +180,7 @@ async def _summarize_block(
         instructions=instructions,
         input_items=_summary_input(block, target_tokens, included_indices),
         temperature=temperature,
-        max_output_tokens=max(LLM_MAX_OUTPUT_TOKENS, target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR),
+        max_output_tokens=output_budget,
     )
     response = await call_with_retry(client, context_length=context_length, **request)
     completed = response.status == "completed"
@@ -218,7 +217,6 @@ async def compress_history(
     companion: bool = False,
 ) -> tuple[dict[str, Any], CompressionInfo | None]:
     """压缩可总结的历史前缀；成功返回压缩后的 Responses 上下文，无可压缩内容返回原上下文；摘要调用失败、未完成或为空时抛 CompressionFailedError，历史不变。"""
-    target = SETTINGS.context_summary_target_tokens
     source_ids: list[int | None] = context["source_message_ids"]
     block, keep = _pick_compressible_block(context["input"], source_message_ids=source_ids)
     if not block:
@@ -241,10 +239,19 @@ async def compress_history(
         COMPANION_CONTEXT_SUMMARY_PROMPTS if companion else CONTEXT_SUMMARY_PROMPTS,
         language,
     )
+    # 小窗口按比例缩小摘要与输出预留，安全余量最多占四分之一，保留完整原消息的输入空间。
+    target = min(SETTINGS.context_summary_target_tokens, max(1, context_length // 4))
+    output_budget = min(
+        max(LLM_MAX_OUTPUT_TOKENS, target * CONTEXT_SUMMARY_HEADROOM_FACTOR),
+        max(1, context_length // 2),
+    )
+    input_budget = context_length - output_budget - min(max(1024, context_length // 20), context_length // 4)
+    if input_budget <= 0:
+        raise CompressionFailedError("context window cannot fit summary input and output")
     bounded = _fit_summary_block(
         block,
         source_ids,
-        context_length=context_length,
+        input_budget=input_budget,
         target_tokens=target,
         instructions=instructions,
         included_indices=included_indices,
@@ -259,6 +266,7 @@ async def compress_history(
             client=client,
             model=model,
             target_tokens=target,
+            output_budget=output_budget,
             temperature=temperature,
             instructions=instructions,
             included_indices=included_indices,

@@ -492,7 +492,7 @@ async def _run_chat_turn(
                             provider.config.model,
                             current_context,
                             active_schemas,
-                            resolve_context_tokens(provider.provider_name),
+                            resolve_context_tokens(provider.config),
                             provider,
                             delivery=delivery,
                             on_response_started=set_response_started,

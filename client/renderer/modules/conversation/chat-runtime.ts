@@ -344,7 +344,7 @@ export function createConversationRuntime(sessionId: string | null) {
     })
   }
 
-  function resetSessionContextUsage(contextLimit?: number, totalTokens = 0): void {
+  function resetSessionContextUsage(contextLimit?: null | number, totalTokens = 0): void {
     $sessionContextUsage.set({
       promptTokens: 0,
       completionTokens: 0,
