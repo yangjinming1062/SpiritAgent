@@ -1,5 +1,5 @@
 from .bootstrap import ensure_system_conversations_for_user
-from .context_window import CHECKPOINT_SUBTYPES, load_context_messages, load_recent_context_window
+from .context_window import CHECKPOINT_SUBTYPE, load_context_messages, load_recent_context_window
 from .edit import EditNotAllowedError, replace_last_user_message
 from .fork import ForkNotAllowedError, SourceNotFoundError, fork_conversation_from_message
 from .formatting import companion_context_content, format_messages_compact, message_contains_text, message_text
@@ -58,7 +58,7 @@ __all__ = [
     "resolve_memory_scope",
     "user_authored_conversation",
     "validate_memory_scope",
-    "CHECKPOINT_SUBTYPES",
+    "CHECKPOINT_SUBTYPE",
     "CLEARED_STATUS_SUBTYPE",
     "COMPANION_PRESET_ID",
     "MEDIA_STATUS_SUBTYPE",

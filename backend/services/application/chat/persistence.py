@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.contracts import MemoryScope
 from services.domains.companion import update_mood_from_companion_turn
 from services.domains.conversation import (
+    CHECKPOINT_SUBTYPE,
     bind_reply_videos,
     client_media_entries,
     client_reply_bubbles,
@@ -162,7 +163,7 @@ async def persist_compression_checkpoint(
         conversation_id=conv_id,
         role="system",
         content=info.checkpoint_text,
-        subtype="compress_summary",
+        subtype=CHECKPOINT_SUBTYPE,
         summary_through_message_id=info.through_message_id,
         prompt_tokens=info.prompt_tokens,
         completion_tokens=info.completion_tokens,
@@ -176,7 +177,7 @@ async def persist_compression_checkpoint(
             event_type="compress.completed",
             payload={
                 "session_id": str(conv_id),
-                "subtype": "compress_summary",
+                "subtype": checkpoint.subtype,
                 "text": checkpoint.content,
                 "message_id": checkpoint.id,
             },

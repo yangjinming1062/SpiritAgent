@@ -23,9 +23,6 @@ import { ToolChipTimeline } from './tool-chip-timeline'
 // 居中的元信息行，而非聊天气泡。Slash 命令结果与历史清空标记（详见 PROTOCOL「Slash 命令」）走同一形态。
 const SYSTEM_PILL_SUBTYPES = new Set(['status_cleared', 'status_command_result', 'status_media_failed'])
 
-// 对话摘要与上下文压缩检查点：居中分界线式可折叠卡片；走独立分支而非 pill，视觉上要突出为有信息量的节点。
-const SUMMARY_CARD_SUBTYPES = new Set(['compress_summary', 'daily_summary'])
-
 export type ConversationVariant = 'living' | 'workbench'
 
 interface MessageBubbleProps {
@@ -106,7 +103,7 @@ function MessageBubbleWithBody({
   const retryableMessage = useStore($retryableAssistantMessage)
   const gatewayState = useStore($gatewayState)
 
-  // 摘要/压缩卡片折叠态：组件局部 useState，默认折叠，不持久化、不入 store；多窗口各自独立展开。
+  // 压缩摘要卡片折叠态：组件局部 useState，默认折叠，不持久化、不入 store；多窗口各自独立展开。
   const [summaryExpanded, setSummaryExpanded] = useState(false)
 
   const timeLabel = showTimeLabel ? formatConversationTime(message.timestamp) : ''
@@ -118,8 +115,8 @@ function MessageBubbleWithBody({
   ) : null
 
   // 摘要卡只凭 subtype 识别；正文格式不是识别契约，用户或模型写出相同文字仍是普通消息。
-  if (SUMMARY_CARD_SUBTYPES.has(subtype)) {
-    // 解析 content：第一行（如"[📝 截至 ...]"或"[🗜️ 对话压缩 — ...]"）是胶囊标题，剩余为摘要 body。
+  if (subtype === 'compress_summary') {
+    // 第一行是胶囊标题，剩余为摘要正文。
     const rawText = body.text
     const newlineIdx = rawText.indexOf('\n')
     let title = ''

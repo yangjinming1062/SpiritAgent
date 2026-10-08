@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import user_asset_lock
 
-from .context_window import CHECKPOINT_SUBTYPES
+from .context_window import CHECKPOINT_SUBTYPE
 from .main_conversation import SPECIAL_KIND, STANDARD_KIND, UI_ONLY_SUBTYPES
 from .memory_scope import conversation_memory_scope
 
@@ -126,7 +126,7 @@ async def _fork_conversation_from_message(
         copies[row.id] = copy
     await db.flush()
     for row in rows:
-        if row.subtype in CHECKPOINT_SUBTYPES:
+        if row.subtype == CHECKPOINT_SUBTYPE:
             boundary = copies.get(row.summary_through_message_id)
             if boundary is None:
                 raise SourceNotFoundError("摘要覆盖边界不在可派生历史中")

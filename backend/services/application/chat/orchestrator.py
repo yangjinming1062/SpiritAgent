@@ -382,7 +382,7 @@ async def _run_chat_turn(
                 await emitter.send_json(
                     {
                         "type": "compress.completed",
-                        "subtype": "compress_summary",
+                        "subtype": checkpoint.subtype,
                         "text": checkpoint.content,
                         "message_id": checkpoint.id,
                     },

@@ -1,7 +1,6 @@
-import asyncio
 import contextlib
 import json
-from collections.abc import Coroutine, Sequence
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -47,7 +46,6 @@ from services.domains.memory import (
 from services.domains.posts import collect_post_interactions
 from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_user_llm_config
 
-from .daily_checkpoint import run_daily_checkpoint
 from .journal_nightly import project_today
 from .nightly_planning import ActionExecutionResult, DateContext, load_terminal_action_results, run_nightly_planning
 from .stage_state import load_narrative_result, save_narrative_result
@@ -477,15 +475,9 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             await db.commit()
         stages.append({"stage": "reflection", "status": "skipped", "reason": "当日无互动或自主行动"})
 
-    # Daily checkpoint 与日记发布相互独立，并发执行以缩短每用户的夜间墙钟时间。
-    labels = ["daily checkpoint"]
-    jobs: list[Coroutine[Any, Any, bool]] = [
-        run_daily_checkpoint(llm_cfg, user_id, utc_start, utc_end, local_date_str, user_language, user_timezone=tz_str),
-    ]
     if has_material:
-        labels.append("journal nightly")
-        jobs.append(
-            project_today(
+        try:
+            journal_ok = await project_today(
                 user_id,
                 target_date,
                 log_id=log_id,
@@ -498,21 +490,12 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 posts=posts,
                 persona=persona,
                 language=user_language,
-            ),
-        )
-    results = await asyncio.gather(*jobs, return_exceptions=True)
-    for label, result in zip(labels, results, strict=True):
-        if isinstance(result, asyncio.CancelledError):
-            raise result
-        if isinstance(result, Exception):
-            # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
-            logger.error(f"nightly_activity: {label} failed", exc_info=result, extra={"user_id": user_id})
-            stages.append({"stage": label, "status": "error", "error": str(result)})
-        elif result is False:
-            stages.append({"stage": label, "status": "skipped"})
-        else:
-            stages.append({"stage": label, "status": "ok"})
-    if not has_material:
+            )
+            stages.append({"stage": "journal nightly", "status": "ok" if journal_ok else "skipped"})
+        except Exception as exc:
+            logger.exception("nightly_activity: journal nightly failed", extra={"user_id": user_id})
+            stages.append({"stage": "journal nightly", "status": "error", "error": str(exc)})
+    else:
         stages.append({"stage": "journal nightly", "status": "skipped"})
 
     has_errors = any(stage["status"] == "error" for stage in stages) or any(

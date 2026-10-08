@@ -45,7 +45,7 @@ from sqlalchemy import Date, DateTime, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope, MemorySource
-from services.domains.conversation import CHECKPOINT_SUBTYPES, validate_memory_scope
+from services.domains.conversation import CHECKPOINT_SUBTYPE, validate_memory_scope
 from services.infrastructure.assets import parse_companion_asset_path
 
 from .action_assets import restore_action_payload
@@ -441,7 +441,7 @@ def _build_payload(
         raise ValueError("Message conversation is missing from backup")
     if table == "messages":
         through_id = payload.get("summary_through_message_id")
-        if payload.get("subtype") in CHECKPOINT_SUBTYPES:
+        if payload.get("subtype") == CHECKPOINT_SUBTYPE:
             if type(through_id) is not int or through_id <= 0:
                 raise ValueError("Conversation summary requires an original message boundary")
         elif through_id is not None:
@@ -574,14 +574,14 @@ async def restore_conversation_context(
 ) -> None:
     messages = {str(row["id"]): row for row in rows.get("messages", [])}
     for original_id, raw in messages.items():
-        if raw.get("subtype") not in CHECKPOINT_SUBTYPES:
+        if raw.get("subtype") != CHECKPOINT_SUBTYPE:
             continue
         source_id = str(raw["summary_through_message_id"])
         source = messages.get(source_id)
         if (
             source is None
             or str(source["conversation_id"]) != str(raw["conversation_id"])
-            or source.get("subtype") in CHECKPOINT_SUBTYPES
+            or source.get("subtype") == CHECKPOINT_SUBTYPE
         ):
             raise ValueError("Conversation summary boundary is missing from backup")
         checkpoint = await db.get(Message, int(id_map["messages"][original_id]))

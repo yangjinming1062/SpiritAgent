@@ -6,7 +6,7 @@ from .formatting import format_messages_compact
 from .main_conversation import UI_ONLY_SUBTYPES, get_special_conversation
 
 RECENT_CONTEXT_CHAR_CAP = 200
-CHECKPOINT_SUBTYPES: tuple[str, ...] = ("daily_summary", "compress_summary")
+CHECKPOINT_SUBTYPE = "compress_summary"
 
 
 async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Message]:
@@ -16,7 +16,7 @@ async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Me
         .where(
             Message.conversation_id == conv.id,
             Message.id > conv.context_after_message_id,
-            Message.subtype.in_(CHECKPOINT_SUBTYPES),
+            Message.subtype == CHECKPOINT_SUBTYPE,
         )
         .order_by(Message.id.desc())
         .limit(1),
@@ -24,14 +24,14 @@ async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Me
     stmt = select(Message).where(
         Message.conversation_id == conv.id,
         Message.id > conv.context_after_message_id,
-        Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, *CHECKPOINT_SUBTYPES)),
+        Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
     )
     if checkpoint is not None:
         boundary = await db.scalar(
             select(Message).where(
                 Message.conversation_id == conv.id,
                 Message.id == checkpoint.summary_through_message_id,
-                Message.subtype.is_(None) | Message.subtype.notin_(CHECKPOINT_SUBTYPES),
+                Message.subtype.is_(None) | (Message.subtype != CHECKPOINT_SUBTYPE),
             ),
         )
         if boundary is None:
