@@ -219,7 +219,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
     }
   }
 
-  function request(command: Record<string, unknown>, timeoutMs: number, fatalTimeout = false): Promise<void> {
+  function request(command: Record<string, unknown>, timeoutMs: number): Promise<void> {
     const process = child
 
     if (!process || exited(process) || process.killed) {
@@ -232,11 +232,6 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
       const timer = setTimeout(() => {
         pending.delete(id)
         const reason = `Desktop helper ${String(command.command)} timed out`
-
-        if (fatalTimeout) {
-          process.kill()
-          reportFailure(reason)
-        }
 
         reject(new Error(reason))
       }, timeoutMs)
@@ -577,7 +572,8 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           return false
         }
 
-        await request({ command: 'focus', handle: encodeHandle(handle) }, 1_000, true)
+        // helper 单线程命令循环里启动期首轮应用扫描可达秒级；超时只放弃本次激活，存活由心跳与 lease 兜底。
+        await request({ command: 'focus', handle: encodeHandle(handle) }, 3_000)
 
         return true
       })
@@ -590,7 +586,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           throw new Error('桌面已改变，请重新选择程序。')
         }
 
-        await request({ command: 'refresh_applications' }, 2_000, true)
+        await request({ command: 'refresh_applications' }, 4_000)
       })
     },
     activateExternal: (windowId, eligible) => {
@@ -601,7 +597,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           throw new Error('桌面已改变，请重新选择窗口。')
         }
 
-        await request({ command: 'activate_external', window_id: windowId }, 1_000, true)
+        await request({ command: 'activate_external', window_id: windowId }, 3_000)
       })
     },
     closeExternal: (windowIds, eligible) => {
@@ -612,7 +608,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           throw new Error('桌面已改变，请重新选择窗口。')
         }
 
-        await request({ command: 'close_external', window_ids: windowIds }, 1_000, true)
+        await request({ command: 'close_external', window_ids: windowIds }, 3_000)
       })
     },
     recover: () =>

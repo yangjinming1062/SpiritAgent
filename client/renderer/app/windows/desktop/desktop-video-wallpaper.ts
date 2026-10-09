@@ -13,6 +13,7 @@ import {
   playDesktopVideoAction,
   refreshDesktopVideos
 } from '@/modules/desktop-videos'
+import { $activeScene } from '@/modules/scene'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
@@ -25,6 +26,7 @@ export function useDesktopVideoWallpaper(): void {
   const presentation = useStore($presentation)
   const locked = useStore($surfaceScreenLocked)
   const theme = useStore($theme)
+  const scene = useStore($activeScene)
   const state = useStore($desktopVideoState)
   const requested = useStore($desktopVideoPlayback)
   const contextRevision = useStore($desktopVideoContextRevision)
@@ -290,7 +292,7 @@ export function useDesktopVideoWallpaper(): void {
   )
 
   const videoUrl = claimed?.video_url ?? fallbackAction?.video_url ?? null
-  const posterUrl = claimed?.poster_url ?? fallbackAction?.poster_url ?? firstPoster
+  const posterUrl = claimed?.poster_url ?? fallbackAction?.poster_url ?? firstPoster ?? scene?.assetUrl ?? null
 
   useEffect(() => {
     if (!active || !authSessionId) {
@@ -341,6 +343,7 @@ export function useDesktopVideoWallpaper(): void {
     fallbackAction?.set_id,
     videoUrl,
     posterUrl,
+    scene?.assetUrl,
     state?.set_epoch,
     theme,
     reduceMotion,

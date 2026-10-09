@@ -26,7 +26,7 @@ html[data-maximized='true'] .root {
     radial-gradient(circle at 20% 80%, var(--ui-accent-soft) 0%, transparent 50%);
   background-position: center;
   background-repeat: no-repeat;
-  background-size: contain;
+  background-size: cover;
   bottom: 0;
   left: 0;
   position: absolute;
@@ -34,9 +34,10 @@ html[data-maximized='true'] .root {
   top: 0;
 }
 
-/* 烘焙位图自带模糊；CSS filter 只服务尚未就绪或失败时的回退路径。 */
+/* CSS filter 只服务烘焙未就绪或失败时的回退路径；scale 与烘焙的 overscan 同为补偿 blur 边缘收缩。 */
 html[data-effect='clear'] .backdropImage {
   filter: blur(18px) saturate(1.22);
+  transform: scale(1.1);
 }
 
 html[data-effect='clear'][data-palette='day'] .backdropImage {
@@ -45,6 +46,7 @@ html[data-effect='clear'][data-palette='day'] .backdropImage {
 
 html[data-effect='solid'] .backdropImage {
   filter: blur(12px) saturate(1.06);
+  transform: scale(1.06);
 }
 
 html[data-effect='clear'] .backdropImage.status_pending {
@@ -61,6 +63,7 @@ html[data-effect='solid'] .backdropImage.status_pending {
 
 html[data-effect] .backdropImage[data-baked='true'] {
   filter: none;
+  transform: none;
 }
 
 .status_pending {
@@ -105,4 +108,5 @@ html[class~='no-blur'] .pendingGlass {
 
 html[class~='no-blur'] .backdropImage {
   filter: none !important;
+  transform: none;
 }

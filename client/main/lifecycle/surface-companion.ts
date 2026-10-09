@@ -11,19 +11,6 @@ export const PANEL_SIZES: Record<SurfaceId, { height: number; minHeight: number;
   workbench: { height: 800, minHeight: 640, minWidth: 1095, width: 1321 }
 }
 
-export const LIVING_ASPECT_RATIO = 16 / 9
-
-/** 内容区完整落入给定宽高，像素取整不拉伸场景。 */
-export function livingPanelSize(width: number, height: number): { height: number; width: number } {
-  let fittedHeight = Math.max(1, Math.min(Math.floor(height), Math.round(width / LIVING_ASPECT_RATIO)))
-
-  if (Math.round(fittedHeight * LIVING_ASPECT_RATIO) > width && fittedHeight > 1) {
-    fittedHeight -= 1
-  }
-
-  return { height: fittedHeight, width: Math.round(fittedHeight * LIVING_ASPECT_RATIO) }
-}
-
 const DEFAULT_COMPANIONS: Record<SurfaceId, SurfaceCompanionPreference> = {
   living: { enabled: true, side: 'right' },
   workbench: { enabled: true, side: 'left' }

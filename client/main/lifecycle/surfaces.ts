@@ -31,15 +31,7 @@ import {
   setWindowIgnoreMouseEvents
 } from '../shared/utils'
 
-import {
-  companionSlot,
-  LIVING_ASPECT_RATIO,
-  livingPanelSize,
-  outerBounds,
-  PANEL_SIZES,
-  panelBounds,
-  parseCompanionPreference
-} from './surface-companion'
+import { companionSlot, outerBounds, PANEL_SIZES, panelBounds, parseCompanionPreference } from './surface-companion'
 import type { CreatedSurfaceWindow } from './surface-window'
 
 export interface SurfacesManager {
@@ -206,32 +198,16 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
     const preference = options.getCompanionPreference(id)
     const area = screen.getDisplayMatching(layout.panel).workArea
-
-    if (id === 'living') {
-      layout.panel = {
-        ...layout.panel,
-        ...livingPanelSize(
-          Math.min(layout.panel.width, area.width - 16),
-          Math.min(layout.panel.height, area.height - 16)
-        )
-      }
-    }
-
     const slot = companionSlot(layout.panel, preference.side, preference.enabled, area)
     const target = outerBounds(layout.panel, preference.side, slot.width)
     layout.slotWidth = slot.width
     layout.side = preference.side
     layout.reason = slot.reason
 
-    const minWidth = id === 'living' ? Math.min(PANEL_SIZES[id].minWidth, layout.panel.width) : PANEL_SIZES[id].minWidth
-
-    const minHeight =
-      id === 'living' ? Math.min(PANEL_SIZES[id].minHeight, layout.panel.height) : PANEL_SIZES[id].minHeight
-
     if (!sameBounds(win.getBounds(), target)) {
       // 收起侧栏时先放宽最小宽度；展开后再约束整个物理窗口。
       layout.expectedBounds = target
-      win.setMinimumSize(minWidth, minHeight)
+      win.setMinimumSize(PANEL_SIZES[id].minWidth, PANEL_SIZES[id].minHeight)
       win.setBounds(target)
 
       clearTimeout(layout.adjustmentTimer)
@@ -251,11 +227,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       }, 0)
     }
 
-    win.setMinimumSize(minWidth + slot.width, minHeight)
-
-    if (id === 'living') {
-      win.setAspectRatio(LIVING_ASPECT_RATIO, { height: 0, width: slot.width })
-    }
+    win.setMinimumSize(PANEL_SIZES[id].minWidth + slot.width, PANEL_SIZES[id].minHeight)
 
     publish()
   }
@@ -586,16 +558,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       }
 
       const area = screen.getDisplayMatching(layout.panel).workArea
-
-      if (layout.id === 'living') {
-        layout.panel = {
-          ...layout.panel,
-          ...livingPanelSize(
-            Math.min(layout.panel.width, area.width - 16),
-            Math.min(layout.panel.height, area.height - 16)
-          )
-        }
-      }
 
       layout.panel = {
         ...layout.panel,

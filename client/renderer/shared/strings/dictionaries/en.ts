@@ -1198,7 +1198,7 @@ export const dict: Dictionary = {
     },
     scene: {
       intro:
-        'Scenes fill the entire living space window at a fixed 16:9 ratio. They omit a duplicate of your companion; other people, animals and statues may appear. The default style is natural realism.',
+        'Scenes fill the area behind the living space window; extra parts are cropped when the window and image ratios differ. They omit a duplicate of your companion; other people, animals and statues may appear. The default style is natural realism.',
       referenceHint:
         'A reference guides the environment, composition and style. Your companion’s own appearance is not repeated in the scene image.',
       referenceLabel: 'Scene reference',

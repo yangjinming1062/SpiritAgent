@@ -28,6 +28,8 @@ export interface ActiveScene {
   requirements: string
   prompt: string
   url: string
+  /** 后端原始资产 URL，供受限媒体桥取字节；url 是解析后的可显示 src。 */
+  assetUrl: string
   thumbnailUrl: string
   status: SceneStatus
   stage: string
@@ -40,7 +42,7 @@ export interface ActiveScene {
   regeneration: SceneRegeneration | null
 }
 export type SceneAsset = ActiveScene
-interface SceneWire extends Omit<ActiveScene, 'id' | 'thumbnailUrl'> {
+interface SceneWire extends Omit<ActiveScene, 'assetUrl' | 'id' | 'thumbnailUrl'> {
   id: number
 }
 interface SceneStateWire {
@@ -89,7 +91,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollCount = 0
 
 function toScene(row: SceneWire, url: string): ActiveScene {
-  return { ...row, id: String(row.id), url, thumbnailUrl: url }
+  return { ...row, assetUrl: row.url || '', id: String(row.id), url, thumbnailUrl: url }
 }
 
 /** 把场景图片解析为可用 src；失败抛出，由调用方决定保留旧图还是占位。 */

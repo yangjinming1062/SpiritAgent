@@ -53,7 +53,7 @@
 
 入口面快照仅在实际状态变化时增加版本并广播；重复几何与显隐事件不重复发布。`surface:open` 完成或失败仍回灌当前快照，纠正渲染层的乐观意图；新窗口通过 `surface:get-state` 取得当前版本。
 
-生活空间的内容面板在普通窗口下保持 16:9，初始尺寸与等比适配归 [surface-companion.ts](lifecycle/surface-companion.ts)。原生缩放比例排除透明侧边伙伴区域，侧边切换、收起及屏幕适配不改变内容面板画幅；最大化沿用系统工作区，背景完整显示。
+生活空间窗口按 [surface-companion.ts](lifecycle/surface-companion.ts) 的初始尺寸打开并可自由缩放，不强制画幅；呈现语义见 [窗口与会话](../../docs/DESIGN.md#窗口与会话)。
 
 [surfaces.ts](lifecycle/surfaces.ts) 另负责播放认领（`surface:claim-play`）与锁屏跟踪：同一 `play_id` 只由一个可见舞台认领，认领随账户变化清空，规则见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
 
