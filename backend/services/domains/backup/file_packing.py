@@ -300,8 +300,22 @@ def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewr
                 required.append(row.get("seed_fullbody_url"))
         elif table == "companion_outfits" and row.get("status") == "ready":
             required.append(row.get("fullbody_url"))
-        elif table == "companion_scenes" and row.get("status") == "ready":
-            required.append(row.get("media_path"))
+        elif table == "companion_scenes":
+            if row.get("status") == "ready":
+                required.append(row.get("media_path"))
+            if row.get("upload_source_path"):
+                required.append(row["upload_source_path"])
+        elif table == "desktop_video_sets":
+            context = json.loads(row["context_json"])
+            required.extend((context.get("identity_path"), context.get("outfit_path")))
+        elif table == "desktop_video_actions":
+            if row.get("accepted_asset_json"):
+                asset = json.loads(row["accepted_asset_json"])
+                required.extend((asset.get("video_path"), asset.get("poster_path")))
+            if row.get("status") == "review_pending" and row.get("generation_state_json"):
+                candidate = json.loads(row["generation_state_json"]).get("candidate")
+                if candidate:
+                    required.extend((candidate.get("video_path"), candidate.get("poster_path")))
         elif table == "companion_posts":
             if row.get("content_type") != "text":
                 required.append(row.get("media_url"))

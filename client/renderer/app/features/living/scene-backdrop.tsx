@@ -16,7 +16,6 @@ import styles from './scene-backdrop.module.css'
 // 拖拽改尺寸按 64px 网格重烘焙，停稳后吸附回精确尺寸，终态烘焙无偏差。
 const BAKE_SIZE_GRID = 64
 const RESIZE_SETTLE_MS = 200
-const reducedMotionMql = typeof window !== 'undefined' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
 
 export function SceneBackdrop(): React.JSX.Element {
   const taskStatus = useStore($sceneTaskStatus)
@@ -64,18 +63,15 @@ export function SceneBackdrop(): React.JSX.Element {
     }
   }, [])
 
-  const reducedMotion = reducedMotionMql?.matches ?? false
-
   const bgUrl = backdrop?.url ?? null
   const status = bgUrl ? 'ready' : taskStatus === 'pending' ? 'pending' : 'none'
-  const showKenBurns = !reducedMotion && status === 'ready'
 
   const baked = useBakedScene(noBlur ? null : bgUrl, viewport.width, viewport.height, theme)
 
   return (
     <div aria-hidden="true" className={styles.root} ref={rootRef}>
       <div
-        className={cn(styles.backdropImage, showKenBurns && styles.kenBurns, styles[`status_${status}`])}
+        className={cn(styles.backdropImage, styles[`status_${status}`])}
         data-baked={baked ? 'true' : undefined}
         style={
           baked

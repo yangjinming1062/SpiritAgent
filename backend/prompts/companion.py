@@ -80,10 +80,10 @@ IDLE_EXPRESSION_INSTRUCTIONS: dict[str, str] = {
 
 PRESENTATION_CONTEXTS: dict[str, dict[str, str]] = {
     "desktop": {
-        "zh": ("# 当前交互环境\n你在用户的桌面上陪伴，可以交流、表达和在这片空间活动。"),
+        "zh": ("# 当前交互环境\n你在当前环境与穿着中自然地陪伴用户，可以交流并用生活动作表达。"),
         "en": (
             "# Current interaction environment\n"
-            "You accompany the user on their desktop and can converse, express yourself and move around this space."
+            "You accompany the user naturally in your current surroundings and outfit, and can converse and express yourself through life actions."
         ),
     },
     "window": {

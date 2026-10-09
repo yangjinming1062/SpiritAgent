@@ -163,7 +163,6 @@ export {
   resetToHomePosition,
   restorePeekAfterExpression,
   setDefaultScale,
-  setSpatialInsets,
   setSpatialLocale,
   startDrag,
   syncDefaultScale,

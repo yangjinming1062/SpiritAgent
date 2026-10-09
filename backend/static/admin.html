@@ -937,6 +937,7 @@ input[type="file"] { font-size: 0.78rem; }
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="diary"> 日记</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="wardrobe"> 衣柜与动作</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="scenes"> 场景</label>
+                    <label class="checkbox-row"><input type="checkbox" class="bk_section" value="desktop_life"> 桌面生活（需同时恢复身份、衣柜与场景）</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="automation"> 定时与意图</label>
                     <label class="checkbox-row"><input type="checkbox" class="bk_section" value="settings"> 设置与凭据</label>
                 </div>
@@ -1498,7 +1499,7 @@ const BACKUP_SECTION_LABELS = Object.freeze({
     user_preferences: '用户偏好', conversations: '会话', messages: '消息',
     user_model_configs: '模型配置与凭据', avatar_assets: '角色形象', companion_character_cards: '角色卡',
     companion_outfits: '衣柜', companion_action_packs: '动作包', companion_actions: '动作',
-    companion_scenes: '场景', personas: '角色定义', user_settings: '用户设置',
+    companion_scenes: '场景', desktop_video_sets: '桌面生活组合', desktop_video_actions: '桌面生活动作', desktop_video_states: '桌面生活偏好', personas: '角色定义', user_settings: '用户设置',
     cron_jobs: '定时任务', companion_intents: '主动陪伴意图', memories: '长期记忆',
     companion_posts: '动态', companion_post_comments: '动态评论',
     companion_diary_entries: '日记', asset_files: '资产文件',
@@ -1513,7 +1514,7 @@ const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' 
 const BACKUP_SCOPE_LABELS = Object.freeze({
     all: '全部数据', identity: '基础身份', custom: '自定义',
     conversations: '会话记录', memories: '长期记忆', posts: '动态', diary: '日记',
-    wardrobe: '衣柜与动作', scenes: '场景', automation: '定时与意图', settings: '设置与凭据',
+    wardrobe: '衣柜与动作', scenes: '场景', desktop_life: '桌面生活', automation: '定时与意图', settings: '设置与凭据',
 });
 let backupImportRunning = false;
 

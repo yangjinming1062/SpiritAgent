@@ -16,9 +16,10 @@ from modules.ws import COMPANION_TURN_EVENT
 
 from services.adapters.desktop import terminate_remote_sessions, terminate_user_gateway
 from services.adapters.scheduler import invalidate_user_scheduler_state
-from services.application.actions import resume_proposal_reviews
+from services.application.actions import resume_desktop_reviews, resume_proposal_reviews
 from services.application.generation import (
     resume_user_character_extraction,
+    resume_user_desktop_video_jobs,
     resume_user_dynamic_actions,
     resume_user_scene_jobs,
     resume_user_video_jobs,
@@ -88,6 +89,8 @@ async def user_maintenance(user_id: int) -> AsyncIterator[None]:
                 resume_user_character_extraction,
                 resume_user_video_jobs,
                 resume_proposal_reviews,
+                resume_user_desktop_video_jobs,
+                resume_desktop_reviews,
             ):
                 try:
                     await resume(user_id)

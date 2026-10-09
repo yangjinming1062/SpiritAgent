@@ -52,6 +52,10 @@ def plan_asset_layout(
                 mapped("companion_outfits", outfit_id) if outfit_id is not None else None,
                 mapped("companion_action_packs", pack["id"]),
             )
+        if table == "desktop_video_sets":
+            return 3, f"desktop/{mapped(table, row['id'])}/references"
+        if table == "desktop_video_actions":
+            return 3, f"desktop/{mapped('desktop_video_sets', row['set_id'])}/{mapped(table, row['id'])}"
         created_at = row.get("created_at")
         if isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at)

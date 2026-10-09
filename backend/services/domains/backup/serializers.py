@@ -25,6 +25,9 @@ from modules.companion import (
     CompanionPost,
     CompanionPostComment,
     CompanionScene,
+    DesktopVideoAction,
+    DesktopVideoSet,
+    DesktopVideoState,
     DiaryContent,
     Persona,
     PostCommentResponse,
@@ -49,6 +52,7 @@ from services.domains.conversation import CHECKPOINT_SUBTYPE, validate_memory_sc
 from services.infrastructure.assets import parse_companion_asset_path
 
 from .action_assets import restore_action_payload
+from .desktop_assets import restore_desktop_payload, validate_desktop_owned_paths
 from .file_packing import UrlRewriter
 
 # 表白名单与依赖顺序单源维护；列从模型读取，新增持久字段不会静默漏备份。
@@ -62,6 +66,9 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "companion_action_packs": CompanionActionPack,
     "companion_actions": CompanionAction,
     "companion_scenes": CompanionScene,
+    "desktop_video_sets": DesktopVideoSet,
+    "desktop_video_actions": DesktopVideoAction,
+    "desktop_video_states": DesktopVideoState,
     "personas": Persona,
     "user_settings": UserSetting,
     "cron_jobs": CronJob,
@@ -75,6 +82,7 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
 TABLES = tuple(TABLE_MODELS)
 CONVERSATION_TABLES = frozenset({"conversations", "messages"})
 ACTION_TABLES = frozenset({"companion_action_packs", "companion_actions"})
+DESKTOP_TABLES = frozenset({"desktop_video_sets", "desktop_video_actions", "desktop_video_states"})
 POST_TABLES = frozenset({"companion_posts", "companion_post_comments"})
 IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_cards"})
 # 旧版片刻表已重构为动态；导入时静默跳过，视为没有动态。
@@ -88,6 +96,7 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
     "diary": ("companion_diary_entries",),
     "wardrobe": ("companion_outfits", "companion_action_packs", "companion_actions"),
     "scenes": ("companion_scenes",),
+    "desktop_life": ("desktop_video_sets", "desktop_video_actions", "desktop_video_states"),
     "automation": ("cron_jobs", "companion_intents"),
     "settings": ("user_model_configs", "user_settings", "user_preferences"),
 }
@@ -97,6 +106,7 @@ ATOMIC_SECTION_GROUPS: tuple[frozenset[str], ...] = (
     IDENTITY_TABLES,
     CONVERSATION_TABLES,
     ACTION_TABLES,
+    DESKTOP_TABLES,
     POST_TABLES,
 )
 # 预检时身份三表成组写入的顺序：先头像，再角色卡与人设。
@@ -109,6 +119,17 @@ FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "companion_character_cards": {"avatar_id": "avatar_assets"},
     "companion_action_packs": {"avatar_id": "avatar_assets", "outfit_id": "companion_outfits"},
     "companion_actions": {"pack_id": "companion_action_packs", "outfit_id": "companion_outfits"},
+    "desktop_video_sets": {
+        "avatar_id": "avatar_assets",
+        "outfit_id": "companion_outfits",
+        "scene_id": "companion_scenes",
+    },
+    "desktop_video_actions": {"set_id": "desktop_video_sets"},
+    "desktop_video_states": {
+        "current_set_id": "desktop_video_sets",
+        "selected_action_id": "desktop_video_actions",
+        "loop_action_id": "desktop_video_actions",
+    },
     "personas": {"active_scene_id": "companion_scenes"},
     "cron_jobs": {"conversation_id": "conversations"},
     "companion_post_comments": {"post_id": "companion_posts"},
@@ -119,6 +140,9 @@ UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "personas": (),
     "user_model_configs": (),
     "user_settings": ("setting_key",),
+    "desktop_video_sets": ("context_hash",),
+    "desktop_video_actions": ("set_id", "key"),
+    "desktop_video_states": (),
     "companion_diary_entries": ("entry_date",),
 }
 # 运行期状态不导出；恢复时取模型默认值（必填列在 _build_payload 中显式置空）。
@@ -240,6 +264,21 @@ async def insert_rows(
     # 会话工厂 autoflush=False：任何需看见本批已插入行的 SELECT 前必须显式 flush。
     for raw in sorted(raw_rows, key=lambda row: int(row["id"])) if table == "messages" else raw_rows:
         payload = _build_payload(table, raw, target_user_id, rewriter, id_map)
+        if table in DESKTOP_TABLES:
+            validate_desktop_owned_paths(payload, asset_owner_id)
+        if table == "desktop_video_states":
+            for field in ("selected_action_id", "loop_action_id"):
+                if payload.get(field) is None:
+                    continue
+                action = await db.get(DesktopVideoAction, payload[field])
+                if (
+                    action is None
+                    or action.user_id != target_user_id
+                    or action.set_id != payload.get("current_set_id")
+                    or field == "loop_action_id"
+                    and action.kind != "loop"
+                ):
+                    raise ValueError("桌面生活播放选择不属于当前组合。")
         if table == "memories":
             payload["source_refs"]["import_batch_id"] = import_batch_id
         if table == "user_preferences":
@@ -277,7 +316,8 @@ async def insert_rows(
             if (payload["role"] == "companion") != (payload["reply_status"] == "none"):
                 raise ValueError("Invalid reply status for comment role")
         existing = None
-        if mode == "merge" and table in UNIQUE_KEYS:
+        # 已删除父资料的历史组合可能在重映射后归为同一视觉版本，覆盖导入也按唯一键复用。
+        if (mode == "merge" or table in {"desktop_video_sets", "desktop_video_actions"}) and table in UNIQUE_KEYS:
             await db.flush()
             existing = await db.scalar(
                 select(model).where(
@@ -418,12 +458,14 @@ def _build_payload(
         if (
             value is not None
             and mapped is None
-            and (table in ACTION_TABLES or ref_table in id_map and key != "avatar_id")
+            and (table in ACTION_TABLES | DESKTOP_TABLES or ref_table in id_map and key != "avatar_id")
         ):
             raise ValueError(f"Missing {ref_table} reference in {table}.{key}")
         payload[key] = mapped
     if table in ACTION_TABLES:
         restore_action_payload(table, payload, id_map, user_id)
+    if table in DESKTOP_TABLES:
+        restore_desktop_payload(table, payload, id_map)
     if table == "companion_character_cards":
         if payload.get("avatar_id") is None:
             raise ValueError("Character card avatar is missing from backup")

@@ -1,4 +1,5 @@
 .root {
+  background-color: var(--ui-app-bg);
   border-radius: 24px;
   clip-path: inset(0 round 24px);
   contain: paint;
@@ -20,13 +21,12 @@ html[data-maximized='true'] .root {
 }
 
 .backdropImage {
-  background-color: var(--ui-app-bg);
   background-image:
     radial-gradient(circle at 75% 25%, var(--ui-accent-soft) 0%, transparent 55%),
     radial-gradient(circle at 20% 80%, var(--ui-accent-soft) 0%, transparent 50%);
-  background-position: 70% center;
+  background-position: center;
   background-repeat: no-repeat;
-  background-size: cover;
+  background-size: contain;
   bottom: 0;
   left: 0;
   position: absolute;
@@ -34,11 +34,9 @@ html[data-maximized='true'] .root {
   top: 0;
 }
 
-/* 烘焙位图（data-baked）自带模糊与 overscan，自身不再叠加 CSS filter；下面的 CSS filter 只服务烘焙未就绪或失败时的回退路径。模糊保持轻，才能看见场景。 */
+/* 烘焙位图自带模糊；CSS filter 只服务尚未就绪或失败时的回退路径。 */
 html[data-effect='clear'] .backdropImage {
   filter: blur(18px) saturate(1.22);
-  transform: scale(1.1);
-  transform-origin: 70% center;
 }
 
 html[data-effect='clear'][data-palette='day'] .backdropImage {
@@ -47,8 +45,6 @@ html[data-effect='clear'][data-palette='day'] .backdropImage {
 
 html[data-effect='solid'] .backdropImage {
   filter: blur(12px) saturate(1.06);
-  transform: scale(1.06);
-  transform-origin: 70% center;
 }
 
 html[data-effect='clear'] .backdropImage.status_pending {
@@ -63,68 +59,8 @@ html[data-effect='solid'] .backdropImage.status_pending {
   filter: blur(12px) saturate(1.06) brightness(1.07);
 }
 
-.kenBurns {
-  animation: ken-burns 50s ease-in-out infinite alternate;
-  will-change: transform;
-}
-
-/* 烘焙位图自带 overscale（baked-backdrop.ts 的 BAKE_OVERSCAN），动画在 1.0–1.04 间漂移即可；1.1 基线是未烘焙路径补偿 blur 边缘用的。 */
-@keyframes ken-burns-baked {
-  from {
-    transform: scale(1);
-  }
-
-  to {
-    transform: scale(1.04);
-  }
-}
-
-html[data-effect='clear'] .kenBurns {
-  animation-name: ken-burns-frosted;
-}
-
-html[data-effect='solid'] .kenBurns {
-  animation-name: ken-burns-veiled;
-}
-
 html[data-effect] .backdropImage[data-baked='true'] {
   filter: none;
-  transform: none;
-  transform-origin: 70% center;
-}
-
-html[data-effect] .backdropImage[data-baked='true'].kenBurns {
-  animation-name: ken-burns-baked;
-}
-
-@keyframes ken-burns {
-  from {
-    transform: scale(1);
-  }
-
-  to {
-    transform: scale(1.04);
-  }
-}
-
-@keyframes ken-burns-frosted {
-  from {
-    transform: scale(1.1);
-  }
-
-  to {
-    transform: scale(1.14);
-  }
-}
-
-@keyframes ken-burns-veiled {
-  from {
-    transform: scale(1.06);
-  }
-
-  to {
-    transform: scale(1.1);
-  }
 }
 
 .status_pending {
@@ -169,10 +105,4 @@ html[class~='no-blur'] .pendingGlass {
 
 html[class~='no-blur'] .backdropImage {
   filter: none !important;
-  transform: none;
-}
-
-html[class~='no-blur'] .backdropImage.kenBurns,
-html[class~='no-blur'] .backdropImage[data-baked='true'].kenBurns {
-  animation-name: ken-burns-baked;
 }

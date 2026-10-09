@@ -1,10 +1,5 @@
 export type PresentationMode = 'window' | 'desktop'
 
-export interface PixelSize {
-  width: number
-  height: number
-}
-
 export interface PresentationDisplay {
   id: number
   label: string
@@ -16,19 +11,17 @@ export interface PresentationState {
   requestedMode: PresentationMode
   effectiveMode: PresentationMode
   status: 'inactive' | 'starting' | 'active' | 'recovering' | 'failed'
+  prepareDesktopMedia: boolean
   failureReason: string | null
   supported: boolean
   foreground: boolean
   stageAvailable: boolean
   fullscreen: boolean
-  companionAlwaysOnTop: boolean
-  stageInsets: DesktopStageInsets
   compatibilityWarning: string | null
   companionActivity: DesktopCompanionActivityState
   voicePreparing: boolean
   displayId: number | null
   displays: PresentationDisplay[]
-  wallpaperTarget: PixelSize | null
   stageOwner: 'sprite' | 'desktop'
   stageVisible: boolean
   stageEpoch: number
@@ -46,22 +39,45 @@ export const DESKTOP_COMPANION_ACTIVITY_PRIORITY: Record<DesktopCompanionActivit
   disconnected: 100
 }
 
-export interface DesktopStageInsets {
-  top: number
-  bottom: number
-  left: number
-  right: number
+export interface DesktopMediaReference {
+  url: string
+  contentHash?: string
 }
 
-export type DesktopCompanionInteraction =
-  | { kind: 'toggle-whisper' | 'hide' }
-  | { kind: 'menu'; x: number; y: number }
-  | { kind: 'drop'; paths: string[] }
+export interface DesktopMediaBytes {
+  bytes: Uint8Array
+  mime: string
+}
 
-export interface DesktopBackground {
-  image: string | null
+export interface DesktopBackgroundRequest {
+  authSessionId: string
+  video: DesktopMediaReference | null
+  poster: DesktopMediaReference | null
+  playId: string | null
+  setId: number | null
+  actionId: number | null
+  setEpoch: number
+  expiresAt: string | null
+  kind: 'loop' | 'once'
   theme: string
   reduceMotion: boolean
+  paused: boolean
+  clear: boolean
+}
+
+export interface DesktopBackground extends Omit<DesktopBackgroundRequest, 'authSessionId' | 'video' | 'poster'> {
+  accountEpoch: number
+  revision: number
+  video: DesktopMediaBytes | null
+  poster: DesktopMediaBytes | null
+}
+
+export interface DesktopBackgroundPlayback {
+  accountEpoch: number
+  revision: number
+  playId: string
+  status: 'first-frame' | 'started' | 'completed' | 'interrupted' | 'failed'
+  error?: string
 }
 
 export interface DockWindow {

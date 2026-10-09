@@ -53,11 +53,8 @@ function DesktopLifecycle(): null {
   return null
 }
 
-export function bootstrapDesktop(
-  RootComponent: React.ComponentType,
-  role: 'desktop' | 'desktop-companion' = 'desktop'
-): void {
-  setSurfaceRole(role)
+export function bootstrapDesktop(RootComponent: React.ComponentType): void {
+  setSurfaceRole('desktop')
   initRenderer()
   setPrimaryGateway(new IpcGatewayProxy())
   const offUpdate = installUpdateBridge()
@@ -81,7 +78,7 @@ export function bootstrapDesktop(
               <DesktopLifecycle />
               <ProxyGatewayPump />
               <AccountScopedRoot RootComponent={RootComponent} />
-              {role === 'desktop' && <NotificationStack />}
+              <NotificationStack />
             </HashRouter>
           </HapticsProvider>
         </ErrorBoundary>

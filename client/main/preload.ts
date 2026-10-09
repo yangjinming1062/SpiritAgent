@@ -76,16 +76,8 @@ contextBridge.exposeInMainWorld('spiritagent', {
   presentation: {
     companionActivity: (activity: InvokePayload<typeof IPC.invoke.presentationCompanionActivity>) =>
       invoke(IPC.invoke.presentationCompanionActivity, activity),
-    getStageActivity: () => invoke(IPC.invoke.presentationGetStageActivity),
-    setStageLayout: (layout: InvokePayload<typeof IPC.invoke.presentationSetStageLayout>) =>
-      invoke(IPC.invoke.presentationSetStageLayout, layout),
-    setCompanionAlwaysOnTop: (enabled: boolean) => invoke(IPC.invoke.presentationSetCompanionTopmost, enabled),
     setIgnoreMouseEvents: (payload: InvokePayload<typeof IPC.invoke.presentationSetIgnoreMouseEvents>) =>
       invoke(IPC.invoke.presentationSetIgnoreMouseEvents, payload),
-    companionInteraction: (interaction: InvokePayload<typeof IPC.invoke.presentationCompanionInteraction>) =>
-      invoke(IPC.invoke.presentationCompanionInteraction, interaction),
-    onCompanionInteraction: (cb: EventCallback<typeof IPC.event.companionInteraction>) =>
-      subscribe(IPC.event.companionInteraction, cb),
     getState: () => invoke(IPC.invoke.presentationGetState),
     setMode: (mode: InvokePayload<typeof IPC.invoke.presentationSetMode>) =>
       invoke(IPC.invoke.presentationSetMode, mode),
@@ -96,13 +88,12 @@ contextBridge.exposeInMainWorld('spiritagent', {
     hostReady: () => invoke(IPC.invoke.presentationHostReady),
     setBackground: (background: InvokePayload<typeof IPC.invoke.presentationSetBackground>) =>
       invoke(IPC.invoke.presentationSetBackground, background),
-    claimPlay: (claim: SurfacePlaybackClaim) => invoke(IPC.invoke.presentationClaimPlay, claim),
     stageActivity: (activity: InvokePayload<typeof IPC.invoke.presentationStageActivity>) =>
       invoke(IPC.invoke.presentationStageActivity, activity),
     onChanged: (cb: EventCallback<typeof IPC.event.presentationChanged>) =>
       subscribe(IPC.event.presentationChanged, cb),
-    onStageActivity: (cb: EventCallback<typeof IPC.event.presentationStageActivity>) =>
-      subscribe(IPC.event.presentationStageActivity, cb)
+    onBackgroundPlayback: (cb: EventCallback<typeof IPC.event.backgroundPlayback>) =>
+      subscribe(IPC.event.backgroundPlayback, cb)
   },
   dock: {
     getState: () => invoke(IPC.invoke.dockGetState),

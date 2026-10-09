@@ -14,6 +14,7 @@
 | [visual_identity.py](visual_identity.py)、[image_generation.py](image_generation.py) | 出镜身份与造型的共享装配、图像能力筛选与生成出口 |
 | [chat_images.py](chat_images.py) | 聊天图片批次、验图、版本与一次重做预算 |
 | [video_jobs.py](video_jobs.py) | 聊天与动态视频任务，句柄轮询、交付和原任务核查 |
+| [desktop_video.py](desktop_video.py) | 独立桌面生活视频，组合资料冻结、构图与起始画面、首尾帧提交、无声交付、评分与恢复 |
 | [video/service.py](video/service.py)、[state.py](video/state.py)、[script.py](video/script.py) | 动作包与单动作制作、冻结上下文、静态描述/视频脚本、探身定位 |
 | [media_chain.py](media_chain.py)、[character_images.py](character_images.py)、[identity_review.py](identity_review.py) | 无凭据链快照、质量进度、候选与身份评分 |
 | [media_review.py](media_review.py) | 成品复核、采纳和拒绝；采纳动作时事务内发布目录 |
@@ -52,7 +53,7 @@
 | 用户操作 | [scene-page.tsx](../../../../client/renderer/app/features/living/scene-page.tsx)、[scene-detail-view.tsx](../../../../client/renderer/app/features/living/scene-detail-view.tsx) | 保存描述、重生成、取消和旧图呈现 |
 | 状态与背景 | [scene-store.ts](../../../../client/renderer/modules/scene/scene-store.ts)、[scene-backdrop.tsx](../../../../client/renderer/app/features/living/scene-backdrop.tsx) | POST 后水合、版本与账户守卫 |
 | API 与数据 | [companion_scenes.py](../../../api/v1/companion_scenes.py)、[schemas_scene.py](../../../modules/companion/schemas_scene.py)、[scene.py](../../../modules/companion/scene.py) | 创建/重生成任务区分与响应状态 |
-| 执行 | `scene_service.regenerate_scene`、`_run_scene_regeneration`、`resume_scene_jobs` | 单任务互斥、冻结尺寸和原位提交 |
+| 执行 | `scene_service.regenerate_scene`、`_run_scene_regeneration`、`resume_scene_jobs`、`scene_wallpaper` | 单任务互斥、固定窗口画幅、上传源保留和原位提交 |
 | 模型链 | `scene_prompt`、`character_images`、`scene_image_review` | 环境参考、尺寸适配、独立重复伙伴检查 |
 
 ## 图像输入与装配

@@ -9,14 +9,7 @@ function checkDistBuilt(distDir) {
     return { ok: false, error: `no dist directory at ${distDir}` }
   }
 
-  const requiredHtmlFiles = [
-    'sprite.html',
-    'living.html',
-    'workbench.html',
-    'desktop.html',
-    'desktop-background.html',
-    'desktop-companion.html'
-  ]
+  const requiredHtmlFiles = ['sprite.html', 'living.html', 'workbench.html', 'desktop.html', 'desktop-background.html']
   for (const file of requiredHtmlFiles) {
     const htmlPath = path.join(distDir, file)
     const htmlStat = fs.statSync(htmlPath, { throwIfNoEntry: false })

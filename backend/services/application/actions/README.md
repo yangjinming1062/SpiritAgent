@@ -11,8 +11,11 @@
 | [review.py](review.py) | 独立评审、结论硬校验、批准时占额和冻结动作规格 |
 | [playback.py](playback.py) | 校验可点播动作，保存播放账本/指令或延迟表达意图 |
 | [context.py](context.py) | 当前包、已采纳动作、在途和近期拒绝提案快照 |
+| [desktop.py](desktop.py) | 桌面组合复用、按需制作、独立提案评审、偏好、播放意图与回执协调；视频制作交给 `generation/desktop_video` |
 
 调用来自 [action_tool.py](../../adapters/tools/builtin/action_tool.py)、[companion_actions.py](../../../api/v1/companion_actions.py) 和夜间规划；工具与 `companion.idle_expression` 发起播放，REST 回执交给 `domains/actions/usage`。依赖可指向 companion、memory 和 generation，不反向调用 chat 或 nightly。
+
+桌面入口为 [desktop_action_tool.py](../../adapters/tools/builtin/desktop_action_tool.py) 和 [companion_desktop_videos.py](../../../api/v1/companion_desktop_videos.py)，按实际模式提供工具与上下文；资源、模式隔离和恢复语义归 [桌面生活契约](../../../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。桌面状态写入共用用户行锁，应用层单飞锁只协调本进程任务；模型等待在短事务之外。同名动作保持冻结设计，已有成品复用，临时中断沿原进度继续且不重复计额。
 
 ## 提案处理
 

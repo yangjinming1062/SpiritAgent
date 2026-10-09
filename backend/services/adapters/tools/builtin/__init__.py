@@ -2,6 +2,7 @@
 
 from .action_tool import register as register_actions
 from .companion_wait_tool import register as register_companion_wait
+from .desktop_action_tool import register as register_desktop_actions
 from .image_generation_tool import register as register_image_generation
 from .post_tool import register as register_posts
 from .scene_tool import register as register_scene
@@ -13,6 +14,7 @@ __all__ = [
     "register_posts",
     "register_actions",
     "register_companion_wait",
+    "register_desktop_actions",
     "register_image_generation",
     "register_scene",
     "register_send_message",

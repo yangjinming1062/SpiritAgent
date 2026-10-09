@@ -42,6 +42,16 @@ from .character_card import (
 )
 from .character_images import generate_character_images, generate_scene_images
 from .chat_images import ImageBatch, generate_chat_images, inspect_chat_image, regenerate_chat_image
+from .desktop_video import (
+    desktop_context_hash,
+    desktop_progress_can_resume,
+    drain_desktop_video_jobs,
+    load_desktop_visual_snapshot,
+    resolve_desktop_video_plan,
+    resume_desktop_video_jobs,
+    resume_user_desktop_video_jobs,
+    schedule_desktop_video_job,
+)
 from .image_generation import (
     ImageGenerationError,
     ImageReviewUnavailableError,
@@ -102,7 +112,6 @@ from .scene_service import (
     scene_generation_wait_seconds,
     schedule_scene_generation,
     schedule_scene_prompt,
-    set_scene_display_target,
     set_scene_policy,
 )
 from .video import (
@@ -160,6 +169,14 @@ from .visual_identity import (
 )
 
 __all__ = [
+    "desktop_context_hash",
+    "desktop_progress_can_resume",
+    "drain_desktop_video_jobs",
+    "load_desktop_visual_snapshot",
+    "resolve_desktop_video_plan",
+    "resume_desktop_video_jobs",
+    "resume_user_desktop_video_jobs",
+    "schedule_desktop_video_job",
     "cleanup_user_media",
     "cleanup_user_video_jobs",
     "GenerationWorkPaused",
@@ -195,7 +212,6 @@ __all__ = [
     "resume_user_character_extraction",
     "schedule_scene_generation",
     "schedule_scene_prompt",
-    "set_scene_display_target",
     "set_scene_policy",
     "load_self_visual_context",
     "optional_outfit_image_reference",

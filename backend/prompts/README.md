@@ -12,6 +12,7 @@
 | [generation.py](generation.py) | 形象、服装、壁纸、出镜媒体、动作素材，视觉提取、评分、命名和审核改写 | [generation](../services/application/generation/)、动态制作、媒体工具及角色卡渲染 |
 | [memory.py](memory.py) | 共享 `MEMORY_POLICY`、审阅指令、资料标签 | [memory](../services/domains/memory/)、即时记忆工具 |
 | [actions.py](actions.py) | 动作检索、提案、检查、播放工具和独立评审 | [action_tool.py](../services/adapters/tools/builtin/action_tool.py)、[actions](../services/application/actions/) |
+| [desktop_videos.py](desktop_videos.py)、[desktop_tools.py](desktop_tools.py) | 桌面生活的构图、起始画面、运动、成品检查和动作工具 | [desktop_video.py](../services/application/generation/desktop_video.py)、[desktop.py](../services/application/actions/desktop.py)、[desktop_action_tool.py](../services/adapters/tools/builtin/desktop_action_tool.py) |
 | [nightly.py](nightly.py) | 规划、事实账本、每日检查点、日记与反思 | [nightly](../services/application/nightly/) |
 | [posts.py](posts.py) | 请求分类、独立动态创作、线程回复和共享资料语义 | [posts](../services/application/posts/) 的 `prompt_contract`、`publication`、`replies`，夜间回顾 |
 | [tools.py](tools.py) | 工具与字段描述、验图、网页摘要 | [工具适配器](../services/adapters/tools/)；字段类型、枚举和必填项留在各 schema 定义 |
@@ -32,6 +33,7 @@
 | [generation/scene_prompt.py](../services/application/generation/scene_prompt.py)、[scene_image_review.py](../services/application/generation/scene_image_review.py) | 环境生成、成品分析与重复伙伴检查分别调用；初始环境要求由 `scene_service._initial_scene_notes` 给出 |
 | [generation/visual_identity.py](../services/application/generation/visual_identity.py) | 聊天与动态共用出镜身份、造型和参考装配 |
 | [generation/video/script.py](../services/application/generation/video/script.py) | 静态图片描述与视频起始姿态/运动脚本分开，另有探身定位校准 |
+| [generation/desktop_video.py](../services/application/generation/desktop_video.py)、[actions/desktop.py](../services/application/actions/desktop.py) | 身份图与穿着图分工，完整环境起始画面、独立运动描述、循环采样检查；模式、预算与播放意图由代码校验 |
 | [companion/first_greeting.py](../services/domains/companion/first_greeting.py)、[prompt_runtime.py](../services/domains/companion/prompt_runtime.py) | 问候保存为意图资料；小推理只选相关人设、记忆与近期原始对话，保留时间和截断标记 |
 
 供应商的 `VOICE_DESIGN_GUIDE` 位于各 TTS 适配器，仅指导用户设计音色，不装入每条语音正文。

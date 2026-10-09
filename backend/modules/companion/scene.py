@@ -49,6 +49,7 @@ class CompanionScene(ModelBase, TimestampMixin):
     requirements: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     prompt: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     media_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    upload_source_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     generation_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     regeneration_status: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
     regeneration_stage: Mapped[str | None] = mapped_column(String(24), nullable=True)
@@ -73,13 +74,3 @@ class SceneGenerationAttempt(ModelBase):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     scene_id: Mapped[int | None] = mapped_column(ForeignKey("companion_scenes.id", ondelete="SET NULL"), nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class SceneDisplayTarget(ModelBase, TimestampMixin):
-    """当前账户最近上报的壁纸尺寸；设备快照不进入备份。"""
-
-    __tablename__ = "scene_display_targets"
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
-    width: Mapped[int] = mapped_column(Integer)
-    height: Mapped[int] = mapped_column(Integer)

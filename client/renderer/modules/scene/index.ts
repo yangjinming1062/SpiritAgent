@@ -26,6 +26,7 @@ export {
   PAGE_SIZE,
   prepareScenePrompt,
   regenerateScene,
+  SCENE_IMAGE_SIZE,
   type SceneAsset,
   type ScenePolicy,
   setScenePolicy

@@ -35,7 +35,7 @@ export const $surfaceCompanions = atom<Record<SurfaceId, SurfaceCompanionState>>
   }
 })
 
-export type SurfaceRole = 'living' | 'workbench' | 'sprite' | 'desktop' | 'desktop-companion'
+export type SurfaceRole = 'living' | 'workbench' | 'sprite' | 'desktop'
 export const $surfaceRole = atom<SurfaceRole | null>(null)
 
 export function setSurfaceRole(role: SurfaceRole): void {
@@ -45,15 +45,6 @@ export function setSurfaceRole(role: SurfaceRole): void {
 // 桌面精灵舞台展示中：精灵窗未隐藏或最小化，且未被完整入口收起。
 export function isSpriteStageShown(): boolean {
   const presentation = $presentation.get()
-
-  if ($surfaceRole.get() === 'desktop-companion') {
-    return (
-      presentation.stageOwner === 'desktop' &&
-      presentation.status === 'active' &&
-      presentation.stageAvailable &&
-      presentation.stageVisible
-    )
-  }
 
   return (
     presentation.stageOwner === 'sprite' &&
@@ -74,7 +65,7 @@ export function isCompanionStageVisible(): boolean {
     return false
   }
 
-  if (role === 'sprite' || role === 'desktop-companion') {
+  if (role === 'sprite') {
     return isSpriteStageShown()
   }
 

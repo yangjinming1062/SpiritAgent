@@ -65,8 +65,8 @@ enum WindowRole {
 
 #[cfg(windows)]
 impl WindowRole {
-    fn is_top_level(self, companion_always_on_top: bool) -> bool {
-        self == Self::Overlay || (self == Self::Companion && companion_always_on_top)
+    fn is_top_level(self) -> bool {
+        self == Self::Overlay
     }
 }
 
@@ -80,7 +80,6 @@ enum Command {
         takeover: bool,
         windows: Vec<WindowSpec>,
         work_area: Bounds,
-        companion_always_on_top: bool,
     },
     Heartbeat {
         id: u32,
@@ -100,10 +99,6 @@ enum Command {
         id: u32,
         window_ids: Vec<String>,
     },
-    CompanionLayer {
-        id: u32,
-        always_on_top: bool,
-    },
     Stop {
         id: u32,
     },
@@ -119,7 +114,6 @@ impl Command {
             | Self::RefreshApplications { id }
             | Self::ActivateExternal { id, .. }
             | Self::CloseExternal { id, .. }
-            | Self::CompanionLayer { id, .. }
             | Self::Stop { id } => *id,
         }
     }

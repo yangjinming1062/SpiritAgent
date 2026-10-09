@@ -87,6 +87,8 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
             "动作",
             "表演",
             "动作库",
+            "desktop",
+            "桌面生活",
         ),
         extra_tools=(
             "image_generate",
@@ -102,6 +104,10 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
             "action_design",
             "action_inspect",
             "action_play",
+            "desktop_action_search",
+            "desktop_action_design",
+            "desktop_action_inspect",
+            "desktop_action_play",
         ),
     ),
     ToolDomain(

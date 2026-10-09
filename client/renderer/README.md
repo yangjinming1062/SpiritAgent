@@ -16,7 +16,7 @@
 | 改动 | 入口 |
 |---|---|
 | 宿主与独立窗口 | [sprite-entry.tsx](sprite-entry.tsx)、[bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)、[bootstrap/surface.tsx](app/bootstrap/surface.tsx) |
-| Windows 桌面与独立舞台 | [bootstrap/desktop.tsx](app/bootstrap/desktop.tsx)、[windows/desktop](app/windows/desktop/)、[desktop-stage.ts](app/workflows/desktop-stage.ts) |
+| Windows 桌面与生活视频 | [bootstrap/desktop.tsx](app/bootstrap/desktop.tsx)、[windows/desktop](app/windows/desktop/)、[desktop-videos](modules/desktop-videos/) |
 | 网关与账户 | [host-runtime.ts](app/runtime/host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
@@ -51,13 +51,13 @@
 
 ## 统一桌面装配
 
-交互桌面在一个 renderer 中装配 [features](app/features/) 与内部面板，独立精灵舞台只装配角色、空间、网关状态和角色事件，不恢复或保存会话历史。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 登记和回收按会话隔离的 runtime；共享与资格契约归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+交互桌面在一个 renderer 中装配 [features](app/features/) 与内部面板，背景表面仅接收主进程缓存后的媒体字节和播放控制；不装配独立精灵舞台。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 登记和回收按会话隔离的 runtime；共享与资格契约归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 [panel-activity](shared/context/panel-activity.tsx) 向子组件和 Portal 传播活动资格，子面板不能解除父级禁用；媒体查看器归打开它的视图，失活时隐藏并暂停。视图切换保留各自草稿与附件，录音资格失效后旧麦克风或转写结果不能因重新激活恢复。布局、位置和防抖保存守卫账户清理代次。
 
-[desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或舞台代次变化重发，失败允许同值重试，舞台初始化读取主进程最新镜像。`desktop-stage.ts` 管空间与自主行为的启停，工具派发仍在宿主。
+[desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或承载代次变化重发，失败允许同值重试。工具派发仍在后台精灵宿主，桌面停用精灵空间行为。
 
-桌面角色受顶栏、Dock 和展开轻语的区域约束，另为情绪放大及退出过渡预留范围；布局、视口或内容轮廓变化重新约束，临时受限不改写保存比例。
+[desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 负责实际桌面启用、组合变化、播放认领和回执；保存的桌面偏好恢复只查询状态，真实内容变化须先刷新并比较组合指纹，不能把水合或重放事件当成付费制作触发。[背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待首帧、保留持续状态供短动作结束返回，按主进程暂停状态控制播放并回收媒体 URL。桌面生活管理页供窗口和桌面共用，读取、制作、复核与实际开播分别处理；`processing` 且 `stage=paused` 的动作显示手动继续入口，沿用已保存参数，暂停期间不持续轮询。
 
 Dock 选择面板是 `.dock` 的兄弟节点，避免 backdrop-filter 改变 fixed 包含块；面板和条目菜单共用开启态，打开时停用面板活动与角色右键菜单。图标按可见条目分批取回，目录仅随固定配置版本刷新。桌面设置用 `PanelSelect` 将下拉框留在弹层 DOM 与命中区，避免原生弹窗触发失焦收起。
 
@@ -128,7 +128,7 @@ speech 持唯一播放队列与台词合成，点播和自动连播共用队列�
 
 记忆页按预设重建列表与编辑状态，保存一条记录保留其他未保存草稿。日记 store 只管日记，记忆编辑页面不归该 store。
 
-[scene-store.ts](modules/scene/scene-store.ts) 分别持当前环境、创建任务、重生成与分页库，按后端版本、请求及账户代次判活。详情按 ID 单读，离开保留会话内编辑；新图预加载成功才替换背景，失败保留旧图但更新任务和政策。不可变图片共享在途与成功解析，失败可重试；显示尺寸由宿主同步、手动生成读主进程快照。任务与激活定义归 [场景契约](../../docs/PROTOCOL.md#场景任务与原位换图)。
+[scene-store.ts](modules/scene/scene-store.ts) 分别持当前环境、创建任务、重生成与分页库，按后端版本、请求及账户代次判活。详情按 ID 单读，离开保留会话内编辑；新图预加载成功才替换背景，失败保留旧图但更新任务和政策。不可变图片共享在途与成功解析，失败可重试；新场景按固定画幅交付，生成与上传不读取显示器尺寸。任务与激活定义归 [场景契约](../../docs/PROTOCOL.md#场景任务与原位换图)。
 
 ## 动作素材呈现
 

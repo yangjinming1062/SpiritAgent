@@ -6,6 +6,8 @@ import { clamp } from '@runtime'
 import {
   companionSlotMinimum,
   companionSlotWidth,
+  LIVING_ASPECT_RATIO,
+  livingPanelSize,
   outerBounds,
   PANEL_SIZES,
   preferredCompanionWidth
@@ -60,10 +62,17 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
     const icon = deps.getAppIconPath() || undefined
     const preference = deps.getCompanionPreference(id)
     const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
-    const initialHeight = clamp(defaults.height, defaults.minHeight, wa.height - 16)
-    const desiredSlot = preference.enabled ? preferredCompanionWidth(initialHeight) : 0
+    const availableHeight = clamp(defaults.height, defaults.minHeight, wa.height - 16)
+    const desiredSlot = preference.enabled ? preferredCompanionWidth(availableHeight) : 0
     const minSlot = companionSlotMinimum(desiredSlot)
-    const panelWidth = clamp(defaults.width, defaults.minWidth, wa.width - 16 - minSlot)
+    const availableWidth = clamp(defaults.width, defaults.minWidth, wa.width - 16 - minSlot)
+
+    const panelSize =
+      id === 'living'
+        ? livingPanelSize(availableWidth, availableHeight)
+        : { height: availableHeight, width: availableWidth }
+
+    const { height: initialHeight, width: panelWidth } = panelSize
     const availableSlot = Math.max(0, wa.width - 16 - panelWidth)
     const slotWidth = companionSlotWidth(desiredSlot, availableSlot)
     const outerWidth = panelWidth + slotWidth
@@ -85,8 +94,8 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       // Windows 任务栏/Alt-Tab 取窗口 icon；不传会退回 electron.exe 自带图标。
       icon,
       height: initialBounds.height,
-      minHeight: defaults.minHeight,
-      minWidth: defaults.minWidth,
+      minHeight: id === 'living' ? Math.min(defaults.minHeight, initialHeight) : defaults.minHeight,
+      minWidth: id === 'living' ? Math.min(defaults.minWidth, panelWidth) + slotWidth : defaults.minWidth,
       resizable: true,
       roundedCorners: false,
       show: false,
@@ -105,6 +114,10 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       x: initialBounds.x,
       y: initialBounds.y
     })
+
+    if (id === 'living') {
+      win.setAspectRatio(LIVING_ASPECT_RATIO, { height: 0, width: slotWidth })
+    }
 
     if (deps.isMac && icon) {
       deps.app.dock?.setIcon(icon)

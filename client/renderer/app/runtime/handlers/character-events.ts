@@ -25,7 +25,6 @@ import {
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
-import { $surfaceRole } from '@/shared/store/surfaces'
 
 import { decodePayload } from '../gateway-event-util'
 
@@ -105,13 +104,7 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
       return
     }
 
-    if (
-      !(await (
-        $surfaceRole.get() === 'desktop-companion'
-          ? window.spiritagent.presentation.claimPlay
-          : window.spiritagent.surface.claimPlay
-      )({ playId: command.play_id, expiresAt: command.expires_at }))
-    ) {
+    if (!(await window.spiritagent.surface.claimPlay({ playId: command.play_id, expiresAt: command.expires_at }))) {
       return
     }
 

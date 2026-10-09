@@ -54,7 +54,7 @@ from pydantic import ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.application.actions import request_playback
+from services.application.actions import choose_idle_desktop_action, request_playback
 from services.application.chat import (
     CompressionFailedError,
     SubmissionConflictError,
@@ -1677,8 +1677,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
 
         idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
         local_hour = coerce_hour_0_23(params.get("local_hour"))
-        llm_config = await _resolve_llm_config(user_id)
         presentation = get_presentation_snapshot(user_id)
+        if presentation is not None and presentation.mode == "desktop":
+            return await choose_idle_desktop_action(user_id, idle_seconds, local_hour)
+        llm_config = await _resolve_llm_config(user_id)
         result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
         if presentation != get_presentation_snapshot(user_id):
             return {"expressed": False, "action_id": None, "reason": "presentation changed"}
@@ -1746,6 +1748,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         # 空间自主决策只服务自主档；客户端另以桌面精灵可见性拦截。
         if await get_disturbance_tier(user_id) != "autonomous":
             return {"should_act": False, "action": "stay", "reason": "autonomous tier required"}
+
+        presentation = get_presentation_snapshot(user_id)
+        if presentation is not None and presentation.mode == "desktop":
+            return {"should_act": False, "action": "stay", "reason": "window presentation required"}
 
         now = time.monotonic()
         if _user_throttled(_last_should_act_ts, user_id, SHOULD_ACT_ANTIDUP_SECONDS, now):

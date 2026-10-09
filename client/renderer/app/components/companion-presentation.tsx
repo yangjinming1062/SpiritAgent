@@ -15,7 +15,7 @@ import { useStrings } from '@/shared/strings'
 
 type CompanionPresentation = ReturnType<typeof resolveCompanionPresentation>
 
-// 视频就绪挂视频层，否则落蛋形并给出真实状态（DESIGN「呈现与降级」）。桌面精灵与完整入口的侧边伙伴共用。
+// 视频就绪挂视频层，否则落蛋形并给出真实状态（DESIGN「呈现与降级」）。精灵窗与完整入口的侧边伙伴共用。
 export function useCompanionPresentation(): CompanionPresentation {
   const catalogStatus = useStore($actionCatalogStatus)
   const generationState = useStore($videoGenState)

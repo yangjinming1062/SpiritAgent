@@ -23,17 +23,13 @@ declare global {
   interface Window {
     desktopBackground?: {
       ready: () => Promise<void>
-      onImage: EventSubscription<'spiritagent:background:image'>
+      onMedia: EventSubscription<'spiritagent:background:media'>
+      acknowledge: AsyncIpc<IpcInvokeContract['spiritagent:background:acknowledge']>
     }
     spiritagent: {
       presentation: {
         companionActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:companion-activity']>
-        getStageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-stage-activity']>
-        setStageLayout: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-stage-layout']>
-        setCompanionAlwaysOnTop: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-companion-topmost']>
         setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-ignore-mouse-events']>
-        companionInteraction: AsyncIpc<IpcInvokeContract['spiritagent:presentation:companion-interaction']>
-        onCompanionInteraction: EventSubscription<'spiritagent:presentation:companion-interaction'>
         getState: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-state']>
         setMode: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-mode']>
         setDisplay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-display']>
@@ -42,10 +38,9 @@ declare global {
         heartbeat: AsyncIpc<IpcInvokeContract['spiritagent:presentation:heartbeat']>
         hostReady: AsyncIpc<IpcInvokeContract['spiritagent:presentation:host-ready']>
         setBackground: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-background']>
-        claimPlay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:claim-play']>
         stageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:stage-activity']>
         onChanged: EventSubscription<'spiritagent:presentation:changed'>
-        onStageActivity: EventSubscription<'spiritagent:presentation:stage-activity'>
+        onBackgroundPlayback: EventSubscription<'spiritagent:presentation:background-playback'>
       }
       dock: {
         getState: AsyncIpc<IpcInvokeContract['spiritagent:dock:get-state']>
@@ -133,8 +128,8 @@ declare global {
         minimize: AsyncIpc<IpcInvokeContract['spiritagent:surface:minimize']>
         getState: AsyncIpc<IpcInvokeContract['spiritagent:surface:get-state']>
         setCompanion: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-companion']>
-        claimPlay: AsyncIpc<IpcInvokeContract['spiritagent:surface:claim-play']>
         setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-ignore-mouse-events']>
+        claimPlay: AsyncIpc<IpcInvokeContract['spiritagent:surface:claim-play']>
         onChanged: EventSubscription<'spiritagent:surface:changed'>
       }
       chat: {

@@ -82,8 +82,7 @@ function isScreenRect(value: unknown): value is DesktopScreenRect {
 
 interface SpriteIpcDeps {
   getSpriteWindow: () => BrowserWindow | null | undefined
-  getStageWindow?: () => BrowserWindow | null | undefined
-  isDesktopSender?: (sender: Electron.WebContents) => boolean
+  stageAvailable: () => boolean
   getUserDataDir: () => string
   log: (chunk: string) => void
   screen: Screen
@@ -114,11 +113,11 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
 
   ipcMain.handle(IPC.invoke.spriteGetPosition, () => readRestPosition(getUserDataDir()))
 
-  // 取窗与 sender 门禁共用；sender 判定始终对精灵窗口而非解析出的舞台窗口。
+  // 隐藏宿主仍处理聊天，但桌面模式不授予精灵空间操作。
   const stageWindowFor = (event: IpcMainInvokeEvent): BrowserWindow | null => {
-    const win = deps.getStageWindow?.() ?? getSpriteWindow()
+    const win = getSpriteWindow()
 
-    if (!isSenderWindow(event.sender, getSpriteWindow()) && !deps.isDesktopSender?.(event.sender)) {
+    if (!deps.stageAvailable() || !isSenderWindow(event.sender, win)) {
       return null
     }
 
@@ -145,7 +144,7 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
       return null
     }
 
-    if (win.isDestroyed() || !snapshot || typeof snapshot !== 'object') {
+    if (!deps.stageAvailable() || win.isDestroyed() || !snapshot || typeof snapshot !== 'object') {
       return null
     }
 
@@ -216,9 +215,7 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
       return
     }
 
-    const stageWindow = deps.getStageWindow?.()
-
-    if (stageWindow && stageWindow !== win) {
+    if (!deps.stageAvailable()) {
       return
     }
 
@@ -230,8 +227,14 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
     }
   })
 
-  ipcMain.handle(IPC.invoke.spriteSetPosition, async (_event, payload?: DesktopSpritePosition) => {
-    if (!payload || !Number.isFinite(payload.x) || !Number.isFinite(payload.y)) {
+  ipcMain.handle(IPC.invoke.spriteSetPosition, async (event, payload?: DesktopSpritePosition) => {
+    if (
+      !deps.stageAvailable() ||
+      !isSenderWindow(event.sender, getSpriteWindow()) ||
+      !payload ||
+      !Number.isFinite(payload.x) ||
+      !Number.isFinite(payload.y)
+    ) {
       return
     }
 
@@ -254,7 +257,11 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
   })
 
   // 拖拽跨屏：光标越过视口到另一显示器时窗口贴到光标所在显示器，返回两个窗口坐标与光标点，供渲染层重映射位置并判断指针采样时序。
-  ipcMain.handle(IPC.invoke.spriteMoveToCursorDisplay, async () => {
+  ipcMain.handle(IPC.invoke.spriteMoveToCursorDisplay, async event => {
+    if (!deps.stageAvailable() || !isSenderWindow(event.sender, getSpriteWindow())) {
+      return null
+    }
+
     const win = getSpriteWindow()
 
     if (!win || win.isDestroyed()) {

@@ -2,6 +2,7 @@
 
 from .domains import apply_search_tools_catalog, search_domains_and_tools
 from .model_tools import coerce_tool_args
+from .presentation import DESKTOP_ACTION_TOOL_NAMES, WINDOW_ACTION_TOOL_NAMES, unavailable_presentation_tool_names
 from .registry import REGISTRY, RESERVED_KEYS, ToolsRegistry, schema_name
 from .tool_dispatch_helpers import (
     is_multimodal_tool_result,
@@ -15,6 +16,8 @@ from .toolsets import disabled_backend_tool_names
 __all__ = [
     "REGISTRY",
     "RESERVED_KEYS",
+    "DESKTOP_ACTION_TOOL_NAMES",
+    "WINDOW_ACTION_TOOL_NAMES",
     "ToolCallGuardrailController",
     "ToolsRegistry",
     "apply_search_tools_catalog",
@@ -27,4 +30,5 @@ __all__ = [
     "schema_name",
     "search_domains_and_tools",
     "should_parallelize_tool_batch",
+    "unavailable_presentation_tool_names",
 ]

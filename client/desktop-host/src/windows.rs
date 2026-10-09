@@ -932,7 +932,6 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
 fn order_desktop_children(
     windows: &[RestoreWindow],
     worker: &Identity,
-    companion_always_on_top: bool,
     takeover: bool,
 ) -> Result<bool> {
     let layer = worker.window();
@@ -944,15 +943,9 @@ fn order_desktop_children(
         }
         previous = view;
     }
-    // 接管时自有子窗连续排列在 Explorer 子窗前方，伙伴保持在背景上方。
     let children = windows
         .iter()
-        .filter(|saved| saved.role == WindowRole::Companion && !companion_always_on_top)
-        .chain(
-            windows
-                .iter()
-                .filter(|saved| saved.role == WindowRole::Background),
-        );
+        .filter(|saved| saved.role == WindowRole::Background);
     let mut changed = false;
     for saved in children {
         let window = saved.identity.window();
@@ -1249,7 +1242,6 @@ struct Session {
     workspace: Workspace,
     events: WinEvents,
     applications: Applications,
-    companion_always_on_top: bool,
     takeover: bool,
     last_shell_scan: Instant,
     stopped: bool,
@@ -1278,14 +1270,13 @@ impl Session {
         takeover: bool,
         specs: &[WindowSpec],
         work_area: Bounds,
-        companion_always_on_top: bool,
     ) -> Result<Self> {
         if actual_parent()? != parent_pid {
             return Err("desktop windows must belong to the helper's real parent process".into());
         }
         let events = WinEvents::start()?;
-        if specs.is_empty() || specs.len() > 32 {
-            return Err("desktop requires between 1 and 32 windows".into());
+        if specs.is_empty() || specs.len() != 2 {
+            return Err("desktop requires one background and one overlay".into());
         }
         if specs
             .iter()
@@ -1294,17 +1285,19 @@ impl Session {
             != 1
             || specs
                 .iter()
-                .filter(|w| w.role == WindowRole::Companion)
+                .filter(|w| w.role == WindowRole::Background)
                 .count()
                 != 1
-            || !specs.iter().any(|w| w.role == WindowRole::Background)
         {
-            return Err("desktop requires backgrounds, one overlay and one companion".into());
+            return Err("desktop requires one background and one overlay".into());
         }
         let overlay = specs
             .iter()
             .find(|spec| spec.role == WindowRole::Overlay)
             .ok_or("desktop overlay is missing")?;
+        if specs.iter().any(|spec| spec.bounds != overlay.bounds) {
+            return Err("desktop windows must share the interaction display".into());
+        }
         let mut workspace = Workspace::prepare(work_area, overlay.bounds, parent_pid, takeover)?;
         if read_journal(path)?.is_some() {
             return Err("an unrecovered desktop journal exists".into());
@@ -1467,8 +1460,8 @@ impl Session {
             journal.phase = JournalPhase::Attaching;
             journal.save(path)?;
             for (saved, target) in journal.windows.iter().zip(&targets) {
-                if saved.role.is_top_level(companion_always_on_top) {
-                    set_top_level(saved, *target, saved.role == WindowRole::Companion)?;
+                if saved.role.is_top_level() {
+                    set_top_level(saved, *target, false)?;
                 } else {
                     attach(saved, &worker, *target)?;
                 }
@@ -1482,7 +1475,7 @@ impl Session {
                 }
                 workspace.activate()?;
             }
-            order_desktop_children(&journal.windows, &worker, companion_always_on_top, takeover)?;
+            order_desktop_children(&journal.windows, &worker, takeover)?;
             journal.phase = JournalPhase::Active;
             journal.save(path)?;
             Ok(())
@@ -1514,7 +1507,6 @@ impl Session {
             workspace,
             events,
             applications,
-            companion_always_on_top,
             takeover,
             last_shell_scan: Instant::now(),
             stopped: false,
@@ -1539,12 +1531,7 @@ impl Session {
         {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
-            if order_desktop_children(
-                &self.journal.windows,
-                &self.worker,
-                self.companion_always_on_top,
-                self.takeover,
-            )? {
+            if order_desktop_children(&self.journal.windows, &self.worker, self.takeover)? {
                 if self
                     .child_order_pending
                     .get_or_insert_with(Instant::now)
@@ -1601,23 +1588,6 @@ impl Session {
         Ok(())
     }
 
-    fn companion_layer(&mut self, always_on_top: bool) -> Result<()> {
-        let _transaction = MutexGuard::restoration()?;
-        require_session(&self.path, &self.journal.session, &self.restoring)?;
-        for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
-            if saved.role == WindowRole::Companion {
-                if always_on_top {
-                    set_top_level(saved, *target, true)?;
-                } else {
-                    attach(saved, &self.worker, *target)?;
-                }
-            }
-        }
-        self.companion_always_on_top = always_on_top;
-        self.foreground = None;
-        self.poll()
-    }
-
     fn focus(&self, handle: &str) -> Result<()> {
         if handle.is_empty()
             || handle.len() > 16
@@ -1639,7 +1609,7 @@ impl Session {
                 || !saved.identity.valid()
                 || !self.worker.valid()
                 || unsafe { GetParent(window) }
-                    != if saved.role.is_top_level(self.companion_always_on_top) {
+                    != if saved.role.is_top_level() {
                         null_mut()
                     } else {
                         self.worker.window()
@@ -1789,7 +1759,7 @@ impl Session {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
-                if !saved.role.is_top_level(self.companion_always_on_top) {
+                if !saved.role.is_top_level() {
                     attach(saved, &replacement, *target)?;
                 }
             }
@@ -1816,8 +1786,7 @@ impl Session {
                     || unsafe { GetAncestor(foreground, GA_ROOTOWNER) } == saved.identity.window())
         });
         let fullscreen = self.workspace.fullscreen(foreground);
-        let stage_available =
-            !fullscreen && (self.companion_always_on_top || desktop_active || active);
+        let stage_available = !fullscreen && (desktop_active || active);
         let state = (active && !fullscreen, stage_available, fullscreen);
         // 显示与位置消息会交错；跨轮复验异步校正的结果，沿用显示器的两像素 DPI 容差。
         let mut overlays_changed = self.foreground.map(|value| value.2) != Some(fullscreen);
@@ -1828,7 +1797,7 @@ impl Session {
             .zip(&self.targets)
             .zip(&mut self.overlay_geometry_pending)
         {
-            if !saved.role.is_top_level(self.companion_always_on_top) {
+            if !saved.role.is_top_level() {
                 *pending = None;
                 continue;
             }
@@ -1854,7 +1823,7 @@ impl Session {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
-                if saved.role.is_top_level(self.companion_always_on_top) {
+                if saved.role.is_top_level() {
                     visibility(&saved.identity, !fullscreen)?;
                     if !fullscreen
                         && unsafe {
@@ -1954,23 +1923,16 @@ pub fn host(path: &Path) -> Result<()> {
                         takeover,
                         windows,
                         work_area,
-                        companion_always_on_top,
                         ..
                     } => {
                         if session.is_some() {
                             Err("desktop host is already running".into())
                         } else {
-                            Session::start(
-                                path,
-                                parent_pid,
-                                takeover,
-                                &windows,
-                                work_area,
-                                companion_always_on_top,
+                            Session::start(path, parent_pid, takeover, &windows, work_area).map(
+                                |started| {
+                                    session = Some(started);
+                                },
                             )
-                            .map(|started| {
-                                session = Some(started);
-                            })
                         }
                     }
                     Command::Heartbeat { .. } => session
@@ -1993,10 +1955,6 @@ pub fn host(path: &Path) -> Result<()> {
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(|active| active.close_external(&window_ids)),
-                    Command::CompanionLayer { always_on_top, .. } => session
-                        .as_mut()
-                        .ok_or("desktop host is not running".into())
-                        .and_then(|active| active.companion_layer(always_on_top)),
                     Command::Stop { .. } => {
                         exiting = true;
                         session.as_mut().map_or(Ok(()), Session::stop)

@@ -1,15 +1,13 @@
-import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
 import { pickAvatarImage } from '@/modules/character'
-import { adoptSceneImage, type SceneAsset } from '@/modules/scene'
+import { adoptSceneImage, SCENE_IMAGE_SIZE, type SceneAsset } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowLeft, Loader2, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard } from '@/shared/panel'
-import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
 
 export interface SceneEditDraft {
@@ -58,7 +56,6 @@ export function SceneDetailView({
   onSaveAndRegenerate,
   onZoom
 }: SceneDetailViewProps): React.JSX.Element {
-  const { wallpaperTarget } = useStore($presentation)
   const t = useStrings().living.scene
   const tToasts = useStrings().living.toasts
   const [actionBusy, setActionBusy] = useState(false)
@@ -373,9 +370,9 @@ export function SceneDetailView({
         {detail.status === 'description_failed' ? (
           <p className={cn(HINT_TEXT, 'px-4 pb-4 sm:px-5')}>{t.needsDescription}</p>
         ) : null}
-        {!generating && wallpaperTarget ? (
+        {!generating ? (
           <p className={cn(HINT_TEXT, 'px-4 pb-4 sm:px-5')}>
-            {t.regenerationTargetSize(wallpaperTarget.width, wallpaperTarget.height)}
+            {t.regenerationTargetSize(SCENE_IMAGE_SIZE.width, SCENE_IMAGE_SIZE.height)}
           </p>
         ) : null}
       </SettingCard>

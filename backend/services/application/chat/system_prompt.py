@@ -5,8 +5,13 @@ from components import resolve_prompt_text
 from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, SCENE_CONTEXT_GUIDANCES, VOLATILE_LABELS
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.application.actions import build_action_context
-from services.domains.companion import build_outfit_extras, get_scene_state, scene_environment
+from services.application.actions import build_action_context, build_desktop_action_context
+from services.domains.companion import (
+    build_outfit_extras,
+    get_presentation_snapshot,
+    get_scene_state,
+    scene_environment,
+)
 
 from .prompt_blocks import AgentPromptConfig, render_preset_body, volatile_header_value
 from .prompt_presets import preset_body
@@ -34,8 +39,12 @@ async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, 
         ],
     )
     # 动作快照：每次模型调用前刷新（含工具续轮），频繁变化的动作数据不写入稳定身份前缀。
-    action_context = await build_action_context(db, user_id)
-    parts.append(action_context.to_prompt_block(language=language))
+    presentation = get_presentation_snapshot(user_id)
+    if presentation is not None and presentation.mode == "desktop":
+        parts.append(await build_desktop_action_context(db, user_id, language=language))
+    else:
+        action_context = await build_action_context(db, user_id)
+        parts.append(action_context.to_prompt_block(language=language))
     return "\n\n".join(parts)
 
 

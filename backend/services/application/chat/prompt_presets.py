@@ -11,6 +11,7 @@ from prompts.chat import (
 )
 
 from services.domains.conversation import COMPANION_PRESET_ID, resolve_preset_meta
+from services.infrastructure.tool_runtime import DESKTOP_ACTION_TOOL_NAMES
 
 COMPANION_MEDIA_TOOL_NAMES = frozenset(
     {
@@ -23,7 +24,7 @@ COMPANION_MEDIA_TOOL_NAMES = frozenset(
 )
 
 # 生活空间工具只服务陪伴会话：其余预设与自动化任务由回合装配、search_tools 与派发层共用同一排除集合，不注入 schema 也不派发。
-LIFE_SPACE_TOOL_NAMES = frozenset(
+LIFE_SPACE_TOOL_NAMES = DESKTOP_ACTION_TOOL_NAMES | frozenset(
     {
         "send_message_tool",
         "companion_wait",

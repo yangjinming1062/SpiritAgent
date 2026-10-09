@@ -18,7 +18,6 @@ export default defineConfig({
       input: {
         sprite: path.resolve(__dirname, 'sprite.html'),
         desktop: path.resolve(__dirname, 'desktop.html'),
-        'desktop-companion': path.resolve(__dirname, 'desktop-companion.html'),
         'desktop-background': path.resolve(__dirname, 'desktop-background.html'),
         living: path.resolve(__dirname, 'living.html'),
         workbench: path.resolve(__dirname, 'workbench.html')

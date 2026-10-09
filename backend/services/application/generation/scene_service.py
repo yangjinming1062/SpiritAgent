@@ -21,7 +21,6 @@ from modules.companion import (
     CompanionScene,
     Persona,
     SceneDescriptionRequest,
-    SceneDisplayTarget,
     SceneGenerationAttempt,
     SceneImageDimensions,
     SceneImageSize,
@@ -35,7 +34,6 @@ from modules.ws import emit_ws_event
 from prompts.generation import SCENE_DESCRIBE_SYSTEM
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.assets import cleanup_user_assets, enqueue_asset_cleanup
@@ -51,7 +49,7 @@ from .character_images import ImageChainState, ImageProgressWriter, generate_sce
 from .image_generation import ImageGenerationError, ImageReviewUnavailableError
 from .paid_work import GenerationWorkPaused, require_new_generation_call
 from .scene_prompt import build_scene_prompt
-from .scene_wallpaper import WallpaperAsset, prepare_scene_wallpaper, scene_aspect_ratio, scene_image_size
+from .scene_wallpaper import SCENE_IMAGE_SIZE, WallpaperAsset, prepare_scene_wallpaper, scene_source_extension
 
 logger = get_logger(__name__)
 _SCENE_LOCKS: dict[int, asyncio.Lock] = {}
@@ -67,25 +65,6 @@ class SceneRegenerationState(BaseModel):
     image_chain: ImageChainState = Field(default_factory=ImageChainState)
     wallpaper_path: str = ""
     source_size: SceneImageDimensions | None = None
-
-
-async def set_scene_display_target(db: AsyncSession, user_id: int, size: SceneImageSize) -> SceneImageSize:
-    stmt = insert(SceneDisplayTarget).values(user_id=user_id, **size.model_dump())
-    await db.execute(
-        stmt.on_conflict_do_update(
-            index_elements=["user_id"],
-            set_={"width": size.width, "height": size.height, "updated_at": func.now()},
-        ),
-    )
-    await db.commit()
-    return size
-
-
-async def _target_size(db: AsyncSession, user_id: int, requested: SceneImageSize | None) -> SceneImageSize:
-    if requested is not None:
-        return requested
-    saved = await db.scalar(select(SceneDisplayTarget).where(SceneDisplayTarget.user_id == user_id))
-    return SceneImageSize(width=saved.width, height=saved.height) if saved else SceneImageSize(width=1920, height=1080)
 
 
 def scene_generation_wait_seconds(scene: CompanionScene) -> float:
@@ -244,7 +223,6 @@ async def _new_scene(
     source: str,
     auto_activate: bool,
     reference_image: str | None = None,
-    target_size: SceneImageSize | None = None,
 ) -> CompanionScene:
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         persona = await _persona(db, user_id)
@@ -262,7 +240,6 @@ async def _new_scene(
             raise SceneStateError("初始场景已准备，不重复创建")
         if origin == SceneOrigin.LLM.value:
             await _consume_llm_quota(db, user_id)
-        size = await _target_size(db, user_id, target_size)
         if auto_activate:
             persona.scene_switch_version += 1
         row = CompanionScene(
@@ -275,9 +252,8 @@ async def _new_scene(
             prompt=build_scene_prompt(
                 notes=notes,
                 has_reference_image=bool(reference_image),
-                aspect_ratio=scene_aspect_ratio(size),
             ),
-            target_size_json=size.model_dump_json(),
+            target_size_json=SCENE_IMAGE_SIZE.model_dump_json(),
             reference_image=reference_image or "",
             auto_activate=auto_activate,
             switch_version=persona.scene_switch_version,
@@ -294,7 +270,6 @@ async def schedule_scene_generation(
     *,
     origin: str,
     notes: str | None = None,
-    target_size: SceneImageSize | None = None,
     reference_image: bytes | None = None,
     auto_activate: bool = False,
 ) -> CompanionScene:
@@ -305,7 +280,6 @@ async def schedule_scene_generation(
         source=SceneSource.GENERATED.value,
         auto_activate=auto_activate,
         reference_image=await _prepare_reference_image(reference_image) if reference_image is not None else None,
-        target_size=target_size,
     )
     _launch_task(row.id, user_id)
     return row
@@ -315,7 +289,6 @@ async def schedule_scene_prompt(
     user_id: int,
     *,
     notes: str | None = None,
-    target_size: SceneImageSize | None = None,
 ) -> CompanionScene:
     return await _new_scene(
         user_id,
@@ -323,11 +296,10 @@ async def schedule_scene_prompt(
         notes=notes or "",
         source=SceneSource.USER_UPLOAD.value,
         auto_activate=False,
-        target_size=target_size,
     )
 
 
-async def regenerate_scene(user_id: int, scene_id: int, *, target_size: SceneImageSize | None = None) -> CompanionScene:
+async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
     cleanup_paths: set[str] = set()
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
@@ -342,12 +314,11 @@ async def regenerate_scene(user_id: int, scene_id: int, *, target_size: SceneIma
         if row.regeneration_state_json:
             previous = SceneRegenerationState.model_validate_json(row.regeneration_state_json)
             cleanup_paths = previous.image_chain.stored_paths()
-        size = await _target_size(db, user_id, target_size)
         task_id = str(uuid4())
         state = SceneRegenerationState(
             task_id=task_id,
-            prompt=build_scene_prompt(notes=row.description, aspect_ratio=scene_aspect_ratio(size)),
-            target_size=size,
+            prompt=build_scene_prompt(notes=row.description),
+            target_size=SCENE_IMAGE_SIZE,
         )
         row.regeneration_status = "pending"
         row.regeneration_stage = "prepare"
@@ -364,7 +335,7 @@ async def regenerate_scene(user_id: int, scene_id: int, *, target_size: SceneIma
 
 async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> CompanionScene:
     try:
-        data, mime = await asyncio.to_thread(validate_image_bytes, data)
+        await asyncio.to_thread(validate_image_bytes, data)
     except Exception as exc:
         raise SceneError("图片无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片") from exc
     if scene_id is None:
@@ -376,11 +347,12 @@ async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> Com
             raise SceneNotFoundError("找不到对应场景")
         if row.status != "pending" or row.stage != "waiting_upload":
             raise SceneStateError("该场景不在等待上传状态")
+        target = SceneImageSize.model_validate_json(row.target_size_json) if row.target_size_json else SCENE_IMAGE_SIZE
         row.stage = "store"
         _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
         await db.commit()
     try:
-        saved = await _save_image(user_id, scene_id, data, mime)
+        saved = await _save_image(user_id, scene_id, data, target=target)
     except Exception:
         await _mark_failed(user_id, scene_id, "图片保存失败，请重新上传")
         raise
@@ -440,7 +412,7 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
             raise SceneStateError("请先取消场景任务")
         if row.regeneration_status == "pending":
             raise SceneStateError("请先取消图片重新生成任务")
-        paths = {row.media_path} - {""}
+        paths = {row.media_path, row.upload_source_path} - {""}
         if row.generation_state_json:
             paths |= ImageChainState.model_validate_json(row.generation_state_json).stored_paths()
         if row.regeneration_state_json:
@@ -520,26 +492,40 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
     return row
 
 
-async def _save_image(user_id: int, scene_id: int, data: bytes, mime: str) -> CompanionScene | None:
-    """保存上传图片并转入分析；场景已不在等待中时丢弃图片并返回现状。"""
-    ext = {"image/gif": "gif", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}.get(mime, "png")
-    size = await asyncio.to_thread(scene_image_size, data)
-    path = await asset_store.save_companion_asset_async(
+async def _save_image(user_id: int, scene_id: int, data: bytes, *, target: SceneImageSize) -> CompanionScene | None:
+    """保留上传源文件并派生窗口背景；取消时回收未交接文件。"""
+    ext = await asyncio.to_thread(scene_source_extension, data)
+    source_path = await asset_store.save_companion_asset_async(
         data,
         user_id=user_id,
-        label="scene",
+        label="scene_source",
         ext=ext,
+        directory=asset_store.scene_asset_directory(scene_id),
+    )
+    generation_id = uuid4().hex
+    wallpaper_path = asset_store.scene_wallpaper_asset_path(
+        user_id,
+        generation_id,
         directory=asset_store.scene_asset_directory(scene_id),
     )
     committed = False
     try:
+        wallpaper = await prepare_scene_wallpaper(
+            user_id,
+            source_path,
+            generation_id=generation_id,
+            storage_directory=asset_store.scene_asset_directory(scene_id),
+            target=target,
+        )
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
             row = await get_scene(db, user_id, scene_id)
-            if row is None or row.status != "pending":
+            if row is None or row.status != "pending" or row.stage != "store":
                 return row
-            row.media_path = path
-            row.source_size_json = size.model_dump_json()
-            row.image_size_json = size.model_dump_json()
+            row.media_path = wallpaper.path
+            row.upload_source_path = source_path
+            row.target_size_json = target.model_dump_json()
+            row.source_size_json = wallpaper.source_size.model_dump_json()
+            row.image_size_json = wallpaper.image_size.model_dump_json()
             row.stage = "analyze"
             _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
             await db.commit()
@@ -547,7 +533,7 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, mime: str) -> Co
             return row
     finally:
         if not committed:
-            await asyncio.to_thread(asset_store.unlink_companion_asset, path)
+            await _reclaim_assets(user_id, {source_path, wallpaper_path})
 
 
 async def _scene_image_uri(user_id: int, path: str) -> str:
@@ -801,7 +787,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
         prompt = row.prompt
         reference_image = row.reference_image or None
         if not row.target_size_json:
-            raise SceneStateError("场景任务缺少已冻结的屏幕尺寸")
+            raise SceneStateError("场景任务缺少已冻结的生活空间尺寸")
         target = SceneImageSize.model_validate_json(row.target_size_json)
 
     async def save_progress(progress: ImageChainState) -> None:

@@ -8,7 +8,16 @@ import {
   storedJson
 } from '@/shared/lib/storage'
 
-export const DESKTOP_APPS = ['chat', 'posts', 'diary', 'scene', 'appearance', 'remote', 'settings'] as const
+export const DESKTOP_APPS = [
+  'chat',
+  'posts',
+  'diary',
+  'scene',
+  'appearance',
+  'desktopLife',
+  'remote',
+  'settings'
+] as const
 
 export type DesktopApp = (typeof DESKTOP_APPS)[number]
 
@@ -30,7 +39,6 @@ interface DesktopLayout {
   windows: DesktopWindowState[]
   whisperOpen: boolean
   whisperSide: 'left' | 'right'
-  spriteVisible: boolean
 }
 
 const LAYOUT_KEY = registerCompanionStorageKey('da.desktop.layout')
@@ -70,8 +78,7 @@ function isLayout(value: unknown): value is DesktopLayout {
     ) &&
     new Set(layout.windows.map(item => item.id)).size === layout.windows.length &&
     typeof layout.whisperOpen === 'boolean' &&
-    (layout.whisperSide === 'left' || layout.whisperSide === 'right') &&
-    typeof layout.spriteVisible === 'boolean'
+    (layout.whisperSide === 'left' || layout.whisperSide === 'right')
   )
 }
 
@@ -100,8 +107,7 @@ export function useDesktopLayout() {
       {
         windows: [],
         whisperOpen: true,
-        whisperSide: 'right',
-        spriteVisible: true
+        whisperSide: 'right'
       },
       isLayout
     )

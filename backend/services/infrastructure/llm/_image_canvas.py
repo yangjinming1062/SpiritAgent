@@ -1,4 +1,4 @@
-"""场景按目标屏幕选择供应商支持的画幅；结果随图片任务冻结。"""
+"""场景按交付尺寸选择供应商支持的画幅；结果随图片任务冻结。"""
 
 import math
 from dataclasses import dataclass

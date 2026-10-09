@@ -3,14 +3,13 @@ import type React from 'react'
 import { useState } from 'react'
 
 import { pickAvatarImage, type PickedImage, SelfSourceImageFlow } from '@/modules/character'
-import { $pendingScene, $sceneTaskSlow, $sceneTaskStatus, hydrateScene } from '@/modules/scene'
+import { $pendingScene, $sceneTaskSlow, $sceneTaskStatus, hydrateScene, SCENE_IMAGE_SIZE } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowLeft, FileImage, Loader2, Plus, Sparkles } from '@/shared/lib/icons'
 import { errorMessage } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard } from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
-import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
 
 export interface SceneCreateDraft {
@@ -41,11 +40,10 @@ export function SceneCreateView({
   onFetchPrompt,
   onUseAi
 }: SceneCreateViewProps): React.JSX.Element {
-  const { wallpaperTarget } = useStore($presentation)
   const pending = useStore($pendingScene)
   const taskStatus = useStore($sceneTaskStatus)
   const slow = useStore($sceneTaskSlow)
-  const targetSize = pending?.target_size ?? wallpaperTarget
+  const targetSize = pending?.target_size ?? SCENE_IMAGE_SIZE
   const strings = useStrings()
   const t = strings.living.scene
   const tToasts = strings.living.toasts
@@ -142,7 +140,7 @@ export function SceneCreateView({
       </div>
 
       <p className="text-[11px] leading-relaxed text-faint">{t.intro}</p>
-      {targetSize ? <p className={HINT_TEXT}>{t.targetSize(targetSize.width, targetSize.height)}</p> : null}
+      <p className={HINT_TEXT}>{t.targetSize(targetSize.width, targetSize.height)}</p>
 
       {pending ? (
         <SettingCard>

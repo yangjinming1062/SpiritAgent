@@ -46,6 +46,8 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "scene_get",
         "action_search",
         "action_inspect",
+        "desktop_action_search",
+        "desktop_action_inspect",
         "post_status",
         "video_generate_status",
         "read_file",
@@ -162,7 +164,15 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     | (
                         frozenset()
                         if disturbance_tier == "autonomous"
-                        else frozenset({"action_play", "image_generate", "image_regenerate", "video_generate"})
+                        else frozenset(
+                            {
+                                "action_play",
+                                "desktop_action_play",
+                                "image_generate",
+                                "image_regenerate",
+                                "video_generate",
+                            },
+                        )
                     ),
                     max_loop_turns=SETTINGS.companion_max_loop_turns,
                 )

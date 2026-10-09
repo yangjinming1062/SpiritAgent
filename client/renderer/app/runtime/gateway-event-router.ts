@@ -5,6 +5,7 @@ import {
   invalidateSessionHistory,
   onSessionListChanged
 } from '@/modules/conversation'
+import { handleDesktopVideoEvent, notifyDesktopVideoContextChanged } from '@/modules/desktop-videos'
 import { onJournalEvent } from '@/modules/memory'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
@@ -59,7 +60,25 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
   const ctx: EventRouteContext = { isProxy: $gateway.get()?.isProxy ?? false }
 
+  if (
+    event.type === 'companion.character_card.updated' ||
+    event.type === 'companion.outfit.updated' ||
+    event.type === 'companion.video.activated' ||
+    event.type === 'avatar.regenerated' ||
+    event.type === 'companion.scene.activated' ||
+    event.type === 'companion.scene.updated'
+  ) {
+    notifyDesktopVideoContextChanged()
+  }
+
   switch (event.type) {
+    case 'companion.desktop_video.updated':
+
+    case 'companion.desktop_video.play_requested':
+      handleDesktopVideoEvent(event.type, event.payload)
+
+      break
+
     case 'session.list_changed':
       onSessionListChanged(decodePayload<{ session_id?: string; deleted?: boolean }>(event.payload))
 

@@ -16,13 +16,9 @@ type Accounts = Awaited<ReturnType<typeof window.spiritagent.desktop.accounts>>
 
 export function DesktopSettings({
   presentation,
-  spriteVisible,
-  onSpriteToggle,
   onSettings
 }: {
   presentation: PresentationState | null
-  spriteVisible: boolean
-  onSpriteToggle: () => void
   onSettings: () => void
 }): React.JSX.Element {
   const t = useDesktopStrings()
@@ -65,21 +61,6 @@ export function DesktopSettings({
           widthClass="w-full"
         />
       </div>
-      <button onClick={onSpriteToggle} type="button">
-        {spriteVisible ? t.hideCompanion : t.showCompanion}
-      </button>
-      <label className={styles.displaySelect}>
-        {t.companionAlwaysOnTop}
-        <input
-          checked={presentation?.companionAlwaysOnTop ?? false}
-          onChange={event =>
-            void window.spiritagent.presentation
-              .setCompanionAlwaysOnTop(event.target.checked)
-              .catch(error => notifyError(error, t.companionAlwaysOnTop))
-          }
-          type="checkbox"
-        />
-      </label>
       {presentation?.compatibilityWarning && <span role="status">{presentation.compatibilityWarning}</span>}
       <button onClick={onSettings} type="button">
         {t.settings}

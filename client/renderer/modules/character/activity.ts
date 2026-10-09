@@ -60,13 +60,18 @@ let localChatTurnCount = 0
 let lastChatTurnSentAt = 0
 
 function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void {
+  const presentation = $presentation.get()
+  const desktop = presentation.effectiveMode === 'desktop'
+
+  const visible = desktop ? presentation.status === 'active' && !presentation.fullscreen : isCompanionStageVisible()
+
   // 自主表演条件与播放共用可见性判断（见 renderer README），发请求时读取；播放指令由后端统一派发。
   if (
-    !$llmAffect.get() ||
+    (!desktop && !$llmAffect.get()) ||
     $effectiveTier.get() !== 'autonomous' ||
     locked ||
     $chatVisible.get() ||
-    !isCompanionStageVisible() ||
+    !visible ||
     idleSeconds < IDLE_THRESHOLD_SECONDS
   ) {
     return

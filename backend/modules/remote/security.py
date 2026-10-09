@@ -92,7 +92,7 @@ def remote_content_allowed(path: str, method: str) -> bool:
             "/api/companion/video-packs",
         )
     ):
-        return path != "/api/companion/scenes/display-target"
+        return True
     if path in {"/api/media/stt", "/api/media/tts", "/api/media/videos"}:
         return method == "POST"
     return method == "GET" and (

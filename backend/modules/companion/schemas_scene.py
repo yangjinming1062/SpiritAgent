@@ -26,12 +26,6 @@ class SceneImageSize(SceneImageDimensions):
         return self
 
 
-class SceneRegenerateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    target_size: SceneImageSize | None = None
-
-
 class SceneRegenerationResponse(BaseModel):
     task_id: str
     status: Literal["pending", "ready", "failed", "cancelled"]
@@ -84,7 +78,6 @@ class SceneGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     notes: str | None = Field(default=None, max_length=500)
-    target_size: SceneImageSize | None = None
     image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
     # 客户端声明的类型只做入口约束；场景服务按图片实际格式编码。
     content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
@@ -94,7 +87,6 @@ class ScenePromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     notes: str | None = Field(default=None, max_length=500)
-    target_size: SceneImageSize | None = None
 
 
 class SceneActivateRequest(BaseModel):

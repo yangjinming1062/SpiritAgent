@@ -24,6 +24,13 @@ from .character_card import (
     PortraitFeatures,
 )
 from .definition import parse_persona_definition
+from .desktop_videos import (
+    DesktopVideoAction,
+    DesktopVideoPlayback,
+    DesktopVideoProposal,
+    DesktopVideoSet,
+    DesktopVideoState,
+)
 from .journal import (
     CompanionDiaryEntry,
 )
@@ -41,7 +48,6 @@ from .posts import CompanionPost, CompanionPostComment, PostCommentRole, PostCon
 from .read_state import has_unread, mark_read, unread_ids
 from .scene import (
     CompanionScene,
-    SceneDisplayTarget,
     SceneGenerationAttempt,
     SceneOrigin,
     ScenePolicy,
@@ -96,6 +102,25 @@ from .schemas_actions import (
     PeekGeometry,
     parse_content_rect,
 )
+from .schemas_desktop_videos import (
+    DesktopVideoActionResponse,
+    DesktopVideoAsset,
+    DesktopVideoClaimRequest,
+    DesktopVideoDesignRequest,
+    DesktopVideoEnsureRequest,
+    DesktopVideoGenerateRequest,
+    DesktopVideoListResponse,
+    DesktopVideoPlayCommand,
+    DesktopVideoPlayRequest,
+    DesktopVideoPreferences,
+    DesktopVideoProgress,
+    DesktopVideoProposalResponse,
+    DesktopVideoReceipt,
+    DesktopVideoSetResponse,
+    DesktopVideoStateResponse,
+    DesktopVisualSnapshot,
+    desktop_visual_hash,
+)
 from .schemas_journal import (
     DIARY_BODY_MAX_CHARS,
     DiaryContent,
@@ -137,7 +162,6 @@ from .schemas_scene import (
     ScenePolicyRequest,
     ScenePolicyResponse,
     ScenePromptRequest,
-    SceneRegenerateRequest,
     SceneResponse,
     SceneStateResponse,
 )
@@ -157,6 +181,28 @@ from .schemas_video import (
 )
 
 __all__ = [
+    "DesktopVideoAction",
+    "DesktopVideoActionResponse",
+    "DesktopVideoAsset",
+    "DesktopVideoClaimRequest",
+    "DesktopVideoDesignRequest",
+    "DesktopVideoEnsureRequest",
+    "DesktopVideoGenerateRequest",
+    "DesktopVideoListResponse",
+    "DesktopVideoPlayback",
+    "DesktopVideoPlayCommand",
+    "DesktopVideoPlayRequest",
+    "DesktopVideoPreferences",
+    "DesktopVideoProgress",
+    "DesktopVideoProposal",
+    "DesktopVideoProposalResponse",
+    "DesktopVideoReceipt",
+    "DesktopVideoSet",
+    "DesktopVideoSetResponse",
+    "DesktopVideoState",
+    "DesktopVideoStateResponse",
+    "DesktopVisualSnapshot",
+    "desktop_visual_hash",
     "parse_persona_definition",
     "POST_COMMENT_MAX_CHARS",
     "DIARY_BODY_MAX_CHARS",
@@ -178,10 +224,8 @@ __all__ = [
     "PostPublicationRecoveryList",
     "ABSOLUTE_MAX_DURATION_SECONDS",
     "SceneGenerationAttempt",
-    "SceneDisplayTarget",
     "SceneImageSize",
     "SceneImageDimensions",
-    "SceneRegenerateRequest",
     "BodyFeatures",
     "CharacterCardExtract",
     "CharacterCardResponse",

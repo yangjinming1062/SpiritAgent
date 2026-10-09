@@ -73,19 +73,17 @@ function isCompanionIdentityAsset(rawUrl: string, baseUrl: string): boolean {
   return pathname.includes('/api/companion/asset/')
 }
 
-export function registerConnectionIpc({
+export function createBackendAssetReader({
   assetDiskCache,
   defaultFetchTimeoutMs,
   ensureBackend,
   fetchImpl = globalThis.fetch,
-  fetchJson,
   getCurrentAuth,
-  getSelectedAccountId,
-  getMainWindow,
-  ipcMain,
-  mintWsTicket,
-  resolvePathTimeoutMs
-}: ConnectionIpcDeps): void {
+  getSelectedAccountId
+}: Pick<
+  ConnectionIpcDeps,
+  'assetDiskCache' | 'defaultFetchTimeoutMs' | 'ensureBackend' | 'fetchImpl' | 'getCurrentAuth' | 'getSelectedAccountId'
+>): (sender: WebContents, request?: AssetRequest) => Promise<CachedAsset> {
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
 
   async function readAsset(sender: WebContents, request?: AssetRequest): Promise<CachedAsset> {
@@ -151,6 +149,33 @@ export function registerConnectionIpc({
       }
     })
   }
+
+  return readAsset
+}
+
+export function registerConnectionIpc({
+  assetDiskCache,
+  defaultFetchTimeoutMs,
+  ensureBackend,
+  fetchImpl = globalThis.fetch,
+  fetchJson,
+  getCurrentAuth,
+  getSelectedAccountId,
+  getMainWindow,
+  ipcMain,
+  mintWsTicket,
+  resolvePathTimeoutMs
+}: ConnectionIpcDeps): void {
+  const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
+
+  const readAsset = createBackendAssetReader({
+    assetDiskCache,
+    defaultFetchTimeoutMs,
+    ensureBackend,
+    fetchImpl,
+    getCurrentAuth,
+    getSelectedAccountId
+  })
 
   ipcMain.handle(IPC.invoke.gatewayWsUrl, async event => {
     assertGatewayHost(event.sender, getMainWindow(), 'gatewayWsUrl')

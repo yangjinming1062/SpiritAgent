@@ -1,10 +1,9 @@
-"""场景图片的物理尺寸与等比壁纸交付。"""
+"""窗口生活空间的固定画幅与等比场景交付。"""
 
 import asyncio
 import io
 from contextlib import nullcontext
 from dataclasses import dataclass
-from math import gcd
 
 from modules.companion import SceneImageDimensions, SceneImageSize
 from PIL import Image, ImageOps
@@ -14,6 +13,8 @@ from services.infrastructure.assets import asset_store
 from .character_images import image_asset_bytes
 from .image_generation import ImageGenerationError
 
+SCENE_IMAGE_SIZE = SceneImageSize(width=2560, height=1440)
+
 
 @dataclass(frozen=True)
 class WallpaperAsset:
@@ -22,17 +23,9 @@ class WallpaperAsset:
     image_size: SceneImageSize
 
 
-def scene_aspect_ratio(size: SceneImageSize) -> str:
-    divisor = gcd(size.width, size.height)
-    return f"{size.width // divisor}:{size.height // divisor}"
-
-
-def scene_image_size(data: bytes) -> SceneImageDimensions:
+def scene_source_extension(data: bytes) -> str:
     with Image.open(io.BytesIO(data)) as image:
-        width, height = image.size
-        if image.getexif().get(274) in {5, 6, 7, 8}:
-            width, height = height, width
-        return SceneImageDimensions(width=width, height=height)
+        return {"GIF": "gif", "JPEG": "jpg", "PNG": "png", "WEBP": "webp"}[image.format or ""]
 
 
 def _fit_wallpaper(data: bytes, target: SceneImageSize) -> tuple[bytes, SceneImageDimensions]:
@@ -61,7 +54,7 @@ async def prepare_scene_wallpaper(
     try:
         fitted, source_size = await asyncio.to_thread(_fit_wallpaper, data, target)
     except Exception as exc:
-        raise ImageGenerationError("场景图片无法适配屏幕尺寸") from exc
+        raise ImageGenerationError("场景图片无法适配生活空间尺寸") from exc
     path = await asset_store.save_scene_wallpaper_asset_async(
         fitted,
         user_id=user_id,

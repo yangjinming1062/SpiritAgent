@@ -17,6 +17,9 @@ from modules.companion import (
     CompanionOutfit,
     CompanionPost,
     CompanionScene,
+    DesktopVideoAction,
+    DesktopVideoProposal,
+    DesktopVideoSet,
     FullbodyCandidate,
     PostPublication,
 )
@@ -110,7 +113,13 @@ async def collect_live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         (CompanionOutfit, ("fullbody_url", "source_json")),
         (CompanionAction, ACTION_ASSET_FIELDS),
         (CompanionActionPack, PACK_ASSET_FIELDS),
-        (CompanionScene, ("media_path", "generation_state_json", "regeneration_state_json", "reference_image")),
+        (
+            CompanionScene,
+            ("media_path", "upload_source_path", "generation_state_json", "regeneration_state_json", "reference_image"),
+        ),
+        (DesktopVideoSet, ("context_json",)),
+        (DesktopVideoAction, ("generation_state_json", "accepted_asset_json")),
+        (DesktopVideoProposal, ("design_json",)),
         (CompanionPost, ("body", "media_url", "audio_url", "context_json")),
     )
     for model, fields in fields_by_model:

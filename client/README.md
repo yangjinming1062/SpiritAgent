@@ -9,9 +9,9 @@
 | 登录、换号与会话过期 | [session.ts](main/backend/session.ts)、[session-runtime.ts](main/backend/session-runtime.ts)、[auth.ts](main/ipc/auth.ts) → [account-lifecycle.ts](renderer/app/workflows/account-lifecycle.ts)、[auth store](renderer/shared/store/auth.ts) |
 | 网关、Runner 派发与断连 | [gateway.ts](main/ipc/gateway.ts)、[runner.ts](main/ipc/runner.ts) → [host-runtime.ts](renderer/app/runtime/host-runtime.ts)、[tool-dispatch.ts](renderer/app/runtime/handlers/tool-dispatch.ts) |
 | 历史、语音与资产缓存 | [session-history.ts](main/ipc/session-history.ts)、[asset-disk-cache.ts](main/ipc/asset-disk-cache.ts)、[voice-playback.ts](main/ipc/voice-playback.ts) → [conversation](renderer/modules/conversation/)、[conversation-speech.ts](renderer/app/workflows/conversation-speech.ts) |
-| 场景与背景 | [scene-store.ts](renderer/modules/scene/scene-store.ts)、[host-runtime.ts](renderer/app/runtime/host-runtime.ts)；后端沿 [场景改动链](../backend/services/application/generation/README.md#场景改动链) 核对 |
+| 场景与背景 | [scene-store.ts](renderer/modules/scene/scene-store.ts)、[scene-backdrop.tsx](renderer/app/features/living/scene-backdrop.tsx)；固定窗口生活空间画幅，后端沿 [场景改动链](../backend/services/application/generation/README.md#场景改动链) 核对 |
 | 窗口、拖拽、主题与动作 | [主进程窗口](main/README.md#窗口与几何)、[渲染层呈现](renderer/README.md#角色呈现契约) |
-| Windows 桌面模式与 Dock | [desktop-presentation.ts](main/lifecycle/desktop-presentation.ts)、[desktop-dock.ts](main/ipc/desktop-dock.ts)、[desktop renderer](renderer/app/windows/desktop/)、[原生宿主](desktop-host/README.md) |
+| Windows 桌面模式、生活视频与 Dock | [desktop-presentation.ts](main/lifecycle/desktop-presentation.ts)、[desktop-dock.ts](main/ipc/desktop-dock.ts)、[桌面生活模块](renderer/modules/desktop-videos/)、[desktop renderer](renderer/app/windows/desktop/)、[原生宿主](desktop-host/README.md) |
 | 设置同步与 Runner 更新 | [runner-config.ts](main/ipc/runner-config.ts)、[config-sync.ts](main/shared/lib/config-sync.ts)、[updater.ts](main/runner/updater.ts) |
 | 桌面应用更新 | [update.ts](main/ipc/update.ts)、[auto-updater.ts](main/lifecycle/auto-updater.ts) → [update-bridge.ts](renderer/shared/lib/update-bridge.ts)、[about-page.tsx](renderer/app/features/living/settings/about-page.tsx) |
 
@@ -20,7 +20,7 @@
 | 代码 | 内部职责 |
 |---|---|
 | [main](main/README.md) | 组合根、preload、身份、窗口、Runner、配置与磁盘资源 |
-| [renderer](renderer/README.md) | 各物理窗口独立运行；桌面内部面板共用 renderer 和会话 runtime |
+| [renderer](renderer/README.md) | 各物理窗口独立运行；桌面内部面板共用 renderer 和会话 runtime，桌面背景视频由受限背景表面消费主进程缓存媒体 |
 | [desktop-host](desktop-host/README.md) | Windows Explorer 挂载、运行窗口观察、工作区与异常恢复 |
 | `shared/ipc` | 跨进程通道和载荷，main、preload 与 renderer 共用 |
 | `shared/runtime.ts`、`shared/speech-text.ts` | 两个进程共用的运行时原语与朗读文本清理 |

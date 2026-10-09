@@ -22,7 +22,12 @@ from modules.system import ChatMessageRequest, ChatRequest
 from prompts.companion import PENDING_INTENTIONS_LABELS
 
 from services.contracts import SceneTurnState
-from services.domains.companion import build_presentation_prompt, list_companion_intents, user_turn_activity
+from services.domains.companion import (
+    build_presentation_prompt,
+    get_presentation_snapshot,
+    list_companion_intents,
+    user_turn_activity,
+)
 from services.domains.conversation import (
     COMPANION_PRESET_ID,
     SPECIAL_KIND,
@@ -45,9 +50,11 @@ from services.infrastructure.llm import (
     scale_temperature,
 )
 from services.infrastructure.tool_runtime import (
+    REGISTRY,
     ToolCallGuardrailController,
     apply_search_tools_catalog,
     schema_name,
+    unavailable_presentation_tool_names,
 )
 from services.infrastructure.turn_ownership import conversation_lock
 
@@ -477,8 +484,19 @@ async def _run_chat_turn(
 
             if not buffer_text:
                 await emitter.send_json({"type": "message.start"})
+            # 呈现模式可在模型或工具等待期间改变；每次调用重新披露当前工具族，不沿用旧模式的解锁资格。
+            schemas_by_name = {
+                schema_name(schema): schema
+                for schema in REGISTRY.get_all_schemas(user_id, user_settings=effective_settings)
+                if schema_name(schema) not in inputs.excluded_tool_names
+            }
+            presentation = get_presentation_snapshot(user_id)
+            mode_excluded = unavailable_presentation_tool_names(presentation.mode if presentation else None)
             available_schemas = apply_search_tools_catalog(
-                available_media_tool_schemas(list(schemas_by_name.values()), media_turn),
+                available_media_tool_schemas(
+                    [schema for name, schema in schemas_by_name.items() if name not in mode_excluded],
+                    media_turn,
+                ),
             )
             available_by_name = {schema_name(schema): schema for schema in available_schemas}
             dispatch_ctx = replace(

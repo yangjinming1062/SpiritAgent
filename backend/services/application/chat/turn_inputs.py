@@ -30,6 +30,7 @@ from services.contracts import MemoryScope, MemorySource
 from services.domains.companion import (
     build_system_prompt_extras,
     get_disturbance_tier,
+    get_presentation_snapshot,
     load_character_snapshot,
     load_persona_definition,
     render_extras,
@@ -73,6 +74,7 @@ from services.infrastructure.tool_runtime import (
     apply_search_tools_catalog,
     disabled_backend_tool_names,
     schema_name,
+    unavailable_presentation_tool_names,
 )
 
 from .native_memory import NativeMemory
@@ -397,11 +399,13 @@ async def build_turn_inputs(
         excluded_tool_names | preset_excluded_tool_names(preset_id) | disabled_backend_tool_names(user_settings)
     )
     # 排除后重算 search_tools 的业务域清单，只列出本回合实际可解锁的能力。
+    presentation = get_presentation_snapshot(user_id)
+    mode_excluded = unavailable_presentation_tool_names(presentation.mode if presentation else None)
     all_schemas = apply_search_tools_catalog(
         [
             schema
             for schema in REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
-            if schema_name(schema) not in excluded_tool_names
+            if schema_name(schema) not in excluded_tool_names | mode_excluded
         ],
     )
     persona = (

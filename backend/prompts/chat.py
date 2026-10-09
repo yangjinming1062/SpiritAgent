@@ -1142,13 +1142,13 @@ SCENE_CONTEXT_GUIDANCES: dict[str, str] = {
 SCENE_TOOL_GUIDANCES: dict[str, str] = {
     "zh": (
         "根据当前情景自主决定是否创建场景或改变所在环境。需要改变环境时，先用 scene_list 查找合适场景，通过 scene_activate 复用；没有合适场景时可用 "
-        "scene_create 自主创建环境壁纸，写清地点、陈设、光线、氛围和画风，不描绘你本人；其他人物、动物、肖像或雕像可以按环境需要出现。每回合最多一次创建、一次切换，以工具结果中的 environment.current 为准。"
+        "scene_create 自主创建环境场景，写清地点、陈设、光线、氛围和画风，不描绘你本人；其他人物、动物、肖像或雕像可以按环境需要出现。每回合最多一次创建、一次切换，以工具结果中的 environment.current 为准。"
         "scene_create 默认只创建保存、当前环境不变；自主决定申请切换时才传 auto_activate=true。"
         "policy 为 locked 时不自主创建或切换。场景变化与发布动态分别决定。"
     ),
     "en": (
         "Decide autonomously from the current situation whether to create a scene or change your surroundings. To change surroundings, first search with scene_list and reuse a suitable scene with scene_activate; "
-        "create an environment wallpaper with scene_create when none fits. Describe location, furnishings, lighting, "
+        "create an environment scene with scene_create when none fits. Describe location, furnishings, lighting, "
         "atmosphere and style without depicting yourself. Other people, animals, portraits and statues may appear as requested. Make at most one creation and one switch per turn, and "
         "rely on environment.current in the tool result. scene_create saves to the library by default without "
         "changing your surroundings; pass auto_activate=true only when your own decision requests activation. "

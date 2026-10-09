@@ -8,7 +8,6 @@ interface PresentationPreferences {
   version: 2
   mode: PresentationMode
   displayId: number | null
-  companionAlwaysOnTop: boolean
 }
 
 export function createPresentationPreferences(userData: string) {
@@ -19,17 +18,14 @@ export function createPresentationPreferences(userData: string) {
   let state: PresentationPreferences = {
     version: 2,
     mode: supported && raw.mode === 'desktop' ? 'desktop' : 'window',
-    displayId: supported && Number.isSafeInteger(raw.displayId) ? (raw.displayId ?? null) : null,
-    companionAlwaysOnTop: supported && raw.companionAlwaysOnTop === true
+    displayId: supported && Number.isSafeInteger(raw.displayId) ? (raw.displayId ?? null) : null
   }
 
   const serial = createSerialQueue()
 
   return {
     get: (): PresentationPreferences => ({ ...state }),
-    set: (
-      patch: Partial<Pick<PresentationPreferences, 'mode' | 'displayId' | 'companionAlwaysOnTop'>>
-    ): Promise<void> =>
+    set: (patch: Partial<Pick<PresentationPreferences, 'mode' | 'displayId'>>): Promise<void> =>
       serial(async () => {
         const next = { ...state, ...patch }
         await atomicWriteFile(filename, JSON.stringify(next))

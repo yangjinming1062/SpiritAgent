@@ -7,7 +7,7 @@ from typing import Any
 
 from components import SETTINGS, get_logger
 from modules.auth import User, generate_activation_token, hash_activation_token
-from modules.companion import COMPANION_CRON_SOURCE_PREFIX, Persona
+from modules.companion import COMPANION_CRON_SOURCE_PREFIX, DesktopVideoState, Persona
 from modules.conversation import Conversation
 from modules.memory import Memory
 from modules.scheduler import CronJob
@@ -23,11 +23,13 @@ from services.infrastructure.assets import user_asset_lock
 
 from .action_assets import restore_action_catalogs, validate_action_files
 from .asset_layout import freeze_asset_directory, plan_asset_layout
+from .desktop_assets import validate_desktop_files
 from .file_packing import UrlRewriter, planned_asset_mapping, referenced_backup_files, restore_files, validate_row_files
 from .serializers import (
     ACTION_TABLES,
     ATOMIC_SECTION_GROUPS,
     CONVERSATION_TABLES,
+    DESKTOP_TABLES,
     IDENTITY_BLOCKED_REASON,
     IDENTITY_DEPENDENT_REASON,
     IDENTITY_GROUP,
@@ -59,15 +61,21 @@ OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = 
     "avatar_assets": (
         ("companion_character_cards", "avatar_id"),
         ("companion_action_packs", "avatar_id"),
+        ("desktop_video_sets", "avatar_id"),
     ),
-    "companion_outfits": (("companion_action_packs", "outfit_id"),),
+    "companion_outfits": (("companion_action_packs", "outfit_id"), ("desktop_video_sets", "outfit_id")),
     "companion_action_packs": (("companion_actions", "pack_id"),),
     "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
         ("memories", None),
     ),
-    "companion_scenes": (("personas", "active_scene_id"),),
+    "companion_scenes": (("personas", "active_scene_id"), ("desktop_video_sets", "scene_id")),
+    "desktop_video_sets": (("desktop_video_actions", "set_id"), ("desktop_video_states", "current_set_id")),
+    "desktop_video_actions": (
+        ("desktop_video_states", "selected_action_id"),
+        ("desktop_video_states", "loop_action_id"),
+    ),
     "companion_posts": (("companion_diary_entries", None),),
 }
 
@@ -125,6 +133,8 @@ def load_backup_rows(
             if table not in TABLES:
                 continue
             if retired_present and table in {"companion_posts", "companion_post_comments"}:
+                continue
+            if table in DESKTOP_TABLES and not DESKTOP_TABLES & manifest_set:
                 continue
             failures.append(
                 BackupImportFailure(
@@ -189,6 +199,8 @@ def load_backup_rows(
                 if group == CONVERSATION_TABLES
                 else "动态与评论必须同时恢复。"
                 if group == POST_TABLES
+                else "桌面生活组合、动作与偏好必须同时恢复。"
+                if group == DESKTOP_TABLES
                 else "动作包与动作必须同时恢复。"
             )
             for table in sorted(present):
@@ -303,6 +315,8 @@ async def _preflight_tables(
                 continue
             if table == "companion_actions":
                 continue
+            if table in {"desktop_video_actions", "desktop_video_states"}:
+                continue
             if table == "messages" and "conversations" in rows:
                 continue
             if table == "companion_post_comments" and "companion_posts" in rows:
@@ -318,6 +332,8 @@ async def _preflight_tables(
                 group = ("companion_action_packs", "companion_actions")
             elif table == "companion_posts":
                 group = ("companion_posts", "companion_post_comments")
+            elif table == "desktop_video_sets":
+                group = ("desktop_video_sets", "desktop_video_actions", "desktop_video_states")
             else:
                 group = (table,)
             available_rows = {name: rows[name] for name in successful | set(group) if name in rows}
@@ -356,6 +372,14 @@ async def _preflight_tables(
                             validation_user.id,
                             UrlRewriter({}),
                             write_files=False,
+                        )
+                    if table == "desktop_video_sets":
+                        await asyncio.to_thread(
+                            validate_desktop_files,
+                            available_rows,
+                            extract_root,
+                            source_user_id,
+                            target_user_id,
                         )
             except (KeyError, StatementError, TypeError, ValueError) as exc:
                 # 对外原因不含数据库细节，诊断保留在日志里。
@@ -459,6 +483,27 @@ async def _clear_compatible_rows(
 ) -> tuple[dict[str, list[dict[str, Any]]], tuple[BackupImportFailure, ...]]:
     remaining = dict(compatible_rows)
     failures: list[BackupImportFailure] = []
+    desktop_required_parents = {
+        parent
+        for field, parent in (
+            ("avatar_id", "avatar_assets"),
+            ("outfit_id", "companion_outfits"),
+            ("scene_id", "companion_scenes"),
+        )
+        if any(row.get(field) is not None for row in remaining.get("desktop_video_sets", ()))
+    }
+
+    def _drop_desktop(reason: str) -> None:
+        for member in sorted(DESKTOP_TABLES & set(remaining)):
+            records = remaining.pop(member)
+            failures.append(BackupImportFailure(member, len(records), reason))
+
+    # 桌面冻结资料依赖三类输入；先核对父类能否覆盖，避免先清理桌面后才发现输入必须保留。
+    if DESKTOP_TABLES.issubset(remaining) and remaining["desktop_video_sets"]:
+        for parent in sorted(desktop_required_parents):
+            if parent not in remaining or await _has_retained_dependent(db, parent, target_user_id, remaining):
+                _drop_desktop("桌面生活引用的身份、衣柜或场景未能安全恢复，请一并恢复对应类别。")
+                break
     # 动态与评论同组保护：保留的日记仍引用动态时，在任何清理前阻止两表覆盖。
     if "companion_posts" in remaining and await _has_retained_dependent(
         db,
@@ -526,6 +571,8 @@ async def _clear_compatible_rows(
 
     # 身份未能写入时先摘掉依赖头像映射的动作类别，避免在清理阶段误删。
     if IDENTITY_TABLES & set(compatible_rows) and not set(remaining) >= IDENTITY_TABLES:
+        if "avatar_assets" in desktop_required_parents:
+            _drop_desktop(IDENTITY_DEPENDENT_REASON)
         for table in ("companion_action_packs", "companion_actions"):
             if table not in remaining:
                 continue
@@ -539,7 +586,7 @@ async def _clear_compatible_rows(
             )
 
     for table in reversed(TABLES):
-        if table in ACTION_TABLES or table in IDENTITY_TABLES:
+        if table in ACTION_TABLES | DESKTOP_TABLES | IDENTITY_TABLES:
             continue
         # user_preferences 就地更新用户行；messages 随 conversations 级联删除。
         if table not in remaining or table in {"user_preferences", "messages"}:
@@ -581,10 +628,31 @@ async def _clear_compatible_rows(
             ),
         )
     # 覆盖清理后仍须成组：身份缺一即整组不写，避免角色卡引用未写入的头像。
-    for group in (IDENTITY_TABLES, ACTION_TABLES):
+    if DESKTOP_TABLES.issubset(remaining):
+        if not desktop_required_parents.issubset(remaining):
+            _drop_desktop("桌面生活的输入类别无法安全覆盖，原桌面资产已保留。")
+        else:
+            try:
+                async with db.begin_nested():
+                    for member in ("desktop_video_states", "desktop_video_actions", "desktop_video_sets"):
+                        await _delete_user_rows(db, member, target_user_id)
+            except IntegrityError:
+                logger.warning(
+                    "desktop life could not be cleared without affecting retained data",
+                    extra={"target_user_id": target_user_id},
+                    exc_info=True,
+                )
+                _drop_desktop("目标桌面生活仍有无法安全覆盖的关联数据。")
+    for group in (IDENTITY_TABLES, ACTION_TABLES, DESKTOP_TABLES):
         present = group & set(remaining)
         if present and present != group:
-            reason = IDENTITY_INCOMPLETE_REASON if group == IDENTITY_TABLES else "动作包与动作必须同时恢复。"
+            reason = (
+                IDENTITY_INCOMPLETE_REASON
+                if group == IDENTITY_TABLES
+                else "桌面生活组合、动作与偏好必须同时恢复。"
+                if group == DESKTOP_TABLES
+                else "动作包与动作必须同时恢复。"
+            )
             for table in sorted(present):
                 remaining.pop(table)
                 failures.append(
@@ -675,6 +743,13 @@ async def restore_backup_rows(
     existing_scene_versions = (
         await db.execute(
             select(Persona.scene_state_version, Persona.scene_switch_version).where(Persona.user_id == target_user_id),
+        )
+    ).one_or_none()
+    existing_desktop_versions = (
+        await db.execute(
+            select(DesktopVideoState.version, DesktopVideoState.set_epoch).where(
+                DesktopVideoState.user_id == target_user_id,
+            ),
         )
     ).one_or_none()
     try:
@@ -786,6 +861,19 @@ async def restore_backup_rows(
                     user_id=target_user_id,
                     event_type="companion.scene.updated",
                     payload={"version": persona.scene_state_version, "switch_version": persona.scene_switch_version},
+                )
+        if DESKTOP_TABLES.issubset(imported):
+            state = await db.scalar(select(DesktopVideoState).where(DesktopVideoState.user_id == target_user_id))
+            if state is not None:
+                previous_version, previous_epoch = existing_desktop_versions or (0, 0)
+                state.version = max(state.version, previous_version) + 1
+                state.set_epoch = max(state.set_epoch, previous_epoch) + 1
+                state.selected_play_id = None
+                emit_ws_event(
+                    db,
+                    user_id=target_user_id,
+                    event_type="companion.desktop_video.updated",
+                    payload={"version": state.version},
                 )
         if rewriter.missing_paths:
             failures = (

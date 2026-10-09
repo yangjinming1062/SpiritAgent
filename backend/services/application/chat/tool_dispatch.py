@@ -6,6 +6,7 @@ from typing import Any
 from components import get_logger, redact_sensitive_text, safe_json_loads, tool_error
 
 from services.contracts import DelegateAction, MediaTurnState, MemoryScope, SceneTurnState
+from services.domains.companion import get_presentation_snapshot
 from services.infrastructure.desktop import MANAGER, dispatch_device_call
 from services.infrastructure.llm import UserLlmConfig
 from services.infrastructure.tool_runtime import (
@@ -18,6 +19,7 @@ from services.infrastructure.tool_runtime import (
     is_multimodal_tool_result,
     make_tool_result_message,
     should_parallelize_tool_batch,
+    unavailable_presentation_tool_names,
 )
 
 from .chat_emitter import Emitter
@@ -192,7 +194,9 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
     await ctx.emitter.send_json({"type": "tool_start", "name": name, "call_id": tc["call_id"]})
 
     try:
-        if name in ctx.excluded_tool_names or name in ctx.unavailable_tool_names:
+        presentation = get_presentation_snapshot(ctx.user_id)
+        mode_excluded = unavailable_presentation_tool_names(presentation.mode if presentation else None)
+        if name in ctx.excluded_tool_names | ctx.unavailable_tool_names | mode_excluded:
             return make_tool_result_message(
                 name,
                 tool_error(f"Tool is unavailable in this execution mode: {name}"),

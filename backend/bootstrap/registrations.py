@@ -6,6 +6,7 @@ from services.adapters.tools import memory as memory_tools
 from services.adapters.tools.builtin import (
     register_actions,
     register_companion_wait,
+    register_desktop_actions,
     register_image_generation,
     register_posts,
     register_scene,
@@ -58,6 +59,7 @@ def register_tools() -> None:
     memory_tools.register_memory_tools(REGISTRY)
     search_tools_tool.register(REGISTRY)
     register_actions(REGISTRY)
+    register_desktop_actions(REGISTRY)
     register_companion_wait(REGISTRY)
     register_image_generation(REGISTRY)
     register_posts(REGISTRY)

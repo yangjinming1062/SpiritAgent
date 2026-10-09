@@ -1,6 +1,6 @@
 from typing import Any
 
-# 工具集 id 权威枚举在 client/main/shared/lib/toolset-index.ts；此处只登记 backend/memory 桶 id，其余由 Runner get_tools 源头过滤。无归属且不受开关影响：search_tools、action_search / action_inspect / action_design / action_play、video_generate / video_generate_status。
+# 工具集 id 权威枚举在 client/main/shared/lib/toolset-index.ts；此处只登记 backend/memory 桶 id，其余由 Runner get_tools 源头过滤。无归属且不受开关影响：search_tools、action_* / desktop_action_*、video_generate / video_generate_status。
 _TOOLSET_TOOL_NAMES: dict[str, tuple[str, ...]] = {
     "memory": ("memory_retain", "memory_recall", "memory_inspect"),
     "posts": ("post_publish", "post_status"),

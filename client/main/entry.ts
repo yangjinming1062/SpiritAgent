@@ -27,7 +27,7 @@ import { createSessionRuntime } from './backend/session-runtime'
 import { createAssetDiskCache } from './ipc/asset-disk-cache'
 import { createAuthBroadcaster, registerAuthIpc, registerDesktopAccountIpc } from './ipc/auth'
 import { registerClipboardIpc } from './ipc/clipboard'
-import { registerConnectionIpc } from './ipc/connection'
+import { createBackendAssetReader, registerConnectionIpc } from './ipc/connection'
 import { registerDesktopDock } from './ipc/desktop-dock'
 import { registerFilesIpc } from './ipc/files'
 import { registerGatewayIpc } from './ipc/gateway'
@@ -306,6 +306,11 @@ presentation = createDesktopPresentation({
   },
   authenticated: () => Boolean(sessionRuntime.ensureBackendSession().getSession()?.hasToken),
   authIdentity: () => sessionRuntime.ensureBackendSession().getSession()?.sessionId ?? null,
+  loadMedia: async (sender, reference) => {
+    const asset = await readDesktopAsset(sender, { ...reference, preferCache: true })
+
+    return { bytes: new Uint8Array(asset.buffer), mime: asset.mime }
+  },
   lockZoom: zoomPersistence.lockZoom,
   installWindowHandlers: windowHandlers.installSurfaceWindowHandlers,
   log: rememberLog,
@@ -365,6 +370,15 @@ const sessionRuntime = createSessionRuntime({
 const assetDiskCache = createAssetDiskCache({
   defaultFetchFn: electronFetch,
   spiritagentHome: SPIRITAGENT_HOME
+})
+
+const readDesktopAsset = createBackendAssetReader({
+  assetDiskCache,
+  defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+  ensureBackend,
+  fetchImpl: electronFetch,
+  getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
+  getSelectedAccountId: () => sessionRuntime.ensureBackendSession().getSelectedAccountId()
 })
 
 const sessionHistoryDiskCache = createSessionHistoryDiskCache({
@@ -491,9 +505,7 @@ registerSpriteIpc({
   deps: {
     getRunnerBridge: () => runnerHost.getBridge(),
     getSpriteWindow: getMainWindow,
-    getStageWindow: () =>
-      presentation?.getState().effectiveMode === 'desktop' ? presentation.getStageWindow() : getMainWindow(),
-    isDesktopSender: sender => presentation?.isStageSender(sender) ?? false,
+    stageAvailable: () => presentation?.getState().effectiveMode !== 'desktop',
     getUserDataDir: () => app.getPath('userData'),
     log: rememberLog,
     screen

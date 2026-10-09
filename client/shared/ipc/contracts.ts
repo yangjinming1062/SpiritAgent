@@ -1,10 +1,10 @@
 import type {
   DesktopAccount,
   DesktopBackground,
+  DesktopBackgroundPlayback,
+  DesktopBackgroundRequest,
   DesktopCompanionActivityState,
-  DesktopCompanionInteraction,
   DesktopNavigation,
-  DesktopStageInsets,
   DockCatalog,
   DockState,
   PresentationMode,
@@ -16,10 +16,12 @@ export { DESKTOP_COMPANION_ACTIVITY_PRIORITY, normalizeSurfaceId } from './deskt
 export type {
   DesktopAccount,
   DesktopBackground,
+  DesktopBackgroundPlayback,
+  DesktopBackgroundRequest,
   DesktopCompanionActivityState,
-  DesktopCompanionInteraction,
+  DesktopMediaBytes,
+  DesktopMediaReference,
   DesktopNavigation,
-  DesktopStageInsets,
   DockCatalog,
   DockCatalogItem,
   DockCatalogSource,
@@ -27,7 +29,6 @@ export type {
   DockEntry,
   DockState,
   DockWindow,
-  PixelSize,
   PresentationDisplay,
   PresentationMode,
   PresentationState,
@@ -404,11 +405,7 @@ export interface IpcInvokeContract {
     voicePreparing: boolean
     authSessionId: string
   }) => void
-  'spiritagent:presentation:get-stage-activity': () => StageActivity
-  'spiritagent:presentation:set-stage-layout': (layout: { visible: boolean; insets: DesktopStageInsets }) => void
-  'spiritagent:presentation:set-companion-topmost': (enabled: boolean) => Promise<PresentationState>
   'spiritagent:presentation:set-ignore-mouse-events': (payload: { ignore: boolean; forward?: boolean }) => void
-  'spiritagent:presentation:companion-interaction': (interaction: DesktopCompanionInteraction) => void
   'spiritagent:presentation:get-state': () => Promise<PresentationState>
   'spiritagent:presentation:set-mode': (mode: PresentationMode) => Promise<PresentationState>
   'spiritagent:presentation:set-display': (id: number) => Promise<PresentationState>
@@ -416,8 +413,7 @@ export interface IpcInvokeContract {
   'spiritagent:presentation:focus': (epoch: number) => Promise<boolean>
   'spiritagent:presentation:heartbeat': () => void
   'spiritagent:presentation:host-ready': () => Promise<void>
-  'spiritagent:presentation:set-background': (background: DesktopBackground) => void
-  'spiritagent:presentation:claim-play': (claim: SurfacePlaybackClaim) => boolean
+  'spiritagent:presentation:set-background': (background: DesktopBackgroundRequest) => Promise<void>
   'spiritagent:presentation:stage-activity': (activity: StageActivity) => void
   'spiritagent:dock:get-state': () => Promise<DockState>
   'spiritagent:dock:catalog': (force?: boolean) => Promise<DockCatalog>
@@ -437,6 +433,7 @@ export interface IpcInvokeContract {
   'spiritagent:desktop:add-account': () => Promise<void>
   'spiritagent:desktop:quit': () => void
   'spiritagent:background:ready': () => void
+  'spiritagent:background:acknowledge': (playback: DesktopBackgroundPlayback) => void
 
   // 连接与启动
   'spiritagent:gateway:ws-url': () => Promise<string> | string
@@ -604,12 +601,11 @@ export interface IpcInvokeContract {
 
 // 2. 主进程向渲染进程推送事件（通过 webContents.send / ipcRenderer.on）
 export interface IpcEventContract {
-  'spiritagent:presentation:companion-interaction': [payload: DesktopCompanionInteraction]
   'spiritagent:presentation:changed': [payload: PresentationState]
   'spiritagent:dock:changed': [payload: DockState]
   'spiritagent:desktop:navigate': [payload: DesktopNavigation]
-  'spiritagent:background:image': [payload: DesktopBackground]
-  'spiritagent:presentation:stage-activity': [payload: StageActivity]
+  'spiritagent:background:media': [payload: DesktopBackground]
+  'spiritagent:presentation:background-playback': [payload: DesktopBackgroundPlayback]
 
   'spiritagent:voice-playback:changed': [payload: VoicePlaybackChanged]
   'spiritagent:auth:changed': [payload: DesktopAuthBroadcast]
@@ -648,11 +644,8 @@ type IpcSendChannel = keyof IpcSendContract
 export const IPC = {
   invoke: {
     presentationCompanionActivity: 'spiritagent:presentation:companion-activity',
-    presentationGetStageActivity: 'spiritagent:presentation:get-stage-activity',
-    presentationSetStageLayout: 'spiritagent:presentation:set-stage-layout',
-    presentationSetCompanionTopmost: 'spiritagent:presentation:set-companion-topmost',
+    presentationStageActivity: 'spiritagent:presentation:stage-activity',
     presentationSetIgnoreMouseEvents: 'spiritagent:presentation:set-ignore-mouse-events',
-    presentationCompanionInteraction: 'spiritagent:presentation:companion-interaction',
     presentationGetState: 'spiritagent:presentation:get-state',
     presentationSetMode: 'spiritagent:presentation:set-mode',
     presentationSetDisplay: 'spiritagent:presentation:set-display',
@@ -661,8 +654,6 @@ export const IPC = {
     presentationHeartbeat: 'spiritagent:presentation:heartbeat',
     presentationHostReady: 'spiritagent:presentation:host-ready',
     presentationSetBackground: 'spiritagent:presentation:set-background',
-    presentationClaimPlay: 'spiritagent:presentation:claim-play',
-    presentationStageActivity: 'spiritagent:presentation:stage-activity',
     dockGetState: 'spiritagent:dock:get-state',
     dockCatalog: 'spiritagent:dock:catalog',
     dockCatalogIcons: 'spiritagent:dock:catalog-icons',
@@ -681,6 +672,7 @@ export const IPC = {
     desktopAddAccount: 'spiritagent:desktop:add-account',
     desktopQuit: 'spiritagent:desktop:quit',
     backgroundReady: 'spiritagent:background:ready',
+    backgroundAcknowledge: 'spiritagent:background:acknowledge',
 
     authActivate: 'spiritagent:auth:activate',
     authRefresh: 'spiritagent:auth:refresh',
@@ -748,12 +740,11 @@ export const IPC = {
     updateGetState: 'spiritagent:update:get-state'
   } as const satisfies Record<string, IpcChannel>,
   event: {
-    companionInteraction: 'spiritagent:presentation:companion-interaction',
     presentationChanged: 'spiritagent:presentation:changed',
     dockChanged: 'spiritagent:dock:changed',
     desktopNavigate: 'spiritagent:desktop:navigate',
-    backgroundImage: 'spiritagent:background:image',
-    presentationStageActivity: 'spiritagent:presentation:stage-activity',
+    backgroundMedia: 'spiritagent:background:media',
+    backgroundPlayback: 'spiritagent:presentation:background-playback',
 
     voicePlaybackChanged: 'spiritagent:voice-playback:changed',
     authChanged: 'spiritagent:auth:changed',

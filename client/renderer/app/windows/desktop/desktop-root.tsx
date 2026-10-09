@@ -3,6 +3,8 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AppearancePage } from '@/app/features/living/appearance/appearance-page'
+import { DesktopLifePage } from '@/app/features/living/desktop-life-page'
+import { useDesktopLifeStrings } from '@/app/features/living/desktop-life-strings'
 import { DiaryPage } from '@/app/features/living/diary-page'
 import { PostsPage } from '@/app/features/living/posts-page'
 import { RemotePage } from '@/app/features/living/remote-page'
@@ -15,15 +17,15 @@ import {
   setChatSession,
   switchSession
 } from '@/modules/conversation'
+import { $desktopVideoError, $desktopVideoState } from '@/modules/desktop-videos'
 import { MediaViewerOverlay } from '@/modules/media'
 import { hydrateDiaryUnread } from '@/modules/memory'
 import { hydratePostsUnread } from '@/modules/posts'
-import { $activeScene, hydrateScene } from '@/modules/scene'
+import { hydrateScene } from '@/modules/scene'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { ArrowLeft, ArrowRight, ChevronDown, MessageCircle, Settings, Wifi, WifiOff, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
@@ -31,16 +33,15 @@ import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
-import { $theme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
 
 import { DesktopChat, DesktopWhisper } from './desktop-chat'
-import { DesktopCompanionMenu } from './desktop-companion'
 import { DesktopDock } from './desktop-dock'
 import { DESKTOP_APPS, type DesktopApp, useDesktopLayout } from './desktop-layout'
 import { DesktopPreferences } from './desktop-preferences'
 import { DesktopAccounts, DesktopSettings } from './desktop-settings'
 import { useDesktopStrings } from './desktop-strings'
+import { useDesktopVideoWallpaper } from './desktop-video-wallpaper'
 import { DesktopWindow } from './desktop-window'
 import styles from './desktop.module.css'
 
@@ -56,7 +57,9 @@ const CONNECTION_TONE: Record<ConnectionState, ConnectionTone> = {
 }
 
 export function DesktopRoot(): React.JSX.Element {
+  useDesktopVideoWallpaper()
   const t = useDesktopStrings()
+  const desktopLife = useDesktopLifeStrings()
   const dict = useStrings()
   const auth = useStore($auth)
   const gatewayState = useStore($gatewayState)
@@ -65,19 +68,31 @@ export function DesktopRoot(): React.JSX.Element {
   const persona = useStore($persona)
   const portrait = useStore($portraitUrl)
   const locale = useStore($locale)
-  const theme = useStore($theme)
-  const scene = useStore($activeScene)
   const pending = useStore(pendingMessages.$atom)
   const [clock, setClock] = useState(() => new Date())
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
+  const videoState = useStore($desktopVideoState)
+  const videoError = useStore($desktopVideoError)
+  const idleVideo = videoState?.current?.actions.find(action => action.key === 'idle')
+
+  const wallpaperStatus =
+    videoState?.preparation_error ||
+    idleVideo?.error ||
+    videoError ||
+    (idleVideo?.status === 'processing'
+      ? idleVideo.stage === 'paused'
+        ? desktopLife.paused
+        : desktopLife.statuses.processing
+      : !idleVideo?.video_url
+        ? desktopLife.noPreview
+        : null)
+
   const [companionSessionId, setCompanionSessionId] = useState<string | null>(null)
   const [focusedConversation, setFocusedConversation] = useState<'main' | 'whisper' | null>('whisper')
   const [accountOpen, setAccountOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dockOverlayOpen, setDockOverlayOpen] = useState(false)
-  const [companionMenu, setCompanionMenu] = useState<{ x: number; y: number } | null>(null)
-  const companionMenuOpen = companionMenu !== null
   const [area, setArea] = useState({ width: 1000, height: 700, left: 16, top: 60 })
   const initialized = useRef(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -115,7 +130,7 @@ export function DesktopRoot(): React.JSX.Element {
   }, [])
   const activeWindow = layout.windows.findLast(item => !item.minimized)?.id
 
-  const panelsEnabled = foreground && !accountOpen && !settingsOpen && !dockOverlayOpen && !companionMenuOpen
+  const panelsEnabled = foreground && !accountOpen && !settingsOpen && !dockOverlayOpen
   const activePanel = panelsEnabled && focusedConversation !== 'whisper' ? activeWindow : null
   const mainChatActive = activePanel === 'chat' && focusedConversation === 'main'
   const whisperChatActive = panelsEnabled && focusedConversation === 'whisper' && layout.whisperOpen
@@ -173,38 +188,6 @@ export function DesktopRoot(): React.JSX.Element {
   }, [mainChatActive, whisperChatActive])
 
   useEffect(() => () => $desktopChatActive.set(false), [])
-
-  useEffect(() => {
-    void window.spiritagent.presentation
-      .setStageLayout({
-        visible: layout.spriteVisible,
-        insets: {
-          top: 48,
-          bottom: 96,
-          left: layout.whisperOpen && layout.whisperSide === 'left' ? 396 : 16,
-          right: layout.whisperOpen && layout.whisperSide === 'right' ? 396 : 16
-        }
-      })
-      .catch(error => log.warn('desktop', 'stage layout failed', error))
-  }, [layout.spriteVisible, layout.whisperOpen, layout.whisperSide])
-
-  useEffect(
-    () =>
-      window.spiritagent.presentation.onCompanionInteraction(interaction => {
-        if (interaction.kind === 'hide') {
-          setLayout(current => ({ ...current, spriteVisible: false }))
-        } else if (interaction.kind === 'toggle-whisper') {
-          setLayout(current => ({ ...current, whisperOpen: !current.whisperOpen }))
-          setFocusedConversation('whisper')
-        } else if (interaction.kind === 'menu') {
-          setCompanionMenu({ x: interaction.x, y: interaction.y })
-        } else if (interaction.kind === 'drop') {
-          pushExternalAttachment(interaction.paths)
-          openWhisper()
-        }
-      }),
-    [setLayout, openWhisper]
-  )
 
   useEffect(
     () =>
@@ -265,7 +248,6 @@ export function DesktopRoot(): React.JSX.Element {
     const closeMenus = (): void => {
       setAccountOpen(false)
       setSettingsOpen(false)
-      setCompanionMenu(null)
     }
 
     window.addEventListener('blur', closeMenus)
@@ -362,33 +344,6 @@ export function DesktopRoot(): React.JSX.Element {
     }
   }, [companionSessionId, gatewayState, openWhisper, t.chat])
 
-  useEffect(() => {
-    let disposed = false
-    const image = scene?.url ?? null
-
-    const send = async (): Promise<void> => {
-      const resolved = image && !image.startsWith('data:') ? await window.spiritagent.apiAsset({ url: image }) : image
-
-      if (image && !resolved) {
-        throw new Error('Desktop background asset is unavailable')
-      }
-
-      if (!disposed) {
-        await window.spiritagent.presentation.setBackground({
-          image: resolved,
-          theme,
-          reduceMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-        })
-      }
-    }
-
-    void send().catch(error => log.warn('desktop', 'background publish failed', error))
-
-    return () => {
-      disposed = true
-    }
-  }, [scene?.url, theme])
-
   useDismissOnOutside(menuRef, accountOpen, () => setAccountOpen(false))
   useDismissOnOutside(settingsRef, settingsOpen, () => setSettingsOpen(false))
 
@@ -400,8 +355,6 @@ export function DesktopRoot(): React.JSX.Element {
       openWhisper()
     }
   }
-
-  const toggleSprite = (): void => setLayout(current => ({ ...current, spriteVisible: !current.spriteVisible }))
 
   const page = (id: DesktopApp, visible: boolean): React.ReactNode => {
     const reading = visible && activePanel === id
@@ -434,6 +387,9 @@ export function DesktopRoot(): React.JSX.Element {
 
       case 'appearance':
         return <AppearancePage />
+
+      case 'desktopLife':
+        return <DesktopLifePage />
 
       case 'remote':
         return <RemotePage />
@@ -483,6 +439,16 @@ export function DesktopRoot(): React.JSX.Element {
           ))}
         </nav>
         <div className={styles.status}>
+          {wallpaperStatus && (
+            <button
+              className={styles.wallpaperStatus}
+              onClick={() => activatePanel('desktopLife')}
+              title={wallpaperStatus}
+              type="button"
+            >
+              <span role="status">{wallpaperStatus}</span>
+            </button>
+          )}
           <SpriteStatusBadge />
           <span
             aria-label={connectionLabel}
@@ -511,9 +477,7 @@ export function DesktopRoot(): React.JSX.Element {
                 activatePanel('settings')
                 setSettingsOpen(false)
               }}
-              onSpriteToggle={toggleSprite}
               presentation={presentation}
-              spriteVisible={layout.spriteVisible}
             />
           )}
         </div>
@@ -544,9 +508,6 @@ export function DesktopRoot(): React.JSX.Element {
           </DesktopWindow>
         ))}
       </main>
-      {companionMenu && (
-        <DesktopCompanionMenu onClose={() => setCompanionMenu(null)} onHide={toggleSprite} position={companionMenu} />
-      )}
       <aside
         aria-label={t.whisper}
         className={styles.whisper}
@@ -597,7 +558,7 @@ export function DesktopRoot(): React.JSX.Element {
         </button>
       )}
       <DesktopDock
-        menuEnabled={desktopVisible && !accountOpen && !settingsOpen && !companionMenuOpen}
+        menuEnabled={desktopVisible && !accountOpen && !settingsOpen}
         onActivate={activatePanel}
         onClose={close}
         onMenuOpenChange={setDockOverlayOpen}

@@ -3,7 +3,14 @@ from typing import Any
 
 from prompts.tools import SEARCH_TOOLS_DESC, SEARCH_TOOLS_PARAM_DESCS
 
-from services.infrastructure.tool_runtime import REGISTRY, ToolsRegistry, schema_name, search_domains_and_tools
+from services.domains.companion import get_presentation_snapshot
+from services.infrastructure.tool_runtime import (
+    REGISTRY,
+    ToolsRegistry,
+    schema_name,
+    search_domains_and_tools,
+    unavailable_presentation_tool_names,
+)
 
 SEARCH_TOOLS_SCHEMA = {
     "name": "search_tools",
@@ -29,6 +36,8 @@ async def search_tools_tool(
     **_: object,
 ) -> str:
     # 与回合装配同源的用户设置过滤，再去掉本回合执行层排除的工具，避免解锁后被派发层拒绝。
+    presentation = get_presentation_snapshot(user_id)
+    excluded_tool_names |= unavailable_presentation_tool_names(presentation.mode if presentation else None)
     available_schemas = [
         schema
         for schema in REGISTRY.get_all_schemas(user_id, user_settings=user_settings)

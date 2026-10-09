@@ -158,7 +158,7 @@ export const dict: Dictionary = {
       intro:
         'Summon or hide the companion from anywhere on your system. Click a key field to record a new combination.',
       toggleVisibility: 'Hide / show companion',
-      toggleVisibilityDesc: 'Quickly show or hide the companion window on the desktop.',
+      toggleVisibilityDesc: 'Quickly show or hide the companion window in window mode.',
       openLiving: 'Show / hide Living Space',
       openLivingDesc: 'Quickly summon or hide the immersive Living Space window.',
       openWorkbench: 'Show / hide Workbench',
@@ -349,11 +349,11 @@ export const dict: Dictionary = {
       idleAffect: 'Idle situational expression',
       idleAffectAria: 'Idle situational mood',
       idleAffectDesc:
-        'On autonomy and with the desktop pet visible, the LLM picks situational expressions after 30+ idle minutes.',
+        'On autonomy and with the companion visible in window mode, the LLM picks situational expressions after 30+ idle minutes.',
       autonomy: 'Autonomous space decisions',
       autonomyAria: 'Autonomous space decisions',
       autonomyDesc:
-        'On autonomy and with the desktop pet visible, the LLM decides where to roam, perch, and approach (off uses local rules).',
+        'On autonomy and with the companion visible in window mode, the LLM decides where to roam, perch, and approach (off uses local rules).',
       postsEnabled: 'Post creation',
       postsEnabledDesc:
         'Let your companion create text, image, video or audio posts at any time, including while offline. All types share the posting limit.'
@@ -529,7 +529,7 @@ export const dict: Dictionary = {
       materialHeading: 'Material effects',
       materialTransparent: 'Clear mode (transparent)',
       materialTransparentDesc:
-        'Enables liquid glass and frosted translucency — the scene image flows with light, and the desktop companion feels airy.',
+        'Enables liquid glass and frosted translucency — the living-space scene flows with light, and the companion stays airy in window mode.',
       materialTransparentDayNight: 'Day transparent / Night transparent',
       materialSolid: 'Solid mode (classic)',
       materialSolidDesc:
@@ -1193,14 +1193,14 @@ export const dict: Dictionary = {
       videoGenHint:
         'Generates action images and videos from the outfit reference and personality; suspended dragging uses a still image. Preview or regenerate each action; the current look stays until it is ready.',
       companionSize: 'Companion size',
-      companionSizeHint: 'Default display scale of the sprite on the desktop.',
+      companionSizeHint: 'Default display scale of the companion in window mode.',
       scaleAria: 'Companion size'
     },
     scene: {
       intro:
-        'Scenes are screen-sized wallpapers shared by window and desktop modes. They omit a duplicate of your desktop companion; other people, animals and statues may appear. The default style is natural realism.',
+        'Scenes fill the entire living space window at a fixed 16:9 ratio. They omit a duplicate of your companion; other people, animals and statues may appear. The default style is natural realism.',
       referenceHint:
-        'A reference guides the environment, composition and style. Your companion’s own appearance is not repeated in the wallpaper.',
+        'A reference guides the environment, composition and style. Your companion’s own appearance is not repeated in the scene image.',
       referenceLabel: 'Scene reference',
       chooseReference: 'Choose reference',
       replaceReference: 'Replace reference',
@@ -1208,19 +1208,19 @@ export const dict: Dictionary = {
       referenceError: 'Choose a valid PNG, JPEG, WebP or GIF image.',
       notesLabel: 'Environment description',
       notesPlaceholder: 'For example: an evening beach with soft sunset light across the sand and sea.',
-      targetSize: (width: number, height: number) => `Target screen: ${width} × ${height}`,
+      targetSize: (width: number, height: number) => `Living space size: ${width} × ${height}`,
       regenerationTargetSize: (width: number, height: number) => `Regeneration size: ${width} × ${height}`,
       generationTargetSize: (width: number, height: number) => `Generation target: ${width} × ${height}`,
       sourceSize: (width: number, height: number) => `Original image: ${width} × ${height}`,
       imageSize: (width: number, height: number) => `Image size: ${width} × ${height}`,
       uploadHint:
-        'Choose a wallpaper without a duplicate of your desktop companion. Uploads keep the original image and dimensions.',
+        'Choose a background without a duplicate of your companion. The source file is kept; the display image is cropped proportionally to fit the living space.',
       noScene: 'No active scene yet',
       pendingOverlay: 'Preparing scene…',
       pendingOverlayHint:
         'The image and description are saved to your library. Your current background stays in place.',
       waitingUploadOverlay: 'Waiting for a scene image',
-      waitingUploadHint: 'The original image is saved to your library first; activate it when ready.',
+      waitingUploadHint: 'The source file is kept and fitted to the living space. Activate the saved scene when ready.',
       waitingUploadAction: 'Upload image',
       generateButton: 'Create scene',
       generatingButton: 'Creating…',

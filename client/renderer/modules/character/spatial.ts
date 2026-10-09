@@ -2,14 +2,9 @@ import { atom, computed } from 'nanostores'
 
 import { deepEqual } from '@/shared/lib/deep-equal'
 import { log } from '@/shared/lib/log'
-import {
-  persistString,
-  registerCompanionStorageKey,
-  registerStorageClearHandler,
-  storedString
-} from '@/shared/lib/storage'
+import { persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
 import { $presentation } from '@/shared/store/presentation'
-import { $surfaceOpen, $surfaceRole, $surfaceSpriteVisible, isSpriteStageShown } from '@/shared/store/surfaces'
+import { $surfaceOpen, $surfaceSpriteVisible, isSpriteStageShown } from '@/shared/store/surfaces'
 import {
   type DesktopScreenRect,
   type DesktopSpriteScalePayload,
@@ -46,80 +41,6 @@ export function getBaseSpriteHeight(): number {
 
 export function getBaseSpriteWidth(): number {
   return baseSpriteSize(window.innerHeight).width
-}
-
-let stageInsets = { top: 0, bottom: 0, left: 0, right: 0 }
-const DESKTOP_POSITION_KEY = registerCompanionStorageKey('da.desktop.sprite.position')
-
-function saveRestPosition(position: {
-  x: number
-  y: number
-  screenEdge?: { side: 'left' | 'right'; yRatio: number }
-}): Promise<void> {
-  if ($surfaceRole.get() === 'desktop-companion') {
-    persistString(DESKTOP_POSITION_KEY, JSON.stringify(position))
-
-    return Promise.resolve()
-  }
-
-  return window.spiritagent.sprite.setPosition(position)
-}
-
-function loadRestPosition(): Promise<{
-  x: number
-  y: number
-  screenEdge?: { side: 'left' | 'right'; yRatio: number }
-} | null> {
-  if ($surfaceRole.get() !== 'desktop-companion') {
-    return window.spiritagent.sprite.getPosition()
-  }
-
-  const raw = storedString(DESKTOP_POSITION_KEY)
-
-  try {
-    const value: unknown = raw ? JSON.parse(raw) : null
-
-    if (
-      value &&
-      typeof value === 'object' &&
-      'x' in value &&
-      'y' in value &&
-      typeof value.x === 'number' &&
-      typeof value.y === 'number' &&
-      Number.isFinite(value.x) &&
-      Number.isFinite(value.y)
-    ) {
-      return Promise.resolve({ x: value.x, y: value.y })
-    }
-  } catch {
-    /* 损坏位置恢复默认落点。 */
-  }
-
-  return Promise.resolve(null)
-}
-
-export function setSpatialInsets(insets: { top: number; bottom: number; left: number; right: number }): void {
-  stageInsets = insets
-
-  if ($surfaceRole.get() === 'desktop-companion') {
-    setScaleTarget(computeTargetScale(), true)
-    $homePosition.set(clampPosToViewport($homePosition.get()))
-
-    if (moveStart) {
-      moveStart = clampPosToViewport(moveStart)
-    }
-
-    if (moveTarget) {
-      moveTarget = clampPosToViewport(moveTarget)
-    }
-  }
-
-  const current = $spatialPos.get()
-  const next = clampPosToViewport(current)
-
-  if (next.x !== current.x || next.y !== current.y) {
-    $spatialPos.set(next)
-  }
 }
 
 const REST_MARGIN = 24
@@ -231,8 +152,8 @@ function getHomePosition(): { x: number; y: number } {
   const c = contentBox($defaultScale.get())
 
   return {
-    x: Math.max(REST_MARGIN, window.innerWidth - stageInsets.right - c.right - REST_MARGIN),
-    y: Math.max(-c.top, window.innerHeight - stageInsets.bottom - c.bottom)
+    x: Math.max(REST_MARGIN, window.innerWidth - c.right - REST_MARGIN),
+    y: Math.max(-c.top, window.innerHeight - c.bottom)
   }
 }
 
@@ -250,32 +171,18 @@ function contentBox(scale = $spatialScale.get()): { left: number; top: number; r
 }
 
 function contentBounds(): SpriteRect {
-  const content = $spriteContentRect.get() ?? { left: 0, top: 0, right: 1, bottom: 1 }
-
-  if ($surfaceRole.get() !== 'desktop-companion') {
-    return content
-  }
-
-  // 预留情绪放大与退出过渡的范围，避免空间比例先恢复时 CSS 放大尚未结束。
-  const center = (content.left + content.right) / 2
-
-  return {
-    left: center + (content.left - center) * EXPRESSION_BOOST_SCALE,
-    right: center + (content.right - center) * EXPRESSION_BOOST_SCALE,
-    top: content.bottom + (content.top - content.bottom) * EXPRESSION_BOOST_SCALE,
-    bottom: content.bottom
-  }
+  return $spriteContentRect.get() ?? { left: 0, top: 0, right: 1, bottom: 1 }
 }
 
 function clampPosToViewport(pos: { x: number; y: number }, scale = $spatialScale.get()): { x: number; y: number } {
   const c = contentBox(scale)
   const vw = window.innerWidth
   const vh = window.innerHeight
-  const maxY = vh - stageInsets.bottom - c.bottom
+  const maxY = vh - c.bottom
 
   return {
-    x: clamp(pos.x, stageInsets.left - c.left, Math.max(stageInsets.left - c.left, vw - stageInsets.right - c.right)),
-    y: clamp(pos.y, stageInsets.top - c.top, Math.max(stageInsets.top - c.top, maxY))
+    x: clamp(pos.x, -c.left, Math.max(-c.left, vw - c.right)),
+    y: clamp(pos.y, -c.top, Math.max(-c.top, maxY))
   }
 }
 
@@ -295,21 +202,10 @@ export function computePerchPlacement(geom: DesktopScreenRect, maxScale: number)
   const contentBottom = content.bottom
   const contentW = Math.max(1, (contentRight - contentLeft) * spriteW)
 
-  const rightAvail = Math.max(
-    0,
-    window.innerWidth - Math.max(REST_MARGIN, stageInsets.right) - (geom.x + geom.w) - margin
-  )
-
-  const leftAvail = Math.max(0, geom.x - margin - Math.max(REST_MARGIN, stageInsets.left))
-  const contentH = Math.max(1, (contentBottom - contentTop) * spriteH0)
-
-  const heightLimit =
-    $surfaceRole.get() === 'desktop-companion'
-      ? Math.max(0, window.innerHeight - stageInsets.top - Math.max(REST_MARGIN, stageInsets.bottom)) / contentH
-      : maxScale
-
-  const rightScale = Math.min(maxScale, rightAvail / contentW, heightLimit)
-  const leftScale = Math.min(maxScale, leftAvail / contentW, heightLimit)
+  const rightAvail = Math.max(0, window.innerWidth - REST_MARGIN - (geom.x + geom.w) - margin)
+  const leftAvail = Math.max(0, geom.x - margin - REST_MARGIN)
+  const rightScale = Math.min(maxScale, rightAvail / contentW)
+  const leftScale = Math.min(maxScale, leftAvail / contentW)
 
   let side: 'left' | 'right'
   let scale: number
@@ -333,11 +229,8 @@ export function computePerchPlacement(geom: DesktopScreenRect, maxScale: number)
       : geom.x - margin - contentRight * spriteW * scale
 
   const y = Math.max(
-    stageInsets.top - contentTopPx,
-    Math.min(
-      geom.y + geom.h - margin - contentBottomPx,
-      window.innerHeight - Math.max(REST_MARGIN, stageInsets.bottom) - contentBottomPx
-    )
+    -contentTopPx,
+    Math.min(geom.y + geom.h - margin - contentBottomPx, window.innerHeight - REST_MARGIN - contentBottomPx)
   )
 
   return { pos: { x, y }, scale }
@@ -424,11 +317,7 @@ function tick(now: number): void {
     y: moveStart.y + (moveTarget.y - moveStart.y) * eased
   }
 
-  $spatialPos.set(
-    (t === 1 || $surfaceRole.get() === 'desktop-companion') && !$spatialPeek.get()
-      ? clampPosToViewport(position)
-      : position
-  )
+  $spatialPos.set(t === 1 && !$spatialPeek.get() ? clampPosToViewport(position) : position)
 
   if (t < 1) {
     rafId = requestAnimationFrame(tick)
@@ -449,10 +338,6 @@ export function locomotionForDistance(dist: number): 'walk' | 'fly' {
 
 function moveTo(target: { x: number; y: number }, locomotion: 'walk' | 'fly', onArrive?: () => void): void {
   cancelMovement()
-
-  if ($surfaceRole.get() === 'desktop-companion' && !$spatialPeek.get()) {
-    target = clampPosToViewport(target)
-  }
 
   const current = $spatialPos.get()
   const dist = Math.hypot(target.x - current.x, target.y - current.y)
@@ -550,21 +435,8 @@ function computeTargetScale(): number {
     $effectiveTier.get() !== 'still' && ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'window_peek')
 
   const cap = hasScaleLimit ? perchScaleLimit : null
-  const requested = cap !== null ? Math.min(base, cap) : base
 
-  if ($surfaceRole.get() !== 'desktop-companion') {
-    return requested
-  }
-
-  const content = contentBox(1)
-  const width = Math.max(1, content.right - content.left)
-  const height = Math.max(1, content.bottom - content.top)
-
-  return Math.min(
-    requested,
-    Math.max(0, window.innerWidth - stageInsets.left - stageInsets.right) / width,
-    Math.max(0, window.innerHeight - stageInsets.top - stageInsets.bottom) / height
-  )
+  return cap !== null ? Math.min(base, cap) : base
 }
 
 function updateAdaptiveScale(): void {
@@ -638,7 +510,7 @@ function applyScreenPeek(
   $homePosition.set(position)
 
   const savePosition = (savedPosition: { x: number; y: number } = position): void => {
-    void saveRestPosition({
+    void window.spiritagent.sprite.setPosition({
       ...savedPosition,
       screenEdge: { side: target.side, yRatio: target.yRatio }
     })
@@ -918,7 +790,7 @@ function abandonPeekMode(): void {
 
   const position = settleHome(peek?.mode === 'window')
 
-  void saveRestPosition({
+  void window.spiritagent.sprite.setPosition({
     ...position,
     ...(screenEdgeHome ? { screenEdge: screenEdgeHome } : {})
   })
@@ -933,7 +805,7 @@ function leaveWindowPeek(): void {
   }
 }
 
-// 跟踪写入前与当前 store 值全等才跳过：不能比对上次应用结果，setSpatialInsets 钳制等外部回写须触发重写自愈。
+// 跟踪写入前与当前 store 值全等才跳过，外部位置回写须触发重写自愈。
 function isWindowPeekLayoutCurrent(layout: WindowPeekLayout): boolean {
   return (
     deepEqual($spatialPeek.get(), layout.peek) &&
@@ -1370,11 +1242,7 @@ export function setSpatialLocale(
   // home 落点可能记录于更低 scale 的时期；按当前 scale 重钳，情绪放大期间回 home 不裁脚。
   const rawTarget = opts?.position ?? $homePosition.get()
 
-  const target =
-    locale === 'home' ||
-    ($surfaceRole.get() === 'desktop-companion' && locale !== 'screen_peek' && locale !== 'window_peek')
-      ? clampPosToViewport(rawTarget)
-      : rawTarget
+  const target = locale === 'home' ? clampPosToViewport(rawTarget) : rawTarget
 
   const locomotion = opts?.locomotion ?? (locale === 'target' ? 'fly' : 'walk')
 
@@ -1552,12 +1420,6 @@ export function startDrag(): void {
 }
 
 export function updateDragPosition(pos: { x: number; y: number }): void {
-  if ($surfaceRole.get() === 'desktop-companion') {
-    $spatialPos.set(clampPosToViewport(pos))
-
-    return
-  }
-
   const c = contentBox()
   const w = getBaseSpriteWidth() * $spatialScale.get()
   $spatialPos.set({
@@ -1575,13 +1437,11 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
   const rightClipped = Math.max(0, pos.x + c.right - window.innerWidth)
 
   const side =
-    $surfaceRole.get() === 'desktop-companion'
-      ? null
-      : !cancelled && rightClipped / fullWidth >= 0.25
-        ? 'right'
-        : !cancelled && leftClipped / fullWidth >= 0.25
-          ? 'left'
-          : null
+    !cancelled && rightClipped / fullWidth >= 0.25
+      ? 'right'
+      : !cancelled && leftClipped / fullWidth >= 0.25
+        ? 'left'
+        : null
 
   $spatialPos.set(safe)
   $homePosition.set(safe)
@@ -1599,7 +1459,7 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
   if (side) {
     const yRatio = safe.y / Math.max(1, window.innerHeight)
     screenEdgeHome = { side, yRatio }
-    void saveRestPosition({ ...safe, screenEdge: { side, yRatio } })
+    void window.spiritagent.sprite.setPosition({ ...safe, screenEdge: { side, yRatio } })
     void activateScreenPeek(screenEdgeHome, true)
 
     return
@@ -1613,7 +1473,7 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
     return
   }
 
-  void saveRestPosition(safe)
+  void window.spiritagent.sprite.setPosition(safe)
 }
 
 export function resetToHomePosition(): void {
@@ -1628,7 +1488,7 @@ export function resetToHomePosition(): void {
   $spatialLocomotion.set('still')
 
   $spatialPos.set(home)
-  void saveRestPosition(home)
+  void window.spiritagent.sprite.setPosition(home)
 }
 
 export function initSpatial(): () => void {
@@ -1663,7 +1523,7 @@ export function initSpatial(): () => void {
     }
 
     if (next.x !== saved.x || next.y !== saved.y) {
-      void saveRestPosition({
+      void window.spiritagent.sprite.setPosition({
         ...next,
         ...(saved.screenEdge ? { screenEdge: saved.screenEdge } : {})
       })
@@ -1690,7 +1550,8 @@ export function initSpatial(): () => void {
     }
   }
 
-  void loadRestPosition()
+  void window.spiritagent.sprite
+    .getPosition()
     .then(saved => {
       if (disposed || !saved || userInteracted) {
         return
@@ -1856,10 +1717,6 @@ export function initSpatial(): () => void {
   // 片段切换只重钳当前位置，不能把表演落点或离开探身的路径拉回 home。
   offs.push(
     $spriteContentRect.listen(() => {
-      if ($surfaceRole.get() === 'desktop-companion') {
-        setSpatialInsets(stageInsets)
-      }
-
       if (!screenEdgeHome) {
         $homePosition.set(clampPosToViewport($homePosition.get()))
       }
@@ -1978,10 +1835,6 @@ export function initSpatial(): () => void {
   const onResize = () => {
     $viewport.set({ width: window.innerWidth, height: window.innerHeight })
 
-    if ($surfaceRole.get() === 'desktop-companion') {
-      setSpatialInsets(stageInsets)
-    }
-
     // 跨屏拖拽由指针路径重映射位置，resize 不接管。
     if ($spatialLocomotion.get() === 'drag') {
       return
@@ -1990,13 +1843,10 @@ export function initSpatial(): () => void {
     const home = $homePosition.get()
     const c = contentBox()
 
-    const clamped =
-      $surfaceRole.get() === 'desktop-companion'
-        ? clampPosToViewport(home)
-        : {
-            x: clamp(home.x, REST_MARGIN, window.innerWidth - c.right - REST_MARGIN),
-            y: clamp(home.y, -c.top, window.innerHeight - c.bottom)
-          }
+    const clamped = {
+      x: clamp(home.x, REST_MARGIN, window.innerWidth - c.right - REST_MARGIN),
+      y: clamp(home.y, -c.top, window.innerHeight - c.bottom)
+    }
 
     $homePosition.set(clamped)
 

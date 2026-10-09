@@ -30,7 +30,7 @@ function isRunningWindow(raw: unknown): raw is RunningApplicationWindow {
 
 export interface ExplorerDesktopWindow {
   handle: Buffer
-  role: 'background' | 'overlay' | 'companion'
+  role: 'background' | 'overlay'
   /** 使用 screen.dipToScreenRect 转换完整显示器边界；helper 校正最多两像素的舍入。 */
   bounds: { x: number; y: number; width: number; height: number }
 }
@@ -51,9 +51,7 @@ export interface ExplorerDesktopHost {
     parentPid: number
     takeover: boolean
     workArea: ExplorerDesktopWindow['bounds']
-    companionAlwaysOnTop: boolean
   }) => Promise<void>
-  setCompanionAlwaysOnTop: (enabled: boolean) => Promise<void>
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   refreshApplications: (eligible: () => boolean) => Promise<void>
   activateExternal: (windowId: string, eligible: () => boolean) => Promise<void>
@@ -567,14 +565,6 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
   }
 
   return {
-    setCompanionAlwaysOnTop: enabled =>
-      serialize(async () => {
-        if (state !== 'running') {
-          throw new Error('Desktop host is not running')
-        }
-
-        await request({ command: 'companion_layer', always_on_top: enabled }, 4_000, true)
-      }),
     focus: (handle, eligible = () => true) => {
       const currentGeneration = generation
 
@@ -664,8 +654,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
               parent_pid: input.parentPid,
               takeover: input.takeover,
               windows,
-              work_area: input.workArea,
-              companion_always_on_top: input.companionAlwaysOnTop
+              work_area: input.workArea
             },
             15_000
           )

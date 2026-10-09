@@ -26,18 +26,25 @@ from modules.auth import User
 from services.adapters.desktop import drain as drain_user_sessions
 from services.adapters.scheduler import drain as drain_cron
 from services.adapters.scheduler import start_scheduler, stop_scheduler
-from services.application.actions import drain_proposal_reviews, resume_proposal_reviews
+from services.application.actions import (
+    drain_desktop_reviews,
+    drain_proposal_reviews,
+    resume_desktop_reviews,
+    resume_proposal_reviews,
+)
 from services.application.chat import recover_interrupted_submissions
 from services.application.configuration import load_and_apply_system_settings
 from services.application.generation import (
     cleanup_user_video_jobs,
     drain_character_extractions,
+    drain_desktop_video_jobs,
     drain_outfit_descriptions,
     drain_scene_jobs,
     drain_video_jobs,
     drain_video_pack_generation,
     recover_outfit_descriptions,
     resume_character_extractions,
+    resume_desktop_video_jobs,
     resume_initial_appearance,
     resume_pending_video_jobs,
     resume_scene_jobs,
@@ -91,6 +98,8 @@ async def _drain_runtime_tasks() -> None:
         ("video_jobs", drain_video_jobs()),
         ("video_pack_generation", drain_video_pack_generation()),
         ("proposal_reviews", drain_proposal_reviews()),
+        ("desktop_reviews", drain_desktop_reviews()),
+        ("desktop_video_jobs", drain_desktop_video_jobs()),
         ("event_tasks", drain_event_tasks()),
         ("user_sessions", drain_user_sessions()),
         ("user_tasks", drain_user_tasks()),
@@ -150,6 +159,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         # 视频包凭持久化句柄续跑，不重复提交付费任务；中断的上传导入包按失败落库并广播。
         await resume_video_generation_jobs()
         await resume_proposal_reviews()  # pending 评审重新调度（approve 后自动接生成编排）。
+        await resume_desktop_video_jobs()
+        # 启动只恢复已持久化的评审状态；评审通过后由用户或维护恢复显式启动付费制作。
+        await resume_desktop_reviews(allow_generation=False)
         await resume_character_extractions()
         await resume_scene_jobs()
         await resume_initial_appearance()

@@ -5,11 +5,12 @@ import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContent
 
 import {
   DESKTOP_COMPANION_ACTIVITY_PRIORITY,
-  type DesktopBackground,
+  type DesktopBackgroundPlayback,
+  type DesktopBackgroundRequest,
   type DesktopCompanionActivityState,
-  type DesktopCompanionInteraction,
+  type DesktopMediaBytes,
+  type DesktopMediaReference,
   type DesktopNavigation,
-  type DesktopStageInsets,
   IPC,
   type PresentationMode,
   type PresentationState,
@@ -18,15 +19,9 @@ import {
 
 import { isSenderWindow } from '../security/ipc-trust'
 import type { RunningApplicationsState } from '../shared/desktop-applications'
-import {
-  atomicWriteFile,
-  broadcastToAllWindows,
-  createPlaybackClaims,
-  createSerialQueue,
-  errorMessage,
-  sendToWindow
-} from '../shared/utils'
+import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, errorMessage, sendToWindow } from '../shared/utils'
 
+import { emptyDesktopBackground, parseDesktopBackgroundRequest } from './desktop-background'
 import { createExplorerDesktopHost } from './explorer-desktop-host'
 import { createPresentationPreferences } from './presentation-preferences'
 
@@ -36,7 +31,7 @@ interface DesktopPresentationOptions {
   backgroundPreloadPath: string
   helperPath: string
   developmentPreparationError?: string
-  rendererUrlFor: (role: 'desktop' | 'desktop-background' | 'desktop-companion', theme?: string) => string
+  rendererUrlFor: (role: 'desktop' | 'desktop-background', theme?: string) => string
   seedTheme: () => string | undefined
   getSpriteWindow: () => BrowserWindow | null
   isSettingsSender: (sender: WebContents) => boolean
@@ -44,6 +39,7 @@ interface DesktopPresentationOptions {
   restoreSprite: () => void
   authenticated: () => boolean
   authIdentity: () => string | null
+  loadMedia: (sender: WebContents, reference: DesktopMediaReference) => Promise<DesktopMediaBytes>
   installWindowHandlers: (win: BrowserWindow, options?: { reloadOnCrash?: boolean }) => void
   lockZoom: (win: BrowserWindow) => void
   log: (message: string) => void
@@ -57,12 +53,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   const interruptedFile = `${journalFile}.interrupted`
   const mainInterruptedFile = `${journalFile}.main-interrupted`
   let interactive: BrowserWindow | null = null
-  let companion: BrowserWindow | null = null
   const backgrounds = new Set<BrowserWindow>()
   const displayBoundsByWindow = new WeakMap<BrowserWindow, Electron.Rectangle>()
   let revision = 0
   let stageEpoch = 0
-  let stageVisible = true
   let foreground = false
   let stageAvailable = false
   let fullscreen = false
@@ -76,8 +70,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     desktop: { state: 'idle', voicePreparing: false }
   }
 
-  let stageInsets: DesktopStageInsets = { top: 48, bottom: 96, left: 16, right: 16 }
   let effectiveMode: PresentationMode = 'window'
+  let prepareDesktopMedia = false
   let status: PresentationState['status'] = 'inactive'
   let notifiedMode: PresentationMode | undefined
   let notifiedStatus: PresentationState['status'] | undefined
@@ -85,17 +79,21 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let hostReady = false
   let suppressAutoRestore = false
   let lastHeartbeat = 0
-  let lastStageHeartbeat = 0
   let startupGeneration = 0
   const readyWindows = new Map<BrowserWindow, { resolve: () => void; reject: (error: Error) => void }>()
   let initialized = false
   let displayTimer: ReturnType<typeof setTimeout> | undefined
   let healthTimer: ReturnType<typeof setInterval> | undefined
   let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
-  let currentBackground: DesktopBackground = { image: null, theme: 'day-clear', reduceMotion: false }
+  let accountEpoch = 0
+  let backgroundGeneration = 0
+  let backgroundRevision = 0
+  let requestedBackground: DesktopBackgroundRequest | null = null
+  let loadedBackground: DesktopBackgroundRequest | null = null
+  let currentBackground = emptyDesktopBackground(accountEpoch, backgroundRevision)
+  const dispatchedPlays = new Map<string, { accountEpoch: number; revision: number }>()
   let runningApplications: RunningApplicationsState = { status: 'inactive', error: null, windows: [] }
   const applicationListeners = new Set<(state: RunningApplicationsState) => void>()
-  const playbackClaims = createPlaybackClaims()
 
   const native = createExplorerDesktopHost({
     helperPath: options.helperPath,
@@ -169,13 +167,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       requestedMode: preferred.mode,
       effectiveMode,
       status,
+      prepareDesktopMedia,
       failureReason,
       supported: process.platform === 'win32',
       foreground: foreground && desktopUnlocked,
       stageAvailable: stageAvailable && desktopUnlocked,
       fullscreen,
-      companionAlwaysOnTop: preferred.companionAlwaysOnTop,
-      stageInsets: { ...stageInsets },
       compatibilityWarning,
       companionActivity:
         DESKTOP_COMPANION_ACTIVITY_PRIORITY[activityBySource.host.state] >
@@ -185,32 +182,166 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       voicePreparing: activityBySource.host.voicePreparing || activityBySource.desktop.voicePreparing,
       displayId: targetDisplay?.id ?? null,
       displays,
-      wallpaperTarget: targetDisplay
-        ? {
-            width: Math.round(targetDisplay.bounds.width * targetDisplay.scaleFactor),
-            height: Math.round(targetDisplay.bounds.height * targetDisplay.scaleFactor)
-          }
-        : null,
       stageOwner: effectiveMode === 'desktop' ? 'desktop' : 'sprite',
-      stageVisible,
+      stageVisible: effectiveMode !== 'desktop',
       stageEpoch,
       revision
     }
   }
 
-  function canUseStage(): boolean {
+  function backgroundPaused(): boolean {
     return (
-      effectiveMode === 'desktop' &&
-      status === 'active' &&
-      stageVisible &&
-      stageAvailable &&
-      powerMonitor.getSystemIdleState(1) !== 'locked'
+      status !== 'active' ||
+      requestedBackground?.paused === true ||
+      currentBackground.reduceMotion ||
+      fullscreen ||
+      lastActivity.locked ||
+      powerMonitor.getSystemIdleState(1) === 'locked'
     )
+  }
+
+  function sendBackground(): void {
+    for (const win of backgrounds) {
+      sendToWindow(win, IPC.event.backgroundMedia, currentBackground)
+    }
+  }
+
+  function publishBackgroundState(): void {
+    const paused = backgroundPaused()
+
+    if (currentBackground.paused !== paused) {
+      currentBackground = { ...currentBackground, paused }
+      sendBackground()
+    }
+  }
+
+  function interruptBackground(): void {
+    for (const [playId, dispatched] of dispatchedPlays) {
+      sendToWindow(interactive, IPC.event.backgroundPlayback, { ...dispatched, playId, status: 'interrupted' })
+    }
+
+    dispatchedPlays.clear()
+    currentBackground = { ...currentBackground, paused: true }
+    sendBackground()
+  }
+
+  async function setBackground(sender: WebContents, raw: unknown): Promise<void> {
+    assertDesktop(sender)
+    const request = parseDesktopBackgroundRequest(raw)
+    const identity = options.authIdentity()
+    const epoch = stageEpoch
+    const generation = ++backgroundGeneration
+
+    const valid = (): boolean =>
+      generation === backgroundGeneration &&
+      epoch === stageEpoch &&
+      identity === options.authIdentity() &&
+      options.authenticated() &&
+      isDesktopSender(sender) &&
+      (status === 'starting' || status === 'active')
+
+    if (request.authSessionId !== identity || !valid()) {
+      throw new Error('桌面背景账户已失效。')
+    }
+
+    if (
+      request.playId !== currentBackground.playId &&
+      request.expiresAt &&
+      Date.parse(request.expiresAt) <= Date.now()
+    ) {
+      throw new Error('桌面播放请求已过期。')
+    }
+
+    requestedBackground = request
+
+    if (request.clear) {
+      interruptBackground()
+      loadedBackground = null
+      currentBackground = {
+        ...emptyDesktopBackground(accountEpoch, ++backgroundRevision, request.theme),
+        reduceMotion: request.reduceMotion
+      }
+      sendBackground()
+
+      return
+    }
+
+    const sameMedia = (a: DesktopMediaReference | null, b: DesktopMediaReference | null): boolean =>
+      a?.url === b?.url && a?.contentHash === b?.contentHash
+
+    const unchanged =
+      loadedBackground &&
+      request.playId === loadedBackground.playId &&
+      request.setEpoch === loadedBackground.setEpoch &&
+      sameMedia(request.video, loadedBackground.video) &&
+      sameMedia(request.poster, loadedBackground.poster)
+
+    let video = currentBackground.video
+    let poster = currentBackground.poster
+
+    if (!unchanged) {
+      try {
+        ;[video, poster] = await Promise.all([
+          request.video ? options.loadMedia(sender, request.video) : null,
+          request.poster ? options.loadMedia(sender, request.poster) : null
+        ])
+
+        if (video && !/^video\/mp4(?:;|$)/i.test(video.mime)) {
+          throw new Error('桌面视频格式不可用。')
+        }
+
+        if (poster && !/^image\/(?:png|jpeg|webp|gif)(?:;|$)/i.test(poster.mime)) {
+          throw new Error('桌面封面格式不可用。')
+        }
+      } catch (error) {
+        if (valid() && request.playId) {
+          sendToWindow(interactive, IPC.event.backgroundPlayback, {
+            accountEpoch,
+            revision: ++backgroundRevision,
+            playId: request.playId,
+            status: 'failed',
+            error: errorMessage(error).slice(0, 2000)
+          })
+        }
+
+        throw error
+      }
+    }
+
+    if (!valid()) {
+      return
+    }
+
+    if (
+      request.playId !== currentBackground.playId &&
+      request.expiresAt &&
+      Date.parse(request.expiresAt) <= Date.now()
+    ) {
+      throw new Error('桌面播放请求已过期。')
+    }
+
+    const { authSessionId: _authSessionId, video: _video, poster: _poster, ...settings } = request
+    currentBackground = {
+      ...settings,
+      accountEpoch,
+      revision: unchanged ? currentBackground.revision : ++backgroundRevision,
+      video,
+      poster
+    }
+    currentBackground.paused = backgroundPaused()
+    loadedBackground = request
+
+    if (request.playId && video) {
+      dispatchedPlays.set(request.playId, { accountEpoch, revision: currentBackground.revision })
+    }
+
+    sendBackground()
   }
 
   function publish(): void {
     revision += 1
     broadcastToAllWindows(IPC.event.presentationChanged, snapshot())
+    publishBackgroundState()
 
     if (notifiedMode !== effectiveMode || notifiedStatus !== status) {
       notifiedMode = effectiveMode
@@ -237,14 +368,13 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     interactive = null
 
-    if (companion && !companion.isDestroyed()) {
-      companion.destroy()
-    }
-
-    companion = null
     stageAvailable = false
     fullscreen = false
-    currentBackground = { image: null, theme: options.seedTheme() ?? 'day-clear', reduceMotion: false }
+    backgroundGeneration += 1
+    requestedBackground = null
+    loadedBackground = null
+    dispatchedPlays.clear()
+    currentBackground = emptyDesktopBackground(accountEpoch, ++backgroundRevision, options.seedTheme())
   }
 
   function scheduleRecovery(reason: string): void {
@@ -273,15 +403,17 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
-  async function leave(reason?: string): Promise<void> {
+  async function leave(reason?: string, preservePreparation = false): Promise<void> {
     let finalReason = reason
+    prepareDesktopMedia &&= preservePreparation
     clearTimeout(displayTimer)
     clearInterval(healthTimer)
     healthTimer = undefined
     status = 'recovering'
     setRunningApplications({ status: 'inactive', error: null, windows: [] })
     stageEpoch += 1
-    playbackClaims.reset()
+    backgroundGeneration += 1
+    interruptBackground()
     publish()
 
     const recording = reason
@@ -329,10 +461,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
-  function makeWindow(
-    display: Electron.Display,
-    role: 'desktop' | 'desktop-background' | 'desktop-companion'
-  ): BrowserWindow {
+  function makeWindow(display: Electron.Display, role: 'desktop' | 'desktop-background'): BrowserWindow {
     const primary = role !== 'desktop-background'
 
     const win = new BrowserWindow({
@@ -346,7 +475,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       hasShadow: false,
       backgroundColor: primary ? '#00000000' : '#111827',
       transparent: primary,
-      title: role === 'desktop' ? '唤生桌面' : role === 'desktop-companion' ? '唤生伙伴' : '唤生背景',
+      title: role === 'desktop' ? '唤生桌面' : '唤生背景',
       webPreferences: {
         preload: primary ? options.preloadPath : options.backgroundPreloadPath,
         contextIsolation: true,
@@ -417,10 +546,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     return win
   }
 
-  async function loadWindow(
-    win: BrowserWindow,
-    role: 'desktop' | 'desktop-background' | 'desktop-companion'
-  ): Promise<void> {
+  async function loadWindow(win: BrowserWindow, role: 'desktop' | 'desktop-background'): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
 
     const loading = new Promise<void>((resolve, reject) => {
@@ -500,19 +626,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       interactive = makeWindow(selected, 'desktop')
       const main = interactive
       await loadWindow(main, 'desktop')
-      companion = makeWindow(selected, 'desktop-companion')
-      const stage = companion
-      await loadWindow(stage, 'desktop-companion')
       assertAttempt()
-
-      for (const display of allDisplays) {
-        const win = makeWindow(display, 'desktop-background')
-        backgrounds.add(win)
-      }
-
-      await Promise.all([...backgrounds].map(win => loadWindow(win, 'desktop-background')))
-
-      const windows = [...backgrounds, stage, main]
+      const background = makeWindow(selected, 'desktop-background')
+      backgrounds.add(background)
+      await loadWindow(background, 'desktop-background')
+      const windows = [background, main]
 
       const assertReady = (): void => {
         assertAttempt()
@@ -527,7 +645,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       await native.start({
         parentPid: process.pid,
         takeover: process.env.SPIRITAGENT_DESKTOP_PROBE !== '1',
-        companionAlwaysOnTop: preferences.get().companionAlwaysOnTop,
         workArea: screen.dipToScreenRect(main, {
           ...selected.bounds,
           y: selected.bounds.y + 44,
@@ -543,7 +660,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
           return {
             handle: win.getNativeWindowHandle(),
             bounds: screen.dipToScreenRect(win, bounds),
-            role: win === main ? ('overlay' as const) : win === stage ? ('companion' as const) : ('background' as const)
+            role: win === main ? ('overlay' as const) : ('background' as const)
           }
         })
       })
@@ -551,7 +668,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       assertReady()
 
       for (const win of windows) {
-        if (fullscreen && (win === main || (win === stage && preferences.get().companionAlwaysOnTop))) {
+        if (fullscreen && win === main) {
           win.hide()
         } else {
           win.showInactive()
@@ -564,10 +681,9 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       status = 'active'
       lastHeartbeat = Date.now()
       options.getSpriteWindow()?.hide()
-      lastStageHeartbeat = Date.now()
       publish()
       healthTimer = setInterval(() => {
-        if (Date.now() - Math.min(lastHeartbeat, lastStageHeartbeat) > 10000) {
+        if (Date.now() - lastHeartbeat > 10000) {
           clearInterval(healthTimer)
           scheduleRecovery('桌面连接中断，已恢复系统桌面。')
         }
@@ -636,7 +752,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
               return
             }
 
-            await leave()
+            await leave(undefined, true)
 
             if (currentGeneration !== startupGeneration) {
               return
@@ -672,13 +788,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   const isDesktopSender = (sender: Pick<WebContents, 'id'>): boolean => isSenderWindow(sender, interactive)
-  const isStageSender = (sender: Pick<WebContents, 'id'>): boolean => isSenderWindow(sender, companion)
-
-  function assertStage(sender: WebContents): void {
-    if (!isStageSender(sender)) {
-      throw new Error('仅桌面精灵允许此操作。')
-    }
-  }
 
   function assertDesktop(sender: WebContents): void {
     if (!isDesktopSender(sender)) {
@@ -736,6 +845,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
 
       suppressAutoRestore = false
+      prepareDesktopMedia = mode === 'desktop'
+      publish()
 
       if (mode === 'desktop') {
         try {
@@ -800,43 +911,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       activityBySource[source] = { state, voicePreparing: activity.voicePreparing }
       publish()
     })
-    ipcMain.handle(IPC.invoke.presentationGetStageActivity, event => {
-      assertStage(event.sender)
-
-      return lastActivity
-    })
-    ipcMain.handle(IPC.invoke.presentationSetStageLayout, (event, raw: unknown) => {
-      assertDesktop(event.sender)
-      const layout = raw as { visible?: unknown; insets?: Partial<DesktopStageInsets> } | null
-      const insets = layout?.insets
-
-      if (
-        typeof layout?.visible !== 'boolean' ||
-        !insets ||
-        ![insets.top, insets.bottom, insets.left, insets.right].every(
-          value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 10000
-        )
-      ) {
-        throw new Error('无效舞台状态。')
-      }
-
-      if (
-        stageVisible === layout.visible &&
-        stageInsets.top === insets.top &&
-        stageInsets.bottom === insets.bottom &&
-        stageInsets.left === insets.left &&
-        stageInsets.right === insets.right
-      ) {
-        return
-      }
-
-      stageVisible = layout.visible
-      stageInsets = { top: insets.top!, bottom: insets.bottom!, left: insets.left!, right: insets.right! }
-
-      publish()
-    })
     ipcMain.handle(IPC.invoke.presentationSetIgnoreMouseEvents, (event, payload: unknown) => {
-      const win = isDesktopSender(event.sender) ? interactive : isStageSender(event.sender) ? companion : null
+      const win = isDesktopSender(event.sender) ? interactive : null
       const value = payload as { ignore?: unknown; forward?: unknown } | null
 
       if (
@@ -848,98 +924,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       }
 
       win.setIgnoreMouseEvents(value.ignore, { forward: value.forward === true })
-    })
-    ipcMain.handle(IPC.invoke.presentationSetCompanionTopmost, (event, enabled: unknown) => {
-      assertDesktop(event.sender)
-
-      if (typeof enabled !== 'boolean') {
-        throw new Error('无效精灵层级。')
-      }
-
-      return serial(async () => {
-        assertDesktop(event.sender)
-        const previous = preferences.get().companionAlwaysOnTop
-
-        if (previous === enabled) {
-          return snapshot()
-        }
-
-        try {
-          await native.setCompanionAlwaysOnTop(enabled)
-        } catch (error) {
-          scheduleRecovery(`精灵层级切换失败：${errorMessage(error)}`)
-          throw error
-        }
-
-        try {
-          await preferences.set({ companionAlwaysOnTop: enabled })
-        } catch (error) {
-          try {
-            await native.setCompanionAlwaysOnTop(previous)
-          } catch (rollbackError) {
-            scheduleRecovery(`精灵层级恢复失败：${errorMessage(rollbackError)}`)
-          }
-
-          throw error
-        }
-
-        stageEpoch += 1
-        publish()
-
-        return snapshot()
-      })
-    })
-    ipcMain.handle(IPC.invoke.presentationCompanionInteraction, (event, raw: unknown) => {
-      assertStage(event.sender)
-      const value = raw as { kind?: unknown; x?: unknown; y?: unknown; paths?: unknown } | null
-      let interaction: DesktopCompanionInteraction
-
-      if (value?.kind === 'hide' || value?.kind === 'toggle-whisper') {
-        interaction = { kind: value.kind }
-      } else if (
-        value?.kind === 'menu' &&
-        typeof value.x === 'number' &&
-        Number.isFinite(value.x) &&
-        typeof value.y === 'number' &&
-        Number.isFinite(value.y)
-      ) {
-        interaction = { kind: 'menu', x: value.x, y: value.y }
-      } else if (
-        value?.kind === 'drop' &&
-        Array.isArray(value.paths) &&
-        value.paths.length <= 100 &&
-        value.paths.every(p => typeof p === 'string' && p.length <= 32768)
-      ) {
-        interaction = { kind: 'drop', paths: value.paths }
-      } else {
-        throw new Error('无效精灵交互。')
-      }
-
-      const identity = options.authIdentity()
-      const epoch = stageEpoch
-
-      return serial(async () => {
-        const eligible = (): boolean =>
-          isStageSender(event.sender) &&
-          status === 'active' &&
-          !fullscreen &&
-          stageEpoch === epoch &&
-          options.authenticated() &&
-          identity === options.authIdentity() &&
-          powerMonitor.getSystemIdleState(1) !== 'locked'
-
-        if (!eligible() || !interactive) {
-          return
-        }
-
-        if (interaction.kind !== 'hide' && !(await native.focus(interactive.getNativeWindowHandle(), eligible))) {
-          return
-        }
-
-        if (eligible()) {
-          sendToWindow(interactive, IPC.event.companionInteraction, interaction)
-        }
-      })
     })
     ipcMain.handle(IPC.invoke.presentationGetState, () => snapshot())
     ipcMain.handle(IPC.invoke.presentationSetMode, (event, raw: unknown) => {
@@ -965,7 +949,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         await preferences.set({ displayId: id })
 
         if (effectiveMode === 'desktop' && currentGeneration === startupGeneration) {
-          await leave()
+          await leave(undefined, true)
 
           if (currentGeneration === startupGeneration) {
             await enter()
@@ -978,7 +962,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       })
     })
     ipcMain.handle(IPC.invoke.presentationReportReady, event => {
-      if (!isDesktopSender(event.sender) && !isStageSender(event.sender)) {
+      if (!isDesktopSender(event.sender)) {
         throw new Error('无效桌面窗口。')
       }
 
@@ -1012,8 +996,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     ipcMain.handle(IPC.invoke.presentationHeartbeat, event => {
       if (isDesktopSender(event.sender)) {
         lastHeartbeat = Date.now()
-      } else if (isStageSender(event.sender)) {
-        lastStageHeartbeat = Date.now()
       } else {
         throw new Error('无效桌面心跳。')
       }
@@ -1039,32 +1021,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         }
       }).catch(error => options.log(`[desktop] auto restore: ${errorMessage(error)}`))
     })
-    ipcMain.handle(IPC.invoke.presentationSetBackground, (event, raw: unknown) => {
-      assertDesktop(event.sender)
-
-      if (!raw || typeof raw !== 'object') {
-        throw new Error('无效背景。')
-      }
-
-      const value = raw as Partial<DesktopBackground>
-
-      if (
-        (value.image !== null &&
-          (typeof value.image !== 'string' ||
-            value.image.length > 48_000_000 ||
-            !/^data:image\/(?:png|jpeg|webp|gif);base64,/.test(value.image))) ||
-        typeof value.theme !== 'string' ||
-        typeof value.reduceMotion !== 'boolean'
-      ) {
-        throw new Error('无效背景。')
-      }
-
-      currentBackground = { image: value.image, theme: value.theme, reduceMotion: value.reduceMotion }
-
-      for (const win of backgrounds) {
-        sendToWindow(win, IPC.event.backgroundImage, currentBackground)
-      }
-    })
+    ipcMain.handle(IPC.invoke.presentationSetBackground, (event, raw: unknown) => setBackground(event.sender, raw))
     ipcMain.handle(IPC.invoke.backgroundReady, event => {
       const win = [...backgrounds].find(candidate => isSenderWindow(event.sender, candidate))
 
@@ -1072,17 +1029,32 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error('无效背景窗口。')
       }
 
-      sendToWindow(win, IPC.event.backgroundImage, currentBackground)
+      sendToWindow(win, IPC.event.backgroundMedia, currentBackground)
       readyWindows.get(win)?.resolve()
     })
-    ipcMain.handle(IPC.invoke.presentationClaimPlay, (event, raw: unknown) => {
-      assertStage(event.sender)
-
-      if (!canUseStage()) {
-        return false
+    ipcMain.handle(IPC.invoke.backgroundAcknowledge, (event, raw: unknown) => {
+      if (![...backgrounds].some(win => isSenderWindow(event.sender, win))) {
+        throw new Error('无效背景窗口。')
       }
 
-      return playbackClaims.claim(raw)
+      const value = raw as Partial<DesktopBackgroundPlayback> | null
+      const dispatched = typeof value?.playId === 'string' ? dispatchedPlays.get(value.playId) : null
+
+      if (
+        !dispatched ||
+        value?.accountEpoch !== accountEpoch ||
+        value.revision !== dispatched.revision ||
+        !['first-frame', 'started', 'completed', 'interrupted', 'failed'].includes(String(value.status)) ||
+        (value.error !== undefined && (typeof value.error !== 'string' || value.error.length > 2000))
+      ) {
+        return
+      }
+
+      sendToWindow(interactive, IPC.event.backgroundPlayback, value as DesktopBackgroundPlayback)
+
+      if (value.status === 'completed' || value.status === 'interrupted' || value.status === 'failed') {
+        dispatchedPlays.delete(value.playId!)
+      }
     })
     ipcMain.handle(IPC.invoke.presentationStageActivity, (event, activity: StageActivity) => {
       if (!isSenderWindow(event.sender, options.getSpriteWindow())) {
@@ -1101,7 +1073,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       lastActivity = activity
 
-      sendToWindow(companion, IPC.event.presentationStageActivity, activity)
+      publishBackgroundState()
     })
   }
 
@@ -1131,9 +1103,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     getState: snapshot,
     setMode,
     getWindow: () => interactive,
-    getStageWindow: () => companion,
     isDesktopSender,
-    isStageSender,
     registerIpc,
     initialize,
     stop: () => {
@@ -1142,6 +1112,12 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       return serial(() => leave())
     },
     accountChanged: () => {
+      prepareDesktopMedia = false
+      accountEpoch += 1
+      backgroundGeneration += 1
+      currentBackground = emptyDesktopBackground(accountEpoch, ++backgroundRevision, options.seedTheme())
+      dispatchedPlays.clear()
+      sendBackground()
       activityBySource.host = { state: 'idle', voicePreparing: false }
       activityBySource.desktop = { state: 'idle', voicePreparing: false }
       hostReady = false
