@@ -78,6 +78,24 @@ IDLE_EXPRESSION_INSTRUCTIONS: dict[str, str] = {
 }
 
 
+PRESENTATION_CONTEXTS: dict[str, dict[str, str]] = {
+    "desktop": {
+        "zh": ("# 当前交互环境\n你在用户的桌面上陪伴，可以交流、表达和在这片空间活动。"),
+        "en": (
+            "# Current interaction environment\n"
+            "You accompany the user on their desktop and can converse, express yourself and move around this space."
+        ),
+    },
+    "window": {
+        "zh": ("# 当前交互环境\n你以悬浮形象陪伴用户，可以交流、表达和在屏幕上活动。"),
+        "en": (
+            "# Current interaction environment\n"
+            "You accompany the user as a floating character and can converse, express yourself and move around the screen."
+        ),
+    },
+}
+
+
 SHOULD_ACT_INSTRUCTIONS: dict[str, str] = {
     "zh": (
         f"决定角色此刻是否采取一次自主空间行为。{JSON_PAYLOAD_DATA_CLAUSE_ZH}"

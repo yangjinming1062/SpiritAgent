@@ -8,7 +8,7 @@
 |---|---|---|
 | [chat.py](chat.py) | 陪伴、工作、自动化及委派预设，回复与修复、标题、压缩 | [chat](../services/application/chat/) 的 `prompt_presets`、`prompt_blocks`、`system_prompt`、`streaming`、`title_generator`、`context_compressor` |
 | [speech.py](speech.py) | 朗读指导与段内控制语义 | [speech_style.py](../services/infrastructure/llm/providers/speech_style.py) 按实际供应商和模型补能力与示例 |
-| [companion.py](companion.py) | 人设与外形资料标签，心情、空闲与空间决策，初次见面及主动回合资料 | [companion](../services/domains/companion/)、[companion_turns.py](../services/application/automation/companion_turns.py)、调度器与对话环境装配 |
+| [companion.py](companion.py) | 人设与外形资料标签，交互环境、心情、空闲与空间决策，初次见面及主动回合资料 | [companion](../services/domains/companion/)、[companion_turns.py](../services/application/automation/companion_turns.py)、调度器与对话环境装配 |
 | [generation.py](generation.py) | 形象、服装、壁纸、出镜媒体、动作素材，视觉提取、评分、命名和审核改写 | [generation](../services/application/generation/)、动态制作、媒体工具及角色卡渲染 |
 | [memory.py](memory.py) | 共享 `MEMORY_POLICY`、审阅指令、资料标签 | [memory](../services/domains/memory/)、即时记忆工具 |
 | [actions.py](actions.py) | 动作检索、提案、检查、播放工具和独立评审 | [action_tool.py](../services/adapters/tools/builtin/action_tool.py)、[actions](../services/application/actions/) |

@@ -22,7 +22,7 @@ from modules.system import ChatMessageRequest, ChatRequest
 from prompts.companion import PENDING_INTENTIONS_LABELS
 
 from services.contracts import SceneTurnState
-from services.domains.companion import list_companion_intents, user_turn_activity
+from services.domains.companion import build_presentation_prompt, list_companion_intents, user_turn_activity
 from services.domains.conversation import (
     COMPANION_PRESET_ID,
     SPECIAL_KIND,
@@ -173,6 +173,7 @@ async def run_chat_turn(
     ephemeral: bool = False,
     headless: bool = False,
     has_viewer: bool = True,
+    desktop_interaction: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
     authorization_check: Callable[[], Awaitable[bool]] | None = None,
@@ -199,6 +200,7 @@ async def run_chat_turn(
                         ephemeral=ephemeral,
                         headless=headless,
                         has_viewer=has_viewer,
+                        desktop_interaction=desktop_interaction,
                         excluded_tool_names=excluded_tool_names,
                         max_loop_turns=max_loop_turns,
                         authorization_check=authorization_check,
@@ -232,6 +234,7 @@ async def _run_chat_turn(
     ephemeral: bool = False,
     headless: bool = False,
     has_viewer: bool = True,
+    desktop_interaction: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
     authorization_check: Callable[[], Awaitable[bool]] | None = None,
@@ -457,11 +460,20 @@ async def _run_chat_turn(
         for _ in range(max_loop_turns):
             if authorization_check is not None and not await authorization_check():
                 raise asyncio.CancelledError("The turn authorization was revoked")
+            instruction_parts = [base_instructions]
             async with session_scope() as db:
                 await refresh_video_media(db, media_turn)
                 if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
                     environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
-                    current_context["instructions"] = base_instructions + "\n\n" + environment
+                    instruction_parts.append(environment)
+            if (
+                desktop_interaction
+                and conv.parent_id is None
+                and not conv.is_automation
+                and (presentation := build_presentation_prompt(user_id, language=inputs.language))
+            ):
+                instruction_parts.append(presentation)
+            current_context["instructions"] = "\n\n".join(instruction_parts)
 
             if not buffer_text:
                 await emitter.send_json({"type": "message.start"})

@@ -76,9 +76,6 @@ contextBridge.exposeInMainWorld('spiritagent', {
   presentation: {
     companionActivity: (activity: InvokePayload<typeof IPC.invoke.presentationCompanionActivity>) =>
       invoke(IPC.invoke.presentationCompanionActivity, activity),
-    cancelRitual: (callId: string) => invoke(IPC.invoke.presentationRitualCancel, callId),
-    onRitualCancelled: (cb: EventCallback<typeof IPC.event.presentationRitualCancelled>) =>
-      subscribe(IPC.event.presentationRitualCancelled, cb),
     getStageActivity: () => invoke(IPC.invoke.presentationGetStageActivity),
     setStageLayout: (layout: InvokePayload<typeof IPC.invoke.presentationSetStageLayout>) =>
       invoke(IPC.invoke.presentationSetStageLayout, layout),
@@ -102,15 +99,10 @@ contextBridge.exposeInMainWorld('spiritagent', {
     claimPlay: (claim: SurfacePlaybackClaim) => invoke(IPC.invoke.presentationClaimPlay, claim),
     stageActivity: (activity: InvokePayload<typeof IPC.invoke.presentationStageActivity>) =>
       invoke(IPC.invoke.presentationStageActivity, activity),
-    requestRitual: (request: InvokePayload<typeof IPC.invoke.presentationRitualRequest>) =>
-      invoke(IPC.invoke.presentationRitualRequest, request),
-    completeRitual: (reply: InvokePayload<typeof IPC.invoke.presentationRitualComplete>) =>
-      invoke(IPC.invoke.presentationRitualComplete, reply),
     onChanged: (cb: EventCallback<typeof IPC.event.presentationChanged>) =>
       subscribe(IPC.event.presentationChanged, cb),
     onStageActivity: (cb: EventCallback<typeof IPC.event.presentationStageActivity>) =>
-      subscribe(IPC.event.presentationStageActivity, cb),
-    onRitual: (cb: EventCallback<typeof IPC.event.presentationRitual>) => subscribe(IPC.event.presentationRitual, cb)
+      subscribe(IPC.event.presentationStageActivity, cb)
   },
   dock: {
     getState: () => invoke(IPC.invoke.dockGetState),
@@ -241,8 +233,6 @@ contextBridge.exposeInMainWorld('spiritagent', {
     setDefaultScale: (payload: DesktopSpriteScalePayload) => ipcRenderer.send(IPC.send.spriteSetDefaultScale, payload),
     getPosition: () => invoke(IPC.invoke.spriteGetPosition),
     getWindowScene: () => invoke(IPC.invoke.spriteGetWindowScene),
-    mapScreenRect: (rect: InvokePayload<typeof IPC.invoke.spriteMapScreenRect>) =>
-      invoke(IPC.invoke.spriteMapScreenRect, rect),
     moveToDisplay: (point: InvokePayload<typeof IPC.invoke.spriteMoveToDisplay>) =>
       invoke(IPC.invoke.spriteMoveToDisplay, point),
     hide: () => invoke(IPC.invoke.spriteHide),

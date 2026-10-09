@@ -13,8 +13,7 @@ import {
   IPC,
   type PresentationMode,
   type PresentationState,
-  type StageActivity,
-  type StageRitualRequest
+  type StageActivity
 } from '@ipc/contracts'
 
 import { isSenderWindow } from '../security/ipc-trust'
@@ -98,11 +97,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   const applicationListeners = new Set<(state: RunningApplicationsState) => void>()
   const playbackClaims = createPlaybackClaims()
 
-  const rituals = new Map<
-    string,
-    { epoch: number; resolve: (completed: boolean) => void; timer: ReturnType<typeof setTimeout> }
-  >()
-
   const native = createExplorerDesktopHost({
     helperPath: options.helperPath,
     journalPath: journalFile,
@@ -115,10 +109,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       foreground = state.active
       stageAvailable = state.stageAvailable
       fullscreen = state.fullscreen
-
-      if (!stageAvailable) {
-        clearRituals()
-      }
 
       publish()
     },
@@ -229,26 +219,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
-  function cancelRitual(callId: string): void {
-    const ritual = rituals.get(callId)
-
-    if (!ritual) {
-      return
-    }
-
-    clearTimeout(ritual.timer)
-    rituals.delete(callId)
-
-    sendToWindow(companion, IPC.event.presentationRitualCancelled, { callId, epoch: ritual.epoch })
-    ritual.resolve(false)
-  }
-
-  function clearRituals(): void {
-    for (const callId of rituals.keys()) {
-      cancelRitual(callId)
-    }
-  }
-
   function destroyWindows(): void {
     readyWindows.clear()
     activityBySource.desktop = { state: 'idle', voicePreparing: false }
@@ -284,7 +254,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     invalidateStartup(reason)
     foreground = false
-    clearRituals()
     publish()
 
     void serial(async () => {
@@ -311,7 +280,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     healthTimer = undefined
     status = 'recovering'
     setRunningApplications({ status: 'inactive', error: null, windows: [] })
-    clearRituals()
     stageEpoch += 1
     playbackClaims.reset()
     publish()
@@ -691,7 +659,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     })
     powerMonitor.on('lock-screen', () => {
       foreground = false
-      clearRituals()
       publish()
     })
     powerMonitor.on('unlock-screen', publish)
@@ -833,17 +800,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       activityBySource[source] = { state, voicePreparing: activity.voicePreparing }
       publish()
     })
-    ipcMain.handle(IPC.invoke.presentationRitualCancel, (event, callId: unknown) => {
-      if (!isSenderWindow(event.sender, options.getSpriteWindow())) {
-        throw new Error('仅精灵宿主允许取消仪式。')
-      }
-
-      if (typeof callId !== 'string') {
-        throw new Error('无效调用。')
-      }
-
-      cancelRitual(callId)
-    })
     ipcMain.handle(IPC.invoke.presentationGetStageActivity, event => {
       assertStage(event.sender)
 
@@ -876,10 +832,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       stageVisible = layout.visible
       stageInsets = { top: insets.top!, bottom: insets.bottom!, left: insets.left!, right: insets.right! }
-
-      if (!stageVisible) {
-        clearRituals()
-      }
 
       publish()
     })
@@ -932,7 +884,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         }
 
         stageEpoch += 1
-        clearRituals()
         publish()
 
         return snapshot()
@@ -1152,50 +1103,6 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       sendToWindow(companion, IPC.event.presentationStageActivity, activity)
     })
-    ipcMain.handle(IPC.invoke.presentationRitualRequest, (event, raw: Omit<StageRitualRequest, 'epoch'>) => {
-      if (!isSenderWindow(event.sender, options.getSpriteWindow())) {
-        throw new Error('仅精灵宿主允许请求仪式。')
-      }
-
-      if (
-        !canUseStage() ||
-        !companion ||
-        !raw ||
-        typeof raw.callId !== 'string' ||
-        !raw.rect ||
-        ![raw.rect.x, raw.rect.y, raw.rect.w, raw.rect.h].every(Number.isFinite)
-      ) {
-        return false
-      }
-
-      return new Promise<boolean>(resolve => {
-        if (rituals.has(raw.callId)) {
-          resolve(false)
-
-          return
-        }
-
-        const timer = setTimeout(() => cancelRitual(raw.callId), 10000)
-
-        rituals.set(raw.callId, { epoch: stageEpoch, resolve, timer })
-        sendToWindow(companion, IPC.event.presentationRitual, { ...raw, epoch: stageEpoch })
-      })
-    })
-    ipcMain.handle(
-      IPC.invoke.presentationRitualComplete,
-      (event, reply: { callId: string; epoch: number; completed: boolean }) => {
-        assertStage(event.sender)
-        const pending = reply && rituals.get(reply.callId)
-
-        if (!pending || reply.epoch !== pending.epoch || reply.epoch !== stageEpoch) {
-          return
-        }
-
-        clearTimeout(pending.timer)
-        rituals.delete(reply.callId)
-        pending.resolve(reply.completed === true && canUseStage())
-      }
-    )
   }
 
   return {

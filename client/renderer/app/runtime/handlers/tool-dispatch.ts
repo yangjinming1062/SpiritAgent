@@ -1,19 +1,13 @@
 import { holdRemoteToolActivity, syncConversationActivity } from '@/app/workflows/conversation-activity'
-import { findWindowByKeyword, performRitualWalk } from '@/modules/character'
 import { type ConversationRuntime, findConversationRuntime } from '@/modules/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { trimOldest } from '@/shared/lib/trim-oldest'
 import { $gateway } from '@/shared/store/gateway'
-import { $presentation } from '@/shared/store/presentation'
 import { getStrings } from '@/shared/strings'
-import type { DesktopScreenRect, MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
+import type { MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
-
-// 宿主专属设备指令分发：tool.call/cancel 只在精灵窗宿主执行，按 call_id 去重重放帧，交互类工具先仪式行走再 execute。click_at 虚拟目标几何边长（px）：只为 perch 落位与指向方位提供参照，精灵会站到点击点旁而非覆盖它。
-const CLICK_GEOM_SIZE = 160
-const CLICK_GEOM_HALF = CLICK_GEOM_SIZE / 2
 
 const NOT_EXECUTED_RESULT = { ok: false, error: 'Not executed: the call did not reach the local runner.' }
 
@@ -45,8 +39,8 @@ function runnerCallResult(outcome: RunnerCallOutcome): unknown {
 const seenToolCalls = new Set<string>()
 const SEEN_TOOL_CALL_CAP = 500
 
-// 已受理未收尾的调用：后端中断时下发 tool.cancel，未交给 Runner 的不再执行，已在执行的请 Runner 取消；两种都不回传结果。
-const activeToolCalls = new Map<string, { cancelled: boolean; running: boolean }>()
+// 已交给 Runner 的在途调用：后端中断时请求 Runner 取消，并停止回传结果。
+const activeToolCalls = new Map<string, { cancelled: boolean }>()
 
 function markToolCallSeen(callId: string): boolean {
   if (seenToolCalls.has(callId)) {
@@ -99,95 +93,23 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
   // fire-and-forget 调用 Runner 并回传结果，让后端等待解析完成；工具错误不得冒泡到本处理器。
   const gateway = $gateway.get()
   const callId = p.call_id
-  const call = { cancelled: false, running: false }
+  const call = { cancelled: false }
 
   activeToolCalls.set(callId, call)
 
   void (async () => {
     try {
-      const args = p.args ?? {}
-
-      // 仪式行走目标：system.click_at 用点击坐标本身（包成虚拟几何，execute 即那次点击，避免双击）；open_application/browser_* 按名称或 URL 匹配窗口，关键词缺失时直接走常规调用。
-      let findTarget: (() => Promise<DesktopScreenRect | null>) | null = null
-      let previewClick = true
-
-      if (name === 'system.click_at') {
-        const cx = Number(args.x)
-        const cy = Number(args.y)
-
-        if (Number.isFinite(cx) && Number.isFinite(cy)) {
-          const geom: DesktopScreenRect = {
-            x: cx - CLICK_GEOM_HALF,
-            y: cy - CLICK_GEOM_HALF,
-            w: CLICK_GEOM_SIZE,
-            h: CLICK_GEOM_SIZE
-          }
-
-          findTarget = () => Promise.resolve(geom)
-          previewClick = false
-        }
-      } else {
-        const keyword = String(args.name ?? args.url ?? args.keyword ?? '')
-
-        if (keyword.trim()) {
-          findTarget = () => findWindowByKeyword(keyword)
-        }
-      }
-
-      // 仪式行走期间回合已被中断的调用不再交给 Runner。
-      const dispatch = (): Promise<null | RunnerCallOutcome> => {
-        if (call.cancelled) {
-          return Promise.resolve(null)
-        }
-
-        call.running = true
-
-        return runnerDispatchCall({ args, callId, name, skillScope: p.skill_scope })
-      }
-
-      let outcome: null | RunnerCallOutcome
+      let outcome: RunnerCallOutcome
 
       try {
-        const stage = $presentation.get()
-
-        if (findTarget && stage.stageOwner === 'desktop') {
-          try {
-            const rect = p.headless || !stage.stageVisible || !stage.stageAvailable ? null : await findTarget()
-
-            if (rect && !call.cancelled) {
-              const completed = await window.spiritagent.presentation.requestRitual({ callId, rect })
-              const currentStage = $presentation.get()
-
-              if (
-                completed &&
-                previewClick &&
-                !call.cancelled &&
-                currentStage.stageOwner === 'desktop' &&
-                currentStage.stageVisible &&
-                currentStage.stageAvailable &&
-                currentStage.stageEpoch === stage.stageEpoch
-              ) {
-                await window.spiritagent.runnerInvoke('system.click_at', {
-                  x: Math.round(rect.x + rect.w / 2),
-                  y: Math.round(rect.y + rect.h / 2)
-                })
-              }
-            }
-          } catch (error) {
-            log.warn('events', `desktop ritual for ${callId} skipped:`, error)
-          }
-
-          outcome = await dispatch()
-        } else {
-          outcome = findTarget ? await performRitualWalk(findTarget, dispatch, { previewClick }) : await dispatch()
-        }
+        outcome = await runnerDispatchCall({ args: p.args ?? {}, callId, name, skillScope: p.skill_scope })
       } catch (err) {
-        // 尚未交给 Runner 的调用确定没有执行；已交出后的 IPC 失败无法判断请求是否到达 Runner。
+        // IPC 失败无法判断请求是否到达 Runner。
         log.warn('events', `runner tool ${name} (${callId}) failed:`, err)
-        outcome = call.running ? { status: 'unknown' } : { status: 'not_executed' }
+        outcome = { status: 'unknown' }
       }
 
-      if (!outcome || call.cancelled) {
+      if (call.cancelled) {
         return
       }
 
@@ -224,17 +146,9 @@ export function handleToolCancel(event: GatewayEvent, ctx: EventRouteContext): v
 
   call.cancelled = true
 
-  if ($presentation.get().stageOwner === 'desktop') {
-    void window.spiritagent.presentation
-      .cancelRitual(callId)
-      .catch(error => log.warn('events', 'Ritual cancellation failed', error))
-  }
-
-  if (call.running) {
-    void window.spiritagent?.runnerCancel?.(callId).catch(err => {
-      log.warn('events', `runner cancel for ${callId} failed:`, err)
-    })
-  }
+  void window.spiritagent?.runnerCancel?.(callId).catch(err => {
+    log.warn('events', `runner cancel for ${callId} failed:`, err)
+  })
 }
 
 export function handleToolComplete(runtime: ConversationRuntime): void {

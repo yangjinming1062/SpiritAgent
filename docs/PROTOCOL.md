@@ -345,7 +345,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 - clip 可选携带 `peek_geometry`（遮挡线及需保留的识别区域）和 `content_rect`（内容轮廓），坐标归一化到最终媒体画布；clip 与目录结构见 [publishing](../backend/services/domains/actions/publishing.py) 的 `ActionClipSpec` / `ActionCatalogManifest`（客户端镜像为 [action-types.ts](../client/renderer/modules/character/actions/action-types.ts)），`PeekGeometry` 与 `content_rect` 解析见 [schema](../backend/modules/companion/schemas_actions.py)。缺少有效探身定位时不启用遮挡；侧边伙伴与桌面精灵缺少内容轮廓时优先从 alpha 遮罩推导，仍缺失按完整画布适配与落位。
 - `hitmask_ref` 指向行整数按位表示列占用的 JSON，网格由 `hitmask_grid` 提供：图片是静态 `[row]`，视频是逐帧 `[frame][row]`，视频另带 `hitmask_fps`。生成见 [图片处理](../backend/services/infrastructure/video_processing/image.py)与 [视频处理](../backend/services/infrastructure/video_processing/process.py)。drag 图片在拖拽结束时切回当前基础动作，不进入播放计时或媒体结束事件逻辑；有限播放请求若指向图片须拒绝。
 - [探身补齐接口](../backend/api/v1/companion.py)的输入见 [schema](../backend/modules/companion/schemas_video.py)。仅当前激活且具有可读冻结参考的包可补齐；按包和槽位复用任务，素材成功但目录缺失时只重试发布。失败或未知结果不自动重新付费，由衣柜显式处理；无冻结参考的导入包不自动重建。
-- 窗口快照与仪式目标换算见 [IPC 类型](../client/shared/ipc/contracts.ts)：精灵宿主或当前桌面精灵舞台可读取，均按当前舞台视口转换；跟随目标跨屏只允许仍拥有舞台的精灵宿主执行。主进程将 Runner 原生几何转换为 DIP，快照提供视口原点由渲染层换算，目标换算直接返回视口内坐标。绑定包含窗口标识、进程身份和 Runner 实例标识，重启使旧绑定失效；这些本机数据不进入云端自主上下文。
+- 窗口快照见 [IPC 类型](../client/shared/ipc/contracts.ts)：精灵宿主或当前桌面精灵舞台可读取；跟随目标跨屏只允许仍拥有舞台的精灵宿主执行。主进程将 Runner 原生几何转换为 DIP，快照提供当前舞台视口原点供渲染层换算。绑定包含窗口标识、进程身份和 Runner 实例标识，重启使旧绑定失效；这些本机数据不进入云端自主上下文。
 
 ## 本机工具
 
@@ -448,7 +448,9 @@ Runner 仅内存持有配置，工具调用与 `get_tools` 时读取当前值；
 
 ### 桌面呈现与本机启动器
 
-呈现模式、交互屏幕、精灵置顶和 Dock 保存在 Client 独立的版本化本机文件，不放入云同步的 ui／companion 节；旧配置的精灵置顶默认关闭。内部布局、角色位置及输入草稿按产品账户隔离。桌面状态由主进程广播带 revision 的快照；requestedMode 表示用户偏好，effectiveMode 表示实际成功呈现，失败不能以偏好值伪装成功。舞台所有权和 stageEpoch 隔离迟到动作、移动与仪式请求。
+唯一精灵宿主通过 `companion.signal` 的必填 `presentation_mode` 上报实际呈现，连接建立、模式变化时立即同步，随活动信号续期。Backend 保留带有效期的账户运行态，断连与换号使旧状态失效。桌面主对话、主动陪伴、空闲表达和空间决策使用简短自然的环境说明；模式及可用性变化使在途自主决策失效。
+
+呈现模式、交互屏幕、精灵置顶和 Dock 保存在 Client 独立的版本化本机文件，不放入云同步的 ui／companion 节；旧配置的精灵置顶默认关闭。内部布局、角色位置及输入草稿按产品账户隔离。桌面状态由主进程广播带 revision 的快照；requestedMode 表示用户偏好，effectiveMode 表示实际成功呈现，失败不能以偏好值伪装成功。舞台所有权和 stageEpoch 隔离迟到动作与移动。
 
 界面前台与精灵舞台可用性分别裁决，精灵可见或置顶不能代替会话视图的活动资格。精灵的轻语、文件投喂与菜单交互由主进程转交交互界面；背景窗口不获得这些能力。会话活动与语音准备状态以账户会话为作用域，经主进程镜像到舞台，持续活动按 [IPC 优先级](../client/shared/ipc/desktop-presentation.ts)合并；本地手势与情绪瞬态由角色模块裁决。工作区原值进入恢复记录，退出时的系统行为见[桌面模式](DESIGN.md#桌面模式)。
 
@@ -478,7 +480,7 @@ standard 使用独立 automation 任务会话，可离线运行云端部分；�
 
 同一 standard 任务串行执行，至多一个运行中和一个待执行触发，更多触发合并丢弃并记录日志；触发获得执行权后重读任务，已删除、暂停或改为 special 的丢弃，否则按当前名称与提示词运行，一次性任务触发时已删除，沿用触发时的内容。回合共用聊天编排的整体执行时限、工具轮数上限及单次调用超时；本地生图等待可暂停执行预算，不能把执行时限理解为全部等待的墙钟上限。入口为 [standard_turns.py](../backend/services/application/automation/standard_turns.py) 与 [orchestrator.py](../backend/services/application/chat/orchestrator.py)。
 
-`companion_wait` 保存时间或情境条件；并存时任一满足即可成为候选，仍须通过在线和档位闸门。主动续等不能延长原有效期。Client 的 `companion.signal` 只上报可用性及允许的事件类别，不上传窗口标题、应用名称或屏幕；信号过期、断连或不可用时停止认领，不可用同时取消在途主动回合。
+`companion_wait` 保存时间或情境条件；并存时任一满足即可成为候选，仍须通过在线和档位闸门。主动续等不能延长原有效期。Client 的 `companion.signal` 上报可用性、[实际呈现](#桌面呈现与本机启动器)及允许的事件类别，不上传窗口标题、应用名称或屏幕；信号过期、断连或不可用时停止认领，不可用同时取消在途主动回合。
 
 修改或主动删除源任务须同步撤销旧意图；调度后自动删除一次性任务不撤销已交接意图。认领、租约与提交隔离迟到结果；未开始或仅调用查询工具的回合可重试，执行可能产生副作用后结果不明则保留待核对提示，不重放，意图到期也不抹去提示。创建、恢复及解除暂停均在用户锁内检查活跃任务配额，重启不补算未互动时长。查询工具集合由 [companion_turns.py](../backend/services/application/automation/companion_turns.py) 定义，意图结构见 [schemas_loop](../backend/modules/companion/schemas_loop.py)。
 

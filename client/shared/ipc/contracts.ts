@@ -10,7 +10,6 @@ import type {
   PresentationMode,
   PresentationState,
   StageActivity,
-  StageRitualRequest,
   SurfaceId
 } from './desktop-presentation'
 export { DESKTOP_COMPANION_ACTIVITY_PRIORITY, normalizeSurfaceId } from './desktop-presentation'
@@ -33,7 +32,6 @@ export type {
   PresentationMode,
   PresentationState,
   StageActivity,
-  StageRitualRequest,
   SurfaceId
 } from './desktop-presentation'
 
@@ -406,7 +404,6 @@ export interface IpcInvokeContract {
     voicePreparing: boolean
     authSessionId: string
   }) => void
-  'spiritagent:presentation:ritual-cancel': (callId: string) => void
   'spiritagent:presentation:get-stage-activity': () => StageActivity
   'spiritagent:presentation:set-stage-layout': (layout: { visible: boolean; insets: DesktopStageInsets }) => void
   'spiritagent:presentation:set-companion-topmost': (enabled: boolean) => Promise<PresentationState>
@@ -422,8 +419,6 @@ export interface IpcInvokeContract {
   'spiritagent:presentation:set-background': (background: DesktopBackground) => void
   'spiritagent:presentation:claim-play': (claim: SurfacePlaybackClaim) => boolean
   'spiritagent:presentation:stage-activity': (activity: StageActivity) => void
-  'spiritagent:presentation:ritual-request': (request: Omit<StageRitualRequest, 'epoch'>) => Promise<boolean>
-  'spiritagent:presentation:ritual-complete': (reply: { callId: string; epoch: number; completed: boolean }) => void
   'spiritagent:dock:get-state': () => Promise<DockState>
   'spiritagent:dock:catalog': (force?: boolean) => Promise<DockCatalog>
   'spiritagent:dock:catalog-icons': (ids: string[]) => Promise<Record<string, string | null>>
@@ -600,9 +595,6 @@ export interface IpcInvokeContract {
     | DesktopWindowSceneSnapshot
     | null
     | Promise<DesktopWindowSceneSnapshot | null>
-  'spiritagent:sprite:map-screen-rect': (
-    rect: DesktopScreenRect
-  ) => DesktopScreenRect | null | Promise<DesktopScreenRect | null>
   'spiritagent:sprite:move-to-display': (point: { x: number; y: number }) => Promise<void> | void
   'spiritagent:sprite:move-to-cursor-display': () =>
     | null
@@ -613,13 +605,11 @@ export interface IpcInvokeContract {
 // 2. 主进程向渲染进程推送事件（通过 webContents.send / ipcRenderer.on）
 export interface IpcEventContract {
   'spiritagent:presentation:companion-interaction': [payload: DesktopCompanionInteraction]
-  'spiritagent:presentation:ritual-cancelled': [payload: { callId: string; epoch: number }]
   'spiritagent:presentation:changed': [payload: PresentationState]
   'spiritagent:dock:changed': [payload: DockState]
   'spiritagent:desktop:navigate': [payload: DesktopNavigation]
   'spiritagent:background:image': [payload: DesktopBackground]
   'spiritagent:presentation:stage-activity': [payload: StageActivity]
-  'spiritagent:presentation:ritual': [payload: StageRitualRequest]
 
   'spiritagent:voice-playback:changed': [payload: VoicePlaybackChanged]
   'spiritagent:auth:changed': [payload: DesktopAuthBroadcast]
@@ -658,7 +648,6 @@ type IpcSendChannel = keyof IpcSendContract
 export const IPC = {
   invoke: {
     presentationCompanionActivity: 'spiritagent:presentation:companion-activity',
-    presentationRitualCancel: 'spiritagent:presentation:ritual-cancel',
     presentationGetStageActivity: 'spiritagent:presentation:get-stage-activity',
     presentationSetStageLayout: 'spiritagent:presentation:set-stage-layout',
     presentationSetCompanionTopmost: 'spiritagent:presentation:set-companion-topmost',
@@ -674,8 +663,6 @@ export const IPC = {
     presentationSetBackground: 'spiritagent:presentation:set-background',
     presentationClaimPlay: 'spiritagent:presentation:claim-play',
     presentationStageActivity: 'spiritagent:presentation:stage-activity',
-    presentationRitualRequest: 'spiritagent:presentation:ritual-request',
-    presentationRitualComplete: 'spiritagent:presentation:ritual-complete',
     dockGetState: 'spiritagent:dock:get-state',
     dockCatalog: 'spiritagent:dock:catalog',
     dockCatalogIcons: 'spiritagent:dock:catalog-icons',
@@ -753,7 +740,6 @@ export const IPC = {
     spriteGetPosition: 'spiritagent:sprite:get-position',
     spriteSetPosition: 'spiritagent:sprite:set-position',
     spriteGetWindowScene: 'spiritagent:sprite:get-window-scene',
-    spriteMapScreenRect: 'spiritagent:sprite:map-screen-rect',
     spriteMoveToDisplay: 'spiritagent:sprite:move-to-display',
     spriteMoveToCursorDisplay: 'spiritagent:sprite:move-to-cursor-display',
     updateCheck: 'spiritagent:update:check',
@@ -763,13 +749,11 @@ export const IPC = {
   } as const satisfies Record<string, IpcChannel>,
   event: {
     companionInteraction: 'spiritagent:presentation:companion-interaction',
-    presentationRitualCancelled: 'spiritagent:presentation:ritual-cancelled',
     presentationChanged: 'spiritagent:presentation:changed',
     dockChanged: 'spiritagent:dock:changed',
     desktopNavigate: 'spiritagent:desktop:navigate',
     backgroundImage: 'spiritagent:background:image',
     presentationStageActivity: 'spiritagent:presentation:stage-activity',
-    presentationRitual: 'spiritagent:presentation:ritual',
 
     voicePlaybackChanged: 'spiritagent:voice-playback:changed',
     authChanged: 'spiritagent:auth:changed',

@@ -9,7 +9,7 @@ from services.domains.conversation import (
     get_or_create_special_conversation,
 )
 
-from .proactive_runtime import note_outreach_throttle
+from .proactive_runtime import PresentationSnapshot, get_presentation_snapshot, note_outreach_throttle
 
 
 async def append_companion_message(db: AsyncSession, user_id: int, reply: CompanionReply, content: str) -> None:
@@ -38,14 +38,22 @@ async def append_companion_message(db: AsyncSession, user_id: int, reply: Compan
     )
 
 
-async def emit_companion_message(user_id: int, text: str) -> None:
-    """把伙伴主动消息推送到客户端（WSEvent companion.message）并落库。供 send_message_tool 与 should_act 的 approach 共用；是否展示由客户端打扰档位决定，静止档的源头拦截由调用方各自负责。"""
+async def emit_companion_message(
+    user_id: int,
+    text: str,
+    *,
+    presentation: PresentationSnapshot | None = None,
+) -> bool:
+    """返回是否保存并投递主动消息；自主搭话在提交前复核呈现快照，展示与静止档门控仍由各自调用方负责。"""
     clean_text = text.strip()
     if not clean_text:
-        return
+        return False
     bubble = TextBubble(type="text", text=clean_text)
     content = CompanionReplyInput(root=[bubble]).model_dump_json()
     async with SESSION_LOCAL() as db:
         await append_companion_message(db, user_id, CompanionReply(bubbles=[bubble]), content)
+        if presentation is not None and presentation != get_presentation_snapshot(user_id):
+            return False
         await db.commit()
     note_outreach_throttle(user_id)
+    return True

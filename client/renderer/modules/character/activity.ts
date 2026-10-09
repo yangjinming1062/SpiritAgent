@@ -3,11 +3,11 @@ import { atom } from 'nanostores'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $chatVisible } from '@/shared/store/chat-visibility'
-import { $gateway } from '@/shared/store/gateway'
+import { $gateway, $gatewayState } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $runnerPhase } from '@/shared/store/runner-status'
 import { isCompanionStageVisible } from '@/shared/store/surfaces'
-import type { StageActivity } from '@ipc/contracts'
+import type { PresentationMode, StageActivity } from '@ipc/contracts'
 import type { DesktopScreenRect } from '@ipc/contracts'
 
 import {
@@ -54,6 +54,7 @@ let polling = false
 let lastSignalContext: string | null = null
 let pendingSignalContextChange = false
 let signalRevision = 0
+let companionAvailable = false
 
 let localChatTurnCount = 0
 let lastChatTurnSentAt = 0
@@ -231,6 +232,7 @@ interface SystemSnapshot {
 }
 
 async function reportCompanionSignal(available: boolean, context: string | null = null): Promise<void> {
+  companionAvailable = available
   const gateway = $gateway.get()
   const generation = monitorGeneration
   const revision = ++signalRevision
@@ -239,14 +241,20 @@ async function reportCompanionSignal(available: boolean, context: string | null 
     pendingSignalContextChange = true
   }
 
-  if (!gateway) {
+  const presentation = $presentation.get()
+
+  if (!gateway || gateway.connectionState !== 'open' || presentation.revision < 0) {
     return
   }
 
   const event = available && pendingSignalContextChange ? 'context_changed' : undefined
 
   try {
-    await gateway.request('companion.signal', { available, ...(event ? { event } : {}) })
+    await gateway.request('companion.signal', {
+      available,
+      presentation_mode: presentation.effectiveMode,
+      ...(event ? { event } : {})
+    })
 
     if (
       generation === monitorGeneration &&
@@ -383,7 +391,7 @@ async function pollSnapshot(generation: number): Promise<void> {
 
   maybePushTierOverride()
 
-  // 只上报可用性与变化类别，不上传窗口标题、应用名称或屏幕内容。
+  // 上报可用性、实际呈现与变化类别，不上传窗口标题、应用名称或屏幕内容。
   const available =
     snapshot.locked === false &&
     fullscreenProbeOk &&
@@ -417,6 +425,28 @@ export function startActivityMonitor(): () => void {
 
   monitorGeneration += 1
 
+  const presentation = $presentation.get()
+  let presentationMode: PresentationMode | null = presentation.revision >= 0 ? presentation.effectiveMode : null
+
+  const syncPresentation = (): void => {
+    const presentation = $presentation.get()
+
+    if (presentation.revision < 0 || presentation.effectiveMode === presentationMode) {
+      return
+    }
+
+    presentationMode = presentation.effectiveMode
+    void reportCompanionSignal(companionAvailable)
+  }
+
+  unsubs.push($presentation.listen(syncPresentation))
+  unsubs.push(
+    $gatewayState.subscribe(state => {
+      if (state === 'open') {
+        void reportCompanionSignal(companionAvailable)
+      }
+    })
+  )
   let forwardingActive = true
   let forwardingQueued = false
   let forwarded: { signature: string } | undefined

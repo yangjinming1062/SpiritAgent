@@ -6,10 +6,12 @@ from components import (
     get_logger,
     parse_llm_json,
     resolve_language,
+    resolve_prompt_text,
     utc_now,
 )
 from modules.companion import Persona
 from modules.settings import get_user_setting, resolve_user_timezone
+from prompts.companion import PRESENTATION_CONTEXTS
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,7 @@ from services.infrastructure.llm import (
 )
 
 from .persona_service import load_persona_definition, render_extras
+from .proactive_runtime import PresentationSnapshot, get_presentation_snapshot
 
 logger = get_logger(__name__)
 
@@ -38,6 +41,17 @@ class CompanionPromptContext(BaseModel):
     persona_extras: str
     current_mood: str
     memories_block: str
+    presentation: PresentationSnapshot | None
+
+
+def presentation_prompt(snapshot: PresentationSnapshot | None, *, language: str) -> str:
+    if snapshot is None:
+        return ""
+    return resolve_prompt_text(PRESENTATION_CONTEXTS[snapshot.mode], language)
+
+
+def build_presentation_prompt(user_id: int, *, language: str) -> str:
+    return presentation_prompt(get_presentation_snapshot(user_id), language=language)
 
 
 class PromptOutcome(NamedTuple):
@@ -60,6 +74,7 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
             persona_extras=render_extras(load_persona_definition(persona), language=language),
             current_mood=persona.current_mood or "",
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion"), language=language),
+            presentation=get_presentation_snapshot(user_id),
         )
 
 

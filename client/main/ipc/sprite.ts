@@ -203,20 +203,6 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
     }
   })
 
-  // 仪式行走目标：原生屏幕矩形换算为精灵视口内坐标，与窗口快照同一换算。
-  ipcMain.handle(IPC.invoke.spriteMapScreenRect, async (event, rect?: unknown): Promise<DesktopScreenRect | null> => {
-    const win = stageWindowFor(event)
-
-    if (!win || !isScreenRect(rect)) {
-      return null
-    }
-
-    const dip = toDipRect(screen, rect)
-    const bounds = win.getContentBounds()
-
-    return { h: dip.height, w: dip.width, x: dip.x - bounds.x, y: dip.y - bounds.y }
-  })
-
   ipcMain.handle(IPC.invoke.spriteMoveToDisplay, async (event, point?: { x: number; y: number }) => {
     const win = getSpriteWindow()
 

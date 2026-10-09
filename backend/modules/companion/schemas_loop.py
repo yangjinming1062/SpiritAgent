@@ -4,6 +4,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 CompanionWakeEvent = Literal["desktop_available", "context_changed"]
+PresentationMode = Literal["desktop", "window"]
 CompanionIntentStatus = Literal["waiting", "queued", "running", "completed", "cancelled", "expired", "failed"]
 MAX_COMPANION_FAILURES: int = 3
 
@@ -43,6 +44,7 @@ class CompanionSignal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     available: StrictBool
+    presentation_mode: PresentationMode
     event: CompanionWakeEvent | None = None
 
 

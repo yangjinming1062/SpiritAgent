@@ -21,7 +21,6 @@ import {
   peekMaskRects,
   playSpriteGesture,
   setSpriteState,
-  SpriteTargetCue,
   SpriteVfxOverlay,
   startDrag,
   updateDragPosition,
@@ -517,7 +516,6 @@ export function SpriteStage({
           </defs>
         </svg>
       ) : null}
-      <SpriteTargetCue hidden={hidden} />
       <div
         className="absolute transition-opacity duration-200"
         onContextMenu={e => {

@@ -118,7 +118,6 @@ export {
   systemActionNames,
   VIDEO_GEN_STAGE_TEXT_KEYS
 } from './presentation'
-export { bindProactiveLineSpeaker } from './proactive-speak'
 export { handleDragEndInteraction } from './reactions/reaction-audio'
 export { EggStage } from './rendering/fallback/egg-stage'
 export {
@@ -136,7 +135,6 @@ export {
   videoGenScopeMatches,
   videoPackEventReceived
 } from './rendering/video/video-pack-store'
-export { findWindowByKeyword, performRitualWalk } from './ritual-walk'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
   $defaultScale,
@@ -176,7 +174,7 @@ export { SpriteStatusBadge } from './sprite-status-badge'
 export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
 export { playSpriteGesture } from './sprite/gesture'
-export { SpriteTargetCue, useSpriteBodyGesture } from './sprite/gesture-layer'
+export { useSpriteBodyGesture } from './sprite/gesture-layer'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
 

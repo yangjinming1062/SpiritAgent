@@ -28,8 +28,6 @@ declare global {
     spiritagent: {
       presentation: {
         companionActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:companion-activity']>
-        cancelRitual: AsyncIpc<IpcInvokeContract['spiritagent:presentation:ritual-cancel']>
-        onRitualCancelled: EventSubscription<'spiritagent:presentation:ritual-cancelled'>
         getStageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:get-stage-activity']>
         setStageLayout: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-stage-layout']>
         setCompanionAlwaysOnTop: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-companion-topmost']>
@@ -46,11 +44,8 @@ declare global {
         setBackground: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-background']>
         claimPlay: AsyncIpc<IpcInvokeContract['spiritagent:presentation:claim-play']>
         stageActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:stage-activity']>
-        requestRitual: AsyncIpc<IpcInvokeContract['spiritagent:presentation:ritual-request']>
-        completeRitual: AsyncIpc<IpcInvokeContract['spiritagent:presentation:ritual-complete']>
         onChanged: EventSubscription<'spiritagent:presentation:changed'>
         onStageActivity: EventSubscription<'spiritagent:presentation:stage-activity'>
-        onRitual: EventSubscription<'spiritagent:presentation:ritual'>
       }
       dock: {
         getState: AsyncIpc<IpcInvokeContract['spiritagent:dock:get-state']>
@@ -173,7 +168,6 @@ declare global {
         setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-ignore-mouse-events']>
         getPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-position']>
         getWindowScene: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-window-scene']>
-        mapScreenRect: AsyncIpc<IpcInvokeContract['spiritagent:sprite:map-screen-rect']>
         moveToDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-display']>
         setPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-position']>
         moveToCursorDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-cursor-display']>

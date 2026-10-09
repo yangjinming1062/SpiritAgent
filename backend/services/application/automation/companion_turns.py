@@ -156,6 +156,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     emitter,
                     ephemeral=True,
                     headless=True,
+                    desktop_interaction=True,
                     # 常规档主动回合只提供文字能力：语音由回合装配按档位关闭，视觉表达在此排除。
                     excluded_tool_names=frozenset({"send_message_tool", "agent_delegate_tool"})
                     | (

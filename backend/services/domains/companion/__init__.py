@@ -57,13 +57,14 @@ from .persona_service import (
 from .proactive_runtime import (
     clear_user_proactive_state,
     get_personality_tags,
+    get_presentation_snapshot,
     get_user_proactive_record,
     note_outreach_throttle,
     note_user_contact,
     observe_companion_presence,
     user_turn_activity,
 )
-from .prompt_runtime import load_companion_prompt_context, run_prompt_json
+from .prompt_runtime import build_presentation_prompt, load_companion_prompt_context, run_prompt_json
 from .scenes import (
     get_pending_scene_task,
     get_scene,
@@ -104,6 +105,7 @@ __all__ = [
     "update_character_card",
     "clear_user_proactive_state",
     "get_personality_tags",
+    "get_presentation_snapshot",
     "get_user_proactive_record",
     "note_outreach_throttle",
     "note_user_contact",
@@ -123,6 +125,7 @@ __all__ = [
     "set_companion_wait",
     "PersonaValidationError",
     "build_outfit_extras",
+    "build_presentation_prompt",
     "build_system_prompt_extras",
     "check_idle_expression",
     "confirm_portrait",

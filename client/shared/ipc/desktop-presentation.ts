@@ -152,9 +152,3 @@ export interface StageActivity {
   idleSeconds: number
   effectiveTier: 'autonomous' | 'normal' | 'still'
 }
-
-export interface StageRitualRequest {
-  callId: string
-  epoch: number
-  rect: { x: number; y: number; w: number; h: number }
-}

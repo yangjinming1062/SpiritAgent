@@ -1,14 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 
-import {
-  applyStageActivity,
-  cancelMovement,
-  initSpatial,
-  performRitualWalk,
-  setSpatialInsets,
-  startAutonomyProvision
-} from '@/modules/character'
+import { applyStageActivity, initSpatial, setSpatialInsets, startAutonomyProvision } from '@/modules/character'
 import { log } from '@/shared/lib/log'
 import { $presentation } from '@/shared/store/presentation'
 
@@ -70,80 +63,4 @@ export function useDesktopStage({
 
     return startAutonomyProvision()
   }, [enabled, visible, presentation.stageAvailable, presentation.stageEpoch])
-
-  useEffect(() => {
-    if (!enabled) {
-      return
-    }
-
-    let disposed = false
-    const controllers = new Map<string, AbortController>()
-
-    const offCancellation = window.spiritagent.presentation.onRitualCancelled(reply => {
-      if (reply.epoch !== presentation.stageEpoch) {
-        return
-      }
-
-      const controller = controllers.get(reply.callId)
-
-      if (controller && !controller.signal.aborted) {
-        controller.abort()
-        cancelMovement()
-      }
-    })
-
-    const stop = window.spiritagent.presentation.onRitual(request => {
-      const epoch = presentation.stageEpoch
-
-      if (request.epoch !== epoch || !visible) {
-        return
-      }
-
-      for (const previous of controllers.values()) {
-        previous.abort()
-      }
-
-      cancelMovement()
-      let prepared = false
-      const controller = new AbortController()
-      controllers.set(request.callId, controller)
-      void performRitualWalk(
-        () => Promise.resolve(request.rect),
-        () =>
-          Promise.resolve(
-            prepared &&
-              !controller.signal.aborted &&
-              $presentation.get().stageAvailable &&
-              $presentation.get().stageEpoch === epoch
-          ),
-        {
-          previewClick: false,
-          signal: controller.signal,
-          onPrepared: () => {
-            prepared = true
-          }
-        }
-      )
-        .then(completed =>
-          window.spiritagent.presentation.completeRitual({
-            callId: request.callId,
-            epoch,
-            completed: !disposed && $presentation.get().stageEpoch === epoch && completed
-          })
-        )
-        .catch(error => log.warn('desktop-stage', 'ritual failed', error))
-        .finally(() => controllers.delete(request.callId))
-    })
-
-    return () => {
-      disposed = true
-
-      for (const controller of controllers.values()) {
-        controller.abort()
-      }
-
-      offCancellation()
-      stop()
-    }
-  }, [enabled, visible, presentation.stageEpoch])
 }

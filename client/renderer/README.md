@@ -55,7 +55,7 @@
 
 [panel-activity](shared/context/panel-activity.tsx) 向子组件和 Portal 传播活动资格，子面板不能解除父级禁用；媒体查看器归打开它的视图，失活时隐藏并暂停。视图切换保留各自草稿与附件，录音资格失效后旧麦克风或转写结果不能因重新激活恢复。布局、位置和防抖保存守卫账户清理代次。
 
-[desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或舞台代次变化重发，失败允许同值重试，舞台初始化读取主进程最新镜像。`desktop-stage.ts` 核对舞台代次并持有可取消仪式，工具派发仍在宿主。
+[desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或舞台代次变化重发，失败允许同值重试，舞台初始化读取主进程最新镜像。`desktop-stage.ts` 管空间与自主行为的启停，工具派发仍在宿主。
 
 桌面角色受顶栏、Dock 和展开轻语的区域约束，另为情绪放大及退出过渡预留范围；布局、视口或内容轮廓变化重新约束，临时受限不改写保存比例。
 
@@ -79,7 +79,7 @@ Dock 选择面板是 `.dock` 的兄弟节点，避免 backdrop-filter 改变 fix
 
 ### 直接交互与命中
 
-[sprite-stage.tsx](app/components/sprite-stage.tsx) 持手势和捕获；[gesture.ts](modules/character/sprite/gesture.ts) 将整体形变、指向及点击提示交给容器，情绪放大只作用形象层。光晕、形变和透明留白不扩大像素命中。
+[sprite-stage.tsx](app/components/sprite-stage.tsx) 持手势和捕获；[gesture.ts](modules/character/sprite/gesture.ts) 将整体形变交给容器，情绪放大只作用形象层。光晕、形变和透明留白不扩大像素命中。
 
 - mousemove 时先捕获，异步遮罩更新后静止指针也重判；相同捕获状态复用在途或成功 IPC，失败可重试，穿透释放防抖。
 - 按下后持有指针和窗口捕获，取消、失焦、隐藏及卸载统一释放，取消不触发点击或拖拽反馈；单击等待双击判定。
@@ -98,7 +98,7 @@ Dock 选择面板是 `.dock` 的兄弟节点，避免 backdrop-filter 改变 fix
 
 拖拽、换包和卸载撤销探身准备；素材解码后才一起应用位置、遮挡和命中，失败保留旧画面，表演移出遮挡后才上报 started。隐藏／最小化暂停移动、漫游、探身及跟踪，恢复重新约束。
 
-仪式行走的每一步复核舞台资格，目标由主进程换算；中途不可见或失败仍执行原工具，未抵达不指向或预点击，`system.click_at` 不补第二次点击。云端 stay／失败不启动本地漫游，智能关闭后的本地规则仍要求真实空闲信号。
+云端 stay／失败不启动本地漫游，智能关闭后的本地规则仍要求真实空闲信号。
 
 ## 会话与媒体
 
@@ -118,7 +118,7 @@ speech 持唯一播放队列与台词合成，点播和自动连播共用队列�
 
 播放资格由挂载、真实可见、视图活动、锁屏和录音共同裁决；失效使旧下载与播放回包作废，显示聊天不重新启动队列。结果区分完成、中断和失败，声音抢占不标记不可用。AudioContext 预热后保持 running，避免 suspend／resume 与 MediaElementSource 重路由叠加丢首帧；语音准备态使用成对引用计数。
 
-保存语音与重试归 [语音契约](../../docs/PROTOCOL.md#语音保存与重试)。当前 `speak` 的生产入口是仪式行走失败提示，预制反应和音色试听用 `speakScripted`；朗读清理不修改聊天原文。限额与字节缓存由主进程统一执行。
+保存语音与重试归 [语音契约](../../docs/PROTOCOL.md#语音保存与重试)。预制反应和音色试听用 `speakScripted`；朗读清理不修改聊天原文。限额与字节缓存由主进程统一执行。
 
 ### 媒体查看
 

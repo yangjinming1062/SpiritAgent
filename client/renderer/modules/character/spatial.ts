@@ -437,7 +437,7 @@ function tick(now: number): void {
   }
 }
 
-export function moveDurationMs(dist: number, locomotion: 'walk' | 'fly'): number {
+function moveDurationMs(dist: number, locomotion: 'walk' | 'fly'): number {
   const speed = locomotion === 'walk' ? WALK_SPEED : FLY_SPEED
 
   return Math.max((dist / speed) * 1000, 200)
@@ -1321,7 +1321,6 @@ export function setSpatialLocale(
     instant?: boolean
     /** 普通与窗口栖息的缩放上限；缺省时不限。 */
     scaleLimit?: number
-    onArrive?: () => void
   }
 ): void {
   if (locale === 'home' && screenEdgeHome) {
@@ -1336,8 +1335,6 @@ export function setSpatialLocale(
     const home = clampPosToViewport($homePosition.get(), computeTargetScale())
 
     const returnToEdge = (): void => {
-      opts?.onArrive?.()
-
       if (screenEdgeHome) {
         void activateScreenPeek(screenEdgeHome, !opts?.instant)
       }
@@ -1385,9 +1382,8 @@ export function setSpatialLocale(
     cancelMovement()
     $spatialPos.set(target)
     $spatialLocomotion.set('still')
-    opts?.onArrive?.()
   } else {
-    moveTo(target, locomotion, opts?.onArrive)
+    moveTo(target, locomotion)
   }
 }
 
@@ -1726,7 +1722,7 @@ export function initSpatial(): () => void {
       settleSavedRectWait()
     })
 
-  // 桌面舞台收起、精灵窗隐藏或最小化时暂停走位、漫游、探身与仪式提示；重新展示后收回栖身、恢复贴边并重新裁决。
+  // 桌面舞台收起、精灵窗隐藏或最小化时暂停走位、漫游与探身；重新展示后收回栖身、恢复贴边并重新裁决。
   const pauseDesktopStage = (): void => {
     peekIntentGeneration += 1
     clearSpriteGesture()

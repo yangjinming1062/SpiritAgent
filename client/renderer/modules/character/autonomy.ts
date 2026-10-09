@@ -1,6 +1,8 @@
 import { log } from '@/shared/lib/log'
 import { $gateway } from '@/shared/store/gateway'
+import { $presentation } from '@/shared/store/presentation'
 import { $runnerPhase } from '@/shared/store/runner-status'
+import type { PresentationMode } from '@ipc/contracts'
 import { clamp } from '@runtime'
 
 import { $activePlayInstance, isActionStageVisible, observeActionStageVisibility } from './actions'
@@ -28,6 +30,7 @@ const MIN_ACTION_QUIET_MS = 60_000
 const BACKGROUND_CONSULT_INTERVAL_MS = 30 * 60_000
 
 interface Snapshot {
+  presentation_mode: PresentationMode
   focused_category: string
   fullscreen: boolean
   locked: boolean
@@ -69,6 +72,7 @@ function invalidateConsult(): void {
 
 function stateChanged(oldSnap: Snapshot, newSnap: Snapshot): boolean {
   return (
+    oldSnap.presentation_mode !== newSnap.presentation_mode ||
     oldSnap.focused_category !== newSnap.focused_category ||
     oldSnap.fullscreen !== newSnap.fullscreen ||
     oldSnap.locked !== newSnap.locked
@@ -160,6 +164,7 @@ async function consultAutonomyLLM(force = false): Promise<void> {
   const hour = new Date().getHours()
 
   const newSnapshot: Snapshot = {
+    presentation_mode: $presentation.get().effectiveMode,
     focused_category: focus?.category ?? 'unknown',
     fullscreen: focus?.fullscreen ?? false,
     locked
@@ -181,11 +186,14 @@ async function consultAutonomyLLM(force = false): Promise<void> {
   const secondsSinceLastAction = lastAutonomousActionAt > 0 ? (now - lastAutonomousActionAt) / 1000 : 9999
   const generation = provisionGeneration
   const home = $homePosition.get()
+  const stageEpoch = $presentation.get().stageEpoch
 
   const isCurrent = (): boolean =>
     generation === provisionGeneration &&
     gateway === $gateway.get() &&
     home === $homePosition.get() &&
+    stageEpoch === $presentation.get().stageEpoch &&
+    newSnapshot.presentation_mode === $presentation.get().effectiveMode &&
     canConsultAutonomy()
 
   const peekIntent = await captureWindowPeekIntent()
@@ -223,6 +231,18 @@ export function startAutonomyProvision(): () => void {
   }
 
   active = true
+
+  let presentationMode = $presentation.get().effectiveMode
+  let stageEpoch = $presentation.get().stageEpoch
+  unsubs.push(
+    $presentation.listen(state => {
+      if (state.effectiveMode !== presentationMode || state.stageEpoch !== stageEpoch) {
+        presentationMode = state.effectiveMode
+        stageEpoch = state.stageEpoch
+        invalidateConsult()
+      }
+    })
+  )
 
   const onStateOrEventChange = () => {
     void consultAutonomyLLM(false)

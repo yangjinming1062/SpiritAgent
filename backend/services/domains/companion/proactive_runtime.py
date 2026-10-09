@@ -4,7 +4,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 from components import SETTINGS, safe_json_loads
-from modules.companion import Persona
+from modules.companion import Persona, PresentationMode
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,22 @@ class UserProactiveRecord:
     busy_count: int = 0
     available: bool = False
     observed_at: float = 0.0
+    presentation_mode: PresentationMode | None = None
+    presentation_revision: int = 0
+
+
+class PresentationSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    mode: PresentationMode
+    revision: int
+
+
+def get_presentation_snapshot(user_id: int) -> PresentationSnapshot | None:
+    rec = get_user_proactive_record(user_id)
+    if rec.presentation_mode is None or time.monotonic() - rec.observed_at > PRESENCE_TTL_SECONDS:
+        return None
+    return PresentationSnapshot(mode=rec.presentation_mode, revision=rec.presentation_revision)
 
 
 def get_user_proactive_record(user_id: int) -> UserProactiveRecord:
@@ -54,12 +71,19 @@ def note_outreach_throttle(user_id: int) -> None:
     get_user_proactive_record(user_id).last_outreach_ts = time.monotonic()
 
 
-def observe_companion_presence(user_id: int, available: bool) -> bool:
+def observe_companion_presence(user_id: int, available: bool, *, presentation_mode: PresentationMode | None) -> bool:
     rec = get_user_proactive_record(user_id)
     now = time.monotonic()
     became_available = available and (not rec.available or now - rec.observed_at > PRESENCE_TTL_SECONDS)
+    if (
+        rec.available != available
+        or rec.presentation_mode != presentation_mode
+        or now - rec.observed_at > PRESENCE_TTL_SECONDS
+    ):
+        rec.presentation_revision += 1
     rec.available = available
     rec.observed_at = now
+    rec.presentation_mode = presentation_mode
     return became_available
 
 

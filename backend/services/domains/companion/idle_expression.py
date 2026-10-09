@@ -12,7 +12,13 @@ from pydantic import BaseModel
 from services.domains.conversation import load_recent_context_window
 from services.infrastructure.llm import UserLlmConfig
 
-from .prompt_runtime import load_available_expression_actions, load_companion_prompt_context, run_prompt_json
+from .proactive_runtime import get_presentation_snapshot
+from .prompt_runtime import (
+    load_available_expression_actions,
+    load_companion_prompt_context,
+    presentation_prompt,
+    run_prompt_json,
+)
 
 logger = get_logger(__name__)
 
@@ -33,6 +39,8 @@ async def check_idle_expression(
     ctx = await load_companion_prompt_context(user_id)
     if ctx is None:
         return IdleExpressionResult(expressed=False, reason="persona not ready")
+    if ctx.presentation is None:
+        return IdleExpressionResult(expressed=False, reason="presentation unavailable")
 
     async with SESSION_LOCAL() as db:
         available_actions = await load_available_expression_actions(db, user_id)
@@ -43,7 +51,9 @@ async def check_idle_expression(
     parsed, fail_reason = await run_prompt_json(
         user_id,
         llm_config,
-        resolve_prompt_text(IDLE_EXPRESSION_INSTRUCTIONS, ctx.language),
+        resolve_prompt_text(IDLE_EXPRESSION_INSTRUCTIONS, ctx.language)
+        + "\n\n"
+        + presentation_prompt(ctx.presentation, language=ctx.language),
         {
             "current_time": ctx.current_time,
             "persona": ctx.persona_extras,
@@ -58,6 +68,8 @@ async def check_idle_expression(
     )
     if parsed is None:
         return IdleExpressionResult(expressed=False, reason=fail_reason or "unparseable")
+    if ctx.presentation != get_presentation_snapshot(user_id):
+        return IdleExpressionResult(expressed=False, reason="presentation changed")
 
     if parsed.get("should_express") is not True:
         logger.info("idle_expression: skip", extra={"user_id": user_id})

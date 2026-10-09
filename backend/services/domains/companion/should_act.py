@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 from services.domains.conversation import load_recent_context_window
 from services.infrastructure.llm import UserLlmConfig
 
-from .prompt_runtime import load_companion_prompt_context, run_prompt_json
+from .proactive_runtime import get_presentation_snapshot
+from .prompt_runtime import load_companion_prompt_context, presentation_prompt, run_prompt_json
 
 logger = get_logger(__name__)
 
@@ -66,6 +67,8 @@ async def should_act(
     ctx = await load_companion_prompt_context(user_id)
     if ctx is None:
         return ShouldActResult(should_act=False, reason="persona not ready")
+    if ctx.presentation is None:
+        return ShouldActResult(should_act=False, action="stay", reason="presentation unavailable")
 
     # 搭话台词直接进入主会话；近期对话让开场白不重复、不违背用户刚表达的意愿。锁屏与全屏已在上方返回，不再作为资料。
     async with SESSION_LOCAL() as db:
@@ -74,7 +77,9 @@ async def should_act(
     parsed, fail_reason = await run_prompt_json(
         user_id,
         llm_config,
-        resolve_prompt_text(SHOULD_ACT_INSTRUCTIONS, ctx.language),
+        resolve_prompt_text(SHOULD_ACT_INSTRUCTIONS, ctx.language)
+        + "\n\n"
+        + presentation_prompt(ctx.presentation, language=ctx.language),
         {
             "output_language": ctx.language,
             "persona": ctx.persona_extras,
@@ -90,6 +95,8 @@ async def should_act(
     )
     if parsed is None:
         return ShouldActResult(should_act=False, reason=fail_reason or "llm_error")
+    if ctx.presentation != get_presentation_snapshot(user_id):
+        return ShouldActResult(should_act=False, action="stay", reason="presentation changed")
 
     should_act_bool = parsed.get("should_act") is True
     action = str(parsed.get("action") or "stay").lower().strip()

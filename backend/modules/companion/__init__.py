@@ -111,6 +111,7 @@ from .schemas_loop import (
     CompanionTurnRequest,
     CompanionWaitRequest,
     CompanionWakeEvent,
+    PresentationMode,
 )
 from .schemas_posts import (
     POST_COMMENT_MAX_CHARS,
@@ -198,6 +199,7 @@ __all__ = [
     "CompanionTurnRequest",
     "CompanionWaitRequest",
     "CompanionWakeEvent",
+    "PresentationMode",
     "companion_cron_source_key",
     "OUTFIT_POLICY_DEFAULT",
     "SceneListResponse",

@@ -86,6 +86,7 @@ from services.domains.companion import (
     get_disturbance_tier,
     get_onboarding_state,
     get_or_create_persona,
+    get_presentation_snapshot,
     invalidate_user_interaction_stats,
     list_tts_voices,
     match_user_voice,
@@ -339,7 +340,7 @@ async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | No
         with contextlib.suppress(Exception):
             await websocket.close(code=1008)
         MANAGER.disconnect(websocket, user_id)
-    observe_companion_presence(user_id, False)
+    observe_companion_presence(user_id, False, presentation_mode=None)
     await _cancel_origin_turns(user_id, "desktop", str(session.login_record_id))
     await _cancel_tasks([session.grace_timer_task, *session.background_tasks])
     await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
@@ -487,7 +488,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
     finally:
         if MANAGER.active_connections.get(user_id) is websocket:
             MANAGER.disconnect(websocket, user_id)
-            observe_companion_presence(user_id, False)
+            observe_companion_presence(user_id, False, presentation_mode=None)
             session.dispatcher.set_sender(_noop_send)
             task = asyncio.create_task(_expire_disconnected_gateway(user_id))
             _GRACE_TIMER_TASKS.add(task)
@@ -1504,6 +1505,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     user_id,
                     emitter,
                     session_client_context=client_context,
+                    desktop_interaction=session.origin_kind == "desktop",
                     track_task=session.account.track,
                     session_settings=runtime.settings,
                     persisted_message_id=persisted_message_id,
@@ -1676,7 +1678,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
         local_hour = coerce_hour_0_23(params.get("local_hour"))
         llm_config = await _resolve_llm_config(user_id)
+        presentation = get_presentation_snapshot(user_id)
         result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
+        if presentation != get_presentation_snapshot(user_id):
+            return {"expressed": False, "action_id": None, "reason": "presentation changed"}
         if result.expressed and result.action_id is not None:
             async with SESSION_LOCAL() as db:
                 play = await request_playback(
@@ -1685,6 +1690,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     ActionPlayRequest(action_id=result.action_id, reason="idle expression"),
                     source="autonomous",
                 )
+                if presentation != get_presentation_snapshot(user_id):
+                    return {"expressed": False, "action_id": None, "reason": "presentation changed"}
                 await db.commit()
             return {
                 "expressed": play.outcome == "queued",
@@ -1704,7 +1711,11 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             signal = CompanionSignal.model_validate(params)
         except ValueError as exc:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
-        became_available = observe_companion_presence(user_id, signal.available)
+        became_available = observe_companion_presence(
+            user_id,
+            signal.available,
+            presentation_mode=signal.presentation_mode,
+        )
         if not signal.available:
             await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
             return {"queued": False}
@@ -1750,6 +1761,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         screen_locked = bool(params.get("screen_locked"))
         seconds_since_last_action = coerce_non_negative_float(params.get("seconds_since_last_action"))
 
+        llm_config = await _resolve_llm_config(user_id)
+        presentation = get_presentation_snapshot(user_id)
         res = await should_act(
             user_id=user_id,
             idle_seconds=idle_seconds,
@@ -1758,11 +1771,17 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             fullscreen=fullscreen,
             screen_locked=screen_locked,
             seconds_since_last_action=seconds_since_last_action,
-            llm_config=await _resolve_llm_config(user_id),
+            llm_config=llm_config,
         )
+        if presentation != get_presentation_snapshot(user_id):
+            return {"should_act": False, "action": "stay", "reason": "presentation changed"}
         # 走过去搭话（DESIGN「位置、移动与缩放」）：开场白经 companion.message 独立投递、客户端边走边说，RPC 响应只承载走位动作；should_act 已把 approach 的 params 收敛为非空 text。
-        if res.action == "approach" and res.params is not None:
-            await emit_companion_message(user_id, res.params["text"])
+        if (
+            res.action == "approach"
+            and res.params is not None
+            and not await emit_companion_message(user_id, res.params["text"], presentation=presentation)
+        ):
+            return {"should_act": False, "action": "stay", "reason": "presentation changed"}
         return res.model_dump()
 
     register("companion.should_act", companion_should_act)
