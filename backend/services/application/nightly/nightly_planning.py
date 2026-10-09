@@ -282,13 +282,20 @@ class _ActionRun:
     facts: list[str]
 
 
+def _planning_context_payload(context: PlanningContext) -> dict[str, Any]:
+    """Expose a generic outfit field to the model while retaining the internal execution field name."""
+    payload = context.model_dump(exclude_none=True)
+    payload["outfits"] = payload.pop("wardrobe", [])
+    return payload
+
+
 _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="outfit.wear",
         phase=10,
-        description="换上 wardrobe 中一套已就绪（status=ready）的外观。outfit_id 取 wardrobe 中实际存在的 id；已经穿着的无需重复选择。",
+        description="换上一套已有且已就绪（status=ready）的外观。outfit_id 取可用外观资料中实际存在的 id；已经穿着的无需重复选择。",
         arguments={
-            "outfit_id": "integer：wardrobe 中 status=ready 且尚未穿着的外观 id，不填名称或自造 id。",
+            "outfit_id": "integer：可用外观资料中 status=ready 且尚未穿着的外观 id，不填名称或自造 id。",
             "reason": "string（可选）：选择这套已有外观的具体理由。",
         },
         exclusive_group="outfit",
@@ -1269,7 +1276,7 @@ async def run_nightly_planning(
             "recall_highlights": [item.model_dump() for item in recall_highlights],
             "today_conversations": today_conversations,
             **({"post_interactions": post_interactions} if post_interactions else {}),
-            "autonomous_context": context.model_dump(exclude_none=True),
+            "autonomous_context": _planning_context_payload(context),
             "current_time": utc_now().astimezone(timezone).isoformat(),
             **date_context.model_dump(),
             **anomaly_stats,

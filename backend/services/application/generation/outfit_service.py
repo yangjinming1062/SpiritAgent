@@ -80,6 +80,13 @@ _DRAFT_TTL_MARGIN = timedelta(hours=1)
 _DESCRIBE_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
 
 
+def _valid_outfit_name(name: str, language: str) -> bool:
+    """Keep the stored wardrobe label aligned with the naming contract in ``OUTFIT_DESCRIBE_SYSTEM``."""
+    if language == "zh":
+        return 1 <= len(name) <= 8
+    return 1 <= len(name.split()) <= 5 and len(name) <= 64
+
+
 class OutfitError(RuntimeError):
     """换装流程错误；str(exc) 恒为可展示的公开文案。"""
 
@@ -920,10 +927,17 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
             logger.warning("outfit description fields invalid", extra={"user_id": user_id, "outfit_id": outfit_id})
             raise OutfitStateError("外观描述未完成，请重试补全")
         name, description = name.strip(), description.strip()
-        if not name or len(name) > 64 or not description or len(description) > 2000:
+        output_language = payload["output_language"]
+        if not _valid_outfit_name(name, output_language) or not description or len(description) > 500:
             logger.warning(
-                "outfit description output empty",
-                extra={"user_id": user_id, "outfit_id": outfit_id, "output_chars": len(raw)},
+                "outfit description output invalid",
+                extra={
+                    "user_id": user_id,
+                    "outfit_id": outfit_id,
+                    "output_chars": len(raw),
+                    "name_chars": len(name),
+                    "description_chars": len(description),
+                },
             )
             raise OutfitStateError("外观描述未完成，请重试补全")
         async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:

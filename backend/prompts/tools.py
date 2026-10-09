@@ -61,8 +61,8 @@ MEDIA_INSPECTION_INSTRUCTIONS = (
 _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
     "Optional complete outfit for this generation only (clothing, colors, hairstyle and hair color, makeup, "
     "footwear, accessories). Use with subject='self'. It replaces the default outfit for this output only, "
-    "without changing the wardrobe or the scene. Scenes describe the background; your current clothing "
-    "comes from the wardrobe. Do not treat other depicted subjects' clothing as yours. For partial revisions, merge "
+    "without changing the current outfit or the scene. Scenes describe the background; your current clothing "
+    "comes from confirmed outfit data. Do not treat other depicted subjects' clothing as yours. For partial revisions, merge "
     "the confirmed current outfit with the changed "
     "dimensions into one complete description."
 )
@@ -79,7 +79,7 @@ IMAGE_GENERATION_PARAM_DESCS = {
     "subject": (
         "Set to 'self' when the current character appears in the image. Their reference image, confirmed physical "
         "features and the default outfit description are supplied automatically; describe the scene, pose, "
-        "and action without reconstructing appearance from memory. Current clothing comes from the wardrobe; "
+        "and action without reconstructing appearance from memory. Current clothing comes from confirmed outfit data; "
         "the scene describes the background, not your clothing."
     ),
     "outfit_override": _SELF_MEDIA_OUTFIT_OVERRIDE_DESC,
