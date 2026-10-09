@@ -1871,7 +1871,8 @@ export function createConversationRuntime(sessionId: string | null) {
     const unfinished = $chatTurnInFlight.get() || $lastAssistantStreaming.get() || $pendingPromptBatch.get().length > 0
     cancelPendingFlush()
 
-    if (unfinished) {
+    // 陪伴回合断线后继续生成，终态由恢复快照确认。
+    if (unfinished && !($chatSessionKind.get() === 'special' && $chatSessionPresetId.get() === 'companion')) {
       markAssistantTerminal({ error: getStrings().chat.connectionInterrupted })
     }
 

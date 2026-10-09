@@ -113,6 +113,7 @@ flowchart TD
 - `seq` 是当前连接的网关重放流位置，跨聊天 Session 共享；宽限期重连可复用。网关销毁、登录记录更换或服务重启后可重新开始，不是数据库消息 ID 或永久递增编号。
 - `stream_id` 标识连接重放流，变更时重置旧序号；请求重放须同时带流身份与 `last_seq`。Client 按 `seq` 去重并用 `session.ack` 确认消费。ACK 只裁剪重放缓冲，不证明业务提交或工具执行；RPC 响应不属于该事件流。
 - 重放、增量合并与全量替换分别处理，不能混用旧流游标。
+- 桌面断连超过 `desktop_disconnect_grace_seconds` 后，固定陪伴会话（`special + companion`）的已受理用户回合继续执行并落库，其他桌面用户回合中断；重连通过 `session.resume` 恢复。显式停止、授权失效、维护及 Backend 停机仍取消回合。
 - 历史同步复用已有会话运行时，不取消在途回合；停止回复须显式调用 `session.interrupt`。快照与流游标在同一运行态锁内取得，桌面挂载期间暂存事件，快照内已表达的回合帧不重复追加；宿主通过内部 `session.snapshot` 将同一快照同步所有 IPC 代理窗口。
 - 历史携持久化消息 ID 与毫秒级创建时间。全量恢复达到防御上限时返回 `truncated` 与 `next_cursor`（本页首条 ID，未截断为 null）；可用 `session.history` 携 `before_id` 向前分页读取更早历史。
 - 握手后所有事件帧（含回合帧与 `tool.call`）先暂存，直到挂载类 RPC（`session.resume`、`session.get_main`、`session.create`、`session.fork`）或约 10 秒超时后才冲刷；重放缓冲容量与时限见 [buffer](../backend/services/infrastructure/desktop/buffer.py)，恢复结果字段见 [runtime](../backend/services/adapters/desktop/runtime.py) 的 `SessionResumeResult`。

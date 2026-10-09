@@ -100,6 +100,8 @@ from services.domains.companion import (
 )
 from services.domains.conversation import (
     CLEARED_STATUS_SUBTYPE,
+    COMPANION_PRESET_ID,
+    SPECIAL_KIND,
     SYSTEM_PRESET_CATALOG,
     EditNotAllowedError,
     ForkNotAllowedError,
@@ -263,14 +265,26 @@ async def _cancel_tasks(tasks: list[asyncio.Task | None]) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-async def _cancel_origin_turns(user_id: int, origin_kind: str, origin_id: str | None) -> None:
+async def _cancel_origin_turns(
+    user_id: int,
+    origin_kind: str,
+    origin_id: str | None,
+    *,
+    preserve_companion_turns: bool = False,
+) -> None:
     account = _ACCOUNT_RUNTIMES.get(user_id)
     if account is None:
         return
     runtimes = [
         runtime
         for runtime in account.runtime_sessions.values()
-        if runtime.origin_kind == origin_kind and (origin_id is None or runtime.origin_id == origin_id)
+        if runtime.origin_kind == origin_kind
+        and (origin_id is None or runtime.origin_id == origin_id)
+        and not (
+            preserve_companion_turns
+            and runtime.kind == SPECIAL_KIND
+            and runtime.system_preset_id == COMPANION_PRESET_ID
+        )
     ]
     await _cancel_tasks(
         [runtime.chat_task for runtime in runtimes if runtime.active_turn is None or runtime.active_turn.running],
@@ -331,9 +345,22 @@ async def desktop_history_lock(session_id: str) -> AsyncIterator[None]:
         yield
 
 
-async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | None = None) -> None:
+async def _terminate_user_gateway_locked(
+    user_id: int,
+    login_record_id: int | None = None,
+    *,
+    preserve_companion_turns: bool = False,
+) -> None:
     session = _USER_SESSIONS.get(user_id)
     if session is None or (login_record_id is not None and session.login_record_id != login_record_id):
+        # 断线后网关可能已释放，撤权仍需取消账户持有的来源回合。
+        if not preserve_companion_turns:
+            await _cancel_origin_turns(
+                user_id,
+                "desktop",
+                str(login_record_id) if login_record_id is not None else None,
+            )
+            _release_account_runtime(user_id)
         return
     _USER_SESSIONS.pop(user_id, None)
     if (websocket := MANAGER.active_connections.get(user_id)) is not None:
@@ -341,7 +368,12 @@ async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | No
             await websocket.close(code=1008)
         MANAGER.disconnect(websocket, user_id)
     observe_companion_presence(user_id, False, presentation_mode=None)
-    await _cancel_origin_turns(user_id, "desktop", str(session.login_record_id))
+    await _cancel_origin_turns(
+        user_id,
+        "desktop",
+        str(session.login_record_id),
+        preserve_companion_turns=preserve_companion_turns,
+    )
     await _cancel_tasks([session.grace_timer_task, *session.background_tasks])
     await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
     await MANAGER.aunregister_dispatcher(user_id)
@@ -379,7 +411,7 @@ async def _expire_disconnected_gateway(user_id: int) -> None:
         await asyncio.sleep(SETTINGS.desktop_disconnect_grace_seconds)
         async with _user_lock(user_id):
             if not MANAGER.is_connected(user_id):
-                await _terminate_user_gateway_locked(user_id)
+                await _terminate_user_gateway_locked(user_id, preserve_companion_turns=True)
     except asyncio.CancelledError:
         pass
 
@@ -418,7 +450,9 @@ async def _read_socket(websocket: WebSocket, session: UserGatewaySession) -> Non
                 else _USER_SESSIONS.get(session.user_id) is session
                 and MANAGER.active_connections.get(session.user_id) is websocket
             )
-            valid = current and await session.authorized()
+            if not current:
+                return
+            valid = await session.authorized()
             if valid:
                 dispatch_task = asyncio.create_task(session.dispatcher.handle_raw(data))
                 session.track(dispatch_task)
@@ -447,7 +481,10 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
             return
         session = _USER_SESSIONS.get(user_id)
         if session is not None and (session.login_record_id != ticket.login_record_id or MANAGER.is_connected(user_id)):
-            await _terminate_user_gateway_locked(user_id)
+            await _terminate_user_gateway_locked(
+                user_id,
+                preserve_companion_turns=session.login_record_id == ticket.login_record_id,
+            )
             session = None
         try:
             await MANAGER.connect(websocket, user_id)
@@ -476,7 +513,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
             MANAGER.register_dispatcher(user_id, session.dispatcher)
         except BaseException:
             logger.exception("desktop websocket initialization failed", extra={"user_id": user_id})
-            await _terminate_user_gateway_locked(user_id)
+            await _terminate_user_gateway_locked(user_id, preserve_companion_turns=True)
             MANAGER.disconnect(websocket, user_id)
             with contextlib.suppress(Exception):
                 await websocket.close(code=1011)
