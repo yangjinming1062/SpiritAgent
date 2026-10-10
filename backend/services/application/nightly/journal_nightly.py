@@ -1,22 +1,24 @@
 """夜间自主日记：决定、发布与阶段恢复。"""
 
+from collections.abc import Awaitable, Callable
 from datetime import date
+from functools import partial
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, SETTINGS, parse_llm_json, resolve_prompt_text, utc_now
+from components import NIGHTLY_REASONING_EFFORT, SESSION_LOCAL, SETTINGS, resolve_prompt_text, utc_now
 from modules.companion import DIARY_BODY_MAX_CHARS, DiaryContent
-from prompts.nightly import JOURNAL_DIARY_TEXTS
-from pydantic import ValidationError
+from prompts.nightly import JOURNAL_DIARY_TEXTS, NIGHTLY_JSON_REPAIR_TEXTS
 
 from services.contracts import MemoryScope
 from services.domains.journal import get_diary_by_date, publish_diary
 from services.domains.memory import backfill_diary_embeddings, load_companion_reflection, narrative_date
 from services.domains.posts import PostInteractions
-from services.infrastructure.llm import UserLlmConfig, call_llm_once
+from services.infrastructure.llm import LlmAttemptDiagnostic, UserLlmConfig, call_llm_json
 
+from .output_contracts import DIARY_DECISION, parse_diary_decision
 from .stage_state import load_narrative_result, save_narrative_result
-from .window import in_nightly_window
+from .window import in_nightly_window, require_nightly_window
 
 
 async def project_today(
@@ -33,6 +35,7 @@ async def project_today(
     contextual_memories: dict[str, str],
     background_memories: dict[str, str],
     user_timezone: str,
+    diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> bool:
     """True 已发布，False 正常跳过；模型调用或输出失败时抛出。"""
     previous_reflection = None
@@ -70,6 +73,8 @@ async def project_today(
         contextual_memories,
         background_memories,
         previous_reflection,
+        before_call=partial(require_nightly_window, ZoneInfo(user_timezone)),
+        diagnostics=diagnostics,
     )
     async with SESSION_LOCAL() as db:
         if not SETTINGS.diary_nightly_enabled:
@@ -94,6 +99,9 @@ async def _compose_diary(
     contextual_memories: dict[str, str],
     background_memories: dict[str, str],
     previous_reflection: dict[str, str | None] | None,
+    *,
+    before_call: Callable[[], Awaitable[None]] | None = None,
+    diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> DiaryContent | Literal[False]:
     payload = {
         "local_date": target_date.isoformat(),
@@ -107,26 +115,16 @@ async def _compose_diary(
         "persona": persona,
         "language": language,
     }
-    raw = await call_llm_once(
+    return await call_llm_json(
         llm_cfg,
         resolve_prompt_text(JOURNAL_DIARY_TEXTS, language),
         payload,
-        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
-        json_output=True,
+        max_output_tokens=None,
+        reasoning_effort=NIGHTLY_REASONING_EFFORT,
+        schema=DIARY_DECISION.json_schema(),
+        schema_name="nightly_diary",
+        parse_output=parse_diary_decision,
+        repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, language),
+        before_call=before_call,
+        diagnostics=diagnostics,
     )
-    parsed = parse_llm_json(raw)
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("publish"), bool):
-        raise ValueError("Expected an explicit publish decision")
-    if parsed["publish"] is False:
-        if set(parsed) != {"publish"}:
-            raise ValueError("Declined diary must contain only publish")
-        return False
-    try:
-        return DiaryContent.model_validate({key: value for key, value in parsed.items() if key != "publish"})
-    except ValidationError as exc:
-        # 错误文本进入夜间日志与管理页：不带模型输出原文，只列日记自有字段名，模型自取的字段名以固定措辞概括。
-        failed = {str(error["loc"][0]) if error["loc"] else "" for error in exc.errors(include_input=False)}
-        fields = sorted(name for name in failed if name in DiaryContent.model_fields)
-        if len(fields) < len(failed):
-            fields.append("unexpected fields")
-        raise ValueError(f"invalid diary fields: {', '.join(fields)}") from None

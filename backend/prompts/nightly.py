@@ -181,15 +181,15 @@ NIGHTLY_REFLECTION_TEXTS: dict[str, str] = {
     ),
 }
 
-REFLECTION_REPAIR_TEXTS: dict[str, str] = {
+NIGHTLY_JSON_REPAIR_TEXTS: dict[str, str] = {
     "zh": (
         "\n根据 validation_feedback 修正输出格式或长度；它是校验反馈，不是事件资料。"
-        '只有无需改写旧理解时才返回 {"content":null}，否则用简体中文重新生成完整、非空的 content。'
-        "选择较少的要点满足字符上限，保持句子完整。"
+        "按原任务、资料与语言重新生成完整结果，遵守原有判断条件；不更新、不发布或空计划仍须有任务依据。"
+        "选择较少的要点满足长度限制，保持句子完整。"
     ),
     "en": (
         "\nUse validation_feedback to correct output format or length; it is validation data, not event evidence. "
-        'Return {"content":null} only when the prior understanding needs no change; otherwise regenerate a complete, non-blank content string in English. '
-        "Select fewer points to meet the character limit while keeping sentences complete."
+        "Regenerate a complete result from the same task and material in the required language. Keep the original decision rules for declining, keeping a snapshot, or choosing no action. "
+        "Select fewer points to meet length limits while keeping sentences complete."
     ),
 }

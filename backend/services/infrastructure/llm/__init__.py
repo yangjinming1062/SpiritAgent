@@ -24,7 +24,10 @@ from .llm_fallback import execute_with_fallback
 from .llm_retry import call_with_retry
 from .prompt_engineer import (
     IncompleteLlmResponseError,
+    LlmAttemptDiagnostic,
+    LlmJsonValidationError,
     VisualReasoningError,
+    call_llm_json,
     call_llm_once,
     chat,
     vision_chat,
@@ -91,6 +94,8 @@ __all__ = [
     "IncompleteLlmResponseError",
     "LLMRuntimeError",
     "LlmCallBlockedError",
+    "LlmAttemptDiagnostic",
+    "LlmJsonValidationError",
     "MissingLlmConfigError",
     "MissingVideoModelError",
     "ProviderConfig",
@@ -110,6 +115,7 @@ __all__ = [
     "build_provider",
     "build_responses_kwargs",
     "call_llm_once",
+    "call_llm_json",
     "call_with_retry",
     "chat",
     "classify_api_error",

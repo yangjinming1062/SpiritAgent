@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import ClassVar, Literal
@@ -126,19 +126,31 @@ class ChatProvider(BaseProvider):
         effort = resolve_provider_reasoning_effort(requested, self.REASONING_EFFORTS)
         return {"effort": effort} if effort else None
 
-    def companion_reply_client(self, *, repair: bool) -> AsyncOpenAI | ChatSchemaResponsesClient:
+    def structured_response_client(
+        self,
+        *,
+        repair: bool,
+        before_submit: Callable[[], Awaitable[None]] | None = None,
+    ) -> AsyncOpenAI | ChatSchemaResponsesClient:
         if repair:
-            return ChatSchemaResponsesClient(self.raw_client())
+            return ChatSchemaResponsesClient(self.raw_client(), before_submit=before_submit)
         return self.raw_client()
 
-    async def companion_reply_options(self, schema: dict, *, allow_tools: bool, repair: bool = False) -> dict:
-        """供应商实际支持的陪伴结构输出参数；schema 仍由应用层统一校验。"""
+    async def structured_response_options(
+        self,
+        schema: dict,
+        *,
+        name: str,
+        allow_tools: bool,
+        repair: bool = False,
+    ) -> dict:
+        """供应商实际支持的结构输出参数；schema 仍由应用层统一校验。"""
         if repair:
             return {
                 "text": {
                     "format": {
                         "type": "json_schema",
-                        "name": "companion_reply",
+                        "name": name,
                         "strict": True,
                         "schema": {**schema, "type": "object"},
                     },

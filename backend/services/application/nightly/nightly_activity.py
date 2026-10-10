@@ -2,14 +2,15 @@ import contextlib
 import json
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
+from functools import partial
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import (
+    NIGHTLY_REASONING_EFFORT,
     SETTINGS,
     format_local_iso,
     get_logger,
-    parse_llm_json,
     resolve_language,
     resolve_prompt_text,
     session_scope,
@@ -20,7 +21,7 @@ from modules.companion import Persona
 from modules.conversation import Conversation, Message
 from modules.scheduler import NightlyActivityLog
 from modules.settings import get_user_setting, resolve_user_timezone
-from prompts.nightly import NIGHTLY_REFLECTION_TEXTS, REFLECTION_REPAIR_TEXTS
+from prompts.nightly import NIGHTLY_JSON_REPAIR_TEXTS, NIGHTLY_REFLECTION_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -44,12 +45,13 @@ from services.domains.memory import (
     upsert_slotted_memory,
 )
 from services.domains.posts import collect_post_interactions
-from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_user_llm_config
+from services.infrastructure.llm import LlmAttemptDiagnostic, UserLlmConfig, call_llm_json, resolve_user_llm_config
 
 from .journal_nightly import project_today
 from .nightly_planning import ActionExecutionResult, DateContext, load_terminal_action_results, run_nightly_planning
+from .output_contracts import parse_reflection, reflection_schema
 from .stage_state import load_narrative_result, save_narrative_result
-from .window import in_nightly_window
+from .window import NightlyWindowClosedError, in_nightly_window, require_nightly_window
 
 logger = get_logger(__name__)
 
@@ -100,6 +102,7 @@ async def _stage_4_reflection(
     log_id: int,
     *,
     user_timezone: str,
+    diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> bool:
     async with session_scope() as db:
         previous_result = await load_narrative_result(db, log_id, "reflection")
@@ -126,34 +129,25 @@ async def _stage_4_reflection(
         "max_content_chars": SETTINGS.reflection_max_content_chars,
         "persona": persona,
     }
-    instructions = resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language)
-    for attempt in range(2):
-        if not in_nightly_window(utc_now(), ZoneInfo(user_timezone)):
-            return False
-        raw = await call_llm_once(
-            llm_cfg,
-            instructions + (resolve_prompt_text(REFLECTION_REPAIR_TEXTS, language) if attempt else ""),
-            payload,
-            max_output_tokens=SETTINGS.nightly_reflection_max_tokens,
-            json_output=True,
-        )
-        parsed = parse_llm_json(raw)
-        valid_shape = isinstance(parsed, dict) and set(parsed) == {"content"}
-        if valid_shape and parsed["content"] is None:
-            async with session_scope() as db:
-                await save_narrative_result(db, log_id, "reflection", False)
-                await db.commit()
-            return False
-        raw_content = parsed.get("content") if valid_shape else None
-        content = raw_content.strip() if isinstance(raw_content, str) else ""
-        if content and len(content) <= SETTINGS.reflection_max_content_chars:
-            break
-        payload["validation_feedback"] = {
-            "error": "Expected content:null or a non-blank string within max_content_chars",
-            "received_content_chars": len(content),
-        }
-    else:
-        raise ValueError("Invalid companion reflection after repair")
+    max_content_chars = SETTINGS.reflection_max_content_chars
+    content = await call_llm_json(
+        llm_cfg,
+        resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language),
+        payload,
+        schema=reflection_schema(max_content_chars),
+        schema_name="nightly_reflection",
+        parse_output=partial(parse_reflection, max_content_chars=max_content_chars),
+        repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, language),
+        max_output_tokens=None,
+        reasoning_effort=NIGHTLY_REASONING_EFFORT,
+        before_call=partial(require_nightly_window, ZoneInfo(user_timezone)),
+        diagnostics=diagnostics,
+    )
+    if content is None:
+        async with session_scope() as db:
+            await save_narrative_result(db, log_id, "reflection", False)
+            await db.commit()
+        return False
     async with session_scope() as db:
         row = await save_companion_reflection(db, scope, content, date.fromisoformat(local_date_str))
         item = EmbeddingItem(row.id, row.content, row.content_version)
@@ -308,10 +302,23 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
 
     # 各阶段顺序执行，失败域相互隔离；每个阶段的结果汇入 stages 给末尾日志。
     stages: list[dict[str, Any]] = []
+    stage_diagnostics: dict[str, list[LlmAttemptDiagnostic]] = {
+        "planning": [],
+        "reflection": [],
+        "journal nightly": [],
+    }
     if in_nightly_window(utc_now(), ZoneInfo(tz_str)):
         try:
-            await review_memories(scope, llm_config=llm_cfg)
+            await review_memories(
+                scope,
+                llm_config=llm_cfg,
+                max_output_tokens=None,
+                before_call=partial(require_nightly_window, ZoneInfo(tz_str)),
+                reasoning_effort=NIGHTLY_REASONING_EFFORT,
+            )
             stages.append({"stage": "memory_review", "status": "ok"})
+        except NightlyWindowClosedError as exc:
+            stages.append({"stage": "memory_review", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
             logger.exception("nightly memory review failed", extra={"user_id": user_id})
             stages.append({"stage": "memory_review", "status": "error", "error": str(exc)})
@@ -400,9 +407,12 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 clean_messages,
                 posts.threads,
                 log_id=log_id,
+                diagnostics=stage_diagnostics["planning"],
             )
             stages.append({"stage": "planning", "status": "ok", "actions": planning_result.model_dump()})
             action_results = planning_result.actions
+        except NightlyWindowClosedError as exc:
+            stages.append({"stage": "planning", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
             logger.exception(
                 "nightly_activity: stage 3 planning failed",
@@ -459,8 +469,11 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 user_language,
                 log_id,
                 user_timezone=tz_str,
+                diagnostics=stage_diagnostics["reflection"],
             )
             stages.append({"stage": "reflection", "status": "ok" if reflection_ok else "skipped"})
+        except NightlyWindowClosedError as exc:
+            stages.append({"stage": "reflection", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
             logger.exception(
                 "nightly_activity: companion reflection failed",
@@ -490,14 +503,20 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 posts=posts,
                 persona=persona,
                 language=user_language,
+                diagnostics=stage_diagnostics["journal nightly"],
             )
             stages.append({"stage": "journal nightly", "status": "ok" if journal_ok else "skipped"})
+        except NightlyWindowClosedError as exc:
+            stages.append({"stage": "journal nightly", "status": "skipped", "reason": str(exc)})
         except Exception as exc:
             logger.exception("nightly_activity: journal nightly failed", extra={"user_id": user_id})
             stages.append({"stage": "journal nightly", "status": "error", "error": str(exc)})
     else:
         stages.append({"stage": "journal nightly", "status": "skipped"})
 
+    for stage in stages:
+        if diagnostics := stage_diagnostics.get(stage["stage"]):
+            stage["diagnostics"] = [item.model_dump() for item in diagnostics]
     has_errors = any(stage["status"] == "error" for stage in stages) or any(
         action.status in _FAILED_ACTION_STATUSES for action in action_results.values()
     )

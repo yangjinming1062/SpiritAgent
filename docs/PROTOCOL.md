@@ -175,7 +175,7 @@ flowchart TD
 
 ### 模型失败与重试预算
 
-- 通用调用按配置能力链依次尝试；供应商报错时不区分错误类型，结果未知除外，仍有下一家就回退。聊天回合在流首事件或非流式响应到达后锁定供应商；独立文本调用可对未完成响应回退，视觉分析也可对空结果回退。每家按自身模型能力重新计算参数；嵌入须保持模型一致，不使用文本回退。实现见 [llm_fallback.py](../backend/services/infrastructure/llm/llm_fallback.py)、[error_classifier.py](../backend/services/infrastructure/llm/error_classifier.py) 与 [prompt_engineer.py](../backend/services/infrastructure/llm/prompt_engineer.py)。媒体候选择优与下载、评分边界归 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
+- 通用调用按配置能力链依次尝试；供应商报错时不区分错误类型，结果未知除外，仍有下一家就回退。聊天回合在流首事件或非流式响应到达后锁定供应商；独立文本调用可对未完成响应或空正文回退，视觉分析也可对空结果回退。每家按自身模型能力重新计算参数；嵌入须保持模型一致，不使用文本回退。实现见 [llm_fallback.py](../backend/services/infrastructure/llm/llm_fallback.py)、[error_classifier.py](../backend/services/infrastructure/llm/error_classifier.py) 与 [prompt_engineer.py](../backend/services/infrastructure/llm/prompt_engineer.py)。媒体候选择优与下载、评分边界归 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
 - 同一端点的网络自动重试只用于幂等方法、显式幂等键或可确认未发送的连接失败，且请求体可重放；非幂等请求在写入或等待响应时断线按结果未知处理，不能换供应商重交。
 - 未交付正文、非内容过滤的不完整终态可在同供应商同参数重试，完成响应却没有任何正文的用户回复同样按此处理；所有供应商的陪伴回复在结构、日常分句、演绎或媒体校验失败时，都在同供应商进行独立格式修正。
 - 模型把完整的最终回复对象写成对未提供工具的单个调用时，参数视为本次响应的正文，走同一套校验与修正，不当作工具失败再试一轮。
@@ -318,7 +318,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 发布时间为实际完成时刻，活动归属日由发布任务记录；夜间规划、反思和日记按动态 ID 去重归集发布事实，资料中的发布与评论时间均转换为带时区偏移的用户本地时间。评论按自身发生的本地日期归集，包括较早动态上的新评论。备份规则见[覆盖恢复](#备份校验与覆盖恢复)。
 
-生成正文完整保存，超出容量时明确失败，不静默裁切。字段上限见[动态 schema](../backend/modules/companion/schemas_posts.py)与[日记 schema](../backend/modules/companion/schemas_journal.py)，中英文均按字符计数；反思的正文及输出预算由 [Settings](../backend/components/config.py) 的 `reflection_max_content_chars`、`nightly_reflection_max_tokens` 控制。
+生成正文完整保存，超出容量时明确失败，不静默裁切。字段上限见[动态 schema](../backend/modules/companion/schemas_posts.py)与[日记 schema](../backend/modules/companion/schemas_journal.py)，中英文均按字符计数；反思的正文上限由 [Settings](../backend/components/config.py) 的 `reflection_max_content_chars` 控制。
 
 ### 资产访问与缓存
 
@@ -514,7 +514,9 @@ standard 使用独立 automation 任务会话，可离线运行云端部分；�
 - 夜间总控约束规划与计划执行，动态互动归集、记忆整理、反思和日记不受总控影响。每项执行前重读政策与能力；场景不依赖外观或动作阶段，失败互相隔离。
 - 计划和动作账本先保存再执行，动作 ID 唯一且不改写；前置能力过滤后仍保留依赖，前置整项成功才解锁后续。规划按实际当前本地时间判断时效，不能把回顾日当作今天。文本与媒体参数执行前校验长度，不截断计划。
 - 有句柄先核对原任务；未知结果保留中断事实，不重发副作用。动态创作、日记、反思与次日联系只使用账本确认的已完成事实，部分成功只提供完成部分，动作受理不代表制作完成。
-- 日记和反思共用目标日同域对话、动态互动与已完成活动，无可读素材则跳过。反思格式至多修复一次，仍失败保留旧理解；完成决定与业务写入同事务保存，恢复复用结果。发布与召回契约在“动态与日记”定义。
+- 规划、日记和反思在供应商链内校验结构输出，每阶段整条链共用一次格式修正预算，仍无效时按配置回退；空正文、未完成和拒绝响应不进入格式修正。新增调用前重查夜间窗口，窗口关闭只记阶段跳过，不保存为模型主动拒绝。阶段结果保存脱敏的调用状态、预算、用量和校验诊断，不保存对话或模型正文。
+- 夜间记忆审阅、规划、日记和反思使用中等推理强度，不下发最大输出 token 限制；正文长度仍按各自契约校验。每次调用及其网络重试共用既有调用时限，未完成响应明确记为失败并按配置回退；记忆审阅的批次、修正和回退同样在新增调用前核对夜间窗口。
+- 日记和反思共用目标日同域对话、动态互动与已完成活动，无可读素材则跳过。反思仍失败保留旧理解；完成决定与业务写入同事务保存，恢复复用结果。发布与召回契约在“动态与日记”定义。
 
 窗口与阶段实现见 [nightly](../backend/services/application/nightly/)，调度所有者见 [cron.py](../backend/services/adapters/scheduler/cron.py)。
 

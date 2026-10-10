@@ -300,8 +300,7 @@ function MessageBubbleWithBody({
     const selection = window.getSelection()
     const rawSelection = selection?.toString().trim() ?? ''
 
-    const selectionText =
-      rawSelection && selection?.containsNode(event.currentTarget, true) ? rawSelection : ''
+    const selectionText = rawSelection && selection?.containsNode(event.currentTarget, true) ? rawSelection : ''
 
     // 按消息可用性装配菜单项；一项都没有（如纯流式等待）时只拦截原生菜单，不弹菜单。
     if (!selectionText && !canCopy && !canEdit && !canUndo && !canFork) {

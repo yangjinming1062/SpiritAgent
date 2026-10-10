@@ -7,7 +7,7 @@ from typing import Any
 from components import LLM_RETRY_MIN_TIMEOUT, SETTINGS, get_logger
 from openai import AsyncOpenAI
 
-from .error_classifier import LLMRuntimeError, classify_api_error
+from .error_classifier import LlmCallBlockedError, LLMRuntimeError, classify_api_error
 from .llm_debug import (
     log_event,
     new_call_id,
@@ -151,6 +151,8 @@ async def call_with_retry(
 
     try:
         result = await client.responses.create(**create_kwargs, extra_headers={"Idempotency-Key": call_id})
+    except LlmCallBlockedError:
+        raise
     except Exception as exc:
         classified = classify_api_error(
             exc,

@@ -22,7 +22,7 @@ DEFAULT_SESSION_TITLE: str = "New Conversation"  # 标题生成失败/跳过时�
 LLM_RETRY_MIN_TIMEOUT: float = 1.0
 CONTEXT_SUMMARY_HEADROOM_FACTOR: int = 2  # 留余量避免中途截断。
 TOOL_CALL_ID_HEX_PREFIX_LEN: int = 24  # 前 24 个 hex，96 bit 熵。
-NIGHTLY_PLANNING_REASONING_EFFORT: str = "high"
+NIGHTLY_REASONING_EFFORT: str = "medium"
 
 # SessionSettingsPatch 可写三键 → 全局 UserSetting key。
 SESSION_TO_GLOBAL_KEY_ALIASES: dict[str, str] = {

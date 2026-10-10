@@ -1,5 +1,6 @@
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,7 +10,7 @@ from prompts.memory import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 from sqlalchemy import func, select
 
 from services.contracts import MemoryScope, MemorySource
-from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_user_llm_config
+from services.infrastructure.llm import LlmCallBlockedError, UserLlmConfig, call_llm_once, resolve_user_llm_config
 
 from .memory_learning import (
     MemoryConflictError,
@@ -22,7 +23,7 @@ from .memory_policy import MemoryDecisions
 
 logger = get_logger(__name__)
 
-# 整批最多 24 项决策，证据引用与理由和推理共用输出预算。
+# 普通审阅的整批决策、证据引用与理由和推理共用输出预算。
 _MEMORY_REVIEW_MAX_OUTPUT_TOKENS = 32768
 
 # 每个记忆作用域一把审阅锁，保证同域审核串行；用户覆盖恢复/删除后经 invalidate 丢弃。
@@ -77,6 +78,9 @@ async def assess_memory_changes(
     llm_config: UserLlmConfig,
     proposal: dict[str, Any] | None = None,
     advance_review: bool = False,
+    max_output_tokens: int | None = _MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
+    before_call: Callable[[], Awaitable[None]] | None = None,
+    reasoning_effort: str | None = None,
 ) -> list[MemoryRecord]:
     payload = context.payload()
     payload["system_preset_id"] = scope.system_preset_id
@@ -88,8 +92,10 @@ async def assess_memory_changes(
             llm_config,
             MEMORY_POLICY + "\n" + MEMORY_REVIEW_INSTRUCTIONS,
             payload,
-            max_output_tokens=_MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
+            max_output_tokens=max_output_tokens,
             json_output=True,
+            before_call=before_call,
+            reasoning_effort=reasoning_effort,
         )
         try:
             parsed = MemoryDecisions.model_validate(parse_llm_json(raw))
@@ -109,6 +115,9 @@ async def review_memories(
     session_id: int | None = None,
     through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
+    max_output_tokens: int | None = _MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
+    before_call: Callable[[], Awaitable[None]] | None = None,
+    reasoning_effort: str | None = None,
 ) -> None:
     """审阅到截止消息；失败记入该范围的退避并向上抛出，成功清除退避。退避只由调用方查询，本函数不据此拒绝执行。"""
     try:
@@ -117,9 +126,12 @@ async def review_memories(
             session_id=session_id,
             through_message_id=through_message_id,
             llm_config=llm_config,
+            max_output_tokens=max_output_tokens,
+            before_call=before_call,
+            reasoning_effort=reasoning_effort,
         )
-    except MemoryConflictError:
-        # 记忆在审阅期间被并发修改，属瞬时冲突：不计入失败，也不启动退避。
+    except (MemoryConflictError, LlmCallBlockedError):
+        # 并发冲突和业务守卫的停止不计入失败退避。
         raise
     except Exception:
         _note_review_failure(scope, session_id)
@@ -133,6 +145,9 @@ async def _review_batches(
     session_id: int | None = None,
     through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
+    max_output_tokens: int | None = _MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
+    before_call: Callable[[], Awaitable[None]] | None = None,
+    reasoning_effort: str | None = None,
 ) -> None:
     async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
         started_at = utc_now()
@@ -171,4 +186,7 @@ async def _review_batches(
                 context,
                 llm_config=llm_config,
                 advance_review=True,
+                max_output_tokens=max_output_tokens,
+                before_call=before_call,
+                reasoning_effort=reasoning_effort,
             )

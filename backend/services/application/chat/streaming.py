@@ -262,8 +262,9 @@ async def _generate_llm_response(
             allow_media=bool(media_turn.artifacts),
             repair=reply_repair,
         )
-        reply_options = await provider.companion_reply_options(
+        reply_options = await provider.structured_response_options(
             schema,
+            name="companion_reply",
             allow_tools=not final_only and bool(active_schemas),
             repair=reply_repair,
         )
@@ -332,7 +333,7 @@ async def _generate_llm_response(
 
     turn_start_time = time.monotonic()
     # 请求失败交给编排层处理回退，避免先向客户端报错又交付下一供应商的正文。
-    client = provider.companion_reply_client(repair=reply_repair)
+    client = provider.structured_response_client(repair=reply_repair)
     response = await call_with_retry(client, context_length=ctx_length, **kwargs)
 
     turn_parts: list[str] = []

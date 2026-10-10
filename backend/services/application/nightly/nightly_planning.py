@@ -6,17 +6,17 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from functools import partial
 from time import monotonic
 from typing import Any, Literal, TypeGuard
 from zoneinfo import ZoneInfo
 
 from components import (
-    NIGHTLY_PLANNING_REASONING_EFFORT,
+    NIGHTLY_REASONING_EFFORT,
     SESSION_LOCAL,
-    SETTINGS,
     get_logger,
-    parse_llm_json,
     resolve_language,
+    resolve_prompt_text,
     utc_now,
 )
 from modules.auth import User
@@ -32,7 +32,12 @@ from modules.companion import (
 )
 from modules.scheduler import NightlyActivityAction, NightlyActivityLog
 from modules.settings import load_user_settings
-from prompts.nightly import NIGHTLY_FACT_TEXTS, OUTREACH_CONTEXT_TEMPLATES, PLANNING_SYSTEM_PROMPT
+from prompts.nightly import (
+    NIGHTLY_FACT_TEXTS,
+    NIGHTLY_JSON_REPAIR_TEXTS,
+    OUTREACH_CONTEXT_TEMPLATES,
+    PLANNING_SYSTEM_PROMPT,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,9 +72,16 @@ from services.domains.companion import (
 )
 from services.domains.memory import MemoryListItem
 from services.domains.posts import PostBlockedError, publication_quota_remaining
-from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_provider_chain
+from services.infrastructure.llm import (
+    LlmAttemptDiagnostic,
+    LlmJsonValidationError,
+    UserLlmConfig,
+    call_llm_json,
+    resolve_provider_chain,
+)
 
-from .window import in_nightly_window
+from .output_contracts import NightlyPlanOutput
+from .window import in_nightly_window, require_nightly_window
 
 logger = get_logger(__name__)
 
@@ -622,18 +634,13 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
 
 
 def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
-    if not isinstance(parsed, dict):
-        raise TypeError("nightly planning returned invalid JSON")
-    raw_actions = parsed.get("actions")
-    if not isinstance(raw_actions, list):
-        raise ValueError("nightly plan requires an actions array; use [] for no action")
+    raw_plan = NightlyPlanOutput.model_validate(parsed)
+    raw_actions = [action.model_dump() for action in raw_plan.actions]
     seen_ids: set[str] = set()
     for raw in raw_actions:
-        if not isinstance(raw, dict):
-            raise ValueError("Each planned action must be an object")
         action_id = raw.get("id")
         if not _is_action_id(action_id) or action_id in seen_ids:
-            raise ValueError("Each action requires a unique ID of 1-48 letters, digits, underscores or hyphens")
+            raise LlmJsonValidationError("duplicate_action_id", fields=("id",))
         seen_ids.add(action_id)
     available_names = {item.name for item in context.available_capabilities}
     seen_groups: set[str] = set()
@@ -655,7 +662,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
         if is_media and media_count >= _MAX_MEDIA_ACTIONS:
             continue
         # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
-        # null 视为没有依赖；依赖写法无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。
+        # 依赖 ID 无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。
         dependencies = raw.get("depends_on") or []
         if not isinstance(dependencies, list) or not all(_is_action_id(dep) for dep in dependencies):
             continue
@@ -686,8 +693,8 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     # 稳定排序：同阶段保持规划顺序。
     actions.sort(key=lambda action: action.phase)
     return NormalizedPlan(
-        theme=_text(parsed.get("theme")),
-        rationale=_text(parsed.get("rationale")),
+        theme=raw_plan.theme.strip(),
+        rationale=raw_plan.rationale.strip(),
         actions=actions,
     )
 
@@ -1257,6 +1264,7 @@ async def run_nightly_planning(
     post_interactions: list[dict[str, Any]],
     *,
     log_id: int,
+    diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> PlanningResult:
     timezone = ZoneInfo(date_context.user_timezone)
     context = await _collect_context(user_id, timezone)
@@ -1281,15 +1289,19 @@ async def run_nightly_planning(
             **date_context.model_dump(),
             **anomaly_stats,
         }
-        raw = await call_llm_once(
+        plan = await call_llm_json(
             llm_cfg,
             PLANNING_SYSTEM_PROMPT,
             payload,
-            max_output_tokens=SETTINGS.nightly_planning_max_tokens,
-            json_output=True,
-            reasoning_effort=NIGHTLY_PLANNING_REASONING_EFFORT,
+            max_output_tokens=None,
+            schema=NightlyPlanOutput.model_json_schema(),
+            schema_name="nightly_plan",
+            parse_output=partial(_normalize_plan, context=context),
+            repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, "en"),
+            reasoning_effort=NIGHTLY_REASONING_EFFORT,
+            before_call=partial(require_nightly_window, timezone),
+            diagnostics=diagnostics,
         )
-        plan = _normalize_plan(parse_llm_json(raw), context)
         await _persist_plan(log_id, plan)
     context.plan_theme = plan.theme
     actions = await _execute_persisted_actions(log_id, user_id, context, date_context)

@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from openai import APIStatusError, AsyncOpenAI
@@ -8,8 +9,14 @@ from openai.types.responses import Response
 class ChatSchemaResponsesClient:
     """为一次无工具格式修正兼容 Chat Completions 与 Responses。"""
 
-    def __init__(self, client: AsyncOpenAI) -> None:
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        *,
+        before_submit: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._client = client
+        self._before_submit = before_submit
         self.base_url = client.base_url
         self.responses = self
 
@@ -53,6 +60,8 @@ class ChatSchemaResponsesClient:
         # 仅在接口明确拒绝格式参数、尚未产生模型结果时降级；成功返回始终只消费一次。
         while True:
             try:
+                if self._before_submit is not None:
+                    await self._before_submit()
                 format_type = request.get("response_format", {}).get("type", "plain")
                 return await self._client.chat.completions.create(
                     **self._with_idempotency_key(request, "chat", format_type),
@@ -68,6 +77,8 @@ class ChatSchemaResponsesClient:
     async def _responses_completion(self, request: dict[str, Any]) -> Response:
         while True:
             try:
+                if self._before_submit is not None:
+                    await self._before_submit()
                 format_type = request.get("text", {}).get("format", {}).get("type", "plain")
                 return await self._client.responses.create(
                     **self._with_idempotency_key(request, "responses", format_type),
