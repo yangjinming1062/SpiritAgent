@@ -31,7 +31,6 @@ from services.infrastructure.llm import (
     build_responses_kwargs,
     call_with_retry,
     classify_api_error,
-    resolve_provider_reasoning_effort,
     speech_style_guidance,
 )
 
@@ -179,8 +178,7 @@ async def _generate_llm_response(
     allow_voice_fallback: bool = False,
 ) -> _LLMTurnResult:
     """单次 LLM 调用与正文交付；完整响应或流式首事件到达时锁定供应商，陪伴终端对象校验后交付气泡数组。"""
-    resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
-    reasoning = {"effort": resolved_effort} if resolved_effort else None
+    reasoning = await provider.reasoning_param(reasoning_effort)
     reply_repair = reply_preference is not None and reply_format_error is not None
     instructions = (
         resolve_prompt_text(COMPANION_REPLY_EDIT_GUIDANCES, lang)
@@ -470,6 +468,12 @@ async def _generate_llm_response(
     # 确认完整终态且没有工具调用，才交付正文；工具轮的重叠台词不能先进入气泡或 TTS。
     if delivery != "stream" and not tool_calls_list:
         text = "".join(pending_text)
+        if reply_preference is not None and not text.strip() and not allow_silence and reply_format_error is None:
+            # 模型完成响应却没有任何正文：不是可编辑的草稿。先按不完整终态重试；恢复预算用尽后仍为空，
+            # 视为没有台词的回复，只交付本回合已生成的媒体（没有媒体则照常报告格式错误）。
+            if not allow_voice_fallback:
+                raise _IncompleteResponseError("empty_output", text_emitted=False)
+            text = '{"kind":"dialogue","bubbles":[]}'
         if reply_preference is not None:
             # 本回合全部校验共享一次语料扫描；工具轮与失败路径不进入此块，保持零扫描。
             refs = ReplyReferences.from_texts(reference_texts)
@@ -529,7 +533,7 @@ async def _generate_llm_response(
                     raise invalid_reply(exc, raw_reply) from exc
                 pending_text = [text]
                 logger.warning(
-                    "Companion voice performance unavailable; delivering dialogue as text",
+                    "Companion reply degraded after the repair budget was used",
                     extra={
                         "provider": provider.provider_name,
                         "model": model_name,

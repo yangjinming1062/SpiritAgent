@@ -48,6 +48,32 @@ AvailabilityCheck = Callable[[], bool]
 ToolLocation = Literal["backend", "memory", "runner"]
 
 
+def _argument_problem(name: str, schema: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """按工具自己的 schema 核对必填参数，以及 schema 声明 additionalProperties=false 时的多余参数；说明可直接用于修正调用。
+
+    允许 null 的必填项（如 expected_set_id）只要求模型表态，缺省仍按空值交给工具处理。
+    """
+    parameters = schema.get("parameters") or {}
+    properties = parameters.get("properties") or {}
+    required = parameters.get("required") or []
+
+    def nullable(key: str) -> bool:
+        return any(
+            isinstance(variant, dict) and variant.get("type") == "null"
+            for variant in properties.get(key, {}).get("anyOf") or []
+        )
+
+    problems = []
+    if missing := [key for key in required if key not in args and not nullable(key)]:
+        problems.append("missing required parameter " + ", ".join(missing))
+    if parameters.get("additionalProperties") is False and (unknown := [key for key in args if key not in properties]):
+        problems.append("unknown parameter " + ", ".join(unknown))
+    if not problems:
+        return None
+    accepted = ", ".join(key + (" (required)" if key in required else "") for key in properties)
+    return f"Invalid arguments for {name}: {'; '.join(problems)}. Accepted parameters: {accepted}."
+
+
 @dataclass(frozen=True)
 class _BackendTool:
     schema: dict[str, Any]
@@ -123,6 +149,8 @@ class ToolsRegistry:
         tool = self._backend_tools.get(name)
         if tool is None:
             return tool_error(f"Tool {name} not found in backend registry.")
+        if (problem := _argument_problem(name, tool.schema, args)) is not None:
+            return tool_error(problem)
         try:
             result = tool.func(**{**args, **context})
             if inspect.isawaitable(result):

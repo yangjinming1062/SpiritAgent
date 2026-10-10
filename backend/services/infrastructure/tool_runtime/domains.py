@@ -227,6 +227,12 @@ def apply_search_tools_catalog(schemas: list[dict[str, Any]]) -> list[dict[str, 
     return decorated
 
 
+def _tool_summary(description: object) -> str:
+    """检索结果只给首句说明；匹配的工具已就地解锁，完整描述随下一次请求的 Schema 提供，不在结果里重复。"""
+    text = description.strip() if isinstance(description, str) else ""
+    return re.split(r"(?<=[。.!?])\s*|\n", text, maxsplit=1)[0][:160]
+
+
 def search_domains_and_tools(query: str, available_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     query_str = query.strip().lower()
     if not query_str:
@@ -252,7 +258,7 @@ def search_domains_and_tools(query: str, available_schemas: list[dict[str, Any]]
 
     matched_names.discard(_META_TOOL_NAME)
     return [
-        {"name": name, "description": schema_map[name].get("description", "")}
+        {"name": name, "description": _tool_summary(schema_map[name].get("description"))}
         for name in sorted(matched_names)
         if name in schema_map
     ]

@@ -511,6 +511,9 @@ async def _run_chat_turn(
                 nonlocal response_started
                 response_started = True
 
+            # 媒体请求受理后工具步用尽：本次调用只生成最终回复（沿用最终回复重试的无工具请求形态）。
+            reply_only = final_reply_only or (companion_reply and media_turn.final_reply_due())
+
             async def _call(provider: ChatProvider) -> _LLMTurnResult:
                 input_length = len(current_context["input"])
                 retry_available = True
@@ -539,7 +542,7 @@ async def _run_chat_turn(
                             reply_format_error=reply_format_error,
                             media_turn=media_turn,
                             pace_bubbles=has_viewer and not headless,
-                            final_reply_only=final_reply_only,
+                            final_reply_only=reply_only,
                             allow_voice_fallback=not retry_available,
                         )
                     except _IncompleteResponseError as exc:
@@ -561,9 +564,7 @@ async def _run_chat_turn(
                     llm_chain = await resolve_context_provider_chain(
                         db,
                         user_id,
-                        _reply_repair_history(current_context["input"])
-                        if final_reply_only
-                        else current_context["input"],
+                        _reply_repair_history(current_context["input"]) if reply_only else current_context["input"],
                     )
                 llm_result = await execute_with_fallback(
                     llm_chain,

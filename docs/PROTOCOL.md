@@ -149,7 +149,7 @@ flowchart TD
 
 终端对象在分句前检查 `text` 和 `voice.text`：常见媒体文件地址（含查询串与 URL 编码）、媒体 data/blob/file 地址及内部资产路径必须原样来自本次上下文中的用户文字或工具返回，助手历史、工具参数和摘要不提供来源。台词中的内部资产路径、Markdown 图片和 HTML 媒体嵌入不能代替媒体气泡；用户明确要求的书面引用可保留资料中已有的地址或完整媒体语法。普通网页链接不受媒体地址检查；来源匹配只证明可引用，不证明生成成功。地址内部标点不参与分句。失败沿用一次格式恢复，纠正伪造地址及完成宣称；仍不合法则不落库、不交付，不通过语音降级绕过。代码见 [reply_links.py](../backend/services/application/chat/reply_links.py)；该检查不判定任意自然语言的真实性或所有无扩展名外链的用途。
 
-`image_generate.requests` 一次提交本轮完整清单，每项指定内容、生成参数和数量；初次生成合计最多 16 张，这是生成预算，不限制回复气泡数。派发前登记整批目标；清单受理后再次调用只返回已有状态，改变 prompt 或 call ID 不重新生成。`media_inspect(media_id)` 读取真实图片，检查原请求并复用身份评分，返回绑定具体版本的检查标识与问题。`image_regenerate(media_id, inspection_id, correction)` 只接受当前版本的有效问题检查，每目标最多重做一次。原图保留，修订版本有新标识但属于同一目标，最终只交付一个版本；文本回复附加最新成功版本，重做失败保留原图。图片失败不能作为就绪产物发送，结果未知不重复提交。代码入口：批次、验图与重做见 [chat_images.py](../backend/services/application/generation/chat_images.py)，回合媒体状态 `MediaTurnState` 见 [contracts/media.py](../backend/services/contracts/media.py)，单个引用的校验与视频绑定见 [reply_media.py](../backend/services/domains/conversation/reply_media.py)，逐目标唯一与遗漏校验见 [reply_delivery.py](../backend/services/application/chat/reply_delivery.py)，工具定义在 [image_generation_tool.py](../backend/services/adapters/tools/builtin/image_generation_tool.py) 与 [video_generation_tool.py](../backend/services/adapters/tools/builtin/video_generation_tool.py)。
+`image_generate` 每次调用描述一幅画面（`prompt`、`subject`、`aspect_ratio`、`outfit_override`），`n` 是同一描述的变体张数；不同画面在同一个工具步里分别调用。每回合只在一个工具步里受理图片请求，之后的新请求被拒绝；初次生成合计最多 16 张（含失败项），这是生成预算，不限制回复气泡数。派发前登记目标；完全相同的请求再次调用只返回已有状态，改变 call ID 不重新生成；已有图片结果未知时，本回合不再提交新的生成。必填项缺失、多余参数和越界取值在派发前返回说明可用参数的错误，成功项为零时顶层 `success=false` 并带 `error`，成功结果带 `next` 说明交付方式。媒体请求（图片或视频）受理后，陪伴回合最多再保留两个工具步（核对或补做一次），其后的模型调用只生成最终回复，不再披露工具。`media_inspect(media_id)` 读取真实图片，检查原请求并复用身份评分，返回绑定具体版本的检查标识与问题。`image_regenerate(media_id, inspection_id, correction)` 只接受当前版本的有效问题检查，每目标最多重做一次。原图保留，修订版本有新标识但属于同一目标，最终只交付一个版本；文本回复附加最新成功版本，重做失败保留原图。图片失败不能作为就绪产物发送，结果未知不重复提交。代码入口：批次、验图与重做见 [chat_images.py](../backend/services/application/generation/chat_images.py)，回合媒体状态 `MediaTurnState` 见 [contracts/media.py](../backend/services/contracts/media.py)，单个引用的校验与视频绑定见 [reply_media.py](../backend/services/domains/conversation/reply_media.py)，逐目标唯一与遗漏校验见 [reply_delivery.py](../backend/services/application/chat/reply_delivery.py)，工具定义在 [image_generation_tool.py](../backend/services/adapters/tools/builtin/image_generation_tool.py) 与 [video_generation_tool.py](../backend/services/adapters/tools/builtin/video_generation_tool.py)。
 
 视频每回合最多受理一个初次请求，已有 pending 任务只能查询。生活空间通过媒体气泡交付等待卡片，其他气泡正常发送。任务绑定消息与媒体标识，终态以 `message.media` 携 `message_id / media_id / bubble_index / bubble` 更新原卡片。落库与后台完成通过任务行锁协调；先完成后绑定读取真实终态，消息删除后不补建。重复更新幂等，终态不回退；缓存与重连恢复见 [Client](../client/README.md#历史同步)。其他文本会话使用附件及后台媒体送达机制；视频失败保存可见系统状态行，实时事件携同一消息 ID，刷新或重复事件不生成第二条失败状态。
 
@@ -175,14 +175,14 @@ flowchart TD
 
 - 通用调用按配置能力链依次尝试；供应商报错时不区分错误类型，结果未知除外，仍有下一家就回退。聊天回合在流首事件或非流式响应到达后锁定供应商；独立文本调用可对未完成响应回退，视觉分析也可对空结果回退。每家按自身模型能力重新计算参数；嵌入须保持模型一致，不使用文本回退。实现见 [llm_fallback.py](../backend/services/infrastructure/llm/llm_fallback.py)、[error_classifier.py](../backend/services/infrastructure/llm/error_classifier.py) 与 [prompt_engineer.py](../backend/services/infrastructure/llm/prompt_engineer.py)。媒体候选择优与下载、评分边界归 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
 - 同一端点的网络自动重试只用于幂等方法、显式幂等键或可确认未发送的连接失败，且请求体可重放；非幂等请求在写入或等待响应时断线按结果未知处理，不能换供应商重交。
-- 未交付正文、非内容过滤的不完整终态可在同供应商同参数重试；所有供应商的陪伴回复在结构、日常分句、演绎或媒体校验失败时，都在同供应商进行独立格式修正。
+- 未交付正文、非内容过滤的不完整终态可在同供应商同参数重试，完成响应却没有任何正文的用户回复同样按此处理；所有供应商的陪伴回复在结构、日常分句、演绎或媒体校验失败时，都在同供应商进行独立格式修正。
 - 首次请求与恢复请求共用按当前音色和可引用媒体生成的气泡 schema，无媒体时不提供媒体气泡类型；格式修正额外允许空数组表示无可恢复内容，用户回合按现有空回复校验报告格式失败，主动回合可保持沉默，均不能遗漏应交付媒体。通用语音结构中其他供应商字段的 null 或空列表不表达演绎，绑定时忽略，非空的不支持字段仍拒绝。段内演绎遵循上文 `segments` 原文与位置契约；MiniMax 停顿须跟在已说出的词之后。校验错误定位到具体气泡的 speech 字段，持久化一致性检查使用相同绑定规则。
 - 格式恢复请求不提供工具，返回工具调用时仍由代码拒绝。失败草稿不是已执行操作，修复资料与指令不写入聊天历史。恢复仍失败时报告回复格式错误，与供应商不可用区分。
 - 格式修正以完整的未交付助手响应为唯一编辑正文，只附只读人设、校验错误、实际语音能力与可信媒体清单，不携带用户原话、历史、工具调用及结果正文或中间推理；人设只帮助保持原说话者与语气，不提供新台词。媒体地址的原始来源仍由代码核对，不作为对话传给修正模型。温度使用供应商允许的最低值。手动重试最终回复属于重新生成，仍保留历史，并将原生工具调用与结果按顺序转换为只读资料；原始历史不变。
 - 格式修正统一尝试 Chat Completions 的 schema 参数，仅在接口明确拒绝格式能力时依次降为 JSON 模式或普通请求，入口缺失时使用 Responses；不按模型名称或供应商选择校验路径。参数拒绝不产生模型结果，成功返回后不再切换入口或追加修正；鉴权、限流、内容过滤等失败不触发参数降级。
 - 每次模型生成中的不完整终态重试与格式修正共用一次恢复预算，工具循环进入下一次生成时重新计；它与 HTTP 网络重试、供应商回退及格式参数降级分别控制。不复用半截正文或工具草稿，不重跑已完成工具。
 - 模型保留草稿的说话者、受话者、内容、顺序及有效交付类型，不重新解读用户意图或续写回答：日常台词逐句成泡，旁白的情绪与情景转为台词或可用的语音演绎；书面文字与标点保持，只调整必要排版。缺少类型时按草稿正文恢复对话或书面形式，未指定通道的台词用文字；语音不可用时保留原台词转文字。有效媒体引用与顺序保留，错误地址及完成宣称、遗漏引用按可信产物修正。无可恢复正文及应交付媒体时返回空数组，不根据用户输入另写回答。修正使用同一输出结构与交付校验，不执行工具、不再次修正；预算耗尽不增加调用，仍不合格时报告格式错误。
-- 预算耗尽后，若错误仅在语音演绎字段，将相应气泡转为原台词文字再完整校验并保存；其他气泡、媒体与顺序保留。正文、气泡结构或媒体仍无效时才报告回复格式错误。
+- 预算耗尽后，若错误仅在语音演绎字段，将相应气泡转为原台词文字再完整校验并保存；其他气泡、媒体与顺序保留。若只是遗漏了本回合已生成且可交付的媒体（包括回复仍没有任何正文），按生成顺序补在末尾交付，已生成的产物不因模型漏引而丢失。正文、气泡结构或媒体仍无效时才报告回复格式错误。
 - 模型取消或异常不交付未确认正文；失败的模型回合不写终端正文行。
 
 ### Slash 命令

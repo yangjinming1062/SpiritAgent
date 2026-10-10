@@ -1,15 +1,15 @@
-"""聊天图片批次、实际验图与有界重做。"""
+"""聊天图片请求、实际验图与有界重做。"""
 
 import asyncio
 import json
 from dataclasses import asdict, replace
-from typing import Literal
+from typing import Literal, get_args
 from uuid import uuid4
 
 from components import SESSION_LOCAL, get_logger, parse_llm_json, tool_error
 from modules.companion import CharacterCardSnapshot
 from prompts.generation import CHAT_IMAGE_CORRECTION_PREFIX
-from prompts.tools import IMAGE_GENERATION_PARAM_DESCS, MEDIA_INSPECTION_INSTRUCTIONS
+from prompts.tools import MEDIA_INSPECTION_INSTRUCTIONS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from services.contracts import ImagePlan, MediaArtifact, MediaInspection, MediaTurnState
@@ -30,27 +30,22 @@ from .visual_identity import (
 
 logger = get_logger(__name__)
 
+# 每回合初次生成的图片总预算（含失败项）；单次调用只描述一个画面，n 为该画面的张数。
+CHAT_IMAGES_PER_TURN = 16
+ImageAspectRatio = Literal["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"]
+IMAGE_ASPECT_RATIOS: tuple[str, ...] = get_args(ImageAspectRatio)
+
 
 class ImageRequest(BaseModel):
+    """一次 image_generate 调用：同一描述的 n 张图片，字段说明在工具 schema。"""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    prompt: str = Field(min_length=1, max_length=16000, description=IMAGE_GENERATION_PARAM_DESCS["prompt"])
-    subject: Literal["self"] | None = Field(default=None, description=IMAGE_GENERATION_PARAM_DESCS["subject"])
-    size: Literal["1024x1024", "1024x1792", "1792x1024", "1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"] = (
-        "1024x1024"
-    )
-    n: int = Field(default=1, ge=1, le=16, strict=True)
-    outfit_override: str | None = Field(
-        default=None,
-        max_length=8000,
-        description=IMAGE_GENERATION_PARAM_DESCS["outfit_override"],
-    )
-
-
-class ImageBatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    requests: list[ImageRequest] = Field(min_length=1, max_length=16)
+    prompt: str = Field(min_length=1, max_length=16000)
+    subject: Literal["self"] | None = None
+    aspect_ratio: ImageAspectRatio = "1:1"
+    n: int = Field(default=1, ge=1, le=CHAT_IMAGES_PER_TURN, strict=True)
+    outfit_override: str | None = Field(default=None, max_length=8000)
 
 
 class InspectionResult(BaseModel):
@@ -62,14 +57,14 @@ class InspectionResult(BaseModel):
 
 async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
     if request.subject != "self":
-        return ImagePlan(request=request.prompt, prompt=request.prompt, size=request.size)
+        return ImagePlan(request=request.prompt, prompt=request.prompt, size=request.aspect_ratio)
     visual = await load_self_visual_context(user_id)
     plan = apply_outfit_override(visual, request.outfit_override)
     outfit = await optional_outfit_image_reference(plan, user_id)
     return ImagePlan(
         request=request.model_dump_json(),
         prompt=build_self_image_prompt(plan, request.prompt, has_outfit_reference=bool(outfit)),
-        size=request.size,
+        size=request.aspect_ratio,
         reference_image=visual.reference_image,
         secondary_reference_image=outfit,
         identity_json=visual.identity.model_dump_json(),
@@ -188,66 +183,112 @@ async def _produce(state: MediaTurnState, artifact: MediaArtifact, plan: ImagePl
         raise
 
 
-def _batch_result(state: MediaTurnState, *, reused: bool = False) -> str:
-    return json.dumps({"success": True, "reused": reused, "media": state.image_results()}, ensure_ascii=False)
+def _delivery_hint(state: MediaTurnState) -> str:
+    """图片就绪后的下一步：交付由最终回复完成，模型不必再调用工具。"""
+    if state.structured_reply:
+        return (
+            "Ready images are delivered in your final reply: put each ready media_id in an image bubble. "
+            "The reply is not a tool call, so no further tool call is needed."
+        )
+    return "Ready images are attached to your reply automatically; describe the result briefly."
 
 
-async def generate_chat_images(requests: list[dict], state: MediaTurnState) -> str:
+def _call_result(state: MediaTurnState, media_ids: list[str], *, reused: bool = False) -> str:
+    """本次调用的图片结果；一张都没有就绪时按失败返回，保持顶层 error 供模型与循环守卫识别。"""
+    media = [state.artifacts[media_id].tool_view() for media_id in media_ids]
+    ready = any(item["status"] == "ready" for item in media)
+    payload: dict[str, object] = {"success": ready, "media": media}
+    if reused:
+        payload["reused"] = True
+    if ready:
+        payload["next"] = _delivery_hint(state)
+    else:
+        payload["error"] = next((item["error"] for item in media if item.get("error")), "图片生成失败")
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _validation_message(exc: ValidationError) -> str:
+    return "图片请求参数无效：" + "；".join(
+        f"{'.'.join(str(part) for part in error['loc'])}：{error['msg']}"
+        for error in exc.errors(include_input=False, include_url=False, include_context=False)
+    )
+
+
+async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
+    """生成同一描述的 n 张图片。图片请求只在回合的一个工具步里提交（同一步可分别描述多个画面），总量受回合预算约束；完全相同的请求只返回已有结果。"""
     try:
-        batch = ImageBatch.model_validate({"requests": requests})
-        if sum(item.n for item in batch.requests) > 16:
-            return tool_error("每轮初次生成最多 16 张图片，请缩小生成清单")
-    except ValidationError:
-        return tool_error("图片请求必须是非空 requests 数组，每项提供 prompt 和有效的生成参数")
+        request = ImageRequest.model_validate(arguments)
+    except ValidationError as exc:
+        return tool_error(_validation_message(exc))
+    if request.outfit_override and request.subject != "self":
+        return tool_error("outfit_override 仅用于 subject='self' 的本人出镜图片")
+    key = request.model_dump_json()
     async with state.lock:
-        if state.image_batch_claimed:
-            return _batch_result(state, reused=True)
-        state.image_batch_claimed = True
-        # 先登记整个清单，第二个并行调用只能查询这批产物。
-        entries: list[tuple[ImageRequest, list[MediaArtifact]]] = []
-        for request in batch.requests:
-            artifacts = []
-            for _ in range(request.n):
-                media_id = uuid4().hex
-                artifact = MediaArtifact(media_id, "image", media_id, "pending")
-                state.artifacts[media_id] = artifact
-                state.current_versions[media_id] = media_id
-                artifacts.append(artifact)
-            entries.append((request, artifacts))
+        if (media_ids := state.image_requests.get(key)) is not None:
+            return _call_result(state, media_ids, reused=True)
+        if state.image_round is not None and state.image_round != state.tool_round:
+            return tool_error(
+                "本回合的图片请求已经提交，不再接受新的图片请求；需要多幅不同的画面须在同一步里一起提交，或下一回合再提出",
+            )
+        if any(a.type == "image" and a.status == "result_unknown" for a in state.artifacts.values()):
+            return tool_error("前一次图片生成的结果尚未核实，本轮不再提交新的图片生成")
+        if state.image_budget_used + request.n > CHAT_IMAGES_PER_TURN:
+            return tool_error(
+                f"每轮最多生成 {CHAT_IMAGES_PER_TURN} 张图片，本轮已请求 {state.image_budget_used} 张，请减少张数",
+            )
+        state.image_budget_used += request.n
+        state.image_round = state.tool_round
+        state.mark_media_accepted()
+        artifacts: list[MediaArtifact] = []
+        for _ in range(request.n):
+            media_id = uuid4().hex
+            artifact = MediaArtifact(media_id, "image", media_id, "pending")
+            state.artifacts[media_id] = artifact
+            state.current_versions[media_id] = media_id
+            artifacts.append(artifact)
+        media_ids = [artifact.media_id for artifact in artifacts]
+        state.image_requests[key] = media_ids
     try:
-        for request, artifacts in entries:
-            try:
-                plan = await _freeze_plan(request, state.user_id)
-            except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as exc:
-                _fail_all(artifacts, "failed", str(exc))
+        try:
+            plan = await _freeze_plan(request, state.user_id)
+        except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as exc:
+            _fail_all(artifacts, "failed", str(exc))
+            return _call_result(state, media_ids)
+        for artifact in artifacts:
+            state.plans[artifact.goal_id] = plan
+        # 合批后一次失败波及这次调用的全部图片，硬失败不再逐张隔离。
+        try:
+            results = await _generate_batch(plan, state.user_id, state.asset_directory, len(artifacts))
+        except asyncio.CancelledError as exc:
+            _fail_all(artifacts, *_artifact_failure(exc))
+            raise
+        except ImageGenerationError as exc:
+            _fail_all(artifacts, *_artifact_failure(exc))
+            return _call_result(state, media_ids)
+        except Exception as exc:
+            _fail_all(artifacts, *_artifact_failure(exc))
+            raise
+        for artifact, (url, score, error) in zip(artifacts, results):
+            if url is None or error is not None:
+                artifact.status, artifact.error = "failed", error or "图片生成服务没有返回图片"
                 continue
-            for artifact in artifacts:
-                state.plans[artifact.goal_id] = plan
-            # 合批后一次失败波及本 request 全部图片，硬失败不再逐张隔离。
-            try:
-                results = await _generate_batch(plan, state.user_id, state.asset_directory, len(artifacts))
-            except asyncio.CancelledError as exc:
-                _fail_all(artifacts, *_artifact_failure(exc))
-                raise
-            except ImageGenerationError as exc:
-                _fail_all(artifacts, *_artifact_failure(exc))
-                continue
-            except Exception as exc:
-                _fail_all(artifacts, *_artifact_failure(exc))
-                raise
-            for artifact, (url, score, error) in zip(artifacts, results):
-                if url is None or error is not None:
-                    artifact.status, artifact.error = "failed", error or "图片生成服务没有返回图片"
-                    continue
-                artifact.url, artifact.identity_score = url, score
-                artifact.status = "ready"
-                state.required_goals.add(artifact.goal_id)
+            artifact.url, artifact.identity_score = url, score
+            artifact.status = "ready"
+            state.required_goals.add(artifact.goal_id)
     finally:
-        for _, artifacts in entries:
-            for artifact in artifacts:
-                if artifact.status == "pending":
-                    artifact.status, artifact.error = "failed", "生成清单已中断，此项未执行"
-    return _batch_result(state)
+        for artifact in artifacts:
+            if artifact.status == "pending":
+                artifact.status, artifact.error = "failed", "生成已中断，此项未执行"
+    return _call_result(state, media_ids)
+
+
+def _inspection_result(inspection: MediaInspection) -> str:
+    next_step = (
+        "Redraw once with image_regenerate using this inspection_id and a specific correction, or deliver the image as is."
+        if inspection.verdict == "revise"
+        else "Nothing needs fixing; the image can be delivered as is."
+    )
+    return json.dumps({**asdict(inspection), "next": next_step}, ensure_ascii=False)
 
 
 async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
@@ -257,7 +298,7 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
             return tool_error("只能检查当前会话中已就绪的图片")
         prior = state.inspections.get(media_id)
         if prior is not None:
-            return json.dumps(asdict(prior), ensure_ascii=False)
+            return _inspection_result(prior)
         parsed = asset_store.parse_companion_asset_path(artifact.url)
         local = asset_store.resolve_companion_asset_path(*parsed) if parsed and parsed[0] == state.user_id else None
         if local is None:
@@ -291,7 +332,7 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
             verdict, issues = "unavailable", ("未取得有效验图结果，不据此重新生成",)
         inspection = MediaInspection(uuid4().hex, media_id, verdict, issues)
         state.inspections[media_id] = inspection
-        return json.dumps(asdict(inspection), ensure_ascii=False)
+        return _inspection_result(inspection)
 
 
 async def regenerate_chat_image(media_id: str, inspection_id: str, correction: str, state: MediaTurnState) -> str:

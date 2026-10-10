@@ -382,6 +382,7 @@ async def _persist_assistant_with_tool_calls_and_results(
     """持久化工具调用与结果、同步 Responses 输入并解锁 ``search_tools`` 命中的工具；媒体产物由回合状态统一管理。"""
     tool_calls_list = result.tool_calls_list
     context["input"].extend(tool_calls_list)
+    dispatch_ctx.media_turn.tool_round += 1
     progress = _BatchProgress()
     # 调用行提交不随取消中断：取消落在提交或关闭会话的窗口时，仍等它落库后补记结果。
     call_row = (

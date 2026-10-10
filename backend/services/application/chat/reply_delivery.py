@@ -28,6 +28,14 @@ from services.infrastructure.llm import ProviderConfig, speech_performance_schem
 from .reply_links import ReplyReferences, reference_spans, validate_reply_links
 
 
+class OmittedMediaError(ValueError):
+    """回复遗漏了本回合已生成的媒体；``missing`` 是按生成顺序排列的 (类型, media_id)。"""
+
+    def __init__(self, missing: list[tuple[str, str]]) -> None:
+        super().__init__("Reply omits generated media or an accepted video task")
+        self.missing = missing
+
+
 class _ReplyEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["dialogue", "written"]
@@ -398,6 +406,20 @@ def validate_companion_reply_repair(
         raise ValueError("A reply repair must preserve valid media references and order")
 
 
+def _deliverable_media(media_turn: MediaTurnState, goals: set[str]) -> list[tuple[str, str]]:
+    """每个目标当前可交付的版本（图片取最新就绪版本）；无法解析的目标由后续校验照常报告。"""
+    latest: dict[str, tuple[str, str]] = {}
+    for artifact in media_turn.artifacts.values():
+        if artifact.goal_id not in goals:
+            continue
+        try:
+            resolve_reply_media(media_turn, artifact.media_id, artifact.type)
+        except ValueError:
+            continue
+        latest[artifact.goal_id] = (artifact.type, artifact.media_id)
+    return list(latest.values())
+
+
 def parse_companion_reply(
     raw: str,
     *,
@@ -418,6 +440,8 @@ def parse_companion_reply(
     if not source.root:
         if allow_silence and not media_turn.required_goals:
             return None
+        if media_turn.required_goals and (missing := _deliverable_media(media_turn, media_turn.required_goals)):
+            raise OmittedMediaError(missing)
         raise ValueError("A user reply requires at least one bubble")
     bubbles: list[TextBubble | VoiceBubble | MediaBubble] = []
     selected_goals: set[str] = set()
@@ -473,8 +497,8 @@ def parse_companion_reply(
                 language=language,
             ),
         )
-    if not media_turn.required_goals.issubset(selected_goals):
-        raise ValueError("Reply omits generated media or an accepted video task")
+    if missing_goals := media_turn.required_goals - selected_goals:
+        raise OmittedMediaError(_deliverable_media(media_turn, missing_goals))
     return CompanionReply(bubbles=bubbles)
 
 
@@ -489,7 +513,7 @@ def fallback_companion_voice_reply(
     references: ReplyReferences = ReplyReferences(),
     kind: Literal["dialogue", "written"] = "dialogue",
 ) -> tuple[str, CompanionReply | None]:
-    """恢复预算耗尽后仅将演绎无效的气泡降级为原台词；正文和媒体仍须通过完整校验。"""
+    """恢复预算耗尽后的最后降级：演绎无效的气泡转为原台词，遗漏的已生成媒体按生成顺序补在末尾；其余内容仍须通过完整校验。"""
     values = json.loads(raw)
     while True:
         try:
@@ -505,4 +529,9 @@ def fallback_companion_voice_reply(
             )
         except ValidationError as exc:
             values = _fallback_speech_bubbles(values, exc)
+            raw = json.dumps(values, ensure_ascii=False)
+        except OmittedMediaError as exc:
+            if not exc.missing or not isinstance(values, list):
+                raise
+            values = [*values, *({"type": media_type, "media_id": media_id} for media_type, media_id in exc.missing)]
             raw = json.dumps(values, ensure_ascii=False)

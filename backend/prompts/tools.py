@@ -31,23 +31,21 @@ SEND_MESSAGE_PARAM_DESCS = {
 }
 
 IMAGE_GENERATION_DESC = (
-    "Generate the complete image batch requested in this turn. Put each distinct description in requests; "
-    "n creates multiple images for that description, up to 16 images total per turn. "
-    "Submit the initial batch once; later calls reuse it. "
-    "Use subject='self' within an item for the current character; identity and default outfit references are supplied. "
-    "Results include media_id and status. Each generated image is its own goal, and a corrected image is a new version of the same goal; deliver one version of every goal in the final reply. "
-    "Inspect an actual result with media_inspect before requesting a correction with image_regenerate. "
-    "This creates conversation media; it does not change the avatar, outfit or scene."
+    "Generate a picture from a visual description and return its media_id. Call it directly when the user asks "
+    "for a picture, selfie or photo: one call makes one picture, and n makes several variations of the same "
+    "description. For different pictures, call it once per picture in the same step; picture requests cannot be "
+    "added in later steps. Deliver each result in the final reply with an image bubble."
 )
 MEDIA_INSPECT_DESC = (
-    "Inspect an available image from this conversation against the user's request. Reads the actual image "
-    "and returns inspection_id, verdict (pass/revise/unavailable), and concrete defects. "
-    "Only a revise result for the current version allows one image_regenerate in this turn."
+    "Optional quality check of a generated image. It reads the actual picture and reports concrete defects such as "
+    "the wrong number of subjects, malformed anatomy or missing requested elements. Skip it for ordinary requests; "
+    "use it when the user's request has specific visual details that must be verified. Returns inspection_id and "
+    "verdict pass, revise or unavailable."
 )
 IMAGE_REGENERATE_DESC = (
-    "Correct an image generated in this turn using a real media_inspect result that identified defects. "
-    "Provide that image's media_id, inspection_id and a specific correction. One correction per requested "
-    "image is allowed. The original remains available; choose one version of each goal for delivery."
+    "Redraw one image after media_inspect returned revise for it, with a specific correction. Provide that image's "
+    "media_id, the inspection_id and the correction. Each image can be redrawn once; the original stays available and "
+    "you deliver one version of it."
 )
 # {accept_score} 取自 MEDIA_IDENTITY_ACCEPT_SCORE，由 chat_images 渲染；字面大括号须写成 {{ }}。
 MEDIA_INSPECTION_INSTRUCTIONS = (
@@ -59,65 +57,48 @@ MEDIA_INSPECTION_INSTRUCTIONS = (
 )
 
 _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
-    "Optional complete outfit for this generation only (clothing, colors, hairstyle and hair color, makeup, "
-    "footwear, accessories). Use with subject='self'. It replaces the default outfit for this output only, "
-    "without changing the current outfit or the scene. Scenes describe the background; your current clothing "
-    "comes from confirmed outfit data. Do not treat other depicted subjects' clothing as yours. For partial revisions, merge "
-    "the confirmed current outfit with the changed "
-    "dimensions into one complete description."
+    "Complete outfit for this output only (clothing, colors, hairstyle and hair color, makeup, footwear, "
+    "accessories); requires subject='self'. Leave it out to keep the current outfit. For a partial change, start "
+    "from the current outfit given in the context and apply the change, so the description is complete; do not "
+    "invent garments the context does not support. Clothing worn by other people in the scene is not the character's."
 )
 
 IMAGE_GENERATION_PARAM_DESCS = {
     "prompt": (
-        "Write a self-contained visual description: subject, one visible instant, composition, environment, lighting "
-        "and requested style. Describe the positions, contact and support needed for an action, rather than only "
-        "naming it. Preserve the user's concrete requirements; do not add unrelated detail or quality-tag lists. "
-        "Quote only text that must actually appear in the image and specify its placement; keep instructions and "
-        "exclusions outside those quotes. With subject='self', describe environment, pose and action without "
-        "redesigning the confirmed face, anatomy or body proportions; put styling changes in outfit_override."
+        "Self-contained visual description: who or what is in the picture, pose or action, setting, lighting, "
+        "composition and style. Keep the user's concrete requirements and add no unrelated detail. Quote only text "
+        "that must appear in the picture. With subject='self', describe the scene, pose and expression only; "
+        "appearance and outfit are applied automatically."
     ),
-    "subject": (
-        "Set to 'self' when the current character appears in the image. Their reference image, confirmed physical "
-        "features and the default outfit description are supplied automatically; describe the scene, pose, "
-        "and action without reconstructing appearance from memory. Current clothing comes from confirmed outfit data; "
-        "the scene describes the background, not your clothing."
-    ),
+    "subject": "Set to 'self' when the current character appears in the picture, including selfies. Omit it otherwise.",
+    "aspect_ratio": "Shape of the picture, default 1:1.",
+    "n": "Number of variations of this one description, default 1. Raise it only when the user asks for several of the same kind.",
     "outfit_override": _SELF_MEDIA_OUTFIT_OVERRIDE_DESC,
 }
 
 VIDEO_GENERATION_DESC = (
-    "Generate a short video from a text prompt and optional identity and styling reference images. "
-    "Returns media_id and task_id with the current status. In structured replies, include media_id in a video "
-    "bubble to deliver a waiting card that updates in place. One initial video request per turn; subsequent "
-    "calls reuse the task. Check an existing pending task later with video_generate_status. "
-    "Pending is not completion: keep the original task_id, do not submit the same "
-    "job again or poll continuously. If status is result_unknown or retry_safe=false, verify the original "
-    "job before any retry. Self videos use bounded automatic identity correction and keep the best known result."
+    "Generate a short video from a description and return its media_id and task_id. Call it directly when the user "
+    "asks for a clip or continuous motion; one video per turn. Videos take a while, so a pending status is normal: "
+    "deliver the media_id in the final reply (a waiting card updates in place when the video is ready) and do not "
+    "resubmit. Later turns can check the task with video_generate_status. If the status is result_unknown, do not "
+    "retry before the original task is checked."
 )
 
 VIDEO_GENERATION_PARAM_DESCS = {
-    "prompt": "Describe the video's scene, ordered motion and camera behavior. Reference images anchor identity and styling; this prompt determines the opening and subsequent content. With subject='self', keep confirmed physical features and put styling changes in outfit_override.",
-    "subject": (
-        "Set to 'self' for a new depiction of the current character. Their confirmed physical features and the "
-        "selected styling are supplied directly as video references. An optional reference_image supplies "
-        "styling while the confirmed character image remains the identity reference; outfit_override takes "
-        "precedence over styling references. Omit subject to use only reference_image for the depicted subject. Describe the scene, pose and "
-        "action without reconstructing appearance from memory."
-    ),
-    "duration": "Clip length in seconds, default 6. This tool accepts integers from 4 to 15; MiniMax-H3 and Grok support this tool's full range.",
-    "resolution": "Output resolution, default 768P. MiniMax-H3 supports 768P/2K; Grok reference mode supports 512P/768P (mapped to 480p/720p), and text-only mode also supports 1080P; Qwen accepts all listed values.",
-    "reference_image": "An image used as a visual reference, not a pinned opening frame: the url field of an image result from this conversation's media tools, a data URL, or a public http(s) image URL. Never invent a URL; user attachments have no address this tool can use. With subject='self', it supplies styling; otherwise it anchors the depicted subject's identity and styling.",
-    "aspect_ratio": "Requested output aspect ratio, default 9:16. The video uses this ratio independently of the reference image's framing.",
+    "prompt": "Describe the video: setting, ordered motion and camera movement. With subject='self', describe the scene and action only; the character's appearance is applied automatically.",
+    "subject": "Set to 'self' when the current character appears; their appearance and current outfit are supplied automatically.",
+    "duration": "Clip length in seconds, 4 to 15, default 6.",
+    "resolution": "Output resolution, default 768P. If it is unavailable, the error lists the options.",
+    "reference_image": "Optional extra reference: the url of an image result from this conversation, or a public http(s) image URL; never invent one, and user attachments have no usable address. With subject='self' it supplies styling; otherwise it fixes the depicted subject's identity and styling.",
+    "aspect_ratio": "Output aspect ratio, default 9:16.",
     "outfit_override": (
-        _SELF_MEDIA_OUTFIT_OVERRIDE_DESC
-        + " The description governs styling throughout the clip and replaces styling image references."
+        _SELF_MEDIA_OUTFIT_OVERRIDE_DESC + " It governs styling throughout the clip and replaces styling references."
     ),
 }
 
 VIDEO_STATUS_DESC = (
-    "Check an existing video_generate task. Returns its current status and url when the asset exists; "
-    "a completed self video has already passed bounded automatic selection. "
-    "A queued, processing, or downloading job is still pending; result_unknown does not mean a safe retry."
+    "Check a video_generate task by task_id. Returns its status and, once ready, the video. queued, processing and "
+    "downloading mean it is still pending; result_unknown means the outcome is unverified, so do not resubmit."
 )
 
 VIDEO_STATUS_PARAM_DESCS = {

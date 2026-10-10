@@ -37,6 +37,10 @@ _DURATIONS = range(4, 16)
 _RESOLUTIONS = frozenset({"512P", "768P", "1080P", "2K"})
 _ASPECT_RATIOS = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
 _SUBMIT_UNKNOWN_ERROR = "视频提交结果未核实，请勿重复提交"
+_STRUCTURED_DELIVERY_HINT = (
+    "Put this media_id in a video bubble of your final reply; its card updates when the video is ready. "
+    "The reply is not a tool call, so do not poll or submit again."
+)
 
 
 def _video_reference(reference: str, user_id: int) -> str | None:
@@ -208,6 +212,7 @@ async def video_generation_tool(
                 ensure_ascii=False,
             )
         media_turn.video_claimed = True
+        media_turn.mark_media_accepted()
         media_id = uuid4().hex
         artifact = MediaArtifact(media_id, "video", media_id, "pending")
         media_turn.artifacts[media_id] = artifact
@@ -243,6 +248,8 @@ async def video_generation_tool(
         artifact.job_id = job.id
         apply_video_status(artifact, job)
         media_turn.required_goals.add(media_id)
+        if media_turn.structured_reply and result.get("success"):
+            result = {**result, "next": _STRUCTURED_DELIVERY_HINT}
     return json.dumps({**result, "media": [artifact.tool_view()]}, ensure_ascii=False)
 
 
@@ -325,6 +332,7 @@ VIDEO_GENERATION_SCHEMA = {
             },
         },
         "required": ["prompt"],
+        "additionalProperties": False,
     },
 }
 

@@ -41,7 +41,13 @@ from .character_card import (
     schedule_character_extraction,
 )
 from .character_images import generate_character_images, generate_scene_images
-from .chat_images import ImageBatch, generate_chat_images, inspect_chat_image, regenerate_chat_image
+from .chat_images import (
+    CHAT_IMAGES_PER_TURN,
+    IMAGE_ASPECT_RATIOS,
+    generate_chat_images,
+    inspect_chat_image,
+    regenerate_chat_image,
+)
 from .desktop_video import (
     desktop_context_hash,
     desktop_progress_can_resume,
@@ -189,7 +195,8 @@ __all__ = [
     "describe_character_form",
     "describe_garment_image",
     "enhance_avatar_prompt",
-    "ImageBatch",
+    "CHAT_IMAGES_PER_TURN",
+    "IMAGE_ASPECT_RATIOS",
     "generate_chat_images",
     "inspect_chat_image",
     "regenerate_chat_image",

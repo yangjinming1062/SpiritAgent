@@ -121,6 +121,11 @@ class ChatProvider(BaseProvider):
     def raw_client(self) -> AsyncOpenAI:
         return self._client
 
+    async def reasoning_param(self, requested: str | None) -> dict | None:
+        """Responses 请求的 ``reasoning`` 参数：请求档位按 ``REASONING_EFFORTS`` 向下映射，无可用档位时不传。"""
+        effort = resolve_provider_reasoning_effort(requested, self.REASONING_EFFORTS)
+        return {"effort": effort} if effort else None
+
     def companion_reply_client(self, *, repair: bool) -> AsyncOpenAI | ChatSchemaResponsesClient:
         if repair:
             return ChatSchemaResponsesClient(self.raw_client())

@@ -348,12 +348,14 @@ COMPANION_REPLY_TOOL_GUIDANCES: dict[str, str] = {
     "zh": (
         "\n这个 JSON Schema 只描述最终回复当前可交付的内容，工具按各自参数正常调用。"
         "用户要图片或视频但尚无可引用产物时，先调用本轮可用的生成或查询工具；"
-        "工具返回产物或已受理任务后，再用对应媒体气泡交付。"
+        "工具返回产物或已受理任务后，再用对应媒体气泡交付。用户请求的操作做完就直接回复，不追加与本轮请求无关的工具调用；回复本身不是工具调用，工具返回后直接把最终回复作为 JSON 对象输出。"
     ),
     "en": (
         "\nThis JSON Schema describes what can currently be delivered in the final reply; call tools using their own parameters. "
         "When the user requests an image or video and no output is available yet, first use the available generation or status tool. "
-        "After it returns an output or an accepted task, deliver it through the corresponding media bubble."
+        "After it returns an output or an accepted task, deliver it through the corresponding media bubble. "
+        "Once the requested actions are done, reply directly without adding tool calls unrelated to this request; the "
+        "reply itself is not a tool call, so once the tools return, write the final reply as the JSON object."
     ),
 }
 
@@ -433,21 +435,24 @@ COMPANION_REPLY_INTEGRITY_GUIDANCES: dict[str, str] = {
 
 COMPANION_MEDIA_REPLY_GUIDANCES: dict[str, str] = {
     "zh": (
-        "\n图片和视频也是独立气泡，按你要发送的顺序与台词气泡混排："
-        '{"type":"image","media_id":"工具返回的标识"} 或 '
-        '{"type":"video","media_id":"工具返回的标识"}。'
+        "\n图片和视频也是独立气泡，按你要发送的顺序与台词气泡混排，整体仍放在 bubbles 数组里：\n"
+        '{"kind":"dialogue","bubbles":[{"type":"text","text":"给你看，刚拍的。"},{"type":"image","media_id":"工具返回的标识"}]}\n'
+        '视频气泡写 {"type":"video","media_id":"工具返回的标识"}。发送图片或视频时通常配一句符合角色的话，用户只要媒体时也可以只发媒体气泡。'
         "媒体气泡只写 type 和 media_id；历史回复中的媒体气泡带有系统补入的 status，只记录当时的状态，"
         "新气泡不写 status、text、speech 或 URL。"
-        "可以只发送媒体。标识必须来自 available_media，类型必须一致；图片只引用 ready 产物，同一 goal_id 只选一个版本。"
+        "标识必须来自 available_media，类型必须一致；图片只引用 ready 产物，同一 goal_id 只选一个版本。"
         "required_media_goals 中每个目标都需选一个气泡，pending 视频会先显示生成中的卡片并在完成后原位更新。"
         "already_delivered 的 pending 视频已有等待卡片，只查询进度，不重复发送。"
         "媒体状态由工具决定，pending 不代表已生成成功；最终气泡只交付已有产物，不触发重新生成。"
     ),
     "en": (
-        "\nImages and videos are separate bubbles, interleaved with dialogue bubbles in delivery order: "
-        '{"type":"image","media_id":"tool-issued ID"} or {"type":"video","media_id":"tool-issued ID"}. '
+        "\nImages and videos are separate bubbles, interleaved with dialogue bubbles in delivery order, still inside the "
+        "bubbles array:\n"
+        '{"kind":"dialogue","bubbles":[{"type":"text","text":"Here you go, just taken."},{"type":"image","media_id":"tool-issued ID"}]}\n'
+        'A video bubble is {"type":"video","media_id":"tool-issued ID"}. Usually pair a picture or video with a line in '
+        "the character's voice; a media-only reply is also valid when the user wants only the media. "
         "Media bubbles contain only type and media_id. Media bubbles in earlier replies carry a system-added status "
-        "recording their state at the time; never write status, text, speech or URL in a new bubble. Media-only replies are valid. "
+        "recording their state at the time; never write status, text, speech or URL in a new bubble. "
         "Use matching IDs and types from available_media; images must be ready. Select one version per goal_id. Include every "
         "required_media_goals entry. Pending videos display a waiting card and update in place; pending is not "
         "generation success. Already-delivered pending videos have an existing card: query progress without sending another. "
@@ -766,23 +771,21 @@ MEMORY_TOOL_GUIDANCES: dict[str, str] = {
 MEDIA_GUIDANCES: dict[str, str] = {
     "zh": (
         "# 媒体生成与交付\n"
-        "直接调用本轮已提供的媒体工具；需要尚未提供的工具时，用 `search_tools(query='media')` 查找。"
-        "成功后通过 media_id 引用产物。"
-        "按本轮回复协议交付工具返回的图片与视频；采用气泡数组时用媒体气泡安排顺序，文本回复由系统附加预览卡片——"
-        "不要在文本里粘贴原始媒体 URL 或 Markdown 图片语法；改为简要描述结果。\n"
-        "普通媒体生成只产生对话附件，不会改变当前形象、穿着或场景。"
+        "用户要图片、自拍、照片时直接调用 image_generate，要短片或连续动作时直接调用 video_generate；"
+        "成功后通过 media_id 引用产物，按本轮回复协议交付：采用气泡数组时用媒体气泡安排顺序，文本回复由系统附加预览卡片——"
+        "不要在文本里粘贴原始媒体 URL 或 Markdown 图片语法，简要描述结果即可。\n"
+        "媒体生成只产生对话附件，不会改变当前形象、穿着或场景。"
         "仅在工具确认成功且产物可用时称为完成；"
         "pending 表示仍在生成，任务标识本身不证明成功。失败或结果不明时如实说明，后续核对原任务，不因结果未知重复提交。"
     ),
     "en": (
         "# Media Generation & Delivery\n"
-        "Call media tools already provided in this turn directly; use `search_tools(query='media')` to find a needed tool "
-        "that has not been provided. Refer to results by media_id. "
-        "Deliver generated media using this turn's reply protocol: media bubbles determine order in structured replies; text replies receive system-attached preview "
-        "cards to your reply — do NOT paste raw media URLs or markdown image "
-        "syntax into your text; describe the result briefly instead.\n"
-        "Ordinary media generation creates conversation attachments; it does not change the current avatar, "
-        "outfit, or scene. "
+        "When the user asks for a picture, selfie or photo, call image_generate directly; for a clip or continuous "
+        "motion, call video_generate. Refer to results by media_id and deliver them using this turn's reply "
+        "protocol: media bubbles determine order in structured replies, and text replies receive system-attached "
+        "preview cards — do NOT paste raw media URLs or markdown image syntax into your text; describe the result "
+        "briefly instead.\n"
+        "Media generation creates conversation attachments; it does not change the current avatar, outfit, or scene. "
         "Claim completion only when the tool confirms success and an output is available. "
         "Pending means still generating; a task ID alone does not prove success. Report failed or unknown "
         "outcomes accurately, check the original task later, and do not resubmit because its outcome is unknown."
@@ -791,53 +794,43 @@ MEDIA_GUIDANCES: dict[str, str] = {
 
 MEDIA_IMAGE_GUIDANCES: dict[str, str] = {
     "zh": (
-        "图片用 image_generate 的 requests 一次提交本轮完整清单；每项的 subject、造型与数量分别设置。"
-        "只有 media_inspect 实际发现问题时，才用 image_regenerate 重做一次，不能换个描述再次初次生成。"
+        "一次 image_generate 调用对应一幅画面：要几幅不同的画面，就在同一步里分别调用，n 只用于同一描述的多张变体；"
+        "每回合只提交一次图片请求，用户只要一张时只生成一张。生成成功即可交付，一般不必验图。"
     ),
     "en": (
-        "Submit the complete initial image batch in image_generate.requests, with each item's subject, styling and count. "
-        "Only an actual media_inspect finding permits one image_regenerate, not another initial batch."
+        "One image_generate call makes one picture: for different pictures, call it once per picture in the same step, "
+        "and use n only for variations of the same description. Submit picture requests once per turn; a single "
+        "requested picture is a single image. A successful result can be delivered as is, without inspection."
     ),
 }
 
 MEDIA_VIDEO_GUIDANCES: dict[str, str] = {
-    "zh": "video_generate 根据 prompt 决定视频的环境、动作顺序与镜头；图片仅提供身份与造型参考，不固定开场。本人出镜传 subject='self'，系统直接提供已确认的角色参考。可把本会话图片工具结果中的 url 传入 reference_image：本人出镜时作为造型参考，否则保持图中主体身份与造型；用户附件没有可用于此参数的地址。本人出镜需要更换造型时传 outfit_override。",
-    "en": "video_generate uses prompt to determine the setting, ordered motion and camera work; images provide identity and styling references without pinning the opening. Set subject='self' to supply the confirmed character reference directly. A conversation image tool's url may be passed as reference_image: it supplies styling with subject='self', or subject identity and styling when subject is omitted. User attachments have no usable address for this parameter. Use outfit_override for a styling change with subject='self'.",
+    "zh": "video_generate 的 prompt 决定视频的环境、动作顺序与镜头，参考图只提供身份与造型，不固定开场。本人出镜传 subject='self'，需要换造型时传 outfit_override；reference_image 可用本会话图片工具结果中的 url，用户附件没有可用地址。",
+    "en": "video_generate's prompt determines the setting, ordered motion and camera work; reference images provide identity and styling without pinning the opening. Pass subject='self' when the character appears and outfit_override for a different outfit; reference_image can use a url from this conversation's image results, and user attachments have no usable address.",
 }
 
 COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
     "zh": (
-        "用户要求生成或发送图片、自拍、照片时，直接调用本轮提供的 image_generate；"
-        "要求短片或连续动作视频时，直接调用本轮提供的 video_generate。"
-        "用户追问尚未收到的媒体时，先核对本会话已有产物与任务：有对应产物就交付，已受理任务就查询，确实未生成且工具可用才开始生成。"
-        "当画面、表情或动作比说出来更能传达本轮意思时，可以用图片或视频表达，与台词自然搭配；"
-        "静态情景适合图片，需要展示连续动作或变化时选择视频，不为每句聊天都生成媒体。"
-        "先调用本轮可用工具，按真实返回的产物和状态交付，台词不附括号描述画面或代替媒体。"
-        "使用本轮可用媒体工具创作当前角色本人出镜的新画面时传 subject='self'，工具会提供身份参考，未指定造型时沿用当前着装。"
-        "当前环境提供背景画面资料，其中其他主体的活动或穿着不属于你；你的当前着装以已确认的着装资料为准。"
-        "outfit_override 是本次图片或视频的完整造型，局部修改先与有依据的当前造型合并，资料不足时不虚构衣物。"
-        "它只作用于本次产物，不改变当前着装或当前环境。"
-        "不要凭记忆补写角色外貌，把提示词集中在场景、姿态与动作上；造型修改统一放入 outfit_override，"
-        "保持已确认的面容、物种与身体比例。"
+        "当画面、表情或动作比文字更能传达本轮意思时，也可以主动用图片或视频表达，与台词自然搭配：静态情景用图片，"
+        "连续动作或变化用视频，不为每句闲聊都生成媒体。\n"
+        "用户追问尚未收到的媒体时，先核对本会话已有的产物与任务：有对应产物就交付，已受理的任务只查询进度，"
+        "确实没有生成过且工具可用才开始生成。\n"
+        "画面里是你本人时传 subject='self'：系统自动带上你的形象与当前着装，提示词只写场景、姿态、表情和动作，"
+        "不凭记忆补写外貌；要换一套造型才传 outfit_override。当前环境资料只描述背景，其中其他人物的活动或穿着不属于你；你的当前着装以已确认的着装资料为准。\n"
+        "先调用工具，再按真实返回的产物和状态交付；台词里不用括号描述画面，也不用文字代替媒体。"
     ),
     "en": (
-        "When asked to create or send a picture, selfie, or photo, call image_generate directly when provided in this turn; "
-        "for a clip or continuous-motion video, call video_generate directly when provided. "
-        "When asked about missing media, check this conversation's existing outputs and tasks: deliver a matching output, "
-        "query an accepted task, or generate only if no generation has occurred and the tool is available. "
-        "When a scene, expression, or action conveys this turn's meaning better than saying it, use an image or "
-        "video alongside natural dialogue. Images suit a still scene; video suits continuous movement or change. "
-        "Do not generate media for every chat sentence. Call an available tool first and deliver only its actual "
-        "outputs and status, without parenthetical descriptions standing in for the media. "
-        "When creating a new depiction of the current character with an available media tool, pass subject='self'; "
-        "the tool supplies identity references and uses your current outfit unless styling is specified. "
-        "Current surroundings describe the background; depicted activities or clothing of other subjects do not "
-        "belong to you. Confirmed outfit data is the source of what you are wearing. "
-        "outfit_override is the complete styling for this image or video. Merge partial revisions with the evidenced "
-        "current outfit, without inventing garments from insufficient details. It affects only this output, "
-        "without changing the current outfit or surroundings. Do not reconstruct appearance from memory; focus the "
-        "prompt on scene, pose, and action. Put styling changes in outfit_override and keep the confirmed face, "
-        "species and body proportions."
+        "When a scene, expression, or action conveys this turn's meaning better than words, you may also use an "
+        "image or video on your own alongside natural dialogue: images suit a still scene, video suits continuous "
+        "movement or change, and not every chat sentence needs media.\n"
+        "When asked about missing media, check this conversation's existing outputs and tasks first: deliver a matching "
+        "output, only query an accepted task, and generate only if nothing was generated yet and the tool is available.\n"
+        "Pass subject='self' when you yourself are in the picture: your appearance and current outfit are applied "
+        "automatically, so the prompt covers only scene, pose, expression and action, without reconstructing "
+        "appearance from memory; pass outfit_override only to change into a different outfit. The current "
+        "surroundings describe the background; activities or clothing of other people there are not yours, and confirmed outfit data is the source of what you are wearing.\n"
+        "Call the tool first, then deliver only the actual outputs and status; no parenthetical descriptions of the "
+        "picture in dialogue, and no words standing in for the media."
     ),
 }
 

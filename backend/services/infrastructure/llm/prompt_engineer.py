@@ -16,7 +16,6 @@ from .providers import (
     ProviderConfig,
     ServiceType,
     resolve_context_tokens,
-    resolve_provider_reasoning_effort,
 )
 from .responses import approx_responses_tokens, build_responses_kwargs
 from .user_config import UserLlmConfig
@@ -109,14 +108,13 @@ async def call_llm_once(
 
     async def call(provider: ChatProvider) -> str:
         context_length = resolve_context_tokens(provider.config)
-        effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
         request = build_responses_kwargs(
             model=provider.config.model,
             instructions=system_prompt,
             input_items=input_items,
             max_output_tokens=_output_token_budget(context_length, system_prompt, input_items, max_output_tokens),
             temperature=provider.scale_temperature(temperature) if temperature is not None else None,
-            reasoning={"effort": effort} if effort else None,
+            reasoning=await provider.reasoning_param(reasoning_effort),
             text={"format": {"type": "json_object"}} if json_output and provider.supports_json_object else None,
         )
         return await _call_text_response(

@@ -4,6 +4,9 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Literal
 
+# 媒体请求受理后保留的工具步：足够核对结果或补做一次，其余回合时间留给最终回复。
+MEDIA_FOLLOW_UP_STEPS = 2
+
 
 @dataclass(frozen=True)
 class ImagePlan:
@@ -63,16 +66,23 @@ class MediaTurnState:
     current_versions: dict[str, str] = field(default_factory=dict)
     required_goals: set[str] = field(default_factory=set)
     regenerated_goals: set[str] = field(default_factory=set)
-    image_batch_claimed: bool = False
+    # 本回合已受理的图片请求（规范化请求 → 其 media_id）、已用的图片预算，以及提交图片请求所在的工具步序号。
+    image_requests: dict[str, list[str]] = field(default_factory=dict)
+    image_budget_used: int = 0
+    tool_round: int = 0
+    image_round: int | None = None
+    media_round: int | None = None
     video_claimed: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    def image_results(self) -> list[dict]:
-        return [
-            artifact.tool_view()
-            for artifact in self.artifacts.values()
-            if artifact.type == "image" and artifact.goal_id in self.current_versions
-        ]
+    def mark_media_accepted(self) -> None:
+        """记录本回合首个媒体请求受理时所在的工具步。"""
+        if self.media_round is None:
+            self.media_round = self.tool_round
+
+    def final_reply_due(self) -> bool:
+        """媒体请求受理后只再允许有限的工具步；用尽后模型调用只生成最终回复，不再披露工具。"""
+        return self.media_round is not None and self.tool_round - self.media_round >= MEDIA_FOLLOW_UP_STEPS
 
     def text_reply_media(self) -> list[dict[str, str]]:
         """文本回复每个交付目标只附加最新成功版本，重做失败时保留原图。"""

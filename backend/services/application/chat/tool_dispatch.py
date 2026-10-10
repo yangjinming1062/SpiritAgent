@@ -97,7 +97,7 @@ def matched_tool_names(output: object) -> list[str]:
 
 
 def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> list[dict]:
-    """按真实图片与验图状态披露工具，参数只接受可用产物标识。"""
+    """按真实图片与验图状态披露工具，参数只接受可用产物标识；已受理本回合图片请求后不再披露 image_generate。"""
     ready_images = {
         artifact.media_id: artifact
         for artifact in state.artifacts.values()
@@ -115,6 +115,8 @@ def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> 
     available = []
     for schema in schemas:
         name = schema["name"]
+        if name == "image_generate" and state.image_round is not None:
+            continue  # 图片请求每回合只受理一次；其后不再披露，避免把交付回复误当成再次生成。
         if name not in {"media_inspect", "image_regenerate"}:
             available.append(schema)
             continue
@@ -185,6 +187,17 @@ async def _dispatch_runner_tool(
     return result
 
 
+def _unavailable_tool_message(name: str, ctx: _ToolDispatchContext) -> str:
+    """不存在、被排除或本轮已不披露的工具共用同一说明：只调用本轮提供的工具；结构化回复另提示回复本身不是工具调用。"""
+    reply_hint = (
+        " Your reply is not a tool call: write it as the final JSON object." if ctx.media_turn.structured_reply else ""
+    )
+    return (
+        f"Tool {name} is not available. Call only the tools provided in this turn, "
+        f"or use search_tools to find others.{reply_hint}"
+    )
+
+
 async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _BatchProgress) -> dict:
     name = tc["name"]
 
@@ -197,11 +210,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
         presentation = get_presentation_snapshot(ctx.user_id)
         mode_excluded = unavailable_presentation_tool_names(presentation.mode if presentation else None)
         if name in ctx.excluded_tool_names | ctx.unavailable_tool_names | mode_excluded:
-            return make_tool_result_message(
-                name,
-                tool_error(f"Tool is unavailable in this execution mode: {name}"),
-                tc["call_id"],
-            )
+            return make_tool_result_message(name, tool_error(_unavailable_tool_message(name, ctx)), tc["call_id"])
         parsed_args = parse_tool_call_arguments(tc["arguments"], name)
         if parsed_args is None:
             # 参数无法解析时不派发：以失败结果告知模型，并计入守卫，重复失败能得到换策略提示。
@@ -266,7 +275,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
                     memory_scope=ctx.memory_scope,
                 )
             case _:
-                result_str = tool_error(f"Unknown tool location for {name}")
+                result_str = tool_error(_unavailable_tool_message(name, ctx))
 
         trusted_suffix = ctx.guardrails.record_call(name, args, result_str)
 

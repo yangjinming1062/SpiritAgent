@@ -1,7 +1,8 @@
-from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_REGENERATE_DESC, MEDIA_INSPECT_DESC
+from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_GENERATION_PARAM_DESCS, IMAGE_REGENERATE_DESC, MEDIA_INSPECT_DESC
 
 from services.application.generation import (
-    ImageBatch,
+    CHAT_IMAGES_PER_TURN,
+    IMAGE_ASPECT_RATIOS,
     generate_chat_images,
     inspect_chat_image,
     regenerate_chat_image,
@@ -10,8 +11,25 @@ from services.contracts import MediaTurnState
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 
-async def image_generation_tool(requests: list[dict], media_turn: MediaTurnState, **_: object) -> str:
-    return await generate_chat_images(requests, media_turn)
+async def image_generation_tool(
+    prompt: str,
+    media_turn: MediaTurnState,
+    subject: str | None = None,
+    aspect_ratio: str = "1:1",
+    n: int = 1,
+    outfit_override: str | None = None,
+    **_: object,
+) -> str:
+    return await generate_chat_images(
+        {
+            "prompt": prompt,
+            "subject": subject,
+            "aspect_ratio": aspect_ratio,
+            "n": n,
+            "outfit_override": outfit_override,
+        },
+        media_turn,
+    )
 
 
 async def media_inspect_tool(media_id: str, media_turn: MediaTurnState, **_: object) -> str:
@@ -31,7 +49,27 @@ async def image_regenerate_tool(
 IMAGE_GENERATION_SCHEMA = {
     "name": "image_generate",
     "description": IMAGE_GENERATION_DESC,
-    "parameters": ImageBatch.model_json_schema(),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "description": IMAGE_GENERATION_PARAM_DESCS["prompt"]},
+            "subject": {"type": "string", "enum": ["self"], "description": IMAGE_GENERATION_PARAM_DESCS["subject"]},
+            "aspect_ratio": {
+                "type": "string",
+                "enum": list(IMAGE_ASPECT_RATIOS),
+                "description": IMAGE_GENERATION_PARAM_DESCS["aspect_ratio"],
+            },
+            "n": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": CHAT_IMAGES_PER_TURN,
+                "description": IMAGE_GENERATION_PARAM_DESCS["n"],
+            },
+            "outfit_override": {"type": "string", "description": IMAGE_GENERATION_PARAM_DESCS["outfit_override"]},
+        },
+        "required": ["prompt"],
+        "additionalProperties": False,
+    },
 }
 MEDIA_INSPECT_SCHEMA = {
     "name": "media_inspect",
