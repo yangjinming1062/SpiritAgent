@@ -19,6 +19,7 @@ from prompts.chat import (
     COMPANION_REPLY_TOOL_GUIDANCES,
     COMPANION_TEXT_REPLY_GUIDANCES,
     COMPANION_VOICE_REPLY_GUIDANCES,
+    FINAL_REPLY_REQUEST_LABELS,
     FINAL_REPLY_RETRY_GUIDANCES,
 )
 from pydantic import ValidationError
@@ -151,6 +152,24 @@ def _reply_repair_history(input_items: list[dict[str, Any]]) -> list[dict[str, A
     ]
 
 
+def _misdirected_reply(tool_calls: list[dict[str, Any]], active_schemas: list[dict]) -> str | None:
+    """模型把完整的最终回复对象写成对未提供工具的单个调用（弱模型常见）：返回该参数文本，按回复交付并走同一套校验。"""
+    if len(tool_calls) != 1 or tool_calls[0].get("name") in {schema.get("name") for schema in active_schemas}:
+        return None
+    arguments = tool_calls[0].get("arguments")
+    try:
+        parsed = json.loads(arguments) if isinstance(arguments, str) else None
+    except ValueError:
+        return None
+    if (
+        isinstance(parsed, dict)
+        and parsed.get("kind") in {"dialogue", "written"}
+        and isinstance(parsed.get("bubbles"), list)
+    ):
+        return arguments
+    return None
+
+
 async def _generate_llm_response(
     emitter: Emitter,
     model_name: str,
@@ -194,6 +213,20 @@ async def _generate_llm_response(
     request_input = _reply_repair_history(context["input"]) if final_only and not reply_repair else context["input"]
     if final_reply_only and not reply_repair:
         instructions += resolve_prompt_text(FINAL_REPLY_RETRY_GUIDANCES, lang)
+        last_item = context["input"][-1] if context["input"] else {}
+        if turn_request.strip() and last_item.get("type") in {"function_call", "function_call_output"}:
+            request_input = [
+                *request_input,
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": resolve_prompt_text(FINAL_REPLY_REQUEST_LABELS, lang) + turn_request,
+                        },
+                    ],
+                },
+            ]
     reply_options: dict = {}
     if reply_preference is not None:
         capability_guidance = resolve_prompt_text(COMPANION_REPLY_INTEGRITY_GUIDANCES, lang)
@@ -400,7 +433,19 @@ async def _generate_llm_response(
         # 必须先检查全部输出项；完整响应也可能同时包含正文和工具调用。
         for item in response.output:
             await _collect_output_item(item)
-        if not tool_calls_list:
+        misdirected = _misdirected_reply(tool_calls_list, active_schemas) if reply_preference is not None else None
+        if misdirected is not None:
+            logger.warning(
+                "Companion reply was sent as a tool call; delivering it as the reply",
+                extra={
+                    "provider": provider.provider_name,
+                    "model": model_name,
+                    "tool_name": tool_calls_list[0].get("name"),
+                },
+            )
+            tool_calls_list.clear()
+            pending_text.append(misdirected)
+        elif not tool_calls_list:
             pending_text.append(response.output_text)
         if response.usage:
             final_prompt_tokens, final_completion_tokens = response.usage.input_tokens, response.usage.output_tokens

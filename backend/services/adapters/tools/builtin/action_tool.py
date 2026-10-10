@@ -52,7 +52,7 @@ async def action_search_tool(
             if needle in searchable:
                 hits.append(stats)
         return json.dumps(
-            {"pack_id": pack.id, "hits": hits[: max(1, min(limit, 20))], "total": len(hits)},
+            {"hits": hits[: max(1, min(limit, 20))], "total": len(hits)},
             ensure_ascii=False,
         )
 
@@ -66,7 +66,6 @@ async def action_design_tool(
     reason: str = "",
     duration_seconds: float = 4,
     clip_kind: str = "once",
-    expected_pack_id: int | None = None,
     proactive_turn: bool = False,
     **_: Any,
 ) -> str:
@@ -79,7 +78,6 @@ async def action_design_tool(
             reason=reason or "对话中需要新的表达动作",
             duration_seconds=duration_seconds,
             clip_kind=clip_kind,
-            expected_pack_id=expected_pack_id,
         )
     except ValidationError as exc:
         fields = sorted(
@@ -156,11 +154,10 @@ async def action_play_tool(
     action_id: int,
     user_id: int,
     reason: str = "",
-    expected_pack_id: int | None = None,
     **_: Any,
 ) -> str:
     """LLM 统一动作播放入口；对话与非对话均由此转入 request_playback。"""
-    request = ActionPlayRequest(action_id=action_id, reason=reason, expected_pack_id=expected_pack_id)
+    request = ActionPlayRequest(action_id=action_id, reason=reason)
     async with SESSION_LOCAL() as db:
         result = await request_playback(db, user_id, request, source="chat_expression")
         await db.commit()
@@ -223,10 +220,6 @@ def register(registry: ToolsRegistry) -> None:
                     "default": "once",
                     "description": "loop 首尾可循环；once 完整播放一次。",
                 },
-                "expected_pack_id": {
-                    "type": "integer",
-                    "description": "当前上下文的 expected_pack_id 或 action_search 返回的 pack_id；形象切换后刷新再填。",
-                },
             },
             ["name", "motion_description"],
         ),
@@ -249,10 +242,6 @@ def register(registry: ToolsRegistry) -> None:
                     "description": "当前形象中的 action_id（来自动作列表、action_search 或 action_inspect），不是 proposal_id。",
                 },
                 "reason": {"type": "string", "maxLength": 200, "description": "本次表演的简短情境依据。"},
-                "expected_pack_id": {
-                    "type": "integer",
-                    "description": "当前上下文的 expected_pack_id 或 action_search 返回的 pack_id，用来确认仍是对当前这套形象播放。",
-                },
             },
             ["action_id"],
         ),

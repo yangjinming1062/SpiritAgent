@@ -6,7 +6,7 @@ from typing import Any
 from components import SESSION_LOCAL, tool_error
 from modules.companion import DesktopVideoDesignRequest, DesktopVideoPlayRequest
 from prompts.desktop_tools import DESKTOP_ACTION_PARAMETER_DESCRIPTIONS, DESKTOP_ACTION_TOOL_DESCRIPTIONS
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from services.application.actions import (
     DesktopVideoError,
@@ -50,7 +50,6 @@ async def desktop_action_search_tool(user_id: int, query: str = "", limit: int =
     ]
     return json.dumps(
         {
-            "set_id": state.current.id,
             "hits": hits[: max(1, min(limit, 20))],
             "total": len(hits),
             "pinned": state.pinned,
@@ -69,7 +68,6 @@ async def desktop_action_design_tool(
     use_when: list[str] | None = None,
     avoid_when: list[str] | None = None,
     reason: str = "",
-    expected_set_id: int | None = None,
     proactive_turn: bool = False,
     **_: Any,
 ) -> str:
@@ -84,7 +82,6 @@ async def desktop_action_design_tool(
             use_when=use_when or [],
             avoid_when=avoid_when or [],
             reason=reason,
-            expected_set_id=expected_set_id,
         )
         result = await design_desktop_action(
             user_id,
@@ -128,14 +125,13 @@ async def desktop_action_play_tool(
     user_id: int,
     action_id: int,
     reason: str = "",
-    expected_set_id: int | None = None,
     proactive_turn: bool = False,
     **_: Any,
 ) -> str:
     if not _is_desktop(user_id):
         return tool_error("当前不在桌面模式，请使用当前模式的动作工具")
     try:
-        request = DesktopVideoPlayRequest(action_id=action_id, expected_set_id=expected_set_id, reason=reason)
+        request = DesktopVideoPlayRequest(action_id=action_id, reason=reason)
         async with SESSION_LOCAL() as db:
             command = await play_desktop_action(
                 db,
@@ -160,11 +156,17 @@ async def desktop_action_play_tool(
     )
 
 
+def _model_schema(model: type[BaseModel], required: list[str]) -> dict[str, Any]:
+    """请求模型的工具 schema：目标组合由服务端按当前画面绑定，并发守卫字段只留给 REST 调用方。"""
+    schema = model.model_json_schema()
+    schema["properties"].pop("expected_set_id")
+    schema["required"] = required
+    return schema
+
+
 def register(registry: ToolsRegistry) -> None:
-    design_schema = DesktopVideoDesignRequest.model_json_schema()
-    design_schema["required"] = ["name", "motion_description", "expected_set_id"]
-    play_schema = DesktopVideoPlayRequest.model_json_schema()
-    play_schema["required"] = ["action_id", "expected_set_id"]
+    design_schema = _model_schema(DesktopVideoDesignRequest, ["name", "motion_description"])
+    play_schema = _model_schema(DesktopVideoPlayRequest, ["action_id"])
     definitions = [
         (
             "desktop_action_search",

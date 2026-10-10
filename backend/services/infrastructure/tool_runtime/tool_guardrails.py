@@ -34,6 +34,27 @@ _WRITE_DENIED_TOOLS = frozenset({"write_file", "patch"})
 _EXACT_FAILURE_WARN_AFTER = 2
 _SAME_TOOL_FAILURE_WARN_AFTER = 3
 _NO_PROGRESS_WARN_AFTER = 2
+_STALL_AFTER_ROUNDS = 3
+# 成功即完成用户请求的动作型工具：陪伴聊天里其后只需回复，只再保留少量工具步用于核对。
+_EFFECT_TOOLS = frozenset(
+    {
+        "companion_wait",
+        "action_play",
+        "desktop_action_play",
+        "action_design",
+        "desktop_action_design",
+        "scene_create",
+        "scene_activate",
+        "post_publish",
+        "cronjob",
+        "memory_retain",
+    },
+)
+_EFFECT_FOLLOW_UP_STEPS = 2
+# 状态型工具在一个回合内的调用上限：合理需求至多几次，超出只会是空转。
+_TURN_CALL_LIMITS = {"companion_wait": 4, "action_play": 2, "desktop_action_play": 2}
+# 守卫追加在工具结果之后的提示不属于结果信封，判定前须先剥离。
+_LOOP_WARNING_PREFIX = "\n\n[Tool loop warning"
 
 
 def check_file_safety(tool_name: str, args: dict[str, Any]) -> str | None:
@@ -74,9 +95,49 @@ class ToolCallGuardrailController:
         self._exact_failure_counts: dict[tuple[str, str], int] = {}
         self._same_tool_failure_counts: dict[str, int] = {}
         self._no_progress: dict[tuple[str, str], tuple[str, int]] = {}
+        self._call_counts: dict[str, int] = {}
+        self._last_results: dict[tuple[str, str], str] = {}
+        self._stuck_rounds = 0
+        self._rounds = 0
+        self._effect_round: int | None = None
+
+    @property
+    def must_conclude(self) -> bool:
+        """继续调用工具已无意义：连续多个工具步没有新信息，或动作型工具已成功且核对额度用尽。调用方应收束为最终回复。"""
+        effect_done = self._effect_round is not None and self._rounds >= self._effect_round + _EFFECT_FOLLOW_UP_STEPS
+        return self._stuck_rounds >= _STALL_AFTER_ROUNDS or effect_done
+
+    def call_limit_error(self, tool_name: str) -> str | None:
+        """状态型工具本回合已用满调用上限时的拦截说明。"""
+        limit = _TURN_CALL_LIMITS.get(tool_name)
+        if limit is None or self._call_counts.get(tool_name, 0) < limit:
+            return None
+        return (
+            f"{tool_name} was already used {limit} times this turn, which is its limit. "
+            "Continue with what you have and write the final reply."
+        )
+
+    def record_round(self, calls: list[tuple[str, str]], results: list[str | None]) -> None:
+        """一个工具步结束：整步调用都失败，或只是重复本回合已有的调用且结果不变，就没有新信息；连续没有新信息的工具步累计，否则清零。多模态结果（None）总是新信息。"""
+        self._rounds += 1
+        stuck: list[bool] = []
+        for (name, arguments), result in zip(calls, results, strict=True):
+            if result is None:
+                stuck.append(False)
+                continue
+            body = result.split(_LOOP_WARNING_PREFIX, 1)[0]
+            failed = _tool_failed(body)
+            if name in _EFFECT_TOOLS and not failed and self._effect_round is None:
+                self._effect_round = self._rounds
+            signature = (name, _arguments_hash(arguments))
+            digest = _result_hash(body)
+            stuck.append(failed or self._last_results.get(signature) == digest)
+            self._last_results[signature] = digest
+        self._stuck_rounds = self._stuck_rounds + 1 if stuck and all(stuck) else 0
 
     def record_call(self, tool_name: str, args: dict[str, Any], result: str) -> str:
         """记录原始结果，返回独立于不可信工具内容的循环提示。"""
+        self._call_counts[tool_name] = self._call_counts.get(tool_name, 0) + 1
         signature = (tool_name, _hash_json(args))
         if _tool_failed(result):
             warning = self._record_failure(tool_name, signature)
@@ -85,7 +146,7 @@ class ToolCallGuardrailController:
         return (
             ""
             if warning is None
-            else f"\n\n[Tool loop warning: {warning.code}; count={warning.count}; {warning.message}]"
+            else f"{_LOOP_WARNING_PREFIX}: {warning.code}; count={warning.count}; {warning.message}]"
         )
 
     def _record_failure(self, tool_name: str, signature: tuple[str, str]) -> _LoopWarning | None:
@@ -162,6 +223,11 @@ def _tool_failure_recovery_hint(tool_name: str, count: int) -> str:
 
 def _hash_json(value: dict[str, Any]) -> str:
     return sha256_hex(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str))
+
+
+def _arguments_hash(arguments: str) -> str:
+    parsed = safe_json_loads(arguments)
+    return _hash_json(parsed) if isinstance(parsed, dict) else sha256_hex(arguments)
 
 
 def _result_hash(result: str) -> str:

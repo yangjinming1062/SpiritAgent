@@ -2,21 +2,19 @@
 与 prompts.chat 的媒体/工具教学块语义耦合（如 subject='self' 在两处表述），调整时两边核对。"""
 
 COMPANION_WAIT_DESC = (
-    "Save a one-time companion follow-up for a later time or meaningful desktop event, or inspect, update "
-    "and cancel existing intentions. Use cronjob for recurring fixed schedules. schedule creates an intention "
-    "or replaces the specified one; list also returns failed runs whose tool effects may need verification. "
-    "In a proactive turn, only the current intention can be scheduled or cancelled, and changes take effect "
-    "only if the turn finishes successfully. Save future work here instead of polling or waiting with tools. "
-    "At wake-up the desktop must be online, available, and outside still mode; expiry can end the wait "
-    "without contact. Do not promise an exact delivery time."
+    "Save a one-time follow-up for a later time or desktop event, list saved follow-ups, or cancel one. Use it "
+    "for something the user asked or agreed to, or a concrete check the task needs later; save it here instead of "
+    "waiting or polling. Use cronjob for recurring schedules. A follow-up wakes only while the desktop is online "
+    "and available, so never promise an exact time."
 )
 
 COMPANION_WAIT_PARAM_DESCS = {
-    "intent_id": "Required for cancel; use an ID returned by list. For schedule, set to replace that intent or omit to create; in proactive turns omission defers the current intent.",
-    "intent": "Required for schedule, together with at least one of after_seconds or wake_on. State a grounded purpose, verified progress and what remains to check. A plan is not a completed action or new authorization.",
-    "after_seconds": "Time-based wake-up delay. If wake_on is also set, either condition may wake the intent.",
-    "wake_on": "Wait for desktop availability to resume, or a change of application category/fullscreen state. The event does not itself prove the user is free.",
-    "expires_seconds": "Validity window, default one day, later than after_seconds. Deferral cannot extend the original intent's expiry.",
+    "action": "schedule saves a follow-up (or replaces the one in intent_id), list shows saved ones, cancel removes the one in intent_id.",
+    "intent_id": "Follow-up to replace or cancel; take it from list. Omit it to save a new one.",
+    "intent": "Required for schedule, together with at least one of after_seconds or wake_on. State the purpose and what remains to check. A plan is not a completed action or new authorization.",
+    "after_seconds": "Wake-up delay in seconds. With wake_on, either condition wakes the follow-up.",
+    "wake_on": "desktop_available wakes when the desktop becomes available again; context_changed wakes when the application category or fullscreen state changes. Neither shows the user is free.",
+    "expires_seconds": "How long the follow-up stays valid, default one day, and longer than after_seconds.",
 }
 
 SEND_MESSAGE_DESC = (

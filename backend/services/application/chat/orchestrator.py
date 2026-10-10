@@ -21,6 +21,7 @@ from modules.settings import get_user_setting, load_user_settings, resolve_user_
 from modules.system import ChatMessageRequest, ChatRequest
 from prompts.companion import PENDING_INTENTIONS_LABELS
 
+from services.application.actions import unavailable_action_tool_names
 from services.contracts import SceneTurnState
 from services.domains.companion import (
     build_presentation_prompt,
@@ -247,9 +248,6 @@ async def _run_chat_turn(
     authorization_check: Callable[[], Awaitable[bool]] | None = None,
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
-    # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量。
-    if max_loop_turns is None:
-        max_loop_turns = SETTINGS.agent_max_loop_turns
     user_message_id: int | None = None
     with ExitStack() as turn_scope:
         # 轮次起点先提交用户输入并解析召回查询；会话退出后生成向量，再以新短会话装配上下文。
@@ -417,6 +415,11 @@ async def _run_chat_turn(
 
         # 固定陪伴会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
         companion_reply = conv.kind == SPECIAL_KIND and conv.system_preset_id == COMPANION_PRESET_ID
+        # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量；陪伴聊天的上限独立于工作回合。
+        if max_loop_turns is None:
+            max_loop_turns = (
+                SETTINGS.companion_chat_max_loop_turns if companion_reply else SETTINGS.agent_max_loop_turns
+            )
         async with session_scope() as db:
             media_turn = await load_media_turn(
                 db,
@@ -464,15 +467,17 @@ async def _run_chat_turn(
         if buffer_text:
             await emitter.send_json({"type": "message.start"})
         base_instructions = current_context["instructions"]
-        for _ in range(max_loop_turns):
+        for step in range(max_loop_turns):
             if authorization_check is not None and not await authorization_check():
                 raise asyncio.CancelledError("The turn authorization was revoked")
             instruction_parts = [base_instructions]
+            action_tools_not_ready: frozenset[str] = frozenset()
             async with session_scope() as db:
                 await refresh_video_media(db, media_turn)
                 if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
                     environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
                     instruction_parts.append(environment)
+                    action_tools_not_ready = await unavailable_action_tool_names(db, user_id)
             if (
                 desktop_interaction
                 and conv.parent_id is None
@@ -492,6 +497,7 @@ async def _run_chat_turn(
             }
             presentation = get_presentation_snapshot(user_id)
             mode_excluded = unavailable_presentation_tool_names(presentation.mode if presentation else None)
+            mode_excluded |= action_tools_not_ready
             available_schemas = apply_search_tools_catalog(
                 available_media_tool_schemas(
                     [schema for name, schema in schemas_by_name.items() if name not in mode_excluded],
@@ -511,8 +517,15 @@ async def _run_chat_turn(
                 nonlocal response_started
                 response_started = True
 
-            # 媒体请求受理后工具步用尽：本次调用只生成最终回复（沿用最终回复重试的无工具请求形态）。
-            reply_only = final_reply_only or (companion_reply and media_turn.final_reply_due())
+            # 工具步用尽（媒体请求受理后的额度、聊天的循环上限、动作型工具成功后的额度、连续没有新信息）：
+            # 本次调用只依据已有结果生成最终回复，沿用最终回复重试的无工具请求形态。主动回合保持各自的上限报错，由意图收尾逻辑处理。
+            reply_only = final_reply_only or (
+                companion_reply
+                and (
+                    media_turn.final_reply_due()
+                    or (not ephemeral and (step == max_loop_turns - 1 or dispatch_ctx.guardrails.must_conclude))
+                )
+            )
 
             async def _call(provider: ChatProvider) -> _LLMTurnResult:
                 input_length = len(current_context["input"])

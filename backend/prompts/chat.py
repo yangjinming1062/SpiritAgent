@@ -563,6 +563,12 @@ FINAL_REPLY_RETRY_GUIDANCES: dict[str, str] = {
     ),
 }
 
+# 历史以工具记录结尾时重述用户本轮请求：工具记录改写为只读资料后位于末尾，模型会把它误当成用户发言。
+FINAL_REPLY_REQUEST_LABELS: dict[str, str] = {
+    "zh": "[用户本轮的请求，上文的工具记录是为它执行的；请据此回复，这不是新的发言]\n",
+    "en": "[The user's request for this turn, which the tool records above were run for; reply to it. This is not a new message]\n",
+}
+
 TOOL_RESULT_UNCERTAINTY: dict[str, str] = {
     "zh": "超时、连接中断或缺少记录不证明操作未执行；用户要求停止或取消，也不证明先前操作已撤销。没有新的核实结果时继续保留结果未知；可核实时先查原任务或实际状态，不盲目重做有副作用的步骤。",
     "en": "A timeout, disconnection, or missing record does not prove an action never ran; a request to stop or cancel does not prove an earlier action was reversed. Without new verification, keep the outcome unknown. When verification is available, check the original task or actual state before repeating a step with side effects. ",
@@ -658,11 +664,14 @@ COMPANION_PROACTIVE_GUIDANCES: dict[str, str] = {
 COMPANION_PROACTIVE_WAIT_GUIDANCES: dict[str, str] = {
     "zh": (
         "原事项仍有具体后续条件时，可用 companion_wait 保存已核实的进展和下一次唤醒条件，再结束本轮；"
-        "保存等待后也可以使用空 bubbles 数组。没有后续事项就自然结束，不为维持联系而编造新目的。"
+        "保存等待后也可以使用空 bubbles 数组。本轮只能顺延当前事项（不填 intent_id），新的唤醒时间须早于它的到期时间，"
+        "等待在本轮正常结束后才生效。没有后续事项就自然结束，不为维持联系而编造新目的。"
     ),
     "en": (
         "If the original purpose has a concrete next condition, use companion_wait to save verified progress "
         "and the next wake condition, then finish this turn. You may save a wait and use an empty bubbles array. "
+        "This turn can only defer the current follow-up (omit intent_id); the new wake time must fall before its "
+        "expiry, and the wait takes effect only if the turn finishes normally. "
         "When nothing remains to follow up, finish naturally; do not invent a new purpose just to stay in contact."
     ),
 }

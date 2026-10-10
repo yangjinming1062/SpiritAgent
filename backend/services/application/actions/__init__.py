@@ -2,7 +2,7 @@
 
 from services.domains.actions import DesktopVideoError, DesktopVideoNotFoundError, DesktopVideoStateError
 
-from .context import ActionContextSnapshot, build_action_context
+from .context import ActionContextSnapshot, build_action_context, unavailable_action_tool_names
 from .design import ProposalAcceptance, accept_proposal
 from .desktop import (
     build_desktop_action_context,
@@ -53,4 +53,5 @@ __all__ = [
     "request_playback",
     "resume_proposal_reviews",
     "schedule_accepted_proposal",
+    "unavailable_action_tool_names",
 ]

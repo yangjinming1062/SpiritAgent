@@ -14,7 +14,11 @@ COMPANION_WAIT_SCHEMA: dict[str, object] = {
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["schedule", "list", "cancel"]},
+            "action": {
+                "type": "string",
+                "enum": ["schedule", "list", "cancel"],
+                "description": COMPANION_WAIT_PARAM_DESCS["action"],
+            },
             "intent_id": {
                 "type": "integer",
                 "description": COMPANION_WAIT_PARAM_DESCS["intent_id"],
@@ -64,7 +68,9 @@ async def companion_wait(
         if action == "cancel":
             if intent_id is None:
                 raise ValueError("intent_id is required for cancellation")
-            return json.dumps({"cancelled": await cancel_companion_wait(user_id, intent_id)})
+            if not await cancel_companion_wait(user_id, intent_id):
+                raise ValueError(f"No active follow-up with intent_id {intent_id}; use list to see the saved ones")
+            return json.dumps({"cancelled": True})
         if action != "schedule":
             raise ValueError("action must be schedule, list or cancel")
         request = CompanionWaitRequest(
@@ -74,13 +80,7 @@ async def companion_wait(
             expires_seconds=expires_seconds,
         )
         result = await set_companion_wait(user_id, request, intent_id)
-        return json.dumps(
-            {
-                "intent_id": result,
-                "scheduled": True,
-                "note": "In a proactive turn this wait commits only when the turn finishes successfully.",
-            },
-        )
+        return json.dumps({"intent_id": result, "scheduled": True})
     except ValueError as exc:
         return tool_error(str(exc))
 

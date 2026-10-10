@@ -742,7 +742,6 @@ async def build_desktop_action_context(db: AsyncSession, user_id: int, *, langua
     state = await get_desktop_video_state(db, user_id)
     actions = state.current.actions if state.current else []
     payload = {
-        "expected_set_id": state.current.id if state.current else None,
         "pinned": state.pinned,
         "autonomous_enabled": state.autonomous_enabled,
         "current_action_id": state.selected_action_id,

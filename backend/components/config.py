@@ -161,6 +161,8 @@ class Settings(BaseSettings):
 
     # 对话回合与陪伴交互节奏：控制工具循环上限、桌面互动的 LLM 成本窗口与主动行为的静默门槛。
     agent_max_loop_turns: int = Field(default=150, gt=0, validation_alias="AGENT_MAX_LOOP_TURNS")
+    # 陪伴聊天的工具只是回复的辅助：预算内最后一次模型调用不带工具，只依据已有结果生成回复，不以报错中断。
+    companion_chat_max_loop_turns: int = Field(default=20, gt=0, validation_alias="COMPANION_CHAT_MAX_LOOP_TURNS")
     agent_turn_timeout_seconds: float = Field(default=1800.0, gt=0, validation_alias="AGENT_TURN_TIMEOUT_SECONDS")
     companion_idle_expression_min_interval_seconds: float = Field(
         default=2.0,

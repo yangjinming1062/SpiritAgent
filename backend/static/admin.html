@@ -1987,6 +1987,7 @@ const SETTINGS_SECTIONS = [
             ['field', bool('enable_context_compression', '启用长会话自动上下文压缩摘要')],
             ['grid', [
                 num('agent_max_loop_turns', '工具循环轮数上限', 1),
+                num('companion_chat_max_loop_turns', '陪伴聊天工具循环上限 (轮)', 1),
                 num('context_compression_threshold', '压缩触发阈值 (占上下文比例)', 0.05, { min: 0.3, max: 1 }),
                 num('context_summary_target_tokens', '摘要压缩目标 Token 数', 100, { min: 100 }),
                 num('ipc_future_timeout_seconds', 'IPC 异步调用等待超时 (秒)', 10, { min: 10 }),

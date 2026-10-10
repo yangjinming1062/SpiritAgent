@@ -14,10 +14,13 @@ from services.domains.actions import (
     ACTION_PROMPT_KEYS,
     DEFERRED_PROPOSAL_WINDOW,
     action_to_dict,
+    desktop_state,
     get_active_pack,
     is_expression_action,
     list_pack_actions,
 )
+from services.domains.companion import get_presentation_snapshot
+from services.infrastructure.tool_runtime import DESKTOP_ACTION_TOOL_NAMES, WINDOW_ACTION_TOOL_NAMES
 
 
 @dataclass
@@ -33,7 +36,6 @@ class ActionContextSnapshot:
     def to_prompt_block(self, *, language: str = "zh") -> str:
         """动作内容使用 JSON 保留资料边界与完整适用条件。"""
         payload = {
-            "expected_pack_id": self.pack_id,
             **({"action_outfit": self.outfit_description} if self.outfit_description else {}),
             "ready_actions_total": len(self.ready_actions),
             "ready_actions": [{key: item.get(key) for key in ACTION_PROMPT_KEYS} for item in self.ready_actions[:12]],
@@ -128,3 +130,12 @@ async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextS
         )
 
     return snapshot
+
+
+async def unavailable_action_tool_names(db: AsyncSession, user_id: int) -> frozenset[str]:
+    """当前呈现下没有可操作对象的动作工具不披露：桌面需要当前生活画面，窗口需要当前形象；否则调用必然失败。"""
+    presentation = get_presentation_snapshot(user_id)
+    if presentation is not None and presentation.mode == "desktop":
+        state = await desktop_state(db, user_id)
+        return frozenset() if state is not None and state.current_set_id is not None else DESKTOP_ACTION_TOOL_NAMES
+    return frozenset() if await get_active_pack(db, user_id) is not None else WINDOW_ACTION_TOOL_NAMES

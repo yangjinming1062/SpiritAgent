@@ -117,6 +117,8 @@ def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> 
         name = schema["name"]
         if name == "image_generate" and state.image_round is not None:
             continue  # 图片请求每回合只受理一次；其后不再披露，避免把交付回复误当成再次生成。
+        if name == "video_generate_status" and not any(a.type == "video" for a in state.artifacts.values()):
+            continue  # 没有视频任务可查时不披露。
         if name not in {"media_inspect", "image_regenerate"}:
             available.append(schema)
             continue
@@ -225,6 +227,15 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
         # 在入口处统一剥离保留键，使 backend / memory / runner 三类工具都受同一过滤。
         args = {k: v for k, v in args.items() if k not in RESERVED_KEYS}
 
+        if (limited := ctx.guardrails.call_limit_error(name)) is not None:
+            result_str = tool_error(limited)
+            return make_tool_result_message(
+                name,
+                _redact_tool_payload(result_str),
+                tc["call_id"],
+                trusted_suffix=ctx.guardrails.record_call(name, args, result_str),
+            )
+
         if (blocked := check_file_safety(name, args)) is not None:
             return make_tool_result_message(name, blocked, tc["call_id"])
 
@@ -300,6 +311,19 @@ async def _run_tracked_tool(tc: dict, ctx: _ToolDispatchContext, progress: _Batc
 
 
 async def _run_tool_batch(
+    tool_calls_list: list[dict],
+    ctx: _ToolDispatchContext,
+    progress: _BatchProgress,
+) -> list[dict]:
+    results = await _execute_tool_batch(tool_calls_list, ctx, progress)
+    ctx.guardrails.record_round(
+        [(tc["name"], tc["arguments"]) for tc in tool_calls_list],
+        [result["content"] if isinstance(result.get("content"), str) else None for result in results],
+    )
+    return results
+
+
+async def _execute_tool_batch(
     tool_calls_list: list[dict],
     ctx: _ToolDispatchContext,
     progress: _BatchProgress,

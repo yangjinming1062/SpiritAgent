@@ -128,9 +128,11 @@ async def set_companion_wait(
     plan = _TURN_PLAN.get()
     if plan is not None:
         if plan.user_id != user_id or intent_id not in (None, plan.intent_id):
-            raise ValueError("A proactive turn may only defer its current intent")
+            raise ValueError("This proactive turn can only defer its current follow-up: omit intent_id")
         if utc_now() + timedelta(seconds=request.after_seconds or 60) >= plan.expires_at:
-            raise ValueError("The requested wake time is outside the original intent's validity window")
+            raise ValueError(
+                "The wake time must fall before the current follow-up expires: use a shorter after_seconds",
+            )
         # 主动回合内只暂存计划，成功终态时与消息原子提交；取消或失败不能留下幽灵跟进。
         plan.followup = request
         return plan.intent_id
@@ -179,7 +181,7 @@ async def cancel_companion_wait(user_id: int, intent_id: int) -> bool:
     plan = _TURN_PLAN.get()
     if plan is not None:
         if plan.user_id != user_id or plan.intent_id != intent_id:
-            raise ValueError("A proactive turn may only complete its current intent")
+            raise ValueError("This proactive turn can only end its current follow-up: use its own intent_id")
         plan.followup = None
         return True
     async with session_scope() as db:
