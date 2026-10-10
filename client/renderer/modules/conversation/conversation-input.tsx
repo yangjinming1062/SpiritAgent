@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-// 对话输入胶囊：生活空间、工作台与轻语共用。默认单行胶囊；编辑消息，或工作台聚焦、挂附件、长文本时展开为多行指挥台。此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
+// 对话输入胶囊：生活空间、工作台与轻语共用。默认单行胶囊，内容超过一行自动换行增高、封顶后内部滚动；编辑消息，或工作台聚焦、挂附件、长文本时展开为多行指挥台。此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
 import type React from 'react'
 import {
   type ClipboardEvent,
@@ -62,7 +62,7 @@ export interface ConversationInputProps {
   variant?: ConversationVariant
 }
 
-// 工作台指挥台的展开阈值：超过这个长度、存在附件或聚焦时，长成 2–4 行 textarea。生活空间始终走单行胶囊。
+// 工作台指挥台的展开阈值：超过这个长度、存在附件或聚焦时，长成多行指挥台。生活空间空闲保持单行胶囊，靠 field-sizing 自动换行增高。
 const COMMAND_LINE_THRESHOLD = 80
 
 const ATTACH_MENU = [
@@ -121,10 +121,9 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   const expanded =
     isEditing || (variant === 'workbench' && (focused || Boolean(pending) || text.length >= COMMAND_LINE_THRESHOLD))
 
-  const editorRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
+  const editorRef = useRef<HTMLTextAreaElement | null>(null)
 
-  // input 与 textarea 随展开切换，共用同一个 ref。
-  const setEditorRef = useCallback((node: HTMLInputElement | HTMLTextAreaElement | null): void => {
+  const setEditorRef = useCallback((node: HTMLTextAreaElement | null): void => {
     editorRef.current = node
   }, [])
 
@@ -193,7 +192,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
         (!text.trim() && !pending && externalPaths.length === 0) ||
         (pending?.type === 'video' && pending.status !== 'ready')))
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
     schedulePendingFlush()
     setSlashPaletteForced(false)
     setSlashDismissed(false)
@@ -201,7 +200,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     onSetText(e.target.value)
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (!eligible) {
       return
     }
@@ -290,20 +289,18 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     value: text
   }
 
-  // 工作台指挥台：textarea；生活空间：单行 input。
+  // 编辑器统一用 field-sizing: content 的 textarea（Electron 42 / Chromium 123+）：高度由实际折行行数决定，min-h/max-h 夹住起步与上限；生活空间空闲态也是单行形态。
   const editorElement = expanded ? (
     <textarea
       {...commonEditorProps}
-      className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs text-strong placeholder:text-faint px-1.5 py-1.5 min-h-[2.4em] max-h-[7.2em] leading-snug"
+      className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs text-strong placeholder:text-faint px-1.5 py-1.5 min-h-[2.4em] max-h-[7.2em] leading-snug field-sizing-content overflow-y-auto"
       ref={setEditorRef}
-      rows={Math.min(4, Math.max(2, (text.match(/\n/g)?.length ?? 0) + 1))}
     />
   ) : (
-    <input
+    <textarea
       {...commonEditorProps}
-      className="h-full flex-1 bg-transparent border-0 outline-none text-xs px-1.5 text-strong placeholder:text-faint"
+      className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs px-1.5 py-0.5 text-strong placeholder:text-faint min-h-[1.5em] max-h-[7.2em] leading-snug field-sizing-content overflow-y-auto"
       ref={setEditorRef}
-      type="text"
     />
   )
 
