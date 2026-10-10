@@ -1,6 +1,7 @@
-# 推送 v<semver> tag 即发版：双平台构建 + MiniMax 总结提交生成 release notes，汇总为 draft release。
+# 推送 v<semver> tag 即发版：双平台构建 + LLM 总结提交生成 release notes，汇总为 draft release。
 # 人工在 Releases 页检查产物与 notes 后 Publish。版本号以 tag 为唯一来源，构建时注入各清单文件。
-# 所需 repo secrets：MINIMAX_API_KEY（notes 生成，缺失时回退为提交列表）、SPIRITAGENT_UPDATE_SIGNING_KEY（PEM 内容，Windows update zip 签名）。
+# notes 生成走供应商无关的 OpenAI 兼容接口：repo secrets LLM_API_KEY / LLM_BASE_URL / LLM_MODEL_NAME，缺失或请求失败直接终止工作流。
+# 签名所需 repo secrets：SPIRITAGENT_UPDATE_SIGNING_KEY（PEM 内容，Windows update zip 签名）。
 name: Release
 
 on:
@@ -12,9 +13,9 @@ permissions:
 
 jobs:
   notes:
-    name: Release notes (MiniMax)
+    name: Release notes (LLM)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20 # 须大于脚本内 600s 请求超时 + 环境准备时间，慢模型由脚本自行报错
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,7 +25,9 @@ jobs:
           python-version: "3.13"
       - name: Generate release notes
         env:
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL_NAME: ${{ secrets.LLM_MODEL_NAME }}
         run: |
           python scripts/gen_release_notes.py "${GITHUB_REF_NAME}" --output release-notes.md
           echo "--- release notes ---"

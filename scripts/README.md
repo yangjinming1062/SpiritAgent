@@ -128,18 +128,18 @@ Windows 安装器内嵌 NSIS 包；update ZIP 由 [UpdateManifest.ps1](lib/Updat
 
 GitHub release 与客户端更新是两个入口：自动更新需在 Backend 管理端“版本管理”上传 update ZIP，再由当前后端分发，通信与验签见 [PROTOCOL](../docs/PROTOCOL.md#自更新签名)。当前构建入口只生成 Windows update ZIP，macOS DMG 不等于可直接上传的同类更新包。
 
-CI 的 `SPIRITAGENT_UPDATE_SIGNING_KEY` Secret 存 PEM 内容；工作流落地临时文件后传路径。`MINIMAX_API_KEY` 缺失只使 notes 降级。工作流未配置平台证书签名或 macOS 公证，不能把 CI 构建成功视为已完成二者。
+CI 的 `SPIRITAGENT_UPDATE_SIGNING_KEY` Secret 存 PEM 内容；工作流落地临时文件后传路径。notes 用的 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL_NAME` 均为 repo secrets，缺失会使 notes 任务失败。工作流未配置平台证书签名或 macOS 公证，不能把 CI 构建成功视为已完成二者。
 
 ## Release notes
 
-[`gen_release_notes.py`](gen_release_notes.py) 按版本排序选前一个 tag，或由 `--from-tag` 指定区间，生成中文说明；模型不可用时回退为分组提交列表。以下 tag 须替换为仓库实际版本：
+[`gen_release_notes.py`](gen_release_notes.py) 按版本排序选前一个 tag，或由 `--from-tag` 指定区间，生成中文说明。以下 tag 须替换为仓库实际版本：
 
 ```bash
 python scripts/gen_release_notes.py v1.3.0
 python scripts/gen_release_notes.py v1.3.0 --from-tag v1.2.0 --output notes.md
 ```
 
-模型生成通过环境提供 `MINIMAX_API_KEY`，可选 `MINIMAX_BASE_URL` / `MINIMAX_MODEL`（默认值见脚本）。notes 来源是提交资料，发布前须核对产品影响、兼容要求和验证表述。
+模型生成要求环境提供 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME`（OpenAI 兼容 `chat/completions` 接口，base URL 含 `/v1`），任一缺失或请求失败脚本报错退出。notes 来源是提交资料，发布前须核对产品影响、兼容要求和验证表述。
 
 ## 共享图标资源
 
