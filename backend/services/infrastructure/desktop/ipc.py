@@ -12,7 +12,7 @@ _PENDING: dict[tuple[int, str], asyncio.Future[str]] = {}
 
 def _outcome_unknown_result(message: str) -> str:
     """与客户端回传的结果未知同一信封（ok=false + error），循环守卫按失败计数，模型按正文核对而不是重做。"""
-    return json.dumps({"ok": False, "error": message})
+    return json.dumps({"ok": False, "error": message}, ensure_ascii=False)
 
 
 _DESKTOP_GONE_ERROR = _outcome_unknown_result(

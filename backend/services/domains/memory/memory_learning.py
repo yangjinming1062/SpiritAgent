@@ -376,7 +376,7 @@ async def apply_memory_decisions(
             if row and (
                 row.content == decision.content.strip()
                 and row.context == _recall_context(decision.topic)
-                and row.tags == json.dumps([decision.category])
+                and row.tags == json.dumps([decision.category], ensure_ascii=False)
                 and row.basis == decision.basis
                 and row.status == decision.status
                 and row.usage == decision.usage
@@ -433,7 +433,7 @@ async def apply_memory_decisions(
             row.content = decision.content.strip()
             if not row.context or not row.context.startswith("user_profile:"):
                 row.context = _recall_context(decision.topic)
-            row.tags = json.dumps([decision.category])
+            row.tags = json.dumps([decision.category], ensure_ascii=False)
             row.basis, row.status, row.usage = decision.basis, decision.status, decision.usage
             row.reason, row.expires_at = decision.reason.strip(), expiry
             row.evidence, row.reviewed_at, row.updated_at = evidence_rows, now, now

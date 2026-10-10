@@ -212,7 +212,7 @@ async def _persist_tool_call_row(conv_id: int, result: _LLMTurnResult) -> None:
                 conversation_id=conv_id,
                 role="assistant",
                 content=None,
-                tool_calls=json.dumps(result.tool_calls_list),
+                tool_calls=json.dumps(result.tool_calls_list, ensure_ascii=False),
                 reasoning_content=result.reasoning or None,
                 prompt_tokens=result.final_prompt_tokens,
                 completion_tokens=result.final_completion_tokens,
