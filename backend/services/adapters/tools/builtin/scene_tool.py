@@ -132,7 +132,7 @@ def register(registry: ToolsRegistry) -> None:
             {
                 "notes": {
                     "type": "string",
-                    "description": "环境场景设计，非空：写清地点、陈设、光线、氛围与需要的画风，不描绘你本人；其他人物、动物、肖像或雕像可以按环境需要出现。",
+                    "description": "环境场景设计，非空：写清地点、陈设、光线与氛围，不写画风，不描绘你本人；其他人物、动物、肖像或雕像可以按环境需要出现。",
                 },
                 "auto_activate": {
                     "type": "boolean",

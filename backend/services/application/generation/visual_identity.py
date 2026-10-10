@@ -1,4 +1,4 @@
-"""出镜媒体共用的固定身份、本次生成造型及视频参考准备。衣柜已启用外观提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改衣柜或场景。"""
+"""出镜媒体共用的固定身份、本次生成造型及视频参考准备。衣柜已启用外观提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改衣柜或场景。无角色出镜的图片与视频在此补上统一的真实拍摄要求。"""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -10,6 +10,8 @@ from prompts.generation import (
     CHARACTER_ALIGNMENT_REFERENCES,
     CHARACTER_REFERENCE_ALIGN,
     CHARACTER_VISUAL_STYLE,
+    PLAIN_IMAGE_TEMPLATE,
+    PLAIN_VIDEO_TEMPLATE,
     SELF_IMAGE_CURRENT_OUTFIT,
     SELF_IMAGE_OUTFIT_DESCRIPTION,
     SELF_IMAGE_OUTFIT_REFERENCE,
@@ -90,6 +92,15 @@ def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_ref
         parts.append(SELF_IMAGE_OUTFIT_REFERENCE.format(outfit=outfit or "未提供"))
     parts.append(render_character_identity(plan.context.identity))
     return "\n".join(parts)
+
+
+def build_plain_image_prompt(prompt: str) -> str:
+    """没有角色参考的图片：统一按真实拍摄呈现。"""
+    return PLAIN_IMAGE_TEMPLATE.format(prompt=prompt)
+
+
+def build_plain_video_prompt(prompt: str) -> str:
+    return PLAIN_VIDEO_TEMPLATE.format(prompt=prompt)
 
 
 async def optional_outfit_image_reference(plan: SelfVisualPlan, user_id: int) -> str | None:

@@ -63,10 +63,12 @@ _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
 
 IMAGE_GENERATION_PARAM_DESCS = {
     "prompt": (
-        "Self-contained visual description: who or what is in the picture, pose or action, setting, lighting, "
-        "composition and style. Keep the user's concrete requirements and add no unrelated detail. Quote only text "
-        "that must appear in the picture. With subject='self', describe the scene, pose and expression only; "
-        "appearance and outfit are applied automatically."
+        "Self-contained visual description: who or what is in the picture, pose or action, setting, light source "
+        "and framing. Pictures are always rendered as real photographs, so describe a believable real scene without "
+        "decorative words such as dreamy or cinematic, and do not name an art style. Keep the "
+        "user's concrete requirements and add no unrelated detail. Quote only text that must appear in the picture. "
+        "With subject='self', describe the scene, pose and expression only; appearance and outfit are applied "
+        "automatically."
     ),
     "subject": "Set to 'self' when the current character appears in the picture, including selfies. Omit it otherwise.",
     "aspect_ratio": "Shape of the picture, default 1:1.",
@@ -83,7 +85,7 @@ VIDEO_GENERATION_DESC = (
 )
 
 VIDEO_GENERATION_PARAM_DESCS = {
-    "prompt": "Describe the video: setting, ordered motion and camera movement. With subject='self', describe the scene and action only; the character's appearance is applied automatically.",
+    "prompt": "Describe the video: setting, ordered motion and camera movement. Videos are always rendered as real footage; do not name an art style. With subject='self', describe the scene and action only; the character's appearance is applied automatically.",
     "subject": "Set to 'self' when the current character appears; their appearance and current outfit are supplied automatically.",
     "duration": "Clip length in seconds, 4 to 15, default 6.",
     "resolution": "Output resolution, default 768P. If it is unavailable, the error lists the options.",
@@ -106,7 +108,7 @@ VIDEO_STATUS_PARAM_DESCS = {
 SCENE_TOOL_DESCRIPTIONS = {
     "scene_list": "分页查询已就绪场景，query 搜索标题和描述。先检查已有场景，适合就复用；明确需要新设计或已有不合适再创建。返回当前环境与待完成切换。",
     "scene_get": "查询场景详情和任务状态。生成、描述分析或失败都不是到达；只以 environment.current 为当前地点。",
-    "scene_create": "根据当前情景自主设计环境场景并保存到场景列表。notes 描述地点、陈设、光线、氛围与需要的画风，不描绘你本人；其他人物、动物、肖像和雕像可以按环境需要出现。先用 scene_list 检查已有场景。默认只创建保存、当前环境不变；自主决定申请切换时才传 auto_activate=true 并通过政策校验。接受任务仅表示正在准备；以 environment.current 确认当前环境。受政策与新增额度限制，每回合最多一次创建、一次切换。",
+    "scene_create": "根据当前情景自主设计环境场景并保存到场景列表。notes 描述地点、陈设、光线与氛围，场景统一按真实拍摄的环境照片呈现，不写画风，不描绘你本人；其他人物、动物、肖像和雕像可以按环境需要出现。先用 scene_list 检查已有场景。默认只创建保存、当前环境不变；自主决定申请切换时才传 auto_activate=true 并通过政策校验。接受任务仅表示正在准备；以 environment.current 确认当前环境。受政策与新增额度限制，每回合最多一次创建、一次切换。",
     "scene_activate": "根据当前情景自主切换到已有的完整场景，不消耗生图额度。成功后 environment.current 记录所在环境，不提供你自身的活动或穿着事实。锁定时禁止自主切换，每回合最多一次切换。",
 }
 

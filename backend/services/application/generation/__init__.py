@@ -167,6 +167,8 @@ from .video_jobs import (
 from .video_jobs import drain as drain_video_jobs
 from .visual_identity import (
     apply_outfit_override,
+    build_plain_image_prompt,
+    build_plain_video_prompt,
     build_self_image_prompt,
     build_self_video_prompt,
     load_self_visual_context,
@@ -200,6 +202,8 @@ __all__ = [
     "generate_chat_images",
     "inspect_chat_image",
     "regenerate_chat_image",
+    "build_plain_image_prompt",
+    "build_plain_video_prompt",
     "build_self_image_prompt",
     "build_self_video_prompt",
     "SceneError",

@@ -130,7 +130,7 @@ class AvatarFromImageRequest(BaseModel):
     image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=500)
-    # 身份锚之外的呈现/风格参考图（可选）。
+    # 身份锚之外的呈现参考图（光线、色调与构图，可选）。
     presentation_image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     presentation_content_type: str | None = Field(default=None, max_length=64)
 

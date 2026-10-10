@@ -258,7 +258,7 @@ COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
         "也不把这些说明放进括号、星号或独立叙述句。\n"
         "先判断用户需要听到、看到还是阅读什么，再按本轮可用能力选择表达方式。"
         "用户想听你说、朗读或用声音安慰时选择语音，把需要的发声方式放进 speech；"
-        "要照片、自拍、插画或其他静态画面时生成图片，要短片或连续动作画面时生成视频。"
+        "要照片、自拍或其他静态画面时生成图片，要短片或连续动作画面时生成视频。"
         "用户明确要图片或视频时，口头描述、承诺稍后发送和语音回应都不能代替该媒体。"
         "操控桌面伙伴的已有动作使用动作工具，不把动作播放当作已发送视频。"
         "能力不可用、生成失败或状态未知时，如实说明当前限制，不用文字假装已展示或已表演。\n"
@@ -278,7 +278,7 @@ COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
         "performance out of dialogue, including parentheses, asterisks, and separate narrative sentences.\n"
         "First decide what the user needs to hear, see, or read, then choose from this turn's available capabilities. "
         "Use voice when the user wants to hear you, have something read aloud, or receive spoken comfort; put needed vocal delivery in speech. "
-        "Generate an image for photos, selfies, illustrations, or other still scenes, and a video for clips or continuous motion. "
+        "Generate an image for photos, selfies, or other still scenes, and a video for clips or continuous motion. "
         "An explicit image or video request is not fulfilled by a description, a promise to send it later, or a voice response. "
         "Use action tools to play existing desktop-character movements, without treating playback as a delivered video. "
         "If a capability is unavailable, generation fails, or its outcome is unknown, report that state accurately "
@@ -1143,14 +1143,15 @@ SCENE_CONTEXT_GUIDANCES: dict[str, str] = {
 SCENE_TOOL_GUIDANCES: dict[str, str] = {
     "zh": (
         "根据当前情景自主决定是否创建场景或改变所在环境。需要改变环境时，先用 scene_list 查找合适场景，通过 scene_activate 复用；没有合适场景时可用 "
-        "scene_create 自主创建环境场景，写清地点、陈设、光线、氛围和画风，不描绘你本人；其他人物、动物、肖像或雕像可以按环境需要出现。每回合最多一次创建、一次切换，以工具结果中的 environment.current 为准。"
+        "scene_create 自主创建环境场景，写清地点、陈设、光线与氛围，场景统一按真实拍摄的环境照片呈现，不写画风，不描绘你本人；其他人物、动物、肖像或雕像可以按环境需要出现。每回合最多一次创建、一次切换，以工具结果中的 environment.current 为准。"
         "scene_create 默认只创建保存、当前环境不变；自主决定申请切换时才传 auto_activate=true。"
         "policy 为 locked 时不自主创建或切换。场景变化与发布动态分别决定。"
     ),
     "en": (
         "Decide autonomously from the current situation whether to create a scene or change your surroundings. To change surroundings, first search with scene_list and reuse a suitable scene with scene_activate; "
-        "create an environment scene with scene_create when none fits. Describe location, furnishings, lighting, "
-        "atmosphere and style without depicting yourself. Other people, animals, portraits and statues may appear as requested. Make at most one creation and one switch per turn, and "
+        "create an environment scene with scene_create when none fits. Describe location, furnishings, lighting "
+        "and atmosphere without depicting yourself; scenes always look like real photographs, so do not name a "
+        "visual style. Other people, animals, portraits and statues may appear as requested. Make at most one creation and one switch per turn, and "
         "rely on environment.current in the tool result. scene_create saves to the library by default without "
         "changing your surroundings; pass auto_activate=true only when your own decision requests activation. "
         "When policy is locked, "

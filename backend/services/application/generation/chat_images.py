@@ -23,6 +23,7 @@ from .image_generation import ImageGenerationError, generate_images
 from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from .visual_identity import (
     apply_outfit_override,
+    build_plain_image_prompt,
     build_self_image_prompt,
     load_self_visual_context,
     optional_outfit_image_reference,
@@ -57,7 +58,11 @@ class InspectionResult(BaseModel):
 
 async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
     if request.subject != "self":
-        return ImagePlan(request=request.prompt, prompt=request.prompt, size=request.aspect_ratio)
+        return ImagePlan(
+            request=request.prompt,
+            prompt=build_plain_image_prompt(request.prompt),
+            size=request.aspect_ratio,
+        )
     visual = await load_self_visual_context(user_id)
     plan = apply_outfit_override(visual, request.outfit_override)
     outfit = await optional_outfit_image_reference(plan, user_id)

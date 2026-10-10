@@ -186,7 +186,7 @@ class ImageGenProvider(BaseProvider):
     supports_reference_image: ClassVar[bool] = (
         False  # 原生消费 reference_image（图生图）；False 则对参考图请求跳过，避免图→文→图
     )
-    supports_environment_reference_image: ClassVar[bool] = False  # 能按文字将参考图仅用于环境、构图与画风
+    supports_environment_reference_image: ClassVar[bool] = False  # 能按文字将参考图仅用于环境与构图
     supports_multiple_reference_images: ClassVar[bool] = (
         False  # 同时消费 secondary_reference_image；False 时调用链会过滤掉
     )

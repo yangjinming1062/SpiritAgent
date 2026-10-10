@@ -41,6 +41,8 @@ from sqlalchemy import or_, select, update
 from services.application.generation import (
     ImageGenerationError,
     apply_outfit_override,
+    build_plain_image_prompt,
+    build_plain_video_prompt,
     build_self_image_prompt,
     build_self_video_prompt,
     discard_post_video_job,
@@ -410,7 +412,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
             )
         else:
             urls = await generate_images(
-                plan.prompt,
+                build_plain_image_prompt(plan.prompt),
                 size=plan.size,
                 user_id=row.user_id,
                 persist_user_assets=True,
@@ -430,7 +432,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     else:
         job_id = progress.get("job_id")
         if job_id is None:
-            references, prompt = (), plan.prompt
+            references, prompt = (), build_plain_video_prompt(plan.prompt)
             if visual is not None:
                 visual_plan = apply_outfit_override(visual, None)
                 references = self_video_references(visual_plan)

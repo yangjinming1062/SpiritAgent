@@ -325,10 +325,10 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="scene.create",
         phase=20,
-        description="已有场景不适合时创建并启用环境场景。notes 描述地点、陈设、光线、氛围与需要的画风，必须非空；"
+        description="已有场景不适合时创建并启用环境场景。notes 描述地点、陈设、光线与氛围，必须非空，场景统一按真实拍摄的环境照片呈现，不写画风；"
         "不描绘你本人，其他人物、动物、肖像或雕像可以按环境需要出现；不依赖换装动作。",
         arguments={
-            "notes": "string（非空）：环境场景的地点、陈设、光线、氛围与需要的画风；不描绘你本人，其他人物、动物、肖像或雕像可按环境需要安排。",
+            "notes": "string（非空）：环境场景的地点、陈设、光线与氛围，统一按真实拍摄的环境照片呈现，不写画风；不描绘你本人，其他人物、动物、肖像或雕像可按环境需要安排。",
             "reason": "string（可选）：已有场景不合适、需要新建场景的依据。",
         },
         exclusive_group="scene",

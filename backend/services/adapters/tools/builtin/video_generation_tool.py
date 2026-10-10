@@ -18,6 +18,7 @@ from prompts.tools import (
 from services.application.generation import (
     AvatarGenerationError,
     apply_outfit_override,
+    build_plain_video_prompt,
     build_self_video_prompt,
     enqueue_video_job,
     ensure_video_capability,
@@ -92,6 +93,8 @@ async def _submit_video(
         prompt = build_self_video_prompt(plan, prompt, has_outfit_reference=len(references) > 1)
     elif references:
         prompt = VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
+    else:
+        prompt = build_plain_video_prompt(prompt)
 
     try:
         async with SESSION_LOCAL() as db:
