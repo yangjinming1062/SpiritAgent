@@ -278,7 +278,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 桌面资源由 `/api/companion/desktop-videos` 管理：`GET /state`、`GET /sets`、`GET /actions/{id}` 查询，`POST /ensure-current` 准备当前组合，`POST /actions/{id}/generate` 制作，`POST /actions/{id}/accept|reject` 复核，`POST /design` 设计自主动作，`POST /play` 请求播放，`PUT /preferences` 设置固定和自主切换，`POST /plays/{play_id}/claim` 认领以及 `POST /plays/{play_id}/receipt` 回执。`DesktopVideoEnsureRequest.trigger` 为 `entry`（用户明确进入桌面，按用户请求计额）或 `context_change`（依赖变化，按自主政策计额）；启动水合只查询和复用，不因缺项自动提交付费制作。
 
-状态分为组合、动作、提案、播放命令和实际回执。组合与动作是持久资产，提案用于设计和评审，播放命令只在当前组合、`set_epoch`、`presentation_revision` 与有效期仍匹配时兑现；播放器先以客户端 ID 原子认领，再以 `started`、`completed`、`interrupted`、`failed` 或 `rejected` 回报，排队或命令到达不等于已经显示。当前模式、账户和呈现代次不匹配时返回状态错误，迟到结果不能覆盖新组合。
+状态分为组合、动作、提案、播放命令和实际回执。组合与动作是持久资产，提案用于设计和评审。持续保底循环由客户端按当前组合、持续动作选择和已缓存媒体直接渲染，不依赖播放请求或认领；有效认领指令优先播放，终态、组合变化或持续素材版本更新立即解除旧指令优先级，回执失败不阻塞本地回退。播放命令只在当前组合、`set_epoch`、`presentation_revision` 与有效期仍匹配时兑现；播放器先以客户端 ID 原子认领，再以 `started`、`completed`、`interrupted`、`failed` 或 `rejected` 回报，排队或命令到达不等于已经显示。当前模式、账户和呈现代次不匹配时返回状态错误，迟到结果不能覆盖新组合。
 
 桌面动作工具 `desktop_action_search/design/inspect/play` 只在实际桌面模式且存在当前生活画面时装配、检索和派发；窗口模式继续使用 `action_*` 的透明动作契约，需要当前形象，没有可操作对象的工具族不披露。目标组合由服务端按当前画面绑定，聊天工具不向模型暴露组合标识。夜间规划冻结目标呈现模式和当前组合，模式变化后拒绝旧计划，不把透明动作重定向到桌面视频。制作完成默认入库，短暂动作结束后返回原持续循环，固定当前动作时自主切换不改写用户选择。
 

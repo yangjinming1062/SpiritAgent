@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { hydrateWardrobe } from '@/modules/character'
 import {
@@ -9,6 +9,7 @@ import {
   acknowledgeDesktopVideoPlay,
   claimDesktopVideoPlay,
   type DesktopVideoPlayCommand,
+  type DesktopVideoReceiptStatus,
   ensureDesktopVideoCurrent,
   playDesktopVideoAction,
   refreshDesktopVideos
@@ -20,6 +21,10 @@ import { $auth } from '@/shared/store/auth'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $theme } from '@/shared/store/theme'
+
+function hasTerminalReceipt(statuses: ReadonlySet<DesktopVideoReceiptStatus> | undefined): boolean {
+  return statuses !== undefined && [...statuses].some(status => status !== 'started')
+}
 
 export function useDesktopVideoWallpaper(): void {
   const auth = useStore($auth)
@@ -39,9 +44,78 @@ export function useDesktopVideoWallpaper(): void {
   const [claimed, setClaimed] = useState<DesktopVideoPlayCommand | null>(null)
   const [reduceMotion, setReduceMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const defaultPlay = useRef('')
-  const claimedPlays = useRef(new Map<string, Set<string>>())
+  const claimedPlays = useRef(new Map<string, Set<DesktopVideoReceiptStatus>>())
   const receiptQueues = useRef(new Map<string, Promise<void>>())
   const paused = locked || presentation.fullscreen || reduceMotion
+
+  const current = state?.current && state.current.context_hash === state.desired_context_hash ? state.current : null
+
+  const currentLoop =
+    current?.actions.find(
+      item => item.id === state?.selected_action_id && item.kind === 'loop' && item.enabled && item.video_url
+    ) ??
+    current?.actions.find(
+      item => item.id === state?.loop_action_id && item.kind === 'loop' && item.enabled && item.video_url
+    ) ??
+    current?.actions.find(item => item.key === 'idle' && item.enabled && item.video_url) ??
+    null
+
+  const claimedAction = current?.actions.find(action => action.id === claimed?.action_id)
+
+  const activeCommand =
+    claimed &&
+    claimed.set_id === current?.id &&
+    claimed.set_epoch === state?.set_epoch &&
+    (claimed.kind !== 'loop' || !claimedAction || claimedAction.version <= claimed.version)
+      ? claimed
+      : null
+
+  const recordReceipt = useCallback(
+    (playId: string, status: DesktopVideoReceiptStatus, error?: string): void => {
+      const scope = captureAuthScope()
+      const statuses = claimedPlays.current.get(playId)
+
+      if (!scope || !statuses || statuses.has(status) || hasTerminalReceipt(statuses)) {
+        return
+      }
+
+      statuses.add(status)
+
+      if (status !== 'started') {
+        setClaimed(command => (command?.play_id === playId ? null : command))
+      }
+
+      const previous = receiptQueues.current.get(playId) ?? Promise.resolve()
+
+      const request = previous
+        .then(async () => {
+          if (scope()) {
+            await acknowledgeDesktopVideoPlay(playId, clientId, status, error)
+          }
+        })
+        .catch(failure => log.warn('desktop-video', 'Playback receipt failed', failure))
+        .finally(() => {
+          if (receiptQueues.current.get(playId) === request) {
+            receiptQueues.current.delete(playId)
+          }
+        })
+
+      receiptQueues.current.set(playId, request)
+
+      if (claimedPlays.current.size > 128) {
+        for (const [recordedId, recorded] of claimedPlays.current) {
+          if (recordedId !== playId && hasTerminalReceipt(recorded)) {
+            claimedPlays.current.delete(recordedId)
+
+            if (claimedPlays.current.size <= 128) {
+              break
+            }
+          }
+        }
+      }
+    },
+    [clientId]
+  )
 
   const preparationInProgress =
     state?.current?.actions.some(action => action.status === 'processing' && action.stage !== 'paused') ?? false
@@ -128,11 +202,9 @@ export function useDesktopVideoWallpaper(): void {
   }, [active, preparationInProgress])
 
   useEffect(() => {
-    if (!active || !authSessionId || !state?.current || state.current.context_hash !== state.desired_context_hash) {
+    if (!active || !authSessionId || !state || !current || !currentLoop) {
       return
     }
-
-    const current = state.current
 
     const ongoingOnce = (command: DesktopVideoPlayCommand | null): boolean => {
       if (
@@ -146,7 +218,7 @@ export function useDesktopVideoWallpaper(): void {
 
       const statuses = claimedPlays.current.get(command.play_id)
 
-      if (statuses && ['completed', 'interrupted', 'failed', 'rejected'].some(status => statuses.has(status))) {
+      if (hasTerminalReceipt(statuses)) {
         return false
       }
 
@@ -157,33 +229,20 @@ export function useDesktopVideoWallpaper(): void {
       return
     }
 
-    const action =
-      current.actions.find(
-        item => item.id === state.selected_action_id && item.kind === 'loop' && item.enabled && item.video_url
-      ) ??
-      current.actions.find(
-        item => item.id === state.loop_action_id && item.kind === 'loop' && item.enabled && item.video_url
-      ) ??
-      current.actions.find(item => item.key === 'idle' && item.enabled && item.video_url)
-
-    if (!action?.video_url || !action.enabled) {
-      return
-    }
-
-    const key = `${state.set_epoch}:${action.id}:${action.video_url}`
+    const key = `${state.set_epoch}:${currentLoop.id}:${currentLoop.video_url}`
 
     const receiptStatuses = requested ? claimedPlays.current.get(requested.play_id) : undefined
 
-    const settled =
-      receiptStatuses && ['completed', 'interrupted', 'failed'].some(status => receiptStatuses.has(status))
+    const settled = hasTerminalReceipt(receiptStatuses)
 
     if (
       requested &&
+      requested.set_id === current.id &&
       requested.set_epoch === state.set_epoch &&
       Date.parse(requested.expires_at) > Date.now() &&
       !settled
     ) {
-      if (requested.kind === 'loop' && requested.action_id === action.id) {
+      if (requested.kind === 'loop' && requested.action_id === currentLoop.id) {
         defaultPlay.current = key
       }
 
@@ -196,10 +255,10 @@ export function useDesktopVideoWallpaper(): void {
 
     defaultPlay.current = key
 
-    void playDesktopVideoAction(action.id, current.id, 'desktop-entry').catch(error =>
+    void playDesktopVideoAction(currentLoop.id, current.id, 'desktop-entry').catch(error =>
       log.warn('desktop-video', 'Initial playback failed', error)
     )
-  }, [active, authSessionId, state, requested, claimed])
+  }, [active, authSessionId, state, current, currentLoop, requested, claimed])
 
   useEffect(() => {
     if (!active || !authSessionId || !requested) {
@@ -228,6 +287,13 @@ export function useDesktopVideoWallpaper(): void {
         }
 
         claimedPlays.current.set(requested.play_id, new Set())
+
+        if (Date.parse(requested.expires_at) <= Date.now()) {
+          recordReceipt(requested.play_id, 'failed', 'Playback request expired before publication')
+
+          return
+        }
+
         setClaimed(requested)
       }
     }
@@ -237,53 +303,23 @@ export function useDesktopVideoWallpaper(): void {
     return () => {
       disposed = true
     }
-  }, [active, authSessionId, requested, clientId, state?.set_epoch])
+  }, [active, authSessionId, requested, clientId, state?.set_epoch, recordReceipt])
+
+  useEffect(() => {
+    if (claimed && (!active || !authSessionId || claimed !== activeCommand)) {
+      recordReceipt(claimed.play_id, 'interrupted')
+    }
+  }, [active, authSessionId, claimed, activeCommand, recordReceipt])
 
   useEffect(() => {
     const scope = captureAuthScope()
 
     return window.spiritagent.presentation.onBackgroundPlayback(receipt => {
-      const statuses = claimedPlays.current.get(receipt.playId)
-      const status = receipt.status
-
-      if (!scope?.() || !statuses || statuses.has(status) || status === 'first-frame') {
-        return
-      }
-
-      statuses.add(status)
-      const previous = receiptQueues.current.get(receipt.playId) ?? Promise.resolve()
-
-      const request = previous
-        .then(async () => {
-          if (scope()) {
-            await acknowledgeDesktopVideoPlay(receipt.playId, clientId, status, receipt.error)
-          }
-        })
-        .catch(error => log.warn('desktop-video', 'Playback receipt failed', error))
-        .finally(() => {
-          if (receiptQueues.current.get(receipt.playId) === request) {
-            receiptQueues.current.delete(receipt.playId)
-          }
-        })
-
-      receiptQueues.current.set(receipt.playId, request)
-
-      if (claimedPlays.current.size > 128) {
-        for (const [playId, recorded] of claimedPlays.current) {
-          if (
-            playId !== receipt.playId &&
-            ['completed', 'failed', 'interrupted'].some(status => recorded.has(status))
-          ) {
-            claimedPlays.current.delete(playId)
-
-            if (claimedPlays.current.size <= 128) {
-              break
-            }
-          }
-        }
+      if (scope?.() && receipt.status !== 'first-frame') {
+        recordReceipt(receipt.playId, receipt.status, receipt.error)
       }
     })
-  }, [clientId, authSessionId])
+  }, [authSessionId, recordReceipt])
 
   const firstPoster = state?.current?.actions.find(action => action.key === 'idle')?.poster_url ?? null
 
@@ -291,8 +327,11 @@ export function useDesktopVideoWallpaper(): void {
     action => action.kind === 'loop' && action.enabled && action.video_url
   )
 
-  const videoUrl = claimed?.video_url ?? fallbackAction?.video_url ?? null
-  const posterUrl = claimed?.poster_url ?? fallbackAction?.poster_url ?? firstPoster ?? scene?.assetUrl ?? null
+  // 保底渲染独立于播放指令与回执。
+  const baseline = currentLoop ?? fallbackAction ?? null
+
+  const videoUrl = activeCommand?.video_url ?? baseline?.video_url ?? null
+  const posterUrl = activeCommand?.poster_url ?? baseline?.poster_url ?? firstPoster ?? scene?.assetUrl ?? null
 
   useEffect(() => {
     if (!active || !authSessionId) {
@@ -307,12 +346,12 @@ export function useDesktopVideoWallpaper(): void {
         authSessionId,
         video: videoUrl ? { url: videoUrl } : null,
         poster: posterUrl ? { url: posterUrl } : null,
-        playId: claimed?.play_id ?? null,
-        setId: claimed?.set_id ?? fallbackAction?.set_id ?? null,
-        actionId: claimed?.action_id ?? fallbackAction?.id ?? null,
-        setEpoch: claimed?.set_epoch ?? state?.set_epoch ?? 0,
-        expiresAt: claimed?.expires_at ?? null,
-        kind: claimed?.kind ?? 'loop',
+        playId: activeCommand?.play_id ?? null,
+        setId: activeCommand?.set_id ?? baseline?.set_id ?? null,
+        actionId: activeCommand?.action_id ?? baseline?.id ?? null,
+        setEpoch: activeCommand?.set_epoch ?? state?.set_epoch ?? 0,
+        expiresAt: activeCommand?.expires_at ?? null,
+        kind: activeCommand?.kind ?? 'loop',
         theme,
         reduceMotion,
         paused,
@@ -325,10 +364,8 @@ export function useDesktopVideoWallpaper(): void {
 
         log.warn('desktop-video', 'Background publish failed', error)
 
-        if (claimed) {
-          void acknowledgeDesktopVideoPlay(claimed.play_id, clientId, 'failed', String(error)).catch(failure =>
-            log.warn('desktop-video', 'Failure receipt failed', failure)
-          )
+        if (activeCommand) {
+          recordReceipt(activeCommand.play_id, 'failed', String(error))
         }
       })
 
@@ -338,9 +375,9 @@ export function useDesktopVideoWallpaper(): void {
   }, [
     active,
     authSessionId,
-    claimed,
-    fallbackAction?.id,
-    fallbackAction?.set_id,
+    activeCommand,
+    baseline?.id,
+    baseline?.set_id,
     videoUrl,
     posterUrl,
     scene?.assetUrl,
@@ -348,7 +385,7 @@ export function useDesktopVideoWallpaper(): void {
     theme,
     reduceMotion,
     paused,
-    clientId
+    recordReceipt
   ])
 
   useEffect(() => {
@@ -362,7 +399,7 @@ export function useDesktopVideoWallpaper(): void {
       }
 
       for (const [playId, statuses] of plays) {
-        if (!['completed', 'failed', 'interrupted'].some(status => statuses.has(status))) {
+        if (!hasTerminalReceipt(statuses)) {
           const previous = queues.get(playId) ?? Promise.resolve()
           void previous
             .then(async () => {

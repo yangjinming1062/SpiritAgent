@@ -57,7 +57,7 @@
 
 [desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或承载代次变化重发，失败允许同值重试。工具派发仍在后台精灵宿主，桌面停用精灵空间行为。
 
-[desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 负责实际桌面启用、组合变化、播放认领和回执；无可用视频与封面时回退当前场景图为静态封面，视频就绪后自动替换。保存的桌面偏好恢复只查询状态，真实内容变化须先刷新并比较组合指纹，不能把水合或重放事件当成付费制作触发。[背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待首帧、保留持续状态供短动作结束返回，按主进程暂停状态控制播放并回收媒体 URL。桌面生活管理页供窗口和桌面共用，读取、制作、复核与实际开播分别处理；`processing` 且 `stage=paused` 的动作显示手动继续入口，沿用已保存参数，暂停期间不持续轮询。
+[desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 负责实际桌面启用、组合变化、播放认领和回执，保底循环规则见[桌面生活契约](../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。无可用视频与封面时回退当前场景图为静态封面，视频就绪后自动替换。保存的桌面偏好恢复只查询状态，真实内容变化须先刷新并比较组合指纹，不能把水合或重放事件当成付费制作触发。[背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待首帧、保留持续状态供短动作结束返回，按主进程暂停状态控制播放并回收媒体 URL。桌面生活管理页供窗口和桌面共用，读取、制作、复核与实际开播分别处理；`processing` 且 `stage=paused` 的动作显示手动继续入口，沿用已保存参数，暂停期间不持续轮询。
 
 Dock 选择面板是 `.dock` 的兄弟节点，避免 backdrop-filter 改变 fixed 包含块；面板和条目菜单共用开启态，打开时停用面板活动与角色右键菜单。图标按可见条目分批取回，目录仅随固定配置版本刷新。桌面设置用 `PanelSelect` 将下拉框留在弹层 DOM 与命中区，避免原生弹窗触发失焦收起。
 
