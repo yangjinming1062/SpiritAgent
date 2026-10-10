@@ -76,6 +76,8 @@ export interface ChatEditDraft {
   sessionId: string
   sourceMessageId: number
   text: string
+  /** 原消息的多模态附件；编辑期只读展示，提交时由服务端随修订消息保留。 */
+  attachments?: ChatAttachment[]
 }
 
 export interface ChatUndoDraft {

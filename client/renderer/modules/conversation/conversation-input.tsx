@@ -23,15 +23,17 @@ import {
 } from '@/shared/lib/slash-commands'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
+import type { ChatAttachment } from '@protocol'
 
 import { attachVideoFile, pickFile, pickFolder, pickImage, pickVideo } from './chat-attach-picker'
 import type { ConversationVariant } from './chat-dock-message-bubble'
-import { PendingAttachmentView } from './chat-pending-attachment'
+import { EditRetainedAttachments, PendingAttachmentView } from './chat-pending-attachment'
 import { type PendingAttachment } from './chat-store'
 import { useConversationView } from './conversation-view'
 import { SlashCommandPopover } from './slash-command-popover'
 
 export interface ChatSubmitState {
+  editAttachments?: ChatAttachment[]
   editMessageId?: number
   gatewayState: ConnectionState
   isGenerating: boolean
@@ -93,7 +95,18 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     variant = 'living'
   } = props
 
-  const { editMessageId, gatewayState, isGenerating, isReadOnlySession, pending, recording, sending, text } = submit
+  const {
+    editAttachments,
+    editMessageId,
+    gatewayState,
+    isGenerating,
+    isReadOnlySession,
+    pending,
+    recording,
+    sending,
+    text
+  } = submit
+
   const isEditing = editMessageId !== undefined
 
   const [slashDismissed, setSlashDismissed] = useState(false)
@@ -321,6 +334,12 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
           />
         </div>
       )}
+
+      {editAttachments?.length ? (
+        <div className="px-1">
+          <EditRetainedAttachments attachments={editAttachments} />
+        </div>
+      ) : null}
 
       <div
         className={cn(

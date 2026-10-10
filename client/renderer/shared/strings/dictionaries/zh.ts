@@ -668,6 +668,8 @@ export const dict = {
       cancel: '取消编辑 (Esc)',
       send: '发送修改并重新生成回复',
       hint: '发送后重新生成回复，保留原消息附件',
+      retainedImage: '原消息图片，发送后保留',
+      retainedVideo: '原消息视频，发送后保留',
       stale: '消息状态已变化，请等待回复结束或重新选择最后一条消息',
       failed: '编辑消息失败，修改内容已保留'
     },

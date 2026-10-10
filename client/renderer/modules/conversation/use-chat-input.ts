@@ -171,6 +171,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
   }
 
   const submitState: ChatSubmitState = {
+    editAttachments: submit.editing?.attachments,
     editMessageId: submit.editing?.sourceMessageId,
     gatewayState,
     isGenerating: gatewayState === 'open' && (submit.sending || pendingBatchLen > 0 || turnInFlight || lastStreaming),

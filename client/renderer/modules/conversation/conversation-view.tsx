@@ -39,10 +39,20 @@ function createViewController(runtime: ConversationRuntime, draft: ConversationV
       return
     }
 
+    // 用户消息按空行拆泡时所有分段共用一个 backend id，附件只挂首个分段；从首段取回原附件供编辑期只读展示。
+    const bodies = runtime.$chatMessageBodies.get()
+
+    const attachments = runtime.$chatMessageList
+      .get()
+      .filter(item => item.backendMessageId === message.backendMessageId)
+      .map(item => bodies[item.id]?.attachments)
+      .find(Boolean)
+
     $chatEditDraft.set({
       sessionId,
       sourceMessageId: message.backendMessageId,
-      text: stripAttachmentDirectives(body.editableText ?? body.text).trim()
+      text: stripAttachmentDirectives(body.editableText ?? body.text).trim(),
+      attachments
     })
   }
 

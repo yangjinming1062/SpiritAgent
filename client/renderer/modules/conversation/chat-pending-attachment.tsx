@@ -3,11 +3,12 @@ import { FileText, FolderOpen, Video, X } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
+import type { ChatAttachment } from '@protocol'
 
 import type { PendingAttachment } from './chat-store'
 import { useConversationView } from './conversation-view'
 
-function PendingImageThumb({ path }: { path: string }): React.JSX.Element {
+function PendingImageThumb({ alt, path }: { alt?: string; path: string }): React.JSX.Element {
   const { viewId } = useConversationView()
   const dict = useStrings()
   const media = useResolvedMediaSrc({ type: 'image', url: path })
@@ -19,7 +20,11 @@ function PendingImageThumb({ path }: { path: string }): React.JSX.Element {
       type="button"
     >
       {media.status === 'ready' ? (
-        <img alt={dict.chat.attachment.pendingImageAlt} className="block h-full w-full object-cover" src={media.src} />
+        <img
+          alt={alt ?? dict.chat.attachment.pendingImageAlt}
+          className="block h-full w-full object-cover"
+          src={media.src}
+        />
       ) : (
         <span className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-faint">
           {media.status === 'failed' ? dict.chat.media.loadFailed : dict.chat.attachment.loading}
@@ -36,9 +41,17 @@ interface AttachmentChipProps {
   sending: boolean
 }
 
-function AttachmentChip({ children, onRemove, removeLabel, sending }: AttachmentChipProps): React.JSX.Element {
+function AttachmentChipShell({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="flex items-center gap-2 rounded-lg bg-fill-faint border border-line-hairline px-2.5 py-1 text-xs text-body">
+      {children}
+    </div>
+  )
+}
+
+function AttachmentChip({ children, onRemove, removeLabel, sending }: AttachmentChipProps): React.JSX.Element {
+  return (
+    <AttachmentChipShell>
       {children}
       {!sending && (
         <button
@@ -49,6 +62,29 @@ function AttachmentChip({ children, onRemove, removeLabel, sending }: Attachment
         >
           <X className="size-3" />
         </button>
+      )}
+    </AttachmentChipShell>
+  )
+}
+
+// 编辑消息时原附件由服务端随修订消息保留，这里只读展示、不提供增删。
+export function EditRetainedAttachments({ attachments }: { attachments: ChatAttachment[] }): React.JSX.Element {
+  const dict = useStrings()
+
+  return (
+    <div className="flex flex-col gap-1">
+      {attachments.map(item =>
+        item.type === 'image' ? (
+          <AttachmentChipShell key={item.url}>
+            <PendingImageThumb alt={dict.chat.edit.retainedImage} path={item.url} />
+            <span className="truncate text-[11px] text-body">{dict.chat.edit.retainedImage}</span>
+          </AttachmentChipShell>
+        ) : (
+          <AttachmentChipShell key={item.url}>
+            <Video className="size-3.5 shrink-0 text-rose-400" />
+            <span className="truncate text-[11px] text-body">{dict.chat.edit.retainedVideo}</span>
+          </AttachmentChipShell>
+        )
       )}
     </div>
   )

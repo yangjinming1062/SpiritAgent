@@ -34,6 +34,7 @@ export function ConversationSurface({
   const view = useConversationView()
 
   const {
+    $chatEditDraft,
     $chatMessageList,
     $chatSessionId,
     $chatStreamingTick,
@@ -69,10 +70,16 @@ export function ConversationSurface({
   }, [sessionId, pending, surfaceOpen, surfaceRole, locked, view.eligible, view.scoped])
   const dict = useStrings()
   const list = useStore($chatMessageList)
+  const editing = useStore($chatEditDraft)
   const lastAssistantStreaming = useStore($lastAssistantStreaming)
   const chatTurnInFlight = useStore($chatTurnInFlight)
   const pendingPromptBatch = useStore($pendingPromptBatch)
   const gatewayState = useStore($gatewayState)
+
+  // 编辑最后一条消息时正文只留在输入框，本视图隐藏原消息；共享 store 不动，取消编辑即恢复。
+  const visibleList = editing
+    ? list.filter(item => !(item.role === 'user' && item.backendMessageId === editing.sourceMessageId))
+    : list
 
   const isTurnPendingOrInFlight = pendingPromptBatch.length > 0 || chatTurnInFlight
   const showTyping = isTurnPendingOrInFlight && !lastAssistantStreaming && gatewayState === 'open'
@@ -87,7 +94,7 @@ export function ConversationSurface({
     scrollToBottom(scrollRef.current)
   }, [list.length, scrollRef])
 
-  const showTimeSet = useMemo(() => collectTimeDividerIds(list), [list])
+  const showTimeSet = useMemo(() => collectTimeDividerIds(visibleList), [visibleList])
 
   return (
     <div
@@ -109,7 +116,7 @@ export function ConversationSurface({
           </span>
         </div>
       )}
-      {list.map(item => (
+      {visibleList.map(item => (
         <MessageBubble key={item.id} message={item} showTimeLabel={showTimeSet.has(item.id)} variant={variant} />
       ))}
       {showTyping && (
