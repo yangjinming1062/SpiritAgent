@@ -450,10 +450,7 @@ export function createConversationRuntime(sessionId: string | null) {
       const segments = companionBubbles
         ? companionBubbles.map(bubble => ('text' in bubble ? bubble.text : ''))
         : canSplit
-          ? textContent
-              .split(/\r?\n(?:[ \t]*\r?\n)+/)
-              .map(part => part.trim())
-              .filter(Boolean)
+          ? splitUserText(textContent)
           : [hideText ? '' : textContent]
 
       if (segments.length === 0) {
@@ -622,6 +619,13 @@ export function createConversationRuntime(sessionId: string | null) {
     return id !== null && id === $companionSessionId.get()
   }
 
+  function splitUserText(text: string): string[] {
+    return text
+      .split(/\r?\n(?:[ \t]*\r?\n)+/)
+      .map(part => part.trim())
+      .filter(Boolean)
+  }
+
   // 历史可能先于落库事件返回；活气泡替换同一后端消息的快照，沿用历史位置。
   function reconcilePersistedMessages(list: ChatMessageListItem[], boundIds: Set<string>): void {
     const groups = new Map<number, ChatMessageListItem[]>()
@@ -687,14 +691,37 @@ export function createConversationRuntime(sessionId: string | null) {
       return
     }
 
-    const next = list.slice()
+    const messageIdsByRow = new Map(
+      unboundIndexes.map((rowIndex, index) => [rowIndex, validIds[index] ?? validIds[validIds.length - 1]])
+    )
 
-    for (const [index, idx] of unboundIndexes.entries()) {
-      const messageId = validIds[index] ?? validIds[validIds.length - 1]
-      next[idx] = { ...next[idx], backendMessageId: messageId }
-    }
+    const boundIds = new Set<string>()
+    const bodies = $chatMessageBodies.get()
 
-    reconcilePersistedMessages(next, new Set(unboundIndexes.map(index => next[index].id)))
+    const next = list.flatMap((item, index) => {
+      const messageId = messageIdsByRow.get(index)
+
+      if (messageId === undefined) {
+        return [item]
+      }
+
+      const body = bodies[item.id]
+      const segments = splitUserBubblesEnabled() ? splitUserText(body.text) : [body.text]
+
+      return (segments.length ? segments : ['']).map((text, segmentIndex) => {
+        const id = segmentIndex === 0 ? item.id : nextChatMessageId()
+        $chatMessageBodies.setKey(id, {
+          ...body,
+          text,
+          attachments: segmentIndex === 0 ? body.attachments : undefined
+        })
+        boundIds.add(id)
+
+        return { ...item, id, backendMessageId: messageId }
+      })
+    })
+
+    reconcilePersistedMessages(next, boundIds)
   }
 
   function preparePromptSubmission(params: Record<string, unknown>, bubbleIds: string[] = []): Record<string, unknown> {
@@ -741,7 +768,7 @@ export function createConversationRuntime(sessionId: string | null) {
 
       seen.add(message.id)
       const content = extractMessageContent(message)
-      const segments = splitUserBubblesEnabled() ? content.text.split(/\n\s*\n/).filter(Boolean) : [content.text]
+      const segments = !message.subtype && splitUserBubblesEnabled() ? splitUserText(content.text) : [content.text]
 
       for (const [index, text] of (segments.length ? segments : ['']).entries()) {
         const id = nextChatMessageId()

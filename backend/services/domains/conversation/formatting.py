@@ -1,9 +1,43 @@
 import json
 
 from components import format_local_iso, safe_json_loads
-from modules.conversation import CompanionReply, CompanionReplyInput, MediaBubble, MediaBubbleInput, Message
-from sqlalchemy import ColumnElement, and_, case, cast, column, false, func, literal_column, select
-from sqlalchemy.dialects.postgresql import JSONB
+from modules.conversation import (
+    CompanionReply,
+    CompanionReplyInput,
+    Conversation,
+    MediaBubble,
+    MediaBubbleInput,
+    Message,
+)
+from sqlalchemy import (
+    ColumnElement,
+    and_,
+    case,
+    cast,
+    column,
+    false,
+    func,
+    literal_column,
+    or_,
+    select,
+)
+from sqlalchemy.dialects.postgresql import JSONB, JSONPATH, aggregate_order_by
+
+from .main_conversation import SPECIAL_KIND
+from .presets import COMPANION_PRESET_ID
+
+# 与 chat-runtime.ts 的分段和 JavaScript trim、chatDisplayText 保持一致。
+_BLANK_LINE_SPLIT = r"\r?\n(?:[ \t]*\r?\n)+"
+_DISPLAY_WHITESPACE = " \t\r\n\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+_MEDIA_MARKER = rf"(?<![A-Za-z0-9_])MEDIA:[^{_DISPLAY_WHITESPACE}]*"
+
+
+def _is_json_array(content: ColumnElement[str | None] = Message.content) -> ColumnElement[bool]:
+    """排除畸形、非数组与 JSONB 无法表示的 \\u0000；调用方须用 CASE 保护强转。"""
+    return and_(
+        content.op("IS JSON", is_comparison=True)(literal_column("ARRAY")),
+        func.pg_input_is_valid(content, "jsonb"),
+    )
 
 
 def message_contains_text(query: str) -> ColumnElement[bool]:
@@ -27,11 +61,8 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
         .correlate(Message)
         .exists()
     )
-    # IS JSON ARRAY 排除畸形与非数组内容，pg_input_is_valid 排除 JSONB 无法表示的 \u0000；二者都不报错，CASE 保证只有通过才执行强转，其余多模态行不按原文匹配。
-    jsonb_array = and_(
-        Message.content.op("IS JSON", is_comparison=True)(literal_column("ARRAY")),
-        func.pg_input_is_valid(Message.content, "jsonb"),
-    )
+    # 非 JSON 数组的多模态行不按原文匹配，避免把 parts 结构当文本搜。
+    jsonb_array = _is_json_array()
     return case(
         (and_(Message.content_type == "companion_reply", jsonb_array), bubble_match),
         (and_(Message.content_type == "multimodal_v1", jsonb_array), text_part_match),
@@ -41,6 +72,73 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
         ),
         (Message.content_type.in_(("companion_reply", "multimodal_v1")), false()),
         else_=Message.content.icontains(query, autoescape=True),
+    )
+
+
+def _visible_message_text() -> ColumnElement[str | None]:
+    """多模态正文只取字符串 input_text 并保留数组顺序，与 extractMessageContent 一致。"""
+    parts = (
+        func.jsonb_array_elements(cast(Message.content, JSONB))
+        .table_valued(column("value", JSONB), with_ordinality="position")
+        .render_derived()
+    )
+    joined = (
+        select(func.string_agg(parts.c.value["text"].astext, aggregate_order_by("\n", parts.c.position)))
+        .where(parts.c.value["type"].astext == "input_text", func.jsonb_typeof(parts.c.value["text"]) == "string")
+        .correlate(Message)
+        .scalar_subquery()
+    )
+    return case(
+        (and_(Message.content_type == "multimodal_v1", _is_json_array()), joined),
+        else_=Message.content,
+    )
+
+
+def _companion_user_bubble_count() -> ColumnElement[int]:
+    """陪伴用户行分段去空；空正文或纯附件与界面一致，至少保留一泡。"""
+    segments = (
+        func.regexp_split_to_table(_visible_message_text(), _BLANK_LINE_SPLIT).table_valued("segment").render_derived()
+    )
+    return (
+        select(func.greatest(func.count(), 1))
+        .select_from(segments)
+        .where(func.btrim(segments.c.segment, _DISPLAY_WHITESPACE) != "")
+        .correlate(Message)
+        .scalar_subquery()
+    )
+
+
+def visible_bubble_count() -> ColumnElement[int]:
+    """已保存消息的聊天气泡数；查询须关联 Conversation，系统状态与工具记录不计。"""
+    reply_bubbles = func.jsonb_array_length(cast(Message.content, JSONB))
+    assistant_text = func.btrim(
+        func.regexp_replace(_visible_message_text(), _MEDIA_MARKER, "", "g"),
+        _DISPLAY_WHITESPACE,
+    )
+    has_media = case(
+        (
+            _is_json_array(Message.media_json),
+            cast(Message.media_json, JSONB).path_exists(cast('strict $[*] ? (@.type() == "object")', JSONPATH)),
+        ),
+        else_=false(),
+    )
+    return case(
+        (
+            and_(
+                Message.role == "user",
+                Conversation.kind == SPECIAL_KIND,
+                Conversation.system_preset_id == COMPANION_PRESET_ID,
+                or_(Message.subtype.is_(None), Message.subtype == ""),
+            ),
+            _companion_user_bubble_count(),
+        ),
+        (Message.role == "user", 1),
+        (
+            and_(Message.role == "assistant", Message.content_type == "companion_reply"),
+            case((_is_json_array(), reply_bubbles), else_=0),
+        ),
+        (and_(Message.role == "assistant", or_(assistant_text != "", has_media)), 1),
+        else_=0,
     )
 
 

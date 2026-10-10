@@ -290,7 +290,7 @@ export async function syncSessionHistory(params: {
     })
   }
 
-  return { ...res, current_seq: currentSeq, info, messages, message_count: messages.length, incremental: false, kind }
+  return { ...res, current_seq: currentSeq, info, messages, incremental: false, kind }
 }
 
 function cancelPersist(sessionId: string): void {

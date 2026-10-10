@@ -1,13 +1,25 @@
-"""会话消息前向重建：按 Message.id 升序遍历，保证 assistant 的 tool_calls 早于同轮 tool 结果，从而预先填充 call_id -> name 映射供后续 tool 消息回填 tool_name。"""
+"""会话历史读取与气泡统计；按 Message.id 正序重建消息，使工具结果可回填调用名称。"""
 
 from components import safe_json_loads
-from modules.conversation import CompanionReply, Message
-from sqlalchemy import select
+from modules.conversation import CompanionReply, Conversation, Message
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import client_asset_url
 
+from .formatting import visible_bubble_count
 from .reply_audio import client_reply_bubbles
+
+
+async def count_conversation_bubbles(db: AsyncSession, conversation_id: int) -> int:
+    return (
+        await db.execute(
+            select(func.coalesce(func.sum(visible_bubble_count()), 0))
+            .select_from(Message)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(Message.conversation_id == conversation_id),
+        )
+    ).scalar_one()
 
 
 def client_media_entries(media: list[dict[str, str]]) -> list[dict[str, str]]:

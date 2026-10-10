@@ -36,6 +36,7 @@ from services.domains.conversation import (
     message_contains_text,
     resolve_preset_meta,
     synthesize_reply_audio,
+    visible_bubble_count,
 )
 from services.infrastructure.assets import user_asset_lock
 from services.infrastructure.turn_ownership import conversation_is_running, conversation_lock
@@ -133,7 +134,7 @@ async def list_sessions(
     msg_stats = (
         select(
             Message.conversation_id,
-            func.count(Message.id).label("msg_count"),
+            func.coalesce(func.sum(visible_bubble_count()), 0).label("msg_count"),
             func.coalesce(func.sum(Message.prompt_tokens), 0).label("input_tok"),
             func.coalesce(func.sum(Message.completion_tokens), 0).label("output_tok"),
             func.count(Message.id).filter(Message.tool_calls.isnot(None)).label("tool_count"),
@@ -250,7 +251,7 @@ async def search_sessions(
         content_match_ids = content_match_ids.where(archived_filter)
 
     rows_query = (
-        select(Conversation, _preview_subquery, func.count(Message.id).label("msg_count"))
+        select(Conversation, _preview_subquery, func.coalesce(func.sum(visible_bubble_count()), 0).label("msg_count"))
         .outerjoin(Message, Message.conversation_id == Conversation.id)
         .where(
             Conversation.user_id == user.id,

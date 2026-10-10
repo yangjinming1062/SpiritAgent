@@ -111,6 +111,7 @@ from services.domains.conversation import (
     build_session_messages,
     cancel_reply_audio,
     conversation_memory_scope,
+    count_conversation_bubbles,
     fork_conversation_from_message,
     get_or_create_special_conversation,
     get_reply_retry_message,
@@ -989,6 +990,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     messages = await build_session_messages(conv.id, db, after_id=after_id)
                 else:
                     messages, truncated, next_cursor = await _fetch_truncated_history(conv.id, db)
+                message_count = await count_conversation_bubbles(db, conv.id)
             last_submission = await _last_submission(runtime)
             info = await _runtime_info(runtime, conv)
             snapshot = deepcopy(runtime.active_turn)
@@ -1005,7 +1007,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             await dispatcher.flush_unsent()
             return SessionResumeResult(
                 session_id=runtime.session_id,
-                message_count=len(messages),
+                message_count=message_count,
                 messages=messages,
                 info=info,
                 current_seq=replay_buffer.max_seq,
@@ -1133,6 +1135,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             async with runtime.snapshot_lock:
                 replayed_count = await dispatcher.replay(last_seq)
                 if replayed_count is not None:
+                    async with SESSION_LOCAL() as db:
+                        message_count = await count_conversation_bubbles(db, conv.id)
                     logger.info(
                         "session.resume replayed frames",
                         extra={
@@ -1144,7 +1148,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     )
                     return SessionResumeResult(
                         session_id=runtime.session_id,
-                        message_count=0,
+                        message_count=message_count,
                         info=await _runtime_info(runtime, conv),
                         resumed=True,
                         replayed_count=replayed_count,
@@ -1500,6 +1504,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 "message_ids": [*precursor_user_message_ids, persisted_message_id],
             },
         )
+        # 输入持久化后刷新列表，不等待回复生成。
+        await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
         client_context = session.session_client_context
         runtime.active_turn = snapshot
         runtime.origin_kind = session.origin_kind
