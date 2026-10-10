@@ -4,20 +4,20 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { app, nativeImage, shell } from 'electron'
+import { shell } from 'electron'
 import log from 'electron-log/main'
 
 import type { DockCatalogSource, DockCatalogSourceKey } from '@ipc/contracts'
 
 import { createSerialQueue } from '../shared/utils'
 
+import { readWindowsApplicationIcon } from './windows-application-icon'
 import { readRegisteredApplications, readShellApplications } from './windows-installed-apps'
 
 const MAX_DEPTH = 4
 const MAX_SHORTCUTS = 1000
 const CACHE_TTL_MS = 60_000
 const MAX_ICON_BATCH = 64
-const ICON_CONCURRENCY = 4
 
 export interface CatalogApplication {
   id: string
@@ -111,33 +111,6 @@ async function collectShortcuts(dir: string, depth: number, out: string[]): Prom
       out.push(full)
     }
   }
-}
-
-// 清单图标优先；.lnk 先读取目标程序，失败再回退。
-async function readApplicationIcon(item: CatalogApplication): Promise<string | null> {
-  for (const source of new Set([item.iconPath, item.target, item.launchTarget])) {
-    if (!source || !path.isAbsolute(source)) {
-      continue
-    }
-
-    try {
-      if (path.extname(source).toLowerCase() === '.png') {
-        const icon = nativeImage.createFromPath(source)
-
-        if (!icon.isEmpty()) {
-          return icon.toDataURL()
-        }
-
-        continue
-      }
-
-      return (await app.getFileIcon(source, { size: 'normal' })).toDataURL()
-    } catch {
-      // 目标图标读不到时继续尝试下一个来源。
-    }
-  }
-
-  return null
 }
 
 function toShortcut(file: string, rootDir: string, target: string): CatalogApplication | null {
@@ -287,23 +260,21 @@ export function createWindowsAppCatalog(): {
 
       const queue = [...new Set(ids)].filter(id => !iconCache.has(id))
 
-      for (let index = 0; index < queue.length; index += ICON_CONCURRENCY) {
-        await Promise.all(
-          queue.slice(index, index + ICON_CONCURRENCY).map(async id => {
-            const item = handles.get(id)
+      await Promise.all(
+        queue.map(async id => {
+          const item = handles.get(id)
 
-            if (!item) {
-              return
-            }
+          if (!item) {
+            return
+          }
 
-            const icon = await readApplicationIcon(item)
+          const icon = await readWindowsApplicationIcon(item.launchTarget, item.iconPath)
 
-            if (handles.has(id)) {
-              iconCache.set(id, icon)
-            }
-          })
-        )
-      }
+          if (handles.has(id)) {
+            iconCache.set(id, icon)
+          }
+        })
+      )
 
       const result: Record<string, string | null> = {}
 

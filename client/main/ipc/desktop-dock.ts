@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 
-import { app, type BrowserWindow, dialog, type IpcMain, shell, type WebContents } from 'electron'
+import { type BrowserWindow, dialog, type IpcMain, shell, type WebContents } from 'electron'
 import log from 'electron-log/main'
 
 import { type DockCatalog, type DockEntry, type DockState, IPC } from '@ipc/contracts'
@@ -11,6 +11,7 @@ import type { RunningApplicationsState, RunningApplicationWindow } from '../shar
 import { atomicWriteFile, createSerialQueue, safeReadJson, sendToWindow } from '../shared/utils'
 
 import { type CatalogApplication, createWindowsAppCatalog } from './windows-app-catalog'
+import { readWindowsApplicationIcon } from './windows-application-icon'
 import { isPackagedAppTarget, launchPackagedApplication } from './windows-installed-apps'
 
 interface SavedDockEntry {
@@ -106,23 +107,6 @@ async function validateFileTarget(target: string): Promise<void> {
       throw new Error('快捷方式没有指向可用程序。')
     }
   }
-}
-
-// Windows 不解析 .lnk 图标，先读取目标程序，失败再回退。
-async function readTargetIcon(target: string): Promise<string> {
-  if (path.extname(target).toLowerCase() === '.lnk') {
-    try {
-      const shortcut = shell.readShortcutLink(target)
-
-      if (path.extname(shortcut.target).toLowerCase() === '.exe') {
-        return (await app.getFileIcon(shortcut.target, { size: 'large' })).toDataURL()
-      }
-    } catch {
-      // 目标不可读时退回快捷方式本身。
-    }
-  }
-
-  return (await app.getFileIcon(target, { size: 'large' })).toDataURL()
 }
 
 export function registerDesktopDock(options: {
@@ -249,7 +233,7 @@ export function registerDesktopDock(options: {
       try {
         icon = application
           ? ((await catalog.icons([application.id]))[application.id] ?? null)
-          : await readTargetIcon(entry.target)
+          : await readWindowsApplicationIcon(entry.target)
       } catch {
         /* 图标失败保留程序启动能力。 */
       }
@@ -374,7 +358,7 @@ export function registerDesktopDock(options: {
               icon = item
                 ? ((await catalog.icons([item.id]))[item.id] ?? null)
                 : application.target && !isPackagedAppTarget(application.target)
-                  ? await readTargetIcon(application.target)
+                  ? await readWindowsApplicationIcon(application.target)
                   : null
             } catch {
               /* 图标失败不影响窗口切换。 */
