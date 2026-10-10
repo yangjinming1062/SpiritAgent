@@ -14,7 +14,7 @@ from components import (
 )
 from modules.ws import COMPANION_TURN_EVENT
 
-from services.adapters.desktop import terminate_remote_sessions, terminate_user_gateway
+from services.adapters.desktop import terminate_remote_sessions, terminate_user_gateway, wait_user_turns
 from services.adapters.scheduler import invalidate_user_scheduler_state
 from services.application.actions import resume_desktop_reviews, resume_proposal_reviews
 from services.application.generation import (
@@ -36,14 +36,15 @@ logger = get_logger(__name__)
 
 
 async def _stop_user_runtime(user_id: int) -> None:
-    """并行停稳网关、主动回合与用户任务；全部收敛后再抛出首个失败。"""
+    """停稳连接与主动回合，等待用户回合后再清理后台任务。"""
     results = await asyncio.gather(
         terminate_user_gateway(user_id),
         terminate_remote_sessions(user_id),
         interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT),
-        cancel_user_tasks(user_id),
         return_exceptions=True,
     )
+    await wait_user_turns(user_id)
+    results.extend(await asyncio.gather(cancel_user_tasks(user_id), return_exceptions=True))
     for result in results:
         if isinstance(result, BaseException):
             raise result

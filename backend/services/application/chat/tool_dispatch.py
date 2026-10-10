@@ -51,7 +51,6 @@ class _ToolDispatchContext:
     scene_turn: SceneTurnState
     proactive_turn: bool
     user_message: str
-    authorization_check: Callable[[], Awaitable[bool]] | None = None
     unavailable_tool_names: frozenset[str] = frozenset()
 
 
@@ -203,9 +202,6 @@ def _unavailable_tool_message(name: str, ctx: _ToolDispatchContext) -> str:
 async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _BatchProgress) -> dict:
     name = tc["name"]
 
-    if ctx.authorization_check is not None and not await ctx.authorization_check():
-        raise asyncio.CancelledError("The turn authorization was revoked")
-
     await ctx.emitter.send_json({"type": "tool_start", "name": name, "call_id": tc["call_id"]})
 
     try:
@@ -240,8 +236,6 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext, progress: _B
             return make_tool_result_message(name, blocked, tc["call_id"])
 
         tool_location = REGISTRY.get_location(ctx.user_id, name)
-        if ctx.authorization_check is not None and not await ctx.authorization_check():
-            raise asyncio.CancelledError("The turn authorization was revoked")
         progress.started.add(tc["call_id"])
         match tool_location:
             case "backend":

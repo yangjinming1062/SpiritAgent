@@ -1,6 +1,5 @@
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from functools import partial
@@ -184,13 +183,10 @@ async def run_chat_turn(
     desktop_interaction: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
-    authorization_check: Callable[[], Awaitable[bool]] | None = None,
     turn_timeout_seconds: float | None = None,
 ) -> None:
-    """所有入口共享会话互斥和执行预算；账户授权在模型与工具派发边界复核。"""
+    """所有入口共享会话互斥和执行预算；用户请求在受理入口校验授权。"""
     async with conversation_lock(req.session_id):
-        if authorization_check is not None and not await authorization_check():
-            raise asyncio.CancelledError("The turn authorization was revoked")
         timeout = asyncio.timeout(turn_timeout_seconds or SETTINGS.agent_turn_timeout_seconds)
         try:
             async with timeout:
@@ -211,7 +207,6 @@ async def run_chat_turn(
                         desktop_interaction=desktop_interaction,
                         excluded_tool_names=excluded_tool_names,
                         max_loop_turns=max_loop_turns,
-                        authorization_check=authorization_check,
                     )
         except TimeoutError:
             if not timeout.expired():
@@ -245,7 +240,6 @@ async def _run_chat_turn(
     desktop_interaction: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
-    authorization_check: Callable[[], Awaitable[bool]] | None = None,
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
     user_message_id: int | None = None
@@ -446,11 +440,7 @@ async def _run_chat_turn(
             # 子 Agent 回合沿用本回合的无头标志：定时任务等无头回合委派出的本机调用同样不显示桌面工作态。
             delegate_executor=partial(
                 run_delegated_turn,
-                run_turn=partial(
-                    run_chat_turn,
-                    headless=headless,
-                    authorization_check=authorization_check,
-                ),
+                run_turn=partial(run_chat_turn, headless=headless),
                 inherited_excluded_tool_names=inputs.excluded_tool_names,
             ),
             headless=headless,
@@ -459,7 +449,6 @@ async def _run_chat_turn(
             proactive_turn=ephemeral,
             user_message=memory_query if not ephemeral else "",
             media_turn=media_turn,
-            authorization_check=authorization_check,
         )
 
         buffer_text = companion_reply or headless or not has_viewer or final_reply_only
@@ -468,8 +457,6 @@ async def _run_chat_turn(
             await emitter.send_json({"type": "message.start"})
         base_instructions = current_context["instructions"]
         for step in range(max_loop_turns):
-            if authorization_check is not None and not await authorization_check():
-                raise asyncio.CancelledError("The turn authorization was revoked")
             instruction_parts = [base_instructions]
             action_tools_not_ready: frozenset[str] = frozenset()
             async with session_scope() as db:

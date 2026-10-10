@@ -87,16 +87,14 @@ class ToolsSyncResult(BaseModel):
 @dataclass
 class RuntimeSession:
     conversation_id: int
-    system_preset_id: str
     chat_task: asyncio.Task | None = None
     settlement_task: asyncio.Task | None = None
+    cancel_requested: bool = False
     # 设置写回 Conversation，挂载时重新读取。
     settings: dict[str, Any] = field(default_factory=dict)
     # 会话权限不依赖前端当前列表。
     kind: str = "standard"
     is_automation: bool = False
-    origin_kind: str = "desktop"
-    origin_id: str = ""
     active_turn: ActiveTurnSnapshot | None = None
     snapshot_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -123,7 +121,6 @@ def new_runtime_session(conv: Conversation) -> RuntimeSession:
     """为已存在的 DB 会话创建 runtime；settings 解码自 Conversation.settings_json，让回合逻辑不必每次回查 DB。"""
     return RuntimeSession(
         conversation_id=conv.id,
-        system_preset_id=conv.system_preset_id,
         settings=decode_session_settings(conv.settings_json),
         kind=conv.kind,
         is_automation=conv.is_automation,

@@ -6,6 +6,7 @@ from .handlers import (
     handle_remote_websocket,
     terminate_remote_sessions,
     terminate_user_gateway,
+    wait_user_turns,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "handle_remote_websocket",
     "terminate_remote_sessions",
     "terminate_user_gateway",
+    "wait_user_turns",
 ]

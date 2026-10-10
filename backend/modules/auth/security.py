@@ -22,12 +22,12 @@ WS_TICKET_TTL_SECONDS = 60
 
 @dataclass(frozen=True)
 class _PendingWsTicket:
-    jti: str
+    login_record_id: int
     expires_at: float
 
 
-# WS 本身按单 web 进程部署；每个登录只保留最新待握手票据，签发与消费没有 await。
-_pending_ws_tickets: dict[int, _PendingWsTicket] = {}
+# WS 按单 web 进程部署；票据独立消费，签发与消费没有 await。
+_pending_ws_tickets: dict[str, _PendingWsTicket] = {}
 _next_ws_ticket_prune = 0.0
 
 
@@ -126,7 +126,7 @@ def create_ws_ticket(*, user_id: int, username: str, login_record_id: int) -> tu
         purpose="ws",
         login_record_id=login_record_id,
     )
-    _pending_ws_tickets[login_record_id] = _PendingWsTicket(jti=jti, expires_at=now + expires_in)
+    _pending_ws_tickets[jti] = _PendingWsTicket(login_record_id=login_record_id, expires_at=now + expires_in)
     return token, expires_in
 
 
@@ -141,10 +141,13 @@ def consume_ws_ticket(token: str) -> bool:
     login_id = payload.get("login_id")
     if not isinstance(login_id, int) or isinstance(login_id, bool):
         return False
-    pending = _pending_ws_tickets.get(login_id)
-    if pending is None or pending.jti != payload.get("jti") or pending.expires_at <= time.monotonic():
+    jti = payload.get("jti")
+    if not isinstance(jti, str):
         return False
-    del _pending_ws_tickets[login_id]
+    pending = _pending_ws_tickets.get(jti)
+    if pending is None or pending.login_record_id != login_id or pending.expires_at <= time.monotonic():
+        return False
+    del _pending_ws_tickets[jti]
     return True
 
 

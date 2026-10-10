@@ -100,8 +100,6 @@ from services.domains.companion import (
 )
 from services.domains.conversation import (
     CLEARED_STATUS_SUBTYPE,
-    COMPANION_PRESET_ID,
-    SPECIAL_KIND,
     SYSTEM_PRESET_CATALOG,
     EditNotAllowedError,
     ForkNotAllowedError,
@@ -266,31 +264,10 @@ async def _cancel_tasks(tasks: list[asyncio.Task | None]) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-async def _cancel_origin_turns(
-    user_id: int,
-    origin_kind: str,
-    origin_id: str | None,
-    *,
-    preserve_companion_turns: bool = False,
-) -> None:
-    account = _ACCOUNT_RUNTIMES.get(user_id)
-    if account is None:
-        return
-    runtimes = [
-        runtime
-        for runtime in account.runtime_sessions.values()
-        if runtime.origin_kind == origin_kind
-        and (origin_id is None or runtime.origin_id == origin_id)
-        and not (
-            preserve_companion_turns
-            and runtime.kind == SPECIAL_KIND
-            and runtime.system_preset_id == COMPANION_PRESET_ID
-        )
-    ]
-    await _cancel_tasks(
-        [runtime.chat_task for runtime in runtimes if runtime.active_turn is None or runtime.active_turn.running],
-    )
-    await _wait_turn_settlement(runtimes)
+async def wait_user_turns(user_id: int) -> None:
+    """维护前等待已受理用户回合自然收尾；连接释放不改变回合所有权。"""
+    if (account := _ACCOUNT_RUNTIMES.get(user_id)) is not None:
+        await _wait_turn_settlement(list(account.runtime_sessions.values()))
 
 
 async def _wait_turn_settlement(runtimes: list[RuntimeSession]) -> None:
@@ -299,23 +276,12 @@ async def _wait_turn_settlement(runtimes: list[RuntimeSession]) -> None:
         tasks = [runtime.settlement_task if settling else runtime.chat_task for runtime in runtimes]
         pending = [task for task in tasks if task is not None and task is not asyncio.current_task()]
         if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+            await asyncio.gather(*(asyncio.shield(task) for task in pending), return_exceptions=True)
 
 
 async def drain() -> None:
     runtimes = [runtime for account in _ACCOUNT_RUNTIMES.values() for runtime in account.runtime_sessions.values()]
-    settling = {
-        task
-        for runtime in runtimes
-        for task in (
-            runtime.settlement_task,
-            runtime.chat_task if runtime.active_turn is not None and not runtime.active_turn.running else None,
-        )
-        if task is not None
-    }
     tasks: list[asyncio.Task | None] = list(_GRACE_TIMER_TASKS)
-    for account in _ACCOUNT_RUNTIMES.values():
-        tasks.extend(task for task in account.background_tasks if task not in settling)
     for session in [
         *_USER_SESSIONS.values(),
         *(peer for peers in _REMOTE_SESSIONS.values() for peer in peers.values()),
@@ -323,6 +289,7 @@ async def drain() -> None:
         tasks.extend(session.background_tasks)
     await _cancel_tasks(tasks)
     await _wait_turn_settlement(runtimes)
+    await _cancel_tasks([task for account in _ACCOUNT_RUNTIMES.values() for task in account.background_tasks])
     for user_id in list(_REMOTE_SESSIONS):
         await terminate_remote_sessions(user_id)
 
@@ -349,19 +316,10 @@ async def desktop_history_lock(session_id: str) -> AsyncIterator[None]:
 async def _terminate_user_gateway_locked(
     user_id: int,
     login_record_id: int | None = None,
-    *,
-    preserve_companion_turns: bool = False,
 ) -> None:
     session = _USER_SESSIONS.get(user_id)
     if session is None or (login_record_id is not None and session.login_record_id != login_record_id):
-        # 断线后网关可能已释放，撤权仍需取消账户持有的来源回合。
-        if not preserve_companion_turns:
-            await _cancel_origin_turns(
-                user_id,
-                "desktop",
-                str(login_record_id) if login_record_id is not None else None,
-            )
-            _release_account_runtime(user_id)
+        _release_account_runtime(user_id)
         return
     _USER_SESSIONS.pop(user_id, None)
     if (websocket := MANAGER.active_connections.get(user_id)) is not None:
@@ -369,12 +327,6 @@ async def _terminate_user_gateway_locked(
             await websocket.close(code=1008)
         MANAGER.disconnect(websocket, user_id)
     observe_companion_presence(user_id, False, presentation_mode=None)
-    await _cancel_origin_turns(
-        user_id,
-        "desktop",
-        str(session.login_record_id),
-        preserve_companion_turns=preserve_companion_turns,
-    )
     await _cancel_tasks([session.grace_timer_task, *session.background_tasks])
     await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
     await MANAGER.aunregister_dispatcher(user_id)
@@ -403,7 +355,6 @@ async def terminate_remote_sessions(user_id: int, device_id: int | None = None) 
             await MANAGER.unregister_remote(user_id, connection_id)
         if not _REMOTE_SESSIONS.get(user_id):
             _REMOTE_SESSIONS.pop(user_id, None)
-        await _cancel_origin_turns(user_id, "remote", str(device_id) if device_id is not None else None)
         _release_account_runtime(user_id)
 
 
@@ -412,7 +363,7 @@ async def _expire_disconnected_gateway(user_id: int) -> None:
         await asyncio.sleep(SETTINGS.desktop_disconnect_grace_seconds)
         async with _user_lock(user_id):
             if not MANAGER.is_connected(user_id):
-                await _terminate_user_gateway_locked(user_id, preserve_companion_turns=True)
+                await _terminate_user_gateway_locked(user_id)
     except asyncio.CancelledError:
         pass
 
@@ -482,10 +433,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
             return
         session = _USER_SESSIONS.get(user_id)
         if session is not None and (session.login_record_id != ticket.login_record_id or MANAGER.is_connected(user_id)):
-            await _terminate_user_gateway_locked(
-                user_id,
-                preserve_companion_turns=session.login_record_id == ticket.login_record_id,
-            )
+            await _terminate_user_gateway_locked(user_id)
             session = None
         try:
             await MANAGER.connect(websocket, user_id)
@@ -514,7 +462,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
             MANAGER.register_dispatcher(user_id, session.dispatcher)
         except BaseException:
             logger.exception("desktop websocket initialization failed", extra={"user_id": user_id})
-            await _terminate_user_gateway_locked(user_id, preserve_companion_turns=True)
+            await _terminate_user_gateway_locked(user_id)
             MANAGER.disconnect(websocket, user_id)
             with contextlib.suppress(Exception):
                 await websocket.close(code=1011)
@@ -1216,9 +1164,11 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         runtime = _require_runtime(params)
         if (
             runtime.chat_task is not None
+            and not runtime.chat_task.done()
             and not runtime.chat_task.cancelling()
             and (runtime.active_turn is None or runtime.active_turn.running)
         ):
+            runtime.cancel_requested = True
             runtime.chat_task.cancel()
         return {}
 
@@ -1508,8 +1458,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
         client_context = session.session_client_context
         runtime.active_turn = snapshot
-        runtime.origin_kind = session.origin_kind
-        runtime.origin_id = session.origin_id
+        runtime.cancel_requested = False
         started = False
 
         async def settle_turn(status: str, error: str | None) -> None:
@@ -1553,12 +1502,14 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     session_settings=runtime.settings,
                     persisted_message_id=persisted_message_id,
                     final_reply_only=retry_message_id is not None,
-                    authorization_check=session.authorized,
                 )
                 status = "failed" if emitter.failed else "completed"
                 error = emitter.error
             except asyncio.CancelledError:
-                error = "任务已中断，请核对已执行的操作后再继续。"
+                if runtime.cancel_requested:
+                    status = "cancelled"
+                else:
+                    error = "任务已中断，请核对已执行的操作后再继续。"
                 raise
             except Exception:
                 status = "failed"
@@ -1574,7 +1525,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         def finished(done: asyncio.Task) -> None:
             if not started and done.cancelled():
                 runtime.settlement_task = asyncio.create_task(
-                    settle_turn("interrupted", "任务已中断，请核对已执行的操作后再继续。"),
+                    settle_turn(
+                        "cancelled" if runtime.cancel_requested else "interrupted",
+                        None if runtime.cancel_requested else "任务已中断，请核对已执行的操作后再继续。",
+                    ),
                 )
                 session.account.track(runtime.settlement_task)
                 runtime.settlement_task.add_done_callback(lambda _done: turn_activity.close())

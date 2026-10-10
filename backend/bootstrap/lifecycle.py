@@ -85,6 +85,8 @@ async def _best_effort_shutdown(step: str, operation: Awaitable[object]) -> None
 
 async def _drain_runtime_tasks() -> None:
     """按模块集中等待后台任务，并保留每个 drain 的失败诊断。"""
+    # 已受理回合仍可能等待生成任务，先等回合收尾再释放其依赖。
+    await _best_effort_shutdown("user_sessions", drain_user_sessions())
     steps: tuple[tuple[str, Awaitable[object]], ...] = (
         ("cron", drain_cron()),
         ("posts_autonomous", drain_autonomous_posts()),
@@ -101,7 +103,6 @@ async def _drain_runtime_tasks() -> None:
         ("desktop_reviews", drain_desktop_reviews()),
         ("desktop_video_jobs", drain_desktop_video_jobs()),
         ("event_tasks", drain_event_tasks()),
-        ("user_sessions", drain_user_sessions()),
         ("user_tasks", drain_user_tasks()),
     )
     results = await asyncio.gather(*(operation for _, operation in steps), return_exceptions=True)
