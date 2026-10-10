@@ -130,10 +130,18 @@ export function DesktopRoot(): React.JSX.Element {
   }, [])
   const activeWindow = layout.windows.findLast(item => !item.minimized)?.id
 
+  // 轻语收起时遗留的 whisper 焦点按当前布局归一，覆盖持久化收起启动与互斥收起路径。
+  const focused =
+    layout.whisperOpen || focusedConversation !== 'whisper'
+      ? focusedConversation
+      : activeWindow === 'chat'
+        ? 'main'
+        : null
+
   const panelsEnabled = foreground && !accountOpen && !settingsOpen && !dockOverlayOpen
-  const activePanel = panelsEnabled && focusedConversation !== 'whisper' ? activeWindow : null
-  const mainChatActive = activePanel === 'chat' && focusedConversation === 'main'
-  const whisperChatActive = panelsEnabled && focusedConversation === 'whisper' && layout.whisperOpen
+  const activePanel = panelsEnabled && focused !== 'whisper' ? activeWindow : null
+  const mainChatActive = activePanel === 'chat' && focused === 'main'
+  const whisperChatActive = panelsEnabled && focused === 'whisper' && layout.whisperOpen
   const whisperHasUnread = pending.some(message => message.sessionId === companionSessionId)
   const connectionTone = CONNECTION_TONE[gatewayState]
   const connectionLabel = { offline: t.disconnected, online: t.connected, pending: t.loading }[connectionTone]

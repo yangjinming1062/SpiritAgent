@@ -51,7 +51,7 @@
 
 ## 统一桌面装配
 
-交互桌面在一个 renderer 中装配 [features](app/features/) 与内部面板，背景表面仅接收主进程缓存后的媒体字节和播放控制；不装配独立精灵舞台。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 登记和回收按会话隔离的 runtime；共享与资格契约归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+交互桌面在一个 renderer 中装配 [features](app/features/) 与内部面板，背景表面仅接收主进程缓存后的媒体字节和播放控制；不装配独立精灵舞台。主对话与轻语的互斥显示规则归 [DESIGN](../../docs/DESIGN.md#桌面模式)。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 登记和回收按会话隔离的 runtime；共享与资格契约归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 [panel-activity](shared/context/panel-activity.tsx) 向子组件和 Portal 传播活动资格，子面板不能解除父级禁用；媒体查看器归打开它的视图，失活时隐藏并暂停。视图切换保留各自草稿与附件，录音资格失效后旧麦克风或转写结果不能因重新激活恢复。布局、位置和防抖保存守卫账户清理代次。
 

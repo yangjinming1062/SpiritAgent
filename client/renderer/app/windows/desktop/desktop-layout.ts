@@ -162,7 +162,12 @@ export function useDesktopLayout() {
             maximized: false
           }
 
-      return { ...current, windows: [...current.windows.filter(item => item.id !== id), next] }
+      // 激活对话窗口即收起轻语（新开、恢复与重新置前共用本分支）；已置前的提前返回不打扰手动展开的并存状态。
+      return {
+        ...current,
+        windows: [...current.windows.filter(item => item.id !== id), next],
+        whisperOpen: id === 'chat' ? false : current.whisperOpen
+      }
     })
   }, [])
 
