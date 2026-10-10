@@ -17,6 +17,7 @@ export {
   cancelVoiceBar,
   enqueueVoiceBars,
   refreshVoiceAutoplay,
+  restartVoiceBar,
   setVoiceRecording,
   setVoiceSurfaceMounted,
   toggleVoiceBar

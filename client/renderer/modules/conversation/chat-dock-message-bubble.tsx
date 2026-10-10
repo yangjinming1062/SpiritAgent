@@ -14,7 +14,7 @@ import { ChatMessageCopyButton } from './chat-message-copy-button'
 import { ChatMessageEditButton } from './chat-message-edit-button'
 import { ChatMessageForkButton, ChatMessageUndoButton } from './chat-message-session-buttons'
 import { type ChatMessageBody, type ChatMessageListItem } from './chat-store'
-import { ChatVoiceBar, TranscriptBlock } from './chat-voice-bar'
+import { ChatVoiceBar } from './chat-voice-bar'
 import { CompanionAvatar } from './companion-avatar'
 import { formatConversationTime } from './conversation-time'
 import { useConversationView } from './conversation-view'
@@ -281,18 +281,16 @@ function MessageBubbleWithBody({
                 <span className="animate-pulse text-faint">{dict.chat.typing}</span>
               </div>
             ) : (
-              <>
-                <ChatVoiceBar
-                  duration={body.replyAudio?.duration}
-                  messageId={message.id}
-                  playbackKey={
-                    message.backendMessageId !== undefined && body.replyIndex !== undefined
-                      ? voicePlaybackKey(message.backendMessageId, body.replyIndex)
-                      : undefined
-                  }
-                />
-                <TranscriptBlock text={displayText} />
-              </>
+              <ChatVoiceBar
+                duration={body.replyAudio?.duration}
+                messageId={message.id}
+                playbackKey={
+                  message.backendMessageId !== undefined && body.replyIndex !== undefined
+                    ? voicePlaybackKey(message.backendMessageId, body.replyIndex)
+                    : undefined
+                }
+                text={displayText}
+              />
             )
           ) : !hideTextBubble && (!toolOnly || showLivingToolWait) ? (
             <div

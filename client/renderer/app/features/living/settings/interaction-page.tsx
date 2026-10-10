@@ -3,13 +3,11 @@ import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import {
-  $autoplayVoice,
   $llmAffect,
   $llmAutonomy,
   $postsEnabled,
   $responsePreference,
   $userPreferredTier,
-  autoplayVoicePref,
   type DisturbanceTier,
   endQuiet,
   llmAffectPref,
@@ -52,7 +50,6 @@ export function InteractionPage(): React.ReactElement {
   const llmAffect = useStore($llmAffect)
   const llmAutonomy = useStore($llmAutonomy)
   const postsEnabled = useStore($postsEnabled)
-  const autoplayVoice = useStore($autoplayVoice)
 
   const [maxRecordingSeconds, setMaxRecordingSeconds] = useState<number>(DEFAULT_RECORDING_SECONDS)
   const [isSavingRecordTime, setIsSavingRecordTime] = useState(false)
@@ -145,9 +142,6 @@ export function InteractionPage(): React.ReactElement {
               value={String(maxRecordingSeconds)}
               widthClass="w-28"
             />
-          </SettingRow>
-          <SettingRow label={t.autoplayVoice}>
-            <Toggle ariaLabel={t.autoplayVoice} checked={autoplayVoice} onChange={autoplayVoicePref.set} />
           </SettingRow>
         </SettingCard>
       </section>

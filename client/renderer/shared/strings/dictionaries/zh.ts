@@ -322,7 +322,6 @@ export const dict = {
       responsePreferenceText: '偏好文字',
       responsePreferenceVoice: '偏好语音',
       responsePreferenceDesc: '告诉伙伴你通常更喜欢文字还是语音。伙伴会结合情景选择。',
-      autoplayVoice: '自动播放语音',
       recording: '录音时长上限',
       recordingDesc: '单条语音录音的最大时长，到达上限后自动停止录制并发送。',
       recordingSecondsSuffix: '秒',
@@ -728,7 +727,11 @@ export const dict = {
       failed: '播放失败',
       progress: '播放进度',
       saveFailed: '无法保存语音播放进度',
-      collapse: '收起',
+      controls: '语音控制',
+      autoplay: '自动播放语音',
+      restart: '从头播放',
+      retryPlayback: '重试播放',
+      hideTranscript: '收起文本',
       showTranscript: '查看文本'
     },
 

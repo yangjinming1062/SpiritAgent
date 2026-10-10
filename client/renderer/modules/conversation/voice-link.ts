@@ -1,4 +1,4 @@
-import { atom, map } from 'nanostores'
+import { type Atom, atom, map } from 'nanostores'
 
 import { createPort } from '@/shared/lib/port'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
@@ -48,6 +48,9 @@ export const setConversationVoiceSink = voiceSinkPort.bind
 export const conversationVoiceSink = voiceSinkPort.get
 
 export interface VoiceBarControl {
+  $autoplay: Atom<boolean>
+  restart(messageId: string): void
+  setAutoplay(value: boolean): void
   toggle(messageId: string): void
 }
 

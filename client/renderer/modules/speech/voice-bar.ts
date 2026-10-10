@@ -126,7 +126,7 @@ function playNext(): void {
   }
 }
 
-async function playItem(messageId: string, manual: boolean): Promise<void> {
+async function playItem(messageId: string, manual: boolean, fromStart = false): Promise<void> {
   const proj = voiceProjection()
   const token = ++playToken
   const key = proj.getKey(messageId)
@@ -144,6 +144,12 @@ async function playItem(messageId: string, manual: boolean): Promise<void> {
 
     if (!valid() || (!manual && proj.getRecord(messageId)?.listened)) {
       return
+    }
+
+    const onProgress = proj.captureProgress(messageId)
+
+    if (fromStart) {
+      onProgress(0, false, true)
     }
 
     if (!proj.getAudio(messageId) && manual) {
@@ -174,8 +180,8 @@ async function playItem(messageId: string, manual: boolean): Promise<void> {
     }
 
     const result = await playDataUrl(dataUrl, {
-      startAtSeconds: proj.getRecord(messageId)?.positionSeconds ?? 0,
-      onProgress: proj.captureProgress(messageId),
+      startAtSeconds: fromStart ? 0 : (proj.getRecord(messageId)?.positionSeconds ?? 0),
+      onProgress,
       onStarted: () => {
         if (valid()) {
           proj.setLoading(null)
@@ -259,6 +265,17 @@ export function toggleVoiceBar(messageId: string): void {
   }
 
   void playItem(messageId, true)
+}
+
+export function restartVoiceBar(messageId: string): void {
+  if (!isVoiceSurfaceVisible(messageId)) {
+    return
+  }
+
+  const proj = voiceProjection()
+  stopCurrent()
+  queue = proj.isAutoplay() ? proj.getFollowing(messageId) : []
+  void playItem(messageId, true, true)
 }
 
 export function bindVoiceBarListeners(): () => void {

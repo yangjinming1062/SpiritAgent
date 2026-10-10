@@ -1,4 +1,4 @@
-import { $autoplayVoice } from '@/modules/character'
+import { $autoplayVoice, autoplayVoicePref } from '@/modules/character'
 import {
   $conversationViews,
   activeVoiceMessageId,
@@ -21,6 +21,7 @@ import {
   cancelVoiceBar,
   enqueueVoiceBars,
   refreshVoiceAutoplay,
+  restartVoiceBar,
   setVoiceRecording,
   setVoiceSurfaceMounted,
   toggleVoiceBar
@@ -148,7 +149,12 @@ export function bindConversationSpeech(): void {
     setVisible: setVoiceSurfaceMounted,
     setRecording: setVoiceRecording
   })
-  setVoiceBarControl({ toggle: toggleVoiceBar })
+  setVoiceBarControl({
+    $autoplay: $autoplayVoice,
+    restart: restartVoiceBar,
+    setAutoplay: autoplayVoicePref.set,
+    toggle: toggleVoiceBar
+  })
 
   const listeners = [
     bindVoicePlaybackUpdates(),
