@@ -177,7 +177,9 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...(options.spiritagentHome ? { SPIRITAGENT_HOME: options.spiritagentHome } : {}),
-      SPIRITAGENT_DESKTOP_TOKEN: args.authToken
+      SPIRITAGENT_DESKTOP_TOKEN: args.authToken,
+      // 管道下 Python stdio 默认走系统区域编码(中文 Windows 为 GBK)，而主进程按 UTF-8 解码 stderr。
+      PYTHONIOENCODING: 'utf-8'
     }
 
     log(`[runner] spawn ${resolved.kind} ${resolved.command} ${argv.join(' ')}`)

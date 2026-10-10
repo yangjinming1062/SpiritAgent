@@ -423,8 +423,7 @@ runnerHost = createRunnerHost({
   fileExists,
   getMainWindow,
   rememberLog,
-  spiritagentHome: SPIRITAGENT_HOME,
-  taggedLogger: prefix => chunk => rememberLog(`${prefix} ${chunk}`)
+  spiritagentHome: SPIRITAGENT_HOME
 })
 
 const autoUpdater = createAutoUpdater({

@@ -73,6 +73,9 @@ _ENDPOINT_POLL_S = 1.0
 
 _BG_TASKS: set[asyncio.Task] = set()
 
+# 能力探测基线：最近一次 runner_ready 快照；watcher 据此判断能力是否真的变化。
+_CAPS_WATCH_BASELINE: tuple[dict[str, Any], bool] | None = None
+
 
 class _InflightCall(NamedTuple):
     task: asyncio.Task[Any]
@@ -370,7 +373,7 @@ def _fail_pending_rpcs(reason: str) -> None:
 
 async def runner_loop(endpoint: DesktopEndpoint) -> None:
     """与 Desktop IPC 的长连接主循环: 维护持久连接、处理重连退避、派发 RPC、Ready 时主动通知。"""
-    global _ACTIVE_WS, _RECONNECT_COUNT, _current_reconnect_streak
+    global _ACTIVE_WS, _RECONNECT_COUNT, _current_reconnect_streak, _CAPS_WATCH_BASELINE
 
     current_endpoint: DesktopEndpoint | None = endpoint
     attempt = 0
@@ -388,7 +391,13 @@ async def runner_loop(endpoint: DesktopEndpoint) -> None:
                     _ACTIVE_WS = ws
                     try:
                         reset_llm_rate_limits()
-                        await _send_notification(ws, "runner_ready", await _runner_ready_payload())
+                        ready_payload = await _runner_ready_payload()
+                        await _send_notification(ws, "runner_ready", ready_payload)
+                        # 握手快照即探测基线，能力未变化时不重复通知。
+                        _CAPS_WATCH_BASELINE = (
+                            ready_payload["capabilities"],
+                            ready_payload["probe_failed"],
+                        )
                         attempt = 0
                         _current_reconnect_streak = 0
                         async for message in ws:
@@ -464,13 +473,13 @@ async def _runner_ready_payload() -> dict[str, Any]:
 
 async def _watch_capabilities(interval_s: float = 120.0) -> None:
     """周期重探测能力；失败发 probe_failed 降级通知并撤销可选能力。"""
-    last: tuple[dict[str, Any], bool] | None = None
+    global _CAPS_WATCH_BASELINE
     while True:
         await asyncio.sleep(interval_s)
         if (ws := _ACTIVE_WS) is None:
             continue
         caps, _, probe_failed = await _probe_capabilities()
-        if (caps, probe_failed) == last:
+        if (caps, probe_failed) == _CAPS_WATCH_BASELINE:
             continue
         try:
             await _send_notification(
@@ -486,7 +495,7 @@ async def _watch_capabilities(interval_s: float = 120.0) -> None:
             # 发送失败最常见于断连瞬间；下次循环 _ACTIVE_WS 已更新，无需特殊处理。
             logger.debug(f"capabilities_changed notification failed: {e}")
             continue
-        last = (caps, probe_failed)
+        _CAPS_WATCH_BASELINE = (caps, probe_failed)
 
 
 async def _build_info() -> dict[str, Any]:

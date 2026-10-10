@@ -386,7 +386,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
         }
       } else if (ev.type === 'error') {
         log(`[runner-bridge] ws server error: ${errorMessage(ev.error)}`)
-      } else if (ev.type === 'notification') {
+      } else if (ev.type === 'notification' && ev.method !== 'runner_capabilities_changed') {
+        // Client 不消费运行期能力通知（PROTOCOL「能力与进程代次」），该通知属预期事件。
         log(`[runner-bridge] unhandled ws server event: notification ${ev.method}`)
       }
     })

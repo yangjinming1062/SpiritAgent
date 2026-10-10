@@ -22,7 +22,6 @@ export interface RunnerHostOptions {
   getMainWindow: () => BrowserWindow | null | undefined
   rememberLog: (chunk: string) => void
   spiritagentHome?: null | string
-  taggedLogger: (tag: string) => (msg: string) => void
 }
 
 export interface RunnerHost {
@@ -100,14 +99,15 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
     runnerBridge = options.createRunnerBridge({
       spiritagentHome: options.spiritagentHome,
-      log: options.taggedLogger('[runner-bridge]'),
+      // 桥与子进程日志自带 [runner-bridge]/[runner]/[runner-ws] 前缀。
+      log: options.rememberLog,
       processFactory: () =>
         options.createRunnerProcess({
           spiritagentHome: options.spiritagentHome,
           devPython: process.env.SPIRITAGENT_DESKTOP_PYTHON || null,
           executable: process.env.SPIRITAGENT_DESKTOP_RUNNER_EXECUTABLE || null,
           fileExists: options.fileExists,
-          log: options.taggedLogger('[runner]'),
+          log: options.rememberLog,
           repoRoot: process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT || null
         }),
       pushConfig,

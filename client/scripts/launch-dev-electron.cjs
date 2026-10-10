@@ -2,7 +2,7 @@
 
 const path = require('node:path')
 const fs = require('node:fs')
-const { spawn } = require('node:child_process')
+const { spawn, execSync } = require('node:child_process')
 const { createConcurrently } = require('concurrently')
 const waitOn = require('wait-on')
 let electronPath = require('electron')
@@ -27,6 +27,19 @@ if (!process.env.SPIRITAGENT_DESKTOP_PYTHON && fs.existsSync(venvPython)) {
 if (!process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT && fs.existsSync(path.join(repoRoot, 'runner', 'server.py'))) {
   process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT = repoRoot
 }
+
+// Windows 控制台默认代码页 936(GBK)，会把 UTF-8 中文显示成乱码；
+// chcp 输出随系统语言本地化，不解析，无条件执行幂等切换。
+// 必须共享当前控制台：windowsHide/CREATE_NO_WINDOW 会让 chcp 改不到真正用于显示的代码页。
+function ensureUtf8Console() {
+  if (process.platform !== 'win32') return
+  try {
+    execSync('chcp 65001 >nul', { shell: 'cmd.exe', stdio: ['ignore', 'ignore', 'ignore'], windowsHide: false })
+  } catch {
+    // 无法切换时保持现状，仅影响显示。
+  }
+}
+ensureUtf8Console()
 
 let child = null
 let exitIntent = null

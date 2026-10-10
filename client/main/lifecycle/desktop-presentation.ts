@@ -241,7 +241,9 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       (status === 'starting' || status === 'active')
 
     if (request.authSessionId !== identity || !valid()) {
-      throw new Error('桌面背景账户已失效。')
+      // 换号与代次更替属预期竞态，记日志后仍须失败返回，避免把未应用的背景伪装成成功。
+      options.log(`[desktop] dropped stale background request (playId=${String(request.playId)})`)
+      throw new Error('桌面背景请求已失效。')
     }
 
     if (
@@ -252,9 +254,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       throw new Error('桌面播放请求已过期。')
     }
 
-    requestedBackground = request
-
     if (request.clear) {
+      requestedBackground = request
       interruptBackground()
       loadedBackground = null
       currentBackground = {
@@ -309,7 +310,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     if (!valid()) {
-      return
+      options.log(`[desktop] dropped stale background request after load (playId=${String(request.playId)})`)
+      throw new Error('桌面背景请求已失效。')
     }
 
     if (
@@ -319,6 +321,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     ) {
       throw new Error('桌面播放请求已过期。')
     }
+
+    requestedBackground = request
 
     const { authSessionId: _authSessionId, video: _video, poster: _poster, ...settings } = request
     currentBackground = {

@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -6,6 +7,20 @@ const DESKTOP_LOG_BUFFER_MAX_CHARS = 64 * 1024
 const DESKTOP_LOG_MAX_BYTES = 10 * 1024 * 1024
 const DESKTOP_LOG_BACKUP_COUNT = 3
 const DESKTOP_LOG_DISCARD_BYTES = DESKTOP_LOG_MAX_BYTES * 4
+
+/** Windows 控制台默认 GBK 会把本进程写出的 UTF-8 日志显示成乱码；在写终端前把代码页切到 UTF-8。 */
+function ensureUtf8Console(): void {
+  if (process.platform !== 'win32') {
+    return
+  }
+
+  try {
+    // 禁用 windowsHide/CREATE_NO_WINDOW，否则 chcp 改不到当前控制台。
+    execSync('chcp 65001 >nul', { shell: 'cmd.exe', stdio: ['ignore', 'ignore', 'ignore'], windowsHide: false })
+  } catch {
+    // 尽力而为：仅影响终端显示，不影响文件日志。
+  }
+}
 
 interface DesktopLoggerOptions {
   spiritagentHome: string
@@ -20,6 +35,10 @@ interface DesktopLogger {
 type RotationStep = { from: string; op: 'mv'; to: string } | { op: 'rm'; path: string }
 
 export function createDesktopLogger({ spiritagentHome, isPackaged = true }: DesktopLoggerOptions): DesktopLogger {
+  if (!isPackaged) {
+    ensureUtf8Console()
+  }
+
   const logPath = path.join(spiritagentHome, 'logs', 'desktop.log')
   const logBackupPath = (n: number) => `${logPath}.${n}`
 
