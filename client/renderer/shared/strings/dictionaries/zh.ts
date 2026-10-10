@@ -234,7 +234,7 @@ export const dict = {
     },
     runner: {
       title: '执行器配置',
-      intro: '配置底层执行器的相关设置。修改这些设置需要重启执行器才能生效。',
+      intro: '配置底层执行器的相关设置。修改后会自动保存，重启执行器后生效。',
       loading: '正在加载执行器配置...',
       failedLoad: '执行器配置加载失败',
       save: '保存配置',
@@ -270,7 +270,7 @@ export const dict = {
     inference: {
       heading: '推理与对话',
       intro:
-        '仅配置普通对话的默认参数、思考深度与上下文压缩策略。每个固定对话使用独立场景默认值，并在其会话窗口内修改。',
+        '仅配置普通对话的默认参数、思考深度与上下文压缩策略。每个固定对话使用独立场景默认值，并在其会话窗口内修改；设置修改后会自动保存。',
       loading: '加载中…',
       saveFailed: '无法保存推理与对话设置。',
       saved: '推理与对话设置已保存。',
@@ -380,7 +380,7 @@ export const dict = {
         }
       },
       title: '角色与记忆',
-      intro: '人设怎么改、记得什么，都在这里。',
+      intro: '人设怎么改、记得什么，都在这里。修改后会自动保存。',
       sectionTitle: '角色',
       sectionMemory: '长期记忆',
       mediaReviewTitle: '待确认的动作视频',
@@ -459,6 +459,7 @@ export const dict = {
       speakingStylePlaceholder: '描述想要的语气和表达习惯',
       hintEmptyName: '请填写名字',
       hintEmptySpeakingStyle: '请填写说话风格',
+      hintSaved: '已自动保存',
       hintSaveFailed: '保存失败，稍后再试',
       hintHydrateFailed: '已保存，但本地刷新失败，稍后再试'
     },
@@ -540,7 +541,7 @@ export const dict = {
       loading: '加载中…',
       loadFailedHint: '加载失败',
       loadFailedToast: '加载长期记忆失败',
-      saveFailedHint: '保存失败，已回滚',
+      saveFailedHint: '保存失败，请重试',
       saveFailedToast: '保存记忆失败',
       deleteFailedHint: '删除失败，已回滚',
       deleteFailedToast: '删除记忆失败',

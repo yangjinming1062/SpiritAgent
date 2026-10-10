@@ -6,9 +6,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { $systemPresets, fetchSystemPresets, presetDisplayName } from '@/modules/conversation'
 import { requestGateway } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useAutoSave } from '@/shared/hooks/use-auto-save'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS, PanelSelect } from '@/shared/panel'
+import { BTN_GHOST, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS, PanelSelect } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -91,6 +92,8 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
   const [hint, setHint] = useState<string | null>(null)
   const [draftById, setDraftById] = useState<Record<number, MemoryDraft | undefined>>({})
   const [savingById, setSavingById] = useState<Record<number, boolean>>({})
+  const draftByIdRef = useRef(draftById)
+  draftByIdRef.current = draftById
   const beginGuard = useAsyncGuard()
   const loadIdRef = useRef(0)
   const scopeRef = useRef(0)
@@ -161,12 +164,12 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
 
   // 编辑期间固定原版本；后台刷新不能让旧草稿覆盖其他设备的新内容。
   const saveRecall = useCallback(
-    async (id: number) => {
+    async (id: number, snapshot?: MemoryDraft): Promise<boolean> => {
       const isLive = beginScopeGuard()
-      const draft = draftById[id]
+      const draft = snapshot ?? draftByIdRef.current[id]
 
       if (!draft || draft.baseVersion === null) {
-        return
+        return false
       }
 
       setSavingById(s => ({ ...s, [id]: true }))
@@ -180,18 +183,29 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         })
 
         if (!isLive()) {
-          return
+          return false
         }
 
         setRows(prev => (tab === 'active' ? prev.map(r => (r.id === id ? updated : r)) : prev.filter(r => r.id !== id)))
-        setDraftById(prev => ({ ...prev, [id]: undefined }))
+        const latest = draftByIdRef.current[id]
+        setDraftById(prev => ({
+          ...prev,
+          [id]:
+            latest && (latest.content !== draft.content || latest.baseVersion !== draft.baseVersion)
+              ? editMemoryDraft(undefined, latest.content, updated)
+              : undefined
+        }))
+
+        return true
       } catch (err) {
         if (!isLive()) {
-          return
+          return false
         }
 
         setHint(t.saveFailedHint)
         notifyError(err, t.saveFailedToast)
+
+        return false
       } finally {
         if (isLive()) {
           setSavingById(s => {
@@ -203,7 +217,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         }
       }
     },
-    [beginScopeGuard, presetId, draftById, t.saveFailedHint, t.saveFailedToast, tab]
+    [beginScopeGuard, presetId, t.saveFailedHint, t.saveFailedToast, tab]
   )
 
   const del = useCallback(
@@ -276,61 +290,21 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
             const saving = !!savingById[r.id]
 
             return (
-              <div className="liquid-glass-card rounded-2xl p-3.5" key={r.id}>
-                <p className={cn(HINT_TEXT, 'mb-2')}>
-                  {t.basis[r.basis]} · {t.usage[r.usage]}
-                </p>
-                {r.reason && <p className={cn(HINT_TEXT, 'mb-2')}>{r.reason}</p>}
-                {r.expires_at && (
-                  <p className={HINT_TEXT}>
-                    {t.expires} {r.expires_at}
-                  </p>
-                )}
-                {r.evidence.length > 0 && (
-                  <details className="mb-2 text-xs text-muted">
-                    <summary>{t.evidence}</summary>
-                    {r.evidence.map((e, i) => (
-                      <blockquote className="mt-1 border-l pl-2" key={`${e.message_id}-${i}`}>
-                        {t.stance[e.stance]} · {e.created_at}
-                        <br />
-                        {e.quote}
-                      </blockquote>
-                    ))}
-                  </details>
-                )}
-                <textarea
-                  className={cn(INPUT_CLASS, 'resize-none')}
-                  disabled={saving}
-                  onChange={e => setDraftById(d => ({ ...d, [r.id]: editMemoryDraft(d[r.id], e.target.value, r) }))}
-                  rows={3}
-                  value={draft}
-                />
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  {tags.map(tg => (
-                    <span className={CHIP} key={tg}>
-                      {tg}
-                    </span>
-                  ))}
-                </div>
-                <p className={cn(HINT_TEXT, 'mt-1')}>
-                  {r.context?.replace(RECALL_CONTEXT_PREFIX, '') || '—'} · {t.updated} {r.updated_at ?? '—'} ·{' '}
-                  {t.charCount(draft.length)}
-                </p>
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={saving || !dirty}
-                    onClick={() => void saveRecall(r.id)}
-                    type="button"
-                  >
-                    {saving ? t.saving : dict.common.save}
-                  </button>
-                  <button className={BTN_GHOST} disabled={saving} onClick={() => void del(r.id)} type="button">
-                    {t.delete}
-                  </button>
-                  {!dirty && <span className={cn(HINT_TEXT, 'ml-1')}>{t.saved}</span>}
-                </div>
-              </div>
+              <MemoryRowEditor
+                dirty={dirty}
+                key={r.id}
+                onAutoSave={async () => {
+                  if (!(await saveRecall(r.id, edit))) {
+                    throw new Error(t.saveFailedToast)
+                  }
+                }}
+                onChange={value => setDraftById(d => ({ ...d, [r.id]: editMemoryDraft(d[r.id], value, r) }))}
+                onDelete={() => void del(r.id)}
+                row={r}
+                saving={saving}
+                tags={tags}
+                value={draft}
+              />
             )
           })}
         </div>
@@ -343,4 +317,79 @@ function parseTags(raw: string | null): string[] {
   const parsed = safeJsonParse<unknown>(raw, [])
 
   return Array.isArray(parsed) ? parsed.map(String) : []
+}
+
+function MemoryRowEditor({
+  dirty,
+  onAutoSave,
+  onChange,
+  onDelete,
+  row,
+  saving,
+  tags,
+  value
+}: {
+  dirty: boolean
+  onAutoSave: () => Promise<void>
+  onChange: (value: string) => void
+  onDelete: () => void
+  row: MemoryRow
+  saving: boolean
+  tags: string[]
+  value: string
+}): React.ReactElement {
+  const t = useStrings().settings.memory
+  const { status: saveStatus } = useAutoSave({ dirty, onSave: onAutoSave, value })
+
+  return (
+    <div className="liquid-glass-card rounded-2xl p-3.5">
+      <p className={cn(HINT_TEXT, 'mb-2')}>
+        {t.basis[row.basis]} · {t.usage[row.usage]}
+      </p>
+      {row.reason && <p className={cn(HINT_TEXT, 'mb-2')}>{row.reason}</p>}
+      {row.expires_at && (
+        <p className={HINT_TEXT}>
+          {t.expires} {row.expires_at}
+        </p>
+      )}
+      {row.evidence.length > 0 && (
+        <details className="mb-2 text-xs text-muted">
+          <summary>{t.evidence}</summary>
+          {row.evidence.map((e, i) => (
+            <blockquote className="mt-1 border-l pl-2" key={`${e.message_id}-${i}`}>
+              {t.stance[e.stance]} · {e.created_at}
+              <br />
+              {e.quote}
+            </blockquote>
+          ))}
+        </details>
+      )}
+      <textarea
+        className={cn(INPUT_CLASS, 'resize-none')}
+        disabled={false}
+        onChange={e => onChange(e.target.value)}
+        rows={3}
+        value={value}
+      />
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        {tags.map(tag => (
+          <span className={CHIP} key={tag}>
+            {tag}
+          </span>
+        ))}
+      </div>
+      <p className={cn(HINT_TEXT, 'mt-1')}>
+        {row.context?.replace(RECALL_CONTEXT_PREFIX, '') || '—'} · {t.updated} {row.updated_at ?? '—'} ·{' '}
+        {t.charCount(value.length)}
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        {saveStatus === 'saving' && <span className={HINT_TEXT}>{t.saving}</span>}
+        {saveStatus === 'saved' && !dirty && <span className={HINT_TEXT}>{t.saved}</span>}
+        {saveStatus === 'error' && <span className="text-[10px] text-danger-fg">{t.saveFailedHint}</span>}
+        <button className={BTN_GHOST} disabled={saving} onClick={onDelete} type="button">
+          {t.delete}
+        </button>
+      </div>
+    </div>
+  )
 }

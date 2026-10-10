@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   $persona,
@@ -9,8 +9,9 @@ import {
   RELATIONSHIP_PRESETS,
   SPEAKING_STYLE_PRESETS
 } from '@/modules/character'
+import { useAutoSave } from '@/shared/hooks/use-auto-save'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, Chip, FIELD_LABEL, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import { BTN_GHOST, BTN_SUBTLE, Chip, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 type PersonaDraft = Record<'name' | 'personality' | 'relationship' | 'speakingStyle', string>
@@ -40,10 +41,17 @@ export function PersonaSection(): React.JSX.Element {
   const persona = useStore($persona)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(() => draftOf(persona))
-  const [saving, setSaving] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
   // 查看态降级提示与编辑态 hint 分槽：hydrate 失败提示不能串进编辑校验文案，反之亦然。
   const [staleHint, setStaleHint] = useState<string | null>(null)
+  const mountedRef = useRef(true)
+
+  useEffect(
+    () => () => {
+      mountedRef.current = false
+    },
+    []
+  )
 
   const fields: readonly PersonaField[] = [
     { key: 'name', label: t.nameLabel, placeholder: t.namePlaceholder },
@@ -77,59 +85,77 @@ export function PersonaSection(): React.JSX.Element {
     setEditing(true)
   }
 
-  const save = async (): Promise<void> => {
-    const trimmed = draft.name.trim()
-    const trimmedSpeakingStyle = draft.speakingStyle.trim()
+  const hasValidDraft = draft.name.trim().length > 0 && draft.speakingStyle.trim().length > 0
+
+  const hasChanges =
+    draft.name.trim() !== (persona?.name ?? '') ||
+    draft.personality.trim() !== (persona?.personality ?? '') ||
+    draft.relationship.trim() !== (persona?.relationship ?? '') ||
+    draft.speakingStyle.trim() !== (persona?.speaking_style ?? '')
+
+  useEffect(() => {
+    if (!editing) {
+      return
+    }
+
+    if (!draft.name.trim()) {
+      setHint(t.hintEmptyName)
+    } else if (!draft.speakingStyle.trim()) {
+      setHint(t.hintEmptySpeakingStyle)
+    } else {
+      setHint(null)
+    }
+  }, [draft.name, draft.speakingStyle, editing, t.hintEmptyName, t.hintEmptySpeakingStyle])
+
+  const persist = async (nextDraft: PersonaDraft): Promise<void> => {
+    const trimmed = nextDraft.name.trim()
+    const trimmedSpeakingStyle = nextDraft.speakingStyle.trim()
 
     if (!trimmed) {
-      setHint(t.hintEmptyName)
-
-      return
+      throw new Error(t.hintEmptyName)
     }
 
     if (!trimmedSpeakingStyle) {
-      setHint(t.hintEmptySpeakingStyle)
-
-      return
+      throw new Error(t.hintEmptySpeakingStyle)
     }
-
-    setSaving(true)
-    setHint(null)
 
     // PUT 与 hydrate 的失败模式分开—— PUT 成功后即便 GET 短暂失败也不能当成保存失败（诱导用户重试会造成重复写入）；把当前 persona 作为 previous 传入，让锁定字段原样带回。
-    try {
-      await window.spiritagent.api({
-        body: {
-          definition_json: JSON.stringify(
-            assemblePersona(
-              {
-                name: trimmed,
-                personality: draft.personality.trim(),
-                relationship: draft.relationship.trim(),
-                speaking_style: trimmedSpeakingStyle
-              },
-              persona ?? undefined
-            )
+    await window.spiritagent.api({
+      body: {
+        definition_json: JSON.stringify(
+          assemblePersona(
+            {
+              name: nextDraft.name.trim(),
+              personality: nextDraft.personality.trim(),
+              relationship: nextDraft.relationship.trim(),
+              speaking_style: nextDraft.speakingStyle.trim()
+            },
+            persona ?? undefined
           )
-        },
-        method: 'PUT',
-        path: '/api/companion/persona'
-      })
-    } catch {
-      setHint(t.hintSaveFailed)
-      setSaving(false)
-
-      return
-    }
+        )
+      },
+      method: 'PUT',
+      path: '/api/companion/persona'
+    })
 
     const result = await hydratePersona({ silent: true })
 
     // 本地副本未刷出时给查看态降级提示：当前展示的是旧值，下次保存或重启后更新。
-    setStaleHint(result.ok ? null : t.hintHydrateFailed)
-
-    setEditing(false)
-    setSaving(false)
+    if (mountedRef.current) {
+      setStaleHint(result.ok ? null : t.hintHydrateFailed)
+    }
   }
+
+  const { status: saveStatus } = useAutoSave({
+    dirty: editing && hasValidDraft && hasChanges,
+    onError: error => {
+      if (mountedRef.current) {
+        setHint(error instanceof Error && error.message ? error.message : t.hintSaveFailed)
+      }
+    },
+    onSave: persist,
+    value: draft
+  })
 
   if (!editing) {
     const saved = draftOf(persona)
@@ -205,7 +231,6 @@ export function PersonaSection(): React.JSX.Element {
         <div className="flex gap-2">
           <button
             className={cn(BTN_SUBTLE, 'flex-1')}
-            disabled={saving}
             onClick={() => {
               setHint(null)
               setEditing(false)
@@ -214,9 +239,9 @@ export function PersonaSection(): React.JSX.Element {
           >
             {dict.common.cancel}
           </button>
-          <button className={cn(BTN_PRIMARY, 'flex-1')} disabled={saving} onClick={() => void save()} type="button">
-            {saving ? dict.common.saving : dict.common.save}
-          </button>
+          {saveStatus === 'saving' && <span className={cn(HINT_TEXT, 'self-center')}>{dict.common.saving}</span>}
+          {saveStatus === 'saved' && <span className={cn(HINT_TEXT, 'self-center')}>{t.hintSaved}</span>}
+          {saveStatus === 'error' && <span className="self-center text-[10px] text-danger-fg">{t.hintSaveFailed}</span>}
         </div>
       </div>
     </section>

@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   $avatarSeeds,
@@ -14,12 +14,19 @@ import {
 } from '@/modules/character'
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useAutoSave } from '@/shared/hooks/use-auto-save'
 import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import { BTN_GHOST, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
+
+function sameChanges(left: CharacterOverrides, right: CharacterOverrides): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+
+  return [...keys].every(key => left[key as keyof CharacterOverrides] === right[key as keyof CharacterOverrides])
+}
 
 export function CharacterCardSection({ avatarId }: { avatarId: number }): React.JSX.Element {
   const strings = useStrings()
@@ -34,9 +41,21 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
   const [hint, setHint] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [zoom, setZoom] = useState<string | null>(null)
+  const mountedRef = useRef(true)
+  const latestChangesRef = useRef(changes)
+  const revisionRef = useRef(revision)
+  latestChangesRef.current = changes
+  revisionRef.current = revision
   const begin = useAsyncGuard()
   const current = card?.avatar_id === avatarId ? card : null
   const analyzing = current?.status === 'pending' || current?.status === 'running'
+
+  useEffect(
+    () => () => {
+      mountedRef.current = false
+    },
+    []
+  )
 
   const refresh = useCallback((): void => {
     const isLive = begin()
@@ -90,15 +109,37 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
     }
   }
 
-  const save = (): void => {
-    void run(async isLive => {
-      if ((await saveCharacterCard(avatarId, revision, changes)) && isLive()) {
-        setEditing(false)
+  const persist = async (nextChanges: CharacterOverrides): Promise<void> => {
+    if (!(await saveCharacterCard(avatarId, revisionRef.current, nextChanges))) {
+      throw new Error(t.operationFailed)
+    }
+
+    const savedCard = $characterCard.get()
+
+    if (mountedRef.current && savedCard?.avatar_id === avatarId) {
+      revisionRef.current = savedCard.revision
+      setRevision(savedCard.revision)
+
+      if (sameChanges(latestChangesRef.current, nextChanges)) {
         setChanges({})
-        setHint(t.saved)
       }
-    })
+    }
   }
+
+  const { status: saveStatus } = useAutoSave({
+    dirty: editing && Object.keys(changes).length > 0,
+    onError: error => {
+      if (mountedRef.current) {
+        setHint(backendDetailMessage(error, t.operationFailed))
+
+        if (ipcErrorStatus(error) === 409) {
+          void hydrateCharacterCard().catch(refreshError => log.warn('character-card', 'Refresh failed', refreshError))
+        }
+      }
+    },
+    onSave: persist,
+    value: changes
+  })
 
   return (
     <section className="space-y-3">
@@ -241,14 +282,9 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
                 {t.merge}
               </button>
             )}
-            <button
-              className={BTN_PRIMARY}
-              disabled={busy || !Object.keys(changes).length || revision !== current?.revision}
-              onClick={save}
-              type="button"
-            >
-              {busy ? common.saving : common.save}
-            </button>
+            {saveStatus === 'saving' && <span className={HINT_TEXT}>{common.saving}</span>}
+            {saveStatus === 'saved' && <span className={HINT_TEXT}>{t.saved}</span>}
+            {saveStatus === 'error' && <span className="text-[10px] text-danger-fg">{t.operationFailed}</span>}
           </div>
         ) : (
           <div className="flex gap-2">

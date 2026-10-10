@@ -244,7 +244,7 @@ export const dict: Dictionary = {
     },
     runner: {
       title: 'Runner configuration',
-      intro: 'Configure the local runner. Changes require restarting the runner to take effect.',
+      intro: 'Configure the local runner. Changes are saved automatically and take effect after the runner restarts.',
       loading: 'Loading runner configuration…',
       failedLoad: 'Failed to load runner configuration',
       save: 'Save configuration',
@@ -281,7 +281,7 @@ export const dict: Dictionary = {
     inference: {
       heading: 'Inference & chat',
       intro:
-        'Configure defaults for ordinary conversations only. Each fixed conversation has scenario defaults and is configured within its own conversation window.',
+        'Configure defaults for ordinary conversations only. Each fixed conversation has scenario defaults and is configured within its own conversation window. Changes are saved automatically.',
       loading: 'Loading…',
       saveFailed: 'Could not save inference & chat settings.',
       saved: 'Inference & chat settings saved.',
@@ -403,7 +403,8 @@ export const dict: Dictionary = {
         }
       },
       title: 'Persona & memory',
-      intro: 'Edit the persona and review what the companion remembers — all in one place.',
+      intro:
+        'Edit the persona and review what the companion remembers — all in one place. Changes are saved automatically.',
       sectionTitle: 'Persona',
       sectionMemory: 'Long-term memory',
       mediaReviewTitle: 'Action videos to confirm',
@@ -489,6 +490,7 @@ export const dict: Dictionary = {
       speakingStylePlaceholder: 'Describe the tone and expression style you want',
       hintEmptyName: 'Please enter a name',
       hintEmptySpeakingStyle: 'Please enter a speaking style',
+      hintSaved: 'Saved automatically',
       hintSaveFailed: 'Save failed, please try again',
       hintHydrateFailed: 'Saved, but the local refresh failed — please try again'
     },
@@ -586,7 +588,7 @@ export const dict: Dictionary = {
       loading: 'Loading…',
       loadFailedHint: 'Failed to load',
       loadFailedToast: 'Failed to load long-term memory',
-      saveFailedHint: 'Save failed, rolled back',
+      saveFailedHint: 'Save failed. Try again.',
       saveFailedToast: 'Failed to save memory',
       deleteFailedHint: 'Delete failed, rolled back',
       deleteFailedToast: 'Failed to delete memory',

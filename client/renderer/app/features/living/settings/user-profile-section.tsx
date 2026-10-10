@@ -5,10 +5,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MAX_USER_TEXT } from '@/modules/character'
 import { requestGateway } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useAutoSave } from '@/shared/hooks/use-auto-save'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { isRecord } from '@/shared/lib/is-record'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_SUBTLE, DatePicker, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import { BTN_GHOST, DatePicker, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { SpiritAgentGateway } from '@/shared/spiritagent'
 import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
@@ -92,7 +93,7 @@ interface ProfileEntryEditorProps {
   multiline?: boolean
   onChange: (value: string) => void
   onDelete?: () => void
-  onSave: () => void
+  onAutoSave: () => Promise<void>
   persisted: boolean
   value: string
 }
@@ -195,17 +196,21 @@ export function UserProfileSection({
     key: string,
     failure: { hint: string; toast: string },
     action: (isLive: () => boolean) => Promise<void>
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const isLive = beginGuard()
     setBusy(key, true)
 
     try {
       await action(isLive)
+
+      return true
     } catch (err) {
       if (isLive()) {
         setHint(failure.hint)
         notifyError(err, failure.toast)
       }
+
+      return false
     } finally {
       if (isLive()) {
         setBusy(key, false)
@@ -216,16 +221,16 @@ export function UserProfileSection({
   // 资料槽位的 context 在后端唯一（uq_memories_user_context），按 context 取首条即可。
   const rowOf = (field: ProfileField): ProfileMemoryRow | undefined => rows.find(row => row.context === field.context)
 
-  const saveKnown = async (field: ProfileField): Promise<void> => {
+  const saveKnown = async (field: ProfileField): Promise<boolean> => {
     const row = rowOf(field)
     const draft = drafts[field.key]
     const value = pendingValue(draft?.content ?? row?.content ?? '', draft?.baseContent ?? row?.content)
 
     if (!value) {
-      return
+      return false
     }
 
-    await guarded(field.key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async isLive => {
+    return guarded(field.key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async isLive => {
       await requestGateway('onboarding.submit', {
         field: field.key,
         value,
@@ -248,16 +253,16 @@ export function UserProfileSection({
     })
   }
 
-  const saveExtra = async (row: ProfileMemoryRow): Promise<void> => {
+  const saveExtra = async (row: ProfileMemoryRow): Promise<boolean> => {
     const key = row.context ?? String(row.id)
     const draft = drafts[key]
     const value = pendingValue(draft?.content ?? row.content ?? '', draft?.baseContent ?? row.content)
 
     if (!value || draft?.baseVersion === undefined || draft.baseVersion === null) {
-      return
+      return false
     }
 
-    await guarded(key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async isLive => {
+    return guarded(key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async isLive => {
       const updated = await requestGateway<ProfileMemoryRow>('memory.update', {
         memory_id: row.id,
         content: value,
@@ -314,6 +319,11 @@ export function UserProfileSection({
                 label={`${p.fields[field.key]} · ${row ? p.set : p.unset}`}
                 maxLength={MAX_USER_TEXT}
                 multiline={field.multiline}
+                onAutoSave={async () => {
+                  if (!(await saveKnown(field))) {
+                    throw new Error(t.saveFailedToast)
+                  }
+                }}
                 onChange={value =>
                   setDrafts(previous => ({
                     ...previous,
@@ -321,7 +331,6 @@ export function UserProfileSection({
                   }))
                 }
                 onDelete={row ? () => void remove(field.key, row.id) : undefined}
-                onSave={() => void saveKnown(field)}
                 persisted={!!row}
                 value={draft}
               />
@@ -340,11 +349,15 @@ export function UserProfileSection({
                 key={row.id}
                 label={row.context?.replace(USER_PROFILE_CONTEXT_PREFIX, '') || '—'}
                 multiline
+                onAutoSave={async () => {
+                  if (!(await saveExtra(row))) {
+                    throw new Error(t.saveFailedToast)
+                  }
+                }}
                 onChange={value =>
                   setDrafts(previous => ({ ...previous, [key]: editMemoryDraft(previous[key], value, row) }))
                 }
                 onDelete={() => void remove(key, row.id)}
-                onSave={() => void saveExtra(row)}
                 persisted
                 value={draft}
               />
@@ -366,12 +379,13 @@ function ProfileEntryEditor({
   multiline = false,
   onChange,
   onDelete,
-  onSave,
+  onAutoSave,
   persisted,
   value
 }: ProfileEntryEditorProps): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.memory
+  const { status: saveStatus } = useAutoSave({ dirty, onSave: onAutoSave, value })
 
   const inputProps = {
     className: cn(INPUT_CLASS, multiline && 'resize-none'),
@@ -402,15 +416,14 @@ function ProfileEntryEditor({
         <input {...inputProps} />
       )}
       <div className="mt-2 flex items-center gap-2">
-        <button className={BTN_SUBTLE} disabled={busy || !dirty} onClick={onSave} type="button">
-          {busy ? t.saving : persisted ? dict.common.save : t.profile.add}
-        </button>
+        {saveStatus === 'saving' && <span className={HINT_TEXT}>{t.saving}</span>}
+        {saveStatus === 'saved' && persisted && !dirty && <span className={HINT_TEXT}>{t.saved}</span>}
+        {saveStatus === 'error' && <span className="text-[10px] text-danger-fg">{t.saveFailedHint}</span>}
         {onDelete && (
           <button className={BTN_GHOST} disabled={busy} onClick={onDelete} type="button">
             {t.delete}
           </button>
         )}
-        {persisted && !dirty && !busy && <span className={HINT_TEXT}>{t.saved}</span>}
       </div>
     </div>
   )

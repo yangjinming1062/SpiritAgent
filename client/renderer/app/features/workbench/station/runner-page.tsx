@@ -1,22 +1,21 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 
-import { triggerHaptic } from '@/shared/lib/haptics'
+import { useAutoSave } from '@/shared/hooks/use-auto-save'
 import { cn } from '@/shared/lib/utils'
 import {
-  BTN_PRIMARY,
   CapsuleTabs,
   EmptyState,
+  HINT_TEXT,
   INPUT_CLASS,
   LoadingBlock,
   SECTION_TITLE,
   SettingCard,
   SettingRow,
   SettingsSectionIntro,
-  Spinner,
   Toggle
 } from '@/shared/panel'
-import { notify, notifyError } from '@/shared/store/notifications'
+import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 import { getIn, setIn, useRunnerConfig } from './use-runner-config'
@@ -65,36 +64,43 @@ export function RunnerPage(): React.JSX.Element {
   const r = dict.settings.runner
 
   const { config, setConfig, isLoading, patch } = useRunnerConfig(r.failedLoad)
-  const [isSaving, setIsSaving] = useState(false)
-  // 按路径记录本页改过的字段；配置还会被偏好、托盘语言和云端水合写入，整份写回会覆盖这些改动。
+  // 按路径记录本页改过的字段，只提交对应点键，避免覆盖其他来源的配置更新。
   const [dirtyPaths, setDirtyPaths] = useState<ReadonlyMap<string, readonly string[]>>(new Map())
+  const dirtyPathsRef = useRef(dirtyPaths)
+  const revisionRef = useRef(0)
+  const mountedRef = useRef(true)
+  dirtyPathsRef.current = dirtyPaths
 
-  const handleSave = async () => {
-    if (!config) {
-      return
+  useEffect(
+    () => () => {
+      mountedRef.current = false
+    },
+    []
+  )
+
+  const persist = async (snapshot: Record<string, unknown>): Promise<void> => {
+    const revision = revisionRef.current
+
+    for (const path of dirtyPathsRef.current.values()) {
+      await patch(path, getIn(snapshot, path))
     }
 
-    setIsSaving(true)
-
-    try {
-      for (const path of dirtyPaths.values()) {
-        await patch(path, getIn(config, path))
-      }
-
-      triggerHaptic('success')
-      notify({ kind: 'success', message: r.saveSuccess })
-
+    if (mountedRef.current && revisionRef.current === revision) {
       setDirtyPaths(new Map())
-    } catch (err) {
-      notifyError(err, r.saveFailed)
-    } finally {
-      setIsSaving(false)
     }
   }
+
+  const { status: saveStatus } = useAutoSave({
+    dirty: dirtyPaths.size > 0,
+    onError: error => notifyError(error, r.saveFailed),
+    onSave: persist,
+    value: config ?? {}
+  })
 
   const updateField = useCallback(
     (path: readonly string[], value: unknown) => {
       setConfig(prev => (prev ? setIn(prev, path, value) : prev))
+      revisionRef.current += 1
       setDirtyPaths(prev => new Map(prev).set(path.join('.'), path))
     },
     [setConfig]
@@ -167,7 +173,7 @@ export function RunnerPage(): React.JSX.Element {
             <SettingCard>
               {group.rows.map(row => (
                 <SettingRow key={row.title} label={row.title}>
-                  {renderRowAction(row, config, updateField, isSaving)}
+                  {renderRowAction(row, config, updateField, false)}
                 </SettingRow>
               ))}
             </SettingCard>
@@ -175,22 +181,10 @@ export function RunnerPage(): React.JSX.Element {
         ))}
       </div>
 
-      <div className="mt-8 flex justify-end">
-        <button
-          className={BTN_PRIMARY}
-          disabled={isSaving || dirtyPaths.size === 0}
-          onClick={() => void handleSave()}
-          type="button"
-        >
-          {isSaving ? (
-            <span className="flex items-center gap-1.5">
-              <Spinner className="size-3.5" />
-              {dict.common.saving}
-            </span>
-          ) : (
-            r.save
-          )}
-        </button>
+      <div className="flex min-h-5 justify-end pt-2">
+        {saveStatus === 'saving' && <span className={HINT_TEXT}>{dict.common.saving}</span>}
+        {saveStatus === 'saved' && <span className={HINT_TEXT}>{r.saveSuccess}</span>}
+        {saveStatus === 'error' && <span className="text-[10px] leading-relaxed text-danger-fg">{r.saveFailed}</span>}
       </div>
     </div>
   )
