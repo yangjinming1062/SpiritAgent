@@ -695,8 +695,12 @@ export const dict: Dictionary = {
 
     copy: {
       label: 'Copy message',
-      copied: 'Copied',
       failed: 'Failed to copy message'
+    },
+
+    contextMenu: {
+      label: 'Message actions',
+      copySelection: 'Copy selected text'
     },
 
     fork: {

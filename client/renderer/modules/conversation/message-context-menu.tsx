@@ -7,7 +7,7 @@ import { CaptureWindowIdContext, probeInteractiveRegions, useInteractiveRegion }
 import { cn } from '@/shared/lib/utils'
 import { SURFACE_OVERLAY } from '@/shared/panel/palette'
 
-interface VoiceBarMenuItem {
+interface MessageContextMenuItem {
   checked?: boolean
   disabled?: boolean
   icon: IconComponent
@@ -15,15 +15,21 @@ interface VoiceBarMenuItem {
   onSelect(): void
 }
 
-interface VoiceBarMenuProps {
+interface MessageContextMenuProps {
   id: string
-  items: VoiceBarMenuItem[]
+  items: MessageContextMenuItem[]
   label: string
   onClose(restoreFocus?: boolean): void
   position: { x: number; y: number }
 }
 
-export function VoiceBarMenu({ id, items, label, onClose, position }: VoiceBarMenuProps): React.JSX.Element {
+export function MessageContextMenu({
+  id,
+  items,
+  label,
+  onClose,
+  position
+}: MessageContextMenuProps): React.JSX.Element {
   const menuRef = useRef<HTMLDivElement>(null)
   const windowId = useContext(CaptureWindowIdContext)
   useInteractiveRegion(id, menuRef)

@@ -1,23 +1,25 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { memo, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useRef, useState } from 'react'
 
-import { ChevronDown, RefreshCw, Search } from '@/shared/lib/icons'
+import { usePanelActivity } from '@/shared/context/panel-activity'
+import { useClipboard } from '@/shared/hooks/use-clipboard'
+import { ArrowBackUp, ChevronDown, Copy, GitFork, Pencil, RefreshCw, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { $gatewayState } from '@/shared/store/gateway'
+import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { voicePlaybackKey } from '@ipc/contracts'
 
 import { stripAttachmentDirectives } from './chat-display-text'
 import { ChatMediaCard } from './chat-media-card'
-import { ChatMessageCopyButton } from './chat-message-copy-button'
-import { ChatMessageEditButton } from './chat-message-edit-button'
-import { ChatMessageForkButton, ChatMessageUndoButton } from './chat-message-session-buttons'
+import { useMessageSessionActions } from './chat-message-session-actions'
 import { type ChatMessageBody, type ChatMessageListItem } from './chat-store'
 import { ChatVoiceBar } from './chat-voice-bar'
 import { CompanionAvatar } from './companion-avatar'
 import { formatConversationTime } from './conversation-time'
 import { useConversationView } from './conversation-view'
+import { MessageContextMenu } from './message-context-menu'
 import { ToolChipTimeline } from './tool-chip-timeline'
 
 // 居中的元信息行，而非聊天气泡。Slash 命令结果与历史清空标记（详见 PROTOCOL「Slash 命令」）走同一形态。
@@ -52,7 +54,7 @@ function MessageBubbleInner({ message, showTimeLabel, variant }: MessageBubblePr
 
   // 仅订阅本 id 的 body，避免流式增量触发全局重渲染。
   const bodies = useStore($chatMessageBodies, { keys: [message.id], deps: [message.id] })
-  // 撤回在 in-flight 时会被服务端拒绝，必须订这个 atom，否则 memo 挡掉按钮显隐。
+  // 撤回在 in-flight 时会被服务端拒绝，必须订这个 atom，否则 memo 挡掉菜单项状态。
   const turnInFlight = useStore($chatTurnInFlight)
   const body: ChatMessageBody | undefined = bodies[message.id]
 
@@ -84,14 +86,17 @@ function MessageBubbleWithBody({
   turnInFlight: boolean
   variant: ConversationVariant
 }): React.JSX.Element {
+  const { controller, eligible } = useConversationView()
+
   const {
     $chatEditDraft,
     $chatSessionKind,
     $chatSessionReadOnly,
     $lastEditableUserMessage,
     $retryableAssistantMessage,
-    retryAssistantReply
-  } = useConversationView().controller
+    retryAssistantReply,
+    startEditingMessage
+  } = controller
 
   const dict = useStrings()
   const subtype = message.subtype || ''
@@ -103,8 +108,27 @@ function MessageBubbleWithBody({
   const retryableMessage = useStore($retryableAssistantMessage)
   const gatewayState = useStore($gatewayState)
 
-  // 压缩摘要卡片折叠态：组件局部 useState，默认折叠，不持久化、不入 store；多窗口各自独立展开。
+  // 右键菜单是纯临时态：局部 useState，不持久化、不入 store；多窗口各自独立。
+  const panelActive = usePanelActivity()
+  const { copy } = useClipboard()
+  const sessionActions = useMessageSessionActions({ messageId: message.id })
   const [summaryExpanded, setSummaryExpanded] = useState(false)
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null)
+  const [menuSelection, setMenuSelection] = useState('')
+  const bubbleRef = useRef<HTMLDivElement>(null)
+  const menuId = useId()
+
+  const closeMenu = useCallback((restoreFocus = false): void => {
+    setMenuPosition(null)
+
+    if (restoreFocus) {
+      bubbleRef.current?.focus({ preventScroll: true })
+    }
+  }, [])
+
+  useEffect(() => {
+    closeMenu()
+  }, [eligible, panelActive, message.id, closeMenu])
 
   const timeLabel = showTimeLabel ? formatConversationTime(message.timestamp) : ''
 
@@ -203,7 +227,7 @@ function MessageBubbleWithBody({
   const isVoiceBarMode = variant === 'living' && !isUser && body.replyType === 'voice' && Boolean(body.replyAudio)
   const isVoicePendingOrStreaming = isVoiceBarMode && body.streaming
 
-  // 必须有后端 Message.id 才能回传；回合进行中服务端会拒绝撤回，按钮一并藏掉。
+  // 必须有后端 Message.id 才能回传；回合进行中服务端会拒绝撤回，菜单项一并隐藏。
   const canOperate =
     !readOnly &&
     Boolean(message.backendMessageId) &&
@@ -254,18 +278,45 @@ function MessageBubbleWithBody({
 
   // 只要消息具有非空可见正文且非流式传输中，即允许一键复制
   const canCopy = Boolean(displayText) && !body.streaming && !isVoicePendingOrStreaming
-  const hasActions = canFork || canUndo || canCopy || canEdit
+  const sourceMessageId = message.backendMessageId
+
+  const copyToClipboard = async (text: string): Promise<void> => {
+    try {
+      await copy(text)
+    } catch (err) {
+      notifyError(err, dict.chat.copy.failed)
+    }
+  }
+
+  // 右键时刻捕获选区：随后点击菜单项会清掉选区；仅当选区与本气泡相交才提供"复制所选"。
+  const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!eligible || !panelActive) {
+      return
+    }
+
+    const selection = window.getSelection()
+    const rawSelection = selection?.toString().trim() ?? ''
+
+    const selectionText =
+      rawSelection && selection?.containsNode(event.currentTarget, true) ? rawSelection : ''
+
+    // 按消息可用性装配菜单项；一项都没有（如纯流式等待）时只拦截原生菜单，不弹菜单。
+    if (!selectionText && !canCopy && !canEdit && !canUndo && !canFork) {
+      return
+    }
+
+    setMenuSelection(selectionText)
+    setMenuPosition({ x: event.clientX, y: event.clientY })
+  }
 
   return wrapWithTimeDivider(
     timeDivider,
     <div className={cn('relative flex shrink-0 gap-2.5 overflow-visible', isUser ? 'justify-end' : 'justify-start')}>
       {!isUser && variant === 'workbench' && <CompanionAvatar />}
-      <div
-        className={cn(
-          'group/message relative flex max-w-[80%] items-center gap-1.5 overflow-visible',
-          isUser ? 'flex-row-reverse' : 'flex-row'
-        )}
-      >
+      <div className="relative flex max-w-[80%] overflow-visible">
         <div className={cn('flex min-w-0 flex-col', isUser ? 'items-end' : 'items-start')}>
           {body.attachments?.length ? (
             <div className="flex flex-col gap-1">
@@ -300,6 +351,8 @@ function MessageBubbleWithBody({
                   ? 'border border-accent-line/45 text-strong shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.35)] backdrop-blur-xl backdrop-saturate-180'
                   : 'border border-line-standard bg-surface-card text-strong shadow-xs backdrop-blur-md'
               )}
+              onContextMenu={handleContextMenu}
+              ref={bubbleRef}
               style={
                 isUser
                   ? {
@@ -307,6 +360,7 @@ function MessageBubbleWithBody({
                     }
                   : undefined
               }
+              tabIndex={-1}
             >
               {body.error ? (
                 <span className="flex flex-wrap items-center gap-x-3 gap-y-2 text-amber-500">
@@ -359,17 +413,57 @@ function MessageBubbleWithBody({
             </div>
           ) : null}
         </div>
-        {hasActions && (
-          <MessageActionCluster
-            canCopy={canCopy}
-            canEdit={canEdit}
-            canFork={canFork}
-            canUndo={canUndo}
-            copyText={displayText}
-            messageId={message.id}
-            sourceMessageId={message.backendMessageId}
+        {menuPosition && eligible && panelActive ? (
+          <MessageContextMenu
+            id={menuId}
+            items={[
+              ...(menuSelection
+                ? [
+                    {
+                      icon: Copy,
+                      label: dict.chat.contextMenu.copySelection,
+                      onSelect: () => void copyToClipboard(menuSelection)
+                    }
+                  ]
+                : []),
+              ...(canCopy
+                ? [
+                    {
+                      icon: Copy,
+                      label: dict.chat.copy.label,
+                      onSelect: () => void copyToClipboard(displayText)
+                    }
+                  ]
+                : []),
+              ...(canEdit
+                ? [{ icon: Pencil, label: dict.chat.edit.label, onSelect: () => startEditingMessage(message.id) }]
+                : []),
+              ...(canUndo && sourceMessageId !== undefined
+                ? [
+                    {
+                      disabled: sessionActions.undo.disabled,
+                      icon: ArrowBackUp,
+                      label: sessionActions.undo.label,
+                      onSelect: () => void sessionActions.runUndo(sourceMessageId)
+                    }
+                  ]
+                : []),
+              ...(canFork && sourceMessageId !== undefined
+                ? [
+                    {
+                      disabled: sessionActions.fork.disabled,
+                      icon: GitFork,
+                      label: sessionActions.fork.label,
+                      onSelect: () => void sessionActions.runFork(sourceMessageId)
+                    }
+                  ]
+                : [])
+            ]}
+            label={dict.chat.contextMenu.label}
+            onClose={closeMenu}
+            position={menuPosition}
           />
-        )}
+        ) : null}
       </div>
     </div>
   )
@@ -425,45 +519,6 @@ function ReasoningBlock({
           {trimmed ? trimmed : <span className="text-faint italic">{dict.chat.reasoning.thinkingStreaming}</span>}
         </div>
       ) : null}
-    </div>
-  )
-}
-
-function MessageActionCluster({
-  canCopy,
-  canEdit,
-  canFork,
-  canUndo,
-  copyText,
-  messageId,
-  sourceMessageId
-}: {
-  canCopy: boolean
-  canEdit: boolean
-  canFork: boolean
-  canUndo: boolean
-  copyText?: string
-  messageId: string
-  sourceMessageId?: number
-}): React.JSX.Element {
-  return (
-    <div
-      className={cn(
-        'flex shrink-0 items-center gap-0.5 rounded-full border border-line-hairline/80 bg-surface-card/90 p-0.5 shadow-sm backdrop-blur-md',
-        'transition-opacity duration-150 select-none',
-        'pointer-events-none opacity-0 group-hover/message:pointer-events-auto group-hover/message:opacity-100',
-        'focus-within:pointer-events-auto focus-within:opacity-100',
-        'has-[[data-busy]]:pointer-events-auto has-[[data-busy]]:opacity-100'
-      )}
-    >
-      {canCopy && copyText && <ChatMessageCopyButton text={copyText} />}
-      {canEdit && <ChatMessageEditButton messageId={messageId} />}
-      {canFork && sourceMessageId !== undefined && (
-        <ChatMessageForkButton messageId={messageId} sourceMessageId={sourceMessageId} />
-      )}
-      {canUndo && sourceMessageId !== undefined && (
-        <ChatMessageUndoButton messageId={messageId} sourceMessageId={sourceMessageId} />
-      )}
     </div>
   )
 }

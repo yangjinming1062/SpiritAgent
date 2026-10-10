@@ -640,8 +640,12 @@ export const dict = {
 
     copy: {
       label: '复制消息',
-      copied: '已复制',
       failed: '复制消息失败'
+    },
+
+    contextMenu: {
+      label: '消息操作',
+      copySelection: '复制所选文本'
     },
 
     fork: {

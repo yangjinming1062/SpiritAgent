@@ -11,7 +11,7 @@ import { clamp } from '@runtime'
 
 import styles from './chat-voice-bar.module.css'
 import { useConversationView } from './conversation-view'
-import { VoiceBarMenu } from './voice-bar-menu'
+import { MessageContextMenu } from './message-context-menu'
 import {
   $voiceBarFailedIds,
   $voiceBarLoadingId,
@@ -181,7 +181,7 @@ export function ChatVoiceBar({ duration, messageId, playbackKey, text }: ChatVoi
         </div>
       ) : null}
       {menuPosition && eligible && panelActive ? (
-        <VoiceBarMenu
+        <MessageContextMenu
           id={menuId}
           items={[
             {

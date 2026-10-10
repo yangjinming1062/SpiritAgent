@@ -180,7 +180,12 @@ export function createWindowHandlers({
 
       const template = groups.flatMap((group, index) => (index ? [{ type: 'separator' as const }, ...group] : group))
 
-      menu.buildFromTemplate(template.length ? template : [{ role: 'selectAll' }]).popup({ window: targetWin })
+      // 没有任何适用项时不弹菜单
+      if (!template.length) {
+        return
+      }
+
+      menu.buildFromTemplate(template).popup({ window: targetWin })
     })
   }
 
