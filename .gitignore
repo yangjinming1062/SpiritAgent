@@ -2,7 +2,6 @@
 # Editor / IDE
 # ---------------------------------------------------------------------------
 .idea/
-.zcode/
 .mimocode/
 .vscode/
 .DS_Store
@@ -10,13 +9,11 @@
 *.swo
 *~
 .#*
-.mimocode
+.mimocode/
 .claude/
 .codex/
-.cursor/
 .gemini/
-.firecrawl
-.zcodeignore
+.mvs-tmp/
 
 # ---------------------------------------------------------------------------
 # Environment & Secrets
@@ -76,8 +73,6 @@ backend/updates/
 # Database & Cache
 # ---------------------------------------------------------------------------
 *.db
-*.sqlite
-*.sqlite3
 .pip-cache/
 .uv-cache/
 
