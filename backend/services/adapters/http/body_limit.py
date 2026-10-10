@@ -21,6 +21,7 @@ _IMAGE_UPLOAD_PATH = re.compile(
     r"|scenes/(?:generate|adopt|\d+/adopt))",
 )
 _BACKUP_UPLOAD_PATH = re.compile(r"/api/admin/users/\d+/import")
+_DESKTOP_VIDEO_UPLOAD_PATH = re.compile(r"/api/companion/desktop-videos/actions/\d+/upload")
 
 
 class _RequestBodyTooLarge(MultiPartException):
@@ -43,6 +44,8 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
         # Client / Runner 的视觉补全载荷预算为 10 MiB。
         return 10 * _MIB + _DEFAULT_MAX_BYTES, False
     if path == "/api/media/videos":
+        return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
+    if _DESKTOP_VIDEO_UPLOAD_PATH.fullmatch(path):
         return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
     if path == "/api/media/stt":
         return STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES, False

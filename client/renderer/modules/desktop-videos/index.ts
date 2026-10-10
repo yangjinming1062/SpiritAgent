@@ -10,17 +10,21 @@ export {
   designDesktopVideoAction,
   ensureDesktopVideoCurrent,
   generateDesktopVideoAction,
+  getDesktopVideoPrompt,
   handleDesktopVideoEvent,
   notifyDesktopVideoContextChanged,
   playDesktopVideoAction,
   refreshDesktopVideos,
   reviewDesktopVideoAction,
-  setDesktopVideoPreferences
+  setDesktopVideoPreferences,
+  uploadDesktopVideoAction
 } from './desktop-video-store'
 export type {
   DesktopVideoAction,
   DesktopVideoKind,
   DesktopVideoPlayCommand,
+  DesktopVideoPrompt,
+  DesktopVideoPromptReference,
   DesktopVideoProposal,
   DesktopVideoReceiptStatus,
   DesktopVideoSet,

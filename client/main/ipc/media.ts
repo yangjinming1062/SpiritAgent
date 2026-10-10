@@ -5,6 +5,8 @@ import type { IpcMain } from 'electron'
 import {
   type AttachmentVideoUploadPayload,
   type AttachmentVideoUploadResult,
+  type DesktopVideoUploadPayload,
+  type DesktopVideoUploadResult,
   IPC,
   type MediaSttPayload,
   type MediaTtsPayload
@@ -15,7 +17,7 @@ import { speechText } from '../../shared/speech-text'
 import { readUserSelectedFile } from '../security/hardening'
 import type { BackendConnection } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
-import { dataUrlFromBuffer, parseDataUrl } from '../shared/mime'
+import { dataUrlFromBuffer, mimeTypeForPath, parseDataUrl } from '../shared/mime'
 import { errorMessage, httpErrorFromResponse } from '../shared/utils'
 
 import { createBackendCaller, type GetCurrentAuth } from './connection'
@@ -27,6 +29,7 @@ const TTS_MAX_TEXT_CHARS = 4000
 const STT_MAX_AUDIO_BYTES = 24 * 1024 * 1024
 const ATTACH_VIDEO_MAX_BYTES = 512 * 1024 * 1024
 const ATTACH_VIDEO_TIMEOUT_MS = 120_000
+const DESKTOP_VIDEO_UPLOAD_TIMEOUT_MS = 15 * 60_000
 const DEFAULT_TTS_LANGUAGE = 'zh'
 const DEFAULT_STT_LANGUAGE = 'zh'
 
@@ -519,6 +522,69 @@ export function registerMediaIpc({
       }
 
       return { url: parsed.url }
+    }
+  )
+
+  ipcMain.handle(
+    IPC.invoke.mediaDesktopVideoUpload,
+    async (event, payload: DesktopVideoUploadPayload): Promise<DesktopVideoUploadResult> => {
+      const authSessionId = getCurrentAuth()?.sessionId
+
+      if (!authSessionId || typeof payload?.authSessionId !== 'string' || authSessionId !== payload.authSessionId) {
+        throw new Error('An authenticated session is required')
+      }
+
+      if (typeof payload?.path !== 'string' || !payload.path) {
+        throw new Error('Desktop video file is required')
+      }
+
+      if (!Number.isInteger(payload?.actionId) || payload.actionId <= 0) {
+        throw new Error('Desktop video action is invalid')
+      }
+
+      if (!Number.isInteger(payload?.expectedSetId) || payload.expectedSetId <= 0) {
+        throw new Error('Desktop video set is invalid')
+      }
+
+      const { data, resolvedPath } = await readUserSelectedFile(payload.path, {
+        maxBytes: ATTACH_VIDEO_MAX_BYTES,
+        purpose: 'Desktop video upload'
+      })
+
+      const form = new FormData()
+      const mime = mimeTypeForPath(resolvedPath)
+      const blob = new Blob([data], { type: mime })
+
+      form.append('file', blob, path.basename(resolvedPath))
+      form.append('expected_set_id', String(payload.expectedSetId))
+
+      if (getCurrentAuth()?.sessionId !== authSessionId) {
+        throw new Error('Authentication changed during desktop video upload')
+      }
+
+      const { body } = await callBackend(event.sender, connection =>
+        postBackend({
+          body: form,
+          fetchImpl,
+          timeoutMs: DESKTOP_VIDEO_UPLOAD_TIMEOUT_MS,
+          token: connection.token,
+          url: `${connection.baseUrl}/api/companion/desktop-videos/actions/${payload.actionId}/upload`
+        })
+      )
+
+      if (getCurrentAuth()?.sessionId !== authSessionId) {
+        throw new Error('Authentication changed during desktop video upload')
+      }
+
+      let response: unknown
+
+      try {
+        response = JSON.parse(body.toString('utf8'))
+      } catch {
+        throw new Error('Backend desktop video upload returned invalid JSON')
+      }
+
+      return { response }
     }
   )
 }

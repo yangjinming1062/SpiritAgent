@@ -287,7 +287,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
           request.poster ? options.loadMedia(sender, request.poster) : null
         ])
 
-        if (video && !/^video\/mp4(?:;|$)/i.test(video.mime)) {
+        if (video && !/^video\/(?:mp4|quicktime)(?:;|$)/i.test(video.mime)) {
           throw new Error('桌面视频格式不可用。')
         }
 

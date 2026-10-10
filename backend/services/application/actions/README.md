@@ -15,7 +15,7 @@
 
 调用来自 [action_tool.py](../../adapters/tools/builtin/action_tool.py)、[companion_actions.py](../../../api/v1/companion_actions.py) 和夜间规划；工具与 `companion.idle_expression` 发起播放，REST 回执交给 `domains/actions/usage`。依赖可指向 companion、memory 和 generation，不反向调用 chat 或 nightly。
 
-桌面入口为 [desktop_action_tool.py](../../adapters/tools/builtin/desktop_action_tool.py) 和 [companion_desktop_videos.py](../../../api/v1/companion_desktop_videos.py)，按实际模式提供工具与上下文；资源、模式隔离和恢复语义归 [桌面生活契约](../../../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。桌面状态写入共用用户行锁，应用层单飞锁只协调本进程任务；模型等待在短事务之外。同名动作保持冻结设计，已有成品复用，临时中断沿原进度继续且不重复计额。
+桌面入口为 [desktop_action_tool.py](../../adapters/tools/builtin/desktop_action_tool.py) 和 [companion_desktop_videos.py](../../../api/v1/companion_desktop_videos.py)，按实际模式提供工具与上下文；资源、模式隔离和恢复语义归 [桌面生活契约](../../../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。桌面状态写入共用用户行锁，应用层单飞锁只协调本进程任务；模型等待在短事务之外。同名动作保持冻结设计，已有成品复用，临时中断沿原进度继续且不重复计额。外部提示词与原始视频上传不进入系统制作额度或人工复核，上传成功后直接发布为动作版本。
 
 ## 提案处理
 

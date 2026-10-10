@@ -14,7 +14,7 @@
 | [visual_identity.py](visual_identity.py)、[image_generation.py](image_generation.py) | 出镜身份与造型的共享装配、图像能力筛选与生成出口 |
 | [chat_images.py](chat_images.py) | 聊天图片批次、验图、版本与一次重做预算 |
 | [video_jobs.py](video_jobs.py) | 聊天与动态视频任务，句柄轮询、交付和原任务核查 |
-| [desktop_video.py](desktop_video.py) | 独立桌面生活视频，组合资料冻结、构图与起始画面、首尾帧提交、无声交付、评分与恢复 |
+| [desktop_video.py](desktop_video.py) | 独立桌面生活视频，组合资料冻结、构图与起始画面、系统视频提交、用户原始视频导入、封面、评分与恢复 |
 | [video/service.py](video/service.py)、[state.py](video/state.py)、[script.py](video/script.py) | 动作包与单动作制作、冻结上下文、静态描述/视频脚本、探身定位 |
 | [media_chain.py](media_chain.py)、[character_images.py](character_images.py)、[identity_review.py](identity_review.py) | 无凭据链快照、质量进度、候选与身份评分 |
 | [media_review.py](media_review.py) | 成品复核、采纳和拒绝；采纳动作时事务内发布目录 |

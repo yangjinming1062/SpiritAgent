@@ -76,6 +76,7 @@ from services.infrastructure.video_processing import (
     VideoProcessError,
     VideoToolUnavailableError,
     prepare_desktop_video,
+    prepare_external_desktop_video,
     sample_desktop_video_frames,
 )
 
@@ -387,6 +388,22 @@ async def _process_candidate(
     if resolved is None:
         raise DesktopVideoStateError("已下载的视频无法读取")
     source = resolved[0]
+    if progress.source == "external_upload":
+        result = await asyncio.to_thread(prepare_external_desktop_video, source)
+        poster = await save_companion_asset_async(
+            result.cover,
+            user_id=user_id,
+            label="desktop_cover",
+            ext="webp",
+            directory=directory,
+        )
+        return DesktopVideoAsset(
+            video_path=progress.source_path or "",
+            poster_path=poster,
+            width=result.width,
+            height=result.height,
+            duration_ms=result.duration_ms,
+        )
     temporary = source.with_name(f"desktop-normalized-{progress.generation_id}.mp4")
     processing = asyncio.create_task(asyncio.to_thread(prepare_desktop_video, source, temporary))
     try:
@@ -504,7 +521,8 @@ async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgre
         action.generation_state_json = progress.model_dump_json()
         if progress.candidate is None:
             raise DesktopVideoStateError("桌面视频没有可用成品")
-        if (
+        external_upload = progress.source == "external_upload"
+        if external_upload or (
             progress.review_verdict == "pass"
             and progress.identity_score is not None
             and progress.identity_score >= MEDIA_IDENTITY_ACCEPT_SCORE
@@ -569,6 +587,17 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
             generation_id = initial.generation_id
         action, snapshot, progress = await _job_inputs(user_id, action_id, generation_id)
         directory = f"desktop/{action.set_id}/{action.id}/{generation_id}"
+        if progress.source == "external_upload":
+            if progress.candidate is None:
+                if not progress.source_path:
+                    raise DesktopVideoStateError("上传的视频文件缺失，请重新上传")
+                await _save_progress(user_id, action_id, progress, stage="process")
+                progress.candidate = await _process_candidate(user_id, action, progress, directory)
+                progress.review_verdict = "pass"
+                progress.review_reason = ""
+                await _save_progress(user_id, action_id, progress, stage="complete")
+            await _finish_job(user_id, action_id, progress)
+            return
         if not allow_paid_steps and progress.candidate is not None and progress.review_verdict is not None:
             await _finish_job(user_id, action_id, progress)
             return

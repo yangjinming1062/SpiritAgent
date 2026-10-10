@@ -13,6 +13,7 @@ from .desktop import (
     ensure_current_desktop_videos,
     generate_desktop_action,
     get_desktop_action_response,
+    get_desktop_external_prompt,
     get_desktop_proposal_response,
     get_desktop_video_state,
     list_desktop_video_sets,
@@ -21,6 +22,7 @@ from .desktop import (
     resume_desktop_reviews,
     review_desktop_action,
     set_desktop_video_preferences,
+    upload_desktop_action,
 )
 from .pipeline import drain_proposal_reviews, resume_proposal_reviews, schedule_accepted_proposal
 from .playback import request_playback
@@ -37,6 +39,7 @@ __all__ = [
     "ensure_current_desktop_videos",
     "generate_desktop_action",
     "get_desktop_action_response",
+    "get_desktop_external_prompt",
     "get_desktop_proposal_response",
     "get_desktop_video_state",
     "list_desktop_video_sets",
@@ -45,6 +48,7 @@ __all__ = [
     "review_desktop_action",
     "resume_desktop_reviews",
     "set_desktop_video_preferences",
+    "upload_desktop_action",
     "ActionContextSnapshot",
     "ProposalAcceptance",
     "accept_proposal",

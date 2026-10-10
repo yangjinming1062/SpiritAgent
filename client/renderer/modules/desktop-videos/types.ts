@@ -23,6 +23,21 @@ export interface DesktopVideoAction {
   actual_duration_ms: number | null
 }
 
+export interface DesktopVideoPromptReference {
+  label: string
+  url: string
+}
+
+export interface DesktopVideoPrompt {
+  action_id: number
+  description: string
+  duration_seconds: number
+  kind: DesktopVideoKind
+  prompt: string
+  references: DesktopVideoPromptReference[]
+  set_id: number
+}
+
 export interface DesktopVideoSet {
   id: number
   title: string

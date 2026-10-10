@@ -17,9 +17,11 @@ from components import (
     utc_now,
 )
 from modules.companion import (
+    CompanionScene,
     DesktopVideoAction,
     DesktopVideoActionResponse,
     DesktopVideoDesignRequest,
+    DesktopVideoExternalPromptResponse,
     DesktopVideoListResponse,
     DesktopVideoPlayback,
     DesktopVideoPlayCommand,
@@ -29,6 +31,7 @@ from modules.companion import (
     DesktopVideoProposal,
     DesktopVideoProposalResponse,
     DesktopVideoReceipt,
+    DesktopVideoReference,
     DesktopVideoSet,
     DesktopVideoStateResponse,
     DesktopVisualSnapshot,
@@ -84,7 +87,13 @@ from services.domains.companion import (
     load_companion_prompt_context,
 )
 from services.domains.conversation import load_recent_context_window
-from services.infrastructure.assets import read_asset_data_uri
+from services.infrastructure.assets import (
+    read_asset_data_uri,
+    save_action_source_asset_async,
+    signed_companion_asset_url,
+    sniff_media_ext,
+    unlink_companion_asset,
+)
 from services.infrastructure.llm import LlmCallBlockedError, VisualReasoningError, chat, vision_chat
 
 logger = get_logger(__name__)
@@ -141,6 +150,70 @@ async def list_desktop_video_sets(db: AsyncSession, user_id: int) -> DesktopVide
 
 async def get_desktop_action_response(db: AsyncSession, user_id: int, action_id: int) -> DesktopVideoActionResponse:
     return desktop_action_response(await desktop_action(db, user_id, action_id))
+
+
+async def get_desktop_external_prompt(
+    db: AsyncSession,
+    user_id: int,
+    action_id: int,
+    *,
+    expected_set_id: int | None = None,
+    requirements: str = "",
+) -> DesktopVideoExternalPromptResponse:
+    action = await desktop_action(db, user_id, action_id)
+    if expected_set_id is not None and expected_set_id != action.set_id:
+        raise DesktopVideoStateError("桌面生活组合已经变化")
+    await require_desktop_current(db, user_id, action.set_id)
+    snapshot = await load_desktop_visual_snapshot(db, user_id)
+    row = await db.get(DesktopVideoSet, action.set_id)
+    if row is None or row.context_hash != desktop_context_hash(snapshot):
+        raise DesktopVideoStateError("请先准备当前穿着和场景的桌面组合")
+    scene = await db.scalar(
+        select(CompanionScene).where(
+            CompanionScene.id == snapshot.scene_id,
+            CompanionScene.user_id == user_id,
+        ),
+    )
+    references: list[DesktopVideoReference] = []
+    for label, path in (
+        ("身份参考图", snapshot.identity_path),
+        ("当前穿着参考图", snapshot.outfit_path),
+        ("桌景参考图", scene.media_path if scene is not None else ""),
+    ):
+        url = signed_companion_asset_url(path) if path else None
+        if url:
+            references.append(DesktopVideoReference(label=label, url=url))
+    language = resolve_language(await get_user_setting(db, user_id, "language"))
+    extra = requirements.strip()
+    if language == "en":
+        prompt = (
+            f"Create a {action.duration_seconds}-second {action.kind} video of the same character in the supplied "
+            f"current outfit and desktop scene. Keep the identity, body structure, outfit, scene, lighting and "
+            f"camera stable; show only this action: {action.description}. Keep motion physically natural and "
+            f"suitable for the character. Do not add people, subtitles, logos, watermarks, cuts or split screens. "
+            f"Do not change the framing unless needed for the action."
+        )
+        if extra:
+            prompt += f" Additional user requirements: {extra}"
+    else:
+        prompt = (
+            f"制作一段 {action.duration_seconds} 秒的{('循环' if action.kind == 'loop' else '单次')}视频，使用所提供的同一伙伴、当前穿着和桌景。"
+            f"保持身份、身体结构、穿着、桌景、光线和镜头稳定，只表现以下动作：{action.description}"
+            "。动作要符合身体结构，受力、接触和衣物变化自然。不要新增人物，不要字幕、标志、水印、切镜或分屏；"
+            "不要改变取景，除非动作确实需要。"
+        )
+        if extra:
+            prompt += f" 用户补充要求：{extra}"
+    return DesktopVideoExternalPromptResponse(
+        action_id=action.id,
+        set_id=action.set_id,
+        name=action.name,
+        description=action.description,
+        kind=action.kind,
+        duration_seconds=action.duration_seconds,
+        prompt=prompt,
+        references=references,
+    )
 
 
 async def get_desktop_proposal_response(
@@ -320,6 +393,98 @@ async def generate_desktop_action(
         await touch_desktop_state(db, user_id)
         await db.commit()
         response = desktop_action_response(action)
+    schedule_desktop_video_job(user_id, action_id)
+    return response
+
+
+async def upload_desktop_action(
+    user_id: int,
+    action_id: int,
+    data: bytes,
+    extension: str,
+    *,
+    expected_set_id: int | None = None,
+) -> DesktopVideoActionResponse:
+    """受理用户制作的视频；保存原文件后走无转码校验和直接发布路径。"""
+    if not data:
+        raise DesktopVideoStateError("上传的视频文件为空")
+    extension = extension.lower().lstrip(".")
+    detected = sniff_media_ext(data)
+    if extension not in {"mp4", "mov"} or detected not in {"mp4", "mov"}:
+        raise DesktopVideoStateError("仅支持 MP4 或 MOV 视频")
+    async with _lock(user_id), SESSION_LOCAL() as db:
+        initial = await desktop_action(db, user_id, action_id)
+        if expected_set_id is not None and expected_set_id != initial.set_id:
+            raise DesktopVideoStateError("桌面生活组合已经变化")
+        if initial.status == "processing":
+            raise DesktopVideoStateError("这个桌面动作正在制作，请等待当前任务完成")
+        await require_desktop_current(db, user_id, initial.set_id)
+        snapshot = await load_desktop_visual_snapshot(db, user_id)
+        row = await db.get(DesktopVideoSet, initial.set_id)
+        if row is None or row.context_hash != desktop_context_hash(snapshot):
+            raise DesktopVideoStateError("穿着或场景已经变化，请先准备当前组合")
+        initial.attempt += 1
+        generation_id = uuid4().hex
+        directory = f"desktop/{initial.set_id}/{initial.id}/{generation_id}"
+        old_paths = asset_paths(initial.generation_state_json, user_id)
+        previous = desktop_accepted_asset(initial)
+        if previous is not None:
+            old_paths -= {previous.video_path, previous.poster_path}
+        progress = DesktopVideoProgress(
+            generation_id=generation_id,
+            source="external_upload",
+            duration_seconds=initial.duration_seconds,
+            video_chain_json="{}",
+        )
+        await enqueue_asset_cleanup(db, user_id, old_paths)
+        initial.generation_state_json = progress.model_dump_json()
+        initial.status, initial.stage, initial.error = "processing", "upload", None
+        state = await desktop_state(db, user_id)
+        if state is not None:
+            state.preparation_error = None
+        await touch_desktop_state(db, user_id)
+        await db.commit()
+    source_path: str | None = None
+    try:
+        source_path = await save_action_source_asset_async(
+            data,
+            user_id=user_id,
+            generation_id=generation_id,
+            attempt=initial.attempt,
+            ext=detected,
+            directory=directory,
+        )
+        async with SESSION_LOCAL() as db:
+            action = await desktop_action(db, user_id, action_id)
+            current = desktop_progress(action)
+            if current is None or current.generation_id != generation_id or action.status != "processing":
+                raise DesktopVideoStateError("上传任务已经失效")
+            current.source_path = source_path
+            action.generation_state_json = current.model_dump_json()
+            action.stage = "process"
+            await touch_desktop_state(db, user_id)
+            await db.commit()
+            response = desktop_action_response(action)
+    except Exception as exc:
+        if source_path:
+            await asyncio.to_thread(unlink_companion_asset, source_path)
+        async with SESSION_LOCAL() as db:
+            action = await db.scalar(
+                select(DesktopVideoAction).where(
+                    DesktopVideoAction.id == action_id,
+                    DesktopVideoAction.user_id == user_id,
+                ),
+            )
+            current = desktop_progress(action) if action else None
+            if action is not None and current is not None and current.generation_id == generation_id:
+                current.failure_reason = "failed"
+                action.generation_state_json = current.model_dump_json()
+                action.status, action.stage, action.error = "failed", "upload", "上传视频保存失败，请重试"
+                await touch_desktop_state(db, user_id)
+                await db.commit()
+        if isinstance(exc, DesktopVideoError):
+            raise
+        raise DesktopVideoStateError("上传视频保存失败，请重试") from exc
     schedule_desktop_video_job(user_id, action_id)
     return response
 

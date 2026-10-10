@@ -12,7 +12,7 @@
 | [generation.py](generation.py) | 形象、服装、壁纸、出镜媒体、动作素材，视觉提取、评分、命名和审核改写 | [generation](../services/application/generation/)、动态制作、媒体工具及角色卡渲染 |
 | [memory.py](memory.py) | 共享 `MEMORY_POLICY`、审阅指令、资料标签 | [memory](../services/domains/memory/)、即时记忆工具 |
 | [actions.py](actions.py) | 动作检索、提案、检查、播放工具和独立评审 | [action_tool.py](../services/adapters/tools/builtin/action_tool.py)、[actions](../services/application/actions/) |
-| [desktop_videos.py](desktop_videos.py)、[desktop_tools.py](desktop_tools.py) | 桌面生活的构图、起始画面、运动、成品检查和动作工具 | [desktop_video.py](../services/application/generation/desktop_video.py)、[desktop.py](../services/application/actions/desktop.py)、[desktop_action_tool.py](../services/adapters/tools/builtin/desktop_action_tool.py) |
+| [desktop_videos.py](desktop_videos.py)、[desktop_tools.py](desktop_tools.py) | 桌面生活的构图、起始画面、运动、外部视频提示词、成品检查和动作工具 | [desktop_video.py](../services/application/generation/desktop_video.py)、[desktop.py](../services/application/actions/desktop.py)、[desktop_action_tool.py](../services/adapters/tools/builtin/desktop_action_tool.py) |
 | [nightly.py](nightly.py) | 规划、事实账本、每日检查点、日记与反思 | [nightly](../services/application/nightly/) |
 | [posts.py](posts.py) | 请求分类、独立动态创作、线程回复和共享资料语义 | [posts](../services/application/posts/) 的 `prompt_contract`、`publication`、`replies`，夜间回顾 |
 | [tools.py](tools.py) | 工具与字段描述、验图、网页摘要 | [工具适配器](../services/adapters/tools/)；字段类型、枚举和必填项留在各 schema 定义 |

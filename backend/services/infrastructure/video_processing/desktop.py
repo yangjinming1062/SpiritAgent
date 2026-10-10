@@ -1,4 +1,4 @@
-"""完整环境视频的无声 MP4 交付，不执行透明化或人物裁切。"""
+"""桌面生活视频处理：系统生成视频规范化，用户上传视频原样校验与封面生成。"""
 
 from dataclasses import dataclass
 from io import BytesIO
@@ -102,3 +102,59 @@ def prepare_desktop_video(src: Path, dst: Path) -> DesktopVideoResult:
     run_ffmpeg(["-i", str(dst), "-map", "0:v:0", "-an", "-f", "null", "-"], label="桌面视频解码检查")
     cover = extract_cover(dst, canvas_w=output.width, canvas_h=output.height)
     return DesktopVideoResult(output.width, output.height, round(output.duration_seconds * 1000), cover)
+
+
+def prepare_external_desktop_video(src: Path) -> DesktopVideoResult:
+    """验证外部视频并生成缩略图；视频文件本身保持原字节、画幅、帧率和音轨。"""
+    probe = probe_video(src)
+    if probe.codec_name not in {"h264", "vp8", "vp9", "av1"}:
+        raise VideoProcessError("桌面播放器不支持该视频编码")
+    container = probe.format_name.split(",", 1)[0]
+    if container not in {"mov", "mp4", "matroska", "webm"}:
+        raise VideoProcessError("桌面播放器不支持该视频容器")
+    if any(codec not in {"aac", "mp3", "opus", "vorbis"} for codec in probe.audio_codecs):
+        raise VideoProcessError("桌面播放器不支持该音频编码")
+    # Chromium 的 H.264 硬件/软件路径要求常见的 8-bit 4:2:0；10-bit、4:2:2
+    # 和 4:4:4 即使能被 FFmpeg 解码，也不能保证桌面视频元素可播放。
+    h264_profile = probe.profile.casefold()
+    if probe.codec_name == "h264" and (
+        probe.pix_fmt not in {"yuv420p", "yuvj420p"}
+        or h264_profile in {"high 10", "high 4:2:2", "high 4:4:4 predictive"}
+    ):
+        raise VideoProcessError("桌面播放器不支持该 H.264 像素格式")
+    if probe.codec_name in {"vp8", "vp9"} and container not in {"matroska", "webm"}:
+        raise VideoProcessError("桌面播放器不支持该 VPx 视频容器")
+    # 完整解码只用于确认文件可读，不生成新的交付视频。
+    run_ffmpeg(
+        ["-xerror", "-i", str(src), "-map", "0:v:0", "-f", "null", "-"],
+        label="桌面视频解码检查",
+    )
+    scale = min(1.0, 1024 / max(probe.width, probe.height))
+    width = max(2, round(probe.width * scale / 2) * 2)
+    height = max(2, round(probe.height * scale / 2) * 2)
+    raw = ffmpeg_stdout(
+        [
+            "-i",
+            str(src),
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-an",
+            "-vf",
+            f"scale={width}:{height}",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        failure_message="桌面视频封面解码失败",
+    )
+    frame_size = width * height * 3
+    if len(raw) != frame_size:
+        raise VideoProcessError("桌面视频封面解码失败")
+    with Image.frombytes("RGB", (width, height), raw) as frame, BytesIO() as output:
+        frame.save(output, format="WEBP", quality=90)
+        cover = output.getvalue()
+    return DesktopVideoResult(probe.width, probe.height, round(probe.duration_seconds * 1000), cover)

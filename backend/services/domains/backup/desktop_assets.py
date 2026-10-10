@@ -11,6 +11,7 @@ from PIL import Image
 
 from services.domains.assets import asset_paths
 from services.infrastructure.assets import normalize_asset_reference, parse_companion_asset_path
+from services.infrastructure.video_processing import VideoProcessError, probe_video
 
 
 def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[str, dict[str, int | str]]) -> None:
@@ -176,12 +177,15 @@ def validate_desktop_files(
                 assets.append(progress.candidate)
         for asset in assets:
             video, poster = effective_file(asset.video_path), effective_file(asset.poster_path)
-            if not video.is_file() or video.suffix.lower() != ".mp4" or not poster.is_file():
+            if not video.is_file() or not poster.is_file():
                 raise ValueError("桌面生活视频或封面缺失。")
             try:
+                probe = probe_video(video)
+                if (probe.width, probe.height) != (asset.width, asset.height):
+                    raise ValueError("桌面生活视频尺寸与资产记录不一致。")
                 with Image.open(poster) as image:
                     image.load()
-                    if image.size != (asset.width, asset.height):
-                        raise ValueError("桌面生活封面与视频交付尺寸不一致。")
+            except VideoProcessError as exc:
+                raise ValueError("桌面生活视频无法读取。") from exc
             except OSError as exc:
                 raise ValueError("桌面生活封面无法读取。") from exc

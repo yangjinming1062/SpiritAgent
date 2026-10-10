@@ -62,6 +62,9 @@ class VideoProbe:
     pix_fmt: str
     # 容器的 alpha 声明；交付另验解码像素。
     alpha_mode: int = 0
+    profile: str = ""
+    format_name: str = ""
+    audio_codecs: tuple[str, ...] = ()
 
     @property
     def has_alpha(self) -> bool:
@@ -95,10 +98,8 @@ def probe_video(path: Path) -> VideoProbe:
         _binary("ffprobe"),
         "-v",
         "error",
-        "-select_streams",
-        "v:0",
         "-show_entries",
-        "stream=width,height,avg_frame_rate,codec_name,pix_fmt:stream_tags=alpha_mode:format=duration",
+        "stream=codec_type,width,height,avg_frame_rate,codec_name,pix_fmt,profile:stream_tags=alpha_mode:format=duration,format_name",
         "-of",
         "json",
         str(path),
@@ -110,7 +111,10 @@ def probe_video(path: Path) -> VideoProbe:
     streams = payload.get("streams") or []
     if not streams:
         raise VideoProcessError("视频文件中没有视频流")
-    stream = streams[0]
+    video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
+    if video_stream is None:
+        raise VideoProcessError("视频文件中没有视频流")
+    stream = video_stream
     width = int(stream.get("width") or 0)
     height = int(stream.get("height") or 0)
     if width <= 0 or height <= 0:
@@ -129,6 +133,13 @@ def probe_video(path: Path) -> VideoProbe:
         codec_name=str(stream.get("codec_name") or ""),
         pix_fmt=str(stream.get("pix_fmt") or ""),
         alpha_mode=_alpha_mode(stream),
+        profile=str(stream.get("profile") or ""),
+        format_name=str(payload.get("format", {}).get("format_name") or ""),
+        audio_codecs=tuple(
+            str(item.get("codec_name"))
+            for item in streams
+            if item.get("codec_type") == "audio" and item.get("codec_name")
+        ),
     )
 
 

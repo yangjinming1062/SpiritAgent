@@ -372,6 +372,19 @@ export interface AttachmentVideoUploadResult {
   url: string
 }
 
+/** 用户为桌景动作提供的原始视频上传请求。文件路径必须先经系统选择器登记。 */
+export interface DesktopVideoUploadPayload {
+  actionId: number
+  authSessionId: string
+  expectedSetId: number
+  path: string
+}
+
+/** 后端桌景动作上传响应保持原样透传，渲染层随后刷新动作目录。 */
+export interface DesktopVideoUploadResult {
+  response: unknown
+}
+
 export type DesktopGatewayState = 'closed' | 'connecting' | 'error' | 'idle' | 'open'
 
 export interface DesktopGatewayEvent<P = unknown> {
@@ -561,6 +574,9 @@ export interface IpcInvokeContract {
   'spiritagent:media:video-upload': (
     payload: AttachmentVideoUploadPayload
   ) => AttachmentVideoUploadResult | Promise<AttachmentVideoUploadResult>
+  'spiritagent:media:desktop-video-upload': (
+    payload: DesktopVideoUploadPayload
+  ) => DesktopVideoUploadResult | Promise<DesktopVideoUploadResult>
   'spiritagent:onboardingAudio:read': (
     tag: string
   ) =>
@@ -726,6 +742,7 @@ export const IPC = {
     mediaStt: 'spiritagent:media:stt',
     mediaTts: 'spiritagent:media:tts',
     mediaVideoUpload: 'spiritagent:media:video-upload',
+    mediaDesktopVideoUpload: 'spiritagent:media:desktop-video-upload',
     onboardingAudioRead: 'spiritagent:onboardingAudio:read',
     spriteHide: 'spiritagent:sprite:hide',
     spriteSetIgnoreMouseEvents: 'spiritagent:sprite:set-ignore-mouse-events',

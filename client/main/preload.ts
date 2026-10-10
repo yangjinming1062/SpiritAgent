@@ -19,6 +19,7 @@ import {
   type DesktopSurfaceOpenPayload,
   type DesktopUiThemeBroadcast,
   type DesktopUpdateEvent,
+  type DesktopVideoUploadPayload,
   IPC,
   type IpcEventChannel,
   type IpcEventContract,
@@ -175,6 +176,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
   readFileDataUrl: (filePath: string) => invoke(IPC.invoke.readFileDataUrl, filePath),
   readImageForAttach: (filePath: string) => invoke(IPC.invoke.readImageForAttach, filePath),
   uploadVideoForAttach: (payload: AttachmentVideoUploadPayload) => invoke(IPC.invoke.mediaVideoUpload, payload),
+  uploadDesktopVideo: (payload: DesktopVideoUploadPayload) => invoke(IPC.invoke.mediaDesktopVideoUpload, payload),
   refreshSession: () => invoke(IPC.invoke.authRefresh),
   runnerCancel: (callId: string) => invoke(IPC.invoke.runnerCancel, callId),
   runnerConfig: {

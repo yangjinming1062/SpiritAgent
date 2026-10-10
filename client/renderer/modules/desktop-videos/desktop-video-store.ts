@@ -7,6 +7,7 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import type {
   DesktopVideoAction,
   DesktopVideoPlayCommand,
+  DesktopVideoPrompt,
   DesktopVideoProposal,
   DesktopVideoReceiptStatus,
   DesktopVideoSet,
@@ -118,6 +119,29 @@ export async function ensureDesktopVideoCurrent(
 
 export async function generateDesktopVideoAction(actionId: number, feedback?: string): Promise<void> {
   await mutation<DesktopVideoAction>(`/actions/${actionId}/generate`, feedback ? { feedback } : {})
+  await refreshDesktopVideos()
+}
+
+export async function getDesktopVideoPrompt(
+  actionId: number,
+  expectedSetId: number,
+  additionalRequirements?: string
+): Promise<DesktopVideoPrompt> {
+  const prompt = await mutation<DesktopVideoPrompt>(`/actions/${actionId}/external-prompt`, {
+    expected_set_id: expectedSetId,
+    ...(additionalRequirements?.trim() ? { requirements: additionalRequirements.trim() } : {})
+  })
+
+  return prompt
+}
+
+export async function uploadDesktopVideoAction(
+  actionId: number,
+  expectedSetId: number,
+  path: string,
+  authSessionId: string
+): Promise<void> {
+  await window.spiritagent.uploadDesktopVideo({ actionId, authSessionId, expectedSetId, path })
   await refreshDesktopVideos()
 }
 

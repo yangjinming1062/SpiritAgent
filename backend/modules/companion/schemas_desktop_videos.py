@@ -56,7 +56,7 @@ class DesktopVideoProgress(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     generation_id: str
-    source: Literal["user_requested", "autonomous"]
+    source: Literal["user_requested", "autonomous", "external_upload"]
     feedback: str = ""
     duration_seconds: int
     pose_prompt: str = ""
@@ -143,6 +143,29 @@ class DesktopVideoListResponse(BaseModel):
 class DesktopVideoGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feedback: str = Field(default="", max_length=600)
+
+
+class DesktopVideoExternalPromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_set_id: int | None = Field(default=None, gt=0)
+    requirements: str = Field(default="", max_length=1000)
+
+
+class DesktopVideoReference(BaseModel):
+    label: str
+    url: str
+
+
+class DesktopVideoExternalPromptResponse(BaseModel):
+    action_id: int
+    set_id: int
+    name: str
+    description: str
+    kind: Literal["loop", "once"]
+    duration_seconds: int
+    prompt: str
+    references: list[DesktopVideoReference] = Field(default_factory=list)
 
 
 class DesktopVideoEnsureRequest(BaseModel):

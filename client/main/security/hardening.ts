@@ -51,6 +51,8 @@ const CANDIDATE_ANALYSIS_PATH_PATTERN = /^\/api\/companion\/avatar\/\d+\/fullbod
 const AVATAR_SLOW_PATH_PATTERN =
   /^\/api\/companion\/(?:avatar(?:\/(?:prompt|adopt)|\/\d+\/fullbody\/(?:reference\/prompt|confirm|candidate\/\d+\/accept))|portrait\/confirm|scenes\/(?:prompt|adopt|\d+\/adopt))$/i
 
+const DESKTOP_VIDEO_PROMPT_PATH_PATTERN = /^\/api\/companion\/desktop-videos\/actions\/\d+\/external-prompt$/i
+
 const SAFE_ENV_SUFFIXES: Set<string> = new Set(['dist', 'example', 'sample', 'template'])
 const SENSITIVE_EXTENSIONS: Set<string> = new Set(['.kdbx', '.p12', '.pem', '.pfx'])
 
@@ -89,6 +91,10 @@ export function resolvePathTimeoutMs(
   }
 
   const isSlowPost = isPost && AVATAR_SLOW_PATH_PATTERN.test(pathStr)
+
+  if (isPost && DESKTOP_VIDEO_PROMPT_PATH_PATTERN.test(pathStr)) {
+    return AVATAR_FETCH_TIMEOUT_MS
+  }
 
   return isSlowPost ? AVATAR_FETCH_TIMEOUT_MS : resolveTimeoutMs(fallbackMs)
 }

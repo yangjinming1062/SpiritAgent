@@ -9,16 +9,20 @@ import {
   $desktopVideoState,
   designDesktopVideoAction,
   type DesktopVideoAction,
+  type DesktopVideoPromptReference,
   ensureDesktopVideoCurrent,
   generateDesktopVideoAction,
+  getDesktopVideoPrompt,
   playDesktopVideoAction,
   refreshDesktopVideos,
   reviewDesktopVideoAction,
-  setDesktopVideoPreferences
+  setDesktopVideoPreferences,
+  uploadDesktopVideoAction
 } from '@/modules/desktop-videos'
 import { useResolvedMediaSrc } from '@/modules/media'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft } from '@/shared/lib/icons'
 import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
@@ -86,9 +90,61 @@ function DesktopLifePreview({ action }: { action: DesktopVideoAction }): React.J
   )
 }
 
+function ExternalReference({
+  reference,
+  saveLabel,
+  savedLabel
+}: {
+  reference: DesktopVideoPromptReference
+  saveLabel: string
+  savedLabel: string
+}): React.JSX.Element {
+  const media = useResolvedMediaSrc({ type: 'image', url: reference.url })
+  const [saved, setSaved] = useState(false)
+
+  const save = async (): Promise<void> => {
+    if (media.status !== 'ready') {
+      return
+    }
+
+    try {
+      if (await window.spiritagent.saveImage({ defaultName: reference.label, url: media.src })) {
+        setSaved(true)
+      }
+    } catch (failure) {
+      notifyError(failure, saveLabel)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-line-hairline p-2">
+      <div className="flex aspect-video items-center justify-center overflow-hidden rounded bg-black/10">
+        {media.status === 'ready' ? (
+          <img alt={reference.label} className="h-full w-full object-contain" src={media.src} />
+        ) : (
+          <span className="text-xs text-muted">{reference.label}</span>
+        )}
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-xs text-body" title={reference.label}>
+          {reference.label}
+        </span>
+        <button className={BTN_SUBTLE} disabled={media.status !== 'ready'} onClick={() => void save()} type="button">
+          {saved ? savedLabel : saveLabel}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function localFileName(filePath: string): string {
+  return filePath.split(/[\\/]/).pop() || filePath
+}
+
 export function DesktopLifePage(): React.JSX.Element {
   const t = useDesktopLifeStrings()
   const auth = useStore($auth)
+  const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const state = useStore($desktopVideoState)
   const sets = useStore($desktopVideoSets)
   const loading = useStore($desktopVideoLoading)
@@ -98,6 +154,15 @@ export function DesktopLifePage(): React.JSX.Element {
   const [feedback, setFeedback] = useState<Record<number, string>>({})
   const [design, setDesign] = useState({ name: '', description: '', kind: 'loop' as 'loop' | 'once', duration: 10 })
   const [designMessage, setDesignMessage] = useState<string | null>(null)
+  const [externalAction, setExternalAction] = useState<DesktopVideoAction | null>(null)
+  const [externalPrompt, setExternalPrompt] = useState<Awaited<ReturnType<typeof getDesktopVideoPrompt>> | null>(null)
+  const [externalRequirements, setExternalRequirements] = useState('')
+  const [externalFilePath, setExternalFilePath] = useState<string | null>(null)
+  const [externalPromptLoading, setExternalPromptLoading] = useState(false)
+  const [externalUploading, setExternalUploading] = useState(false)
+  const [externalCopied, setExternalCopied] = useState(false)
+  const externalRequest = useRef(0)
+  const externalAuthSession = useRef(authSessionId)
   const beginAsync = useAsyncGuard()
   const selected = sets.find(item => item.id === selectedSetId)
   const currentMatches = selected?.is_current && selected.context_hash === state?.desired_context_hash
@@ -113,6 +178,20 @@ export function DesktopLifePage(): React.JSX.Element {
       void refreshDesktopVideos()
     }
   }, [auth.kind])
+
+  useEffect(() => {
+    if (externalAuthSession.current === authSessionId) {
+      return
+    }
+
+    externalAuthSession.current = authSessionId
+    externalRequest.current += 1
+    setExternalAction(null)
+    setExternalPrompt(null)
+    setExternalFilePath(null)
+    setExternalPromptLoading(false)
+    setExternalUploading(false)
+  }, [authSessionId])
 
   useEffect(() => {
     if (!working) {
@@ -155,6 +234,107 @@ export function DesktopLifePage(): React.JSX.Element {
     }
 
     await ensureDesktopVideoCurrent()
+  }
+
+  const loadExternalPrompt = async (action: DesktopVideoAction, requirements = ''): Promise<void> => {
+    const requestId = ++externalRequest.current
+    const isCurrent = captureAuthScope()
+    setExternalPromptLoading(true)
+
+    try {
+      const prompt = await getDesktopVideoPrompt(action.id, action.set_id, requirements)
+
+      if (isCurrent?.() && requestId === externalRequest.current) {
+        setExternalPrompt(prompt)
+        setExternalCopied(false)
+      }
+    } catch (failure) {
+      if (isCurrent?.() && requestId === externalRequest.current) {
+        setExternalPrompt(null)
+        notifyError(failure, t.externalTitle)
+      }
+    } finally {
+      if (requestId === externalRequest.current) {
+        setExternalPromptLoading(false)
+      }
+    }
+  }
+
+  const openExternal = (action: DesktopVideoAction): void => {
+    setExternalAction(action)
+    setExternalPrompt(null)
+    setExternalRequirements('')
+    setExternalFilePath(null)
+    setExternalCopied(false)
+    void loadExternalPrompt(action)
+  }
+
+  const closeExternal = (): void => {
+    externalRequest.current += 1
+    setExternalAction(null)
+    setExternalPrompt(null)
+    setExternalFilePath(null)
+    setExternalCopied(false)
+    setExternalPromptLoading(false)
+    setExternalUploading(false)
+  }
+
+  const chooseExternalVideo = async (): Promise<void> => {
+    try {
+      const [path] = await window.spiritagent.selectPaths({
+        filters: [{ extensions: ['mp4', 'mov'], name: t.videoFilterName }],
+        multiple: false,
+        title: t.selectVideo
+      })
+
+      if (path) {
+        setExternalFilePath(path)
+      }
+    } catch (failure) {
+      notifyError(failure, t.selectVideo)
+    }
+  }
+
+  const uploadExternalVideo = async (): Promise<void> => {
+    if (!externalAction || !externalFilePath) {
+      return
+    }
+
+    const action = externalAction
+    const isCurrent = captureAuthScope()
+
+    if (!authSessionId || !isCurrent) {
+      return
+    }
+
+    setExternalUploading(true)
+
+    try {
+      await uploadDesktopVideoAction(action.id, action.set_id, externalFilePath, authSessionId)
+
+      if (isCurrent()) {
+        closeExternal()
+      }
+    } catch (failure) {
+      if (isCurrent()) {
+        notifyError(failure, t.externalTitle)
+        setExternalUploading(false)
+      }
+    }
+  }
+
+  const copyExternalPrompt = async (): Promise<void> => {
+    if (!externalPrompt?.prompt) {
+      return
+    }
+
+    try {
+      if (await window.spiritagent.writeClipboard(externalPrompt.prompt)) {
+        setExternalCopied(true)
+      }
+    } catch (failure) {
+      notifyError(failure, t.copyPrompt)
+    }
   }
 
   return (
@@ -267,8 +447,17 @@ export function DesktopLifePage(): React.JSX.Element {
                 )}
                 <div className="flex flex-wrap gap-2">
                   <button
+                    className={BTN_SUBTLE}
+                    disabled={busy || action.status === 'processing' || !currentMatches}
+                    onClick={() => openExternal(action)}
+                    title={currentMatches ? undefined : t.currentOnly}
+                    type="button"
+                  >
+                    {t.external}
+                  </button>
+                  <button
                     className={isActionPaused(action) ? BTN_PRIMARY : BTN_SUBTLE}
-                    disabled={busy || (action.status === 'processing' && !isActionPaused(action))}
+                    disabled={busy || action.status === 'processing'}
                     onClick={() =>
                       void run(() =>
                         generateDesktopVideoAction(action.id, isActionPaused(action) ? undefined : feedback[action.id])
@@ -467,6 +656,110 @@ export function DesktopLifePage(): React.JSX.Element {
               {item.is_current && <span className="text-xs text-accent">{t.current}</span>}
             </button>
           ))}
+        </div>
+      )}
+      {externalAction && (
+        <div
+          aria-label={t.externalTitle}
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget && !externalUploading) {
+              closeExternal()
+            }
+          }}
+          role="dialog"
+        >
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-4 overflow-y-auto rounded-2xl border border-line-hairline bg-surface-card p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-strong">{t.externalTitle}</h3>
+                <p className="mt-1 text-xs leading-relaxed text-muted">{t.externalHint}</p>
+              </div>
+              <button className={BTN_SUBTLE} disabled={externalUploading} onClick={closeExternal} type="button">
+                {t.close}
+              </button>
+            </div>
+            <label className="flex flex-col gap-2 text-xs text-body">
+              {t.requirements}
+              <textarea
+                className={`${INPUT_CLASS} min-h-16 resize-y`}
+                maxLength={600}
+                onChange={event => setExternalRequirements(event.target.value)}
+                placeholder={t.requirements}
+                rows={2}
+                value={externalRequirements}
+              />
+            </label>
+            <button
+              className={`${BTN_SUBTLE} self-start`}
+              disabled={externalPromptLoading || externalUploading}
+              onClick={() => void loadExternalPrompt(externalAction, externalRequirements)}
+              type="button"
+            >
+              {externalPromptLoading ? t.promptLoading : t.generatePrompt}
+            </button>
+            {externalPromptLoading && <p className="text-xs text-muted">{t.promptLoading}</p>}
+            {externalPrompt ? (
+              <section className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-sm font-medium text-strong">{t.prompt}</h4>
+                  <button className={BTN_SUBTLE} onClick={() => void copyExternalPrompt()} type="button">
+                    {externalCopied ? t.copied : t.copyPrompt}
+                  </button>
+                </div>
+                <textarea
+                  aria-label={t.prompt}
+                  className={`${INPUT_CLASS} min-h-40 resize-y text-xs leading-relaxed`}
+                  readOnly
+                  rows={7}
+                  value={externalPrompt.prompt}
+                />
+                <h4 className="mt-2 text-sm font-medium text-strong">{t.references}</h4>
+                {externalPrompt.references?.length ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {externalPrompt.references.map(reference => (
+                      <ExternalReference
+                        key={`${reference.label}:${reference.url}`}
+                        reference={reference}
+                        savedLabel={t.referenceSaved}
+                        saveLabel={t.saveReference}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted">{t.noReferences}</p>
+                )}
+              </section>
+            ) : (
+              !externalPromptLoading && <p className="text-xs text-muted">{t.promptEmpty}</p>
+            )}
+            <section className="flex flex-col gap-3 border-t border-line-hairline pt-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={externalUploading}
+                  onClick={() => void chooseExternalVideo()}
+                  type="button"
+                >
+                  {t.selectVideo}
+                </button>
+                {externalFilePath && (
+                  <span className="max-w-full truncate text-xs text-body" title={externalFilePath}>
+                    {t.selectedVideo}: {localFileName(externalFilePath)}
+                  </span>
+                )}
+              </div>
+              <button
+                className={`${BTN_PRIMARY} self-start`}
+                disabled={!externalFilePath || externalUploading}
+                onClick={() => void uploadExternalVideo()}
+                type="button"
+              >
+                {externalUploading ? t.uploading : t.upload}
+              </button>
+            </section>
+          </div>
         </div>
       )}
     </div>

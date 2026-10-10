@@ -1,10 +1,11 @@
 """桌面生活视频：资源、制作、复核、播放与客户端回执。"""
 
+from pathlib import Path
 from uuid import UUID
 
 from common import get_router
-from components import DbSession
-from fastapi import HTTPException
+from components import ATTACHMENT_VIDEO_EXTENSIONS, SETTINGS, DbSession
+from fastapi import File, Form, HTTPException, UploadFile
 from modules.auth import CurrentUser
 from modules.companion import (
     CompanionOperationResponse,
@@ -12,6 +13,8 @@ from modules.companion import (
     DesktopVideoClaimRequest,
     DesktopVideoDesignRequest,
     DesktopVideoEnsureRequest,
+    DesktopVideoExternalPromptRequest,
+    DesktopVideoExternalPromptResponse,
     DesktopVideoGenerateRequest,
     DesktopVideoListResponse,
     DesktopVideoPlayCommand,
@@ -30,12 +33,14 @@ from services.application.actions import (
     ensure_current_desktop_videos,
     generate_desktop_action,
     get_desktop_action_response,
+    get_desktop_external_prompt,
     get_desktop_video_state,
     list_desktop_video_sets,
     play_desktop_action,
     record_desktop_playback,
     review_desktop_action,
     set_desktop_video_preferences,
+    upload_desktop_action,
 )
 
 router = get_router(prefix="/api/companion/desktop-videos", tag="companion-desktop-videos")
@@ -92,6 +97,59 @@ async def generate_action(
             action_id,
             feedback=body.feedback if body else "",
             source="user_requested",
+        )
+    except DesktopVideoError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
+    "/actions/{action_id}/external-prompt",
+    response_model=DesktopVideoExternalPromptResponse,
+)
+async def external_prompt(
+    action_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    body: DesktopVideoExternalPromptRequest | None = None,
+) -> DesktopVideoExternalPromptResponse:
+    try:
+        return await get_desktop_external_prompt(
+            db,
+            user.id,
+            action_id,
+            expected_set_id=body.expected_set_id if body else None,
+            requirements=body.requirements if body else "",
+        )
+    except DesktopVideoError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/actions/{action_id}/upload", response_model=DesktopVideoActionResponse, status_code=202)
+async def upload_action(
+    action_id: int,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    expected_set_id: int | None = Form(None),
+) -> DesktopVideoActionResponse:
+    extension = Path(file.filename or "").suffix.lower()
+    if extension not in ATTACHMENT_VIDEO_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail={"error": "仅支持 MP4 或 MOV 视频", "reason": "unsupported_video_format"},
+        )
+    max_bytes = SETTINGS.video_attachment_max_bytes
+    if file.size is not None and file.size > max_bytes:
+        raise HTTPException(status_code=413, detail={"error": "视频文件超过大小上限", "reason": "payload_too_large"})
+    data = await file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail={"error": "视频文件超过大小上限", "reason": "payload_too_large"})
+    try:
+        return await upload_desktop_action(
+            user.id,
+            action_id,
+            data,
+            extension,
+            expected_set_id=expected_set_id,
         )
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc
