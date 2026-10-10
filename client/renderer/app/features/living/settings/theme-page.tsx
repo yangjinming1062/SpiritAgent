@@ -1,7 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
-import { PresentationSettings } from '@/app/components/presentation-settings'
 import { $manualReduceTransparency, setManualReduceTransparency } from '@/shared/lib/apply-no-blur'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { Check } from '@/shared/lib/icons'
@@ -20,7 +19,6 @@ export function ThemePage(): React.JSX.Element {
   return (
     <div className="space-y-6">
       <SettingsSectionIntro hint={themeText.hint} title={themeText.heading} />
-      <PresentationSettings />
 
       <section>
         <p className={cn(SECTION_TITLE, 'mb-2.5')}>{themeText.themesHeading}</p>

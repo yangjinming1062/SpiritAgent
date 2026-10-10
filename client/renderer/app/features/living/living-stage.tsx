@@ -7,7 +7,6 @@ import { log } from '@/shared/lib/log'
 import { $gatewayState } from '@/shared/store/gateway'
 
 import { AppearancePage } from './appearance/appearance-page'
-import { DesktopLifePage } from './desktop-life-page'
 import { DiaryPage } from './diary-page'
 import { $livingView, type LivingView } from './living-store'
 import styles from './living.module.css'
@@ -19,7 +18,6 @@ import { LivingSettings } from './settings/living-settings'
 // 视图 → 页面组件；Record<LivingView,…> 强制新成员时报缺 key 错。
 const VIEWS: Record<LivingView, React.ComponentType> = {
   appearance: AppearancePage,
-  desktopLife: DesktopLifePage,
   remote: RemotePage,
   chat: LivingChatView,
   diary: DiaryPage,

@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import { IconRotateClockwise, IconVolume, IconVolumeOff } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef } from 'react'
 
-import { usePresentationModeSwitch } from '@/app/components/presentation-settings'
+import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
 import { SPRITE_REGION_ID } from '@/app/components/sprite-stage'
 import {
   $contextMenuPos,

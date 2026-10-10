@@ -11,7 +11,6 @@ import {
   Home,
   type IconComponent,
   MessageSquareText,
-  Monitor,
   Settings,
   Shirt,
   Sparkles
@@ -19,7 +18,6 @@ import {
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
-import { useDesktopLifeStrings } from './desktop-life-strings'
 import { $livingView, type LivingView, setLivingView } from './living-store'
 import styles from './living.module.css'
 
@@ -31,7 +29,6 @@ interface NavEntry {
 
 export function LivingRail(): React.JSX.Element {
   const t = useStrings().living.rail
-  const desktopLife = useDesktopLifeStrings()
   const companionMood = useStore($companionMood)
   const persona = useStore($persona)
   const portrait = useStore($portraitUrl)
@@ -48,7 +45,6 @@ export function LivingRail(): React.JSX.Element {
     { icon: Sparkles, id: 'posts', label: t.posts },
     { icon: CalendarPlus, id: 'diary', label: t.diary },
     { icon: Shirt, id: 'appearance', label: t.wardrobe },
-    { icon: Monitor, id: 'desktopLife', label: desktopLife.title },
     { icon: Globe, id: 'remote', label: t.remote },
     { icon: Home, id: 'scene', label: t.scene }
   ]

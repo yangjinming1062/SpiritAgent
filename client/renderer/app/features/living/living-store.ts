@@ -3,11 +3,19 @@
 import { normalizeHashPath } from '@/shared/lib/hash-route'
 import { definePersistedEnum } from '@/shared/lib/storage'
 
-const LIVING_VIEWS = ['chat', 'appearance', 'desktopLife', 'posts', 'diary', 'remote', 'scene', 'settings'] as const
+const LIVING_VIEWS = ['chat', 'appearance', 'posts', 'diary', 'remote', 'scene', 'settings'] as const
 
 export type LivingView = (typeof LIVING_VIEWS)[number]
 
-export const LIVING_SETTINGS_SECTIONS = ['persona', 'voice', 'interaction', 'theme', 'shortcuts', 'about'] as const
+export const LIVING_SETTINGS_SECTIONS = [
+  'persona',
+  'voice',
+  'interaction',
+  'theme',
+  'companion',
+  'shortcuts',
+  'about'
+] as const
 
 export type LivingSettingsSection = (typeof LIVING_SETTINGS_SECTIONS)[number]
 

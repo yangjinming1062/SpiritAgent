@@ -3,7 +3,7 @@ import { useStore } from '@nanostores/react'
 import { $locale } from '@/shared/store/locale'
 
 const zh = {
-  title: '桌面生活',
+  title: '桌景',
   hint: '把伙伴的穿着与生活环境融入桌面画面。',
   prepare: '准备当前画面',
   refresh: '刷新',
@@ -70,7 +70,7 @@ const zh = {
 }
 
 const en: typeof zh = {
-  title: 'Desktop life',
+  title: 'Desktop scene',
   hint: 'Bring your companion, their outfit, and living space into your desktop.',
   prepare: 'Prepare current scene',
   refresh: 'Refresh',

@@ -1,11 +1,18 @@
-// 生活空间「设置」：顶部分区胶囊切换角色/音色/交互/主题/快捷键/关于。
-
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
 import { PAGE_INSET_X } from '@/shared/layout/page-inset'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { type IconComponent, Info, Keyboard, Palette, SlidersHorizontal, Users, Volume2 } from '@/shared/lib/icons'
+import {
+  type IconComponent,
+  Info,
+  Keyboard,
+  Monitor,
+  Palette,
+  SlidersHorizontal,
+  Users,
+  Volume2
+} from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { CapsuleTabs } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
@@ -18,6 +25,7 @@ import {
 } from '../living-store'
 
 import { AboutPage } from './about-page'
+import { CompanionPage } from './companion-page'
 import { InteractionPage } from './interaction-page'
 import { PersonaPage } from './persona-page'
 import { ShortcutsPage } from './shortcuts-page'
@@ -28,6 +36,7 @@ type SectionPage = () => React.JSX.Element
 
 const SECTIONS: Record<LivingSettingsSection, { Page: SectionPage; icon: IconComponent }> = {
   about: { Page: AboutPage, icon: Info },
+  companion: { Page: CompanionPage, icon: Monitor },
   interaction: { Page: InteractionPage, icon: SlidersHorizontal },
   persona: { Page: PersonaPage, icon: Users },
   shortcuts: { Page: ShortcutsPage, icon: Keyboard },

@@ -1,4 +1,4 @@
-// 桌面「设置」窗口：单层胶囊 tab 聚合生活与工位的全部分区；生活分区状态沿用 living-store 持久化，工位分区沿用 `#/inference|runner|skills` 深链。
+// 桌面设置只装配共享生活分区与工位分区，窗口伙伴布局由生活空间设置管理。
 
 import type React from 'react'
 import { useEffect, useState } from 'react'
@@ -38,10 +38,12 @@ import { CapsuleTabs } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 type StationSection = 'inference' | 'runner' | 'skills'
+type DesktopLivingSection = Exclude<LivingSettingsSection, 'companion'>
 
-type DesktopSettingsSection = LivingSettingsSection | StationSection
+type DesktopSettingsSection = DesktopLivingSection | StationSection
 
 const STATION_SECTIONS: ReadonlyArray<StationSection> = ['inference', 'runner', 'skills']
+const DESKTOP_LIVING_SECTIONS = LIVING_SETTINGS_SECTIONS.filter(id => id !== 'companion')
 
 const SECTION_PAGES: Record<DesktopSettingsSection, () => React.JSX.Element> = {
   about: AboutPage,
@@ -67,9 +69,9 @@ const SECTION_ICONS: Record<DesktopSettingsSection, IconComponent> = {
   voice: Volume2
 }
 
-// 生活分区保持既有次序，工位分区随后；「关于」使用频率最低，压轴。
+// 共享生活分区保持既有次序，工位分区随后；「关于」压轴。
 const SECTION_ORDER: ReadonlyArray<DesktopSettingsSection> = [
-  ...LIVING_SETTINGS_SECTIONS.filter(id => id !== 'about'),
+  ...DESKTOP_LIVING_SECTIONS.filter(id => id !== 'about'),
   ...STATION_SECTIONS,
   'about'
 ]
@@ -78,24 +80,28 @@ function isStationSection(section: DesktopSettingsSection): section is StationSe
   return (STATION_SECTIONS as readonly string[]).includes(section)
 }
 
+function fallbackLivingSection(): DesktopLivingSection {
+  const current = $livingSettingsSection.get()
+
+  return current === 'companion' ? 'persona' : current
+}
+
 // 深链解析：`#/settings/<section>` 指向生活分区，`#/inference|runner|skills` 与 `#/station/…` 指向工位分区；无深链时沿用生活分区的持久化状态。
 function readHashSection(): DesktopSettingsSection {
   const segments = normalizeHashPath(window.location.hash).split('/')
   const [first, second] = segments
 
   if (first === 'settings') {
-    return (LIVING_SETTINGS_SECTIONS as readonly string[]).includes(second)
-      ? (second as LivingSettingsSection)
-      : $livingSettingsSection.get()
+    return (DESKTOP_LIVING_SECTIONS as readonly string[]).includes(second)
+      ? (second as DesktopLivingSection)
+      : fallbackLivingSection()
   }
 
   if (first === 'station') {
     return (STATION_SECTIONS as readonly string[]).includes(second) ? (second as StationSection) : 'inference'
   }
 
-  return (STATION_SECTIONS as readonly string[]).includes(first)
-    ? (first as StationSection)
-    : $livingSettingsSection.get()
+  return (STATION_SECTIONS as readonly string[]).includes(first) ? (first as StationSection) : fallbackLivingSection()
 }
 
 export function DesktopPreferences(): React.JSX.Element {

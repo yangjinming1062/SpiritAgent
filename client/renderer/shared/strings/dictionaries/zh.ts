@@ -144,7 +144,17 @@ export const dict = {
       navAriaLabel: '设置分区导航',
       persona: '角色',
       shortcuts: '快捷键',
-      voice: '音色'
+      voice: '音色',
+      companion: '伙伴'
+    },
+    companion: {
+      heading: '伙伴',
+      hint: '调整伙伴的显示比例和位置。',
+      companionSize: '伙伴大小',
+      companionSizeHint: '伙伴形象的默认显示比例。',
+      scaleAria: '伙伴大小',
+      resetPosition: '伙伴位置归位',
+      resetPositionDesc: '将伙伴移回当前屏幕的默认位置。'
     },
     shortcuts: {
       heading: '全局快捷键',
@@ -1118,10 +1128,7 @@ export const dict = {
       videoGenRequestFailed: '动作包生成请求失败，请稍后重试',
       videoActivateFailed: '穿上这套着装失败，请稍后重试',
       videoGenHint:
-        '按着装参考与角色性格生成动作图片与视频；悬空拖拽使用静态图片。可逐个预览或重做，成功前保留当前可用形象。',
-      companionSize: '形象大小',
-      companionSizeHint: '窗口模式中伙伴形象的默认显示比例。',
-      scaleAria: '形象大小'
+        '按着装参考与角色性格生成动作图片与视频；悬空拖拽使用静态图片。可逐个预览或重做，成功前保留当前可用形象。'
     },
     scene: {
       intro:

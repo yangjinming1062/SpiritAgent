@@ -151,7 +151,17 @@ export const dict: Dictionary = {
       navAriaLabel: 'Settings section navigation',
       persona: 'Persona',
       shortcuts: 'Shortcuts',
-      voice: 'Voice'
+      voice: 'Voice',
+      companion: 'Companion'
+    },
+    companion: {
+      heading: 'Companion',
+      hint: 'Adjust the companion scale and position.',
+      companionSize: 'Companion size',
+      companionSizeHint: 'Default display scale of your companion.',
+      scaleAria: 'Companion size',
+      resetPosition: 'Reset companion position',
+      resetPositionDesc: 'Move your companion back to its default position on the current display.'
     },
     shortcuts: {
       heading: 'Global shortcuts',
@@ -1191,10 +1201,7 @@ export const dict: Dictionary = {
       videoGenRequestFailed: 'Action pack request failed. Please retry shortly.',
       videoActivateFailed: 'Could not wear this outfit. Please retry shortly.',
       videoGenHint:
-        'Generates action images and videos from the outfit reference and personality; suspended dragging uses a still image. Preview or regenerate each action; the current look stays until it is ready.',
-      companionSize: 'Companion size',
-      companionSizeHint: 'Default display scale of the companion in window mode.',
-      scaleAria: 'Companion size'
+        'Generates action images and videos from the outfit reference and personality; suspended dragging uses a still image. Preview or regenerate each action; the current look stays until it is ready.'
     },
     scene: {
       intro:

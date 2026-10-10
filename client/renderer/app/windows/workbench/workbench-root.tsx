@@ -4,7 +4,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { PresentationModeButton } from '@/app/components/presentation-settings'
+import { PresentationModeButton } from '@/app/components/presentation-mode-switch'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { RunRail } from '@/app/features/workbench/run-rail'

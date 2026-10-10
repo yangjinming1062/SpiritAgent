@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 import type React from 'react'
 
-import { PresentationModeButton } from '@/app/components/presentation-settings'
+import { PresentationModeButton } from '@/app/components/presentation-mode-switch'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { LivingRail } from '@/app/features/living/living-rail'
