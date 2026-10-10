@@ -40,6 +40,7 @@
   flex-shrink: 0;
 }
 .avatarButton {
+  position: relative;
   display: grid;
   place-items: center;
   width: 30px;
@@ -51,11 +52,48 @@
   background: var(--ui-accent-soft);
   font-size: 12px !important;
   font-weight: 700 !important;
+  transform-origin: center;
+  transition:
+    transform 180ms ease,
+    box-shadow 240ms ease,
+    border-color 240ms ease;
 }
 .avatarButton img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+.avatarButton[data-unread='true'] {
+  animation: desktopAvatarPulse 1.6s ease-in-out infinite;
+  border-color: var(--ui-accent-line);
+  box-shadow:
+    0 0 0 2px var(--ui-accent-soft),
+    0 0 16px var(--ui-accent-soft);
+}
+.avatarButton:focus-visible {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 2px var(--ui-accent-soft);
+}
+.avatarUnread {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--ui-app-bg);
+  border-radius: 50%;
+  background: var(--ui-accent);
+  box-shadow: 0 0 0 1px var(--ui-accent-soft);
+}
+@keyframes desktopAvatarPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.05);
+  }
 }
 .mainMenu {
   display: flex;
@@ -515,6 +553,24 @@
 .dockMenu button:hover {
   background: var(--ui-fill-hover);
 }
+.accountPopup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 12px;
+}
+.accountPopup[data-side='left'] {
+  right: 0;
+  left: auto;
+  flex-direction: row-reverse;
+}
+.accountPopup[data-side='below'] {
+  flex-direction: column;
+}
 .menuContent {
   position: absolute;
   top: calc(100% + 12px);
@@ -531,6 +587,16 @@
   border-radius: 12px;
   box-shadow: 0 16px 45px rgb(0 0 0 / 0.2);
   font-size: 12px;
+}
+.accountPopup .accountMenu {
+  position: relative;
+  top: auto;
+  left: auto;
+  max-width: calc(100vw - 24px);
+  overflow: visible;
+}
+.accountPopup[data-side='below'] .accountSubmenu {
+  width: min(256px, calc(100vw - 24px));
 }
 .settingsMenu .menuContent {
   left: auto;
@@ -552,6 +618,104 @@
 }
 .menuContent > button:hover {
   background: var(--ui-fill-hover);
+}
+.accountSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px 10px;
+  border-bottom: 1px solid var(--ui-line-hairline);
+}
+.accountSummaryLabel {
+  color: var(--ui-text-muted);
+  font-size: 10px;
+}
+.accountSummaryName,
+.accountOptionText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.accountSummaryName {
+  font-size: 13px;
+  font-weight: 600;
+}
+.accountSummaryName small,
+.accountOptionText small {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.accountSwitch {
+  position: relative;
+}
+.menuAction {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px;
+  text-align: left;
+  background: transparent;
+}
+.menuAction:hover {
+  background: var(--ui-fill-hover);
+}
+.menuAction:focus-visible,
+.accountOption:focus-visible {
+  background: var(--ui-fill-hover);
+  box-shadow: inset 0 0 0 1px var(--ui-line-strong);
+}
+.menuStatus {
+  padding: 7px 9px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+.accountSubmenu {
+  display: flex;
+  width: 224px;
+  max-height: min(360px, calc(100vh - 80px));
+  flex-direction: column;
+  gap: 3px;
+  overflow: auto;
+  padding: 9px;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 12px;
+  background: var(--ui-app-bg);
+  box-shadow: 0 16px 45px rgb(0 0 0 / 0.2);
+  font-size: 12px;
+}
+.accountSubmenuTitle {
+  padding: 7px 9px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.accountOption {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 9px;
+  text-align: left;
+  background: transparent;
+}
+.accountOption:hover:not(:disabled) {
+  background: var(--ui-fill-hover);
+}
+.accountOption:disabled {
+  color: var(--ui-text-strong);
 }
 .displaySelect {
   padding: 9px;

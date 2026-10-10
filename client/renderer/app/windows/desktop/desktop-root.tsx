@@ -429,15 +429,20 @@ export function DesktopRoot(): React.JSX.Element {
         <div className={styles.avatarMenu} ref={menuRef}>
           <button
             aria-expanded={accountOpen}
-            aria-label={t.accounts}
+            aria-label={whisperHasUnread ? `${t.accounts} (${dict.living.rail.unread})` : t.accounts}
             className={styles.avatarButton}
-            onClick={() => setAccountOpen(value => !value)}
+            data-unread={whisperHasUnread}
+            onClick={() => {
+              setSettingsOpen(false)
+              setAccountOpen(value => !value)
+            }}
             title={persona?.name || dict.brand.name}
             type="button"
           >
             {portrait ? <img alt="" src={portrait} /> : <span>{dict.brand.name.slice(0, 1)}</span>}
+            {whisperHasUnread && <span aria-hidden="true" className={styles.avatarUnread} />}
           </button>
-          {accountOpen && <DesktopAccounts />}
+          {accountOpen && <DesktopAccounts onClose={() => setAccountOpen(false)} />}
         </div>
         <nav aria-label={t.title} className={styles.mainMenu}>
           {DESKTOP_APPS.map(id => (
@@ -473,21 +478,16 @@ export function DesktopRoot(): React.JSX.Element {
             aria-expanded={settingsOpen}
             aria-label={t.desktopSettings}
             className={styles.topIcon}
-            onClick={() => setSettingsOpen(value => !value)}
+            onClick={() => {
+              setAccountOpen(false)
+              setSettingsOpen(value => !value)
+            }}
             type="button"
           >
             <Settings size={17} />
             <ChevronDown size={11} />
           </button>
-          {settingsOpen && (
-            <DesktopSettings
-              onSettings={() => {
-                activatePanel('settings')
-                setSettingsOpen(false)
-              }}
-              presentation={presentation}
-            />
-          )}
+          {settingsOpen && <DesktopSettings presentation={presentation} />}
         </div>
         <time className={styles.clock} dateTime={clock.toISOString()}>
           {clock.toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN', {
