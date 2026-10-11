@@ -106,6 +106,14 @@ export interface DockState {
   runningError: string | null
 }
 
+/** Windows Jump List 任务的渲染层投影；启动目标与参数只保留在主进程。 */
+export interface DockTask {
+  description?: string
+  icon: string | null
+  id: string
+  title: string
+}
+
 export type DockCatalogSourceKey =
   | 'start-user'
   | 'start-all'

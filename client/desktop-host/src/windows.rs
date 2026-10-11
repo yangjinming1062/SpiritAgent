@@ -37,6 +37,7 @@ mod events;
 use events::WinEvents;
 mod applications;
 use applications::Applications;
+mod jump_lists;
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -1565,6 +1566,40 @@ impl Session {
         self.applications.close_windows(window_ids)
     }
 
+    fn get_jump_list_tasks(&self, target: &str) -> Result<jump_lists::JumpListRead> {
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        let read = jump_lists::read_tasks(target, &self.journal.session);
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        Ok(read)
+    }
+
+    fn activate_jump_list_task(
+        &self,
+        target: &str,
+        task_id: &str,
+        expires_at: u64,
+    ) -> Result<Vec<String>> {
+        let read = self.get_jump_list_tasks(target)?;
+        let task = read
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .ok_or("Jump List 任务已失效，请重新打开菜单。")?;
+        let _transaction = MutexGuard::restoration()?;
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        self.require_external_interaction()?;
+        if SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_millis()
+            >= u128::from(expires_at)
+        {
+            return Err("Jump List 任务请求已超时，请重新打开菜单。".into());
+        }
+        jump_lists::launch_task(task)?;
+        Ok(read.diagnostics)
+    }
+
     fn require_external_interaction(&self) -> Result<()> {
         let foreground = unsafe { GetForegroundWindow() };
         if !self.takeover
@@ -1917,7 +1952,7 @@ pub fn host(path: &Path) -> Result<()> {
             Ok(Ok(command)) => {
                 let id = command.id();
                 let mut exiting = false;
-                let result = match command {
+                let result: Result<serde_json::Value> = match command {
                     Command::Start {
                         parent_pid,
                         takeover,
@@ -1931,6 +1966,7 @@ pub fn host(path: &Path) -> Result<()> {
                             Session::start(path, parent_pid, takeover, &windows, work_area).map(
                                 |started| {
                                     session = Some(started);
+                                    json!(null)
                                 },
                             )
                         }
@@ -1938,30 +1974,73 @@ pub fn host(path: &Path) -> Result<()> {
                     Command::Heartbeat { .. } => session
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(Session::heartbeat),
+                        .and_then(Session::heartbeat)
+                        .map(|_| json!(null)),
                     Command::Focus { handle, .. } => session
                         .as_ref()
                         .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.focus(&handle)),
+                        .and_then(|active| active.focus(&handle))
+                        .map(|_| json!(null)),
                     Command::RefreshApplications { .. } => session
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.refresh_applications(true)),
+                        .and_then(|active| active.refresh_applications(true))
+                        .map(|_| json!(null)),
                     Command::ActivateExternal { window_id, .. } => session
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.activate_external(&window_id)),
+                        .and_then(|active| active.activate_external(&window_id))
+                        .map(|_| json!(null)),
                     Command::CloseExternal { window_ids, .. } => session
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.close_external(&window_ids)),
+                        .and_then(|active| active.close_external(&window_ids))
+                        .map(|_| json!(null)),
+                    Command::GetJumpListTasks { target, .. } => session
+                        .as_ref()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| active.get_jump_list_tasks(&target))
+                        .map(|read| {
+                            for diagnostic in &read.diagnostics {
+                                emit(json!({
+                                    "event": "warning",
+                                    "notify": false,
+                                    "reason": format!("Jump List: {diagnostic}"),
+                                }));
+                            }
+                            json!({ "tasks": read.tasks })
+                        }),
+                    Command::ActivateJumpListTask {
+                        target,
+                        task_id,
+                        expires_at,
+                        ..
+                    } => session
+                        .as_ref()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| {
+                            active.activate_jump_list_task(&target, &task_id, expires_at)
+                        })
+                        .map(|diagnostics| {
+                            for diagnostic in diagnostics {
+                                emit(json!({
+                                    "event": "warning",
+                                    "notify": false,
+                                    "reason": format!("Jump List: {diagnostic}"),
+                                }));
+                            }
+                            json!(null)
+                        }),
                     Command::Stop { .. } => {
                         exiting = true;
-                        session.as_mut().map_or(Ok(()), Session::stop)
+                        session
+                            .as_mut()
+                            .map_or(Ok(()), Session::stop)
+                            .map(|_| json!(null))
                     }
                 };
                 match result {
-                    Ok(()) => emit(json!({ "id": id, "ok": true })),
+                    Ok(result) => emit(json!({ "id": id, "ok": true, "result": result })),
                     Err(reason) => emit(json!({ "id": id, "ok": false, "reason": reason })),
                 }
                 if exiting {

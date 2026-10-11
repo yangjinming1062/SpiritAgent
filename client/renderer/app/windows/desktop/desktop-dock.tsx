@@ -25,8 +25,11 @@ import styles from './desktop.module.css'
 
 type DockState = Awaited<ReturnType<typeof window.spiritagent.dock.getState>>
 type DockEntry = DockState['entries'][number]
+type DockTask = Awaited<ReturnType<typeof window.spiritagent.dock.tasks>>[number]
 
 type DockMenuTarget = { kind: 'program'; id: string; pinned: boolean } | { kind: 'internal'; id: DesktopApp }
+type DockMenuState = DockMenuTarget & { x: number; focusMenu: boolean }
+type DockTaskMenuState = { entryId: string; loading: boolean; tasks: DockTask[] }
 
 const APP_ICONS: Record<DesktopApp, IconComponent> = {
   chat: MessageCircle,
@@ -69,13 +72,15 @@ export function DesktopDock({
     runningError: null
   })
 
-  const [menu, setMenu] = useState<(DockMenuTarget & { x: number }) | null>(null)
+  const [menu, setMenu] = useState<DockMenuState | null>(null)
+  const [menuTasks, setMenuTasks] = useState<DockTaskMenuState | null>(null)
   const [picker, setPicker] = useState<DockPickerMode | null>(null)
   const dockRef = useRef<HTMLElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   useInteractiveRegion('desktop-dock', dockRef)
   useInteractiveRegion('desktop-dock-menu', menuRef)
   const triggerRef = useRef<HTMLElement | null>(null)
+  const taskRequestRef = useRef(0)
   const [draggingOver, setDraggingOver] = useState(false)
   const draggedItem = useRef<{ id: string; pinned: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -142,6 +147,7 @@ export function DesktopDock({
         event.preventDefault()
         event.stopPropagation()
         close()
+        triggerRef.current?.focus()
       }
     }
 
@@ -155,6 +161,18 @@ export function DesktopDock({
       window.removeEventListener('blur', close)
     }
   }, [menu, menuEnabled])
+
+  useEffect(() => {
+    if (!menu || !menu.focusMenu) {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [menu, menuTasks])
 
   // 选择面板自己处理遮罩点击，窗口级监听只收 Escape。
   useEffect(() => {
@@ -205,7 +223,13 @@ export function DesktopDock({
     setMenu(null)
   }
 
-  const openMenu = (target: DockMenuTarget, button: HTMLElement): void => {
+  const activateTask = (entryId: string, taskId: string): void => {
+    setMenu(null)
+    triggerRef.current?.focus()
+    void run(() => window.spiritagent.dock.activateTask(entryId, taskId), t.taskLaunchFailed)
+  }
+
+  const openMenu = (target: DockMenuTarget, button: HTMLElement, focusMenu = false): void => {
     if (!menuEnabled) {
       return
     }
@@ -219,7 +243,32 @@ export function DesktopDock({
     const rect = button.getBoundingClientRect()
     const halfWidth = Math.min(120, (window.innerWidth - 32) / 2)
     const center = Math.max(halfWidth + 16, Math.min(rect.left + rect.width / 2, window.innerWidth - halfWidth - 16))
-    setMenu({ ...target, x: center - dock.left })
+    const requestId = taskRequestRef.current + 1
+    taskRequestRef.current = requestId
+    triggerRef.current = button
+    setMenuTasks(target.kind === 'program' ? { entryId: target.id, loading: true, tasks: [] } : null)
+    setMenu({ ...target, focusMenu, x: center - dock.left })
+
+    if (target.kind === 'program') {
+      void window.spiritagent.dock
+        .tasks(target.id)
+        .then(tasks => {
+          if (taskRequestRef.current !== requestId) {
+            return
+          }
+
+          setMenuTasks(current =>
+            current?.entryId === target.id ? { entryId: target.id, loading: false, tasks } : current
+          )
+        })
+        .catch(() => {
+          if (taskRequestRef.current === requestId) {
+            setMenuTasks(current =>
+              current?.entryId === target.id ? { entryId: target.id, loading: false, tasks: [] } : current
+            )
+          }
+        })
+    }
   }
 
   const menuIndex = state.entries.findIndex(entry => entry.id === menu?.id)
@@ -238,6 +287,16 @@ export function DesktopDock({
       setMenu(null)
     }
   }, [menu, menuEntry, menuWindow])
+
+  useEffect(() => {
+    if (!menu || menu.kind !== 'program') {
+      taskRequestRef.current += 1
+      setMenuTasks(null)
+    }
+  }, [menu])
+
+  const visibleMenuTasks =
+    menu?.kind === 'program' && menuTasks?.entryId === menu.id && !menuTasks.loading ? menuTasks.tasks : []
 
   const reorder = (from: string, to: string): void => {
     const ids = state.entries.map(entry => entry.id)
@@ -316,7 +375,7 @@ export function DesktopDock({
           onKeyDown={event => {
             if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
               event.preventDefault()
-              openMenu({ kind: 'program', id: entry.id, pinned }, event.currentTarget)
+              openMenu({ kind: 'program', id: entry.id, pinned }, event.currentTarget, true)
             }
           }}
           title={
@@ -413,7 +472,7 @@ export function DesktopDock({
                       onKeyDown={event => {
                         if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                           event.preventDefault()
-                          openMenu({ kind: 'internal', id: item.id }, event.currentTarget)
+                          openMenu({ kind: 'internal', id: item.id }, event.currentTarget, true)
                         }
                       }}
                       title={label}
@@ -446,6 +505,34 @@ export function DesktopDock({
             role="menu"
             style={{ left: menu.x }}
           >
+            {menu.kind === 'program' && menuTasks?.entryId === menu.id && menuTasks.loading && (
+              <div className={styles.dockMenuHeading} role="presentation">
+                {t.tasksLoading}
+              </div>
+            )}
+            {menu.kind === 'program' && visibleMenuTasks.length > 0 && (
+              <>
+                <div className={styles.dockMenuHeading} role="presentation">
+                  {t.tasks}
+                </div>
+                {visibleMenuTasks.map(task => (
+                  <button
+                    disabled={busy}
+                    key={task.id}
+                    onClick={() => activateTask(menu.id, task.id)}
+                    role="menuitem"
+                    title={task.description || task.title}
+                    type="button"
+                  >
+                    <span className={styles.dockTaskItem}>
+                      {task.icon ? <img alt="" draggable={false} src={task.icon} /> : null}
+                      <span>{task.title}</span>
+                    </span>
+                  </button>
+                ))}
+                <div className={styles.dockMenuSeparator} role="separator" />
+              </>
+            )}
             {menuWindow && (
               <button
                 onClick={() => {

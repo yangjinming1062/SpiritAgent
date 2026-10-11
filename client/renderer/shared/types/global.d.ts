@@ -58,6 +58,8 @@ declare global {
         remove: AsyncIpc<IpcInvokeContract['spiritagent:dock:remove']>
         repairWithCatalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair-with-catalog']>
         repairWithFiles: AsyncIpc<IpcInvokeContract['spiritagent:dock:repair-with-files']>
+        tasks: AsyncIpc<IpcInvokeContract['spiritagent:dock:tasks']>
+        activateTask: AsyncIpc<IpcInvokeContract['spiritagent:dock:activate-task']>
         onChanged: EventSubscription<'spiritagent:dock:changed'>
       }
       desktop: {

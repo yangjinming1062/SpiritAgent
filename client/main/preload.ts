@@ -112,6 +112,8 @@ contextBridge.exposeInMainWorld('spiritagent', {
     repairWithCatalog: (entryId: string, catalogId: string) =>
       invoke(IPC.invoke.dockRepairWithCatalog, entryId, catalogId),
     repairWithFiles: (entryId: string) => invoke(IPC.invoke.dockRepairWithFiles, entryId),
+    tasks: (entryId: string) => invoke(IPC.invoke.dockTasks, entryId),
+    activateTask: (entryId: string, taskId: string) => invoke(IPC.invoke.dockActivateTask, entryId, taskId),
     onChanged: (cb: EventCallback<typeof IPC.event.dockChanged>) => subscribe(IPC.event.dockChanged, cb)
   },
   desktop: {

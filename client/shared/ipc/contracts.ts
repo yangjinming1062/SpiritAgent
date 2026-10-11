@@ -7,6 +7,7 @@ import type {
   DesktopNavigation,
   DockCatalog,
   DockState,
+  DockTask,
   PresentationMode,
   PresentationState,
   StageActivity,
@@ -28,6 +29,7 @@ export type {
   DockCatalogSourceKey,
   DockEntry,
   DockState,
+  DockTask,
   DockWindow,
   PresentationDisplay,
   PresentationMode,
@@ -441,6 +443,8 @@ export interface IpcInvokeContract {
   'spiritagent:dock:remove': (id: string) => Promise<DockState>
   'spiritagent:dock:repair-with-catalog': (entryId: string, catalogId: string) => Promise<DockState>
   'spiritagent:dock:repair-with-files': (entryId: string) => Promise<DockState>
+  'spiritagent:dock:tasks': (entryId: string) => Promise<DockTask[]>
+  'spiritagent:dock:activate-task': (entryId: string, taskId: string) => Promise<void>
   'spiritagent:desktop:accounts': () => Promise<DesktopAccount[]>
   'spiritagent:desktop:switch-account': (id: string) => Promise<void>
   'spiritagent:desktop:add-account': () => Promise<void>
@@ -683,6 +687,8 @@ export const IPC = {
     dockRemove: 'spiritagent:dock:remove',
     dockRepairWithCatalog: 'spiritagent:dock:repair-with-catalog',
     dockRepairWithFiles: 'spiritagent:dock:repair-with-files',
+    dockTasks: 'spiritagent:dock:tasks',
+    dockActivateTask: 'spiritagent:dock:activate-task',
     desktopAccounts: 'spiritagent:desktop:accounts',
     desktopSwitchAccount: 'spiritagent:desktop:switch-account',
     desktopAddAccount: 'spiritagent:desktop:add-account',

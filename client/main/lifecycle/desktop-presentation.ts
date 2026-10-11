@@ -1104,6 +1104,16 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       return serial(() => native.closeExternal(windowIds, eligible))
     },
+    getJumpListTasks: (sender: WebContents, target: string) => {
+      const eligible = captureDesktopEligibility(sender)
+
+      return native.getJumpListTasks(target, eligible)
+    },
+    activateJumpListTask: (sender: WebContents, target: string, taskId: string): Promise<void> => {
+      const eligible = captureDesktopEligibility(sender)
+
+      return serial(() => native.activateJumpListTask(target, taskId, eligible))
+    },
     getState: snapshot,
     setMode,
     getWindow: () => interactive,

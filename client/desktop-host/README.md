@@ -21,6 +21,8 @@
 
 枚举当前虚拟桌面各屏普通与最小化窗口，排除系统壳、工具浮窗、隐藏和产品窗口。会话共用 WinEvent，命令及轮询前处理消息，合并相邻重复事件但保留移动、销毁顺序；每两秒补扫，队列溢出清登记后全量校准，COM 与监听随会话释放。
 
+helper 通过 `get_jump_list_tasks` 只读解析用户 Jump List 的 `Task` 分类，通过 `activate_jump_list_task` 重新读取并校验任务 ID、目标程序和桌面会话后启动。解析仅接受有界的 Shell Link 数据，支持 exe 与 `shell:AppsFolder` AUMID 任务；无法识别的旧格式链接静默跳过，并将仅因 `--user-data-dir` 不同而留下的同一任务历史副本合并。损坏文件跳过并记录诊断，不把程序参数交给渲染层，任务解析诊断不打断现有菜单。
+
 未变化不广播；快照按 revision 分批，每行最多 64 KiB，主进程收齐才应用，换代丢弃未完成批次。总量和等待预算归 [explorer-desktop-host.ts](../main/lifecycle/explorer-desktop-host.ts)。
 
 - `activate_external` 复核会话 ID、窗口身份、虚拟桌面和前台，恢复最小化并优先所属模态窗口；临时连接前台和目标输入线程，去重、反序释放并复验实际前台。

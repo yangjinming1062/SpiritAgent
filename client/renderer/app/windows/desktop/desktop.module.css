@@ -553,6 +553,28 @@
 .dockMenu button:hover {
   background: var(--ui-fill-hover);
 }
+.dockMenuHeading {
+  padding: 4px 10px 2px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+.dockMenuSeparator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--ui-line-standard);
+}
+.dockTaskItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dockTaskItem img {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  object-fit: contain;
+}
 .accountPopup {
   position: absolute;
   top: 100%;

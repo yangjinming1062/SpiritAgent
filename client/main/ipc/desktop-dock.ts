@@ -5,9 +5,10 @@ import path from 'node:path'
 import { type BrowserWindow, dialog, type IpcMain, shell, type WebContents } from 'electron'
 import log from 'electron-log/main'
 
-import { type DockCatalog, type DockEntry, type DockState, IPC } from '@ipc/contracts'
+import { type DockCatalog, type DockEntry, type DockState, type DockTask, IPC } from '@ipc/contracts'
 
 import type { RunningApplicationsState, RunningApplicationWindow } from '../shared/desktop-applications'
+import type { DesktopJumpListTask } from '../shared/desktop-jump-list'
 import { atomicWriteFile, createSerialQueue, safeReadJson, sendToWindow } from '../shared/utils'
 
 import { type CatalogApplication, createWindowsAppCatalog } from './windows-app-catalog'
@@ -120,6 +121,8 @@ export function registerDesktopDock(options: {
   refreshApplications: (sender: WebContents) => Promise<void>
   activateExternal: (sender: WebContents, windowId: string) => Promise<void>
   closeExternal: (sender: WebContents, windowIds: string[]) => Promise<void>
+  getJumpListTasks: (sender: WebContents, target: string) => Promise<DesktopJumpListTask[]>
+  activateJumpListTask: (sender: WebContents, target: string, taskId: string) => Promise<void>
 }): void {
   const filename = path.join(options.userData, 'desktop-dock.json')
   const saved = safeReadJson<SavedDock>(filename)
@@ -127,6 +130,7 @@ export function registerDesktopDock(options: {
   let revision = 0
   let pinnedRevision = 0
   const serial = createSerialQueue()
+  const taskReadSerial = createSerialQueue()
   const catalog = createWindowsAppCatalog()
   const projections = new Map<string, { identity: string; value: DockProjection | null }>()
   const running = new Map<string, RunningDockApplication>()
@@ -586,6 +590,47 @@ export function registerDesktopDock(options: {
     return entry
   }
 
+  function taskTarget(id: string): { target: string; fallbackIcon: string | null } {
+    const entry = entries.find(item => item.id === id)
+
+    if (entry) {
+      const projectionValue = projections.get(entry.target)
+
+      return { target: projectionValue?.identity ?? targetIdentity(entry.target), fallbackIcon: projection(entry).icon }
+    }
+
+    const application = [...running.values()].find(item => item.id === id)
+
+    if (!application?.target) {
+      throw new Error('Dock 项目不存在。')
+    }
+
+    return { target: application.target, fallbackIcon: application.icon }
+  }
+
+  async function projectTasks(tasks: DesktopJumpListTask[], fallbackIcon: string | null): Promise<DockTask[]> {
+    return Promise.all(
+      tasks.map(async task => {
+        let icon: string | null = null
+
+        try {
+          if (task.iconPath && path.isAbsolute(task.iconPath)) {
+            icon = await readWindowsApplicationIcon(task.iconPath, task.iconPath, task.iconIndex)
+          }
+        } catch {
+          /* 任务图标失败不影响任务执行。 */
+        }
+
+        return {
+          id: task.id,
+          title: task.title,
+          ...(task.description ? { description: task.description } : {}),
+          icon: icon ?? fallbackIcon
+        }
+      })
+    )
+  }
+
   async function repairTo(entry: SavedDockEntry, selection: DockSelection): Promise<DockState> {
     await validateTarget(selection.target)
     const identity = targetIdentity(selection.target)
@@ -727,6 +772,47 @@ export function registerDesktopDock(options: {
         publish()
         throw error
       }
+    })
+  })
+  options.ipcMain.handle(IPC.invoke.dockTasks, (event, id: unknown) => {
+    assertSender(event.sender)
+    const eligible = options.captureEligibility(event.sender)
+
+    if (typeof id !== 'string') {
+      throw new Error('无效程序。')
+    }
+
+    return taskReadSerial(async () => {
+      assertSender(event.sender)
+
+      if (!eligible()) {
+        return []
+      }
+
+      const { target, fallbackIcon } = taskTarget(id)
+      const tasks = await options.getJumpListTasks(event.sender, target)
+      const projected = await projectTasks(tasks, fallbackIcon)
+
+      return eligible() && taskTarget(id).target === target ? projected : []
+    })
+  })
+  options.ipcMain.handle(IPC.invoke.dockActivateTask, (event, id: unknown, taskId: unknown) => {
+    assertSender(event.sender)
+    const eligible = options.captureEligibility(event.sender)
+
+    if (typeof id !== 'string' || typeof taskId !== 'string' || taskId.length < 1 || taskId.length > 512) {
+      throw new Error('无效程序任务。')
+    }
+
+    return serial(async () => {
+      assertSender(event.sender)
+
+      if (!eligible()) {
+        throw new Error('桌面已改变，请重新执行程序任务。')
+      }
+
+      const { target } = taskTarget(id)
+      await options.activateJumpListTask(event.sender, target, taskId)
     })
   })
   options.ipcMain.handle(IPC.invoke.dockCloseWindows, (event, id: unknown, windowIds: unknown) => {

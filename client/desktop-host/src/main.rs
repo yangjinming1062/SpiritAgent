@@ -99,6 +99,16 @@ enum Command {
         id: u32,
         window_ids: Vec<String>,
     },
+    GetJumpListTasks {
+        id: u32,
+        target: String,
+    },
+    ActivateJumpListTask {
+        id: u32,
+        target: String,
+        task_id: String,
+        expires_at: u64,
+    },
     Stop {
         id: u32,
     },
@@ -114,6 +124,8 @@ impl Command {
             | Self::RefreshApplications { id }
             | Self::ActivateExternal { id, .. }
             | Self::CloseExternal { id, .. }
+            | Self::GetJumpListTasks { id, .. }
+            | Self::ActivateJumpListTask { id, .. }
             | Self::Stop { id } => *id,
         }
     }

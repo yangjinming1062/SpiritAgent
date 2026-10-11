@@ -93,6 +93,7 @@
 - `revision` 覆盖投影变化，`pinnedRevision` 只随固定配置变化；运行和图标刷新不重取选择面板目录。桌面结束或目录重扫使在途元数据失效。
 - 目录合并开始菜单、桌面快捷方式、App Paths 与 AppsFolder，按 exe 或 AUMID 去重、快捷方式优先；排除非现存 exe、网页快捷方式、`.msc`、虚拟和隐藏入口。各来源独立限时并报告失败；展示上限不限制已保存应用核验。
 - 目录随机句柄仅本次扫描有效，重扫废弃句柄与图标缓存。固定、运行与目录图标共用 [windows-application-icon.ts](ipc/windows-application-icon.ts)：打包应用优先用清单图标，快捷方式保留指定图标及资源索引；exe / DLL 图标经限时、分批的 Windows 原生提取，兼容全 PNG 图标资源，失败再用系统文件图标。目录与产品账户无关，不上云。
+- 程序任务按右键菜单懒加载 Windows `CustomDestinations` 的 `Task` 分类；helper 会合并仅因 `--user-data-dir` 不同而留下的同一任务历史副本。渲染层只接收标题、图标和不透明任务 ID，主进程在 helper 重新校验后启动原始参数。解析失败静默回到现有窗口和固定菜单，任务 ID 不落盘。
 
 激活、关闭和启动的授权与结果边界统一归 [本机启动器契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 

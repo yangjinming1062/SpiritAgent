@@ -145,12 +145,16 @@ function readNativeIcon(source: IconSource): Promise<string | null> {
   })
 }
 
-export async function readWindowsApplicationIcon(target: string, iconPath?: string | null): Promise<string | null> {
+export async function readWindowsApplicationIcon(
+  target: string,
+  iconPath?: string | null,
+  iconIndex = 0
+): Promise<string | null> {
   const sources: IconSource[] = []
   let fallback = target
 
   if (iconPath) {
-    sources.push({ file: iconPath, index: 0 })
+    sources.push({ file: iconPath, index: iconIndex })
   }
 
   if (path.extname(target).toLowerCase() === '.lnk') {

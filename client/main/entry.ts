@@ -328,7 +328,9 @@ registerDesktopDock({
   captureEligibility: desktopPresentation.captureApplicationEligibility,
   refreshApplications: desktopPresentation.refreshApplications,
   activateExternal: desktopPresentation.activateExternal,
-  closeExternal: desktopPresentation.closeExternal
+  closeExternal: desktopPresentation.closeExternal,
+  getJumpListTasks: desktopPresentation.getJumpListTasks,
+  activateJumpListTask: desktopPresentation.activateJumpListTask
 })
 
 registerShortcutsIpc({ ipcMain, rememberLog, surfaces, toggleMainWindow })

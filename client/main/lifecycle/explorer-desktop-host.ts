@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 
 import type { RunningApplicationsState, RunningApplicationWindow } from '../shared/desktop-applications'
+import type { DesktopJumpListTask } from '../shared/desktop-jump-list'
 import { createSerialQueue } from '../shared/utils'
 
 function isRunningWindow(raw: unknown): raw is RunningApplicationWindow {
@@ -56,12 +57,14 @@ export interface ExplorerDesktopHost {
   refreshApplications: (eligible: () => boolean) => Promise<void>
   activateExternal: (windowId: string, eligible: () => boolean) => Promise<void>
   closeExternal: (windowIds: string[], eligible: () => boolean) => Promise<void>
+  getJumpListTasks: (target: string, eligible: () => boolean) => Promise<DesktopJumpListTask[]>
+  activateJumpListTask: (target: string, taskId: string, eligible: () => boolean) => Promise<void>
   stop: () => Promise<void>
   recover: () => Promise<boolean>
 }
 
 interface PendingRequest {
-  resolve: () => void
+  resolve: (value: unknown) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
@@ -74,6 +77,53 @@ function parseMessage(line: string): Record<string, unknown> {
   }
 
   return value as Record<string, unknown>
+}
+
+function parseJumpListTasks(value: unknown): DesktopJumpListTask[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Desktop helper returned invalid Jump List tasks')
+  }
+
+  const tasks = (value as { tasks?: unknown }).tasks
+
+  if (!Array.isArray(tasks) || tasks.length > 64) {
+    throw new Error('Desktop helper returned invalid Jump List task count')
+  }
+
+  return tasks.map(raw => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('Desktop helper returned invalid Jump List task')
+    }
+
+    const task = raw as Partial<DesktopJumpListTask>
+
+    if (
+      typeof task.id !== 'string' ||
+      task.id.length < 1 ||
+      task.id.length > 512 ||
+      typeof task.title !== 'string' ||
+      task.title.length < 1 ||
+      task.title.length > 255 ||
+      typeof task.description !== 'string' ||
+      task.description.length > 2048 ||
+      typeof task.iconPath !== 'string' ||
+      task.iconPath.length > 32_768 ||
+      typeof task.iconIndex !== 'number' ||
+      !Number.isInteger(task.iconIndex) ||
+      task.iconIndex < -2_147_483_648 ||
+      task.iconIndex > 2_147_483_647
+    ) {
+      throw new Error('Desktop helper returned invalid Jump List task fields')
+    }
+
+    return {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      iconPath: task.iconPath,
+      iconIndex: task.iconIndex
+    }
+  })
 }
 
 function encodeHandle(buffer: Buffer): string {
@@ -219,7 +269,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
     }
   }
 
-  function request(command: Record<string, unknown>, timeoutMs: number): Promise<void> {
+  function request<T = void>(command: Record<string, unknown>, timeoutMs: number): Promise<T> {
     const process = child
 
     if (!process || exited(process) || process.killed) {
@@ -228,7 +278,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
 
     const id = nextId++
 
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id)
         const reason = `Desktop helper ${String(command.command)} timed out`
@@ -237,7 +287,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
       }, timeoutMs)
 
       timer.unref()
-      pending.set(id, { reject, resolve, timer })
+      pending.set(id, { reject, resolve: value => resolve(value as T), timer })
       process.stdin.write(`${JSON.stringify({ ...command, id })}\n`, error => {
         if (!error) {
           return
@@ -384,7 +434,10 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
             })
           } else if (message.event === 'warning' && typeof message.reason === 'string') {
             options.log(`[desktop] ${message.reason}`)
-            options.onWarning?.(message.reason)
+
+            if (message.notify !== false) {
+              options.onWarning?.(message.reason)
+            }
           } else if (message.event === 'applications') {
             applicationsMessage(message)
           } else if (
@@ -403,7 +456,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
             clearTimeout(waiting.timer)
 
             if (message.ok) {
-              waiting.resolve()
+              waiting.resolve(message.result)
             } else {
               waiting.reject(
                 new Error(typeof message.reason === 'string' ? message.reason : 'Desktop helper command failed')
@@ -609,6 +662,50 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
         }
 
         await request({ command: 'close_external', window_ids: windowIds }, 3_000)
+      })
+    },
+    getJumpListTasks: async (target, eligible) => {
+      const currentGeneration = generation
+
+      if (state !== 'running' || generation !== currentGeneration || !eligible()) {
+        throw new Error('桌面已改变，请重新读取程序任务。')
+      }
+
+      if (typeof target !== 'string' || target.length < 1 || target.length > 32_768) {
+        throw new Error('无效程序目标。')
+      }
+
+      const result = await request<unknown>({ command: 'get_jump_list_tasks', target }, 5_000)
+
+      if (state !== 'running' || generation !== currentGeneration || !eligible()) {
+        throw new Error('桌面已改变，请重新读取程序任务。')
+      }
+
+      return parseJumpListTasks(result)
+    },
+    activateJumpListTask: (target, taskId, eligible) => {
+      const currentGeneration = generation
+
+      return serialize(async () => {
+        if (state !== 'running' || generation !== currentGeneration || !eligible()) {
+          throw new Error('桌面已改变，请重新执行程序任务。')
+        }
+
+        if (
+          typeof target !== 'string' ||
+          target.length < 1 ||
+          target.length > 32_768 ||
+          typeof taskId !== 'string' ||
+          taskId.length < 1 ||
+          taskId.length > 512
+        ) {
+          throw new Error('无效程序任务。')
+        }
+
+        await request(
+          { command: 'activate_jump_list_task', target, task_id: taskId, expires_at: Date.now() + 5_000 },
+          5_000
+        )
       })
     },
     recover: () =>
