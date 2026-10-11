@@ -39,7 +39,7 @@ export function GenerationActionsGroup({
 
   const editButton = onEdit && (
     <button
-      className={BTN_SUBTLE}
+      className={cn(BTN_SUBTLE, 'shrink-0 whitespace-nowrap')}
       disabled={editDisabled}
       onClick={onEdit}
       title={editDisabled && editReason ? editReason : t.editHint}
@@ -51,7 +51,7 @@ export function GenerationActionsGroup({
 
   const regenerateButton = (
     <button
-      className={BTN_SUBTLE}
+      className={cn(BTN_SUBTLE, 'shrink-0 whitespace-nowrap')}
       disabled={regenerateDisabled}
       onClick={onRegenerate}
       title={t.regenerateHint}
@@ -63,10 +63,10 @@ export function GenerationActionsGroup({
 
   if (dense) {
     return (
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         {editButton}
         {regenerateButton}
-        <span className={cn(HINT_TEXT, 'min-w-0 truncate')}>{t.groupHint}</span>
+        <span className={cn(HINT_TEXT, 'min-w-0 flex-1 truncate')}>{t.groupHint}</span>
       </div>
     )
   }
