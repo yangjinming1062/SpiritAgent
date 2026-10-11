@@ -553,6 +553,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
           sendCreation()
         }}
         open={outfitSelfSourceOpen}
+        promptBlockedReason={!session.draft && !hasInput ? t.design.promptRequiresInput : undefined}
         referenceImages={outfitSelfSourceReferences}
         title={session.draft ? dict.generationActions.regenerate : t.startAction}
       />

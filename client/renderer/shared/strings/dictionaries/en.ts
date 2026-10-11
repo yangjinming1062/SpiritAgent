@@ -1149,7 +1149,9 @@ export const dict: Dictionary = {
         generateFailed: "Couldn't generate the outfit. Try again later.",
         resumeReady: 'Keep refining this draft, or confirm to add it to the wardrobe.',
         resumePreviewMissing:
-          "The draft preview hasn't loaded yet. Keep describing to refine it, or reopen it from the wardrobe later."
+          "The draft preview hasn't loaded yet. Keep describing to refine it, or reopen it from the wardrobe later.",
+        promptRequiresInput:
+          'Describe the outfit or attach a reference image in the design area before fetching a prompt.'
       }
     },
     appearance: {

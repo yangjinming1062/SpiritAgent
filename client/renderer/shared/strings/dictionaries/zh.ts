@@ -1077,7 +1077,8 @@ export const dict = {
         timedOut: '等待结果超时，生成可能仍在继续。请稍后在衣柜页查看草稿，确认结果后再重试。',
         generateFailed: '着装生成失败，请稍后重试',
         resumeReady: '继续微调这套草稿，或直接确认入柜。',
-        resumePreviewMissing: '草稿预览尚未加载，可继续描述微调，或稍后到衣柜页重新打开。'
+        resumePreviewMissing: '草稿预览尚未加载，可继续描述微调，或稍后到衣柜页重新打开。',
+        promptRequiresInput: '请先描述想要的着装，或在设计区附上一张参考图，再获取提示词。'
       }
     },
     appearance: {

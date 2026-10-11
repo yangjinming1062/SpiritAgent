@@ -28,6 +28,8 @@ interface SelfSourceImageFlowProps {
   referenceRequired?: boolean
   /** 当前生成点位的补充要求。 */
   hint?: string
+  /** 当前上下文不足以组装提示词时显示的前置条件；不发起请求。 */
+  promptBlockedReason?: string
   /** 按需拉取后端组装的自备图提示词；失败时给重试入口。 */
   fetchPrompt: () => Promise<string>
   /** 采纳选中的图片；成功后组件自行关闭。抛错时展示后端公开文案。 */
@@ -44,6 +46,7 @@ export function SelfSourceImageFlow({
   referenceImages,
   referenceRequired = true,
   hint,
+  promptBlockedReason,
   fetchPrompt,
   adopt,
   onUseAi,
@@ -232,7 +235,7 @@ export function SelfSourceImageFlow({
           onClick={() => {
             setShowGuidance(value => !value)
 
-            if (!showGuidance && prompt === null && !promptError) {
+            if (!showGuidance && prompt === null && !promptError && !promptBlockedReason) {
               loadPrompt()
             }
           }}
@@ -303,7 +306,11 @@ export function SelfSourceImageFlow({
               </p>
             ) : null}
 
-            {promptError ? (
+            {promptBlockedReason ? (
+              <p className="text-xs text-danger-fg" role="status">
+                {promptBlockedReason}
+              </p>
+            ) : promptError ? (
               <div className="space-y-2">
                 <p className="text-xs text-danger-fg" role="alert">
                   {promptError}
