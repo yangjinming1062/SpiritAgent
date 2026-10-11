@@ -194,7 +194,7 @@ flowchart LR
 #### 本地 ComfyUI
 
 - `local` 的部署与配置见 [Backend 本地供应商](../backend/README.md#本地供应商)。
-- 支持文生图、多参考图与原生透明 PNG；批量上限见 [供应商实现](../backend/services/infrastructure/llm/providers/local/image.py)。
+- 固定 Qwen-Image 2.1 Turbo 工作流使用 8 步 sigma 调度，自动匹配原生或 GGUF loader；支持文生图、多参考图与原生透明 PNG，批量上限见 [供应商实现](../backend/services/infrastructure/llm/providers/local/image.py)。
 - 增量编辑（`image_edit`）采样画布随第一张参考图；身份/造型条件化生成按请求 size/aspect 出图。
 - 已接单任务降低轮询频率并采用独立长等待上限，数值见 [供应商实现](../backend/services/infrastructure/llm/providers/local/image.py)。上限按每个任务计算，多张图片依次制作；暂时的只读查询故障沿同一 `prompt_id` 续查，不重新提交。等待不消耗聊天执行预算，场景等待按冻结供应商声明的上限计算；用户取消、主动意图到期和停机仍可停止等待，结果未知不自动重新付费。
 - 生成图使用 ComfyUI 临时预览目录，参考图上传到 ComfyUI 的 `input` 目录；部署方负责保护并管理参考图存留。

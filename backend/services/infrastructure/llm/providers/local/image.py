@@ -44,7 +44,7 @@ _RGBA_WRAP = (
 )
 
 _POLL_INTERVAL_S = 30.0
-_STEPS = 25
+_TURBO_SIGMAS = "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0.0"
 
 
 def _wrap_rgba(prompt: str) -> str:
@@ -56,6 +56,12 @@ def _unet_loader(unet_name: str) -> tuple[str, dict[str, Any]]:
     if unet_name.lower().endswith(".gguf"):
         return "UnetLoaderGGUF", {"unet_name": unet_name}
     return "UNETLoader", {"unet_name": unet_name, "weight_dtype": "default"}
+
+
+def _clip_loader(clip_name: str) -> tuple[str, dict[str, Any]]:
+    if clip_name.lower().endswith(".gguf"):
+        return "CLIPLoaderGGUF", {"clip_name": clip_name, "type": "qwen_image"}
+    return "CLIPLoader", {"clip_name": clip_name, "type": "qwen_image", "device": "default"}
 
 
 def _image_asset(data: bytes) -> ImageAsset:
@@ -92,7 +98,7 @@ def _graph(
     clip_name: str,
     vae_name: str,
 ) -> dict[str, Any]:
-    """ComfyUI 工作流；有参考图时由编码节点读取参考图。image_edit=True（须带参考图）采样 latent 取编码节点输出、画布随第一张参考图，否则用 width×height 的 EmptyLatentImage。"""
+    """Qwen-Image Turbo 工作流；参考图编辑使用编码节点的 latent 输出。"""
     encode_inputs: dict[str, Any] = {"clip": ["2", 0]}
     if image_names:
         encode_inputs["vae"] = ["3", 0]
@@ -102,14 +108,15 @@ def _graph(
         resolution=0 if image_names else min(width, height),
     )
     unet_class, unet_inputs = _unet_loader(unet_name)
+    clip_class, clip_inputs = _clip_loader(clip_name)
     nodes: dict[str, Any] = {
         "1": {
             "class_type": unet_class,
             "inputs": unet_inputs,
         },
         "2": {
-            "class_type": "CLIPLoader",
-            "inputs": {"clip_name": clip_name, "type": "qwen_image", "device": "default"},
+            "class_type": clip_class,
+            "inputs": clip_inputs,
         },
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}},
         "4": {"class_type": "TextEncodeQwenImage21", "inputs": encode_inputs},
@@ -121,30 +128,32 @@ def _graph(
         }
     nodes.update(
         {
-            "6": {
-                "class_type": "KSampler",
+            "6": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+            "7": {
+                "class_type": "BasicGuider",
+                "inputs": {"model": ["1", 0], "conditioning": ["4", 0]},
+            },
+            "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+            "9": {"class_type": "ManualSigmas", "inputs": {"sigmas": _TURBO_SIGMAS}},
+            "10": {
+                "class_type": "SamplerCustomAdvanced",
                 "inputs": {
-                    "model": ["1", 0],
-                    "positive": ["4", 0],
-                    "negative": ["4", 1],
+                    "noise": ["6", 0],
+                    "guider": ["7", 0],
+                    "sampler": ["8", 0],
+                    "sigmas": ["9", 0],
                     "latent_image": ["4", 2] if image_edit else ["5", 0],
-                    "seed": seed,
-                    "steps": _STEPS,
-                    "cfg": 1,
-                    "sampler_name": "euler",
-                    "scheduler": "simple",
-                    "denoise": 1,
                 },
             },
-            "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 0]}},
-            "8": {
+            "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
+            "12": {
                 "class_type": "PreviewImage",
-                "inputs": {"images": ["7", 0]},
+                "inputs": {"images": ["11", 0]},
             },
         },
     )
     for i, name in enumerate(image_names, start=1):
-        load_id = f"1{i}"
+        load_id = str(20 + i)
         nodes[load_id] = {"class_type": "LoadImage", "inputs": {"image": name}}
         encode_inputs[f"images.image_{i}"] = [load_id, 0]
     return nodes
@@ -189,11 +198,17 @@ class LocalImageGenProvider(ImageGenProvider):
             gguf_opts = (
                 resp.json().get("UnetLoaderGGUF", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
             )
-        resp = await self._client.get("/object_info/CLIPLoader")
-        resp.raise_for_status()
-        clip_opts: list[str] = (
-            resp.json().get("CLIPLoader", {}).get("input", {}).get("required", {}).get("clip_name", [[]])[0]
-        )
+        clip_opts: list[str] = []
+        gguf_clip_opts: list[str] = []
+        for node_name, target in (("CLIPLoader", clip_opts), ("CLIPLoaderGGUF", gguf_clip_opts)):
+            resp = await self._client.get(f"/object_info/{node_name}")
+            if resp.status_code >= 400:
+                if resp.status_code != 404:
+                    resp.raise_for_status()
+                continue
+            options = resp.json().get(node_name, {}).get("input", {}).get("required", {}).get("clip_name", [[]])
+            if options and isinstance(options[0], list):
+                target.extend(name for name in options[0] if isinstance(name, str))
         resp = await self._client.get("/object_info/VAELoader")
         resp.raise_for_status()
         vae_opts: list[str] = (
@@ -214,16 +229,24 @@ class LocalImageGenProvider(ImageGenProvider):
                 f"local image_gen found no model for {prefixes}",
             )
 
-        files = (
-            _pick([*unet_opts, *gguf_opts], "qwen_dit", "qwen_image"),
-            _pick(clip_opts, "qwen_te", "qwen3vl"),
-            _pick(vae_opts, "qwen_vae", "qwen_image_2"),
-        )
+        unet_name = _pick([*unet_opts, *gguf_opts], "qwen_dit", "qwen_image")
+        clip_candidates = gguf_clip_opts if unet_name.lower().endswith(".gguf") else clip_opts
+        if not clip_candidates:
+            clip_candidates = clip_opts or gguf_clip_opts
+        clip_name = _pick(clip_candidates, "qwen_te", "qwen3vl")
+        files = (unet_name, clip_name, _pick(vae_opts, "qwen_vae", "qwen_image_2"))
         self._model_files = files
         unet_class, _ = _unet_loader(files[0])
+        clip_class, _ = _clip_loader(files[1])
         logger.info(
             "local image_gen resolved model files",
-            extra={"unet": files[0], "unet_loader": unet_class, "clip": files[1], "vae": files[2]},
+            extra={
+                "unet": files[0],
+                "unet_loader": unet_class,
+                "clip": files[1],
+                "clip_loader": clip_class,
+                "vae": files[2],
+            },
         )
         return files
 
