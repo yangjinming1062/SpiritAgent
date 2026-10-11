@@ -1,8 +1,10 @@
 import { atom } from 'nanostores'
 
 import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { $presentation } from '@/shared/store/presentation'
 
 import type {
   DesktopVideoAction,
@@ -15,6 +17,8 @@ import type {
 } from './types'
 
 const API = '/api/companion/desktop-videos'
+const ENSURE_CURRENT_RETRY_DELAYS_MS = [250, 500, 1000] as const
+const DESKTOP_MODE_GATE_ERROR = '桌面模式当前未启用'
 
 export const $desktopVideoState = atom<DesktopVideoState | null>(null)
 export const $desktopVideoSets = atom<DesktopVideoSet[]>([])
@@ -27,6 +31,12 @@ let refreshRequest: Promise<void> | null = null
 let refreshAgain = false
 let epoch = 0
 let libraryVersion = -1
+
+let ensureRequest: {
+  trigger: 'entry' | 'context_change'
+  scope: () => boolean
+  request: Promise<DesktopVideoState>
+} | null = null
 
 function applyState(state: DesktopVideoState): void {
   if (state.version >= ($desktopVideoState.get()?.version ?? -1)) {
@@ -107,14 +117,73 @@ async function mutation<T>(path: string, body: object = {}, method: 'POST' | 'PU
   return result.value
 }
 
+function desktopModeIsActive(): boolean {
+  const presentation = $presentation.get()
+
+  return presentation.effectiveMode === 'desktop' && presentation.status === 'active'
+}
+
+function waitForRetry(delayMs: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, delayMs))
+}
+
+function isDesktopModeGateError(error: unknown): boolean {
+  return ipcErrorStatus(error) === 409 && backendDetailMessage(error, '') === DESKTOP_MODE_GATE_ERROR
+}
+
+/** 桌面渲染激活后，网关呈现信号可能尚未抵达 Backend；只重试明确的模式门禁，其他错误保持原语义。 */
+async function ensureCurrentWithRetry(trigger: 'entry' | 'context_change'): Promise<DesktopVideoState> {
+  const scope = captureAuthScope()
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await mutation<DesktopVideoState>('/ensure-current', { trigger })
+    } catch (error) {
+      const delayMs = ENSURE_CURRENT_RETRY_DELAYS_MS[attempt]
+
+      if (!isDesktopModeGateError(error) || delayMs === undefined || !scope?.()) {
+        throw error
+      }
+
+      await waitForRetry(delayMs)
+
+      if (!scope?.() || !desktopModeIsActive()) {
+        throw error
+      }
+    }
+  }
+}
+
 export async function ensureDesktopVideoCurrent(
   trigger: 'entry' | 'context_change' = 'entry'
 ): Promise<DesktopVideoState> {
-  const state = await mutation<DesktopVideoState>('/ensure-current', { trigger })
-  applyState(state)
-  await refreshDesktopVideos()
+  const scope = captureAuthScope()
 
-  return state
+  if (!scope) {
+    return ensureCurrentWithRetry(trigger)
+  }
+
+  if (ensureRequest?.trigger === trigger && ensureRequest.scope()) {
+    return ensureRequest.request
+  }
+
+  const request = (async (): Promise<DesktopVideoState> => {
+    const state = await ensureCurrentWithRetry(trigger)
+    applyState(state)
+    await refreshDesktopVideos()
+
+    return state
+  })()
+
+  ensureRequest = { request, scope, trigger }
+
+  try {
+    return await request
+  } finally {
+    if (ensureRequest?.request === request) {
+      ensureRequest = null
+    }
+  }
 }
 
 export async function generateDesktopVideoAction(actionId: number, feedback?: string): Promise<void> {
@@ -263,6 +332,7 @@ registerStorageClearHandler(() => {
   libraryVersion = -1
   refreshAgain = false
   refreshRequest = null
+  ensureRequest = null
   $desktopVideoState.set(null)
   $desktopVideoSets.set([])
   $desktopVideoPlayback.set(null)

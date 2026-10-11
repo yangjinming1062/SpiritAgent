@@ -18,6 +18,7 @@ import { $activeScene } from '@/modules/scene'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
+import { $gatewayState } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $theme } from '@/shared/store/theme'
@@ -32,6 +33,7 @@ function firstNonBlank(...values: readonly (string | null | undefined)[]): strin
 
 export function useDesktopVideoWallpaper(): void {
   const auth = useStore($auth)
+  const gatewayState = useStore($gatewayState)
   const presentation = useStore($presentation)
   const locked = useStore($surfaceScreenLocked)
   const theme = useStore($theme)
@@ -154,6 +156,10 @@ export function useDesktopVideoWallpaper(): void {
       return
     }
 
+    if (gatewayState !== 'open') {
+      return
+    }
+
     const entryKey = `${authSessionId}:${presentation.stageEpoch}`
     const explicitEntry = presentation.prepareDesktopMedia && preparedEntry.current !== entryKey
 
@@ -175,25 +181,32 @@ export function useDesktopVideoWallpaper(): void {
 
             const hash = $desktopVideoState.get()?.desired_context_hash
             const changed = previousHash !== undefined && hash !== undefined && hash !== previousHash
-            observedContextRevision.current = contextRevision
-            observedContextHash.current = hash
 
             if (explicitEntry || changed) {
+              await ensureDesktopVideoCurrent(explicitEntry ? 'entry' : 'context_change')
+            }
+
+            if (!disposed && scope?.()) {
+              observedContextRevision.current = contextRevision
+              observedContextHash.current = hash
+
               if (explicitEntry) {
                 preparedEntry.current = entryKey
               }
-
-              await ensureDesktopVideoCurrent(explicitEntry ? 'entry' : 'context_change')
             }
           })
-          .catch(error => log.warn('desktop-video', 'Current scene preparation failed', error))
+          .catch(error => {
+            if (!disposed && scope?.()) {
+              log.warn('desktop-video', 'Current scene preparation failed', error)
+            }
+          })
       }
     })
 
     return () => {
       disposed = true
     }
-  }, [active, authSessionId, presentation.prepareDesktopMedia, presentation.stageEpoch, contextRevision])
+  }, [active, authSessionId, gatewayState, presentation.prepareDesktopMedia, presentation.stageEpoch, contextRevision])
 
   useEffect(() => {
     if (!active || !preparationInProgress) {
