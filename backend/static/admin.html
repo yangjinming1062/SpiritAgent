@@ -44,6 +44,11 @@
     --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
     --font-mono: 'Cascadia Code', 'JetBrains Mono', 'SF Mono', ui-monospace, Consolas, monospace;
 
+    --sidebar-bg: #101828;
+    --sidebar-text: #b9c2d6;
+    --sidebar-muted: #7d8aa5;
+    --sidebar-border: rgba(255, 255, 255, 0.08);
+
     --sidebar-w: 15.25rem;
     --topbar-h: 3.6rem;
 }
@@ -174,23 +179,23 @@ button { cursor: pointer; }
 .shell { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
 
 .sidebar {
-    background: var(--surface);
-    border-right: 1px solid var(--border);
+    background: var(--sidebar-bg);
+    color: var(--sidebar-text);
     display: flex; flex-direction: column;
     padding: 1rem 0.75rem;
     position: sticky; top: 0; height: 100vh;
     z-index: 30;
 }
 .side-brand { display: flex; align-items: center; gap: 0.55rem; padding: 0.25rem 0.45rem 1rem; }
-.side-brand .wordmark { font-size: 0.98rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; display: block; }
-.side-brand .tag { display: block; font-size: 0.68rem; font-weight: 500; color: var(--text-3); }
+.side-brand .wordmark { font-size: 0.98rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; display: block; color: #fff; }
+.side-brand .tag { display: block; font-size: 0.68rem; font-weight: 500; color: var(--sidebar-muted); }
 
 .nav { display: flex; flex-direction: column; gap: 1.15rem; }
 .nav-group { display: flex; flex-direction: column; gap: 0.12rem; }
 .nav-label {
     padding: 0 0.55rem 0.35rem;
     font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--text-3);
+    text-transform: uppercase; color: var(--sidebar-muted);
 }
 .nav-item {
     position: relative;
@@ -199,13 +204,13 @@ button { cursor: pointer; }
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--text-2);
+    color: var(--sidebar-text);
     font-size: 0.84rem; font-weight: 600;
     text-align: left; width: 100%;
     transition: background 0.12s ease, color 0.12s ease;
 }
-.nav-item:hover { background: var(--primary-softer); color: var(--primary); }
-.nav-item.active { background: var(--primary-soft); color: var(--primary); }
+.nav-item:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+.nav-item.active { background: color-mix(in srgb, var(--primary) 30%, transparent); color: #fff; }
 .nav-item.active::before {
     content: '';
     position: absolute; left: -0.75rem; top: 50%;
@@ -215,9 +220,16 @@ button { cursor: pointer; }
     background: var(--primary);
 }
 .nav-item svg { flex: none; opacity: 0.9; }
+.nav-item .nav-badge {
+    margin-left: auto;
+    font-size: 0.68rem; font-weight: 700;
+    color: #fff; background: var(--red);
+    padding: 0.05rem 0.42rem; border-radius: 999px;
+}
 
-.side-foot { margin-top: auto; padding-top: 0.75rem; border-top: 1px solid var(--border); }
-.side-foot .btn { width: 100%; justify-content: flex-start; color: var(--text-2); }
+.side-foot { margin-top: auto; padding-top: 0.75rem; border-top: 1px solid var(--sidebar-border); }
+.side-foot .btn { width: 100%; justify-content: flex-start; color: var(--sidebar-muted); border-color: transparent; background: transparent; }
+.side-foot .btn:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
 
 .main { display: flex; flex-direction: column; min-width: 0; }
 .topbar {
@@ -235,6 +247,16 @@ button { cursor: pointer; }
 .topbar-text { flex: 1; min-width: 0; }
 .topbar h1 { margin: 0; font-size: 1.12rem; font-weight: 700; letter-spacing: -0.02em; }
 .topbar .desc { margin: 0.12rem 0 0; color: var(--text-3); font-size: 0.8rem; }
+.topbar-actions { display: flex; align-items: center; gap: 0.5rem; }
+.status-chip {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.32rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.75rem; font-weight: 700;
+    color: var(--green); background: var(--green-soft);
+    white-space: nowrap;
+}
+.status-chip .dot { width: 0.42rem; height: 0.42rem; border-radius: 50%; background: currentColor; }
 
 .content { padding: 1.35rem 1.65rem 4rem; }
 .wrap { max-width: 78rem; margin: 0 auto; display: flex; flex-direction: column; gap: 1.15rem; }
@@ -268,11 +290,12 @@ button { cursor: pointer; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 44rem; }
 th, td { text-align: left; padding: 0.68rem 1.05rem; vertical-align: middle; }
-#panel-users table { min-width: 36rem; }
-#panel-users th:nth-child(1), #panel-users td:nth-child(1) { width: 32%; }
-#panel-users th:nth-child(2), #panel-users td:nth-child(2) { width: 20%; }
-#panel-users th:nth-child(3), #panel-users td:nth-child(3) { width: 16%; }
-#panel-users th:nth-child(4), #panel-users td:nth-child(4) { width: 32%; }
+#panel-users table { min-width: 44rem; }
+#panel-users th:nth-child(1), #panel-users td:nth-child(1) { width: 24%; }
+#panel-users th:nth-child(2), #panel-users td:nth-child(2) { width: 16%; }
+#panel-users th:nth-child(3), #panel-users td:nth-child(3) { width: 22%; }
+#panel-users th:nth-child(4), #panel-users td:nth-child(4) { width: 14%; }
+#panel-users th:nth-child(5), #panel-users td:nth-child(5) { width: 24%; }
 #panel-users tbody td { padding-top: 0.85rem; padding-bottom: 0.85rem; }
 thead th {
     font-size: 0.7rem; font-weight: 700; letter-spacing: 0.045em; text-transform: uppercase;
@@ -531,14 +554,14 @@ input[type="file"] { font-size: 0.78rem; }
     background: var(--surface-2);
 }
 
-:is(#aiCardSettings, #userAiCardSettings) .hint { font-size: 0.78rem; color: var(--text-3); line-height: 1.6; }
-:is(#aiCardSettings, #userAiCardSettings) .ai-card-head .btn { padding: 0.22rem 0.34rem; }
-:is(#aiCardSettings, #userAiCardSettings) .ai-card-head {
+#aiCardSettings .hint { font-size: 0.78rem; color: var(--text-3); line-height: 1.6; }
+#aiCardSettings .ai-card-head .btn { padding: 0.22rem 0.34rem; }
+#aiCardSettings .ai-card-head {
     display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.75rem;
 }
-:is(#aiCardSettings, #userAiCardSettings) .ai-card-head strong { flex: 1; min-width: 0; }
-:is(#aiCardSettings, #userAiCardSettings) [data-ai-handle] { cursor: grab; }
-:is(#aiCardSettings, #userAiCardSettings) .ai-drop-target {
+#aiCardSettings .ai-card-head strong { flex: 1; min-width: 0; }
+#aiCardSettings [data-ai-handle] { cursor: grab; }
+#aiCardSettings .ai-drop-target {
     outline: 2px solid var(--primary);
     outline-offset: -2px;
     background: var(--primary-softer);
@@ -590,7 +613,252 @@ input[type="file"] { font-size: 0.78rem; }
 .toast.err { border-left-color: var(--red); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
 
+/* ── 总览 ─────────────────────────────────────────── */
+.stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+}
+.stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    padding: 0.95rem 1.05rem;
+}
+.stat .label { font-size: 0.74rem; font-weight: 700; color: var(--text-3); margin-bottom: 0.3rem; }
+.stat .value { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.stat .value small { font-size: 0.95rem; color: var(--text-3); font-weight: 600; }
+.stat .meta { font-size: 0.76rem; color: var(--text-3); margin-top: 0.3rem; }
+.stat .meta.good { color: var(--green); }
+.stat .meta.bad { color: var(--amber); }
+
+.matrix-row { cursor: pointer; }
+.matrix-row:hover { background: var(--row-hover); }
+
+.grid-2 {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    gap: 1.15rem;
+    align-items: start;
+}
+.grid-2 > .card + .card { margin: 0; }
+
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline li {
+    display: flex; gap: 0.7rem;
+    padding: 0.7rem 1.05rem;
+    border-bottom: 1px solid var(--border);
+}
+.timeline li:last-child { border-bottom: 0; }
+.tl-dot {
+    width: 0.55rem; height: 0.55rem; border-radius: 50%;
+    margin-top: 0.32rem; flex: none;
+    background: var(--primary);
+}
+.tl-dot.green { background: var(--green); }
+.tl-dot.amber { background: var(--amber); }
+.tl-dot.red { background: var(--red); }
+.tl-body { min-width: 0; flex: 1; }
+.tl-body .title { font-weight: 600; font-size: 0.82rem; }
+.tl-body .meta { color: var(--text-3); font-size: 0.74rem; margin-top: 0.12rem; word-break: break-word; }
+
+.dash-actions { display: flex; flex-direction: column; gap: 0.5rem; }
+.dash-actions .btn { justify-content: flex-start; }
+.todo-box {
+    margin-top: 0.95rem;
+    padding: 0.75rem 0.85rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+.todo-box .todo-head { font-size: 0.76rem; font-weight: 700; color: var(--text-2); margin-bottom: 0.35rem; }
+.todo-box ul { margin: 0; padding-left: 1.1rem; color: var(--text-3); font-size: 0.78rem; line-height: 1.7; }
+.todo-box ul a { color: var(--primary); font-weight: 600; cursor: pointer; text-decoration: none; }
+.todo-box ul a:hover { text-decoration: underline; }
+
+/* ── AI 能力视图 ───────────────────────────────────── */
+.ai-layout {
+    display: grid;
+    grid-template-columns: 12.5rem minmax(0, 1fr);
+    gap: 1.15rem;
+    align-items: start;
+}
+.ai-rail {
+    position: sticky; top: calc(var(--topbar-h) + 1rem);
+    display: flex; flex-direction: column; gap: 0.65rem;
+    max-height: calc(100vh - var(--topbar-h) - 2.5rem);
+}
+.ai-scope {
+    display: flex; align-items: center; gap: 0.4rem;
+    padding: 0.35rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+.ai-scope select { min-width: 0; flex: 1; font-size: 0.8rem; padding: 0.35rem 0.45rem; }
+.ai-tree {
+    display: flex; flex-direction: column; gap: 0.15rem;
+    padding: 0.35rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: auto;
+}
+.tree-item {
+    display: flex; align-items: center; gap: 0.4rem;
+    width: 100%;
+    padding: 0.42rem 0.5rem;
+    border: 0; border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-2);
+    font-size: 0.8rem; font-weight: 600;
+    text-align: left;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.tree-item:hover { background: var(--primary-softer); color: var(--primary); }
+.tree-item.active { background: var(--primary-soft); color: var(--primary); }
+.tree-item .tree-sub { margin-left: auto; font-size: 0.68rem; font-weight: 600; color: var(--text-3); white-space: nowrap; }
+.tree-item.active .tree-sub { color: var(--primary); }
+.tree-item.child { padding-left: 1.15rem; }
+.tree-label {
+    padding: 0.35rem 0.5rem 0.2rem;
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-3);
+}
+.chain-pane { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+.chain-pane .card + .card { margin: 0; }
+
+.effective-banner {
+    display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+    padding: 0.7rem 0.95rem;
+    border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--border));
+    background: linear-gradient(135deg, var(--primary-soft), var(--primary-softer));
+    border-radius: var(--radius);
+}
+.effective-banner .tag {
+    flex: none;
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em;
+    color: #fff; background: var(--primary);
+    padding: 0.18rem 0.5rem; border-radius: var(--radius-sm);
+}
+.effective-banner .text { font-size: 0.82rem; font-weight: 600; color: var(--fg); min-width: 0; word-break: break-word; }
+
+.chain-node { display: flex; gap: 0.6rem; }
+.chain-rail { display: flex; flex-direction: column; align-items: center; width: 0.9rem; flex: none; }
+.chain-rail .node-dot {
+    width: 0.7rem; height: 0.7rem; border-radius: 50%;
+    margin-top: 0.95rem;
+    background: var(--primary); border: 0.18rem solid var(--primary-soft);
+    flex: none;
+}
+.chain-rail .node-dot.muted { background: var(--border-2); border-color: var(--surface-3); }
+.chain-rail .node-line { width: 2px; flex: 1; min-height: 0.6rem; background: var(--border-2); }
+.chain-node:last-child .node-line { display: none; }
+.chain-cards { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.chain-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 0.8rem 0.95rem;
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.15s ease;
+}
+.chain-card:hover { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); }
+.chain-card.is-effective {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-soft);
+}
+.chain-card .src {
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--text-3);
+    margin-bottom: 0.3rem;
+}
+.chain-card.is-effective .src { color: var(--primary); }
+.chain-card .chain-title { font-weight: 700; font-size: 0.88rem; }
+.chain-card .kv-row { display: flex; flex-wrap: wrap; gap: 0.25rem 1.1rem; margin-top: 0.45rem; }
+.chain-card .kv { font-size: 0.78rem; color: var(--text-2); }
+.chain-card .kv b { color: var(--fg); font-weight: 600; }
+.chain-card .kv .mono { color: var(--fg); }
+.chain-card .chain-hint { font-size: 0.74rem; color: var(--text-3); margin-top: 0.45rem; line-height: 1.55; }
+.chain-card.muted-card { opacity: 0.75; }
+
+.fallback-strip { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
+.fb-node {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.76rem; font-weight: 600;
+    border: 1px solid var(--border-2);
+    background: var(--surface-2);
+    color: var(--text-2);
+}
+.fb-node.first {
+    border-color: var(--primary);
+    background: var(--primary-soft);
+    color: var(--primary);
+}
+.fb-node .idx {
+    font-size: 0.66rem; font-weight: 700;
+    color: currentColor; opacity: 0.75;
+}
+.fb-arrow { color: var(--text-3); flex: none; }
+.fb-note { font-size: 0.74rem; color: var(--text-3); width: 100%; }
+
+.keybadge.inherit { color: var(--amber); background: var(--amber-soft); }
+
+.src-tag {
+    display: inline-flex; align-items: center;
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.02em;
+    padding: 0.1rem 0.42rem; border-radius: var(--radius-sm);
+}
+.src-tag.sys { color: var(--primary); background: var(--primary-soft); }
+.src-tag.inh { color: var(--amber); background: var(--amber-soft); }
+.src-tag.own { color: var(--green); background: var(--green-soft); }
+.src-tag.fixed { color: var(--text-2); background: var(--surface-3); }
+
+.provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: 0.75rem; }
+.provider-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 0.8rem 0.9rem;
+    transition: border-color 0.15s ease;
+}
+.provider-card:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); }
+.provider-card .p-name { font-weight: 700; font-size: 0.85rem; margin-bottom: 0.35rem; }
+.provider-card .p-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+    font-size: 0.74rem; color: var(--text-3);
+    padding: 0.14rem 0;
+}
+.provider-card .p-row b { color: var(--text-2); font-weight: 600; text-align: right; word-break: break-all; }
+
+/* ── 系统参数折叠面板 ─────────────────────────────── */
+.settings-section.collapsible .card-head { cursor: pointer; user-select: none; }
+.settings-section.collapsible .card-head .chev {
+    transition: transform 0.15s ease;
+    color: var(--text-3); flex: none;
+}
+.settings-section.collapsible .collapse-indicator { margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
+.settings-section.collapsible:not(.open) .chev { transform: rotate(-90deg); }
+.settings-section.collapsible:not(.open) .card-pad { display: none; }
+.settings-section.collapsible .card-head:hover { background: var(--primary-softer); }
+.settings-section.collapsible .card-head .count { cursor: pointer; }
+.settings-section.collapsible .card-head .count:hover { background: var(--primary-soft); color: var(--primary); }
+
 @media (max-width: 1100px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .grid-2, .ai-layout { grid-template-columns: 1fr; }
+    .ai-rail {
+        position: static; max-height: none;
+        flex-direction: row; flex-wrap: wrap; align-items: center;
+    }
+    .ai-scope { flex: 1; min-width: 12rem; }
+    .ai-tree { flex-direction: row; flex-wrap: wrap; width: 100%; }
+    .tree-item { width: auto; }
+    .tree-item.child { padding-left: 0.5rem; }
+    .tree-label { width: 100%; }
     .settings-layout { grid-template-columns: 1fr; }
     .settings-rail {
         position: static; max-height: none;
@@ -674,32 +942,39 @@ input[type="file"] { font-size: 0.78rem; }
             </div>
             <nav class="nav" aria-label="主导航">
                 <div class="nav-group">
-                    <div class="nav-label">账户</div>
-                    <button class="nav-item active" data-tab="users" onclick="showTab('users')">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                        <span>用户管理</span>
-                    </button>
-                    <button class="nav-item" data-tab="models" onclick="showTab('models')">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
-                        <span>模型配置</span>
+                    <div class="nav-label">概览</div>
+                    <button class="nav-item active" data-tab="overview" onclick="showTab('overview')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+                        <span>总览</span>
                     </button>
                 </div>
                 <div class="nav-group">
-                    <div class="nav-label">能力</div>
+                    <div class="nav-label">账户</div>
+                    <button class="nav-item" data-tab="users" onclick="showTab('users')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span>用户管理</span>
+                    </button>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-label">AI 能力</div>
+                    <button class="nav-item" data-tab="ai" onclick="showTab('ai')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+                        <span>能力链配置</span>
+                        <span class="nav-badge" id="aiNavBadge" hidden></span>
+                    </button>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-label">系统</div>
                     <button class="nav-item" data-tab="settings" onclick="showTab('settings')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                        <span>系统设置</span>
+                        <span>系统参数</span>
                     </button>
                 </div>
                 <div class="nav-group">
                     <div class="nav-label">运维</div>
                     <button class="nav-item" data-tab="versions" onclick="showTab('versions')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        <span>版本管理</span>
-                    </button>
-                    <button class="nav-item" data-tab="logs" onclick="showTab('logs')">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                        <span>活动日志</span>
+                        <span>版本与日志</span>
                     </button>
                 </div>
             </nav>
@@ -715,8 +990,11 @@ input[type="file"] { font-size: 0.78rem; }
             <header class="topbar">
                 <div class="topbar-inner">
                     <div class="topbar-text">
-                        <h1 id="topTitle">用户管理</h1>
+                        <h1 id="topTitle">总览</h1>
                         <p class="desc" id="topDesc"></p>
+                    </div>
+                    <div class="topbar-actions">
+                        <span class="status-chip" id="runtimeChip"><span class="dot"></span> 后端运行中</span>
                     </div>
                 </div>
             </header>
@@ -724,7 +1002,76 @@ input[type="file"] { font-size: 0.78rem; }
             <div class="content">
                 <div class="wrap">
 
-                    <section id="panel-users" class="panel active">
+                    <section id="panel-overview" class="panel active">
+                        <div class="stats">
+                            <div class="stat">
+                                <div class="label">当前版本</div>
+                                <div class="value" id="ovVersion">—</div>
+                                <div class="meta" id="ovVersionMeta">&nbsp;</div>
+                            </div>
+                            <div class="stat">
+                                <div class="label">能力就绪</div>
+                                <div class="value" id="ovReady">—</div>
+                                <div class="meta" id="ovReadyMeta">&nbsp;</div>
+                            </div>
+                            <div class="stat">
+                                <div class="label">夜间任务 · 近 7 日</div>
+                                <div class="value" id="ovNightly">—</div>
+                                <div class="meta" id="ovNightlyMeta">&nbsp;</div>
+                            </div>
+                            <div class="stat">
+                                <div class="label">用户级能力覆盖</div>
+                                <div class="value" id="ovOverrides">—</div>
+                                <div class="meta" id="ovOverridesMeta">&nbsp;</div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head">
+                                <h2>能力就绪度</h2>
+                                <span class="count" id="ovMatrixCount"></span>
+                                <span class="spacer"></span>
+                                <button class="btn btn--ghost btn--sm" onclick="showTab('ai')">配置能力链 →</button>
+                            </div>
+                            <div class="table-scroll">
+                                <table>
+                                    <thead><tr>
+                                        <th>能力</th><th>状态</th><th>有效供应商</th><th>模型</th><th>上下文窗</th><th>用户覆盖</th>
+                                    </tr></thead>
+                                    <tbody id="ovMatrix"><tr class="state-row"><td colspan="6"><div class="state-msg">加载中…</div></td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="grid-2">
+                            <div class="card">
+                                <div class="card-head">
+                                    <h2>最近动态</h2>
+                                    <span class="spacer"></span>
+                                    <button class="btn btn--ghost btn--sm" onclick="showTab('versions')">全部日志</button>
+                                </div>
+                                <ul class="timeline" id="ovTimeline"><li><div class="tl-dot"></div><div class="tl-body"><div class="title">加载中…</div></div></li></ul>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-head"><h2>快速操作</h2></div>
+                                <div class="card-pad">
+                                    <div class="dash-actions">
+                                        <button class="btn btn--primary" onclick="showTab('ai')">配置 / 检查 AI 能力链</button>
+                                        <button class="btn btn--ghost" onclick="showCreateUser()">创建用户并生成激活码</button>
+                                        <button class="btn btn--ghost" onclick="showTab('versions')">上传桌面端更新包</button>
+                                        <button class="btn btn--ghost" onclick="showTab('settings')">调整运行与限流参数</button>
+                                    </div>
+                                    <div class="todo-box">
+                                        <div class="todo-head">待处理</div>
+                                        <ul id="ovTodo"><li>加载中…</li></ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="panel-users" class="panel">
                         <div class="card">
                             <div class="card-head">
                                 <h2>用户列表</h2>
@@ -738,32 +1085,44 @@ input[type="file"] { font-size: 0.78rem; }
                             <div class="table-scroll">
                                 <table>
                                     <thead><tr>
-                                        <th>用户</th><th>状态</th><th>创建时间</th><th style="text-align:right">操作</th>
+                                        <th>用户</th><th>状态</th><th>能力覆盖</th><th>创建时间</th><th style="text-align:right">操作</th>
                                     </tr></thead>
-                                    <tbody id="userList"><tr class="state-row"><td colspan="4"><div class="state-msg">加载中…</div></td></tr></tbody>
+                                    <tbody id="userList"><tr class="state-row"><td colspan="5"><div class="state-msg">加载中…</div></td></tr></tbody>
                                 </table>
                             </div>
                         </div>
                     </section>
 
-                    <section id="panel-models" class="panel">
-                        <div class="card">
-                            <div class="card-head">
-                                <h2>凭证配置</h2>
-                                <span class="count" id="modelCount"></span>
-                                <span class="spacer"></span>
-                                <div class="inline-form">
-                                    <select id="modelUserSelect"><option value="">选择用户…</option></select>
-                                    <button class="btn btn--primary btn--sm" onclick="showModelConfig()">设置配置</button>
+                    <section id="panel-ai" class="panel">
+                        <div class="ai-layout">
+                            <aside class="ai-rail">
+                                <div class="ai-scope">
+                                    <select id="aiScopeSelect" onchange="onAiScopeChange()" aria-label="配置对象"><option value="system">系统配置</option></select>
                                 </div>
-                            </div>
-                            <div class="table-scroll">
-                                <table>
-                                    <thead><tr>
-                                        <th>用户</th><th>LLM</th><th>已配置服务</th><th style="text-align:right">操作</th>
-                                    </tr></thead>
-                                    <tbody id="modelList"><tr class="state-row"><td colspan="4"><div class="state-msg">加载中…</div></td></tr></tbody>
-                                </table>
+                                <nav class="ai-tree" id="aiTree" aria-label="AI 配置树"></nav>
+                            </aside>
+                            <div class="chain-pane">
+                                <div class="card">
+                                    <div class="card-head"><h2 id="aiChainTitle">继承链</h2><span class="spacer"></span><span class="count" id="aiChainCount"></span></div>
+                                    <div class="card-pad" id="aiChainBody"></div>
+                                </div>
+                                <div class="card">
+                                    <div class="card-head">
+                                        <h2 id="aiCardsTitle">能力卡片编辑</h2>
+                                        <span class="spacer"></span>
+                                        <button class="btn btn--ghost btn--sm" id="aiDeleteBtn" onclick="deleteModelConfig(aiView.userId)" hidden>删除全部覆盖</button>
+                                        <button class="btn btn--primary btn--sm" id="aiSaveBtn" onclick="saveAiScope()">保存并热生效</button>
+                                    </div>
+                                    <div class="card-pad hint" id="aiCardsHint" style="border-bottom:1px solid var(--border)"></div>
+                                    <div id="aiCardSettings" style="padding:1.05rem"></div>
+                                </div>
+                                <div class="settings-dock" id="aiSettingsDock" hidden>
+                                    <div class="status dirty">AI 配置有未保存的修改</div>
+                                    <div class="settings-dock-actions">
+                                        <button class="btn btn--ghost" onclick="discardAiEdits()">放弃修改</button>
+                                        <button class="btn btn--primary" onclick="saveAiScope()">保存并热生效</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </section>
@@ -782,11 +1141,10 @@ input[type="file"] { font-size: 0.78rem; }
                                 <div class="settings-bar">
                                     <div>
                                         <div class="lead">系统参数设置</div>
-                                        <div class="status">保存后即刻在内存与数据库中生效，无需重启服务</div>
+                                        <div class="status">保存后即刻在内存与数据库中生效，无需重启服务 · 供应商与能力链已移至「AI 能力链配置」</div>
                                     </div>
                                 </div>
 
-                                <div id="aiCardSettings"></div>
                                 <div id="systemSettingsForm"></div>
                                 <div class="settings-empty" id="settingsEmpty">没有匹配的设置项，试试其他关键词。</div>
 
@@ -832,9 +1190,7 @@ input[type="file"] { font-size: 0.78rem; }
                                 </table>
                             </div>
                         </div>
-                    </section>
 
-                    <section id="panel-logs" class="panel">
                         <div class="card">
                             <div class="card-head">
                                 <h2>活动日志</h2>
@@ -1010,24 +1366,6 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
-<div id="modelModal" class="modal">
-    <div class="modal-card wide">
-        <div class="modal-head">
-            <h2 id="modelModalTitle">配置凭证</h2>
-            <button class="modal-close" data-close aria-label="关闭">✕</button>
-        </div>
-        <div class="modal-body">
-            <input type="hidden" id="modelUserId">
-            <p class="hint" style="margin:0 0 1rem">用户能力链有卡片时覆盖系统能力链；空链继承系统配置。用户能力卡片可继承用户或系统的同名供应商信息。</p>
-            <div id="userAiCardSettings"></div>
-        </div>
-        <div class="modal-foot">
-            <button class="btn btn--ghost" onclick="closeModal('modelModal')">取消</button>
-            <button class="btn btn--primary" onclick="saveModelConfig()">保存</button>
-        </div>
-    </div>
-</div>
-
 <div id="logDetailModal" class="modal">
     <div class="modal-card wide">
         <div class="modal-head">
@@ -1048,14 +1386,14 @@ input[type="file"] { font-size: 0.78rem; }
 <script>
 const API_BASE = '';
 const TOKEN_KEY = 'spiritagent_admin_token';
-const tabCache = { users: null, models: null, logs: null };
+const tabCache = { users: null, models: null, logs: null, versions: null };
 
 const TABS = {
+    overview: { title: '总览', desc: '系统健康、能力就绪度与最近动态' },
     users:    { title: '用户管理', desc: '管理可登录客户端的账户、使用权限与激活码' },
-    models:   { title: '模型配置', desc: '为每个用户配置 LLM、语音、图像与视频的接入凭证' },
-    settings: { title: '系统设置', desc: '全局业务参数、AI 供应商凭据与运行时调优配置（实时热生效，无需重启容器）' },
-    versions: { title: '版本管理', desc: '上传并分发桌面端与 Runner 的更新包' },
-    logs:     { title: '活动日志', desc: '查看夜间自主活动流水线运行记录' },
+    ai:       { title: 'AI 能力链配置', desc: '供应商信息库 · 能力链继承 · 用户覆盖（保存后热生效）' },
+    settings: { title: '系统参数', desc: '全局业务参数与运行时调优（实时热生效，无需重启容器）' },
+    versions: { title: '版本与日志', desc: '更新包分发与夜间活动流水线记录' },
 };
 
 const $  = (s, r = document) => r.querySelector(s);
@@ -1065,7 +1403,6 @@ function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const getItems = (data) => data?.items ?? [];
 
 function pill(text, type = 'muted') { return `<span class="pill pill--${type}">${esc(text)}</span>`; }
-function svcDot(label, on) { return `<span class="svc-dot ${on ? 'on' : ''}">${esc(label)}</span>`; }
 function plat(label, on) { return `<span class="plat ${on ? 'plat--on' : 'plat--off'}">${esc(label)}</span>`; }
 
 function fmtDate(s) {
@@ -1164,7 +1501,7 @@ function toggleMenu(btn) {
     placeMenuPop(btn, pop);
 }
 
-const TAB_LOADERS = { users: loadUsers, models: loadModelConfigs, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs };
+const TAB_LOADERS = { overview: loadOverview, users: loadUsers, ai: loadAiView, settings: loadSystemSettings, versions: loadOpsTab };
 
 function showTab(name) {
     $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -1203,12 +1540,13 @@ async function apiFetch(path, options = {}) {
 function enterApp() {
     $('#login').style.display = 'none';
     $('#app').style.display = 'block';
-    showTab('users');
+    showTab('overview');
 }
 
 function logout() {
-    if (settingsDirty && !confirm('系统设置有未保存的修改，确定退出登录？')) return;
+    if ((settingsDirty || aiUserDirty) && !confirm('系统设置或 AI 配置有未保存的修改，确定退出登录？')) return;
     clearSettingsDirty();
+    clearAiDirty();
     sessionStorage.removeItem(TOKEN_KEY);
     location.reload();
 }
@@ -1245,12 +1583,25 @@ async function loadUsers() {
     try {
         const data = await (await apiFetch('/api/admin/users')).json();
         tabCache.users = data;
+        if (!tabCache.models) {
+            // 用户表展示能力覆盖列，静默拉取；失败不阻塞用户列表。
+            apiFetch('/api/admin/model-configs').then(r => r.json()).then(d => { tabCache.models = d; renderUsers(tabCache.users); }).catch(() => {});
+        }
         renderUsers(data);
-    } catch (e) { $('#userList').innerHTML = stateRow(4, '加载失败：' + e.message, '', true); }
+    } catch (e) { $('#userList').innerHTML = stateRow(5, '加载失败：' + e.message, '', true); }
 }
 
 function filterUsers() {
     if (tabCache.users) renderUsers(tabCache.users);
+}
+
+function userOverrideSummary(id) {
+    const item = tabCache.models?.items?.find(c => c.user_id === id);
+    if (!item) return null;
+    const groups = Object.entries(item.ai_config?.capabilities ?? {})
+        .filter(([, cards]) => (cards ?? []).length > 0)
+        .map(([group]) => READINESS_KEY_LABELS[group] ?? group);
+    return groups.length ? groups : null;
 }
 
 function renderUsers(data) {
@@ -1268,6 +1619,10 @@ function renderUsers(data) {
         const active = u.is_active
             ? `<span class="status-line on"><span class="dot"></span>账户正常</span>`
             : `<span class="status-line off"><span class="dot"></span>账户已停用</span>`;
+        const overrides = userOverrideSummary(u.id);
+        const overrideCell = overrides
+            ? `<div class="td-services">${overrides.map(g => pill(g, 'amber')).join('')}</div>`
+            : '<span class="text-3">继承系统</span>';
         return `<tr>
             <td>
                 <div class="cell-user">
@@ -1284,11 +1639,13 @@ function renderUsers(data) {
                     ${night}
                 </div>
             </td>
+            <td>${overrideCell}</td>
             <td><div class="cell-meta">${fmtDate(u.created_at)}</div></td>
             <td class="td-actions">
                 <button class="btn btn--ghost btn--sm" onclick="editUser(${u.id})">编辑</button>
                 <button class="btn btn--ghost btn--sm" onclick="manageActivation(${u.id})">激活码</button>
                 ${menuHtml([
+                    { label: overrides ? '编辑能力覆盖' : '设置能力覆盖', onclick: `openAiUserScope(${u.id})` },
                     { label: u.is_active ? '停用账户' : '启用账户', onclick: `toggleUser(${u.id})` },
                     { label: '导出备份', onclick: `exportUserPrompt(${u.id})` },
                     { label: '导入备份', onclick: `importUserPrompt(${u.id})` },
@@ -1297,7 +1654,7 @@ function renderUsers(data) {
                 ])}
             </td>
         </tr>`;
-    }).join('') : stateRow(4, q ? '没有匹配的用户' : '暂无用户', q ? '换个关键词试试' : '点击右上角“创建用户”添加');
+    }).join('') : stateRow(5, q ? '没有匹配的用户' : '暂无用户', q ? '换个关键词试试' : '点击右上角“创建用户”添加');
 }
 
 const DEFAULT_BASE_URL = 'http://localhost:10620';
@@ -1643,88 +2000,457 @@ async function submitUserBackup() {
     }
 }
 
-async function loadModelConfigs() {
-    try {
-        const [configsResp, usersResp] = await Promise.all([apiFetch('/api/admin/model-configs'), apiFetch('/api/admin/users')]);
-        const data = await configsResp.json();
-        const userData = await usersResp.json();
-        tabCache.models = data;
-        tabCache.users = userData;
-        renderModels(data);
-        $('#modelUserSelect').innerHTML = '<option value="">选择用户…</option>' + getItems(userData).map(u => `<option value="${u.id}">${esc(u.username)} (#${u.id})</option>`).join('');
-    } catch (e) { $('#modelList').innerHTML = stateRow(4, '加载失败：' + e.message, '', true); }
+// ── 总览 ─────────────────────────────────────────────
+// 就绪度与矩阵由已缓存数据派生；避免每次切页重复请求。
+const READINESS_KEY_LABELS = Object.freeze({
+    llm: '对话 LLM', stt: '语音识别', tts: '语音合成',
+    image_gen: '图像生成', video_gen: '视频生成', embedding: '向量嵌入',
+});
+
+function systemCapabilities() {
+    return normalizeAiConfig(tabCache.models?.system_ai_config).capabilities;
 }
 
-function renderModels(data) {
-    renderTable('#modelList', 'modelCount', data, {
-        unit: '条配置', cols: 4, empty: '暂无凭证配置', emptyHint: '选择用户后点击“设置配置”',
-        row: c => {
-            const capabilities = c.ai_config.capabilities;
-            const llm = capabilities.llm[0];
-            return `<tr>
-                <td class="td-id">#${c.user_id}</td>
-                <td><div class="cell-strong">${llm ? esc(aiProviderLabel(llm.provider)) : '<span class="text-3">继承系统配置</span>'}</div><div class="cell-sub mono">${llm ? esc(llm.model_name) : ''}</div></td>
-                <td class="td-services">
-                    ${svcDot('LLM', capabilities.llm.length > 0)}
-                    ${svcDot('STT', capabilities.stt.length > 0)}
-                    ${svcDot('TTS', capabilities.tts.length > 0)}
-                    ${svcDot('图像', capabilities.image_gen.length > 0)}
-                    ${svcDot('视频', capabilities.video_gen.length > 0)}
-                    ${svcDot('向量', (capabilities.embedding || []).length > 0)}
-                </td>
-                <td class="td-actions">
-                    <button class="btn btn--ghost btn--sm" onclick="showModelConfigForUser(${c.user_id})">编辑</button>
-                    <button class="btn btn--danger btn--sm" onclick="deleteModelConfig(${c.user_id})">删除</button>
-                </td>
-            </tr>`;
-        },
+function userOverrideCount(group) {
+    return (tabCache.models?.items ?? []).filter(c => (c.ai_config?.capabilities?.[group] ?? []).length > 0).length;
+}
+
+// 返回 { group: { status: 'ok'|'bad'|'warn', cards, windowMissing } }；llm 缺上下文窗口记 warn。
+function computeReadiness(systemCaps) {
+    const result = {};
+    for (const [group, label] of Object.entries(READINESS_KEY_LABELS)) {
+        const cards = systemCaps[group] ?? [];
+        const windowMissing = group === 'llm' && cards.length > 0 && cards.some(c => !c.context_window || Number(c.context_window) <= 0);
+        const status = cards.length === 0 ? 'bad' : windowMissing ? 'warn' : 'ok';
+        result[group] = { label, status, cards, windowMissing };
+    }
+    return result;
+}
+
+function updateAiNavBadge(readiness) {
+    const issues = Object.values(readiness).filter(r => r.status !== 'ok').length;
+    const badge = $('#aiNavBadge');
+    if (!badge) return;
+    badge.hidden = issues === 0;
+    badge.textContent = String(issues);
+}
+
+function renderOverviewMatrix(readiness) {
+    const rows = Object.entries(readiness).map(([group, r]) => {
+        const first = r.cards[0];
+        const local = first?.provider === 'local' && group === 'image_gen';
+        const providers = r.cards.length
+            ? r.cards.map(c => esc(aiProviderLabel(c.provider))).join(' → ')
+            : '<span class="text-3">—</span>';
+        const statusPill = r.status === 'ok'
+            ? pill('已配置', 'green')
+            : r.status === 'warn' ? pill('缺上下文窗', 'amber') : pill('未配置', 'red');
+        const overrides = userOverrideCount(group);
+        const overridePill = overrides ? pill(`${overrides} 人覆盖`, 'amber') : '<span class="text-3">继承系统</span>';
+        return `<tr class="matrix-row" onclick="openAiGroup('${group}')">
+            <td><div class="cell-strong">${esc(r.label)}</div><div class="cell-sub mono">${esc(group)}</div></td>
+            <td>${statusPill}</td>
+            <td>${providers}</td>
+            ${group === 'llm'
+                ? `<td>${first ? `<div class="cell-strong">${esc(first.model_name || '默认模型')}</div>` : '<span class="text-3">—</span>'}</td>
+                   <td>${first?.context_window ? `<span class="mono">${esc(String(first.context_window))}</span>` : first ? '<span class="text-3">未填</span>' : '<span class="text-3">—</span>'}</td>`
+                : `<td>${local ? '<span class="text-3">固定工作流</span>' : first?.model_name ? esc(first.model_name) : first ? '<span class="text-3">默认</span>' : '<span class="text-3">—</span>'}</td>
+                   <td><span class="text-3">—</span></td>`}
+            <td>${overridePill}</td>
+        </tr>`;
+    }).join('');
+    $('#ovMatrix').innerHTML = rows;
+    const total = Object.keys(READINESS_KEY_LABELS).length;
+    const ok = Object.values(readiness).filter(r => r.status === 'ok').length;
+    $('#ovMatrixCount').textContent = `${ok}/${total} 项就绪`;
+}
+
+async function loadOverview() {
+    try {
+        const [settingsResp, modelsResp, versionsResp, logsResp] = await Promise.all([
+            apiFetch('/api/admin/system-settings'),
+            apiFetch('/api/admin/model-configs'),
+            apiFetch('/api/update/versions'),
+            apiFetch('/api/admin/nightly-activity-logs'),
+        ]);
+        const settings = await settingsResp.json();
+        tabCache.models = await modelsResp.json();
+        tabCache.versions = await versionsResp.json();
+        const logs = await logsResp.json();
+
+        const activeVersion = getItems(tabCache.versions).find(v => v.is_active);
+        $('#ovVersion').textContent = activeVersion ? `v${activeVersion.version}` : '—';
+        $('#ovVersionMeta').textContent = activeVersion ? `发布于 ${fmtDate(activeVersion.created_at)}` : '暂无已上线版本';
+
+        const readiness = computeReadiness(normalizeAiConfig(settings.ai_config).capabilities);
+        const ok = Object.values(readiness).filter(r => r.status === 'ok').length;
+        const total = Object.keys(READINESS_KEY_LABELS).length;
+        $('#ovReady').innerHTML = `${ok}<small>/${total}</small>`;
+        const notOk = Object.values(readiness).filter(r => r.status !== 'ok');
+        $('#ovReadyMeta').textContent = notOk.length
+            ? `${notOk.map(r => r.label).join('、')}未配置或不完整`
+            : '全部能力可用';
+        $('#ovReadyMeta').className = 'meta' + (notOk.length ? ' bad' : ' good');
+
+        const logItems = getItems(logs);
+        const recent = logItems.slice(0, 7);
+        const days = new Set(recent.map(r => String(r.target_date).slice(0, 10)));
+        const okCount = recent.filter(r => r.status === 'completed').length;
+        $('#ovNightly').textContent = recent.length ? `${Math.round(okCount / recent.length * 100)}%` : '—';
+        $('#ovNightlyMeta').textContent = recent.length
+            ? `近 ${days.size} 日 ${recent.length} 条 · 成功 ${okCount}`
+            : '暂无夜间活动记录';
+        $('#ovNightlyMeta').className = 'meta' + (recent.length && okCount < recent.length ? ' bad' : ' good');
+
+        const overrideUsers = (tabCache.models.items ?? []).filter(c => Object.values(c.ai_config?.capabilities ?? {}).some(list => (list ?? []).length > 0));
+        $('#ovOverrides').textContent = String(overrideUsers.length);
+        $('#ovOverridesMeta').textContent = overrideUsers.length
+            ? overrideUsers.slice(0, 3).map(c => `#${c.user_id}`).join('、') + (overrideUsers.length > 3 ? ' 等' : '')
+            : '全部继承系统配置';
+
+        renderOverviewMatrix(readiness);
+        updateAiNavBadge(readiness);
+
+        const timeline = [];
+        const lastLog = logItems[0];
+        if (lastLog) {
+            const [statusLabel] = Object.hasOwn(LOG_STATUS, lastLog.status) ? LOG_STATUS[lastLog.status] : [lastLog.status];
+            timeline.push({ dot: lastLog.status === 'completed' ? 'green' : lastLog.status === 'running' ? 'amber' : 'red',
+                title: `夜间活动 · 用户 ${lastLog.user_id} · ${statusLabel}`, meta: `目标日 ${lastLog.target_date} · ${fmtDate(lastLog.updated_at || lastLog.created_at)}` });
+        }
+        for (const v of getItems(tabCache.versions).slice(0, 2)) {
+            timeline.push({ dot: '', title: `版本 v${v.version} ${v.is_active ? '已上线' : '已下线'}`, meta: `${fmtDate(v.created_at)} · ${v.created_by || '—'}` });
+        }
+        const failedLogs = logItems.filter(r => r.status === 'failed' || r.status === 'completed_with_errors').slice(0, 2);
+        for (const r of failedLogs) {
+            timeline.push({ dot: 'red', title: `夜间活动失败 · 用户 ${r.user_id} · ${r.target_date}`, meta: fmtDate(r.updated_at || r.created_at) });
+        }
+        $('#ovTimeline').innerHTML = timeline.length
+            ? timeline.slice(0, 5).map(t => `<li><div class="tl-dot ${t.dot}"></div><div class="tl-body"><div class="title">${esc(t.title)}</div><div class="meta">${esc(t.meta)}</div></div></li>`).join('')
+            : '<li><div class="tl-dot"></div><div class="tl-body"><div class="title">暂无动态</div></div></li>';
+
+        const todos = [];
+        for (const r of Object.values(readiness)) {
+            if (r.status === 'bad') todos.push({ text: `${r.label} 未配置`, tab: 'ai' });
+            else if (r.status === 'warn') todos.push({ text: `${r.label} 缺上下文窗口`, tab: 'ai' });
+        }
+        if (failedLogs.length) todos.push({ text: `${failedLogs.length} 条夜间任务失败待处理`, tab: 'versions' });
+        if (!activeVersion) todos.push({ text: '没有已上线的客户端版本', tab: 'versions' });
+        $('#ovTodo').innerHTML = todos.length
+            ? todos.map(t => `<li><a onclick="showTab('${t.tab}')">${esc(t.text)}</a></li>`).join('')
+            : '<li>没有待处理事项</li>';
+    } catch (e) {
+        $('#ovMatrix').innerHTML = stateRow(6, '加载失败：' + e.message, '请检查后端服务与登录状态', true);
+        $('#ovTimeline').innerHTML = `<li><div class="tl-dot red"></div><div class="tl-body"><div class="title">动态加载失败</div><div class="meta">${esc(e.message)}</div></div></li>`;
+    }
+}
+
+// ── AI 能力视图 ───────────────────────────────────────
+let aiView = { scope: 'system', userId: null, group: 'llm' };
+let aiUserDirty = false;
+
+function aiScopeOptions() {
+    const overridden = new Set((tabCache.models?.items ?? []).map(c => c.user_id));
+    const options = ['<option value="system">系统配置</option>'];
+    for (const u of tabCache.users?.items ?? []) {
+        options.push(`<option value="${u.id}">${esc(u.username)} (#${u.id})${overridden.has(u.id) ? ' · 覆盖' : ''}</option>`);
+    }
+    return options.join('');
+}
+
+function userAiCards(group) {
+    const item = tabCache.models?.items?.find(c => c.user_id === Number(aiView.scope));
+    return item ? (item.ai_config?.capabilities?.[group] ?? []) : [];
+}
+
+function renderAiTree() {
+    const providers = aiActiveEditor().config.providers;
+    const groupsHtml = Object.keys(READINESS_KEY_LABELS).map(group => {
+        const cards = aiView.scope === 'system' ? systemCapabilities()[group] : userAiCards(group);
+        const sub = aiView.scope === 'system'
+            ? (cards.length ? `${cards.length} 卡` : '空')
+            : (cards.length ? `${cards.length} 卡` : '继承');
+        return `<button type="button" class="tree-item child${aiView.group === group ? ' active' : ''}" onclick="aiSelectNode('${group}')">
+            <span>${esc(READINESS_KEY_LABELS[group])}</span><span class="tree-sub">${esc(sub)}</span>
+        </button>`;
+    }).join('');
+    $('#aiTree').innerHTML = `
+        <div class="tree-label">能力链</div>
+        ${groupsHtml}
+        <div class="tree-label" style="margin-top:0.5rem">信息库</div>
+        <button type="button" class="tree-item${aiView.group === 'providers' ? ' active' : ''}" onclick="aiSelectNode('providers')">
+            <span>供应商</span><span class="tree-sub">${providers.length} 家</span>
+        </button>`;
+}
+
+function aiActiveEditor() {
+    return aiView.scope === 'system' ? aiEditors.system : aiEditors.user;
+}
+
+// 用户作用域卡片编辑复用 user 编辑器与既有弹窗校验；系统作用域走 settings 保存链路。
+function renderAiCardsPane() {
+    const editor = aiActiveEditor();
+    const title = aiView.group === 'providers'
+        ? '供应商信息库'
+        : `${READINESS_KEY_LABELS[aiView.group]} · ${aiView.scope === 'system' ? '系统' : '用户覆盖'}`;
+    $('#aiCardsTitle').textContent = title;
+    $('#aiCardsHint').textContent = aiView.scope === 'system'
+        ? '能力链为唯一调用信息源：未添加卡片表示该能力未配置；API Key 与 Base URL 留空继承同名供应商，模型名称留空使用默认模型。修改后需保存生效。'
+        : '用户能力链有卡片时覆盖系统能力链；空链继承系统配置。API Key 与 Base URL 留空先继承用户再系统同名供应商。';
+    $('#aiDeleteBtn').hidden = aiView.scope === 'system';
+    // 只展示当前分组：重渲染整棵再隐藏其余分区。
+    renderAiCards(aiView.scope === 'system' ? 'system' : 'user');
+    $$('#aiCardSettings > .settings-section').forEach(sec => {
+        sec.style.display = sec.dataset.aiGroup === aiView.group ? '' : 'none';
     });
 }
 
-function showModelConfig() {
-    const userId = $('#modelUserSelect').value;
-    if (!userId) { toast('请先选择用户', 'err'); return; }
-    showModelConfigForUser(userId);
+function renderAiChain() {
+    const scopeLabel = aiView.scope === 'system' ? '系统' : `用户 #${aiView.scope}`;
+    $('#aiChainTitle').textContent = `继承链 · ${READINESS_KEY_LABELS[aiView.group] ?? '供应商信息库'}（${scopeLabel}）`;
+    const editor = aiActiveEditor();
+    if (aiView.group === 'providers') {
+        const cards = editor.config.providers;
+        $('#aiChainCount').textContent = `${cards.length} 家`;
+        $('#aiChainBody').innerHTML = cards.length
+            ? `<div class="provider-grid">${cards.map(card => {
+                const keyOn = card.api_key || card.api_key_set;
+                return `<div class="provider-card">
+                    <div class="p-name">${esc(aiProviderLabel(card.provider))}</div>
+                    <div class="p-row"><span>API Key</span><b style="color:${keyOn ? 'var(--green)' : 'var(--amber)'}">${keyOn ? '已设置' : '未设置'}</b></div>
+                    <div class="p-row"><span>Base URL</span><b>${esc(card.base_url || '官方地址')}</b></div>
+                </div>`;
+            }).join('')}</div>`
+            : '<p class="hint" style="margin:0">尚未添加供应商。可在下方添加卡片建立共享密钥与地址。</p>';
+        return;
+    }
+    const cards = aiList(editor, aiView.group);
+    const systemCards = systemCapabilities()[aiView.group];
+    const isUserScope = aiView.scope !== 'system';
+    const userCards = isUserScope ? cards : [];
+    const effectiveCards = isUserScope && userCards.length ? userCards : systemCards;
+    $('#aiChainCount').textContent = `${effectiveCards.length} 张卡片`;
+    const fbStrip = effectiveCards.length
+        ? `<div class="fallback-strip">${effectiveCards.map((card, i) => {
+            const local = card.provider === 'local' && aiView.group === 'image_gen';
+            return `<span class="fb-node${i === 0 ? ' first' : ''}"><span class="idx">${i + 1}</span>${esc(aiProviderLabel(card.provider))}${card.model_name && !local ? ' · ' + esc(card.model_name) : ''}</span>`;
+        }).join('<span class="fb-arrow">→</span>')}<span class="fb-note">按卡片顺序调用，失败时回退到下一张${aiView.group === 'embedding' ? '；嵌入按首个有效配置，不自动切换' : ''}</span></div>`
+        : `<p class="hint" style="margin:0">${isUserScope ? '该用户继承系统的此项能力链。' : '该能力未配置。在下方添加卡片后生效。'}</p>`;
+
+    const providerNode = editor.config.providers.length || (tabCache.models?.system_ai_config?.providers ?? []).length
+        ? (() => {
+            const lib = (tabCache.models?.system_ai_config?.providers ?? []);
+            const referenced = new Set(effectiveCards.map(c => c.provider));
+            const items = lib.filter(p => referenced.has(p.provider));
+            const rows = items.map(p => `<div class="kv"><span>密钥</span> <b style="color:${p.api_key || p.api_key_set ? 'var(--green)' : 'var(--amber)'}">${p.api_key || p.api_key_set ? '已设置' : '未设置'}</b></div><div class="kv"><span>地址</span> <b class="mono">${esc(p.base_url || '官方')}</b></div>`).join('');
+            return `<div class="chain-rail"><div class="node-dot muted"></div><div class="node-line"></div></div>
+                <div class="chain-card">
+                    <div class="src">L1 · 供应商信息库</div>
+                    <div class="chain-title">${items.length ? items.map(p => esc(aiProviderLabel(p.provider))).join('、') : '未引用信息库'}</div>
+                    ${rows ? `<div class="kv-row">${rows}</div>` : ''}
+                    <div class="chain-hint">只提供共享 API Key 与 Base URL；模型名称写在各能力卡片上。</div>
+                </div>`;
+        })()
+        : '';
+
+    const userNode = isUserScope
+        ? `<div class="chain-rail"><div class="node-dot${userCards.length ? '' : ' muted'}"></div><div class="node-line"></div></div>
+            <div class="chain-card${userCards.length ? ' is-effective' : ' muted-card'}">
+                <div class="src">L3 · 用户覆盖</div>
+                <div class="chain-title">${userCards.length ? `${userCards.length} 张覆盖卡片` : '未覆盖本能力'}</div>
+                <div class="chain-hint">${userCards.length ? '该用户使用自己的调用顺序与模型，密钥可继承供应商。' : '未添加卡片时完整继承系统能力链。'}</div>
+            </div>`
+        : '';
+
+    $('#aiChainBody').innerHTML = `
+        <div class="chain-node">
+            ${providerNode}
+            <div class="chain-node" style="flex:1">
+                <div class="chain-rail"><div class="node-dot"></div><div class="node-line"></div></div>
+                <div class="chain-cards">
+                    <div class="chain-card${isUserScope && userCards.length ? '' : ' is-effective'}">
+                        <div class="src">L2 · ${isUserScope && userCards.length ? '系统（被覆盖）' : '系统能力链（当前生效）'}</div>
+                        <div class="chain-title">${systemCards.length ? systemCards.map(c => `${esc(aiProviderLabel(c.provider))}${c.model_name ? ' · ' + esc(c.model_name) : ''}`).join(' → ') : '系统未配置'}</div>
+                        ${systemCards[0]?.context_window ? `<div class="kv-row"><div class="kv"><span>上下文窗</span> <b class="mono">${esc(String(systemCards[0].context_window))}</b></div></div>` : ''}
+                        <div class="chain-hint">${isUserScope && userCards.length ? '该能力被用户卡片覆盖，系统链不参与该用户调用。' : isUserScope ? '用户未覆盖，按系统链调用。' : '按顺序调用，失败自动回退。'}</div>
+                    </div>
+                    ${fbStrip}
+                </div>
+            </div>
+            ${userNode}
+        </div>`;
 }
 
-function setKeyBadge(id, set) {
-    const el = $('#' + id);
-    if (!el) return;
-    el.textContent = set ? '已设置' : '未设置';
-    el.className = 'keybadge ' + (set ? 'on' : 'off');
+function aiSelectNode(group) {
+    aiView.group = group;
+    renderAiTree();
+    renderAiChain();
+    renderAiCardsPane();
 }
 
-function showModelConfigForUser(userId) {
+function onAiScopeChange() {
+    const value = $('#aiScopeSelect').value;
+    if (value === aiView.scope) return;
+    if ((settingsDirty || aiUserDirty) && !confirm('系统设置或 AI 配置有未保存的修改，切换将丢弃，确定？')) {
+        $('#aiScopeSelect').value = aiView.scope === 'system' ? 'system' : String(aiView.scope);
+        return;
+    }
+    clearSettingsDirty();
+    clearAiDirty();
+    aiView.scope = value;
+    aiView.userId = value === 'system' ? null : Number(value);
+    if (aiView.scope !== 'system') {
+        showModelConfigForUserSilent(aiView.userId);
+    } else {
+        aiEditors.system.config = normalizeAiConfig(lastSystemAiRaw);
+        renderAiScope();
+    }
+}
+
+function renderAiScope() {
+    renderAiTree();
+    renderAiChain();
+    renderAiCardsPane();
+}
+
+// 总览矩阵点击行 → AI 视图并定位到该能力。
+function openAiGroup(group) {
+    showTab('ai');
+    aiSelectNode(group);
+}
+
+async function loadAiView() {
+    try {
+        if (!tabCache.models) {
+            const resp = await apiFetch('/api/admin/model-configs');
+            tabCache.models = await resp.json();
+        }
+        if (!tabCache.users) {
+            const usersResp = await apiFetch('/api/admin/users');
+            tabCache.users = await usersResp.json();
+        }
+        if (!aiSettingsLoaded && !settingsDirty) {
+            await loadSystemSettings({ silent: true });
+        }
+        // 重进视图时未保存的用户覆盖编辑仍在编辑器对象上，仅重新渲染而不重置。
+        if (aiView.scope !== 'system' && !aiUserDirty) {
+            showModelConfigForUserSilent(aiView.userId);
+        } else {
+            renderAiScope();
+        }
+        $('#aiScopeSelect').innerHTML = aiScopeOptions();
+        $('#aiScopeSelect').value = aiView.scope;
+    } catch (e) {
+        toast('加载 AI 配置失败：' + e.message, 'err');
+    }
+}
+
+function showModelConfigForUserSilent(userId) {
     const cached = tabCache.models?.items?.find(c => c.user_id == userId) ?? null;
-    $('#modelUserId').value = userId;
-    $('#modelModalTitle').textContent = cached ? `编辑凭证 · 用户 #${userId}` : `配置凭证 · 用户 #${userId}`;
     aiEditors.user.config = normalizeAiConfig(cached?.ai_config);
     aiEditors.user.support = tabCache.models?.ai_provider_support ?? {};
     aiEditors.user.contextDefaults = tabCache.models.ai_context_defaults;
     aiEditors.user.inheritedProviders = tabCache.models?.system_ai_config?.providers ?? [];
-    renderAiCards('user');
-    openModal('modelModal');
+    renderAiScope();
 }
 
-async function saveModelConfig() {
-    if (!validateAiCards('user')) return;
-    const userId = $('#modelUserId').value;
-    const payload = { ai_config: aiEditors.user.config };
+async function saveAiScope() {
+    if (aiView.scope === 'system') {
+        if (!validateAiCards('system')) return;
+        if (!aiSettingsLoaded) { toast('系统配置尚未加载完成', 'err'); return; }
+        try {
+            await apiFetch('/api/admin/system-settings', {
+                method: 'PUT',
+                body: JSON.stringify({ ai_config: aiEditors.system.config }),
+            });
+            toast('AI 能力配置已保存并实时生效');
+            clearSettingsDirty();
+            clearAiDirty();
+            await refreshAiCache();
+            renderAiScope();
+            loadOverviewIfActive();
+        } catch (e) { toast('保存失败：' + e.message, 'err'); }
+    } else {
+        saveModelConfigFromAiView();
+    }
+}
+
+async function refreshAiCache() {
     try {
-        await apiFetch(`/api/admin/${userId}/model-config`, { method: 'PUT', body: JSON.stringify(payload) });
-        closeModal('modelModal');
-        toast('凭证配置已保存');
-        loadModelConfigs();
+        const resp = await apiFetch('/api/admin/model-configs');
+        tabCache.models = await resp.json();
+        const systemResp = await apiFetch('/api/admin/system-settings');
+        lastSystemAiRaw = (await systemResp.json()).ai_config;
+        aiEditors.system.config = normalizeAiConfig(lastSystemAiRaw);
+        aiSettingsLoaded = true;
+    } catch (e) { /* 缓存刷新失败不阻塞 UI，下次进入视图会重新拉取 */ }
+}
+
+function markAiDirty(editorName) {
+    // 系统作用域同时驱动系统设置页与 AI 面板的未保存提示。
+    if (editorName === 'system') markSettingsDirty();
+    else aiUserDirty = true;
+    const dock = $('#aiSettingsDock');
+    if (dock) dock.hidden = false;
+}
+
+function clearAiDirty() {
+    aiUserDirty = false;
+    const dock = $('#aiSettingsDock');
+    if (dock) dock.hidden = true;
+}
+
+function discardAiEdits() {
+    if (aiView.scope === 'system') {
+        aiEditors.system.config = normalizeAiConfig(lastSystemAiRaw);
+        clearSettingsDirty();
+        clearAiDirty();
+        renderAiScope();
+    } else {
+        showModelConfigForUserSilent(aiView.userId);
+        clearAiDirty();
+    }
+}
+
+function loadOverviewIfActive() {
+    if ($('#panel-overview')?.classList.contains('active')) loadOverview();
+}
+
+async function saveModelConfigFromAiView() {
+    if (!validateAiCards('user')) return;
+    try {
+        await apiFetch(`/api/admin/${aiView.userId}/model-config`, { method: 'PUT', body: JSON.stringify({ ai_config: aiEditors.user.config }) });
+        toast('用户覆盖配置已保存');
+        clearAiDirty();
+        await refreshAiCache();
+        renderAiScope();
+        loadOverviewIfActive();
     } catch (e) { toast(e.message, 'err'); }
 }
 
+// AI 视图内删除当前用户的全部覆盖；删除后回到继承系统状态。
 async function deleteModelConfig(userId) {
-    if (!confirm('确定删除此用户的凭证配置？')) return;
+    if (!confirm('确定删除此用户的全部覆盖配置？删除后该用户继承系统配置。')) return;
     try {
         await apiFetch(`/api/admin/${userId}/model-config`, { method: 'DELETE' });
-        toast('凭证配置已删除');
-        loadModelConfigs();
+        toast('用户覆盖配置已删除');
+        await refreshAiCache();
+        showModelConfigForUserSilent(userId);
+        clearAiDirty();
+        loadOverviewIfActive();
     } catch (e) { toast(e.message, 'err'); }
+}
+
+// 用户视图「编辑覆盖」入口：跳到 AI 视图并定位该用户。
+function openAiUserScope(userId) {
+    if ((settingsDirty || aiUserDirty) && !confirm('系统设置或 AI 配置有未保存的修改，切换将丢弃，确定？')) return;
+    clearSettingsDirty();
+    clearAiDirty();
+    showTab('ai');
+    aiView.scope = String(userId);
+    aiView.userId = Number(userId);
+    showModelConfigForUserSilent(aiView.userId);
+    $('#aiScopeSelect').value = String(userId);
 }
 
 const AI_NAMES = { mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问', local: '本地 Local' };
@@ -1739,8 +2465,9 @@ function normalizeAiConfig(raw) {
 }
 const aiEditors = {
     system: { root: '#aiCardSettings', config: emptyAiConfig(), support: {}, contextDefaults: {}, inheritedProviders: [] },
-    user: { root: '#userAiCardSettings', config: emptyAiConfig(), support: {}, contextDefaults: {}, inheritedProviders: [] },
+    user: { root: '#aiCardSettings', config: emptyAiConfig(), support: {}, contextDefaults: {}, inheritedProviders: [] },
 };
+let lastSystemAiRaw = null;
 let aiDrag = null;
 // 点过“清除”的卡片：API Key 留空保持清除，填写后以新密钥为准；卡片对象原样提交（接口禁止额外字段），故不把标记写进卡片。
 const clearedKeyCards = new WeakSet();
@@ -1879,7 +2606,7 @@ function renderAiCards(editorName) {
         card[field] = event.target.value;
         if (field === 'context_window') event.target.setCustomValidity('');
         if (field === 'api_key' && clearedKeyCards.has(card)) card.clear_api_key = !event.target.value.trim();
-        if (editorName === 'system') markSettingsDirty();
+        markAiDirty(editorName);
     };
     root.onclick = event => {
         const button = event.target.closest('[data-ai-action]');
@@ -1917,7 +2644,7 @@ function renderAiCards(editorName) {
             cards.splice(target, 0, cards.splice(index, 1)[0]);
         }
         renderAiCards(editorName);
-        if (editorName === 'system') markSettingsDirty();
+        markAiDirty(editorName);
     };
     root.ondragstart = event => {
         if (!event.target.matches('[data-ai-handle]')) { event.preventDefault(); return; }
@@ -1944,7 +2671,7 @@ function renderAiCards(editorName) {
         cards.splice(Number(target.dataset.aiIndex), 0, cards.splice(aiDrag.index, 1)[0]);
         aiDrag = null;
         renderAiCards(editorName);
-        if (editorName === 'system') markSettingsDirty();
+        markAiDirty(editorName);
     };
     root.ondragend = () => {
         aiDrag = null;
@@ -2126,10 +2853,22 @@ function settingsFieldHtml(f) {
     return `${wrapOpen}<label>${f.label}</label><input${attrs} id="${id}"></div>`;
 }
 
+function setKeyBadge(id, set) {
+    const el = $('#' + id);
+    if (!el) return;
+    el.textContent = set ? '已设置' : '未设置';
+    el.className = 'keybadge ' + (set ? 'on' : 'off');
+}
+
 function renderSettingsForm() {
     $('#systemSettingsForm').innerHTML = SETTINGS_SECTIONS.map((s, idx) => `
-        <div class="card settings-section" id="settings-sec-${idx}" data-search-text="${esc(`${s.title} ${s.hint}`.toLowerCase())}" style="margin-bottom:1.15rem">
-            <div class="card-head"><h2>${s.title}</h2><span class="hint">${s.hint}</span></div>
+        <div class="card settings-section collapsible${idx === 0 ? ' open' : ''}" id="settings-sec-${idx}" data-search-text="${esc(`${s.title} ${s.hint}`.toLowerCase())}" style="margin-bottom:1.15rem">
+            <div class="card-head" onclick="toggleSettingsSection(this)">
+                <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                <h2>${s.title}</h2>
+                <span class="hint">${s.hint}</span>
+                <div class="collapse-indicator"><span class="count">${s.blocks.flatMap(b => b[0] === 'grid' ? b[1] : b[0] === 'field' ? [b[1]] : []).length} 项</span></div>
+            </div>
             <div class="card-pad">${s.blocks.map(b => b[0] === 'sub'
                 ? `<h3 class="subhead">${b[1]}</h3>`
                 : b[0] === 'grid'
@@ -2146,7 +2885,10 @@ function renderSettingsForm() {
         if (!link) return;
         $$('#settingsRail .rail-link').forEach(x => x.classList.toggle('active', x === link));
         const target = document.getElementById(link.dataset.railTarget);
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (target) {
+            target.classList.add('open');
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     };
 
     $('#systemSettingsForm').addEventListener('input', markSettingsDirty);
@@ -2159,6 +2901,10 @@ function renderSettingsForm() {
         }
         markSettingsDirty();
     });
+}
+
+function toggleSettingsSection(head) {
+    head.parentElement.classList.toggle('open');
 }
 renderSettingsForm();
 
@@ -2190,6 +2936,8 @@ function filterSettingsFields() {
     let visible = 0;
 
     $$('#systemSettingsForm .settings-section').forEach(section => {
+        // 搜索时强制展开命中分区；清空搜索恢复仅第一个展开。
+        const searching = !!q;
         // 分区标题或说明命中时，分区内字段全部显示。
         const selfHit = !q || (section.dataset.searchText || '').includes(q);
         let shown = 0;
@@ -2203,6 +2951,7 @@ function filterSettingsFields() {
         const show = selfHit || shown > 0;
         section.classList.toggle('is-hidden', !show);
         if (show) {
+            section.classList.toggle('open', searching ? true : section.id === 'settings-sec-0');
             $$('.subhead', section).forEach(h => {
                 if (!q) { h.classList.remove('is-hidden'); return; }
                 let node = h.nextElementSibling;
@@ -2217,17 +2966,11 @@ function filterSettingsFields() {
         }
     });
 
-    $$('#aiCardSettings .settings-section').forEach(section => {
-        const hit = !q || (section.dataset.searchText || '').toLowerCase().includes(q) || (section.textContent || '').toLowerCase().includes(q);
-        section.classList.toggle('is-hidden', !hit);
-    });
-
-    const aiVisible = $$('#aiCardSettings .settings-section:not(.is-hidden)').length > 0;
     const empty = $('#settingsEmpty');
-    if (empty) empty.classList.toggle('show', !!q && visible === 0 && !aiVisible);
+    if (empty) empty.classList.toggle('show', !!q && visible === 0);
 }
 
-async function loadSystemSettings() {
+async function loadSystemSettings({ silent = false } = {}) {
     // 切回本页时保留尚未保存的修改；放弃修改需刷新页面。
     if (settingsDirty && aiSettingsLoaded) return;
     aiSettingsLoaded = false;
@@ -2236,17 +2979,18 @@ async function loadSystemSettings() {
         const resp = await apiFetch('/api/admin/system-settings');
         renderSystemSettings(await resp.json());
     } catch (e) {
-        toast('加载系统设置失败：' + e.message, 'err');
+        if (!silent) toast('加载系统设置失败：' + e.message, 'err');
+        else console.warn('loadSystemSettings failed', e);
     }
 }
 
 function renderSystemSettings(data) {
     if (!data) return;
+    lastSystemAiRaw = data.ai_config;
     aiEditors.system.config = normalizeAiConfig(data.ai_config);
     aiEditors.system.support = data.ai_provider_support;
     aiEditors.system.contextDefaults = data.ai_context_defaults;
     aiSettingsLoaded = true;
-    renderAiCards('system');
     for (const k of SETTING_TEXT_KEYS) {
         const el = $('#sys_' + k);
         if (!el) continue;
@@ -2366,6 +3110,11 @@ async function openLogDetail(id) {
     openModal('logDetailModal');
 }
 
+// 运维视图：版本与日志合并加载。
+async function loadOpsTab() {
+    await Promise.all([loadVersions(), loadLogs()]);
+}
+
 async function loadVersions() {
     try {
         const data = await (await apiFetch('/api/update/versions')).json();
@@ -2470,9 +3219,10 @@ document.addEventListener('keydown', (e) => {
         $$('.modal.open').forEach(m => closeModal(m.id));
         return;
     }
-    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S') && $('#panel-settings')?.classList.contains('active')) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S') && ($('#panel-settings')?.classList.contains('active') || $('#panel-ai')?.classList.contains('active'))) {
         e.preventDefault();
-        saveSystemSettingsForm();
+        if ($('#panel-ai')?.classList.contains('active')) saveAiScope();
+        else saveSystemSettingsForm();
     }
 });
 </script>
