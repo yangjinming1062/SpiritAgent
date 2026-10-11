@@ -26,6 +26,10 @@ function hasTerminalReceipt(statuses: ReadonlySet<DesktopVideoReceiptStatus> | u
   return statuses !== undefined && [...statuses].some(status => status !== 'started')
 }
 
+function firstNonBlank(...values: readonly (string | null | undefined)[]): string | null {
+  return values.find(value => typeof value === 'string' && value.trim().length > 0) ?? null
+}
+
 export function useDesktopVideoWallpaper(): void {
   const auth = useStore($auth)
   const presentation = useStore($presentation)
@@ -321,7 +325,7 @@ export function useDesktopVideoWallpaper(): void {
     })
   }, [authSessionId, recordReceipt])
 
-  const firstPoster = state?.current?.actions.find(action => action.key === 'idle')?.poster_url ?? null
+  const firstPoster = firstNonBlank(state?.current?.actions.find(action => action.key === 'idle')?.poster_url)
 
   const fallbackAction = state?.fallback?.actions.find(
     action => action.kind === 'loop' && action.enabled && action.video_url
@@ -330,8 +334,8 @@ export function useDesktopVideoWallpaper(): void {
   // 保底渲染独立于播放指令与回执。
   const baseline = currentLoop ?? fallbackAction ?? null
 
-  const videoUrl = activeCommand?.video_url ?? baseline?.video_url ?? null
-  const posterUrl = activeCommand?.poster_url ?? baseline?.poster_url ?? firstPoster ?? scene?.assetUrl ?? null
+  const videoUrl = firstNonBlank(activeCommand?.video_url, baseline?.video_url)
+  const posterUrl = firstNonBlank(activeCommand?.poster_url, baseline?.poster_url, firstPoster, scene?.assetUrl)
 
   useEffect(() => {
     if (!active || !authSessionId) {

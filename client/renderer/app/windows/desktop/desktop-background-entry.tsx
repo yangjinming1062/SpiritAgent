@@ -17,6 +17,49 @@ interface VideoSlot {
   generation: number
 }
 
+const BASELINE_VIDEO_ASPECT = 16 / 9
+const BASELINE_ASPECT_TOLERANCE = 0.07
+const MAX_COVER_CROP = 0.28
+const FALLBACK_BACKGROUND = 'radial-gradient(circle at center, var(--ui-fill-hover), var(--ui-app-bg) 72%)'
+
+function selectVideoObjectFit(
+  videoWidth: number,
+  videoHeight: number,
+  viewportWidth = window.innerWidth,
+  viewportHeight = window.innerHeight
+): 'contain' | 'cover' {
+  if (
+    !Number.isFinite(videoWidth) ||
+    !Number.isFinite(videoHeight) ||
+    videoWidth <= 0 ||
+    videoHeight <= 0 ||
+    !Number.isFinite(viewportWidth) ||
+    !Number.isFinite(viewportHeight) ||
+    viewportWidth <= 0 ||
+    viewportHeight <= 0
+  ) {
+    return 'contain'
+  }
+
+  const videoAspect = videoWidth / videoHeight
+  const viewportAspect = viewportWidth / viewportHeight
+
+  // 非 16:9 资产保留完整画面，避免把用户上传的窄幅或超宽视频强行裁切。
+  if (Math.abs(videoAspect - BASELINE_VIDEO_ASPECT) > BASELINE_ASPECT_TOLERANCE) {
+    return 'contain'
+  }
+
+  // 桌面模式当前只需处理超宽屏；较窄视口使用 contain，避免裁掉左右主体。
+  if (viewportAspect <= videoAspect) {
+    return 'contain'
+  }
+
+  const cropFraction = 1 - videoAspect / viewportAspect
+
+  // 常见 21:9（含 3440×1440）相对 16:9 的上下裁切约 24%～26%；32:9 会接近 50%，改用模糊铺底。
+  return cropFraction <= MAX_COVER_CROP ? 'cover' : 'contain'
+}
+
 // 壁纸表面只消费主进程取得的账户媒体字节，没有鉴权、API 或会话能力。
 function DesktopWallpaper() {
   const first = useRef<HTMLVideoElement>(null)
@@ -53,9 +96,15 @@ function DesktopWallpaper() {
     let revision = -1
     let paused = false
     let fallbackPoster: string | null = null
+    let fillPosterUrl: string | null = null
     let disposed = false
     const settled = new Set<string>()
     const fadeTimers = new Set<ReturnType<typeof setTimeout>>()
+
+    const setFill = (url: string | null): void => {
+      fillPosterUrl = url
+      fill.style.backgroundImage = url ? `url("${url}")` : FALLBACK_BACKGROUND
+    }
 
     const acknowledge = (slot: VideoSlot, status: DesktopBackgroundPlayback['status'], error?: string): void => {
       const media = slot.media
@@ -111,7 +160,16 @@ function DesktopWallpaper() {
       }
 
       if (slot.posterUrl) {
-        URL.revokeObjectURL(slot.posterUrl)
+        const revokedPoster = slot.posterUrl
+
+        const replacement =
+          slots.find(candidate => candidate !== slot && candidate.posterUrl)?.posterUrl ?? fallbackPoster ?? null
+
+        if (fillPosterUrl === revokedPoster) {
+          setFill(replacement)
+        }
+
+        URL.revokeObjectURL(revokedPoster)
       }
 
       slot.media = null
@@ -123,7 +181,11 @@ function DesktopWallpaper() {
     }
 
     const showPoster = (url: string | null): void => {
-      fill.style.backgroundImage = url ? `url("${url}")` : ''
+      if (url) {
+        setFill(url)
+      } else if (!fillPosterUrl) {
+        setFill(null)
+      }
 
       if (url && active === null) {
         still.src = url
@@ -131,6 +193,20 @@ function DesktopWallpaper() {
       } else {
         still.style.opacity = '0'
       }
+    }
+
+    const updateVideoFit = (slot: VideoSlot): void => {
+      slot.element.style.objectFit = selectVideoObjectFit(
+        slot.element.videoWidth,
+        slot.element.videoHeight,
+        slot.element.clientWidth || window.innerWidth,
+        slot.element.clientHeight || window.innerHeight
+      )
+      slot.element.style.objectPosition = 'center center'
+    }
+
+    const updateAllVideoFits = (): void => {
+      slots.forEach(updateVideoFit)
     }
 
     const start = (slot: VideoSlot): void => {
@@ -198,6 +274,7 @@ function DesktopWallpaper() {
       }
 
       slot.ready = true
+      updateVideoFit(slot)
       acknowledge(slot, 'first-frame')
       const previous = active
 
@@ -284,6 +361,7 @@ function DesktopWallpaper() {
         fallbackPoster = null
       }
 
+      setFill(null)
       still.removeAttribute('src')
       showPoster(null)
     }
@@ -329,6 +407,10 @@ function DesktopWallpaper() {
       if (!media.video) {
         if (active === null) {
           if (fallbackPoster) {
+            if (fillPosterUrl === fallbackPoster) {
+              setFill(null)
+            }
+
             URL.revokeObjectURL(fallbackPoster)
           }
 
@@ -365,6 +447,7 @@ function DesktopWallpaper() {
         ? URL.createObjectURL(new Blob([new Uint8Array(media.poster.bytes)], { type: media.poster.mime }))
         : null
       slot.element.loop = media.kind === 'loop'
+      slot.element.style.objectFit = 'contain'
       slot.element.src = slot.videoUrl
 
       if (slot.posterUrl) {
@@ -390,6 +473,8 @@ function DesktopWallpaper() {
       }
     })
 
+    window.addEventListener('resize', updateAllVideoFits)
+
     void bridge.ready().catch(error => console.warn('Desktop background readiness failed', error))
 
     return () => {
@@ -398,6 +483,7 @@ function DesktopWallpaper() {
       disposed = true
       listeners.forEach(remove => remove())
       fadeTimers.forEach(timer => clearTimeout(timer))
+      window.removeEventListener('resize', updateAllVideoFits)
     }
   }, [])
 
