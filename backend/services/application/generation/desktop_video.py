@@ -149,12 +149,16 @@ async def load_desktop_visual_snapshot(db: AsyncSession, user_id: int) -> Deskto
     if avatar is None or avatar.user_id != user_id or not avatar.seed_fullbody_url:
         raise DesktopVideoStateError("伙伴的形象尚未准备好")
     if persona is None or not persona.is_complete or persona.active_scene_id is None:
-        raise DesktopVideoStateError("请先准备并启用一个生活场景")
+        raise DesktopVideoStateError(
+            "请先在场景页启用一个生活场景；若描述分析失败，请重试分析或手动补全标题和描述后启用",
+        )
     scene = await db.scalar(
         select(CompanionScene).where(CompanionScene.id == persona.active_scene_id, CompanionScene.user_id == user_id),
     )
     if scene is None or scene.status != "ready" or not scene.description.strip():
-        raise DesktopVideoStateError("当前生活场景尚未准备好")
+        raise DesktopVideoStateError(
+            "当前生活场景尚未准备好，请在场景页查看状态；若描述分析失败，可重试分析或手动补全标题和描述",
+        )
     outfit = await db.scalar(
         select(CompanionOutfit).where(
             CompanionOutfit.user_id == user_id,

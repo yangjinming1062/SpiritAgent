@@ -28,7 +28,7 @@ interface SceneDetailViewProps {
   onChangeDraft: (next: Partial<SceneEditDraft>) => void
   onDelete: (scene: SceneAsset) => void
   onEdit: () => void
-  onLoad: () => Promise<void>
+  onLoad: () => Promise<SceneAsset | null>
   onRegenerate: (sceneId: string) => Promise<void>
   onRetryAnalysis: (sceneId: string) => Promise<void>
   onSave: (sceneId: string) => Promise<void>
@@ -58,13 +58,16 @@ export function SceneDetailView({
 }: SceneDetailViewProps): React.JSX.Element {
   const t = useStrings().living.scene
   const tToasts = useStrings().living.toasts
-  const [actionBusy, setActionBusy] = useState(false)
+  const [actionKind, setActionKind] = useState<'refresh' | 'other' | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const begin = useAsyncGuard()
+  const actionBusy = actionKind !== null
+  const refreshing = actionKind === 'refresh'
   const isCurrent = detail?.id === activeScene?.id
   const regenerating = detail?.regeneration?.status === 'pending'
   const generating = detail?.status === 'pending' || regenerating
-  const canChangeInfo = Boolean(detail?.url) && detail?.status !== 'pending' && !busy && !regenerating
+  const hasImage = Boolean(detail?.assetUrl)
+  const canChangeInfo = hasImage && detail?.status !== 'pending' && !busy && !regenerating
 
   const hasDraft = Boolean(
     detail && draft && (draft.title.trim() !== detail.title || draft.description.trim() !== detail.description)
@@ -78,22 +81,26 @@ export function SceneDetailView({
         : detail?.status === 'ready' && detail.title.trim() && detail.description.trim()
     )
 
-  const canActivate = detail?.status === 'ready' && Boolean(detail.url) && Boolean(detail.description.trim())
+  const canActivate =
+    detail?.status === 'ready' && hasImage && Boolean(detail.title.trim() && detail.description.trim())
 
   const canRetryAnalysis = Boolean(
     detail &&
-    (((detail.status === 'description_failed' || detail.status === 'cancelled') && detail.url) ||
+    (((detail.status === 'description_failed' || detail.status === 'cancelled') && hasImage) ||
       (detail.status === 'failed' && detail.stage === 'review_failed') ||
       (detail.regeneration?.status === 'failed' &&
         (detail.regeneration.stage === 'analyze' || detail.regeneration.stage === 'review_failed')))
   )
 
-  const runAction = async (action: (isLive: () => boolean) => Promise<void>): Promise<void> => {
+  const runAction = async (
+    action: (isLive: () => boolean) => Promise<void>,
+    kind: 'refresh' | 'other' = 'other'
+  ): Promise<void> => {
     if (actionBusy) {
       return
     }
 
-    setActionBusy(true)
+    setActionKind(kind)
     setActionError(null)
     const isLive = begin()
 
@@ -101,14 +108,21 @@ export function SceneDetailView({
       await action(isLive)
     } catch (error) {
       if (isLive()) {
-        setActionError(errorMessage(error, tToasts.sceneRegenerateFailed))
+        setActionError(
+          errorMessage(error, kind === 'refresh' ? tToasts.sceneStatusRefreshFailed : tToasts.sceneRegenerateFailed)
+        )
       }
     } finally {
       if (isLive()) {
-        setActionBusy(false)
+        setActionKind(null)
       }
     }
   }
+
+  const refreshDetail = (): Promise<void> =>
+    runAction(async () => {
+      await onLoad()
+    }, 'refresh')
 
   if (!detail) {
     return (
@@ -119,12 +133,23 @@ export function SceneDetailView({
         </button>
         <SettingCard>
           <div className="space-y-3 p-5 text-center">
-            {loading ? <Loader2 className="mx-auto size-5 animate-spin text-accent" /> : null}
+            {loading || refreshing ? <Loader2 className="mx-auto size-5 animate-spin text-accent" /> : null}
             <p className="text-xs text-faint">{loading ? t.loading : t.detailLoadFailed}</p>
+            {actionError ? (
+              <p className="text-xs text-danger-fg" role="alert">
+                {actionError}
+              </p>
+            ) : null}
             {!loading ? (
-              <button className={BTN_SUBTLE} onClick={onLoad} type="button">
+              <button
+                aria-busy={refreshing}
+                className={BTN_SUBTLE}
+                disabled={actionBusy}
+                onClick={() => void refreshDetail()}
+                type="button"
+              >
                 <RefreshCw className="size-3.5" />
-                {t.refresh}
+                {refreshing ? t.refreshing : t.refresh}
               </button>
             ) : null}
           </div>
@@ -161,12 +186,6 @@ export function SceneDetailView({
           <p className="p-3 text-xs text-danger-fg">{detail.error}</p>
         </SettingCard>
       ) : null}
-      {actionError ? (
-        <SettingCard className="border border-danger-line/50">
-          <p className="p-3 text-xs text-danger-fg">{actionError}</p>
-        </SettingCard>
-      ) : null}
-
       <SettingCard className="min-w-0" divided={false}>
         <div className="border-b border-line-hairline">
           {detail.url ? (
@@ -285,9 +304,6 @@ export function SceneDetailView({
           ) : null}
           {generating ? (
             <>
-              <button className={BTN_SUBTLE} disabled={actionBusy} onClick={() => void runAction(onLoad)} type="button">
-                {t.refresh}
-              </button>
               <button
                 className={BTN_SUBTLE}
                 disabled={actionBusy}
@@ -337,7 +353,7 @@ export function SceneDetailView({
                   {t.save}
                 </button>
               </>
-            ) : detail.url ? (
+            ) : hasImage ? (
               <button
                 className={cn(BTN_SUBTLE, 'whitespace-nowrap')}
                 disabled={!canChangeInfo || actionBusy}
@@ -348,7 +364,7 @@ export function SceneDetailView({
                 {t.edit}
               </button>
             ) : null}
-            {detail.url && (detail.status === 'ready' || detail.status === 'description_failed') ? (
+            {hasImage && (detail.status === 'ready' || detail.status === 'description_failed') ? (
               <button
                 className={cn(BTN_PRIMARY, 'whitespace-nowrap')}
                 disabled={!canRegenerate || actionBusy}
@@ -361,12 +377,21 @@ export function SceneDetailView({
                 }}
                 type="button"
               >
-                {actionBusy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                {actionKind === 'other' ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
                 {hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
               </button>
             ) : null}
           </div>
         </div>
+        {actionError ? (
+          <p className="px-4 pb-4 text-xs text-danger-fg sm:px-5" role="alert">
+            {actionError}
+          </p>
+        ) : null}
         {detail.status === 'description_failed' ? (
           <p className={cn(HINT_TEXT, 'px-4 pb-4 sm:px-5')}>{t.needsDescription}</p>
         ) : null}

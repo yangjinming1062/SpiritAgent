@@ -1,6 +1,6 @@
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
@@ -78,6 +78,8 @@ export const $scenePage = atom(0)
 export const $sceneQuery = atom('')
 export const PAGE_SIZE = 24
 const detailCache = new Map<string, SceneAsset>()
+const detailReads = new Map<string, number>()
+let nextRead = 0
 // 场景图 URL 的签名 query 会轮换，同路径即同内容（资产名带随机后缀）：按去 query 路径缓存解析结果，避免轮询期重复取整图。
 const MAX_SCENE_SRC_ENTRIES = 48
 const sceneSrcCache = new Map<string, string>()
@@ -86,6 +88,7 @@ let stateRequest = 0
 let listRequest = 0
 let version = -1
 let eventVersion = -1
+let mutationRevision = 0
 let submitting = false
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollCount = 0
@@ -148,13 +151,25 @@ async function resolveScene(row: SceneWire): Promise<ActiveScene> {
   }
 }
 
-function cacheSceneDetails(entries: SceneAsset[]): void {
+function cacheSceneDetails(entries: SceneAsset[], read: number): void {
   for (const entry of entries) {
+    if (read < (detailReads.get(entry.id) ?? -1)) {
+      continue
+    }
+
+    detailReads.set(entry.id, read)
     detailCache.delete(entry.id)
     detailCache.set(entry.id, entry)
   }
 
   trimOldest(detailCache, 48)
+
+  for (const id of detailReads.keys()) {
+    if (!detailCache.has(id)) {
+      detailReads.delete(id)
+    }
+  }
+
   $sceneDetails.set(Object.fromEntries(detailCache))
 }
 
@@ -208,6 +223,7 @@ registerStorageClearHandler(() => {
   $sceneRegenerating.set(null)
   $sceneLibrary.set([])
   detailCache.clear()
+  detailReads.clear()
   sceneSrcCache.clear()
   sceneSrcRequests.clear()
   $sceneDetails.set({})
@@ -221,6 +237,7 @@ registerStorageClearHandler(() => {
 })
 
 export async function loadSceneLibrary(query = $sceneQuery.get(), page = $scenePage.get()): Promise<void> {
+  const read = ++nextRead
   const request = ++listRequest
   const epoch = currentClearEpoch()
   const isCurrent = (): boolean => request === listRequest && epoch === currentClearEpoch()
@@ -247,8 +264,8 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
     return
   }
 
-  $sceneLibrary.set(entries)
-  cacheSceneDetails(entries)
+  cacheSceneDetails(entries, read)
+  $sceneLibrary.set(entries.map(entry => detailCache.get(entry.id) ?? entry))
   $sceneTotal.set(value.total)
   $sceneLibraryStatus.set('loaded')
 
@@ -257,31 +274,109 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   }
 }
 
-export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | null> {
-  const epoch = currentClearEpoch()
+async function fetchSceneDetail(sceneId: string, deferMedia = false): Promise<SceneAsset | null> {
+  const scope = captureAuthScope()
+
+  if (!scope) {
+    return null
+  }
+
+  const read = ++nextRead
+  const startMutation = mutationRevision
+  const startEvent = eventVersion
+
+  const isCurrent = (): boolean =>
+    scope() &&
+    startMutation === mutationRevision &&
+    startEvent === eventVersion &&
+    read >= (detailReads.get(sceneId) ?? -1)
+
   const result = await authedApi<SceneWire>({ path: `/api/companion/scenes/${encodeURIComponent(sceneId)}` })
 
-  if (
-    !apiSucceeded(result, 'scene', 'Scene detail could not be loaded:') ||
-    epoch !== currentClearEpoch() ||
-    !result.value
-  ) {
+  if (!isCurrent()) {
     return null
   }
 
-  const scene = await resolveScene(result.value)
+  if (!result.ok) {
+    if (result.reason === 'unauth') {
+      return null
+    }
 
-  if (epoch !== currentClearEpoch()) {
+    throw new Error(backendDetailMessage(result.error, getStrings().living.toasts.sceneStatusRefreshFailed))
+  }
+
+  if (!result.value || String(result.value.id) !== sceneId) {
+    throw new Error(getStrings().living.toasts.sceneStatusRefreshFailed)
+  }
+
+  const row = result.value
+  const cached = detailCache.get(sceneId)
+
+  const scene = deferMedia ? toScene(row, row.url ? (cached?.url ?? '') : '') : await resolveScene(row)
+
+  if (!isCurrent()) {
     return null
   }
 
-  cacheSceneDetails([scene])
+  cacheSceneDetails([scene], read)
+
+  if (deferMedia) {
+    void resolveScene(row).then(resolved => {
+      if (isCurrent() && detailReads.get(sceneId) === read) {
+        cacheSceneDetails([resolved], read)
+      }
+    })
+  }
 
   return scene
 }
 
+export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | null> {
+  try {
+    return await fetchSceneDetail(sceneId)
+  } catch (error) {
+    log.warn('scene', 'Scene detail could not be loaded:', error)
+
+    return null
+  }
+}
+
+/** 刷新单个场景的最新状态；不等待场景列表或图片字节，业务错误交给页面显示。 */
+export async function refreshSceneStatus(sceneId: string): Promise<SceneAsset | null> {
+  const scope = captureAuthScope()
+  const detail = await fetchSceneDetail(sceneId, true)
+
+  if (!scope?.() || !detail) {
+    return null
+  }
+
+  // 单场景终态立即解除它的忙碌标记；更早的全局读取不能再覆盖本次查询。
+  stateRequest++
+
+  if (detail.status === 'pending' || $pendingScene.get()?.id === sceneId) {
+    $pendingScene.set(detail.status === 'pending' ? detail : null)
+  }
+
+  if (detail.regeneration?.status === 'pending' || $sceneRegenerating.get()?.id === sceneId) {
+    $sceneRegenerating.set(detail.regeneration?.status === 'pending' ? detail : null)
+  }
+
+  const pending = $pendingScene.get()
+  const taskStatus = !pending ? 'none' : pending.stage === 'waiting_upload' ? 'waiting_upload' : 'pending'
+  $sceneTaskStatus.set(taskStatus)
+  stopPoll()
+  $sceneTaskSlow.set(false)
+
+  if (taskStatus === 'pending' || $sceneRegenerating.get()) {
+    startPoll()
+  }
+
+  return detail
+}
+
 /** 刷新场景状态并在尾部重刷列表；skipLibraryRefresh 只供首屏已并行 loadSceneLibrary 的调用方消去冗余刷新，其余刷新时机不得跳过。 */
 export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {}): Promise<void> {
+  const read = ++nextRead
   const request = ++stateRequest
   const epoch = currentClearEpoch()
   const isCurrent = (): boolean => request === stateRequest && epoch === currentClearEpoch()
@@ -327,11 +422,10 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
     $activeScene.set(active)
     $pendingScene.set(pending)
     $sceneRegenerating.set(regenerating)
-    cacheSceneDetails([
-      ...(active ? [active] : []),
-      ...(pending ? [pending] : []),
-      ...(regenerating ? [regenerating] : [])
-    ])
+    cacheSceneDetails(
+      [...(active ? [active] : []), ...(pending ? [pending] : []), ...(regenerating ? [regenerating] : [])],
+      read
+    )
     $scenePolicy.set(state.policy)
     const taskStatus = !pending ? 'none' : pending.stage === 'waiting_upload' ? 'waiting_upload' : 'pending'
     $sceneTaskStatus.set(taskStatus)
@@ -380,6 +474,7 @@ const sceneError = (error: unknown): string =>
 // 写请求使在途的状态读取失效；返回非空 body，失败或请求期间账户被清理则抛出可直接展示的文案。
 async function sceneRequest<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: object): Promise<T> {
   const epoch = currentClearEpoch()
+  mutationRevision++
   stateRequest++
   const result = await authedApi<T>({ path: `/api/companion/scenes${path}`, method, ...(body ? { body } : {}) })
 

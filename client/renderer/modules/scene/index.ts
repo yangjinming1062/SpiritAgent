@@ -25,6 +25,7 @@ export {
   onSceneEvent,
   PAGE_SIZE,
   prepareScenePrompt,
+  refreshSceneStatus,
   regenerateScene,
   SCENE_IMAGE_SIZE,
   type SceneAsset,

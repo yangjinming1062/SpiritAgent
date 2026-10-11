@@ -27,6 +27,7 @@ import {
   loadSceneDetail,
   loadSceneLibrary,
   prepareScenePrompt,
+  refreshSceneStatus,
   regenerateScene,
   type SceneAsset,
   setScenePolicy
@@ -110,7 +111,7 @@ export function ScenePage(): React.JSX.Element {
 
     let current = true
     setDetailLoading(true)
-    void loadSceneDetail(view.sceneId)
+    void refreshSceneStatus(view.sceneId)
       .catch(() => null)
       .finally(() => {
         if (current) {
@@ -337,10 +338,7 @@ export function ScenePage(): React.JSX.Element {
                   changeEditDraft(detail.id, { title: detail.title, description: detail.description })
                 }
               }}
-              onLoad={async () => {
-                await hydrateScene()
-                await loadSceneDetail(view.sceneId)
-              }}
+              onLoad={() => refreshSceneStatus(view.sceneId)}
               onRegenerate={regenerate}
               onRetryAnalysis={async sceneId => {
                 await analyzeScene(sceneId)
