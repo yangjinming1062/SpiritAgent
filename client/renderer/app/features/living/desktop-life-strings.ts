@@ -75,7 +75,7 @@ const zh = {
     stretch: '舒展身体'
   },
   actionDescriptions: {
-    idle: '以舒服自然的姿态安静相伴，保留呼吸、眨眼等细微变化。',
+    idle: '以舒服自然的姿态安静相伴，以稳定舒适为主；未明确要求时只保留自然带出的不显眼变化。',
     focus: '在当前环境中专注于适合自身身体与性格的安静活动。',
     relax: '以自然的坐卧或休息姿态放松，保持轻微而连续的动作。',
     look: '自然地把注意力转向你，短暂关注后平静收束。',
@@ -165,7 +165,7 @@ const en: typeof zh = {
     stretch: 'Stretch'
   },
   actionDescriptions: {
-    idle: 'Keep you company in a comfortable pose with subtle breathing and blinking.',
+    idle: 'Keep you company in a comfortable pose, favoring a stable, relaxed state; unless explicitly required, only subtle changes that arise naturally.',
     focus: 'Focus on a quiet activity suited to their body, personality, and surroundings.',
     relax: 'Relax in a natural seated or reclining pose with gentle, continuous movement.',
     look: 'Turn their attention toward you briefly, then settle comfortably.',

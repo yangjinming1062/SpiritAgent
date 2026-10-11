@@ -814,8 +814,8 @@ MEDIA_IMAGE_GUIDANCES: dict[str, str] = {
 }
 
 MEDIA_VIDEO_GUIDANCES: dict[str, str] = {
-    "zh": "video_generate 的 prompt 决定视频的环境、动作顺序与镜头，参考图只提供身份与造型，不固定开场。本人出镜传 subject='self'，需要换造型时传 outfit_override；reference_image 可用本会话图片工具结果中的 url，用户附件没有可用地址。",
-    "en": "video_generate's prompt determines the setting, ordered motion and camera work; reference images provide identity and styling without pinning the opening. Pass subject='self' when the character appears and outfit_override for a different outfit; reference_image can use a url from this conversation's image results, and user attachments have no usable address.",
+    "zh": "video_generate 的 prompt 决定视频的环境、动作顺序与镜头；以自然、连贯为第一优先级，只写完成本轮目的所需的动作，未明确要求时不把呼吸、眨眼等重复微动作作为填充。参考图只提供身份与造型，不固定开场。本人出镜传 subject='self'，需要换造型时传 outfit_override；reference_image 可用本会话图片工具结果中的 url，用户附件没有可用地址。",
+    "en": "video_generate's prompt determines the setting, ordered motion and camera work; natural, continuous motion comes first, so describe only what this turn needs and, unless explicitly required, do not use repetitive breathing, blinking, or other filler movement. Reference images provide identity and styling without pinning the opening. Pass subject='self' when the character appears and outfit_override for a different outfit; reference_image can use a url from this conversation's image results, and user attachments have no usable address.",
 }
 
 COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {

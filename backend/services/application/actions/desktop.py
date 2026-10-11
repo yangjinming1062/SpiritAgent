@@ -196,7 +196,8 @@ async def get_desktop_external_prompt(
             f"Create a {action.duration_seconds}-second {action.kind} video from the supplied images in order: "
             f"{DESKTOP_IMAGE_1_REFERENCE_EN} Image 2 provides the desktop-scene environment. "
             f"{DESKTOP_IMAGE_1_PRESERVE_EN} Use image 2 only for the environment, and keep the scene, "
-            f"lighting and camera stable; show only this action: {action.description}. Keep motion physically natural and "
+            f"lighting and camera stable; show only this action: {action.description}. Natural, continuous motion is the priority: "
+            f"include only what this action needs; unless explicitly required, do not use repetitive breathing, blinking or filler movement. Keep motion physically natural and "
             f"suitable for the character. Do not add people, subtitles, logos, watermarks, cuts or split screens. "
             f"Do not change the framing unless needed for the action."
         )
@@ -206,7 +207,7 @@ async def get_desktop_external_prompt(
         prompt = (
             f"制作一段 {action.duration_seconds} 秒的{('循环' if action.kind == 'loop' else '单次')}视频，按顺序使用所提供的图片：{DESKTOP_IMAGE_1_REFERENCE_ZH}图 2 提供桌景环境。"
             f"{DESKTOP_IMAGE_1_PRESERVE_ZH}图 2 只用于环境，并保持桌景、光线和镜头稳定，只表现以下动作：{action.description}"
-            "。动作要符合身体结构，受力、接触和衣物变化自然。不要新增人物，不要字幕、标志、水印、切镜或分屏；"
+            "。自然感优先，只表现完成该动作所需的连贯变化；未明确要求时不把反复呼吸、眨眼或其他微动作作为填充。动作要符合身体结构，受力、接触和衣物变化自然。不要新增人物，不要字幕、标志、水印、切镜或分屏；"
             "不要改变取景，除非动作确实需要。"
         )
         if extra:
