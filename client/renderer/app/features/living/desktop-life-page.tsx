@@ -20,11 +20,12 @@ import {
   uploadDesktopVideoAction
 } from '@/modules/desktop-videos'
 import { useResolvedMediaSrc } from '@/modules/media'
+import { PortraitLightbox } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft } from '@/shared/lib/icons'
-import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, WizardModal } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
@@ -92,10 +93,12 @@ function DesktopLifePreview({ action }: { action: DesktopVideoAction }): React.J
 
 function ExternalReference({
   reference,
+  onZoom,
   saveLabel,
   savedLabel
 }: {
   reference: DesktopVideoPromptReference
+  onZoom: (url: string) => void
   saveLabel: string
   savedLabel: string
 }): React.JSX.Element {
@@ -120,7 +123,14 @@ function ExternalReference({
     <div className="flex flex-col gap-2 rounded-lg border border-line-hairline p-2">
       <div className="flex aspect-video items-center justify-center overflow-hidden rounded bg-black/10">
         {media.status === 'ready' ? (
-          <img alt={reference.label} className="h-full w-full object-contain" src={media.src} />
+          <button
+            aria-label={reference.label}
+            className="h-full w-full cursor-zoom-in"
+            onClick={() => onZoom(media.src)}
+            type="button"
+          >
+            <img alt={reference.label} className="h-full w-full object-contain" src={media.src} />
+          </button>
         ) : (
           <span className="text-xs text-muted">{reference.label}</span>
         )}
@@ -161,6 +171,7 @@ export function DesktopLifePage(): React.JSX.Element {
   const [externalPromptLoading, setExternalPromptLoading] = useState(false)
   const [externalUploading, setExternalUploading] = useState(false)
   const [externalCopied, setExternalCopied] = useState(false)
+  const [externalReferenceZoom, setExternalReferenceZoom] = useState<{ label: string; url: string } | null>(null)
   const externalRequest = useRef(0)
   const externalAuthSession = useRef(authSessionId)
   const beginAsync = useAsyncGuard()
@@ -189,6 +200,7 @@ export function DesktopLifePage(): React.JSX.Element {
     setExternalAction(null)
     setExternalPrompt(null)
     setExternalFilePath(null)
+    setExternalReferenceZoom(null)
     setExternalPromptLoading(false)
     setExternalUploading(false)
   }, [authSessionId])
@@ -265,6 +277,7 @@ export function DesktopLifePage(): React.JSX.Element {
     setExternalPrompt(null)
     setExternalRequirements('')
     setExternalFilePath(null)
+    setExternalReferenceZoom(null)
     setExternalCopied(false)
     void loadExternalPrompt(action)
   }
@@ -274,6 +287,7 @@ export function DesktopLifePage(): React.JSX.Element {
     setExternalAction(null)
     setExternalPrompt(null)
     setExternalFilePath(null)
+    setExternalReferenceZoom(null)
     setExternalCopied(false)
     setExternalPromptLoading(false)
     setExternalUploading(false)
@@ -659,27 +673,18 @@ export function DesktopLifePage(): React.JSX.Element {
         </div>
       )}
       {externalAction && (
-        <div
-          aria-label={t.externalTitle}
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onMouseDown={event => {
-            if (event.target === event.currentTarget && !externalUploading) {
-              closeExternal()
-            }
-          }}
-          role="dialog"
+        <WizardModal
+          backdropClose={!externalUploading}
+          closeDisabled={externalUploading}
+          draggable
+          escClose={!externalUploading && !externalReferenceZoom}
+          onClose={externalUploading ? () => undefined : closeExternal}
+          regionId="desktop-life-external"
+          title={t.externalTitle}
+          widthClass="max-w-2xl"
         >
-          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-4 overflow-y-auto rounded-2xl border border-line-hairline bg-surface-card p-5 shadow-xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-base font-semibold text-strong">{t.externalTitle}</h3>
-                <p className="mt-1 text-xs leading-relaxed text-muted">{t.externalHint}</p>
-              </div>
-              <button className={BTN_SUBTLE} disabled={externalUploading} onClick={closeExternal} type="button">
-                {t.close}
-              </button>
-            </div>
+          <div className="flex flex-col gap-4">
+            <p className="text-xs leading-relaxed text-muted">{t.externalHint}</p>
             <label className="flex flex-col gap-2 text-xs text-body">
               {t.requirements}
               <textarea
@@ -717,10 +722,11 @@ export function DesktopLifePage(): React.JSX.Element {
                 />
                 <h4 className="mt-2 text-sm font-medium text-strong">{t.references}</h4>
                 {externalPrompt.references?.length ? (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {externalPrompt.references.map(reference => (
                       <ExternalReference
                         key={`${reference.label}:${reference.url}`}
+                        onZoom={url => setExternalReferenceZoom({ label: reference.label, url })}
                         reference={reference}
                         savedLabel={t.referenceSaved}
                         saveLabel={t.saveReference}
@@ -760,7 +766,14 @@ export function DesktopLifePage(): React.JSX.Element {
               </button>
             </section>
           </div>
-        </div>
+        </WizardModal>
+      )}
+      {externalReferenceZoom && (
+        <PortraitLightbox
+          name={externalReferenceZoom.label}
+          onClose={() => setExternalReferenceZoom(null)}
+          url={externalReferenceZoom.url}
+        />
       )}
     </div>
   )

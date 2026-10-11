@@ -274,9 +274,9 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 ### 桌面生活视频与模式隔离
 
-窗口模式的场景背景和透明精灵与桌面模式的生活视频是两条独立呈现链。窗口场景新生成、重生成和新上传展示图固定为 `2560×1440`、`16:9`；桌面组合使用冻结身份图、当前衣柜图、场景描述／媒体和系统生成的 `16:9` 规格，角色卡文字 revision 不单独使组合失效。桌面系统视频为无声 MP4 与封面，不执行抠像、透明命中或完整全身检查；用户上传视频保留原始比例、分辨率、帧率、时长和音轨，只要求能被桌面播放器直接解码，桌面播放器继续静音。客户端按视频画幅和显示器比例自动选择铺满或完整显示，裁切过重时以同画面的模糊铺底补足空白。聊天语音仍走会话通道。
+窗口模式的场景背景和透明精灵与桌面模式的生活视频是两条独立呈现链。窗口场景新生成、重生成和新上传展示图固定为 `2560×1440`、`16:9`；桌面组合保留冻结身份快照用于版本校验，但制作视觉输入使用当前衣柜图、场景描述／媒体和系统生成的 `16:9` 规格，当前衣柜图同时承担角色与造型参考，角色卡文字 revision 不单独使组合失效。桌面系统视频为无声 MP4 与封面，不执行抠像、透明命中或完整全身检查；用户上传视频保留原始比例、分辨率、帧率、时长和音轨，只要求能被桌面播放器直接解码，桌面播放器继续静音。客户端按视频画幅和显示器比例自动选择铺满或完整显示，裁切过重时以同画面的模糊铺底补足空白。聊天语音仍走会话通道。
 
-桌面资源由 `/api/companion/desktop-videos` 管理：`GET /state`、`GET /sets`、`GET /actions/{id}` 查询，`POST /ensure-current` 准备当前组合，`POST /actions/{id}/generate` 制作，`POST /actions/{id}/external-prompt` 获取外部制作提示词与当前身份／穿着／桌景参考图，`POST /actions/{id}/upload` 以 multipart 上传可直接播放的原始视频并生成封面，`POST /actions/{id}/accept|reject` 复核系统候选，`POST /design` 设计自主动作，`POST /play` 请求播放，`PUT /preferences` 设置固定和自主切换，`POST /plays/{play_id}/claim` 认领以及 `POST /plays/{play_id}/receipt` 回执。外部上传不占系统视频制作额度、不进入人工复核；技术检查失败时保留旧已采纳版本。`DesktopVideoEnsureRequest.trigger` 为 `entry`（用户明确进入桌面，按用户请求计额）或 `context_change`（依赖变化，按自主政策计额）；启动水合只查询和复用，不因缺项自动提交付费制作。
+桌面资源由 `/api/companion/desktop-videos` 管理：`GET /state`、`GET /sets`、`GET /actions/{id}` 查询，`POST /ensure-current` 准备当前组合，`POST /actions/{id}/generate` 制作，`POST /actions/{id}/external-prompt` 获取外部制作提示词与当前穿着、桌景参考图，`POST /actions/{id}/upload` 以 multipart 上传可直接播放的原始视频并生成封面，`POST /actions/{id}/accept|reject` 复核系统候选，`POST /design` 设计自主动作，`POST /play` 请求播放，`PUT /preferences` 设置固定和自主切换，`POST /plays/{play_id}/claim` 认领以及 `POST /plays/{play_id}/receipt` 回执。外部上传不占系统视频制作额度、不进入人工复核；技术检查失败时保留旧已采纳版本。`DesktopVideoEnsureRequest.trigger` 为 `entry`（用户明确进入桌面，按用户请求计额）或 `context_change`（依赖变化，按自主政策计额）；启动水合只查询和复用，不因缺项自动提交付费制作。
 
 状态分为组合、动作、提案、播放命令和实际回执。组合与动作是持久资产，提案用于设计和评审。持续保底循环由客户端按当前组合、持续动作选择和已缓存媒体直接渲染，不依赖播放请求或认领；有效认领指令优先播放，终态、组合变化或持续素材版本更新立即解除旧指令优先级，回执失败不阻塞本地回退。播放命令只在当前组合、`set_epoch`、`presentation_revision` 与有效期仍匹配时兑现；播放器先以客户端 ID 原子认领，再以 `started`、`completed`、`interrupted`、`failed` 或 `rejected` 回报，排队或命令到达不等于已经显示。当前模式、账户和呈现代次不匹配时返回状态错误，迟到结果不能覆盖新组合。
 

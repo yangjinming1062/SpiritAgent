@@ -21,11 +21,7 @@ from modules.settings import get_user_setting
 from PIL import Image, ImageOps
 from prompts.desktop_videos import (
     DESKTOP_ACTION_DESIGN,
-    DESKTOP_OUTFIT_FROM_IDENTITY,
-    DESKTOP_OUTFIT_REFERENCE,
     DESKTOP_POSE_IMAGE_TEMPLATE,
-    DESKTOP_REVIEW_OUTFIT_FROM_IDENTITY,
-    DESKTOP_REVIEW_OUTFIT_REFERENCE,
     DESKTOP_VIDEO_LOOP,
     DESKTOP_VIDEO_MOTION_TEMPLATE,
     DESKTOP_VIDEO_ONCE,
@@ -57,10 +53,11 @@ from services.infrastructure.assets import (
     build_data_uri,
     compute_file_sha256,
     download_media_result,
-    read_asset_data_uri,
+    read_valid_image_data_uri,
     resolve_asset_reference,
     save_companion_asset_async,
     save_video_job_asset_async,
+    unlink_companion_asset,
 )
 from services.infrastructure.llm import (
     LlmCallBlockedError,
@@ -80,7 +77,7 @@ from services.infrastructure.video_processing import (
     sample_desktop_video_frames,
 )
 
-from .character_images import ImageChainState, generate_character_images
+from .character_images import CharacterImageInput, ImageChainState, generate_character_images
 from .identity_review import score_character_frames
 from .image_generation import resolve_image_gen_chain
 from .media_chain import (
@@ -201,9 +198,9 @@ async def resolve_desktop_video_plan(
         chain = await resolve_provider_chain(db, user_id, "video_gen")
         if not await resolve_vision_chain(db, user_id):
             raise DesktopVideoStateError("请先配置视觉模型")
-        images, error = await resolve_image_gen_chain(db, user_id, has_reference=True, multiple_references=True)
+        images, error = await resolve_image_gen_chain(db, user_id, has_reference=True)
         if not images:
-            raise DesktopVideoStateError(error or "请配置支持身份和穿着参考的图片模型")
+            raise DesktopVideoStateError(error or "请配置支持当前穿着参考的图片模型")
     configured = [(config, build_provider(config, VideoGenProvider)) for config in chain]
     for index, (_, provider) in enumerate(configured):
         if not provider.supports_first_frame or (kind == "loop" and not provider.supports_loop_frames):
@@ -275,14 +272,11 @@ async def _save_progress(user_id: int, action_id: int, progress: DesktopVideoPro
         await db.commit()
 
 
-async def _references(snapshot: DesktopVisualSnapshot) -> tuple[str, str | None]:
-    identity, outfit = await asyncio.gather(
-        asyncio.to_thread(read_asset_data_uri, snapshot.identity_path),
-        asyncio.to_thread(read_asset_data_uri, snapshot.outfit_path),
-    )
-    if not identity or not outfit:
-        raise DesktopVideoStateError("身份或穿着参考图片无法读取，请先修复对应资产")
-    return identity, outfit if snapshot.outfit_hash != snapshot.identity_hash else None
+async def _reference(snapshot: DesktopVisualSnapshot) -> str:
+    outfit = await asyncio.to_thread(read_valid_image_data_uri, snapshot.outfit_path)
+    if not outfit:
+        raise DesktopVideoStateError("当前穿着参考图片无法读取，请先修复对应资产")
+    return outfit
 
 
 def _fit_pose(data: bytes) -> bytes:
@@ -302,7 +296,7 @@ async def _prepare_pose(
 ) -> None:
     if progress.pose_path:
         return
-    identity, outfit = await _references(snapshot)
+    outfit = await _reference(snapshot)
 
     async def before_submit() -> None:
         await _require_paid_job(user_id, action.id, progress.generation_id)
@@ -316,7 +310,6 @@ async def _prepare_pose(
                 {
                     "persona": snapshot.persona,
                     "identity": snapshot.identity.features.model_dump(),
-                    "has_outfit_reference": outfit is not None,
                     "outfit": snapshot.outfit_description,
                     "environment": snapshot.scene_description,
                     "action": action.description,
@@ -328,7 +321,7 @@ async def _prepare_pose(
                 },
                 ensure_ascii=False,
             ),
-            reference_images=(identity, outfit) if outfit else (identity,),
+            reference_images=(outfit,),
             before_submit=before_submit,
         )
         script = DesktopVideoScript.model_validate(parse_llm_json(raw))
@@ -345,19 +338,41 @@ async def _prepare_pose(
         await _save_progress(user_id, action.id, progress, stage="image")
 
     prompt = DESKTOP_POSE_IMAGE_TEMPLATE.format(
-        outfit_reference=DESKTOP_OUTFIT_REFERENCE if outfit else DESKTOP_OUTFIT_FROM_IDENTITY,
         pose=progress.pose_prompt,
         environment=snapshot.scene_description,
         outfit=snapshot.outfit_description,
         identity=render_character_identity(snapshot.identity),
     )
+    if isinstance(image_state.inputs, CharacterImageInput):
+        # Older in-flight jobs froze identity + outfit as separate references. Repoint
+        # the resumable image chain to the outfit image without submitting a new task.
+        legacy_references = {
+            value
+            for value in (
+                image_state.inputs.reference_image,
+                image_state.inputs.secondary_reference_image,
+                image_state.inputs.identity_reference,
+            )
+            if value and value != outfit
+        }
+        retained_candidates = {
+            path for candidate in image_state.candidates for path in (candidate.path, *candidate.artifacts)
+        }
+        frozen_reference = image_state.inputs.secondary_reference_image or outfit
+        image_state.inputs.reference_image = frozen_reference
+        image_state.inputs.secondary_reference_image = None
+        image_state.inputs.identity_reference = frozen_reference
+        image_state.inputs.identity_text = render_character_identity(snapshot.identity)
+        image_state.inputs.prompt = prompt
+        protected_assets = {snapshot.identity_path, snapshot.outfit_path}
+        for path in legacy_references - {frozen_reference} - retained_candidates - protected_assets:
+            await asyncio.to_thread(unlink_companion_asset, path)
     paths = await generate_character_images(
         prompt,
         user_id=user_id,
         storage_directory=directory,
-        reference_image=identity,
-        secondary_reference_image=outfit,
-        identity_reference=identity,
+        reference_image=outfit,
+        identity_reference=outfit,
         identity_text=render_character_identity(snapshot.identity),
         size="1920x1080",
         state=image_state,
@@ -457,7 +472,7 @@ async def _evaluate_candidate(
     samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0])
     uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
     try:
-        identity, outfit = await _references(snapshot)
+        outfit = await _reference(snapshot)
     except (DesktopVideoStateError, OSError):
         progress.review_verdict, progress.review_reason = "review", "参考图片无法读取，成品保留供预览确认"
         await _save_progress(user_id, action.id, progress, stage="review")
@@ -471,7 +486,7 @@ async def _evaluate_candidate(
     if progress.identity_score is None:
         progress.identity_score = await score_character_frames(
             user_id,
-            identity,
+            outfit,
             uris,
             identity_text=render_character_identity(snapshot.identity),
             before_submit=before_submit,
@@ -484,12 +499,10 @@ async def _evaluate_candidate(
         try:
             raw = await vision_chat(
                 user_id,
-                DESKTOP_VIDEO_REVIEW.format(
-                    outfit_reference=DESKTOP_REVIEW_OUTFIT_REFERENCE if outfit else DESKTOP_REVIEW_OUTFIT_FROM_IDENTITY,
-                    frame_start=3 if outfit else 2,
-                ),
+                DESKTOP_VIDEO_REVIEW,
                 json.dumps(
                     {
+                        "identity": snapshot.identity.features.model_dump(),
                         "outfit": snapshot.outfit_description,
                         "environment": snapshot.scene_description,
                         "action": action.description,
@@ -499,7 +512,7 @@ async def _evaluate_candidate(
                     },
                     ensure_ascii=False,
                 ),
-                reference_images=(identity, outfit, *uris) if outfit else (identity, *uris),
+                reference_images=(outfit, *uris),
                 before_submit=before_submit,
             )
             review = DesktopVideoReview.model_validate(parse_llm_json(raw))
@@ -681,7 +694,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 if not allow_paid_steps:
                     raise GenerationWorkPaused
                 await _require_paid_job(user_id, action_id, generation_id)
-                pose = await asyncio.to_thread(read_asset_data_uri, progress.pose_path)
+                pose = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
                 if not pose:
                     raise DesktopVideoStateError("起始画面无法读取")
                 chain.begin(index)

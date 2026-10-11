@@ -100,6 +100,18 @@ def read_asset_data_uri(reference: str | None) -> str | None:
         return None
 
 
+def read_valid_image_data_uri(reference: str | None) -> str | None:
+    """读取并完整解码图片；缺失、损坏或不支持的图片返回 None。"""
+    resolved = resolve_asset_reference(reference)
+    if resolved is None or not resolved[1].startswith("image/"):
+        return None
+    try:
+        data, mime = validate_image_bytes(resolved[0].read_bytes())
+    except (OSError, ValueError):
+        return None
+    return build_data_uri(data, mime)
+
+
 class UnsupportedImageFormatError(ValueError):
     """图片可以识别，但格式不在 PNG / JPEG / WebP / GIF 范围内。"""
 

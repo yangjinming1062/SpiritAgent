@@ -33,7 +33,7 @@
 | [generation/scene_prompt.py](../services/application/generation/scene_prompt.py)、[scene_image_review.py](../services/application/generation/scene_image_review.py) | 环境生成、成品分析与重复伙伴检查分别调用；初始环境要求由 `scene_service._initial_scene_notes` 给出 |
 | [generation/visual_identity.py](../services/application/generation/visual_identity.py) | 聊天与动态共用出镜身份、造型和参考装配；无角色出镜的图片与视频也在此补统一的写实要求，新增生图入口须经过对应装配函数 |
 | [generation/video/script.py](../services/application/generation/video/script.py) | 静态图片描述与视频起始姿态/运动脚本分开，另有探身定位校准 |
-| [generation/desktop_video.py](../services/application/generation/desktop_video.py)、[actions/desktop.py](../services/application/actions/desktop.py) | 身份图与穿着图分工，完整环境起始画面、独立运动描述、循环采样检查；模式、预算与播放意图由代码校验 |
+| [generation/desktop_video.py](../services/application/generation/desktop_video.py)、[actions/desktop.py](../services/application/actions/desktop.py) | 当前穿着图统一提供角色与造型参考，完整环境起始画面、独立运动描述、循环采样检查；模式、预算与播放意图由代码校验 |
 | [companion/first_greeting.py](../services/domains/companion/first_greeting.py)、[prompt_runtime.py](../services/domains/companion/prompt_runtime.py) | 问候保存为意图资料；小推理只选相关人设、记忆与近期原始对话，保留时间和截断标记 |
 
 供应商的 `VOICE_DESIGN_GUIDE` 位于各 TTS 适配器，仅指导用户设计音色，不装入每条语音正文。

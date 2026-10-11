@@ -272,16 +272,36 @@ export function Slider({
   )
 }
 
-export function PanelHeader({ title, onClose }: { title: ReactNode; onClose: () => void }): React.JSX.Element {
+export function PanelHeader({
+  title,
+  onClose,
+  closeDisabled = false,
+  onPointerDown,
+  draggable = false
+}: {
+  title: ReactNode
+  onClose: () => void
+  closeDisabled?: boolean
+  onPointerDown?: React.PointerEventHandler<HTMLDivElement>
+  draggable?: boolean
+}): React.JSX.Element {
   const t = useStrings()
 
   return (
-    <div className="relative flex items-center justify-between gap-2 border-b border-line-standard px-4 py-2.5 bg-fill-faint">
+    <div
+      className={cn(
+        'relative flex items-center justify-between gap-2 border-b border-line-standard bg-fill-faint px-4 py-2.5',
+        draggable && 'cursor-move select-none touch-none'
+      )}
+      onPointerDown={onPointerDown}
+    >
       <h2 className="text-sm font-semibold tracking-wide text-strong">{title}</h2>
       <button
         aria-label={t.common.close}
         className={cn(BTN_ICON, 'hover:border hover:border-line-strong hover:bg-danger-bg hover:text-danger-fg')}
+        disabled={closeDisabled}
         onClick={onClose}
+        onPointerDown={event => event.stopPropagation()}
         type="button"
       >
         <X />

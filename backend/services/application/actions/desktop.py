@@ -41,6 +41,10 @@ from prompts.desktop_videos import (
     DESKTOP_ACTION_REVIEW,
     DESKTOP_CONTEXT_GUIDANCE,
     DESKTOP_IDLE_EXPRESSION,
+    DESKTOP_IMAGE_1_PRESERVE_EN,
+    DESKTOP_IMAGE_1_PRESERVE_ZH,
+    DESKTOP_IMAGE_1_REFERENCE_EN,
+    DESKTOP_IMAGE_1_REFERENCE_ZH,
     DESKTOP_PRESETS,
 )
 from pydantic import BaseModel, ConfigDict, Field
@@ -88,7 +92,7 @@ from services.domains.companion import (
 )
 from services.domains.conversation import load_recent_context_window
 from services.infrastructure.assets import (
-    read_asset_data_uri,
+    read_valid_image_data_uri,
     save_action_source_asset_async,
     signed_companion_asset_url,
     sniff_media_ext,
@@ -175,21 +179,24 @@ async def get_desktop_external_prompt(
         ),
     )
     references: list[DesktopVideoReference] = []
-    for label, path in (
-        ("身份参考图", snapshot.identity_path),
-        ("当前穿着参考图", snapshot.outfit_path),
-        ("桌景参考图", scene.media_path if scene is not None else ""),
+    for label, path, failure_message in (
+        ("当前穿着参考图", snapshot.outfit_path, "当前穿着参考图片无法读取，请先修复对应资产"),
+        ("桌景参考图", scene.media_path if scene is not None else "", "桌景参考图片无法读取，请先修复对应资产"),
     ):
-        url = signed_companion_asset_url(path) if path else None
-        if url:
-            references.append(DesktopVideoReference(label=label, url=url))
+        if not path or not await asyncio.to_thread(read_valid_image_data_uri, path):
+            raise DesktopVideoStateError(failure_message)
+        url = signed_companion_asset_url(path)
+        if url is None:
+            raise DesktopVideoStateError(failure_message)
+        references.append(DesktopVideoReference(label=label, url=url))
     language = resolve_language(await get_user_setting(db, user_id, "language"))
     extra = requirements.strip()
     if language == "en":
         prompt = (
-            f"Create a {action.duration_seconds}-second {action.kind} video of the same character in the supplied "
-            f"current outfit and desktop scene. Keep the identity, body structure, outfit, scene, lighting and "
-            f"camera stable; show only this action: {action.description}. Keep motion physically natural and "
+            f"Create a {action.duration_seconds}-second {action.kind} video from the supplied images in order: "
+            f"{DESKTOP_IMAGE_1_REFERENCE_EN} Image 2 provides the desktop-scene environment. "
+            f"{DESKTOP_IMAGE_1_PRESERVE_EN} Use image 2 only for the environment, and keep the scene, "
+            f"lighting and camera stable; show only this action: {action.description}. Keep motion physically natural and "
             f"suitable for the character. Do not add people, subtitles, logos, watermarks, cuts or split screens. "
             f"Do not change the framing unless needed for the action."
         )
@@ -197,8 +204,8 @@ async def get_desktop_external_prompt(
             prompt += f" Additional user requirements: {extra}"
     else:
         prompt = (
-            f"制作一段 {action.duration_seconds} 秒的{('循环' if action.kind == 'loop' else '单次')}视频，使用所提供的同一伙伴、当前穿着和桌景。"
-            f"保持身份、身体结构、穿着、桌景、光线和镜头稳定，只表现以下动作：{action.description}"
+            f"制作一段 {action.duration_seconds} 秒的{('循环' if action.kind == 'loop' else '单次')}视频，按顺序使用所提供的图片：{DESKTOP_IMAGE_1_REFERENCE_ZH}图 2 提供桌景环境。"
+            f"{DESKTOP_IMAGE_1_PRESERVE_ZH}图 2 只用于环境，并保持桌景、光线和镜头稳定，只表现以下动作：{action.description}"
             "。动作要符合身体结构，受力、接触和衣物变化自然。不要新增人物，不要字幕、标志、水印、切镜或分屏；"
             "不要改变取景，除非动作确实需要。"
         )
@@ -799,11 +806,8 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int, *, allow_gene
                 ):
                     raise LlmCallBlockedError("自主制作当前已关闭")
 
-        identity, outfit = await asyncio.gather(
-            asyncio.to_thread(read_asset_data_uri, snapshot.identity_path),
-            asyncio.to_thread(read_asset_data_uri, snapshot.outfit_path),
-        )
-        if not identity or not outfit:
+        outfit = await asyncio.to_thread(read_valid_image_data_uri, snapshot.outfit_path)
+        if not outfit:
             raise DesktopVideoStateError("参考图片无法读取")
         raw = await vision_chat(
             user_id,
@@ -812,6 +816,7 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int, *, allow_gene
                 {
                     "design": request.model_dump(),
                     "output_language": language,
+                    "identity": snapshot.identity.features.model_dump(),
                     "persona": snapshot.persona,
                     "outfit": snapshot.outfit_description,
                     "environment": snapshot.scene_description,
@@ -819,7 +824,7 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int, *, allow_gene
                 },
                 ensure_ascii=False,
             ),
-            reference_images=(identity, outfit) if snapshot.outfit_hash != snapshot.identity_hash else (identity,),
+            reference_images=(outfit,),
             before_submit=before_submit,
         )
         verdict = DesktopProposalVerdict.model_validate(parse_llm_json(raw))
