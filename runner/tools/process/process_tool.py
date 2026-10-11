@@ -591,15 +591,14 @@ atexit.register(process_registry.kill_all)
 PROCESS_SCHEMA = {
     "name": "process",
     "description": (
-        "Manage background processes started with terminal(background=true). "
-        "Actions: 'list' (show all), 'poll' (check status + recent output), "
-        "'log' (full output with pagination), 'wait' (block until done or timeout), "
-        "'kill' (terminate), 'write' (send raw stdin data without newline), "
-        "'submit' (send data + Enter, for answering prompts), 'close' (close stdin/send EOF). "
-        "stdin actions work only for processes on the local host."
+        "Manage processes started with terminal(background=true). action='list' takes no session_id; every other "
+        "action uses terminal's session_id. poll checks status, log reads output, wait blocks, kill terminates, "
+        "write sends stdin, submit sends stdin plus Enter, and close sends EOF. write/submit/close change state and "
+        "stdin works only for local processes. After a timeout or unknown result, poll before repeating a state change."
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "action": {
                 "type": "string",
@@ -609,22 +608,47 @@ PROCESS_SCHEMA = {
             "session_id": {
                 "type": "string",
                 "description": (
-                    "Process session ID (from terminal background output). Required for all actions except 'list'."
+                    "Process session ID from terminal(background=true). Required for every action except 'list'; "
+                    "do not invent or reuse an ID from another task."
                 ),
             },
             "data": {
                 "type": "string",
-                "description": "Text to send to process stdin (for 'write' and 'submit' actions)",
+                "description": "Required for 'write' and 'submit'. Text sent to stdin; 'submit' appends Enter.",
             },
             "timeout": {
                 "type": "integer",
                 "description": "Max seconds to block for 'wait' action. Returns partial output on timeout.",
                 "minimum": 1,
             },
-            "offset": {"type": "integer", "description": "Line offset for 'log' action (default: last 200 lines)"},
+            "offset": {
+                "type": "integer",
+                "description": "Line offset for 'log' action (default: last 200 lines)",
+                "minimum": 0,
+            },
             "limit": {"type": "integer", "description": "Max lines to return for 'log' action", "minimum": 1},
         },
         "required": ["action"],
+        "allOf": [
+            {
+                "if": {"properties": {"action": {"const": "list"}}},
+                "then": {"not": {"required": ["session_id"]}},
+            },
+            {
+                "if": {
+                    "properties": {
+                        "action": {
+                            "enum": ["poll", "log", "wait", "kill", "write", "submit", "close"],
+                        },
+                    },
+                },
+                "then": {"required": ["session_id"]},
+            },
+            {
+                "if": {"properties": {"action": {"enum": ["write", "submit"]}}},
+                "then": {"required": ["data"]},
+            },
+        ],
     },
 }
 
@@ -641,8 +665,25 @@ def _coerce_int(value: Any, field_name: str) -> int | None:
 
 def _handle_process(args: dict[str, Any], **kw: Any) -> str:
     action = args.get("action", "")
-    # 兼容模型把 session_id 发成整数。
-    session_id = str(args["session_id"]) if args.get("session_id") is not None else ""
+    valid_actions = {"list", "poll", "log", "wait", "kill", "write", "submit", "close"}
+    if not isinstance(action, str) or action not in valid_actions:
+        return tool_error(
+            f"Unknown process action: {action}. Use: list, poll, log, wait, kill, write, submit, close",
+        )
+    # 兼容模型把 session_id 发成整数，但拒绝把任意对象转成看似有效的 ID。
+    raw_session_id = args.get("session_id")
+    if raw_session_id is not None and (isinstance(raw_session_id, bool) or not isinstance(raw_session_id, str | int)):
+        return tool_error("session_id must be a string")
+    if action == "list" and "session_id" in args:
+        return tool_error("session_id must be omitted for list")
+    session_id = str(raw_session_id) if raw_session_id is not None else ""
+    if action != "list" and not session_id:
+        return tool_error(f"session_id is required for {action}")
+    if action in {"write", "submit"}:
+        if "data" not in args:
+            return tool_error(f"data is required for {action}")
+        if not isinstance(args["data"], str):
+            return tool_error(f"data must be a string for {action}")
     try:
         offset = _coerce_int(args.get("offset"), "offset")
         limit = _coerce_int(args.get("limit"), "limit")
@@ -650,6 +691,8 @@ def _handle_process(args: dict[str, Any], **kw: Any) -> str:
         for field_name, value in (("limit", limit), ("timeout", timeout)):
             if value is not None and value < 1:
                 raise ValueError(f"{field_name} must be at least 1")
+        if offset is not None and offset < 0:
+            raise ValueError("offset must be at least 0")
     except ValueError as e:
         return tool_error(str(e))
     match action:
@@ -658,8 +701,6 @@ def _handle_process(args: dict[str, Any], **kw: Any) -> str:
                 {"processes": process_registry.list_sessions(task_id=kw.get("task_id"))},
                 ensure_ascii=False,
             )
-        case "poll" | "log" | "wait" | "kill" | "write" | "submit" | "close" if not session_id:
-            return tool_error(f"session_id is required for {action}")
         case "poll":
             return json.dumps(process_registry.poll(session_id), ensure_ascii=False)
         case "log":
@@ -682,9 +723,8 @@ def _handle_process(args: dict[str, Any], **kw: Any) -> str:
         case "close":
             return json.dumps(process_registry.close_stdin(session_id), ensure_ascii=False)
         case _:
-            return tool_error(
-                f"Unknown process action: {action}. Use: list, poll, log, wait, kill, write, submit, close",
-            )
+            # action was validated above; keep a defensive branch if the dispatch table changes.
+            return tool_error(f"Unknown process action: {action}")
 
 
 registry.register_tool("process", schema=PROCESS_SCHEMA)(_handle_process)

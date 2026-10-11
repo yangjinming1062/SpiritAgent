@@ -115,6 +115,102 @@ def _blocked_type_pattern(text: str) -> str | None:
     return next((pat.pattern for pat in _BLOCKED_TYPE_PATTERNS if pat.search(text)), None)
 
 
+def _validate_action_args(action: str, args: dict[str, Any]) -> str | None:
+    """Reject incomplete or malformed actions before starting the desktop backend or sending input."""
+    try:
+        if action == "capture":
+            mode = str(args.get("mode") or "som")
+            if mode not in _CAPTURE_MODES:
+                return f"bad mode {mode!r}; use som, vision or ax"
+            if "max_elements" in args:
+                max_elements = int(args["max_elements"])
+                if not 1 <= max_elements <= 1000:
+                    return "max_elements must be between 1 and 1000"
+            return None
+        if action == "list_apps":
+            return None
+        if action == "focus_app":
+            if not isinstance(args.get("app"), str) or not args["app"].strip():
+                return "focus_app requires `app`"
+            return None
+        if action in {"click", "double_click", "right_click", "middle_click"}:
+            if args.get("element") is None and args.get("coordinate") is None:
+                return f"{action} requires `element` or `coordinate`; use the latest capture"
+            if (
+                args.get("element") is not None
+                and (element := _optional_int(args["element"])) is not None
+                and element < 0
+            ):
+                return "element must be non-negative"
+            if args.get("coordinate") is not None:
+                _point(args["coordinate"])
+            button = str(args.get("button") or "left")
+            if button not in _BUTTONS:
+                return f"bad button {button!r}; use left, right or middle"
+            _canonical_modifiers(args.get("modifiers"))
+            return None
+        if action == "drag":
+            if args.get("from_element") is None and args.get("from_coordinate") is None:
+                return "drag requires from_element or from_coordinate"
+            if args.get("to_element") is None and args.get("to_coordinate") is None:
+                return "drag requires to_element or to_coordinate"
+            for field in ("from_element", "to_element"):
+                if args.get(field) is not None and (element := _optional_int(args[field])) is not None and element < 0:
+                    return f"{field} must be non-negative"
+            for field in ("from_coordinate", "to_coordinate"):
+                if args.get(field) is not None:
+                    _point(args[field])
+            button = str(args.get("button") or "left")
+            if button not in _BUTTONS:
+                return f"bad button {button!r}; use left, right or middle"
+            _canonical_modifiers(args.get("modifiers"))
+            return None
+        if action == "scroll":
+            direction = str(args.get("direction") or "down")
+            if direction not in _SCROLL_DIRECTIONS:
+                return f"bad direction {direction!r}; use up, down, left or right"
+            amount = int(args.get("amount", 3))
+            if not 1 <= amount <= 50:
+                return "amount must be between 1 and 50"
+            if args.get("element") is not None:
+                element = _optional_int(args["element"])
+                if element is not None and element < 0:
+                    return "element must be non-negative"
+            if args.get("coordinate") is not None:
+                _point(args["coordinate"])
+            _canonical_modifiers(args.get("modifiers"))
+            return None
+        if action == "type":
+            if "text" not in args or not isinstance(args["text"], str):
+                return "type requires string `text`"
+            return None
+        if action == "key":
+            if not isinstance(args.get("keys"), str) or not _parse_key_combo(args["keys"]):
+                return "key requires non-empty string `keys`"
+            return None
+        if action == "set_value":
+            if (
+                "value" not in args
+                or isinstance(args["value"], bool)
+                or not isinstance(args["value"], str | int | float)
+            ):
+                return "set_value requires string or number `value`"
+            if args.get("element") is None:
+                return "set_value requires `element`"
+            element = _optional_int(args["element"])
+            if element is not None and element < 0:
+                return "element must be non-negative"
+            return None
+        if action == "wait":
+            seconds = float(args.get("seconds", 1.0))
+            if not 0 < seconds <= 30:
+                return f"wait: `seconds` must be in (0, 30], got {seconds}"
+            return None
+    except (TypeError, ValueError) as exc:
+        return str(exc)
+    return f"unknown action {action!r}"
+
+
 def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
 
@@ -173,6 +269,8 @@ def handle_computer_use(args: dict[str, Any], **kwargs: Any) -> str | dict[str, 
         return tool_error("Interrupted")
     if not (action := str(args.get("action") or "").strip().lower()):
         return tool_error("missing `action`")
+    if validation_error := _validate_action_args(action, args):
+        return tool_error(validation_error)
     if action == "type" and (pattern := _blocked_type_pattern(str(args.get("text", "")))):
         return tool_error(
             f"blocked pattern in type text: {pattern!r}",

@@ -4,9 +4,38 @@ from typing import Any
 
 from ...registry import registry
 from ..camofox import is_camofox_mode
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements
 from ..schemas import BROWSER_BATCH_SCHEMA
 from ._common import browser_session, camofox_unsupported, compact_snapshot, no_supervisor, pending_dialog_fields
+
+_BATCH_ACTIONS = frozenset({"click", "type", "press", "hover", "scroll", "wait", "select"})
+
+
+def _validate_batch_actions(actions: list[dict[str, Any]]) -> str | None:
+    for index, action in enumerate(actions):
+        if not isinstance(action, dict):
+            return f"Action at index {index} must be an object"
+        kind = action.get("action")
+        if not isinstance(kind, str) or kind not in _BATCH_ACTIONS:
+            return f"Unknown action type {kind!r} at step {index}; use {', '.join(sorted(_BATCH_ACTIONS))}"
+        required: tuple[str, ...] = ()
+        if kind in {"click", "hover"}:
+            required = ("ref",)
+        elif kind == "type":
+            required = ("ref", "text")
+        elif kind == "press":
+            required = ("key",)
+        elif kind == "scroll":
+            required = ("direction",)
+        elif kind == "select":
+            selectors = [name for name in ("value", "label", "index") if name in action]
+            if len(selectors) != 1:
+                return f"select action at step {index} requires exactly one of value, label or index"
+            required = ("ref",)
+        missing = [name for name in required if name not in action]
+        if missing:
+            return f"{kind} action at step {index} is missing required field(s): {', '.join(missing)}"
+    return None
 
 
 def browser_batch(
@@ -22,6 +51,8 @@ def browser_batch(
 
     if not actions or not isinstance(actions, list):
         return json.dumps({"success": False, "error": "actions parameter must be a non-empty list of action objects"})
+    if validation_error := _validate_batch_actions(actions):
+        return json.dumps({"success": False, "error": validation_error}, ensure_ascii=False)
 
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
@@ -50,7 +81,7 @@ def browser_batch(
         return json.dumps(result, ensure_ascii=False)
 
 
-registry.register_tool("browser_batch", check_fn=check_browser_native_requirements, schema=BROWSER_BATCH_SCHEMA)(
+registry.register_tool("browser_batch", check_fn=check_browser_cdp_requirements, schema=BROWSER_BATCH_SCHEMA)(
     lambda args, **kw: browser_batch(
         actions=args.get("actions", []),
         return_snapshot=args.get("return_snapshot", True),

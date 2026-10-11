@@ -11,3 +11,8 @@ def check_browser_native_requirements() -> bool:
     if str(cfg_get(load_config(), "browser", "cdp_url", default="")).strip():
         return True
     return find_browser_binary() is not None
+
+
+def check_browser_cdp_requirements() -> bool:
+    """CDP-only browser tools are unavailable when the active backend is Camofox."""
+    return check_browser_native_requirements() and not is_camofox_mode()

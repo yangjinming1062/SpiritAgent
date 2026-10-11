@@ -328,6 +328,36 @@ def skill_manage(
     replace_all: bool = False,
     absorbed_into: str | None = None,
 ) -> str:
+    valid_actions = {"create", "patch", "edit", "delete", "write_file", "remove_file"}
+    if not isinstance(action, str) or action not in valid_actions:
+        return tool_error(
+            f"Unknown action '{action}'. Use: create, patch, edit, delete, write_file, remove_file.",
+            success=False,
+        )
+    if not isinstance(name, str) or not name.strip():
+        return tool_error("name is required and must be a string.", success=False)
+    for field_name, value in (("category", category), ("file_path", file_path)):
+        if value is not None and not isinstance(value, str):
+            return tool_error(f"{field_name} must be a string when provided.", success=False)
+    if not isinstance(replace_all, bool):
+        return tool_error("replace_all must be a boolean.", success=False)
+    if action in {"create", "edit"} and (not isinstance(content, str) or not content):
+        return tool_error(f"content is required for '{action}'. Provide the full updated SKILL.md text.", success=False)
+    if action == "patch":
+        if not isinstance(old_string, str) or not old_string:
+            return tool_error("old_string is required for 'patch'.", success=False)
+        if not isinstance(new_string, str):
+            return tool_error("new_string is required for 'patch' and must be a string.", success=False)
+    if action == "write_file":
+        if not isinstance(file_path, str) or not file_path:
+            return tool_error("file_path is required for 'write_file'.", success=False)
+        if not isinstance(file_content, str):
+            return tool_error("file_content is required for 'write_file' and must be a string.", success=False)
+    if action == "remove_file" and (not isinstance(file_path, str) or not file_path):
+        return tool_error("file_path is required for 'remove_file'.", success=False)
+    if absorbed_into is not None and not isinstance(absorbed_into, str):
+        return tool_error("absorbed_into must be a string when provided.", success=False)
+
     learned_skills_root()
     try:
         if action == "create":
@@ -387,6 +417,7 @@ SKILL_MANAGE_SCHEMA = {
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "action": {
                 "type": "string",
@@ -453,6 +484,24 @@ SKILL_MANAGE_SCHEMA = {
             },
         },
         "required": ["action", "name"],
+        "allOf": [
+            {
+                "if": {"properties": {"action": {"enum": ["create", "edit"]}}},
+                "then": {"required": ["content"]},
+            },
+            {
+                "if": {"properties": {"action": {"const": "patch"}}},
+                "then": {"required": ["old_string", "new_string"]},
+            },
+            {
+                "if": {"properties": {"action": {"const": "write_file"}}},
+                "then": {"required": ["file_path", "file_content"]},
+            },
+            {
+                "if": {"properties": {"action": {"const": "remove_file"}}},
+                "then": {"required": ["file_path"]},
+            },
+        ],
     },
 }
 

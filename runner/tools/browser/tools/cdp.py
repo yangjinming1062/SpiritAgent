@@ -6,7 +6,7 @@ from utils import cfg_get, load_config
 
 from ...registry import registry, tool_error
 from ..camofox import is_camofox_mode
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements
 from ..schemas import BROWSER_CDP_SCHEMA
 from ._common import NO_SUPERVISOR_MSG, browser_session, camofox_unsupported
 
@@ -107,7 +107,7 @@ def browser_cdp(
         return tool_error(f"CDP request failed: {type(exc).__name__}: {exc}")
 
 
-registry.register_tool("browser_cdp", check_fn=check_browser_native_requirements, schema=BROWSER_CDP_SCHEMA)(
+registry.register_tool("browser_cdp", check_fn=check_browser_cdp_requirements, schema=BROWSER_CDP_SCHEMA)(
     lambda args, **kw: browser_cdp(
         method=args.get("method", ""),
         params=args.get("params"),

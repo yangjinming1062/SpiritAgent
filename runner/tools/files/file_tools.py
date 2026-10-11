@@ -448,6 +448,7 @@ LIST_DIRECTORY_SCHEMA = {
     "description": "List the contents of a directory. Returns file and folder names, sizes, and modification times.",
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "path": {
                 "type": "string",
@@ -470,6 +471,7 @@ READ_FILE_SCHEMA = {
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "path": {
                 "type": "string",
@@ -505,6 +507,7 @@ WRITE_FILE_SCHEMA = {
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "path": {
                 "type": "string",
@@ -531,6 +534,7 @@ PATCH_SCHEMA = {
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "mode": {
                 "type": "string",
@@ -573,6 +577,16 @@ PATCH_SCHEMA = {
             },
         },
         "required": ["mode"],
+        "allOf": [
+            {
+                "if": {"properties": {"mode": {"const": "replace"}}},
+                "then": {"required": ["path", "old_string", "new_string"]},
+            },
+            {
+                "if": {"properties": {"mode": {"const": "patch"}}},
+                "then": {"required": ["patch"]},
+            },
+        ],
     },
 }
 
@@ -588,6 +602,7 @@ SEARCH_FILES_SCHEMA = {
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "pattern": {
                 "type": "string",
@@ -662,8 +677,28 @@ def _handle_write_file(args: dict[str, Any], **kw: Any) -> str:
 
 
 def _handle_patch(args: dict[str, Any], **kw: Any) -> str:
+    mode = args.get("mode", "replace")
+    if mode == "replace":
+        missing = [field for field in ("path", "old_string", "new_string") if field not in args]
+        if missing:
+            return tool_error(f"patch mode='replace' requires: {', '.join(missing)}")
+        if not isinstance(args["path"], str) or not args["path"]:
+            return tool_error("patch mode='replace' requires non-empty string 'path'")
+        if not isinstance(args["old_string"], str):
+            return tool_error("patch mode='replace' requires string 'old_string'")
+        if not isinstance(args["new_string"], str):
+            return tool_error("patch mode='replace' requires string 'new_string'")
+    elif mode == "patch":
+        if "patch" not in args:
+            return tool_error("patch mode='patch' requires 'patch' content")
+        if not isinstance(args["patch"], str) or not args["patch"]:
+            return tool_error("patch mode='patch' requires non-empty string 'patch' content")
+    else:
+        return tool_error(f"Unknown mode: {mode!r}. Use 'replace' or 'patch'.")
+    if not isinstance(args.get("replace_all", False), bool):
+        return tool_error("patch 'replace_all' must be a boolean")
     return patch_tool(
-        args.get("mode", "replace"),
+        mode,
         args.get("path"),
         args.get("old_string"),
         args.get("new_string"),

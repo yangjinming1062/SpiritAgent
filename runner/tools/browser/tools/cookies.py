@@ -4,7 +4,7 @@ from urllib.parse import urlsplit
 
 from ...registry import registry
 from ..camofox import is_camofox_mode
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements
 from ..schemas import (
     BROWSER_COOKIES_CLEAR_SCHEMA,
     BROWSER_COOKIES_GET_SCHEMA,
@@ -182,7 +182,7 @@ def browser_storage_set(
 
 registry.register_tool(
     "browser_cookies_get",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_COOKIES_GET_SCHEMA,
 )(
     lambda args, **kw: browser_cookies_get(url=args.get("url"), task_id=kw.get("task_id")),
@@ -190,7 +190,7 @@ registry.register_tool(
 
 registry.register_tool(
     "browser_cookies_set",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_COOKIES_SET_SCHEMA,
 )(
     lambda args, **kw: browser_cookies_set(
@@ -208,7 +208,7 @@ registry.register_tool(
 
 registry.register_tool(
     "browser_cookies_clear",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_COOKIES_CLEAR_SCHEMA,
 )(
     lambda args, **kw: browser_cookies_clear(
@@ -220,7 +220,7 @@ registry.register_tool(
 
 registry.register_tool(
     "browser_storage_get",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_STORAGE_GET_SCHEMA,
 )(
     lambda args, **kw: browser_storage_get(
@@ -233,7 +233,7 @@ registry.register_tool(
 
 registry.register_tool(
     "browser_storage_set",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_STORAGE_SET_SCHEMA,
 )(
     lambda args, **kw: browser_storage_set(

@@ -366,6 +366,7 @@ _TERMINAL_SCHEMA_TEMPLATE: dict[str, Any] = {
     "description": "",
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "command": {"type": "string", "description": ""},
             "background": {

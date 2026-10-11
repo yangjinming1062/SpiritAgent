@@ -353,6 +353,7 @@ SKILLS_LIST_SCHEMA = {
     "description": "List available skills (name + description). Use skill_view(name) to load full content.",
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {"category": {"type": "string", "description": "Optional category filter to narrow results"}},
         "required": [],
     },
@@ -369,6 +370,7 @@ SKILL_VIEW_SCHEMA = {
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "name": {
                 "type": "string",

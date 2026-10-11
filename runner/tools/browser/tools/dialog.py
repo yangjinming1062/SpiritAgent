@@ -2,7 +2,7 @@ import json
 
 from ...registry import registry
 from ..camofox import is_camofox_mode
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements
 from ..schemas import BROWSER_DIALOG_SCHEMA
 from ._common import browser_session, camofox_unsupported, no_supervisor
 
@@ -35,7 +35,7 @@ def browser_dialog(
         return json.dumps({"success": False, "error": res.get("error", "unknown error")}, ensure_ascii=False)
 
 
-registry.register_tool("browser_dialog", check_fn=check_browser_native_requirements, schema=BROWSER_DIALOG_SCHEMA)(
+registry.register_tool("browser_dialog", check_fn=check_browser_cdp_requirements, schema=BROWSER_DIALOG_SCHEMA)(
     lambda args, **kw: browser_dialog(
         action=args.get("action", ""),
         prompt_text=args.get("prompt_text"),

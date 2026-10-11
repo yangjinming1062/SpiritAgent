@@ -20,92 +20,109 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_GET_IDLE_SCHEMA = {
     "name": "system.get_idle_seconds",
-    "description": "Seconds since the last user input. Cheap; safe to poll.",
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "description": (
+        "Take one point-in-time probe and return {idle_seconds: number}. The value is seconds since the last user "
+        "input; -1 means the probe was unavailable. Use it when a current reading is needed; do not poll it in an "
+        "unbounded loop."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_IS_LOCKED_SCHEMA = {
     "name": "system.is_screen_locked",
     "description": (
-        "True when the workstation session is detected as locked. False means unlocked or unavailable detection; "
-        "it does not by itself prove the desktop is available or that the user welcomes contact."
+        "Take one point-in-time probe and return {locked: boolean}. True means the workstation session is detected "
+        "as locked. False means unlocked or unavailable detection; it does not by itself prove the desktop is "
+        "available or that the user welcomes contact."
     ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_FOCUS_SCHEMA = {
     "name": "system.get_focused_app",
     "description": (
-        "The foreground app: {name, pid, title or bundle, window_id, x, y, w, h}; window fields are omitted when "
-        "unknown, and {} means the foreground app could not be determined."
+        "Take one point-in-time probe and return {focused_app: {name, pid, title or bundle, window_id, x, y, w, h}}; "
+        "window fields are omitted when unknown, and focused_app={} means the foreground app could not be "
+        "determined."
     ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_IS_FULLSCREEN_SCHEMA = {
     "name": "system.is_fullscreen",
     "description": (
-        "True when the foreground window covers its entire display, as fullscreen video, games and presentations "
-        "do; maximized windows that leave the taskbar or menu bar visible are not fullscreen. False when unknown."
+        "Take one point-in-time probe and return {fullscreen: boolean}. True when the foreground window covers its "
+        "entire display, as fullscreen video, games and presentations do; maximized windows that leave the taskbar "
+        "or menu bar visible are not fullscreen. False also covers unknown detection."
     ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_SNAPSHOT_SCHEMA = {
     "name": "system.snapshot",
     "description": (
-        "Aggregated activity snapshot: {idle_seconds, locked, focused_app, fullscreen} "
-        "in one call — same data as the four individual system.* probes."
+        "Take one point-in-time probe and return {idle_seconds, locked, focused_app, fullscreen} in one call — the "
+        "same data as the four individual system.* probes. Fallbacks match those probes: idle_seconds=-1, "
+        "focused_app={}, and locked/fullscreen=false when unavailable. Use this call when all four signals are "
+        "needed; do not loop without a bound."
     ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_POWER_SCHEMA = {
     "name": "system.get_power_state",
-    "description": "{on_battery, charging}; both are false when there is no battery or the power state is unknown.",
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "description": (
+        "Return {on_battery: boolean, charging: boolean}; both are false when there is no battery or the power "
+        "state is unknown."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_GET_WINDOWS_SCHEMA = {
     "name": "system.get_windows",
     "description": (
-        "Visible top-level windows, front to back: {windows: [{title, name, x, y, w, h, focused, window_id, pid, "
-        "z_order}, ...]}. Minimized and hidden windows are excluded; x/y/w/h are global screen coordinates, the same "
-        "space as system.get_cursor_pos and system.click_at."
+        "Return visible top-level windows front to back as {windows: [{title, name, x, y, w, h, focused, visible, "
+        "window_id, pid, z_order}, ...]}; runner_instance_id may identify the current Runner process. Minimized, "
+        "hidden and cloaked windows are excluded. x/y/w/h are global screen coordinates, the same space as "
+        "system.get_cursor_pos and system.click_at."
     ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_OPEN_APP_SCHEMA = {
     "name": "system.open_application",
     "description": (
         "Open an application by name (e.g. 'chrome', 'notepad', 'Calculator') or executable path. Returns "
-        "{opened: true, name} or {opened: false, error}."
+        "{opened: true, name} or {opened: false, error}; opened=true means the launch request was accepted, not "
+        "that the application is ready or focused."
     ),
     "parameters": {
         "type": "object",
         "properties": {"name": {"type": "string", "description": "Application name or executable path"}},
         "required": ["name"],
+        "additionalProperties": False,
     },
 }
 
 SYSTEM_GET_WORK_AREA_SCHEMA = {
     "name": "system.get_work_area",
     "description": "Primary display's working area {x, y, w, h} excluding the taskbar or Dock, in global screen coordinates.",
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_GET_CURSOR_POS_SCHEMA = {
     "name": "system.get_cursor_pos",
     "description": "Current mouse pointer position {x, y} in global screen coordinates.",
-    "parameters": {"type": "object", "properties": {}, "required": []},
+    "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
 }
 
 SYSTEM_CLICK_AT_SCHEMA = {
     "name": "system.click_at",
     "description": (
         "Click the real mouse at global screen coordinates (x, y), the same space as system.get_windows. This moves "
-        "the user's pointer. Returns {clicked: true, ...} or {clicked: false, error}."
+        "the user's pointer. Returns {clicked: true, x, y, button, clicks} or {clicked: false, error}; a successful "
+        "click confirms the input was dispatched, not that the target application consumed it. After a failure the "
+        "pointer may already have moved, so check the current state before retrying."
     ),
     "parameters": {
         "type": "object",
@@ -116,6 +133,7 @@ SYSTEM_CLICK_AT_SCHEMA = {
             "clicks": {"type": "integer", "minimum": 1, "maximum": 3, "default": 1},
         },
         "required": ["x", "y"],
+        "additionalProperties": False,
     },
 }
 

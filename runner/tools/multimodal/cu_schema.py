@@ -16,6 +16,7 @@ if IS_WINDOWS:
     )
     _KEY_EXAMPLES = "'ctrl+s', 'ctrl+shift+t', 'alt+tab', 'enter', 'escape'"
     _DRAG_SUMMARY = ", scroll and drag"
+    _DRAG_REQUIREMENT = "drag requires both a start and an end (each as element or coordinate); "
     _POINTER_ACTIONS = "click, drag or scroll"
 else:
     _INPUT_BEHAVIOR = (
@@ -26,6 +27,7 @@ else:
     _BRING_TO_FRONT = "Raising windows is not supported on this computer; input is sent without raising the window."
     _KEY_EXAMPLES = "'cmd+s', 'cmd+shift+t', 'return', 'escape', 'tab'"
     _DRAG_SUMMARY = " and scroll (dragging is not available)"
+    _DRAG_REQUIREMENT = ""
     _POINTER_ACTIONS = "click or scroll"
 
 _COORDINATE = {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
@@ -62,15 +64,18 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
     "name": "computer_use",
     "description": (
         f"Inspect and operate desktop applications with screenshots, mouse, keyboard{_DRAG_SUMMARY}. "
-        "Start with action='capture' (optionally with app) to choose the target window and list its elements, "
-        "then act by element index; use pixel coordinates from the capture image only when no element fits. "
-        "Input actions apply to the window chosen by the latest capture or focus_app. "
+        "Start with action='capture' (optionally app), then act by element index; use coordinates only when needed. "
+        "Required arguments: click variants need element or coordinate; "
+        f"{_DRAG_REQUIREMENT}scroll may target an element or coordinate; "
+        "type needs text, key needs keys, set_value needs value+element, focus_app needs app, and wait needs seconds. "
+        "Capture again after the window changes; inputs target the latest capture or focus_app. "
         f"{_INPUT_BEHAVIOR} "
         "ok=true means the input was sent, not that the application reacted as intended; verify with a fresh "
         "capture. Hidden or minimized windows may be inaccessible."
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "action": {
                 "type": "string",
@@ -136,7 +141,7 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
             },
             "amount": {"type": "integer", "description": "Scroll wheel notches, 1-50. Default 3."},
             "value": {
-                "type": "string",
+                "type": ["string", "number"],
                 "description": (
                     "For set_value: the value to set. For dropdowns pass the option's visible label; for sliders "
                     "pass the number."
@@ -155,5 +160,44 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
             "bring_to_front": {"type": "boolean", "description": _BRING_TO_FRONT},
         },
         "required": ["action"],
+        "allOf": [
+            {
+                "if": {"properties": {"action": {"const": "focus_app"}}},
+                "then": {"required": ["app"]},
+            },
+            {
+                "if": {"properties": {"action": {"const": "type"}}},
+                "then": {"required": ["text"]},
+            },
+            {
+                "if": {"properties": {"action": {"const": "key"}}},
+                "then": {"required": ["keys"]},
+            },
+            {
+                "if": {"properties": {"action": {"const": "set_value"}}},
+                "then": {"required": ["value", "element"]},
+            },
+            {
+                "if": {
+                    "properties": {
+                        "action": {"enum": ["click", "double_click", "right_click", "middle_click"]},
+                    },
+                },
+                "then": {"anyOf": [{"required": ["element"]}, {"required": ["coordinate"]}]},
+            },
+            {
+                "if": {"properties": {"action": {"const": "drag"}}},
+                "then": {
+                    "allOf": [
+                        {"anyOf": [{"required": ["from_element"]}, {"required": ["from_coordinate"]}]},
+                        {"anyOf": [{"required": ["to_element"]}, {"required": ["to_coordinate"]}]},
+                    ],
+                },
+            },
+            {
+                "if": {"properties": {"action": {"const": "wait"}}},
+                "then": {"required": ["seconds"]},
+            },
+        ],
     },
 }

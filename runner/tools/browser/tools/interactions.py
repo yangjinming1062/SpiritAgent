@@ -10,7 +10,7 @@ from ..camofox import (
     camofox_type,
     is_camofox_mode,
 )
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements, check_browser_native_requirements
 from ..schemas import (
     BROWSER_CLICK_SCHEMA,
     BROWSER_DRAG_SCHEMA,
@@ -120,6 +120,12 @@ def browser_select(
 ) -> str:
     if is_camofox_mode():
         return camofox_unsupported("browser_select")
+    selectors = [value is not None, label is not None, index is not None]
+    if sum(selectors) != 1:
+        return json.dumps(
+            {"success": False, "error": "Provide exactly one of value, label, or index."},
+            ensure_ascii=False,
+        )
 
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
@@ -138,6 +144,11 @@ def browser_wait_for(
 ) -> str:
     if is_camofox_mode():
         return camofox_unsupported("browser_wait_for")
+    if not selector and not text:
+        return json.dumps(
+            {"success": False, "error": "At least one of selector or text must be provided."},
+            ensure_ascii=False,
+        )
 
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
@@ -184,11 +195,11 @@ registry.register_tool("browser_press", check_fn=check_browser_native_requiremen
     lambda args, **kw: browser_press(key=args.get("key", ""), task_id=kw.get("task_id")),
 )
 
-registry.register_tool("browser_hover", check_fn=check_browser_native_requirements, schema=BROWSER_HOVER_SCHEMA)(
+registry.register_tool("browser_hover", check_fn=check_browser_cdp_requirements, schema=BROWSER_HOVER_SCHEMA)(
     lambda args, **kw: browser_hover(ref=args.get("ref", ""), task_id=kw.get("task_id")),
 )
 
-registry.register_tool("browser_drag", check_fn=check_browser_native_requirements, schema=BROWSER_DRAG_SCHEMA)(
+registry.register_tool("browser_drag", check_fn=check_browser_cdp_requirements, schema=BROWSER_DRAG_SCHEMA)(
     lambda args, **kw: browser_drag(
         from_ref=args.get("from_ref", ""),
         to_ref=args.get("to_ref", ""),
@@ -197,7 +208,7 @@ registry.register_tool("browser_drag", check_fn=check_browser_native_requirement
     ),
 )
 
-registry.register_tool("browser_select", check_fn=check_browser_native_requirements, schema=BROWSER_SELECT_SCHEMA)(
+registry.register_tool("browser_select", check_fn=check_browser_cdp_requirements, schema=BROWSER_SELECT_SCHEMA)(
     lambda args, **kw: browser_select(
         ref=args.get("ref", ""),
         value=args.get("value"),
@@ -207,7 +218,7 @@ registry.register_tool("browser_select", check_fn=check_browser_native_requireme
     ),
 )
 
-registry.register_tool("browser_wait_for", check_fn=check_browser_native_requirements, schema=BROWSER_WAIT_FOR_SCHEMA)(
+registry.register_tool("browser_wait_for", check_fn=check_browser_cdp_requirements, schema=BROWSER_WAIT_FOR_SCHEMA)(
     lambda args, **kw: browser_wait_for(
         selector=args.get("selector"),
         text=args.get("text"),
@@ -218,7 +229,7 @@ registry.register_tool("browser_wait_for", check_fn=check_browser_native_require
     ),
 )
 
-registry.register_tool("browser_find", check_fn=check_browser_native_requirements, schema=BROWSER_FIND_SCHEMA)(
+registry.register_tool("browser_find", check_fn=check_browser_cdp_requirements, schema=BROWSER_FIND_SCHEMA)(
     lambda args, **kw: browser_find(
         query=args.get("query", ""),
         ref_only=args.get("ref_only", True),

@@ -21,11 +21,13 @@ logger = logging.getLogger(__name__)
 VISION_ANALYZE_SCHEMA = {
     "name": "vision_analyze",
     "description": (
-        "Load an image into the conversation so you can see it. Accepts an http(s) image URL or a local PNG, "
-        "JPEG, GIF, WebP or BMP file inside an allowed directory; a rejected path's error lists those directories."
+        "Inspect one image from an HTTP/HTTPS URL or a local PNG, JPEG, GIF, WebP or BMP file. Local paths must "
+        "already be under cache, external_skills or the current working directory; outside paths are rejected. "
+        "Use an allowed path or URL instead of copying files."
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "image_url": {
                 "type": "string",

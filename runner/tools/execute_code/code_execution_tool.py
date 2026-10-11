@@ -963,8 +963,10 @@ EXECUTE_CODE_SCHEMA = {
         '    target: "content" (search inside files) or "files" (find files by name). '
         'Returns {"total_count": N} plus "matches" (content search, items with path/line/content) '
         'or "files" (name search); the list key is omitted when nothing matches.\n'
-        "  patch(path: str, old_string: str, new_string: str, replace_all: bool = False) -> dict\n"
-        "    Replaces old_string with new_string in the file.\n"
+        "  patch(path: str = None, old_string: str = None, new_string: str = None, "
+        'replace_all: bool = False, mode: str = "replace", patch: str = None) -> dict\n'
+        '    mode="replace" requires path, old_string and new_string and performs a targeted replacement; '
+        'mode="patch" requires patch containing a V4A multi-file patch.\n'
         "  terminal(command: str, timeout=None, workdir=None) -> dict\n"
         '    Foreground only (no background/pty). Returns {"output": "...", "exit_code": N}\n\n'
         'A failed tool call returns a dict with an "error" key instead of raising.\n\n'
@@ -986,6 +988,7 @@ EXECUTE_CODE_SCHEMA = {
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "code": {
                 "type": "string",

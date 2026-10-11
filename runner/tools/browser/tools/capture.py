@@ -12,7 +12,7 @@ from utils import get_spiritagent_dir
 
 from ...registry import registry
 from ..camofox import is_camofox_mode
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements
 from ..helpers import _get_downloads_dir, _safe_save_name, screenshot_multimodal_result
 from ..schemas import (
     BROWSER_DOWNLOAD_SCHEMA,
@@ -162,7 +162,7 @@ def browser_download(
 
 registry.register_tool(
     "browser_screenshot_element",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_SCREENSHOT_ELEMENT_SCHEMA,
 )(
     lambda args, **kw: browser_screenshot_element(
@@ -172,7 +172,7 @@ registry.register_tool(
     ),
 )
 
-registry.register_tool("browser_pdf", check_fn=check_browser_native_requirements, schema=BROWSER_PDF_SCHEMA)(
+registry.register_tool("browser_pdf", check_fn=check_browser_cdp_requirements, schema=BROWSER_PDF_SCHEMA)(
     lambda args, **kw: browser_pdf(
         save_as=args.get("save_as"),
         landscape=args.get("landscape", False),
@@ -183,7 +183,7 @@ registry.register_tool("browser_pdf", check_fn=check_browser_native_requirements
     ),
 )
 
-registry.register_tool("browser_download", check_fn=check_browser_native_requirements, schema=BROWSER_DOWNLOAD_SCHEMA)(
+registry.register_tool("browser_download", check_fn=check_browser_cdp_requirements, schema=BROWSER_DOWNLOAD_SCHEMA)(
     lambda args, **kw: browser_download(
         ref_or_url=args.get("ref_or_url", ""),
         save_as=args.get("save_as"),

@@ -2,7 +2,7 @@ import json
 
 from ...registry import registry
 from ..camofox import is_camofox_mode
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements
 from ..schemas import (
     BROWSER_TAB_CLOSE_SCHEMA,
     BROWSER_TAB_LIST_SCHEMA,
@@ -119,13 +119,13 @@ def browser_tab_list(task_id: str | None = None) -> str:
         return json.dumps({"success": True, "tabs": tabs, "count": len(tabs)})
 
 
-registry.register_tool("browser_tab_new", check_fn=check_browser_native_requirements, schema=BROWSER_TAB_NEW_SCHEMA)(
+registry.register_tool("browser_tab_new", check_fn=check_browser_cdp_requirements, schema=BROWSER_TAB_NEW_SCHEMA)(
     lambda args, **kw: browser_tab_new(url=args.get("url"), task_id=kw.get("task_id")),
 )
 
 registry.register_tool(
     "browser_tab_switch",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_TAB_SWITCH_SCHEMA,
 )(
     lambda args, **kw: browser_tab_switch(tab_id=args.get("tab_id", ""), task_id=kw.get("task_id")),
@@ -133,12 +133,12 @@ registry.register_tool(
 
 registry.register_tool(
     "browser_tab_close",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_TAB_CLOSE_SCHEMA,
 )(
     lambda args, **kw: browser_tab_close(tab_id=args.get("tab_id"), task_id=kw.get("task_id")),
 )
 
-registry.register_tool("browser_tab_list", check_fn=check_browser_native_requirements, schema=BROWSER_TAB_LIST_SCHEMA)(
+registry.register_tool("browser_tab_list", check_fn=check_browser_cdp_requirements, schema=BROWSER_TAB_LIST_SCHEMA)(
     lambda args, **kw: browser_tab_list(task_id=kw.get("task_id")),  # noqa: ARG005
 )

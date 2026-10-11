@@ -2,7 +2,7 @@ import json
 
 from ...registry import registry
 from ..camofox import camofox_get_images, is_camofox_mode
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements, check_browser_native_requirements
 from ..schemas import BROWSER_CONSOLE_SCHEMA, BROWSER_GET_IMAGES_SCHEMA
 from ._common import browser_session, camofox_unsupported, no_supervisor
 
@@ -66,7 +66,7 @@ def browser_get_images(task_id: str | None = None) -> str:
         )
 
 
-registry.register_tool("browser_console", check_fn=check_browser_native_requirements, schema=BROWSER_CONSOLE_SCHEMA)(
+registry.register_tool("browser_console", check_fn=check_browser_cdp_requirements, schema=BROWSER_CONSOLE_SCHEMA)(
     lambda args, **kw: browser_console(
         clear=args.get("clear", False),
         expression=args.get("expression"),

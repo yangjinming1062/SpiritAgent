@@ -2,7 +2,7 @@ import json
 
 from ...registry import registry
 from ..camofox import is_camofox_mode
-from ..check import check_browser_native_requirements
+from ..check import check_browser_cdp_requirements
 from ..schemas import (
     BROWSER_SET_EXTRA_HEADERS_SCHEMA,
     BROWSER_SET_GEOLOCATION_SCHEMA,
@@ -123,7 +123,7 @@ def browser_set_geolocation(
 
 registry.register_tool(
     "browser_set_viewport",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_SET_VIEWPORT_SCHEMA,
 )(
     lambda args, **kw: browser_set_viewport(
@@ -137,7 +137,7 @@ registry.register_tool(
 
 registry.register_tool(
     "browser_set_user_agent",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_SET_USER_AGENT_SCHEMA,
 )(
     lambda args, **kw: browser_set_user_agent(
@@ -150,7 +150,7 @@ registry.register_tool(
 
 registry.register_tool(
     "browser_set_extra_headers",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_SET_EXTRA_HEADERS_SCHEMA,
 )(
     lambda args, **kw: browser_set_extra_headers(headers=args.get("headers") or {}, task_id=kw.get("task_id")),
@@ -158,7 +158,7 @@ registry.register_tool(
 
 registry.register_tool(
     "browser_set_geolocation",
-    check_fn=check_browser_native_requirements,
+    check_fn=check_browser_cdp_requirements,
     schema=BROWSER_SET_GEOLOCATION_SCHEMA,
 )(
     lambda args, **kw: browser_set_geolocation(
