@@ -399,14 +399,14 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
         await _save(row.id, phase="image_submitting", **progress)
         if visual is not None:
             visual_plan = apply_outfit_override(visual, None)
-            outfit = await optional_outfit_image_reference(visual_plan, row.user_id)
+            outfit = optional_outfit_image_reference(visual_plan)
             urls = await generate_character_images(
                 build_self_image_prompt(visual_plan, plan.prompt, has_outfit_reference=bool(outfit)),
                 size=plan.size,
                 user_id=row.user_id,
                 storage_directory=directory,
-                reference_image=visual.reference_image,
-                identity_reference=visual.reference_image,
+                reference_image=visual.avatar_image,
+                identity_reference=visual.avatar_image,
                 secondary_reference_image=outfit,
                 identity_text=render_character_identity(identity),
             )
@@ -457,7 +457,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     resolution=resolution,
                     reference_images=references,
                     aspect_ratio=plan.aspect_ratio,
-                    identity_reference_path=visual.reference_path if visual else None,
+                    identity_reference_path=visual.fullbody_path if visual else None,
                     identity=identity,
                 )
             job_id = job.id

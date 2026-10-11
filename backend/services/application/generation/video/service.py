@@ -28,7 +28,6 @@ from modules.companion import (
     CompanionOutfit,
     ImageClipSpec,
     MediaReviewPublication,
-    OutfitSource,
     PeekGeometry,
     RemovedActionVideoTask,
     VideoActionImageResponse,
@@ -583,6 +582,14 @@ async def create_pack_from_reference(
         system_providers: list[FrozenMediaProvider] = []
         if not await resolve_vision_chain(db, user_id):
             raise VideoPackStateError("未配置视觉模型，无法根据角色参考图撰写动作脚本")
+        alignment_chain, alignment_error = await resolve_image_gen_chain(
+            db,
+            user_id,
+            has_reference=True,
+            multiple_references=True,
+        )
+        if not alignment_chain:
+            raise VideoPackStateError(alignment_error or "请配置支持头像与着装双参考的图像供应商")
         image_chain, image_error = await resolve_image_gen_chain(db, user_id, has_reference=True, image_edit=True)
         if not image_chain:
             raise VideoPackStateError(image_error or "请配置图像编辑供应商以生成动作姿态")
@@ -651,12 +658,11 @@ async def create_pack_from_reference(
             if identity_reference_path is None:
                 raise VideoPackStateError("全身形象无法读取")
             pending_assets.callback(unlink_companion_asset, identity_reference_path)
-            applied_identity_path = OutfitSource.load(outfit.source_json).identity_reference_path
             context = GenerationContext(
                 identity=identity,
                 identity_reference_path=identity_reference_path,
-                # 外观按制作时的全身身份图生成；身份图已更换时先校准冻结参考。
-                reference_alignment="ready" if applied_identity_path == seed_path else "pending",
+                # 全身身份图只用于版本守卫；动作包参考由头像与当前着装图合成。
+                reference_alignment="pending",
                 persona_definition=load_persona_definition(persona),
                 personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
                 outfit_description=outfit.description or "",
@@ -1136,14 +1142,15 @@ async def _fail_pack(pack_id: int, message: str) -> None:
 async def _review_pack_identity(
     pack_id: int,
     user_id: int,
+    pack: CompanionActionPack,
     context: GenerationContext,
     results: dict[str, ActionResult],
     *,
     before_submit: Callable[[], Awaitable[None]],
 ) -> tuple[str, str]:
-    """必需动作的静态图或视频采样帧与冻结身份图复核；不可用时转人工预览。"""
+    """必需动作的静态图或视频采样帧与头像、当前着装合成的冻结参考复核；不可用时转人工预览。"""
     try:
-        reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, context.identity_reference_path)
+        reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
         frame_uris: list[str] = []
         for slot in REQUIRED_SYSTEM_SLOTS:
             if slot in results:
@@ -1179,6 +1186,7 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
         review_status, review_reason = await _review_pack_identity(
             pack_id,
             user_id,
+            pack,
             context,
             results,
             before_submit=lambda: _require_new_paid_step(pack, context),
@@ -1412,8 +1420,19 @@ async def _prepare_action_video_plan(job: CompanionAction) -> None:
 async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationContext) -> GenerationContext:
     if context.reference_alignment == "ready":
         return context
-    source = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
     outfit_reference = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    async with SESSION_LOCAL() as db:
+        avatar = await db.scalar(
+            select(AvatarAsset).where(
+                AvatarAsset.id == context.identity.avatar_id,
+                AvatarAsset.user_id == pack.user_id,
+            ),
+        )
+    if avatar is None or not avatar.asset_url:
+        raise VideoPackStateError("头像形象无法读取")
+    portrait_source = await _process_thread(load_avatar_bytes_as_data_uri, avatar.asset_url)
+    if not portrait_source:
+        raise VideoPackStateError("头像形象无法读取")
 
     async def save_progress(state: ImageChainState) -> None:
         context.reference_chain = state
@@ -1430,7 +1449,7 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
         outfit_reference,
         context.identity,
         "",
-        identity_reference=source,
+        identity_reference=portrait_source,
         storage_directory=_pack_dir(pack),
         state=context.reference_chain,
         save_progress=save_progress,
@@ -1709,7 +1728,7 @@ async def _prepare_action_pose(
         return
     require_action_matting_model()
     reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
-    identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+    identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
     pose_state = (
         ImageChainState.model_validate_json(job.pose_generation_state_json)
         if job.pose_generation_state_json
@@ -1796,7 +1815,7 @@ async def _run_image_pipeline(
             setattr(job, key, value)
         job.stage = "process"
     if job.system_slot in ("peek_left", "peek_right"):
-        identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+        identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
         sample_uri = await _process_thread(_image_data_uri, _artifact_abs_path(result.clip.path))
         geometry = await inspect_peek_geometry(
             pack.user_id,
@@ -1808,7 +1827,7 @@ async def _run_image_pipeline(
         result = result.model_copy(update={"clip": result.clip.model_copy(update={"peek_geometry": geometry})})
     review_id = None
     if pack.status == "ready":
-        identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+        identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
         verdict, reason = await review_character_frames(
             pack.user_id,
             identity_uri,
@@ -1870,7 +1889,7 @@ async def _run_action_pipeline(
         raise VideoPackStateError("视频规格与素材类型不符")
     await _prepare_action_video_plan(job)
     state = MediaChainState.model_validate_json(job.generation_state_json or "")
-    identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+    identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
     if (
         state.phase == "ready"
         and state.active_index is None

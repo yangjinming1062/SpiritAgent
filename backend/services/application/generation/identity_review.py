@@ -8,6 +8,7 @@ from prompts.generation import (
     CHARACTER_ACTION_IMAGE_REVIEW,
     CHARACTER_ACTION_VIDEO_REVIEW,
     CHARACTER_MEDIA_IMAGE_SCORE,
+    CHARACTER_MEDIA_SELF_IMAGE_SCORE,
     CHARACTER_MEDIA_VIDEO_SCORE,
     CHARACTER_VIDEO_PACK_REVIEW,
 )
@@ -82,6 +83,24 @@ async def score_character_image(
     )
 
 
+async def score_character_image_with_references(
+    user_id: int,
+    identity_uris: tuple[str, ...],
+    candidate_uri: str,
+    *,
+    identity_text: str = "",
+    before_submit: Callable[[], Awaitable[None]] | None = None,
+) -> int | None:
+    """按头像和当前完整着装图的职责共同评分图片候选。"""
+    return await _score_media(
+        user_id,
+        CHARACTER_MEDIA_SELF_IMAGE_SCORE,
+        (*identity_uris, candidate_uri),
+        identity_text,
+        before_submit,
+    )
+
+
 async def score_character_frames(
     user_id: int,
     identity_uri: str | None,
@@ -94,6 +113,25 @@ async def score_character_frames(
         user_id,
         CHARACTER_MEDIA_VIDEO_SCORE,
         (identity_uri or "", *frame_uris),
+        identity_text,
+        before_submit,
+    )
+
+
+async def score_character_frames_with_references(
+    user_id: int,
+    identity_uris: tuple[str, ...],
+    frame_uris: tuple[str, ...],
+    prompt: str,
+    *,
+    identity_text: str = "",
+    before_submit: Callable[[], Awaitable[None]] | None = None,
+) -> int | None:
+    """按有序的多张身份参考及视频帧评分。"""
+    return await _score_media(
+        user_id,
+        prompt,
+        (*identity_uris, *frame_uris),
         identity_text,
         before_submit,
     )

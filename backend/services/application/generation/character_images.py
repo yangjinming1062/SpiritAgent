@@ -23,7 +23,7 @@ from services.infrastructure.llm import (
 )
 from services.infrastructure.video_processing import VideoProcessError, prepare_transparent_image
 
-from .identity_review import score_character_image
+from .identity_review import score_character_image, score_character_image_with_references
 from .image_generation import ImageGenerationError, generate_images, resolve_image_gen_chain
 from .media_chain import (
     FrozenMediaProvider,
@@ -589,17 +589,24 @@ async def _run_image_chain(
                         candidate.evaluated = True
                         candidate.result_json = json.dumps({"accepted": accepted, "reason": reason}, ensure_ascii=False)
                     else:
-                        score = (
-                            None
-                            if state.stop_reason == "score_unavailable"
-                            else await score_character_image(
+                        if state.stop_reason == "score_unavailable":
+                            score = None
+                        elif secondary_uri:
+                            score = await score_character_image_with_references(
+                                user_id,
+                                (identity_uri or "", secondary_uri),
+                                uri,
+                                identity_text=inputs.identity_text,
+                                before_submit=before_submit,
+                            )
+                        else:
+                            score = await score_character_image(
                                 user_id,
                                 identity_uri,
                                 uri,
                                 identity_text=inputs.identity_text,
                                 before_submit=before_submit,
                             )
-                        )
                         state.accept_score(candidate, score)
                     await _save_progress(state, save_progress)
                 state.phase = "ready"

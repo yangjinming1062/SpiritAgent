@@ -17,6 +17,7 @@ from components import (
     utc_now,
 )
 from modules.companion import (
+    AvatarAsset,
     CompanionScene,
     DesktopVideoAction,
     DesktopVideoActionResponse,
@@ -45,6 +46,8 @@ from prompts.desktop_videos import (
     DESKTOP_IMAGE_1_PRESERVE_ZH,
     DESKTOP_IMAGE_1_REFERENCE_EN,
     DESKTOP_IMAGE_1_REFERENCE_ZH,
+    DESKTOP_IMAGE_2_REFERENCE_EN,
+    DESKTOP_IMAGE_2_REFERENCE_ZH,
     DESKTOP_PRESETS,
 )
 from pydantic import BaseModel, ConfigDict, Field
@@ -169,6 +172,8 @@ async def get_desktop_external_prompt(
         raise DesktopVideoStateError("桌面生活组合已经变化")
     await require_desktop_current(db, user_id, action.set_id)
     snapshot = await load_desktop_visual_snapshot(db, user_id)
+    avatar = await db.get(AvatarAsset, snapshot.identity.avatar_id)
+    portrait_path = avatar.asset_url if avatar is not None else ""
     row = await db.get(DesktopVideoSet, action.set_id)
     if row is None or row.context_hash != desktop_context_hash(snapshot):
         raise DesktopVideoStateError("请先准备当前穿着和场景的桌面组合")
@@ -180,6 +185,7 @@ async def get_desktop_external_prompt(
     )
     references: list[DesktopVideoReference] = []
     for label, path, failure_message in (
+        ("头像参考图", portrait_path, "头像参考图片无法读取，请先修复对应资产"),
         ("当前穿着参考图", snapshot.outfit_path, "当前穿着参考图片无法读取，请先修复对应资产"),
         ("桌景参考图", scene.media_path if scene is not None else "", "桌景参考图片无法读取，请先修复对应资产"),
     ):
@@ -194,8 +200,8 @@ async def get_desktop_external_prompt(
     if language == "en":
         prompt = (
             f"Create a {action.duration_seconds}-second {action.kind} video from the supplied images in order: "
-            f"{DESKTOP_IMAGE_1_REFERENCE_EN} Image 2 provides the desktop-scene environment. "
-            f"{DESKTOP_IMAGE_1_PRESERVE_EN} Use image 2 only for the environment, and keep the scene, "
+            f"{DESKTOP_IMAGE_1_REFERENCE_EN} {DESKTOP_IMAGE_2_REFERENCE_EN} Image 3 provides the desktop-scene environment. "
+            f"{DESKTOP_IMAGE_1_PRESERVE_EN} Use image 3 only for the environment, and keep the scene, "
             f"lighting and camera stable; show only this action: {action.description}. Natural, continuous motion is the priority: "
             f"include only what this action needs; unless explicitly required, do not use repetitive breathing, blinking or filler movement. Keep motion physically natural and "
             f"suitable for the character. Do not add people, subtitles, logos, watermarks, cuts or split screens. "
@@ -205,8 +211,8 @@ async def get_desktop_external_prompt(
             prompt += f" Additional user requirements: {extra}"
     else:
         prompt = (
-            f"制作一段 {action.duration_seconds} 秒的{('循环' if action.kind == 'loop' else '单次')}视频，按顺序使用所提供的图片：{DESKTOP_IMAGE_1_REFERENCE_ZH}图 2 提供桌景环境。"
-            f"{DESKTOP_IMAGE_1_PRESERVE_ZH}图 2 只用于环境，并保持桌景、光线和镜头稳定，只表现以下动作：{action.description}"
+            f"制作一段 {action.duration_seconds} 秒的{('循环' if action.kind == 'loop' else '单次')}视频，按顺序使用所提供的图片：{DESKTOP_IMAGE_1_REFERENCE_ZH}{DESKTOP_IMAGE_2_REFERENCE_ZH}图 3 提供桌景环境。"
+            f"{DESKTOP_IMAGE_1_PRESERVE_ZH}图 3 只用于环境，并保持桌景、光线和镜头稳定，只表现以下动作：{action.description}"
             "。自然感优先，只表现完成该动作所需的连贯变化；未明确要求时不把反复呼吸、眨眼或其他微动作作为填充。动作要符合身体结构，受力、接触和衣物变化自然。不要新增人物，不要字幕、标志、水印、切镜或分屏；"
             "不要改变取景，除非动作确实需要。"
         )
@@ -771,6 +777,8 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int, *, allow_gene
                 return
             row = await db.get(DesktopVideoSet, proposal.set_id)
             snapshot = DesktopVisualSnapshot.model_validate_json(row.context_json)
+            avatar = await db.get(AvatarAsset, snapshot.identity.avatar_id)
+            portrait_path = avatar.asset_url if avatar is not None else ""
             request = DesktopVideoDesignRequest.model_validate_json(proposal.design_json)
             language = resolve_language(await get_user_setting(db, user_id, "language"))
             existing = list(
@@ -807,8 +815,9 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int, *, allow_gene
                 ):
                     raise LlmCallBlockedError("自主制作当前已关闭")
 
+        portrait = await asyncio.to_thread(read_valid_image_data_uri, portrait_path)
         outfit = await asyncio.to_thread(read_valid_image_data_uri, snapshot.outfit_path)
-        if not outfit:
+        if not portrait or not outfit:
             raise DesktopVideoStateError("参考图片无法读取")
         raw = await vision_chat(
             user_id,
@@ -825,7 +834,7 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int, *, allow_gene
                 },
                 ensure_ascii=False,
             ),
-            reference_images=(outfit,),
+            reference_images=(portrait, outfit),
             before_submit=before_submit,
         )
         verdict = DesktopProposalVerdict.model_validate(parse_llm_json(raw))

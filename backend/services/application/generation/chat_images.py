@@ -65,12 +65,12 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
         )
     visual = await load_self_visual_context(user_id)
     plan = apply_outfit_override(visual, request.outfit_override)
-    outfit = await optional_outfit_image_reference(plan, user_id)
+    outfit = optional_outfit_image_reference(plan)
     return ImagePlan(
         request=request.model_dump_json(),
         prompt=build_self_image_prompt(plan, request.prompt, has_outfit_reference=bool(outfit)),
         size=request.aspect_ratio,
-        reference_image=visual.reference_image,
+        reference_image=visual.avatar_image,
         secondary_reference_image=outfit,
         identity_json=visual.identity.model_dump_json(),
     )

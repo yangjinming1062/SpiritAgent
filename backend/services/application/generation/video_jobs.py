@@ -24,6 +24,7 @@ from modules.conversation import Conversation, Message
 from modules.media import VideoGenJob
 from modules.settings import resolve_user_timezone
 from modules.ws import emit_ws_event
+from prompts.generation import CHARACTER_MEDIA_SELF_VIDEO_SCORE
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,7 +59,7 @@ from services.infrastructure.llm import (
 )
 from services.infrastructure.video_processing import VideoToolUnavailableError, probe_video, sample_key_frames
 
-from .identity_review import score_character_frames
+from .identity_review import score_character_frames_with_references
 from .media_chain import (
     FrozenMediaProvider,
     MediaCandidate,
@@ -206,6 +207,7 @@ async def _score_self_video(
     identity_path: str | None,
     *,
     identity_uri: str | None,
+    outfit_uri: str | None = None,
     identity_text: str = "",
     job_id: int | None = None,
 ) -> tuple[str, int | None]:
@@ -233,8 +235,8 @@ async def _score_self_video(
         return "undecodable", None
     if not identity_path:
         return "unavailable", None
-    if not identity_uri:
-        return "unavailable", None
+    if not identity_uri or not outfit_uri:
+        return "invalid", None
     try:
         frames = await asyncio.to_thread(sample_key_frames, local)
 
@@ -243,10 +245,12 @@ async def _score_self_video(
                 await _require_live_job(job_id)
             require_new_generation_call(user_id)
 
-        score = await score_character_frames(
+        frame_uris = tuple(build_data_uri(frame, "image/webp") for frame in frames)
+        score = await score_character_frames_with_references(
             user_id,
-            identity_uri,
-            tuple(build_data_uri(frame, "image/webp") for frame in frames),
+            (identity_uri, outfit_uri),
+            frame_uris,
+            CHARACTER_MEDIA_SELF_VIDEO_SCORE,
             identity_text=identity_text,
             before_submit=before_submit,
         )
@@ -627,6 +631,9 @@ async def _evaluate_stored_video(job_id: int) -> str:
             candidate,
             params.identity_reference_path,
             identity_uri=params.reference_images[0] if snapshot is not None else None,
+            outfit_uri=params.reference_images[1]
+            if snapshot is not None and len(params.reference_images) > 1
+            else None,
             identity_text=render_character_identity(snapshot) if snapshot else "",
             job_id=job_id,
         )

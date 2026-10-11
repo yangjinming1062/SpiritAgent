@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from components import SESSION_LOCAL
 from modules.companion import AvatarAsset, CharacterCardSnapshot, CompanionOutfit
 from prompts.generation import (
-    CHARACTER_ALIGNMENT_REFERENCES,
-    CHARACTER_REFERENCE_ALIGN,
-    CHARACTER_VISUAL_STYLE,
+    CHARACTER_APPEARANCE_ALIGNMENT_REFERENCES,
+    CHARACTER_APPEARANCE_REFERENCE_ALIGN,
+    CHARACTER_APPEARANCE_VISUAL_STYLE,
     PLAIN_IMAGE_TEMPLATE,
     PLAIN_VIDEO_TEMPLATE,
     SELF_IMAGE_CURRENT_OUTFIT,
@@ -24,14 +24,14 @@ from services.domains.companion import render_character_identity, require_charac
 
 from .avatar_service import FULLBODY_SIZE, AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
 from .character_images import ImageChainState, ImageProgressWriter, generate_character_images
-from .image_generation import resolve_image_gen_chain
 
 
 @dataclass(frozen=True)
 class SelfVisualContext:
+    # 全身种子路径只供任务身份代次守卫使用；媒体参考使用头像和当前着装图。
     identity: CharacterCardSnapshot
-    reference_image: str
-    reference_path: str
+    avatar_image: str
+    fullbody_path: str
     outfit_description: str
     outfit_reference: str | None
 
@@ -50,6 +50,7 @@ async def load_self_visual_context(user_id: int) -> SelfVisualContext:
         avatar = await db.get(AvatarAsset, identity.avatar_id)
         if avatar is None:
             raise AvatarSourceUnreadableError("角色形象缺失")
+        avatar_path = avatar.asset_url
         seed_path = avatar.seed_fullbody_url
         outfit = await db.scalar(
             select(CompanionOutfit).where(
@@ -58,16 +59,20 @@ async def load_self_visual_context(user_id: int) -> SelfVisualContext:
                 CompanionOutfit.status == "ready",
             ),
         )
-        outfit_path = outfit.fullbody_url if outfit is not None else ""
-        outfit_description = (outfit.description or "") if outfit is not None else ""
-    reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, seed_path)
+        if outfit is None or not outfit.fullbody_url:
+            raise AvatarSourceUnreadableError("当前着装形象缺失，请先完成衣柜准备")
+        outfit_path = outfit.fullbody_url
+        outfit_description = outfit.description or ""
+    reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar_path)
     if not reference:
-        raise AvatarSourceUnreadableError("全身形象缺失或无法读取，请重新生成")
-    outfit_reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, outfit_path) if outfit_path else None
+        raise AvatarSourceUnreadableError("头像缺失或无法读取，请重新生成")
+    outfit_reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, outfit_path)
+    if not outfit_reference:
+        raise AvatarSourceUnreadableError("当前着装形象缺失或无法读取，请重新准备着装")
     return SelfVisualContext(
         identity=identity,
-        reference_image=reference,
-        reference_path=seed_path,
+        avatar_image=reference,
+        fullbody_path=seed_path,
         outfit_description=outfit_description,
         outfit_reference=outfit_reference,
     )
@@ -81,7 +86,7 @@ def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_ref
     outfit = plan.override_outfit_description or plan.context.outfit_description
     parts = [
         SELF_IMAGE_REFERENCE_TEMPLATE.format(
-            reference="图 1" if has_outfit_reference else "参考图",
+            reference="图 1 头像" if has_outfit_reference else "头像参考图",
             outfit=SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=outfit)
             if outfit and not has_outfit_reference
             else ("" if has_outfit_reference else SELF_IMAGE_CURRENT_OUTFIT),
@@ -103,22 +108,16 @@ def build_plain_video_prompt(prompt: str) -> str:
     return PLAIN_VIDEO_TEMPLATE.format(prompt=prompt)
 
 
-async def optional_outfit_image_reference(plan: SelfVisualPlan, user_id: int) -> str | None:
-    """双图供应商可用时才附衣柜图；固定身份始终由全身种子提供。"""
-    if (
-        plan.override_outfit_description
-        or not plan.context.outfit_reference
-        or plan.context.outfit_reference == plan.context.reference_image
-    ):
+def optional_outfit_image_reference(plan: SelfVisualPlan) -> str | None:
+    """返回当前完整着装参考；不在这里静默丢弃必需的第二张参考图。"""
+    if plan.override_outfit_description or not plan.context.outfit_reference:
         return None
-    async with SESSION_LOCAL() as db:
-        chain, _ = await resolve_image_gen_chain(db, user_id, has_reference=True, multiple_references=True)
-    return plan.context.outfit_reference if chain else None
+    return plan.context.outfit_reference
 
 
 async def align_character_reference(
     user_id: int,
-    reference_image: str,
+    outfit_image: str,
     identity: CharacterCardSnapshot,
     outfit_description: str,
     *,
@@ -129,22 +128,21 @@ async def align_character_reference(
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
     """返回本次生成独有的持久参考；调用者承担保存或回收，不改变原图。"""
-    separate_reference = reference_image != identity_reference
     paths = await generate_character_images(
-        (CHARACTER_ALIGNMENT_REFERENCES + "\n" if separate_reference else "")
-        + CHARACTER_REFERENCE_ALIGN.format(
-            target_reference="图 2" if separate_reference else "输入图",
+        CHARACTER_APPEARANCE_ALIGNMENT_REFERENCES
+        + "\n"
+        + CHARACTER_APPEARANCE_REFERENCE_ALIGN.format(
             identity=render_character_identity(identity),
-            outfit=outfit_description or "沿用原图可见造型",
+            outfit=outfit_description or "沿用图 2 可见造型",
         )
         + "\n"
-        + CHARACTER_VISUAL_STYLE,
+        + CHARACTER_APPEARANCE_VISUAL_STYLE,
         user_id=user_id,
         storage_directory=storage_directory,
         reference_image=identity_reference,
-        secondary_reference_image=reference_image if separate_reference else None,
+        secondary_reference_image=outfit_image,
         size=FULLBODY_SIZE,
-        image_edit=not separate_reference,
+        image_edit=False,
         identity_reference=identity_reference,
         identity_text=render_character_identity(identity),
         state=state,
@@ -155,10 +153,10 @@ async def align_character_reference(
 
 
 def self_video_references(plan: SelfVisualPlan, reference_image: str | None = None) -> tuple[str, ...]:
-    """身份与选定造型分别提供参考；相同图只发送一次，造型覆盖只消费文字。"""
+    """头像提供面容参考，当前着装全身图提供完整外观；造型覆盖只消费文字。"""
     outfit = None if plan.override_outfit_description else reference_image or plan.context.outfit_reference
-    identity = plan.context.reference_image
-    return (identity, outfit) if outfit and outfit != identity else (identity,)
+    identity = plan.context.avatar_image
+    return (identity, outfit) if outfit else (identity,)
 
 
 def build_self_video_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_reference: bool) -> str:
@@ -171,7 +169,7 @@ def build_self_video_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_ref
         outfit_instructions = SELF_IMAGE_CURRENT_OUTFIT
     return (
         SELF_VIDEO_REFERENCE_TEMPLATE.format(
-            reference="图 1" if has_outfit_reference else "参考图",
+            reference="图 1 头像" if has_outfit_reference else "头像参考图",
             outfit=outfit_instructions,
             prompt=prompt,
         )

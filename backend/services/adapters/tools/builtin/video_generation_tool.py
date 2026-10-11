@@ -109,7 +109,7 @@ async def _submit_video(
                 resolution=resolution,
                 reference_images=references,
                 aspect_ratio=aspect_ratio,
-                identity_reference_path=visual.reference_path if visual is not None else None,
+                identity_reference_path=visual.fullbody_path if visual is not None else None,
                 identity=visual.identity if visual is not None else None,
                 structured_reply=structured_reply,
                 media_id=media_id,
