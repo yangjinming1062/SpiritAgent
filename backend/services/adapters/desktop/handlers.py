@@ -232,7 +232,13 @@ class UserGatewaySession:
 
     def track(self, task: asyncio.Task) -> None:
         self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
+
+        def finished(done: asyncio.Task) -> None:
+            self.background_tasks.discard(done)
+            if not done.cancelled() and (error := done.exception()) is not None:
+                logger.warning("gateway background task failed", extra={"user_id": self.user_id}, exc_info=error)
+
+        task.add_done_callback(finished)
 
 
 _ACCOUNT_RUNTIMES: dict[int, AccountChatRuntime] = {}
@@ -301,6 +307,8 @@ async def _noop_send(data: dict[str, Any]) -> bool:
 _last_idle_expression_ts: dict[int, float] = {}
 SHOULD_ACT_ANTIDUP_SECONDS = 2.0
 _last_should_act_ts: dict[int, float] = {}
+_COMPANION_DECISION_TIMEOUT_SECONDS = 20.0
+_MAX_IN_FLIGHT_REQUESTS = 32
 _VOICE_PREVIEW_TEXT_MAX_CHARS = MAX_VOICE_DESIGN_PROMPT_CHARS
 
 
@@ -393,31 +401,37 @@ def _ws_sender(websocket: WebSocket) -> Callable[[dict[str, Any]], Awaitable[boo
 
 
 async def _read_socket(websocket: WebSocket, session: UserGatewaySession) -> None:
-    while True:
-        data = await websocket.receive_text()
-        async with _user_lock(session.user_id):
-            current = (
-                _REMOTE_SESSIONS.get(session.user_id, {}).get(session.connection_id) is session
-                if session.device_id is not None
-                else _USER_SESSIONS.get(session.user_id) is session
-                and MANAGER.active_connections.get(session.user_id) is websocket
-            )
-            if not current:
+    requests: set[asyncio.Task[None]] = set()
+    try:
+        while True:
+            data = await websocket.receive_text()
+            async with _user_lock(session.user_id):
+                current = (
+                    _REMOTE_SESSIONS.get(session.user_id, {}).get(session.connection_id) is session
+                    if session.device_id is not None
+                    else _USER_SESSIONS.get(session.user_id) is session
+                    and MANAGER.active_connections.get(session.user_id) is websocket
+                )
+                if not current:
+                    return
+                valid = await session.authorized()
+                if valid:
+                    if len(requests) >= _MAX_IN_FLIGHT_REQUESTS:
+                        await websocket.close(code=1013, reason="Too many pending requests")
+                        return
+                    dispatch_task = asyncio.create_task(session.dispatcher.handle_raw(data))
+                    requests.add(dispatch_task)
+                    dispatch_task.add_done_callback(requests.discard)
+                    session.track(dispatch_task)
+            if not valid:
+                if session.device_id is not None:
+                    await terminate_remote_sessions(session.user_id, session.device_id)
+                else:
+                    await terminate_user_gateway(session.user_id, login_record_id=session.login_record_id)
                 return
-            valid = await session.authorized()
-            if valid:
-                dispatch_task = asyncio.create_task(session.dispatcher.handle_raw(data))
-                session.track(dispatch_task)
-        if not valid:
-            if session.device_id is not None:
-                await terminate_remote_sessions(session.user_id, session.device_id)
-            else:
-                await terminate_user_gateway(session.user_id, login_record_id=session.login_record_id)
-            return
-        try:
-            await dispatch_task
-        except asyncio.CancelledError:
-            return
+    finally:
+        # 请求归当前连接；已受理的聊天回合归账户，不随断连取消。
+        await _cancel_tasks(list(requests))
 
 
 async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
@@ -869,9 +883,9 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         "memory.delete",
     }
 
-    def register(method: str, handler: Callable[[dict], Awaitable[Any]]) -> None:
+    def register(method: str, handler: Callable[[dict], Awaitable[Any]], *, concurrent: bool = False) -> None:
         if session.device_id is None or method in remote_methods:
-            dispatcher.register(method, handler)
+            dispatcher.register(method, handler, concurrent=concurrent)
 
     def _mount_runtime(conv: Conversation) -> RuntimeSession:
         """历史同步复用已有 runtime，不能取消其他视图正在消费的回合。"""
@@ -979,12 +993,12 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         seq = _require_nonneg_int(params, "seq")
         return {"acked": seq, "pruned": replay_buffer.ack(seq)}
 
-    register("session.ack", session_ack)
+    register("session.ack", session_ack, concurrent=True)
 
     async def session_ping(_params: dict) -> dict:
         return {}
 
-    register("session.ping", session_ping)
+    register("session.ping", session_ping, concurrent=True)
 
     async def session_get_main(_params: dict) -> dict:
         async with SESSION_LOCAL() as db:
@@ -1609,7 +1623,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             logger.warning("Future not found or already done", extra={"user_id": user_id, "call_id": call_id})
         return {}
 
-    register("tool.result", tool_result_handler)
+    register("tool.result", tool_result_handler, concurrent=True)
 
     async def tools_sync(params: dict) -> dict:
         tools = params.get("tools", [])
@@ -1630,7 +1644,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         REGISTRY.update_runner_tools(user_id, accepted)
         return ToolsSyncResult(count=len(accepted)).model_dump()
 
-    register("tools.sync", tools_sync)
+    register("tools.sync", tools_sync, concurrent=True)
 
     async def image_attach(params: dict) -> dict:
         # 路径属于用户本机，后端视为不透明引用，LLM 通过 Runner 文件工具读取。
@@ -1677,8 +1691,13 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         presentation = get_presentation_snapshot(user_id)
         if presentation is not None and presentation.mode == "desktop":
             return await choose_idle_desktop_action(user_id, idle_seconds, local_hour)
-        llm_config = await _resolve_llm_config(user_id)
-        result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
+        try:
+            async with asyncio.timeout(_COMPANION_DECISION_TIMEOUT_SECONDS):
+                llm_config = await _resolve_llm_config(user_id)
+                result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
+        except TimeoutError:
+            logger.warning("companion.idle_expression decision timed out", extra={"user_id": user_id})
+            return {"expressed": False, "action_id": None, "reason": "decision timed out"}
         if presentation != get_presentation_snapshot(user_id):
             return {"expressed": False, "action_id": None, "reason": "presentation changed"}
         if result.expressed and result.action_id is not None:
@@ -1703,7 +1722,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             "reason": result.reason,
         }
 
-    register("companion.idle_expression", companion_idle_expression)
+    register("companion.idle_expression", companion_idle_expression, concurrent=True)
 
     async def companion_signal(params: dict) -> dict[str, bool]:
         try:
@@ -1764,18 +1783,23 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         screen_locked = bool(params.get("screen_locked"))
         seconds_since_last_action = coerce_non_negative_float(params.get("seconds_since_last_action"))
 
-        llm_config = await _resolve_llm_config(user_id)
         presentation = get_presentation_snapshot(user_id)
-        res = await should_act(
-            user_id=user_id,
-            idle_seconds=idle_seconds,
-            local_hour=local_hour,
-            focused_category=focused_category,
-            fullscreen=fullscreen,
-            screen_locked=screen_locked,
-            seconds_since_last_action=seconds_since_last_action,
-            llm_config=llm_config,
-        )
+        try:
+            async with asyncio.timeout(_COMPANION_DECISION_TIMEOUT_SECONDS):
+                llm_config = await _resolve_llm_config(user_id)
+                res = await should_act(
+                    user_id=user_id,
+                    idle_seconds=idle_seconds,
+                    local_hour=local_hour,
+                    focused_category=focused_category,
+                    fullscreen=fullscreen,
+                    screen_locked=screen_locked,
+                    seconds_since_last_action=seconds_since_last_action,
+                    llm_config=llm_config,
+                )
+        except TimeoutError:
+            logger.warning("companion.should_act decision timed out", extra={"user_id": user_id})
+            return {"should_act": False, "action": "stay", "reason": "decision timed out"}
         if presentation != get_presentation_snapshot(user_id):
             return {"should_act": False, "action": "stay", "reason": "presentation changed"}
         # 走过去搭话（DESIGN「位置、移动与缩放」）：开场白经 companion.message 独立投递、客户端边走边说，RPC 响应只承载走位动作；should_act 已把 approach 的 params 收敛为非空 text。
@@ -1787,7 +1811,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             return {"should_act": False, "action": "stay", "reason": "presentation changed"}
         return res.model_dump()
 
-    register("companion.should_act", companion_should_act)
+    register("companion.should_act", companion_should_act, concurrent=True)
 
     async def _memory_scope(params: dict, db: AsyncSession) -> MemoryScope:
         try:

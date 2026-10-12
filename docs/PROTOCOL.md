@@ -21,6 +21,8 @@ ticket 关联登录记录，每张票据在 60 秒内独立消费一次，并发
 
 关闭码 `1008` 停止自动重连，表示策略拒绝，维护状态也可能使用，不能据此断言令牌失效。心跳用 `session.ping`，无入站帧超时以 `4000/heartbeat` 重连；探测间隔和超时见 [JsonRpcGatewayClient](../client/renderer/shared/lib/gateway-protocol/json-rpc-gateway.ts)。
 
+WS 持续收包，普通业务请求按接收顺序执行；心跳、ACK、工具同步与回执及即时自主决策独立执行，自主推理不阻塞心跳和会话恢复。每条连接的在途请求有上限，超限以 `1013` 关闭；断连取消该连接未完成的 RPC，已受理回合按[序号与恢复](#序号与恢复)继续运行。自主空间与窗口空闲表达的推理预算短于客户端 RPC 超时，耗尽后跳过本次动作；上限、预算及处理入口见 [handlers.py](../backend/services/adapters/desktop/handlers.py)。
+
 ### 通道分工
 
 依赖持续会话、进程内运行上下文和流式交付的操作走 WS；独立资源操作与较大载荷走 REST。REST 不要求聊天在线，但仍独立校验身份、权限与资源归属，不能因此视为可任意重试。

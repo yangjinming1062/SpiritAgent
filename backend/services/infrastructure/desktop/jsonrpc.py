@@ -103,6 +103,8 @@ class JsonRpcDispatcher:
         self._send = send
         self.replay_buffer = ReplayBuffer()
         self._handlers: dict[str, Handler] = {}
+        self._concurrent_methods: set[str] = set()
+        self._request_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         self._hold_events: bool = False
         self._hold_timeout_task: asyncio.Task | None = None
@@ -198,8 +200,13 @@ class JsonRpcDispatcher:
 
         self._hold_timeout_task = asyncio.create_task(_timeout_flush())
 
-    def register(self, method: str, handler: Handler) -> None:
+    def register(self, method: str, handler: Handler, *, concurrent: bool = False) -> None:
+        """仅不依赖普通请求执行顺序的处理器可并发运行。"""
         self._handlers[method] = handler
+        if concurrent:
+            self._concurrent_methods.add(method)
+        else:
+            self._concurrent_methods.discard(method)
 
     async def handle_raw(self, data: str) -> None:
         """解析原始 WS 帧并派发：JSON 非法返回 -32700，非对象返回 -32600；错误回复 id 按 JSON-RPC 2.0 §5.1 为 null。"""
@@ -214,6 +221,14 @@ class JsonRpcDispatcher:
         await self.handle(msg)
 
     async def handle(self, msg: dict) -> None:
+        method = msg.get("method")
+        if isinstance(method, str) and method in self._concurrent_methods:
+            await self._handle(msg)
+        else:
+            async with self._request_lock:
+                await self._handle(msg)
+
+    async def _handle(self, msg: dict) -> None:
         msg_id = msg.get("id")
         method = msg.get("method")
         params = msg.get("params")
