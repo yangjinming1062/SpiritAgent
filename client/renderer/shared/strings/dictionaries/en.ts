@@ -31,7 +31,7 @@ export const dict: Dictionary = {
     restore: 'Restore',
     retry: 'Retry',
     pickDate: 'Pick a date',
-    datePicker: { year: 'Year', month: 'Month', day: 'Day', unset: 'Not set' },
+    datePicker: { year: 'Year', month: 'Month', day: 'Day' },
     imagePick: {
       tooLarge: 'This image is too large. Choose a smaller one.',
       readFailed: "Couldn't read the selected image. Try again."

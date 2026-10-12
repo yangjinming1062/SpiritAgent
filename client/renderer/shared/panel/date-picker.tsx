@@ -8,7 +8,7 @@ import { clamp } from '@runtime'
 
 import { INPUT_CLASS } from './palette'
 
-// 自绘日期选择：YYYY/MM/DD 三组整段滚轮（1993 的邻位是 1992/1994）。value 空串表示未选择（显示短横），首次拨动以今天为基准写入。年份钳在四位：0–99 会被 JS Date 重映射到 1900+，也写不出 YYYY-MM-DD。
+// 自绘日期选择：YYYY/MM/DD 三组整段滚轮（1993 的邻位是 1992/1994）。value 空串表示未选择，滚轮常显默认生日（当前年份-18、7 月 15 日；月日取中间值便于前后微调），拨动任意字段即写入。年份钳在四位：0–99 会被 JS Date 重映射到 1900+，也写不出 YYYY-MM-DD。
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 
@@ -51,6 +51,14 @@ function todayFields(): Fields {
   return { d: now.getDate(), m: now.getMonth() + 1, y: now.getFullYear() }
 }
 
+// 默认生日：当前年份-18、7 月 15 日；月日取各自区间的中间值，便于前后滚动微调。
+const DEFAULT_MONTH = 7
+const DEFAULT_DAY = 15
+
+function defaultBirthdayFields(): Fields {
+  return { d: DEFAULT_DAY, m: DEFAULT_MONTH, y: todayFields().y - 18 }
+}
+
 // 年/月/日各自环回；年月变动后日夹回当月合法日（如 1-31 → 2 月会变 2-28）。
 function stepField(fields: Fields, axis: 'd' | 'm' | 'y', delta: number): Fields {
   const next: Fields = { ...fields }
@@ -88,9 +96,8 @@ function FieldWheel({
   min: number
   minW?: string
   onStep: (delta: number) => void
-  value: number | null
+  value: number
 }): React.JSX.Element {
-  const t = useStrings()
   const ref = useRef<HTMLDivElement>(null)
   const accRef = useRef(0)
   const onStepRef = useLatestRef(onStep)
@@ -123,16 +130,16 @@ function FieldWheel({
     return () => el.removeEventListener('wheel', onWheel)
   }, [disabled, onStepRef])
 
-  const prev = value === null ? null : wrapInto(value - 1, min, max)
-  const next = value === null ? null : wrapInto(value + 1, min, max)
+  const prev = wrapInto(value - 1, min, max)
+  const next = wrapInto(value + 1, min, max)
 
   return (
     <div
       aria-label={label}
       aria-valuemax={max}
       aria-valuemin={min}
-      aria-valuenow={value ?? undefined}
-      aria-valuetext={value === null ? t.common.datePicker.unset : format(value)}
+      aria-valuenow={value}
+      aria-valuetext={format(value)}
       className={cn(
         'flex h-[52px] cursor-ns-resize select-none flex-col items-center justify-center rounded-md px-1 transition',
         'hover:bg-fill-hover focus-visible:outline focus-visible:outline-1 focus-visible:outline-focus-line',
@@ -155,32 +162,20 @@ function FieldWheel({
     >
       <div
         aria-hidden
-        className={cn(
-          'h-3 w-full text-center text-[10px] leading-3 text-faint',
-          prev === null ? '' : 'cursor-pointer hover:text-muted'
-        )}
+        className="h-3 w-full cursor-pointer text-center text-[10px] leading-3 text-faint hover:text-muted"
         onClick={() => onStep(-1)}
       >
-        {prev === null ? ' ' : format(prev)}
+        {format(prev)}
       </div>
-      <span
-        className={cn(
-          minW,
-          'text-center text-sm font-semibold leading-6 tabular-nums',
-          value === null ? 'text-faint' : 'text-strong'
-        )}
-      >
-        {value === null ? '–' : format(value)}
+      <span className={cn(minW, 'text-center text-sm font-semibold leading-6 tabular-nums text-strong')}>
+        {format(value)}
       </span>
       <div
         aria-hidden
-        className={cn(
-          'h-3 w-full text-center text-[10px] leading-3 text-faint',
-          next === null ? '' : 'cursor-pointer hover:text-muted'
-        )}
+        className="h-3 w-full cursor-pointer text-center text-[10px] leading-3 text-faint hover:text-muted"
         onClick={() => onStep(1)}
       >
-        {next === null ? ' ' : format(next)}
+        {format(next)}
       </div>
     </div>
   )
@@ -215,7 +210,7 @@ export function DatePicker({
 }: DatePickerProps): React.JSX.Element {
   const labels = useStrings().common.datePicker
   const parsed = parseISODate(value)
-  const fields = parsed ?? todayFields()
+  const fields = parsed ?? defaultBirthdayFields()
 
   const step = (axis: 'd' | 'm' | 'y', delta: number): void => {
     if (disabled) {
@@ -226,7 +221,7 @@ export function DatePicker({
     onChange(toISODate(next.y, next.m, next.d))
   }
 
-  const fieldAt = (axis: 'd' | 'm' | 'y'): number | null => parsed?.[axis] ?? null
+  const fieldAt = (axis: 'd' | 'm' | 'y'): number => fields[axis]
 
   return (
     <div className={className} id={id}>

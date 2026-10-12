@@ -29,7 +29,7 @@ export const dict = {
     restore: '还原',
     retry: '重试',
     pickDate: '选择日期',
-    datePicker: { year: '年', month: '月', day: '日', unset: '未选择' },
+    datePicker: { year: '年', month: '月', day: '日' },
     imagePick: { tooLarge: '图片太大，请换一张较小的图片', readFailed: '无法读取所选图片，请重试' },
     processing: '处理中…'
   },
