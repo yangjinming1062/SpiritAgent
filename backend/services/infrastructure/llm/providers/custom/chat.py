@@ -10,7 +10,7 @@ class CustomChatProvider(ChatProvider):
     """
 
     provider_name = "custom"
-    # 无默认端点与模型，均须在能力卡片填写；留空的卡片会被能力链丢弃。
+    # 地址由供应商信息库配置，模型由能力卡片指定。
     DEFAULT_BASE_URL: ClassVar[str] = ""
     DEFAULT_MODEL: ClassVar[str] = ""
     supports_json_object: ClassVar[bool] = True

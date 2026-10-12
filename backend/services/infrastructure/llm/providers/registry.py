@@ -1,4 +1,4 @@
-from components import AI_FEATURE_BY_ID, AiFeature
+from components import AI_FEATURE_BY_ID, AiFeature, ProviderDefaults
 
 from .base import BaseProvider, ChatProvider, ProviderConfig, ServiceType, TTSProvider
 
@@ -40,12 +40,6 @@ def default_base_url(provider: str, service_type: ServiceType) -> str:
     return cls.DEFAULT_BASE_URL if cls is not None else ""
 
 
-def default_model_for(provider: str, service_type: ServiceType) -> str:
-    """返回供应商为该能力发布的默认模型名称；没有默认值时返回空字符串。"""
-    cls = try_resolve(service_type, provider)
-    return cls.DEFAULT_MODEL if cls is not None else ""
-
-
 def provider_requires_api_key(service_type: ServiceType, provider_name: str) -> bool:
     cls = try_resolve(service_type, provider_name)
     return cls is None or cls.requires_api_key
@@ -74,13 +68,28 @@ def providers_for_feature(feature: AiFeature) -> list[str]:
     return names
 
 
-def provider_context_defaults() -> dict[str, int]:
-    """注册 LLM 供应商的新卡片窗口预填值。"""
-    return {
-        name: cls.DEFAULT_CONTEXT_TOKENS
-        for (service, name), cls in _REGISTRY.items()
-        if service == ServiceType.llm and issubclass(cls, ChatProvider)
-    }
+def provider_configuration_defaults() -> dict[str, dict[str, ProviderDefaults]]:
+    """管理页预填模型与窗口，并用适配器声明核对供应商配置状态。"""
+    result: dict[str, dict[str, ProviderDefaults]] = {}
+    for (service, name), cls in _REGISTRY.items():
+        result.setdefault(service.value, {})[name] = ProviderDefaults(
+            model_name=cls.DEFAULT_MODEL,
+            base_url=cls.DEFAULT_BASE_URL,
+            requires_api_key=cls.requires_api_key,
+            context_window=cls.DEFAULT_CONTEXT_TOKENS if issubclass(cls, ChatProvider) else None,
+            voice_design_model=cls.VOICE_DESIGN_MODEL if issubclass(cls, TTSProvider) else None,
+        )
+    return result
+
+
+def model_supports_feature(provider_name: str, model_name: str, feature: AiFeature) -> bool:
+    if provider_name not in providers_for_feature(feature):
+        return False
+    if feature == AiFeature.voice_design:
+        cls = resolve(ServiceType.tts, provider_name)
+        if issubclass(cls, TTSProvider) and cls.VOICE_DESIGN_MODEL is not None:
+            return model_name == cls.VOICE_DESIGN_MODEL
+    return True
 
 
 def resolve_context_tokens(config: ProviderConfig) -> int:

@@ -50,6 +50,7 @@
 | companion / journal → memory | 陪伴召回与日记派生索引 |
 | companion → actions | 读取当前包目录快照 |
 | backup → actions / memory | 重建动作目录与日记索引 |
+| backup → configuration | 预检 AI 配置引用与能力 |
 | automation → chat | 复用 `run_chat_turn` 与 `HeadlessEmitter` |
 | nightly → generation / posts / actions | 夜间制作、发布与动作上下文 |
 | posts / application/actions → generation | 制作动态媒体与动作素材 |
@@ -150,15 +151,15 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 
 ### 本地供应商
 
-`local` 对接 Responses 服务、embedding 和 ComfyUI，默认地址见 [适配器](services/infrastructure/llm/providers/local/)。Base URL 必须从 Backend（含容器）可达；信息库卡片提供共享地址与密钥，能力卡片可覆盖。无鉴权服务可留空密钥；启用 SSRF 守卫时私网地址须加入允许 CIDR，CGNAT 和云元数据地址不可豁免。
+`local` 对接 Responses 服务、embedding 和 ComfyUI，默认地址见 [适配器](services/infrastructure/llm/providers/local/)。信息库地址须从 Backend（含容器）可达，不同地址分别建条目。无鉴权服务可留空密钥；启用 SSRF 守卫时私网地址须加入允许 CIDR，CGNAT 和云元数据地址不可豁免。
 
-- ComfyUI 使用固定 Qwen 工作流，自动匹配权重，不支持能力卡片独立密钥或自选权重。图像能力与长等待归 PIPELINE。
+- ComfyUI 自动匹配 Qwen 权重，卡片要求见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)；图像能力与长等待归 PIPELINE。
 - LLM 支持 Responses API；能力卡片须填写已部署模型 ID 和模型服务实际加载的上下文窗口（tokens），供压缩、调用预算和会话容量展示使用。适配器按地址缓存 `/props` 探测结果；无工具结构输出中，llama.cpp 使用 `response_format.json_schema`，Strata 使用 `text.format`。两者按会话或任务的推理强度下发 `reasoning.effort`（`none` 关闭思考），未识别服务不下发推理参数和原生结构约束。其余由提示词与应用校验约束。归一化温度按 1:1 下发（界面 0.7 即 0.7），本地模型的推荐值多在 0–1。
 - embedding 固定使用记忆向量功能配置的模型；链为空、无效或调用失败时记忆用关键词召回。维度适配见 [embedding.py](services/infrastructure/llm/providers/local/embedding.py)：仅默认模型允许 MRL 截断，短向量归一化补零，其他超宽向量拒绝。向量空间与补齐规则见 [记忆读取与恢复](services/domains/memory/README.md#读取召回与恢复)。
 
 ### 运营参数
 
-`/admin/` 提供按功能分组的调用链、通用默认、供应商信息库、用户覆盖及运营参数，保存后即时生效。功能链继承、凭据与预算归 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。自主动态快照的保留期由 [publication.py](services/application/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
+`/admin/` 维护三级 AI 配置、用户覆盖与运营参数，保存即时生效；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。AI 配置仅支持引用格式，部署需全新数据库并重新配置；旧配置与旧备份不兼容。自主动态快照的保留期由 [publication.py](services/application/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
 
 ### LLM 调试日志
 

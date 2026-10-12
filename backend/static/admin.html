@@ -1372,7 +1372,7 @@ const tabCache = { users: null, models: null, logs: null, versions: null };
 const TABS = {
     overview: { title: '总览', desc: '系统健康、能力就绪度与最近动态' },
     users:    { title: '用户管理', desc: '管理可登录客户端的账户、使用权限与激活码' },
-    ai:       { title: 'AI 功能调用链配置', desc: '功能调用链 · 通用默认 · 用户覆盖（保存后热生效）' },
+    ai:       { title: 'AI 功能调用链配置', desc: '供应商信息库 → 能力模型配置 → 功能调用链（保存后热生效）' },
     settings: { title: '系统参数', desc: '全局业务参数与运行时调优（实时热生效，无需重启容器）' },
     versions: { title: '版本与日志', desc: '更新包分发与夜间活动流水线记录' },
 };
@@ -1991,25 +1991,20 @@ const READINESS_KEY_LABELS = Object.freeze({
     image_gen: '图像生成', video_gen: '视频生成', embedding: '向量嵌入',
 });
 
-function systemCapabilities() {
-    return normalizeAiConfig(tabCache.models?.system_ai_config).capabilities;
-}
-
 function userOverrideCount(group) {
     const feature = aiFeature(group);
     if (feature) return (tabCache.models?.items ?? []).filter(item => hasFeatureOverride(item.ai_config?.features?.[feature.id])).length;
     return (tabCache.models?.items ?? []).filter(c => (c.ai_config?.capabilities?.[group] ?? []).length > 0).length;
 }
 
-// 返回 { group: { status: 'ok'|'bad'|'warn', cards, windowMissing } }；llm 缺上下文窗口记 warn。
+// 就绪度核对引用、模型与供应商凭据，不以卡片数量判断可调用性。
 function computeReadiness(systemConfig) {
     const result = {};
     for (const feature of tabCache.models?.ai_features ?? []) {
         const group = `feature:${feature.id}`;
         const { cards, source } = effectiveFeatureChain(systemConfig, emptyAiConfig(), feature);
-        const windowMissing = feature.service === 'llm' && cards.length > 0 && cards.some(c => !c.context_window || Number(c.context_window) <= 0);
-        const status = cards.length === 0 ? 'bad' : windowMissing ? 'warn' : 'ok';
-        result[group] = { label: feature.label, service: feature.service, groupLabel: feature.group, source, status, cards, windowMissing };
+        const status = !cards.some(card => card.available) ? 'bad' : cards.some(card => !card.available) ? 'warn' : 'ok';
+        result[group] = { label: feature.label, service: feature.service, groupLabel: feature.group, source, status, cards };
     }
     return result;
 }
@@ -2024,14 +2019,14 @@ function updateAiNavBadge(readiness) {
 
 function renderOverviewMatrix(readiness) {
     const rows = Object.entries(readiness).map(([group, r]) => {
-        const first = r.cards[0];
+        const first = r.cards.find(card => card.available);
         const local = first?.provider === 'local' && r.service === 'image_gen';
         const providers = r.cards.length
-            ? r.cards.map(c => esc(aiProviderLabel(c.provider))).join(' → ')
+            ? r.cards.filter(card => card.available).map(card => esc(card.provider_name + ' · ' + card.model_name)).join(' → ') || '<span class="text-3">暂无可用模型</span>'
             : '<span class="text-3">—</span>';
         const statusPill = r.status === 'ok'
             ? pill('已配置', 'green')
-            : r.status === 'warn' ? pill('缺上下文窗', 'amber') : pill('未配置', 'red');
+            : r.status === 'warn' ? pill('部分卡片不可用', 'amber') : pill('未配置可用模型', 'red');
         const overrides = userOverrideCount(group);
         const overridePill = overrides ? pill(`${overrides} 人覆盖`, 'amber') : '<span class="text-3">继承系统</span>';
         return `<tr class="matrix-row" onclick="openAiGroup('${group}')">
@@ -2133,7 +2128,7 @@ async function loadOverview() {
 }
 
 // ── AI 能力视图 ───────────────────────────────────────
-let aiView = { scope: 'system', userId: null, group: 'feature:companion_chat' };
+let aiView = { scope: 'system', userId: null, group: 'providers' };
 let aiUserDirty = false;
 
 function aiScopeOptions() {
@@ -2147,136 +2142,51 @@ function aiScopeOptions() {
 
 function renderAiTree() {
     const config = aiActiveEditor().config;
-    const providers = config.providers;
-    const groupsHtml = Object.keys(READINESS_KEY_LABELS).map(group => {
-        const cards = config.capabilities[group] ?? [];
-        const sub = aiView.scope === 'system'
-            ? (cards.length ? `${cards.length} 卡` : '空')
-            : (cards.length ? `${cards.length} 卡` : '继承');
-        return `<button type="button" class="tree-item child${aiView.group === group ? ' active' : ''}" onclick="aiSelectNode('${group}')">
-            <span>${esc(READINESS_KEY_LABELS[group])}</span><span class="tree-sub">${esc(sub)}</span>
-        </button>`;
-    }).join('');
+    const node = (key, label, sub, child = false) => '<button type="button" class="tree-item' + (child ? ' child' : '') + (aiView.group === key ? ' active' : '') + '" onclick="aiSelectNode(\'' + key + '\')"><span>' + esc(label) + '</span><span class="tree-sub">' + esc(sub) + '</span></button>';
+    const groups = Object.keys(READINESS_KEY_LABELS).map(group => node(group, READINESS_KEY_LABELS[group], config.capabilities[group].length ? config.capabilities[group].length + ' 模型' : aiView.scope === 'system' ? '空' : '继承', true)).join('');
     const sections = new Map();
     for (const feature of tabCache.models?.ai_features ?? []) {
         if (!sections.has(feature.group)) sections.set(feature.group, []);
         sections.get(feature.group).push(feature);
     }
-    const featureHtml = [...sections].map(([label, features]) => `<details ${features.some(feature => aiView.group === `feature:${feature.id}`) ? 'open' : ''}>
-        <summary class="tree-label">${esc(label)}</summary>
-        ${features.map(feature => {
-            const key = `feature:${feature.id}`;
-            const cards = config.features?.[feature.id]?.chain ?? [];
-            return `<button type="button" class="tree-item child${aiView.group === key ? ' active' : ''}" onclick="aiSelectNode('${key}')"><span>${esc(feature.label)}</span><span class="tree-sub">${cards.length ? `${cards.length} 卡` : '继承'}</span></button>`;
-        }).join('')}
-    </details>`).join('');
-    $('#aiTree').innerHTML = `
-        <div class="tree-label">功能调用链</div>
-        ${featureHtml}
-        <div class="tree-label">通用默认</div>
-        ${groupsHtml}
-        <div class="tree-label" style="margin-top:0.5rem">信息库</div>
-        <button type="button" class="tree-item${aiView.group === 'providers' ? ' active' : ''}" onclick="aiSelectNode('providers')">
-            <span>供应商</span><span class="tree-sub">${providers.length} 家</span>
-        </button>`;
+    const features = [...sections].map(([label, values]) => '<details' + (values.some(feature => aiView.group === 'feature:' + feature.id) ? ' open' : '') + '><summary class="tree-label">' + esc(label) + '</summary>' + values.map(feature => {
+        const count = config.features[feature.id]?.chain?.length || 0;
+        return node('feature:' + feature.id, feature.label, count ? count + ' 引用' : '继承', true);
+    }).join('') + '</details>').join('');
+    $('#aiTree').innerHTML = '<div class="tree-label">1 · 供应商信息库</div>' + node('providers', '供应商', config.providers.length + ' 条') + '<div class="tree-label">2 · 能力模型配置</div>' + groups + '<div class="tree-label">3 · 功能调用链</div>' + features;
 }
 
 function aiActiveEditor() {
     return aiView.scope === 'system' ? aiEditors.system : aiEditors.user;
 }
 
-// 继承链视图即编辑面：L2/L3 调用卡片行内展开配置，排序/拖拽直接作用于调用顺序。
 function renderAiChain() {
-    const scopeLabel = aiView.scope === 'system' ? '系统' : `用户 #${aiView.scope}`;
-    $('#aiChainTitle').textContent = `调用链 · ${aiGroupLabel(aiView.group)}（${scopeLabel}）`;
-    $('#aiDeleteBtn').hidden = aiView.scope === 'system';
     const editorName = aiView.scope === 'system' ? 'system' : 'user';
     const editor = aiActiveEditor();
+    const isUser = editorName === 'user';
+    $('#aiChainTitle').textContent = aiGroupLabel(aiView.group) + '（' + (isUser ? '用户 #' + aiView.scope : '系统') + '）';
+    $('#aiDeleteBtn').hidden = !isUser;
     const feature = aiFeature(aiView.group);
-    if (feature) {
-        renderAiFeatureChain(editorName, editor, feature);
-        return;
-    }
+    if (feature) { renderAiFeatureChain(editorName, editor, feature); return; }
     if (aiView.group === 'providers') {
-        $('#aiChainCount').textContent = `${editor.config.providers.length} 家`;
-        $('#aiChainBody').innerHTML = `
-            <section class="chain-layer is-effective">
-                <div class="layer-head">
-                    <span class="layer-tag">L1</span>
-                    <span class="layer-title">供应商信息库</span>
-                    <span class="layer-badge">${editor.config.providers.length} 家</span>
-                </div>
-                ${callListHtml(editorName, 'providers')}
-                <p class="layer-hint">供应商名称是唯一标识，只保存 API Key 与 Base URL；模型名称写在各调用卡片上。自定义供应商需注册后端实现才可选用。各能力须单独添加卡片才会启用，信息库不隐式补链。</p>
-            </section>`;
-        bindAiCardEvents();
-        return;
+        $('#aiChainCount').textContent = editor.config.providers.length + ' 条';
+        const inherited = isUser ? '<section class="chain-layer"><div class="layer-head"><span class="layer-title">可引用的系统供应商</span></div>' + providerSummaryHtml(aiSystemConfig(editor).providers) + '</section>' : '';
+        $('#aiChainBody').innerHTML = inherited + '<section class="chain-layer is-effective"><div class="layer-head"><span class="layer-tag">1</span><span class="layer-title">' + (isUser ? '用户供应商信息库' : '供应商信息库') + '</span></div>' + callListHtml(editorName, 'providers') + '<p class="layer-hint">在这里维护名称、API Key 与 Base URL。同一类型可添加多条配置；自定义使用标准 OpenAI 接口，名称可自由填写。</p></section>';
+    } else {
+        const group = aiView.group;
+        const system = aiSystemConfig(editor);
+        const systemCards = modelEntries(system, group, '系统');
+        const ownCards = modelEntries(editor.config, group, isUser ? '用户' : '系统', isUser ? system : null);
+        $('#aiChainCount').textContent = ownCards.length + ' 个模型';
+        const inherited = isUser ? '<section class="chain-layer"><div class="layer-head"><span class="layer-title">系统模型与默认顺序</span><span class="layer-badge">' + (ownCards.length ? '默认顺序被用户覆盖' : '继承系统默认顺序') + '</span></div>' + readonlyCallListHtml(systemCards, group) + '</section>' : '';
+        $('#aiChainBody').innerHTML = inherited + '<section class="chain-layer is-effective"><div class="layer-head"><span class="layer-tag">2</span><span class="layer-title">' + (isUser ? '用户模型与默认顺序' : '能力模型与默认顺序') + '</span></div>' + callListHtml(editorName, group) + '<p class="layer-hint">先选择已有供应商，再配置具体模型。同一供应商可反复添加。功能链可引用这些模型；未配置专用功能链时按默认顺序调用。' + (group === 'embedding' ? '向量默认只使用首张，失败时使用关键词召回。' : '失败时回退到后续可用模型。') + '</p></section>';
     }
-    const group = aiView.group;
-    const isUserScope = aiView.scope !== 'system';
-    const systemCards = isUserScope ? systemCapabilities()[group] : editor.config.capabilities[group];
-    const userCards = isUserScope ? aiList(editor, group) : [];
-    const effectiveCards = isUserScope && userCards.length ? userCards : systemCards;
-    $('#aiChainCount').textContent = `${effectiveCards.length} 张卡片`;
-
-    const lib = tabCache.models?.system_ai_config?.providers ?? [];
-    const referenced = new Set(effectiveCards.map(c => c.provider));
-    const libItems = lib.filter(p => referenced.has(p.provider));
-    const l1 = `
-        <section class="chain-layer">
-            <div class="layer-head">
-                <span class="layer-tag">L1</span>
-                <span class="layer-title">供应商信息库</span>
-                <span class="layer-badge muted">${libItems.length} 家被引用</span>
-            </div>
-            ${libItems.length ? `<div class="provider-grid">${libItems.map(p => {
-                const keyOn = p.api_key || p.api_key_set;
-                return `<div class="provider-card">
-                    <div class="p-name">${esc(aiProviderLabel(p.provider))}</div>
-                    <div class="p-row"><span>API Key</span><b style="color:${keyOn ? 'var(--green)' : 'var(--amber)'}">${keyOn ? '已设置' : '未设置'}</b></div>
-                    <div class="p-row"><span>Base URL</span><b>${esc(p.base_url || (p.provider === 'custom' ? '未填写' : '官方地址'))}</b></div>
-                </div>`;
-            }).join('')}</div>` : '<p class="hint" style="margin:0">当前调用链未引用信息库中的供应商。</p>'}
-            <p class="layer-hint">只提供共享 API Key 与 Base URL；模型名称写在各调用卡片上。前往「供应商」节点维护。</p>
-        </section>`;
-
-    const link = text => `<div class="layer-link">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
-        <span>${esc(text)}</span>
-    </div>`;
-
-    const l2Readonly = isUserScope;
-    const l2 = `
-        <section class="chain-layer${isUserScope && userCards.length ? ' muted-card' : ' is-effective'}">
-            <div class="layer-head">
-                <span class="layer-tag">L2</span>
-                <span class="layer-title">系统通用默认链</span>
-                <span class="layer-badge${isUserScope && userCards.length ? ' muted' : ''}">${isUserScope && userCards.length ? '被用户覆盖' : '当前生效'}</span>
-            </div>
-            ${l2Readonly ? readonlyCallListHtml(systemCards, group) : callListHtml(editorName, group)}
-            <p class="layer-hint">${isUserScope && userCards.length ? '该能力被用户卡片覆盖，系统通用默认链不参与该用户默认调用。' : isUserScope ? '用户未覆盖本能力时按此系统链调用。' : '按卡片顺序调用，失败自动回退到下一张；未添加卡片表示该能力未配置。API Key 与 Base URL 留空继承同名供应商，模型名称留空使用默认模型；自定义供应商没有默认端点与模型。'}</p>
-        </section>`;
-
-    const l3 = isUserScope
-        ? link('用户添加卡片后覆盖系统链') + `
-        <section class="chain-layer${userCards.length ? ' is-effective' : ''}">
-            <div class="layer-head">
-                <span class="layer-tag">L3</span>
-                <span class="layer-title">用户覆盖</span>
-                <span class="layer-badge${userCards.length ? '' : ' muted'}">${userCards.length ? '当前生效' : '未覆盖'}</span>
-            </div>
-            ${callListHtml(editorName, group)}
-            <p class="layer-hint">${userCards.length ? '该用户使用自己的调用顺序与模型；API Key 与 Base URL 留空先继承用户再系统同名供应商。' : '未添加卡片时完整继承系统通用默认链。'}</p>
-        </section>`
-        : '';
-
-    $('#aiChainBody').innerHTML = `<div class="chain-flow">
-        ${l1}
-        ${link('能力卡片引用共享 API Key 与 Base URL')}
-        ${l2}
-        ${l3}
-    </div>`;
     bindAiCardEvents();
+}
+
+function providerSummaryHtml(providers) {
+    if (!providers.length) return '<p class="hint">暂无系统供应商。</p>';
+    return '<div class="provider-grid">' + providers.map(provider => '<div class="provider-card"><div class="p-name">' + esc(provider.name) + '</div><div class="p-row"><span>类型</span><b>' + esc(aiProviderLabel(provider.provider_type)) + '</b></div><div class="p-row"><span>API Key</span><b>' + (provider.api_key_set ? '已设置' : '未设置') + '</b></div><div class="p-row"><span>Base URL</span><b>' + esc(provider.base_url || '使用适配器默认地址') + '</b></div></div>').join('') + '</div>';
 }
 
 function hasFeatureOverride(value) {
@@ -2284,21 +2194,15 @@ function hasFeatureOverride(value) {
 }
 
 function renderAiFeatureChain(editorName, editor, feature) {
-    const system = editorName === 'system' ? editor.config : normalizeAiConfig(tabCache.models?.system_ai_config);
+    const system = editorName === 'system' ? editor.config : aiSystemConfig(editor);
     const user = editorName === 'user' ? editor.config : emptyAiConfig();
     const { cards, source } = effectiveFeatureChain(system, user, feature);
-    const group = `feature:${feature.id}`;
-    const policy = editor.config.features?.[feature.id] ?? {};
-    const inheritedPolicy = editorName === 'user' ? system.features?.[feature.id] ?? {} : {};
-    $('#aiChainCount').textContent = `${cards.length} 张卡片 · ${source}`;
-    const budgets = ['attempt_timeout_seconds', 'total_timeout_seconds'].map((key, index) => `<div class="field"><label>${index === 0 ? '单家调用预算' : '调用链总预算'}（秒）<input type="number" min="0.001" max="86400" step="any" data-ai-policy="${key}" value="${esc(policy[key] ?? '')}" placeholder="${esc(inheritedPolicy[key] ?? '沿用功能默认预算')}"></label></div>`).join('');
-    $('#aiChainBody').innerHTML = `<div class="chain-flow">
-        <section class="chain-layer is-effective"><div class="layer-head"><span class="layer-title">实际生效：${esc(source)}</span><span class="layer-badge">${esc(AI_SERVICES[feature.service])}${feature.vision ? ' · 需要图像理解' : ''}</span></div>${readonlyCallListHtml(cards, group)}</section>
-        <section class="chain-layer"><div class="layer-head"><span class="layer-title">${editorName === 'system' ? '系统功能链' : '用户功能链'}</span></div>${callListHtml(editorName, group)}
-            <p class="layer-hint">按配置顺序调用。未添加卡片时继承；用户功能链 → 系统功能链 → 用户通用默认链 → 系统通用默认链。模型与上下文窗口由调用卡片指定。</p>
-            <div class="call-item-body" style="display:grid">${budgets}</div>
-            <p class="layer-hint">预算留空继承系统功能配置，之后沿用功能默认值。${feature.fast_decision ? '自主判断总预算最多 20 秒；多家时默认单家 8 秒，单家时 20 秒。' : '重试与格式修复共用预算，已有任务和回合期限继续生效。'}${feature.service === 'embedding' ? '向量固定使用一个模型；失败时使用关键词召回。' : ''}</p>
-        </section></div>`;
+    const group = 'feature:' + feature.id;
+    const policy = editor.config.features[feature.id] ?? {};
+    const inheritedPolicy = editorName === 'user' ? system.features[feature.id] ?? {} : {};
+    $('#aiChainCount').textContent = cards.length + ' 张卡片 · ' + source;
+    const budgets = ['attempt_timeout_seconds', 'total_timeout_seconds'].map((key, index) => '<div class="field"><label>' + (index === 0 ? '单模型调用预算' : '调用链总预算') + '（秒）<input type="number" min="0.001" max="86400" step="any" data-ai-policy="' + key + '" value="' + esc(policy[key] ?? '') + '" placeholder="' + esc(inheritedPolicy[key] ?? '沿用功能默认预算') + '"></label></div>').join('');
+    $('#aiChainBody').innerHTML = '<div class="chain-flow"><section class="chain-layer is-effective"><div class="layer-head"><span class="layer-title">实际生效：' + esc(source) + '</span><span class="layer-badge">' + esc(AI_SERVICES[feature.service]) + (feature.vision ? ' · 需要图像理解' : '') + '</span></div>' + readonlyCallListHtml(cards, group) + '</section><section class="chain-layer"><div class="layer-head"><span class="layer-tag">3</span><span class="layer-title">' + (editorName === 'system' ? '系统功能链' : '用户功能链') + '</span></div>' + callListHtml(editorName, group) + '<p class="layer-hint">这里只选择、移除和排序已有模型卡片。模型参数在能力层统一维护。留空按用户功能链 → 系统功能链 → 用户默认能力链 → 系统默认能力链继承。</p><div class="call-item-body" style="display:grid">' + budgets + '</div><p class="layer-hint">预算留空继承系统功能配置，之后沿用功能默认值。' + (feature.fast_decision ? '自主判断总预算最多 20 秒；多模型时默认单模型 8 秒。' : '重试与格式修复共用预算。') + (feature.service === 'embedding' ? '向量只能选择一张模型卡片，失败时使用关键词召回。' : '') + '</p></section></div>';
     bindAiCardEvents();
 }
 
@@ -2368,8 +2272,7 @@ function showModelConfigForUserSilent(userId) {
     const cached = tabCache.models?.items?.find(c => c.user_id == userId) ?? null;
     aiEditors.user.config = normalizeAiConfig(cached?.ai_config);
     aiEditors.user.support = tabCache.models?.ai_provider_support ?? {};
-    aiEditors.user.contextDefaults = tabCache.models.ai_context_defaults;
-    aiEditors.user.inheritedProviders = tabCache.models?.system_ai_config?.providers ?? [];
+    aiEditors.user.defaults = tabCache.models?.ai_provider_defaults ?? {};
     renderAiScope();
 }
 
@@ -2484,8 +2387,8 @@ function normalizeAiConfig(raw) {
     return config;
 }
 const aiEditors = {
-    system: { config: emptyAiConfig(), support: {}, contextDefaults: {}, inheritedProviders: [] },
-    user: { config: emptyAiConfig(), support: {}, contextDefaults: {}, inheritedProviders: [] },
+    system: { config: emptyAiConfig(), support: {}, defaults: {} },
+    user: { config: emptyAiConfig(), support: {}, defaults: {} },
 };
 let lastSystemAiRaw = null;
 let aiDrag = null;
@@ -2512,16 +2415,47 @@ function aiGroupLabel(group) {
     return aiFeature(group)?.label ?? READINESS_KEY_LABELS[group] ?? '供应商信息库';
 }
 
+function aiSystemConfig(editor) {
+    return editor === aiEditors.system ? emptyAiConfig() : normalizeAiConfig(tabCache.models?.system_ai_config);
+}
+
+function modelEntries(config, service, scope, system = null) {
+    const defaults = tabCache.models?.ai_provider_defaults ?? aiEditors.system.defaults;
+    return (config.capabilities[service] ?? []).map(card => {
+        const provider = config.providers.find(item => item.id === card.provider_id) ?? system?.providers.find(item => item.id === card.provider_id);
+        const settings = defaults?.[service]?.[provider?.provider_type];
+        const keySet = Boolean(provider?.api_key || (provider?.api_key_set && !provider?.clear_api_key));
+        const issue = !provider ? '供应商引用失效' : !settings ? '供应商不支持此能力' : !card.model_name?.trim() ? '未填写模型名称' : service === 'llm' && !parseAiContextWindow(card.context_window) ? '缺上下文窗口' : !(provider.base_url || settings.base_url) ? '缺 Base URL' : settings.requires_api_key && !keySet ? '缺 API Key' : '';
+        return { ...card, service, scope, provider: provider?.provider_type, provider_name: provider?.name ?? '供应商不存在', available: !issue, issue };
+    });
+}
+
+function aiModels(editor, service) {
+    const isSystem = editor === aiEditors.system;
+    const system = aiSystemConfig(editor);
+    return [...modelEntries(editor.config, service, isSystem ? '系统' : '用户', isSystem ? null : system), ...(isSystem ? [] : modelEntries(system, service, '系统'))];
+}
+
+function aiModelSupportsFeature(card, feature) {
+    const supported = tabCache.models?.ai_feature_support?.[feature.id] ?? [];
+    if (!supported.includes(card.provider)) return false;
+    const requiredModel = (tabCache.models?.ai_provider_defaults ?? aiEditors.system.defaults)?.[feature.service]?.[card.provider]?.voice_design_model;
+    return feature.id !== 'voice_design' || !requiredModel || card.model_name === requiredModel;
+}
+
 function effectiveFeatureChain(system, user, feature) {
     const layers = [
-        [user.features?.[feature.id]?.chain, '用户功能链'],
-        [system.features?.[feature.id]?.chain, '系统功能链'],
-        [user.capabilities?.[feature.service], '用户通用默认链'],
-        [system.capabilities?.[feature.service], '系统通用默认链'],
+        { values: user.features[feature.id]?.chain, owner: user, scope: '用户', refs: true, source: '用户功能链' },
+        { values: system.features[feature.id]?.chain, owner: system, scope: '系统', refs: true, source: '系统功能链' },
+        { values: user.capabilities[feature.service], owner: user, scope: '用户', source: '用户默认能力链' },
+        { values: system.capabilities[feature.service], owner: system, scope: '系统', source: '系统默认能力链' },
     ];
-    const selected = layers.find(([cards]) => cards?.length);
-    const supported = tabCache.models?.ai_feature_support?.[feature.id];
-    return selected ? { cards: supported ? selected[0].filter(card => supported.includes(card.provider)) : selected[0], source: selected[1] } : { cards: [], source: '未配置' };
+    const layer = layers.find(item => item.values?.length);
+    if (!layer) return { cards: [], source: '未配置' };
+    let values = feature.service === 'embedding' ? layer.values.slice(0, 1) : layer.values;
+    const catalog = [...modelEntries(layer.owner, feature.service, layer.scope, layer.owner === user ? system : null), ...(layer.owner === user ? modelEntries(system, feature.service, '系统') : [])];
+    values = values.map(value => catalog.find(card => card.id === (layer.refs ? value : value.id)) ?? { id: value, model_name: '模型引用失效', provider_name: '模型不存在', available: false, issue: '模型引用失效' });
+    return { cards: values.filter(card => !card.provider || aiModelSupportsFeature(card, feature)), source: layer.source };
 }
 
 function aiProviderLabel(provider) {
@@ -2541,128 +2475,188 @@ function parseAiContextWindow(raw) {
 
 function validateAiCards(editorName) {
     const editor = aiEditors[editorName];
-    const groups = Object.keys(AI_SERVICES).map(service => ({ group: service, service, cards: editor.config.capabilities[service] ?? [] }));
-    for (const [featureId, value] of Object.entries(editor.config.features)) {
-        const feature = aiFeature(`feature:${featureId}`);
-        if (!feature) { toast('存在未知的功能配置，请重新加载', 'err'); return false; }
-        for (const key of ['attempt_timeout_seconds', 'total_timeout_seconds']) {
-            if (value[key] != null && (!Number.isFinite(value[key]) || value[key] <= 0 || value[key] > 86400)) {
-                toast(`${feature.label}：预算必须是 0 至 86400 之间的正数`, 'err'); return false;
-            }
-        }
-        groups.push({ group: `feature:${featureId}`, service: feature.service, cards: value.chain ?? [] });
+    const ids = new Set();
+    const system = aiSystemConfig(editor);
+    const inheritedIds = new Set([...system.providers, ...Object.values(system.capabilities).flat()].map(card => card.id));
+    const validId = id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) && !ids.has(id) && !inheritedIds.has(id);
+    const fail = message => { toast(message, 'err'); return false; };
+    for (const provider of editor.config.providers) {
+        if (!validId(provider.id)) return fail('供应商 ID 无效或重复，请重新加载');
+        ids.add(provider.id);
+        if (!provider.name?.trim()) return fail('请填写供应商名称');
+        if (!Object.values(editor.support).flat().includes(provider.provider_type)) return fail('供应商类型未注册');
     }
     const windows = [];
-    for (const { group, service, cards } of groups) {
-        if (service === 'embedding' && cards.length > 1) { toast('记忆向量只配置一个模型，失败时使用关键词召回', 'err'); return false; }
-        if (service !== 'llm') continue;
-        for (const [index, card] of cards.entries()) {
-            const value = parseAiContextWindow(card.context_window);
-            if (value === null) {
-                const message = `${aiGroupLabel(group)}：请填写有效的上下文窗口，例如 32k、1M 或 32768`;
-                toast(message, 'err');
-                const input = $('#aiChainBody')?.querySelector(`[data-ai-group="${group}"] [data-ai-index="${index}"] [data-ai-field="context_window"]`);
-                if (input) { input.setCustomValidity(message); input.reportValidity(); input.focus(); }
-                return false;
+    for (const service of Object.keys(AI_SERVICES)) {
+        for (const card of editor.config.capabilities[service]) {
+            if (!validId(card.id)) return fail('模型卡片 ID 无效或重复，请重新加载');
+            ids.add(card.id);
+            const provider = aiSource(editor, card.provider_id);
+            if (!provider || !(editor.support[service] ?? []).includes(provider.provider_type)) return fail(aiGroupLabel(service) + '：请选择支持此能力的已有供应商');
+            if (!card.model_name?.trim()) return fail(aiGroupLabel(service) + '：请填写具体模型名称');
+            if (service === 'image_gen' && provider.provider_type === 'local' && card.model_name !== 'qwen') return fail('本地生图使用固定 Qwen 工作流');
+            if (service === 'llm') {
+                const window = parseAiContextWindow(card.context_window);
+                if (window === null) return fail('请填写有效的上下文窗口，例如 32k、1M 或 32768');
+                windows.push([card, window]);
             }
-            if (card.provider === 'custom' && (!card.model_name?.trim() || !(card.base_url || aiSource(editor, card.provider)?.base_url)?.trim())) {
-                toast('自定义供应商必须填写模型名称与 Base URL', 'err'); return false;
-            }
-            windows.push([card, value]);
         }
     }
-    for (const [card, value] of windows) card.context_window = value;
+    for (const [featureId, policy] of Object.entries(editor.config.features)) {
+        const feature = aiFeature('feature:' + featureId);
+        if (!feature) return fail('存在未知的功能配置，请重新加载');
+        const chain = policy.chain ?? [];
+        const models = aiModels(editor, feature.service);
+        if (new Set(chain).size !== chain.length) return fail(feature.label + '：不能重复引用同一模型卡片');
+        if (feature.service === 'embedding' && chain.length > 1) return fail('记忆向量只能选择一张模型卡片');
+        if (chain.some(id => !models.some(card => card.id === id && aiModelSupportsFeature(card, feature)))) return fail(feature.label + '：请引用支持此功能的已有模型卡片');
+        for (const key of ['attempt_timeout_seconds', 'total_timeout_seconds']) {
+            if (policy[key] != null && (!Number.isFinite(policy[key]) || policy[key] <= 0 || policy[key] > 86400)) return fail(feature.label + '：预算必须是 0 至 86400 之间的正数');
+        }
+    }
+    for (const [card, window] of windows) card.context_window = window;
     return true;
 }
 
-function aiSource(editor, provider) {
-    const local = editor.config.providers.find(card => card.provider === provider);
-    const inherited = editor.inheritedProviders.find(card => card.provider === provider);
-    if (!local) return inherited;
-    if (!inherited) return local;
-    return {
-        provider,
-        api_key: local.api_key || inherited.api_key,
-        api_key_set: local.api_key_set || inherited.api_key_set,
-        base_url: local.base_url || inherited.base_url,
-    };
+function aiSource(editor, providerId) {
+    return editor.config.providers.find(card => card.id === providerId) ?? aiSystemConfig(editor).providers.find(card => card.id === providerId);
 }
 
-// 调用卡片列表（可编辑）：摘要行含排序/删除/展开，点击摘要行切换行内配置。
-function callListHtml(editorName, group) {
-    const service = aiService(group);
-    const editor = aiEditors[editorName];
-    const library = group === 'providers';
-    const cards = aiList(editor, group);
-    const configured = new Set(cards.map(card => card.provider));
-    const registered = [...new Set(Object.values(editor.support).flat())];
-    const supported = library ? [...new Set([...Object.keys(AI_NAMES), ...registered])] : (aiFeature(group) ? tabCache.models?.ai_feature_support?.[aiFeature(group).id] || [] : editor.support[service] || []);
-    const options = supported.filter(provider => !configured.has(provider)).map(provider => {
-        const source = aiSource(editor, provider);
-        return `<option value="${esc(provider)}">${library ? '' : source ? '引用：' : '独立配置：'}${esc(aiProviderLabel(provider))}</option>`;
-    }).join('') + (library ? '<option value="__custom__">自定义 provider</option>' : '');
+function aiProviderOptions(editor, service) {
+    const supported = editor.support[service] ?? [];
+    return [...editor.config.providers.map(card => ({ ...card, scope: editor === aiEditors.system ? '系统' : '用户' })), ...aiSystemConfig(editor).providers.map(card => ({ ...card, scope: '系统' }))].filter(card => supported.includes(card.provider_type));
+}
 
-    const items = cards.map((card, index) => {
-        const localImage = !library && service === 'image_gen' && card.provider === 'local';
-        if (localImage) Object.assign(card, { api_key: '', api_key_set: false, clear_api_key: true, model_name: '' });
-        const source = library ? null : aiSource(editor, card.provider);
-        const inherited = source ? '继承 ' + aiProviderLabel(source.provider) : '独立配置';
-        const keySet = card.api_key || card.api_key_set;
-        const sourceKey = source && (source.api_key || source.api_key_set);
-        const model = library ? '' : localImage ? '固定工作流' : card.model_name || (card.provider === 'custom' ? '未填模型' : '默认模型');
+function aiModelLabel(card) {
+    return card.scope + ' · ' + card.provider_name + ' · ' + card.model_name + (card.context_window ? ' · 窗 ' + card.context_window : '') + (card.issue ? ' · ' + card.issue : '');
+}
+
+function aiRemovalReferences(editor, group, id) {
+    const scopes = [{ config: editor.config, label: editor === aiEditors.system ? '系统' : '当前用户' }];
+    if (editor === aiEditors.system) scopes.push(...(tabCache.models?.items ?? []).map(item => ({ config: normalizeAiConfig(item.ai_config), label: '用户 #' + item.user_id })));
+    const references = [];
+    for (const { config, label } of scopes) {
+        if (group === 'providers') {
+            for (const [service, cards] of Object.entries(config.capabilities)) {
+                for (const card of cards) if (card.provider_id === id) references.push(label + ' · ' + AI_SERVICES[service] + ' · ' + card.model_name);
+            }
+        } else {
+            for (const [feature, policy] of Object.entries(config.features)) if (policy.chain?.includes(id)) references.push(label + ' · ' + aiGroupLabel('feature:' + feature));
+        }
+    }
+    return references;
+}
+
+function callListHtml(editorName, group) {
+    const editor = aiEditors[editorName];
+    const service = aiService(group);
+    const library = group === 'providers';
+    const feature = aiFeature(group);
+    const cards = aiList(editor, group);
+    const models = library ? [] : aiModels(editor, service);
+    const suppliers = library ? [] : aiProviderOptions(editor, service);
+    const option = (value, label, selected = false) =>
+        `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
+    const options = library
+        ? [...new Set(Object.values(editor.support).flat())].map(type => option(type, aiProviderLabel(type))).join('')
+        : feature
+            ? models.filter(card => aiModelSupportsFeature(card, feature) && !cards.includes(card.id)).map(card => option(card.id, aiModelLabel(card))).join('')
+            : suppliers.map(card => option(card.id, card.scope + ' · ' + card.name + ' (' + aiProviderLabel(card.provider_type) + ')')).join('');
+    const items = cards.map((value, index) => {
+        const card = feature ? models.find(item => item.id === value) : value;
+        const provider = library ? card : aiSource(editor, card?.provider_id);
+        const summary = library
+            ? provider.name + ' · ' + aiProviderLabel(provider.provider_type)
+            : card
+                ? feature ? aiModelLabel(card) : (provider?.name ?? '供应商引用失效') + ' · ' + card.model_name + (service === 'llm' ? ' · 窗 ' + (card.context_window ?? '未填写') : '')
+                : '模型引用失效';
+        const keySet = library && Boolean(card.api_key || (card.api_key_set && !card.clear_api_key));
+        const localImage = !library && !feature && service === 'image_gen' && provider?.provider_type === 'local';
+        const voiceDesignModel = !library && !feature && editor.defaults?.[service]?.[provider?.provider_type]?.voice_design_model;
+        let body = '';
+        if (library) {
+            body = `
+                <div class="field"><label>供应商名称
+                    <input type="text" data-ai-field="name" maxlength="128" value="${esc(card.name)}" required>
+                </label></div>
+                <div class="field"><label>API Key
+                    <span class="keybadge ${keySet ? 'on' : 'off'}">${keySet ? '已设置' : '未设置'}</span>
+                    <input type="password" autocomplete="new-password" data-ai-field="api_key" value="${esc(card.api_key)}"
+                        placeholder="${keySet ? '留空保持已保存密钥' : '填写 API Key'}">
+                </label><button class="btn btn--ghost" data-ai-action="clear-key">清除密钥</button></div>
+                <div class="field"><label>Base URL
+                    <input type="text" data-ai-field="base_url" value="${esc(card.base_url)}"
+                        placeholder="${card.provider_type === 'custom' ? '如 https://host/v1' : '留空使用该能力的适配器默认地址'}">
+                </label></div>`;
+        } else if (!feature) {
+            body = `
+                <div class="field"><label>供应商
+                    <select data-ai-field="provider_id">
+                        ${suppliers.map(item => option(item.id, item.scope + ' · ' + item.name, item.id === card.provider_id)).join('')}
+                    </select>
+                </label></div>
+                <div class="field"><label>模型名称
+                    <input type="text" data-ai-field="model_name" value="${esc(card.model_name)}"
+                        placeholder="填写具体模型 ID" required${localImage ? ' readonly' : ''}>
+                </label>${localImage ? '<p class="hint">固定 Qwen 工作流，模型文件由服务匹配。</p>' : ''}
+                ${voiceDesignModel ? `<p class="hint">自定义音色合成与音色设计须另配 ${esc(voiceDesignModel)} 模型卡片。</p>` : ''}</div>
+                ${service === 'llm' ? `
+                    <div class="field"><label>上下文窗口（tokens）
+                        <input type="text" data-ai-field="context_window" value="${esc(card.context_window ?? '')}"
+                            placeholder="如 32k、1M 或 32768" required>
+                    </label><p class="hint">按模型服务实际窗口填写；k = 1000，M = 1000000。</p></div>` : ''}`;
+        }
+        const configuration = feature
+            ? card ? `<button class="btn btn--ghost" data-ai-action="model-config" data-ai-model-id="${card.id}">查看模型配置</button>` : ''
+            : '<button class="btn btn--ghost" data-ai-action="toggle" aria-label="展开配置" title="展开配置">配置</button>';
         return `<article class="call-item" data-ai-index="${index}">
             <div class="call-item-head">
                 <button class="btn btn--ghost" draggable="true" data-ai-handle aria-label="拖拽排序" title="拖拽排序">⠿</button>
-                <span class="num">${index + 1}</span>
-                <span class="prov">${esc(aiProviderLabel(card.provider))}</span>
-                ${model ? `<span class="model">${esc(model)}</span>` : ''}
-                ${service === 'llm' && card.context_window ? `<span class="model">窗 ${esc(String(card.context_window))}</span>` : ''}
-                <span class="spacer"></span>
-                <span class="keybadge ${keySet ? 'on' : sourceKey ? 'inherit' : 'off'}">${keySet ? '独立密钥' : sourceKey ? '继承供应商密钥' : '未设置'}</span>
-                <button class="btn btn--ghost" data-ai-action="up" aria-label="上移" title="上移" ${index === 0 ? 'disabled' : ''}>↑</button>
-                <button class="btn btn--ghost" data-ai-action="down" aria-label="下移" title="下移" ${index === cards.length - 1 ? 'disabled' : ''}>↓</button>
-                <button class="btn btn--ghost" data-ai-action="remove" aria-label="删除卡片" title="删除卡片">✕</button>
-                <button class="btn btn--ghost" data-ai-action="toggle" aria-label="展开配置" title="展开配置">配置</button>
+                <span class="num">${index + 1}</span><span class="prov">${esc(summary)}</span><span class="spacer"></span>
+                ${library ? `<span class="keybadge ${keySet ? 'on' : 'off'}">${keySet ? '密钥已设置' : '未设置密钥'}</span>` : ''}
+                <button class="btn btn--ghost" data-ai-action="up" aria-label="上移" title="上移"${index === 0 ? ' disabled' : ''}>↑</button>
+                <button class="btn btn--ghost" data-ai-action="down" aria-label="下移" title="下移"${index === cards.length - 1 ? ' disabled' : ''}>↓</button>
+                <button class="btn btn--ghost" data-ai-action="remove" aria-label="移除卡片" title="移除卡片">✕</button>
+                ${configuration}
             </div>
-            <div class="call-item-body" hidden>
-                ${library ? '' : `<p class="hint" style="grid-column:1/-1;margin:0">${esc(inherited)}</p>`}
-                ${localImage ? '<p class="hint" style="grid-column:1/-1;margin:0">本地生图使用固定 Qwen 工作流，不使用 API Key；模型文件由服务自动匹配。</p>' : `<div class="field"><label>API Key <span class="keybadge ${keySet ? 'on' : sourceKey ? 'inherit' : 'off'}">${keySet ? '已设置独立密钥' : sourceKey ? '继承供应商密钥' : '未设置'}</span>
-                    <input type="password" autocomplete="new-password" data-ai-field="api_key" value="${esc(card.api_key)}" placeholder="${keySet ? '留空保持已保存密钥' : source ? '留空继承供应商' : '填写 API Key'}"></label>
-                    <button class="btn btn--ghost" data-ai-action="clear-key">${source ? '清除覆盖，恢复继承' : '清除密钥'}</button>
-                </div>`}
-                <div class="field"><label>Base URL<input type="text" data-ai-field="base_url" value="${esc(card.base_url)}" placeholder="${esc(source?.base_url || (card.provider === 'custom' ? '填写 Base URL（如 https://host/v1）' : '使用供应商官方地址'))}"></label></div>
-                ${library || localImage ? '' : `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(card.provider === 'local' && service === 'llm' ? '填写已部署的对话模型 ID' : card.provider === 'custom' ? '填写模型 ID' : '使用该能力的默认模型')}"></label></div>`}
-                ${service === 'llm' ? `<div class="field"><label>上下文窗口（tokens）<input type="text" data-ai-field="context_window" value="${esc(card.context_window)}" placeholder="如 32k、1M 或 32768" required></label><p class="hint">按模型服务实际上下文窗口填写；k = 1000，M = 1000000。</p></div>` : ''}
-            </div>
+            ${body ? `<div class="call-item-body" hidden>${body}</div>` : ''}
         </article>`;
     }).join('');
-
+    const hint = library ? '先添加供应商并填写凭据与地址。'
+        : feature ? '未选择专用模型时继承默认调用链。'
+        : editorName === 'user' ? '尚未添加用户模型，默认顺序继承系统。'
+        : '先在供应商信息库建立配置，再添加模型。';
     return `<div data-ai-group="${group}">
         <div class="call-list">${items}</div>
-        ${cards.length ? '' : `<p class="hint" style="margin:0.35rem 0 0">${library ? '尚未添加供应商。可先建立共享信息卡片，再在能力中引用。' : aiFeature(group) ? '未配置功能专用链，将按优先级继承。添加卡片后使用本功能的调用顺序。' : editorName === 'user' ? '该用户继承系统的此项通用默认链。添加卡片后改为用户专属默认顺序。' : '该能力未配置。点击“添加卡片”选择共享供应商或填写独立配置。'}</p>`}
+        ${cards.length ? '' : `<p class="hint">${hint}</p>`}
         <div class="layer-actions">
-            <select aria-label="${library ? '选择供应商' : '选择能力配置来源'}" data-ai-add-source>${options || '<option value="">没有可添加的供应商</option>'}</select>
-            ${library ? '<input type="text" data-ai-custom-provider placeholder="自定义 provider 名称" maxlength="64" style="width:12rem">' : ''}
-            <button class="btn btn--primary btn--sm" data-ai-action="add" ${service === 'embedding' && cards.length ? 'disabled' : ''}>＋ 添加卡片</button>
+            <select aria-label="${library ? '选择供应商类型' : feature ? '选择已有模型卡片' : '选择已有供应商'}" data-ai-add-source>
+                ${options || '<option value="">暂无可选择的配置</option>'}
+            </select>
+            ${library ? '<input type="text" data-ai-provider-name placeholder="供应商名称，支持中文和大写" maxlength="128" style="width:14rem">' : ''}
+            <button class="btn btn--primary btn--sm" data-ai-action="add"${!options || (feature?.service === 'embedding' && cards.length) ? ' disabled' : ''}>
+                ＋ ${library ? '添加供应商' : feature ? '引用模型' : '添加模型'}
+            </button>
         </div>
     </div>`;
 }
 
-// 只读调用序列（用户作用域下展示系统链参考）。
-function readonlyCallListHtml(cards, group) {
-    const service = aiService(group);
-    if (!cards.length) return '<p class="hint" style="margin:0">本功能没有可用的调用卡片。</p>';
-    return `<div class="call-list">${cards.map((card, index) => {
-        const local = card.provider === 'local' && service === 'image_gen';
-        return `<div class="call-item">
-            <div class="call-item-head">
-                <span class="num">${index + 1}</span>
-                <span class="prov">${esc(aiProviderLabel(card.provider))}</span>
-                ${card.model_name && !local ? `<span class="model">${esc(card.model_name)}</span>` : ''}
-                ${service === 'llm' && card.context_window ? `<span class="model">窗 ${esc(String(card.context_window))}</span>` : ''}
-            </div>
-        </div>`;
-    }).join('')}</div>`;
+function readonlyCallListHtml(cards) {
+    if (!cards.length) return '<p class="hint">本功能没有可用的模型卡片。</p>';
+    return `<div class="call-list">${cards.map((card, index) => `
+        <div class="call-item"><div class="call-item-head">
+            <span class="num">${index + 1}</span><span class="prov">${esc(aiModelLabel(card))}</span>
+            ${card.issue ? '<span class="keybadge off">不可用</span>' : ''}
+        </div></div>`).join('')}</div>`;
+}
+
+function newAiId() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 15) | 64;
+    bytes[8] = (bytes[8] & 63) | 128;
+    const hex = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+    return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
 }
 
 function bindAiCardEvents() {
@@ -2670,10 +2664,6 @@ function bindAiCardEvents() {
     if (!root) return;
     const editorName = () => aiView.scope === 'system' ? 'system' : 'user';
     root.oninput = event => {
-        if (event.target.matches('[data-ai-custom-provider]')) {
-            event.target.closest('[data-ai-group]').querySelector('[data-ai-add-source]').value = '__custom__';
-            return;
-        }
         const policyKey = event.target.dataset.aiPolicy;
         if (policyKey) {
             const feature = aiFeature(aiView.group);
@@ -2690,6 +2680,22 @@ function bindAiCardEvents() {
         card[field] = event.target.value;
         event.target.setCustomValidity('');
         if (field === 'api_key' && clearedKeyCards.has(card)) card.clear_api_key = !event.target.value.trim();
+        markAiDirty(editorName());
+    };
+    root.onchange = event => {
+        if (event.target.dataset.aiField !== 'provider_id') return;
+        const group = event.target.closest('[data-ai-group]').dataset.aiGroup;
+        const index = Number(event.target.closest('[data-ai-index]').dataset.aiIndex);
+        const editor = aiEditors[editorName()];
+        const card = aiList(editor, group)[index];
+        const provider = aiSource(editor, card.provider_id);
+        const defaults = editor.defaults?.[aiService(group)]?.[provider?.provider_type] ?? {};
+        card.model_name = defaults.model_name ?? '';
+        if (aiService(group) === 'llm') card.context_window = defaults.context_window ?? '';
+        renderAiChain();
+        const item = root.querySelector('[data-ai-index="' + index + '"]');
+        const body = item?.querySelector('.call-item-body');
+        if (body) { body.hidden = false; item.classList.add('open'); }
         markAiDirty(editorName());
     };
     root.onclick = event => {
@@ -2714,6 +2720,10 @@ function bindAiCardEvents() {
         const cards = aiList(editor, group);
         const index = Number(button.closest('[data-ai-index]')?.dataset.aiIndex);
         const action = button.dataset.aiAction;
+        if (action === 'model-config') {
+            aiSelectNode(aiService(group));
+            return;
+        }
         if (action === 'toggle') {
             const item = button.closest('.call-item');
             const body = item.querySelector('.call-item-body');
@@ -2723,23 +2733,26 @@ function bindAiCardEvents() {
             return;
         }
         if (action === 'add') {
-            let value = section.querySelector('[data-ai-add-source]').value;
-            if (group === 'providers' && value === '__custom__') value = section.querySelector('[data-ai-custom-provider]').value.trim();
+            const value = section.querySelector('[data-ai-add-source]').value;
             if (!value) return;
-            if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(value)) {
-                toast('provider 名称只能包含小写字母、数字、点、下划线和短横线', 'err');
-                return;
+            if (aiFeature(group)) {
+                if (cards.includes(value) || (aiService(group) === 'embedding' && cards.length)) return;
+                cards.push(value);
+            } else if (group === 'providers') {
+                cards.push({ id: newAiId(), name: section.querySelector('[data-ai-provider-name]').value.trim() || AI_NAMES[value] || value, provider_type: value, api_key: '', base_url: '' });
+            } else {
+                const provider = aiSource(editor, value);
+                if (!provider) { toast('请先配置供应商', 'err'); return; }
+                const defaults = editor.defaults?.[aiService(group)]?.[provider.provider_type] ?? {};
+                const card = { id: newAiId(), provider_id: value, model_name: defaults.model_name ?? '' };
+                if (aiService(group) === 'llm') card.context_window = defaults.context_window ?? '';
+                cards.push(card);
             }
-            if (cards.some(card => card.provider === value)) {
-                toast('该 provider 已存在，名称不能冲突', 'err');
-                return;
-            }
-            const card = group === 'providers'
-                ? { provider: value, api_key: '', base_url: '' }
-                : { provider: value, api_key: '', base_url: '', model_name: '' };
-            if (aiService(group) === 'llm') card.context_window = editor.contextDefaults[value];
-            cards.push(card);
         } else if (action === 'remove') {
+            if (!aiFeature(group)) {
+                const references = aiRemovalReferences(editor, group, cards[index].id);
+                if (references.length) { toast('请先移除引用：' + references.join('；'), 'err'); return; }
+            }
             cards.splice(index, 1);
         } else if (action === 'clear-key') {
             Object.assign(cards[index], { api_key: '', api_key_set: false, clear_api_key: true });
@@ -2750,6 +2763,7 @@ function bindAiCardEvents() {
             cards.splice(target, 0, cards.splice(index, 1)[0]);
         }
         renderAiChain();
+        renderAiTree();
         markAiDirty(editorName());
     };
     root.ondragstart = event => {
@@ -2776,6 +2790,7 @@ function bindAiCardEvents() {
         cards.splice(Number(target.dataset.aiIndex), 0, cards.splice(aiDrag.index, 1)[0]);
         aiDrag = null;
         renderAiChain();
+        renderAiTree();
         markAiDirty(editorName());
     };
     root.ondragend = () => {
@@ -3092,7 +3107,7 @@ function renderSystemSettings(data) {
     lastSystemAiRaw = data.ai_config;
     aiEditors.system.config = normalizeAiConfig(data.ai_config);
     aiEditors.system.support = data.ai_provider_support;
-    aiEditors.system.contextDefaults = data.ai_context_defaults;
+    aiEditors.system.defaults = data.ai_provider_defaults;
     aiSettingsLoaded = true;
     for (const k of SETTING_TEXT_KEYS) {
         const el = $('#sys_' + k);

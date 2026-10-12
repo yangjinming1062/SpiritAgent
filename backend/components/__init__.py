@@ -6,9 +6,9 @@ from .ai_config import (
     AIConfigPublic,
     AIConfigUpdate,
     CapabilityCard,
-    CapabilityCardUpdate,
     ProviderCard,
     ProviderCardUpdate,
+    ProviderDefaults,
 )
 from .ai_features import AI_FEATURE_BY_ID, AI_FEATURES, AiFeature, AiFeatureDefinition
 from .attachments import attachment_root, session_dir
@@ -124,7 +124,6 @@ __all__ = [
     "ATTACHMENT_VIDEO_MAX_BYTES",
     "CAPABILITY_SERVICES",
     "CapabilityCard",
-    "CapabilityCardUpdate",
     "CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT",
     "CONTEXT_SUMMARY_HEADROOM_FACTOR",
     "DEFAULT_LANGUAGE",
@@ -149,6 +148,7 @@ __all__ = [
     "REQUEST_ID_HEADER",
     "ProviderCard",
     "ProviderCardUpdate",
+    "ProviderDefaults",
     "SCENE_DOWNLOAD_MAX_BYTES",
     "SEARCH_INPUT_MAX_LEN",
     "SESSION_LOCAL",

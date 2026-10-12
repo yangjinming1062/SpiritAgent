@@ -1,7 +1,5 @@
 """TTS 供应商链调用：REST 合成端点共用的服务层。"""
 
-from dataclasses import replace
-
 from components import SESSION_LOCAL, AiFeature
 from modules.media import SpeechStyle
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,9 +40,14 @@ def _route_selected_voice(
     return voice_id, [selected, *(config for config in language_chain if config is not selected)], provider_name
 
 
-def _with_voice_model(config: ProviderConfig, voice_id: str) -> ProviderConfig:
-    model = build_provider(config, TTSProvider).model_for_voice(voice_id)
-    return replace(config, model=model) if model != config.model else config
+def _voice_model_chain(chain: list[ProviderConfig], voice_id: str, selected_provider: str) -> list[ProviderConfig]:
+    """从已有模型卡片中选择适配音色的配置，不修改卡片的模型。"""
+    return [
+        config
+        for config in chain
+        if config.provider_name != selected_provider
+        or build_provider(config, TTSProvider).model_for_voice(voice_id) == config.model
+    ]
 
 
 async def resolve_reply_voice(
@@ -54,10 +57,11 @@ async def resolve_reply_voice(
     language: str,
 ) -> tuple[ProviderConfig | None, str]:
     chain = await resolve_provider_chain(db, user_id, ServiceType.tts, feature=AiFeature.companion_voice)
-    voice_id, chain, _ = _route_selected_voice(voice, chain, language)
+    voice_id, chain, selected_provider = _route_selected_voice(voice, chain, language)
+    chain = _voice_model_chain(chain, voice_id, selected_provider)
     if not chain or chain[0].provider_name not in {"mimo", "minimax"}:
         return None, ""
-    config = _with_voice_model(chain[0], voice_id)
+    config = chain[0]
     selected_voice = voice_id or pick_voice_id("", config.provider_name, language)
     custom = "custom:" if voice_id and ":custom:" in voice else ""
     return config, f"{config.provider_name}:{custom}{selected_voice}"
@@ -83,14 +87,19 @@ async def synthesize_speech(
     if preserve_performance:
         if speech_style is None:
             raise ValueError("Voice message requires speech performance")
-        chain = [config for config in chain if config.provider_name == speech_style.provider]
+        chain = [
+            config
+            for config in chain
+            if config.provider_name == speech_style.provider and config.model == speech_style.model
+        ]
         if not chain:
             raise ValueError("Voice message TTS configuration is no longer available")
     voice, chain, selected_provider = _route_selected_voice(voice, chain, language)
+    chain = _voice_model_chain(chain, voice, selected_provider)
     if not chain:
         raise MissingLlmConfigError(f"no TTS provider supports language {language!r}")
     if preserve_performance and speech_style is not None:
-        config = _with_voice_model(chain[0], voice)
+        config = chain[0]
         if (
             config.provider_name != speech_style.provider
             or config.model != speech_style.model

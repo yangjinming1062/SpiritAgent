@@ -8,7 +8,7 @@ from ..base import ProviderConfig, TTSProvider, TTSResult, VoiceDesignResult, pi
 from ..http import get_async_client
 from ..speech_style import speech_style_matches, styled_speech_text
 
-# 声纹设计音色以前缀 + 设计描述作为 voice id，合成时须改用声纹设计模型。
+# 声纹设计音色以前缀 + 设计描述作为 voice id，必须选择已配置的声纹设计模型。
 VOICEDESIGN_MODEL = "mimo-v2.5-tts-voicedesign"
 VOICEDESIGN_PREFIX = "mimo_voicedesign:"
 
@@ -19,6 +19,7 @@ class MiMoTTSProvider(TTSProvider):
     provider_name = "mimo"
     DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"
     DEFAULT_MODEL: ClassVar[str] = "mimo-v2.5-tts"
+    VOICE_DESIGN_MODEL: ClassVar[str | None] = VOICEDESIGN_MODEL
     VOICE_DESIGN_GUIDE = """\
 关键维度（不需要面面俱到）：
 • 性别与年龄：如"二十多岁的年轻女性"、"五十岁的中年男性"
@@ -115,7 +116,9 @@ class MiMoTTSProvider(TTSProvider):
         voice: str,
         speech_style: SpeechStyle | None,
     ) -> tuple[str, list[dict], dict, str]:
-        model = self.model_for_voice(voice)
+        model = self.config.model
+        if self.model_for_voice(voice) != model:
+            raise ValueError("MiMo 自定义音色需要配置 mimo-v2.5-tts-voicedesign 模型卡片")
         instruction = ""
         if isinstance(speech_style, MiMoSpeechStyle) and speech_style_matches(speech_style, self.provider_name, model):
             instruction = speech_style.instruction or ""
@@ -131,7 +134,7 @@ class MiMoTTSProvider(TTSProvider):
                 {"role": "user", "content": design_prompt + ("\n\n" + instruction if instruction else "")},
                 {"role": "assistant", "content": text},
             ]
-            return VOICEDESIGN_MODEL, messages, {"format": "mp3", "optimize_text_preview": False}, ""
+            return model, messages, {"format": "mp3", "optimize_text_preview": False}, ""
         chosen_voice = pick_catalog_voice(voice, self.VOICE_CATALOG, provider=self.provider_name)
         messages = [{"role": "user", "content": instruction}, {"role": "assistant", "content": text}]
         return self.config.model, messages, {"format": "mp3", "voice": chosen_voice}, chosen_voice
@@ -147,8 +150,10 @@ class MiMoTTSProvider(TTSProvider):
         return TTSResult(audio=base64.b64decode(choice.message.audio.data), mime="audio/mpeg", voice=chosen_voice)
 
     async def design_voice(self, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
+        if self.config.model != VOICEDESIGN_MODEL:
+            raise ValueError("MiMo 音色设计需要配置 mimo-v2.5-tts-voicedesign 模型卡片")
         response = await self._client.chat.completions.create(
-            model=VOICEDESIGN_MODEL,
+            model=self.config.model,
             messages=[
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": preview_text or "你好，我是你的桌面伙伴。"},

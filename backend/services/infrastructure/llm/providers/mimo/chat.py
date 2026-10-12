@@ -8,7 +8,6 @@ class MiMoChatProvider(ChatProvider):
     DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"
     DEFAULT_MODEL: ClassVar[str] = "mimo-v2.6-pro"
     supports_vision: ClassVar[bool] = True
-    DEFAULT_VISION_MODEL: ClassVar[str] = "mimo-v2.6-flash"
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset(
         {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
     )

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from components import AI_FEATURE_BY_ID, SESSION_LOCAL, AiFeature, get_logger, track_user_task
 from modules.companion import RemovedActionVideoTask
@@ -70,7 +70,8 @@ class FrozenMediaProvider(BaseModel):
     model: str
     base_url: str
     feature: AiFeature
-    model_overridden: bool = False
+    provider_id: UUID
+    model_card_id: UUID
     max_images_per_request: int | None = Field(default=None, ge=1)
     background: Literal["transparent"] | None = None
     image_size: str | None = None
@@ -88,7 +89,8 @@ class FrozenMediaProvider(BaseModel):
             model=config.model,
             base_url=config.base_url,
             feature=config.feature,
-            model_overridden=config.model_overridden,
+            provider_id=config.provider_id,
+            model_card_id=config.model_card_id,
         )
 
 
@@ -198,12 +200,17 @@ async def resolve_frozen_media_provider(
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, service, feature=frozen.feature)
     current = next(
-        (config for config in chain if config.provider_name == frozen.provider and config.base_url == frozen.base_url),
+        (
+            config
+            for config in chain
+            if config.model_card_id == frozen.model_card_id
+            and config.provider_id == frozen.provider_id
+            and config.provider_name == frozen.provider
+            and config.base_url == frozen.base_url
+        ),
         None,
     )
-    return (
-        replace(current, model=frozen.model, model_overridden=frozen.model_overridden) if current is not None else None
-    )
+    return replace(current, model=frozen.model) if current is not None else None
 
 
 async def cancel_frozen_video_task(user_id: int, state: MediaChainState, task_id: str, provider_name: str = "") -> str:

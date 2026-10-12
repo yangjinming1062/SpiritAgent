@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal, get_args
 
 from common import ModelBase
-from components import AIConfig, ensure_utc, utc_now
+from components import SETTINGS, AIConfig, ensure_utc, utc_now
 from modules.auth import User, UserModelConfig
 from modules.companion import (
     COMPANION_CRON_SOURCE_PREFIX,
@@ -48,6 +48,7 @@ from sqlalchemy import Date, DateTime, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope, MemorySource
+from services.domains.configuration import validate_ai_config
 from services.domains.conversation import CHECKPOINT_SUBTYPE, validate_memory_scope
 from services.infrastructure.assets import parse_companion_asset_path
 
@@ -414,8 +415,8 @@ def _validated_ai_config(value: Any) -> dict[str, Any]:
     """按运行期读取方式整体校验模型配置；配置含供应商密钥，错误只报告字段位置与类型，不回显取值。"""
     try:
         config = AIConfig.model_validate(value)
-        config.validate_capability_overrides()
-        return config.model_dump()
+        validate_ai_config(config, SETTINGS.ai_config)
+        return config.model_dump(mode="json")
     except ValidationError as exc:
         fields = ", ".join(
             f"{'.'.join(str(part) for part in error['loc']) or 'ai_config'} ({error['type']})"

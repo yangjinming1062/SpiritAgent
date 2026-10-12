@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+from collections.abc import Callable, Coroutine
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -18,8 +19,10 @@ from components import (
     purge_user_temp_files,
     utc_now,
 )
-from fastapi import Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
+from fastapi.routing import APIRoute
 from modules.auth import (
     CurrentAdmin,
     LoginRecord,
@@ -52,7 +55,7 @@ from modules.scheduler import (
 from modules.system import MessageResponse
 from services.adapters.desktop import terminate_remote_sessions, terminate_user_gateway
 from services.adapters.maintenance import user_maintenance
-from services.application.configuration import get_system_settings_for_admin, save_system_settings
+from services.application.configuration import configuration_lock, get_system_settings_for_admin, save_system_settings
 from services.domains.backup import (
     BACKUP_SECTION_IDS,
     TABLES,
@@ -73,13 +76,31 @@ from services.domains.backup import (
 from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.infrastructure.assets import delete_user_assets
-from services.infrastructure.llm import provider_context_defaults, providers_for_feature, providers_supporting
+from services.infrastructure.llm import provider_configuration_defaults, providers_for_feature, providers_supporting
 from sqlalchemy import select, update
 from starlette.background import BackgroundTask
+from starlette.responses import Response
 
 logger = get_logger(__name__)
 
+
+class _AdminRoute(APIRoute):
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def handle(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except RequestValidationError as exc:
+                # 管理请求包含密钥，校验响应只返回字段位置与原因。
+                detail = [{key: error[key] for key in ("loc", "msg", "type")} for error in exc.errors()]
+                raise HTTPException(status_code=422, detail=detail) from None
+
+        return handle
+
+
 router = get_router(dependencies=[Depends(get_current_admin_token)])
+router.route_class = _AdminRoute
 
 # 备份 zip 分块读写；1 MB 分块减少线程池往返。
 ARCHIVE_UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -184,7 +205,7 @@ async def list_model_configs(db: DbSession) -> UserModelConfigListResponse:
     return UserModelConfigListResponse(
         items=[_config_list_item(r) for r in (await db.execute(select(UserModelConfig))).scalars().all()],
         ai_provider_support=support,
-        ai_context_defaults=provider_context_defaults(),
+        ai_provider_defaults=provider_configuration_defaults(),
         system_ai_config=public_ai_config(SETTINGS.ai_config),
         ai_features=list(AI_FEATURES),
         ai_feature_support={feature.id.value: providers_for_feature(feature.id) for feature in AI_FEATURES},
@@ -231,25 +252,29 @@ async def list_nightly_activity_logs(
 
 @router.put("/{user_id}/model-config")
 async def upsert_model_config(user_id: int, payload: UserModelConfigRequest, db: DbSession) -> MessageResponse:
-    await get_or_404(db, User, id=user_id, detail="用户不存在。")
-    config = (await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))).scalar_one_or_none()
-    previous = AIConfig.model_validate(config.ai_config) if config else None
-    try:
-        ai_config = prepare_ai_config(payload.ai_config, previous)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if config:
-        config.ai_config = ai_config.model_dump()
-    else:
-        db.add(UserModelConfig(user_id=user_id, ai_config=ai_config.model_dump()))
-    await db.commit()
+    async with configuration_lock:
+        await get_or_404(db, User, id=user_id, detail="用户不存在。")
+        config = (
+            await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))
+        ).scalar_one_or_none()
+        previous = AIConfig.model_validate(config.ai_config) if config else None
+        try:
+            ai_config = prepare_ai_config(payload.ai_config, previous, SETTINGS.ai_config)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if config:
+            config.ai_config = ai_config.model_dump(mode="json")
+        else:
+            db.add(UserModelConfig(user_id=user_id, ai_config=ai_config.model_dump(mode="json")))
+        await db.commit()
     return MessageResponse(message="模型配置已更新。")
 
 
 @router.delete("/{user_id}/model-config")
 async def delete_model_config(user_id: int, db: DbSession) -> MessageResponse:
-    await db.delete(await get_or_404(db, UserModelConfig, user_id=user_id, detail="模型配置不存在。"))
-    await db.commit()
+    async with configuration_lock:
+        await db.delete(await get_or_404(db, UserModelConfig, user_id=user_id, detail="模型配置不存在。"))
+        await db.commit()
     return MessageResponse(message="模型配置已删除。")
 
 
@@ -346,7 +371,7 @@ async def import_user_backup(
             selected_tables=selected_tables,
         )
         restore_result: BackupRestoreResult | None = None
-        async with user_maintenance(user_id):
+        async with user_maintenance(user_id), configuration_lock:
             await get_or_404(db, User, id=user_id, detail="用户不存在。")
             try:
                 restore_result = await restore_backup_rows(

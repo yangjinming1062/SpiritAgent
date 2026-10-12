@@ -43,7 +43,8 @@ def _sort_voices_by_language(voices: list[VoiceEntry]) -> list[VoiceEntry]:
 
 def _chain_voices(chain: list[ProviderConfig], language: str | None) -> list[VoiceEntry]:
     """按能力链顺序汇总音色；指定语言时保留该语言与多语言音色。"""
-    voices = [voice for config in chain for voice in voices_for_provider(config.provider_name)]
+    providers = dict.fromkeys(config.provider_name for config in chain)
+    voices = [voice for provider in providers for voice in voices_for_provider(provider)]
     return [voice for voice in voices if voice.language in {language, "multi"}] if language else voices
 
 
@@ -63,7 +64,7 @@ async def list_tts_voices(db: AsyncSession, user_id: int, language: str | None =
     )
     guide = design_cls.VOICE_DESIGN_GUIDE if design_cls else None
     return VoicesListResponse(
-        providers=[config.provider_name for config in chain],
+        providers=list(dict.fromkeys(config.provider_name for config in chain)),
         voices=voices,
         supports_voice_design=guide is not None,
         voice_design_guide=guide or "",

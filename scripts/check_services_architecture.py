@@ -42,6 +42,7 @@ DOMAIN_FLOW_EDGES = {
     ("services.domains.actions", "services.domains.assets"),
     ("services.domains.backup", "services.domains.actions"),
     ("services.domains.backup", "services.domains.memory"),
+    ("services.domains.backup", "services.domains.configuration"),
     ("services.domains.companion", "services.domains.memory"),
     ("services.domains.journal", "services.domains.memory"),
     ("services.domains.companion", "services.domains.actions"),

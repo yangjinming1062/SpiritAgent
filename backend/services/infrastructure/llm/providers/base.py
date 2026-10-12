@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import ClassVar, Literal
+from uuid import UUID
 
 from components import AiFeature, get_logger
 from modules.media import SpeechStyle
@@ -65,7 +66,8 @@ class ProviderConfig:
     model: str
     service_type: ServiceType
     provider_name: str
-    model_overridden: bool = False
+    provider_id: UUID
+    model_card_id: UUID
     context_window: int | None = None
     feature: AiFeature | None = None
     config_source: str = "system_default"
@@ -78,7 +80,7 @@ class BaseProvider(ABC):
 
     service_type: ServiceType = ServiceType.llm
     provider_name: str = ""
-    # 能力卡片未填写端点与模型时使用的默认值。
+    # 信息库的默认端点与新模型卡片的预填值。
     DEFAULT_BASE_URL: ClassVar[str] = ""
     DEFAULT_MODEL: ClassVar[str] = ""
     # False 表示该能力可不带 api_key（如本机无鉴权服务）；能力链解析据此放宽空密钥
@@ -104,12 +106,11 @@ class ChatProvider(BaseProvider):
 
     # 新卡片的预填窗口，实际调用始终读取卡片配置。
     DEFAULT_CONTEXT_TOKENS: ClassVar[int] = 1_000_000
-    DEFAULT_VISION_MODEL: ClassVar[str] = ""  # 与 DEFAULT_MODEL 不同的视觉模型；空表示文本与视觉共用
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high"})
     TEMPERATURE_MIN: ClassVar[float] = 0.0
     TEMPERATURE_MAX: ClassVar[float] = 2.0
     supports_json_object: ClassVar[bool] = False
-    supports_vision: ClassVar[bool] = False  # 接受 input_image 部件；文本模型需配合 DEFAULT_VISION_MODEL
+    supports_vision: ClassVar[bool] = False  # 接受 input_image 部件，实际支持取决于所配置的模型
     # 接受 Responses 形状的 input_video 部件；仅 chat.completions 支持视频的供应商（如 mimo）不能声明
     supports_video: ClassVar[bool] = False
 
@@ -295,6 +296,7 @@ class TTSProvider(BaseProvider):
     VOICE_CATALOG: ClassVar[list[dict]] = []
 
     VOICE_DESIGN_GUIDE: ClassVar[str | None] = None  # None 不支持声纹设计；非空字符串表示支持并作为面向用户的撰写指引
+    VOICE_DESIGN_MODEL: ClassVar[str | None] = None  # 需要特定模型的音色设计；None 表示没有额外模型限制
 
     def model_for_voice(self, voice: str) -> str:
         """返回该音色实际使用的模型，供演绎配置与合成共同核对。"""

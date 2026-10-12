@@ -2,9 +2,10 @@ import asyncio
 import hashlib
 import json
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
+from uuid import UUID
 
 from components import AI_FEATURE_BY_ID, SETTINGS, AIConfig, AiFeature, CapabilityCard, ProviderCard, get_logger
 from modules.auth import UserModelConfig
@@ -19,7 +20,7 @@ from .providers import (
     ProviderConfig,
     ServiceType,
     default_base_url,
-    default_model_for,
+    model_supports_feature,
     provider_requires_api_key,
     providers_supporting,
     resolve,
@@ -58,75 +59,67 @@ async def _load_user_config(
 
 def _chain_entry(
     service_type: ServiceType,
-    provider: str,
-    *,
-    api_key: str,
-    base_url: str,
-    model: str,
-    context_window: int | None,
+    provider: ProviderCard,
+    card: CapabilityCard,
 ) -> ProviderConfig | None:
-    """补齐供应商默认端点与模型；缺少必需密钥、端点、模型或未注册该能力时返回 None。"""
-    if provider == "local" and service_type == ServiceType.image_gen and model not in {"", "qwen"}:
-        raise MissingLlmConfigError("本地生图使用固定 Qwen 工作流，请清除自选模型名称")
-    resolved_model = model or default_model_for(provider, service_type)
-    if not resolved_model:
-        return None
-    base_url = base_url or default_base_url(provider, service_type)
-    # 同一 MiniMax 卡片的端点含 /v1 供 chat SDK 使用；其余能力的请求路径自带版本前缀。
-    if provider == "minimax" and service_type != ServiceType.llm:
+    """凭据仅从供应商实例取得；未配置必需凭据或端点的模型不可调用。"""
+    provider_type = provider.provider_type
+    if provider_type == "local" and service_type == ServiceType.image_gen and card.model_name != "qwen":
+        raise MissingLlmConfigError("本地生图使用固定 Qwen 工作流")
+    base_url = provider.base_url or default_base_url(provider_type, service_type)
+    if provider_type == "qwen":
+        for suffix in ("/compatible-mode/v1", "/api/v1"):
+            if base_url.rstrip("/").endswith(suffix):
+                target = (
+                    "/api/v1"
+                    if service_type in (ServiceType.tts, ServiceType.image_gen, ServiceType.video_gen)
+                    else "/compatible-mode/v1"
+                )
+                base_url = base_url.rstrip("/").removesuffix(suffix) + target
+                break
+    if provider_type == "minimax" and service_type != ServiceType.llm:
         base_url = base_url.rstrip("/").removesuffix("/v1")
-    if not base_url or provider not in providers_supporting(service_type):
+    if not base_url or provider_type not in providers_supporting(service_type):
         return None
-    if not api_key and provider_requires_api_key(service_type, provider):
+    if not provider.api_key and provider_requires_api_key(service_type, provider_type):
         return None
     return ProviderConfig(
         base_url=base_url,
-        api_key=api_key,
-        model=resolved_model,
+        api_key=provider.api_key if not (provider_type == "local" and service_type == ServiceType.image_gen) else "",
+        model=card.model_name,
         service_type=service_type,
-        provider_name=provider,
-        model_overridden=bool(model),
-        context_window=context_window,
+        provider_name=provider_type,
+        provider_id=provider.id,
+        model_card_id=card.id,
+        context_window=card.context_window,
     )
 
 
 def _chain_from_ai_config(
     config: AIConfig,
     service_type: ServiceType,
-    inherited_sources: Iterable[ProviderCard] = (),
+    system: AIConfig | None = None,
     *,
-    cards: Sequence[CapabilityCard] | None = None,
+    card_ids: Sequence[UUID] | None = None,
 ) -> list[ProviderConfig]:
-    """密钥与端点按 卡片 → 本配置信息库 → 继承信息库 取值；模型只看能力卡片，空则用供应商默认。"""
-    inherited = {card.provider: card for card in inherited_sources}
-    sources = {card.provider: card for card in config.providers}
+    models: list[tuple[CapabilityCard, AIConfig]] = []
+    if card_ids is None:
+        models = [(card, config) for card in getattr(config.capabilities, service_type)]
+    else:
+        for model_id in card_ids:
+            model = config.find_model(model_id, system)
+            if model is None or model[0] != service_type:
+                raise MissingLlmConfigError(f"功能引用的模型卡片无效：{model_id}")
+            models.append((model[1], model[2]))
+    # 向量先选模型再核对凭据；首张失效不能改用另一向量空间。
+    if service_type == ServiceType.embedding:
+        models = models[:1]
     result: list[ProviderConfig] = []
-    for card in cards if cards is not None else getattr(config.capabilities, service_type):
-        if card.provider == "local" and service_type == ServiceType.image_gen and card.api_key:
-            raise MissingLlmConfigError("本地生图不支持独立 API Key，请清除该能力卡片的密钥覆盖")
-        layers = [
-            layer for layer in (card, sources.get(card.provider), inherited.get(card.provider)) if layer is not None
-        ]
-        base_url = next((layer.base_url for layer in layers if layer.base_url), "")
-        if card.provider == "qwen" and not card.base_url:
-            # 共享卡片的两种标准 API 前缀按能力转换，代理主机和自定义前缀保持；能力显式覆盖不改写。
-            for suffix in ("/compatible-mode/v1", "/api/v1"):
-                if base_url.rstrip("/").endswith(suffix):
-                    target = (
-                        "/api/v1"
-                        if service_type in (ServiceType.tts, ServiceType.image_gen, ServiceType.video_gen)
-                        else "/compatible-mode/v1"
-                    )
-                    base_url = base_url.rstrip("/").removesuffix(suffix) + target
-                    break
-        entry = _chain_entry(
-            service_type,
-            card.provider,
-            api_key=next((layer.api_key for layer in layers if layer.api_key), ""),
-            base_url=base_url,
-            model=card.model_name,
-            context_window=card.context_window,
-        )
+    for card, owner in models:
+        provider = owner.find_provider(card.provider_id, system if owner is config else None)
+        if provider is None:
+            raise MissingLlmConfigError(f"模型引用的供应商不存在：{card.provider_id}")
+        entry = _chain_entry(service_type, provider, card)
         if entry is not None:
             result.append(entry)
     return result
@@ -148,21 +141,19 @@ async def resolve_provider_chain(
     user_feature = user_ai.features.get(feature) if feature is not None else None
     system_feature = system_ai.features.get(feature) if feature is not None else None
     if user_feature is not None and user_feature.chain:
-        owner, cards, source = user_ai, user_feature.chain, "user_feature"
+        owner, card_ids, source = user_ai, user_feature.chain, "user_feature"
     elif system_feature is not None and system_feature.chain:
-        owner, cards, source = system_ai, system_feature.chain, "system_feature"
+        owner, card_ids, source = system_ai, system_feature.chain, "system_feature"
     elif getattr(user_ai.capabilities, service):
-        owner, cards, source = user_ai, getattr(user_ai.capabilities, service), "user_default"
+        owner, card_ids, source = user_ai, None, "user_default"
     else:
-        owner, cards, source = system_ai, getattr(system_ai.capabilities, service), "system_default"
-    # 预算逐字段继承；只覆盖预算时仍沿原功能链调用。
+        owner, card_ids, source = system_ai, None, "system_default"
     policies = [value for value in (user_feature, system_feature) if value is not None]
     attempt = next(
         (value.attempt_timeout_seconds for value in policies if value.attempt_timeout_seconds is not None),
         None,
     )
     total = next((value.total_timeout_seconds for value in policies if value.total_timeout_seconds is not None), None)
-    inherited = system_ai.providers if owner is user_ai else ()
     chain = [
         replace(
             config,
@@ -171,9 +162,18 @@ async def resolve_provider_chain(
             attempt_timeout_seconds=attempt,
             total_timeout_seconds=total,
         )
-        for config in _chain_from_ai_config(owner, service, inherited, cards=cards)
+        for config in _chain_from_ai_config(
+            owner,
+            service,
+            system_ai if owner is user_ai else None,
+            card_ids=card_ids,
+        )
     ]
-    return _vision_configs(chain) if feature is not None and AI_FEATURE_BY_ID[feature].vision else chain
+    return (
+        [config for config in chain if model_supports_feature(config.provider_name, config.model, feature)]
+        if feature is not None
+        else chain
+    )
 
 
 async def resolve_provider_config(
@@ -193,14 +193,8 @@ async def resolve_provider_config(
 
 
 def _vision_configs(configs: Sequence[ProviderConfig]) -> list[ProviderConfig]:
-    """筛选视觉供应商；仅默认模型自动选择视觉变体，保留显式模型配置。"""
-    chain: list[ProviderConfig] = []
-    for cfg in configs:
-        cls = try_resolve_chat(cfg.provider_name)
-        if cls is not None and cls.supports_vision:
-            vision_model = "" if cfg.model_overridden else cls.DEFAULT_VISION_MODEL
-            chain.append(replace(cfg, model=vision_model) if vision_model else cfg)
-    return chain
+    """按视觉能力筛选，实际模型始终由能力卡片指定。"""
+    return [cfg for cfg in configs if (cls := try_resolve_chat(cfg.provider_name)) is not None and cls.supports_vision]
 
 
 async def resolve_vision_chain(

@@ -1,85 +1,66 @@
-from components import (
-    CAPABILITY_SERVICES,
-    AIConfig,
-    AIConfigPublic,
-    AIConfigUpdate,
-    CapabilityCard,
-    CapabilityCardUpdate,
-    ProviderCard,
-    ProviderCardUpdate,
-)
+from components import AI_FEATURE_BY_ID, CAPABILITY_SERVICES, AIConfig, AIConfigPublic, AIConfigUpdate
 from pydantic import ValidationError
 
-from services.infrastructure.llm import providers_for_feature, providers_supporting
+from services.infrastructure.llm import model_supports_feature, providers_supporting
 
 
-def _merge_saved_keys(
-    cards: list[ProviderCardUpdate] | list[CapabilityCardUpdate],
-    saved: list[ProviderCard] | list[CapabilityCard],
-) -> list[dict[str, str | int | None]]:
-    """留空的 API Key 沿用同一供应商已保存的值，clear_api_key 显式清空。"""
-    saved_keys = {card.provider: card.api_key for card in saved}
-    return [
-        {
-            **card.model_dump(exclude={"api_key_set", "clear_api_key"}),
-            "api_key": "" if card.clear_api_key else card.api_key or saved_keys.get(card.provider, ""),
-        }
-        for card in cards
-    ]
+def validate_ai_config(config: AIConfig, system: AIConfig | None = None) -> None:
+    """校验当前作用域的引用与适配器能力；系统卡片始终从系统信息库解析。"""
+    config.validate_references(system)
+    registered = {name for service in CAPABILITY_SERVICES for name in providers_supporting(service)}
+    for provider in config.providers:
+        if provider.provider_type not in registered:
+            raise ValueError(f"供应商 {provider.name} 的类型未注册：{provider.provider_type}")
+    for service, card in config.models():
+        provider = config.find_provider(card.provider_id, system)
+        if provider is None or provider.provider_type not in providers_supporting(service):
+            raise ValueError(f"模型 {card.model_name} 的供应商不支持 {service} 能力")
+    for feature, value in config.features.items():
+        for model_id in value.chain:
+            model = config.find_model(model_id, system)
+            if model is None:
+                raise ValueError(f"功能 {feature.value} 引用的模型卡片不存在：{model_id}")
+            _, card, owner = model
+            provider = owner.find_provider(card.provider_id, system if owner is config else None)
+            if provider is None or not model_supports_feature(provider.provider_type, card.model_name, feature):
+                raise ValueError(f"模型 {card.model_name} 不支持功能 {AI_FEATURE_BY_ID[feature].label}")
 
 
-def prepare_ai_config(update: AIConfigUpdate, previous: AIConfig | None) -> AIConfig:
-    """合并已保存密钥后整批校验；失败抛 ValueError（含具体原因），由调用方决定错误呈现。"""
-    saved = previous or AIConfig()
+def prepare_ai_config(
+    update: AIConfigUpdate,
+    previous: AIConfig | None,
+    system: AIConfig | None = None,
+) -> AIConfig:
+    """按稳定 ID 保留密钥，整批校验后返回候选配置；错误不回显配置值。"""
+    saved = {card.id: card for card in previous.providers} if previous is not None else {}
+    providers = []
+    for card in update.providers:
+        old = saved.get(card.id)
+        if old is not None and old.provider_type != card.provider_type:
+            raise ValueError(f"供应商 {card.name} 的类型不能修改，请创建新的供应商条目")
+        providers.append(
+            {
+                **card.model_dump(mode="json", exclude={"api_key_set", "clear_api_key"}),
+                "api_key": "" if card.clear_api_key else card.api_key or (old.api_key if old else ""),
+            },
+        )
     try:
         config = AIConfig.model_validate(
             {
-                "providers": _merge_saved_keys(update.providers, saved.providers),
-                "capabilities": {
-                    service: _merge_saved_keys(
-                        getattr(update.capabilities, service),
-                        getattr(saved.capabilities, service),
-                    )
-                    for service in CAPABILITY_SERVICES
-                },
-                "features": {
-                    feature: {
-                        **value.model_dump(exclude={"chain"}),
-                        "chain": _merge_saved_keys(
-                            value.chain,
-                            saved.features[feature].chain if feature in saved.features else [],
-                        ),
-                    }
-                    for feature, value in update.features.items()
-                },
+                **update.model_dump(mode="json", exclude={"providers"}),
+                "providers": providers,
             },
         )
     except ValidationError as exc:
-        # 只取 msg：str(exc) 带 input_value，可能夹带配置里的 API Key。
         reasons = "；".join(error["msg"].removeprefix("Value error, ") for error in exc.errors())
         raise ValueError(f"AI 卡片配置无效：{reasons}") from exc
-
-    config.validate_capability_overrides()
-
-    for service, cards in config.chains():
-        supported = set(providers_supporting(service))
-        if any(card.provider not in supported for card in cards):
-            raise ValueError(f"所选供应商不支持 {service} 能力")
-    for feature, value in config.features.items():
-        supported = set(providers_for_feature(feature))
-        if any(card.provider not in supported for card in value.chain):
-            raise ValueError(f"所选供应商不支持功能 {feature.value}")
+    validate_ai_config(config, system)
     return config
 
 
 def public_ai_config(config: AIConfig) -> AIConfigPublic:
-    value = config.model_dump()
-    for cards in [
-        value["providers"],
-        *value["capabilities"].values(),
-        *(feature["chain"] for feature in value["features"].values()),
-    ]:
-        for card in cards:
-            card["api_key_set"] = bool(card["api_key"])
-            card["api_key"] = ""
+    value = config.model_dump(mode="json")
+    for card in value["providers"]:
+        card["api_key_set"] = bool(card["api_key"])
+        card["api_key"] = ""
     return AIConfigPublic.model_validate(value)

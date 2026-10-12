@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import Any
 
@@ -6,25 +5,28 @@ from components import (
     AI_FEATURES,
     CAPABILITY_SERVICES,
     SETTINGS,
+    AIConfig,
     AIConfigUpdate,
     get_logger,
     setup_logging,
 )
+from modules.auth import UserModelConfig
 from modules.settings import SystemSetting
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.configuration import prepare_ai_config, public_ai_config
+from services.domains.configuration import prepare_ai_config, public_ai_config, validate_ai_config
 from services.infrastructure.llm import (
-    provider_context_defaults,
+    provider_configuration_defaults,
     providers_for_feature,
     providers_supporting,
     rotate_http_clients,
 )
 
+from .lock import configuration_lock
+
 logger = get_logger(__name__)
-_SETTINGS_UPDATE_LOCK = asyncio.Lock()
 
 # 启动专用核心参数（不可由后台动态变更，必须保持在 config.toml / 环境变量 中）
 STARTUP_ONLY_KEYS: frozenset[str] = frozenset(
@@ -53,9 +55,23 @@ def _validation_fields(exc: ValidationError) -> str:
     return ", ".join(sorted({".".join(str(part) for part in error["loc"]) for error in exc.errors()}))
 
 
+async def _validate_system_ai_references(db: AsyncSession, system: AIConfig) -> None:
+    validate_ai_config(system)
+    failures = []
+    for row in (await db.execute(select(UserModelConfig))).scalars():
+        try:
+            validate_ai_config(AIConfig.model_validate(row.ai_config), system)
+        except ValidationError as exc:
+            failures.append(f"用户 #{row.user_id}：{_validation_fields(exc)}")
+        except ValueError as exc:
+            failures.append(f"用户 #{row.user_id}：{exc}")
+    if failures:
+        raise ValueError("系统配置与用户引用冲突：" + "；".join(failures))
+
+
 async def load_and_apply_system_settings(db: AsyncSession) -> None:
     """服务启动时调用：从 system_settings 表中批量加载已保存的动态配置并水合进内存单例 SETTINGS。"""
-    async with _SETTINGS_UPDATE_LOCK:
+    async with configuration_lock:
         rows = (await db.execute(select(SystemSetting))).scalars().all()
         try:
             overrides = {
@@ -64,10 +80,13 @@ async def load_and_apply_system_settings(db: AsyncSession) -> None:
                 if row.setting_key not in STARTUP_ONLY_KEYS and row.setting_key in type(SETTINGS).model_fields
             }
             candidate = SETTINGS.validate_runtime_update(overrides)
+            await _validate_system_ai_references(db, candidate.ai_config)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Invalid persisted system settings: {exc}") from None
         except ValidationError as exc:
             raise RuntimeError(f"Invalid persisted system settings: {_validation_fields(exc)}") from None
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid persisted AI config: {exc}") from None
 
         SETTINGS.apply_runtime_candidate(candidate)
         if overrides:
@@ -113,7 +132,7 @@ def get_system_settings_for_admin() -> dict[str, Any]:
             continue
         val = getattr(SETTINGS, key)
         if key == "ai_config":
-            result[key] = public_ai_config(val).model_dump()
+            result[key] = public_ai_config(val).model_dump(mode="json")
         elif key in SENSITIVE_KEYS:
             result[key] = ""
             result[f"{key}_set"] = bool(val)
@@ -121,7 +140,10 @@ def get_system_settings_for_admin() -> dict[str, Any]:
             result[key] = val
 
     result["ai_provider_support"] = {service: providers_supporting(service) for service in CAPABILITY_SERVICES}
-    result["ai_context_defaults"] = provider_context_defaults()
+    result["ai_provider_defaults"] = {
+        service: {name: value.model_dump() for name, value in defaults.items()}
+        for service, defaults in provider_configuration_defaults().items()
+    }
     result["ai_features"] = [feature.model_dump(mode="json") for feature in AI_FEATURES]
     result["ai_feature_support"] = {feature.id.value: providers_for_feature(feature.id) for feature in AI_FEATURES}
     return result
@@ -129,7 +151,7 @@ def get_system_settings_for_admin() -> dict[str, Any]:
 
 async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> None:
     """合并候选值 → 整批校验 → 事务落库 → 原位更新 SETTINGS → 副作用；校验失败抛 ValueError，不修改运行时。"""
-    async with _SETTINGS_UPDATE_LOCK:
+    async with configuration_lock:
         pending: dict[str, Any] = {}
         for key, val in updates.items():
             if key in STARTUP_ONLY_KEYS or key not in type(SETTINGS).model_fields:
@@ -147,6 +169,7 @@ async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> Non
                     AIConfigUpdate.model_validate(pending["ai_config"]),
                     SETTINGS.ai_config,
                 )
+                await _validate_system_ai_references(db, pending["ai_config"])
             candidate = SETTINGS.validate_runtime_update(pending)
         except ValidationError as exc:
             raise ValueError(f"系统设置无效，请检查：{_validation_fields(exc)}") from None

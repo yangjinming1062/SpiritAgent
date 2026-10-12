@@ -26,8 +26,8 @@ from .base import (
 from .http import ProviderResultUnknownError, aclose_all, rotate_http_clients
 from .registry import (
     default_base_url,
-    default_model_for,
-    provider_context_defaults,
+    model_supports_feature,
+    provider_configuration_defaults,
     provider_requires_api_key,
     providers_for_feature,
     providers_supporting,
@@ -66,8 +66,8 @@ __all__ = [
     "VoiceDesignResult",
     "aclose_all",
     "default_base_url",
-    "default_model_for",
-    "provider_context_defaults",
+    "model_supports_feature",
+    "provider_configuration_defaults",
     "provider_requires_api_key",
     "providers_supporting",
     "register",

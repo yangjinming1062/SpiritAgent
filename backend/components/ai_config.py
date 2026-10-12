@@ -1,4 +1,6 @@
+from collections.abc import Iterator
 from typing import Self
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -8,21 +10,23 @@ CAPABILITY_SERVICES = ("llm", "stt", "tts", "image_gen", "video_gen", "embedding
 
 
 class ProviderCard(BaseModel):
-    """供应商信息库卡片：只存密钥与地址，模型名属调用卡片。"""
+    """供应商实例：显示名称与注册适配器类型分开，凭据只属于此层。"""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    provider: str = Field(
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z0-9][a-z0-9._-]*$",
-    )
+    id: UUID
+    name: str = Field(min_length=1, max_length=128)
+    provider_type: str = Field(min_length=1, max_length=64)
     api_key: str = Field(default="", max_length=2048)
     base_url: str = Field(default="", max_length=2048)
 
 
-class CapabilityCard(ProviderCard):
-    model_name: str = Field(default="", max_length=128)
+class CapabilityCard(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    id: UUID
+    provider_id: UUID
+    model_name: str = Field(min_length=1, max_length=128)
     context_window: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
 
 
@@ -37,10 +41,10 @@ class CapabilityChains(BaseModel):
     embedding: list[CapabilityCard] = Field(default_factory=list)
 
 
-class FeatureChain[Card: CapabilityCard](BaseModel):
+class FeatureChain(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    chain: list[Card] = Field(default_factory=list)
+    chain: list[UUID] = Field(default_factory=list)
     attempt_timeout_seconds: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
     total_timeout_seconds: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
 
@@ -50,40 +54,63 @@ class AIConfig(BaseModel):
 
     providers: list[ProviderCard] = Field(default_factory=list)
     capabilities: CapabilityChains = Field(default_factory=CapabilityChains)
-    features: dict[AiFeature, FeatureChain[CapabilityCard]] = Field(default_factory=dict)
+    features: dict[AiFeature, FeatureChain] = Field(default_factory=dict)
 
-    def chains(self) -> list[tuple[str, list[CapabilityCard]]]:
-        return [
-            *((service, getattr(self.capabilities, service)) for service in CAPABILITY_SERVICES),
-            *((AI_FEATURE_BY_ID[feature].service, value.chain) for feature, value in self.features.items()),
-        ]
+    def models(self) -> Iterator[tuple[str, CapabilityCard]]:
+        for service in CAPABILITY_SERVICES:
+            for card in getattr(self.capabilities, service):
+                yield service, card
 
-    def validate_capability_overrides(self) -> None:
-        for service, cards in self.chains():
-            for card in cards:
-                if (
-                    service == "image_gen"
-                    and card.provider == "local"
-                    and (card.api_key or card.model_name not in {"", "qwen"})
-                ):
-                    raise ValueError("本地生图使用固定 Qwen 工作流，不支持独立 API Key 或自选模型名称")
+    def find_provider(self, provider_id: UUID, system: Self | None = None) -> ProviderCard | None:
+        return next((card for card in self.providers if card.id == provider_id), None) or (
+            system.find_provider(provider_id) if system is not None else None
+        )
+
+    def find_model(
+        self,
+        model_id: UUID,
+        system: Self | None = None,
+    ) -> tuple[str, CapabilityCard, Self] | None:
+        return next(((service, card, self) for service, card in self.models() if card.id == model_id), None) or (
+            system.find_model(model_id) if system is not None else None
+        )
+
+    def validate_references(self, system: Self | None = None) -> None:
+        if system is not None:
+            own_ids = {card.id for card in self.providers} | {card.id for _, card in self.models()}
+            system_ids = {card.id for card in system.providers} | {card.id for _, card in system.models()}
+            if own_ids & system_ids:
+                raise ValueError("用户配置的 ID 不能覆盖系统供应商或模型卡片")
+        for service, card in self.models():
+            provider = self.find_provider(card.provider_id, system)
+            if provider is None:
+                raise ValueError(f"{service} 模型 {card.model_name} 引用的供应商不存在：{card.provider_id}")
+            if service == "image_gen" and provider.provider_type == "local" and card.model_name != "qwen":
+                raise ValueError("本地生图使用固定 Qwen 工作流，不支持自选模型名称")
+        for feature, value in self.features.items():
+            definition = AI_FEATURE_BY_ID[feature]
+            for model_id in value.chain:
+                model = self.find_model(model_id, system)
+                if model is None:
+                    raise ValueError(f"功能 {definition.label} 引用的模型卡片不存在：{model_id}")
+                if model[0] != definition.service:
+                    raise ValueError(f"功能 {definition.label} 只能引用 {definition.service} 模型卡片")
 
     @model_validator(mode="after")
-    def validate_unique_providers(self) -> Self:
-        provider_names = [card.provider for card in self.providers]
-        if len(provider_names) != len(set(provider_names)):
-            raise ValueError("同一供应商只能配置一张信息卡片")
-        for service, cards in self.chains():
-            if service == "embedding" and len(cards) > 1:
-                raise ValueError("记忆向量固定使用同一模型，仅配置一张卡片；失败时使用关键词召回")
-            capability_names = [card.provider for card in cards]
-            if len(capability_names) != len(set(capability_names)):
-                raise ValueError(f"{service} 中同一供应商只能配置一张卡片")
-            for card in cards:
-                if service == "llm" and card.context_window is None:
-                    raise ValueError("请填写 LLM 的上下文窗口大小（正整数 tokens）")
-                if service != "llm" and card.context_window is not None:
-                    raise ValueError("上下文窗口仅支持 LLM 能力卡片")
+    def validate_cards(self) -> Self:
+        ids = [card.id for card in self.providers] + [card.id for _, card in self.models()]
+        if len(ids) != len(set(ids)):
+            raise ValueError("供应商与模型卡片的 ID 不能重复")
+        for service, card in self.models():
+            if service == "llm" and card.context_window is None:
+                raise ValueError("请填写 LLM 的上下文窗口大小（正整数 tokens）")
+            if service != "llm" and card.context_window is not None:
+                raise ValueError("上下文窗口仅支持 LLM 能力卡片")
+        for feature, value in self.features.items():
+            if len(value.chain) != len(set(value.chain)):
+                raise ValueError(f"功能 {AI_FEATURE_BY_ID[feature].label} 不能重复引用同一模型卡片")
+            if AI_FEATURE_BY_ID[feature].service == "embedding" and len(value.chain) > 1:
+                raise ValueError("记忆向量只能选择一个模型；失败时使用关键词召回")
         return self
 
 
@@ -92,52 +119,31 @@ class ProviderCardUpdate(ProviderCard):
     clear_api_key: bool = False
 
 
-class CapabilityCardUpdate(CapabilityCard):
-    api_key_set: bool = False
-    clear_api_key: bool = False
-
-
-class CapabilityChainsUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    llm: list[CapabilityCardUpdate] = Field(default_factory=list)
-    stt: list[CapabilityCardUpdate] = Field(default_factory=list)
-    tts: list[CapabilityCardUpdate] = Field(default_factory=list)
-    image_gen: list[CapabilityCardUpdate] = Field(default_factory=list)
-    video_gen: list[CapabilityCardUpdate] = Field(default_factory=list)
-    embedding: list[CapabilityCardUpdate] = Field(default_factory=list)
-
-
 class AIConfigUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     providers: list[ProviderCardUpdate]
-    capabilities: CapabilityChainsUpdate
-    features: dict[AiFeature, FeatureChain[CapabilityCardUpdate]] = Field(default_factory=dict)
+    capabilities: CapabilityChains
+    features: dict[AiFeature, FeatureChain] = Field(default_factory=dict)
 
 
 class ProviderCardPublic(ProviderCard):
     api_key_set: bool = False
 
 
-class CapabilityCardPublic(CapabilityCard):
-    api_key_set: bool = False
-
-
-class CapabilityChainsPublic(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    llm: list[CapabilityCardPublic] = Field(default_factory=list)
-    stt: list[CapabilityCardPublic] = Field(default_factory=list)
-    tts: list[CapabilityCardPublic] = Field(default_factory=list)
-    image_gen: list[CapabilityCardPublic] = Field(default_factory=list)
-    video_gen: list[CapabilityCardPublic] = Field(default_factory=list)
-    embedding: list[CapabilityCardPublic] = Field(default_factory=list)
-
-
 class AIConfigPublic(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     providers: list[ProviderCardPublic] = Field(default_factory=list)
-    capabilities: CapabilityChainsPublic = Field(default_factory=CapabilityChainsPublic)
-    features: dict[AiFeature, FeatureChain[CapabilityCardPublic]] = Field(default_factory=dict)
+    capabilities: CapabilityChains = Field(default_factory=CapabilityChains)
+    features: dict[AiFeature, FeatureChain] = Field(default_factory=dict)
+
+
+class ProviderDefaults(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model_name: str
+    base_url: str
+    requires_api_key: bool
+    context_window: int | None = None
+    voice_design_model: str | None = None
