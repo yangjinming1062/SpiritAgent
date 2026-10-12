@@ -904,6 +904,11 @@ export function createConversationRuntime(sessionId: string | null) {
       return false
     }
 
+    // 宿主的增量广播可能先于本窗口的完整历史，未初始化时不能据此建立历史基底。
+    if (snapshot.incremental && !$historyHydrated.get()) {
+      return false
+    }
+
     if (snapshot.resumed) {
       if (snapshot.info) {
         hydrateSessionSettings(snapshot.info)
@@ -924,8 +929,6 @@ export function createConversationRuntime(sessionId: string | null) {
 
         return true
       }
-
-      snapshotPosition = { streamId: snapshot.stream_id, seq: snapshot.current_seq }
     }
 
     if (snapshot.incremental) {
@@ -983,6 +986,10 @@ export function createConversationRuntime(sessionId: string | null) {
         )
         activeRequestId = null
       }
+    }
+
+    if (snapshot.stream_id && typeof snapshot.current_seq === 'number') {
+      snapshotPosition = { streamId: snapshot.stream_id, seq: snapshot.current_seq }
     }
 
     return true
