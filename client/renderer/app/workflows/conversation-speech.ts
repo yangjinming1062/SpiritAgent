@@ -51,10 +51,22 @@ function voiceReference(id: string) {
     : null
 }
 
+function isVoiceViewVisible(messageId?: string): boolean | undefined {
+  const views = $conversationViews.get()
+
+  if (views.length === 0) {
+    return undefined
+  }
+
+  const sessionId = messageId ? runtimeForMessage(messageId)?.$chatSessionId.get() : null
+
+  return views.some(view => view.visible && (!messageId || view.runtime.$chatSessionId.get() === sessionId))
+}
+
 export function bindConversationSpeech(): void {
   dispose?.()
   bindVoiceBarProjection({
-    isVisible: id => {
+    isActive: id => {
       if ($conversationViews.get().length === 0) {
         return undefined
       }
@@ -63,6 +75,7 @@ export function bindConversationSpeech(): void {
 
       return id ? isConversationActive(sessionId ?? null) : $conversationViews.get().some(view => view.eligible)
     },
+    isVisible: isVoiceViewVisible,
     getAudio: id => runtimeForMessage(id)?.$chatMessageBodies.get()[id]?.replyAudio,
     getRecord: id => {
       const reference = voiceReference(id)
@@ -156,16 +169,33 @@ export function bindConversationSpeech(): void {
     toggle: toggleVoiceBar
   })
 
+  let disposed = false
+  let viewUpdateQueued = false
+
   const listeners = [
     bindVoicePlaybackUpdates(),
     bindVoiceBarListeners(),
     $autoplayVoice.listen(refreshVoiceAutoplay),
     $conversationViews.listen(() => {
-      const current = activeVoiceMessageId()
-
-      if (current && !isConversationActive(voiceReference(current)?.sessionId ?? null)) {
-        cancelVoiceBar()
+      if (viewUpdateQueued) {
+        return
       }
+
+      viewUpdateQueued = true
+      // 视图更新先注销再登记；等同一轮登记完成后判断，也覆盖主对话与轻语之间的交接。
+      queueMicrotask(() => {
+        viewUpdateQueued = false
+
+        if (disposed) {
+          return
+        }
+
+        const current = activeVoiceMessageId()
+
+        if (current && !isVoiceViewVisible(current)) {
+          cancelVoiceBar()
+        }
+      })
     }),
     $gatewayState.listen(state => {
       if (state === 'closed' || state === 'error') {
@@ -174,5 +204,8 @@ export function bindConversationSpeech(): void {
     })
   ]
 
-  dispose = () => listeners.forEach(stop => stop())
+  dispose = () => {
+    disposed = true
+    listeners.forEach(stop => stop())
+  }
 }

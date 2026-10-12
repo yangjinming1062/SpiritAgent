@@ -16,6 +16,7 @@ import type { ReplyAudio } from '@protocol'
 import { type AudioPlaybackOptions, playDataUrl, stopAudio } from './audio-track'
 
 export interface VoiceBarProjection {
+  isActive?(messageId?: string): boolean | undefined
   isVisible?(messageId?: string): boolean | undefined
   getAudio(messageId: string): ReplyAudio | null | undefined
   getRecord(messageId: string): VoicePlaybackRecord | undefined
@@ -74,6 +75,10 @@ function isVoiceSurfaceVisible(messageId?: string): boolean {
   return $surfaceRole.get() === 'sprite' && $whisperOpen.get() && isSpriteStageShown()
 }
 
+function isVoiceSurfaceActive(messageId?: string): boolean {
+  return isVoiceSurfaceVisible(messageId) && (projection?.isActive?.(messageId) ?? true)
+}
+
 function stopCurrent(): void {
   // stopAudio 同步保存最后进度；之后再作废下载与异步播放收尾。
   stopAudio()
@@ -115,13 +120,14 @@ export function refreshVoiceAutoplay(): void {
 function playNext(): void {
   const proj = voiceProjection()
 
-  if (activeId || pausedId || !isVoiceSurfaceVisible() || !proj.isAutoplay()) {
+  if (activeId || pausedId || !proj.isAutoplay()) {
     return
   }
 
-  const next = queue.shift()
+  const next = queue[0]
 
-  if (next) {
+  if (next && isVoiceSurfaceVisible(next)) {
+    queue.shift()
     void playItem(next, false)
   }
 }
@@ -229,7 +235,7 @@ export function enqueueVoiceBars(messageIds: string[]): void {
     received.add(key)
 
     if (
-      isVoiceSurfaceVisible(id) &&
+      isVoiceSurfaceActive(id) &&
       proj.isAutoplay() &&
       !proj.getRecord(id)?.listened &&
       !queue.includes(id) &&
@@ -243,7 +249,7 @@ export function enqueueVoiceBars(messageIds: string[]): void {
 }
 
 export function toggleVoiceBar(messageId: string): void {
-  if (!isVoiceSurfaceVisible(messageId)) {
+  if (!isVoiceSurfaceActive(messageId)) {
     return
   }
 
@@ -268,7 +274,7 @@ export function toggleVoiceBar(messageId: string): void {
 }
 
 export function restartVoiceBar(messageId: string): void {
-  if (!isVoiceSurfaceVisible(messageId)) {
+  if (!isVoiceSurfaceActive(messageId)) {
     return
   }
 
@@ -280,7 +286,7 @@ export function restartVoiceBar(messageId: string): void {
 
 export function bindVoiceBarListeners(): () => void {
   const cancelIfHidden = (): void => {
-    if (!isVoiceSurfaceVisible()) {
+    if (!isVoiceSurfaceVisible(activeId ?? pausedId ?? queue[0])) {
       cancelVoiceBar()
     }
   }
