@@ -579,7 +579,7 @@ AI 配置仅经管理入口维护。功能目录及所需能力由 [ai_features.
 
 供应商信息库只提供共享 API Key 与 Base URL，调用卡片指定模型与 LLM 上下文窗口；未填写模型使用供应商该能力默认值。密钥和地址按调用卡片 → 所属配置信息库 → 用户配置继承的系统信息库取值；系统功能链使用系统凭据。千问信息库地址的标准 `/compatible-mode/v1` 与 `/api/v1` 后缀按能力转换，保留主机和代理前缀，调用卡片显式地址原样使用。LLM 窗口必填且为正整数 tokens，不从信息库继承；管理页按供应商默认值预填，支持 `32k`、`1M` 等输入，`k` 为 1,000、`M` 为 1,000,000，实际窗口由配置者按模型及部署填写。
 
-调用卡片仅在 [registrations.py](../backend/bootstrap/registrations.py) 注册的供应商能力内生效；保存拒绝不支持该功能所需能力的卡片，运行时跳过缺少必需密钥、端点或模型的卡片。`custom` 没有默认端点与模型，按标准 OpenAI Responses（`/responses`）协议调用，Base URL 填到版本前缀（如 `https://host/v1`）为止，由 SDK 拼接 `/responses`；结构化输出与视觉等能力按标准协议声明，实际支持取决于所配模型。本地 ComfyUI 使用固定 Qwen 工作流，不使用 API Key、不支持自选权重，调用卡片隐藏并拒绝这些非空覆盖。
+调用卡片仅在 [registrations.py](../backend/bootstrap/registrations.py) 注册的供应商能力内生效；保存拒绝不支持该功能所需能力的卡片，运行时跳过缺少必需密钥、端点或模型的卡片。`custom` 没有默认端点与模型，按标准 OpenAI 协议调用：对话走 Responses（`/responses`，Base URL 填到版本前缀如 `https://host/v1` 为止，由 SDK 拼接路径），向量嵌入走 `/embeddings`；图像、视频、语音合成与语音识别未注册该供应商。结构化输出与视觉等能力按标准协议声明，实际支持取决于所配模型。本地 ComfyUI 使用固定 Qwen 工作流，不使用 API Key、不支持自选权重，调用卡片隐藏并拒绝这些非空覆盖。
 
 音色目录来自伙伴回复功能链，自定义音色能力来自音色设计功能链；已保存演绎仍绑定其供应商、模型与音色。记忆向量只配置一个模型，入库与查询共用配置；来源标识与不同空间的索引补齐见 [记忆读取与恢复](../backend/services/domains/memory/README.md#读取召回与恢复)。
 

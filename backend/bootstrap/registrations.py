@@ -52,6 +52,7 @@ def register_providers() -> None:
     register_provider(ServiceType.embedding, "local", local.LocalEmbeddingProvider)
     register_provider(ServiceType.image_gen, "local", local.LocalImageGenProvider)
     register_provider(ServiceType.llm, "custom", custom.CustomChatProvider)
+    register_provider(ServiceType.embedding, "custom", custom.CustomEmbeddingProvider)
 
 
 def register_tools() -> None:

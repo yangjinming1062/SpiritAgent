@@ -65,11 +65,11 @@ def _chain_entry(
     model: str,
     context_window: int | None,
 ) -> ProviderConfig | None:
-    """补齐供应商默认端点与模型；缺少必需密钥、端点或未注册该能力时返回 None。"""
+    """补齐供应商默认端点与模型；缺少必需密钥、端点、模型或未注册该能力时返回 None。"""
     if provider == "local" and service_type == ServiceType.image_gen and model not in {"", "qwen"}:
         raise MissingLlmConfigError("本地生图使用固定 Qwen 工作流，请清除自选模型名称")
     resolved_model = model or default_model_for(provider, service_type)
-    if service_type == ServiceType.llm and not resolved_model:
+    if not resolved_model:
         return None
     base_url = base_url or default_base_url(provider, service_type)
     # 同一 MiniMax 卡片的端点含 /v1 供 chat SDK 使用；其余能力的请求路径自带版本前缀。
