@@ -8,7 +8,6 @@ from services.adapters.tools.builtin import (
     register_companion_wait,
     register_desktop_actions,
     register_image_generation,
-    register_posts,
     register_scene,
     register_send_message,
     register_video_generation,
@@ -62,7 +61,6 @@ def register_tools() -> None:
     register_desktop_actions(REGISTRY)
     register_companion_wait(REGISTRY)
     register_image_generation(REGISTRY)
-    register_posts(REGISTRY)
     register_scene(REGISTRY)
     register_send_message(REGISTRY)
     register_video_generation(REGISTRY)

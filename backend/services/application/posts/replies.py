@@ -2,15 +2,15 @@
 
 import asyncio
 
-from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, TaskBag, get_logger, track_user_task
-from modules.companion import POST_COMMENT_MAX_CHARS, CompanionPostComment, PostContext
+from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, TaskBag, format_local_iso, get_logger, track_user_task
+from modules.companion import POST_COMMENT_MAX_CHARS, CompanionPostComment
 from prompts.posts import POST_REPLY_INSTRUCTIONS
 from sqlalchemy import select
 
-from services.domains.companion import load_companion_prompt_context
 from services.domains.posts import emit_comment, get_post
 from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
 
+from .context import elapsed_seconds, load_post_prompt_context, post_prompt_entry
 from .prompt_contract import render_post_instructions
 
 logger = get_logger(__name__)
@@ -62,9 +62,7 @@ async def _run_thread(user_id: int, post_id: str) -> None:
 
 
 async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
-    ctx = await load_companion_prompt_context(user_id)
-    if ctx is None:
-        raise RuntimeError("Companion is not ready")
+    ctx = await load_post_prompt_context(user_id)
     async with SESSION_LOCAL() as db:
         target = await db.scalar(
             select(CompanionPostComment)
@@ -86,24 +84,36 @@ async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
         allowed_users = {
             c.id for c in post.comments if c.role == "user" and (c.created_at, c.id) <= (target.created_at, target.id)
         }
+        thread = [
+            c
+            for c in post.comments
+            if c.id in allowed_users or (c.role == "companion" and c.reply_to_comment_id in allowed_users)
+        ]
+        post_data = post_prompt_entry(post, ctx)
         payload = {
-            "output_language": ctx.language,
-            "current_time": ctx.current_time,
-            "persona": ctx.persona_extras,
-            "long_term_memories": ctx.memories_block,
-            "current_mood": ctx.current_mood,
-            "post": {
-                "title": post.title,
-                "body": post.body,
-                "content_type": post.content_type,
-                "published_at": post.published_at.isoformat(),
+            **ctx.payload,
+            "media_context": post_data.pop("media_context"),
+            "post": post_data,
+            "target_comment": {
+                "id": target.id,
+                "role": "user",
+                "content": target.content,
+                "created_at": format_local_iso(target.created_at, ctx.user_timezone),
+                "seconds_after_publication": elapsed_seconds(target.created_at, post.published_at),
+                "seconds_until_reply": elapsed_seconds(ctx.now, target.created_at),
             },
-            "media_context": PostContext.model_validate(post.context_json).model_dump(exclude={"voice_id"}),
-            "target_comment": {"id": target.id, "role": "user", "content": target.content},
             "comments": [
-                {"role": c.role, "content": c.content}
-                for c in post.comments
-                if c.id in allowed_users or (c.role == "companion" and c.reply_to_comment_id in allowed_users)
+                {
+                    "id": c.id,
+                    "reply_to_comment_id": c.reply_to_comment_id,
+                    "role": c.role,
+                    "content": c.content,
+                    "created_at": format_local_iso(c.created_at, ctx.user_timezone),
+                    "seconds_after_previous_comment": elapsed_seconds(c.created_at, thread[i - 1].created_at)
+                    if i
+                    else None,
+                }
+                for i, c in enumerate(thread)
             ],
         }
         config = await resolve_user_llm_config(db, user_id)

@@ -209,7 +209,6 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="MEMORY_RECALL_MAX_CONTENT_CHARS",
     )
-    memory_prompt_max_memories: int = Field(default=10, gt=0, validation_alias="MEMORY_PROMPT_MAX_MEMORIES")
 
     # 动作库：每日制作额度按用户本地日结算；评审不设日限额；创建/自动使用独立开关。
     action_autonomous_create_daily_limit: int = Field(
@@ -266,7 +265,6 @@ class Settings(BaseSettings):
     scene_llm_create_per_24h: int = Field(default=1, validation_alias="SCENE_LLM_CREATE_PER_24H")
     scene_store_max_attempts: int = Field(default=3, gt=0, validation_alias="SCENE_STORE_MAX_ATTEMPTS")
     # 动态每日配额为 0 时不允许发布。
-    post_requested_per_day: int = Field(default=3, ge=0, validation_alias="POST_REQUESTED_PER_DAY")
     post_autonomous_per_day: int = Field(default=3, ge=0, validation_alias="POST_AUTONOMOUS_PER_DAY")
     diary_nightly_enabled: bool = Field(default=True, validation_alias="DIARY_NIGHTLY_ENABLED")
 

@@ -2763,7 +2763,6 @@ const SETTINGS_SECTIONS = [
             ['grid', [
                 num('memory_review_interval_seconds', '记忆维护最小间隔 (秒)', 60),
                 num('memory_recall_max_content_chars', '召回内容截断 (字)', 100),
-                num('memory_prompt_max_memories', '提示词注入记忆条数', 1),
             ]],
             ['sub', '夜间整理与规划'],
             ['grid', [
@@ -2810,7 +2809,6 @@ const SETTINGS_SECTIONS = [
             ['grid', [
                 num('scene_llm_create_per_24h', '角色自主新增场景上限 (/24小时)'),
                 num('scene_store_max_attempts', '场景图片转存最大重试次数', 1, { min: 1 }),
-                num('post_requested_per_day', '用户明确请求动态配额 (/24小时)', 1, { min: 0 }),
                 num('post_autonomous_per_day', '伙伴自主发布动态配额 (/24小时)', 1, { min: 0 }),
                 num('max_attachments_per_turn', '单回合附件数量上限', 1),
                 num('attachment_session_quota_bytes', '会话附件目录配额 (字节)', 1048576),

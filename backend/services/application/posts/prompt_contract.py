@@ -9,7 +9,10 @@ def render_post_instructions(texts: dict[str, str], language: str) -> str:
     values = {
         "content_types": "/".join(item.value for item in PostContentType),
         "title_min": fields["title"]["minLength"],
-        **{f"{name}_max": fields[name]["maxLength"] for name in ("title", "body", "text", "prompt", "narration")},
+        **{
+            f"{name}_max": fields[name]["maxLength"]
+            for name in ("publication_intent", "title", "body", "text", "prompt", "narration")
+        },
         "image_sizes": "/".join(fields["size"]["enum"]),
         "video_ratios": "/".join(fields["aspect_ratio"]["enum"]),
         "durations_zh": "或".join(map(str, fields["duration"]["enum"])),

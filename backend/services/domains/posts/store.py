@@ -42,7 +42,7 @@ class PostNotFoundError(PostError):
 
 
 class PostBlockedError(PostError):
-    """受理被自主发布开关、请求类型或发布额度拦截；与参数和系统错误区分，夜间账本据此记为阻止。"""
+    """动态创作开关或发布额度阻止了本次发布。"""
 
 
 @dataclass(frozen=True)
@@ -140,33 +140,18 @@ async def reserve_publication(
     db: AsyncSession,
     user_id: int,
     *,
-    key: str,
-    trigger: str,
-    quota_kind: str,
     activity_date: date,
-    request: dict,
 ) -> PostPublication:
     await lock_user_row(db, user_id)
     user = await db.get(User, user_id, populate_existing=True)
     if user is None or not user.is_active:
         raise PostError("账户不可用")
-    existing = await db.scalar(
-        select(PostPublication).where(
-            PostPublication.user_id == user_id,
-            PostPublication.idempotency_key == key,
-        ),
-    )
-    if existing is not None:
-        return existing
-    if await publication_quota_remaining(db, user_id, quota_kind) <= 0:
+    if await publication_quota_remaining(db, user_id) <= 0:
         raise PostBlockedError("最近24小时的动态发布额度已用完")
     row = PostPublication(
         user_id=user_id,
-        idempotency_key=key,
-        trigger=trigger,
-        quota_kind=quota_kind,
         activity_date=activity_date,
-        request_json=request,
+        request_json={},
         progress_json={},
         status="queued",
         phase="planning",
@@ -180,18 +165,16 @@ async def reserve_publication(
 async def publication_quota_remaining(
     db: AsyncSession,
     user_id: int,
-    quota_kind: str,
     *,
     exclude_publication_id: str | None = None,
 ) -> int:
-    """最近24小时内该类别还可预留的发布数；已发布、排队或运行中的任务，以及24小时内结果未知的任务都占用额度。"""
+    """已发布、在途及24小时内结果未知的任务共同占用账户滚动额度。"""
     since = utc_now() - timedelta(hours=24)
     posted = await db.scalar(
         select(func.count())
         .select_from(CompanionPost)
         .where(
             CompanionPost.user_id == user_id,
-            CompanionPost.quota_kind == quota_kind,
             CompanionPost.published_at >= since,
         ),
     )
@@ -200,7 +183,6 @@ async def publication_quota_remaining(
         .select_from(PostPublication)
         .where(
             PostPublication.user_id == user_id,
-            PostPublication.quota_kind == quota_kind,
             or_(
                 PostPublication.status.in_(("queued", "running")),
                 (PostPublication.status == "result_unknown") & (PostPublication.reserved_at >= since),
@@ -210,20 +192,7 @@ async def publication_quota_remaining(
     if exclude_publication_id is not None:
         reservations = reservations.where(PostPublication.id != exclude_publication_id)
     reserved = await db.scalar(reservations)
-    limit = SETTINGS.post_autonomous_per_day if quota_kind == "autonomous" else SETTINGS.post_requested_per_day
-    return max(0, limit - (posted or 0) - (reserved or 0))
-
-
-async def publication_status(db: AsyncSession, user_id: int, task_id: str) -> PostPublicationResult:
-    row = await db.scalar(
-        select(PostPublication).where(
-            PostPublication.id == task_id,
-            PostPublication.user_id == user_id,
-        ),
-    )
-    if row is None:
-        raise PostNotFoundError("找不到发布任务")
-    return response_for_publication(row)
+    return max(0, SETTINGS.post_autonomous_per_day - (posted or 0) - (reserved or 0))
 
 
 async def commit_publication(
@@ -268,7 +237,6 @@ async def commit_publication(
         user_id=task.user_id,
         published_at=utc_now(),
         activity_date=task.activity_date,
-        quota_kind=task.quota_kind,
         title=title,
         body=body,
         content_type=content_type.value,

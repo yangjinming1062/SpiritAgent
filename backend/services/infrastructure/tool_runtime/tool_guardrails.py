@@ -45,7 +45,6 @@ _EFFECT_TOOLS = frozenset(
         "desktop_action_design",
         "scene_create",
         "scene_activate",
-        "post_publish",
         "cronjob",
         "memory_retain",
     },

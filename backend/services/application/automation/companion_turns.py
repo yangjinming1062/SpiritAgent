@@ -48,7 +48,6 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "action_inspect",
         "desktop_action_search",
         "desktop_action_inspect",
-        "post_status",
         "video_generate_status",
         "read_file",
         "list_directory",

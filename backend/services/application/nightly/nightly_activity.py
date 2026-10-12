@@ -188,7 +188,7 @@ def _successful_action_facts(actions: dict[str, ActionExecutionResult]) -> list[
             "status": action.status,
             "fact": fact,
         }
-        for identifier in ("post_id", "outfit_id", "scene_id"):
+        for identifier in ("outfit_id", "scene_id"):
             if (value := getattr(action, identifier)) is not None:
                 item[identifier] = value
         facts.append(item)
@@ -439,9 +439,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             utc_start=utc_start,
             utc_end=utc_end,
         )
-    action_facts = [
-        item for item in _successful_action_facts(action_results) if item.get("post_id") not in posts.posted_ids
-    ]
+    action_facts = _successful_action_facts(action_results)
     try:
         await _write_action_memory(scope, local_date_str, action_facts, user_language)
     except Exception as exc:

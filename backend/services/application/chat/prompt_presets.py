@@ -28,8 +28,6 @@ LIFE_SPACE_TOOL_NAMES = DESKTOP_ACTION_TOOL_NAMES | frozenset(
     {
         "send_message_tool",
         "companion_wait",
-        "post_publish",
-        "post_status",
         "scene_list",
         "scene_get",
         "scene_create",

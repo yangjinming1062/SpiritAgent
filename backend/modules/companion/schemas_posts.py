@@ -54,6 +54,7 @@ class PostContext(BaseModel):
 
 class PostPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    publication_intent: str = Field(min_length=1, max_length=1000)
     content_type: PostContentType
     title: str = Field(min_length=1, max_length=64)
     body: str = Field(default="", max_length=500)

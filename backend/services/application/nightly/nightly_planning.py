@@ -59,7 +59,6 @@ from services.application.generation import (
     scene_generation_wait_seconds,
     schedule_scene_generation,
 )
-from services.application.posts import available_types, await_publication, request_publication
 from services.contracts import MemoryScope
 from services.domains.automation import create_job, remove_job
 from services.domains.companion import (
@@ -71,7 +70,6 @@ from services.domains.companion import (
     scene_environment,
 )
 from services.domains.memory import MemoryListItem
-from services.domains.posts import PostBlockedError, publication_quota_remaining
 from services.infrastructure.llm import (
     LlmAttemptDiagnostic,
     LlmJsonValidationError,
@@ -93,10 +91,9 @@ _TERMINAL_ACTION_STATUSES = frozenset(
 )
 _SUCCESS_ACTION_STATUSES = frozenset(("succeeded", "partial"))
 # 在途动作记下这些子任务 id 后，进程重启可以核对原任务续跑而不重复付费。
-_PROGRESS_KEYS = {"outfit.create": "outfit_id", "scene.create": "scene_id", "post.publish": "publication_id"}
+_PROGRESS_KEYS = {"outfit.create": "outfit_id", "scene.create": "scene_id"}
 _ACTION_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
 _MAX_ACTIONS = 8
-_MAX_MEDIA_ACTIONS = 2
 _MAX_PAID_ACTIONS = 4
 
 
@@ -143,11 +140,6 @@ class SceneCreateArgs(_ActionArgs):
     notes: str = Field(min_length=1)
 
 
-class PostPublishArgs(_ActionArgs):
-    intent: str = Field(min_length=1, max_length=1000)
-    content_type: Literal["auto", "text", "image", "video", "audio"] = "auto"
-
-
 class OutreachScheduleArgs(_ActionArgs):
     name: str = Field(default="主动联系", max_length=100)
     # 规划给出用户本地时刻，时区换算由代码完成。
@@ -183,7 +175,6 @@ class ActionExecutionResult(BaseModel):
     dependencies: list[str] | None = None
     outfit_id: int | None = None
     scene_id: int | None = None
-    post_id: str | None = None
     cron_job_id: int | None = None
     expires_at: str | None = None
 
@@ -278,7 +269,6 @@ class PlanningContext(BaseModel):
     recent_posts: list[RecentPostSummary] = Field(default_factory=list)
     available_capabilities: list[NightlyCapability] = Field(default_factory=list)
     blocked_capabilities: list[BlockedCapability] = Field(default_factory=list)
-    post_types: list[str] = Field(default_factory=list)
     plan_theme: str = ""
 
 
@@ -344,17 +334,6 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
             "reason": "string（可选）：已有场景不合适、需要新建场景的依据。",
         },
         exclusive_group="scene",
-        paid=True,
-    ),
-    NightlyCapability(
-        name="post.publish",
-        phase=30,
-        description="表达伙伴想分享的心情、想法或作品，提出社交动态的发布意图，可为文字、图片、视频或语音。"
-        "正文与媒体独立创作，发布后在动态页展示和评论。",
-        arguments={
-            "intent": "string（1–1000字符）：自包含的发布主题、目的及必要内容要求，不写完整动态正文，不把计划或作品描绘的情节写成现实经历。",
-            "content_type": "string（可选）：auto或post_types中列出的类型；默认auto，由动态创作时自行选择。",
-        },
         paid=True,
     ),
     NightlyCapability(
@@ -470,8 +449,6 @@ async def _image_provider_available(
 
 def _capability_availability(
     context: PlanningContext,
-    *,
-    post_quota_available: bool,
 ) -> tuple[list[NightlyCapability], list[BlockedCapability]]:
     providers = context.providers
     persona_ready = bool(context.persona.complete)
@@ -484,10 +461,6 @@ def _capability_availability(
         "scene.create": (
             providers.image_text and persona_ready and not context.scene.generation_pending,
             "场景已锁定、人设/生图不可用或已有场景正在生成",
-        ),
-        "post.publish": (
-            bool(context.post_types) and post_quota_available,
-            "动态自主发布或创作能力不可用，或最近24小时的自主发布额度已用完",
         ),
         "outreach.schedule": (True, ""),
         "action.design": (
@@ -548,7 +521,6 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
                 .limit(20),
             )
         ).all()
-        post_quota_available = await publication_quota_remaining(db, user_id, "autonomous") > 0
         # 动作库摘要在会话生命周期内读取，避免 session 关闭后重开未托管事务。
         presentation = get_presentation_snapshot(user_id)
         if presentation is not None and presentation.mode == "desktop":
@@ -617,7 +589,6 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             for row in recent_actions
         ],
         # 与动作的 target_date 一样按用户本地日标注。
-        post_types=await available_types(user_id, autonomous=True),
         recent_posts=[
             RecentPostSummary(
                 date=occurred_at.astimezone(timezone).date().isoformat(),
@@ -627,10 +598,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
             for occurred_at, content_type, title in recent_posts
         ],
     )
-    context.available_capabilities, context.blocked_capabilities = _capability_availability(
-        context,
-        post_quota_available=post_quota_available,
-    )
+    context.available_capabilities, context.blocked_capabilities = _capability_availability(context)
     return context
 
 
@@ -645,7 +613,6 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
         seen_ids.add(action_id)
     available_names = {item.name for item in context.available_capabilities}
     seen_groups: set[str] = set()
-    media_count = 0
     paid_count = 0
     actions: list[PlannedAction] = []
     for raw in raw_actions:
@@ -659,9 +626,6 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         if spec.paid and paid_count >= _MAX_PAID_ACTIONS:
             continue
-        is_media = capability_name == "post.publish"
-        if is_media and media_count >= _MAX_MEDIA_ACTIONS:
-            continue
         # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
         # 依赖 ID 无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。
         dependencies = raw.get("depends_on") or []
@@ -672,8 +636,6 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             args.setdefault("target_presentation_mode", context.actions.get("presentation_mode", "window"))
             if context.actions.get("presentation_mode") == "desktop" and context.actions.get("expected_set_id"):
                 args.setdefault("expected_set_id", context.actions["expected_set_id"])
-        if is_media:
-            media_count += 1
         if spec.paid:
             paid_count += 1
         if spec.exclusive_group:
@@ -940,61 +902,6 @@ async def _execute_scene_create(run: _ActionRun, args: dict[str, Any]) -> Action
     return ActionExecutionResult(status="succeeded", scene_id=ready.id, fact=_scene_fact(run, ready))
 
 
-async def _execute_post_publish(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    try:
-        parsed = PostPublishArgs.model_validate(args)
-    except ValidationError as exc:
-        return _invalid_arguments(exc)
-    task_id = run.resume.get("publication_id")
-    if task_id is None:
-        # 规划只会看到 post_types 中的类型，选列表外的类型属于规划违约；列表为空说明自主发布已关闭，交给受理判定。
-        if run.context.post_types and parsed.content_type not in ("auto", *run.context.post_types):
-            return ActionExecutionResult(
-                status="failed",
-                reason="invalid arguments: content_type: not listed in post_types",
-            )
-        # 规划后开关、类型或额度发生变化时受理被拦截，记为阻止而非失败。
-        try:
-            result = await request_publication(
-                run.user_id,
-                key=f"nightly:{run.row_id}",
-                trigger="nightly",
-                intent=parsed.intent,
-                requested_type=parsed.content_type,
-                activity_date=date.fromisoformat(run.date_context.source_date),
-                companion_activity_facts=tuple(run.facts),
-            )
-        except PostBlockedError as exc:
-            return ActionExecutionResult(status="blocked", reason=str(exc))
-        task_id = result.publication_id
-        await _save_progress(run, publication_id=task_id)
-    result = await await_publication(run.user_id, str(task_id))
-    if result.status == "declined":
-        return ActionExecutionResult(status="skipped", reason="伙伴决定本次不发布")
-    if result.status == "blocked":
-        return ActionExecutionResult(status="blocked", reason=result.error)
-    if result.status == "result_unknown":
-        return ActionExecutionResult(status="result_unknown", reason=result.error or "原制作结果尚未确认，未重新提交")
-    if result.status == "discarded":
-        return ActionExecutionResult(status="skipped", reason="本次动态已被明确放弃")
-    if result.status not in ("published", "partial"):
-        return ActionExecutionResult(status="failed", reason=result.error or "动态尚未发布")
-    async with SESSION_LOCAL() as db:
-        title = await db.scalar(
-            select(CompanionPost.title).where(
-                CompanionPost.id == result.post_id,
-                CompanionPost.user_id == run.user_id,
-            ),
-        )
-    if title is None:
-        return ActionExecutionResult(status="failed", reason="发布任务缺少动态记录")
-    return ActionExecutionResult(
-        status="partial" if result.status == "partial" else "succeeded",
-        post_id=result.post_id,
-        fact=_fact(run, "post_published", title=title),
-    )
-
-
 def _near_term_cron(now: datetime) -> str:
     target = (now + timedelta(minutes=2)).replace(second=0, microsecond=0)
     return f"{target.minute} {target.hour} {target.day} {target.month} *"
@@ -1138,7 +1045,6 @@ _EXECUTORS: dict[str, CapabilityExecutor] = {
     "outfit.create": _execute_outfit_create,
     "scene.create": _execute_scene_create,
     "scene.activate": _execute_scene_activate,
-    "post.publish": _execute_post_publish,
     "outreach.schedule": _execute_outreach_schedule,
     "action.design": _execute_action_design,
 }
@@ -1276,7 +1182,6 @@ async def run_nightly_planning(
         payload = {
             "plan_limits": {
                 "max_actions": _MAX_ACTIONS,
-                "max_media_actions": _MAX_MEDIA_ACTIONS,
                 "max_paid_actions": _MAX_PAID_ACTIONS,
             },
             "contextual_memories": contextual_memories,

@@ -57,13 +57,6 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
         extra_tools=("memory_retain", "memory_recall", "memory_inspect"),
     ),
     ToolDomain(
-        id="posts",
-        description_zh="伙伴社交动态的独立发布与状态",
-        description_en="Independent companion posts and publication status",
-        aliases=("posts", "动态", "朋友圈"),
-        extra_tools=("post_publish", "post_status"),
-    ),
-    ToolDomain(
         id="media",
         description_zh="图片与视频生成",
         description_en="Image and video generation",

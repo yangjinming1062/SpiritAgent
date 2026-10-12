@@ -295,8 +295,6 @@ async def insert_rows(
             if payload.get("content_type") not in {kind.value for kind in PostContentType}:
                 raise ValueError("Invalid post content type")
             PostContext.model_validate(payload["context_json"])
-            if payload.get("quota_kind") not in {"autonomous", "user_requested"}:
-                raise ValueError("Invalid post quota kind")
             if payload["content_type"] != "text" and not payload.get("media_url"):
                 raise ValueError("Post main media is missing")
             for path in (payload.get("media_url"), payload.get("audio_url")):

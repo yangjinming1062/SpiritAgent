@@ -50,7 +50,6 @@ class CompanionPost(ModelBase, TimestampMixin):
     media_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     audio_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     context_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    quota_kind: Mapped[str] = mapped_column(String(24), index=True)
     comments: Mapped[list["CompanionPostComment"]] = relationship(
         lazy="selectin",
         order_by="(CompanionPostComment.created_at, CompanionPostComment.id)",
@@ -78,13 +77,9 @@ class CompanionPostComment(ModelBase, TimestampMixin):
 
 class PostPublication(ModelBase, TimestampMixin):
     __tablename__ = "post_publications"
-    __table_args__ = (UniqueConstraint("user_id", "idempotency_key", name="uq_post_publication_request"),)
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    idempotency_key: Mapped[str] = mapped_column(String(200))
-    trigger: Mapped[str] = mapped_column(String(24))
-    quota_kind: Mapped[str] = mapped_column(String(24))
     reserved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     activity_date: Mapped[date] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)

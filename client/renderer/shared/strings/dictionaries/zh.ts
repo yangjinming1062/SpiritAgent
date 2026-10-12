@@ -580,7 +580,6 @@ export const dict = {
     code_execution: { label: '代码执行', description: '沙箱 Python 执行与受限调用。' },
     process_management: { label: '进程管理', description: '后台进程的启动与跟踪。' },
     skills_system: { label: '技能系统', description: '列出、查看与管理 Skill 内容。' },
-    posts: { label: '动态', description: '伙伴社交动态的独立发布和状态查询。' },
     memory: { label: '记忆', description: '长期记忆的写入、检索与删除。' },
     web_tools: { label: '联网工具', description: '网络搜索与网页内容抽取。' },
     image_generation: { label: '图片生成', description: '通过云端模型生成图片。' },

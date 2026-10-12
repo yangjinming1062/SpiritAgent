@@ -630,7 +630,6 @@ export const dict: Dictionary = {
     code_execution: { label: 'Code execution', description: 'Sandboxed Python execution with restricted calls.' },
     process_management: { label: 'Process management', description: 'Background process startup and tracking.' },
     skills_system: { label: 'Skill system', description: 'List, view and manage Skill contents.' },
-    posts: { label: 'Posts', description: 'Publish independent companion posts and query their status.' },
     memory: { label: 'Memory', description: 'Write, retrieve and delete long-term memories.' },
     web_tools: { label: 'Web tools', description: 'Web search and page content extraction.' },
     image_generation: { label: 'Image generation', description: 'Generate images via cloud models.' },

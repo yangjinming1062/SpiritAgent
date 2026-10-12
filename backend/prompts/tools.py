@@ -112,27 +112,6 @@ SCENE_TOOL_DESCRIPTIONS = {
     "scene_activate": "根据当前情景自主切换到已有的完整场景，不消耗生图额度。成功后 environment.current 记录所在环境，不提供你自身的活动或穿着事实。锁定时禁止自主切换，每回合最多一次切换。",
 }
 
-_POST_PUBLICATION_RESULT_DESC = (
-    "返回 publication_id、status、post_id 和 error，不包含动态内容。queued/running 表示尚未发布；"
-    "published/partial 且有 post_id 才表示已发布，partial 表示主内容已发布但可选旁白未完成；"
-    "declined/blocked/failed 表示未发布；result_unknown 表示制作结果未确认，不能认定成功或重新提交同一意图。"
-)
-
-POST_PUBLISH_DESC = (
-    "提出一条伙伴社交动态的发布意图，内容可为文字、图片、视频或语音。"
-    "正文、媒体与评论只保存在动态中，受理不代表已经发布。"
-    "不要在主对话生成或复述动态正文；用户可在动态页查看和评论。"
-    "自主发布受统一滚动24小时额度和创作开关约束，明确用户请求使用用户请求额度。" + _POST_PUBLICATION_RESULT_DESC
-)
-POST_STATUS_DESC = "按 publication_id 查询原发布任务；评论交互在动态页进行。" + _POST_PUBLICATION_RESULT_DESC
-
-POST_PUBLISH_PARAM_DESCS = {
-    "intent": "1–1000字符的发布主题与目的，保留明确的内容要求，不提交完整动态正文或把创作计划说成已经完成",
-    "content_type": "希望的动态类型；省略或auto时由独立创作选择，用户明确指定类型时使用该类型",
-}
-POST_STATUS_PARAM_DESCS = {"publication_id": "post_publish 返回的 publication_id，不使用 post_id"}
-
-
 WEB_SEARCH_DESC = (
     "Search the web for information. Returns results with title, "
     "URL, and description. Search operators (site:domain, filetype:pdf, intitle:word, "

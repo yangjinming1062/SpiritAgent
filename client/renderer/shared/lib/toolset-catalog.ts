@@ -32,7 +32,6 @@ export const TOOLSET_CATALOG: readonly ToolsetCatalogEntry[] = [
   { id: 'process_management', icon: Cpu },
   { id: 'skills_system', icon: Sparkles },
   { id: 'memory', icon: Brain },
-  { id: 'posts', icon: Sparkles },
   { id: 'web_tools', icon: Search },
   { id: 'image_generation', icon: ImageIcon },
   { id: 'messaging', icon: Send },

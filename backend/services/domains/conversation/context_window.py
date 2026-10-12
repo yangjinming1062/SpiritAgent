@@ -1,12 +1,26 @@
+from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from components import ensure_utc, utc_now
 from modules.conversation import Conversation, Message
+from modules.settings import resolve_user_timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .formatting import format_messages_compact
 from .main_conversation import UI_ONLY_SUBTYPES, get_special_conversation
 
-RECENT_CONTEXT_CHAR_CAP = 200
 CHECKPOINT_SUBTYPE = "compress_summary"
+
+
+@dataclass(frozen=True)
+class CompanionDialogue:
+    window_start: datetime
+    window_end: datetime
+    user_timezone: str
+    timezone_configured: bool
+    content: str
 
 
 async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Message]:
@@ -41,11 +55,22 @@ async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Me
     return [checkpoint, *rows] if checkpoint is not None else rows
 
 
-async def load_recent_context_window(db: AsyncSession, user_id: int, max_messages: int = 10) -> str:
-    """主对话最近 N 条正常对话消息的紧凑文本，供空闲表达、自主行动决策和心情更新的一次性 prompt 使用。``status_proactive`` 保留（那是用户可以回应的真实轮次），只剔除 ``UI_ONLY_SUBTYPES``。"""
+async def load_companion_dialogue(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    now: datetime | None = None,
+) -> CompanionDialogue:
+    """完整读取本地当日对话；05:00 前连同前一自然日，清空水位和发言归属保持不变。"""
+    now = ensure_utc(now or utc_now())
+    timezone = await resolve_user_timezone(db, user_id)
+    zone = ZoneInfo(timezone or "UTC")
+    local_now = now.astimezone(zone)
+    day = local_now.date() - timedelta(days=1) if local_now.hour < 5 else local_now.date()
+    start = datetime.combine(day, time.min, zone)
     main_conv = await get_special_conversation(db, user_id, "companion")
     if main_conv is None:
-        return ""
+        return CompanionDialogue(start, local_now, zone.key, bool(timezone), "")
     msgs = (
         (
             await db.execute(
@@ -54,15 +79,25 @@ async def load_recent_context_window(db: AsyncSession, user_id: int, max_message
                     Message.conversation_id == main_conv.id,
                     Message.id > main_conv.context_after_message_id,
                     Message.role.in_(("user", "assistant")),
-                    # ``NULL NOT IN (...)`` 在 WHERE 中为 NULL（视为 false），显式 is_(None) 分支是保留普通消息的关键。
-                    Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
+                    Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
                     Message.tool_calls.is_(None),
+                    Message.created_at >= start.astimezone(UTC),
+                    Message.created_at <= now,
                 )
-                .order_by(Message.id.desc())
-                .limit(max_messages),
+                .order_by(Message.id),
             )
         )
         .scalars()
         .all()
     )
-    return format_messages_compact(list(reversed(msgs)), char_cap=RECENT_CONTEXT_CHAR_CAP)
+    return CompanionDialogue(
+        start,
+        local_now,
+        zone.key,
+        bool(timezone),
+        format_messages_compact(list(msgs), user_local_tz=zone.key),
+    )
+
+
+async def load_recent_context_window(db: AsyncSession, user_id: int) -> str:
+    return (await load_companion_dialogue(db, user_id)).content

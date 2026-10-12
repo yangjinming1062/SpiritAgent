@@ -1,6 +1,6 @@
 import re
 
-from components import DEFAULT_LANGUAGE, SETTINGS, resolve_language, resolve_prompt_text
+from components import DEFAULT_LANGUAGE, resolve_language, resolve_prompt_text
 from modules.memory import Memory
 from prompts.memory import (
     BACKGROUND_MEMORY_LABELS_TEXTS,
@@ -52,8 +52,7 @@ async def format_memories_block(db: AsyncSession, scope: MemoryScope, *, languag
                     active_memory_filter(),
                     Memory.context.like("recall:%"),
                 )
-                .order_by(Memory.updated_at.desc())
-                .limit(SETTINGS.memory_prompt_max_memories),
+                .order_by(Memory.updated_at.desc(), Memory.id),
             )
         ).all(),
     )
@@ -77,8 +76,7 @@ async def format_background_memory_block(
                     Memory.basis == "explicit",
                     Memory.context.like("recall:%"),
                 )
-                .order_by(Memory.id)
-                .limit(SETTINGS.memory_prompt_max_memories),
+                .order_by(Memory.id),
             )
         ).all(),
     )

@@ -1,9 +1,8 @@
-"""所有发布入口共用的独立规划、制作与可恢复任务。"""
+"""独立主动创作、媒体制作与可恢复发布任务。"""
 
 import asyncio
 from datetime import date, timedelta
 from typing import Any, Literal, get_args
-from uuid import UUID
 from weakref import WeakValueDictionary
 
 from components import (
@@ -11,11 +10,11 @@ from components import (
     SESSION_LOCAL,
     TaskBag,
     ensure_utc,
+    format_local_iso,
     get_logger,
     is_user_in_maintenance,
     parse_llm_json,
     resolve_language,
-    resolve_prompt_text,
     track_user_task,
     utc_now,
 )
@@ -33,10 +32,10 @@ from modules.companion import (
     PostPublicationResult,
 )
 from modules.media import VideoGenJob
-from modules.scheduler import NightlyActivityAction
 from modules.settings import get_user_setting, load_user_settings, resolve_user_timezone
-from prompts.posts import POST_PUBLISH_INSTRUCTIONS, POST_REQUEST_CLASSIFICATION
+from prompts.posts import POST_PUBLISH_INSTRUCTIONS
 from sqlalchemy import or_, select, update
+from sqlalchemy.orm import raiseload
 
 from services.application.generation import (
     ImageGenerationError,
@@ -62,7 +61,6 @@ from services.domains.assets import cleanup_user_assets, enqueue_asset_cleanup
 from services.domains.companion import (
     character_snapshot_is_current,
     get_scene_state,
-    load_companion_prompt_context,
     render_character_identity,
     scene_environment,
 )
@@ -72,7 +70,6 @@ from services.domains.posts import (
     PostNotFoundError,
     commit_publication,
     publication_quota_remaining,
-    publication_status,
     reserve_publication,
     response_for_publication,
 )
@@ -91,6 +88,7 @@ from services.infrastructure.llm import (
     synthesize_speech,
 )
 
+from .context import load_post_prompt_context, post_prompt_entry
 from .prompt_contract import render_post_instructions
 
 logger = get_logger(__name__)
@@ -109,12 +107,12 @@ class _VideoUnsupportedError(PostError):
     """供应商链不支持本次视频的参考模式、时长或分辨率，提交前阻止。"""
 
 
-async def available_types(user_id: int, *, autonomous: bool) -> list[str]:
+async def available_types(user_id: int) -> list[str]:
     async with SESSION_LOCAL() as db:
         if not await db.scalar(select(User.is_active).where(User.id == user_id)):
             return []
         enabled = await get_user_setting(db, user_id, _POSTS_SWITCH)
-        if autonomous and enabled is not None and enabled is not True:
+        if enabled is not None and enabled is not True:
             return []
         types = ["text"]
         for content_type, service_type in (("image", "image_gen"), ("video", "video_gen"), ("audio", "tts")):
@@ -145,68 +143,34 @@ async def _video_supported(user_id: int) -> bool:
     return False
 
 
-async def _requested_by_user(user_id: int, user_message: str, intent: str) -> bool:
-    if not user_message:
-        return False
-    async with SESSION_LOCAL() as db:
-        config = await resolve_user_llm_config(db, user_id)
-        language = await get_user_setting(db, user_id, "language")
-    if not config.is_configured:
-        raise PostError("模型配置不可用")
-    raw = await call_llm_once(
-        config,
-        resolve_prompt_text(POST_REQUEST_CLASSIFICATION, language),
-        {"user_message": user_message, "intent": intent},
-        json_output=True,
-        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
-    )
-    data = parse_llm_json(raw)
-    if not isinstance(data, dict) or set(data) != {"user_requested"} or type(data["user_requested"]) is not bool:
-        raise PostError("发布请求判断格式无效")
-    return data["user_requested"]
-
-
-async def _freeze_input(
-    user_id: int,
-    *,
-    intent: str,
-    requested_type: str,
-    user_message: str,
-    requested: bool,
-    companion_activity_facts: tuple[str, ...],
-) -> dict:
-    ctx = await load_companion_prompt_context(user_id)
-    if ctx is None:
-        raise PostError("伙伴资料尚未就绪")
-    types = await available_types(user_id, autonomous=not requested)
+async def _creation_input(user_id: int) -> dict:
+    ctx = await load_post_prompt_context(user_id)
+    types = await available_types(user_id)
     if not types:
         raise PostBlockedError("动态自主发布已关闭")
-    if requested_type != "auto" and requested_type not in types:
-        raise PostBlockedError("请求的动态类型当前不可用")
     async with SESSION_LOCAL() as db:
         recent = (
-            await db.execute(
-                select(CompanionPost.title, CompanionPost.body)
-                .where(CompanionPost.user_id == user_id)
-                .order_by(CompanionPost.published_at.desc())
-                .limit(10),
+            (
+                await db.execute(
+                    select(CompanionPost)
+                    .options(raiseload(CompanionPost.comments))
+                    .where(
+                        CompanionPost.user_id == user_id,
+                        CompanionPost.published_at >= ctx.now - timedelta(days=3),
+                        CompanionPost.published_at <= ctx.now,
+                    )
+                    .order_by(CompanionPost.published_at, CompanionPost.id),
+                )
             )
-        ).all()
+            .scalars()
+            .all()
+        )
         environment = scene_environment(await get_scene_state(db, user_id))
     return {
-        "intent": intent,
-        "requested_type": requested_type,
-        "user_message": user_message,
-        "user_requested": requested,
-        "output_language": ctx.language,
-        "current_time": ctx.current_time,
-        "persona": ctx.persona_extras,
-        "long_term_memories": ctx.memories_block,
-        "current_mood": ctx.current_mood,
+        **ctx.payload,
         "environment": environment,
         "available_types": types,
-        "recent_posts": [{"title": t, "body": b} for t, b in recent],
-        **({"companion_activity_facts": list(companion_activity_facts)} if companion_activity_facts else {}),
+        "recent_posts": [post_prompt_entry(post, ctx) for post in recent],
     }
 
 
@@ -232,9 +196,7 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
     if set(data) != {"post", "plan"}:
         raise PostError("发布决策字段无效")
     plan = PostPlan.model_validate(data["plan"])
-    if plan.content_type.value not in payload["available_types"] or (
-        payload["requested_type"] != "auto" and plan.content_type.value != payload["requested_type"]
-    ):
+    if plan.content_type.value not in payload["available_types"]:
         raise PostError("发布决策选择了不可用的类型")
     return _drop_inapplicable_fields(user_id, plan, payload["available_types"])
 
@@ -257,50 +219,19 @@ def _drop_inapplicable_fields(user_id: int, plan: PostPlan, types: list[str]) ->
     return plan.model_copy(update=dropped)
 
 
-async def request_publication(
-    user_id: int,
-    *,
-    key: str,
-    trigger: str,
-    intent: str,
-    requested_type: str = "auto",
-    user_message: str = "",
-    autonomous: bool = True,
-    activity_date: date | None = None,
-    companion_activity_facts: tuple[str, ...] = (),
-) -> PostPublicationResult:
-    async with SESSION_LOCAL() as db:
-        existing = await db.scalar(
-            select(PostPublication).where(
-                PostPublication.user_id == user_id,
-                PostPublication.idempotency_key == key,
-            ),
-        )
-        if existing is not None:
-            schedule_publication(existing.id, user_id)
-            return response_for_publication(existing)
+async def request_publication(user_id: int) -> PostPublicationResult:
     if is_user_in_maintenance(user_id):
         raise PostError("账户正在维护，暂不能发布")
-    if not intent.strip() or len(intent) > 1000 or requested_type not in ("auto", "text", "image", "video", "audio"):
-        raise PostError("发布意图或类型无效")
-    requested = not autonomous and await _requested_by_user(user_id, user_message, intent)
-    payload = await _freeze_input(
-        user_id,
-        intent=intent,
-        requested_type=requested_type,
-        user_message=user_message,
-        requested=requested,
-        companion_activity_facts=companion_activity_facts,
-    )
+    if not await available_types(user_id):
+        raise PostBlockedError("动态自主发布已关闭")
     async with SESSION_LOCAL() as db:
+        timezone = await resolve_user_timezone(db, user_id)
         row = await reserve_publication(
             db,
             user_id,
-            key=key,
-            trigger=trigger,
-            quota_kind="user_requested" if requested else "autonomous",
-            activity_date=activity_date or date.fromisoformat(payload["current_time"][:10]),
-            request=payload,
+            activity_date=date.fromisoformat(
+                (format_local_iso(utc_now(), timezone) or "")[:10],
+            ),
         )
     schedule_publication(row.id, user_id)
     return response_for_publication(row)
@@ -331,6 +262,7 @@ async def _save(
     status: str | None = None,
     error: str | None = None,
     plan: PostPlan | None = None,
+    request: dict | None = None,
     **progress: Any,
 ) -> None:
     async with SESSION_LOCAL() as db:
@@ -346,6 +278,8 @@ async def _save(
         row.error = error
         if plan is not None:
             row.plan_json = plan.model_dump(mode="json")
+        if request is not None:
+            row.request_json = request
         row.progress_json = {**row.progress_json, **progress}
         # 阻止或失败的任务不会产生动态（已有动态时上方已返回），其保存的资产随之删除；结果未知的任务保留已有产物。
         discarded = _owned_assets(row.progress_json) if status in ("blocked", "failed") else []
@@ -497,18 +431,19 @@ async def _run_publication(task_id: str) -> None:
         if is_user_in_maintenance(row.user_id):
             return
         if row.plan_json is None:
-            if not await available_types(row.user_id, autonomous=row.quota_kind == "autonomous"):
+            if not await available_types(row.user_id):
                 await _save(task_id, status="blocked", error="发布开关已关闭")
                 return
-            await _save(task_id, status="running", phase="planning")
-            plan = await compose_plan(row.user_id, row.request_json)
+            payload = await _creation_input(row.user_id)
+            await _save(task_id, status="running", phase="planning", request=payload)
+            plan = await compose_plan(row.user_id, payload)
             if plan is None:
                 await _save(task_id, status="declined", phase="complete")
                 return
             await _save(task_id, plan=plan, phase="planned")
         else:
             plan = PostPlan.model_validate(row.plan_json)
-        if plan.content_type.value not in await available_types(row.user_id, autonomous=row.quota_kind == "autonomous"):
+        if plan.content_type.value not in await available_types(row.user_id):
             await _save(task_id, status="blocked", error="发布开关或供应商能力不可用")
             return
         await _save(task_id, status="running")
@@ -520,7 +455,7 @@ async def _run_publication(task_id: str) -> None:
             and not progress.get("narration_failed")
         ):
             try:
-                voice_types = await available_types(row.user_id, autonomous=row.quota_kind == "autonomous")
+                voice_types = await available_types(row.user_id)
                 if "audio" not in voice_types:
                     raise PostError("旁白不可用")
                 progress["audio_url"], progress["voice_id"] = await _voice(
@@ -544,7 +479,7 @@ async def _run_publication(task_id: str) -> None:
             if not current:
                 await _save(task_id, status="blocked", error="伙伴外形已更新，本次旧参考作品未发布")
                 return
-        if plan.content_type.value not in await available_types(row.user_id, autonomous=row.quota_kind == "autonomous"):
+        if plan.content_type.value not in await available_types(row.user_id):
             await _save(task_id, status="blocked", error="发布开关已关闭")
             return
         async with SESSION_LOCAL() as db:
@@ -557,7 +492,7 @@ async def _run_publication(task_id: str) -> None:
                 media_url=progress.get("media_url"),
                 audio_url=progress.get("audio_url"),
                 context=PostContext(
-                    publication_intent=row.request_json.get("intent", ""),
+                    publication_intent=plan.publication_intent,
                     creation_intent=plan.prompt,
                     transcript=plan.text,
                     narration=plan.narration if progress.get("audio_url") else "",
@@ -569,6 +504,8 @@ async def _run_publication(task_id: str) -> None:
         raise
     except _VideoUnsupportedError:
         await _save(task_id, status="blocked", error="视频供应商不支持本次视频要求")
+    except PostBlockedError as exc:
+        await _save(task_id, status="blocked", error=str(exc))
     except ProviderResultUnknownError:
         await _save(task_id, status="result_unknown", error="制作请求结果未知，未重复提交")
     except ImageGenerationError as exc:
@@ -580,14 +517,6 @@ async def _run_publication(task_id: str) -> None:
     except Exception:
         logger.exception("Post publication failed", extra={"publication_id": task_id})
         await _save(task_id, status="failed", error="动态制作失败，内容未发布")
-
-
-async def await_publication(user_id: int, task_id: str) -> PostPublicationResult:
-    task = _TASKS.get(task_id)
-    if task is not None:
-        await asyncio.shield(task)
-    async with SESSION_LOCAL() as db:
-        return await publication_status(db, user_id, task_id)
 
 
 async def resume_publications() -> None:
@@ -727,9 +656,9 @@ async def adopt_publication_video(user_id: int, task_id: str) -> PostPublication
         ):
             raise PostBlockedError("账户或伙伴资料不可用")
         enabled = await get_user_setting(db, user_id, _POSTS_SWITCH)
-        if row.quota_kind == "autonomous" and enabled is not None and enabled is not True:
+        if enabled is not None and enabled is not True:
             raise PostBlockedError("动态自主发布已关闭")
-        remaining = await publication_quota_remaining(db, user_id, row.quota_kind, exclude_publication_id=row.id)
+        remaining = await publication_quota_remaining(db, user_id, exclude_publication_id=row.id)
         if remaining <= 0:
             raise PostBlockedError("最近24小时的动态发布额度已用完")
         plan = PostPlan.model_validate(row.plan_json)
@@ -758,7 +687,7 @@ async def adopt_publication_video(user_id: int, task_id: str) -> PostPublication
             media_url=path,
             audio_url=row.progress_json.get("audio_url"),
             context=PostContext(
-                publication_intent=row.request_json.get("intent", ""),
+                publication_intent=plan.publication_intent,
                 creation_intent=plan.prompt,
                 narration=plan.narration if row.progress_json.get("audio_url") else "",
                 voice_id=row.progress_json.get("voice_id", ""),
@@ -811,7 +740,7 @@ async def discard_publication_video(user_id: int, task_id: str) -> PostPublicati
 
 
 async def gc_autonomous_publications() -> tuple[int, int]:
-    """随机自主任务完整资料保留七天、精简记录九十天；未知、在途和引用职责不删除。"""
+    """完整资料保留七天、精简记录九十天；未知和在途媒体职责不删除。"""
     compacted = deleted = 0
     cutoff = utc_now() - timedelta(days=7)
     remove_before = utc_now() - timedelta(days=90)
@@ -821,11 +750,8 @@ async def gc_autonomous_publications() -> tuple[int, int]:
             statement = (
                 select(PostPublication)
                 .where(
-                    PostPublication.trigger == "autonomous",
-                    PostPublication.quota_kind == "autonomous",
                     PostPublication.status.in_(_TERMINAL - {"result_unknown"}),
                     PostPublication.updated_at < cutoff,
-                    PostPublication.idempotency_key.startswith("autonomous:"),
                 )
                 .order_by(PostPublication.id)
                 .limit(200)
@@ -839,13 +765,8 @@ async def gc_autonomous_publications() -> tuple[int, int]:
             cursor = rows[-1].id
             candidates: list[PostPublication] = []
             for row in rows:
-                try:
-                    key = UUID(row.idempotency_key.removeprefix("autonomous:"))
-                except ValueError:
-                    continue
                 if (
-                    key.version != 4
-                    or row.progress_json.get("discard_cleanup_pending")
+                    row.progress_json.get("discard_cleanup_pending")
                     or is_user_in_maintenance(row.user_id)
                     or ((task := _TASKS.get(row.id)) is not None and not task.done())
                 ):
@@ -853,16 +774,6 @@ async def gc_autonomous_publications() -> tuple[int, int]:
                 candidates.append(row)
             if not candidates:
                 continue
-            ids = [row.id for row in candidates]
-            referenced = set(
-                (
-                    await db.scalars(
-                        select(NightlyActivityAction.result["publication_id"].as_string()).where(
-                            NightlyActivityAction.result["publication_id"].as_string().in_(ids),
-                        ),
-                    )
-                ).all(),
-            )
             job_ids = [job_id for row in candidates if (job_id := _video_job_id(row)) is not None]
             jobs: dict[int, VideoGenJob] = {}
             if job_ids:
@@ -871,8 +782,6 @@ async def gc_autonomous_publications() -> tuple[int, int]:
                     for job in (await db.scalars(select(VideoGenJob).where(VideoGenJob.id.in_(job_ids)))).all()
                 }
             for row in candidates:
-                if row.id in referenced:
-                    continue
                 job_id = _video_job_id(row)
                 if job_id is not None:
                     job = jobs.get(job_id)

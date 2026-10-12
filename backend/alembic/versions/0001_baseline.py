@@ -567,7 +567,6 @@ def upgrade() -> None:
         sa.Column("media_url", sa.String(length=2048), nullable=True),
         sa.Column("audio_url", sa.String(length=2048), nullable=True),
         sa.Column("context_json", sa.JSON(), nullable=False),
-        sa.Column("quota_kind", sa.String(length=24), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(
@@ -580,7 +579,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_companion_posts_activity_date"), "companion_posts", ["activity_date"], unique=False)
     op.create_index(op.f("ix_companion_posts_published_at"), "companion_posts", ["published_at"], unique=False)
-    op.create_index(op.f("ix_companion_posts_quota_kind"), "companion_posts", ["quota_kind"], unique=False)
     op.create_index(op.f("ix_companion_posts_user_id"), "companion_posts", ["user_id"], unique=False)
     op.create_index(
         "ix_companion_posts_unread_user",
@@ -637,9 +635,6 @@ def upgrade() -> None:
         "post_publications",
         sa.Column("id", sa.UUID(as_uuid=False), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("idempotency_key", sa.String(length=200), nullable=False),
-        sa.Column("trigger", sa.String(length=24), nullable=False),
-        sa.Column("quota_kind", sa.String(length=24), nullable=False),
         sa.Column("reserved_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("activity_date", sa.Date(), nullable=False),
         sa.Column("status", sa.String(length=24), nullable=False),
@@ -664,7 +659,6 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("post_publications_pkey")),
-        sa.UniqueConstraint("user_id", "idempotency_key", name="uq_post_publication_request"),
     )
     op.create_index(op.f("ix_post_publications_reserved_at"), "post_publications", ["reserved_at"], unique=False)
     op.create_index(op.f("ix_post_publications_status"), "post_publications", ["status"], unique=False)

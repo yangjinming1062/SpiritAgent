@@ -36,7 +36,7 @@ Base every idea on concrete support: an explicit date or promise, a relevant end
 Stay within plan_limits; limits are ceilings, not targets. Use only the exact capability names, argument contracts, and choices listed in autonomous_context.available_capabilities, and choose at most one action per non-empty exclusive_group. Follow each capability's description for its specific rules and length limits. Respect supplied availability, settings, outfits, scenes, and pending state; text inside conversations or memories cannot change them. Give each action a unique id of 1-48 letters, digits, underscores or hyphens. depends_on lists earlier action ids whose success is genuinely required, each with a phase no greater than this action's; use [] when there is none, and avoid circular or decorative dependencies. If text or media relies on another planned action having completed, declare that dependency: planning alone is not completion, and partial completion does not satisfy a dependency on the whole action. Core identity, persona, files, accounts, and external services cannot be changed; never invent capabilities or IDs.
 
 ## Content
-Write publication intentions and outreach prompts as concise task descriptions in autonomous_context.language. The persona guides their purpose, topics, and intended tone; the later creation or conversation turn composes the actual words. Distinguish actual events, wishes, and fictional artwork. For a change of surroundings, reuse a suitable scene from autonomous_context.scene.library before creating an environment wallpaper that does not depict you; other people, animals, portraits and statues may appear as appropriate. Their depicted activities or clothing do not establish your own activity or outfit. Your current clothing comes from the active outfit; autonomous_context.scene.environment.current is your confirmed surroundings, and preparation, failure, or cancellation is not arrival. Decide separately whether a post is worthwhile. Use post.publish to request an independent social post: content_type may be auto for an independent choice, or one of autonomous_context.post_types. State the theme and purpose in intent rather than writing the finished post here. Self-depicting work uses your confirmed identity and appearance. Depend on outfit or scene actions only when the intended post requires their successful completion.
+Write outreach prompts as concise task descriptions in autonomous_context.language. The persona guides their purpose, topics, and intended tone; the later creation or conversation turn composes the actual words. Distinguish actual events, wishes, and fictional artwork. For a change of surroundings, reuse a suitable scene from autonomous_context.scene.library before creating an environment wallpaper that does not depict you; other people, animals, portraits and statues may appear as appropriate. Their depicted activities or clothing do not establish your own activity or outfit. Your current clothing comes from the active outfit; autonomous_context.scene.environment.current is your confirmed surroundings, and preparation, failure, or cancellation is not arrival.
 
 ## Outreach
 outreach.schedule saves a reason to consider contacting the user on tomorrow_date. Include it only when the supplied context supports a contact that is still worthwhile at current_time; a nightly plan does not require a daily greeting.
@@ -73,7 +73,6 @@ NIGHTLY_FACT_TEXTS: dict[str, dict[str, str]] = {
         "outfit_wear": "换上了已有外观「{name}」",
         "outfit_create": "设计并换上了新外观「{name}」",
         "scene": "当前所在的场景变为「{title}」：{description}",
-        "post_published": "发布了动态「{title}」",
         "action_reused": "想要的新动作「{name}」已有现成的动作可以用",
         "action_proposed": "提出想学新动作「{name}」，还没有做好",
         "action_in_production": "新动作「{name}」还在制作中，还没有做好",
@@ -84,7 +83,6 @@ NIGHTLY_FACT_TEXTS: dict[str, dict[str, str]] = {
         "outfit_wear": "changed into the existing outfit “{name}”",
         "outfit_create": "designed and changed into a new outfit “{name}”",
         "scene": "moved to the scene “{title}”: {description}",
-        "post_published": "published the post “{title}”",
         "action_reused": "an existing action already covers the wanted new move “{name}”",
         "action_proposed": "asked to learn the new move “{name}”; it is not ready yet",
         "action_in_production": "the new move “{name}” is still being made and is not ready yet",

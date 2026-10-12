@@ -14,7 +14,7 @@
 | [actions.py](actions.py) | 动作检索、提案、检查、播放工具和独立评审 | [action_tool.py](../services/adapters/tools/builtin/action_tool.py)、[actions](../services/application/actions/) |
 | [desktop_videos.py](desktop_videos.py)、[desktop_tools.py](desktop_tools.py) | 桌面生活的构图、起始画面、运动、外部视频提示词、成品检查和动作工具 | [desktop_video.py](../services/application/generation/desktop_video.py)、[desktop.py](../services/application/actions/desktop.py)、[desktop_action_tool.py](../services/adapters/tools/builtin/desktop_action_tool.py) |
 | [nightly.py](nightly.py) | 规划、事实账本、每日检查点、日记与反思 | [nightly](../services/application/nightly/) |
-| [posts.py](posts.py) | 请求分类、独立动态创作、线程回复和共享资料语义 | [posts](../services/application/posts/) 的 `prompt_contract`、`publication`、`replies`，夜间回顾 |
+| [posts.py](posts.py) | 独立主动创作、线程回复、共享资料和时间语义 | [posts](../services/application/posts/) 的 `context`、`prompt_contract`、`publication`、`replies`，夜间回顾 |
 | [tools.py](tools.py) | 工具与字段描述、验图、网页摘要 | [工具适配器](../services/adapters/tools/)；字段类型、枚举和必填项留在各 schema 定义 |
 
 双语常量以 `zh` / `en` 为键，经 `components.resolve_prompt_text` 取值；消费方直接从文本所属模块导入，不设转发别名。文本在进程启动时加载，改动后须重启 Backend。

@@ -3,7 +3,6 @@
 import asyncio
 import random
 from time import monotonic
-from uuid import uuid4
 
 from components import SESSION_LOCAL, TaskBag, get_logger, is_user_in_maintenance, track_user_task
 from modules.auth import User
@@ -54,14 +53,9 @@ async def scan_autonomous_posts() -> None:
 
 async def _decide(user_id: int) -> None:
     try:
-        if not await available_types(user_id, autonomous=True):
+        if not await available_types(user_id):
             return
-        await request_publication(
-            user_id,
-            key=f"autonomous:{uuid4()}",
-            trigger="autonomous",
-            intent="结合此刻的生活和心情，决定是否有值得分享的新动态。",
-        )
+        await request_publication(user_id)
     except PostBlockedError:
         logger.info("Autonomous post skipped by policy or quota", extra={"user_id": user_id})
     except Exception:

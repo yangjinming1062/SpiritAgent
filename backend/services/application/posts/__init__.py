@@ -4,7 +4,6 @@ from .autonomous import drain_autonomous_posts, scan_autonomous_posts
 from .publication import (
     adopt_publication_video,
     available_types,
-    await_publication,
     discard_publication_video,
     drain_publications,
     gc_autonomous_publications,
@@ -22,7 +21,6 @@ __all__ = [
     "gc_autonomous_publications",
     "list_publication_recoveries",
     "publication_recovery",
-    "await_publication",
     "drain_autonomous_posts",
     "drain_publications",
     "drain_replies",
