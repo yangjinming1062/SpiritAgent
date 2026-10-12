@@ -71,7 +71,7 @@
 
 `system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [modules/settings](modules/settings/values.py) 读写，消费方取得解码值，不再自行解析。
 
-启动自动执行 Alembic 升级，当前结构基线为 [0001_baseline.py](alembic/versions/0001_baseline.py)。迁移可降级、回填幂等；比对 ORM 类型、默认值及索引。autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
+启动自动执行 Alembic 升级。比对 ORM 类型、默认值及索引；autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
 
 ### 装配与启停
 

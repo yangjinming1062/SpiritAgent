@@ -41,7 +41,7 @@ def _is_json_array(content: ColumnElement[str | None] = Message.content) -> Colu
 
 
 def message_contains_text(query: str) -> ColumnElement[bool]:
-    """逐泡匹配台词，解码 JSON 转义并排除演绎字段；多模态行只匹配文本部分，不扫描附件地址，旧版工具结果数组同样只搜索文本部分。"""
+    """逐泡匹配台词，解码 JSON 转义并排除演绎字段；多模态行只匹配文本部分，不扫描附件地址。"""
     parts = (
         func.jsonb_array_elements(cast(Message.content, JSONB)).table_valued(column("value", JSONB)).render_derived()
     )
@@ -50,14 +50,7 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     text_part_match = (
         select(1)
         .select_from(parts)
-        .where(parts.c.value["type"].astext.in_(("input_text", "text")), text_match)
-        .correlate(Message)
-        .exists()
-    )
-    legacy_parts = (
-        select(1)
-        .select_from(parts)
-        .where(parts.c.value["type"].astext.in_(("input_text", "input_image", "input_video")))
+        .where(parts.c.value["type"].astext == "input_text", text_match)
         .correlate(Message)
         .exists()
     )
@@ -66,10 +59,6 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     return case(
         (and_(Message.content_type == "companion_reply", jsonb_array), bubble_match),
         (and_(Message.content_type == "multimodal_v1", jsonb_array), text_part_match),
-        (
-            and_(Message.role == "tool", jsonb_array),
-            case((legacy_parts, text_part_match), else_=Message.content.icontains(query, autoescape=True)),
-        ),
         (Message.content_type.in_(("companion_reply", "multimodal_v1")), false()),
         else_=Message.content.icontains(query, autoescape=True),
     )
@@ -170,7 +159,7 @@ def message_text(m: Message) -> str:
         parsed = safe_json_loads(raw, default=None)
         if isinstance(parsed, list):
             return "\n".join(
-                p.get("text", "") for p in parsed if isinstance(p, dict) and p.get("type") in {"input_text", "text"}
+                p.get("text", "") for p in parsed if isinstance(p, dict) and p.get("type") == "input_text"
             ).strip()
         return raw
 

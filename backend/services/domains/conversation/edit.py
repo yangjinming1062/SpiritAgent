@@ -48,7 +48,7 @@ async def replace_user_message(
         content = json.dumps(
             [
                 {"type": "input_text", "text": content},
-                *(part for part in parts if part.get("type") not in ("input_text", "text")),
+                *(part for part in parts if part.get("type") != "input_text"),
             ],
             ensure_ascii=False,
         )

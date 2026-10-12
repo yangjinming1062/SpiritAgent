@@ -150,7 +150,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["avatar_id"], ["avatar_assets.id"], ondelete="CASCADE"),
-        sa.UniqueConstraint("avatar_id"),
+        sa.UniqueConstraint("avatar_id", name="uq_companion_character_cards_avatar_id"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_companion_character_cards_user_id", "companion_character_cards", ["user_id"])
@@ -496,6 +496,7 @@ def upgrade() -> None:
         sa.Column("reference_image", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("prompt", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("media_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("upload_source_path", sa.String(2048), server_default=sa.text("''"), nullable=False),
         sa.Column("attempt_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("requested_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("ready_at", sa.DateTime(timezone=True), nullable=True),
@@ -513,18 +514,6 @@ def upgrade() -> None:
         ["regeneration_status"],
         unique=False,
     )
-    op.create_table(
-        "scene_display_targets",
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("width", sa.Integer(), nullable=False),
-        sa.Column("height", sa.Integer(), nullable=False),
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_scene_display_targets_user_id"), "scene_display_targets", ["user_id"], unique=True)
     op.create_table(
         "scene_generation_attempts",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -795,14 +784,13 @@ def upgrade() -> None:
     op.create_table(
         "user_model_configs",
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("ai_config", sa.JSON(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("ai_config", sa.JSON(), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.alter_column("user_model_configs", "ai_config", server_default=None)
     op.create_index(op.f("ix_user_model_configs_user_id"), "user_model_configs", ["user_id"], unique=True)
     op.create_table(
         "user_settings",
@@ -904,12 +892,6 @@ def upgrade() -> None:
         sa.Column("content_type", sa.String(length=32), server_default=sa.text("'text'"), nullable=False),
         sa.Column("media_json", sa.Text(), nullable=True),
         sa.Column("summary_through_message_id", sa.Integer(), nullable=True),
-        # IM 入站先落库再确认；context_order 表达 queued 批排序，dedup_key 做渠道重投去重。
-        sa.Column("queued", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
-        sa.Column("channel_peer_id", sa.String(length=128), nullable=True),
-        sa.Column("discarded", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
-        sa.Column("dedup_key", sa.String(length=64), nullable=True),
-        sa.Column("context_order", sa.Integer(), nullable=True),
         sa.Column("reply_json", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -927,7 +909,6 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("dedup_key", name="uq_messages_dedup_key"),
     )
     op.create_index(op.f("ix_messages_conversation_id"), "messages", ["conversation_id"], unique=False)
     op.create_index(op.f("ix_messages_subtype"), "messages", ["subtype"], unique=False)
@@ -948,63 +929,6 @@ def upgrade() -> None:
         ["id"],
         ondelete="SET NULL",
     )
-    # IM 通道桥：conversation_id 唯一外键锚定「每用户每渠道一条专属 im 会话」，防渠道间混流与绑定共享会话。
-    op.create_table(
-        "channel_bindings",
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("channel", sa.String(length=32), nullable=False),
-        sa.Column("status", sa.String(length=16), server_default=sa.text("'disabled'"), nullable=False),
-        sa.Column("conversation_id", sa.Integer(), nullable=True),
-        sa.Column("credentials", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("account_ref", sa.String(length=128), server_default=sa.text("''"), nullable=False),
-        sa.Column("account_name", sa.String(length=128), server_default=sa.text("''"), nullable=False),
-        sa.Column("last_error", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "channel", name="uq_channel_bindings_user_channel"),
-        sa.UniqueConstraint("conversation_id", name="uq_channel_bindings_conversation_id"),
-    )
-    op.create_index(op.f("ix_channel_bindings_user_id"), "channel_bindings", ["user_id"], unique=False)
-    op.create_index(op.f("ix_channel_bindings_status"), "channel_bindings", ["status"], unique=False)
-    op.create_table(
-        "channel_peers",
-        sa.Column("binding_id", sa.Integer(), nullable=False),
-        sa.Column("peer_id", sa.String(length=128), nullable=False),
-        sa.Column("peer_name", sa.String(length=128), server_default=sa.text("''"), nullable=False),
-        sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
-        sa.Column("authorization_revision", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("last_message_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.ForeignKeyConstraint(["binding_id"], ["channel_bindings.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("binding_id", "peer_id", name="uq_channel_peers_binding_peer"),
-    )
-    op.create_index(op.f("ix_channel_peers_binding_id"), "channel_peers", ["binding_id"], unique=False)
-    op.create_index(op.f("ix_channel_peers_status"), "channel_peers", ["status"], unique=False)
-    # 渠道待补发队列：执行与投递独立，恢复语义见 docs/PROTOCOL.md「IM 通道」。
-    op.create_table(
-        "channel_deliveries",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("binding_id", sa.Integer(), nullable=False),
-        sa.Column("peer_id", sa.String(length=128), server_default=sa.text("''"), nullable=False),
-        sa.Column("payload_json", sa.Text(), nullable=False),
-        sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
-        sa.Column("attempts", sa.Integer(), server_default=sa.text("0"), nullable=False),
-        sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["binding_id"], ["channel_bindings.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_channel_deliveries_binding_id"), "channel_deliveries", ["binding_id"], unique=False)
-    op.create_index(op.f("ix_channel_deliveries_status"), "channel_deliveries", ["status"], unique=False)
-
     # 动态系统配置：admin UI 经此表读写并触发运行时副作用。
     op.create_table(
         "system_settings",
@@ -1016,6 +940,181 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_system_settings_setting_key"), "system_settings", ["setting_key"], unique=True)
+
+    # 扫码远程：配对令牌与远程会话、手机页消息提交去重账本。
+    op.create_table(
+        "remote_pairings",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("token_hash", sa.String(64), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("consumed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("cancelled_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("token_hash", name="uq_remote_pairings_token_hash"),
+    )
+    op.create_index("ix_remote_pairings_user_id", "remote_pairings", ["user_id"])
+    op.create_table(
+        "remote_sessions",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("token_hash", sa.String(64), nullable=False),
+        sa.Column("name", sa.String(80), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("token_hash", name="uq_remote_sessions_token_hash"),
+    )
+    op.create_index("ix_remote_sessions_user_id", "remote_sessions", ["user_id"])
+    op.create_index("ix_remote_sessions_expires_at", "remote_sessions", ["expires_at"])
+    op.create_table(
+        "prompt_submissions",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("conversation_id", sa.Integer(), nullable=False),
+        sa.Column("request_id", sa.String(64), nullable=False),
+        sa.Column("fingerprint", sa.String(64), nullable=False),
+        sa.Column("status", sa.String(16), server_default=sa.text("'accepted'"), nullable=False),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("origin_kind", sa.String(16), nullable=False),
+        sa.Column("origin_id", sa.String(64), nullable=True),
+        sa.Column("message_ids_json", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "request_id", name="uq_prompt_submissions_user_request"),
+    )
+    op.create_index("ix_prompt_submissions_user_id", "prompt_submissions", ["user_id"])
+    op.create_index("ix_prompt_submissions_conversation_id", "prompt_submissions", ["conversation_id"])
+
+    # 桌面生活视频：组合、动作、播放偏好、提案与播放账本。
+    op.create_table(
+        "desktop_video_sets",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("avatar_id", sa.Integer(), nullable=True),
+        sa.Column("outfit_id", sa.Integer(), nullable=True),
+        sa.Column("scene_id", sa.Integer(), nullable=True),
+        sa.Column("context_hash", sa.String(64), nullable=False),
+        sa.Column("context_json", sa.Text(), nullable=False),
+        sa.Column("title", sa.String(160), server_default=sa.text("''"), nullable=False),
+        sa.Column("status", sa.String(24), server_default=sa.text("'preparing'"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["avatar_id"], ["avatar_assets.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["outfit_id"], ["companion_outfits.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["scene_id"], ["companion_scenes.id"], ondelete="SET NULL"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "context_hash", name="uq_desktop_video_sets_context"),
+    )
+    op.create_index("ix_desktop_video_sets_user_id", "desktop_video_sets", ["user_id"])
+    op.create_table(
+        "desktop_video_actions",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("set_id", sa.Integer(), nullable=False),
+        sa.Column("key", sa.String(64), nullable=False),
+        sa.Column("name", sa.String(64), nullable=False),
+        sa.Column("description", sa.Text(), nullable=False),
+        sa.Column("preset", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("kind", sa.String(8), server_default=sa.text("'loop'"), nullable=False),
+        sa.Column("duration_seconds", sa.Integer(), server_default=sa.text("10"), nullable=False),
+        sa.Column("use_when_json", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
+        sa.Column("avoid_when_json", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
+        sa.Column("enabled", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
+        sa.Column("status", sa.String(24), server_default=sa.text("'queued'"), nullable=False),
+        sa.Column("stage", sa.String(24), server_default=sa.text("'prepare'"), nullable=False),
+        sa.Column("version", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("attempt", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("generation_state_json", sa.Text(), nullable=True),
+        sa.Column("accepted_asset_json", sa.Text(), nullable=True),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["set_id"], ["desktop_video_sets.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("set_id", "key", name="uq_desktop_video_actions_key"),
+    )
+    op.create_index("ix_desktop_video_actions_user_id", "desktop_video_actions", ["user_id"])
+    op.create_index("ix_desktop_video_actions_set_id", "desktop_video_actions", ["set_id"])
+    op.create_table(
+        "desktop_video_states",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("current_set_id", sa.Integer(), nullable=True),
+        sa.Column("selected_action_id", sa.Integer(), nullable=True),
+        sa.Column("selected_play_id", sa.String(36), nullable=True),
+        sa.Column("loop_action_id", sa.Integer(), nullable=True),
+        sa.Column("set_epoch", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("version", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("pinned", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("autonomous_enabled", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
+        sa.Column("preparation_error", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["current_set_id"], ["desktop_video_sets.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["selected_action_id"], ["desktop_video_actions.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["loop_action_id"], ["desktop_video_actions.id"], ondelete="SET NULL"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_desktop_video_states_user_id", "desktop_video_states", ["user_id"], unique=True)
+    op.create_table(
+        "desktop_video_proposals",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("set_id", sa.Integer(), nullable=False),
+        sa.Column("action_id", sa.Integer(), nullable=True),
+        sa.Column("fingerprint", sa.String(64), nullable=False),
+        sa.Column("design_json", sa.Text(), nullable=False),
+        sa.Column("source", sa.String(24), nullable=False),
+        sa.Column("status", sa.String(24), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("review_reason", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["set_id"], ["desktop_video_sets.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["action_id"], ["desktop_video_actions.id"], ondelete="SET NULL"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("set_id", "fingerprint", name="uq_desktop_video_proposals_fingerprint"),
+    )
+    op.create_index("ix_desktop_video_proposals_user_id", "desktop_video_proposals", ["user_id"])
+    op.create_index("ix_desktop_video_proposals_set_id", "desktop_video_proposals", ["set_id"])
+    op.create_table(
+        "desktop_video_playbacks",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("set_id", sa.Integer(), nullable=False),
+        sa.Column("action_id", sa.Integer(), nullable=False),
+        sa.Column("play_id", sa.String(36), nullable=False),
+        sa.Column("set_epoch", sa.Integer(), nullable=False),
+        sa.Column("presentation_revision", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("status", sa.String(24), server_default=sa.text("'queued'"), nullable=False),
+        sa.Column("source", sa.String(24), nullable=False),
+        sa.Column("client_id", sa.String(80), nullable=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["set_id"], ["desktop_video_sets.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["action_id"], ["desktop_video_actions.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("play_id", name="uq_desktop_video_playbacks_play_id"),
+    )
+    op.create_index("ix_desktop_video_playbacks_user_id", "desktop_video_playbacks", ["user_id"])
+    op.create_index("ix_desktop_video_playbacks_set_id", "desktop_video_playbacks", ["set_id"])
 
     # Partial unique 索引：并发生成或切换头像不留下两条 active 行。
     op.create_index(
@@ -1134,14 +1233,19 @@ FOR EACH STATEMENT EXECUTE FUNCTION notify_ws_event();
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS ws_event_notify_trigger ON ws_events")
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
-    # drop 顺序按外键：子表先于父表；channel_peers/deliveries 后于 bindings；actions/packs 先于 outfits；fullbody 先于 avatar；actions 后于 logs；system_settings 最末。
+    # drop 顺序按外键：子表先于父表；desktop/remote/prompt 各表先于 users/conversations；actions/packs 先于 outfits；fullbody 先于 avatar；actions 后于 logs；system_settings 最末。降级目标为空库，扩展（vector/pg_trgm）保留。
     for table in (
+        "desktop_video_playbacks",
+        "desktop_video_proposals",
+        "desktop_video_states",
+        "desktop_video_actions",
+        "desktop_video_sets",
+        "prompt_submissions",
+        "remote_sessions",
+        "remote_pairings",
         "asset_cleanup_pending",
         "video_gen_jobs",
         "messages",
-        "channel_deliveries",
-        "channel_peers",
-        "channel_bindings",
         "ws_events",
         "user_settings",
         "user_model_configs",
@@ -1154,7 +1258,6 @@ def downgrade() -> None:
         "companion_intents",
         "nightly_activity_logs",
         "scene_generation_attempts",
-        "scene_display_targets",
         "companion_scenes",
         "memories",
         "login_records",

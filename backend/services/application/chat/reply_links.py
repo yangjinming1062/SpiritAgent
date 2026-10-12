@@ -46,9 +46,7 @@ def reply_reference_texts(input_items: list[dict], request: str, *, user_input_i
             texts.extend(
                 part["text"]
                 for part in content
-                if isinstance(part, dict)
-                and part.get("type") in {"input_text", "text"}
-                and isinstance(part.get("text"), str)
+                if isinstance(part, dict) and part.get("type") == "input_text" and isinstance(part.get("text"), str)
             )
     return tuple(texts)
 

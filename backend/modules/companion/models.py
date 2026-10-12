@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Self
 
 from common import ModelBase, TimestampMixin
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -25,9 +25,7 @@ if TYPE_CHECKING:
 
 
 class OutfitSource(BaseModel):
-    """`CompanionOutfit.source_json` 的结构：着装设计来源、已接受反馈，以及生成时的身份修订守卫。读取容错，遗留的未知键原样保留。"""
-
-    model_config = ConfigDict(extra="allow")
+    """`CompanionOutfit.source_json` 的结构：着装设计来源、已接受反馈，以及生成时的身份修订守卫。读取容错。"""
 
     description: str = ""
     reference_image_path: str | None = None

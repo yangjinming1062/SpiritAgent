@@ -113,9 +113,7 @@ def _maybe_wrap_untrusted(name: str, content: str | list[dict[str, Any]]) -> str
     if isinstance(content, list):
         return [
             {**part, "text": _maybe_wrap_untrusted(name, part["text"])}
-            if isinstance(part, dict)
-            and part.get("type") in {"input_text", "text"}
-            and isinstance(part.get("text"), str)
+            if isinstance(part, dict) and part.get("type") == "input_text" and isinstance(part.get("text"), str)
             else part
             for part in content
         ]

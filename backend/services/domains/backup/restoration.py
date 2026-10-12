@@ -36,7 +36,6 @@ from .serializers import (
     IDENTITY_INCOMPLETE_REASON,
     IDENTITY_TABLES,
     POST_TABLES,
-    RETIRED_TABLES,
     TABLE_MODELS,
     TABLES,
     BackupImportMode,
@@ -116,8 +115,6 @@ def load_backup_rows(
 ) -> BackupReadResult:
     wanted = frozenset(TABLES) if selected_tables is None else selected_tables
     manifest_set = set(manifest_tables)
-    # 旧版已废弃表（如片刻）静默跳过；其后继表缺失视为“没有动态”，不报失败。
-    retired_present = bool(RETIRED_TABLES & manifest_set)
     failures = [
         BackupImportFailure(
             section=table,
@@ -125,24 +122,19 @@ def load_backup_rows(
             reason="当前版本不支持此数据类别。",
         )
         for table in manifest_tables
-        if table not in TABLES and table not in RETIRED_TABLES
+        if table not in TABLES
     ]
-    # 仅在显式勾选子集时报告“备份未包含”；全量导入对历史缺表保持静默。
-    if selected_tables is not None and selected_tables != frozenset(TABLES):
-        for table in sorted(wanted - manifest_set):
-            if table not in TABLES:
-                continue
-            if retired_present and table in {"companion_posts", "companion_post_comments"}:
-                continue
-            if table in DESKTOP_TABLES and not DESKTOP_TABLES & manifest_set:
-                continue
-            failures.append(
-                BackupImportFailure(
-                    section=table,
-                    count=0,
-                    reason="备份未包含此数据类别。",
-                ),
-            )
+    # 所选类别缺表一律报告，不再按全量/旧包静默跳过。
+    for table in sorted(wanted - manifest_set):
+        if table not in TABLES:
+            continue
+        failures.append(
+            BackupImportFailure(
+                section=table,
+                count=0,
+                reason="备份未包含此数据类别。",
+            ),
+        )
     incomplete_conversation_tables = set(manifest_tables) & CONVERSATION_TABLES & wanted
     incomplete_conversation_backup = (
         bool(incomplete_conversation_tables) and incomplete_conversation_tables != CONVERSATION_TABLES
@@ -163,7 +155,6 @@ def load_backup_rows(
         if (
             table not in wanted
             or table not in TABLES
-            or table in RETIRED_TABLES
             or incomplete_conversation_backup
             and table in incomplete_conversation_tables
         ):

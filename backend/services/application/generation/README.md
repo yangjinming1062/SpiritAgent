@@ -32,7 +32,7 @@
 
 - 全身与换装共用 `prepare_transparent_image`，确认或采纳前再次校验；候选转存失败可重试，只清理全部图片均过期的草稿行，不连带正式参考。
 - 全身候选和角色卡共用 `extract_card_features`；头像、全身和换装共用 `generate_with_moderation_retry`，不在不同入口另写审核策略。
-- `CompanionOutfit.source_json` 只经 [OutfitSource](../../../modules/companion/models.py) 读写，保存生成来源、接受反馈及身份守卫；异常字段按缺省处理，未知旧键保留。动作包从其身份参考路径判断是否需校准。
+- `CompanionOutfit.source_json` 只经 [OutfitSource](../../../modules/companion/models.py) 读写，保存生成来源、接受反馈及身份守卫；异常字段按缺省处理，未知键忽略。动作包从其身份参考路径判断是否需校准。
 
 ### 后台任务与初始资产
 

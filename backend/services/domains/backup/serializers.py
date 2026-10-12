@@ -85,8 +85,6 @@ ACTION_TABLES = frozenset({"companion_action_packs", "companion_actions"})
 DESKTOP_TABLES = frozenset({"desktop_video_sets", "desktop_video_actions", "desktop_video_states"})
 POST_TABLES = frozenset({"companion_posts", "companion_post_comments"})
 IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_cards"})
-# 旧版片刻表已重构为动态；导入时静默跳过，视为没有动态。
-RETIRED_TABLES = frozenset({"companion_moments", "companion_moment_comments"})
 # 导入勾选粒度：分组 ID → 表；Admin 与 API 共用，不在页面里再维护表名。
 BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
     "identity": ("personas", "avatar_assets", "companion_character_cards"),
@@ -587,12 +585,13 @@ def _build_payload(
         if payload.get("status") == "pending":
             payload["status"] = "description_failed" if payload.get("media_path") else "failed"
             payload["error"] = "恢复的场景任务需要手动重试"
-    if table == "companion_outfits":
-        if "description_status" not in payload:
-            payload["description_status"] = "ready" if payload.get("description") else "pending"
-        if payload.get("status") == "ready" and payload["description_status"] in {"pending", "processing"}:
-            payload["description_status"] = "failed"
-            payload["description_error"] = "恢复的外观描述任务需要手动重试"
+    if (
+        table == "companion_outfits"
+        and payload.get("status") == "ready"
+        and payload.get("description_status") in {"pending", "processing"}
+    ):
+        payload["description_status"] = "failed"
+        payload["description_error"] = "恢复的外观描述任务需要手动重试"
     if table == "companion_post_comments":
         payload["reply_to_comment_id"] = None
         if payload.get("reply_status") in {"pending", "running"}:

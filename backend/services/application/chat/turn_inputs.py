@@ -173,32 +173,6 @@ def _merge_client_context(
     return session_ctx.model_copy(update=request_ctx.model_dump(exclude_none=True))
 
 
-# 已有的 text 型工具结果行可能保存着多模态 part 数组 JSON（json.dumps 默认分隔符）；这些行改写为 multimodal_v1 后可删除此识别。
-_LEGACY_TOOL_PARTS_PREFIX = '[{"type": "input_'
-
-
-def _legacy_multimodal_tool_output(content: str) -> list[dict[str, str]] | None:
-    """只识别由 input_text 与内联 data:image 的 input_image 组成且含图片的 part 数组，其余文本结果原样保留。"""
-    if not content.startswith(_LEGACY_TOOL_PARTS_PREFIX):
-        return None
-    parts = safe_json_loads(content)
-    if not isinstance(parts, list):
-        return None
-    for part in parts:
-        if not isinstance(part, dict):
-            return None
-        is_text = part.keys() == {"type", "text"} and part["type"] == "input_text" and isinstance(part["text"], str)
-        is_image = (
-            part.keys() == {"type", "image_url"}
-            and part["type"] == "input_image"
-            and isinstance(part["image_url"], str)
-            and part["image_url"].startswith("data:image/")
-        )
-        if not (is_text or is_image):
-            return None
-    return parts if any(part["type"] == "input_image" for part in parts) else None
-
-
 def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
     """DB Message -> Responses API input items. 正文保持入库原文，不拼接时间标记。"""
     content_val: str | list = msg.content or ""
@@ -207,8 +181,6 @@ def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
         content_val = companion_context_content(msg)
     elif is_multimodal and isinstance(parsed := safe_json_loads(content_val), list):
         content_val = parsed
-    elif msg.role == "tool" and (legacy := _legacy_multimodal_tool_output(msg.content or "")) is not None:
-        content_val = legacy
 
     if msg.role == "system":
         return [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": content_val}]}]
