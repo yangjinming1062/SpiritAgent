@@ -1,5 +1,6 @@
 .desktop {
   --desktop-bar: 44px;
+  --desktop-avatar-size: 84px;
   color: var(--ui-text-strong);
   width: 100vw;
   height: 100vh;
@@ -39,22 +40,43 @@
   position: relative;
   flex-shrink: 0;
 }
+.avatarDock {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  z-index: 61;
+  width: var(--desktop-avatar-size);
+  height: var(--desktop-avatar-size);
+}
+.avatarDock::before {
+  position: absolute;
+  inset: 12px;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--ui-accent-soft) 0%, transparent 72%);
+  content: '';
+  filter: blur(12px);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.avatarSlot {
+  width: calc(var(--desktop-avatar-size) + 16px);
+  flex: 0 0 calc(var(--desktop-avatar-size) + 16px);
+}
 .avatarButton {
   position: relative;
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: var(--desktop-avatar-size);
+  height: var(--desktop-avatar-size);
   padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--ui-line-standard);
+  overflow: visible;
+  border: 0;
   border-radius: 50%;
-  background: var(--ui-accent-soft);
+  background: transparent;
   font-size: 12px !important;
   font-weight: 700 !important;
-  transform-origin: center;
   transition:
-    transform 180ms ease,
     box-shadow 240ms ease,
     border-color 240ms ease;
 }
@@ -62,13 +84,15 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 50%;
+  -webkit-mask-image: radial-gradient(circle at center, #000 60%, transparent 100%);
+  mask-image: radial-gradient(circle at center, #000 60%, transparent 100%);
 }
 .avatarButton[data-unread='true'] {
-  animation: desktopAvatarPulse 1.6s ease-in-out infinite;
-  border-color: var(--ui-accent-line);
+  animation: desktopAvatarPulse 1.8s ease-in-out infinite;
   box-shadow:
-    0 0 0 2px var(--ui-accent-soft),
-    0 0 16px var(--ui-accent-soft);
+    0 0 0 3px var(--ui-accent-soft),
+    0 0 22px var(--ui-accent-soft);
 }
 .avatarButton:focus-visible {
   border-color: var(--ui-accent);
@@ -88,11 +112,15 @@
 @keyframes desktopAvatarPulse {
   0%,
   100% {
-    transform: scale(1);
+    box-shadow:
+      0 0 0 3px var(--ui-accent-soft),
+      0 0 22px var(--ui-accent-soft);
   }
 
   50% {
-    transform: scale(1.05);
+    box-shadow:
+      0 0 0 7px color-mix(in srgb, var(--ui-accent-soft) 72%, transparent),
+      0 0 30px var(--ui-accent-soft);
   }
 }
 .mainMenu {
@@ -164,7 +192,7 @@
 }
 .workspace {
   position: absolute;
-  top: 60px;
+  top: var(--desktop-bar);
   left: 16px;
   right: 16px;
   bottom: 96px;
@@ -274,6 +302,7 @@
   touch-action: none;
 }
 .chatLayout {
+  position: relative;
   display: flex;
   min-height: 0;
   width: 100%;
@@ -285,6 +314,10 @@
   flex: 0 0 208px;
   overflow: hidden;
   border-right: 1px solid var(--ui-line-hairline);
+  background: color-mix(in srgb, var(--ui-app-bg) 72%, transparent);
+  transition:
+    width 160ms ease,
+    flex-basis 160ms ease;
 }
 .sessionSidebar > aside {
   width: 100%;
@@ -292,6 +325,68 @@
 }
 .chatMain {
   min-width: 240px;
+}
+.chatHeading {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+}
+.chatToolbarButton {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-text-muted);
+}
+.chatToolbarButton:hover,
+.chatToolbarButton:focus-visible,
+.chatToolbarButton[data-active='true'] {
+  border-color: var(--ui-line-standard);
+  background: var(--ui-fill-hover);
+  color: var(--ui-text-strong);
+  outline: none;
+}
+.chatIdentity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.chatIdentity strong {
+  overflow: hidden;
+  max-width: min(42vw, 420px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.chatIdentity span {
+  color: var(--ui-text-muted);
+  font-size: 10px;
+}
+.chatSidebarBackdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  border: 0;
+  background: rgb(0 0 0 / 0.22);
+  cursor: default !important;
+}
+.chatLayout[data-narrow='true'] .sessionSidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 20;
+  width: min(300px, calc(100% - 52px));
+  flex-basis: auto;
+  border-right: 1px solid var(--ui-line-standard);
+  box-shadow: 18px 0 42px rgb(0 0 0 / 0.18);
 }
 .chatSurface {
   padding: 18px 22px;
@@ -304,7 +399,7 @@
 }
 .whisper {
   position: absolute;
-  top: 60px;
+  top: var(--desktop-bar);
   bottom: 96px;
   width: 380px;
   z-index: 30;

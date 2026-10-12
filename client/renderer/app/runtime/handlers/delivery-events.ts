@@ -33,14 +33,23 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       const text = bubbles ? (bubbles.findLast(b => 'text' in b)?.text ?? '') : (payload.text ?? '')
 
       const displayText = chatDisplayText(text)
+      const hasMedia = bubbles?.some(bubble => bubble.type === 'image' || bubble.type === 'video')
+
+      const pendingText =
+        displayText ||
+        (hasMedia
+          ? bubbles?.some(bubble => bubble.type === 'video')
+            ? getStrings().notifications.system.videoReady
+            : getStrings().notifications.system.imageReady
+          : '')
 
       // 此事件由服务端写入唯一陪伴主会话；会话列表尚未加载时也能确定提醒归属。
       if (payload.session_id) {
         setCompanionSessionId(payload.session_id)
       }
 
-      if (payload.session_id && displayText) {
-        rememberPendingMessage(payload.session_id, displayText)
+      if (payload.session_id && pendingText) {
+        rememberPendingMessage(payload.session_id, pendingText)
       }
 
       const runtime = payload.session_id ? findConversationRuntime(payload.session_id) : undefined

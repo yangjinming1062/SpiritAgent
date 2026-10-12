@@ -11,11 +11,12 @@ import { RemotePage } from '@/app/features/living/remote-page'
 import { ScenePage } from '@/app/features/living/scene-page'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait, SpriteStatusBadge } from '@/modules/character'
 import {
+  $companionSessionId,
   ensureCompanionSession,
-  pendingMessages,
   pushExternalAttachment,
   setChatSession,
-  switchSession
+  switchSession,
+  useConversationUnread
 } from '@/modules/conversation'
 import { $desktopVideoError, $desktopVideoState } from '@/modules/desktop-videos'
 import { MediaViewerOverlay } from '@/modules/media'
@@ -56,6 +57,8 @@ const CONNECTION_TONE: Record<ConnectionState, ConnectionTone> = {
   open: 'online'
 }
 
+const DESKTOP_NAV_APPS = DESKTOP_APPS.filter(id => id !== 'chat' && id !== 'settings')
+
 export function DesktopRoot(): React.JSX.Element {
   useDesktopVideoWallpaper()
   const t = useDesktopStrings()
@@ -68,7 +71,10 @@ export function DesktopRoot(): React.JSX.Element {
   const persona = useStore($persona)
   const portrait = useStore($portraitUrl)
   const locale = useStore($locale)
-  const pending = useStore(pendingMessages.$atom)
+  const companionSessionId = useStore($companionSessionId)
+  const { hasUnread: whisperHasUnread, firstUnheard } = useConversationUnread(companionSessionId)
+  const [unreadReveal, setUnreadReveal] = useState<{ key: string; request: number }>()
+  const revealRequest = useRef(0)
   const [clock, setClock] = useState(() => new Date())
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
@@ -88,12 +94,11 @@ export function DesktopRoot(): React.JSX.Element {
         ? desktopLife.noPreview
         : null)
 
-  const [companionSessionId, setCompanionSessionId] = useState<string | null>(null)
   const [focusedConversation, setFocusedConversation] = useState<'main' | 'whisper' | null>('whisper')
   const [accountOpen, setAccountOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dockOverlayOpen, setDockOverlayOpen] = useState(false)
-  const [area, setArea] = useState({ width: 1000, height: 700, left: 16, top: 60 })
+  const [area, setArea] = useState({ width: 1000, height: 700, left: 16, top: 44 })
   const initialized = useRef(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -103,6 +108,7 @@ export function DesktopRoot(): React.JSX.Element {
   const whisperRef = useRef<HTMLElement>(null)
   const whisperTabRef = useRef<HTMLButtonElement>(null)
   useInteractiveRegion('desktop-topbar', topbarRef)
+  useInteractiveRegion('desktop-avatar', menuRef)
   useInteractiveRegion('desktop-account-menu', menuRef)
   useInteractiveRegion('desktop-settings-menu', settingsRef)
   useInteractiveRegion('desktop-whisper', whisperRef, element =>
@@ -142,7 +148,6 @@ export function DesktopRoot(): React.JSX.Element {
   const activePanel = panelsEnabled && focused !== 'whisper' ? activeWindow : null
   const mainChatActive = activePanel === 'chat' && focused === 'main'
   const whisperChatActive = panelsEnabled && focused === 'whisper' && layout.whisperOpen
-  const whisperHasUnread = pending.some(message => message.sessionId === companionSessionId)
   const connectionTone = CONNECTION_TONE[gatewayState]
   const connectionLabel = { offline: t.disconnected, online: t.connected, pending: t.loading }[connectionTone]
 
@@ -185,6 +190,27 @@ export function DesktopRoot(): React.JSX.Element {
     },
     [activate]
   )
+
+  const openCompanionChat = useCallback((): void => {
+    setSettingsOpen(false)
+    setAccountOpen(false)
+    activatePanel('chat')
+
+    if (companionSessionId) {
+      setChatSession(companionSessionId)
+      setUnreadReveal(firstUnheard ? { key: firstUnheard, request: ++revealRequest.current } : undefined)
+      void switchSession(companionSessionId)
+    } else {
+      setUnreadReveal(undefined)
+    }
+
+    setLayout(current => (current.whisperOpen ? { ...current, whisperOpen: false } : current))
+  }, [activatePanel, companionSessionId, firstUnheard, setLayout])
+
+  const openAccountMenu = (): void => {
+    setSettingsOpen(false)
+    setAccountOpen(true)
+  }
 
   const openWhisper = useCallback((): void => {
     setLayout(current => (current.whisperOpen ? current : { ...current, whisperOpen: true }))
@@ -291,8 +317,6 @@ export function DesktopRoot(): React.JSX.Element {
           return
         }
 
-        setCompanionSessionId(id)
-
         if (!initialized.current) {
           initialized.current = true
           const target = new URLSearchParams(window.location.search).get('sessionId')
@@ -373,8 +397,10 @@ export function DesktopRoot(): React.JSX.Element {
           <DesktopChat
             active={mainChatActive}
             companionSessionId={companionSessionId}
+            companionUnread={whisperHasUnread}
             containerRef={rootRef}
             foreground={foreground}
+            reveal={unreadReveal}
             visible={visible && desktopVisible}
           />
         )
@@ -425,27 +451,35 @@ export function DesktopRoot(): React.JSX.Element {
 
   return (
     <div className={styles.desktop} data-whisper={layout.whisperOpen ? layout.whisperSide : 'closed'} ref={rootRef}>
+      <div className={`${styles.avatarMenu} ${styles.avatarDock}`} ref={menuRef}>
+        <button
+          aria-expanded={accountOpen}
+          aria-label={whisperHasUnread ? t.openUnread : t.chat}
+          className={styles.avatarButton}
+          data-unread={whisperHasUnread}
+          onClick={openCompanionChat}
+          onContextMenu={event => {
+            event.preventDefault()
+            openAccountMenu()
+          }}
+          onKeyDown={event => {
+            if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+              event.preventDefault()
+              openAccountMenu()
+            }
+          }}
+          title={whisperHasUnread ? t.avatarUnreadHint : t.avatarChatHint}
+          type="button"
+        >
+          {portrait ? <img alt="" src={portrait} /> : <span>{dict.brand.name.slice(0, 1)}</span>}
+          {whisperHasUnread && <span aria-hidden="true" className={styles.avatarUnread} />}
+        </button>
+        {accountOpen && <DesktopAccounts onClose={() => setAccountOpen(false)} />}
+      </div>
       <header className={styles.topbar} ref={topbarRef}>
-        <div className={styles.avatarMenu} ref={menuRef}>
-          <button
-            aria-expanded={accountOpen}
-            aria-label={whisperHasUnread ? `${t.accounts} (${dict.living.rail.unread})` : t.accounts}
-            className={styles.avatarButton}
-            data-unread={whisperHasUnread}
-            onClick={() => {
-              setSettingsOpen(false)
-              setAccountOpen(value => !value)
-            }}
-            title={persona?.name || dict.brand.name}
-            type="button"
-          >
-            {portrait ? <img alt="" src={portrait} /> : <span>{dict.brand.name.slice(0, 1)}</span>}
-            {whisperHasUnread && <span aria-hidden="true" className={styles.avatarUnread} />}
-          </button>
-          {accountOpen && <DesktopAccounts onClose={() => setAccountOpen(false)} />}
-        </div>
+        <div aria-hidden="true" className={styles.avatarSlot} />
         <nav aria-label={t.title} className={styles.mainMenu}>
-          {DESKTOP_APPS.map(id => (
+          {DESKTOP_NAV_APPS.map(id => (
             <button data-current={activeWindow === id} key={id} onClick={() => activatePanel(id)} type="button">
               {t[id]}
             </button>
@@ -487,7 +521,15 @@ export function DesktopRoot(): React.JSX.Element {
             <Settings size={17} />
             <ChevronDown size={11} />
           </button>
-          {settingsOpen && <DesktopSettings presentation={presentation} />}
+          {settingsOpen && (
+            <DesktopSettings
+              onSettings={() => {
+                activatePanel('settings')
+                setSettingsOpen(false)
+              }}
+              presentation={presentation}
+            />
+          )}
         </div>
         <time className={styles.clock} dateTime={clock.toISOString()}>
           {clock.toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN', {

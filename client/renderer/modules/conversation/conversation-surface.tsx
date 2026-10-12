@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { type RefObject, useEffect, useMemo } from 'react'
+import { type RefObject, useEffect, useMemo, useRef } from 'react'
 
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { cn } from '@/shared/lib/utils'
@@ -13,11 +13,14 @@ import { type ConversationVariant, MessageBubble } from './chat-dock-message-bub
 import { CompanionAvatar } from './companion-avatar'
 import { collectTimeDividerIds } from './conversation-time'
 import { useConversationView } from './conversation-view'
+import { createVisibleMessageList, isMessageGroupRow } from './message-presentation'
 import { consumePendingMessages, pendingMessages } from './pending-messages'
 import { conversationVoiceSink } from './voice-link'
 
 interface ConversationSurfaceProps {
   className?: string
+  groupAvatars?: boolean
+  reveal?: { key: string; request: number }
   scrollRef: RefObject<HTMLDivElement | null>
   variant?: ConversationVariant
 }
@@ -28,6 +31,8 @@ function scrollToBottom(el: HTMLElement | null): void {
 
 export function ConversationSurface({
   className,
+  groupAvatars = false,
+  reveal,
   scrollRef,
   variant = 'living'
 }: ConversationSurfaceProps): React.JSX.Element {
@@ -36,6 +41,7 @@ export function ConversationSurface({
   const {
     $chatEditDraft,
     $chatMessageList,
+    $chatMessageBodies,
     $chatSessionId,
     $chatStreamingTick,
     $chatTurnInFlight,
@@ -69,7 +75,13 @@ export function ConversationSurface({
     }
   }, [sessionId, pending, surfaceOpen, surfaceRole, locked, view.eligible, view.scoped])
   const dict = useStrings()
-  const list = useStore($chatMessageList)
+
+  const $visibleMessages = useMemo(
+    () => createVisibleMessageList($chatMessageList, $chatMessageBodies, variant),
+    [$chatMessageList, $chatMessageBodies, variant]
+  )
+
+  const list = useStore($visibleMessages)
   const editing = useStore($chatEditDraft)
   const lastAssistantStreaming = useStore($lastAssistantStreaming)
   const chatTurnInFlight = useStore($chatTurnInFlight)
@@ -83,23 +95,65 @@ export function ConversationSurface({
 
   const isTurnPendingOrInFlight = pendingPromptBatch.length > 0 || chatTurnInFlight
   const showTyping = isTurnPendingOrInFlight && !lastAssistantStreaming && gatewayState === 'open'
+  const revealed = useRef<number | null>(null)
+  const previousSession = useRef<string | null>(null)
+  const followBottom = useRef(true)
 
   // 流式 tick 仅驱动跟滚，不进入渲染路径—— listen 回调直接动 DOM，避免每个 token 把整个消息流（list.map + 多个 MessageBubble）重新走一遍。
   useAtomListen($chatStreamingTick, () => {
-    scrollToBottom(scrollRef.current)
+    if (followBottom.current) {
+      scrollToBottom(scrollRef.current)
+    }
   })
 
   // 挂载与列表长度变化同样需要跟滚。
   useEffect(() => {
-    scrollToBottom(scrollRef.current)
-  }, [list.length, scrollRef])
+    const element = scrollRef.current
+
+    if (!element || !view.eligible) {
+      return
+    }
+
+    if (previousSession.current !== sessionId) {
+      previousSession.current = sessionId
+      followBottom.current = true
+    }
+
+    if (reveal && revealed.current !== reveal.request) {
+      const target = element.querySelector<HTMLElement>(`[data-message-key="${reveal.key}"]`)
+
+      if (target) {
+        element.scrollTo({
+          top:
+            element.scrollTop +
+            target.getBoundingClientRect().top -
+            element.getBoundingClientRect().top -
+            (element.clientHeight - target.offsetHeight) / 2
+        })
+        revealed.current = reveal.request
+        followBottom.current = false
+
+        return
+      }
+    }
+
+    if (followBottom.current) {
+      scrollToBottom(element)
+    }
+  }, [list, reveal, scrollRef, sessionId, view.eligible])
 
   const showTimeSet = useMemo(() => collectTimeDividerIds(visibleList), [visibleList])
+  const lastVisible = visibleList.at(-1)
 
   return (
     <div
       className={cn('space-y-3', className ?? 'flex-1 overflow-y-auto px-4 py-4')}
+      data-group-avatars={groupAvatars || undefined}
       data-surface={variant}
+      onScroll={event => {
+        const element = event.currentTarget
+        followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 64
+      }}
       ref={scrollRef}
     >
       {list.length === 0 && (
@@ -116,12 +170,30 @@ export function ConversationSurface({
           </span>
         </div>
       )}
-      {visibleList.map(item => (
-        <MessageBubble key={item.id} message={item} showTimeLabel={showTimeSet.has(item.id)} variant={variant} />
-      ))}
+      {visibleList.map((item, index) => {
+        const previous = visibleList[index - 1]
+        const grouped = groupAvatars && item.role === 'assistant' && isMessageGroupRow(item)
+
+        const continued =
+          grouped && previous?.role === 'assistant' && isMessageGroupRow(previous) && !showTimeSet.has(item.id)
+
+        return (
+          <MessageBubble
+            avatar={grouped ? (continued ? 'reserve' : 'show') : undefined}
+            key={item.id}
+            message={item}
+            showTimeLabel={showTimeSet.has(item.id)}
+            variant={variant}
+          />
+        )
+      })}
       {showTyping && (
         <div className="flex shrink-0 items-start gap-2.5">
-          {variant === 'workbench' && <CompanionAvatar />}
+          {groupAvatars && lastVisible?.role === 'assistant' && isMessageGroupRow(lastVisible) ? (
+            <span aria-hidden="true" className="w-8 shrink-0" />
+          ) : (
+            (groupAvatars || variant === 'workbench') && <CompanionAvatar />
+          )}
           <div
             className={
               variant === 'workbench'

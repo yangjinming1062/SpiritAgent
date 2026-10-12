@@ -511,7 +511,7 @@ function DesktopWallpaper() {
           filter: 'blur(24px) brightness(.6)'
         }}
       />
-      <img alt="" ref={poster} style={{ ...videoStyle, zIndex: 1 }} />
+      <img alt="" ref={poster} style={{ ...videoStyle, objectFit: 'cover', zIndex: 1 }} />
       <video muted playsInline preload="auto" ref={first} style={videoStyle} />
       <video muted playsInline preload="auto" ref={second} style={videoStyle} />
     </div>

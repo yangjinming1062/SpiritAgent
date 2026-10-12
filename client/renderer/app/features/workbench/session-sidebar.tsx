@@ -17,6 +17,8 @@ import {
   $systemPresetsFetched,
   $systemPresetsLoading,
   archiveSession,
+  chatDisplayText,
+  CompanionAvatar,
   createNewSession,
   deleteSession,
   fetchArchived,
@@ -92,7 +94,15 @@ function formatSessionTime(
   return tStrings.dateFormat(date.getMonth() + 1, date.getDate(), timeStr)
 }
 
-export function SessionSidebar({ includeCompanion = false }: { includeCompanion?: boolean }): React.JSX.Element {
+export function SessionSidebar({
+  includeCompanion = false,
+  companionUnread = false,
+  headerAction
+}: {
+  includeCompanion?: boolean
+  companionUnread?: boolean
+  headerAction?: React.ReactNode
+}): React.JSX.Element {
   const sessions = useStore($sessions)
   const loading = useStore($sessionsLoading)
   const sort = useStore($sessionSort)
@@ -174,15 +184,18 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
       {/* 顶部操作：Sessions 标题与 + 新建按钮 */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-1">
         <h3 className="text-sm font-semibold tracking-wide text-strong">{t.title}</h3>
-        <button
-          aria-label={t.new}
-          className="flex size-6 items-center justify-center rounded-lg border border-line-standard bg-fill-faint text-muted transition hover:border-line-strong hover:bg-fill-hover hover:text-strong active:scale-95"
-          onClick={handleCreate}
-          title={t.new}
-          type="button"
-        >
-          <Plus className="size-3.5" />
-        </button>
+        <div className="flex items-center gap-1">
+          {headerAction}
+          <button
+            aria-label={t.new}
+            className="flex size-6 items-center justify-center rounded-lg border border-line-standard bg-fill-faint text-muted transition hover:border-line-strong hover:bg-fill-hover hover:text-strong active:scale-95"
+            onClick={handleCreate}
+            title={t.new}
+            type="button"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* 搜索与排序 */}
@@ -229,10 +242,12 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
               visibleSearchResults.map(s => (
                 <SessionRow
                   badge={s.archived ? t.badgeArchived : undefined}
+                  chatStyle={includeCompanion}
                   isActive={s.id === activeSessionId}
                   key={s.id}
                   onSwitch={switchSession}
                   session={s}
+                  unread={companionUnread && isCompanionSession(s)}
                 />
               ))
             )}
@@ -256,12 +271,14 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
                 <div className="space-y-0.5">
                   {specialSessions.map(s => (
                     <SessionRow
+                      chatStyle={includeCompanion}
                       customIcon={presetIcon(s.system_preset_icon_key)}
                       isActive={s.id === activeSessionId}
                       isSpecial
                       key={s.id}
                       onSwitch={switchSession}
                       session={s}
+                      unread={companionUnread && isCompanionSession(s)}
                     />
                   ))}
                 </div>
@@ -303,6 +320,7 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
                           />
                         </>
                       }
+                      chatStyle={includeCompanion}
                       isActive={s.id === activeSessionId}
                       key={s.id}
                       onSwitch={switchSession}
@@ -330,6 +348,7 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
                           />
                         </>
                       }
+                      chatStyle={includeCompanion}
                       isActive={s.id === activeSessionId}
                       key={s.id}
                       onSwitch={switchSession}
@@ -377,6 +396,7 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
                       />
                     </>
                   }
+                  chatStyle={includeCompanion}
                   isActive={s.id === activeSessionId}
                   key={s.id}
                   onSwitch={switchSession}
@@ -401,6 +421,8 @@ export function SessionSidebar({ includeCompanion = false }: { includeCompanion?
 }
 
 function SessionRow({
+  chatStyle = false,
+  unread = false,
   session,
   isActive,
   isSpecial,
@@ -409,6 +431,8 @@ function SessionRow({
   badge,
   onSwitch
 }: {
+  chatStyle?: boolean
+  unread?: boolean
   session: SessionInfo
   isActive: boolean
   isSpecial?: boolean
@@ -430,30 +454,56 @@ function SessionRow({
 
   const timeStr = formatSessionTime(session.last_active || session.started_at, tSidebar.time)
   const msgCount = session.message_count ?? 0
+  const RowIcon = CustomIcon ?? presetIcon(session.system_preset_icon_key)
 
   return (
     <div
+      aria-current={isActive ? 'true' : undefined}
+      aria-label={unread ? `${title} (${dict.living.rail.unread})` : title}
       className={cn(
         'group relative flex cursor-pointer flex-col gap-1 rounded-xl border p-2.5 transition-all duration-150 select-none',
         isActive
           ? 'border-line-standard bg-surface-card text-strong shadow-xs backdrop-blur-md'
-          : 'border-transparent bg-transparent text-muted hover:border-line-hairline hover:bg-fill-hover hover:text-strong'
+          : 'border-transparent bg-transparent text-muted hover:border-line-hairline hover:bg-fill-hover hover:text-strong',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+        chatStyle && 'min-h-[76px] rounded-lg py-3 pl-14 pr-3'
       )}
+      data-chat-row={chatStyle || undefined}
       onClick={() => {
         if (!editing) {
           void onSwitch(session.id)
         }
       }}
+      onKeyDown={event => {
+        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault()
+          void onSwitch(session.id)
+        }
+      }}
+      role="button"
+      tabIndex={0}
     >
+      {chatStyle && (
+        <div className="absolute left-3 top-3">
+          {isCompanionSession(session) ? (
+            <CompanionAvatar />
+          ) : (
+            <span className="grid size-8 place-items-center rounded-xl border border-line-hairline bg-accent-soft text-accent">
+              <RowIcon size={17} />
+            </span>
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {isActive ? (
-            <span className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_8px_var(--ui-accent)]" />
-          ) : CustomIcon ? (
-            <CustomIcon className="size-3.5 shrink-0 text-faint" />
-          ) : (
-            <span className="size-1.5 shrink-0 rounded-full bg-fill-hover" />
-          )}
+          {!chatStyle &&
+            (isActive ? (
+              <span className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_8px_var(--ui-accent)]" />
+            ) : CustomIcon ? (
+              <CustomIcon className="size-3.5 shrink-0 text-faint" />
+            ) : (
+              <span className="size-1.5 shrink-0 rounded-full bg-fill-hover" />
+            ))}
 
           {editing ? (
             <SessionTitleInput
@@ -474,21 +524,36 @@ function SessionRow({
 
         <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
           {canRename && !editing && (
-            <div className="opacity-0 transition-opacity group-hover:opacity-100">
+            <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               <RowAction icon={Pencil} label={dict.chat.sessionRename.action} onClick={() => setEditing(true)} />
             </div>
           )}
-          <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             {actions}
           </div>
           {badge && <span className="rounded bg-fill-faint px-1 py-0.2 text-[9px] text-muted">{badge}</span>}
         </div>
       </div>
 
-      <div className="flex items-center justify-between pl-4 text-[10.5px] text-faint">
-        <span>{timeStr}</span>
-        <span>{tSidebar.messageCount(msgCount)}</span>
+      <div
+        className={cn('flex min-w-0 items-center justify-between gap-2 text-[10.5px] text-faint', !chatStyle && 'pl-4')}
+      >
+        {chatStyle ? (
+          <span className="min-w-0 flex-1 truncate text-xs">
+            {isCompanionSession(session)
+              ? tSidebar.messageCount(msgCount)
+              : chatDisplayText(session.preview ?? '').replace(/\s+/g, ' ') || tSidebar.messageCount(msgCount)}
+          </span>
+        ) : (
+          <span>{timeStr}</span>
+        )}
+        {chatStyle ? (
+          unread && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
+        ) : (
+          <span>{tSidebar.messageCount(msgCount)}</span>
+        )}
       </div>
+      {chatStyle && <span className="mt-0.5 text-[10px] text-faint">{timeStr}</span>}
     </div>
   )
 }

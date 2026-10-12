@@ -45,6 +45,7 @@ export {
   updateVoiceBubble
 } from './chat-store'
 export { conversationRuntimes, findConversationRuntime, getConversationRuntime, runtimeForMessage } from './chat-store'
+export { CompanionAvatar } from './companion-avatar'
 export { ConversationInput } from './conversation-input'
 export { ConversationSurface } from './conversation-surface'
 export {
@@ -97,6 +98,7 @@ export {
   TITLE_MAX_CHARS
 } from './session-list-store'
 export { useChatInput } from './use-chat-input'
+export { useConversationUnread } from './use-conversation-unread'
 
 export { useIsReadOnlySession } from './use-is-read-only-session'
 export {

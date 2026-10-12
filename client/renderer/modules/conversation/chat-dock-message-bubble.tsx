@@ -20,14 +20,13 @@ import { CompanionAvatar } from './companion-avatar'
 import { formatConversationTime } from './conversation-time'
 import { useConversationView } from './conversation-view'
 import { MessageContextMenu } from './message-context-menu'
+import { type ConversationVariant, isMessageVisible, SYSTEM_PILL_SUBTYPES } from './message-presentation'
 import { ToolChipTimeline } from './tool-chip-timeline'
 
-// 居中的元信息行，而非聊天气泡。Slash 命令结果与历史清空标记（详见 PROTOCOL「Slash 命令」）走同一形态。
-const SYSTEM_PILL_SUBTYPES = new Set(['status_cleared', 'status_command_result', 'status_media_failed'])
-
-export type ConversationVariant = 'living' | 'workbench'
+export type { ConversationVariant } from './message-presentation'
 
 interface MessageBubbleProps {
+  avatar?: 'show' | 'reserve'
   message: ChatMessageListItem
   showTimeLabel?: boolean
   variant?: ConversationVariant
@@ -49,7 +48,12 @@ function wrapWithTimeDivider(timeDivider: React.ReactNode, node: React.JSX.Eleme
   )
 }
 
-function MessageBubbleInner({ message, showTimeLabel, variant }: MessageBubbleProps): React.JSX.Element {
+function MessageBubbleInner({
+  avatar,
+  message,
+  showTimeLabel,
+  variant = 'living'
+}: MessageBubbleProps): React.JSX.Element {
   const { $chatMessageBodies, $chatTurnInFlight } = useConversationView().controller
 
   // 仅订阅本 id 的 body，避免流式增量触发全局重渲染。
@@ -58,28 +62,31 @@ function MessageBubbleInner({ message, showTimeLabel, variant }: MessageBubblePr
   const turnInFlight = useStore($chatTurnInFlight)
   const body: ChatMessageBody | undefined = bodies[message.id]
 
-  if (!body) {
+  if (!body || !isMessageVisible(message, body, variant)) {
     return <></>
   }
 
   return (
     <MessageBubbleWithBody
+      avatar={avatar}
       body={body}
       message={message}
       showTimeLabel={showTimeLabel}
       turnInFlight={turnInFlight}
-      variant={variant ?? 'living'}
+      variant={variant}
     />
   )
 }
 
 function MessageBubbleWithBody({
+  avatar,
   body,
   message,
   showTimeLabel,
   turnInFlight,
   variant
 }: {
+  avatar?: 'show' | 'reserve'
   body: ChatMessageBody
   message: ChatMessageListItem
   showTimeLabel?: boolean
@@ -255,27 +262,6 @@ function MessageBubbleWithBody({
   const showToolIndicator = !isUser && tools.length > 0
   const showLivingToolWait = variant === 'living' && toolOnly && Boolean(body.streaming)
 
-  // 生活空间不暴露工具轨迹，但回合进行中仍保留通用等待气泡，避免长时间准备期只剩用户消息。
-  if (variant === 'living' && toolOnly && !showLivingToolWait) {
-    return <></>
-  }
-
-  const hasVisibleReasoning = variant === 'workbench' && Boolean(body.reasoning?.trim())
-
-  if (
-    !isUser &&
-    !displayText &&
-    !body.streaming &&
-    !body.attachments?.length &&
-    !body.media?.length &&
-    !body.replyMedia &&
-    !body.error &&
-    !body.cancelled &&
-    !hasVisibleReasoning
-  ) {
-    return <></>
-  }
-
   // 只要消息具有非空可见正文且非流式传输中，即允许一键复制
   const canCopy = Boolean(displayText) && !body.streaming && !isVoicePendingOrStreaming
   const sourceMessageId = message.backendMessageId
@@ -313,9 +299,18 @@ function MessageBubbleWithBody({
 
   return wrapWithTimeDivider(
     timeDivider,
-    <div className={cn('relative flex shrink-0 gap-2.5 overflow-visible', isUser ? 'justify-end' : 'justify-start')}>
-      {!isUser && variant === 'workbench' && <CompanionAvatar />}
-      <div className="relative flex max-w-[80%] overflow-visible">
+    <div
+      className={cn('relative flex shrink-0 gap-2.5 overflow-visible', isUser ? 'justify-end' : 'justify-start')}
+      data-avatar={avatar}
+      data-message-key={
+        message.backendMessageId !== undefined && body.replyIndex !== undefined
+          ? voicePlaybackKey(message.backendMessageId, body.replyIndex)
+          : undefined
+      }
+    >
+      {!isUser && (avatar === 'show' || (!avatar && variant === 'workbench')) && <CompanionAvatar />}
+      {!isUser && avatar === 'reserve' && <span aria-hidden="true" className="w-8 shrink-0" />}
+      <div className="relative flex min-w-0 max-w-[80%] overflow-visible">
         <div className={cn('flex min-w-0 flex-col', isUser ? 'items-end' : 'items-start')}>
           {body.attachments?.length ? (
             <div className="flex flex-col gap-1">

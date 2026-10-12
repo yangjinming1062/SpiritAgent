@@ -3,10 +3,12 @@ import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
 import { reportInteractionStat, triggerFootGlowPulse } from '@/modules/character'
 import {
   $chatDraftFromUndo,
+  $companionSessionId,
   chatDisplayText,
   type ConversationRuntime,
   invalidateSessionHistory,
   rememberFullHistory,
+  rememberPendingMessage,
   removeVoicePlayback,
   showMediaHint
 } from '@/modules/conversation'
@@ -54,6 +56,27 @@ export function handleConversationEvent(
     updateVoiceBubble
   } = runtime
 
+  const rememberReply = (text?: string, bubbles?: CompanionBubble[], media?: ChatMediaItem[]): void => {
+    const sessionId = runtime.$chatSessionId.get()
+
+    if (!sessionId || sessionId !== $companionSessionId.get()) {
+      return
+    }
+
+    const preview = chatDisplayText(bubbles?.findLast(bubble => 'text' in bubble)?.text ?? text ?? '')
+    const hasMedia = media?.length || bubbles?.some(bubble => bubble.type === 'image' || bubble.type === 'video')
+
+    if (preview || hasMedia) {
+      rememberPendingMessage(
+        sessionId,
+        preview ||
+          (media?.some(item => item.type === 'video') || bubbles?.some(bubble => bubble.type === 'video')
+            ? getStrings().notifications.system.videoReady
+            : getStrings().notifications.system.imageReady)
+      )
+    }
+  }
+
   switch (event.type) {
     case 'message.start':
       $chatTurnInFlight.set(true)
@@ -98,7 +121,19 @@ export function handleConversationEvent(
       )
 
       if (typeof payload.message_id === 'number' && typeof payload.bubble_index === 'number' && payload.bubble) {
+        const exists = runtime.$chatMessageList
+          .get()
+          .some(
+            item =>
+              item.backendMessageId === payload.message_id &&
+              runtime.$chatMessageBodies.get()[item.id]?.replyIndex === payload.bubble_index
+          )
+
         appendCompanionBubble(payload.message_id, payload.bubble_index, payload.bubble)
+
+        if (!exists) {
+          rememberReply(undefined, [payload.bubble])
+        }
       }
 
       break
@@ -216,6 +251,10 @@ export function handleConversationEvent(
       const media = Array.isArray(payload.media) ? payload.media : undefined
       const text = chatDisplayText(payload.text ?? '')
 
+      const replyExists =
+        payload.message_id !== undefined &&
+        runtime.$chatMessageList.get().some(item => item.backendMessageId === payload.message_id)
+
       if (payload.usage) {
         setSessionContextUsage({
           completionTokens: payload.usage.completion_tokens,
@@ -239,6 +278,10 @@ export function handleConversationEvent(
         if (typeof payload.message_id === 'number') {
           bindTrailingAssistantMessageId(payload.message_id)
         }
+      }
+
+      if (!replyExists) {
+        rememberReply(payload.text, bubbles, media)
       }
 
       // 媒体已送达但对话界面收起：精灵可见时气泡只做轻量系统提示，点击打开轻语/生活空间；不可见或锁屏时不弹出，媒体已在会话历史中。

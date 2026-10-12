@@ -351,10 +351,13 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* 精灵窗/生活空间/工作台为无边框真透明窗体；html 也须透明——color-scheme 会铺画布底填进圆角楔形。 */
+  /* 精灵窗/桌面/生活空间/工作台为无边框真透明窗体；html 也须透明——color-scheme 会铺画布底填进圆角楔形。 */
   html[data-role='sprite'],
   html[data-role='sprite'] body,
   html[data-role='sprite'] #root,
+  html[data-role='desktop'],
+  html[data-role='desktop'] body,
+  html[data-role='desktop'] #root,
   html[data-role='workbench'],
   html[data-role='workbench'] body,
   html[data-role='workbench'] #root,

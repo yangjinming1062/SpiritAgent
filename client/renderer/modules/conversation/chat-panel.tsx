@@ -22,6 +22,9 @@ import { useChatInput } from './use-chat-input'
 
 export interface ChatPanelProps {
   className?: string
+  heading?: React.ReactNode
+  groupAvatars?: boolean
+  reveal?: { key: string; request: number }
   gatewayState: ConnectionState
   inputWrapperClassName?: string
   isReadOnlySession: boolean
@@ -32,6 +35,9 @@ export interface ChatPanelProps {
 
 export function ChatPanel({
   className,
+  heading,
+  groupAvatars,
+  reveal,
   gatewayState,
   inputWrapperClassName,
   isReadOnlySession,
@@ -89,6 +95,7 @@ export function ChatPanel({
   return (
     <div className={cn('flex flex-col flex-1 h-full min-h-0', className)}>
       <div className={headerWrapClass}>
+        {heading}
         <div
           className="flex items-center gap-1.5"
           onPointerDown={e => {
@@ -130,6 +137,8 @@ export function ChatPanel({
       {variant === 'workbench' && <ChatContextAmbientLine />}
       <ConversationSurface
         className={cn('flex-1 min-h-0 overflow-y-auto', surfaceClassName)}
+        groupAvatars={groupAvatars}
+        reveal={reveal}
         scrollRef={scrollRef}
         variant={variant}
       />

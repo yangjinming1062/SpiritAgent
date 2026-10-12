@@ -20,7 +20,13 @@ const ACCOUNT_SUBMENU_GAP = 8
 
 type AccountSubmenuSide = 'below' | 'left' | 'right'
 
-export function DesktopSettings({ presentation }: { presentation: PresentationState | null }): React.JSX.Element {
+export function DesktopSettings({
+  onSettings,
+  presentation
+}: {
+  onSettings: () => void
+  presentation: PresentationState | null
+}): React.JSX.Element {
   const t = useDesktopStrings()
   const preferredTier = useStore($userPreferredTier)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -62,6 +68,9 @@ export function DesktopSettings({ presentation }: { presentation: PresentationSt
         />
       </div>
       {presentation?.compatibilityWarning && <span role="status">{presentation.compatibilityWarning}</span>}
+      <button onClick={onSettings} type="button">
+        {t.settings}
+      </button>
       <button
         onClick={() =>
           void window.spiritagent.presentation.setMode('window').catch(error => notifyError(error, t.windowMode))

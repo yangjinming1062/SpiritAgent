@@ -1,4 +1,4 @@
-import { map } from 'nanostores'
+import { atom, map } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
@@ -14,6 +14,7 @@ import {
 
 function createPlaybackStore() {
   const $voicePlaybackRecords = map<Record<string, VoicePlaybackRecord>>({})
+  const $voicePlaybackLoaded = atom(false)
   let scope: VoicePlaybackScope | null = null
   let confirmed: VoicePlaybackSnapshot = { records: {}, revision: -1 }
   let loading: Promise<void> = Promise.resolve()
@@ -37,6 +38,7 @@ function createPlaybackStore() {
 
     if (previousKeys.length === 0) {
       $voicePlaybackRecords.set(records)
+      $voicePlaybackLoaded.set(true)
 
       return
     }
@@ -49,6 +51,8 @@ function createPlaybackStore() {
         $voicePlaybackRecords.setKey(key, record)
       }
     }
+
+    $voicePlaybackLoaded.set(true)
   }
 
   function reportFailure(error: unknown): void {
@@ -75,6 +79,7 @@ function createPlaybackStore() {
     confirmed = { records: {}, revision: -1 }
     pending.clear()
     reportedFailure = false
+    $voicePlaybackLoaded.set(false)
     $voicePlaybackRecords.set({})
     loading = owner
       ? window.spiritagent.voicePlayback
@@ -86,6 +91,7 @@ function createPlaybackStore() {
           })
           .catch(error => {
             if (owner === scope) {
+              $voicePlaybackLoaded.set(true)
               reportFailure(error)
             }
           })
@@ -182,6 +188,7 @@ function createPlaybackStore() {
   }
 
   return {
+    $voicePlaybackLoaded,
     $voicePlaybackRecords,
     loadVoicePlayback,
     voicePlaybackReady,

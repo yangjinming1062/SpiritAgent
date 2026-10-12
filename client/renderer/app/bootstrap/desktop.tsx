@@ -54,6 +54,7 @@ function DesktopLifecycle(): null {
 }
 
 export function bootstrapDesktop(RootComponent: React.ComponentType): void {
+  document.documentElement.dataset.role = 'desktop'
   setSurfaceRole('desktop')
   initRenderer()
   setPrimaryGateway(new IpcGatewayProxy())
