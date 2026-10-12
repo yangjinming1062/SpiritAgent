@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 
 import type { IconComponent } from '@/shared/lib/icons'
 import { ChevronDown, Loader2, Search, X } from '@/shared/lib/icons'
+import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
@@ -597,6 +598,18 @@ export function ConfirmDialog({
 }: ConfirmDialogProps): React.JSX.Element {
   const t = useStrings()
   const [busy, setBusy] = useState(false)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const regionId = useId()
+
+  // 透明窗口（精灵窗、交互桌面）点击会穿透：登记在 early return 之前，关闭时 overlay 未挂载、getRect 为 null 自然退出（同 NotificationStack）。
+  useInteractiveRegion(`confirm-dialog:${regionId}`, overlayRef)
+
+  // 打开后立即探测一次，键盘唤起、鼠标未移动时也能直接点击按钮。
+  useLayoutEffect(() => {
+    if (open) {
+      probeInteractiveRegions()
+    }
+  }, [open])
 
   useEscapeKey(() => onOpenChange(false), { enabled: open, busy })
 
@@ -606,12 +619,13 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center p-6"
+      className="fixed inset-0 z-[80] flex items-center justify-center p-6 [-webkit-app-region:no-drag]"
       onPointerDown={e => {
         if (!busy && e.target === e.currentTarget) {
           onOpenChange(false)
         }
       }}
+      ref={overlayRef}
     >
       <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}>
         <h3 className="text-sm font-semibold">{title}</h3>

@@ -31,6 +31,7 @@ import { NotificationStack, requestGateway } from '@/shared'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
 import { useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
+import { ConfirmHost } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { notify } from '@/shared/store/notifications'
@@ -220,6 +221,7 @@ export function SpriteWindow(): React.JSX.Element {
       <WhisperOverlay />
       {authed && <MediaViewerOverlay />}
       <NotificationStack />
+      <ConfirmHost />
       <BootFailureOverlay />
       <DeveloperOverlay />
     </>

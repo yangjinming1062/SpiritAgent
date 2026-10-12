@@ -719,7 +719,9 @@ export const dict: Dictionary = {
       otherBusy: 'Another undo is in progress',
       failed: 'Undo failed',
       internalError: 'Undo failed: server rejected the request or the network is down',
-      confirm: 'Undo this message? This will also delete every message after it.',
+      confirmTitle: 'Undo this message?',
+      confirmDescription: 'This will also delete every message after it.',
+      confirmLabel: 'Undo',
       extraImagesNotRestored: (count: number) =>
         `Only one image can be attached at a time; ${count} other image${count === 1 ? ' was' : 's were'} not restored`
     },
@@ -731,7 +733,9 @@ export const dict: Dictionary = {
       hint: 'Regenerate the reply and keep the original attachments',
       retainedImage: 'Original image, kept after sending',
       retainedVideo: 'Original video, kept after sending',
-      confirm: 'This is not the last message. Sending the changes will delete every message after it. Continue?',
+      confirmTitle: 'Continue and send the changes?',
+      confirmDescription: 'This is not the last message. Sending the changes will delete every message after it.',
+      confirmLabel: 'Send changes',
       stale: 'The conversation has changed. Wait for the reply or select this message again.',
       failed: 'Could not edit the message. Your changes have been kept.'
     },
@@ -761,7 +765,9 @@ export const dict: Dictionary = {
       unknown: 'Unknown command',
       inFlight: 'The previous command is still running',
       pendingAttachment: 'Please send or cancel the attachment before running the command',
-      confirmMessage: (name: string) => `Run /${name}? This will affect the message history.`,
+      confirmTitle: (name: string) => `Run /${name}?`,
+      confirmDescription: 'This will affect the message history.',
+      confirmLabel: 'Run',
       popoverTitle: 'Commands',
       popoverConfirm: 'Needs confirmation'
     },

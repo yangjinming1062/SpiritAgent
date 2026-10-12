@@ -17,6 +17,7 @@ import { CaptureWindowIdContext, useWindowMouseCapture } from '@/shared/lib/inte
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { log } from '@/shared/lib/log'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
+import { ConfirmHost } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { setPrimaryGateway } from '@/shared/store/gateway'
 import { setSurfaceRole } from '@/shared/store/surfaces'
@@ -80,6 +81,7 @@ export function bootstrapDesktop(RootComponent: React.ComponentType): void {
               <ProxyGatewayPump />
               <AccountScopedRoot RootComponent={RootComponent} />
               <NotificationStack />
+              <ConfirmHost />
             </HashRouter>
           </HapticsProvider>
         </ErrorBoundary>

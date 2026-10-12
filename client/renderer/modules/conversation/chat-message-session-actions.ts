@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { atom, type WritableAtom } from 'nanostores'
 
+import { confirmAction, type ConfirmRequest } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -12,7 +13,7 @@ const $chatForkInFlight = atom<string | null>(null)
 const $chatUndoInFlight = atom<string | null>(null)
 
 async function runSessionAction({
-  confirmText,
+  confirm,
   failedLabel,
   $inFlight,
   messageId,
@@ -20,7 +21,8 @@ async function runSessionAction({
   sourceMessageId,
   sourceSessionId
 }: {
-  confirmText?: string
+  /** 需二次确认时的弹窗内容（confirmAction），未提供则直接执行。 */
+  confirm?: ConfirmRequest
   failedLabel: string
   $inFlight: WritableAtom<string | null>
   /** 当前气泡的本地 id；同类操作同一时刻只允许一个 RPC 在飞，并发点击靠此 id 排他。 */
@@ -34,7 +36,12 @@ async function runSessionAction({
     return
   }
 
-  if (confirmText !== undefined && !window.confirm(confirmText)) {
+  if (confirm && !(await confirmAction(confirm))) {
+    return
+  }
+
+  // 确认弹窗等待期间可能已有同类操作起飞，复核排他标记。
+  if ($inFlight.get() !== null) {
     return
   }
 
@@ -64,7 +71,7 @@ export interface MessageSessionActions {
   runUndo(sourceMessageId: number): Promise<void>
 }
 
-/** 消息菜单里的 fork / undo：同类操作同一时刻只允许一个在途 RPC，undo 执行前须系统确认。 */
+/** 消息菜单里的 fork / undo：同类操作同一时刻只允许一个在途 RPC，undo 执行前须二次确认。 */
 export function useMessageSessionActions({ messageId }: { messageId: string }): MessageSessionActions {
   const { $chatSessionId } = useConversationView().controller
   const dict = useStrings()
@@ -103,7 +110,11 @@ export function useMessageSessionActions({ messageId }: { messageId: string }): 
       }),
     runUndo: sourceMessageId =>
       runSessionAction({
-        confirmText: dict.chat.undo.confirm,
+        confirm: {
+          confirmLabel: dict.chat.undo.confirmLabel,
+          description: dict.chat.undo.confirmDescription,
+          title: dict.chat.undo.confirmTitle
+        },
         failedLabel: dict.chat.undo.failed,
         $inFlight: $chatUndoInFlight,
         messageId,

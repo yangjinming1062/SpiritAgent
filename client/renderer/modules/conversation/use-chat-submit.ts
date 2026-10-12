@@ -8,6 +8,7 @@ import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
 import { currentClearEpoch } from '@/shared/lib/storage'
+import { confirmAction } from '@/shared/panel'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $gateway } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
@@ -175,18 +176,21 @@ export function useChatSubmit({
     }
 
     if (edit) {
-      const currentSourceIndex = $chatMessageList
-        .get()
-        .findLastIndex(
-          item => item.role === 'user' && item.backendMessageId === edit.sourceMessageId && item.subtype === undefined
-        )
+      // 编辑时效检查：草稿归属、在途回合与源消息须同时成立；确认弹窗等待期间历史可能被事件改写，提交前复用同一检查。
+      const editSourceIndex = (): number =>
+        $chatMessageList
+          .get()
+          .findLastIndex(
+            item => item.role === 'user' && item.backendMessageId === edit.sourceMessageId && item.subtype === undefined
+          )
 
-      if (
+      const editStale = (): boolean =>
         edit.sessionId !== $chatSessionId.get() ||
         $chatTurnInFlight.get() ||
         $pendingPromptBatch.get().length > 0 ||
-        currentSourceIndex < 0
-      ) {
+        editSourceIndex() < 0
+
+      if (editStale()) {
         onPreCheckFail(getStrings().chat.edit.stale)
 
         return
@@ -194,10 +198,31 @@ export function useChatSubmit({
 
       const hasLaterUserMessage = $chatMessageList
         .get()
-        .slice(currentSourceIndex + 1)
+        .slice(editSourceIndex() + 1)
         .some(item => item.role === 'user' && item.backendMessageId !== undefined && item.subtype === undefined)
 
-      if (hasLaterUserMessage && !window.confirm(getStrings().chat.edit.confirm)) {
+      if (hasLaterUserMessage) {
+        const editStrings = getStrings().chat.edit
+
+        if (
+          !(await confirmAction({
+            confirmLabel: editStrings.confirmLabel,
+            description: editStrings.confirmDescription,
+            title: editStrings.confirmTitle
+          }))
+        ) {
+          return
+        }
+      }
+
+      // 确认期间所属会话或网关已变则静默放弃；历史被改写时提示重新选择。
+      if (!requestCurrent() || !controller.isCurrent()) {
+        return
+      }
+
+      if (editStale()) {
+        onPreCheckFail(getStrings().chat.edit.stale)
+
         return
       }
 

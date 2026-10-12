@@ -663,7 +663,9 @@ export const dict = {
       otherBusy: '另一条正在撤回',
       failed: '撤回消息失败',
       internalError: '撤回失败：服务端拒绝或网络异常',
-      confirm: '撤回这条消息？此操作将一并删除其后所有消息。',
+      confirmTitle: '撤回这条消息？',
+      confirmDescription: '此操作将一并删除其后所有消息。',
+      confirmLabel: '撤回',
       extraImagesNotRestored: (count: number) => `输入框一次只能附加一张图片，另有 ${count} 张图片未恢复`
     },
 
@@ -674,7 +676,9 @@ export const dict = {
       hint: '发送后重新生成回复，保留原消息附件',
       retainedImage: '原消息图片，发送后保留',
       retainedVideo: '原消息视频，发送后保留',
-      confirm: '这不是最后一条消息，发送修改后将删除其后的所有消息。继续吗？',
+      confirmTitle: '继续发送修改？',
+      confirmDescription: '这不是最后一条消息，发送修改后将删除其后的所有消息。',
+      confirmLabel: '发送修改',
       stale: '消息状态已变化，请等待回复结束或重新选择这条消息',
       failed: '编辑消息失败，修改内容已保留'
     },
@@ -704,7 +708,9 @@ export const dict = {
       unknown: '未知命令',
       inFlight: '上一条命令还在执行中',
       pendingAttachment: '请先发送或取消附件再执行命令',
-      confirmMessage: (name: string) => `执行 /${name}？该操作会影响历史消息。`,
+      confirmTitle: (name: string) => `执行 /${name}？`,
+      confirmDescription: '该操作会影响历史消息。',
+      confirmLabel: '执行',
       popoverTitle: '命令',
       popoverConfirm: '需确认'
     },

@@ -5,6 +5,7 @@ import {
 } from '@/shared/lib/gateway-protocol'
 import { errorMessage } from '@/shared/lib/ipc-error'
 import type { SlashCommandMeta } from '@/shared/lib/slash-commands'
+import { confirmAction } from '@/shared/panel'
 import { getStrings } from '@/shared/strings'
 import type { SessionMessage } from '@protocol'
 
@@ -59,7 +60,7 @@ function slashPreCheck(pending: PendingAttachment | null, sending: boolean): str
   return null
 }
 
-/** 单条 slash 命令的执行入口（由 send() 调用）：confirm → RPC → hydrate/pill → 错误映射。需确认的命令每次调用都会弹 window.confirm，以取得 PROTOCOL「Slash 命令」要求的确认。 */
+/** 单条 slash 命令的执行入口（由 send() 调用）：confirm → RPC → hydrate/pill → 错误映射。需确认的命令每次调用都会弹确认弹窗（confirmAction），以取得 PROTOCOL「Slash 命令」要求的确认。 */
 async function executeSlashCommand(
   cmd: SlashCommandMeta,
   args: string[],
@@ -74,8 +75,18 @@ async function executeSlashCommand(
   const runtime = opts.runtime ?? activeConversationRuntime()
   const { $chatSessionId, hydrateChatMessages, markAssistantTerminal, pushStatusPill } = runtime
 
-  if (cmd.requiresConfirmation && !window.confirm(getStrings().chat.slash.confirmMessage(cmd.name))) {
-    return
+  if (cmd.requiresConfirmation) {
+    const confirmStrings = getStrings().chat.slash
+
+    if (
+      !(await confirmAction({
+        confirmLabel: confirmStrings.confirmLabel,
+        description: confirmStrings.confirmDescription,
+        title: confirmStrings.confirmTitle(cmd.name)
+      }))
+    ) {
+      return
+    }
   }
 
   let sid: string | null = null

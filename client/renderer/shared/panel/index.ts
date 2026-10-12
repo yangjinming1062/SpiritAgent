@@ -1,5 +1,6 @@
 export * from './chip'
 export * from './components'
+export * from './confirm-host'
 export * from './date-picker'
 export * from './palette'
 export * from './primitives'

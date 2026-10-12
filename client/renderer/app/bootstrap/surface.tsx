@@ -16,6 +16,7 @@ import { initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
 import { CaptureWindowIdContext } from '@/shared/lib/interactive-regions'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
+import { ConfirmHost } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { setPrimaryGateway } from '@/shared/store/gateway'
 import { setSurfaceRole } from '@/shared/store/surfaces'
@@ -97,6 +98,7 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
               <ProxyGatewayPump />
               <AccountScopedRoot RootComponent={RootComponent} />
               <NotificationStack />
+              <ConfirmHost />
             </HashRouter>
           </HapticsProvider>
         </ErrorBoundary>
