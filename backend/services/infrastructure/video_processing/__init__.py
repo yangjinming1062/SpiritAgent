@@ -1,5 +1,6 @@
 """动作媒体处理：静态透明图片、FFmpeg 受控视频规范化与命中遮罩。仅服务端使用；不执行用户字符串，不向客户端分发 FFmpeg。"""
 
+from .audio import audio_wav_bytes, probe_audio
 from .desktop import (
     DesktopVideoFrames,
     DesktopVideoResult,
@@ -27,6 +28,8 @@ from .process import (
 from .quality import validate_action_clip, validate_action_image, validate_transparent_image
 
 __all__ = [
+    "audio_wav_bytes",
+    "probe_audio",
     "DesktopVideoFrames",
     "DesktopVideoResult",
     "prepare_desktop_video",

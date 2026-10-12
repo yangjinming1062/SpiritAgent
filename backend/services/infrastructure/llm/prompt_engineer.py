@@ -5,7 +5,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from components import (
-    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     AiFeature,
     get_logger,
@@ -22,9 +21,9 @@ from .llm_retry import call_with_retry
 from .providers import (
     ChatProvider,
     ServiceType,
-    resolve_context_tokens,
 )
-from .responses import approx_responses_tokens, build_responses_kwargs
+from .responses import build_responses_kwargs
+from .token_budget import request_output_budget
 from .user_config import UserLlmConfig
 
 logger = get_logger(__name__)
@@ -91,7 +90,7 @@ async def chat(
     async with SESSION_LOCAL() as config_db:
         chain = await resolve_provider_chain(config_db, user_id, ServiceType.llm, feature=feature)
     config = UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
-    text = (await call_llm_once(config, system_prompt, user_payload, max_output_tokens=LLM_MAX_OUTPUT_TOKENS)).strip()
+    text = (await call_llm_once(config, system_prompt, user_payload)).strip()
     return text
 
 
@@ -111,12 +110,9 @@ def _response_failure_detail(response: Response) -> str:
 async def _call_text_response(
     provider: ChatProvider,
     request: dict[str, Any],
-    *,
-    context_length: int | None = None,
 ) -> str:
-    retry_kwargs = {"context_length": context_length} if context_length is not None else {}
     try:
-        response = await call_with_retry(provider.raw_client(), **retry_kwargs, **request)
+        response = await call_with_retry(provider.raw_client(), config=provider.config, **request)
     except TimeoutError as exc:
         raise LLMRuntimeError(ClassifiedError(FailoverReason.timeout, None, "LLM request timed out")) from exc
     return _response_text(response)
@@ -136,27 +132,12 @@ def _response_text(response: Response) -> str:
     return text
 
 
-def _output_token_budget(
-    context_length: int,
-    instructions: str,
-    input_items: list[dict[str, Any]],
-    max_output_tokens: int | None,
-) -> int | None:
-    if max_output_tokens is None:
-        return None
-    available = (
-        context_length - approx_responses_tokens(instructions, input_items) - min(1024, max(1, context_length // 20))
-    )
-    # 超长输入保留原样，由供应商返回窗口错误。
-    return min(max_output_tokens, available) if available > 0 else max_output_tokens
-
-
 async def call_llm_once(
     llm_cfg: UserLlmConfig,
     system_prompt: str,
     user_payload: Any,
     *,
-    max_output_tokens: int | None,
+    max_output_tokens: int | None = None,
     reasoning_effort: str | None = None,
     json_output: bool = False,
     temperature: float | None = None,
@@ -169,12 +150,11 @@ async def call_llm_once(
     input_items = [{"role": "user", "content": [{"type": "input_text", "text": user_content}]}]
 
     async def call(provider: ChatProvider) -> str:
-        context_length = resolve_context_tokens(provider.config)
         request = build_responses_kwargs(
             model=provider.config.model,
             instructions=system_prompt,
             input_items=input_items,
-            max_output_tokens=_output_token_budget(context_length, system_prompt, input_items, max_output_tokens),
+            max_output_tokens=max_output_tokens,
             temperature=provider.scale_temperature(temperature) if temperature is not None else None,
             reasoning=await provider.reasoning_param(reasoning_effort),
         )
@@ -187,7 +167,6 @@ async def call_llm_once(
         text = await _call_text_response(
             provider,
             request,
-            context_length=context_length,
         )
         if json_output and not isinstance(parse_llm_json(text), dict):
             raise LLMRuntimeError(
@@ -233,7 +212,7 @@ async def call_llm_json[T](
     schema_name: str,
     parse_output: Callable[[Any], T],
     repair_prompt: str,
-    max_output_tokens: int | None,
+    max_output_tokens: int | None = None,
     reasoning_effort: str | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
     diagnostics: list[LlmAttemptDiagnostic] | None = None,
@@ -272,8 +251,7 @@ async def call_llm_json[T](
             input_items = [
                 {"role": "user", "content": [{"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}]},
             ]
-            context_length = resolve_context_tokens(provider.config)
-            budget = _output_token_budget(context_length, instructions, input_items, max_output_tokens)
+            budget = max_output_tokens
             options = await provider.structured_response_options(
                 schema,
                 name=schema_name,
@@ -289,6 +267,8 @@ async def call_llm_json[T](
                 temperature=provider.scale_temperature(0.0) if repair else None,
             )
             request.update(options)
+            budget = request_output_budget(provider.config, request)
+            request["max_output_tokens"] = budget
             if before_call is not None:
                 await before_call()
             diagnostic = LlmAttemptDiagnostic(
@@ -300,10 +280,10 @@ async def call_llm_json[T](
                 reasoning_effort=(request.get("reasoning") or {}).get("effort"),
             )
             try:
-                # 不限输出 token 时仍沿用配置的调用时限，整个请求与 SDK 网络重试共用该时限。
+                # 整个请求与 SDK 网络重试共用当前功能的调用时限。
                 response = await call_with_retry(
                     provider.structured_response_client(repair=repair, before_submit=before_call),
-                    context_length=context_length,
+                    config=provider.config,
                     **request,
                 )
             except LlmCallBlockedError:
@@ -401,20 +381,13 @@ async def vision_chat(
     async def _describe(provider: ChatProvider) -> str:
         if before_submit is not None:
             await before_submit()
-        context_length = resolve_context_tokens(provider.config)
         response = await call_with_retry(
             provider.raw_client(),
-            context_length=context_length,
+            config=provider.config,
             **build_responses_kwargs(
                 model=provider.config.model,
                 instructions=system_prompt,
                 input_items=input_items,
-                max_output_tokens=_output_token_budget(
-                    context_length,
-                    system_prompt,
-                    input_items,
-                    LLM_MAX_OUTPUT_TOKENS,
-                ),
             ),
         )
         result = strip_outer_code_fence(response.output_text) if response.status == "completed" else ""

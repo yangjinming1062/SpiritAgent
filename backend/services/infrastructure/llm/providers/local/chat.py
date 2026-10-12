@@ -27,10 +27,10 @@ def _cache_probe(props_url: str, api: _LocalApi, now: float) -> None:
 class LocalChatProvider(ChatProvider):
     """自托管 Responses 服务；配置与部署约束见 Backend README。"""
 
+    supports_image: ClassVar[bool] = True
     provider_name = "local"
     # 默认 LM Studio；模型须显式填写已部署的模型 ID。
     DEFAULT_BASE_URL: ClassVar[str] = "http://127.0.0.1:1234/v1"
-    DEFAULT_CONTEXT_TOKENS: ClassVar[int] = 200_000
     requires_api_key: ClassVar[bool] = False
     # 已识别的 llama.cpp / Strata 下发 reasoning.effort（none 关闭思考），其他本地服务不传。
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high"})

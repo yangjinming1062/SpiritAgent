@@ -13,7 +13,6 @@ class MiniMaxTTSProvider(TTSProvider):
 
     provider_name = "minimax"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
-    DEFAULT_MODEL: ClassVar[str] = "speech-2.8-hd"
     VOICE_DESIGN_GUIDE = """\
 用一段文字描述你想要的音色，描述越具体效果越好。建议涵盖：
 • 性别与年龄：如"沉稳可靠的中年男性"、"专业播音腔的中年女性"

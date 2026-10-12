@@ -142,7 +142,6 @@ async def _stage_4_reflection(
         schema_name="nightly_reflection",
         parse_output=partial(parse_reflection, max_content_chars=max_content_chars),
         repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, language),
-        max_output_tokens=None,
         reasoning_effort=NIGHTLY_REASONING_EFFORT,
         before_call=partial(require_nightly_window, ZoneInfo(user_timezone)),
         diagnostics=diagnostics,
@@ -309,7 +308,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
             await review_memories(
                 scope,
                 feature=AiFeature.nightly_memory,
-                max_output_tokens=None,
                 before_call=partial(require_nightly_window, ZoneInfo(tz_str)),
                 reasoning_effort=NIGHTLY_REASONING_EFFORT,
             )

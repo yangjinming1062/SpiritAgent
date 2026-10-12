@@ -32,7 +32,6 @@ class QwenImageGenProvider(ImageGenProvider):
 
     provider_name = "qwen"
     DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/api/v1"
-    DEFAULT_MODEL: ClassVar[str] = "qwen-image-3.0-pro"
     supports_reference_image: ClassVar[bool] = True
     supports_environment_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True

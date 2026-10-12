@@ -1,10 +1,11 @@
 from collections.abc import Iterator
-from typing import Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .ai_features import AI_FEATURE_BY_ID, AiFeature
+from .ai_models import ModelModality
 
 CAPABILITY_SERVICES = ("llm", "stt", "tts", "image_gen", "video_gen", "embedding")
 
@@ -28,6 +29,10 @@ class CapabilityCard(BaseModel):
     provider_id: UUID
     model_name: str = Field(min_length=1, max_length=128)
     context_window: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
+    max_output_tokens: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
+    max_input_tokens: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
+    input_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
+    output_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
 
 
 class CapabilityChains(BaseModel):
@@ -102,10 +107,16 @@ class AIConfig(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("供应商与模型卡片的 ID 不能重复")
         for service, card in self.models():
-            if service == "llm" and card.context_window is None:
-                raise ValueError("请填写 LLM 的上下文窗口大小（正整数 tokens）")
-            if service != "llm" and card.context_window is not None:
-                raise ValueError("上下文窗口仅支持 LLM 能力卡片")
+            if service == "llm":
+                if card.context_window is None or card.max_output_tokens is None:
+                    raise ValueError("请填写 LLM 的上下文窗口与输出 Token 上限（正整数 tokens）")
+                if ModelModality.text not in card.output_modalities:
+                    raise ValueError("LLM 模型须支持文字输出")
+            if card.context_window is not None:
+                if card.max_output_tokens is not None and card.max_output_tokens > card.context_window:
+                    raise ValueError("输出 Token 上限不能超过上下文窗口")
+                if card.max_input_tokens is not None and card.max_input_tokens > card.context_window:
+                    raise ValueError("输入 Token 上限不能超过上下文窗口")
         for feature, value in self.features.items():
             if len(value.chain) != len(set(value.chain)):
                 raise ValueError(f"功能 {AI_FEATURE_BY_ID[feature].label} 不能重复引用同一模型卡片")
@@ -142,8 +153,18 @@ class AIConfigPublic(BaseModel):
 class ProviderDefaults(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    model_name: str
     base_url: str
     requires_api_key: bool
-    context_window: int | None = None
     voice_design_model: str | None = None
+    input_modalities: frozenset[ModelModality] = frozenset()
+
+
+class ModelDiscoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    provider: ProviderCardUpdate
+    user_id: int | None = Field(default=None, gt=0)
+    service: Literal["llm", "stt", "tts", "image_gen", "video_gen", "embedding"]
+    model_name: str | None = Field(default=None, min_length=1, max_length=128)
+    catalog_id: str | None = Field(default=None, min_length=1, max_length=256)
+    refresh: bool = False

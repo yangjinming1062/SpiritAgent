@@ -38,7 +38,7 @@ class ReleaseManifestResponse(BaseModel):
 
 
 class ChatAttachment(BaseModel):
-    type: Literal["image", "video"]
+    type: Literal["image", "video", "audio"]
     file_url: str = Field(min_length=1)
 
 

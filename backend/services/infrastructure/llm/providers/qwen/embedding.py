@@ -12,8 +12,8 @@ class QwenEmbeddingProvider(OpenAIEmbeddingProvider):
     provider_name = "qwen"
     service_type = ServiceType.embedding
     DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/compatible-mode/v1"
-    DEFAULT_MODEL: ClassVar[str] = "text-embedding-v4"
+    DIMENSION_MODEL: ClassVar[str] = "text-embedding-v4"
 
     def _request_dimensions(self) -> int | None:
         # 仅默认模型确认支持该宽度；其他模型按原生宽度返回，与列宽不符时由记忆层降级为关键词召回。
-        return MEMORY_EMBEDDING_DIM if self.config.model == self.DEFAULT_MODEL else None
+        return MEMORY_EMBEDDING_DIM if self.config.model == self.DIMENSION_MODEL else None

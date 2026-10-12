@@ -13,7 +13,6 @@ class GeminiImageGenProvider(ImageGenProvider):
 
     provider_name = "gemini"
     DEFAULT_BASE_URL: ClassVar[str] = "https://generativelanguage.googleapis.com"
-    DEFAULT_MODEL: ClassVar[str] = "gemini-3-pro-image"
     supports_reference_image: ClassVar[bool] = True
     supports_environment_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True

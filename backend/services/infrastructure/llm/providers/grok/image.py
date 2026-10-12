@@ -15,7 +15,6 @@ class GrokImageGenProvider(ImageGenProvider):
 
     provider_name = "grok"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
-    DEFAULT_MODEL: ClassVar[str] = "grok-imagine-image-2.0"
     # xAI /images/edits 原生消费 reference_image，工具层可直接透传，无需回退到视觉模型描述。
     supports_reference_image: ClassVar[bool] = True
     supports_environment_reference_image: ClassVar[bool] = True

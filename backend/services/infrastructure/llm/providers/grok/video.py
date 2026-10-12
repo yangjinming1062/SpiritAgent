@@ -1,6 +1,6 @@
 from typing import ClassVar
 
-from components import get_logger
+from components import ModelModality, get_logger
 from prompts.generation import VIDEO_REFERENCE_IMAGE_LABELS
 
 from ..base import ProviderConfig, ProviderError, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
@@ -35,7 +35,6 @@ class GrokVideoGenProvider(VideoGenProvider):
 
     provider_name = "grok"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
-    DEFAULT_MODEL: ClassVar[str] = "grok-imagine-video-1.5"
 
     # 能力声明与 submit 校验一致，分辨率含工具档位映射。
     durations = _SUPPORTED_DURATIONS
@@ -45,7 +44,9 @@ class GrokVideoGenProvider(VideoGenProvider):
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
-        self.supports_loop_frames = (config.model or self.DEFAULT_MODEL) == "grok-imagine-video-1.5"
+        self.supports_loop_frames = (
+            ModelModality.image in config.input_modalities and config.model == "grok-imagine-video-1.5"
+        )
         self.supports_reference_images = self.supports_loop_frames
 
     def native_resolution(self, resolution: str) -> str | None:
@@ -63,7 +64,7 @@ class GrokVideoGenProvider(VideoGenProvider):
             return None
         if last_frame or reference_images:
             return "720p" if self.supports_loop_frames else None
-        return "1080p" if (self.config.model or self.DEFAULT_MODEL) == "grok-imagine-video-1.5" else "720p"
+        return "1080p" if (self.config.model) == "grok-imagine-video-1.5" else "720p"
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = self.config.model

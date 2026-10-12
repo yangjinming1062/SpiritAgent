@@ -1,7 +1,14 @@
 import asyncio
 import base64
 
-from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, AiFeature, download_capped, get_logger
+from components import (
+    REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
+    SESSION_LOCAL,
+    AiFeature,
+    ModelModality,
+    download_capped,
+    get_logger,
+)
 from prompts.generation import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,7 +88,11 @@ async def resolve_image_gen_chain(
             return False
         return not multiple_references or cls.supports_multiple_reference_images
 
-    capable = [c for c in full if _fits(c) and _capable(c.provider_name)]
+    capable = [
+        c
+        for c in full
+        if _fits(c) and _capable(c.provider_name) and (not has_reference or ModelModality.image in c.input_modalities)
+    ]
     if not full or (capable == full and not has_reference):
         return full, None
     if not any(_fits(c) for c in full):

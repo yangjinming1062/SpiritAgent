@@ -97,7 +97,7 @@ async def run_prompt_json(
     instructions: str,
     payload: dict[str, Any],
     *,
-    max_output_tokens: int,
+    max_output_tokens: int | None = None,
     log_prefix: str,
     temperature: float = 0.2,
 ) -> PromptOutcome:

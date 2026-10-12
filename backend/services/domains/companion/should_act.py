@@ -2,7 +2,6 @@ import time
 from typing import Any
 
 from components import (
-    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     SETTINGS,
     get_logger,
@@ -90,7 +89,6 @@ async def should_act(
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
             **({"recent_context": recent_context} if recent_context else {}),
         },
-        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="should_act",
     )
     if parsed is None:

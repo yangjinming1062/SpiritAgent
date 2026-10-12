@@ -4,6 +4,7 @@ from collections.abc import Coroutine
 from typing import Any, Literal
 
 from components import (
+    ATTACHMENT_TYPE_AUDIO,
     ATTACHMENT_TYPE_VIDEO,
     DEFAULT_SESSION_TITLE,
     TITLE_GENERATION_TEMPERATURE,
@@ -27,7 +28,7 @@ from services.domains.conversation import (
     client_reply_bubbles,
     synthesize_reply_audio,
 )
-from services.domains.media import prune_videos_in_range
+from services.domains.media import ensure_audio_transcripts, prune_media_in_range
 from services.infrastructure.llm import message_to_response_items
 from services.infrastructure.tool_runtime import REGISTRY
 
@@ -90,9 +91,24 @@ def _on_bg_error(task: asyncio.Task) -> None:
         logger.warning("background task raised after completion", exc_info=exc)
 
 
-def _spawn_post_turn_task(user_id: int, coro: Coroutine[Any, Any, object], track_task: TrackTask | None) -> None:
+def _spawn_post_turn_task(
+    user_id: int,
+    coro: Coroutine[Any, Any, object],
+    track_task: TrackTask | None,
+    *,
+    session_id: str,
+    transcripts: dict[str, str | Exception],
+) -> None:
     """回合后任务交给调用方跟踪；无跟踪方时纳入模块级强引用集合并登记到用户任务。失败统一记录日志。"""
-    task = asyncio.create_task(coro)
+
+    async def run() -> None:
+        try:
+            await ensure_audio_transcripts(user_id, session_id, transcripts=transcripts)
+            await coro
+        finally:
+            coro.close()
+
+    task = asyncio.create_task(run())
     if track_task:
         track_task(task)
         task.add_done_callback(_on_bg_error)
@@ -117,7 +133,9 @@ def _build_persisted_content(text: str, attachments: list[ChatAttachment] | None
     parts = [{"type": "input_text", "text": text}]
     for att in attachments:
         url = att.file_url
-        if att.type == ATTACHMENT_TYPE_VIDEO:
+        if att.type == ATTACHMENT_TYPE_AUDIO:
+            parts.append({"type": "input_audio", "audio_url": url, "format": url.rsplit(".", 1)[-1]})
+        elif att.type == ATTACHMENT_TYPE_VIDEO:
             parts.append({"type": "input_video", "video_url": url})
         else:
             parts.append({"type": "input_image", "image_url": url})
@@ -158,7 +176,7 @@ async def persist_compression_checkpoint(
     *,
     notify_user_id: int | None = None,
 ) -> Message:
-    """写入压缩检查点，下一轮历史从其覆盖边界之后读取；原消息保留，边界前无人引用的视频随之清理。"""
+    """写入压缩检查点，下一轮历史从其覆盖边界之后读取；原消息保留，边界前无人引用的音视频随之清理。"""
     checkpoint = Message(
         conversation_id=conv_id,
         role="system",
@@ -184,7 +202,7 @@ async def persist_compression_checkpoint(
         )
     await db.commit()
     if info.prune_before_message_id:
-        await prune_videos_in_range(db, conv_id, hi=info.prune_before_message_id)
+        await prune_media_in_range(db, conv_id, hi=info.prune_before_message_id)
         await db.commit()
     return checkpoint
 
@@ -314,7 +332,8 @@ async def _persist_assistant_no_tool_turn(
         if reply is not None
         else None
     )
-    # 首条用户消息只有附件时文字为空串，仍依据助手回复生成标题。
+    audio_transcripts: dict[str, str | Exception] = {}
+    # 首条用户消息只有附件时文字为空串，转写按需准备后仍可生成标题。
     if persist and conv.title == DEFAULT_SESSION_TITLE and first_user_msg_content is not None and turn_content:
         _spawn_post_turn_task(
             user_id,
@@ -330,6 +349,8 @@ async def _persist_assistant_no_tool_turn(
                 ),
             ),
             track_task,
+            session_id=str(conv.id),
+            transcripts=audio_transcripts,
         )
 
     # 自动化会话没有记忆域；设置 UI 写入 ``agent.enable_background_review``。
@@ -343,6 +364,8 @@ async def _persist_assistant_no_tool_turn(
                 through_message_id=assistant_message_id,
             ),
             track_task,
+            session_id=str(conv.id),
+            transcripts=audio_transcripts,
         )
 
     await emitter.send_json(
@@ -364,6 +387,8 @@ async def _persist_assistant_no_tool_turn(
             user_id,
             update_mood_from_companion_turn(user_id, user_text, reply_bubbles),
             track_task,
+            session_id=str(conv.id),
+            transcripts=audio_transcripts,
         )
 
 

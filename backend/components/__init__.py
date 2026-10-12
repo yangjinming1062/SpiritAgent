@@ -6,11 +6,13 @@ from .ai_config import (
     AIConfigPublic,
     AIConfigUpdate,
     CapabilityCard,
+    ModelDiscoveryRequest,
     ProviderCard,
     ProviderCardUpdate,
     ProviderDefaults,
 )
 from .ai_features import AI_FEATURE_BY_ID, AI_FEATURES, AiFeature, AiFeatureDefinition
+from .ai_models import SERVICE_OUTPUT_MODALITY, ModelDiscoveryResponse, ModelMetadata, ModelModality
 from .attachments import attachment_root, session_dir
 from .attachments import gc_session as attachments_gc_session
 from .background import BackgroundTask, TaskBag
@@ -18,6 +20,7 @@ from .backoff import backoff_for_poll
 from .config import SETTINGS, insecure_secret_settings
 from .constants import (
     ATTACHMENT_DATA_URL_MAX_CHARS,
+    ATTACHMENT_TYPE_AUDIO,
     ATTACHMENT_TYPE_IMAGE,
     ATTACHMENT_TYPE_VIDEO,
     ATTACHMENT_VIDEO_EXTENSIONS,
@@ -36,7 +39,6 @@ from .constants import (
     JSONRPC_SLASH_CONFIRM_REQUIRED,
     JSONRPC_SLASH_GENERIC,
     JSONRPC_TURN_BUSY,
-    LLM_MAX_OUTPUT_TOKENS,
     LLM_RETRY_MIN_TIMEOUT,
     MAX_VOICE_DESIGN_PROMPT_CHARS,
     NIGHTLY_REASONING_EFFORT,
@@ -110,6 +112,11 @@ from .user_maintenance_runtime import (
 )
 
 __all__ = [
+    "ModelDiscoveryRequest",
+    "ModelDiscoveryResponse",
+    "ModelMetadata",
+    "ModelModality",
+    "SERVICE_OUTPUT_MODALITY",
     "AI_FEATURES",
     "AI_FEATURE_BY_ID",
     "AiFeature",
@@ -118,6 +125,7 @@ __all__ = [
     "AIConfigPublic",
     "AIConfigUpdate",
     "ATTACHMENT_DATA_URL_MAX_CHARS",
+    "ATTACHMENT_TYPE_AUDIO",
     "ATTACHMENT_TYPE_IMAGE",
     "ATTACHMENT_TYPE_VIDEO",
     "ATTACHMENT_VIDEO_EXTENSIONS",
@@ -140,7 +148,6 @@ __all__ = [
     "JSONRPC_SLASH_GENERIC",
     "JSONRPC_TURN_BUSY",
     "JSON_RPC_VERSION",
-    "LLM_MAX_OUTPUT_TOKENS",
     "LLM_RETRY_MIN_TIMEOUT",
     "MAX_VOICE_DESIGN_PROMPT_CHARS",
     "NIGHTLY_REASONING_EFFORT",

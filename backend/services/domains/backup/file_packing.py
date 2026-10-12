@@ -18,6 +18,7 @@ from services.infrastructure.assets import parse_companion_asset_path
 URL_PREFIXES: dict[str, str] = {
     "/api/companion/asset/": "companion-assets/",
     "/api/media/videos/": "desktop-attachments/",
+    "/api/media/audios/": "desktop-attachments/",
 }
 
 # 用户维度、整目录按 user_id 重命名的资产根目录；备份按该常量在父子两代实例间搬迁。

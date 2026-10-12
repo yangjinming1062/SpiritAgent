@@ -333,7 +333,7 @@ async def _dispatch_claimed_batch() -> tuple[int, bool]:
                 event_type,
                 payload,
                 event_id=event_id,
-                session_id=payload.get("session_id") if event_type == "compress.completed" else None,
+                session_id=payload.get("session_id") if event_type in {"compress.completed", "message.audio"} else None,
             )
         except Exception as e:
             logger.exception(

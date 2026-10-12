@@ -27,17 +27,19 @@ from pydantic import ValidationError
 from services.contracts import MediaTurnState
 from services.infrastructure.llm import (
     ChatProvider,
+    FailoverReason,
     LLMRuntimeError,
     ProviderConfig,
     build_responses_kwargs,
     call_with_retry,
     classify_api_error,
+    request_output_budget,
     speech_style_guidance,
 )
 
 from .bubble import BubbleEvent, BubbleSplitter
 from .chat_emitter import Emitter
-from .message_sanitization import replace_media_parts
+from .message_sanitization import replace_media_parts, truncate_responses_context
 from .reply_delivery import (
     companion_reply_schema,
     decode_companion_reply,
@@ -320,6 +322,32 @@ async def _generate_llm_response(
         temperature=provider.scale_temperature(0.0 if reply_repair else temperature),
     )
     kwargs.update(reply_options)
+    # 回退到较小窗口时，从同一份原始上下文重新按完整调用批次缩减历史。
+    if not reply_repair:
+        original_input = context["input"]
+        user_indices = context.get("user_input_indices") or [
+            index for index, item in enumerate(original_input) if item.get("role") == "user"
+        ]
+        anchor = max(user_indices or [max(0, len(original_input) - 1)])
+        while anchor > 0 and original_input[anchor - 1].get("role") == "user":
+            anchor -= 1
+        protected_items = {id(item) for item in original_input[anchor:]}
+        protected = next((index for index, item in enumerate(request_input) if id(item) in protected_items), 0)
+        minimum_tail = len(request_input) - protected
+        for count in range(len(request_input), max(0, minimum_tail - 1), -1):
+            try:
+                kwargs["max_output_tokens"] = request_output_budget(provider.config, kwargs)
+                break
+            except LLMRuntimeError as exc:
+                if exc.classified.reason != FailoverReason.context_overflow or count <= minimum_tail:
+                    raise
+                fitted = truncate_responses_context(
+                    {**context, "instructions": instructions, "input": request_input},
+                    current_max_chars=ctx_length // 4,
+                    max_recent_items=count - 1,
+                    protected_start=protected,
+                )
+                kwargs["input"] = fitted["input"]
 
     # 只记录含图片的输入项数量，多模态请求异常时可确认是否带图而无需抓包。
     image_items = [
@@ -334,7 +362,7 @@ async def _generate_llm_response(
     turn_start_time = time.monotonic()
     # 请求失败交给编排层处理回退，避免先向客户端报错又交付下一供应商的正文。
     client = provider.structured_response_client(repair=reply_repair)
-    response = await call_with_retry(client, context_length=ctx_length, **kwargs)
+    response = await call_with_retry(client, config=provider.config, **kwargs)
 
     turn_parts: list[str] = []
     bubble_parts: list[str] = []
@@ -450,7 +478,7 @@ async def _generate_llm_response(
             pending_text.append(response.output_text)
         if response.usage:
             final_prompt_tokens, final_completion_tokens = response.usage.input_tokens, response.usage.output_tokens
-            final_usage_payload = _usage_payload(response.usage)
+            final_usage_payload = {**_usage_payload(response.usage), "context_window": provider.config.context_window}
     else:
         response_finished = False
         try:
@@ -487,7 +515,10 @@ async def _generate_llm_response(
                     completed_response = getattr(chunk, "response", None)
                     if usage := getattr(getattr(chunk, "response", None), "usage", None):
                         final_prompt_tokens, final_completion_tokens = usage.input_tokens, usage.output_tokens
-                        final_usage_payload = _usage_payload(usage)
+                        final_usage_payload = {
+                            **_usage_payload(usage),
+                            "context_window": provider.config.context_window,
+                        }
                 elif event_type == "response.failed":
                     failed_response = getattr(chunk, "response", None)
                     error = getattr(failed_response, "error", None)

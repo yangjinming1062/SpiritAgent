@@ -11,7 +11,6 @@ class MiniMaxEmbeddingProvider(EmbeddingProvider):
     provider_name = "minimax"
     service_type = ServiceType.embedding
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
-    DEFAULT_MODEL: ClassVar[str] = "embo-01"
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)

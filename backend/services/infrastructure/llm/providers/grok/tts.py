@@ -24,7 +24,6 @@ class GrokTTSProvider(TTSProvider):
 
     provider_name = "grok"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
-    DEFAULT_MODEL: ClassVar[str] = "grok-voice-think-fast-1.0"
     VOICE_CATALOG: ClassVar[list[dict]] = [
         {
             "id": voice_id,

@@ -93,11 +93,12 @@ def remote_content_allowed(path: str, method: str) -> bool:
         )
     ):
         return True
-    if path in {"/api/media/stt", "/api/media/tts", "/api/media/videos"}:
+    if path in {"/api/media/stt", "/api/media/tts", "/api/media/videos", "/api/media/audios"}:
         return method == "POST"
     return method == "GET" and (
         path in {"/api/companion/persona", "/api/companion/avatar", "/api/companion/character-card"}
         or path.startswith("/api/companion/asset/")
+        or path.startswith("/api/media/audios/")
     )
 
 

@@ -9,7 +9,6 @@ class MiMoSTTProvider(STTProvider):
 
     provider_name = "mimo"
     DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"
-    DEFAULT_MODEL: ClassVar[str] = "mimo-v2.5-asr"
 
     async def transcribe(self, audio: bytes, *, mime_type: str = "audio/wav", language: str = "auto") -> STTResult:
         return await transcribe_input_audio(

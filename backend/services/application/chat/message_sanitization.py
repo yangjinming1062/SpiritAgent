@@ -6,7 +6,7 @@ from components import get_logger, is_time_context_text
 logger = get_logger(__name__)
 
 # Responses API 输入媒体 part 类型 → 占位文本；较早的历史条目与格式恢复请求不携带媒体。
-_MEDIA_PART_PLACEHOLDERS = {"input_image": "[screenshot]", "input_video": "[video]"}
+_MEDIA_PART_PLACEHOLDERS = {"input_image": "[screenshot]", "input_video": "[video]", "input_audio": "[audio]"}
 # 确定性窗口：保留的最近输入项数、其中仍携带媒体的最近项数、历史条目字符上限。
 _MAX_RECENT_ITEMS = 40
 _MEDIA_RECENT_ITEMS = 10
@@ -116,7 +116,9 @@ def _truncate_response_text(value: Any, max_chars: int) -> Any:
         return [_truncate_response_text(item, max_chars) for item in value]
     if isinstance(value, dict):
         return {
-            key: item if key in ("image_url", "video_url") else _truncate_response_text(item, max_chars)
+            key: item
+            if key in ("image_url", "video_url", "audio_url", "data")
+            else _truncate_response_text(item, max_chars)
             for key, item in value.items()
         }
     return value
@@ -166,10 +168,12 @@ def truncate_responses_context(
     context: dict[str, Any],
     current_max_chars: int = 0,
     current_message_id: int | None = None,
+    max_recent_items: int | None = None,
+    protected_start: int | None = None,
 ) -> dict[str, Any]:
     """deterministic Responses input-window fallback; instructions are never dropped。``current_max_chars`` 是本轮用户输入的字符上限（不低于历史条目上限），由调用方按上下文窗口给出。"""
     items = context["input"]
-    keep_start = max(0, len(items) - _MAX_RECENT_ITEMS)
+    keep_start = max(0, len(items) - (_MAX_RECENT_ITEMS if max_recent_items is None else max_recent_items))
     call_positions = {
         item["call_id"]: index
         for index, item in enumerate(items)
@@ -193,6 +197,8 @@ def truncate_responses_context(
         for index, source_id in enumerate(context.get("source_message_ids", []))
         if current_message_id is not None and source_id == current_message_id
     }
+    if protected_start is not None:
+        current_indices.update(range(protected_start, len(items)))
     current_chars = max(current_max_chars, _MAX_CHARS_PER_ITEM)
     kept = [
         _normalize_older_response_item(
@@ -213,6 +219,8 @@ def truncate_responses_context(
             ),
             None,
         )
+        if max_recent_items is not None and any(_is_user_anchor(item) for item in tail):
+            anchor_index = None
         retained_indices = sorted(index for index in checkpoint_indices if index < keep_start)
         if anchor_index is not None:
             retained_indices.append(anchor_index)
@@ -243,4 +251,5 @@ def truncate_responses_context(
         "instructions": context["instructions"],
         "input": kept,
         "user_input_indices": [index for index, original in enumerate(kept_indices) if original in user_indices],
+        "checkpoint_indices": [index for index, original in enumerate(kept_indices) if original in checkpoint_indices],
     }

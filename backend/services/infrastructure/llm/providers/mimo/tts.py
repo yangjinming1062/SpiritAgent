@@ -18,7 +18,6 @@ class MiMoTTSProvider(TTSProvider):
 
     provider_name = "mimo"
     DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"
-    DEFAULT_MODEL: ClassVar[str] = "mimo-v2.5-tts"
     VOICE_DESIGN_MODEL: ClassVar[str | None] = VOICEDESIGN_MODEL
     VOICE_DESIGN_GUIDE = """\
 关键维度（不需要面面俱到）：

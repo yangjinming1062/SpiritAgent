@@ -47,7 +47,7 @@ function readPendingPrompt(key: string): PendingPrompt | null {
   const attachments: ChatAttachment[] = value.attachments.map((attachment: unknown) => {
     if (
       !record(attachment) ||
-      (attachment.type !== 'image' && attachment.type !== 'video') ||
+      (attachment.type !== 'image' && attachment.type !== 'video' && attachment.type !== 'audio') ||
       typeof attachment.url !== 'string'
     ) {
       throw new Error('待确认的消息附件无法读取，请核对会话后重新登录')
@@ -373,6 +373,7 @@ export function Chat({
     } else if (
       event.type === 'message.media' ||
       event.type === 'message.voice' ||
+      event.type === 'message.audio' ||
       event.type === 'message.edited' ||
       event.type === 'message.deleted'
     ) {
@@ -535,6 +536,10 @@ export function Chat({
     pauseMedia()
     const revision = recordingRevision.current
     const id = selectedRef.current
+    if (!id) {
+      setFailure('请先选择会话')
+      return
+    }
     const microphone = await navigator.mediaDevices.getUserMedia({
       audio: true
     })
@@ -584,15 +589,16 @@ export function Chat({
       setTranscribing(true)
       const form = new FormData()
       form.append(
-        'audio_file',
+        'file',
         new Blob(chunks, { type: media.mimeType }),
         media.mimeType.includes('mp4') ? 'recording.m4a' : 'recording.webm'
       )
+      form.append('session_id', id)
       void api
-        .request<{ text: string }>('/api/media/stt', 'POST', form)
+        .request<{ url: string; duration: number; mime_type: string }>('/api/media/audios', 'POST', form)
         .then(result => {
           if (alive() && revision === recordingRevision.current && id === selectedRef.current) {
-            setDraft(previous => previous + (previous ? '\n' : '') + result.text)
+            setAttachments(previous => [...previous, { type: 'audio', url: result.url }])
           }
         })
         .catch(failure => {
@@ -874,9 +880,9 @@ export function Chat({
             <div className="attachments">
               {attachments.map((attachment, index) => (
                 <div key={index}>
-                  <img alt="待发送图片" src={attachment.url} />
+                  <Media type={attachment.type} url={attachment.url} />
                   <button
-                    aria-label="移除图片"
+                    aria-label="移除附件"
                     onClick={() => setAttachments(previous => previous.filter((_, item) => item !== index))}
                     type="button"
                   >
@@ -912,12 +918,12 @@ export function Chat({
                 setDraft(event.target.value)
                 sessionStorage.setItem(draftKey(selected), event.target.value)
               }}
-              placeholder={transcribing ? '正在转写，请稍候…' : '说点什么…'}
+              placeholder={transcribing ? '正在上传录音，请稍候…' : '说点什么…'}
               rows={1}
               value={draft}
             />
             <button
-              aria-label={recording ? '完成录音' : '录音转文字'}
+              aria-label={recording ? '完成录音' : '录制语音'}
               className={`icon-button ${recording ? 'recording' : ''}`}
               disabled={transcribing || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder}
               onClick={() => run(recordVoice)}
@@ -1035,6 +1041,11 @@ function Message({
                 <Media key={index} refresh={refresh} type="image" url={part.image_url} />
               ) : record(part) && part.type === 'input_video' && typeof part.video_url === 'string' ? (
                 <Media key={index} refresh={refresh} type="video" url={part.video_url} />
+              ) : record(part) && part.type === 'input_audio' && typeof part.audio_url === 'string' ? (
+                <div key={index}>
+                  <Media refresh={refresh} type="audio" url={part.audio_url} />
+                  {typeof part.transcript === 'string' ? <p>{part.transcript}</p> : null}
+                </div>
               ) : null
             )}
             {message.media?.map((media, index) => (

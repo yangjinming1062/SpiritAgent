@@ -163,6 +163,51 @@ export function handleConversationEvent(
       break
     }
 
+    case 'message.audio': {
+      const payload = decodePayload<{
+        session_id?: string
+        message_id?: number
+        audio_url?: string
+        duration?: number
+        transcript?: string
+      }>(event.payload)
+
+      if (
+        payload.session_id !== $chatSessionId.get() ||
+        typeof payload.message_id !== 'number' ||
+        typeof payload.audio_url !== 'string'
+      ) {
+        break
+      }
+
+      for (const item of runtime.$chatMessageList.get()) {
+        if (item.backendMessageId !== payload.message_id) {
+          continue
+        }
+
+        const body = runtime.$chatMessageBodies.get()[item.id]
+
+        if (!body?.attachments) {
+          continue
+        }
+
+        runtime.$chatMessageBodies.setKey(item.id, {
+          ...body,
+          attachments: body.attachments.map(attachment =>
+            attachment.type === 'audio' && attachment.url === payload.audio_url
+              ? {
+                  ...attachment,
+                  ...(typeof payload.duration === 'number' ? { duration: payload.duration } : {}),
+                  ...(typeof payload.transcript === 'string' ? { transcript: payload.transcript } : {})
+                }
+              : attachment
+          )
+        })
+      }
+
+      break
+    }
+
     case 'message.voice': {
       const payload = decodePayload<{
         session_id: string
@@ -243,7 +288,7 @@ export function handleConversationEvent(
         message_id?: number
         reasoning?: string
         text?: string
-        usage?: { completion_tokens?: number; prompt_tokens?: number; total_tokens?: number }
+        usage?: { completion_tokens?: number; prompt_tokens?: number; total_tokens?: number; context_window?: number }
       }>(event.payload)
 
       // 形状异常时按缺省处理：本分支抛错会跳过下方回合收尾，让 $chatTurnInFlight 卡住。
@@ -257,6 +302,7 @@ export function handleConversationEvent(
 
       if (payload.usage) {
         setSessionContextUsage({
+          contextLimit: payload.usage.context_window,
           completionTokens: payload.usage.completion_tokens,
           promptTokens: payload.usage.prompt_tokens,
           totalTokens:

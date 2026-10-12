@@ -15,7 +15,6 @@ class QwenTTSProvider(TTSProvider):
 
     provider_name = "qwen"
     DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/api/v1"
-    DEFAULT_MODEL: ClassVar[str] = "qwen3-tts-instruct-flash"
     VOICE_CATALOG: ClassVar[list[dict]] = [
         {
             "id": "Cherry",

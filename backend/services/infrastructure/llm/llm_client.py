@@ -7,7 +7,16 @@ from dataclasses import replace
 from functools import partial
 from uuid import UUID
 
-from components import AI_FEATURE_BY_ID, SETTINGS, AIConfig, AiFeature, CapabilityCard, ProviderCard, get_logger
+from components import (
+    AI_FEATURE_BY_ID,
+    SETTINGS,
+    AIConfig,
+    AiFeature,
+    CapabilityCard,
+    ModelModality,
+    ProviderCard,
+    get_logger,
+)
 from modules.auth import UserModelConfig
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +28,8 @@ from .providers import (
     EmbeddingProvider,
     ProviderConfig,
     ServiceType,
-    default_base_url,
+    configured_base_url,
+    effective_input_modalities,
     model_supports_feature,
     provider_requires_api_key,
     providers_supporting,
@@ -66,19 +76,7 @@ def _chain_entry(
     provider_type = provider.provider_type
     if provider_type == "local" and service_type == ServiceType.image_gen and card.model_name != "qwen":
         raise MissingLlmConfigError("本地生图使用固定 Qwen 工作流")
-    base_url = provider.base_url or default_base_url(provider_type, service_type)
-    if provider_type == "qwen":
-        for suffix in ("/compatible-mode/v1", "/api/v1"):
-            if base_url.rstrip("/").endswith(suffix):
-                target = (
-                    "/api/v1"
-                    if service_type in (ServiceType.tts, ServiceType.image_gen, ServiceType.video_gen)
-                    else "/compatible-mode/v1"
-                )
-                base_url = base_url.rstrip("/").removesuffix(suffix) + target
-                break
-    if provider_type == "minimax" and service_type != ServiceType.llm:
-        base_url = base_url.rstrip("/").removesuffix("/v1")
+    base_url = configured_base_url(provider_type, provider.base_url, service_type)
     if not base_url or provider_type not in providers_supporting(service_type):
         return None
     if not provider.api_key and provider_requires_api_key(service_type, provider_type):
@@ -92,6 +90,10 @@ def _chain_entry(
         provider_id=provider.id,
         model_card_id=card.id,
         context_window=card.context_window,
+        max_output_tokens=card.max_output_tokens,
+        max_input_tokens=card.max_input_tokens,
+        input_modalities=card.input_modalities,
+        output_modalities=card.output_modalities,
     )
 
 
@@ -170,7 +172,17 @@ async def resolve_provider_chain(
         )
     ]
     return (
-        [config for config in chain if model_supports_feature(config.provider_name, config.model, feature)]
+        [
+            config
+            for config in chain
+            if model_supports_feature(
+                config.provider_name,
+                config.model,
+                feature,
+                input_modalities=config.input_modalities,
+                output_modalities=config.output_modalities,
+            )
+        ]
         if feature is not None
         else chain
     )
@@ -194,7 +206,7 @@ async def resolve_provider_config(
 
 def _vision_configs(configs: Sequence[ProviderConfig]) -> list[ProviderConfig]:
     """按视觉能力筛选，实际模型始终由能力卡片指定。"""
-    return [cfg for cfg in configs if (cls := try_resolve_chat(cfg.provider_name)) is not None and cls.supports_vision]
+    return [cfg for cfg in configs if ModelModality.image in effective_input_modalities(cfg)]
 
 
 async def resolve_vision_chain(
@@ -216,7 +228,21 @@ async def resolve_video_chain(
     return [
         cfg
         for cfg in await resolve_provider_chain(db, user_id, ServiceType.llm, feature=feature)
-        if (cls := try_resolve_chat(cfg.provider_name)) is not None and cls.supports_video
+        if ModelModality.video in effective_input_modalities(cfg)
+    ]
+
+
+async def resolve_media_chain(
+    db: AsyncSession | None,
+    user_id: int | None,
+    *,
+    feature: AiFeature,
+    required_modalities: frozenset[ModelModality],
+) -> list[ProviderConfig]:
+    return [
+        config
+        for config in await resolve_provider_chain(db, user_id, ServiceType.llm, feature=feature)
+        if required_modalities <= effective_input_modalities(config)
     ]
 
 

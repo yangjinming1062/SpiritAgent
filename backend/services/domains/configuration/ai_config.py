@@ -1,4 +1,12 @@
-from components import AI_FEATURE_BY_ID, CAPABILITY_SERVICES, AIConfig, AIConfigPublic, AIConfigUpdate
+from components import (
+    AI_FEATURE_BY_ID,
+    CAPABILITY_SERVICES,
+    AIConfig,
+    AIConfigPublic,
+    AIConfigUpdate,
+    ProviderCard,
+    ProviderCardUpdate,
+)
 from pydantic import ValidationError
 
 from services.infrastructure.llm import model_supports_feature, providers_supporting
@@ -22,7 +30,13 @@ def validate_ai_config(config: AIConfig, system: AIConfig | None = None) -> None
                 raise ValueError(f"功能 {feature.value} 引用的模型卡片不存在：{model_id}")
             _, card, owner = model
             provider = owner.find_provider(card.provider_id, system if owner is config else None)
-            if provider is None or not model_supports_feature(provider.provider_type, card.model_name, feature):
+            if provider is None or not model_supports_feature(
+                provider.provider_type,
+                card.model_name,
+                feature,
+                input_modalities=card.input_modalities,
+                output_modalities=card.output_modalities,
+            ):
                 raise ValueError(f"模型 {card.model_name} 不支持功能 {AI_FEATURE_BY_ID[feature].label}")
 
 
@@ -36,14 +50,7 @@ def prepare_ai_config(
     providers = []
     for card in update.providers:
         old = saved.get(card.id)
-        if old is not None and old.provider_type != card.provider_type:
-            raise ValueError(f"供应商 {card.name} 的类型不能修改，请创建新的供应商条目")
-        providers.append(
-            {
-                **card.model_dump(mode="json", exclude={"api_key_set", "clear_api_key"}),
-                "api_key": "" if card.clear_api_key else card.api_key or (old.api_key if old else ""),
-            },
-        )
+        providers.append(prepare_provider_card(card, old).model_dump(mode="json"))
     try:
         config = AIConfig.model_validate(
             {
@@ -56,6 +63,17 @@ def prepare_ai_config(
         raise ValueError(f"AI 卡片配置无效：{reasons}") from exc
     validate_ai_config(config, system)
     return config
+
+
+def prepare_provider_card(update: ProviderCardUpdate, previous: ProviderCard | None) -> ProviderCard:
+    if previous is not None and previous.provider_type != update.provider_type:
+        raise ValueError("供应商类型不能修改，请创建新的供应商条目")
+    return ProviderCard.model_validate(
+        {
+            **update.model_dump(exclude={"api_key_set", "clear_api_key"}),
+            "api_key": "" if update.clear_api_key else update.api_key or (previous.api_key if previous else ""),
+        },
+    )
 
 
 def public_ai_config(config: AIConfig) -> AIConfigPublic:

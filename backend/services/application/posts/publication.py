@@ -6,7 +6,6 @@ from typing import Any, Literal, get_args
 from weakref import WeakValueDictionary
 
 from components import (
-    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     AiFeature,
     TaskBag,
@@ -191,7 +190,6 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
         render_post_instructions(POST_PUBLISH_INSTRUCTIONS, payload["output_language"]),
         payload,
         json_output=True,
-        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
     )
     data = parse_llm_json(raw)
     if not isinstance(data, dict) or type(data.get("post")) is not bool:

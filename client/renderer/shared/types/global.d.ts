@@ -155,6 +155,7 @@ declare global {
       }
       media: {
         stt: AsyncIpc<IpcInvokeContract['spiritagent:media:stt']>
+        uploadAudio: AsyncIpc<IpcInvokeContract['spiritagent:media:audio-upload']>
         tts: AsyncIpc<IpcInvokeContract['spiritagent:media:tts']>
         onboardingAudio: {
           read: AsyncIpc<IpcInvokeContract['spiritagent:onboardingAudio:read']>

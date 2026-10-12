@@ -10,7 +10,6 @@ import {
 
 import type { ChatUndoDraft, PendingExternalAttachment, ProactiveBubbleState } from './chat-runtime'
 
-export const DEFAULT_CONTEXT_LIMIT = 1_000_000
 export const CHAT_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.chatSessionId')
 const COMPANION_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.companionSessionId')
 export const FLUSH_DEBOUNCE_MS = 4000

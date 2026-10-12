@@ -8,7 +8,7 @@ from components import LLM_RETRY_MIN_TIMEOUT, SETTINGS, get_logger
 from openai import AsyncOpenAI
 
 from .call_budget import current_call_feature, provider_request_timeout, remaining_chain_seconds, response_started
-from .error_classifier import LlmCallBlockedError, LLMRuntimeError, classify_api_error
+from .error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, LLMRuntimeError, classify_api_error
 from .llm_debug import (
     log_event,
     new_call_id,
@@ -17,8 +17,15 @@ from .llm_debug import (
     summarize_llm_response,
     truncate_for_log,
 )
-from .providers import ChatSchemaResponsesClient
-from .responses import approx_responses_tokens
+from .providers import (
+    AudioChatResponsesClient,
+    ChatSchemaResponsesClient,
+    ProviderConfig,
+    effective_input_modalities,
+    resolve_context_tokens,
+)
+from .responses import approx_responses_tokens, request_input_modalities
+from .token_budget import request_output_budget
 
 logger = get_logger(__name__)
 
@@ -125,10 +132,35 @@ async def _guarded_stream(
 async def call_with_retry(
     client: AsyncOpenAI | ChatSchemaResponsesClient,
     *,
-    context_length: int = 200000,
+    config: ProviderConfig,
     **create_kwargs: Any,
 ) -> Any:
     """client.responses.create(**kwargs) 的统一入口：终端异常分类为 LLMRuntimeError，流式响应受总预算约束。重试由客户端 max_retries 接管（SDK 遵循 Retry-After 并对 408/409/429/5xx 退避）；换供应商由 execute_with_fallback 决定。"""
+    context_length = resolve_context_tokens(config)
+    if create_kwargs.get("model") != config.model:
+        raise ValueError("调用模型必须来自当前能力卡片")
+    if not request_input_modalities(create_kwargs.get("input")) <= effective_input_modalities(config):
+        raise LLMRuntimeError(
+            ClassifiedError(FailoverReason.model_not_found, None, "当前模型卡片不支持请求中的媒体类型"),
+        )
+    create_kwargs["max_output_tokens"] = request_output_budget(config, create_kwargs)
+    required_media = request_input_modalities(create_kwargs.get("input"))
+    if config.provider_name == "mimo" and required_media & {"audio", "video"}:
+        if not isinstance(client, AsyncOpenAI):
+            raise ValueError("音频请求不能使用文本格式恢复客户端")
+        client = AudioChatResponsesClient(client)
+    else:
+        # 音频时长和转写只参与预算或历史，不发送给供应商。
+        def wire(value: Any) -> Any:
+            if isinstance(value, list):
+                return [wire(item) for item in value]
+            if isinstance(value, dict):
+                if value.get("type") == "input_audio":
+                    return {key: item for key, item in value.items() if key in {"type", "format", "data", "audio_url"}}
+                return {key: wire(item) for key, item in value.items()}
+            return value
+
+        create_kwargs["input"] = wire(create_kwargs.get("input"))
     request_timeout = provider_request_timeout(max(float(SETTINGS.llm_request_timeout_seconds), LLM_RETRY_MIN_TIMEOUT))
     budget = remaining_chain_seconds(request_timeout)
     create_kwargs.setdefault("timeout", request_timeout)

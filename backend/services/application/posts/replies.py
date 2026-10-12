@@ -3,7 +3,6 @@
 import asyncio
 
 from components import (
-    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     AiFeature,
     TaskBag,
@@ -133,7 +132,6 @@ async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
             config,
             render_post_instructions(POST_REPLY_INSTRUCTIONS, ctx.language),
             payload,
-            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         )
     ).strip()
     if not reply or len(reply) > POST_COMMENT_MAX_CHARS:

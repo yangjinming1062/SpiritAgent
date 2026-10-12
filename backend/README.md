@@ -17,7 +17,7 @@
 | 管理后台、配置与用户维护 | [admin.py](api/v1/admin.py)、[static/admin.html](static/admin.html)、[配置与迁移](#配置与迁移) |
 | 供应商与功能链 | [ai_features.py](components/ai_features.py)、[registrations.py](bootstrap/registrations.py)、[providers/base.py](services/infrastructure/llm/providers/base.py)、[llm_client.py](services/infrastructure/llm/llm_client.py) |
 | 桌面配置同步 | [config.py](api/v1/config.py)、[desktop_config.py](services/domains/configuration/desktop_config.py) |
-| 附件、上传视频与语音 | [media.py](api/v1/media.py)、[sessions.py](api/v1/sessions.py)、[chat_videos.py](services/domains/media/chat_videos.py) |
+| 附件、上传视频与语音 | [media.py](api/v1/media.py)、[sessions.py](api/v1/sessions.py)、[chat_attachments.py](services/domains/media/chat_attachments.py) |
 | 正式资产写入、签名与回收 | [asset_store.py](services/infrastructure/assets/asset_store.py)、[资产领域](services/domains/assets/README.md) |
 | 桌面与 Runner 更新分发 | [update.py](api/v1/update.py)、[update_releases.py](services/domains/update_releases.py) |
 | 备份与覆盖恢复 | [admin.py](api/v1/admin.py)、[backup](services/domains/backup/)、[maintenance.py](services/adapters/maintenance.py) |
@@ -154,7 +154,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 `local` 对接 Responses 服务、embedding 和 ComfyUI，默认地址见 [适配器](services/infrastructure/llm/providers/local/)。信息库地址须从 Backend（含容器）可达，不同地址分别建条目。无鉴权服务可留空密钥；启用 SSRF 守卫时私网地址须加入允许 CIDR，CGNAT 和云元数据地址不可豁免。
 
 - ComfyUI 自动匹配 Qwen 权重，卡片要求见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)；图像能力与长等待归 PIPELINE。
-- LLM 支持 Responses API；能力卡片须填写已部署模型 ID 和模型服务实际加载的上下文窗口（tokens），供压缩、调用预算和会话容量展示使用。适配器按地址缓存 `/props` 探测结果；无工具结构输出中，llama.cpp 使用 `response_format.json_schema`，Strata 使用 `text.format`。两者按会话或任务的推理强度下发 `reasoning.effort`（`none` 关闭思考），未识别服务不下发推理参数和原生结构约束。其余由提示词与应用校验约束。归一化温度按 1:1 下发（界面 0.7 即 0.7），本地模型的推荐值多在 0–1。
+- LLM 支持 Responses API；能力卡片须填写已部署模型 ID 、模型服务实际加载的上下文窗口与输出 Token 上限，供压缩、调用预算和会话容量展示使用。适配器按地址缓存 `/props` 探测结果；无工具结构输出中，llama.cpp 使用 `response_format.json_schema`，Strata 使用 `text.format`。两者按会话或任务的推理强度下发 `reasoning.effort`（`none` 关闭思考），未识别服务不下发推理参数和原生结构约束。其余由提示词与应用校验约束。归一化温度按 1:1 下发（界面 0.7 即 0.7），本地模型的推荐值多在 0–1。
 - embedding 固定使用记忆向量功能配置的模型；链为空、无效或调用失败时记忆用关键词召回。维度适配见 [embedding.py](services/infrastructure/llm/providers/local/embedding.py)：仅默认模型允许 MRL 截断，短向量归一化补零，其他超宽向量拒绝。向量空间与补齐规则见 [记忆读取与恢复](services/domains/memory/README.md#读取召回与恢复)。
 
 ### 运营参数

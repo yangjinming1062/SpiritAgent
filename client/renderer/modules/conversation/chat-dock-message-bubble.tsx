@@ -318,7 +318,10 @@ function MessageBubbleWithBody({
           {body.attachments?.length ? (
             <div className="flex flex-col gap-1">
               {body.attachments.map(a => (
-                <ChatMediaCard item={{ type: a.type, url: a.url }} key={a.url} />
+                <div key={a.url}>
+                  <ChatMediaCard item={{ type: a.type, url: a.url }} />
+                  {a.transcript ? <p className="text-xs text-muted whitespace-pre-wrap">{a.transcript}</p> : null}
+                </div>
               ))}
             </div>
           ) : null}

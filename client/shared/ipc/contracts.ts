@@ -358,6 +358,18 @@ export interface MediaSttPayload {
   language?: string
 }
 
+export interface AudioUploadPayload {
+  dataUrl: string
+  filename: string
+  sessionId: string
+}
+
+export interface AudioUploadResult {
+  url: string
+  mime_type: string
+  duration: number
+}
+
 export interface MediaTtsPayload {
   context?: null | string
   persist?: boolean
@@ -572,6 +584,7 @@ export interface IpcInvokeContract {
 
   // 媒体
   'spiritagent:media:stt': (payload: MediaSttPayload) => { text: string } | Promise<{ text: string }>
+  'spiritagent:media:audio-upload': (payload: AudioUploadPayload) => AudioUploadResult | Promise<AudioUploadResult>
   'spiritagent:media:tts': (
     payload: MediaTtsPayload
   ) => { dataUrl: string; mimeType: string } | Promise<{ dataUrl: string; mimeType: string }>
@@ -746,6 +759,7 @@ export const IPC = {
     toolsetsList: 'spiritagent:toolsets:list',
     toolsetSetEnabled: 'spiritagent:toolset:set-enabled',
     mediaStt: 'spiritagent:media:stt',
+    mediaAudioUpload: 'spiritagent:media:audio-upload',
     mediaTts: 'spiritagent:media:tts',
     mediaVideoUpload: 'spiritagent:media:video-upload',
     mediaDesktopVideoUpload: 'spiritagent:media:desktop-video-upload',

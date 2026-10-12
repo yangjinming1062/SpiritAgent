@@ -17,17 +17,22 @@ from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from modules.auth import CurrentUser
 from modules.conversation import Conversation
-from modules.media import ChatVideoUploadResponse, SpeechToTextResponse
+from modules.media import ChatAudioUploadResponse, ChatVideoUploadResponse, SpeechToTextResponse
 from pydantic import BaseModel
 from services.adapters.http import limiter
 from services.domains.media import (
+    attachment_audio_url,
     attachment_video_url,
+    audio_mime_for_ext,
     enforce_session_quota,
+    resolve_audio_file,
     resolve_video_file,
+    save_audio_attachment,
     save_video_attachment,
     video_mime_for_ext,
 )
 from services.infrastructure.llm import MissingLlmConfigError, synthesize_speech, transcribe_audio
+from services.infrastructure.video_processing import VideoProcessError, probe_audio
 
 from ._http_errors import llm_http_error, missing_config_http
 
@@ -81,6 +86,86 @@ async def serve_session_video(session_id: str, file_id: str) -> FileResponse:
             detail={"error": "Video not found", "reason": "not_found", "status_code": 404},
         )
     return FileResponse(path, media_type=video_mime_for_ext(path.suffix))
+
+
+@router.get("/audios/{session_id}/{file_id}")
+async def serve_session_audio(session_id: str, file_id: str, db: DbSession, user: CurrentUser) -> FileResponse:
+    if await Conversation.by_session_id(db, session_id, user_id=user.id) is None:
+        raise HTTPException(status_code=404, detail="Audio not found")
+    path = resolve_audio_file(session_id, file_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Audio not found")
+    await db.commit()
+    return FileResponse(path, media_type=audio_mime_for_ext(path.suffix))
+
+
+@router.post("/audios", response_model=ChatAudioUploadResponse)
+@limiter.limit(lambda: f"{SETTINGS.media_stt_rate_limit_per_minute}/minute")
+async def upload_chat_audio(
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+) -> ChatAudioUploadResponse:
+    raw_id = session_id.strip()
+    if not raw_id.isdigit() or len(raw_id) > 20:
+        raise HTTPException(status_code=422, detail="Invalid session_id")
+    session_id = str(int(raw_id))
+    if await Conversation.by_session_id(db, session_id, user_id=user.id) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if file.size is None or file.size <= 0:
+        raise HTTPException(status_code=422, detail="Empty audio")
+    if file.size > min(STT_MAX_AUDIO_BYTES, SETTINGS.attachment_session_quota_bytes):
+        raise HTTPException(status_code=413, detail="Audio exceeds upload or session byte limit")
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in {".wav", ".mp3", ".ogg", ".m4a", ".flac", ".webm"}:
+        raise HTTPException(status_code=415, detail="Unsupported audio format")
+    await db.commit()
+
+    def save() -> tuple[str, float]:
+        file_id, _ = save_audio_attachment(session_id, file.file, ext, STT_MAX_AUDIO_BYTES)
+        path = resolve_audio_file(session_id, file_id)
+        if path is None:
+            raise ValueError("Audio file unavailable")
+        try:
+            duration = probe_audio(path)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return file_id, duration
+
+    task = asyncio.create_task(asyncio.to_thread(save))
+    try:
+        file_id, duration = await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not task.cancelled() and task.exception() is None:
+            path = resolve_audio_file(session_id, task.result()[0])
+            if path is not None:
+                path.unlink(missing_ok=True)
+        raise
+    except (ValueError, VideoProcessError) as exc:
+        raise HTTPException(status_code=422, detail="无法读取音频，请重新录制或上传有效音频") from exc
+    try:
+        await enforce_session_quota(db, session_id, 0)
+        await db.commit()
+    except BaseException:
+        path = resolve_audio_file(session_id, file_id)
+        if path is not None:
+            path.unlink(missing_ok=True)
+        raise
+    return ChatAudioUploadResponse(
+        url=attachment_audio_url(session_id, file_id),
+        mime_type=audio_mime_for_ext(ext),
+        duration=duration,
+    )
 
 
 @router.post("/videos", response_model=ChatVideoUploadResponse)

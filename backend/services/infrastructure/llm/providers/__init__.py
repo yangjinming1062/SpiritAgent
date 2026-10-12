@@ -1,3 +1,4 @@
+from ._audio_responses import AudioChatResponsesClient
 from ._companion_format import ChatSchemaResponsesClient
 from ._reference import resolve_reference_bytes
 from ._size_aspect import ASPECT_RATIOS, SIZE_TO_ASPECT
@@ -25,9 +26,12 @@ from .base import (
 )
 from .http import ProviderResultUnknownError, aclose_all, rotate_http_clients
 from .registry import (
+    configured_base_url,
     default_base_url,
+    effective_input_modalities,
     model_supports_feature,
     provider_configuration_defaults,
+    provider_input_modalities,
     provider_requires_api_key,
     providers_for_feature,
     providers_supporting,
@@ -39,6 +43,7 @@ from .registry import (
 )
 
 __all__ = [
+    "AudioChatResponsesClient",
     "providers_for_feature",
     "ASPECT_RATIOS",
     "PRODUCT_REASONING_EFFORTS",
@@ -66,7 +71,10 @@ __all__ = [
     "VoiceDesignResult",
     "aclose_all",
     "default_base_url",
+    "configured_base_url",
     "model_supports_feature",
+    "effective_input_modalities",
+    "provider_input_modalities",
     "provider_configuration_defaults",
     "provider_requires_api_key",
     "providers_supporting",

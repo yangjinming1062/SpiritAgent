@@ -3,7 +3,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
-from components import AI_FEATURE_BY_ID, SETTINGS, AiFeature, get_logger, log_paid_call
+from components import AI_FEATURE_BY_ID, SETTINGS, AiFeature, ModelModality, get_logger, log_paid_call
 
 from .call_budget import attempt_budget, chain_budget, remaining_chain_seconds
 from .error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, LLMRuntimeError, classify_api_error
@@ -11,16 +11,78 @@ from .llm_client import MissingLlmConfigError, build_provider
 from .llm_debug import log_event, new_call_id
 from .providers import (
     BaseProvider,
+    ChatProvider,
     ImageGenProvider,
     ProviderConfig,
     ProviderResultUnknownError,
     STTProvider,
     TTSProvider,
     VideoGenProvider,
+    effective_input_modalities,
 )
 from .wait_budget import generation_timeout_scope
 
 logger = get_logger(__name__)
+
+
+async def execute_media_with_fallback[T](
+    chain: Sequence[ProviderConfig],
+    required_modalities: frozenset[ModelModality],
+    call_fn: Callable[[ChatProvider, bool], Awaitable[T]],
+    *,
+    user_id: int | None,
+    stream_started: Callable[[], bool] | None = None,
+) -> T:
+    """原生音频优先；转写和文本回退共用同一功能期限，不能跨过流已开始的边界。"""
+    text_requirements = required_modalities - {ModelModality.audio}
+    native = [config for config in chain if required_modalities <= effective_input_modalities(config)]
+    text = [config for config in chain if text_requirements <= effective_input_modalities(config)]
+    if ModelModality.audio not in required_modalities:
+        return await execute_with_fallback(
+            native,
+            ChatProvider,
+            lambda provider: call_fn(provider, False),
+            user_id=user_id,
+            stream_started=stream_started,
+        )
+    if not chain:
+        raise MissingLlmConfigError("未配置可用模型")
+    total = chain[0].total_timeout_seconds
+    if chain[0].feature is not None and AI_FEATURE_BY_ID[chain[0].feature].fast_decision:
+        total = min(total, 20.0) if total is not None else 20.0
+    timeout = asyncio.timeout(total)
+    try:
+        async with timeout:
+            with chain_budget(timeout), generation_timeout_scope(timeout):
+                if native:
+                    try:
+                        return await _execute_with_fallback(
+                            native,
+                            ChatProvider,
+                            lambda provider: call_fn(provider, True),
+                            user_id=user_id,
+                            stream_started=stream_started,
+                        )
+                    except LlmCallBlockedError:
+                        raise
+                    except Exception as exc:
+                        if not classify_api_error(exc).should_fallback or (
+                            stream_started is not None and stream_started()
+                        ):
+                            raise
+                return await _execute_with_fallback(
+                    text,
+                    ChatProvider,
+                    lambda provider: call_fn(provider, False),
+                    user_id=user_id,
+                    stream_started=stream_started,
+                )
+    except TimeoutError as exc:
+        if not timeout.expired():
+            raise
+        raise LLMRuntimeError(
+            ClassifiedError(FailoverReason.timeout, None, "AI feature call budget exhausted"),
+        ) from exc
 
 
 async def execute_with_fallback[P: BaseProvider, T](

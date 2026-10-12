@@ -23,9 +23,6 @@ from .memory_policy import MemoryDecisions
 
 logger = get_logger(__name__)
 
-# 普通审阅的整批决策、证据引用与理由和推理共用输出预算。
-_MEMORY_REVIEW_MAX_OUTPUT_TOKENS = 32768
-
 # 每个记忆作用域一把审阅锁，保证同域审核串行；用户覆盖恢复/删除后经 invalidate 丢弃。
 _REVIEW_LOCKS: dict[MemoryScope, asyncio.Lock] = {}
 
@@ -78,7 +75,7 @@ async def assess_memory_changes(
     llm_config: UserLlmConfig,
     proposal: dict[str, Any] | None = None,
     advance_review: bool = False,
-    max_output_tokens: int | None = _MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
+    max_output_tokens: int | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
 ) -> list[MemoryRecord]:
@@ -116,7 +113,7 @@ async def review_memories(
     through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
     feature: AiFeature = AiFeature.memory_review,
-    max_output_tokens: int | None = _MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
+    max_output_tokens: int | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
 ) -> None:
@@ -148,7 +145,7 @@ async def _review_batches(
     through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
     feature: AiFeature = AiFeature.memory_review,
-    max_output_tokens: int | None = _MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
+    max_output_tokens: int | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
 ) -> None:

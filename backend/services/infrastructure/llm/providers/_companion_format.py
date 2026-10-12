@@ -1,5 +1,5 @@
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 from openai import APIStatusError, AsyncOpenAI
 from openai.types.chat import ChatCompletion
@@ -14,9 +14,11 @@ class ChatSchemaResponsesClient:
         client: AsyncOpenAI,
         *,
         before_submit: Callable[[], Awaitable[None]] | None = None,
+        token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens",
     ) -> None:
         self._client = client
         self._before_submit = before_submit
+        self._token_parameter = token_parameter
         self.base_url = client.base_url
         self.responses = self
 
@@ -117,93 +119,97 @@ class ChatSchemaResponsesClient:
         if reasoning := kwargs.get("reasoning"):
             request["reasoning_effort"] = reasoning["effort"]
         if "max_output_tokens" in kwargs:
-            request["max_tokens"] = kwargs["max_output_tokens"]
+            request[self._token_parameter] = kwargs["max_output_tokens"]
         try:
             completion = await self._chat_completion(request)
         except APIStatusError as error:
             if error.status_code not in {404, 405} or "model" in str(error.body).lower():
                 raise
             return await self._responses_completion(kwargs)
-        if len(completion.choices) != 1:
-            raise ValueError("Schema repair requires one completion choice")
-        choice = completion.choices[0]
-        message = choice.message
-        reason = (
-            "content_filter"
-            if choice.finish_reason == "content_filter" or message.refusal
-            else "max_output_tokens"
-            if choice.finish_reason == "length"
-            else None
-        )
-        if reason is None and choice.finish_reason not in {"stop", "tool_calls", "function_call"}:
-            raise ValueError("Schema repair did not reach a known completion state")
-        output: list[dict] = []
-        if reasoning_text := getattr(message, "reasoning_content", None):
-            output.append(
-                {
-                    "id": completion.id + "-reasoning",
-                    "type": "reasoning",
-                    "summary": [],
-                    "content": [{"type": "reasoning_text", "text": reasoning_text}],
-                },
-            )
-        if message.content:
-            output.append(
-                {
-                    "id": completion.id + "-text",
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": [{"type": "output_text", "text": message.content, "annotations": []}],
-                },
-            )
-        for call in message.tool_calls or []:
-            if call.type != "function":
-                raise ValueError("Schema repair returned an unsupported tool call")
-            output.append(
-                {
-                    "id": call.id,
-                    "call_id": call.id,
-                    "type": "function_call",
-                    "name": call.function.name,
-                    "arguments": call.function.arguments,
-                },
-            )
-        if message.function_call is not None:
-            output.append(
-                {
-                    "call_id": completion.id + "-call",
-                    "type": "function_call",
-                    "name": message.function_call.name,
-                    "arguments": message.function_call.arguments,
-                },
-            )
-        usage = completion.usage
-        return Response.model_validate(
+        return chat_completion_response(completion)
+
+
+def chat_completion_response(completion: ChatCompletion) -> Response:
+    if len(completion.choices) != 1:
+        raise ValueError("Chat request requires one completion choice")
+    choice = completion.choices[0]
+    message = choice.message
+    reason = (
+        "content_filter"
+        if choice.finish_reason == "content_filter" or message.refusal
+        else "max_output_tokens"
+        if choice.finish_reason == "length"
+        else None
+    )
+    if reason is None and choice.finish_reason not in {"stop", "tool_calls", "function_call"}:
+        raise ValueError("Chat request did not reach a known completion state")
+    output: list[dict] = []
+    if reasoning_text := getattr(message, "reasoning_content", None):
+        output.append(
             {
-                "id": completion.id,
-                "created_at": completion.created,
-                "model": completion.model,
-                "object": "response",
-                "status": "incomplete" if reason else "completed",
-                "incomplete_details": {"reason": reason} if reason else None,
-                "parallel_tool_calls": False,
-                "tool_choice": "none",
-                "tools": [],
-                "output": output,
-                "usage": {
-                    "input_tokens": usage.prompt_tokens,
-                    "output_tokens": usage.completion_tokens,
-                    "total_tokens": usage.total_tokens,
-                    "input_tokens_details": {
-                        "cached_tokens": getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0,
-                        "cache_write_tokens": getattr(usage.prompt_tokens_details, "cache_write_tokens", 0) or 0,
-                    },
-                    "output_tokens_details": {
-                        "reasoning_tokens": getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0,
-                    },
-                }
-                if usage
-                else None,
+                "id": completion.id + "-reasoning",
+                "type": "reasoning",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": reasoning_text}],
             },
         )
+    if message.content:
+        output.append(
+            {
+                "id": completion.id + "-text",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": message.content, "annotations": []}],
+            },
+        )
+    for call in message.tool_calls or []:
+        if call.type != "function":
+            raise ValueError("Schema repair returned an unsupported tool call")
+        output.append(
+            {
+                "id": call.id,
+                "call_id": call.id,
+                "type": "function_call",
+                "name": call.function.name,
+                "arguments": call.function.arguments,
+            },
+        )
+    if message.function_call is not None:
+        output.append(
+            {
+                "call_id": completion.id + "-call",
+                "type": "function_call",
+                "name": message.function_call.name,
+                "arguments": message.function_call.arguments,
+            },
+        )
+    usage = completion.usage
+    return Response.model_validate(
+        {
+            "id": completion.id,
+            "created_at": completion.created,
+            "model": completion.model,
+            "object": "response",
+            "status": "incomplete" if reason else "completed",
+            "incomplete_details": {"reason": reason} if reason else None,
+            "parallel_tool_calls": False,
+            "tool_choice": "none",
+            "tools": [],
+            "output": output,
+            "usage": {
+                "input_tokens": usage.prompt_tokens,
+                "output_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+                "input_tokens_details": {
+                    "cached_tokens": getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0,
+                    "cache_write_tokens": getattr(usage.prompt_tokens_details, "cache_write_tokens", 0) or 0,
+                },
+                "output_tokens_details": {
+                    "reasoning_tokens": getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0,
+                },
+            }
+            if usage
+            else None,
+        },
+    )

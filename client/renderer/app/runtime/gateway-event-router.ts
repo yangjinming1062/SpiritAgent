@@ -118,6 +118,21 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       }
 
       break
+    case 'message.audio': {
+      const payload = decodePayload<{ session_id?: string }>(event.payload)
+      const sessionId = event.session_id ?? payload.session_id
+
+      if (typeof sessionId === 'string') {
+        invalidateSessionHistory(sessionId)
+      }
+
+      if (runtime) {
+        handleConversationEvent(event, ctx, runtime)
+      }
+
+      break
+    }
+
     case 'compress.completed': {
       const payload = decodePayload<{ subtype?: string; text?: string }>(event.payload)
       const sessionId = event.session_id ?? $chatSessionId.get()

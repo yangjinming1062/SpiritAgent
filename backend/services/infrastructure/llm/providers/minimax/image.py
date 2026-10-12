@@ -15,7 +15,6 @@ class MiniMaxImageGenProvider(ImageGenProvider):
 
     provider_name = "minimax"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
-    DEFAULT_MODEL: ClassVar[str] = "image-01"
     max_prompt_chars: ClassVar[int | None] = 1499  # 实测 ≥1500 字符的提示词被拒
     # 原生 i2i 经 subject_reference；image_file 接受公网 URL 或 data:image/*;base64,... URI。
     supports_reference_image: ClassVar[bool] = True

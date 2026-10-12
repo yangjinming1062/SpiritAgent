@@ -7,14 +7,13 @@ import { getSpiritAgentConfig } from '@/shared/spiritagent'
 import { getStrings } from '@/shared/strings'
 
 import { CHAT_AUDIO_CONSTRAINTS } from './audio-constraints'
-import { convertBlobToWav } from './audio-wav'
 import { blobToDataUrl } from './blob-data-url'
 import type { ConversationRuntime } from './chat-runtime'
 import { activeConversationRuntime } from './chat-store'
 import { ensureChatSession } from './session-list-store'
 import { conversationVoiceSink } from './voice-link'
 
-// 语音消息用 MediaRecorder 整段录制（webm/opus）→ 客户端转 16kHz WAV → REST 转写。
+// 原始录音落到会话附件；后端优先原生音频，必要时转写。
 const PREFERRED_OPUS_MIME_TYPES = [
   'audio/webm;codecs=opus',
   'audio/webm',
@@ -46,7 +45,7 @@ function getAudioExtensionForMime(mime: string): string {
   }
 
   if (mime.includes('mp4')) {
-    return 'mp4'
+    return 'm4a'
   }
 
   return 'webm'
@@ -71,7 +70,7 @@ type Options = {
   isReadOnlySession?: boolean
 }
 
-// 语音消息生命周期管理：录音、自动停止、全局事件解绑、音轨清理与转写提交。
+// 语音消息生命周期管理：录音、自动停止、全局事件解绑、音轨清理与附件发送。
 
 export function useVoiceRecorder({
   isReadOnlySession,
@@ -150,44 +149,6 @@ export function useVoiceRecorder({
     endRecording()
   }, [cancelAutoStop, endRecording])
 
-  const transcribe = useCallback(
-    async (blob: Blob, operation: number): Promise<string | null> => {
-      try {
-        let finalBlob = blob
-
-        try {
-          finalBlob = await convertBlobToWav(blob, 16000)
-        } catch (convErr) {
-          log.warn('voice-recorder', 'Failed to convert audio to wav, fallback to raw blob:', convErr)
-        }
-
-        const dataUrl = await blobToDataUrl(finalBlob)
-
-        const ext = getAudioExtensionForMime(finalBlob.type)
-
-        // 不指定语言：主进程按当前用户语言设置转写。
-        if (!isCurrent() || operation !== operationRef.current) {
-          return null
-        }
-
-        const res = await window.spiritagent.media.stt({ dataUrl, filename: `voice.${ext}` })
-        const text = (res.text ?? '').trim()
-
-        return text || null
-      } catch (err: unknown) {
-        log.warn('voice-recorder', 'Transcription failed:', err)
-        const voiceInput = getStrings().chat.voiceInput
-
-        if (isCurrent() && operation === operationRef.current) {
-          markAssistantTerminal({ error: isMediaBusyError(err) ? voiceInput.busy : voiceInput.notRecognized })
-        }
-
-        return null
-      }
-    },
-    [isCurrent, markAssistantTerminal]
-  )
-
   const stop = useCallback(async () => {
     const operation = operationRef.current
     const recordingCurrent = (): boolean => isCurrent() && operation === operationRef.current
@@ -249,42 +210,43 @@ export function useVoiceRecorder({
     }
 
     presentationPorts().setSpriteState('thinking')
-    const text = await transcribe(blob, operation)
 
-    if (!recordingCurrent()) {
-      return
-    }
-
-    if (text) {
+    try {
       if (isReadOnlySession) {
-        presentationPorts().setSpriteState('idle', { force: true })
-
         return
       }
 
-      try {
-        await ensureChatSession(runtime)
+      const sessionId = await ensureChatSession(runtime)
 
-        if (!recordingCurrent()) {
-          return
-        }
-
-        pushUserMessage(text)
-        presentationPorts().setSpriteState('thinking')
-        pushPendingPrompt({ text })
-        schedulePendingFlush()
-      } catch (err) {
-        log.warn('voice-recorder', 'Voice message send failed:', err)
-
-        if (!recordingCurrent()) {
-          return
-        }
-
-        presentationPorts().setSpriteState('idle', { force: true })
-        markAssistantTerminal({ error: errorMessage(err, getStrings().chat.sendFailed) })
+      if (!recordingCurrent()) {
+        return
       }
-    } else {
-      presentationPorts().setSpriteState('idle', { force: true })
+
+      const uploaded = await window.spiritagent.media.uploadAudio({
+        dataUrl: await blobToDataUrl(blob),
+        filename: `voice.${getAudioExtensionForMime(blob.type)}`,
+        sessionId
+      })
+
+      if (!recordingCurrent()) {
+        return
+      }
+
+      const attachments = [{ type: 'audio' as const, url: uploaded.url }]
+      pushUserMessage('', attachments)
+      pushPendingPrompt({ text: '', attachments })
+      schedulePendingFlush()
+    } catch (err) {
+      log.warn('voice-recorder', 'Voice message send failed:', err)
+
+      if (recordingCurrent()) {
+        presentationPorts().setSpriteState('idle', { force: true })
+        markAssistantTerminal({
+          error: isMediaBusyError(err)
+            ? getStrings().chat.voiceInput.busy
+            : errorMessage(err, getStrings().chat.sendFailed)
+        })
+      }
     }
   }, [
     isReadOnlySession,
@@ -294,7 +256,6 @@ export function useVoiceRecorder({
     pushUserMessage,
     schedulePendingFlush,
     isCurrent,
-    transcribe,
     cancelAutoStop,
     endRecording
   ])

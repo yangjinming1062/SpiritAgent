@@ -1,4 +1,4 @@
-from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, AiFeature, get_logger, resolve_prompt_text
+from components import SESSION_LOCAL, AiFeature, get_logger, resolve_prompt_text
 from modules.companion import Persona
 from modules.ws import emit_ws_event
 from prompts.companion import MOOD_INSTRUCTIONS
@@ -65,7 +65,6 @@ async def update_mood_from_companion_turn(
             **({"current_mood": ctx.current_mood} if ctx.current_mood else {}),
             **({"recent_context": recent_context} if recent_context else {}),
         },
-        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="mood_update",
         temperature=0.5,
     )

@@ -12,7 +12,6 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
     provider_name = "gemini"
     service_type = ServiceType.embedding
     DEFAULT_BASE_URL: ClassVar[str] = "https://generativelanguage.googleapis.com"
-    DEFAULT_MODEL: ClassVar[str] = "gemini-embedding-001"
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)

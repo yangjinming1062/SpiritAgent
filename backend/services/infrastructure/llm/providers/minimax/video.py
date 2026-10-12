@@ -66,14 +66,13 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
 
     provider_name = "minimax"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
-    DEFAULT_MODEL: ClassVar[str] = "MiniMax-H3"
     supports_first_frame = True
     supports_loop_frames = True
     supports_reference_images = True
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
-        self.durations, self.resolutions = _MODEL_CAPABILITIES.get(config.model or self.DEFAULT_MODEL, ((), ()))
+        self.durations, self.resolutions = _MODEL_CAPABILITIES.get(config.model, ((), ()))
         self._client = get_http(config.base_url, config.api_key)
 
     def max_resolution(
@@ -90,7 +89,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         return resolutions[-1]
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
-        model = self.config.model or self.DEFAULT_MODEL
+        model = self.config.model
         resp = await self._client.post("/v2/video_generation", json=self._payload(req, model))
         body = raise_for_minimax_response(resp)
         task_id = body.get("task_id", "")

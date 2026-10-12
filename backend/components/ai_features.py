@@ -4,6 +4,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+from .ai_models import ModelModality
+
 
 class AiFeature(StrEnum):
     companion_chat = "companion_chat"
@@ -76,7 +78,7 @@ class AiFeatureDefinition(BaseModel):
     group: str
     label: str
     service: str
-    vision: bool = False
+    required_input_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
     fast_decision: bool = False
 
 
@@ -86,7 +88,7 @@ def _feature(
     label: str,
     service: str = "llm",
     *,
-    vision: bool = False,
+    image_input: bool = False,
     fast_decision: bool = False,
 ) -> AiFeatureDefinition:
     return AiFeatureDefinition(
@@ -94,7 +96,13 @@ def _feature(
         group=group,
         label=label,
         service=service,
-        vision=vision,
+        required_input_modalities=frozenset(
+            {ModelModality.audio}
+            if service == "stt"
+            else {ModelModality.text, ModelModality.image}
+            if image_input
+            else {ModelModality.text},
+        ),
         fast_decision=fast_decision,
     )
 
@@ -109,7 +117,7 @@ AI_FEATURES: tuple[AiFeatureDefinition, ...] = (
     _feature(AiFeature.web_summary, "聊天", "网页内容摘要"),
     _feature(AiFeature.runner_completion, "聊天", "Runner 代理补全"),
     _feature(AiFeature.chat_image, "聊天媒体", "聊天图片与重做", "image_gen"),
-    _feature(AiFeature.chat_image_inspection, "聊天媒体", "聊天验图", vision=True),
+    _feature(AiFeature.chat_image_inspection, "聊天媒体", "聊天验图", image_input=True),
     _feature(AiFeature.chat_video, "聊天媒体", "聊天视频", "video_gen"),
     _feature(AiFeature.speech_input, "语音", "语音输入转写", "stt"),
     _feature(AiFeature.companion_voice, "语音", "伙伴回复合成", "tts"),
@@ -135,31 +143,31 @@ AI_FEATURES: tuple[AiFeatureDefinition, ...] = (
     _feature(AiFeature.post_voice, "动态", "语音动态与旁白", "tts"),
     _feature(AiFeature.avatar_prompt, "形象与衣柜", "头像提示词整理"),
     _feature(AiFeature.avatar_image, "形象与衣柜", "头像生成与重绘", "image_gen"),
-    _feature(AiFeature.fullbody_guidance, "形象与衣柜", "身体与姿态指导", vision=True),
+    _feature(AiFeature.fullbody_guidance, "形象与衣柜", "身体与姿态指导", image_input=True),
     _feature(AiFeature.fullbody_image, "形象与衣柜", "全身生成与重绘", "image_gen"),
-    _feature(AiFeature.character_card, "形象与衣柜", "角色卡视觉特征提取", vision=True),
-    _feature(AiFeature.garment_analysis, "形象与衣柜", "服装参考解析", vision=True),
-    _feature(AiFeature.outfit_guidance, "形象与衣柜", "换装身体与姿态指导", vision=True),
+    _feature(AiFeature.character_card, "形象与衣柜", "角色卡视觉特征提取", image_input=True),
+    _feature(AiFeature.garment_analysis, "形象与衣柜", "服装参考解析", image_input=True),
+    _feature(AiFeature.outfit_guidance, "形象与衣柜", "换装身体与姿态指导", image_input=True),
     _feature(AiFeature.outfit_image, "形象与衣柜", "换装生成与微调", "image_gen"),
     _feature(AiFeature.outfit_description, "形象与衣柜", "造型命名与描述"),
     _feature(AiFeature.scene_image, "场景", "场景图片生成与重绘", "image_gen"),
-    _feature(AiFeature.scene_review, "场景", "场景重复伙伴检查", vision=True),
-    _feature(AiFeature.scene_description, "场景", "场景标题与描述", vision=True),
-    _feature(AiFeature.action_proposal, "窗口动作", "动作提案评审", vision=True),
-    _feature(AiFeature.action_image_description, "窗口动作", "静态动作描述", vision=True),
-    _feature(AiFeature.action_script, "窗口动作", "视频动作脚本", vision=True),
+    _feature(AiFeature.scene_review, "场景", "场景重复伙伴检查", image_input=True),
+    _feature(AiFeature.scene_description, "场景", "场景标题与描述", image_input=True),
+    _feature(AiFeature.action_proposal, "窗口动作", "动作提案评审", image_input=True),
+    _feature(AiFeature.action_image_description, "窗口动作", "静态动作描述", image_input=True),
+    _feature(AiFeature.action_script, "窗口动作", "视频动作脚本", image_input=True),
     _feature(AiFeature.action_alignment_image, "窗口动作", "外观参考校准图", "image_gen"),
     _feature(AiFeature.action_pose_image, "窗口动作", "动作姿态图", "image_gen"),
     _feature(AiFeature.action_video, "窗口动作", "动作视频", "video_gen"),
-    _feature(AiFeature.action_review, "窗口动作", "动作成品复核", vision=True),
-    _feature(AiFeature.peek_geometry, "窗口动作", "探身遮挡位置分析", vision=True),
-    _feature(AiFeature.desktop_action_proposal, "桌面生活", "桌面动作提案评审", vision=True),
-    _feature(AiFeature.desktop_action_design, "桌面生活", "生活构图与运动设计", vision=True),
+    _feature(AiFeature.action_review, "窗口动作", "动作成品复核", image_input=True),
+    _feature(AiFeature.peek_geometry, "窗口动作", "探身遮挡位置分析", image_input=True),
+    _feature(AiFeature.desktop_action_proposal, "桌面生活", "桌面动作提案评审", image_input=True),
+    _feature(AiFeature.desktop_action_design, "桌面生活", "生活构图与运动设计", image_input=True),
     _feature(AiFeature.desktop_pose_image, "桌面生活", "生活起始画面", "image_gen"),
     _feature(AiFeature.desktop_video, "桌面生活", "生活视频", "video_gen"),
-    _feature(AiFeature.desktop_video_review, "桌面生活", "生活视频成品检查", vision=True),
-    _feature(AiFeature.image_identity, "质量与恢复", "图片身份评分", vision=True),
-    _feature(AiFeature.video_identity, "质量与恢复", "视频抽帧身份评分", vision=True),
+    _feature(AiFeature.desktop_video_review, "桌面生活", "生活视频成品检查", image_input=True),
+    _feature(AiFeature.image_identity, "质量与恢复", "图片身份评分", image_input=True),
+    _feature(AiFeature.video_identity, "质量与恢复", "视频抽帧身份评分", image_input=True),
     _feature(AiFeature.moderation_rewrite, "质量与恢复", "图片提示词审核改写"),
 )
 AI_FEATURE_BY_ID: dict[AiFeature, AiFeatureDefinition] = {definition.id: definition for definition in AI_FEATURES}

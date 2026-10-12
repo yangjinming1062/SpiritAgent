@@ -13,6 +13,7 @@ from uuid import UUID
 
 from components import (
     ATTACHMENT_DATA_URL_MAX_CHARS,
+    ATTACHMENT_TYPE_AUDIO,
     ATTACHMENT_TYPE_IMAGE,
     ATTACHMENT_TYPE_VIDEO,
     JSONRPC_INTERNAL_ERROR,
@@ -123,8 +124,10 @@ from services.domains.conversation import (
     validate_memory_scope,
 )
 from services.domains.media import (
-    copy_forked_video_attachments,
-    prune_videos_in_range,
+    audio_file_id_from_url,
+    copy_forked_media_attachments,
+    prune_media_in_range,
+    resolve_audio_file,
     resolve_video_file,
     video_file_id_from_url,
 )
@@ -603,7 +606,7 @@ def _session_video_file_id(file_url: str, session_id: str) -> str | None:
 
 
 def _validate_attachments(params: dict[str, Any], session_id: str) -> list[ChatAttachment] | None:
-    """校验并规范化 attachments（每项重塑为 {type, file_url}），未传时返回 None。image 接受 HTTP(S) 与 data:image URL；video 只认本会话后端上传且文件仍在的 URL（base64 视频超 WS 单帧上限，须先 POST /api/media/videos）。"""
+    """校验并规范化 attachments（每项重塑为 {type, file_url}），未传时返回 None。image 接受 HTTP(S) 与 data:image URL；音视频只认本会话后端上传且文件仍在的 URL（须先经对应媒体上传接口）。"""
     raw = params.get("attachments")
     if raw is None:
         return None
@@ -616,14 +619,18 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[ChatA
         if not isinstance(att, dict):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}] must be an object")
         att_type = att.get("type", ATTACHMENT_TYPE_IMAGE)
-        if att_type not in (ATTACHMENT_TYPE_IMAGE, ATTACHMENT_TYPE_VIDEO):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}].type must be image or video")
+        if att_type not in (ATTACHMENT_TYPE_IMAGE, ATTACHMENT_TYPE_VIDEO, ATTACHMENT_TYPE_AUDIO):
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}].type must be image, video or audio")
 
         file_url = att.get("file_url")
         if not (file_url and isinstance(file_url, str)):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}] must have file_url")
 
-        if att_type == ATTACHMENT_TYPE_VIDEO:
+        if att_type == ATTACHMENT_TYPE_AUDIO:
+            file_id = audio_file_id_from_url(file_url, session_id)
+            if file_id is None or resolve_audio_file(session_id, file_id) is None:
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "音频附件不属于当前会话或已失效，请重新上传")
+        elif att_type == ATTACHMENT_TYPE_VIDEO:
             if file_url.startswith("data:"):
                 raise JsonRpcError(
                     JSONRPC_INVALID_PARAMS,
@@ -709,7 +716,7 @@ async def _do_clear_history(db: AsyncSession, conv: Conversation) -> dict[str, A
     ).scalar_one()
 
     # 临时上传视频的独立提交先完成，不能提前提交正式资源回收登记。
-    await prune_videos_in_range(db, conv.id)
+    await prune_media_in_range(db, conv.id)
     # 删除业务引用与回收登记同事务；提交以后再取消任务和删除文件。
     async with user_asset_lock(conv.user_id):
         removed = await collect_message_asset_releases(db, conv.user_id, [conv.id])
@@ -1056,15 +1063,15 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(e))
             except SourceNotFoundError as e:
                 raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, str(e))
-            # 服务函数只负责落库；视频附件复制、runtime 挂载与 info 在这里补，与 session.resume 路径一致
+            # 服务函数只负责落库；音视频附件复制、runtime 挂载与 info 在这里补，与 session.resume 路径一致
             conv = await _require_owned_conv(db, user_id, result.session_id)
             conv_id = conv.id  # 失败回滚会使 conv 过期，id 须先取出
             try:
-                await copy_forked_video_attachments(db, str(conv.forked_from_id), str(conv_id))
+                await copy_forked_media_attachments(db, str(conv.forked_from_id), str(conv_id))
             except Exception as exc:
                 logger.exception("session.fork video copy failed", extra={"new_session_id": conv_id})
                 await _discard_forked_conversation(db, conv_id)
-                raise JsonRpcError(JSONRPC_INTERNAL_ERROR, "视频附件复制失败，请稍后重试") from exc
+                raise JsonRpcError(JSONRPC_INTERNAL_ERROR, "音视频附件复制失败，请稍后重试") from exc
             except asyncio.CancelledError:
                 # 网关会话销毁或进程关闭会取消本任务：已提交的派生会话同样撤销，再继续取消。
                 await asyncio.shield(_discard_forked_conversation(db, conv_id))
@@ -1263,7 +1270,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
             try:
                 conv = await resolve_undo_target(db, user_id, session_id, source_message_id)
-                await prune_videos_in_range(db, conv.id, lo=source_message_id)
+                await prune_media_in_range(db, conv.id, lo=source_message_id)
                 result = await undo_conversation_to_message(db, conv, source_message_id)
                 await cleanup_user_media(user_id)
             except (UndoNotAllowedError, SourceNotFoundError) as e:

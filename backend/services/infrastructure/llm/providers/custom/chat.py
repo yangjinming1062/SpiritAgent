@@ -12,6 +12,5 @@ class CustomChatProvider(ChatProvider):
     provider_name = "custom"
     # 地址由供应商信息库配置，模型由能力卡片指定。
     DEFAULT_BASE_URL: ClassVar[str] = ""
-    DEFAULT_MODEL: ClassVar[str] = ""
     supports_json_object: ClassVar[bool] = True
-    supports_vision: ClassVar[bool] = True  # input_image 为 Responses 标准部件
+    supports_image: ClassVar[bool] = True  # input_image 为 Responses 标准部件

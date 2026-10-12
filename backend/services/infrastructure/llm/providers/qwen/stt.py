@@ -9,7 +9,6 @@ class QwenSTTProvider(STTProvider):
 
     provider_name = "qwen"
     DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/compatible-mode/v1"
-    DEFAULT_MODEL: ClassVar[str] = "qwen3-asr-flash"
 
     async def transcribe(self, audio: bytes, *, mime_type: str = "audio/wav", language: str = "auto") -> STTResult:
         return await transcribe_input_audio(

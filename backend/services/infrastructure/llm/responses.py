@@ -1,10 +1,10 @@
 from typing import Any, Literal
 
-from components import approx_text_tokens
+from components import ModelModality, approx_text_tokens
 
 # Responses API: DB↔input-item conversion, token estimation, kwargs assembly.
 INPUT_IMAGE_TOKEN_ESTIMATE: int = 800
-# 持久层只存 URL 无时长只能平坦估算；实测 ~350 token/秒（MiniMax M3），欠估由 1M 上下文与每请求 2 个内联上限兜底。
+# 视频没有时长时采用平坦估算；媒体用量以供应商返回为准。
 INPUT_VIDEO_TOKEN_ESTIMATE: int = 2000
 
 
@@ -18,12 +18,39 @@ def _value_tokens(value: Any) -> int:
             return INPUT_IMAGE_TOKEN_ESTIMATE
         if value.get("type") == "input_video":
             return INPUT_VIDEO_TOKEN_ESTIMATE
+        if value.get("type") == "input_audio":
+            duration = value.get("duration")
+            return (
+                max(1, int(duration * 50))
+                if isinstance(duration, int | float) and duration > 0
+                else INPUT_VIDEO_TOKEN_ESTIMATE
+            )
         return sum(_value_tokens(item) for item in value.values())
     if isinstance(value, str):
         return approx_text_tokens(value)
     if isinstance(value, list):
         return sum(_value_tokens(item) for item in value)
     return approx_text_tokens(str(value)) if value is not None else 0
+
+
+def request_input_modalities(value: Any) -> frozenset[ModelModality]:
+    """含工具结果的实际输入要求；不把媒体地址或 JSON 字符串当成输入部件。"""
+    media = set()
+    if isinstance(value, dict):
+        modality = {
+            "input_image": ModelModality.image,
+            "input_video": ModelModality.video,
+            "input_audio": ModelModality.audio,
+        }.get(value.get("type"))
+        if modality is not None:
+            media.add(modality)
+        for child in value.values():
+            if isinstance(child, dict | list):
+                media.update(request_input_modalities(child))
+    elif isinstance(value, list):
+        for child in value:
+            media.update(request_input_modalities(child))
+    return frozenset(media)
 
 
 def _input_text(text: Any) -> dict[str, Any]:

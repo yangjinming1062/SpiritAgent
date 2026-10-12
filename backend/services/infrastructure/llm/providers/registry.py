@@ -1,6 +1,16 @@
-from components import AI_FEATURE_BY_ID, AiFeature, ProviderDefaults
+from collections.abc import Collection
 
-from .base import BaseProvider, ChatProvider, ProviderConfig, ServiceType, TTSProvider
+from components import AI_FEATURE_BY_ID, SERVICE_OUTPUT_MODALITY, AiFeature, ModelModality, ProviderDefaults
+
+from .base import (
+    BaseProvider,
+    ChatProvider,
+    ImageGenProvider,
+    ProviderConfig,
+    ServiceType,
+    TTSProvider,
+    VideoGenProvider,
+)
 
 # (service_type, provider_name) → 具体类；由 bootstrap 显式注册。
 _REGISTRY: dict[tuple[ServiceType, str], type[BaseProvider]] = {}
@@ -40,6 +50,22 @@ def default_base_url(provider: str, service_type: ServiceType) -> str:
     return cls.DEFAULT_BASE_URL if cls is not None else ""
 
 
+def configured_base_url(provider: str, base_url: str, service: ServiceType) -> str:
+    value = (base_url or default_base_url(provider, service)).rstrip("/")
+    if provider == "qwen":
+        for suffix in ("/compatible-mode/v1", "/api/v1"):
+            if value.endswith(suffix):
+                target = (
+                    "/api/v1"
+                    if service in (ServiceType.tts, ServiceType.image_gen, ServiceType.video_gen)
+                    else "/compatible-mode/v1"
+                )
+                return value.removesuffix(suffix) + target
+    if provider == "minimax" and service != ServiceType.llm:
+        value = value.removesuffix("/v1")
+    return value
+
+
 def provider_requires_api_key(service_type: ServiceType, provider_name: str) -> bool:
     cls = try_resolve(service_type, provider_name)
     return cls is None or cls.requires_api_key
@@ -51,14 +77,39 @@ def providers_supporting(service_type: ServiceType | str) -> list[str]:
     return [name for registered_svc, name in _REGISTRY if registered_svc == svc]
 
 
+def provider_input_modalities(service: ServiceType | str, name: str) -> frozenset[ModelModality]:
+    cls = try_resolve(ServiceType(service), name)
+    if cls is None:
+        return frozenset()
+    if ServiceType(service) == ServiceType.stt:
+        return frozenset({ModelModality.audio})
+    supported = {ModelModality.text}
+    if issubclass(cls, ChatProvider):
+        if cls.supports_image:
+            supported.add(ModelModality.image)
+        if cls.supports_video:
+            supported.add(ModelModality.video)
+        if cls.supports_audio:
+            supported.add(ModelModality.audio)
+    elif (
+        issubclass(cls, ImageGenProvider)
+        and cls.supports_reference_image
+        or issubclass(cls, VideoGenProvider)
+        and (cls.supports_reference_images or cls.supports_first_frame or cls.supports_loop_frames)
+    ):
+        supported.add(ModelModality.image)
+    return frozenset(supported)
+
+
+def effective_input_modalities(config: ProviderConfig) -> frozenset[ModelModality]:
+    return config.input_modalities & provider_input_modalities(config.service_type, config.provider_name)
+
+
 def providers_for_feature(feature: AiFeature) -> list[str]:
     definition = AI_FEATURE_BY_ID[feature]
     service = ServiceType(definition.service)
     names = providers_supporting(service)
-    if definition.vision:
-        names = [
-            name for name in names if (provider := try_resolve_chat(name)) is not None and provider.supports_vision
-        ]
+    names = [name for name in names if definition.required_input_modalities <= provider_input_modalities(service, name)]
     if feature == AiFeature.voice_design:
         names = [
             name
@@ -69,21 +120,32 @@ def providers_for_feature(feature: AiFeature) -> list[str]:
 
 
 def provider_configuration_defaults() -> dict[str, dict[str, ProviderDefaults]]:
-    """管理页预填模型与窗口，并用适配器声明核对供应商配置状态。"""
+    """端点与协议能力；不包含任何模型或 Token 预算默认值。"""
     result: dict[str, dict[str, ProviderDefaults]] = {}
     for (service, name), cls in _REGISTRY.items():
         result.setdefault(service.value, {})[name] = ProviderDefaults(
-            model_name=cls.DEFAULT_MODEL,
             base_url=cls.DEFAULT_BASE_URL,
             requires_api_key=cls.requires_api_key,
-            context_window=cls.DEFAULT_CONTEXT_TOKENS if issubclass(cls, ChatProvider) else None,
             voice_design_model=cls.VOICE_DESIGN_MODEL if issubclass(cls, TTSProvider) else None,
+            input_modalities=provider_input_modalities(service, name),
         )
     return result
 
 
-def model_supports_feature(provider_name: str, model_name: str, feature: AiFeature) -> bool:
+def model_supports_feature(
+    provider_name: str,
+    model_name: str,
+    feature: AiFeature,
+    *,
+    input_modalities: Collection[ModelModality],
+    output_modalities: Collection[ModelModality],
+) -> bool:
     if provider_name not in providers_for_feature(feature):
+        return False
+    definition = AI_FEATURE_BY_ID[feature]
+    if not definition.required_input_modalities <= set(input_modalities):
+        return False
+    if SERVICE_OUTPUT_MODALITY[definition.service] not in output_modalities:
         return False
     if feature == AiFeature.voice_design:
         cls = resolve(ServiceType.tts, provider_name)

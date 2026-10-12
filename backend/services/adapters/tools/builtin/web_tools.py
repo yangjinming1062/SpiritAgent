@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from components import LLM_MAX_OUTPUT_TOKENS, SETTINGS, AiFeature, coerce_int, get_logger, tool_error
+from components import SETTINGS, AiFeature, coerce_int, get_logger, tool_error
 from prompts.tools import (
     WEB_EXTRACT_DESC,
     WEB_EXTRACT_PARAM_DESCS,
@@ -29,7 +29,6 @@ async def _summarize_doc(llm_config: UserLlmConfig, doc: WebDocument) -> None:
             llm_config,
             WEB_SUMMARY_INSTRUCTIONS,
             {"source_url": doc.url, "content": content[:50000], "source_excerpted": len(content) > 50000},
-            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
             temperature=0.1,
         )
         if not summary.strip():

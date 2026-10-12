@@ -911,6 +911,7 @@ export const dict: Dictionary = {
       },
 
       contextCapsuleAria: 'View context usage and compression',
+      contextUnknown: 'Not configured',
       contextCapsuleTitle: (used: string, total: string, pct: string, threshold: number) =>
         `Current context: ${used} / ${total} tokens (${pct}%) · auto-compress threshold: ${threshold}% · click to expand`,
       temperatureCapsuleAria: 'Configure current session sampling temperature',

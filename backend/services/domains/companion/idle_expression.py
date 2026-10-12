@@ -1,7 +1,6 @@
 """空闲表达：LLM 低频决定是否用当前形象动作做一次自主表演。只产出 action_id；统一播放由调用方经 request_playback 派发。"""
 
 from components import (
-    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     get_logger,
     resolve_prompt_text,
@@ -63,7 +62,6 @@ async def check_idle_expression(
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
             **({"recent_context": recent_context} if recent_context else {}),
         },
-        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="idle_expression",
     )
     if parsed is None:

@@ -5,6 +5,8 @@ import type { IpcMain } from 'electron'
 import {
   type AttachmentVideoUploadPayload,
   type AttachmentVideoUploadResult,
+  type AudioUploadPayload,
+  type AudioUploadResult,
   type DesktopVideoUploadPayload,
   type DesktopVideoUploadResult,
   IPC,
@@ -331,6 +333,58 @@ export function registerMediaIpc({
   const sttLimiter = new SttLimiter()
   const ttsQueue = new BoundedTtsQueue()
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
+
+  ipcMain.handle(
+    IPC.invoke.mediaAudioUpload,
+    async (event, payload: AudioUploadPayload): Promise<AudioUploadResult> => {
+      if (
+        typeof payload?.dataUrl !== 'string' ||
+        payload.dataUrl.length > Math.ceil((STT_MAX_AUDIO_BYTES * 4) / 3) + 256 ||
+        !/^\d+$/.test(payload.sessionId)
+      ) {
+        throw new Error('Invalid audio upload')
+      }
+
+      const { data, mime } = parseDataUrl(payload.dataUrl)
+
+      if (data.length === 0 || data.length > STT_MAX_AUDIO_BYTES || !mime.startsWith('audio/')) {
+        throw new Error('Invalid audio upload')
+      }
+
+      const form = new FormData()
+      form.append('file', new Blob([data], { type: mime }), path.basename(payload.filename))
+      form.append('session_id', payload.sessionId)
+
+      const { body } = await callBackend(event.sender, connection =>
+        postBackend({
+          body: form,
+          fetchImpl,
+          timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
+          token: connection.token,
+          url: `${connection.baseUrl}/api/media/audios`
+        })
+      )
+
+      const parsed: unknown = JSON.parse(body.toString('utf8'))
+
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        !('url' in parsed) ||
+        typeof parsed.url !== 'string' ||
+        !('mime_type' in parsed) ||
+        typeof parsed.mime_type !== 'string' ||
+        !('duration' in parsed) ||
+        typeof parsed.duration !== 'number' ||
+        !Number.isFinite(parsed.duration) ||
+        parsed.duration <= 0
+      ) {
+        throw new Error('Backend audio upload returned invalid metadata')
+      }
+
+      return { url: parsed.url, mime_type: parsed.mime_type, duration: parsed.duration }
+    }
+  )
 
   ipcMain.handle(IPC.invoke.mediaStt, async (event, payload?: MediaSttPayload) => {
     const sttId = ++sttSeq

@@ -15,14 +15,16 @@ from .llm_client import (
     generate_embedding,
     generate_embeddings,
     resolve_embedding_provider,
+    resolve_media_chain,
     resolve_provider_chain,
     resolve_provider_config,
     resolve_video_chain,
     resolve_vision_chain,
     scale_temperature,
 )
-from .llm_fallback import execute_with_fallback
+from .llm_fallback import execute_media_with_fallback, execute_with_fallback
 from .llm_retry import call_with_retry
+from .model_discovery import discover_models
 from .prompt_engineer import (
     IncompleteLlmResponseError,
     LlmAttemptDiagnostic,
@@ -53,8 +55,11 @@ from .providers import (
     VideoJobStatus,
     VoiceDesignResult,
     aclose_all,
+    configured_base_url,
+    effective_input_modalities,
     model_supports_feature,
     provider_configuration_defaults,
+    provider_input_modalities,
     providers_for_feature,
     providers_supporting,
     register,
@@ -73,8 +78,10 @@ from .responses import (
     approx_responses_tokens,
     build_responses_kwargs,
     message_to_response_items,
+    request_input_modalities,
 )
 from .stt_service import transcribe_audio
+from .token_budget import request_output_budget
 from .tts_service import (
     resolve_reply_voice,
     synthesize_speech,
@@ -84,6 +91,8 @@ from .voice_catalog import voices_for_provider
 from .wait_budget import accepted_image_job_wait, generation_timeout_scope
 
 __all__ = [
+    "request_output_budget",
+    "discover_models",
     "TTSProvider",
     "providers_for_feature",
     "embedding_model_key",
@@ -118,8 +127,12 @@ __all__ = [
     "VisualReasoningError",
     "VoiceDesignResult",
     "aclose_all",
+    "configured_base_url",
     "model_supports_feature",
+    "effective_input_modalities",
+    "provider_input_modalities",
     "accepted_image_job_wait",
+    "request_input_modalities",
     "approx_responses_tokens",
     "build_provider",
     "build_responses_kwargs",
@@ -128,6 +141,7 @@ __all__ = [
     "call_with_retry",
     "chat",
     "classify_api_error",
+    "execute_media_with_fallback",
     "execute_with_fallback",
     "generate_embedding",
     "generate_embeddings",
@@ -145,6 +159,7 @@ __all__ = [
     "resolve_reference_bytes",
     "resolve_reply_voice",
     "resolve_user_llm_config",
+    "resolve_media_chain",
     "resolve_video_chain",
     "resolve_vision_chain",
     "rotate_http_clients",

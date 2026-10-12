@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import ClassVar, Literal
 from uuid import UUID
 
-from components import AiFeature, get_logger
+from components import AiFeature, ModelModality, get_logger
 from modules.media import SpeechStyle
 from openai import AsyncOpenAI
 
@@ -69,6 +69,10 @@ class ProviderConfig:
     provider_id: UUID
     model_card_id: UUID
     context_window: int | None = None
+    max_output_tokens: int | None = None
+    max_input_tokens: int | None = None
+    input_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
+    output_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
     feature: AiFeature | None = None
     config_source: str = "system_default"
     attempt_timeout_seconds: float | None = None
@@ -80,14 +84,28 @@ class BaseProvider(ABC):
 
     service_type: ServiceType = ServiceType.llm
     provider_name: str = ""
-    # 信息库的默认端点与新模型卡片的预填值。
+    # 信息库未填写端点时使用；模型和预算始终由能力卡片指定。
     DEFAULT_BASE_URL: ClassVar[str] = ""
-    DEFAULT_MODEL: ClassVar[str] = ""
     # False 表示该能力可不带 api_key（如本机无鉴权服务）；能力链解析据此放宽空密钥
     requires_api_key: ClassVar[bool] = True
 
     def __init__(self, config: ProviderConfig) -> None:
         self.config = config
+        if (
+            config.service_type in {ServiceType.image_gen, ServiceType.video_gen}
+            and ModelModality.image not in config.input_modalities
+        ):
+            for field in (
+                "supports_reference_image",
+                "supports_reference_images",
+                "supports_first_frame",
+                "supports_environment_reference_image",
+                "supports_multiple_reference_images",
+                "supports_image_edit",
+                "supports_loop_frames",
+            ):
+                if hasattr(self, field):
+                    setattr(self, field, False)
 
 
 class ProviderError(Exception):
@@ -104,15 +122,14 @@ class ChatProvider(BaseProvider):
 
     service_type: ServiceType = ServiceType.llm
 
-    # 新卡片的预填窗口，实际调用始终读取卡片配置。
-    DEFAULT_CONTEXT_TOKENS: ClassVar[int] = 1_000_000
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high"})
     TEMPERATURE_MIN: ClassVar[float] = 0.0
     TEMPERATURE_MAX: ClassVar[float] = 2.0
     supports_json_object: ClassVar[bool] = False
-    supports_vision: ClassVar[bool] = False  # 接受 input_image 部件，实际支持取决于所配置的模型
-    # 接受 Responses 形状的 input_video 部件；仅 chat.completions 支持视频的供应商（如 mimo）不能声明
+    supports_image: ClassVar[bool] = False  # 接受 input_image 部件，实际支持取决于所配置的模型
+    # 接受统一输入部件；适配器负责转换为供应商的 Responses 或 Chat Completions 协议。
     supports_video: ClassVar[bool] = False
+    supports_audio: ClassVar[bool] = False
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
@@ -138,7 +155,11 @@ class ChatProvider(BaseProvider):
         before_submit: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncOpenAI | ChatSchemaResponsesClient:
         if repair:
-            return ChatSchemaResponsesClient(self.raw_client(), before_submit=before_submit)
+            return ChatSchemaResponsesClient(
+                self.raw_client(),
+                before_submit=before_submit,
+                token_parameter="max_completion_tokens" if self.config.provider_name == "mimo" else "max_tokens",
+            )
         return self.raw_client()
 
     async def structured_response_options(

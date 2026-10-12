@@ -11,7 +11,6 @@ JSONRPC_SLASH_GENERIC: int = -32003  # handler 未映射异常兜底。
 JSONRPC_TURN_BUSY: int = -32004  # prompt.submit 回合在途，可有限重试。
 
 # LLM 预算、温度边界与标题/摘要回退值。
-LLM_MAX_OUTPUT_TOKENS: int = 8192  # 含推理与正文。
 TEMPERATURE_MIN: float = 0.0
 TEMPERATURE_MAX: float = 1.0
 TITLE_GENERATION_TEMPERATURE: float = 0.3
@@ -34,6 +33,7 @@ SESSION_TO_GLOBAL_KEY_ALIASES: dict[str, str] = {
 # 附件、语音与生成资产：协议判别与供应商硬限。
 ATTACHMENT_TYPE_IMAGE: str = "image"  # 视觉模型以 image_url 消费。
 ATTACHMENT_TYPE_VIDEO: str = "video"  # 上传后以 input_video 消费。
+ATTACHMENT_TYPE_AUDIO: str = "audio"
 # data URL 字符上限：覆盖 base64 膨胀（4/3），守住 WS 单帧与 DB TEXT 行体量。
 ATTACHMENT_DATA_URL_MAX_CHARS: int = 12 * 1024 * 1024
 ATTACHMENT_VIDEO_EXTENSIONS: frozenset[str] = frozenset({".mp4", ".mov"})  # 供应商仅接受 mp4/mov。

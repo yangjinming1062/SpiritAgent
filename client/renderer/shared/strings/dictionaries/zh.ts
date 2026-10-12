@@ -854,6 +854,7 @@ export const dict = {
       },
 
       contextCapsuleAria: '查看上下文用量与压缩管理',
+      contextUnknown: '未配置',
       contextCapsuleTitle: (used: string, total: string, pct: string, threshold: number) =>
         `当前会话上下文：${used} / ${total} Tokens (${pct}%) · 自动压缩阈值: ${threshold}% · 点击展开管理`,
       temperatureCapsuleAria: '配置当前会话采样温度',

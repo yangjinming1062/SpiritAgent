@@ -230,24 +230,21 @@ class _Signals:
     text: str
     body_message: str
     approx_tokens: int
-    context_length: int
+    context_length: int | None
     num_messages: int
 
     def has(self, patterns: Iterable[str]) -> bool:
         return any(p in self.text for p in patterns)
 
-    def is_large(self, *, ratio: float, tokens: int, messages: int) -> bool:
-        # 绝对 token / 消息数阈值只是小上下文窗口的近似。
-        return self.approx_tokens > self.context_length * ratio or (
-            self.context_length <= 256000 and (self.approx_tokens > tokens or self.num_messages > messages)
-        )
+    def is_large(self, *, ratio: float) -> bool:
+        return self.context_length is not None and self.approx_tokens > self.context_length * ratio
 
 
 def classify_api_error(
     error: BaseException,
     *,
     approx_tokens: int = 0,
-    context_length: int = 200000,
+    context_length: int | None = None,
     num_messages: int = 0,
 ) -> ClassifiedError:
     """把供应商调用异常分类为失败原因；已携带分类结果的异常直接返回其结果。"""
@@ -297,7 +294,7 @@ def _classify(error: BaseException, s: _Signals) -> FailoverReason:
 
     # 断连须早于 SSL 兜底：大会话按上下文溢出处理
     if s.has(_SERVER_DISCONNECT_PATTERNS):
-        if s.is_large(ratio=0.6, tokens=120000, messages=200):
+        if s.is_large(ratio=0.6):
             return FailoverReason.context_overflow
         return FailoverReason.timeout
     if s.has(_SSL_TRANSIENT_PATTERNS):
@@ -378,7 +375,7 @@ def _by_400(s: _Signals) -> FailoverReason:
     if s.has(_ATTACHMENT_FETCH_PATTERNS):
         return FailoverReason.attachment_fetch_failed
     # 大会话上消息极短（如裸 "error"）的 400 多为上下文过大
-    if len(s.body_message) < 30 and s.is_large(ratio=0.4, tokens=80000, messages=80):
+    if len(s.body_message) < 30 and s.is_large(ratio=0.4):
         return FailoverReason.context_overflow
     return FailoverReason.format_error
 

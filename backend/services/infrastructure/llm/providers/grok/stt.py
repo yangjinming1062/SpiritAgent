@@ -11,7 +11,6 @@ class GrokSTTProvider(STTProvider):
     provider_name = "grok"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
     # grok-transcribe 是底层模型（见流式 STT 文档）；单次端点不接受选择器，此默认值只作展示，不随请求发出。
-    DEFAULT_MODEL: ClassVar[str] = "grok-transcribe"
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)

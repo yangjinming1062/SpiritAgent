@@ -4,10 +4,11 @@ from ..base import ChatProvider
 
 
 class MiMoChatProvider(ChatProvider):
+    supports_audio: ClassVar[bool] = True
+    supports_video: ClassVar[bool] = True
     provider_name = "mimo"
     DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"
-    DEFAULT_MODEL: ClassVar[str] = "mimo-v2.6-pro"
-    supports_vision: ClassVar[bool] = True
+    supports_image: ClassVar[bool] = True
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset(
         {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
     )

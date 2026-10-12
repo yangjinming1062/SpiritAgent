@@ -10,7 +10,6 @@ class MiniMaxSTTProvider(STTProvider):
 
     provider_name = "minimax"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
-    DEFAULT_MODEL: ClassVar[str] = "asr-1.0"
 
     # 上传侧归一化只产这几种 MIME；扩展名与 MiniMax 支持格式对齐，其余（含默认 audio/wav）按 wav 命名。
     _EXT_BY_MIME: ClassVar[dict[str, str]] = {

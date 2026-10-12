@@ -59,17 +59,16 @@ from services.domains.memory import (
 from services.infrastructure.llm import (
     ChatProvider,
     MissingLlmConfigError,
-    MissingVideoModelError,
     ProviderConfig,
     ReasoningEffort,
     approx_responses_tokens,
     build_provider,
     message_to_response_items,
+    request_input_modalities,
     resolve_context_tokens,
+    resolve_media_chain,
     resolve_provider_chain,
     resolve_reply_voice,
-    resolve_video_chain,
-    resolve_vision_chain,
 )
 from services.infrastructure.tool_runtime import (
     REGISTRY,
@@ -210,24 +209,20 @@ async def resolve_context_provider_chain(
     feature: AiFeature,
 ) -> list[ProviderConfig]:
     """仅按本次请求仍携带的媒体选链，包括多模态工具结果。"""
-    media_types = {
-        part.get("type")
-        for item in input_items
-        for key in ("content", "output")
-        if isinstance(parts := item.get(key), list)
-        for part in parts
-        if isinstance(part, dict)
-    }
-    if "input_video" in media_types:
-        chain = await resolve_video_chain(db, user_id, feature=feature)
-        if not chain:
-            raise MissingVideoModelError("no video-capable provider in the chain for a request containing video")
-    elif "input_image" in media_types:
-        chain = await resolve_vision_chain(db, user_id, feature=feature)
-        if not chain:
-            raise MissingLlmConfigError("no vision-capable provider in the chain for a request containing images")
-    else:
-        chain = await resolve_provider_chain(db, user_id, "llm", feature=feature)
+    required = request_input_modalities(input_items)
+    chain = await resolve_media_chain(
+        db,
+        user_id,
+        feature=feature,
+        required_modalities=required,
+    )
+    if not chain and "audio" in required:
+        chain = await resolve_media_chain(
+            db,
+            user_id,
+            feature=feature,
+            required_modalities=required - {"audio"},
+        )
     if not chain:
         raise MissingLlmConfigError("no provider configured for service 'llm'")
     return chain

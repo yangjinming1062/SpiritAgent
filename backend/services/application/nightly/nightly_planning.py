@@ -1218,7 +1218,6 @@ async def run_nightly_planning(
             await load_user_llm_config(user_id, AiFeature.nightly_planning),
             PLANNING_SYSTEM_PROMPT,
             payload,
-            max_output_tokens=None,
             schema=NightlyPlanOutput.model_json_schema(),
             schema_name="nightly_plan",
             parse_output=partial(_normalize_plan, context=context),

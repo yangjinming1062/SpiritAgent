@@ -5,7 +5,7 @@ from components import SESSION_LOCAL, SETTINGS, AiFeature, get_logger
 from fastapi import Request
 from modules.auth import CurrentUser
 from modules.system import CompletionResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from services.adapters.http import limiter
 from services.infrastructure.llm import (
     ChatProvider,
@@ -13,10 +13,8 @@ from services.infrastructure.llm import (
     call_with_retry,
     classify_api_error,
     execute_with_fallback,
-    resolve_context_tokens,
-    resolve_provider_chain,
-    resolve_video_chain,
-    resolve_vision_chain,
+    request_input_modalities,
+    resolve_media_chain,
 )
 from slowapi.util import get_remote_address
 
@@ -32,7 +30,7 @@ class CompletionRequest(BaseModel):
     input: str | list[dict[str, Any]]
     model: str | None = None
     temperature: float | None = None
-    max_output_tokens: int | None = None
+    max_output_tokens: int | None = Field(default=None, gt=0, strict=True)
 
 
 @router.post("/completion", response_model=CompletionResponse)
@@ -41,35 +39,41 @@ class CompletionRequest(BaseModel):
 async def create_completion(req: CompletionRequest, request: Request, user: CurrentUser) -> CompletionResponse:
     """Desktop Runner 代理 LLM 调用的无状态补全端点：错误响应走非泄露分类信封（异常细节留在服务端日志，renderer 只看到 {error, reason, status}，reason 为稳定 FailoverReason 枚举值，见 docs/PROTOCOL.md「错误信封」）；调用走 provider 链路，首个供应商遇鉴权/计费/模型不存在错误时自动透明切换下一家。"""
 
+    used_window: int | None = None
+
     async def _call(provider: ChatProvider) -> Any:
-        model = req.model or provider.config.model
-        kwargs: dict[str, Any] = {"model": model, "instructions": req.instructions, "input": req.input, "store": False}
+        nonlocal used_window
+        kwargs: dict[str, Any] = {
+            "model": provider.config.model,
+            "instructions": req.instructions,
+            "input": req.input,
+            "store": False,
+        }
         if req.temperature is not None:
             kwargs["temperature"] = req.temperature
         if req.max_output_tokens is not None:
             kwargs["max_output_tokens"] = req.max_output_tokens
-        return await call_with_retry(
+        response = await call_with_retry(
             provider.raw_client(),
-            context_length=resolve_context_tokens(provider.config),
+            config=provider.config,
             **kwargs,
         )
+        used_window = provider.config.context_window
+        return response
 
     try:
         # 在会话内解析链路后立即释放连接，避免上游 await 期间长时间占用连接池；resolve_provider_chain 只读 SETTINGS + 单行 UserModelConfig，期间不再访问 DB。
         async with SESSION_LOCAL() as db:
-            items = req.input if isinstance(req.input, list) else []
-            media = {
-                part.get("type")
-                for item in items
-                for part in (item.get("content") if isinstance(item.get("content"), list) else [])
-                if isinstance(part, dict)
-            }
-            if "input_video" in media:
-                chain = await resolve_video_chain(db, user.id, feature=AiFeature.runner_completion)
-            elif "input_image" in media:
-                chain = await resolve_vision_chain(db, user.id, feature=AiFeature.runner_completion)
-            else:
-                chain = await resolve_provider_chain(db, user.id, "llm", feature=AiFeature.runner_completion)
+            chain = await resolve_media_chain(
+                db,
+                user.id,
+                feature=AiFeature.runner_completion,
+                required_modalities=request_input_modalities(req.input),
+            )
+            if req.model is not None:
+                chain = [config for config in chain if config.model == req.model]
+                if not chain:
+                    raise MissingLlmConfigError("指定模型不在当前功能链的可用能力卡片中")
         # 空链由 execute_with_fallback 抛 MissingLlmConfigError。
         response = await execute_with_fallback(chain, ChatProvider, _call, user_id=user.id)
     except MissingLlmConfigError:
@@ -88,6 +92,6 @@ async def create_completion(req: CompletionRequest, request: Request, user: Curr
         raise classified_http_exception(
             classify_api_error(RuntimeError("LLM returned no output")),
         )
-    usage = response.usage.model_dump() if response.usage else None
+    usage = {**(response.usage.model_dump() if response.usage else {}), "context_window": used_window}
 
     return CompletionResponse(content=content, usage=usage)

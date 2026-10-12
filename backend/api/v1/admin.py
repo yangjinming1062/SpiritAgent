@@ -13,6 +13,8 @@ from components import (
     SETTINGS,
     AIConfig,
     DbSession,
+    ModelDiscoveryRequest,
+    ModelDiscoveryResponse,
     apply_partial,
     attachments_gc_session,
     get_logger,
@@ -55,7 +57,12 @@ from modules.scheduler import (
 from modules.system import MessageResponse
 from services.adapters.desktop import terminate_remote_sessions, terminate_user_gateway
 from services.adapters.maintenance import user_maintenance
-from services.application.configuration import configuration_lock, get_system_settings_for_admin, save_system_settings
+from services.application.configuration import (
+    configuration_lock,
+    discover_configured_models,
+    get_system_settings_for_admin,
+    save_system_settings,
+)
 from services.domains.backup import (
     BACKUP_SECTION_IDS,
     TABLES,
@@ -101,6 +108,15 @@ class _AdminRoute(APIRoute):
 
 router = get_router(dependencies=[Depends(get_current_admin_token)])
 router.route_class = _AdminRoute
+
+
+@router.post("/ai/models/discover", response_model=ModelDiscoveryResponse)
+async def discover_ai_models(payload: ModelDiscoveryRequest, db: DbSession) -> ModelDiscoveryResponse:
+    try:
+        return await discover_configured_models(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
 
 # 备份 zip 分块读写；1 MB 分块减少线程池往返。
 ARCHIVE_UPLOAD_CHUNK_BYTES = 1024 * 1024

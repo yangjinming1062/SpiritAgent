@@ -32,7 +32,6 @@ class QwenVideoGenProvider(VideoGenProvider):
 
     provider_name = "qwen"
     DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/api/v1"
-    DEFAULT_MODEL: ClassVar[str] = "wan3.0-video"
     durations = _DURATIONS
     resolutions = ("480P", "720P", "1080P", "512P", "768P", "2K")
     supports_first_frame = True

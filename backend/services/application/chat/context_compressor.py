@@ -4,7 +4,6 @@ from typing import Any
 
 from components import (
     CONTEXT_SUMMARY_HEADROOM_FACTOR,
-    LLM_MAX_OUTPUT_TOKENS,
     SETTINGS,
     AiFeature,
     get_logger,
@@ -18,6 +17,7 @@ from prompts.chat import (
 
 from services.infrastructure.llm import (
     ChatProvider,
+    ProviderConfig,
     approx_responses_tokens,
     build_responses_kwargs,
     call_with_retry,
@@ -59,13 +59,14 @@ def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         parts = []
         for part in content:
-            if isinstance(part, dict) and part.get("type") in ("input_image", "input_video"):
-                source = part.get("image_url") or part.get("video_url") or ""
+            if isinstance(part, dict) and part.get("type") in ("input_image", "input_video", "input_audio"):
+                source = part.get("image_url") or part.get("video_url") or part.get("audio_url") or ""
                 reference = source if isinstance(source, str) and not source.startswith("data:") else "inline media"
                 parts.append(
                     {
                         "type": "input_text",
-                        "text": f"[Media reference: {reference}; contents not supplied to this summary]",
+                        "text": part.get("transcript")
+                        or f"[Media reference: {reference}; contents not supplied to this summary]",
                     },
                 )
             else:
@@ -172,6 +173,7 @@ async def _summarize_block(
     *,
     client: Any,
     model: str,
+    config: ProviderConfig,
     target_tokens: int,
     output_budget: int,
     temperature: float,
@@ -187,7 +189,7 @@ async def _summarize_block(
         temperature=temperature,
         max_output_tokens=output_budget,
     )
-    response = await call_with_retry(client, context_length=context_length, **request)
+    response = await call_with_retry(client, config=config, **request)
     completed = response.status == "completed"
     usage = getattr(response, "usage", None)
     prompt_tokens = getattr(usage, "input_tokens", 0) if usage else 0
@@ -228,6 +230,7 @@ async def compress_history(
             context,
             client=provider.raw_client(),
             model=provider.config.model,
+            config=provider.config,
             temperature=provider.scale_temperature(temperature),
             language=language,
             context_length=min(context_length, resolve_context_tokens(provider.config)),
@@ -245,6 +248,7 @@ async def _compress_history_with_provider(
     *,
     client: Any,
     model: str,
+    config: ProviderConfig,
     temperature: float,
     language: str,
     context_length: int,
@@ -276,10 +280,14 @@ async def _compress_history_with_provider(
     # 小窗口按比例缩小摘要与输出预留，安全余量最多占四分之一，保留完整原消息的输入空间。
     target = min(SETTINGS.context_summary_target_tokens, max(1, context_length // 4))
     output_budget = min(
-        max(LLM_MAX_OUTPUT_TOKENS, target * CONTEXT_SUMMARY_HEADROOM_FACTOR),
+        config.max_output_tokens or 0,
+        target * CONTEXT_SUMMARY_HEADROOM_FACTOR,
         max(1, context_length // 2),
     )
-    input_budget = context_length - output_budget - min(max(1024, context_length // 20), context_length // 4)
+    input_budget = min(
+        context_length - output_budget - min(max(1024, context_length // 20), context_length // 4),
+        config.max_input_tokens or context_length,
+    )
     if input_budget <= 0:
         raise CompressionFailedError("context window cannot fit summary input and output")
     bounded = _fit_summary_block(
@@ -299,6 +307,7 @@ async def _compress_history_with_provider(
             block,
             client=client,
             model=model,
+            config=config,
             target_tokens=target,
             output_budget=output_budget,
             temperature=temperature,

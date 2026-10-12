@@ -11,7 +11,6 @@ import { clamp } from '@runtime'
 import { useConversationView } from './conversation-view'
 
 export const DEFAULT_THRESHOLD = 0.7
-const DEFAULT_LIMIT = 1_000_000
 const DEFAULT_TEMPERATURE = 0.7
 
 export interface CompressContextResponse {
@@ -74,12 +73,12 @@ export function useContextStatus(): {
 
   const threshold = settings.context_compression_threshold ?? DEFAULT_THRESHOLD
   const totalTokens = usage.totalTokens
-  const contextLimit = usage.contextLimit > 0 ? usage.contextLimit : DEFAULT_LIMIT
-  const rawPct = (totalTokens / contextLimit) * 100
+  const contextLimit = usage.contextLimit
+  const rawPct = contextLimit > 0 ? (totalTokens / contextLimit) * 100 : 0
   const pct = clamp(rawPct, 0, 100)
   const thresholdPct = clamp(threshold * 100, 1, 100)
 
-  const isInactive = totalTokens <= 0 || pct < 2
+  const isInactive = contextLimit <= 0 || totalTokens <= 0 || pct < 2
   const isHealthy = !isInactive && pct < thresholdPct * 0.5
   const isWarning = !isInactive && !isHealthy && pct < thresholdPct * 0.88
 
@@ -162,7 +161,7 @@ export function ChatContextCapsule({ active, onClick, variant }: ChatCapsuleProp
 
   const titleText = params.contextCapsuleTitle(
     totalTokens.toLocaleString(),
-    contextLimit.toLocaleString(),
+    contextLimit > 0 ? contextLimit.toLocaleString() : params.contextUnknown,
     pct.toFixed(1),
     Math.round(thresholdPct)
   )
@@ -179,9 +178,9 @@ export function ChatContextCapsule({ active, onClick, variant }: ChatCapsuleProp
       <span className="font-mono text-[10px] tracking-tight">
         {formatTokenNumber(totalTokens)}
         <span className="text-faint font-sans"> / </span>
-        <span className="text-muted">{formatTokenNumber(contextLimit)}</span>
+        <span className="text-muted">{contextLimit > 0 ? formatTokenNumber(contextLimit) : params.contextUnknown}</span>
       </span>
-      <span className="text-[9px] text-faint">({pct.toFixed(0)}%)</span>
+      <span className="text-[9px] text-faint">{contextLimit > 0 ? `(${pct.toFixed(0)}%)` : ''}</span>
     </button>
   )
 }

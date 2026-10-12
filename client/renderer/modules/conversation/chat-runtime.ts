@@ -22,7 +22,7 @@ import type {
 import { sleep } from '@runtime'
 
 import { chatDisplayText } from './chat-display-text'
-import { $companionSessionId, DEFAULT_CONTEXT_LIMIT, FLUSH_DEBOUNCE_MS, nextChatMessageId } from './conversation-state'
+import { $companionSessionId, FLUSH_DEBOUNCE_MS, nextChatMessageId } from './conversation-state'
 import { activeVoiceMessageId, conversationVoiceSink } from './voice-link'
 import { releaseVoicePlaybackStore, removeVoicePlayback } from './voice-playback'
 
@@ -309,7 +309,7 @@ export function createConversationRuntime(sessionId: string | null) {
     promptTokens: 0,
     completionTokens: 0,
     totalTokens: 0,
-    contextLimit: DEFAULT_CONTEXT_LIMIT
+    contextLimit: 0
   })
 
   function setSessionContextUsage(usage: Partial<SessionContextUsage>): void {
@@ -338,7 +338,7 @@ export function createConversationRuntime(sessionId: string | null) {
       promptTokens: 0,
       completionTokens: 0,
       totalTokens,
-      contextLimit: contextLimit ?? DEFAULT_CONTEXT_LIMIT
+      contextLimit: contextLimit ?? 0
     })
   }
 
@@ -486,7 +486,7 @@ export function createConversationRuntime(sessionId: string | null) {
 
     // 估算 Token 占用（~3 字符/Token）；分项清零避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
     const approxTokens = Math.round(totalChars / 3)
-    const contextLimit = info ? info.context_window || DEFAULT_CONTEXT_LIMIT : $sessionContextUsage.get().contextLimit
+    const contextLimit = info ? info.context_window || 0 : $sessionContextUsage.get().contextLimit
     resetSessionContextUsage(contextLimit, approxTokens)
     $historyHydrated.set(true)
   }
@@ -539,6 +539,18 @@ export function createConversationRuntime(sessionId: string | null) {
           part.video_url
         ) {
           attachments.push({ type: 'video', url: part.video_url })
+        } else if (
+          part.type === 'input_audio' &&
+          'audio_url' in part &&
+          typeof part.audio_url === 'string' &&
+          part.audio_url
+        ) {
+          attachments.push({
+            type: 'audio',
+            url: part.audio_url,
+            ...('duration' in part && typeof part.duration === 'number' ? { duration: part.duration } : {}),
+            ...('transcript' in part && typeof part.transcript === 'string' ? { transcript: part.transcript } : {})
+          })
         }
       }
     }

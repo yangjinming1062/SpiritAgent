@@ -13,4 +13,3 @@ class CustomEmbeddingProvider(OpenAIEmbeddingProvider):
     provider_name = "custom"
     service_type = ServiceType.embedding
     DEFAULT_BASE_URL: ClassVar[str] = ""
-    DEFAULT_MODEL: ClassVar[str] = ""

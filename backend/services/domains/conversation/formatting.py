@@ -50,7 +50,15 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     text_part_match = (
         select(1)
         .select_from(parts)
-        .where(parts.c.value["type"].astext == "input_text", text_match)
+        .where(
+            or_(
+                and_(parts.c.value["type"].astext == "input_text", text_match),
+                and_(
+                    parts.c.value["type"].astext == "input_audio",
+                    parts.c.value["transcript"].astext.icontains(query, autoescape=True),
+                ),
+            ),
+        )
         .correlate(Message)
         .exists()
     )
@@ -159,7 +167,9 @@ def message_text(m: Message) -> str:
         parsed = safe_json_loads(raw, default=None)
         if isinstance(parsed, list):
             return "\n".join(
-                p.get("text", "") for p in parsed if isinstance(p, dict) and p.get("type") == "input_text"
+                p.get("text", "") if p.get("type") == "input_text" else p.get("transcript", "")
+                for p in parsed
+                if isinstance(p, dict) and p.get("type") in {"input_text", "input_audio"}
             ).strip()
         return raw
 

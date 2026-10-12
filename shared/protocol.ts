@@ -41,10 +41,12 @@ export interface ChatMediaItem {
   review_id?: string
 }
 
-/** 用户侧聊天附件：图片为 data URL，视频为后端上传返回的会话级 URL；水合与发送共用同一形状。 */
+/** 用户侧聊天附件：图片为 data URL，音视频为后端上传返回的会话级 URL；水合与发送共用同一形状。 */
 export interface ChatAttachment {
-  type: 'image' | 'video'
+  type: 'image' | 'video' | 'audio'
   url: string
+  duration?: number
+  transcript?: string
 }
 
 export interface ReplyAudio {

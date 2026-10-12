@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from 'ele
 
 import {
   type AttachmentVideoUploadPayload,
+  type AudioUploadPayload,
   type DesktopActivatePayload,
   type DesktopAuthBroadcast,
   type DesktopGatewayEvent,
@@ -165,6 +166,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
       read: (tag: string) => invoke(IPC.invoke.onboardingAudioRead, tag)
     },
     stt: (payload: MediaSttPayload) => invoke(IPC.invoke.mediaStt, payload),
+    uploadAudio: (payload: AudioUploadPayload) => invoke(IPC.invoke.mediaAudioUpload, payload),
     tts: (payload: MediaTtsPayload) => invoke(IPC.invoke.mediaTts, payload)
   },
   onAuthChanged: (cb: (payload: DesktopAuthBroadcast) => void) => subscribe(IPC.event.authChanged, cb),

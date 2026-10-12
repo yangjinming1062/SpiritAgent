@@ -118,7 +118,6 @@ async def _compose_diary(
         llm_cfg,
         resolve_prompt_text(JOURNAL_DIARY_TEXTS, language),
         payload,
-        max_output_tokens=None,
         reasoning_effort=NIGHTLY_REASONING_EFFORT,
         schema=DIARY_DECISION.json_schema(),
         schema_name="nightly_diary",

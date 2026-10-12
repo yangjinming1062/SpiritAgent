@@ -164,7 +164,6 @@ class LocalImageGenProvider(ImageGenProvider):
 
     provider_name = "local"
     DEFAULT_BASE_URL: ClassVar[str] = "http://127.0.0.1:8188"
-    DEFAULT_MODEL: ClassVar[str] = "qwen"
     requires_api_key: ClassVar[bool] = False  # 本地 ComfyUI 无鉴权；api_key 可为空，仅占位
     supports_reference_image: ClassVar[bool] = True
     supports_environment_reference_image: ClassVar[bool] = True

@@ -46,5 +46,11 @@ class ChatVideoUploadResponse(BaseModel):
     url: str
 
 
+class ChatAudioUploadResponse(BaseModel):
+    url: str
+    mime_type: str
+    duration: float
+
+
 class SpeechToTextResponse(BaseModel):
     text: str

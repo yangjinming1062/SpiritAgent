@@ -3,7 +3,6 @@ import sqlalchemy.exc
 from components import (
     DEFAULT_LANGUAGE,
     DEFAULT_SESSION_TITLE,
-    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     TITLE_GENERATION_TEMPERATURE,
     TITLE_MAX_CHARS,
@@ -12,10 +11,11 @@ from components import (
     get_logger,
     resolve_prompt_text,
 )
-from modules.conversation import Conversation
+from modules.conversation import Conversation, Message
 from prompts.chat import TITLE_PROMPTS
 from sqlalchemy import select
 
+from services.domains.conversation import message_text
 from services.infrastructure.llm import (
     IncompleteLlmResponseError,
     LLMRuntimeError,
@@ -46,6 +46,15 @@ async def auto_generate_title(
 ) -> None:
     """用 LLM 生成会话标题并持久化（仅在仍是默认标题时覆盖）。"""
     try:
+        if not user_message:
+            async with SESSION_LOCAL() as db:
+                first_user = await db.scalar(
+                    select(Message)
+                    .where(Message.conversation_id == conversation_id, Message.role == "user")
+                    .order_by(Message.id)
+                    .limit(1),
+                )
+                user_message = message_text(first_user) if first_user is not None else ""
         llm_config = await load_user_llm_config(user_id, AiFeature.conversation_title)
         assistant_snippet: str | list[str]
         if isinstance(assistant_response, str):
@@ -62,7 +71,6 @@ async def auto_generate_title(
             llm_config,
             resolve_prompt_text(TITLE_PROMPTS, language),
             {"user": (user_message or "")[:TITLE_SNIPPET_MAX_CHARS], "assistant": assistant_snippet},
-            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
             temperature=temperature if temperature is not None else TITLE_GENERATION_TEMPERATURE,
         )
         if not (title := _clean_title(raw)):

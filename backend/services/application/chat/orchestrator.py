@@ -37,7 +37,7 @@ from services.domains.conversation import (
     load_media_turn,
     refresh_video_media,
 )
-from services.domains.media import inline_video_parts
+from services.domains.media import inline_video_parts, prepare_audio_input
 from services.domains.memory import embed_memory_text
 from services.infrastructure.assets import asset_write_context, dated_asset_directory
 from services.infrastructure.llm import (
@@ -45,9 +45,11 @@ from services.infrastructure.llm import (
     LLMRuntimeError,
     MissingLlmConfigError,
     UserLlmConfig,
-    execute_with_fallback,
+    execute_media_with_fallback,
     generation_timeout_scope,
+    request_input_modalities,
     resolve_context_tokens,
+    resolve_provider_chain,
     resolve_user_llm_config,
 )
 from services.infrastructure.tool_runtime import (
@@ -86,7 +88,6 @@ from .turn_inputs import (
     memory_query_text,
     merge_session_settings,
     parse_temperature,
-    resolve_context_provider_chain,
     resolve_inference_settings,
     user_text_item,
 )
@@ -456,6 +457,7 @@ async def _run_chat_turn(
         if buffer_text:
             await emitter.send_json({"type": "message.start"})
         base_instructions = current_context["instructions"]
+        audio_transcripts: dict[str, str | Exception] = {}
         for step in range(max_loop_turns):
             instruction_parts = [base_instructions]
             action_tools_not_ready: frozenset[str] = frozenset()
@@ -514,16 +516,26 @@ async def _run_chat_turn(
                 )
             )
 
-            async def _call(provider: ChatProvider) -> _LLMTurnResult:
+            async def _call(provider: ChatProvider, native_audio: bool) -> _LLMTurnResult:
                 input_length = len(current_context["input"])
+                call_context = {
+                    **current_context,
+                    "input": await prepare_audio_input(
+                        user_id,
+                        str(conv.id),
+                        current_context["input"],
+                        native=native_audio,
+                        transcripts=audio_transcripts,
+                    ),
+                }
                 retry_available = True
                 reply_format_error = None
                 while True:
                     try:
-                        return await _generate_llm_response(
+                        result = await _generate_llm_response(
                             emitter,
                             provider.config.model,
-                            current_context,
+                            call_context,
                             active_schemas,
                             resolve_context_tokens(provider.config),
                             provider,
@@ -545,14 +557,16 @@ async def _run_chat_turn(
                             final_reply_only=reply_only,
                             allow_voice_fallback=not retry_available,
                         )
+                        current_context["input"].extend(call_context["input"][input_length:])
+                        return result
                     except _IncompleteResponseError as exc:
-                        del current_context["input"][input_length:]
+                        del call_context["input"][input_length:]
                         if not retry_available or not exc.retryable:
                             raise
                         retry_available = False
                         logger.warning("Retrying incomplete LLM response before text delivery: %s", exc)
                     except _InvalidCompanionReplyError as exc:
-                        del current_context["input"][input_length:]
+                        del call_context["input"][input_length:]
                         if not retry_available:
                             raise
                         retry_available = False
@@ -561,15 +575,17 @@ async def _run_chat_turn(
 
             try:
                 async with session_scope() as db:
-                    llm_chain = await resolve_context_provider_chain(
+                    llm_chain = await resolve_provider_chain(
                         db,
                         user_id,
-                        _reply_repair_history(current_context["input"]) if reply_only else current_context["input"],
+                        "llm",
                         feature=feature,
                     )
-                llm_result = await execute_with_fallback(
+                llm_result = await execute_media_with_fallback(
                     llm_chain,
-                    ChatProvider,
+                    request_input_modalities(
+                        _reply_repair_history(current_context["input"]) if reply_only else current_context["input"],
+                    ),
                     _call,
                     user_id=user_id,
                     stream_started=lambda: response_started,

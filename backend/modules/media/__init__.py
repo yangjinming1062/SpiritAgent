@@ -2,6 +2,7 @@ from .asset_lifecycle import AssetCleanupPending
 from .models import VideoGenJob
 from .schemas import (
     SPEECH_STYLE_ADAPTER,
+    ChatAudioUploadResponse,
     ChatVideoUploadResponse,
     MiMoSpeechStyle,
     MiniMaxSpeechStyle,
@@ -13,6 +14,7 @@ from .schemas import (
 __all__ = [
     "AssetCleanupPending",
     "SPEECH_STYLE_ADAPTER",
+    "ChatAudioUploadResponse",
     "ChatVideoUploadResponse",
     "MiniMaxSpeechStyle",
     "MiMoSpeechStyle",
