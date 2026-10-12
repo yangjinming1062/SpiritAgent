@@ -99,7 +99,7 @@ function MessageBubbleWithBody({
     $chatEditDraft,
     $chatSessionKind,
     $chatSessionReadOnly,
-    $lastEditableUserMessage,
+    $pendingPromptBatch,
     $retryableAssistantMessage,
     retryAssistantReply,
     startEditingMessage
@@ -110,8 +110,8 @@ function MessageBubbleWithBody({
   const isUser = message.role === 'user'
   const sessionKind = useStore($chatSessionKind)
   const readOnly = useStore($chatSessionReadOnly)
+  const pendingPromptBatch = useStore($pendingPromptBatch)
   const editing = useStore($chatEditDraft)
-  const lastEditableMessage = useStore($lastEditableUserMessage)
   const retryableMessage = useStore($retryableAssistantMessage)
   const gatewayState = useStore($gatewayState)
 
@@ -250,7 +250,7 @@ function MessageBubbleWithBody({
 
   // 避免误点助手行变成撤回伙伴上一句。
   const canUndo = isUser && sessionKind === 'standard' && canOperate
-  const canEdit = isUser && canOperate && lastEditableMessage?.id === message.id
+  const canEdit = isUser && canOperate && pendingPromptBatch.length === 0 && message.subtype === undefined
 
   // 用户附件渲染为可点击图片卡；正文剔除附件指令行，纯图片消息不渲染空气泡。
   const visibleText = isUser ? stripAttachmentDirectives(body.text) : body.text
@@ -307,6 +307,9 @@ function MessageBubbleWithBody({
           ? voicePlaybackKey(message.backendMessageId, body.replyIndex)
           : undefined
       }
+      onContextMenu={isUser ? handleContextMenu : undefined}
+      ref={isUser ? bubbleRef : undefined}
+      tabIndex={isUser ? -1 : undefined}
     >
       {!isUser && (avatar === 'show' || (!avatar && variant === 'workbench')) && <CompanionAvatar />}
       {!isUser && avatar === 'reserve' && <span aria-hidden="true" className="w-8 shrink-0" />}
@@ -345,8 +348,8 @@ function MessageBubbleWithBody({
                   ? 'border border-accent-line/45 text-strong shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.35)] backdrop-blur-xl backdrop-saturate-180'
                   : 'border border-line-standard bg-surface-card text-strong shadow-xs backdrop-blur-md'
               )}
-              onContextMenu={handleContextMenu}
-              ref={bubbleRef}
+              onContextMenu={!isUser ? handleContextMenu : undefined}
+              ref={!isUser ? bubbleRef : undefined}
               style={
                 isUser
                   ? {

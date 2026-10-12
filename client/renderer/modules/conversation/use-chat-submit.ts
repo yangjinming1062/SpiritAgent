@@ -66,7 +66,7 @@ export function useChatSubmit({
     $chatMessageList,
     $chatSessionId,
     $chatTurnInFlight,
-    $lastEditableUserMessage,
+    $pendingPromptBatch,
     cancelPendingFlush,
     finalizeAssistantMessage,
     markAssistantTerminal,
@@ -175,12 +175,29 @@ export function useChatSubmit({
     }
 
     if (edit) {
+      const currentSourceIndex = $chatMessageList
+        .get()
+        .findLastIndex(
+          item => item.role === 'user' && item.backendMessageId === edit.sourceMessageId && item.subtype === undefined
+        )
+
       if (
         edit.sessionId !== $chatSessionId.get() ||
-        edit.sourceMessageId !== $lastEditableUserMessage.get()?.backendMessageId
+        $chatTurnInFlight.get() ||
+        $pendingPromptBatch.get().length > 0 ||
+        currentSourceIndex < 0
       ) {
         onPreCheckFail(getStrings().chat.edit.stale)
 
+        return
+      }
+
+      const hasLaterUserMessage = $chatMessageList
+        .get()
+        .slice(currentSourceIndex + 1)
+        .some(item => item.role === 'user' && item.backendMessageId !== undefined && item.subtype === undefined)
+
+      if (hasLaterUserMessage && !window.confirm(getStrings().chat.edit.confirm)) {
         return
       }
 
@@ -405,9 +422,10 @@ export function useChatSubmit({
     setSending,
     setText,
     $chatEditDraft,
+    $chatMessageList,
     $chatSessionId,
     $chatTurnInFlight,
-    $lastEditableUserMessage
+    $pendingPromptBatch
   ])
 
   const handleStop = useCallback(async () => {

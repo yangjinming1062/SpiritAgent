@@ -1,6 +1,6 @@
 from .bootstrap import ensure_system_conversations_for_user
 from .context_window import CHECKPOINT_SUBTYPE, load_context_messages, load_recent_context_window
-from .edit import EditNotAllowedError, replace_last_user_message
+from .edit import EditNotAllowedError, replace_user_message
 from .fork import ForkNotAllowedError, SourceNotFoundError, fork_conversation_from_message
 from .formatting import (
     companion_context_content,
@@ -57,7 +57,7 @@ __all__ = [
     "resolve_reply_media",
     "update_video_reply",
     "EditNotAllowedError",
-    "replace_last_user_message",
+    "replace_user_message",
     "message_text",
     "message_contains_text",
     "count_conversation_bubbles",

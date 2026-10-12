@@ -725,13 +725,14 @@ export const dict: Dictionary = {
     },
 
     edit: {
-      label: 'Edit last message',
+      label: 'Edit message',
       cancel: 'Cancel editing (Esc)',
       send: 'Send changes and regenerate reply',
       hint: 'Regenerate the reply and keep the original attachments',
       retainedImage: 'Original image, kept after sending',
       retainedVideo: 'Original video, kept after sending',
-      stale: 'The conversation has changed. Wait for the reply or select the last message again.',
+      confirm: 'This is not the last message. Sending the changes will delete every message after it. Continue?',
+      stale: 'The conversation has changed. Wait for the reply or select this message again.',
       failed: 'Could not edit the message. Your changes have been kept.'
     },
 

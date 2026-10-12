@@ -88,7 +88,7 @@ export function ConversationSurface({
   const pendingPromptBatch = useStore($pendingPromptBatch)
   const gatewayState = useStore($gatewayState)
 
-  // 编辑最后一条消息时正文只留在输入框，本视图隐藏原消息；共享 store 不动，取消编辑即恢复。
+  // 编辑消息时正文只留在输入框，本视图隐藏原消息；共享 store 不动，取消编辑即恢复。
   const visibleList = editing
     ? list.filter(item => !(item.role === 'user' && item.backendMessageId === editing.sourceMessageId))
     : list

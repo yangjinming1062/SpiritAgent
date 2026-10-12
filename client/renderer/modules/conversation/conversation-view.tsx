@@ -31,11 +31,22 @@ function createViewController(runtime: ConversationRuntime, draft: ConversationV
   )
 
   const startEditingMessage = (messageId: string): void => {
-    const message = runtime.$lastEditableUserMessage.get()
     const sessionId = runtime.$chatSessionId.get()
+
+    const message = runtime.$chatMessageList
+      .get()
+      .find(item => item.id === messageId && item.role === 'user' && item.subtype === undefined)
+
     const body = runtime.$chatMessageBodies.get()[messageId]
 
-    if (!sessionId || message?.id !== messageId || !message.backendMessageId || !body) {
+    if (
+      !sessionId ||
+      runtime.$chatSessionReadOnly.get() ||
+      runtime.$chatTurnInFlight.get() ||
+      runtime.$pendingPromptBatch.get().length > 0 ||
+      !message?.backendMessageId ||
+      !body
+    ) {
       return
     }
 

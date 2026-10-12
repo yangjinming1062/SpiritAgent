@@ -114,7 +114,7 @@ from services.domains.conversation import (
     get_or_create_special_conversation,
     get_reply_retry_message,
     message_text,
-    replace_last_user_message,
+    replace_user_message,
     resolve_memory_scope,
     resolve_undo_target,
     undo_conversation_to_message,
@@ -1421,7 +1421,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         if edit_message_id is not None:
             async with SESSION_LOCAL() as db:
                 try:
-                    replacement = await replace_last_user_message(
+                    replacement = await replace_user_message(
                         db,
                         user_id,
                         runtime.session_id,

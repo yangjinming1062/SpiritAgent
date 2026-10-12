@@ -200,19 +200,6 @@ export function createConversationRuntime(sessionId: string | null) {
 
   const $chatTurnInFlight = atom<boolean>(false)
 
-  const $lastEditableUserMessage = computed(
-    [$chatMessageList, $chatTurnInFlight, $pendingPromptBatch, $chatSessionReadOnly],
-    (list, inFlight, pending, readOnly): ChatMessageListItem | null => {
-      if (readOnly || inFlight || pending.length > 0) {
-        return null
-      }
-
-      const last = list.findLast(item => item.role === 'user')
-
-      return last?.backendMessageId && !last.subtype ? last : null
-    }
-  )
-
   const $retryableAssistantMessage = computed(
     [$chatMessageList, $chatMessageBodies, $chatTurnInFlight, $pendingPromptBatch, $chatSessionReadOnly],
     (list, bodies, inFlight, pending, readOnly): ChatMessageListItem | null => {
@@ -1920,7 +1907,6 @@ export function createConversationRuntime(sessionId: string | null) {
     $chatSessionReadOnly,
     $pendingPromptBatch,
     $chatTurnInFlight,
-    $lastEditableUserMessage,
     $retryableAssistantMessage,
     retryAssistantReply,
     $turnHadBubbleBreak,

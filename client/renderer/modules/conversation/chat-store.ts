@@ -157,7 +157,6 @@ export const $chatStreamingTick = projectAtom(runtime => runtime.$chatStreamingT
 export const $chatSessionKind = projectAtom(runtime => runtime.$chatSessionKind)
 export const $pendingPromptBatch = projectAtom(runtime => runtime.$pendingPromptBatch)
 export const $chatTurnInFlight = projectAtom(runtime => runtime.$chatTurnInFlight)
-export const $lastEditableUserMessage = projectRead(runtime => runtime.$lastEditableUserMessage)
 export const $retryableAssistantMessage = projectRead(runtime => runtime.$retryableAssistantMessage)
 export const $turnHadBubbleBreak = projectAtom(runtime => runtime.$turnHadBubbleBreak)
 export const $sessionSettings = projectAtom(runtime => runtime.$sessionSettings)
