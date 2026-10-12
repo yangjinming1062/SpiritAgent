@@ -1,0 +1,17 @@
+from typing import ClassVar
+
+from ..base import ChatProvider
+
+
+class CustomChatProvider(ChatProvider):
+    """标准 OpenAI Responses（/responses）通用供应商；base_url 填到版本前缀为止（如 https://host/v1），SDK 将拼 /responses。
+
+    能力按标准协议声明为可用，实际支持与否取决于所配模型。
+    """
+
+    provider_name = "custom"
+    # 无默认端点与模型，均须在能力卡片填写；留空的卡片会被能力链丢弃。
+    DEFAULT_BASE_URL: ClassVar[str] = ""
+    DEFAULT_MODEL: ClassVar[str] = ""
+    supports_json_object: ClassVar[bool] = True
+    supports_vision: ClassVar[bool] = True  # input_image 为 Responses 标准部件

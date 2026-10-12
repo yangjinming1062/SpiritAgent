@@ -21,14 +21,13 @@ from services.domains.companion import (
 from services.infrastructure.event_store import register_internal_event_handler
 from services.infrastructure.llm import ServiceType
 from services.infrastructure.llm import register as register_provider
-from services.infrastructure.llm.providers import gemini, grok, local, mimo, minimax, qwen
+from services.infrastructure.llm.providers import custom, gemini, grok, local, mimo, minimax, qwen
 from services.infrastructure.tool_runtime import REGISTRY
 
 
 def register_providers() -> None:
     register_provider(ServiceType.image_gen, "gemini", gemini.GeminiImageGenProvider)
     register_provider(ServiceType.embedding, "gemini", gemini.GeminiEmbeddingProvider)
-    register_provider(ServiceType.llm, "gemini", gemini.GeminiChatProvider)
     register_provider(ServiceType.llm, "grok", grok.GrokChatProvider)
     register_provider(ServiceType.stt, "grok", grok.GrokSTTProvider)
     register_provider(ServiceType.tts, "grok", grok.GrokTTSProvider)
@@ -52,6 +51,7 @@ def register_providers() -> None:
     register_provider(ServiceType.llm, "local", local.LocalChatProvider)
     register_provider(ServiceType.embedding, "local", local.LocalEmbeddingProvider)
     register_provider(ServiceType.image_gen, "local", local.LocalImageGenProvider)
+    register_provider(ServiceType.llm, "custom", custom.CustomChatProvider)
 
 
 def register_tools() -> None:

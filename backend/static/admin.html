@@ -2033,7 +2033,7 @@ function renderOverviewMatrix(readiness) {
             <td>${statusPill}</td>
             <td>${providers}</td>
             ${group === 'llm'
-                ? `<td>${first ? `<div class="cell-strong">${esc(first.model_name || '默认模型')}</div>` : '<span class="text-3">—</span>'}</td>
+                ? `<td>${first ? `<div class="cell-strong">${esc(first.model_name || (first.provider === 'custom' ? '未填模型' : '默认模型'))}</div>` : '<span class="text-3">—</span>'}</td>
                    <td>${first?.context_window ? `<span class="mono">${esc(String(first.context_window))}</span>` : first ? '<span class="text-3">未填</span>' : '<span class="text-3">—</span>'}</td>`
                 : `<td>${local ? '<span class="text-3">固定工作流</span>' : first?.model_name ? esc(first.model_name) : first ? '<span class="text-3">默认</span>' : '<span class="text-3">—</span>'}</td>
                    <td><span class="text-3">—</span></td>`}
@@ -2212,7 +2212,7 @@ function renderAiChain() {
                 return `<div class="provider-card">
                     <div class="p-name">${esc(aiProviderLabel(p.provider))}</div>
                     <div class="p-row"><span>API Key</span><b style="color:${keyOn ? 'var(--green)' : 'var(--amber)'}">${keyOn ? '已设置' : '未设置'}</b></div>
-                    <div class="p-row"><span>Base URL</span><b>${esc(p.base_url || '官方地址')}</b></div>
+                    <div class="p-row"><span>Base URL</span><b>${esc(p.base_url || (p.provider === 'custom' ? '未填写' : '官方地址'))}</b></div>
                 </div>`;
             }).join('')}</div>` : '<p class="hint" style="margin:0">当前调用链未引用信息库中的供应商。</p>'}
             <p class="layer-hint">只提供共享 API Key 与 Base URL；模型名称写在各能力卡片上。前往「供应商」节点维护。</p>
@@ -2232,7 +2232,7 @@ function renderAiChain() {
                 <span class="layer-badge${isUserScope && userCards.length ? ' muted' : ''}">${isUserScope && userCards.length ? '被用户覆盖' : '当前生效'}</span>
             </div>
             ${l2Readonly ? readonlyCallListHtml(systemCards, group) : callListHtml(editorName, group)}
-            <p class="layer-hint">${isUserScope && userCards.length ? '该能力被用户卡片覆盖，系统链不参与该用户调用。' : isUserScope ? '用户未覆盖本能力时按此系统链调用。' : '按卡片顺序调用，失败自动回退到下一张；未添加卡片表示该能力未配置。API Key 与 Base URL 留空继承同名供应商，模型名称留空使用默认模型。'}</p>
+            <p class="layer-hint">${isUserScope && userCards.length ? '该能力被用户卡片覆盖，系统链不参与该用户调用。' : isUserScope ? '用户未覆盖本能力时按此系统链调用。' : '按卡片顺序调用，失败自动回退到下一张；未添加卡片表示该能力未配置。API Key 与 Base URL 留空继承同名供应商，模型名称留空使用默认模型；自定义供应商没有默认端点与模型。'}</p>
         </section>`;
 
     const l3 = isUserScope
@@ -2427,7 +2427,7 @@ function openAiUserScope(userId) {
     $('#aiScopeSelect').value = String(userId);
 }
 
-const AI_NAMES = { mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问', local: '本地 Local' };
+const AI_NAMES = { mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问', local: '本地 Local', custom: '自定义' };
 const AI_SERVICES = { llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成', embedding: '向量嵌入 Embedding' };
 function emptyAiConfig() { return { providers: [], capabilities: { llm: [], stt: [], tts: [], image_gen: [], video_gen: [], embedding: [] } }; }
 function normalizeAiConfig(raw) {
@@ -2471,23 +2471,33 @@ function validateAiCards(editorName) {
     const editor = aiEditors[editorName];
     const windows = [];
     for (const [index, card] of editor.config.capabilities.llm.entries()) {
+        // custom 无默认模型与端点，留空会被能力链丢弃，保存前直接拒绝。
+        if (card.provider === 'custom') {
+            if (!card.model_name) return rejectAiField(index, 'model_name', '请填写模型名称，自定义供应商没有默认模型');
+            if (!card.base_url && !aiSource(editor, card.provider)?.base_url) {
+                return rejectAiField(index, 'base_url', '请填写 Base URL（如 https://host/v1），或在供应商信息库配置同名供应商');
+            }
+        }
         const value = parseAiContextWindow(card.context_window);
         if (value === null) {
-            const message = '请填写有效的上下文窗口，例如 32k、1M 或 32768';
-            toast(message, 'err');
-            // 当前只渲染选中分组；llm 输入可能不在 DOM 中，仅在可见时聚焦提示。
-            const input = $('#aiChainBody')?.querySelector(`[data-ai-group="llm"] [data-ai-index="${index}"] [data-ai-field="context_window"]`);
-            if (input) {
-                input.setCustomValidity(message);
-                input.reportValidity();
-                input.focus();
-            }
-            return false;
+            return rejectAiField(index, 'context_window', '请填写有效的上下文窗口，例如 32k、1M 或 32768');
         }
         windows.push(value);
     }
     editor.config.capabilities.llm.forEach((card, index) => { card.context_window = windows[index]; });
     return true;
+}
+
+// 当前只渲染选中分组；llm 输入可能不在 DOM 中，仅在可见时聚焦提示。
+function rejectAiField(index, field, message) {
+    toast(message, 'err');
+    const input = $('#aiChainBody')?.querySelector(`[data-ai-group="llm"] [data-ai-index="${index}"] [data-ai-field="${field}"]`);
+    if (input) {
+        input.setCustomValidity(message);
+        input.reportValidity();
+        input.focus();
+    }
+    return false;
 }
 
 function aiSource(editor, provider) {
@@ -2523,7 +2533,7 @@ function callListHtml(editorName, group) {
         const inherited = source ? '继承 ' + aiProviderLabel(source.provider) : '独立配置';
         const keySet = card.api_key || card.api_key_set;
         const sourceKey = source && (source.api_key || source.api_key_set);
-        const model = library ? '' : localImage ? '固定工作流' : card.model_name || '默认模型';
+        const model = library ? '' : localImage ? '固定工作流' : card.model_name || (card.provider === 'custom' ? '未填模型' : '默认模型');
         return `<article class="call-item" data-ai-index="${index}">
             <div class="call-item-head">
                 <button class="btn btn--ghost" draggable="true" data-ai-handle aria-label="拖拽排序" title="拖拽排序">⠿</button>
@@ -2544,8 +2554,8 @@ function callListHtml(editorName, group) {
                     <input type="password" autocomplete="new-password" data-ai-field="api_key" value="${esc(card.api_key)}" placeholder="${keySet ? '留空保持已保存密钥' : source ? '留空继承供应商' : '填写 API Key'}"></label>
                     <button class="btn btn--ghost" data-ai-action="clear-key">${source ? '清除覆盖，恢复继承' : '清除密钥'}</button>
                 </div>`}
-                <div class="field"><label>Base URL<input type="text" data-ai-field="base_url" value="${esc(card.base_url)}" placeholder="${esc(source?.base_url || '使用供应商官方地址')}"></label></div>
-                ${library || localImage ? '' : `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(card.provider === 'local' && group === 'llm' ? '填写已部署的对话模型 ID' : '使用该能力的默认模型')}"></label></div>`}
+                <div class="field"><label>Base URL<input type="text" data-ai-field="base_url" value="${esc(card.base_url)}" placeholder="${esc(source?.base_url || (card.provider === 'custom' ? '填写 Base URL（如 https://host/v1）' : '使用供应商官方地址'))}"></label></div>
+                ${library || localImage ? '' : `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(card.provider === 'local' && group === 'llm' ? '填写已部署的对话模型 ID' : card.provider === 'custom' ? '填写模型 ID' : '使用该能力的默认模型')}"></label></div>`}
                 ${group === 'llm' ? `<div class="field"><label>上下文窗口（tokens）<input type="text" data-ai-field="context_window" value="${esc(card.context_window)}" placeholder="如 32k、1M 或 32768" required></label><p class="hint">按模型服务实际上下文窗口填写；k = 1000，M = 1000000。</p></div>` : ''}
             </div>
         </article>`;
@@ -2593,7 +2603,7 @@ function bindAiCardEvents() {
         const index = Number(event.target.closest('[data-ai-index]').dataset.aiIndex);
         const card = aiList(aiEditors[editorName()], group)[index];
         card[field] = event.target.value;
-        if (field === 'context_window') event.target.setCustomValidity('');
+        event.target.setCustomValidity('');
         if (field === 'api_key' && clearedKeyCards.has(card)) card.clear_api_key = !event.target.value.trim();
         markAiDirty(editorName());
     };

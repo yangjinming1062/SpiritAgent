@@ -321,7 +321,7 @@ async def _generate_llm_response(
     )
     kwargs.update(reply_options)
 
-    # 只记录含图片的输入项数量：Vertex beta API 400 ``INVALID_ARGUMENT`` 多为代理未能转译 ``inline_data``，据此可确认请求是否带图而无需抓包。
+    # 只记录含图片的输入项数量，多模态请求异常时可确认是否带图而无需抓包。
     image_items = [
         item
         for item in request_input
