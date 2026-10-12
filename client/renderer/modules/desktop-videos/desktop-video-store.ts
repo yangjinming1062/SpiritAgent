@@ -17,8 +17,10 @@ import type {
 } from './types'
 
 const API = '/api/companion/desktop-videos'
-const ENSURE_CURRENT_RETRY_DELAYS_MS = [250, 500, 1000] as const
 const DESKTOP_MODE_GATE_ERROR = '桌面模式当前未启用'
+// 网关重连/显示器热插拔后，桌面激活信号经精灵窗 companion.signal 抵达后端存在秒级传播差；
+// 主进程 presentation 已是 desktop+active，模式门禁 409 属暂态，按退避覆盖该窗口期。
+const MODE_GATE_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000] as const
 
 export const $desktopVideoState = atom<DesktopVideoState | null>(null)
 export const $desktopVideoSets = atom<DesktopVideoSet[]>([])
@@ -132,14 +134,14 @@ function isDesktopModeGateError(error: unknown): boolean {
 }
 
 /** 桌面渲染激活后，网关呈现信号可能尚未抵达 Backend；只重试明确的模式门禁，其他错误保持原语义。 */
-async function ensureCurrentWithRetry(trigger: 'entry' | 'context_change'): Promise<DesktopVideoState> {
+async function withDesktopModeGateRetry<T>(request: () => Promise<T>): Promise<T> {
   const scope = captureAuthScope()
 
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await mutation<DesktopVideoState>('/ensure-current', { trigger })
+      return await request()
     } catch (error) {
-      const delayMs = ENSURE_CURRENT_RETRY_DELAYS_MS[attempt]
+      const delayMs = MODE_GATE_RETRY_DELAYS_MS[attempt]
 
       if (!isDesktopModeGateError(error) || delayMs === undefined || !scope?.()) {
         throw error
@@ -152,6 +154,10 @@ async function ensureCurrentWithRetry(trigger: 'entry' | 'context_change'): Prom
       }
     }
   }
+}
+
+function ensureCurrentWithRetry(trigger: 'entry' | 'context_change'): Promise<DesktopVideoState> {
+  return withDesktopModeGateRetry(() => mutation<DesktopVideoState>('/ensure-current', { trigger }))
 }
 
 export async function ensureDesktopVideoCurrent(
@@ -244,11 +250,13 @@ export async function playDesktopVideoAction(
   setId: number,
   reason = 'user'
 ): Promise<DesktopVideoPlayCommand> {
-  const command = await mutation<DesktopVideoPlayCommand>('/play', {
-    action_id: actionId,
-    expected_set_id: setId,
-    reason
-  })
+  const command = await withDesktopModeGateRetry(() =>
+    mutation<DesktopVideoPlayCommand>('/play', {
+      action_id: actionId,
+      expected_set_id: setId,
+      reason
+    })
+  )
 
   publishPlayCommand(command)
   await refreshDesktopVideos()
