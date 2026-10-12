@@ -8,6 +8,7 @@ from weakref import WeakValueDictionary
 from components import (
     LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
+    AiFeature,
     TaskBag,
     ensure_utc,
     format_local_iso,
@@ -120,6 +121,11 @@ async def available_types(user_id: int) -> list[str]:
                 db,
                 user_id,
                 service_type,
+                feature={
+                    "image_gen": AiFeature.post_image,
+                    "video_gen": AiFeature.post_video,
+                    "tts": AiFeature.post_voice,
+                }[service_type],
             ):
                 types.append(content_type)
     if "video" in types and not await _video_supported(user_id):
@@ -136,6 +142,7 @@ async def _video_supported(user_id: int) -> bool:
                 reference_images=False,
                 duration=duration,
                 preferred=_VIDEO_RESOLUTIONS,
+                feature=AiFeature.post_video,
             ):
                 return True
     except Exception:
@@ -176,7 +183,7 @@ async def _creation_input(user_id: int) -> dict:
 
 async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
     async with SESSION_LOCAL() as db:
-        config = await resolve_user_llm_config(db, user_id)
+        config = await resolve_user_llm_config(db, user_id, feature=AiFeature.post_plan)
     if not config.is_configured:
         raise PostError("模型配置不可用")
     raw = await call_llm_once(
@@ -301,6 +308,7 @@ async def _voice(task_id: str, user_id: int, text: str, *, phase: str, directory
         text,
         settings.get("companion.voice_id") or "",
         resolve_language(settings.get("language")),
+        feature=AiFeature.post_voice,
     )
     mime = result.mime.lower()
     ext = "wav" if "wav" in mime else "ogg" if "ogg" in mime else "m4a" if "mp4" in mime or "m4a" in mime else "mp3"
@@ -343,6 +351,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 identity_reference=visual.avatar_image,
                 secondary_reference_image=outfit,
                 identity_text=render_character_identity(identity),
+                feature=AiFeature.post_image,
             )
         else:
             urls = await generate_images(
@@ -351,6 +360,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 user_id=row.user_id,
                 persist_user_assets=True,
                 storage_directory=directory,
+                feature=AiFeature.post_image,
             )
         if not urls:
             raise PostError("图片生成未取得可用产物")
@@ -376,6 +386,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 reference_images=bool(references),
                 duration=plan.duration,
                 preferred=_VIDEO_RESOLUTIONS,
+                feature=AiFeature.post_video,
             )
             if resolution is None:
                 raise _VideoUnsupportedError
@@ -393,6 +404,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     aspect_ratio=plan.aspect_ratio,
                     identity_reference_path=visual.fullbody_path if visual else None,
                     identity=identity,
+                    feature=AiFeature.post_video,
                 )
             job_id = job.id
             progress["job_id"] = job_id

@@ -87,5 +87,6 @@ class Memory(ModelBase, TimestampMixin):
     tags: Mapped[str | None] = mapped_column(Text, nullable=True)
     importance: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
     embedding: Mapped[list[float] | None] = mapped_column(Vector(MEMORY_EMBEDDING_DIM), nullable=True)
+    embedding_model_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="memories")

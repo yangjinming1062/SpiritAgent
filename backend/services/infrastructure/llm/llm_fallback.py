@@ -1,13 +1,24 @@
+import asyncio
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
-from components import get_logger, log_paid_call
+from components import AI_FEATURE_BY_ID, SETTINGS, AiFeature, get_logger, log_paid_call
 
-from .error_classifier import FailoverReason, LlmCallBlockedError, classify_api_error
+from .call_budget import attempt_budget, chain_budget, remaining_chain_seconds
+from .error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, LLMRuntimeError, classify_api_error
 from .llm_client import MissingLlmConfigError, build_provider
 from .llm_debug import log_event, new_call_id
-from .providers import BaseProvider, ProviderConfig
+from .providers import (
+    BaseProvider,
+    ImageGenProvider,
+    ProviderConfig,
+    ProviderResultUnknownError,
+    STTProvider,
+    TTSProvider,
+    VideoGenProvider,
+)
+from .wait_budget import generation_timeout_scope
 
 logger = get_logger(__name__)
 
@@ -19,6 +30,44 @@ async def execute_with_fallback[P: BaseProvider, T](
     *,
     user_id: int | None,
     stream_started: Callable[[], bool] | None = None,
+) -> T:
+    if not chain:
+        raise MissingLlmConfigError("no provider configured")
+    fast = chain[0].feature is not None and AI_FEATURE_BY_ID[chain[0].feature].fast_decision
+    total = chain[0].total_timeout_seconds
+    if fast:
+        total = min(total, 20.0) if total is not None else 20.0
+    timeout = asyncio.timeout(total)
+    try:
+        async with timeout:
+            with chain_budget(timeout), generation_timeout_scope(timeout):
+                return await _execute_with_fallback(
+                    chain,
+                    provider_type,
+                    call_fn,
+                    user_id=user_id,
+                    stream_started=stream_started,
+                )
+    except TimeoutError as exc:
+        if not timeout.expired():
+            raise
+        if (
+            issubclass(provider_type, (ImageGenProvider, VideoGenProvider, TTSProvider, STTProvider))
+            or chain[0].feature == AiFeature.voice_design
+        ):
+            raise ProviderResultUnknownError("POST", chain[-1].base_url) from exc
+        raise LLMRuntimeError(
+            ClassifiedError(FailoverReason.timeout, None, "AI feature call budget exhausted"),
+        ) from exc
+
+
+async def _execute_with_fallback[P: BaseProvider, T](
+    chain: Sequence[ProviderConfig],
+    provider_type: type[P],
+    call_fn: Callable[[P], Awaitable[T]],
+    *,
+    user_id: int | None,
+    stream_started: Callable[[], bool] | None,
 ) -> T:
     """按已解析的供应商链依次调用 call_fn；链为空时抛 MissingLlmConfigError。should_fallback 时切下一家；结果未知、流已开始或已到末槽时抛出。链内出现过内容策略拦截时优先抛它，便于调用方清洗提示词重试；末家结果未知或流已开始时如实抛出，不能被改写成可重发的拦截。"""
     if not chain:
@@ -40,12 +89,40 @@ async def execute_with_fallback[P: BaseProvider, T](
             chain_index=idx,
             chain_size=chain_size,
             user_id=user_id,
+            feature=config.feature.value if config.feature is not None else None,
+            config_source=config.config_source,
         )
         provider = build_provider(config, provider_type)
         log(phase="chain_attempt")
         started = time.monotonic()
         try:
-            result = await call_fn(provider)
+            fast = config.feature is not None and AI_FEATURE_BY_ID[config.feature].fast_decision
+            seconds = config.attempt_timeout_seconds
+            if seconds is None:
+                seconds = (8.0 if chain_size > 1 else 20.0) if fast else float(SETTINGS.llm_request_timeout_seconds)
+            timeout = asyncio.timeout(remaining_chain_seconds(seconds))
+            try:
+                async with timeout:
+                    with (
+                        attempt_budget(
+                            timeout,
+                            feature=config.feature,
+                            request_timeout=max(seconds, float(SETTINGS.llm_request_timeout_seconds)),
+                        ),
+                        generation_timeout_scope(timeout),
+                    ):
+                        result = await call_fn(provider)
+            except TimeoutError as exc:
+                if not timeout.expired():
+                    raise
+                if (
+                    isinstance(provider, (ImageGenProvider, VideoGenProvider, TTSProvider, STTProvider))
+                    or config.feature == AiFeature.voice_design
+                ):
+                    raise ProviderResultUnknownError("POST", config.base_url) from exc
+                raise LLMRuntimeError(
+                    ClassifiedError(FailoverReason.timeout, None, "AI provider attempt timed out"),
+                ) from exc
         except LlmCallBlockedError:
             raise
         except Exception as exc:

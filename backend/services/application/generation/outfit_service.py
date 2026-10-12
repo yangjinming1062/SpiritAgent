@@ -9,6 +9,7 @@ from datetime import timedelta
 from components import (
     SESSION_LOCAL,
     SETTINGS,
+    AiFeature,
     get_logger,
     is_user_in_maintenance,
     parse_llm_json,
@@ -286,6 +287,7 @@ async def _generate_outfit_fullbody(
             size=FULLBODY_SIZE,
             image_edit=image_edit,
             prefer_transparent_background=True,
+            feature=AiFeature.outfit_image,
         )
 
     try:
@@ -908,6 +910,7 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
             user_id,
             OUTFIT_DESCRIBE_SYSTEM,
             json.dumps(payload, ensure_ascii=False),
+            feature=AiFeature.outfit_description,
         )
         parsed = parse_llm_json(raw)
         if not isinstance(parsed, dict):

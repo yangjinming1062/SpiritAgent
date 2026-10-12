@@ -29,6 +29,7 @@ from .memory_narratives import (
 )
 from .memory_policy import MemoryDecisions
 from .memory_retrieval import (
+    MemoryEmbedding,
     MemoryRecallResult,
     embed_memory_text,
     retrieve_hybrid_memories,
@@ -44,10 +45,13 @@ from .memory_store import (
     backfill_memory_embeddings,
     create_memory,
     delete_memory,
+    drain_memory_embeddings,
     upsert_slotted_memory,
 )
 
 __all__ = [
+    "drain_memory_embeddings",
+    "MemoryEmbedding",
     "MemoryListItem",
     "MemoryRecallResult",
     "backfill_diary_embeddings",

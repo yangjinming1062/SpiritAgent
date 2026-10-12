@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from components import SESSION_LOCAL
+from components import SESSION_LOCAL, AiFeature
 from modules.media import SpeechStyle
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,7 +53,7 @@ async def resolve_reply_voice(
     voice: str,
     language: str,
 ) -> tuple[ProviderConfig | None, str]:
-    chain = await resolve_provider_chain(db, user_id, ServiceType.tts)
+    chain = await resolve_provider_chain(db, user_id, ServiceType.tts, feature=AiFeature.companion_voice)
     voice_id, chain, _ = _route_selected_voice(voice, chain, language)
     if not chain or chain[0].provider_name not in {"mimo", "minimax"}:
         return None, ""
@@ -70,11 +70,12 @@ async def synthesize_speech(
     language: str = "",
     speech_style: SpeechStyle | None = None,
     *,
+    feature: AiFeature,
     preserve_performance: bool = False,
 ) -> TTSResult:
     """走供应商链合成整段语音；链解析为空抛 MissingLlmConfigError。返回体含实际使用的音色 id。"""
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, ServiceType.tts)
+        chain = await resolve_provider_chain(db, user_id, ServiceType.tts, feature=feature)
     if not chain:
         if preserve_performance:
             raise ValueError("Voice message TTS configuration is no longer available")

@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from components import SETTINGS, get_logger, parse_llm_json, session_scope, utc_now
+from components import SETTINGS, AiFeature, get_logger, parse_llm_json, session_scope, utc_now
 from modules.conversation import Conversation, Message
 from prompts.memory import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 from sqlalchemy import func, select
@@ -115,6 +115,7 @@ async def review_memories(
     session_id: int | None = None,
     through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
+    feature: AiFeature = AiFeature.memory_review,
     max_output_tokens: int | None = _MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
@@ -126,6 +127,7 @@ async def review_memories(
             session_id=session_id,
             through_message_id=through_message_id,
             llm_config=llm_config,
+            feature=feature,
             max_output_tokens=max_output_tokens,
             before_call=before_call,
             reasoning_effort=reasoning_effort,
@@ -145,6 +147,7 @@ async def _review_batches(
     session_id: int | None = None,
     through_message_id: int | None = None,
     llm_config: UserLlmConfig | None = None,
+    feature: AiFeature = AiFeature.memory_review,
     max_output_tokens: int | None = _MEMORY_REVIEW_MAX_OUTPUT_TOKENS,
     before_call: Callable[[], Awaitable[None]] | None = None,
     reasoning_effort: str | None = None,
@@ -175,7 +178,7 @@ async def _review_batches(
                     reviewed_before=started_at,
                 )
                 if llm_config is None:
-                    llm_config = await resolve_user_llm_config(db, scope.user_id)
+                    llm_config = await resolve_user_llm_config(db, scope.user_id, feature)
             if not context.messages and (session_id is not None or not context.memories):
                 return
             if not llm_config.is_configured:

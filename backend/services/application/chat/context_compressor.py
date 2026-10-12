@@ -6,6 +6,7 @@ from components import (
     CONTEXT_SUMMARY_HEADROOM_FACTOR,
     LLM_MAX_OUTPUT_TOKENS,
     SETTINGS,
+    AiFeature,
     get_logger,
     resolve_prompt_text,
 )
@@ -16,9 +17,13 @@ from prompts.chat import (
 )
 
 from services.infrastructure.llm import (
+    ChatProvider,
     approx_responses_tokens,
     build_responses_kwargs,
     call_with_retry,
+    execute_with_fallback,
+    load_user_llm_config,
+    resolve_context_tokens,
 )
 
 logger = get_logger(__name__)
@@ -207,6 +212,35 @@ def compression_due(
 
 
 async def compress_history(
+    context: dict[str, Any],
+    *,
+    user_id: int,
+    temperature: float,
+    language: str,
+    context_length: int,
+    companion: bool = False,
+) -> tuple[dict[str, Any], CompressionInfo | None]:
+    """摘要沿独立功能链回退；每家都从原历史计算完整批次的覆盖边界。"""
+    config = await load_user_llm_config(user_id, AiFeature.context_compression)
+
+    async def summarize(provider: ChatProvider) -> tuple[dict[str, Any], CompressionInfo | None]:
+        return await _compress_history_with_provider(
+            context,
+            client=provider.raw_client(),
+            model=provider.config.model,
+            temperature=provider.scale_temperature(temperature),
+            language=language,
+            context_length=min(context_length, resolve_context_tokens(provider.config)),
+            companion=companion,
+        )
+
+    try:
+        return await execute_with_fallback(config.chain, ChatProvider, summarize, user_id=user_id)
+    except Exception as exc:
+        raise CompressionFailedError("summary call failed") from exc
+
+
+async def _compress_history_with_provider(
     context: dict[str, Any],
     *,
     client: Any,

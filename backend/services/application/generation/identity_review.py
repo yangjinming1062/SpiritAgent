@@ -3,7 +3,7 @@
 import json
 from collections.abc import Awaitable, Callable
 
-from components import get_logger, parse_llm_json
+from components import AiFeature, get_logger, parse_llm_json
 from prompts.generation import (
     CHARACTER_ACTION_IMAGE_REVIEW,
     CHARACTER_ACTION_VIDEO_REVIEW,
@@ -35,6 +35,8 @@ async def _score_media(
     images: tuple[str, ...],
     identity_text: str = "",
     before_submit: Callable[[], Awaitable[None]] | None = None,
+    *,
+    feature: AiFeature = AiFeature.image_identity,
 ) -> int | None:
     if not images or any(not image for image in images):
         logger.warning("character media score skipped: image missing", extra={"user_id": user_id})
@@ -46,6 +48,7 @@ async def _score_media(
             json.dumps({"image_count": len(images), "identity": identity_text}, ensure_ascii=False),
             reference_images=images,
             before_submit=before_submit,
+            feature=feature,
         )
         payload = parse_llm_json(raw)
         score = payload.get("score") if isinstance(payload, dict) else None
@@ -115,6 +118,7 @@ async def score_character_frames(
         (identity_uri or "", *frame_uris),
         identity_text,
         before_submit,
+        feature=AiFeature.video_identity,
     )
 
 
@@ -134,6 +138,7 @@ async def score_character_frames_with_references(
         (*identity_uris, *frame_uris),
         identity_text,
         before_submit,
+        feature=AiFeature.video_identity,
     )
 
 
@@ -162,6 +167,7 @@ async def review_character_frames(
             json.dumps({"image_count": len(frame_uris) + 1, "identity": identity_text}, ensure_ascii=False),
             reference_images=(identity_uri, *frame_uris),
             before_submit=before_submit,
+            feature=AiFeature.action_review,
         )
         payload = parse_llm_json(raw)
         if isinstance(payload, dict) and payload.get("verdict") in ("pass", "review"):

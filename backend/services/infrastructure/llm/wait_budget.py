@@ -14,6 +14,7 @@ class _GenerationTimeout:
     waiters: int = 0
     deadline: float | None = None
     started: float = 0
+    waited_seconds: float = 0
 
     def pause(self) -> bool:
         if not self.active or self.timeout.expired():
@@ -31,21 +32,23 @@ class _GenerationTimeout:
         self.waiters -= 1
         if not self.active or self.timeout.expired():
             return
-        if self.waiters == 0 and self.deadline is not None:
+        if self.waiters == 0:
             elapsed = asyncio.get_running_loop().time() - self.started
-            self.timeout.reschedule(self.deadline + elapsed)
+            self.waited_seconds += elapsed
+            if self.deadline is not None:
+                self.timeout.reschedule(self.deadline + elapsed)
 
 
 _GENERATION_TIMEOUTS: ContextVar[tuple[_GenerationTimeout, ...]] = ContextVar("generation_timeouts", default=())
 
 
 @contextmanager
-def generation_timeout_scope(timeout: asyncio.Timeout) -> Iterator[None]:
+def generation_timeout_scope(timeout: asyncio.Timeout) -> Iterator[_GenerationTimeout]:
     """登记可暂停的执行预算；授权到期、用户取消与供应商等待上限由各自入口管理。"""
     budget = _GenerationTimeout(timeout)
     token = _GENERATION_TIMEOUTS.set((*_GENERATION_TIMEOUTS.get(), budget))
     try:
-        yield
+        yield budget
     finally:
         budget.active = False
         _GENERATION_TIMEOUTS.reset(token)

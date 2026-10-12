@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from components import SESSION_LOCAL, AiFeature
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .llm_client import resolve_provider_chain
@@ -31,6 +32,12 @@ class UserLlmConfig:
         return self.config.model if self.config else ""
 
 
-async def resolve_user_llm_config(db: AsyncSession, user_id: int) -> UserLlmConfig:
-    chain = await resolve_provider_chain(db, user_id, ServiceType.llm)
+async def resolve_user_llm_config(db: AsyncSession, user_id: int, feature: AiFeature) -> UserLlmConfig:
+    chain = await resolve_provider_chain(db, user_id, ServiceType.llm, feature=feature)
     return UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
+
+
+async def load_user_llm_config(user_id: int, feature: AiFeature) -> UserLlmConfig:
+    """辅助调用独立解析功能链；供应商等待期间不占数据库连接。"""
+    async with SESSION_LOCAL() as db:
+        return await resolve_user_llm_config(db, user_id, feature)

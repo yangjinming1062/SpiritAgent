@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from components import (
     NIGHTLY_REASONING_EFFORT,
     SESSION_LOCAL,
+    AiFeature,
     get_logger,
     resolve_language,
     resolve_prompt_text,
@@ -73,8 +74,8 @@ from services.domains.memory import MemoryListItem
 from services.infrastructure.llm import (
     LlmAttemptDiagnostic,
     LlmJsonValidationError,
-    UserLlmConfig,
     call_llm_json,
+    load_user_llm_config,
     resolve_provider_chain,
 )
 
@@ -417,9 +418,11 @@ async def _provider_available(
     db: AsyncSession,
     user_id: int,
     service_type: str,
+    *,
+    feature: AiFeature,
 ) -> bool:
     try:
-        return bool(await resolve_provider_chain(db, user_id, service_type))
+        return bool(await resolve_provider_chain(db, user_id, service_type, feature=feature))
     except Exception:
         logger.warning(
             "nightly capability availability check failed",
@@ -433,10 +436,11 @@ async def _image_provider_available(
     db: AsyncSession,
     user_id: int,
     *,
+    feature: AiFeature,
     has_reference: bool,
 ) -> bool:
     try:
-        chain, _ = await resolve_image_gen_chain(db, user_id, has_reference=has_reference)
+        chain, _ = await resolve_image_gen_chain(db, user_id, feature=feature, has_reference=has_reference)
         return bool(chain)
     except Exception:
         logger.warning(
@@ -502,9 +506,25 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         ).all()
         character = await load_character_snapshot(db, user_id)
         settings = await load_user_settings(db, user_id, ("language",))
-        reference_image_available = await _image_provider_available(db, user_id, has_reference=True)
-        text_image_available = await _image_provider_available(db, user_id, has_reference=False)
-        video_available = await _provider_available(db, user_id, "video_gen")
+        reference_image_available = await _image_provider_available(
+            db,
+            user_id,
+            feature=AiFeature.outfit_image,
+            has_reference=True,
+        )
+        text_image_available = await _image_provider_available(
+            db,
+            user_id,
+            feature=AiFeature.scene_image,
+            has_reference=False,
+        )
+        presentation = get_presentation_snapshot(user_id)
+        video_feature = (
+            AiFeature.desktop_video
+            if presentation is not None and presentation.mode == "desktop"
+            else AiFeature.action_video
+        )
+        video_available = await _provider_available(db, user_id, "video_gen", feature=video_feature)
         recent_actions = (
             await db.scalars(
                 select(NightlyActivityAction)
@@ -1159,7 +1179,6 @@ async def _execute_persisted_actions(
 
 
 async def run_nightly_planning(
-    llm_cfg: UserLlmConfig,
     user_id: int,
     contextual_memories: dict[str, str],
     background_memories: dict[str, str],
@@ -1196,7 +1215,7 @@ async def run_nightly_planning(
             **anomaly_stats,
         }
         plan = await call_llm_json(
-            llm_cfg,
+            await load_user_llm_config(user_id, AiFeature.nightly_planning),
             PLANNING_SYSTEM_PROMPT,
             payload,
             max_output_tokens=None,

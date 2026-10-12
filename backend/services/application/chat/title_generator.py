@@ -8,6 +8,7 @@ from components import (
     TITLE_GENERATION_TEMPERATURE,
     TITLE_MAX_CHARS,
     TITLE_SNIPPET_MAX_CHARS,
+    AiFeature,
     get_logger,
     resolve_prompt_text,
 )
@@ -19,8 +20,8 @@ from services.infrastructure.llm import (
     IncompleteLlmResponseError,
     LLMRuntimeError,
     MissingLlmConfigError,
-    UserLlmConfig,
     call_llm_once,
+    load_user_llm_config,
 )
 
 logger = get_logger(__name__)
@@ -39,12 +40,13 @@ async def auto_generate_title(
     conversation_id: int,
     user_message: str,
     assistant_response: str | list[str],
-    llm_config: UserLlmConfig,
+    user_id: int,
     language: str = DEFAULT_LANGUAGE,
     temperature: float | None = None,
 ) -> None:
     """用 LLM 生成会话标题并持久化（仅在仍是默认标题时覆盖）。"""
     try:
+        llm_config = await load_user_llm_config(user_id, AiFeature.conversation_title)
         assistant_snippet: str | list[str]
         if isinstance(assistant_response, str):
             assistant_snippet = assistant_response[:TITLE_SNIPPET_MAX_CHARS]

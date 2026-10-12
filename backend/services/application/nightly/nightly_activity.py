@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from components import (
     NIGHTLY_REASONING_EFFORT,
     SETTINGS,
+    AiFeature,
     format_local_iso,
     get_logger,
     resolve_language,
@@ -45,7 +46,11 @@ from services.domains.memory import (
     upsert_slotted_memory,
 )
 from services.domains.posts import collect_post_interactions
-from services.infrastructure.llm import LlmAttemptDiagnostic, UserLlmConfig, call_llm_json, resolve_user_llm_config
+from services.infrastructure.llm import (
+    LlmAttemptDiagnostic,
+    call_llm_json,
+    load_user_llm_config,
+)
 
 from .journal_nightly import project_today
 from .nightly_planning import ActionExecutionResult, DateContext, load_terminal_action_results, run_nightly_planning
@@ -89,7 +94,6 @@ def _persona_brief(persona: Persona | None) -> dict[str, str]:
 
 
 async def _stage_4_reflection(
-    llm_cfg: UserLlmConfig,
     scope: MemoryScope,
     clean_messages: list[dict[str, str]],
     contextual_memories: dict[str, str],
@@ -131,7 +135,7 @@ async def _stage_4_reflection(
     }
     max_content_chars = SETTINGS.reflection_max_content_chars
     content = await call_llm_json(
-        llm_cfg,
+        await load_user_llm_config(scope.user_id, AiFeature.nightly_reflection),
         resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language),
         payload,
         schema=reflection_schema(max_content_chars),
@@ -293,13 +297,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         )
         await _update_log(log_id, status="skipped", summary=f"时区解析错误: {exc}")
         return False
-    async with session_scope() as db:
-        llm_cfg = await resolve_user_llm_config(db, user_id)
-    if not llm_cfg.is_configured:
-        logger.info("nightly_activity: skipped, missing llm config", extra={"user_id": user_id})
-        await _update_log(log_id, status="skipped", summary="缺少 LLM 配置")
-        return False
-
     # 各阶段顺序执行，失败域相互隔离；每个阶段的结果汇入 stages 给末尾日志。
     stages: list[dict[str, Any]] = []
     stage_diagnostics: dict[str, list[LlmAttemptDiagnostic]] = {
@@ -311,7 +308,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         try:
             await review_memories(
                 scope,
-                llm_config=llm_cfg,
+                feature=AiFeature.nightly_memory,
                 max_output_tokens=None,
                 before_call=partial(require_nightly_window, ZoneInfo(tz_str)),
                 reasoning_effort=NIGHTLY_REASONING_EFFORT,
@@ -396,7 +393,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     if user.nightly_activity_enabled and in_nightly_window(utc_now(), ZoneInfo(tz_str)):
         try:
             planning_result = await run_nightly_planning(
-                llm_cfg,
                 user_id,
                 contextual_memories,
                 background_memories,
@@ -455,7 +451,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     if has_material:
         try:
             reflection_ok = await _stage_4_reflection(
-                llm_cfg,
                 scope,
                 clean_messages,
                 contextual_memories,
@@ -496,7 +491,6 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 background_memories=background_memories,
                 user_timezone=tz_str,
                 messages=clean_messages,
-                llm_cfg=llm_cfg,
                 nightly_actions=action_facts,
                 posts=posts,
                 persona=persona,

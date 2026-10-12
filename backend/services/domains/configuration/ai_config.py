@@ -10,7 +10,7 @@ from components import (
 )
 from pydantic import ValidationError
 
-from services.infrastructure.llm import providers_supporting
+from services.infrastructure.llm import providers_for_feature, providers_supporting
 
 
 def _merge_saved_keys(
@@ -42,6 +42,16 @@ def prepare_ai_config(update: AIConfigUpdate, previous: AIConfig | None) -> AICo
                     )
                     for service in CAPABILITY_SERVICES
                 },
+                "features": {
+                    feature: {
+                        **value.model_dump(exclude={"chain"}),
+                        "chain": _merge_saved_keys(
+                            value.chain,
+                            saved.features[feature].chain if feature in saved.features else [],
+                        ),
+                    }
+                    for feature, value in update.features.items()
+                },
             },
         )
     except ValidationError as exc:
@@ -51,16 +61,24 @@ def prepare_ai_config(update: AIConfigUpdate, previous: AIConfig | None) -> AICo
 
     config.validate_capability_overrides()
 
-    for service in CAPABILITY_SERVICES:
+    for service, cards in config.chains():
         supported = set(providers_supporting(service))
-        if any(card.provider not in supported for card in getattr(config.capabilities, service)):
+        if any(card.provider not in supported for card in cards):
             raise ValueError(f"所选供应商不支持 {service} 能力")
+    for feature, value in config.features.items():
+        supported = set(providers_for_feature(feature))
+        if any(card.provider not in supported for card in value.chain):
+            raise ValueError(f"所选供应商不支持功能 {feature.value}")
     return config
 
 
 def public_ai_config(config: AIConfig) -> AIConfigPublic:
     value = config.model_dump()
-    for cards in [value["providers"], *value["capabilities"].values()]:
+    for cards in [
+        value["providers"],
+        *value["capabilities"].values(),
+        *(feature["chain"] for feature in value["features"].values()),
+    ]:
         for card in cards:
             card["api_key_set"] = bool(card["api_key"])
             card["api_key"] = ""

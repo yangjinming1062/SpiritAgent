@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import ClassVar, Literal
 
-from components import get_logger
+from components import AiFeature, get_logger
 from modules.media import SpeechStyle
 from openai import AsyncOpenAI
 
@@ -67,6 +67,10 @@ class ProviderConfig:
     provider_name: str
     model_overridden: bool = False
     context_window: int | None = None
+    feature: AiFeature | None = None
+    config_source: str = "system_default"
+    attempt_timeout_seconds: float | None = None
+    total_timeout_seconds: float | None = None
 
 
 class BaseProvider(ABC):

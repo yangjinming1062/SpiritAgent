@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Literal
 
 import httpx
-from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger
+from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, AiFeature, download_capped, get_logger
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,7 +29,10 @@ from .media_chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
+    MediaProviderFailedError,
+    media_call_budget,
     media_failure_reason,
+    require_media_call_budget,
     resolve_frozen_media_provider,
 )
 from .scene_image_review import review_scene_image
@@ -278,6 +281,8 @@ async def _complete_images(
                 "图片生成结果未知，请核对供应商任务后再决定是否重做",
                 result_unknown=True,
             )
+        if state.stop_reason == "call_budget_exhausted":
+            raise ImageGenerationError("供应商调用预算已用完，请调整功能预算后重做")
         if state.size_rejected:
             raise ImageGenerationError("生成图片画幅不符合要求")
         if isinstance(state.inputs, SceneImageInput) and any(candidate.evaluated for candidate in state.candidates):
@@ -301,6 +306,7 @@ async def generate_character_images(
     prompt: str,
     *,
     user_id: int,
+    feature: AiFeature,
     storage_directory: str,
     reference_image: str,
     identity_reference: str,
@@ -346,6 +352,7 @@ async def generate_character_images(
             chain, error = await resolve_image_gen_chain(
                 db,
                 user_id,
+                feature=feature,
                 has_reference=bool(reference_image),
                 image_edit=image_edit,
                 multiple_references=bool(secondary_reference_image),
@@ -353,13 +360,6 @@ async def generate_character_images(
             )
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
-        if prefer_transparent_background:
-            # 原生透明优先；组内保持用户链序，非透明供应商保留为安全回退。
-            chain.sort(
-                key=lambda config: (
-                    not resolve(ServiceType.image_gen, config.provider_name).supports_transparent_background
-                ),
-            )
         state.providers = [FrozenMediaProvider.from_config(config) for config in chain]
         for provider in state.providers:
             provider_cls = resolve(ServiceType.image_gen, provider.provider)
@@ -423,6 +423,7 @@ async def generate_scene_images(
             chain, error = await resolve_image_gen_chain(
                 db,
                 user_id,
+                feature=AiFeature.scene_image,
                 has_reference=bool(reference_image),
                 prompt_chars=len(prompt),
                 environment_reference=True,
@@ -634,6 +635,12 @@ async def _run_image_chain(
                 continue
             if before_submit is not None:
                 await before_submit()
+            try:
+                require_media_call_budget(config, state)
+            except MediaProviderFailedError as exc:
+                state.stop_reason = exc.reason
+                await _save_progress(state, save_progress)
+                return await _complete_images(state, save_progress)
             batch_size = state.providers[index].max_images_per_request or len(state.remaining_slots)
             slots = state.remaining_slots[:batch_size]
             state.remaining_slots = state.remaining_slots[batch_size:]
@@ -642,22 +649,24 @@ async def _run_image_chain(
             try:
                 provider = state.providers[index]
                 background = provider.background
-                urls = await generate_images(
-                    inputs.prompt,
-                    size=provider.image_size or inputs.size,
-                    n=len(slots),
-                    user_id=user_id,
-                    reference_image=reference_uri,
-                    secondary_reference_image=secondary_uri if isinstance(inputs, CharacterImageInput) else None,
-                    image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,
-                    provider_config=config,
-                    background=background,
-                    prefer_transparent_background=isinstance(inputs, CharacterImageInput)
-                    and inputs.prefer_transparent_background,
-                    aspect_ratio=provider.image_aspect_ratio,
-                    resolution=provider.image_resolution,
-                    exact_size=provider.image_exact_size,
-                )
+                async with media_call_budget(config, state) as budget_config:
+                    urls = await generate_images(
+                        inputs.prompt,
+                        size=provider.image_size or inputs.size,
+                        n=len(slots),
+                        user_id=user_id,
+                        feature=config.feature,
+                        reference_image=reference_uri,
+                        secondary_reference_image=secondary_uri if isinstance(inputs, CharacterImageInput) else None,
+                        image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,
+                        provider_config=budget_config,
+                        background=background,
+                        prefer_transparent_background=isinstance(inputs, CharacterImageInput)
+                        and inputs.prefer_transparent_background,
+                        aspect_ratio=provider.image_aspect_ratio,
+                        resolution=provider.image_resolution,
+                        exact_size=provider.image_exact_size,
+                    )
             except ImageGenerationError as exc:
                 reason, can_continue = media_failure_reason(exc)
                 state.phase = "ready"

@@ -10,6 +10,7 @@ from pathlib import Path
 from components import (
     SESSION_LOCAL,
     SETTINGS,
+    AiFeature,
     TaskBag,
     get_logger,
     is_user_in_maintenance,
@@ -121,7 +122,9 @@ from ..media_chain import (
     MediaCandidate,
     MediaChainState,
     MediaProviderFailedError,
+    media_call_budget,
     media_failure_reason,
+    require_media_call_budget,
     resolve_frozen_media_provider,
     spawn_removed_action_task_cancellation,
     video_failure_message,
@@ -580,17 +583,24 @@ async def create_pack_from_reference(
                 return reusable
         system_seconds: float | None = None
         system_providers: list[FrozenMediaProvider] = []
-        if not await resolve_vision_chain(db, user_id):
+        if not await resolve_vision_chain(db, user_id, feature=AiFeature.action_script):
             raise VideoPackStateError("未配置视觉模型，无法根据角色参考图撰写动作脚本")
         alignment_chain, alignment_error = await resolve_image_gen_chain(
             db,
             user_id,
+            feature=AiFeature.action_alignment_image,
             has_reference=True,
             multiple_references=True,
         )
         if not alignment_chain:
             raise VideoPackStateError(alignment_error or "请配置支持头像与着装双参考的图像供应商")
-        image_chain, image_error = await resolve_image_gen_chain(db, user_id, has_reference=True, image_edit=True)
+        image_chain, image_error = await resolve_image_gen_chain(
+            db,
+            user_id,
+            feature=AiFeature.action_pose_image,
+            has_reference=True,
+            image_edit=True,
+        )
         if not image_chain:
             raise VideoPackStateError(image_error or "请配置图像编辑供应商以生成动作姿态")
         require_action_matting_model()
@@ -1351,7 +1361,7 @@ async def _resolve_action_video_plan(
         raise VideoPackStateError("动作时长须为 1–15 的整秒数")
     requested = int(round(duration_seconds))
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen")
+        chain = await resolve_provider_chain(db, user_id, "video_gen", feature=AiFeature.action_video)
     configured = [(config, build_provider(config, VideoGenProvider)) for config in chain]
     for index, (_config, provider) in enumerate(configured):
         available = provider.durations if provider.durations is not None else (requested,)
@@ -1758,6 +1768,7 @@ async def _prepare_action_pose(
         state=pose_state,
         save_progress=save_pose,
         before_submit=lambda: _require_new_paid_step(pack, context),
+        feature=AiFeature.action_pose_image,
     )
     job.pose_path = action_pose_asset_path(
         pack.user_id,
@@ -2088,6 +2099,7 @@ async def _run_action_attempt(
             provider = build_provider(config, VideoGenProvider)
             task_id = job.provider_task_id
             if not task_id:
+                require_media_call_budget(config, state)
                 resolution = state.providers[attempt].video_resolution
                 if not resolution:
                     raise VideoPackStateError("动作制作资料缺少分辨率，请重新生成该动作")
@@ -2111,7 +2123,13 @@ async def _run_action_attempt(
                     return status
 
                 try:
-                    submitted = await execute_with_fallback([config], VideoGenProvider, submit, user_id=pack.user_id)
+                    async with media_call_budget(config, state) as budget_config:
+                        submitted = await execute_with_fallback(
+                            [budget_config],
+                            VideoGenProvider,
+                            submit,
+                            user_id=pack.user_id,
+                        )
                 except GenerationWorkPaused:
                     # 尚未提交的游标回到可安全提交的位置，维护恢复不能把它判为结果未知。
                     state.phase, state.active_index, state.next_index = "ready", None, attempt

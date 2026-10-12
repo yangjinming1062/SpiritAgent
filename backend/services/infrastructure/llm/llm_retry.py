@@ -7,6 +7,7 @@ from typing import Any
 from components import LLM_RETRY_MIN_TIMEOUT, SETTINGS, get_logger
 from openai import AsyncOpenAI
 
+from .call_budget import current_call_feature, provider_request_timeout, remaining_chain_seconds, response_started
 from .error_classifier import LlmCallBlockedError, LLMRuntimeError, classify_api_error
 from .llm_debug import (
     log_event,
@@ -53,6 +54,7 @@ async def _guarded_stream(
                 return
             if first_chunk_at is None:
                 first_chunk_at = time.monotonic()
+                response_started()
             events_count += 1
             event_type = str(getattr(chunk, "type", ""))
             delta = getattr(chunk, "delta", None)
@@ -127,7 +129,9 @@ async def call_with_retry(
     **create_kwargs: Any,
 ) -> Any:
     """client.responses.create(**kwargs) 的统一入口：终端异常分类为 LLMRuntimeError，流式响应受总预算约束。重试由客户端 max_retries 接管（SDK 遵循 Retry-After 并对 408/409/429/5xx 退避）；换供应商由 execute_with_fallback 决定。"""
-    budget = max(float(SETTINGS.llm_request_timeout_seconds), LLM_RETRY_MIN_TIMEOUT)
+    request_timeout = provider_request_timeout(max(float(SETTINGS.llm_request_timeout_seconds), LLM_RETRY_MIN_TIMEOUT))
+    budget = remaining_chain_seconds(request_timeout)
+    create_kwargs.setdefault("timeout", request_timeout)
     model = str(create_kwargs.get("model") or "")
     input_items = create_kwargs.get("input")
     is_stream = bool(create_kwargs.get("stream"))
@@ -147,6 +151,7 @@ async def call_with_retry(
         stream=is_stream,
         context_length=context_length,
         timeout_seconds=budget,
+        feature=current_call_feature(),
     )
 
     try:

@@ -111,7 +111,7 @@ class ChatSchemaResponsesClient:
             },
             "store": False,
         }
-        for key in ("temperature", "extra_headers"):
+        for key in ("temperature", "extra_headers", "timeout"):
             if key in kwargs:
                 request[key] = kwargs[key]
         if reasoning := kwargs.get("reasoning"):

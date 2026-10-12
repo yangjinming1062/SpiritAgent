@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime
 from typing import Any
 
-from components import get_logger, session_scope, tool_error, utc_now
+from components import AiFeature, get_logger, session_scope, tool_error, utc_now
 from sqlalchemy.exc import SQLAlchemyError
 
 from services.contracts import MemoryScope, MemorySource
@@ -65,7 +65,7 @@ class NativeMemory:
                     return tool_error("Call memory_inspect first to obtain original evidence and current versions")
                 proposal = MemoryDecisions.model_validate(args)
                 async with session_scope() as db:
-                    config = await resolve_user_llm_config(db, self._scope.user_id)
+                    config = await resolve_user_llm_config(db, self._scope.user_id, feature=AiFeature.memory_proposal)
                 rows = await assess_memory_changes(
                     self._scope,
                     self._source,

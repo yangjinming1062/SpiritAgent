@@ -1,7 +1,7 @@
 import asyncio
 import base64
 
-from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger
+from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, AiFeature, download_capped, get_logger
 from prompts.generation import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,6 +55,7 @@ async def resolve_image_gen_chain(
     db: AsyncSession,
     user_id: int,
     *,
+    feature: AiFeature,
     has_reference: bool,
     image_edit: bool = False,
     multiple_references: bool = False,
@@ -62,7 +63,7 @@ async def resolve_image_gen_chain(
     environment_reference: bool = False,
 ) -> tuple[list[ProviderConfig], str | None]:
     """按参考图/图像编辑能力过滤 image_gen 链；给出 ``prompt_chars`` 时跳过提示词放不下的供应商。"""
-    full = await resolve_provider_chain(db, user_id, "image_gen")
+    full = await resolve_provider_chain(db, user_id, "image_gen", feature=feature)
 
     def _fits(cfg: ProviderConfig) -> bool:
         limit = resolve(ServiceType.image_gen, cfg.provider_name).max_prompt_chars
@@ -117,6 +118,7 @@ async def generate_images(
     prompt: str,
     *,
     user_id: int,
+    feature: AiFeature,
     size: str = "1024x1024",
     n: int = 1,
     reference_image: str | None = None,
@@ -174,6 +176,7 @@ async def generate_images(
                 chain, err = await resolve_image_gen_chain(
                     db,
                     user_id,
+                    feature=feature,
                     has_reference=bool(reference_image),
                     image_edit=image_edit,
                     multiple_references=bool(secondary_reference_image),
@@ -188,11 +191,6 @@ async def generate_images(
                 ]
                 if not chain:
                     err = "提示词超过当前图片生成供应商的长度上限，请缩短描述或启用其他供应商"
-                chain.sort(
-                    key=lambda config: (
-                        not resolve(ServiceType.image_gen, config.provider_name).supports_transparent_background
-                    ),
-                )
         if err:
             logger.warning("image generation chain error", extra={"error": err, "user_id": user_id})
             raise ImageGenerationError(err, internal=err)

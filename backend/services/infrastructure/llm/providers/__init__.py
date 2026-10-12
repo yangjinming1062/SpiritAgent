@@ -29,6 +29,7 @@ from .registry import (
     default_model_for,
     provider_context_defaults,
     provider_requires_api_key,
+    providers_for_feature,
     providers_supporting,
     register,
     resolve,
@@ -38,6 +39,7 @@ from .registry import (
 )
 
 __all__ = [
+    "providers_for_feature",
     "ASPECT_RATIOS",
     "PRODUCT_REASONING_EFFORTS",
     "BaseProvider",

@@ -7,7 +7,7 @@ from components import SESSION_LOCAL, TaskBag, get_logger, track_user_task
 from modules.companion import Persona
 from sqlalchemy import select, update
 
-from services.infrastructure.llm import MissingLlmConfigError, resolve_provider_config
+from services.infrastructure.llm import MissingLlmConfigError
 
 from .persona_service import load_persona_definition
 from .personality_tagger import analyze_personality_tags, personality_tag_inputs
@@ -67,9 +67,8 @@ async def _refresh_once(persona_id: int, user_id: int) -> None:
         if persona is None:
             return  # 行已消失（用户被删？），无事可做
         definition = load_persona_definition(persona)
-        provider_config = await resolve_provider_config(db, user_id, "llm")
     t_llm = time.monotonic()
-    tags = await analyze_personality_tags(definition, provider_config)
+    tags = await analyze_personality_tags(definition, user_id)
     t_write = time.monotonic()
     async with SESSION_LOCAL() as db:
         # 行锁使依据核对与写入和 PUT 的人设写入互斥；定义已更新时，由那次保存调度的任务写入标签

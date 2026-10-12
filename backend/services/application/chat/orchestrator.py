@@ -31,6 +31,7 @@ from services.domains.companion import (
 from services.domains.conversation import (
     COMPANION_PRESET_ID,
     SPECIAL_KIND,
+    conversation_ai_feature,
     conversation_memory_scope,
     load_context_messages,
     load_media_turn,
@@ -47,7 +48,7 @@ from services.infrastructure.llm import (
     execute_with_fallback,
     generation_timeout_scope,
     resolve_context_tokens,
-    scale_temperature,
+    resolve_user_llm_config,
 )
 from services.infrastructure.tool_runtime import (
     REGISTRY,
@@ -94,12 +95,11 @@ from .types import TrackTask
 logger = get_logger(__name__)
 
 
-def _compression_temperature(provider_name: str, settings: dict[str, Any]) -> float:
-    normalized = parse_temperature(
+def _compression_temperature(settings: dict[str, Any]) -> float:
+    return parse_temperature(
         settings.get("chat.compression_temperature"),
         CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
     )
-    return scale_temperature(provider_name, normalized)
 
 
 @dataclass(frozen=True)
@@ -125,9 +125,8 @@ async def compress_session_history(
         inputs = await build_turn_inputs(db, conv, user_id, req, client_context, effective_settings, memory_scope)
     _, info = await compress_history(
         inputs.context,
-        client=inputs.client,
-        model=inputs.model_name,
-        temperature=_compression_temperature(inputs.provider_name, effective_settings),
+        user_id=user_id,
+        temperature=_compression_temperature(effective_settings),
         language=inputs.language,
         context_length=inputs.ctx_length,
         companion=conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None,
@@ -257,6 +256,8 @@ async def _run_chat_turn(
                 language = await get_user_setting(db, user_id, "language")
                 await emit_conversation_unavailable(emitter, language, str(exc))
                 return
+            feature = conversation_ai_feature(conv, proactive=ephemeral)
+            llm_config = await resolve_user_llm_config(db, user_id, feature)
             # 主动回合与自动化任务不算用户接触。
             turn_scope.enter_context(user_turn_activity(user_id, enabled=not ephemeral and not conv.is_automation))
 
@@ -362,9 +363,8 @@ async def _run_chat_turn(
             try:
                 compressed_context, compress_info = await compress_history(
                     inputs.context,
-                    client=inputs.client,
-                    model=inputs.model_name,
-                    temperature=_compression_temperature(inputs.provider_name, effective_settings),
+                    user_id=user_id,
+                    temperature=_compression_temperature(effective_settings),
                     language=inputs.language,
                     context_length=inputs.ctx_length,
                     companion=conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None,
@@ -565,6 +565,7 @@ async def _run_chat_turn(
                         db,
                         user_id,
                         _reply_repair_history(current_context["input"]) if reply_only else current_context["input"],
+                        feature=feature,
                     )
                 llm_result = await execute_with_fallback(
                     llm_chain,
@@ -609,7 +610,6 @@ async def _run_chat_turn(
                     llm_result,
                     emitter=emitter,
                     effective_settings=effective_settings,
-                    llm_config=llm_config,
                     user_text=req.message.content,
                     first_user_msg_content=inputs.first_user_msg_content,
                     memory_scope=memory_scope,

@@ -4,7 +4,7 @@ import asyncio
 import json
 from io import BytesIO
 
-from components import SESSION_LOCAL, get_logger, parse_llm_json, resolve_language, track_user_task
+from components import SESSION_LOCAL, AiFeature, get_logger, parse_llm_json, resolve_language, track_user_task
 from modules.companion import (
     AvatarAsset,
     CompanionOutfit,
@@ -65,6 +65,7 @@ from services.infrastructure.llm import (
     VideoGenProvider,
     VideoGenRequest,
     build_provider,
+    execute_with_fallback,
     resolve_provider_chain,
     resolve_vision_chain,
     vision_chat,
@@ -85,7 +86,9 @@ from .media_chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
+    media_call_budget,
     media_failure_reason,
+    require_media_call_budget,
     resolve_frozen_media_provider,
     video_failure_message,
     video_provider_failure_reason,
@@ -199,10 +202,16 @@ async def resolve_desktop_video_plan(
     duration_seconds: int,
 ) -> tuple[int, list[FrozenMediaProvider]]:
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen")
-        if not await resolve_vision_chain(db, user_id):
+        chain = await resolve_provider_chain(db, user_id, "video_gen", feature=AiFeature.desktop_video)
+        if not await resolve_vision_chain(db, user_id, feature=AiFeature.desktop_action_design):
             raise DesktopVideoStateError("请先配置视觉模型")
-        images, error = await resolve_image_gen_chain(db, user_id, has_reference=True, multiple_references=True)
+        images, error = await resolve_image_gen_chain(
+            db,
+            user_id,
+            has_reference=True,
+            multiple_references=True,
+            feature=AiFeature.desktop_pose_image,
+        )
         if not images:
             raise DesktopVideoStateError(error or "请配置支持当前穿着参考的图片模型")
     configured = [(config, build_provider(config, VideoGenProvider)) for config in chain]
@@ -337,6 +346,7 @@ async def _prepare_pose(
             ),
             reference_images=(portrait, outfit),
             before_submit=before_submit,
+            feature=AiFeature.desktop_action_design,
         )
         script = DesktopVideoScript.model_validate(parse_llm_json(raw))
         progress.pose_prompt, progress.motion_prompt = script.pose_prompt, script.motion_prompt
@@ -375,6 +385,7 @@ async def _prepare_pose(
         state=image_state,
         save_progress=save_image,
         before_submit=before_submit,
+        feature=AiFeature.desktop_pose_image,
     )
     resolved = resolve_asset_reference(paths[0])
     if resolved is None:
@@ -512,6 +523,7 @@ async def _evaluate_candidate(
                 ),
                 reference_images=(portrait, outfit, *uris),
                 before_submit=before_submit,
+                feature=AiFeature.desktop_video_review,
             )
             review = DesktopVideoReview.model_validate(parse_llm_json(raw))
             progress.review_verdict, progress.review_reason = review.verdict, review.reason
@@ -695,24 +707,30 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 pose = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
                 if not pose:
                     raise DesktopVideoStateError("起始画面无法读取")
+                require_media_call_budget(config, chain)
                 chain.begin(index)
                 progress.video_chain_json = chain.model_dump_json()
                 await _save_progress(user_id, action_id, progress, stage="video")
                 try:
-                    submitted = await provider.submit(
-                        VideoGenRequest(
-                            prompt=DESKTOP_VIDEO_MOTION_TEMPLATE.format(
-                                duration_seconds=progress.duration_seconds,
-                                cycle=DESKTOP_VIDEO_LOOP if action.kind == "loop" else DESKTOP_VIDEO_ONCE,
-                                motion=progress.motion_prompt,
-                            ),
-                            duration=progress.duration_seconds,
-                            resolution=chain.providers[index].video_resolution,
-                            first_frame_image=pose,
-                            last_frame_image=pose if action.kind == "loop" else None,
-                            aspect_ratio="16:9",
+                    request = VideoGenRequest(
+                        prompt=DESKTOP_VIDEO_MOTION_TEMPLATE.format(
+                            duration_seconds=progress.duration_seconds,
+                            cycle=DESKTOP_VIDEO_LOOP if action.kind == "loop" else DESKTOP_VIDEO_ONCE,
+                            motion=progress.motion_prompt,
                         ),
+                        duration=progress.duration_seconds,
+                        resolution=chain.providers[index].video_resolution,
+                        first_frame_image=pose,
+                        last_frame_image=pose if action.kind == "loop" else None,
+                        aspect_ratio="16:9",
                     )
+                    async with media_call_budget(config, chain) as budget_config:
+                        submitted = await execute_with_fallback(
+                            [budget_config],
+                            VideoGenProvider,
+                            lambda current: current.submit(request),
+                            user_id=user_id,
+                        )
                 except ProviderResultUnknownError:
                     progress.submission_unknown = True
                     await _save_progress(user_id, action_id, progress, stage="video")

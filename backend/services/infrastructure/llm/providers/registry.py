@@ -1,4 +1,6 @@
-from .base import BaseProvider, ChatProvider, ProviderConfig, ServiceType
+from components import AI_FEATURE_BY_ID, AiFeature
+
+from .base import BaseProvider, ChatProvider, ProviderConfig, ServiceType, TTSProvider
 
 # (service_type, provider_name) → 具体类；由 bootstrap 显式注册。
 _REGISTRY: dict[tuple[ServiceType, str], type[BaseProvider]] = {}
@@ -53,6 +55,23 @@ def providers_supporting(service_type: ServiceType | str) -> list[str]:
     """按注册顺序排列、已注册该能力类的供应商名列表，供回退链筛选可尝试的供应商。"""
     svc = ServiceType(service_type)
     return [name for registered_svc, name in _REGISTRY if registered_svc == svc]
+
+
+def providers_for_feature(feature: AiFeature) -> list[str]:
+    definition = AI_FEATURE_BY_ID[feature]
+    service = ServiceType(definition.service)
+    names = providers_supporting(service)
+    if definition.vision:
+        names = [
+            name for name in names if (provider := try_resolve_chat(name)) is not None and provider.supports_vision
+        ]
+    if feature == AiFeature.voice_design:
+        names = [
+            name
+            for name in names
+            if issubclass(provider := resolve(service, name), TTSProvider) and provider.VOICE_DESIGN_GUIDE is not None
+        ]
+    return names
 
 
 def provider_context_defaults() -> dict[str, int]:

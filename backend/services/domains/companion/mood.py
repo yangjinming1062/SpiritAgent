@@ -1,11 +1,11 @@
-from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, resolve_prompt_text
+from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, AiFeature, get_logger, resolve_prompt_text
 from modules.companion import Persona
 from modules.ws import emit_ws_event
 from prompts.companion import MOOD_INSTRUCTIONS
 from sqlalchemy import update
 
 from services.domains.conversation import load_recent_context_window
-from services.infrastructure.llm import UserLlmConfig
+from services.infrastructure.llm import load_user_llm_config
 
 from .prompt_runtime import load_companion_prompt_context, run_prompt_json
 
@@ -33,7 +33,6 @@ async def update_mood_from_companion_turn(
     user_id: int,
     user_message: str,
     assistant_bubbles: list[str],
-    llm_config: UserLlmConfig,
 ) -> str | None:
     """在陪伴聊天完成后单独推理心情；结果不进入消息正文。"""
     ctx = await load_companion_prompt_context(user_id)
@@ -53,7 +52,7 @@ async def update_mood_from_companion_turn(
     recent_bubbles.reverse()
     parsed, fail_reason = await run_prompt_json(
         user_id,
-        llm_config,
+        await load_user_llm_config(user_id, AiFeature.mood_update),
         resolve_prompt_text(MOOD_INSTRUCTIONS, ctx.language),
         {
             "output_language": ctx.language,

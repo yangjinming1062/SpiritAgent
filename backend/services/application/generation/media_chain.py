@@ -1,12 +1,13 @@
 """媒体质量链的无凭据快照、尝试游标和候选选择。"""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Literal
 from uuid import uuid4
 
-from components import SESSION_LOCAL, get_logger, track_user_task
+from components import AI_FEATURE_BY_ID, SESSION_LOCAL, AiFeature, get_logger, track_user_task
 from modules.companion import RemovedActionVideoTask
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +17,7 @@ from services.infrastructure.llm import (
     VideoGenProvider,
     build_provider,
     classify_api_error,
+    generation_timeout_scope,
     is_content_policy_error_message,
     resolve_provider_chain,
 )
@@ -33,6 +35,7 @@ class MediaProviderFailedError(RuntimeError):
 
 
 _VIDEO_FAILURE_COPY: dict[str, str] = {
+    "call_budget_exhausted": "供应商调用预算已用完，请调整功能预算后重做",
     "result_unknown": "视频提交结果不确定，供应商可能已接单；为避免重复计费，系统没有自动重试",
     "submit_failed": "视频提交失败，请稍后重试",
     "provider_unavailable": "视频生成服务配置已变更，请稍后重试",
@@ -66,6 +69,7 @@ class FrozenMediaProvider(BaseModel):
     provider: str
     model: str
     base_url: str
+    feature: AiFeature
     model_overridden: bool = False
     max_images_per_request: int | None = Field(default=None, ge=1)
     background: Literal["transparent"] | None = None
@@ -77,10 +81,13 @@ class FrozenMediaProvider(BaseModel):
 
     @classmethod
     def from_config(cls, config: ProviderConfig) -> "FrozenMediaProvider":
+        if config.feature is None or AI_FEATURE_BY_ID[config.feature].service != config.service_type:
+            raise ValueError("media task requires an AI feature")
         return cls(
             provider=config.provider_name,
             model=config.model,
             base_url=config.base_url,
+            feature=config.feature,
             model_overridden=config.model_overridden,
         )
 
@@ -110,6 +117,7 @@ class MediaChainState(BaseModel):
     stop_reason: str = ""
     result_url: str | None = None
     source_path: str | None = None
+    call_seconds: float = Field(default=0.0, ge=0, allow_inf_nan=False)
 
     def begin(self, index: int) -> None:
         self.active_index = index
@@ -161,6 +169,26 @@ class MediaChainState(BaseModel):
         self.phase = "complete"
 
 
+@asynccontextmanager
+async def media_call_budget(config: ProviderConfig, state: MediaChainState) -> AsyncIterator[ProviderConfig]:
+    """提交预算跨质量尝试及恢复累计；已接单等待不消耗提交预算。"""
+    remaining = config.total_timeout_seconds - state.call_seconds if config.total_timeout_seconds is not None else None
+    require_media_call_budget(config, state)
+    timeout = asyncio.timeout(None)
+    started = asyncio.get_running_loop().time()
+    async with timeout:
+        with generation_timeout_scope(timeout) as budget:
+            try:
+                yield replace(config, total_timeout_seconds=remaining)
+            finally:
+                state.call_seconds += max(0.0, asyncio.get_running_loop().time() - started - budget.waited_seconds)
+
+
+def require_media_call_budget(config: ProviderConfig, state: MediaChainState) -> None:
+    if config.total_timeout_seconds is not None and state.call_seconds >= config.total_timeout_seconds:
+        raise MediaProviderFailedError("供应商调用预算已用完，请调整功能预算后重做", reason="call_budget_exhausted")
+
+
 async def resolve_frozen_media_provider(
     user_id: int,
     service: str,
@@ -168,7 +196,7 @@ async def resolve_frozen_media_provider(
 ) -> ProviderConfig | None:
     """凭据实时读取；任务模型与端点保持冻结，端点改变后不向新地址发送旧任务。"""
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, service)
+        chain = await resolve_provider_chain(db, user_id, service, feature=frozen.feature)
     current = next(
         (config for config in chain if config.provider_name == frozen.provider and config.base_url == frozen.base_url),
         None,
@@ -243,5 +271,5 @@ def media_failure_reason(exc: Exception) -> tuple[str, bool]:
     if getattr(exc, "result_unknown", False) or classified.reason == FailoverReason.result_unknown:
         return "result_unknown", False
     if isinstance(exc, MediaProviderFailedError):
-        return exc.reason, exc.reason != "result_unknown"
+        return exc.reason, exc.reason not in {"result_unknown", "call_budget_exhausted"}
     return classified.reason.value, getattr(exc, "can_fallback", False) or classified.should_fallback

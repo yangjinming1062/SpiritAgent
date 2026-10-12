@@ -3,7 +3,7 @@ import json
 from datetime import timedelta
 from uuid import uuid4
 
-from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
+from components import SESSION_LOCAL, SETTINGS, AiFeature, get_logger, tool_error, utc_now
 from modules.media import VideoGenJob
 from prompts.generation import (
     VIDEO_REFERENCE_TEMPLATE,
@@ -113,6 +113,7 @@ async def _submit_video(
                 identity=visual.identity if visual is not None else None,
                 structured_reply=structured_reply,
                 media_id=media_id,
+                feature=AiFeature.chat_video,
             )
     except MissingLlmConfigError:
         # 任务行写入前抛出，确定未提交；其余异常可能发生在任务行提交、供应商受理之后，交给调用方按结果未知处理。
@@ -197,6 +198,7 @@ async def video_generation_tool(
             resolution=resolution,
             allowed_durations=_DURATIONS,
             allowed_resolutions=_RESOLUTIONS,
+            feature=AiFeature.chat_video,
         )
     except MissingLlmConfigError as e:
         return tool_error(str(e))

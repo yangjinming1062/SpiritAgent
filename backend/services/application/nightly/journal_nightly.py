@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from components import NIGHTLY_REASONING_EFFORT, SESSION_LOCAL, SETTINGS, resolve_prompt_text, utc_now
+from components import NIGHTLY_REASONING_EFFORT, SESSION_LOCAL, SETTINGS, AiFeature, resolve_prompt_text, utc_now
 from modules.companion import DIARY_BODY_MAX_CHARS, DiaryContent
 from prompts.nightly import JOURNAL_DIARY_TEXTS, NIGHTLY_JSON_REPAIR_TEXTS
 
@@ -14,7 +14,7 @@ from services.contracts import MemoryScope
 from services.domains.journal import get_diary_by_date, publish_diary
 from services.domains.memory import backfill_diary_embeddings, load_companion_reflection, narrative_date
 from services.domains.posts import PostInteractions
-from services.infrastructure.llm import LlmAttemptDiagnostic, UserLlmConfig, call_llm_json
+from services.infrastructure.llm import LlmAttemptDiagnostic, UserLlmConfig, call_llm_json, load_user_llm_config
 
 from .output_contracts import DIARY_DECISION, parse_diary_decision
 from .stage_state import load_narrative_result, save_narrative_result
@@ -27,7 +27,6 @@ async def project_today(
     *,
     log_id: int,
     messages: list[dict[str, str]],
-    llm_cfg: UserLlmConfig,
     nightly_actions: list[dict[str, Any]],
     posts: PostInteractions,
     persona: dict[str, str],
@@ -63,7 +62,7 @@ async def project_today(
     if not in_nightly_window(utc_now(), ZoneInfo(user_timezone)):
         return False
     composed = await _compose_diary(
-        llm_cfg,
+        await load_user_llm_config(user_id, AiFeature.nightly_diary),
         messages,
         target_date,
         nightly_actions,

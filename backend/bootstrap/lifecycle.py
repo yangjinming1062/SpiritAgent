@@ -61,6 +61,7 @@ from services.application.posts import (
 from services.domains.actions import cleanup_retired_action_assets
 from services.domains.assets import cleanup_assets
 from services.domains.companion import drain_first_greeting, drain_persona_background
+from services.domains.memory import drain_memory_embeddings
 from services.domains.update_releases import recover_update_storage
 from services.infrastructure.event_store import drain_event_tasks, start_event_loop, stop_event_loop
 from services.infrastructure.llm import aclose_all
@@ -94,6 +95,7 @@ async def _drain_runtime_tasks() -> None:
         ("post_replies", drain_replies()),
         ("first_greeting", drain_first_greeting()),
         ("persona_background", drain_persona_background()),
+        ("memory_embeddings", drain_memory_embeddings()),
         ("character_extractions", drain_character_extractions()),
         ("outfit_descriptions", drain_outfit_descriptions()),
         ("scene_jobs", drain_scene_jobs()),

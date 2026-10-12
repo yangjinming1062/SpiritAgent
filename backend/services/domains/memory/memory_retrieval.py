@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from datetime import date, datetime
 from itertools import zip_longest
 from typing import Literal
@@ -11,11 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from services.contracts import MemoryScope
-from services.infrastructure.llm import generate_embedding, resolve_embedding_provider
+from services.infrastructure.llm import embedding_model_key, generate_embedding, resolve_embedding_provider
 
 from .memory_namespaces import RESERVED_FROM_RECALL, context_not_in
 from .memory_narratives import narrative_date
-from .memory_store import active_memory_filter, scope_filter
+from .memory_store import active_memory_filter, schedule_embedding_rebuild, scope_filter
 
 # RRF 平滑常数（TREC/IR 标准取值）
 RRF_K: int = 60
@@ -42,6 +43,12 @@ class MemoryRecallResult(BaseModel):
     expires_at: datetime | None
     score: float
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class MemoryEmbedding:
+    vector: list[float]
+    model_key: str
 
 
 def _cjk_ngrams(run: str) -> list[str]:
@@ -84,7 +91,7 @@ def keyword_match_score(keywords: list[str]) -> ColumnElement[float]:
 async def _dense_search(
     db: AsyncSession,
     scope: MemoryScope,
-    query_embedding: list[float],
+    query_embedding: MemoryEmbedding,
     *,
     limit: int,
 ) -> list[Memory]:
@@ -93,6 +100,7 @@ async def _dense_search(
         scope_filter(scope),
         active_memory_filter(),
         Memory.embedding.isnot(None),
+        Memory.embedding_model_key == query_embedding.model_key,
         *[context_not_in(p) for p in RESERVED_FROM_RECALL],
     )
     candidates = stmt.cte("scoped_memories").prefix_with("MATERIALIZED")
@@ -102,7 +110,7 @@ async def _dense_search(
             await db.scalars(
                 select(scoped)
                 .order_by(
-                    scoped.embedding.cosine_distance(query_embedding),
+                    scoped.embedding.cosine_distance(query_embedding.vector),
                     scoped.id,
                 )
                 .limit(limit),
@@ -140,14 +148,17 @@ async def _sparse_search(
     return list((await db.scalars(stmt)).all())
 
 
-async def embed_memory_text(user_id: int, text: str) -> list[float] | None:
+async def embed_memory_text(user_id: int, text: str) -> MemoryEmbedding | None:
     """记忆链路的向量生成入口：独立短会话解析用户级 embedding 供应商，维度校验列宽；未配置、调用失败或维度不符时返回 None，检索降级为纯关键词路径。"""
     if not (text := (text or "").strip()):
         return None
     async with session_scope() as db:
         provider = await resolve_embedding_provider(db, user_id)
     vec = await generate_embedding(text, provider, user_id=user_id, purpose="query")
-    return vec if vec and len(vec) == MEMORY_EMBEDDING_DIM else None
+    if provider is None or not vec or len(vec) != MEMORY_EMBEDDING_DIM:
+        return None
+    schedule_embedding_rebuild(user_id)
+    return MemoryEmbedding(vec, embedding_model_key(provider.config))
 
 
 async def retrieve_hybrid_memories(
@@ -155,7 +166,7 @@ async def retrieve_hybrid_memories(
     scope: MemoryScope,
     query: str,
     *,
-    query_embedding: list[float] | None = None,
+    query_embedding: MemoryEmbedding | None = None,
     limit: int = 10,
     diary_date: date | None = None,
 ) -> list[MemoryRecallResult]:
@@ -231,7 +242,7 @@ async def retrieve_proactive_memories(
     scope: MemoryScope,
     query: str,
     *,
-    query_embedding: list[float] | None = None,
+    query_embedding: MemoryEmbedding | None = None,
     limit: int = 3,
     min_score: float = 0.002,
 ) -> list[MemoryRecallResult]:

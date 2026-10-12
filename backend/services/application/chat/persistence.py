@@ -28,7 +28,7 @@ from services.domains.conversation import (
     synthesize_reply_audio,
 )
 from services.domains.media import prune_videos_in_range
-from services.infrastructure.llm import UserLlmConfig, message_to_response_items
+from services.infrastructure.llm import message_to_response_items
 from services.infrastructure.tool_runtime import REGISTRY
 
 from .background_review import run_background_memory_review
@@ -247,7 +247,6 @@ async def _persist_assistant_no_tool_turn(
     *,
     emitter: Emitter,
     effective_settings: dict[str, Any],
-    llm_config: UserLlmConfig,
     user_text: str,
     first_user_msg_content: str | None,
     memory_scope: MemoryScope | None,
@@ -323,7 +322,7 @@ async def _persist_assistant_no_tool_turn(
                 conv.id,
                 first_user_msg_content,
                 reply_bubbles if reply_bubbles is not None else turn_content,
-                llm_config,
+                user_id,
                 language=resolve_language(effective_settings.get("language")),
                 temperature=parse_temperature(
                     effective_settings.get("chat.title_generation_temperature"),
@@ -340,7 +339,6 @@ async def _persist_assistant_no_tool_turn(
             user_id,
             run_background_memory_review(
                 memory_scope,
-                llm_config,
                 session_id=conv.id,
                 through_message_id=assistant_message_id,
             ),
@@ -364,7 +362,7 @@ async def _persist_assistant_no_tool_turn(
     if persist and reply_bubbles is not None:
         _spawn_post_turn_task(
             user_id,
-            update_mood_from_companion_turn(user_id, user_text, reply_bubbles, llm_config),
+            update_mood_from_companion_turn(user_id, user_text, reply_bubbles),
             track_task,
         )
 

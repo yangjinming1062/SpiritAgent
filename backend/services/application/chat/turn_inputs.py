@@ -9,6 +9,7 @@ from components import (
     SETTINGS,
     TEMPERATURE_MAX,
     TEMPERATURE_MIN,
+    AiFeature,
     format_day_marker,
     format_local_date_str,
     format_time_anchor,
@@ -22,7 +23,6 @@ from modules.companion import Persona
 from modules.conversation import Conversation, Message
 from modules.settings import resolve_user_timezone
 from modules.system import ChatRequest
-from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,11 +42,13 @@ from services.domains.conversation import (
     SPECIAL_KIND,
     InferenceDefaults,
     companion_context_content,
+    conversation_ai_feature,
     load_context_messages,
     message_text,
     resolve_preset_meta,
 )
 from services.domains.memory import (
+    MemoryEmbedding,
     MemoryRecallResult,
     build_user_profile_extras,
     format_background_memory_block,
@@ -89,9 +91,7 @@ class TurnInputs:
     """``build_turn_inputs`` 的输出：回合编排与各轮辅助函数所需字段，避免重复查询 DB。"""
 
     context: dict[str, Any]
-    client: AsyncOpenAI
     native_memory: NativeMemory | None
-    model_name: str
     ctx_length: int
     all_schemas: list[dict]
     # 会话预设、调用方排除与用户已禁用工具集中的工具；装配与执行层共用。
@@ -206,6 +206,8 @@ async def resolve_context_provider_chain(
     db: AsyncSession,
     user_id: int,
     input_items: list[dict[str, Any]],
+    *,
+    feature: AiFeature,
 ) -> list[ProviderConfig]:
     """仅按本次请求仍携带的媒体选链，包括多模态工具结果。"""
     media_types = {
@@ -217,15 +219,15 @@ async def resolve_context_provider_chain(
         if isinstance(part, dict)
     }
     if "input_video" in media_types:
-        chain = await resolve_video_chain(db, user_id)
+        chain = await resolve_video_chain(db, user_id, feature=feature)
         if not chain:
             raise MissingVideoModelError("no video-capable provider in the chain for a request containing video")
     elif "input_image" in media_types:
-        chain = await resolve_vision_chain(db, user_id)
+        chain = await resolve_vision_chain(db, user_id, feature=feature)
         if not chain:
             raise MissingLlmConfigError("no vision-capable provider in the chain for a request containing images")
     else:
-        chain = await resolve_provider_chain(db, user_id, "llm")
+        chain = await resolve_provider_chain(db, user_id, "llm", feature=feature)
     if not chain:
         raise MissingLlmConfigError("no provider configured for service 'llm'")
     return chain
@@ -346,7 +348,7 @@ async def build_turn_inputs(
     memory_scope: MemoryScope | None,
     *,
     proactive_memory_query: str = "",
-    proactive_memory_embedding: list[float] | None = None,
+    proactive_memory_embedding: MemoryEmbedding | None = None,
     companion_proactive_turn: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     history: list[Message] | None = None,
@@ -361,8 +363,13 @@ async def build_turn_inputs(
     # 标题只依据文字：多模态行的正文是 part 数组 JSON，附件地址不进标题请求。
     first_user_msg_content = message_text(first_user_msg) if first_user_msg else None
 
-    # 摘要只接收文字，基础链用于压缩与预算估算；实际回合在截断和视频内联后按幸存媒体选链。
-    llm_chain = await resolve_provider_chain(db, user_id, "llm")
+    # 基础链用于估算当前对话窗口；压缩独立解析功能链，实际回合按截断和视频内联后幸存的媒体选链。
+    llm_chain = await resolve_provider_chain(
+        db,
+        user_id,
+        "llm",
+        feature=conversation_ai_feature(conv, proactive=companion_proactive_turn),
+    )
     if not llm_chain:
         raise MissingLlmConfigError("no provider configured for service 'llm'")
     provider = build_provider(llm_chain[0], ChatProvider)
@@ -472,9 +479,7 @@ async def build_turn_inputs(
 
     return TurnInputs(
         context=context,
-        client=provider.raw_client(),
         native_memory=native_memory,
-        model_name=provider.config.model,
         ctx_length=resolve_context_tokens(provider.config),
         all_schemas=all_schemas,
         excluded_tool_names=excluded_tool_names,

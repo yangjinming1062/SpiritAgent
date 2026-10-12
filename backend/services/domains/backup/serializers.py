@@ -531,6 +531,13 @@ def _build_payload(
         if not isinstance(payload.get("evidence"), list) or not isinstance(payload.get("history"), list):
             raise ValueError("Memory evidence and history are required")
         embedding = payload.get("embedding")
+        model_key = payload.get("embedding_model_key")
+        if model_key is not None and (
+            not isinstance(model_key, str)
+            or len(model_key) != 64
+            or any(char not in "0123456789abcdef" for char in model_key)
+        ):
+            raise ValueError("Memory embedding model key is invalid")
         if embedding is not None:
             if not isinstance(embedding, list) or not all(isinstance(v, int | float) for v in embedding):
                 raise ValueError("Memory embedding must be a list of numbers")

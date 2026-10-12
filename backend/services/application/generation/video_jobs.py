@@ -11,6 +11,7 @@ from weakref import WeakValueDictionary
 from components import (
     SESSION_LOCAL,
     SETTINGS,
+    AiFeature,
     TaskBag,
     backoff_for_poll,
     get_logger,
@@ -64,8 +65,11 @@ from .media_chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
+    MediaProviderFailedError,
     cancel_frozen_video_task,
+    media_call_budget,
     media_failure_reason,
+    require_media_call_budget,
     resolve_frozen_media_provider,
     video_failure_message,
     video_provider_failure_reason,
@@ -338,6 +342,7 @@ def _compatible_video_configs(
 async def ensure_video_capability(
     user_id: int,
     *,
+    feature: AiFeature,
     reference_images: bool,
     duration: int,
     resolution: str,
@@ -346,7 +351,7 @@ async def ensure_video_capability(
 ) -> None:
     """占用视频名额前核对参考模式、时长与分辨率，并在调用方允许的范围内给出可用档位。"""
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen")
+        chain = await resolve_provider_chain(db, user_id, "video_gen", feature=feature)
     if not chain:
         raise MissingLlmConfigError("视频生成服务未配置")
     if _compatible_video_configs(chain, reference_images=reference_images, duration=duration, resolution=resolution):
@@ -382,13 +387,14 @@ async def ensure_video_capability(
 async def select_video_resolution(
     user_id: int,
     *,
+    feature: AiFeature,
     reference_images: bool,
     duration: int,
     preferred: Sequence[str],
 ) -> str | None:
     """按偏好顺序返回供应商链里有能接单的第一档分辨率，大小写写法沿用首个可接单供应商的声明；没有则返回 None，由调用方在付费前处理。"""
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen")
+        chain = await resolve_provider_chain(db, user_id, "video_gen", feature=feature)
     for resolution in preferred:
         compatible = _compatible_video_configs(
             chain,
@@ -406,6 +412,7 @@ async def enqueue_video_job(
     db: AsyncSession,
     *,
     user_id: int,
+    feature: AiFeature,
     session_id: str | None,
     prompt: str,
     source_message_id: int | None = None,
@@ -422,7 +429,7 @@ async def enqueue_video_job(
     """冻结能力链并提交首个任务；轮询绑定实际接单供应商，低分才推进链尾。"""
     if identity is not None and (not identity_reference_path or not reference_images):
         raise ValueError("Self video requires an identity reference and snapshot")
-    chain = await resolve_provider_chain(db, user_id, "video_gen")
+    chain = await resolve_provider_chain(db, user_id, "video_gen", feature=feature)
     compatible = _compatible_video_configs(
         chain,
         reference_images=bool(reference_images),
@@ -727,6 +734,11 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
                 current.generation_state_json = state.model_dump_json()
                 await db.commit()
             continue
+        try:
+            require_media_call_budget(config, state)
+        except MediaProviderFailedError as exc:
+            await _fail_or_keep_best(job_id, exc.reason)
+            return False
         state.begin(index)
         async with SESSION_LOCAL() as db:
             current = await db.get(VideoGenJob, job_id, with_for_update=True)
@@ -760,7 +772,8 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             return result
 
         async def submit_and_record() -> VideoJobStatus:
-            submitted = await execute_with_fallback([config], VideoGenProvider, submit, user_id=user_id)
+            async with media_call_budget(config, state) as budget_config:
+                submitted = await execute_with_fallback([budget_config], VideoGenProvider, submit, user_id=user_id)
             state.phase = "processing"
             async with SESSION_LOCAL() as submit_db:
                 current = await submit_db.get(VideoGenJob, job_id, with_for_update=True)

@@ -7,6 +7,7 @@ from typing import Any
 
 from common import get_or_404, get_router
 from components import (
+    AI_FEATURES,
     CAPABILITY_SERVICES,
     SETTINGS,
     AIConfig,
@@ -72,7 +73,7 @@ from services.domains.backup import (
 from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.infrastructure.assets import delete_user_assets
-from services.infrastructure.llm import provider_context_defaults, providers_supporting
+from services.infrastructure.llm import provider_context_defaults, providers_for_feature, providers_supporting
 from sqlalchemy import select, update
 from starlette.background import BackgroundTask
 
@@ -185,6 +186,8 @@ async def list_model_configs(db: DbSession) -> UserModelConfigListResponse:
         ai_provider_support=support,
         ai_context_defaults=provider_context_defaults(),
         system_ai_config=public_ai_config(SETTINGS.ai_config),
+        ai_features=list(AI_FEATURES),
+        ai_feature_support={feature.id.value: providers_for_feature(feature.id) for feature in AI_FEATURES},
     )
 
 

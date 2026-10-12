@@ -1,10 +1,12 @@
 import asyncio
+import hashlib
+import json
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from functools import partial
 
-from components import SETTINGS, AIConfig, ProviderCard, get_logger
+from components import AI_FEATURE_BY_ID, SETTINGS, AIConfig, AiFeature, CapabilityCard, ProviderCard, get_logger
 from modules.auth import UserModelConfig
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,12 +94,14 @@ def _chain_from_ai_config(
     config: AIConfig,
     service_type: ServiceType,
     inherited_sources: Iterable[ProviderCard] = (),
+    *,
+    cards: Sequence[CapabilityCard] | None = None,
 ) -> list[ProviderConfig]:
     """密钥与端点按 卡片 → 本配置信息库 → 继承信息库 取值；模型只看能力卡片，空则用供应商默认。"""
     inherited = {card.provider: card for card in inherited_sources}
     sources = {card.provider: card for card in config.providers}
     result: list[ProviderConfig] = []
-    for card in getattr(config.capabilities, service_type):
+    for card in cards if cards is not None else getattr(config.capabilities, service_type):
         if card.provider == "local" and service_type == ServiceType.image_gen and card.api_key:
             raise MissingLlmConfigError("本地生图不支持独立 API Key，请清除该能力卡片的密钥覆盖")
         layers = [
@@ -132,23 +136,55 @@ async def resolve_provider_chain(
     db: AsyncSession | None,
     user_id: int | None,
     service_type: str,
+    *,
+    feature: AiFeature | None = None,
 ) -> list[ProviderConfig]:
     service = ServiceType(service_type)
+    if feature is not None and AI_FEATURE_BY_ID[feature].service != service:
+        raise ValueError(f"AI feature {feature.value!r} does not use {service.value!r}")
     user_cfg = await _load_user_config(db, user_id)
-    if user_cfg is not None:
-        user_ai_config = AIConfig.model_validate(user_cfg.ai_config)
-        if getattr(user_ai_config.capabilities, service):
-            return _chain_from_ai_config(user_ai_config, service, SETTINGS.ai_config.providers)
-    return _chain_from_ai_config(SETTINGS.ai_config, service)
+    user_ai = AIConfig.model_validate(user_cfg.ai_config) if user_cfg is not None else AIConfig()
+    system_ai = SETTINGS.ai_config
+    user_feature = user_ai.features.get(feature) if feature is not None else None
+    system_feature = system_ai.features.get(feature) if feature is not None else None
+    if user_feature is not None and user_feature.chain:
+        owner, cards, source = user_ai, user_feature.chain, "user_feature"
+    elif system_feature is not None and system_feature.chain:
+        owner, cards, source = system_ai, system_feature.chain, "system_feature"
+    elif getattr(user_ai.capabilities, service):
+        owner, cards, source = user_ai, getattr(user_ai.capabilities, service), "user_default"
+    else:
+        owner, cards, source = system_ai, getattr(system_ai.capabilities, service), "system_default"
+    # 预算逐字段继承；只覆盖预算时仍沿原功能链调用。
+    policies = [value for value in (user_feature, system_feature) if value is not None]
+    attempt = next(
+        (value.attempt_timeout_seconds for value in policies if value.attempt_timeout_seconds is not None),
+        None,
+    )
+    total = next((value.total_timeout_seconds for value in policies if value.total_timeout_seconds is not None), None)
+    inherited = system_ai.providers if owner is user_ai else ()
+    chain = [
+        replace(
+            config,
+            feature=feature,
+            config_source=source,
+            attempt_timeout_seconds=attempt,
+            total_timeout_seconds=total,
+        )
+        for config in _chain_from_ai_config(owner, service, inherited, cards=cards)
+    ]
+    return _vision_configs(chain) if feature is not None and AI_FEATURE_BY_ID[feature].vision else chain
 
 
 async def resolve_provider_config(
     db: AsyncSession | None,
     user_id: int | None,
     service_type: str,
+    *,
+    feature: AiFeature | None = None,
 ) -> ProviderConfig:
-    """返回能力链首项；链为空时抛出 ``MissingLlmConfigError``。"""
-    chain = await resolve_provider_chain(db, user_id, service_type)
+    """返回已解析调用链首项；链为空时抛出 ``MissingLlmConfigError``。"""
+    chain = await resolve_provider_chain(db, user_id, service_type, feature=feature)
     if not chain:
         raise MissingLlmConfigError(
             f"no provider configured for service {service_type!r}",
@@ -156,10 +192,10 @@ async def resolve_provider_config(
     return chain[0]
 
 
-async def resolve_vision_chain(db: AsyncSession | None, user_id: int | None) -> list[ProviderConfig]:
+def _vision_configs(configs: Sequence[ProviderConfig]) -> list[ProviderConfig]:
     """筛选视觉供应商；仅默认模型自动选择视觉变体，保留显式模型配置。"""
     chain: list[ProviderConfig] = []
-    for cfg in await resolve_provider_chain(db, user_id, ServiceType.llm):
+    for cfg in configs:
         cls = try_resolve_chat(cfg.provider_name)
         if cls is not None and cls.supports_vision:
             vision_model = "" if cfg.model_overridden else cls.DEFAULT_VISION_MODEL
@@ -167,11 +203,25 @@ async def resolve_vision_chain(db: AsyncSession | None, user_id: int | None) -> 
     return chain
 
 
-async def resolve_video_chain(db: AsyncSession | None, user_id: int | None) -> list[ProviderConfig]:
+async def resolve_vision_chain(
+    db: AsyncSession | None,
+    user_id: int | None,
+    *,
+    feature: AiFeature | None = None,
+) -> list[ProviderConfig]:
+    return _vision_configs(await resolve_provider_chain(db, user_id, ServiceType.llm, feature=feature))
+
+
+async def resolve_video_chain(
+    db: AsyncSession | None,
+    user_id: int | None,
+    *,
+    feature: AiFeature | None = None,
+) -> list[ProviderConfig]:
     """筛选接受 input_video 的 chat 供应商。"""
     return [
         cfg
-        for cfg in await resolve_provider_chain(db, user_id, ServiceType.llm)
+        for cfg in await resolve_provider_chain(db, user_id, ServiceType.llm, feature=feature)
         if (cls := try_resolve_chat(cfg.provider_name)) is not None and cls.supports_video
     ]
 
@@ -193,9 +243,9 @@ async def resolve_embedding_provider(
     db: AsyncSession,
     user_id: int,
 ) -> EmbeddingProvider | None:
-    """能力链首个 embedding 供应商；未配置或解析失败时返回 None，记忆降级为关键词召回。"""
+    """记忆向量功能的 embedding 供应商；未配置或解析失败时返回 None，降级为关键词召回。"""
     try:
-        chain = await resolve_provider_chain(db, user_id, ServiceType.embedding)
+        chain = await resolve_provider_chain(db, user_id, ServiceType.embedding, feature=AiFeature.memory_embedding)
         return build_provider(chain[0], EmbeddingProvider) if chain else None
     except Exception:
         logger.warning(
@@ -204,6 +254,12 @@ async def resolve_embedding_provider(
             exc_info=True,
         )
         return None
+
+
+def embedding_model_key(config: ProviderConfig) -> str:
+    """端点或模型变化产生新的向量空间；密钥轮换不改变空间。"""
+    identity = (config.provider_name, config.base_url.rstrip("/"), config.model)
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=True).encode("utf-8")).hexdigest()
 
 
 async def _embed(
@@ -234,7 +290,13 @@ async def _embed(
         log(phase="response", status="skipped", reason="no_provider", latency_ms=0)
         return None
     try:
-        vectors = await asyncio.wait_for(provider.embed(texts, purpose=purpose), timeout=timeout_seconds)
+        configured = [
+            seconds
+            for seconds in (provider.config.attempt_timeout_seconds, provider.config.total_timeout_seconds)
+            if seconds is not None
+        ]
+        budget = min(configured) if configured else timeout_seconds
+        vectors = await asyncio.wait_for(provider.embed(texts, purpose=purpose), timeout=budget)
     except Exception as exc:
         # 记忆随即降级为关键词召回；只记供应商与错误类别，不记输入文本
         logger.warning(

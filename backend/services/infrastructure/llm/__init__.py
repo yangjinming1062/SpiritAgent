@@ -11,6 +11,7 @@ from .llm_client import (
     MissingLlmConfigError,
     MissingVideoModelError,
     build_provider,
+    embedding_model_key,
     generate_embedding,
     generate_embeddings,
     resolve_embedding_provider,
@@ -46,12 +47,14 @@ from .providers import (
     ProviderResultUnknownError,
     ReasoningEffort,
     ServiceType,
+    TTSProvider,
     VideoGenProvider,
     VideoGenRequest,
     VideoJobStatus,
     VoiceDesignResult,
     aclose_all,
     provider_context_defaults,
+    providers_for_feature,
     providers_supporting,
     register,
     resolve,
@@ -75,11 +78,15 @@ from .tts_service import (
     resolve_reply_voice,
     synthesize_speech,
 )
-from .user_config import UserLlmConfig, resolve_user_llm_config
+from .user_config import UserLlmConfig, load_user_llm_config, resolve_user_llm_config
 from .voice_catalog import voices_for_provider
 from .wait_budget import accepted_image_job_wait, generation_timeout_scope
 
 __all__ = [
+    "TTSProvider",
+    "providers_for_feature",
+    "embedding_model_key",
+    "load_user_llm_config",
     "ASPECT_RATIOS",
     "PRODUCT_REASONING_EFFORTS",
     "SIZE_TO_ASPECT",

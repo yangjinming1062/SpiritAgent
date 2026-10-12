@@ -1,3 +1,4 @@
+from .ai_routing import conversation_ai_feature
 from .bootstrap import ensure_system_conversations_for_user
 from .context_window import (
     CHECKPOINT_SUBTYPE,
@@ -52,6 +53,7 @@ from .retry import ReplyRetryNotAllowedError, get_reply_retry_message
 from .undo import UndoNotAllowedError, resolve_undo_target, undo_conversation_to_message
 
 __all__ = [
+    "conversation_ai_feature",
     "cancel_reply_audio",
     "ReplyRetryNotAllowedError",
     "get_reply_retry_message",

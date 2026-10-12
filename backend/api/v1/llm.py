@@ -1,7 +1,7 @@
 from typing import Any
 
 from common import get_router
-from components import SESSION_LOCAL, SETTINGS, get_logger
+from components import SESSION_LOCAL, SETTINGS, AiFeature, get_logger
 from fastapi import Request
 from modules.auth import CurrentUser
 from modules.system import CompletionResponse
@@ -15,6 +15,8 @@ from services.infrastructure.llm import (
     execute_with_fallback,
     resolve_context_tokens,
     resolve_provider_chain,
+    resolve_video_chain,
+    resolve_vision_chain,
 )
 from slowapi.util import get_remote_address
 
@@ -55,7 +57,19 @@ async def create_completion(req: CompletionRequest, request: Request, user: Curr
     try:
         # 在会话内解析链路后立即释放连接，避免上游 await 期间长时间占用连接池；resolve_provider_chain 只读 SETTINGS + 单行 UserModelConfig，期间不再访问 DB。
         async with SESSION_LOCAL() as db:
-            chain = await resolve_provider_chain(db, user.id, "llm")
+            items = req.input if isinstance(req.input, list) else []
+            media = {
+                part.get("type")
+                for item in items
+                for part in (item.get("content") if isinstance(item.get("content"), list) else [])
+                if isinstance(part, dict)
+            }
+            if "input_video" in media:
+                chain = await resolve_video_chain(db, user.id, feature=AiFeature.runner_completion)
+            elif "input_image" in media:
+                chain = await resolve_vision_chain(db, user.id, feature=AiFeature.runner_completion)
+            else:
+                chain = await resolve_provider_chain(db, user.id, "llm", feature=AiFeature.runner_completion)
         # 空链由 execute_with_fallback 抛 MissingLlmConfigError。
         response = await execute_with_fallback(chain, ChatProvider, _call, user_id=user.id)
     except MissingLlmConfigError:

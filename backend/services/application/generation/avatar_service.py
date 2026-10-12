@@ -7,6 +7,7 @@ from pathlib import Path
 
 from components import (
     SESSION_LOCAL,
+    AiFeature,
     get_logger,
     parse_llm_json,
     safe_json_loads,
@@ -103,7 +104,7 @@ _AVATAR_JOB_LOCKS: dict[int, asyncio.Lock] = {}
 async def _sanitize_prompt_for_moderation(user_id: int, prompt: str) -> str:
     """合规改写被审核拒绝的提示词，失败时返回原文。"""
     try:
-        raw = await chat(user_id, MODERATION_SANITIZATION_PROMPT, prompt)
+        raw = await chat(user_id, MODERATION_SANITIZATION_PROMPT, prompt, feature=AiFeature.moderation_rewrite)
         payload = parse_llm_json(raw)
         sanitized = payload.get("prompt") if isinstance(payload, dict) and set(payload) == {"prompt"} else None
         if isinstance(sanitized, str) and sanitized.strip():
@@ -205,6 +206,7 @@ async def extract_card_features[F: BaseModel](
             json.dumps({"source": source, "schema": schema}, ensure_ascii=False),
             reference_images=(uri,),
             before_submit=before_submit,
+            feature=AiFeature.character_card,
         )
     payload = parse_llm_json(raw)
     if not isinstance(payload, dict) or set(payload) != set(model.model_fields):
@@ -473,6 +475,7 @@ async def _generate_portrait(
     prompt: str,
     user_id: int,
     *,
+    feature: AiFeature,
     persist: bool,
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
@@ -486,6 +489,7 @@ async def _generate_portrait(
         return await generate_images(
             text,
             user_id=user_id,
+            feature=feature,
             size=size,
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
@@ -584,6 +588,7 @@ async def _generate_avatar_step(
         reference_image=reference_image,
         secondary_reference_image=secondary_reference_image,
         image_edit=image_edit,
+        feature=AiFeature.avatar_image,
     )
     return await _write_avatar_step(
         user_id,
@@ -1020,6 +1025,7 @@ async def generate_fullbody_reference(
                 size=FULLBODY_SIZE,
                 image_edit=mode == "edit",
                 prefer_transparent_background=True,
+                feature=AiFeature.fullbody_image,
             )
         except AvatarGenerationError as exc:
             raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc

@@ -6,7 +6,7 @@ from dataclasses import asdict, replace
 from typing import Literal, get_args
 from uuid import uuid4
 
-from components import SESSION_LOCAL, get_logger, parse_llm_json, tool_error
+from components import SESSION_LOCAL, AiFeature, get_logger, parse_llm_json, tool_error
 from modules.companion import CharacterCardSnapshot
 from prompts.generation import CHAT_IMAGE_CORRECTION_PREFIX
 from prompts.tools import MEDIA_INSPECTION_INSTRUCTIONS
@@ -93,6 +93,7 @@ async def _generate_batch(
             user_id=user_id,
             persist_user_assets=True,
             storage_directory=directory,
+            feature=AiFeature.chat_image,
         )
 
     identity = CharacterCardSnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
@@ -135,6 +136,7 @@ async def _generate_batch(
         identity_reference=plan.reference_image or "",
         identity_text=render_character_identity(identity),
         state=state,
+        feature=AiFeature.chat_image,
     )
     delivered: list[str] = []
     for slot in range(n):
@@ -324,6 +326,7 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
                     ensure_ascii=False,
                 ),
                 reference_images=(uri,),
+                feature=AiFeature.chat_image_inspection,
             )
             result = InspectionResult.model_validate(parse_llm_json(raw))
             issues = tuple(issue.strip()[:1000] for issue in result.issues if issue.strip())

@@ -2,7 +2,15 @@
 
 import asyncio
 
-from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, TaskBag, format_local_iso, get_logger, track_user_task
+from components import (
+    LLM_MAX_OUTPUT_TOKENS,
+    SESSION_LOCAL,
+    AiFeature,
+    TaskBag,
+    format_local_iso,
+    get_logger,
+    track_user_task,
+)
 from modules.companion import POST_COMMENT_MAX_CHARS, CompanionPostComment
 from prompts.posts import POST_REPLY_INSTRUCTIONS
 from sqlalchemy import select
@@ -116,7 +124,7 @@ async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
                 for i, c in enumerate(thread)
             ],
         }
-        config = await resolve_user_llm_config(db, user_id)
+        config = await resolve_user_llm_config(db, user_id, feature=AiFeature.post_reply)
         await db.commit()
     if not config.is_configured:
         raise RuntimeError("LLM is not configured")

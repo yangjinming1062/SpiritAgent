@@ -1,15 +1,13 @@
 """单次文本与视觉模型调用、终态检查和错误诊断。"""
 
-import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from components import (
     LLM_MAX_OUTPUT_TOKENS,
-    LLM_RETRY_MIN_TIMEOUT,
     SESSION_LOCAL,
-    SETTINGS,
+    AiFeature,
     get_logger,
     parse_llm_json,
     strip_outer_code_fence,
@@ -23,7 +21,6 @@ from .llm_fallback import execute_with_fallback
 from .llm_retry import call_with_retry
 from .providers import (
     ChatProvider,
-    ProviderConfig,
     ServiceType,
     resolve_context_tokens,
 )
@@ -88,14 +85,11 @@ async def chat(
     system_prompt: str,
     user_payload: str,
     *,
-    provider_config: ProviderConfig | None = None,
+    feature: AiFeature,
 ) -> str:
-    """单次非流式 chat 往返；未指定供应商时在独立短会话中解析配置，模型调用期间不占数据库连接。空内容视为错误，避免把空 prompt 透传给生图供应商。"""
-    if provider_config is None:
-        async with SESSION_LOCAL() as config_db:
-            chain = await resolve_provider_chain(config_db, user_id, ServiceType.llm)
-    else:
-        chain = [provider_config]
+    """在独立短会话中解析功能链，模型调用期间不占数据库连接；空内容视为错误。"""
+    async with SESSION_LOCAL() as config_db:
+        chain = await resolve_provider_chain(config_db, user_id, ServiceType.llm, feature=feature)
     config = UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
     text = (await call_llm_once(config, system_prompt, user_payload, max_output_tokens=LLM_MAX_OUTPUT_TOKENS)).strip()
     return text
@@ -122,8 +116,7 @@ async def _call_text_response(
 ) -> str:
     retry_kwargs = {"context_length": context_length} if context_length is not None else {}
     try:
-        async with asyncio.timeout(max(float(SETTINGS.llm_request_timeout_seconds), LLM_RETRY_MIN_TIMEOUT)):
-            response = await call_with_retry(provider.raw_client(), **retry_kwargs, **request)
+        response = await call_with_retry(provider.raw_client(), **retry_kwargs, **request)
     except TimeoutError as exc:
         raise LLMRuntimeError(ClassifiedError(FailoverReason.timeout, None, "LLM request timed out")) from exc
     return _response_text(response)
@@ -169,7 +162,7 @@ async def call_llm_once(
     temperature: float | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
-    """沿能力链执行单次非流式调用；温度按归一化刻度换算，推理档位按当前供应商支持集映射。"""
+    """沿已解析的功能链执行单次非流式调用；温度与推理档位按当前供应商换算。"""
     user_content = (
         json.dumps(user_payload, ensure_ascii=False) if isinstance(user_payload, dict | list) else str(user_payload)
     )
@@ -191,11 +184,16 @@ async def call_llm_once(
             )
         if before_call is not None:
             await before_call()
-        return await _call_text_response(
+        text = await _call_text_response(
             provider,
             request,
             context_length=context_length,
         )
+        if json_output and not isinstance(parse_llm_json(text), dict):
+            raise LLMRuntimeError(
+                ClassifiedError(FailoverReason.format_error, None, "LLM response is not a JSON object"),
+            )
+        return text
 
     return await execute_with_fallback(llm_cfg.chain, ChatProvider, call, user_id=llm_cfg.user_id)
 
@@ -303,12 +301,11 @@ async def call_llm_json[T](
             )
             try:
                 # 不限输出 token 时仍沿用配置的调用时限，整个请求与 SDK 网络重试共用该时限。
-                async with asyncio.timeout(max(float(SETTINGS.llm_request_timeout_seconds), LLM_RETRY_MIN_TIMEOUT)):
-                    response = await call_with_retry(
-                        provider.structured_response_client(repair=repair, before_submit=before_call),
-                        context_length=context_length,
-                        **request,
-                    )
+                response = await call_with_retry(
+                    provider.structured_response_client(repair=repair, before_submit=before_call),
+                    context_length=context_length,
+                    **request,
+                )
             except LlmCallBlockedError:
                 raise
             except Exception as exc:
@@ -386,6 +383,7 @@ async def vision_chat(
     system_prompt: str,
     user_payload: str,
     *,
+    feature: AiFeature,
     reference_images: tuple[str, ...],
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
@@ -393,7 +391,7 @@ async def vision_chat(
     if not reference_images or any(not uri for uri in reference_images):
         raise ValueError("visual reasoning requires readable reference images")
     async with SESSION_LOCAL() as chain_db:
-        chain = await resolve_vision_chain(chain_db, user_id)
+        chain = await resolve_vision_chain(chain_db, user_id, feature=feature)
     if not chain:
         raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
     content = [{"type": "input_image", "image_url": uri} for uri in reference_images]
