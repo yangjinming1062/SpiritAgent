@@ -23,9 +23,10 @@ import { useResolvedMediaSrc } from '@/modules/media'
 import { PortraitLightbox } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft } from '@/shared/lib/icons'
-import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, WizardModal } from '@/shared/panel'
+import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, WizardModal } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
@@ -93,35 +94,39 @@ function DesktopLifePreview({ action }: { action: DesktopVideoAction }): React.J
 
 function ExternalReference({
   reference,
-  onZoom,
-  saveLabel,
-  savedLabel
+  onZoom
 }: {
   reference: DesktopVideoPromptReference
   onZoom: (url: string) => void
-  saveLabel: string
-  savedLabel: string
 }): React.JSX.Element {
+  const t = useDesktopLifeStrings()
   const media = useResolvedMediaSrc({ type: 'image', url: reference.url })
+  const { copied, copy, error, reset } = useImageActions()
   const [saved, setSaved] = useState(false)
+  const beginAsync = useAsyncGuard()
 
   const save = async (): Promise<void> => {
     if (media.status !== 'ready') {
       return
     }
 
+    const isLive = beginAsync()
+    reset()
+
     try {
-      if (await window.spiritagent.saveImage({ defaultName: reference.label, url: media.src })) {
+      if ((await window.spiritagent.saveImage({ defaultName: reference.label, url: media.src })) && isLive()) {
         setSaved(true)
       }
     } catch (failure) {
-      notifyError(failure, saveLabel)
+      if (isLive()) {
+        notifyError(failure, t.saveReference)
+      }
     }
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-line-hairline p-2">
-      <div className="flex aspect-video items-center justify-center overflow-hidden rounded bg-black/10">
+    <div className="flex min-w-0 flex-col gap-2 rounded-lg border border-line-hairline p-2">
+      <div className="flex h-24 shrink-0 items-center justify-center overflow-hidden rounded bg-black/10">
         {media.status === 'ready' ? (
           <button
             aria-label={reference.label}
@@ -135,14 +140,38 @@ function ExternalReference({
           <span className="text-xs text-muted">{reference.label}</span>
         )}
       </div>
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-xs text-body" title={reference.label}>
-          {reference.label}
-        </span>
-        <button className={BTN_SUBTLE} disabled={media.status !== 'ready'} onClick={() => void save()} type="button">
-          {saved ? savedLabel : saveLabel}
+      <span className="truncate text-xs text-body" title={reference.label}>
+        {reference.label}
+      </span>
+      <div className="flex flex-wrap gap-1">
+        <button
+          aria-label={`${t.copyReference} ${reference.label}`}
+          className={BTN_GHOST}
+          disabled={media.status !== 'ready'}
+          onClick={() => {
+            if (media.status === 'ready') {
+              void copy(media.src)
+            }
+          }}
+          type="button"
+        >
+          {copied ? t.copied : t.copyReference}
+        </button>
+        <button
+          aria-label={`${t.saveReference} ${reference.label}`}
+          className={BTN_GHOST}
+          disabled={media.status !== 'ready'}
+          onClick={() => void save()}
+          type="button"
+        >
+          {saved ? t.referenceSaved : t.saveReference}
         </button>
       </div>
+      {error === 'copy' && (
+        <p className="text-xs text-rose-500" role="alert">
+          {t.copyReferenceFailed}
+        </p>
+      )}
     </div>
   )
 }
@@ -167,6 +196,7 @@ export function DesktopLifePage(): React.JSX.Element {
   const [externalAction, setExternalAction] = useState<DesktopVideoAction | null>(null)
   const [externalPrompt, setExternalPrompt] = useState<Awaited<ReturnType<typeof getDesktopVideoPrompt>> | null>(null)
   const [externalRequirements, setExternalRequirements] = useState('')
+  const [externalPromptRequirements, setExternalPromptRequirements] = useState('')
   const [externalFilePath, setExternalFilePath] = useState<string | null>(null)
   const [externalPromptLoading, setExternalPromptLoading] = useState(false)
   const [externalUploading, setExternalUploading] = useState(false)
@@ -199,6 +229,9 @@ export function DesktopLifePage(): React.JSX.Element {
     externalRequest.current += 1
     setExternalAction(null)
     setExternalPrompt(null)
+    setExternalRequirements('')
+    setExternalPromptRequirements('')
+    setExternalCopied(false)
     setExternalFilePath(null)
     setExternalReferenceZoom(null)
     setExternalPromptLoading(false)
@@ -250,23 +283,26 @@ export function DesktopLifePage(): React.JSX.Element {
 
   const loadExternalPrompt = async (action: DesktopVideoAction, requirements = ''): Promise<void> => {
     const requestId = ++externalRequest.current
-    const isCurrent = captureAuthScope()
+    const authScope = captureAuthScope()
+    const isLive = beginAsync()
+    const isCurrent = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
+    const submittedRequirements = requirements.trim()
     setExternalPromptLoading(true)
 
     try {
-      const prompt = await getDesktopVideoPrompt(action.id, action.set_id, requirements)
+      const prompt = await getDesktopVideoPrompt(action.id, action.set_id, submittedRequirements)
 
-      if (isCurrent?.() && requestId === externalRequest.current) {
+      if (isCurrent()) {
         setExternalPrompt(prompt)
+        setExternalPromptRequirements(submittedRequirements)
         setExternalCopied(false)
       }
     } catch (failure) {
-      if (isCurrent?.() && requestId === externalRequest.current) {
-        setExternalPrompt(null)
+      if (isCurrent()) {
         notifyError(failure, t.externalTitle)
       }
     } finally {
-      if (requestId === externalRequest.current) {
+      if (isCurrent()) {
         setExternalPromptLoading(false)
       }
     }
@@ -276,6 +312,7 @@ export function DesktopLifePage(): React.JSX.Element {
     setExternalAction(action)
     setExternalPrompt(null)
     setExternalRequirements('')
+    setExternalPromptRequirements('')
     setExternalFilePath(null)
     setExternalReferenceZoom(null)
     setExternalCopied(false)
@@ -286,6 +323,8 @@ export function DesktopLifePage(): React.JSX.Element {
     externalRequest.current += 1
     setExternalAction(null)
     setExternalPrompt(null)
+    setExternalRequirements('')
+    setExternalPromptRequirements('')
     setExternalFilePath(null)
     setExternalReferenceZoom(null)
     setExternalCopied(false)
@@ -294,6 +333,11 @@ export function DesktopLifePage(): React.JSX.Element {
   }
 
   const chooseExternalVideo = async (): Promise<void> => {
+    const requestId = externalRequest.current
+    const authScope = captureAuthScope()
+    const isLive = beginAsync()
+    const isCurrent = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
+
     try {
       const [path] = await window.spiritagent.selectPaths({
         filters: [{ extensions: ['mp4', 'mov'], name: t.videoFilterName }],
@@ -301,11 +345,13 @@ export function DesktopLifePage(): React.JSX.Element {
         title: t.selectVideo
       })
 
-      if (path) {
+      if (path && isCurrent()) {
         setExternalFilePath(path)
       }
     } catch (failure) {
-      notifyError(failure, t.selectVideo)
+      if (isCurrent()) {
+        notifyError(failure, t.selectVideo)
+      }
     }
   }
 
@@ -342,12 +388,19 @@ export function DesktopLifePage(): React.JSX.Element {
       return
     }
 
+    const requestId = externalRequest.current
+    const authScope = captureAuthScope()
+    const isLive = beginAsync()
+    const isCurrent = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
+
     try {
-      if (await window.spiritagent.writeClipboard(externalPrompt.prompt)) {
+      if ((await window.spiritagent.writeClipboard(externalPrompt.prompt)) && isCurrent()) {
         setExternalCopied(true)
       }
     } catch (failure) {
-      notifyError(failure, t.copyPrompt)
+      if (isCurrent()) {
+        notifyError(failure, t.copyPrompt)
+      }
     }
   }
 
@@ -696,15 +749,22 @@ export function DesktopLifePage(): React.JSX.Element {
                 value={externalRequirements}
               />
             </label>
-            <button
-              className={`${BTN_SUBTLE} self-start`}
-              disabled={externalPromptLoading || externalUploading}
-              onClick={() => void loadExternalPrompt(externalAction, externalRequirements)}
-              type="button"
-            >
-              {externalPromptLoading ? t.promptLoading : t.generatePrompt}
-            </button>
-            {externalPromptLoading && <p className="text-xs text-muted">{t.promptLoading}</p>}
+            {externalPromptLoading ? (
+              <p className="text-xs text-muted" role="status">
+                {t.promptLoading}
+              </p>
+            ) : (
+              (!externalPrompt || externalRequirements.trim() !== externalPromptRequirements) && (
+                <button
+                  className={`${BTN_SUBTLE} self-start`}
+                  disabled={externalUploading}
+                  onClick={() => void loadExternalPrompt(externalAction, externalRequirements)}
+                  type="button"
+                >
+                  {externalPrompt ? t.updatePrompt : t.retryPrompt}
+                </button>
+              )
+            )}
             {externalPrompt ? (
               <section className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-2">
@@ -722,14 +782,12 @@ export function DesktopLifePage(): React.JSX.Element {
                 />
                 <h4 className="mt-2 text-sm font-medium text-strong">{t.references}</h4>
                 {externalPrompt.references?.length ? (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-3 gap-2">
                     {externalPrompt.references.map(reference => (
                       <ExternalReference
                         key={`${reference.label}:${reference.url}`}
                         onZoom={url => setExternalReferenceZoom({ label: reference.label, url })}
                         reference={reference}
-                        savedLabel={t.referenceSaved}
-                        saveLabel={t.saveReference}
                       />
                     ))}
                   </div>

@@ -26,8 +26,9 @@ interface WizardModalProps {
   widthClass?: string
 }
 
-// 每次取当前视口尺寸；提到模块层让 getRect 引用保持稳定。
-const fullscreenRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
+// 桌面内部窗口会限制 fixed 浮层的范围；隐藏时退出命中，避免捕获窗口外的点击。
+const overlayRect = (element: HTMLElement): DOMRect | null =>
+  element.getClientRects().length ? element.getBoundingClientRect() : null
 
 // 线性向导的模态外壳：居中浮层卡（不铺全屏暗化遮罩）。Esc 在捕获阶段拦截并阻断传播，所在页面的 Esc 处理不会同时触发。窗口拖拽区不受 DOM 叠放遮挡，外层须设 no-drag。
 export function WizardModal({
@@ -53,8 +54,10 @@ export function WizardModal({
     renderedOffset: { dx: number; dy: number } = dragOffsetRef.current
   ): { dx: number; dy: number } => {
     const card = cardRef.current
+    const overlay = overlayRef.current
+    const bounds = overlay ? overlayRect(overlay) : null
 
-    if (!card) {
+    if (!card || !bounds) {
       return offset
     }
 
@@ -64,8 +67,8 @@ export function WizardModal({
     const margin = 12
 
     return {
-      dx: Math.min(Math.max(offset.dx, margin - baseLeft), window.innerWidth - margin - rect.width - baseLeft),
-      dy: Math.min(Math.max(offset.dy, margin - baseTop), window.innerHeight - margin - rect.height - baseTop)
+      dx: Math.min(Math.max(offset.dx, bounds.left + margin - baseLeft), bounds.right - margin - rect.width - baseLeft),
+      dy: Math.min(Math.max(offset.dy, bounds.top + margin - baseTop), bounds.bottom - margin - rect.height - baseTop)
     }
   }
 
@@ -94,12 +97,16 @@ export function WizardModal({
       })
     }
 
-    window.addEventListener('resize', constrain)
+    const observer = new ResizeObserver(constrain)
 
-    return () => window.removeEventListener('resize', constrain)
+    if (overlayRef.current) {
+      observer.observe(overlayRef.current)
+    }
+
+    return () => observer.disconnect()
   }, [draggable])
 
-  useInteractiveRegion(regionId, overlayRef, fullscreenRect)
+  useInteractiveRegion(regionId, overlayRef, overlayRect)
 
   useEscapeKey(onClose, { enabled: escClose })
 
@@ -117,7 +124,7 @@ export function WizardModal({
       role="dialog"
     >
       <div
-        className={`flex max-h-[85vh] w-full ${widthClass} flex-col overflow-hidden rounded-2xl text-strong ${SURFACE_OVERLAY}`}
+        className={`flex max-h-[min(85vh,100%)] w-full ${widthClass} flex-col overflow-hidden rounded-2xl text-strong ${SURFACE_OVERLAY}`}
         ref={cardRef}
         style={
           draggable

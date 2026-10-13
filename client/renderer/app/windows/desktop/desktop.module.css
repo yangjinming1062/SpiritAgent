@@ -207,6 +207,7 @@
 }
 .window {
   position: absolute;
+  contain: layout;
   display: flex;
   flex-direction: column;
   pointer-events: auto;
