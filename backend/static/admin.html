@@ -2171,7 +2171,7 @@ function renderAiChain() {
     if (aiView.group === 'providers') {
         $('#aiChainCount').textContent = editor.config.providers.length + ' 条';
         const inherited = isUser ? '<section class="chain-layer"><div class="layer-head"><span class="layer-title">可引用的系统供应商</span></div>' + providerSummaryHtml(aiSystemConfig(editor).providers) + '</section>' : '';
-        $('#aiChainBody').innerHTML = inherited + '<section class="chain-layer is-effective"><div class="layer-head"><span class="layer-tag">1</span><span class="layer-title">' + (isUser ? '用户供应商信息库' : '供应商信息库') + '</span></div>' + callListHtml(editorName, 'providers') + '<p class="layer-hint">在这里维护名称、API Key 与 Base URL。同一类型可添加多条配置；自定义使用标准 OpenAI 接口，名称可自由填写。</p></section>';
+        $('#aiChainBody').innerHTML = inherited + '<section class="chain-layer is-effective"><div class="layer-head"><span class="layer-tag">1</span><span class="layer-title">' + (isUser ? '用户供应商信息库' : '供应商信息库') + '</span></div>' + callListHtml(editorName, 'providers') + '<p class="layer-hint">在这里维护名称、API Key 与 Base URL。本地和自定义可添加多条配置，其它供应商在系统和所有用户的信息库中只能添加一次；自定义使用标准 OpenAI 接口，名称可自由填写。</p></section>';
     } else {
         const group = aiView.group;
         const system = aiSystemConfig(editor);
@@ -2186,7 +2186,7 @@ function renderAiChain() {
 
 function providerSummaryHtml(providers) {
     if (!providers.length) return '<p class="hint">暂无系统供应商。</p>';
-    return '<div class="provider-grid">' + providers.map(provider => '<div class="provider-card"><div class="p-name">' + esc(provider.name) + '</div><div class="p-row"><span>类型</span><b>' + esc(aiProviderLabel(provider.provider_type)) + '</b></div><div class="p-row"><span>API Key</span><b>' + (provider.api_key_set ? '已设置' : '未设置') + '</b></div><div class="p-row"><span>Base URL</span><b>' + esc(provider.base_url || '使用适配器默认地址') + '</b></div></div>').join('') + '</div>';
+    return '<div class="provider-grid">' + providers.map(provider => '<div class="provider-card"><div class="p-name">' + esc(provider.name) + '</div><div class="p-row"><span>API Key</span><b>' + (provider.api_key_set ? '已设置' : '未设置') + '</b></div><div class="p-row"><span>Base URL</span><b>' + esc(provider.base_url || '使用适配器默认地址') + '</b></div></div>').join('') + '</div>';
 }
 
 function hasFeatureOverride(value) {
@@ -2534,6 +2534,18 @@ function aiSource(editor, providerId) {
     return editor.config.providers.find(card => card.id === providerId) ?? aiSystemConfig(editor).providers.find(card => card.id === providerId);
 }
 
+function aiAvailableProviderTypes(editor) {
+    const providers = [
+        ...(editor === aiEditors.system ? editor.config.providers : tabCache.models?.system_ai_config?.providers ?? []),
+        ...(tabCache.models?.items ?? [])
+            .filter(item => editor !== aiEditors.user || item.user_id != aiView.userId)
+            .flatMap(item => item.ai_config?.providers ?? []),
+        ...(editor === aiEditors.user ? editor.config.providers : []),
+    ];
+    const used = new Set(providers.map(card => card.provider_type));
+    return [...new Set(Object.values(editor.support).flat())].filter(type => type === 'local' || type === 'custom' || !used.has(type));
+}
+
 function aiProviderOptions(editor, service) {
     const supported = editor.support[service] ?? [];
     return [...editor.config.providers.map(card => ({ ...card, scope: editor === aiEditors.system ? '系统' : '用户' })), ...aiSystemConfig(editor).providers.map(card => ({ ...card, scope: '系统' }))].filter(card => supported.includes(card.provider_type));
@@ -2570,7 +2582,7 @@ function callListHtml(editorName, group) {
     const option = (value, label, selected = false) =>
         `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
     const options = library
-        ? [...new Set(Object.values(editor.support).flat())].map(type => option(type, aiProviderLabel(type))).join('')
+        ? aiAvailableProviderTypes(editor).map(type => option(type, aiProviderLabel(type))).join('')
         : feature
             ? models.filter(card => aiModelSupportsFeature(card, feature) && !cards.includes(card.id)).map(card => option(card.id, aiModelLabel(card))).join('')
             : suppliers.map(card => option(card.id, card.scope + ' · ' + card.name + ' (' + aiProviderLabel(card.provider_type) + ')')).join('');
@@ -2578,7 +2590,7 @@ function callListHtml(editorName, group) {
         const card = feature ? models.find(item => item.id === value) : value;
         const provider = library ? card : aiSource(editor, card?.provider_id);
         const summary = library
-            ? provider.name + ' · ' + aiProviderLabel(provider.provider_type)
+            ? provider.name
             : card
                 ? feature ? aiModelLabel(card) : (provider?.name ?? '供应商引用失效') + ' · ' + card.model_name + (service === 'llm' ? ' · 窗 ' + (card.context_window ?? '未填写') : '')
                 : '模型引用失效';
@@ -2846,6 +2858,10 @@ function bindAiCardEvents() {
                 if (cards.includes(value) || (aiService(group) === 'embedding' && cards.length)) return;
                 cards.push(value);
             } else if (group === 'providers') {
+                if (!aiAvailableProviderTypes(editor).includes(value)) {
+                    toast('该供应商类型已在供应商库中添加', 'err');
+                    return;
+                }
                 cards.push({ id: newAiId(), name: section.querySelector('[data-ai-provider-name]').value.trim() || AI_NAMES[value] || value, provider_type: value, api_key: '', base_url: '' });
             } else {
                 const provider = aiSource(editor, value);

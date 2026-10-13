@@ -581,7 +581,7 @@ Runner 只持工具所需本机配置。终端、SSH 密码及凭据文件不上
 
 ### AI 配置与密钥
 
-管理页按供应商信息库 → 能力模型卡片 → 功能调用链维护配置。供应商与模型以稳定 UUID 引用，名称仅用于显示；同一供应商类型可建多条实例，每条实例可配多个模型。结构、功能要求与适配器能力分别见 [ai_config.py](../backend/components/ai_config.py)、[ai_features.py](../backend/components/ai_features.py) 和 [registrations.py](../backend/bootstrap/registrations.py)。
+管理页按供应商信息库 → 能力模型卡片 → 功能调用链维护配置。供应商与模型以稳定 UUID 引用，名称仅用于显示，每张供应商卡片可配多个模型。管理页新增时，`local` 与 `custom` 可建多条实例，其它类型在系统与所有用户的信息库中合计只允许一张；此限制由前端实施，已有重复卡片不自动合并。预设在下拉列表中选择 `provider_type` 供适配器使用，名称留空时取预设名，供应商卡片仅展示名称。结构、功能要求与适配器能力分别见 [ai_config.py](../backend/components/ai_config.py)、[ai_features.py](../backend/components/ai_features.py) 和 [registrations.py](../backend/bootstrap/registrations.py)。
 
 信息库独占 API Key 与 Base URL。能力卡片保存供应商实际模型 ID、输入与输出类型，以及适用的上下文窗口、输出 Token 和独立输入上限；LLM 的窗口与输出上限必填，输出包含推理与正文。管理页提供 8,192、16,384、32,768、65,536、131,072 五档输出快捷值，并保留自由输入（k = 1,000，M = 1,000,000）。模型列表按供应商草稿或已保存凭据读取，未返回元数据时由 OpenRouter 公开目录补全；完整 ID、canonical slug 或唯一精确名称可自动匹配，多个候选须选择。字段来源在应用建议前展示，供应商与本地部署值优先，已保存卡片不随目录刷新改变；公开目录缓存一小时，不接收供应商密钥。目录失败仍允许手填，运行时不查询目录、不使用默认模型或固定 Token 预算。
 
