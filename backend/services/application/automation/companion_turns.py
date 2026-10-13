@@ -139,7 +139,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
     language = "zh"
     try:
         remaining = (intent.expires_at - utc_now()).total_seconds()
-        async with asyncio.timeout(min(SETTINGS.companion_turn_timeout_seconds, max(0.0, remaining))):
+        async with asyncio.timeout(max(0.0, remaining)):
             async with session_scope() as db:
                 conversation = await get_or_create_special_conversation(db, user_id, "companion")
                 llm_config = await resolve_user_llm_config(db, user_id, AiTaskKey.proactive)

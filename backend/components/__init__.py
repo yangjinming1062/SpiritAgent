@@ -45,7 +45,6 @@ from .constants import (
     JSONRPC_SLASH_CONFIRM_REQUIRED,
     JSONRPC_SLASH_GENERIC,
     JSONRPC_TURN_BUSY,
-    LLM_RETRY_MIN_TIMEOUT,
     MAX_VOICE_DESIGN_PROMPT_CHARS,
     NIGHTLY_REASONING_EFFORT,
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
@@ -98,7 +97,7 @@ from .functions import (
 )
 from .hashing import sha256_hex, sha512_b64
 from .logger import get_logger, set_request_user_id, setup_logging
-from .network import download_capped, safe_outbound_async_client, safe_outbound_async_transport
+from .network import ai_http_timeout, download_capped, safe_outbound_async_client, safe_outbound_async_transport
 from .paid_calls import log_paid_call
 from .redact import redact_sensitive_text
 from .temp_files import cleanup_expired, get_file_path, owned_temp_files, save_file
@@ -118,6 +117,7 @@ from .user_maintenance_runtime import (
 )
 
 __all__ = [
+    "ai_http_timeout",
     "ModelDiscoveryRequest",
     "ModelDiscoveryResponse",
     "ModelMetadata",
@@ -155,7 +155,6 @@ __all__ = [
     "JSONRPC_SLASH_GENERIC",
     "JSONRPC_TURN_BUSY",
     "JSON_RPC_VERSION",
-    "LLM_RETRY_MIN_TIMEOUT",
     "MAX_VOICE_DESIGN_PROMPT_CHARS",
     "NIGHTLY_REASONING_EFFORT",
     "REMOTE_ASSET_DOWNLOAD_MAX_BYTES",

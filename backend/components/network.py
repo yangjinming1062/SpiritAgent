@@ -299,12 +299,17 @@ def safe_outbound_async_transport(*, trust_env: bool = True) -> httpx.AsyncBaseT
 _MAX_REDIRECTS = 5
 
 
-async def download_capped(url: str, *, max_bytes: int, timeout: float) -> bytes:
+def ai_http_timeout() -> httpx.Timeout:
+    """模型响应与媒体传输持续等待；连接建立和连接池等待仍有界。"""
+    return httpx.Timeout(None, connect=10.0, pool=10.0)
+
+
+async def download_capped(url: str, *, max_bytes: int, timeout: float | None = None) -> bytes:
     """下载远程 URL：大小上限、逐跳 SSRF（由建连后端完成）、协议白名单 {http, https} 与 HTTPS→HTTP 降级防护。"""
     current_url = url
     redirect_count = 0
 
-    client_timeout = httpx.Timeout(timeout, connect=10.0, read=timeout, write=timeout)
+    client_timeout = httpx.Timeout(timeout, connect=10.0, pool=10.0)
 
     while True:
         parsed = urlparse(current_url)

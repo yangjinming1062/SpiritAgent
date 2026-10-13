@@ -5,10 +5,10 @@ from collections.abc import AsyncGenerator
 from dataclasses import asdict
 from typing import Any
 
-from components import LLM_RETRY_MIN_TIMEOUT, SETTINGS, get_logger
+from components import SETTINGS, ai_http_timeout, get_logger
 from openai import AsyncOpenAI
 
-from .call_budget import current_call_task, provider_request_timeout, remaining_chain_seconds, response_started
+from .call_context import current_call_task
 from .error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, LLMRuntimeError, classify_api_error
 from .llm_debug import (
     log_event,
@@ -66,7 +66,6 @@ def _record_usage(
 async def _guarded_stream(
     stream: Any,
     *,
-    budget: float,
     call_id: str,
     call_site: str,
     model: str,
@@ -75,10 +74,7 @@ async def _guarded_stream(
     accumulator: LlmUsageAccumulator | None,
     task: str | None,
 ) -> AsyncGenerator[Any]:
-    """流式迭代：chunk 间静默期受 idle 超时约束、整流受 budget 总预算约束（httpx read 是按次读超时，不等价）；流中异常分类后以 LLMRuntimeError 抛出；结束时关闭底层流避免连接泄漏到 SDK 池。"""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + budget
-    idle = float(SETTINGS.llm_stream_idle_timeout_seconds)
+    """持续读取模型流；真实异常上抛，结束与取消时关闭底层流。"""
     events_count = 0
     accumulated_content = ""
     usage = None
@@ -89,16 +85,12 @@ async def _guarded_stream(
     terminal_status: str | None = None
     try:
         while True:
-            remaining_total = deadline - loop.time()
-            if remaining_total <= 0:
-                raise TimeoutError(f"LLM stream total budget exceeded ({budget}s)")
             try:
-                chunk = await asyncio.wait_for(stream.__anext__(), timeout=min(idle, remaining_total))
+                chunk = await stream.__anext__()
             except StopAsyncIteration:
                 return
             if first_chunk_at is None:
                 first_chunk_at = time.monotonic()
-                response_started()
             events_count += 1
             event_type = str(getattr(chunk, "type", ""))
             delta = getattr(chunk, "delta", None)
@@ -188,7 +180,7 @@ async def call_with_retry(
     config: ProviderConfig,
     **create_kwargs: Any,
 ) -> Any:
-    """client.responses.create(**kwargs) 的统一入口：终端异常分类为 LLMRuntimeError，流式响应受总预算约束。重试由客户端 max_retries 接管（SDK 遵循 Retry-After 并对 408/409/429/5xx 退避）；换供应商由 execute_with_fallback 决定。"""
+    """client.responses.create(**kwargs) 的统一入口：持续等待模型结果，真实异常分类为 LLMRuntimeError。重试由客户端 max_retries 接管（SDK 遵循 Retry-After 并对 408/409/429/5xx 退避）；换供应商由 execute_with_fallback 决定。"""
     context_length = resolve_context_tokens(config)
     if create_kwargs.get("model") != config.model:
         raise ValueError("调用模型必须来自当前能力卡片")
@@ -214,9 +206,7 @@ async def call_with_retry(
             return value
 
         create_kwargs["input"] = wire(create_kwargs.get("input"))
-    request_timeout = provider_request_timeout(max(float(SETTINGS.llm_request_timeout_seconds), LLM_RETRY_MIN_TIMEOUT))
-    budget = remaining_chain_seconds(request_timeout)
-    create_kwargs.setdefault("timeout", request_timeout)
+    create_kwargs["timeout"] = ai_http_timeout()
     model = str(create_kwargs.get("model") or "")
     input_items = create_kwargs.get("input")
     is_stream = bool(create_kwargs.get("stream"))
@@ -237,7 +227,6 @@ async def call_with_retry(
         request=summarize_llm_request(create_kwargs),
         stream=is_stream,
         context_length=context_length,
-        timeout_seconds=budget,
         task=current_call_task(),
     )
 
@@ -293,7 +282,6 @@ async def call_with_retry(
     if is_stream:
         return _guarded_stream(
             result,
-            budget=budget,
             call_id=call_id,
             call_site=call_site,
             model=model,

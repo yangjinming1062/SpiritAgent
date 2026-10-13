@@ -12,7 +12,6 @@ import httpx
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, get_logger
 from PIL import Image
 
-from ...wait_budget import accepted_image_job_wait
 from .._reference import resolve_reference_bytes
 from ..base import (
     ImageAsset,
@@ -172,12 +171,10 @@ class LocalImageGenProvider(ImageGenProvider):
     supports_transparent_background: ClassVar[bool] = True
     # Mac 16GB 统一内存不宜并行 batch；单次原生请求只出 1 张，多张由调用方或本层顺序重试
     max_images_per_request: ClassVar[int | None] = 1
-    # 本地推理受设备与画幅影响较大；单次 HTTP 仍由 llm_request_timeout_seconds 约束。
-    max_job_wait_seconds: ClassVar[float] = 24 * 60 * 60.0
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
-        # ComfyUI 不校验 Authorization；空 auth_header 避免带 Bearer 占位。单次请求超时仍远小于任务总预算
+        # ComfyUI 不校验 Authorization；空 auth_header 避免带 Bearer 占位。
         self._client = get_http(config.base_url, config.api_key or "local", auth_header={})
         self._model_files: tuple[str, str, str] | None = None
 
@@ -272,18 +269,18 @@ class LocalImageGenProvider(ImageGenProvider):
         return f"{sub}/{name}" if sub else name
 
     async def _wait_and_fetch(self, prompt_id: str) -> list[ImageAsset]:
-        deadline = time.monotonic() + self.max_job_wait_seconds
         history: dict[str, Any] | None = None
-        while time.monotonic() < deadline:
-            resp = await self._read_job_response(prompt_id, f"/history/{prompt_id}", deadline)
+        while history is None:
+            resp = await self._read_job_response(prompt_id, f"/history/{prompt_id}")
             payload = resp.json()
             entry = payload.get(prompt_id)
-            if entry:
+            if entry and (
+                entry.get("status", {}).get("completed")
+                or entry.get("status", {}).get("status_str") in {"success", "error"}
+            ):
                 history = entry
                 break
-            await asyncio.sleep(min(_POLL_INTERVAL_S, max(0.0, deadline - time.monotonic())))
-        if history is None:
-            raise self._result_unknown(prompt_id, f"waiting exceeded {self.max_job_wait_seconds} seconds")
+            await asyncio.sleep(_POLL_INTERVAL_S)
 
         status = history.get("status") or {}
         if status.get("status_str") == "error":
@@ -303,7 +300,7 @@ class LocalImageGenProvider(ImageGenProvider):
                     "subfolder": img.get("subfolder", ""),
                     "type": img.get("type", "output"),
                 }
-                view = await self._read_job_response(prompt_id, "/view", deadline, params=params)
+                view = await self._read_job_response(prompt_id, "/view", params=params)
                 # 解码检查与编码都是整图字节运算，放到工作线程避免阻塞事件循环
                 try:
                     assets.append(await asyncio.to_thread(_image_asset, view.content))
@@ -315,11 +312,10 @@ class LocalImageGenProvider(ImageGenProvider):
         self,
         prompt_id: str,
         path: str,
-        deadline: float,
         *,
         params: dict[str, str] | None = None,
     ) -> httpx.Response:
-        while time.monotonic() < deadline:
+        while True:
             try:
                 response = await self._client.get(path, params=params)
                 response.raise_for_status()
@@ -332,8 +328,7 @@ class LocalImageGenProvider(ImageGenProvider):
                     "local image_gen result query failed; retrying same submitted task",
                     extra={"prompt_id": prompt_id, "error_type": type(exc).__name__, "status_code": status_code},
                 )
-            await asyncio.sleep(min(_POLL_INTERVAL_S, max(0.0, deadline - time.monotonic())))
-        raise self._result_unknown(prompt_id, f"waiting exceeded {self.max_job_wait_seconds} seconds")
+            await asyncio.sleep(_POLL_INTERVAL_S)
 
     def _result_unknown(self, prompt_id: str | None, detail: str) -> ProviderResultUnknownError:
         logger.warning(
@@ -371,8 +366,7 @@ class LocalImageGenProvider(ImageGenProvider):
             raise self._result_unknown(None, "successful submission returned no valid task handle")
         logger.info("local image_gen task accepted", extra={"prompt_id": prompt_id})
         try:
-            with accepted_image_job_wait():
-                assets = await self._wait_and_fetch(prompt_id)
+            assets = await self._wait_and_fetch(prompt_id)
         except asyncio.CancelledError:
             # 只操作本次 prompt；旧服务器缺少定向运行取消时只能移除本任务的排队项。
             cancellation = asyncio.create_task(self._cancel_job(prompt_id))

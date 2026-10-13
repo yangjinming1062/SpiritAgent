@@ -762,7 +762,7 @@ function renderAiTree() {
         else aiSelectNode(key);
     };
 }
-function hasChainOverride(value) { return Boolean(value && (value.chain?.length || value.attempt_timeout_seconds != null || value.total_timeout_seconds != null)); }
+function hasChainOverride(value) { return Boolean(value && (value.chain?.length)); }
 function aiUsageHtml(task) {
     const usages = task.service_usage[task.service];
     return `<div class="usage-tags">${usages.slice(0, 2).map(text => `<span>${esc(text)}</span>`).join('')}${usages.length > 2 ? `<details><summary>+${usages.length - 2} 用途</summary><ul>${usages.map(text => `<li>${esc(text)}</li>`).join('')}</ul></details>` : ''}</div>`;
@@ -780,12 +780,9 @@ function abilityCardHtml(definition, service, multiTask) {
     const ownChain = policy.chain ?? [];
     const models = aiModels(editor, service);
     const cards = ownChain.map(id => resolved.cards.find(card => card.id === id) ?? models.find(card => card.id === id) ?? { id, model_name: '模型引用失效', provider_name: '模型不存在', issue: '模型引用失效' });
-    const budgetOverride = policy.attempt_timeout_seconds != null || policy.total_timeout_seconds != null;
     const sourceLabel = resolved.source.includes('默认') ? `${resolved.source.startsWith('用户') ? '用户' : '系统'}默认 · ${READINESS_KEY_LABELS[service]}` : `${resolved.source.startsWith('用户') ? '用户' : '系统'}任务 · ${task.label} · ${SERVICE_SHORT[service]}`;
     const chain = cards.length ? cards.map((card, index) => chainNodeHtml(card, index, cards.length)).join('') : `<div class="chain-placeholder"><div>${icon(service)} <span>${resolved.source === '未配置' ? '默认链未配置' : `继承${esc(sourceLabel)}`}</span>${resolved.source !== '未配置' && !resolved.cards.some(card => card.available) ? '<p class="hint">所选链没有可用模型</p>' : ''}</div><button class="btn btn--text" data-ai-source="${esc(resolved.sourceKey)}">查看来源 →</button></div>`;
-    const inheritedPolicy = aiEditorName() === 'user' ? system.tasks[task.id]?.chains?.[service] ?? {} : {};
-    const budgetFields = ['attempt_timeout_seconds', 'total_timeout_seconds'].map((field, index) => `<div class="field"><label>${index ? '调用链总预算' : '单模型调用预算'}（秒）<input type="number" min="0.001" max="86400" step="any" data-ai-policy="${field}" value="${esc(policy[field] ?? '')}" placeholder="${esc(inheritedPolicy[field] ?? '沿用调用默认预算')}"></label></div>`).join('');
-    return `<article class="ability-card${aiView.group === key ? ' selected' : ''}" data-ai-group="${key}" tabindex="-1"><div class="ability-heading">${icon(service)}<h3>${esc(multiTask ? task.label : READINESS_KEY_LABELS[service])}</h3>${multiTask ? `<span class="hint">${READINESS_KEY_LABELS[service]}</span>` : ''}<span class="chain-state pill ${cards.length && !resolved.cards.some(card => card.available) ? 'pill--red' : 'pill--muted'}">${cards.length ? '独立配置' : '默认继承'}</span></div>${aiUsageHtml(task)}<div class="chain-track">${chain}</div><div class="chain-footer"><details><summary>高级设置${budgetOverride ? ' · 预算已调整' : ''}</summary><div class="budget-grid">${budgetFields}</div></details><button class="btn btn--text" data-ai-choose="${key}">＋ 添加模型</button></div></article>`;
+    return `<article class="ability-card${aiView.group === key ? ' selected' : ''}" data-ai-group="${key}" tabindex="-1"><div class="ability-heading">${icon(service)}<h3>${esc(multiTask ? task.label : READINESS_KEY_LABELS[service])}</h3>${multiTask ? `<span class="hint">${READINESS_KEY_LABELS[service]}</span>` : ''}<span class="chain-state pill ${cards.length && !resolved.cards.some(card => card.available) ? 'pill--red' : 'pill--muted'}">${cards.length ? '独立配置' : '默认继承'}</span></div>${aiUsageHtml(task)}<div class="chain-track">${chain}</div><div class="chain-footer"><button class="btn btn--text" data-ai-choose="${key}">＋ 添加模型</button></div></article>`;
 }
 function renderAiChain() {
     const editor = aiActiveEditor();
@@ -1047,7 +1044,7 @@ function aiTaskChain(group) {
 
 function aiTaskPolicy(editor, task) {
     const value = editor.config.tasks[task.id] ??= { chains: {} };
-    return value.chains[task.service] ??= { chain: [], attempt_timeout_seconds: null, total_timeout_seconds: null };
+    return value.chains[task.service] ??= { chain: [] };
 }
 
 function aiService(group) {
@@ -1164,9 +1161,6 @@ function validateAiCards(editorName) {
             if (new Set(chain).size !== chain.length) return fail(task.label + '：不能重复引用同一模型卡片');
             if (service === 'embedding' && chain.length > 1) return fail('记忆向量只能选择一张模型卡片');
             if (chain.some(id => !models.some(card => card.id === id && aiModelSupportsTask(card, task)))) return fail(task.label + '：请引用支持此能力的已有模型卡片');
-            for (const key of ['attempt_timeout_seconds', 'total_timeout_seconds']) {
-                if (policy[key] != null && (!Number.isFinite(policy[key]) || policy[key] <= 0 || policy[key] > 86400)) return fail(task.label + '：预算必须是 0 至 86400 之间的正数');
-            }
         }
     }
     for (const [card, window] of windows) card.context_window = window;
@@ -1550,13 +1544,6 @@ function bindAiCardEvents() {
         root.oninput = event => {
             if (aiSaving) return;
             const target = event.target;
-            if (target.dataset.aiPolicy) {
-                const group = target.closest('[data-ai-group]').dataset.aiGroup;
-                const policy = aiTaskPolicy(aiActiveEditor(), aiTaskChain(group));
-                policy[target.dataset.aiPolicy] = target.value.trim() ? Number(target.value) : null;
-                target.closest('details').querySelector('summary').textContent = hasChainOverride({ ...policy, chain: [] }) ? '高级设置 · 预算已调整' : '高级设置';
-                markAiDirty(aiEditorName()); return;
-            }
             const context = aiEventCard(target);
             if (!context) return;
             const { group, card } = context;
@@ -1718,10 +1705,8 @@ const SETTINGS_SECTIONS = [
     {
         title: '能力运行参数', hint: '请求、重试与媒体任务的全局运行参数',
         blocks: [
-            ['sub', 'LLM 调用超时与重试调优'],
+            ['sub', 'LLM 网络重试调优'],
             ['grid', [
-                num('llm_request_timeout_seconds', '请求超时时间 (秒)', 1, { min: 1 }),
-                num('llm_stream_idle_timeout_seconds', '流式静默超时 (秒)', 1, { min: 1 }),
                 num('llm_max_retry_attempts', '失败最大重试次数', 1, { min: 0 }),
                 num('llm_base_retry_delay', '初始重试退避 (秒)', 0.5, { min: 0 }),
                 num('llm_max_retry_delay', '最大重试延迟 (秒)', 1, { min: 0 }),
@@ -1730,8 +1715,6 @@ const SETTINGS_SECTIONS = [
             ['grid', [
                 num('video_gen_poll_interval_seconds', '轮询间隔 (秒)', 0.5, { min: 0.5 }),
                 num('video_gen_poll_backoff_max_seconds', '轮询退避上限 (秒)', 1, { min: 1 }),
-                num('video_gen_max_poll_seconds', '最大轮询超时 (秒)', 10, { min: 10 }),
-                num('video_gen_tool_wait_seconds', '工具等待超时 (秒)', 10, { min: 0 }),
                 num('video_gen_download_max_bytes', '产物下载上限 (字节)', 1048576, { min: 1048576 }),
             ]],
         ],
@@ -1763,7 +1746,6 @@ const SETTINGS_SECTIONS = [
             ['grid', [
                 num('companion_max_pending_intents', '待处理意图上限 (条)', 1),
                 num('companion_min_turn_interval_seconds', '主动回合最小间隔 (秒)', 5),
-                num('companion_turn_timeout_seconds', '主动回合超时 (秒)', 10),
                 num('companion_max_loop_turns', '主动回合工具循环上限 (轮)', 1),
             ]],
             ['sub', '动作制作'],

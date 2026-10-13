@@ -46,13 +46,11 @@ class CapabilityChains(BaseModel):
 
 
 class ChainPolicy(BaseModel):
-    """任务内单一能力的调用链与预算；留空继承下一层。"""
+    """任务内单一能力的调用链；留空继承下一层。"""
 
     model_config = ConfigDict(extra="forbid")
 
     chain: list[UUID] = Field(default_factory=list)
-    attempt_timeout_seconds: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
-    total_timeout_seconds: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
 
 
 class TaskConfig(BaseModel):

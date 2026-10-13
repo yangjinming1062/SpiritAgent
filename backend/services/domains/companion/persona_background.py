@@ -16,8 +16,6 @@ logger = get_logger(__name__)
 
 _BG = TaskBag("companion.persona_background")
 
-# 单次尝试超时刻意远小于 call_with_retry 的总预算（llm_request_timeout_seconds，默认 3000s）：后台任务卡住不能长期占住 worker
-_BG_TASK_PER_ATTEMPT_TIMEOUT = 30.0
 _BG_TASK_MAX_ATTEMPTS = 3
 _BG_TASK_BASE_DELAY = 5.0
 _BG_TASK_MAX_DELAY = 30.0
@@ -39,7 +37,7 @@ async def _refresh_personality_tags(persona_id: int, user_id: int) -> None:
     last_exc: Exception | None = None
     for attempt in range(1, _BG_TASK_MAX_ATTEMPTS + 1):
         try:
-            await asyncio.wait_for(_refresh_once(persona_id, user_id), timeout=_BG_TASK_PER_ATTEMPT_TIMEOUT)
+            await _refresh_once(persona_id, user_id)
             return
         except MissingLlmConfigError as exc:
             last_exc = exc

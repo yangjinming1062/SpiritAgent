@@ -9,6 +9,7 @@ import {
   type IpcEventChannel,
   type IpcEventContract
 } from '@ipc/contracts'
+import { isAiWaitingRpc } from '@protocol'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import { sendToWindow } from '../shared/utils'
@@ -30,7 +31,7 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
     {
       reject: (err: Error) => void
       resolve: (value: DesktopGatewayRpcResult) => void
-      timeout: ReturnType<typeof setTimeout>
+      timeout: ReturnType<typeof setTimeout> | undefined
     }
   >()
 
@@ -168,10 +169,12 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
       const id = ++nextRequestId
 
       return new Promise<DesktopGatewayRpcResult>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          pendingRequests.delete(id)
-          reject(new Error(`Gateway request timed out: ${method}`))
-        }, 45_000)
+        const timeout = isAiWaitingRpc(method)
+          ? undefined
+          : setTimeout(() => {
+              pendingRequests.delete(id)
+              reject(new Error(`Gateway request timed out: ${method}`))
+            }, 45_000)
 
         pendingRequests.set(id, { reject, resolve, timeout })
 

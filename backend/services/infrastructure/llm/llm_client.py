@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import json
 import time
@@ -134,7 +133,6 @@ async def resolve_provider_chain(
     *,
     task: AiTaskKey,
     required_modalities: frozenset[ModelModality] | None = None,
-    fast_decision: bool = False,
 ) -> list[ProviderConfig]:
     service = ServiceType(service_type)
     if service.value not in AI_TASK_BY_ID[task].services:
@@ -157,20 +155,11 @@ async def resolve_provider_chain(
         owner, card_ids, source = user_ai, None, "user_default"
     else:
         owner, card_ids, source = system_ai, None, "system_default"
-    policies = [value for value in (user_policy, system_policy) if value is not None]
-    attempt = next(
-        (value.attempt_timeout_seconds for value in policies if value.attempt_timeout_seconds is not None),
-        None,
-    )
-    total = next((value.total_timeout_seconds for value in policies if value.total_timeout_seconds is not None), None)
     chain = [
         replace(
             config,
             task=task,
             config_source=source,
-            attempt_timeout_seconds=attempt,
-            total_timeout_seconds=total,
-            fast_decision=fast_decision,
         )
         for config in _chain_from_ai_config(
             owner,
@@ -207,7 +196,6 @@ async def resolve_provider_config(
     *,
     task: AiTaskKey,
     required_modalities: frozenset[ModelModality] | None = None,
-    fast_decision: bool = False,
 ) -> ProviderConfig:
     """返回已解析调用链首项；链为空时抛出 ``MissingLlmConfigError``。"""
     chain = await resolve_provider_chain(
@@ -216,7 +204,6 @@ async def resolve_provider_config(
         service_type,
         task=task,
         required_modalities=required_modalities,
-        fast_decision=fast_decision,
     )
     if not chain:
         raise MissingLlmConfigError(
@@ -230,7 +217,6 @@ async def resolve_vision_chain(
     user_id: int | None,
     *,
     task: AiTaskKey,
-    fast_decision: bool = False,
 ) -> list[ProviderConfig]:
     return await resolve_provider_chain(
         db,
@@ -238,7 +224,6 @@ async def resolve_vision_chain(
         ServiceType.llm,
         task=task,
         required_modalities=frozenset({ModelModality.text, ModelModality.image}),
-        fast_decision=fast_decision,
     )
 
 
@@ -315,7 +300,6 @@ async def _embed(
     provider: EmbeddingProvider | None,
     *,
     user_id: int | None,
-    timeout_seconds: float,
     purpose: str,
 ) -> list[list[float]] | None:
     """调用 embedding 并记调试日志；未配置或失败时返回 None。"""
@@ -338,13 +322,7 @@ async def _embed(
         log(phase="response", status="skipped", reason="no_provider", latency_ms=0)
         return None
     try:
-        configured = [
-            seconds
-            for seconds in (provider.config.attempt_timeout_seconds, provider.config.total_timeout_seconds)
-            if seconds is not None
-        ]
-        budget = min(configured) if configured else timeout_seconds
-        vectors = await asyncio.wait_for(provider.embed(texts, purpose=purpose), timeout=budget)
+        vectors = await provider.embed(texts, purpose=purpose)
     except Exception as exc:
         # 记忆随即降级为关键词召回；只记供应商与错误类别，不记输入文本
         logger.warning(
@@ -378,13 +356,12 @@ async def generate_embedding(
     provider: EmbeddingProvider | None,
     *,
     user_id: int | None = None,
-    timeout_seconds: float = 2.0,
     purpose: str = "db",
 ) -> list[float] | None:
     """为单段文本生成 embedding 向量；未配置或失败时返回 None。purpose 见 EmbeddingProvider.embed。"""
     if not text or not text.strip():
         return None
-    vectors = await _embed([text], provider, user_id=user_id, timeout_seconds=timeout_seconds, purpose=purpose)
+    vectors = await _embed([text], provider, user_id=user_id, purpose=purpose)
     return vectors[0] if vectors else None
 
 
@@ -393,9 +370,8 @@ async def generate_embeddings(
     provider: EmbeddingProvider | None,
     *,
     user_id: int | None = None,
-    timeout_seconds: float = 5.0,
 ) -> list[list[float]] | None:
     """为多段文本生成 embedding 向量列表。"""
     if not texts:
         return []
-    return await _embed(texts, provider, user_id=user_id, timeout_seconds=timeout_seconds, purpose="db")
+    return await _embed(texts, provider, user_id=user_id, purpose="db")

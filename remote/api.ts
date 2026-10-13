@@ -1,3 +1,5 @@
+import { isAiWaitingApi, isAiWaitingRpc } from '@protocol'
+
 import type { RemoteSession } from './types'
 
 export function record(value: unknown): value is Record<string, unknown> {
@@ -35,11 +37,16 @@ export class RemoteApi {
     this.controllers.clear()
   }
 
-  async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  async request<T>(
+    path: string,
+    method = 'GET',
+    body?: unknown,
+    timeoutMs = isAiWaitingApi(path, method) ? 0 : 180_000
+  ): Promise<T> {
     const revision = this.revision
     const controller = new AbortController()
     this.controllers.add(controller)
-    const timer = setTimeout(() => controller.abort(), 180_000)
+    const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined
     const headers = new Headers()
 
     if (method !== 'GET' && this.csrf) {
@@ -105,7 +112,7 @@ export interface GatewayEvent {
 interface Pending {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
-  timer: ReturnType<typeof setTimeout>
+  timer: ReturnType<typeof setTimeout> | undefined
 }
 
 export class RemoteGateway {
@@ -235,7 +242,11 @@ export class RemoteGateway {
     this.stateHandlers.clear()
   }
 
-  request<T>(method: string, params: Record<string, unknown> = {}, timeout = 30_000): Promise<T> {
+  request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeout = isAiWaitingRpc(method) ? 0 : 30_000
+  ): Promise<T> {
     const socket = this.socket
 
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -245,10 +256,13 @@ export class RemoteGateway {
     const id = ++this.nextId
 
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error('尚未确认是否受理，请重连后查看会话'))
-      }, timeout)
+      const timer =
+        timeout > 0
+          ? setTimeout(() => {
+              this.pending.delete(id)
+              reject(new Error('尚未确认是否受理，请重连后查看会话'))
+            }, timeout)
+          : undefined
 
       this.pending.set(id, {
         resolve: value => resolve(value as T),

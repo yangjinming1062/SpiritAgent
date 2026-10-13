@@ -122,9 +122,8 @@ from ..media_chain import (
     MediaCandidate,
     MediaChainState,
     MediaProviderFailedError,
-    media_call_budget,
+    media_call_duration,
     media_failure_reason,
-    require_media_call_budget,
     resolve_frozen_media_provider,
     spawn_removed_action_task_cancellation,
     video_failure_message,
@@ -133,7 +132,7 @@ from ..media_chain import (
 from ..media_review import create_media_review, reject_pending_action_reviews
 from ..outfit_service import wait_outfit_description
 from ..paid_work import GenerationWorkPaused, require_new_generation_call
-from ..video_jobs import VideoPollTimeoutError, poll_video_task
+from ..video_jobs import poll_video_task
 from ..visual_identity import align_character_reference
 from .script import (
     ActionScriptEntry,
@@ -2107,7 +2106,6 @@ async def _run_action_attempt(
             provider = build_provider(config, VideoGenProvider)
             task_id = job.provider_task_id
             if not task_id:
-                require_media_call_budget(config, state)
                 resolution = state.providers[attempt].video_resolution
                 if not resolution:
                     raise VideoPackStateError("动作制作资料缺少分辨率，请重新生成该动作")
@@ -2131,9 +2129,9 @@ async def _run_action_attempt(
                     return status
 
                 try:
-                    async with media_call_budget(config, state) as budget_config:
+                    async with media_call_duration(config, state) as call_config:
                         submitted = await execute_with_fallback(
-                            [budget_config],
+                            [call_config],
                             VideoGenProvider,
                             submit,
                             user_id=pack.user_id,
@@ -2148,10 +2146,7 @@ async def _run_action_attempt(
                 await _save_action_state(job, state, stage="generate", provider_task_id=task_id)
             if state.phase != "storing":
                 await progress("generate")
-                try:
-                    status = await poll_video_task(provider, task_id)
-                except VideoPollTimeoutError as exc:
-                    raise VideoPackError("视频生成超时，请稍后重试") from exc
+                status = await poll_video_task(provider, task_id)
                 if status.status != "succeeded":
                     reason = video_provider_failure_reason(status.error)
                     raise MediaProviderFailedError(video_failure_message(reason), reason=reason)
@@ -2161,7 +2156,7 @@ async def _run_action_attempt(
         await progress("download")
         if not state.result_url:
             raise VideoPackError("供应商未返回视频下载地址")
-        data = await download_media_result(state.result_url, max_bytes=MAX_SOURCE_BYTES, timeout=180)
+        data = await download_media_result(state.result_url, max_bytes=MAX_SOURCE_BYTES)
         ext = sniff_media_ext(data)
         if ext not in _SOURCE_MEDIA_EXTS:
             raise VideoPackError("供应商返回了不支持的视频格式")

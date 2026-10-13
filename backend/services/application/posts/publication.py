@@ -9,7 +9,6 @@ from components import (
     SESSION_LOCAL,
     AiTaskKey,
     TaskBag,
-    ensure_utc,
     format_local_iso,
     get_logger,
     is_user_in_maintenance,
@@ -55,7 +54,6 @@ from services.application.generation import (
     query_post_video_job,
     select_video_resolution,
     self_video_references,
-    video_generation_wait_seconds,
 )
 from services.domains.assets import cleanup_user_assets, enqueue_asset_cleanup
 from services.domains.companion import (
@@ -413,10 +411,6 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
             if job.status == "succeeded":
                 progress["media_url"] = job.video_url
                 break
-            # 任务可能停在下载失败、等待重启恢复的非终态；按任务创建时间计时，重启后仍受同一预算约束，超时按结果未知收尾。
-            if utc_now() >= ensure_utc(job.created_at) + timedelta(seconds=video_generation_wait_seconds(job)):
-                logger.warning("Post video wait budget exhausted", extra={"publication_id": row.id, "job_id": job_id})
-                raise ProviderResultUnknownError("POST", "")
             await asyncio.sleep(3)
     await _save(row.id, phase="media_ready", **progress)
     return progress

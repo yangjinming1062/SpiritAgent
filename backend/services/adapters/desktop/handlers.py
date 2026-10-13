@@ -89,6 +89,7 @@ from services.domains.companion import (
     get_onboarding_state,
     get_or_create_persona,
     get_presentation_snapshot,
+    get_user_proactive_record,
     invalidate_user_interaction_stats,
     list_tts_voices,
     match_user_voice,
@@ -312,7 +313,6 @@ async def _noop_send(data: dict[str, Any]) -> bool:
 _last_idle_expression_ts: dict[int, float] = {}
 SHOULD_ACT_ANTIDUP_SECONDS = 2.0
 _last_should_act_ts: dict[int, float] = {}
-_COMPANION_DECISION_TIMEOUT_SECONDS = 20.0
 _MAX_IN_FLIGHT_REQUESTS = 32
 _VOICE_PREVIEW_TEXT_MAX_CHARS = MAX_VOICE_DESIGN_PROMPT_CHARS
 
@@ -562,10 +562,10 @@ async def _require_owned_conv(db: AsyncSession, user_id: int, session_id: str) -
     return conv
 
 
-async def _resolve_llm_config(user_id: int, task: AiTaskKey, *, fast_decision: bool = False) -> UserLlmConfig:
+async def _resolve_llm_config(user_id: int, task: AiTaskKey) -> UserLlmConfig:
     """每次调用现读用户任务链，管理端改配置后已连接的桌面无需重连即生效。"""
     async with SESSION_LOCAL() as db:
-        return await resolve_user_llm_config(db, user_id, task, fast_decision=fast_decision)
+        return await resolve_user_llm_config(db, user_id, task)
 
 
 def _reject_read_only_session(runtime: RuntimeSession) -> None:
@@ -1700,16 +1700,16 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
         local_hour = coerce_hour_0_23(params.get("local_hour"))
         presentation = get_presentation_snapshot(user_id)
+        contact_revision = get_user_proactive_record(user_id).contact_revision
         if presentation is not None and presentation.mode == "desktop":
             return await choose_idle_desktop_action(user_id, idle_seconds, local_hour)
-        try:
-            async with asyncio.timeout(_COMPANION_DECISION_TIMEOUT_SECONDS):
-                llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive, fast_decision=True)
-                result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
-        except TimeoutError:
-            logger.warning("companion.idle_expression decision timed out", extra={"user_id": user_id})
-            return {"expressed": False, "action_id": None, "reason": "decision timed out"}
-        if presentation != get_presentation_snapshot(user_id):
+        llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive)
+        result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
+        if (
+            presentation != get_presentation_snapshot(user_id)
+            or contact_revision != get_user_proactive_record(user_id).contact_revision
+            or await get_disturbance_tier(user_id) != "autonomous"
+        ):
             return {"expressed": False, "action_id": None, "reason": "presentation changed"}
         if result.expressed and result.action_id is not None:
             async with SESSION_LOCAL() as db:
@@ -1719,7 +1719,10 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     ActionPlayRequest(action_id=result.action_id, reason="idle expression"),
                     source="autonomous",
                 )
-                if presentation != get_presentation_snapshot(user_id):
+                if (
+                    presentation != get_presentation_snapshot(user_id)
+                    or contact_revision != get_user_proactive_record(user_id).contact_revision
+                ):
                     return {"expressed": False, "action_id": None, "reason": "presentation changed"}
                 await db.commit()
             return {
@@ -1795,23 +1798,23 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         seconds_since_last_action = coerce_non_negative_float(params.get("seconds_since_last_action"))
 
         presentation = get_presentation_snapshot(user_id)
-        try:
-            async with asyncio.timeout(_COMPANION_DECISION_TIMEOUT_SECONDS):
-                llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive, fast_decision=True)
-                res = await should_act(
-                    user_id=user_id,
-                    idle_seconds=idle_seconds,
-                    local_hour=local_hour,
-                    focused_category=focused_category,
-                    fullscreen=fullscreen,
-                    screen_locked=screen_locked,
-                    seconds_since_last_action=seconds_since_last_action,
-                    llm_config=llm_config,
-                )
-        except TimeoutError:
-            logger.warning("companion.should_act decision timed out", extra={"user_id": user_id})
-            return {"should_act": False, "action": "stay", "reason": "decision timed out"}
-        if presentation != get_presentation_snapshot(user_id):
+        contact_revision = get_user_proactive_record(user_id).contact_revision
+        llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive)
+        res = await should_act(
+            user_id=user_id,
+            idle_seconds=idle_seconds,
+            local_hour=local_hour,
+            focused_category=focused_category,
+            fullscreen=fullscreen,
+            screen_locked=screen_locked,
+            seconds_since_last_action=seconds_since_last_action,
+            llm_config=llm_config,
+        )
+        if (
+            presentation != get_presentation_snapshot(user_id)
+            or contact_revision != get_user_proactive_record(user_id).contact_revision
+            or await get_disturbance_tier(user_id) != "autonomous"
+        ):
             return {"should_act": False, "action": "stay", "reason": "presentation changed"}
         # 走过去搭话（DESIGN「位置、移动与缩放」）：开场白经 companion.message 独立投递、客户端边走边说，RPC 响应只承载走位动作；should_act 已把 approach 的 params 收敛为非空 text。
         if (

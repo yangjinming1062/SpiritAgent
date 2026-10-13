@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
 from openai import AsyncOpenAI
 
 # 请求体对齐 backend MiMoTTSProvider.synthesize() 的目录音色路径；用法见 scripts/onboarding-audio/README.md。
@@ -56,7 +57,7 @@ async def _generate(manifest: dict, output_dir: Path, only_tags: set[str] | None
     if not api_key:
         raise SystemExit("Set MIMO_API_KEY (or TTS_API_KEY) before running.")
 
-    client = AsyncOpenAI(api_key=api_key, base_url=MIMO_BASE_URL)
+    client = AsyncOpenAI(api_key=api_key, base_url=MIMO_BASE_URL, timeout=httpx.Timeout(None, connect=10.0, pool=10.0))
 
     async def one(entry: dict) -> Path:
         audio = await _synthesize_one(client, voice, entry["text"])
@@ -70,12 +71,17 @@ async def _generate(manifest: dict, output_dir: Path, only_tags: set[str] | None
         async with sem:
             return await one(entry)
 
-    results = await asyncio.gather(*(bounded(e) for e in entries))
-    for path in results:
-        print(f"  wrote {path.relative_to(REPO_ROOT)} ({path.stat().st_size} bytes)")
-
-    await client.close()
-    return len(results)
+    tasks = [asyncio.create_task(bounded(entry)) for entry in entries]
+    try:
+        results = await asyncio.gather(*tasks)
+        for path in results:
+            print(f"  wrote {path.relative_to(REPO_ROOT)} ({path.stat().st_size} bytes)")
+        return len(results)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await client.close()
 
 
 def _check(manifest: dict, output_dir: Path) -> int:

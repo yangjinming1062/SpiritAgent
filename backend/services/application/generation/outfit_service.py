@@ -837,7 +837,7 @@ async def wait_outfit_description(user_id: int, outfit_id: int) -> None:
     """等待本外观已经受理的描述任务；不隐式重复付费失败任务。"""
     task = _DESCRIBE_TASKS.get((user_id, outfit_id))
     if task is not None:
-        await asyncio.wait_for(asyncio.shield(task), timeout=SETTINGS.llm_request_timeout_seconds * 2 + 30)
+        await asyncio.shield(task)
 
 
 async def retry_outfit_description(db: AsyncSession, user_id: int, outfit_id: int) -> CompanionOutfit:

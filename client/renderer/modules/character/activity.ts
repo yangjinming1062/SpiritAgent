@@ -46,6 +46,7 @@ const STATS_POST_THROTTLE_MS = 60_000
 
 let timer: ReturnType<typeof setInterval> | null = null
 let lastIdleExpressionAt = 0
+let idleExpressionInFlight = false
 let lastTierPushed: DisturbanceTier | null = null
 let runnerReady = false
 let unsubs: Array<() => void> = []
@@ -67,6 +68,7 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
 
   // 自主表演条件与播放共用可见性判断（见 renderer README），发请求时读取；播放指令由后端统一派发。
   if (
+    idleExpressionInFlight ||
     (!desktop && !$llmAffect.get()) ||
     $effectiveTier.get() !== 'autonomous' ||
     locked ||
@@ -86,15 +88,24 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
   // 夜间政策权威在服务端，客户端只传 local_hour，不在此硬编码跳过。
   const hour = new Date().getHours()
 
-  lastIdleExpressionAt = now
   const gateway = $gateway.get()
+
+  if (!gateway) {
+    return
+  }
+
+  lastIdleExpressionAt = now
+  idleExpressionInFlight = true
   void gateway
-    ?.request('companion.idle_expression', {
+    .request('companion.idle_expression', {
       idle_seconds: idleSeconds,
       local_hour: hour
     })
     .catch(error => {
       log.warn('activity', 'companion.idle_expression failed', error)
+    })
+    .finally(() => {
+      idleExpressionInFlight = false
     })
 }
 

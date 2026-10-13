@@ -115,7 +115,6 @@ from .scene_service import (
     resume_scene_jobs,
     resume_user_scene_jobs,
     retry_scene_description,
-    scene_generation_wait_seconds,
     schedule_scene_generation,
     schedule_scene_prompt,
     set_scene_policy,
@@ -162,7 +161,6 @@ from .video_jobs import (
     resume_pending_video_jobs,
     resume_user_video_jobs,
     select_video_resolution,
-    video_generation_wait_seconds,
 )
 from .video_jobs import drain as drain_video_jobs
 from .visual_identity import (
@@ -293,8 +291,6 @@ __all__ = [
     "generate_images",
     "generate_character_images",
     "generate_scene_images",
-    "scene_generation_wait_seconds",
-    "video_generation_wait_seconds",
     "get_active_avatar",
     "get_avatar_job_lock",
     "get_job",

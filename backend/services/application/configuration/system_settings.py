@@ -94,7 +94,7 @@ async def load_and_apply_system_settings(db: AsyncSession) -> None:
 
 
 def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
-    """日志配置或 LLM 超时/重试参数变更时触发即时副作用。"""
+    """日志配置或 LLM 重试参数变更时触发即时副作用。"""
     if "log_level" in changed_keys or "log_format" in changed_keys:
         try:
             setup_logging()
@@ -106,9 +106,8 @@ def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
         except Exception:
             logger.warning("Failed to reload logging configuration", exc_info=True)
 
-    # DynamicLimiter.enabled 直读 SETTINGS.rate_limit_enabled，无需进程内赋值；LLM 超时/重试参数变动时换代连接池让新连接生效。
+    # DynamicLimiter.enabled 直读 SETTINGS.rate_limit_enabled，无需进程内赋值；LLM 重试参数变动时换代连接池让新连接生效。
     llm_http_keys = {
-        "llm_request_timeout_seconds",
         "llm_max_retry_attempts",
         "llm_base_retry_delay",
         "llm_max_retry_delay",
@@ -117,7 +116,7 @@ def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
         try:
             rotate_http_clients()
             logger.info(
-                "LLM HTTP client pools rotated for new timeout/retry settings",
+                "LLM HTTP client pools rotated for new retry settings",
             )
         except Exception:
             logger.warning("Failed to rotate LLM HTTP client caches", exc_info=True)

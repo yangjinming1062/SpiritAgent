@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
-from time import monotonic
 from typing import Any, Literal, TypeGuard
 from zoneinfo import ZoneInfo
 
@@ -57,7 +56,6 @@ from services.application.generation import (
     create_outfit_draft,
     resolve_image_gen_chain,
     resume_scene_generation,
-    scene_generation_wait_seconds,
     schedule_scene_generation,
 )
 from services.contracts import MemoryScope
@@ -84,7 +82,6 @@ from .window import in_nightly_window, require_nightly_window
 
 logger = get_logger(__name__)
 
-_SCENE_WAIT_SECONDS = 15 * 60
 _POLL_SECONDS = 3.0
 ActionStatus = Literal["succeeded", "partial", "skipped", "blocked", "failed", "interrupted", "result_unknown"]
 _TERMINAL_ACTION_STATUSES = frozenset(
@@ -857,9 +854,7 @@ async def _wait_for_scene(
     user_id: int,
     scene_id: int,
 ) -> CompanionScene | None:
-    started = monotonic()
-    deadline = started + _SCENE_WAIT_SECONDS
-    while monotonic() < deadline:
+    while True:
         async with SESSION_LOCAL() as db:
             row = await db.get(CompanionScene, scene_id)
         if (
@@ -873,11 +868,9 @@ async def _wait_for_scene(
             )
         ):
             return None
-        deadline = max(deadline, started + scene_generation_wait_seconds(row))
         if row.status == SceneStatus.READY.value:
             return row if row.activated_at is not None else None
         await asyncio.sleep(_POLL_SECONDS)
-    return None
 
 
 async def _execute_scene_activate(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:

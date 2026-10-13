@@ -9,7 +9,7 @@ logger = get_logger(__name__)
 VIDEO_DOWNLOAD_ATTEMPTS = 3
 
 
-async def download_media_result(url: str, *, max_bytes: int, timeout: float) -> bytes:
+async def download_media_result(url: str, *, max_bytes: int, timeout: float | None = None) -> bytes:
     """仅重试传输失败与 5xx，超限、协议及 4xx 保持确定失败。"""
     for attempt in range(VIDEO_DOWNLOAD_ATTEMPTS):
         try:

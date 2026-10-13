@@ -88,7 +88,6 @@ from .tts_service import (
 from .usage import CacheUsageSummary, LlmUsageAccumulator, collect_llm_usage
 from .user_config import UserLlmConfig, load_user_llm_config, resolve_user_llm_config
 from .voice_catalog import voices_for_provider
-from .wait_budget import accepted_image_job_wait, generation_timeout_scope
 
 __all__ = [
     "CacheUsageSummary",
@@ -133,7 +132,6 @@ __all__ = [
     "model_supports_service",
     "effective_input_modalities",
     "provider_input_modalities",
-    "accepted_image_job_wait",
     "request_input_modalities",
     "approx_responses_tokens",
     "build_provider",
@@ -147,7 +145,6 @@ __all__ = [
     "execute_with_fallback",
     "generate_embedding",
     "generate_embeddings",
-    "generation_timeout_scope",
     "is_content_policy_error_message",
     "message_to_response_items",
     "provider_configuration_defaults",

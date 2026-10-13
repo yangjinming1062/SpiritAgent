@@ -135,8 +135,8 @@ CI 的 `SPIRITAGENT_UPDATE_SIGNING_KEY` Secret 存 PEM 内容；工作流落地�
 [`gen_release_notes.py`](gen_release_notes.py) 按版本排序选前一个 tag，或由 `--from-tag` 指定区间，生成中文说明。以下 tag 须替换为仓库实际版本：
 
 ```bash
-python scripts/gen_release_notes.py v1.3.0
-python scripts/gen_release_notes.py v1.3.0 --from-tag v1.2.0 --output notes.md
+uv run --project backend python scripts/gen_release_notes.py v1.3.0
+uv run --project backend python scripts/gen_release_notes.py v1.3.0 --from-tag v1.2.0 --output notes.md
 ```
 
 模型生成要求环境提供 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME`（OpenAI 兼容 `chat/completions` 接口，base URL 含 `/v1`），任一缺失或请求失败脚本报错退出。notes 来源是提交资料，发布前须核对产品影响、兼容要求和验证表述。

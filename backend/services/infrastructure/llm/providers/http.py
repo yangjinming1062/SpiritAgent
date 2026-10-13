@@ -12,6 +12,7 @@ import httpx
 from components import (
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     SETTINGS,
+    ai_http_timeout,
     download_capped,
     get_logger,
     safe_outbound_async_transport,
@@ -56,7 +57,7 @@ class ProviderResultUnknownError(Exception):
 
 async def download_bytes(url: str) -> bytes:
     """下载供应商资产；走安全 transport（SSRF 守卫）并限制大小。"""
-    return await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=360.0)
+    return await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
 
 
 async def download_as_b64(url: str) -> str:
@@ -177,7 +178,6 @@ def _clone_request(request: httpx.Request, body: bytes) -> httpx.Request:
 
 @dataclass(frozen=True)
 class _ClientSettings:
-    request_timeout: float
     max_retries: int
     base_retry_delay: float
     max_retry_delay: float
@@ -248,7 +248,7 @@ class _RotatingAsyncClient(httpx.AsyncClient):
 
     def build_delegate(self, settings: _ClientSettings) -> httpx.AsyncClient:
         return httpx.AsyncClient(
-            timeout=_http_timeout(settings),
+            timeout=ai_http_timeout(),
             transport=self._transport_factory(settings),
         )
 
@@ -296,7 +296,6 @@ _closing = False
 
 def _settings_snapshot() -> _ClientSettings:
     return _ClientSettings(
-        request_timeout=float(SETTINGS.llm_request_timeout_seconds),
         max_retries=max(0, int(SETTINGS.llm_max_retry_attempts)),
         base_retry_delay=float(SETTINGS.llm_base_retry_delay),
         max_retry_delay=float(SETTINGS.llm_max_retry_delay),
@@ -304,19 +303,6 @@ def _settings_snapshot() -> _ClientSettings:
 
 
 _generation = _ClientGeneration(_settings_snapshot())
-
-
-def _http_timeout(settings: _ClientSettings) -> httpx.Timeout:
-    return httpx.Timeout(settings.request_timeout, connect=10.0)
-
-
-def _openai_timeout(settings: _ClientSettings) -> httpx.Timeout:
-    return httpx.Timeout(
-        connect=10.0,
-        read=settings.request_timeout,
-        write=settings.request_timeout,
-        pool=10.0,
-    )
 
 
 def _raw_transport(settings: _ClientSettings) -> httpx.AsyncBaseTransport:
@@ -412,7 +398,7 @@ def rotate_http_clients() -> None:
         retiring = _generation
         _generation = _ClientGeneration(settings)
         for client in _clients.values():
-            client.timeout = _http_timeout(settings)
+            client.timeout = ai_http_timeout()
     _retire_generation(retiring)
 
 
@@ -478,7 +464,7 @@ class _RetryAwareAsyncOpenAI(AsyncOpenAI):
         if isinstance(options.max_retries, NotGiven):
             updates["max_retries"] = generation.settings.max_retries
         if isinstance(options.timeout, NotGiven):
-            updates["timeout"] = _openai_timeout(generation.settings)
+            updates["timeout"] = ai_http_timeout()
         if updates:
             options = options.model_copy(update=updates)
         try:
@@ -514,7 +500,7 @@ def get_http(
         )
         client = _RotatingAsyncClient(
             base_url=key[0],
-            timeout=_http_timeout(_generation.settings),
+            timeout=ai_http_timeout(),
             headers=headers,
             follow_redirects=False,
             transport_factory=_raw_transport,
@@ -534,14 +520,14 @@ def get_async_client(api_key: str, base_url: str) -> AsyncOpenAI:
             return client
         settings = _generation.settings
         http_client = _RotatingAsyncClient(
-            timeout=_openai_timeout(settings),
+            timeout=ai_http_timeout(),
             transport_factory=_openai_transport,
         )
         client = _RetryAwareAsyncOpenAI(
             api_key=api_key,
             base_url=key[1],
             max_retries=settings.max_retries,
-            timeout=_openai_timeout(settings),
+            timeout=ai_http_timeout(),
             http_client=http_client,
         )
         _clients_openai[key] = client

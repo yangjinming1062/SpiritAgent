@@ -44,7 +44,7 @@ from services.domains.companion import (
     load_persona_definition,
 )
 from services.infrastructure.assets import asset_store, build_data_uri, validate_image_bytes
-from services.infrastructure.llm import ServiceType, resolve, vision_chat
+from services.infrastructure.llm import vision_chat
 
 from .character_images import ImageChainState, ImageProgressWriter, generate_scene_images
 from .image_generation import ImageGenerationError, ImageReviewUnavailableError
@@ -66,28 +66,6 @@ class SceneRegenerationState(BaseModel):
     image_chain: ImageChainState = Field(default_factory=ImageChainState)
     wallpaper_path: str = ""
     source_size: SceneImageDimensions | None = None
-
-
-def scene_generation_wait_seconds(scene: CompanionScene) -> float:
-    state = (
-        ImageChainState.model_validate_json(scene.generation_state_json)
-        if scene.generation_state_json
-        else ImageChainState()
-    )
-    return max(
-        900,
-        sum(
-            max(
-                SETTINGS.llm_request_timeout_seconds,
-                resolve(ServiceType.image_gen, provider.provider).max_job_wait_seconds or 0,
-            )
-            + SETTINGS.llm_request_timeout_seconds
-            + 120 * max(1, SETTINGS.scene_store_max_attempts)
-            for provider in state.providers
-        )
-        + SETTINGS.llm_request_timeout_seconds
-        + 90,
-    )
 
 
 class SceneError(RuntimeError):

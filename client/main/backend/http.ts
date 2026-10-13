@@ -2,7 +2,7 @@ import type { Net } from 'electron'
 
 import { sleep } from '@runtime'
 
-import { resolveTimeoutMs } from '../security/hardening'
+import { resolvePathTimeoutMs, resolveTimeoutMs } from '../security/hardening'
 import { resolveNormalizedBackendUrl } from '../shared/config'
 import { errorMessage, httpErrorFromResponse } from '../shared/utils'
 
@@ -22,7 +22,7 @@ export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpO
     token?: string,
     options: { body?: unknown; method?: string; timeoutMs?: number } = {}
   ): Promise<unknown> {
-    const timeoutMs = resolveTimeoutMs(options.timeoutMs)
+    const timeoutMs = resolveTimeoutMs(options.timeoutMs ?? resolvePathTimeoutMs(new URL(url).pathname, options.method))
     const body = options.body !== undefined ? JSON.stringify(options.body) : undefined
 
     const headers: Record<string, string> = {
@@ -34,7 +34,7 @@ export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpO
       body,
       headers,
       method: options.method || 'GET',
-      signal: AbortSignal.timeout(timeoutMs)
+      signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined
     })
 
     if (!res.ok) {

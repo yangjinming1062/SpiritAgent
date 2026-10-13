@@ -93,7 +93,6 @@ _AVATAR_SIZE: str = "1024x1024"
 # 全身种子竖版画幅（PIPELINE「头像与全身」）：9:16，作为参考立绘与视频链身份的输入；外观、冻结参考校准与动作姿态图沿用同一画幅。
 FULLBODY_SIZE: str = "1024x1792"
 FULLBODY_ASPECT: str = SIZE_TO_ASPECT[FULLBODY_SIZE]
-_CARD_ANALYSIS_TIMEOUT = 180
 _UPLOAD_EXTS: dict[str, str] = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 ALLOWED_AVATAR_UPLOAD_MIME_TYPES: frozenset[str] = frozenset(_UPLOAD_EXTS)
 
@@ -205,15 +204,14 @@ async def extract_card_features[F: BaseModel](
     schema = model.model_json_schema()
     schema["required"] = list(model.model_fields)
     source = "portrait" if model is PortraitFeatures else "body"
-    async with asyncio.timeout(_CARD_ANALYSIS_TIMEOUT):
-        raw = await vision_chat(
-            user_id,
-            CHARACTER_CARD_EXTRACTION,
-            json.dumps({"source": source, "schema": schema}, ensure_ascii=False),
-            reference_images=(uri,),
-            before_submit=before_submit,
-            task=AiTaskKey.appearance,
-        )
+    raw = await vision_chat(
+        user_id,
+        CHARACTER_CARD_EXTRACTION,
+        json.dumps({"source": source, "schema": schema}, ensure_ascii=False),
+        reference_images=(uri,),
+        before_submit=before_submit,
+        task=AiTaskKey.appearance,
+    )
     payload = parse_llm_json(raw)
     if not isinstance(payload, dict) or set(payload) != set(model.model_fields):
         raise ValueError("incomplete character extraction")

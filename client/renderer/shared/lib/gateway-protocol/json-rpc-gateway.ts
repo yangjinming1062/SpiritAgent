@@ -2,6 +2,7 @@ import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import type { DesktopGatewayEvent, DesktopGatewayState } from '@ipc/contracts'
+import { isAiWaitingRpc } from '@protocol'
 
 /** Slash 命令结果 payload：与 docs/PROTOCOL.md「事件路由」 `command.result` 事件载荷一致。 */
 export interface SlashCommandResultPayload {
@@ -401,7 +402,11 @@ export class JsonRpcGatewayClient {
     return () => this.stateHandlers.delete(handler)
   }
 
-  request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<T> {
+  request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = isAiWaitingRpc(method) ? 0 : DEFAULT_REQUEST_TIMEOUT_MS
+  ): Promise<T> {
     const socket = this.socket
 
     if (!socket || socket.readyState !== WebSocket.OPEN) {

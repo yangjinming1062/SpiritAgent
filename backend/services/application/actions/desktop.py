@@ -976,6 +976,7 @@ class DesktopIdleChoice(BaseModel):
 
 async def choose_idle_desktop_action(user_id: int, idle_seconds: float, local_hour: int) -> dict[str, object]:
     presentation = get_presentation_snapshot(user_id)
+    contact_revision = get_user_proactive_record(user_id).contact_revision
     if presentation is None or presentation.mode != "desktop" or not get_user_proactive_record(user_id).available:
         return {"expressed": False, "action_id": None, "reason": "unavailable"}
     async with SESSION_LOCAL() as db:
@@ -1035,7 +1036,6 @@ async def choose_idle_desktop_action(user_id: int, idle_seconds: float, local_ho
             ensure_ascii=False,
         ),
         task=AiTaskKey.proactive,
-        fast_decision=True,
     )
     choice = DesktopIdleChoice.model_validate(parse_llm_json(raw))
     if (
@@ -1043,6 +1043,9 @@ async def choose_idle_desktop_action(user_id: int, idle_seconds: float, local_ho
         or choice.action_id == state.selected_action_id
         or choice.action_id not in {action["id"] for action in actions}
         or presentation != get_presentation_snapshot(user_id)
+        or contact_revision != get_user_proactive_record(user_id).contact_revision
+        or not get_user_proactive_record(user_id).available
+        or await get_disturbance_tier(user_id) != "autonomous"
     ):
         return {"expressed": False, "action_id": None, "reason": choice.reason or "keep_current"}
     async with SESSION_LOCAL() as db:
@@ -1052,7 +1055,10 @@ async def choose_idle_desktop_action(user_id: int, idle_seconds: float, local_ho
             DesktopVideoPlayRequest(action_id=choice.action_id, expected_set_id=state.current.id, reason=choice.reason),
             source="autonomous",
         )
-        if presentation != get_presentation_snapshot(user_id):
+        if (
+            presentation != get_presentation_snapshot(user_id)
+            or contact_revision != get_user_proactive_record(user_id).contact_revision
+        ):
             return {"expressed": False, "action_id": None, "reason": "presentation_changed"}
         await db.commit()
     return {"expressed": True, "action_id": command.action_id, "reason": choice.reason}

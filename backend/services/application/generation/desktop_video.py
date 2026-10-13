@@ -86,9 +86,8 @@ from .media_chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
-    media_call_budget,
+    media_call_duration,
     media_failure_reason,
-    require_media_call_budget,
     resolve_frozen_media_provider,
     video_failure_message,
     video_provider_failure_reason,
@@ -679,7 +678,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 await _save_progress(user_id, action_id, progress, stage="review")
                 continue
             if progress.download_url:
-                data = await download_media_result(progress.download_url, max_bytes=256 * 1024 * 1024, timeout=180)
+                data = await download_media_result(progress.download_url, max_bytes=256 * 1024 * 1024)
                 progress.source_path = await save_video_job_asset_async(
                     data,
                     user_id=user_id,
@@ -708,7 +707,6 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 pose = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
                 if not pose:
                     raise DesktopVideoStateError("起始画面无法读取")
-                require_media_call_budget(config, chain)
                 chain.begin(index)
                 progress.video_chain_json = chain.model_dump_json()
                 await _save_progress(user_id, action_id, progress, stage="video")
@@ -725,9 +723,9 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                         last_frame_image=pose if action.kind == "loop" else None,
                         aspect_ratio="16:9",
                     )
-                    async with media_call_budget(config, chain) as budget_config:
+                    async with media_call_duration(config, chain) as call_config:
                         submitted = await execute_with_fallback(
-                            [budget_config],
+                            [call_config],
                             VideoGenProvider,
                             lambda current: current.submit(request),
                             user_id=user_id,
@@ -740,7 +738,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                     raise
                 except Exception as exc:
                     reason, can_fallback = media_failure_reason(exc)
-                    if reason in {"result_unknown", "submit_result_unknown", "timeout"}:
+                    if reason in {"result_unknown", "submit_result_unknown"}:
                         progress.submission_unknown = True
                         await _save_progress(user_id, action_id, progress, stage="video")
                         raise DesktopVideoStateError(video_failure_message("result_unknown")) from exc

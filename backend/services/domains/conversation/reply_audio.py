@@ -66,26 +66,25 @@ def _audio_info(data: bytes) -> tuple[float, str]:
     return float(audio.info.length), extension
 
 
-async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, deadline: float, directory: str) -> ReplyAudio:
-    async with asyncio.timeout(max(0, min(60, deadline - asyncio.get_running_loop().time()))):
-        audio = await synthesize_speech(
-            user_id,
-            bubble.text,
-            bubble.voice_id,
-            bubble.language,
-            bubble.speech,
-            preserve_performance=True,
-            task=AiTaskKey.companion_voice,
-        )
-        duration, ext = await asyncio.to_thread(_audio_info, audio.audio)
-        path = await save_companion_asset_async(
-            audio.audio,
-            user_id=user_id,
-            label="chat-voice",
-            ext=ext,
-            directory=directory,
-        )
-        return ReplyAudio(url=path, duration=duration)
+async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, directory: str) -> ReplyAudio:
+    audio = await synthesize_speech(
+        user_id,
+        bubble.text,
+        bubble.voice_id,
+        bubble.language,
+        bubble.speech,
+        preserve_performance=True,
+        task=AiTaskKey.companion_voice,
+    )
+    duration, ext = await asyncio.to_thread(_audio_info, audio.audio)
+    path = await save_companion_asset_async(
+        audio.audio,
+        user_id=user_id,
+        label="chat-voice",
+        ext=ext,
+        directory=directory,
+    )
+    return ReplyAudio(url=path, duration=duration)
 
 
 async def prepare_reply_audio(user_id: int, reply: CompanionReply) -> None:
@@ -95,13 +94,12 @@ async def prepare_reply_audio(user_id: int, reply: CompanionReply) -> None:
     if reply.audio_directory is None:
         reply.audio_directory = dated_asset_directory(utc_now(), timezone=timezone)
     directory = reply.audio_directory
-    deadline = asyncio.get_running_loop().time() + 120
     # TTS 网络调用并发先行、按下标顺序消费赋值；未消费的结果按未提交音频清理。
     pending: dict[int, asyncio.Task[ReplyAudio]] = {}
     for index, bubble in enumerate(reply.bubbles):
         if isinstance(bubble, VoiceBubble) and bubble.audio is None:
             pending[index] = asyncio.create_task(
-                _synthesize_bubble(user_id, bubble, deadline, directory),
+                _synthesize_bubble(user_id, bubble, directory),
                 name=f"reply-audio-prepare:{user_id}:{index}",
             )
     consumed: set[int] = set()
@@ -149,8 +147,7 @@ async def _synthesize_reply_audio(
     """
     key = (user_id, message_id)
     lock = _locks.setdefault(key, asyncio.Lock())
-    async with asyncio.timeout(30):
-        await lock.acquire()
+    await lock.acquire()
     try:
         async with user_asset_lock(user_id), session_scope() as db:
             row = await db.scalar(
@@ -180,12 +177,11 @@ async def _synthesize_reply_audio(
             not 0 <= bubble_index < len(reply.bubbles) or reply.bubbles[bubble_index].type != "voice"
         ):
             raise LookupError("Voice bubble not found")
-        deadline = asyncio.get_running_loop().time() + 120
         pending: dict[int, asyncio.Task[ReplyAudio]] = {}
         for index, bubble in enumerate(reply.bubbles):
             if isinstance(bubble, VoiceBubble) and not bubble.audio and (bubble_index is None or index == bubble_index):
                 pending[index] = asyncio.create_task(
-                    _synthesize_bubble(user_id, bubble, deadline, directory),
+                    _synthesize_bubble(user_id, bubble, directory),
                     name=f"reply-audio:{user_id}:{message_id}:{index}",
                 )
         consumed: set[int] = set()

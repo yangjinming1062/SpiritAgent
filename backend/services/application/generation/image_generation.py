@@ -260,7 +260,7 @@ async def generate_images(
             if asset.url:
                 if persist_user_assets:
                     # 供应商地址短时效：下载→魔数校验→转存正式资产，失败即本轮报错重试，不把短效 URL 落库。
-                    data = await download_capped(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=360.0)
+                    data = await download_capped(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
                     urls.append(await _persist_user_asset_async(data, user_id, persist_directory))
                 else:
                     urls.append(asset.url)

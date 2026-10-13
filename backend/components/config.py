@@ -113,12 +113,6 @@ class Settings(BaseSettings):
     ssrf_guard_enabled: bool = Field(default=False, validation_alias="SSRF_GUARD_ENABLED")
     ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
 
-    llm_request_timeout_seconds: float = Field(default=3000.0, gt=0, validation_alias="LLM_REQUEST_TIMEOUT_SECONDS")
-    llm_stream_idle_timeout_seconds: float = Field(
-        default=60.0,
-        gt=0,
-        validation_alias="LLM_STREAM_IDLE_TIMEOUT_SECONDS",
-    )
     llm_max_retry_attempts: int = Field(default=3, ge=0, validation_alias="LLM_MAX_RETRY_ATTEMPTS")
     llm_base_retry_delay: float = Field(default=5.0, ge=0, validation_alias="LLM_BASE_RETRY_DELAY")
     llm_max_retry_delay: float = Field(default=60.0, ge=0, validation_alias="LLM_MAX_RETRY_DELAY")
@@ -133,8 +127,6 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="VIDEO_GEN_POLL_BACKOFF_MAX_SECONDS",
     )
-    video_gen_max_poll_seconds: float = Field(default=900.0, gt=0, validation_alias="VIDEO_GEN_MAX_POLL_SECONDS")
-    video_gen_tool_wait_seconds: float = Field(default=180.0, ge=0, validation_alias="VIDEO_GEN_TOOL_WAIT_SECONDS")
     video_gen_download_max_bytes: int = Field(
         default=209715200,
         gt=0,
@@ -163,7 +155,6 @@ class Settings(BaseSettings):
     agent_max_loop_turns: int = Field(default=150, gt=0, validation_alias="AGENT_MAX_LOOP_TURNS")
     # 陪伴聊天的工具只是回复的辅助：预算内最后一次模型调用不带工具，只依据已有结果生成回复，不以报错中断。
     companion_chat_max_loop_turns: int = Field(default=20, gt=0, validation_alias="COMPANION_CHAT_MAX_LOOP_TURNS")
-    agent_turn_timeout_seconds: float = Field(default=1800.0, gt=0, validation_alias="AGENT_TURN_TIMEOUT_SECONDS")
     companion_idle_expression_min_interval_seconds: float = Field(
         default=2.0,
         gt=0,
@@ -189,12 +180,6 @@ class Settings(BaseSettings):
         default=60.0,
         gt=0,
         validation_alias="COMPANION_MIN_TURN_INTERVAL_SECONDS",
-    )
-    companion_turn_timeout_seconds: float = Field(
-        # 自主回合可能调用本地慢速生图；实际执行仍受意图到期时间约束。
-        default=3600.0,
-        gt=0,
-        validation_alias="COMPANION_TURN_TIMEOUT_SECONDS",
     )
     companion_max_loop_turns: int = Field(default=8, gt=0, validation_alias="COMPANION_MAX_LOOP_TURNS")
 

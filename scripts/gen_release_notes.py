@@ -7,10 +7,10 @@ import os
 import re
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import NamedTuple
+
+import httpx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LLM_ENV_VARS = ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL_NAME")
@@ -126,14 +126,11 @@ def llm_notes(from_ref: str, to_ref: str, commits: list[Commit]) -> str:
     api_key = os.environ["LLM_API_KEY"]
 
     def post(payload: dict) -> dict:
-        request = urllib.request.Request(
-            f"{base_url}/chat/completions",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=600) as response:
-            return json.loads(response.read().decode("utf-8"))
+        with httpx.Client(timeout=httpx.Timeout(None, connect=10.0, pool=10.0), follow_redirects=True) as client:
+            headers = {"Authorization": f"Bearer {api_key}"}
+            response = client.post(f"{base_url}/chat/completions", json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json()
 
     payload = {
         "model": model,
@@ -148,16 +145,16 @@ def llm_notes(from_ref: str, to_ref: str, commits: list[Commit]) -> str:
     }
     try:
         data = post(payload)
-    except urllib.error.HTTPError as exc:
-        if exc.code != 400:
-            raise RuntimeError(f"LLM request failed: HTTP {exc.code}") from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 400:
+            raise RuntimeError(f"LLM request failed: HTTP {exc.response.status_code}") from exc
         # 部分供应商（如 OpenAI 官方）拒绝未知字段；去掉扩展参数按原样重试一次。
         payload.pop("chat_template_kwargs")
         try:
             data = post(payload)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc2:
+        except (httpx.HTTPError, json.JSONDecodeError, OSError) as exc2:
             raise RuntimeError(f"LLM request failed: {exc2}") from exc2
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+    except (httpx.HTTPError, json.JSONDecodeError, OSError) as exc:
         raise RuntimeError(f"LLM request failed: {exc}") from exc
 
     choices = data.get("choices")

@@ -27,7 +27,7 @@ from .affect_emit import append_companion_message
 from .disturbance import get_disturbance_tier
 from .proactive_runtime import can_start_companion_turn, get_user_proactive_record, note_outreach_throttle
 
-# 待处理意图、回合间隔与超时上限走 SETTINGS 动态配置；队列租约是回合超时的实现细节，留在代码。
+# 待处理意图与回合间隔走 SETTINGS 动态配置；队列认领租约独立于模型等待。
 _QUEUE_LEASE_SECONDS: int = 180
 _ACTIVE_STATUSES: tuple[str, ...] = ("waiting", "queued", "running")
 _INTENT_RETENTION: timedelta = timedelta(days=30)
@@ -385,7 +385,7 @@ async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) ->
             await db.commit()
             return None
         row.status = "running"
-        row.lease_until = now + timedelta(seconds=SETTINGS.companion_turn_timeout_seconds + 30)
+        row.lease_until = row.expires_at + timedelta(seconds=30)
         await db.commit()
         return CompanionIntentView.model_validate(row)
 

@@ -1,3 +1,32 @@
+/** 同步等待模型的请求不按耗时结束；握手、心跳和普通查询沿用各端默认期限。 */
+export function isAiWaitingRpc(method: string): boolean {
+  return [
+    'session.compress_context',
+    'command.dispatch',
+    'companion.idle_expression',
+    'companion.should_act',
+    'memory.update',
+    'tts.match_voice',
+    'tts.design_voice'
+  ].includes(method)
+}
+
+export function isAiWaitingApi(path: string, method = 'GET'): boolean {
+  if (method.toUpperCase() !== 'POST') return false
+  const pathname = path.split(/[?#]/, 1)[0]
+  return [
+    /^\/api\/media\/(?:stt|tts)$/,
+    /^\/api\/sessions\/messages\/\d+\/voice\/\d+$/,
+    /^\/api\/companion\/avatar(?:\/(?:from-image|prompt|adopt)|\/\d+\/fullbody\/(?:reference(?:\/(?:prompt|adopt))?|confirm|candidate\/\d+\/(?:analyze|accept)))?$/,
+    /^\/api\/companion\/outfits(?:\/(?:prompt|adopt)|\/\d+\/(?:regenerate|prompt|adopt|confirm))?$/,
+    /^\/api\/companion\/portrait\/confirm$/,
+    /^\/api\/companion\/scenes\/(?:prompt|adopt|\d+\/adopt)$/,
+    /^\/api\/companion\/actions\/design$/,
+    /^\/api\/companion\/posts\/publications\/[^/]+\/query$/,
+    /^\/api\/companion\/desktop-videos\/actions\/\d+\/external-prompt$/
+  ].some(pattern => pattern.test(pathname))
+}
+
 /** 图像迭代意图：微调上一版，或从固定参考重新生成。与后端 ImageReviseMode 对齐。 */
 export type ImageReviseMode = 'edit' | 'regenerate'
 

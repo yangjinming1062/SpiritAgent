@@ -1,6 +1,6 @@
 import { app } from 'electron'
 
-import { resolveTimeoutMs } from '../security/hardening'
+import { resolvePathTimeoutMs, resolveTimeoutMs } from '../security/hardening'
 import { errorMessage } from '../shared/utils'
 
 interface BackendRequestErrorOptions {
@@ -177,8 +177,8 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     }
 
-    const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs)
-    const signal = AbortSignal.timeout(effectiveTimeoutMs)
+    const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs ?? resolvePathTimeoutMs(url.pathname, method))
+    const signal = effectiveTimeoutMs > 0 ? AbortSignal.timeout(effectiveTimeoutMs) : undefined
 
     let res: MinimalFetchResponse
     let payload: unknown
@@ -193,7 +193,7 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
       // 超时同样覆盖响应体读取：响应头到达后连接仍可能停滞。
       payload = await decodeResponseBody(res)
     } catch (error: unknown) {
-      const timedOut = signal.aborted
+      const timedOut = signal?.aborted ?? false
       const errMessage = (error as { message?: string } | undefined)?.message || String(error)
       throw new BackendRequestError({
         cause: error,

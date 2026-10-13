@@ -1,26 +1,19 @@
-import asyncio
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
-from components import SETTINGS, AiTaskKey, ModelModality, get_logger, log_paid_call
+from components import ModelModality, get_logger, log_paid_call
 
-from .call_budget import attempt_budget, chain_budget, remaining_chain_seconds
-from .error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, LLMRuntimeError, classify_api_error
+from .call_context import ai_call_context
+from .error_classifier import FailoverReason, LlmCallBlockedError, classify_api_error
 from .llm_client import MissingLlmConfigError, build_provider
 from .llm_debug import log_event, new_call_id
 from .providers import (
     BaseProvider,
     ChatProvider,
-    ImageGenProvider,
     ProviderConfig,
-    ProviderResultUnknownError,
-    STTProvider,
-    TTSProvider,
-    VideoGenProvider,
     effective_input_modalities,
 )
-from .wait_budget import generation_timeout_scope
 
 logger = get_logger(__name__)
 
@@ -33,7 +26,7 @@ async def execute_media_with_fallback[T](
     user_id: int | None,
     stream_started: Callable[[], bool] | None = None,
 ) -> T:
-    """原生音频优先；转写和文本回退共用同一任务期限，不能跨过流已开始的边界。"""
+    """原生音频优先；转写和文本回退不能跨过流已开始的边界。"""
     text_requirements = required_modalities - {ModelModality.audio}
     native = [config for config in chain if required_modalities <= effective_input_modalities(config)]
     text = [config for config in chain if text_requirements <= effective_input_modalities(config)]
@@ -47,42 +40,27 @@ async def execute_media_with_fallback[T](
         )
     if not chain:
         raise MissingLlmConfigError("未配置可用模型")
-    total = chain[0].total_timeout_seconds
-    if chain[0].fast_decision:
-        total = min(total, 20.0) if total is not None else 20.0
-    timeout = asyncio.timeout(total)
-    try:
-        async with timeout:
-            with chain_budget(timeout), generation_timeout_scope(timeout):
-                if native:
-                    try:
-                        return await _execute_with_fallback(
-                            native,
-                            ChatProvider,
-                            lambda provider: call_fn(provider, True),
-                            user_id=user_id,
-                            stream_started=stream_started,
-                        )
-                    except LlmCallBlockedError:
-                        raise
-                    except Exception as exc:
-                        if not classify_api_error(exc).should_fallback or (
-                            stream_started is not None and stream_started()
-                        ):
-                            raise
-                return await _execute_with_fallback(
-                    text,
-                    ChatProvider,
-                    lambda provider: call_fn(provider, False),
-                    user_id=user_id,
-                    stream_started=stream_started,
-                )
-    except TimeoutError as exc:
-        if not timeout.expired():
+    if native:
+        try:
+            return await _execute_with_fallback(
+                native,
+                ChatProvider,
+                lambda provider: call_fn(provider, True),
+                user_id=user_id,
+                stream_started=stream_started,
+            )
+        except LlmCallBlockedError:
             raise
-        raise LLMRuntimeError(
-            ClassifiedError(FailoverReason.timeout, None, "AI task call budget exhausted"),
-        ) from exc
+        except Exception as exc:
+            if not classify_api_error(exc).should_fallback or (stream_started is not None and stream_started()):
+                raise
+    return await _execute_with_fallback(
+        text,
+        ChatProvider,
+        lambda provider: call_fn(provider, False),
+        user_id=user_id,
+        stream_started=stream_started,
+    )
 
 
 async def execute_with_fallback[P: BaseProvider, T](
@@ -95,32 +73,13 @@ async def execute_with_fallback[P: BaseProvider, T](
 ) -> T:
     if not chain:
         raise MissingLlmConfigError("no provider configured")
-    fast = chain[0].fast_decision
-    total = chain[0].total_timeout_seconds
-    if fast:
-        total = min(total, 20.0) if total is not None else 20.0
-    timeout = asyncio.timeout(total)
-    try:
-        async with timeout:
-            with chain_budget(timeout), generation_timeout_scope(timeout):
-                return await _execute_with_fallback(
-                    chain,
-                    provider_type,
-                    call_fn,
-                    user_id=user_id,
-                    stream_started=stream_started,
-                )
-    except TimeoutError as exc:
-        if not timeout.expired():
-            raise
-        if (
-            issubclass(provider_type, (ImageGenProvider, VideoGenProvider, TTSProvider, STTProvider))
-            or chain[0].task == AiTaskKey.voice_design
-        ):
-            raise ProviderResultUnknownError("POST", chain[-1].base_url) from exc
-        raise LLMRuntimeError(
-            ClassifiedError(FailoverReason.timeout, None, "AI task call budget exhausted"),
-        ) from exc
+    return await _execute_with_fallback(
+        chain,
+        provider_type,
+        call_fn,
+        user_id=user_id,
+        stream_started=stream_started,
+    )
 
 
 async def _execute_with_fallback[P: BaseProvider, T](
@@ -158,33 +117,8 @@ async def _execute_with_fallback[P: BaseProvider, T](
         log(phase="chain_attempt")
         started = time.monotonic()
         try:
-            fast = config.fast_decision
-            seconds = config.attempt_timeout_seconds
-            if seconds is None:
-                seconds = (8.0 if chain_size > 1 else 20.0) if fast else float(SETTINGS.llm_request_timeout_seconds)
-            timeout = asyncio.timeout(remaining_chain_seconds(seconds))
-            try:
-                async with timeout:
-                    with (
-                        attempt_budget(
-                            timeout,
-                            task=config.task,
-                            request_timeout=max(seconds, float(SETTINGS.llm_request_timeout_seconds)),
-                        ),
-                        generation_timeout_scope(timeout),
-                    ):
-                        result = await call_fn(provider)
-            except TimeoutError as exc:
-                if not timeout.expired():
-                    raise
-                if (
-                    isinstance(provider, (ImageGenProvider, VideoGenProvider, TTSProvider, STTProvider))
-                    or config.task == AiTaskKey.voice_design
-                ):
-                    raise ProviderResultUnknownError("POST", config.base_url) from exc
-                raise LLMRuntimeError(
-                    ClassifiedError(FailoverReason.timeout, None, "AI provider attempt timed out"),
-                ) from exc
+            with ai_call_context(config.task):
+                result = await call_fn(provider)
         except LlmCallBlockedError:
             raise
         except Exception as exc:

@@ -29,10 +29,8 @@ from .media_chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
-    MediaProviderFailedError,
-    media_call_budget,
+    media_call_duration,
     media_failure_reason,
-    require_media_call_budget,
     resolve_frozen_media_provider,
 )
 from .scene_image_review import review_scene_image
@@ -216,7 +214,7 @@ async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD
         except ValueError as exc:
             raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
     else:
-        data = await download_capped(path, max_bytes=max_bytes, timeout=360.0)
+        data = await download_capped(path, max_bytes=max_bytes)
         mime = asset_store.image_mime_for_extension(asset_store.sniff_media_ext(data) or "") or "image/jpeg"
     if len(data) > max_bytes:
         raise ImageGenerationError("生成图片超过大小限制", can_fallback=True)
@@ -281,8 +279,6 @@ async def _complete_images(
                 "图片生成结果未知，请核对供应商任务后再决定是否重做",
                 result_unknown=True,
             )
-        if state.stop_reason == "call_budget_exhausted":
-            raise ImageGenerationError("供应商调用预算已用完，请调整功能预算后重做")
         if state.size_rejected:
             raise ImageGenerationError("生成图片画幅不符合要求")
         if isinstance(state.inputs, SceneImageInput) and any(candidate.evaluated for candidate in state.candidates):
@@ -640,12 +636,6 @@ async def _run_image_chain(
                 continue
             if before_submit is not None:
                 await before_submit()
-            try:
-                require_media_call_budget(config, state)
-            except MediaProviderFailedError as exc:
-                state.stop_reason = exc.reason
-                await _save_progress(state, save_progress)
-                return await _complete_images(state, save_progress)
             batch_size = state.providers[index].max_images_per_request or len(state.remaining_slots)
             slots = state.remaining_slots[:batch_size]
             state.remaining_slots = state.remaining_slots[batch_size:]
@@ -654,7 +644,7 @@ async def _run_image_chain(
             try:
                 provider = state.providers[index]
                 background = provider.background
-                async with media_call_budget(config, state) as budget_config:
+                async with media_call_duration(config, state) as call_config:
                     urls = await generate_images(
                         inputs.prompt,
                         size=provider.image_size or inputs.size,
@@ -664,7 +654,7 @@ async def _run_image_chain(
                         reference_image=reference_uri,
                         secondary_reference_image=secondary_uri if isinstance(inputs, CharacterImageInput) else None,
                         image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,
-                        provider_config=budget_config,
+                        provider_config=call_config,
                         background=background,
                         prefer_transparent_background=isinstance(inputs, CharacterImageInput)
                         and inputs.prefer_transparent_background,

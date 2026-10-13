@@ -1,4 +1,3 @@
-import asyncio
 import json
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
@@ -48,7 +47,6 @@ from services.infrastructure.llm import (
     UserLlmConfig,
     collect_llm_usage,
     execute_media_with_fallback,
-    generation_timeout_scope,
     request_input_modalities,
     resolve_context_tokens,
     resolve_provider_chain,
@@ -205,43 +203,26 @@ async def run_chat_turn(
     desktop_interaction: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
-    turn_timeout_seconds: float | None = None,
 ) -> None:
-    """所有入口共享会话互斥和执行预算；用户请求在受理入口校验授权。"""
+    """所有入口共享会话互斥和取消收尾；用户请求在受理入口校验授权。"""
     async with conversation_lock(req.session_id):
-        timeout = asyncio.timeout(turn_timeout_seconds or SETTINGS.agent_turn_timeout_seconds)
-        try:
-            async with timeout:
-                with generation_timeout_scope(timeout), asset_write_context():
-                    await _run_chat_turn(
-                        req,
-                        llm_config,
-                        user_id,
-                        emitter,
-                        session_client_context,
-                        track_task,
-                        session_settings=session_settings,
-                        persisted_message_id=persisted_message_id,
-                        final_reply_only=final_reply_only,
-                        ephemeral=ephemeral,
-                        headless=headless,
-                        has_viewer=has_viewer,
-                        desktop_interaction=desktop_interaction,
-                        excluded_tool_names=excluded_tool_names,
-                        max_loop_turns=max_loop_turns,
-                    )
-        except TimeoutError:
-            if not timeout.expired():
-                raise
-            async with session_scope() as db:
-                language = await get_user_setting(db, user_id, "language")
-            await emitter.send_json(
-                {
-                    "type": "error",
-                    "message": "本次任务已达到运行时限。请核对已执行的操作后再继续。"
-                    if language != "en"
-                    else "The task reached its time limit. Check completed operations before continuing.",
-                },
+        with asset_write_context():
+            await _run_chat_turn(
+                req,
+                llm_config,
+                user_id,
+                emitter,
+                session_client_context,
+                track_task,
+                session_settings=session_settings,
+                persisted_message_id=persisted_message_id,
+                final_reply_only=final_reply_only,
+                ephemeral=ephemeral,
+                headless=headless,
+                has_viewer=has_viewer,
+                desktop_interaction=desktop_interaction,
+                excluded_tool_names=excluded_tool_names,
+                max_loop_turns=max_loop_turns,
             )
 
 

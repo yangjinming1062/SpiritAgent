@@ -17,7 +17,6 @@ from services.infrastructure.llm import (
     VideoGenProvider,
     build_provider,
     classify_api_error,
-    generation_timeout_scope,
     is_content_policy_error_message,
     resolve_provider_chain,
 )
@@ -35,14 +34,12 @@ class MediaProviderFailedError(RuntimeError):
 
 
 _VIDEO_FAILURE_COPY: dict[str, str] = {
-    "call_budget_exhausted": "供应商调用预算已用完，请调整任务预算后重做",
     "result_unknown": "视频提交结果不确定，供应商可能已接单；为避免重复计费，系统没有自动重试",
     "submit_failed": "视频提交失败，请稍后重试",
     "provider_unavailable": "视频生成服务配置已变更，请稍后重试",
     "provider_failed": "视频生成失败，请稍后重试",
     "content_policy_blocked": "内容审核未通过，请调整请求内容或参考形象后重试",
     "download_failed": "视频下载失败，请稍后重试",
-    "timeout": "视频生成超过等待时限，供应商任务可能仍在进行；为避免重复计费，系统没有自动重试",
     "worker_failed": "视频生成服务异常，请稍后重试",
     "identity_changed": "角色外形已更新，旧参考生成的视频未交付",
     "quality_failed": "视频文件无法完成质量核查，请稍后重试",
@@ -172,23 +169,13 @@ class MediaChainState(BaseModel):
 
 
 @asynccontextmanager
-async def media_call_budget(config: ProviderConfig, state: MediaChainState) -> AsyncIterator[ProviderConfig]:
-    """提交预算跨质量尝试及恢复累计；已接单等待不消耗提交预算。"""
-    remaining = config.total_timeout_seconds - state.call_seconds if config.total_timeout_seconds is not None else None
-    require_media_call_budget(config, state)
-    timeout = asyncio.timeout(None)
+async def media_call_duration(config: ProviderConfig, state: MediaChainState) -> AsyncIterator[ProviderConfig]:
+    """记录媒体调用耗时，不以耗时终止已受理制作。"""
     started = asyncio.get_running_loop().time()
-    async with timeout:
-        with generation_timeout_scope(timeout) as budget:
-            try:
-                yield replace(config, total_timeout_seconds=remaining)
-            finally:
-                state.call_seconds += max(0.0, asyncio.get_running_loop().time() - started - budget.waited_seconds)
-
-
-def require_media_call_budget(config: ProviderConfig, state: MediaChainState) -> None:
-    if config.total_timeout_seconds is not None and state.call_seconds >= config.total_timeout_seconds:
-        raise MediaProviderFailedError("供应商调用预算已用完，请调整任务预算后重做", reason="call_budget_exhausted")
+    try:
+        yield config
+    finally:
+        state.call_seconds += max(0.0, asyncio.get_running_loop().time() - started)
 
 
 async def resolve_frozen_media_provider(
@@ -278,5 +265,5 @@ def media_failure_reason(exc: Exception) -> tuple[str, bool]:
     if getattr(exc, "result_unknown", False) or classified.reason == FailoverReason.result_unknown:
         return "result_unknown", False
     if isinstance(exc, MediaProviderFailedError):
-        return exc.reason, exc.reason not in {"result_unknown", "call_budget_exhausted"}
+        return exc.reason, exc.reason != "result_unknown"
     return classified.reason.value, getattr(exc, "can_fallback", False) or classified.should_fallback

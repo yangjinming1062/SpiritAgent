@@ -15,7 +15,6 @@ jobs:
   notes:
     name: Release notes (LLM)
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # 须大于脚本内 600s 请求超时 + 环境准备时间，慢模型由脚本自行报错
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,6 +28,7 @@ jobs:
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL_NAME: ${{ secrets.LLM_MODEL_NAME }}
         run: |
+          python -m pip install httpx==0.28.1
           python scripts/gen_release_notes.py "${GITHUB_REF_NAME}" --output release-notes.md
           echo "--- release notes ---"
           cat release-notes.md

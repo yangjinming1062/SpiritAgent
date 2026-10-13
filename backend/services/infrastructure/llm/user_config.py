@@ -38,7 +38,6 @@ async def resolve_user_llm_config(
     task: AiTaskKey,
     *,
     required_modalities: frozenset[ModelModality] | None = None,
-    fast_decision: bool = False,
 ) -> UserLlmConfig:
     chain = await resolve_provider_chain(
         db,
@@ -46,7 +45,6 @@ async def resolve_user_llm_config(
         ServiceType.llm,
         task=task,
         required_modalities=required_modalities,
-        fast_decision=fast_decision,
     )
     return UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
 
@@ -56,7 +54,6 @@ async def load_user_llm_config(
     task: AiTaskKey,
     *,
     required_modalities: frozenset[ModelModality] | None = None,
-    fast_decision: bool = False,
 ) -> UserLlmConfig:
     """辅助调用独立解析任务链；供应商等待期间不占数据库连接。"""
     async with SESSION_LOCAL() as db:
@@ -65,5 +62,4 @@ async def load_user_llm_config(
             user_id,
             task,
             required_modalities=required_modalities,
-            fast_decision=fast_decision,
         )

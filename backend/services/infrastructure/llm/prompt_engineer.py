@@ -85,7 +85,6 @@ async def chat(
     user_payload: str,
     *,
     task: AiTaskKey,
-    fast_decision: bool = False,
 ) -> str:
     """在独立短会话中解析任务链，模型调用期间不占数据库连接；空内容视为错误。"""
     async with SESSION_LOCAL() as config_db:
@@ -94,7 +93,6 @@ async def chat(
             user_id,
             ServiceType.llm,
             task=task,
-            fast_decision=fast_decision,
         )
     config = UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
     text = (await call_llm_once(config, system_prompt, user_payload)).strip()
@@ -371,7 +369,6 @@ async def vision_chat(
     user_payload: str,
     *,
     task: AiTaskKey,
-    fast_decision: bool = False,
     reference_images: tuple[str, ...],
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
@@ -379,7 +376,7 @@ async def vision_chat(
     if not reference_images or any(not uri for uri in reference_images):
         raise ValueError("visual reasoning requires readable reference images")
     async with SESSION_LOCAL() as chain_db:
-        chain = await resolve_vision_chain(chain_db, user_id, task=task, fast_decision=fast_decision)
+        chain = await resolve_vision_chain(chain_db, user_id, task=task)
     if not chain:
         raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
     content = [{"type": "input_image", "image_url": uri} for uri in reference_images]

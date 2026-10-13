@@ -25,8 +25,6 @@ import { errorMessage, httpErrorFromResponse } from '../shared/utils'
 import { createBackendCaller, type GetCurrentAuth } from './connection'
 import { createTtsDiskCache } from './tts-disk-cache'
 
-const STT_TIMEOUT_MS = 60_000
-const TTS_TIMEOUT_MS = 60_000
 const TTS_MAX_TEXT_CHARS = 4000
 const STT_MAX_AUDIO_BYTES = 24 * 1024 * 1024
 const ATTACH_VIDEO_MAX_BYTES = 512 * 1024 * 1024
@@ -165,7 +163,7 @@ async function postBackend({
     body,
     headers: { ...headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     method: 'POST',
-    signal: AbortSignal.timeout(timeoutMs)
+    signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined
   })
 
   if (!res.ok) {
@@ -227,7 +225,7 @@ async function sttViaBackend({
   const { body } = await postBackend({
     body: form,
     fetchImpl,
-    timeoutMs: STT_TIMEOUT_MS,
+    timeoutMs: 0,
     token: connection.token,
     url
   })
@@ -268,7 +266,7 @@ async function ttsViaBackend({
     body: JSON.stringify(payload),
     fetchImpl,
     headers: { 'Content-Type': 'application/json' },
-    timeoutMs: TTS_TIMEOUT_MS,
+    timeoutMs: 0,
     token: connection.token,
     url: `${connection.baseUrl}/api/media/tts`
   })

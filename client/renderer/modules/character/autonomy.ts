@@ -50,6 +50,7 @@ let backgroundTimer: ReturnType<typeof setInterval> | null = null
 let unsubs: Array<() => void> = []
 let active = false
 let provisionGeneration = 0
+let consulting = false
 
 // 精灵舞台须实际可见（精灵窗未隐藏或最小化、未被完整入口收起、未开轻语、未锁屏）；发请求前与结果返回后都按此重验。
 function canConsultAutonomy(): boolean {
@@ -144,7 +145,7 @@ function executeAutonomousAction(action: string, peekIntent: WindowPeekIntent | 
 
 async function consultAutonomyLLM(force = false): Promise<void> {
   // 空间智能只服务当前可见的桌面精灵；生活空间等表面打开时精灵已收起，不发起推理。
-  if (!canConsultAutonomy()) {
+  if (consulting || !canConsultAutonomy()) {
     return
   }
 
@@ -194,34 +195,46 @@ async function consultAutonomyLLM(force = false): Promise<void> {
     home === $homePosition.get() &&
     stageEpoch === $presentation.get().stageEpoch &&
     newSnapshot.presentation_mode === $presentation.get().effectiveMode &&
+    !stateChanged(newSnapshot, {
+      presentation_mode: $presentation.get().effectiveMode,
+      focused_category: $focusContext.get()?.category ?? 'unknown',
+      fullscreen: $focusContext.get()?.fullscreen ?? false,
+      locked: $screenLocked.get()
+    }) &&
     canConsultAutonomy()
 
-  const peekIntent = await captureWindowPeekIntent()
+  consulting = true
 
-  if (!isCurrent()) {
-    return
-  }
+  try {
+    const peekIntent = await captureWindowPeekIntent()
 
-  // 请求失败时不做任何自主动作。
-  const res = await gateway
-    .request<ShouldActRpcResponse | null>('companion.should_act', {
-      kind: 'periodic_provision',
-      idle_seconds: idle,
-      local_hour: hour,
-      focused_category: focus?.category ?? null,
-      fullscreen: focus?.fullscreen ?? false,
-      screen_locked: locked,
-      seconds_since_last_action: secondsSinceLastAction
-    })
-    .catch(error => {
-      log.warn('autonomy', 'companion.should_act failed', error)
+    if (!isCurrent()) {
+      return
+    }
 
-      return null
-    })
+    // 请求失败时不做任何自主动作。
+    const res = await gateway
+      .request<ShouldActRpcResponse | null>('companion.should_act', {
+        kind: 'periodic_provision',
+        idle_seconds: idle,
+        local_hour: hour,
+        focused_category: focus?.category ?? null,
+        fullscreen: focus?.fullscreen ?? false,
+        screen_locked: locked,
+        seconds_since_last_action: secondsSinceLastAction
+      })
+      .catch(error => {
+        log.warn('autonomy', 'companion.should_act failed', error)
 
-  if (isCurrent() && res?.should_act && res.action) {
-    lastAutonomousActionAt = Date.now()
-    executeAutonomousAction(res.action, peekIntent)
+        return null
+      })
+
+    if (isCurrent() && res?.should_act && res.action) {
+      lastAutonomousActionAt = Date.now()
+      executeAutonomousAction(res.action, peekIntent)
+    }
+  } finally {
+    consulting = false
   }
 }
 

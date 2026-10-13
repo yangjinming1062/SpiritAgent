@@ -11,8 +11,6 @@ interface AvatarRegeneratedPayload {
   error?: string
 }
 
-// 与同步生图请求共用 25 小时等待预算，覆盖本地任务最长 24 小时和生成前后处理。
-const REGEN_TIMEOUT_MS = 25 * 60 * 60_000
 const TOMBSTONE_TTL_MS = 10 * 60_000
 
 interface PendingRegeneration {
@@ -22,14 +20,14 @@ interface PendingRegeneration {
 
 const pending = new Map<string, PendingRegeneration>()
 const late = new Map<string, AvatarRegeneratedPayload>()
-const timedOut = new Map<string, number>()
+const cancelled = new Map<string, number>()
 
 function pruneTombstones(): void {
   const cutoff = Date.now() - TOMBSTONE_TTL_MS
 
-  for (const [jobId, t] of timedOut) {
+  for (const [jobId, t] of cancelled) {
     if (t < cutoff) {
-      timedOut.delete(jobId)
+      cancelled.delete(jobId)
     }
   }
 }
@@ -73,22 +71,14 @@ export function awaitAvatarRegeneration(jobId: string): Promise<AvatarRegenerate
       return
     }
 
-    const timer = setTimeout(() => {
-      if (pending.get(jobId)?.settle === settle) {
-        cancel(new Error(`avatar regeneration timed out for job ${jobId}`))
-      }
-    }, REGEN_TIMEOUT_MS)
-
     const cancel = (error: Error): void => {
-      clearTimeout(timer)
       pending.delete(jobId)
       late.delete(jobId)
-      timedOut.set(jobId, Date.now())
+      cancelled.set(jobId, Date.now())
       reject(error)
     }
 
     const settle = (payload: AvatarRegeneratedPayload): void => {
-      clearTimeout(timer)
       resolve(payload)
     }
 
@@ -105,7 +95,7 @@ export function resolveAvatarRegeneration(payload: AvatarRegeneratedPayload): vo
 
   pruneTombstones()
 
-  if (timedOut.has(jobId)) {
+  if (cancelled.has(jobId)) {
     return
   }
 

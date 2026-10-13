@@ -1,9 +1,8 @@
 import asyncio
 import json
-from datetime import timedelta
 from uuid import uuid4
 
-from components import SESSION_LOCAL, SETTINGS, AiTaskKey, get_logger, tool_error, utc_now
+from components import SESSION_LOCAL, AiTaskKey, get_logger, tool_error
 from modules.media import VideoGenJob
 from prompts.generation import (
     VIDEO_REFERENCE_TEMPLATE,
@@ -81,7 +80,7 @@ async def _submit_video(
     subject: str | None,
     outfit_override: str | None,
 ) -> tuple[dict[str, object], VideoGenJob | None]:
-    """提交已校验请求，返回 (工具结果, 最近读取的任务行)；结构化回复直接交付任务，文本回复有界等待。"""
+    """提交已校验请求并返回真实任务状态；成品由后台沿原句柄查询及交付。"""
     visual = None
     references = (reference_image,) if reference_image else ()
     if subject == "self":
@@ -124,43 +123,20 @@ async def _submit_video(
     if job.status == "result_unknown":
         return _result_unknown_payload(task_id, job), job
 
-    if structured_reply:
+    if job.status == "failed":
+        return {"success": False, "task_id": task_id, "error": job.error_message or "video generation failed"}, job
+    if job.status == "succeeded":
         return {
             "success": True,
-            "pending": job.status not in {"succeeded", "failed", "result_unknown"},
+            "url": job.video_url,
             "task_id": task_id,
+            **({"warning": job.error_message} if job.error_message else {}),
         }, job
-
-    # 限时等待：轮询 DB 行直到终态或截止。
-    deadline = utc_now() + timedelta(seconds=SETTINGS.video_gen_tool_wait_seconds)
-    interval = min(SETTINGS.video_gen_poll_interval_seconds, 5.0)
-    while utc_now() < deadline:
-        await asyncio.sleep(interval)
-        async with SESSION_LOCAL() as db:
-            row = await get_job(db, job.id, user_id)
-        if row is None:
-            return {"success": False, "error": "video job disappeared"}, None
-        job = row
-        if row.status == "succeeded":
-            logger.info("video_generation_tool succeeded", extra={"job_id": job.id})
-            return {
-                "success": True,
-                "url": row.video_url,
-                "task_id": task_id,
-                **({"warning": row.error_message} if row.error_message else {}),
-            }, job
-        if row.status == "result_unknown":
-            return _result_unknown_payload(task_id, row), job
-        if row.status == "failed":
-            return {"success": False, "task_id": task_id, "error": row.error_message or "video generation failed"}, job
-
-    # 已超时——任务在后台继续，模型可后续查询。
-    logger.info("video_generation_tool timed out, job continues", extra={"job_id": job.id})
     return {
         "success": True,
         "pending": True,
         "task_id": task_id,
-        "hint": "视频仍在生成中，请稍后用 video_generate_status 查询结果",
+        **({} if structured_reply else {"hint": "视频仍在生成中，请稍后用 video_generate_status 查询结果"}),
     }, job
 
 
