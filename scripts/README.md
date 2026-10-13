@@ -10,7 +10,7 @@
 |---|---|
 | 文档 | 事实、相对路径、锚点、图表分支与渲染；`git diff --check` 只检查空白 |
 | Python | 提交前 hook；Backend 依赖变化另跑分层检查 |
-| Client | `pnpm --dir client lint`、`pnpm --dir client typecheck` |
+| Client | `pnpm --dir client lint`（含路径解析后的模块／窗口边界、平台桥访问与静态值依赖环）、`pnpm --dir client typecheck` |
 | 手机远程页面 | `pnpm --dir remote lint`、`pnpm --dir remote typecheck`、`pnpm --dir remote build`；扫码、麦克风和后台恢复须在 iOS Safari、Android Chrome 实机验收 |
 | 共享协议 `shared/` | 同时执行 Client 与 Remote 的 lint、typecheck 和构建 |
 | Windows 桌面 helper | 在 Windows 执行 `pnpm --dir client build:native`，或在 `client/desktop-host/` 做对应目标的 `cargo check --locked`；交互与恢复另做实机验收 |
@@ -83,7 +83,7 @@ uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --prese
 
 ## Client 开发与打包脚本
 
-[`client/scripts/`](../client/scripts/) 的关键门禁：`assert-root-install.cjs` 检查 Client 根依赖，`write-build-stamp.cjs` 记录提交来源，`assert-dist-built.cjs` 检查六个页面及其本地 JS、样式和预加载资源。`launch-dev-electron.cjs` 管理开发进程，打包钩子准备 Windows helper 和 DPI manifest。
+[`client/scripts/`](../client/scripts/) 的关键门禁：`assert-root-install.cjs` 检查 Client 根依赖，`write-build-stamp.cjs` 记录提交来源，`assert-dist-built.cjs` 检查所有入口页面及其本地 JS、样式和预加载资源。`launch-dev-electron.cjs` 管理开发进程，打包钩子准备 Windows helper 和 DPI manifest。
 
 `build` 收尾与 `beforePack` 均校验渲染产物，直接调用 `builder` 仍须先完成构建；Windows helper 的架构或静态运行库门禁失败会中止打包。开发准备见 [桌面宿主构建](../client/desktop-host/README.md#构建)。
 

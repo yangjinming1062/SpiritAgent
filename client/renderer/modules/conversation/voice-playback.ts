@@ -2,6 +2,7 @@ import { atom, map } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { mediaApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
@@ -82,8 +83,8 @@ function createPlaybackStore() {
     $voicePlaybackLoaded.set(false)
     $voicePlaybackRecords.set({})
     loading = owner
-      ? window.spiritagent.voicePlayback
-          .get(owner)
+      ? mediaApi()
+          .voicePlayback.get(owner)
           .then(snapshot => {
             if (owner === scope && snapshot) {
               applySnapshot(snapshot)
@@ -125,8 +126,8 @@ function createPlaybackStore() {
       }
 
       lastSaved = Date.now()
-      void window.spiritagent.voicePlayback
-        .update({ ...owner, messageId, bubbleIndex, ...record })
+      void mediaApi()
+        .voicePlayback.update({ ...owner, messageId, bubbleIndex, ...record })
         .then(snapshot => {
           if (owner !== scope) {
             return
@@ -167,8 +168,8 @@ function createPlaybackStore() {
       }
     }
 
-    void window.spiritagent.voicePlayback
-      .remove({ ...owner, messageIds })
+    void mediaApi()
+      .voicePlayback.remove({ ...owner, messageIds })
       .then(snapshot => {
         if (snapshot && scope?.sessionId === sessionId && scope.authSessionId === owner.authSessionId) {
           applySnapshot(snapshot)
@@ -236,7 +237,7 @@ export function removeVoicePlayback(sessionId: string, messageIds?: number[]): v
 }
 
 export function bindVoicePlaybackUpdates(): () => void {
-  return window.spiritagent.voicePlayback.onChanged(event => {
+  return mediaApi().voicePlayback.onChanged(event => {
     playbackStores.get(event.sessionId)?.receive(event)
   })
 }

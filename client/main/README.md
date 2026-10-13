@@ -1,6 +1,6 @@
 # Client 主进程
 
-主进程通过 `entry.ts` 装配桌面能力，通过 `preload.ts` 暴露受控桥。本文维护内部生命周期、准入和原生承载；共享缓存归 Client README，跨端契约归 PROTOCOL。
+主进程通过 `entry.ts` 装配桌面能力，通过 `preload.ts` 暴露受控桥；普通与背景 preload 均按 `shared/ipc/bridge.ts` 校验实现。本文维护内部生命周期、准入和原生承载；共享缓存归 Client README，跨端契约归 PROTOCOL。
 
 ## 包边界
 
@@ -65,7 +65,9 @@
 
 ## 桌面承载与恢复
 
-[desktop-presentation.ts](lifecycle/desktop-presentation.ts)管理 desktop 生命周期、交互屏、舞台所有权与受控 IPC；living／workbench 只代表窗口入口。交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口。网关票及 Runner 派发仍只授予隐藏精灵宿主。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
+[desktop-presentation.ts](lifecycle/desktop-presentation.ts) 管呈现模式、交互屏、舞台资格与串行恢复；`desktop-windows.ts` 拥有窗口与就绪等待，`desktop-health.ts` 拥有显示器／电源监听和模式计时器，`desktop-background-runtime.ts` 拥有媒体字节、请求代次及回执。[IPC 适配](ipc/desktop-presentation.ts) 先校验 sender、账户与载荷，再调用窄操作接口。`stop()` 只停止当前桌面模式，允许更新取消后再次启用；应用退出使用幂等 `dispose()`，释放监听和 IPC 后恢复系统。living／workbench 只代表窗口入口。
+
+交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口。网关票及 Runner 派发仍只授予隐藏精灵宿主。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
 
 呈现切换 IPC 允许精灵宿主、生活空间、工作台和交互桌面；托盘复用主进程同一串行切换入口，菜单按实际模式与准备状态更新。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
 

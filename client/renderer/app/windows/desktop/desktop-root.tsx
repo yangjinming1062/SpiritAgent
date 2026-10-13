@@ -2,13 +2,13 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { AppearancePage } from '@/app/features/living/appearance/appearance-page'
-import { DesktopLifePage } from '@/app/features/living/desktop-life-page'
-import { useDesktopLifeStrings } from '@/app/features/living/desktop-life-strings'
-import { DiaryPage } from '@/app/features/living/diary-page'
-import { PostsPage } from '@/app/features/living/posts-page'
-import { RemotePage } from '@/app/features/living/remote-page'
-import { ScenePage } from '@/app/features/living/scene-page'
+import { AppearancePage } from '@/app/features/appearance/appearance-page'
+import { DesktopLifePage } from '@/app/features/desktop-life/desktop-life-page'
+import { useDesktopLifeStrings } from '@/app/features/desktop-life/desktop-life-strings'
+import { DiaryPage } from '@/app/features/diary/diary-page'
+import { PostsPage } from '@/app/features/posts/posts-page'
+import { RemotePage } from '@/app/features/remote/remote-page'
+import { ScenePage } from '@/app/features/scene/scene-page'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait, SpriteStatusBadge } from '@/modules/character'
 import {
   $companionSessionId,
@@ -19,14 +19,15 @@ import {
   useConversationUnread
 } from '@/modules/conversation'
 import { $desktopVideoError, $desktopVideoState } from '@/modules/desktop-videos'
+import { hydrateDiaryUnread } from '@/modules/diary'
 import { MediaViewerOverlay } from '@/modules/media'
-import { hydrateDiaryUnread } from '@/modules/memory'
 import { hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { ArrowLeft, ArrowRight, ChevronDown, MessageCircle, Settings, Wifi, WifiOff, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
@@ -173,9 +174,11 @@ export function DesktopRoot(): React.JSX.Element {
         return
       }
 
-      void window.spiritagent.presentation.focus(current.stageEpoch).catch(error => {
-        console.warn('[desktop] pointer activation failed', error)
-      })
+      void shellApi()
+        .presentation.focus(current.stageEpoch)
+        .catch(error => {
+          console.warn('[desktop] pointer activation failed', error)
+        })
     }
 
     window.addEventListener('pointerup', onPointerUp, true)
@@ -225,7 +228,7 @@ export function DesktopRoot(): React.JSX.Element {
 
   useEffect(
     () =>
-      window.spiritagent.desktop.onNavigate(payload => {
+      shellApi().desktop.onNavigate(payload => {
         const view = payload.view?.split('/')[0]
 
         // 工位与设置深链统一进设置窗口，具体分区由 DesktopPreferences 从 hash 解析。
@@ -347,8 +350,8 @@ export function DesktopRoot(): React.JSX.Element {
     let disposed = false
 
     const drain = (): void => {
-      void window.spiritagent.chat
-        .takePendingFeed()
+      void shellApi()
+        .chat.takePendingFeed()
         .then(paths => {
           if (!disposed && paths.length) {
             pushExternalAttachment(paths)
@@ -362,7 +365,7 @@ export function DesktopRoot(): React.JSX.Element {
         })
     }
 
-    const off = window.spiritagent.chat.onPendingFeed(drain)
+    const off = shellApi().chat.onPendingFeed(drain)
     // StrictMode 的首次清理不得提前取走一次性信箱内容。
     queueMicrotask(() => {
       if (!disposed) {
@@ -439,7 +442,9 @@ export function DesktopRoot(): React.JSX.Element {
         <span>{t.waiting}</span>
         <button
           onClick={() =>
-            void window.spiritagent.presentation.setMode('window').catch(error => notifyError(error, t.title))
+            void shellApi()
+              .presentation.setMode('window')
+              .catch(error => notifyError(error, t.title))
           }
           type="button"
         >

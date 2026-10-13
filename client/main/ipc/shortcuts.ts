@@ -8,9 +8,10 @@ import {
   IPC,
   type SurfaceId
 } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import * as store from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows, errorMessage } from '../shared/utils'
+import { broadcastToAllWindows } from '../shared/utils'
 
 /** 窄接口：快捷键只需要切表面，不依赖 lifecycle/surfaces 具体类型。 */
 interface SurfaceToggler {

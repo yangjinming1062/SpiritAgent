@@ -1,9 +1,9 @@
 import type { IpcMain, WebContents } from 'electron'
 
 import { IPC, type RunnerConfigPatch } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import * as store from '../shared/lib/runner-config-store'
-import { errorMessage } from '../shared/utils'
 
 interface RunnerConfigIpcDeps {
   ipcMain: IpcMain

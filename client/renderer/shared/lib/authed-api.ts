@@ -1,3 +1,4 @@
+import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import type { SpiritAgentApiRequest } from '@ipc/contracts'
 
@@ -42,7 +43,7 @@ export async function authedApi<T>(opts: SpiritAgentApiRequest): Promise<AuthedA
   try {
     result = {
       ok: true,
-      value: (await window.spiritagent.api<T>({ ...opts, authSessionId: auth.snapshot.sessionId })) as T | null
+      value: (await backendApi().api<T>({ ...opts, authSessionId: auth.snapshot.sessionId })) as T | null
     }
   } catch (error) {
     result = { error, ok: false, reason: 'err' }

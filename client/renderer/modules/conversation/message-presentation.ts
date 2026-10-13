@@ -1,6 +1,6 @@
 import { computed, type ReadableAtom } from 'nanostores'
 
-import type { ChatMessageBody, ChatMessageListItem } from './chat-runtime'
+import type { ChatMessageBody, ChatMessageListItem } from './chat-runtime-types'
 
 export type ConversationVariant = 'living' | 'workbench'
 export const SYSTEM_PILL_SUBTYPES = new Set(['status_cleared', 'status_command_result', 'status_media_failed'])

@@ -38,6 +38,8 @@ import {
   type SurfacePlaybackClaim
 } from '@ipc/contracts'
 
+import type { DesktopBridge, DesktopFileBridge } from '../shared/ipc/bridge'
+
 type InvokeChannel = keyof IpcInvokeContract
 type InvokePayload<C extends InvokeChannel> = Parameters<IpcInvokeContract[C]>[0]
 type EventCallback<C extends IpcEventChannel> = (...payload: IpcEventContract[C]) => void
@@ -51,7 +53,7 @@ function invoke<C extends InvokeChannel>(
 }
 
 // Electron 32+ 移除了 File.path，真实路径只能经 webUtils.getPathForFile 拿到；解析成功即写入主进程可读白名单，不向渲染层暴露 registerUserSelectedPaths，防止 XSS 自授后外传。
-contextBridge.exposeInMainWorld('spiritagentWebUtils', {
+const desktopFiles = {
   getPathForFile: (file: File): string => {
     const filePath = webUtils.getPathForFile(file)
 
@@ -61,7 +63,9 @@ contextBridge.exposeInMainWorld('spiritagentWebUtils', {
 
     return filePath
   }
-})
+} satisfies DesktopFileBridge
+
+contextBridge.exposeInMainWorld('spiritagentWebUtils', desktopFiles)
 
 // 订阅主进程单方向事件：listener 解构 payload 丢弃 IpcRendererEvent，返回卸载函数供 useEffect 清理。
 function subscribe<C extends IpcEventChannel>(channel: C, callback: EventCallback<C>): () => void {
@@ -74,7 +78,7 @@ function subscribe<C extends IpcEventChannel>(channel: C, callback: EventCallbac
   return () => ipcRenderer.removeListener(channel, listener)
 }
 
-contextBridge.exposeInMainWorld('spiritagent', {
+const desktopBridge = {
   presentation: {
     companionActivity: (activity: InvokePayload<typeof IPC.invoke.presentationCompanionActivity>) =>
       invoke(IPC.invoke.presentationCompanionActivity, activity),
@@ -126,7 +130,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
     onNavigate: (cb: EventCallback<typeof IPC.event.desktopNavigate>) => subscribe(IPC.event.desktopNavigate, cb)
   },
   activate: (payload: DesktopActivatePayload) => invoke(IPC.invoke.authActivate, payload),
-  api: (request: SpiritAgentApiRequest) => invoke(IPC.invoke.api, request),
+  api: <T = unknown>(request: SpiritAgentApiRequest) => invoke(IPC.invoke.api, request) as Promise<T>,
   apiAsset: (request: InvokePayload<typeof IPC.invoke.apiAsset>) => invoke(IPC.invoke.apiAsset, request),
   apiAssetBuffer: (request: InvokePayload<typeof IPC.invoke.apiAssetBuffer>) =>
     invoke(IPC.invoke.apiAssetBuffer, request),
@@ -173,7 +177,8 @@ contextBridge.exposeInMainWorld('spiritagent', {
   onAuthChanged: (cb: (payload: DesktopAuthBroadcast) => void) => subscribe(IPC.event.authChanged, cb),
   onPowerResume: (cb: () => void) => subscribe(IPC.event.powerResume, cb),
   onRunnerStatus: (cb: (payload: DesktopRunnerStatusEvent) => void) => subscribe(IPC.event.runnerStatus, cb),
-  onSessionExpired: (cb: () => void) => subscribe(IPC.event.authSessionExpired, cb),
+  onSessionExpired: (cb: EventCallback<typeof IPC.event.authSessionExpired>) =>
+    subscribe(IPC.event.authSessionExpired, cb),
   onTrayActivate: (cb: () => void) => subscribe(IPC.event.trayActivate, cb),
   onTrayResetPosition: (cb: () => void) => subscribe(IPC.event.trayResetPosition, cb),
   onPrefsHydrated: (cb: (payload: DesktopPrefsHydrated) => void) => subscribe(IPC.event.prefsHydrated, cb),
@@ -254,4 +259,6 @@ contextBridge.exposeInMainWorld('spiritagent', {
   writeClipboard: (text: string) => invoke(IPC.invoke.writeClipboard, text),
   copyImage: (payload: InvokePayload<typeof IPC.invoke.copyImage>) => invoke(IPC.invoke.copyImage, payload),
   saveImage: (payload: InvokePayload<typeof IPC.invoke.saveImage>) => invoke(IPC.invoke.saveImage, payload)
-})
+} satisfies DesktopBridge
+
+contextBridge.exposeInMainWorld('spiritagent', desktopBridge)

@@ -7,11 +7,12 @@ import {
   type DesktopLogoutPayload,
   IPC
 } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'
 import { confirmAccountRemoval, showAccountRemovalError } from '../shared/lib/account-removal'
-import { broadcastToAllWindows, createSerialQueue, errorMessage } from '../shared/utils'
+import { broadcastToAllWindows, createSerialQueue } from '../shared/utils'
 
 interface AuthBroadcasterDeps {
   autoStartBridge: () => void

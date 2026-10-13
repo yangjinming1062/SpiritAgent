@@ -22,6 +22,7 @@ import { EyeOff, Home, type IconComponent, KeyRound, Monitor } from '@/shared/li
 import { isRegionHit, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
 import { SURFACE_OVERLAY } from '@/shared/panel/palette'
+import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { requestCloseSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
@@ -95,7 +96,7 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
   }
 
   const handleHideSprite = () => {
-    void window.spiritagent.sprite.hide()
+    void shellApi().sprite.hide()
   }
 
   const getInteractiveRect = useCallback(

@@ -1,11 +1,11 @@
-/** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；账户快照先恢复再网络校准，失败保留已有目录。 */
-
 import { atom } from 'nanostores'
 
+/** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；账户快照先恢复再网络校准，失败保留已有目录。 */
 import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { sleep } from '@runtime'
 
@@ -394,7 +394,7 @@ function assetUrl(rawUrl: string): string {
 
 async function resolveUrl(rawUrl: string): Promise<string | null> {
   try {
-    return await window.spiritagent.apiAsset({ preferCache: true, url: assetUrl(rawUrl) })
+    return await backendApi().apiAsset({ preferCache: true, url: assetUrl(rawUrl) })
   } catch (err) {
     log.warn('action-store', 'asset resolve failed', err)
 
@@ -403,7 +403,7 @@ async function resolveUrl(rawUrl: string): Promise<string | null> {
 }
 
 async function readJsonAsset(rawUrl: string): Promise<unknown> {
-  const buffer = await window.spiritagent.apiAssetBuffer({ preferCache: true, url: assetUrl(rawUrl) })
+  const buffer = await backendApi().apiAssetBuffer({ preferCache: true, url: assetUrl(rawUrl) })
 
   return JSON.parse(new TextDecoder().decode(buffer))
 }

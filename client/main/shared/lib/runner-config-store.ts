@@ -2,7 +2,9 @@ import path from 'node:path'
 
 import log from 'electron-log/main'
 
-import { atomicWriteFile, createSerialQueue, errorMessage, RunnerNotConnectedError, safeReadJson } from '../utils'
+import { errorMessage } from '@runtime'
+
+import { atomicWriteFile, createSerialQueue, RunnerNotConnectedError, safeReadJson } from '../utils'
 
 const FILENAME = 'desktop-settings.json'
 

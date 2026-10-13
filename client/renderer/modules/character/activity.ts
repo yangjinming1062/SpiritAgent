@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
+import { activityHost, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
@@ -369,7 +370,7 @@ async function pollOnce(): Promise<void> {
 }
 
 async function pollSnapshot(generation: number): Promise<void> {
-  const desktop = window.spiritagent
+  const desktop = activityHost()
 
   if (!desktop?.runnerInvoke) {
     return
@@ -588,13 +589,15 @@ export function startActivityMonitor(): () => void {
 
       const current = { signature }
       forwarded = current
-      void window.spiritagent.presentation.stageActivity(activity).catch(error => {
-        if (forwarded === current) {
-          forwarded = undefined
-        }
+      void shellApi()
+        .presentation.stageActivity(activity)
+        .catch(error => {
+          if (forwarded === current) {
+            forwarded = undefined
+          }
 
-        log.warn('activity', 'Desktop activity forwarding failed', error)
-      })
+          log.warn('activity', 'Desktop activity forwarding failed', error)
+        })
     })
   }
 

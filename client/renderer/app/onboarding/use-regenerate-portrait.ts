@@ -10,6 +10,7 @@ import {
 import { requestGateway } from '@/shared'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { backendApi } from '@/shared/platform/desktop'
 
 interface UseRegeneratePortraitOptions {
   refImage?: PickedImage | null
@@ -83,9 +84,9 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         let result: PortraitResponse | null
 
         if (mode === 'reload') {
-          result = await window.spiritagent.api<PortraitResponse>({ path: '/api/companion/avatar', method: 'GET' })
+          result = await backendApi().api<PortraitResponse>({ path: '/api/companion/avatar', method: 'GET' })
         } else if (mode !== 'edit' && (primaryRef || mode === 'generate')) {
-          result = await window.spiritagent.api<PortraitResponse>({
+          result = await backendApi().api<PortraitResponse>({
             method: 'POST',
             path: primaryRef ? '/api/companion/avatar/from-image' : '/api/companion/avatar',
             body: primaryRef

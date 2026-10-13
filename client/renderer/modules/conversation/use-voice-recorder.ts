@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
+import { mediaApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { getSpiritAgentConfig } from '@/shared/spiritagent'
 import { getStrings } from '@/shared/strings'
+import { errorMessage } from '@runtime'
 
 import { CHAT_AUDIO_CONSTRAINTS } from './audio-constraints'
 import { blobToDataUrl } from './blob-data-url'
 import type { ConversationRuntime } from './chat-runtime'
-import { activeConversationRuntime } from './chat-store'
 import { ensureChatSession } from './session-list-store'
 import { conversationVoiceSink } from './voice-link'
 
@@ -65,18 +65,14 @@ function stopTracks(stream: MediaStream | null): void {
 let recordingOwner: symbol | null = null
 
 type Options = {
-  runtime?: ConversationRuntime
+  runtime: ConversationRuntime
   eligible?: boolean
   isReadOnlySession?: boolean
 }
 
 // 语音消息生命周期管理：录音、自动停止、全局事件解绑、音轨清理与附件发送。
 
-export function useVoiceRecorder({
-  isReadOnlySession,
-  runtime = activeConversationRuntime(),
-  eligible = true
-}: Options): {
+export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }: Options): {
   recording: boolean
   start: () => void
   stop: () => Promise<void>
@@ -222,7 +218,7 @@ export function useVoiceRecorder({
         return
       }
 
-      const uploaded = await window.spiritagent.media.uploadAudio({
+      const uploaded = await mediaApi().media.uploadAudio({
         dataUrl: await blobToDataUrl(blob),
         filename: `voice.${getAudioExtensionForMime(blob.type)}`,
         sessionId

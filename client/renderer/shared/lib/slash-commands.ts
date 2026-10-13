@@ -1,11 +1,10 @@
-// 斜杠命令元数据：权威源在服务端注册表，经 RPC 拉到本窗口；本地只用于自动补全与确认弹窗，dispatch 仍以服务端为准。
-
 import { atom } from 'nanostores'
 
-import { errorMessage } from '@/shared/lib/ipc-error'
+// 斜杠命令元数据：权威源在服务端注册表，经 RPC 拉到本窗口；本地只用于自动补全与确认弹窗，dispatch 仍以服务端为准。
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $gateway } from '@/shared/store/gateway'
+import { errorMessage } from '@runtime'
 
 export interface SlashCommandMeta {
   /** 主名（小写，无前导 /）。 */

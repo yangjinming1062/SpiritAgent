@@ -4,6 +4,7 @@ import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-a
 import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { fileApi } from '@/shared/platform/desktop'
 import { $presentation } from '@/shared/store/presentation'
 
 import type {
@@ -223,7 +224,7 @@ export async function uploadDesktopVideoAction(
   path: string,
   authSessionId: string
 ): Promise<void> {
-  await window.spiritagent.uploadDesktopVideo({ actionId, authSessionId, expectedSetId, path })
+  await fileApi().uploadDesktopVideo({ actionId, authSessionId, expectedSetId, path })
   await refreshDesktopVideos()
 }
 

@@ -1,7 +1,6 @@
-// 激活形象的种子图本地缓存（头像 / 全身种子）：生成、确认与水合时写入并持久化，弹窗直接读本地缓存；原始 asset 路径入库，展示 URL 经 resolvePortraitUrl 解析。
-
 import { atom } from 'nanostores'
 
+// 激活形象的种子图本地缓存（头像 / 全身种子）：生成、确认与水合时写入并持久化，弹窗直接读本地缓存；原始 asset 路径入库，展示 URL 经 resolvePortraitUrl 解析。
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import {
@@ -10,6 +9,7 @@ import {
   registerStorageClearHandler,
   registerStorageRestoreHandler
 } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 
 import { resolvePortraitUrl } from './avatar-image'
 
@@ -256,7 +256,7 @@ export function hydrateAvatarSeeds(): Promise<AvatarSeeds> {
       }
 
       const seqBeforeRequest = writeSeq
-      const res = await window.spiritagent.api<AvatarWire>({ path: '/api/companion/avatar' })
+      const res = await backendApi().api<AvatarWire>({ path: '/api/companion/avatar' })
 
       if (isStale(gen, currentClearEpoch())) {
         return $avatarSeeds.get()
@@ -318,7 +318,7 @@ export async function refreshAvatarSeeds(): Promise<void> {
   const epoch = currentClearEpoch()
   const seq = writeSeq
   const requestSeq = patchRequestSeq
-  const response = await window.spiritagent.api<AvatarWire>({ path: '/api/companion/avatar' })
+  const response = await backendApi().api<AvatarWire>({ path: '/api/companion/avatar' })
 
   if (isStale(gen, epoch) || writeSeq !== seq || patchRequestSeq !== requestSeq || !response?.id) {
     return

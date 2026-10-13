@@ -6,12 +6,12 @@
 
 | 层 | 边界 |
 |---|---|
-| `app` | 窗口入口初始化与挂载；runtime／workflows 不反向导入 windows，窗口间不互相导入 |
+| `app` | 窗口外壳、按业务组织的 features、导航与跨域编排；runtime／workflows 不反向导入 windows，窗口间不互相导入 |
 | `modules` | 不依赖 app；conversation 可消费 media 展示原语，其余协作由 app 装配 |
 | `shared` | 无业务依赖 |
 | `@ipc` | 跨进程契约，renderer 不重复定义 |
 
-跨模块只经公共 barrel，app 另可用 `character/rendering/video` 公共入口；模块内部用相对路径，character 渲染域经本模块 barrel 访问角色能力。规则归 [ESLint](../eslint.config.mjs)：flat config 的后续 `no-restricted-imports` 会替换先前集合，目录规则须通过 `restrictImports` 组合完整限制。后端数据与资产统一走主进程桥，直连例外逐处说明 URL 来源。
+跨模块只经公共入口，app 另可用 `character/rendering` 呈现入口；模块内部用相对路径，character 渲染域经本模块公共入口访问角色能力。[架构规则](../scripts/architecture-rules.mjs) 经 ESLint 解析实际路径，覆盖别名与相对导入、当前和新增模块／窗口、运行时值依赖环；纯类型引用不作为运行时环。只有 [platform/desktop.ts](shared/platform/desktop.ts) 读取 preload 全局桥，其他代码按用途消费窄能力接口；后端数据与资产仍经主进程请求，直连例外逐处说明 URL 来源。
 
 | 改动 | 入口 |
 |---|---|
@@ -21,11 +21,13 @@
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
 | 对话与音频联动 | [modules/conversation](modules/conversation/)、[modules/speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
-| 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/memory](modules/memory/)、[memory-section.tsx](app/features/living/settings/memory-section.tsx) |
+| 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/settings/memory-section.tsx) |
 | 场景与背景 | [scene-store.ts](modules/scene/scene-store.ts) |
 | 文案与主题 | [strings/dictionaries](shared/strings/dictionaries/)、[shared/panel](shared/panel/)；`en` 按 `zh` 类型校验，引导问答和人格预设仍有硬编码中文 |
 
 ## 装配与状态归属
+
+`app/windows` 管窗口外壳，`app/features` 按场景、外观、动态、日记、对话、执行轨迹及设置组织可复用业务页面；生活空间导航归 `app/navigation`。业务页面可被不同窗口装配，窗口内部实现不作为其他窗口的依赖。
 
 [bind-presentation.ts](app/bootstrap/bind-presentation.ts) 在渲染前绑定 [presentation-ports.ts](shared/presentation-ports.ts) 的窄端口，角色、语音和窗口能力显式注入，不依赖 barrel 副作用。新增端口用 `createPort`，未装配调用即抛错；订阅与注入随所有者释放。
 
@@ -40,12 +42,14 @@
 
 ## 事件与异步生命周期
 
+账户、宿主网关和代理网关由 `app/runtime` 中的普通 TypeScript 对象管理，提供成对的 `start/dispose`；React Hook 只绑定这些对象。宿主持连接、工具清单同步及重连恢复，代理只消费 IPC 并恢复自己的会话。代理先订阅再读状态快照，释放时只清除自己仍持有的网关；账户与请求代次使旧实例和迟到结果失效。
+
 网关路由先核对认证状态，再按 `session_id` 交给该账户保留的 runtime；角色、工具和投递由 [handlers](app/runtime/handlers/) 处理，场景、动态、日记进入所属 module。`tool.call/cancel` 只由宿主执行，按 `call_id` 去重和撤回，不受当前可见会话过滤。
 
 - store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 核对鉴权会话与清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 核对挂载与代次；失败记录经 `apiSucceeded`，错误文案经 `ipc-error.ts`。
 - [storage.ts](shared/lib/storage.ts) 登记账户持久键、清理及恢复回调。换号释放内存并按 `accountId` 重挂载，重置期间不回写索引；所属账户命名空间切换完成后才应用云偏好广播。全局缓存保留和移除语义归 PROTOCOL。
 - [runner-status.ts](shared/store/runner-status.ts) 先订阅后读快照，同清理代次共用在途读取，迟到快照不能覆盖新事件或新账户。网关握手超时落到 `error`，不能停留 `connecting`。
-- 引导逐字段增量保存，未连网关时不提交；连通后按服务端 `next_field` 续答，本地非空编辑优先。草稿读取失败暂停待重试，不能当作新引导覆盖。
+- 引导 flow 只装配导航与未提交表单，问题和恢复路由为纯定义；`onboarding-draft.ts` 持串行保存与读取守卫，头像和音色流程各自管理异步结果。引导逐字段增量保存，未连网关时不提交；连通后按服务端 `next_field` 续答，本地非空编辑优先。草稿读取失败暂停待重试，不能当作新引导覆盖。
 - 用户提交携稳定 `request_id`，其他设备的保存通知按消息 ID 插入，不绑定本地待确认草稿。挂载期间网关暂存回合帧，并将同一快照通过内部 `session.snapshot` 同步宿主与代理；新流身份重置旧 seq。已提交消息按 ID 合并，入列与提醒分开；未读只在所属视图可见时清除。动态、日记菜单消费服务端未读镜像，生活空间补查，页面确认快照，迟到请求仍受账户和挂载守卫。
 - [proactive-delivery.ts](app/workflows/proactive-delivery.ts) 的气泡与声音复用舞台可见性；不可见时消息仍进入未读，恢复后由待读气泡承接。工作会话跳转不进入轻语。
 
@@ -94,7 +98,7 @@ Dock 选择面板是 `.dock` 的兄弟节点，避免 backdrop-filter 改变 fix
 
 ### 空间行为
 
-[spatial.ts](modules/character/spatial.ts) 持位置和意图生命周期，[spatial-peek.ts](modules/character/spatial-peek.ts) 计算落位及绘制、命中共用的遮挡矩形，[autonomy.ts](modules/character/autonomy.ts) 解释云端意图。默认比例经主进程跨窗同步并平滑生效。
+[spatial.ts](modules/character/spatial.ts) 装配位置 store、空间策略和舞台生命周期；`spatial/geometry.ts` 计算几何，`motion.ts` 持移动与缩放 RAF，`peek-controller.ts` 持探身准备与表达返回目标，`window-tracker.ts` 持外部窗口跟踪。[spatial-peek.ts](modules/character/spatial-peek.ts) 计算绘制、命中共用的遮挡矩形，[autonomy.ts](modules/character/autonomy.ts) 解释云端意图。默认比例经主进程跨窗同步并平滑生效。
 
 拖拽、换包和卸载撤销探身准备；素材解码后才一起应用位置、遮挡和命中，失败保留旧画面，表演移出遮挡后才上报 started。隐藏／最小化暂停移动、漫游、探身及跟踪，恢复重新约束。
 
@@ -103,6 +107,8 @@ Dock 选择面板是 `.dock` 的兄弟节点，避免 backdrop-filter 改变 fix
 ## 会话与媒体
 
 ### 会话与草稿
+
+每个会话 runtime 显式装配唯一状态、消息流、提交队列与历史恢复控制器，纯消息规则、历史投影与合并独立于界面。`chat-store.ts` 只管会话选择、runtime 注册与引用回收；视图、执行轨迹和参数页直接持有所属 runtime，不通过全局当前会话投影转发异步操作。
 
 会话历史、待发批次与流式数据归 runtime，视图持输入草稿；增量快照须以当前 runtime 已初始化的历史为基底，成功应用后才记录快照水位。首次水合保留在途回合，历史修改使旧回包失效。快照与重连处理归 [Client 历史同步](../README.md#历史同步)，`last_seq` 由调用方从活动列表传入。
 

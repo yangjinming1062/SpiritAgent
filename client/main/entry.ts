@@ -598,7 +598,7 @@ const appQuit = installAppQuit({
   flushLog: () => desktopLogger.flushSync(),
   flushPlayback: () => voicePlaybackStore.flush(),
   log: rememberLog,
-  restoreDesktop: () => presentation?.stop() ?? Promise.resolve(),
+  restoreDesktop: () => presentation?.dispose() ?? Promise.resolve(),
   stopRunner: () => runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()
 })
 

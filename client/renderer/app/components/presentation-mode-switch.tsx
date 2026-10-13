@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { Monitor } from '@/shared/lib/icons'
+import { shellApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
@@ -28,7 +29,7 @@ export function usePresentationModeSwitch() {
     setBusy(true)
 
     try {
-      await window.spiritagent.presentation.setMode(mode)
+      await shellApi().presentation.setMode(mode)
     } catch (error) {
       if (isLive()) {
         notifyError(error, en ? 'Desktop mode' : '桌面模式')

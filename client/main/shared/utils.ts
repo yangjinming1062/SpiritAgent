@@ -85,10 +85,6 @@ export function isAccountId(value: string): boolean {
   return /^[a-f0-9]{64}$/.test(value)
 }
 
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /** `Number.isFinite` 不做类型转换，非 number 一律为 false；这里补上类型收窄。 */
 export function isFiniteNumber(value: unknown): value is number {
   return Number.isFinite(value)

@@ -4,11 +4,12 @@ import { useEffect, useState } from 'react'
 import { X } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
+import { shellApi } from '@/shared/platform/desktop'
 import { useStrings } from '@/shared/strings'
 
 async function invokeSurface(action: 'close' | 'maximize' | 'minimize'): Promise<boolean> {
   try {
-    await window.spiritagent?.surface?.[action]?.()
+    await shellApi()?.surface?.[action]?.()
 
     return true
   } catch (err) {
@@ -51,7 +52,7 @@ export function WindowControls(): React.JSX.Element {
 
   const checkMaximized = async (): Promise<void> => {
     try {
-      const isMax = await window.spiritagent?.surface?.isMaximized?.()
+      const isMax = await shellApi()?.surface?.isMaximized?.()
       const flag = Boolean(isMax)
       setMaximized(flag)
       document.documentElement.dataset.maximized = flag ? 'true' : 'false'

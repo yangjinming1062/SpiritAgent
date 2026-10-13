@@ -6,6 +6,7 @@ export {
   actionCatalogChanged,
   type ActionClipEntry,
   type ActionHitmask,
+  type ActionPackWire,
   type ActionPlayCommand,
   type ActionPlayInstance,
   type ActionWire,
@@ -118,8 +119,8 @@ export {
   systemActionNames,
   VIDEO_GEN_STAGE_TEXT_KEYS
 } from './presentation'
+export type { CompanionFallbackStatus } from './presentation'
 export { handleDragEndInteraction } from './reactions/reaction-audio'
-export { EggStage } from './rendering/fallback/egg-stage'
 export {
   $videoGenError,
   $videoGenScope,

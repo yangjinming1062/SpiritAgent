@@ -24,6 +24,7 @@ import {
 } from '@/modules/character'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
+import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 
 import { decodePayload } from '../gateway-event-util'
@@ -104,7 +105,7 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
       return
     }
 
-    if (!(await window.spiritagent.surface.claimPlay({ playId: command.play_id, expiresAt: command.expires_at }))) {
+    if (!(await shellApi().surface.claimPlay({ playId: command.play_id, expiresAt: command.expires_at }))) {
       return
     }
 

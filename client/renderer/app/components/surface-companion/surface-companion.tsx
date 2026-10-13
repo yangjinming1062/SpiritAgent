@@ -11,7 +11,7 @@ import {
   hydrateVideoPack,
   SpriteVfxOverlay
 } from '@/modules/character'
-import { MediaStage, useMediaPixelHitTest } from '@/modules/character/rendering/video'
+import { MediaStage, useMediaPixelHitTest } from '@/modules/character/rendering'
 import { useInteractiveRegion } from '@/shared'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'

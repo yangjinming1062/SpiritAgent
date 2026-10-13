@@ -1,3 +1,4 @@
+import { initLivingNavigation } from '@/app/navigation/living-navigation'
 import { initCompanionPrefsSync } from '@/modules/character'
 import { applyNoBlurIfNeeded } from '@/shared/lib/apply-no-blur'
 import { initLocaleSync } from '@/shared/store/locale'
@@ -9,6 +10,12 @@ import { bindPresentation } from './bind-presentation'
 
 // 各窗口入口在渲染前调用一次的公共初始化；窗口角色（setSurfaceRole）由入口先行登记。
 export function initRenderer(): void {
+  const stopNavigation = initLivingNavigation()
+
+  if (import.meta.hot) {
+    import.meta.hot.dispose(stopNavigation)
+  }
+
   applyNoBlurIfNeeded()
   bindPresentation()
   initUiThemeSync()

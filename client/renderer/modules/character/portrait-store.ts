@@ -9,6 +9,7 @@ import {
   registerStorageClearHandler,
   registerStorageRestoreHandler
 } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 
 import { resolvePortraitUrl } from './avatar-image'
 import { clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'
@@ -155,7 +156,7 @@ export async function hydratePortrait(): Promise<void> {
   const epoch = currentClearEpoch()
 
   try {
-    const res = await window.spiritagent.api<{
+    const res = await backendApi().api<{
       asset_url?: string
       id?: number
     }>({
@@ -211,7 +212,7 @@ export async function hydratePortraitHistory(): Promise<void> {
   const epoch = currentClearEpoch()
 
   try {
-    const res = await window.spiritagent.api<{
+    const res = await backendApi().api<{
       history: Array<{
         asset_url: string
         id: number
@@ -268,7 +269,7 @@ export async function selectAvatar(avatarId: number): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {
-    await window.spiritagent.api({
+    await backendApi().api({
       method: 'PUT',
       path: `/api/companion/avatar/${avatarId}/select`
     })

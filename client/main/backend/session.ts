@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 
+import { errorMessage } from '@runtime'
+
 import type { SafeStorageApi } from '../security/hardening'
-import { atomicWriteFile, createSerialQueue, errorMessage, safeReadJson } from '../shared/utils'
+import { atomicWriteFile, createSerialQueue, safeReadJson } from '../shared/utils'
 
 import {
   type BackendClient,

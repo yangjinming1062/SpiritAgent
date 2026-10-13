@@ -5,6 +5,7 @@ import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 
 type OutfitStatus = 'draft' | 'ready' | 'expired'
@@ -102,7 +103,7 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
       }
 
       try {
-        const url = await window.spiritagent.apiAsset({ url: o.fullbody_url, preferCache: true, cacheOnly })
+        const url = await backendApi().apiAsset({ url: o.fullbody_url, preferCache: true, cacheOnly })
 
         if (url && current()) {
           $outfits.set($outfits.get().map(item => (item.id === o.id ? { ...item, fullbodyUrl: url } : item)))
@@ -161,7 +162,7 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {
-    const result = await window.spiritagent.api<{ policy: OutfitPolicy }>({
+    const result = await backendApi().api<{ policy: OutfitPolicy }>({
       body: { policy },
       method: 'PATCH',
       path: '/api/companion/outfits/policy'
@@ -184,12 +185,12 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
 }
 
 export async function deleteOutfit(outfitId: number): Promise<void> {
-  await window.spiritagent.api({ path: `/api/companion/outfits/${outfitId}`, method: 'DELETE' })
+  await backendApi().api({ path: `/api/companion/outfits/${outfitId}`, method: 'DELETE' })
   await hydrateWardrobe()
 }
 
 export async function retryOutfitDescription(outfitId: number): Promise<void> {
-  await window.spiritagent.api({
+  await backendApi().api({
     path: `/api/companion/outfits/${outfitId}/description/retry`,
     method: 'POST',
     body: {}

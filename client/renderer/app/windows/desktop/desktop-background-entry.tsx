@@ -3,6 +3,7 @@ import '../../../styles.css'
 import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { backgroundMedia } from '@/shared/platform/desktop'
 import type { DesktopBackground, DesktopBackgroundPlayback } from '@ipc/contracts'
 
 interface VideoSlot {
@@ -69,7 +70,7 @@ function DesktopWallpaper() {
   const poster = useRef<HTMLImageElement>(null)
 
   useEffect(() => {
-    const bridge = window.desktopBackground
+    const bridge = backgroundMedia()
     const firstVideo = first.current
     const secondVideo = second.current
     const fill = backdrop.current

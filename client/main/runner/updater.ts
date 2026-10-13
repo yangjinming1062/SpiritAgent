@@ -9,9 +9,7 @@ import { promisify } from 'node:util'
 
 import YAML from 'yaml'
 
-import { sleep } from '@runtime'
-
-import { errorMessage } from '../shared/utils'
+import { errorMessage, sleep } from '@runtime'
 
 import { runnerServerPyFor, venvPythonFor } from './venv'
 

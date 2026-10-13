@@ -2,8 +2,8 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { type RefObject, useEffect, useRef, useState } from 'react'
 
-import { RunRail } from '@/app/features/workbench/run-rail'
-import { SessionSidebar } from '@/app/features/workbench/session-sidebar'
+import { SessionSidebar } from '@/app/features/conversation/session-sidebar'
+import { RunRail } from '@/app/features/execution/run-rail'
 import { $persona } from '@/modules/character'
 import {
   $chatSessionId,

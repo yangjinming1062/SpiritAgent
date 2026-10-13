@@ -16,16 +16,18 @@ import {
   X
 } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
+import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
 import { DesktopDockPicker, type DockPickerMode } from './desktop-dock-picker'
 import { DESKTOP_APPS, type DesktopApp, type DesktopWindowState } from './desktop-layout'
 import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
-type DockState = Awaited<ReturnType<typeof window.spiritagent.dock.getState>>
+type DockState = Awaited<ReturnType<DesktopBridge['dock']['getState']>>
 type DockEntry = DockState['entries'][number]
-type DockTask = Awaited<ReturnType<typeof window.spiritagent.dock.tasks>>[number]
+type DockTask = Awaited<ReturnType<DesktopBridge['dock']['tasks']>>[number]
 
 type DockMenuTarget = { kind: 'program'; id: string; pinned: boolean } | { kind: 'internal'; id: DesktopApp }
 type DockMenuState = DockMenuTarget & { x: number; focusMenu: boolean }
@@ -119,9 +121,9 @@ export function DesktopDock({
       }
     }
 
-    const off = window.spiritagent.dock.onChanged(apply)
-    void window.spiritagent.dock
-      .getState()
+    const off = shellApi().dock.onChanged(apply)
+    void shellApi()
+      .dock.getState()
       .then(apply)
       .catch(error => {
         if (!disposed) {
@@ -219,14 +221,14 @@ export function DesktopDock({
   }
 
   const closeWindows = (entry: DockEntry, windowIds: string[]): void => {
-    void run(() => window.spiritagent.dock.closeWindows(entry.id, windowIds), t.closeWindow)
+    void run(() => shellApi().dock.closeWindows(entry.id, windowIds), t.closeWindow)
     setMenu(null)
   }
 
   const activateTask = (entryId: string, taskId: string): void => {
     setMenu(null)
     triggerRef.current?.focus()
-    void run(() => window.spiritagent.dock.activateTask(entryId, taskId), t.taskLaunchFailed)
+    void run(() => shellApi().dock.activateTask(entryId, taskId), t.taskLaunchFailed)
   }
 
   const openMenu = (target: DockMenuTarget, button: HTMLElement, focusMenu = false): void => {
@@ -250,8 +252,8 @@ export function DesktopDock({
     setMenu({ ...target, focusMenu, x: center - dock.left })
 
     if (target.kind === 'program') {
-      void window.spiritagent.dock
-        .tasks(target.id)
+      void shellApi()
+        .dock.tasks(target.id)
         .then(tasks => {
           if (taskRequestRef.current !== requestId) {
             return
@@ -309,7 +311,7 @@ export function DesktopDock({
 
     ids.splice(fromIndex, 1)
     ids.splice(toIndex, 0, from)
-    void run(() => window.spiritagent.dock.reorder(ids))
+    void run(() => shellApi().dock.reorder(ids))
   }
 
   const dropAt = (event: React.DragEvent, beforeId?: string): void => {
@@ -325,7 +327,7 @@ export function DesktopDock({
     setDraggingOver(false)
 
     if (!dragged.pinned) {
-      void run(() => window.spiritagent.dock.pin(dragged.id, beforeId))
+      void run(() => shellApi().dock.pin(dragged.id, beforeId))
 
       return
     }
@@ -341,7 +343,7 @@ export function DesktopDock({
       ids.splice(index, 0, dragged.id)
 
       if (ids.some((id, position) => id !== state.entries[position]?.id)) {
-        void run(() => window.spiritagent.dock.reorder(ids))
+        void run(() => shellApi().dock.reorder(ids))
       }
     }
   }
@@ -357,7 +359,7 @@ export function DesktopDock({
           data-unavailable={entry.status !== 'ready' && !entry.running}
           disabled={busy}
           draggable={pinned || entry.canPin}
-          onClick={() => void run(() => window.spiritagent.dock.activate(entry.id))}
+          onClick={() => void run(() => shellApi().dock.activate(entry.id))}
           onContextMenu={event => {
             event.preventDefault()
             openMenu({ kind: 'program', id: entry.id, pinned }, event.currentTarget)
@@ -415,7 +417,7 @@ export function DesktopDock({
           const files = Array.from(event.dataTransfer.files)
 
           if (files.length) {
-            void run(() => window.spiritagent.dock.addDroppedFiles(files))
+            void run(() => shellApi().dock.addDroppedFiles(files))
           }
         }}
         ref={dockRef}
@@ -553,7 +555,7 @@ export function DesktopDock({
                       className={styles.dockWindowActivate}
                       disabled={busy}
                       onClick={() => {
-                        void run(() => window.spiritagent.dock.activate(menuEntry.id, runningWindow.id))
+                        void run(() => shellApi().dock.activate(menuEntry.id, runningWindow.id))
                         setMenu(null)
                       }}
                       role="menuitem"
@@ -640,7 +642,7 @@ export function DesktopDock({
                     <button
                       disabled={busy}
                       onClick={() => {
-                        void run(() => window.spiritagent.dock.remove(menuEntry.id))
+                        void run(() => shellApi().dock.remove(menuEntry.id))
                         setMenu(null)
                       }}
                       role="menuitem"
@@ -653,7 +655,7 @@ export function DesktopDock({
                   <button
                     disabled={busy || !menuEntry.canPin}
                     onClick={() => {
-                      void run(() => window.spiritagent.dock.pin(menuEntry.id))
+                      void run(() => shellApi().dock.pin(menuEntry.id))
                       setMenu(null)
                     }}
                     role="menuitem"

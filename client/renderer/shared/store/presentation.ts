@@ -1,5 +1,6 @@
 import { atom } from 'nanostores'
 
+import { shellApi } from '@/shared/platform/desktop'
 import type { PresentationState } from '@ipc/contracts'
 
 import { log } from '../lib/log'
@@ -34,9 +35,9 @@ export function hydratePresentation(): () => void {
     }
   }
 
-  const stop = window.spiritagent.presentation.onChanged(apply)
-  void window.spiritagent.presentation
-    .getState()
+  const stop = shellApi().presentation.onChanged(apply)
+  void shellApi()
+    .presentation.getState()
     .then(apply)
     .catch(error => log.warn('presentation', error))
 

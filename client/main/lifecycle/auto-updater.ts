@@ -6,8 +6,9 @@ import log from 'electron-log/main'
 // CJS 包没有 named export，使用处从 default import 解构 autoUpdater。
 import electronUpdaterPkg from 'electron-updater'
 
+import { errorMessage } from '@runtime'
+
 import { resolveNormalizedBackendUrl } from '../shared/config'
-import { errorMessage } from '../shared/utils'
 
 const UPDATE_INITIAL_CHECK_DELAY_MS = 30_000
 

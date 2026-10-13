@@ -1,7 +1,7 @@
 import { getStrings } from '@/shared/strings'
 
 import type { ActionCatalogStatus } from '../actions'
-import type { VideoGenStage } from '../rendering/video'
+import type { VideoGenStage } from '../rendering'
 
 import type { CompanionFallbackStatus, CompanionPresentation } from './types'
 

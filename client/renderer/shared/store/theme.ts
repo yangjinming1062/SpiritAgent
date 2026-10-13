@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
 import { persistString, storedString } from '@/shared/lib/storage'
+import { preferencesApi } from '@/shared/platform/desktop'
 import {
   getUiEffect,
   getUiPalette,
@@ -52,12 +53,12 @@ function apply(theme: SpiritAgentUiTheme): void {
 export function setUiTheme(theme: SpiritAgentUiTheme): void {
   apply(theme)
   // 主进程广播到两个窗口（含本窗，回声幂等）；各窗口经 apply 各自写入本地缓存。
-  window.spiritagent?.setUiTheme?.(theme)
+  preferencesApi()?.setUiTheme?.(theme)
 }
 
 // 订阅主进程主题广播（另一窗口切换时同步本窗口）；两个 entry 的模块作用域各调用一次。
 export function initUiThemeSync(): () => void {
-  const unsubscribe = window.spiritagent?.onUiThemeChanged?.(payload => apply(normalizeUiTheme(payload?.theme)))
+  const unsubscribe = preferencesApi()?.onUiThemeChanged?.(payload => apply(normalizeUiTheme(payload?.theme)))
 
   return unsubscribe ?? (() => {})
 }

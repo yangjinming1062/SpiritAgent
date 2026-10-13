@@ -1,0 +1,117 @@
+import { setCompanionLifecycle } from '@/modules/character'
+import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { requestGateway } from '@/shared/lib/gateway-request'
+import { log } from '@/shared/lib/log'
+import { desktopEvents } from '@/shared/platform/desktop'
+import { applyAuthBroadcast, expireSession, hydrateAuth } from '@/shared/store/auth'
+import { $gatewayState } from '@/shared/store/gateway'
+
+interface OnboardingState {
+  complete?: boolean
+}
+
+export function createAccountLifecycleRuntime() {
+  let disposed = false
+  let started = false
+  let unresolved = false
+  let generation = 0
+  const subscriptions: Array<() => void> = []
+
+  async function sync(): Promise<void> {
+    if (disposed) {
+      return
+    }
+
+    const currentGeneration = ++generation
+    const authScope = captureAuthScope()
+    const isCurrent = (): boolean => !disposed && currentGeneration === generation && Boolean(authScope?.())
+
+    if (!authScope) {
+      unresolved = false
+      setCompanionLifecycle('unauthed')
+
+      return
+    }
+
+    let complete: boolean | undefined
+    const rest = await authedApi<OnboardingState>({ path: '/api/companion/onboarding/state' })
+
+    if (!isCurrent()) {
+      return
+    }
+
+    if (rest.ok) {
+      complete = rest.value?.complete
+    } else if (rest.reason === 'unauth') {
+      return
+    } else {
+      log.warn('account-lifecycle', 'onboarding state REST failed', rest.error)
+
+      try {
+        const state = await requestGateway<OnboardingState>('onboarding.get_state', {})
+
+        if (!isCurrent()) {
+          return
+        }
+
+        complete = state?.complete
+      } catch (error) {
+        if (!isCurrent()) {
+          return
+        }
+
+        log.warn('account-lifecycle', 'onboarding state gateway failed', error)
+      }
+    }
+
+    // 查询失败保留已展示状态，网关连通后重查。
+    unresolved = typeof complete !== 'boolean'
+
+    if (!unresolved) {
+      setCompanionLifecycle(complete ? 'ready' : 'onboarding')
+    }
+  }
+
+  function start(): void {
+    if (started || disposed) {
+      return
+    }
+
+    started = true
+    const events = desktopEvents()
+    subscriptions.push(
+      $gatewayState.listen(state => {
+        if (state === 'open' && unresolved) {
+          void sync()
+        }
+      }),
+      events.onAuthChanged(payload => {
+        if (disposed) {
+          return
+        }
+
+        generation += 1
+        void applyAuthBroadcast(payload).finally(() => {
+          void sync()
+        })
+      }),
+      events.onSessionExpired(sessionId => {
+        if (!disposed) {
+          void expireSession(sessionId)
+        }
+      })
+    )
+    void hydrateAuth().finally(() => {
+      void sync()
+    })
+  }
+
+  return {
+    start,
+    dispose: () => {
+      disposed = true
+      generation += 1
+      subscriptions.splice(0).forEach(stop => stop())
+    }
+  }
+}

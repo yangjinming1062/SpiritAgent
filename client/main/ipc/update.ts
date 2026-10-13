@@ -5,9 +5,10 @@ import electronUpdaterPkg from 'electron-updater'
 import type { ProgressInfo } from 'electron-updater'
 
 import { type DesktopUpdateEvent, type DesktopUpdateInfo, type DesktopUpdatePhase, IPC } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import * as store from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows, createSerialQueue, errorMessage } from '../shared/utils'
+import { broadcastToAllWindows, createSerialQueue } from '../shared/utils'
 
 // 更新源来自激活时保存的后端地址；设置页把该文案拼在对应阶段的失败提示之后。
 const FEED_UNAVAILABLE_MESSAGE = { en: 'activation required', zh: '请先激活' } as const

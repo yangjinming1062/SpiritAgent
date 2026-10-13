@@ -1,3 +1,5 @@
+import { desktopFilePaths } from '@/shared/platform/desktop'
+
 /** 从拖拽或剪贴板 FileList/File[] 解析真实文件系统路径（Electron webUtils）；仅保留有效路径条目，避免把无法解析的 blob/dataURL 注入路径管道。白名单由 preload 的 getPathForFile 内部完成。 */
 export function resolveDroppedFiles(fileList: FileList | File[] | null | undefined): string[] {
   const files = Array.from(fileList ?? [])
@@ -6,7 +8,7 @@ export function resolveDroppedFiles(fileList: FileList | File[] | null | undefin
     return []
   }
 
-  const webUtils = window.spiritagentWebUtils
+  const webUtils = desktopFilePaths()
 
   if (!webUtils) {
     return []

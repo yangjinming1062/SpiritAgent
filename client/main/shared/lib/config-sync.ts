@@ -1,7 +1,7 @@
 import { type DesktopPrefsHydrated, normalizeUiTheme, type SpiritAgentUiTheme } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import type { BackendClientPort, BackendConnection } from '../backend-port'
-import { errorMessage } from '../utils'
 
 import * as store from './runner-config-store'
 

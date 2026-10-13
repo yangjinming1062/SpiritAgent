@@ -79,7 +79,7 @@ function main() {
   }
 
   console.log(
-    '✓ assert-dist-built: six HTML entries and their local JS, stylesheet and modulepreload resources are complete'
+    '✓ assert-dist-built: renderer HTML entries and their local JS, stylesheet and modulepreload resources are complete'
   )
 }
 

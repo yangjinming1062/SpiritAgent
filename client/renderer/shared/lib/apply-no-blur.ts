@@ -1,8 +1,8 @@
-// no-blur 降级管理：OS 减透明、集显探测、用户手动开关与帧预算自动降级汇成一个 html class，任一来源命中即降级。自动降级在来源消失后恢复，手动开关始终生效；前两个启动时一次性判定，帧预算由 glass-budget 监视器运行期驱动。
-
 import { atom } from 'nanostores'
 
+// no-blur 降级管理：OS 减透明、集显探测、用户手动开关与帧预算自动降级汇成一个 html class，任一来源命中即降级。自动降级在来源消失后恢复，手动开关始终生效；前两个启动时一次性判定，帧预算由 glass-budget 监视器运行期驱动。
 import { definePersistedBoolean } from '@/shared/lib/storage'
+import { preferencesApi } from '@/shared/platform/desktop'
 
 const BUDGET_FRAME_MS = 1000 / 45
 const DEGRADE_WINDOW_MS = 2000
@@ -51,7 +51,7 @@ export function applyNoBlurIfNeeded(): void {
 
 export function setManualReduceTransparency(value: boolean): void {
   hydrateManualReduceTransparency(value)
-  window.spiritagent?.prefs?.set({ key: 'companion.reduce_transparency', value })
+  preferencesApi()?.prefs?.set({ key: 'companion.reduce_transparency', value })
 }
 
 /** 水合与跨窗口回声只更新缓存，不重复上传或在登出清理时写入旧用户偏好。 */

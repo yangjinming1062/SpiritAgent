@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { fileApi } from '@/shared/platform/desktop'
+
 type ClipboardStatus = 'idle' | 'copied' | 'failed'
 
 export function useClipboard(): { status: ClipboardStatus; copy: (text: string) => Promise<void> } {
@@ -37,8 +39,8 @@ export function useClipboard(): { status: ClipboardStatus; copy: (text: string) 
     const requestVersion = ++version.current
 
     try {
-      if (window.spiritagent?.writeClipboard) {
-        await window.spiritagent.writeClipboard(text)
+      if (fileApi()?.writeClipboard) {
+        await fileApi().writeClipboard(text)
       } else {
         await navigator.clipboard.writeText(text)
       }

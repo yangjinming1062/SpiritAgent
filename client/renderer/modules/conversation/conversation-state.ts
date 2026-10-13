@@ -8,7 +8,7 @@ import {
   storedString
 } from '@/shared/lib/storage'
 
-import type { ChatUndoDraft, PendingExternalAttachment, ProactiveBubbleState } from './chat-runtime'
+import type { ChatUndoDraft, PendingExternalAttachment, ProactiveBubbleState } from './chat-runtime-types'
 
 export const CHAT_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.chatSessionId')
 const COMPANION_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.companionSessionId')

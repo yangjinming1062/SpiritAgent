@@ -3,9 +3,9 @@ import path from 'node:path'
 
 import type { App, BrowserWindow } from 'electron'
 
-import { clamp } from '@runtime'
+import { clamp, errorMessage } from '@runtime'
 
-import { errorMessage, safeReadJson } from '../shared/utils'
+import { safeReadJson } from '../shared/utils'
 
 // 缩放级别本地持久化：BrowserWindow 的 setZoomLevel 不跨重启，落盘 desktop-zoom.json 以还原。
 const ZOOM_FILE = 'desktop-zoom.json'

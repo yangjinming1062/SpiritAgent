@@ -1,8 +1,9 @@
 import { atom } from 'nanostores'
 
-import { errorMessage } from '@/shared/lib/ipc-error'
 import { setStorageAccount } from '@/shared/lib/storage'
+import { accountApi } from '@/shared/platform/desktop'
 import type { DesktopActivatePayload, DesktopAuthBroadcast, DesktopAuthSnapshot } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import { tearDownPrimaryGateway } from './gateway'
 
@@ -23,7 +24,7 @@ function isExpiredSnapshot(snapshot: DesktopAuthSnapshot | null | undefined): bo
 
 export async function hydrateAuth(): Promise<void> {
   try {
-    const snapshot = await window.spiritagent.getSession()
+    const snapshot = await accountApi().getSession()
 
     if ($auth.get().kind !== 'pending') {
       return
@@ -76,13 +77,13 @@ export async function applyAuthBroadcast(payload: DesktopAuthBroadcast): Promise
 }
 
 export async function activate(payload: DesktopActivatePayload): Promise<void> {
-  await window.spiritagent.activate(payload)
+  await accountApi().activate(payload)
 }
 
 export async function refreshSession(): Promise<void> {
-  await window.spiritagent.refreshSession()
+  await accountApi().refreshSession()
 }
 
 export async function expireSession(sessionId: string): Promise<void> {
-  await window.spiritagent.logout({ expectedSessionId: sessionId, reason: 'expired' })
+  await accountApi().logout({ expectedSessionId: sessionId, reason: 'expired' })
 }

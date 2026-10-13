@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import type { App } from 'electron'
 
-import { errorMessage } from '../shared/utils'
+import { errorMessage } from '@runtime'
 
 const RUNNER_STOP_TIMEOUT_MS = 3000
 

@@ -8,6 +8,7 @@ import { authedApi } from '@/shared/lib/authed-api'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import { backendApi } from '@/shared/platform/desktop'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
@@ -179,7 +180,7 @@ export function FullbodyReferencePanel({
   }
 
   const fetchSelfSourcePrompt = async (): Promise<string> => {
-    const res = await window.spiritagent.api<{ prompt: string }>({
+    const res = await backendApi().api<{ prompt: string }>({
       path: `/api/companion/avatar/${avatarId}/fullbody/reference/prompt`,
       method: 'POST',
       body: { feedback: feedback.trim() || undefined }

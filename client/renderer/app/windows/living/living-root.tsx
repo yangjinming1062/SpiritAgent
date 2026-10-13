@@ -5,26 +5,27 @@ import type React from 'react'
 import { PresentationModeButton } from '@/app/components/presentation-mode-switch'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
-import { LivingRail } from '@/app/features/living/living-rail'
-import { LivingStage } from '@/app/features/living/living-stage'
-import { $livingView } from '@/app/features/living/living-store'
-import styles from '@/app/features/living/living.module.css'
-import { SceneBackdrop } from '@/app/features/living/scene-backdrop'
+import { SceneBackdrop } from '@/app/features/scene/scene-backdrop'
+import { $livingView } from '@/app/navigation/living-navigation'
+import { LivingRail } from '@/app/windows/living/living-rail'
+import { LivingStage } from '@/app/windows/living/living-stage'
+import styles from '@/app/windows/living/living.module.css'
 import { SpriteStatusBadge } from '@/modules/character'
+import { hydrateDiaryUnread } from '@/modules/diary'
 import { MediaViewerOverlay } from '@/modules/media'
-import { hydrateDiaryUnread } from '@/modules/memory'
 import { hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared'
 import { ArrowRight, Home } from '@/shared/lib/icons'
 import { WindowControls } from '@/shared/panel'
+import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $surfaceOpenVisible, $surfaceScreenLocked, requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 export function LivingRoot(): React.JSX.Element {
-  useWindowMouseCapture(1, { setIgnoreMouseEvents: window.spiritagent?.surface?.setIgnoreMouseEvents })
+  useWindowMouseCapture(1, { setIgnoreMouseEvents: shellApi()?.surface?.setIgnoreMouseEvents })
   const shellRef = useRef<HTMLDivElement>(null)
   useInteractiveRegion('living-shell', shellRef, undefined, undefined, 1)
   const auth = useStore($auth)
@@ -112,7 +113,7 @@ export function LivingRoot(): React.JSX.Element {
           <header
             className={styles.titlebar}
             onDoubleClick={() => {
-              void window.spiritagent?.surface?.maximize?.()
+              void shellApi()?.surface?.maximize?.()
             }}
           >
             <div className={styles.titleArea}>

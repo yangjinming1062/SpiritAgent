@@ -24,7 +24,7 @@ import {
   setCompanionVoiceId,
   startActivityMonitor
 } from '@/modules/character'
-import { MediaStage } from '@/modules/character/rendering/video'
+import { MediaStage } from '@/modules/character/rendering'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack, requestGateway } from '@/shared'
@@ -32,6 +32,7 @@ import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener
 import { useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 import { ConfirmHost } from '@/shared/panel'
+import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { notify } from '@/shared/store/notifications'
@@ -123,7 +124,9 @@ export function SpriteWindow(): React.JSX.Element {
 
     const stopActivity = startActivityMonitor()
 
-    void window.spiritagent.presentation.hostReady().catch(error => log.warn('desktop', error))
+    void shellApi()
+      .presentation.hostReady()
+      .catch(error => log.warn('desktop', error))
 
     void hydrateActionCatalog()
     void hydrateVideoPack()

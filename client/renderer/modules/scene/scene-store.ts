@@ -5,6 +5,7 @@ import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { trimOldest } from '@/shared/lib/trim-oldest'
+import { backendApi } from '@/shared/platform/desktop'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
@@ -118,7 +119,7 @@ async function resolveSceneUrl(row: SceneWire): Promise<string> {
     const epoch = currentClearEpoch()
 
     const request = (async (): Promise<string | null> => {
-      const dataUrl = await window.spiritagent?.apiAsset({ url, preferCache: true })
+      const dataUrl = await backendApi()?.apiAsset({ url, preferCache: true })
 
       if (dataUrl && epoch === currentClearEpoch()) {
         sceneSrcCache.set(key, dataUrl)

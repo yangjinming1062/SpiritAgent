@@ -1,7 +1,8 @@
+import { backendApi } from '@/shared/platform/desktop'
 import type { SpiritAgentConfigResponse } from '@protocol'
 
 export async function getSpiritAgentConfig(): Promise<SpiritAgentConfigResponse> {
-  const { config } = await window.spiritagent.api<{ config: SpiritAgentConfigResponse }>({ path: '/api/config' })
+  const { config } = await backendApi().api<{ config: SpiritAgentConfigResponse }>({ path: '/api/config' })
 
   return config
 }
@@ -9,7 +10,7 @@ export async function getSpiritAgentConfig(): Promise<SpiritAgentConfigResponse>
 export async function saveSpiritAgentConfig(
   config: SpiritAgentConfigResponse
 ): Promise<{ config: SpiritAgentConfigResponse }> {
-  const response = await window.spiritagent.api<{ config: SpiritAgentConfigResponse }>({
+  const response = await backendApi().api<{ config: SpiritAgentConfigResponse }>({
     body: { config },
     method: 'PUT',
     path: '/api/config'

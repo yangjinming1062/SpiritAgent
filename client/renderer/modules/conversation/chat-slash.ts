@@ -3,14 +3,14 @@ import {
   SpiritAgentRpcError,
   SpiritAgentRpcErrorCode
 } from '@/shared/lib/gateway-protocol'
-import { errorMessage } from '@/shared/lib/ipc-error'
 import type { SlashCommandMeta } from '@/shared/lib/slash-commands'
 import { confirmAction } from '@/shared/panel'
 import { getStrings } from '@/shared/strings'
 import type { SessionMessage } from '@protocol'
+import { errorMessage } from '@runtime'
 
 import type { ConversationRuntime } from './chat-runtime'
-import { activeConversationRuntime, type PendingAttachment } from './chat-store'
+import type { PendingAttachment } from './chat-runtime-types'
 import { rememberFullHistory } from './session-history-cache'
 import { ensureChatSession } from './session-list-store'
 import { removeVoicePlayback } from './voice-playback'
@@ -65,14 +65,13 @@ async function executeSlashCommand(
   cmd: SlashCommandMeta,
   args: string[],
   opts: {
-    runtime?: ConversationRuntime
+    runtime: ConversationRuntime
     onFinish?: () => void
     onStart?: () => void
     requestGateway: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>
   }
 ): Promise<void> {
-  const { requestGateway, onStart, onFinish } = opts
-  const runtime = opts.runtime ?? activeConversationRuntime()
+  const { requestGateway, onStart, onFinish, runtime } = opts
   const { $chatSessionId, hydrateChatMessages, markAssistantTerminal, pushStatusPill } = runtime
 
   if (cmd.requiresConfirmation) {

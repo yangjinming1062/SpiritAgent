@@ -3,21 +3,21 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
+import { AboutPage } from '@/app/features/settings/about-page'
+import { InteractionPage } from '@/app/features/settings/interaction-page'
+import { PersonaPage } from '@/app/features/settings/persona-page'
+import { ShortcutsPage } from '@/app/features/settings/shortcuts-page'
+import { InferencePage } from '@/app/features/settings/station/inference-page'
+import { RunnerPage } from '@/app/features/settings/station/runner-page'
+import { SkillsToolsTabs } from '@/app/features/settings/station/skills-tools-tabs'
+import { ThemePage } from '@/app/features/settings/theme-page'
+import { VoicePage } from '@/app/features/settings/voice-page'
 import {
   $livingSettingsSection,
   LIVING_SETTINGS_SECTIONS,
   type LivingSettingsSection,
   setLivingSettingsSection
-} from '@/app/features/living/living-store'
-import { AboutPage } from '@/app/features/living/settings/about-page'
-import { InteractionPage } from '@/app/features/living/settings/interaction-page'
-import { PersonaPage } from '@/app/features/living/settings/persona-page'
-import { ShortcutsPage } from '@/app/features/living/settings/shortcuts-page'
-import { ThemePage } from '@/app/features/living/settings/theme-page'
-import { VoicePage } from '@/app/features/living/settings/voice-page'
-import { InferencePage } from '@/app/features/workbench/station/inference-page'
-import { RunnerPage } from '@/app/features/workbench/station/runner-page'
-import { SkillsToolsTabs } from '@/app/features/workbench/station/skills-tools-tabs'
+} from '@/app/navigation/living-navigation'
 import { PAGE_INSET_X } from '@/shared/layout/page-inset'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { normalizeHashPath } from '@/shared/lib/hash-route'

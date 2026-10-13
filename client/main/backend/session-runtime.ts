@@ -1,8 +1,9 @@
 import type { SafeStorage } from 'electron'
 
+import { errorMessage } from '@runtime'
+
 import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { buildClientContext } from '../shared/client-context'
-import { errorMessage } from '../shared/utils'
 
 export interface SessionRuntime {
   buildClientContext: () => ReturnType<typeof buildClientContext>

@@ -1,10 +1,10 @@
 import type { Net } from 'electron'
 
-import { sleep } from '@runtime'
+import { errorMessage, sleep } from '@runtime'
 
 import { resolvePathTimeoutMs, resolveTimeoutMs } from '../security/hardening'
 import { resolveNormalizedBackendUrl } from '../shared/config'
-import { errorMessage, httpErrorFromResponse } from '../shared/utils'
+import { httpErrorFromResponse } from '../shared/utils'
 
 interface BackendHttpOptions {
   electronNet: Net

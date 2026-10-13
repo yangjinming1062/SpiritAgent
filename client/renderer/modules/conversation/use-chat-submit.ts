@@ -4,17 +4,18 @@ import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef } fr
 import { requestGateway } from '@/shared'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
-import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { confirmAction } from '@/shared/panel'
+import { fileApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $gateway } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { ChatAttachment } from '@protocol'
 import type { PromptSubmissionResult } from '@protocol'
+import { errorMessage } from '@runtime'
 
 import { basename } from './chat-path'
 import type { ConversationRuntime } from './chat-runtime'
@@ -315,7 +316,7 @@ export function useChatSubmit({
 
         if (!dataUrl) {
           try {
-            dataUrl = await window.spiritagent.readImageForAttach(currentPending.value)
+            dataUrl = await fileApi().readImageForAttach(currentPending.value)
           } catch (err) {
             log.warn('use-chat-submit', 'readImageForAttach failed', err)
             /* 降级路径模式 */

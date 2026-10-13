@@ -1,11 +1,8 @@
+import { errorMessage } from '@runtime'
+
 import { safeJsonParse } from './safe-json'
 
 const IPC_ENVELOPE_RE = /Error invoking remote method '[^']+': (?:Error|HttpError): ([\s\S]+)$/
-
-/** Error 取 message，其余取 fallback；未给 fallback 时转字符串。 */
-export function errorMessage(error: unknown, fallback?: string): string {
-  return error instanceof Error ? error.message : (fallback ?? String(error))
-}
 
 export function unwrapIpcErrorMessage(error: unknown): string {
   const raw = errorMessage(error)

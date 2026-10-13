@@ -7,3 +7,7 @@ export function sleep(ms: number): Promise<void> {
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
+
+export function errorMessage(error: unknown, fallback?: string): string {
+  return error instanceof Error ? error.message : (fallback ?? String(error))
+}

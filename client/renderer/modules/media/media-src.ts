@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { trimOldest } from '@/shared/lib/trim-oldest'
+import { backendApi, fileApi } from '@/shared/platform/desktop'
 import type { ChatMediaItem } from '@protocol'
 
 // 图片结果与在途读取分别缓存，淘汰旧图片不影响仍在等待的消费者。
@@ -52,8 +53,8 @@ function resolveImageSrc(url: string): string | Promise<string | null> {
 
   const load = (async () => {
     const dataUrl = await (LOCAL_PATH_RE.test(url) && !url.startsWith('/api/')
-      ? window.spiritagent.readFileDataUrl(url)
-      : window.spiritagent.apiAsset({ url, preferCache: true }))
+      ? fileApi().readFileDataUrl(url)
+      : backendApi().apiAsset({ url, preferCache: true }))
 
     if (epoch !== currentClearEpoch()) {
       return null
@@ -109,7 +110,7 @@ export function useResolvedMediaSrc(item: ChatMediaItem): MediaSrcState {
 
           setResolved({ url: item.url, type: item.type, state: { status: 'ready', src: dataUrl } })
         } else {
-          const buf = await window.spiritagent.apiAssetBuffer({ url: item.url, preferCache: true })
+          const buf = await backendApi().apiAssetBuffer({ url: item.url, preferCache: true })
 
           if (!isCurrent()) {
             return

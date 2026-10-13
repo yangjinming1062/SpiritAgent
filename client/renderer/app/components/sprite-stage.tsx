@@ -26,11 +26,12 @@ import {
   updateDragPosition,
   useSpriteBodyGesture
 } from '@/modules/character'
-import { useMediaPixelHitTest } from '@/modules/character/rendering/video'
+import { useMediaPixelHitTest } from '@/modules/character/rendering'
 import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
+import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
 import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
@@ -218,8 +219,8 @@ export function SpriteStage({
     displayProbePendingRef.current = true
     const generation = gestureGenerationRef.current
 
-    void window.spiritagent.sprite
-      .moveToCursorDisplay()
+    void shellApi()
+      .sprite.moveToCursorDisplay()
       .then(switched => {
         if (!switched || generation !== gestureGenerationRef.current) {
           return
@@ -267,7 +268,7 @@ export function SpriteStage({
         if (!dragging) {
           const next = $spatialPos.get()
           $homePosition.set(next)
-          void window.spiritagent.sprite.setPosition(next)
+          void shellApi().sprite.setPosition(next)
         }
       })
       .catch(error => console.warn('Sprite display switch failed', error))
@@ -300,8 +301,8 @@ export function SpriteStage({
     }
 
     // 跨窗：生活空间是独立 BrowserWindow，atom 互不可见，经主进程信箱转交；失败时提示重新拖入仍打开生活空间。
-    void window.spiritagent.chat
-      .setPendingFeed(paths)
+    void shellApi()
+      .chat.setPendingFeed(paths)
       .catch((error: unknown) => {
         log.warn('sprite-stage', 'Dropped files handoff failed', error)
         notifyError(error, getStrings().chat.filesHandoffFailed)

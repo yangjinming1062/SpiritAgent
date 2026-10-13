@@ -1,5 +1,6 @@
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { backendApi, fileApi } from '@/shared/platform/desktop'
 import { getStrings } from '@/shared/strings'
 
 export interface PickedImage {
@@ -25,7 +26,7 @@ export function parseImageDataUrl(dataUrl: string): PickedImage | null {
 /** `null` when the user cancels or the file is unreadable; `error` is user-facing copy. */
 export async function pickAvatarImage(title: string): Promise<{ image: PickedImage } | { error: string } | null> {
   try {
-    const [path] = await window.spiritagent.selectPaths({
+    const [path] = await fileApi().selectPaths({
       title,
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]
     })
@@ -34,7 +35,7 @@ export async function pickAvatarImage(title: string): Promise<{ image: PickedIma
       return null
     }
 
-    const image = parseImageDataUrl(await window.spiritagent.readFileDataUrl(path))
+    const image = parseImageDataUrl(await fileApi().readFileDataUrl(path))
 
     if (!image) {
       return null
@@ -58,7 +59,7 @@ export async function resolvePortraitUrl(
   }
 
   try {
-    return await window.spiritagent.apiAsset({
+    return await backendApi().apiAsset({
       cacheOnly: options?.cacheOnly,
       preferCache: options?.preferCache,
       url: assetUrl

@@ -4,9 +4,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { sleep } from '@runtime'
+import { errorMessage, sleep } from '@runtime'
 
-import { atomicWriteFile, createSerialQueue, errorMessage, RunnerNotConnectedError } from '../shared/utils'
+import { atomicWriteFile, createSerialQueue, RunnerNotConnectedError } from '../shared/utils'
 
 import type { RunnerProcess, RunnerProcessState } from './process'
 import type {

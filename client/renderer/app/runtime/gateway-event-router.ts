@@ -6,7 +6,7 @@ import {
   onSessionListChanged
 } from '@/modules/conversation'
 import { handleDesktopVideoEvent, notifyDesktopVideoContextChanged } from '@/modules/desktop-videos'
-import { onJournalEvent } from '@/modules/memory'
+import { onJournalEvent } from '@/modules/diary'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'

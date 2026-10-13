@@ -3,6 +3,7 @@ import { atom, computed } from 'nanostores'
 import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 import { $gateway, type SpiritAgentGatewayLike } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
@@ -15,7 +16,8 @@ import type {
   UndoResponse
 } from '@protocol'
 
-import type { ConversationHistorySync, ConversationRuntime } from './chat-runtime'
+import type { ConversationRuntime } from './chat-runtime'
+import type { ConversationHistorySync } from './chat-runtime-types'
 import {
   $chatDraftFromUndo,
   $chatSessionId,
@@ -23,10 +25,6 @@ import {
   conversationRuntimes,
   findConversationRuntime,
   getConversationRuntime,
-  hydrateChatMessages,
-  hydrateSessionSettings,
-  resetChatMessages,
-  resetSessionContextUsage,
   retainConversationRuntime,
   setChatSession,
   setCompanionSessionId
@@ -140,7 +138,7 @@ export async function fetchSessions(): Promise<void> {
   $sessionsLoading.set(true)
 
   try {
-    const res = await window.spiritagent.api<{ sessions: SessionInfo[] }>({
+    const res = await backendApi().api<{ sessions: SessionInfo[] }>({
       path: `/api/sessions?order=${$sessionSort.get()}`
     })
 
@@ -170,7 +168,7 @@ export async function fetchArchived(): Promise<void> {
   $archivedLoading.set(true)
 
   try {
-    const res = await window.spiritagent.api<{ sessions: SessionInfo[] }>({
+    const res = await backendApi().api<{ sessions: SessionInfo[] }>({
       path: '/api/sessions?archived=only&limit=100'
     })
 
@@ -201,7 +199,7 @@ export async function runSessionSearch(query: string): Promise<void> {
   $searchLoading.set(true)
 
   try {
-    const res = await window.spiritagent.api<{ sessions: SessionInfo[] }>({
+    const res = await backendApi().api<{ sessions: SessionInfo[] }>({
       path: `/api/sessions/search?q=${encodeURIComponent(q)}&archived=include`
     })
 
@@ -220,7 +218,7 @@ export async function runSessionSearch(query: string): Promise<void> {
 type SessionPatchBody = { archived?: boolean; pinned?: boolean; title?: string }
 
 async function patchSessionOrThrow(sessionId: string, body: SessionPatchBody): Promise<void> {
-  await window.spiritagent.api({ body, method: 'PATCH', path: `/api/sessions/${sessionId}` })
+  await backendApi().api({ body, method: 'PATCH', path: `/api/sessions/${sessionId}` })
 }
 
 async function patchSession(sessionId: string, body: SessionPatchBody): Promise<boolean> {
@@ -385,13 +383,14 @@ export async function createNewSession(systemPresetId: string): Promise<string |
 
     if (token === navigationToken) {
       setChatSession(res.session_id)
-      resetChatMessages()
+      const runtime = getConversationRuntime(res.session_id)
+      runtime.resetChatMessages()
 
       if (res.info) {
-        hydrateSessionSettings(res.info)
+        runtime.hydrateSessionSettings(res.info)
       }
 
-      resetSessionContextUsage(res.info?.context_window)
+      runtime.resetSessionContextUsage(res.info?.context_window)
     }
 
     void fetchSessions()
@@ -505,7 +504,7 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
 
     if (token === navigationToken) {
       setChatSession(res.session_id)
-      hydrateChatMessages(res.messages || [], res.info)
+      getConversationRuntime(res.session_id).hydrateChatMessages(res.messages || [], res.info)
     }
 
     void fetchSessions()
@@ -886,7 +885,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
   const epoch = currentClearEpoch()
 
   try {
-    await window.spiritagent.api({ method: 'DELETE', path: `/api/sessions/${sessionId}` })
+    await backendApi().api({ method: 'DELETE', path: `/api/sessions/${sessionId}` })
   } catch (err) {
     log.error('session-list', 'Failed to delete session:', err)
 

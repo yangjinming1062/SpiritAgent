@@ -1,9 +1,12 @@
 import { type DependencyList, useEffect } from 'react'
 
-// 预加载桥顶层的主进程事件订阅：on…成员接收回调并返回退订函数。
-type ListenerName = Extract<keyof Window['spiritagent'], `on${string}`>
+import { desktopEvents } from '@/shared/platform/desktop'
+import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
-type ListenerCallback<K extends ListenerName> = Parameters<Window['spiritagent'][K]>[0]
+// 预加载桥顶层的主进程事件订阅：on…成员接收回调并返回退订函数。
+type ListenerName = Extract<keyof DesktopBridge, `on${string}`>
+
+type ListenerCallback<K extends ListenerName> = Parameters<DesktopBridge[K]>[0]
 
 type ListenerSubscriptions = { [K in ListenerName]: (callback: ListenerCallback<K>) => () => void }
 
@@ -15,7 +18,7 @@ export function useMainProcessListener<K extends ListenerName>(
   deps: DependencyList
 ): void {
   useEffect(() => {
-    const subscriptions: ListenerSubscriptions | undefined = window.spiritagent
+    const subscriptions: ListenerSubscriptions | undefined = desktopEvents()
     const off = subscriptions?.[name]?.(fn)
 
     return () => {

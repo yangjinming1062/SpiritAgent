@@ -1,3 +1,4 @@
+import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import type { SpiritAgentApiRequest } from '@ipc/contracts'
 import type { RemoteDevice, RemotePairing } from '@protocol'
@@ -9,7 +10,7 @@ function remoteApi<T>(request: SpiritAgentApiRequest): Promise<T> {
     return Promise.reject(new Error('Account is not signed in'))
   }
 
-  return window.spiritagent.api<T>({ ...request, authSessionId: auth.snapshot.sessionId })
+  return backendApi().api<T>({ ...request, authSessionId: auth.snapshot.sessionId })
 }
 
 export function createRemotePairing(): Promise<RemotePairing> {

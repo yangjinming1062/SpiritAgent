@@ -5,15 +5,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { Check, FolderOpen, Monitor, RefreshCw, Search, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { shellApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
+import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
 import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
-type Catalog = Awaited<ReturnType<typeof window.spiritagent.dock.catalog>>
+type Catalog = Awaited<ReturnType<DesktopBridge['dock']['catalog']>>
 type CatalogItem = Catalog['items'][number]
-type DockState = Awaited<ReturnType<typeof window.spiritagent.dock.getState>>
+type DockState = Awaited<ReturnType<DesktopBridge['dock']['getState']>>
 
 /** 面板一次最多为前 60 条结果取图标；图标陆续到位后自动续取下一批。 */
 const ICON_BATCH = 60
@@ -88,8 +90,8 @@ export function DesktopDockPicker({
     let disposed = false
     const isLive = beginAsync()
 
-    void window.spiritagent.dock
-      .catalog()
+    void shellApi()
+      .dock.catalog()
       .then(next => {
         if (!disposed && isLive()) {
           setCatalog(next)
@@ -124,8 +126,8 @@ export function DesktopDockPicker({
     const isLive = beginAsync()
 
     const timer = window.setTimeout(() => {
-      void window.spiritagent.dock
-        .catalogIcons(pending.map(item => item.id))
+      void shellApi()
+        .dock.catalogIcons(pending.map(item => item.id))
         .then(next => {
           if (!disposed && isLive()) {
             setIcons(current => ({ ...current, ...next }))
@@ -187,8 +189,8 @@ export function DesktopDockPicker({
     void run(
       () =>
         mode.kind === 'add'
-          ? window.spiritagent.dock.addFromCatalog([item.id])
-          : window.spiritagent.dock.repairWithCatalog(mode.entryId, item.id),
+          ? shellApi().dock.addFromCatalog([item.id])
+          : shellApi().dock.repairWithCatalog(mode.entryId, item.id),
       () => mode.kind === 'repair'
     )
   }
@@ -201,7 +203,7 @@ export function DesktopDockPicker({
       setFailed(false)
 
       try {
-        setCatalog(await window.spiritagent.dock.catalog(true))
+        setCatalog(await shellApi().dock.catalog(true))
         setFailed(false)
       } catch (error) {
         setFailed(true)
@@ -219,8 +221,8 @@ export function DesktopDockPicker({
 
         try {
           return await (mode.kind === 'add'
-            ? window.spiritagent.dock.addFromFiles()
-            : window.spiritagent.dock.repairWithFiles(mode.entryId))
+            ? shellApi().dock.addFromFiles()
+            : shellApi().dock.repairWithFiles(mode.entryId))
         } finally {
           browsingRef.current = false
         }

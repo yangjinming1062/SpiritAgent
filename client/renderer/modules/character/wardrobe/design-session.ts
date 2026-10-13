@@ -4,6 +4,7 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { backendDetailMessage, ipcErrorStatus, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
@@ -215,7 +216,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
 
     try {
       // 确认只把草稿立绘转正为参考图，不触发生成、不自动穿着（PIPELINE「用户自备图」）。
-      await window.spiritagent.api({
+      await backendApi().api({
         path: `/api/companion/outfits/${draft.id}/confirm`,
         method: 'POST',
         body: {}
@@ -303,7 +304,7 @@ async function runCreate(
   description: string,
   image: PickedImage | null
 ): Promise<{ id?: number; fullbody_url?: string }> {
-  return window.spiritagent.api<{ id?: number; fullbody_url?: string }>({
+  return backendApi().api<{ id?: number; fullbody_url?: string }>({
     path: '/api/companion/outfits',
     method: 'POST',
     body: {
@@ -319,7 +320,7 @@ async function runRegenerate(
   feedback: string,
   mode: ImageReviseMode
 ): Promise<{ id?: number; fullbody_url?: string }> {
-  return window.spiritagent.api<{ id?: number; fullbody_url?: string }>({
+  return backendApi().api<{ id?: number; fullbody_url?: string }>({
     path: `/api/companion/outfits/${id}/regenerate`,
     method: 'POST',
     body: { feedback: feedback || undefined, mode }

@@ -1,5 +1,6 @@
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import type { SessionHistorySnapshot } from '@ipc/contracts'
 import type { SessionMessage, SessionResumeResponse, SessionRuntimeInfo } from '@protocol'
@@ -90,7 +91,7 @@ export async function loadLocalSessionHistory(sessionId: string): Promise<null |
   }
 
   try {
-    const snap = await window.spiritagent.sessionHistory.get(sessionId, authSessionId)
+    const snap = await backendApi().sessionHistory.get(sessionId, authSessionId)
 
     if (epoch !== currentClearEpoch() || currentAuthSessionId() !== authSessionId) {
       return null
@@ -326,7 +327,7 @@ async function persistNow(sessionId: string): Promise<void> {
   }
 
   try {
-    await window.spiritagent.sessionHistory.save(sessionId, toSnapshot(state), authSessionId)
+    await backendApi().sessionHistory.save(sessionId, toSnapshot(state), authSessionId)
   } catch (err) {
     log.warn('session-history', 'persist failed:', err)
   }
@@ -346,9 +347,11 @@ function removeSnapshot(sessionId: string, reason: string): void {
   const authSessionId = currentAuthSessionId()
 
   if (authSessionId) {
-    void window.spiritagent.sessionHistory.remove(sessionId, authSessionId).catch(err => {
-      log.warn('session-history', `remove ${reason} history failed:`, err)
-    })
+    void backendApi()
+      .sessionHistory.remove(sessionId, authSessionId)
+      .catch(err => {
+        log.warn('session-history', `remove ${reason} history failed:`, err)
+      })
   }
 }
 

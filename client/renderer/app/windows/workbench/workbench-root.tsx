@@ -1,16 +1,15 @@
-// 工作台根组件：三栏（会话侧栏 256 / 对话 flex / Run Rail 320 可折到 0）+ 顶栏（会话名+工位环境+回生活空间）+ 全屏工位环境设置；工位环境打开时挂载全屏设置并隐藏底层会话区。
-
 import { useStore } from '@nanostores/react'
+// 工作台根组件：三栏（会话侧栏 256 / 对话 flex / Run Rail 320 可折到 0）+ 顶栏（会话名+工位环境+回生活空间）+ 全屏工位环境设置；工位环境打开时挂载全屏设置并隐藏底层会话区。
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { PresentationModeButton } from '@/app/components/presentation-mode-switch'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
-import { RunRail } from '@/app/features/workbench/run-rail'
-import { SessionSidebar } from '@/app/features/workbench/session-sidebar'
-import { StationSettings } from '@/app/features/workbench/station-settings'
-import styles from '@/app/features/workbench/workbench.module.css'
+import { SessionSidebar } from '@/app/features/conversation/session-sidebar'
+import { RunRail } from '@/app/features/execution/run-rail'
+import { StationSettings } from '@/app/features/settings/station-settings'
+import styles from '@/app/windows/workbench/workbench.module.css'
 import { SpriteStatusBadge } from '@/modules/character'
 import {
   $archivedSessions,
@@ -31,6 +30,7 @@ import { normalizeHashPath } from '@/shared/lib/hash-route'
 import { ArrowLeft, Home, SlidersHorizontal, Terminal } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { EmptyState, LoadingBlock, WindowControls } from '@/shared/panel'
+import { shellApi } from '@/shared/platform/desktop'
 import { $gatewayState } from '@/shared/store/gateway'
 import { requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
@@ -48,7 +48,7 @@ function isStationSettingsHash(rawHash: string): boolean {
 }
 
 export function WorkbenchRoot(): React.JSX.Element {
-  useWindowMouseCapture(1, { setIgnoreMouseEvents: window.spiritagent?.surface?.setIgnoreMouseEvents })
+  useWindowMouseCapture(1, { setIgnoreMouseEvents: shellApi()?.surface?.setIgnoreMouseEvents })
   const shellRef = useRef<HTMLDivElement>(null)
   useInteractiveRegion('workbench-shell', shellRef, undefined, undefined, 1)
 
@@ -135,7 +135,7 @@ export function WorkbenchRoot(): React.JSX.Element {
         <header
           className={styles.titlebar}
           onDoubleClick={() => {
-            void window.spiritagent?.surface?.maximize?.()
+            void shellApi()?.surface?.maximize?.()
           }}
         >
           <div className={styles.titleArea}>

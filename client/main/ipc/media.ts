@@ -13,14 +13,14 @@ import {
   type MediaSttPayload,
   type MediaTtsPayload
 } from '@ipc/contracts'
-import { sleep } from '@runtime'
+import { errorMessage, sleep } from '@runtime'
 
 import { speechText } from '../../shared/speech-text'
 import { readUserSelectedFile } from '../security/hardening'
 import type { BackendConnection } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
 import { dataUrlFromBuffer, mimeTypeForPath, parseDataUrl } from '../shared/mime'
-import { errorMessage, httpErrorFromResponse } from '../shared/utils'
+import { httpErrorFromResponse } from '../shared/utils'
 
 import { createBackendCaller, type GetCurrentAuth } from './connection'
 import { createTtsDiskCache } from './tts-disk-cache'

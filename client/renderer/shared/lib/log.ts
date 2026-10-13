@@ -1,7 +1,9 @@
+import { systemApi } from '@/shared/platform/desktop'
+
 type LogLevel = 'error' | 'info' | 'warn'
 
 function emit(level: LogLevel, scope: string, args: unknown[]): void {
-  void window.spiritagent?.log?.({ level, scope, args })
+  void systemApi()?.log?.({ level, scope, args })
 }
 
 export const log = {

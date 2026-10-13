@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { InlineMedia, useResolvedMediaSrc } from '@/modules/media'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
+import { backendApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 import type { ChatMediaItem } from '@protocol'
@@ -53,7 +54,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
   useEffect(() => {
     let mounted = true
     const isLive = beginAsync()
-    void window.spiritagent
+    void backendApi()
       .api<{ status: string; reason: string }>({
         path: `/api/companion/media-reviews/${item.review_id}`,
         method: 'GET'
@@ -89,7 +90,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
     setError('')
 
     try {
-      const result = await window.spiritagent.api<{ status: string }>({
+      const result = await backendApi().api<{ status: string }>({
         path: `/api/companion/media-reviews/${item.review_id}/${decision}`,
         method: 'POST',
         body: {}
@@ -107,7 +108,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
       }
 
       try {
-        const current = await window.spiritagent.api<{ status: string }>({
+        const current = await backendApi().api<{ status: string }>({
           path: `/api/companion/media-reviews/${item.review_id}`,
           method: 'GET'
         })

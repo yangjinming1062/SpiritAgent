@@ -10,6 +10,7 @@ import {
   registerStorageClearHandler,
   storedJson
 } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
@@ -198,7 +199,7 @@ function updateReference(
         $fullbodyReference.set({ ...base, history, busy: true, error: null, errorMessage: null })
       }
 
-      const response = await window.spiritagent.api<ReferenceResponse>({
+      const response = await backendApi().api<ReferenceResponse>({
         path: generate ? `/api/companion/avatar/${avatarId}/fullbody/reference` : '/api/companion/avatar',
         method: generate ? 'POST' : 'GET',
         ...(generate
@@ -228,7 +229,7 @@ function updateReference(
         ? response.image_url
           ? response
           : null
-        : await window.spiritagent.api<ReferenceResponse | null>({
+        : await backendApi().api<ReferenceResponse | null>({
             path: `/api/companion/avatar/${avatarId}/fullbody/candidate`,
             method: 'GET'
           })
@@ -330,7 +331,7 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
   $fullbodyReference.set({ ...current, busy: true, error: null, errorMessage: null })
 
   try {
-    const response = await window.spiritagent.api<ReferenceResponse>({
+    const response = await backendApi().api<ReferenceResponse>({
       path: `/api/companion/avatar/${avatarId}/fullbody/reference/adopt`,
       method: 'POST',
       body: { image: image.base64, content_type: image.contentType }
@@ -433,7 +434,7 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
   $fullbodyReference.set({ ...current, busy: true, errorMessage: null })
 
   try {
-    const response = await window.spiritagent.api<ReferenceResponse>({
+    const response = await backendApi().api<ReferenceResponse>({
       path: `/api/companion/avatar/${avatarId}/fullbody/candidate/${current.candidateId}/accept`,
       method: 'POST',
       body: {}
@@ -492,7 +493,7 @@ export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<
   $fullbodyReference.set({ ...current, busy: true, candidateError: null })
 
   try {
-    const result = await window.spiritagent.api<ReferenceResponse>({
+    const result = await backendApi().api<ReferenceResponse>({
       path: `/api/companion/avatar/${avatarId}/fullbody/candidate/${current.candidateId}/analyze`,
       method: 'POST',
       body: {}

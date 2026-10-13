@@ -10,13 +10,12 @@ import {
   IPC,
   SPRITE_SCALE_LIMITS
 } from '@ipc/contracts'
-import { clamp } from '@runtime'
+import { clamp, errorMessage } from '@runtime'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import {
   atomicWriteFile,
   broadcastToAllWindows,
-  errorMessage,
   hideAndSkipTaskbar,
   isFiniteNumber,
   safeReadJson,

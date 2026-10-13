@@ -3,7 +3,7 @@ import childProcess from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import path from 'node:path'
 
-import { errorMessage } from '../shared/utils'
+import { errorMessage } from '@runtime'
 
 import { resolveVenvPython } from './venv'
 

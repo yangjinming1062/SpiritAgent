@@ -1,4 +1,5 @@
 import { log } from '@/shared/lib/log'
+import { mediaApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { speechText } from '@client-shared/speech-text'
 
@@ -50,7 +51,7 @@ async function synth(
 
   return await playPrepared(
     () =>
-      window.spiritagent.media.tts({
+      mediaApi().media.tts({
         text: spokenText,
         voice: voice ?? presentationPorts().$companionVoiceId.get(),
         context: context ?? null,

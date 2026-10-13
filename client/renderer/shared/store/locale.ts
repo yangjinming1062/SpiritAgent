@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
 import { persistString, storedString } from '@/shared/lib/storage'
+import { preferencesApi } from '@/shared/platform/desktop'
 
 import { type Locale, normalizeLocale } from '../strings/locales'
 
@@ -12,7 +13,7 @@ const initialLocale: Locale = normalizeLocale(storedString(LOCALE_STORAGE_KEY))
 export const $locale = atom<Locale>(initialLocale)
 
 export function initLocaleSync(): () => void {
-  const unsubscribe = window.spiritagent?.onPrefsHydrated?.(payload => {
+  const unsubscribe = preferencesApi()?.onPrefsHydrated?.(payload => {
     const next = normalizeLocale(payload?.language)
 
     if (next !== $locale.get()) {

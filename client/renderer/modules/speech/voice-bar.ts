@@ -1,5 +1,6 @@
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { backendApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $auth } from '@/shared/store/auth'
 import { $whisperOpen } from '@/shared/store/chat-visibility'
@@ -175,7 +176,7 @@ async function playItem(messageId: string, manual: boolean, fromStart = false): 
     }
 
     proj.setFailed(messageId, false)
-    const dataUrl = await window.spiritagent.apiAsset({ url: audio.url, preferCache: true })
+    const dataUrl = await backendApi().apiAsset({ url: audio.url, preferCache: true })
 
     if (!valid()) {
       return

@@ -1,8 +1,9 @@
-import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
+import { fileApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { SpiritAgentSelectPathsOptions } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import { basename } from './chat-path'
 import type { ConversationRuntime } from './chat-runtime'
@@ -50,7 +51,7 @@ async function pickPath(
   apply: (path: string) => Promise<void> | void
 ): Promise<void> {
   try {
-    const [path] = await window.spiritagent.selectPaths(options)
+    const [path] = await fileApi().selectPaths(options)
 
     if (!path) {
       return
@@ -101,7 +102,7 @@ export async function attachVideoFile(
 
   try {
     const sessionId = await ensureChatSession(runtime)
-    const result = await window.spiritagent.uploadVideoForAttach({ path, sessionId })
+    const result = await fileApi().uploadVideoForAttach({ path, sessionId })
 
     setPending(prev =>
       prev === uploading ? { type: 'video', fileName, path, status: 'ready', url: result.url } : prev

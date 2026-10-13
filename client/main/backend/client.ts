@@ -1,7 +1,8 @@
 import { app } from 'electron'
 
+import { errorMessage } from '@runtime'
+
 import { resolvePathTimeoutMs, resolveTimeoutMs } from '../security/hardening'
-import { errorMessage } from '../shared/utils'
 
 interface BackendRequestErrorOptions {
   body?: unknown

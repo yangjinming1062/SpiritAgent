@@ -5,6 +5,7 @@ import { $spriteState, setDesktopCompanionActivity } from '@/modules/character'
 import { $voiceBarPlayingId } from '@/modules/conversation'
 import { $voicePreparing, setDesktopVoicePreparing } from '@/modules/speech'
 import { log } from '@/shared/lib/log'
+import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
@@ -43,13 +44,15 @@ export function useDesktopCompanionActivityPublisher(): void {
       }
 
       published = activity
-      void window.spiritagent.presentation.companionActivity({ ...activity, authSessionId: sessionId }).catch(error => {
-        if (published === activity) {
-          published = undefined
-        }
+      void shellApi()
+        .presentation.companionActivity({ ...activity, authSessionId: sessionId })
+        .catch(error => {
+          if (published === activity) {
+            published = undefined
+          }
 
-        log.warn('desktop-companion', 'activity publish failed', error)
-      })
+          log.warn('desktop-companion', 'activity publish failed', error)
+        })
     }
 
     const stops = [

@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import type { App } from 'electron'
 
-import { errorMessage } from '../shared/utils'
+import { errorMessage } from '@runtime'
 
 /** 与安装器 install-skills 阶段共用的退出标记：存在时不释放随包技能。 */
 const OPT_OUT_MARKER = '.no-bundled-skills'

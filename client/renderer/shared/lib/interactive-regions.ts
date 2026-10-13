@@ -1,6 +1,7 @@
 import { createContext, type RefObject, useContext, useEffect, useRef } from 'react'
 
 import { log } from '@/shared/lib/log'
+import { shellApi } from '@/shared/platform/desktop'
 
 // 当前窗口的鼠标捕获 ID：精灵窗取默认 0，完整入口在渲染根部提供 1，经 Portal 挂载的弹层同样继承。
 export const CaptureWindowIdContext = createContext<number>(0)
@@ -176,7 +177,7 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
 
       const payload = { forward: ignore, ignore }
       const customFn = setIgnoreFnRef.current
-      const request = customFn ? customFn(payload) : window.spiritagent?.sprite?.setIgnoreMouseEvents?.(payload)
+      const request = customFn ? customFn(payload) : shellApi()?.sprite?.setIgnoreMouseEvents?.(payload)
 
       if (request === undefined) {
         return

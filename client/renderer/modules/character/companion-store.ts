@@ -8,6 +8,7 @@ import {
   registerStorageClearHandler,
   storedString
 } from '@/shared/lib/storage'
+import { preferencesApi } from '@/shared/platform/desktop'
 import type { SetSpriteStateOptions, SpriteStateName } from '@/shared/presentation-ports'
 import { DESKTOP_COMPANION_ACTIVITY_PRIORITY, type DesktopCompanionActivityState } from '@ipc/contracts'
 
@@ -49,7 +50,7 @@ export function setDisturbanceTier(tier: DisturbanceTier): void {
   userPreferredTierPersisted.set(tier)
 
   try {
-    window.spiritagent?.prefs?.set({ key: 'companion.disturbance_preference', value: tier })
+    preferencesApi()?.prefs?.set({ key: 'companion.disturbance_preference', value: tier })
   } catch (err) {
     log.warn('companion-store', 'Failed to persist disturbance preference', err)
   }
@@ -265,7 +266,7 @@ export function reportUserActivity(): void {
 
 // 生效档位（含活动覆盖与临时安静）经配置管道上云，是后端闸门的唯一档位来源；与用户偏好分键（设备派生不回写偏好），只由精灵窗推送。
 export function pushEffectiveDisturbanceTier(tier: DisturbanceTier): void {
-  window.spiritagent?.prefs?.set({ key: 'companion.disturbance_tier', value: tier })
+  preferencesApi()?.prefs?.set({ key: 'companion.disturbance_tier', value: tier })
 }
 
 function runOnce(key: string, fn: () => Promise<unknown>): Promise<unknown> {

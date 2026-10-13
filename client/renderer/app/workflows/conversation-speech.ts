@@ -26,6 +26,7 @@ import {
   setVoiceSurfaceMounted,
   toggleVoiceBar
 } from '@/modules/speech'
+import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { voicePlaybackKey } from '@ipc/contracts'
@@ -124,7 +125,7 @@ export function bindConversationSpeech(): void {
 
       const auth = $auth.get()
 
-      const result = await window.spiritagent.api<CompanionBubble>({
+      const result = await backendApi().api<CompanionBubble>({
         path: '/api/sessions/messages/' + reference.messageId + '/voice/' + reference.bubbleIndex,
         method: 'POST'
       })

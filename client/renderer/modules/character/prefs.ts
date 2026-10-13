@@ -12,6 +12,7 @@ import {
   storedBoolean,
   storedString
 } from '@/shared/lib/storage'
+import { preferencesApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import type { DesktopPrefsHydrated } from '@ipc/contracts'
 
@@ -27,7 +28,7 @@ const POSTS_ENABLED_STORAGE_KEY = registerCompanionStorageKey('da.companion.post
 
 // localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经 prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
 function reportCloud(key: string, value: unknown): void {
-  window.spiritagent?.prefs?.set({ key, value })
+  preferencesApi()?.prefs?.set({ key, value })
 }
 
 export const $companionVoiceId = atom<string>(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
@@ -177,7 +178,7 @@ export function initCompanionPrefsSync(): () => void {
   // 配置广播可先于鉴权广播到达；等目标账户的本地存储切换完成再应用。
   const unsubscribeAuth = $auth.listen(applyHydrated)
 
-  const unsubscribe = window.spiritagent?.onPrefsHydrated?.(payload => {
+  const unsubscribe = preferencesApi()?.onPrefsHydrated?.(payload => {
     pending = payload
     applyHydrated()
   })

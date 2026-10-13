@@ -1,4 +1,5 @@
 import { log } from '@/shared/lib/log'
+import { systemApi } from '@/shared/platform/desktop'
 import { setUpdateStatus } from '@/shared/store/update'
 import type { DesktopUpdateEvent } from '@ipc/contracts'
 
@@ -28,7 +29,7 @@ const UPDATE_HANDLERS: UpdateHandlerMap = {
 }
 
 export function installUpdateBridge(): () => void {
-  const update = window.spiritagent?.update
+  const update = systemApi()?.update
 
   if (!update) {
     return () => {}

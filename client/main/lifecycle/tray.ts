@@ -10,12 +10,13 @@ import {
 } from 'electron'
 
 import { IPC, type IpcEventChannel, type IpcEventContract, type PresentationMode, type SurfaceId } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import type { BackendSessionPort } from '../shared/backend-port'
 import { confirmAccountRemoval, showAccountRemovalError } from '../shared/lib/account-removal'
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, isWindowShown, sendToWindow } from '../shared/utils'
+import { broadcastToAllWindows, hideAndSkipTaskbar, isWindowShown, sendToWindow } from '../shared/utils'
 
 import type { DesktopPresentation } from './desktop-presentation'
 import type { SurfacesManager } from './surfaces'

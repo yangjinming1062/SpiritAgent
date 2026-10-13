@@ -1,6 +1,6 @@
 import type { BrowserWindow, Menu, PowerMonitor, session } from 'electron'
 
-import { errorMessage } from '../shared/utils'
+import { errorMessage } from '@runtime'
 
 import type { ContextMenuHelpers } from './window-context-menu-helpers'
 import type { ZoomPersistence } from './zoom-persistence'

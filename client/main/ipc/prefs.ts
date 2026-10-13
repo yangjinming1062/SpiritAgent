@@ -1,10 +1,11 @@
 import type { IpcMain } from 'electron'
 
 import { IPC } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as store from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows, errorMessage } from '../shared/utils'
+import { broadcastToAllWindows } from '../shared/utils'
 
 interface PrefsIpcDeps {
   ipcMain: IpcMain

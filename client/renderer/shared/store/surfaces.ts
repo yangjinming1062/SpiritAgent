@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
+import { shellApi } from '@/shared/platform/desktop'
 // 渲染层入口面 store：当前哪个 surface 开着。主进程是状态权威（持有 BrowserWindow 引用与互斥锁），本 store 只是镜像。启动期 hydrateSurfaces 主动拉一次 getState，之后订阅 onChanged 维持一致；requestOpenSurface 先更新本地意图再交给主进程，本地意图用于 UI 立即反馈。
 import type {
   DesktopSurfaceChangedEvent,
@@ -86,7 +87,7 @@ function applySurfaceState(state: DesktopSurfaceChangedEvent): void {
 }
 
 export async function setSurfaceCompanion(preference: SurfaceCompanionPreference): Promise<void> {
-  applySurfaceState(await window.spiritagent.surface.setCompanion(preference))
+  applySurfaceState(await shellApi().surface.setCompanion(preference))
 }
 
 export type OpenSurfaceOptions = Omit<DesktopSurfaceOpenPayload, 'surface'>
@@ -101,23 +102,23 @@ export async function requestOpenSurface(surface: SurfaceId, options: OpenSurfac
   // 乐观回灌：把当前意图同步进 store，让按钮立即按下、UI 跟随。
   $surfaceOpen.set(surface)
 
-  await window.spiritagent?.surface?.open?.(payload)
+  await shellApi()?.surface?.open?.(payload)
 }
 
 export async function requestCloseSurface(): Promise<void> {
-  await window.spiritagent?.surface?.close?.()
+  await shellApi()?.surface?.close?.()
 }
 
 export function hydrateSurfaces(): () => void {
-  if (!window.spiritagent?.surface) {
+  if (!shellApi()?.surface) {
     return () => {}
   }
 
   let disposed = false
-  const stop = window.spiritagent.surface.onChanged(applySurfaceState)
+  const stop = shellApi().surface.onChanged(applySurfaceState)
 
-  void window.spiritagent.surface
-    .getState()
+  void shellApi()
+    .surface.getState()
     .then(state => {
       if (!disposed && state) {
         applySurfaceState(state)

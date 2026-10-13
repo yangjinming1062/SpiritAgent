@@ -2,14 +2,13 @@
 
 import { atom } from 'nanostores'
 
+import type { ActionPackWire } from '@/modules/character'
 import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
-
-import type { ActionPackWire } from '../../actions'
 
 export const $videoPacks = atom<ActionPackWire[]>([])
 

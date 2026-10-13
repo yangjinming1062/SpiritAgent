@@ -3,8 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { isAiWaitingApi } from '@protocol'
-
-import { errorMessage } from '../shared/utils'
+import { errorMessage } from '@runtime'
 
 import { assertUserSelectedPath } from './user-selected-paths'
 

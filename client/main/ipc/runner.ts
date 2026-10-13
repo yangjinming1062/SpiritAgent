@@ -1,7 +1,7 @@
 import type { BrowserWindow, IpcMain } from 'electron'
 
 import { type DesktopRunnerState, IPC, type RunnerCallOutcome, type RunnerCallRequest } from '@ipc/contracts'
-import { sleep } from '@runtime'
+import { errorMessage, sleep } from '@runtime'
 
 import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
 import type { CreateRunnerProcessOptions, RunnerProcess } from '../runner/process'
@@ -9,7 +9,7 @@ import type { CreateRunnerWsServerOptions, RunnerWsServer } from '../runner/rpc-
 import { assertGatewayHost } from '../security/ipc-trust'
 import type { BackendSessionPort } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
-import { errorMessage, RunnerNotConnectedError, RunnerRpcError, sendToWindow } from '../shared/utils'
+import { RunnerNotConnectedError, RunnerRpcError, sendToWindow } from '../shared/utils'
 
 export interface RunnerHostOptions {
   createRunnerBridge: (options: RunnerBridgeOptions) => RunnerBridge

@@ -3,6 +3,7 @@ import { type ConversationRuntime, findConversationRuntime } from '@/modules/con
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { trimOldest } from '@/shared/lib/trim-oldest'
+import { runnerApi } from '@/shared/platform/desktop'
 import { $gateway } from '@/shared/store/gateway'
 import { getStrings } from '@/shared/strings'
 import type { MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
@@ -72,7 +73,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
     skill_scope?: MemoryToolScope
   }>(event.payload)
 
-  const runnerDispatchCall = window.spiritagent?.runnerDispatchCall
+  const runnerDispatchCall = runnerApi()?.runnerDispatchCall
 
   if (ctx.isProxy || !p.call_id || !runnerDispatchCall) {
     return
@@ -146,9 +147,11 @@ export function handleToolCancel(event: GatewayEvent, ctx: EventRouteContext): v
 
   call.cancelled = true
 
-  void window.spiritagent?.runnerCancel?.(callId).catch(err => {
-    log.warn('events', `runner cancel for ${callId} failed:`, err)
-  })
+  void runnerApi()
+    ?.runnerCancel?.(callId)
+    .catch(err => {
+      log.warn('events', `runner cancel for ${callId} failed:`, err)
+    })
 }
 
 export function handleToolComplete(runtime: ConversationRuntime): void {

@@ -1,8 +1,7 @@
 import type { BrowserWindow, dialog, MessageBoxOptions } from 'electron'
 
 import type { DesktopAccount } from '@ipc/contracts'
-
-import { errorMessage } from '../utils'
+import { errorMessage } from '@runtime'
 
 import * as runnerConfigStore from './runner-config-store'
 

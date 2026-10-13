@@ -2,6 +2,7 @@ import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch } from '@/shared/lib/storage'
+import { runnerApi } from '@/shared/platform/desktop'
 import type { DesktopRunnerPhase } from '@ipc/contracts'
 
 // Runner 状态镜像；先订阅再读取快照，迟到快照不能覆盖更新的状态事件。
@@ -12,7 +13,7 @@ let statusRevision = 0
 let hydration: { epoch: number; request: Promise<void> } | undefined
 
 export function hydrateRunnerStatus(): Promise<void> {
-  const desktop = window.spiritagent
+  const desktop = runnerApi()
   const epoch = currentClearEpoch()
 
   if (!offRunnerStatus) {

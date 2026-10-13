@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url'
 
 import { shell } from 'electron'
 
-import { errorMessage } from '../shared/utils'
+import { errorMessage } from '@runtime'
 
 /** 打开外部链接/本地路径：仅放行 http/https/mailto 与 file:；file: 走 openPath，失败则 reveal in folder。 */
 export function createOpenExternalUrl(rememberLog: (chunk: string) => void): (rawUrl: string) => boolean {

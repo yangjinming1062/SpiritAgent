@@ -17,6 +17,7 @@ import {
 import { $activeScene } from '@/modules/scene'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
+import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
@@ -338,7 +339,7 @@ export function useDesktopVideoWallpaper(): void {
   useEffect(() => {
     const scope = captureAuthScope()
 
-    return window.spiritagent.presentation.onBackgroundPlayback(receipt => {
+    return shellApi().presentation.onBackgroundPlayback(receipt => {
       if (scope?.() && receipt.status !== 'first-frame') {
         recordReceipt(receipt.playId, receipt.status, receipt.error)
       }
@@ -368,8 +369,8 @@ export function useDesktopVideoWallpaper(): void {
     const scope = captureAuthScope()
     let disposed = false
 
-    void window.spiritagent.presentation
-      .setBackground({
+    void shellApi()
+      .presentation.setBackground({
         authSessionId,
         video: videoUrl ? { url: videoUrl } : null,
         poster: posterUrl ? { url: posterUrl } : null,

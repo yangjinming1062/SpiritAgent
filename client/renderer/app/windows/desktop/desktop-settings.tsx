@@ -7,13 +7,15 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowRight, Check } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { PanelSelect } from '@/shared/panel'
+import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
+import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
 import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
-type PresentationState = Awaited<ReturnType<typeof window.spiritagent.presentation.getState>>
-type Accounts = Awaited<ReturnType<typeof window.spiritagent.desktop.accounts>>
+type PresentationState = Awaited<ReturnType<DesktopBridge['presentation']['getState']>>
+type Accounts = Awaited<ReturnType<DesktopBridge['desktop']['accounts']>>
 
 const ACCOUNT_SUBMENU_WIDTH = 224
 const ACCOUNT_SUBMENU_GAP = 8
@@ -46,7 +48,9 @@ export function DesktopSettings({
           ariaLabel={t.display}
           disabled={!presentation?.displays.length}
           onChange={value =>
-            void window.spiritagent.presentation.setDisplay(Number(value)).catch(error => notifyError(error, t.display))
+            void shellApi()
+              .presentation.setDisplay(Number(value))
+              .catch(error => notifyError(error, t.display))
           }
           options={
             presentation?.displays.map(display => ({
@@ -78,14 +82,20 @@ export function DesktopSettings({
       </button>
       <button
         onClick={() =>
-          void window.spiritagent.presentation.setMode('window').catch(error => notifyError(error, t.windowMode))
+          void shellApi()
+            .presentation.setMode('window')
+            .catch(error => notifyError(error, t.windowMode))
         }
         type="button"
       >
         {t.windowMode}
       </button>
       <button
-        onClick={() => void window.spiritagent.desktop.quit().catch(error => notifyError(error, t.quit))}
+        onClick={() =>
+          void shellApi()
+            .desktop.quit()
+            .catch(error => notifyError(error, t.quit))
+        }
         type="button"
       >
         {t.quit}
@@ -196,8 +206,8 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
     setAccounts(null)
     setFailed(false)
 
-    void window.spiritagent.desktop
-      .accounts()
+    void shellApi()
+      .desktop.accounts()
       .then(value => {
         if (!disposed) {
           setAccounts(value)
@@ -370,7 +380,7 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
         <button
           className={styles.menuAction}
           disabled={busy}
-          onClick={() => void run(() => window.spiritagent.desktop.addAccount())}
+          onClick={() => void run(() => shellApi().desktop.addAccount())}
           onFocus={closeSubmenu}
           onPointerEnter={closeSubmenu}
           tabIndex={submenu ? -1 : 0}
@@ -398,8 +408,8 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
               onClick={() =>
                 void run(() =>
                   submenu === 'remove'
-                    ? window.spiritagent.desktop.removeAccount(account.id)
-                    : window.spiritagent.desktop.switchAccount(account.id)
+                    ? shellApi().desktop.removeAccount(account.id)
+                    : shellApi().desktop.switchAccount(account.id)
                 )
               }
               onKeyDown={event => handleAccountOptionKeyDown(event, index)}

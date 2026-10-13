@@ -5,11 +5,11 @@ import {
   $actionCatalogStatus,
   $videoGenStage,
   $videoGenState,
-  EggStage,
   hydrateActionCatalog,
   hydrateVideoPack,
   resolveCompanionPresentation
 } from '@/modules/character'
+import { EggStage } from '@/modules/character/rendering'
 import { requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 

@@ -12,7 +12,6 @@ const CLEAR_HANDLERS = new Set<() => void | Promise<void>>()
 const RESTORE_HANDLERS = new Set<() => void>()
 const ACCOUNT_CACHE_OWNER_KEY = 'da.auth.accountCacheOwner'
 let storageAccountId = storedString(ACCOUNT_CACHE_OWNER_KEY)
-let legacyAccountId = storageAccountId
 let switchingAccount = false
 
 // 切换账户时递增；异步回写必须核对，不能把旧账户结果写入当前命名空间。
@@ -25,24 +24,6 @@ export function currentClearEpoch(): number {
 
 export function registerCompanionStorageKey(key: string, config: StorageKeyConfig = {}): string {
   REGISTERED_STORAGE_KEYS.set(key, config)
-
-  // 已有未分账户的索引归入其记录的账户；没有归属时不读取旧值。
-  if (legacyAccountId && !config.preserveOnLogout) {
-    try {
-      const legacy = window.localStorage.getItem(key)
-      const target = `da.accounts.${legacyAccountId}:${key}`
-
-      if (legacy !== null) {
-        if (window.localStorage.getItem(target) === null) {
-          window.localStorage.setItem(target, legacy)
-        }
-
-        window.localStorage.removeItem(key)
-      }
-    } catch (error) {
-      log.warn('storage', 'account cache migration failed', error)
-    }
-  }
 
   return key
 }
@@ -295,17 +276,10 @@ export function definePersistedEnum<T extends string>(options: PersistedEnumOpti
 export async function setStorageAccount(accountId: string | null, removedAccountId?: string): Promise<void> {
   if (removedAccountId) {
     const prefix = `da.accounts.${removedAccountId}:`
-    const removeLegacy = legacyAccountId === removedAccountId
-
-    if (removeLegacy) {
-      legacyAccountId = null
-    }
 
     try {
       for (const key of Object.keys(window.localStorage)) {
-        const config = REGISTERED_STORAGE_KEYS.get(key)
-
-        if (key.startsWith(prefix) || (removeLegacy && config && !config.preserveOnLogout)) {
+        if (key.startsWith(prefix)) {
           try {
             window.localStorage.removeItem(key)
           } catch (error) {

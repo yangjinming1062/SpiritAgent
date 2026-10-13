@@ -6,9 +6,9 @@ import type { Socket } from 'node:net'
 import type WebSocket from 'ws'
 import { WebSocketServer } from 'ws'
 
-import { sleep } from '@runtime'
+import { errorMessage, sleep } from '@runtime'
 
-import { errorMessage, isFiniteNumber, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
+import { isFiniteNumber, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const JSON_RPC_VERSION = '2.0'

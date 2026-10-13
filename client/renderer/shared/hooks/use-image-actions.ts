@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 
 import { imageUrlForNativeClipboard } from '@/shared/lib/image-clipboard'
 import { log } from '@/shared/lib/log'
+import { fileApi } from '@/shared/platform/desktop'
 
 type ImageActionName = 'copy' | 'save'
 
@@ -37,14 +38,14 @@ export function useImageActions(): {
     copied,
     copy: url =>
       run('copy', async () => {
-        await window.spiritagent.copyImage({ url: await imageUrlForNativeClipboard(url) })
+        await fileApi().copyImage({ url: await imageUrlForNativeClipboard(url) })
         setCopied(true)
       }),
     error,
     reset,
     save: (url, defaultName) =>
       run('save', async () => {
-        await window.spiritagent.saveImage({ defaultName: defaultName || undefined, url })
+        await fileApi().saveImage({ defaultName: defaultName || undefined, url })
       })
   }
 }
