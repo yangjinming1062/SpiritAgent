@@ -11,7 +11,7 @@ from slowapi.util import get_remote_address
 
 router = get_router(prefix="", tag="admin")
 
-ADMIN_HTML_PATH = Path(__file__).parent.parent.parent / "static" / "admin.html"
+ADMIN_STATIC_PATH = Path(__file__).parent.parent.parent / "static"
 
 
 @router.post("/admin/login", response_model=AdminTokenResponse)
@@ -28,4 +28,22 @@ async def admin_login(payload: AdminLoginRequest, request: Request) -> AdminToke
 
 @router.get("/admin/")
 async def admin_page() -> FileResponse:
-    return FileResponse(ADMIN_HTML_PATH)
+    return FileResponse(ADMIN_STATIC_PATH / "admin.html", headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/admin/admin.js", include_in_schema=False)
+async def admin_script() -> FileResponse:
+    return FileResponse(
+        ADMIN_STATIC_PATH / "admin.js",
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@router.get("/admin/admin.css", include_in_schema=False)
+async def admin_styles() -> FileResponse:
+    return FileResponse(
+        ADMIN_STATIC_PATH / "admin.css",
+        media_type="text/css",
+        headers={"Cache-Control": "no-cache"},
+    )

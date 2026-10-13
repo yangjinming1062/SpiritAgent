@@ -14,7 +14,7 @@
 | 动态与日记 | [动态编排](services/application/posts/README.md)、[journal_service.py](services/domains/journal/journal_service.py)；REST 在 `api/v1/companion_posts.py`、`companion_journal.py` |
 | 手机扫码与远程访问 | [远程网页](#远程网页)、[remote.py](api/v1/remote.py) |
 | 激活、登录、WS 票据与凭据 | [user.py](api/v1/user.py)、[page.py](api/v1/page.py)、[modules/auth](modules/auth/) |
-| 管理后台、配置与用户维护 | [admin.py](api/v1/admin.py)、[static/admin.html](static/admin.html)、[配置与迁移](#配置与迁移) |
+| 管理后台、配置与用户维护 | [admin.py](api/v1/admin.py)、[后台结构](static/admin.html)、[交互](static/admin.js)、[样式](static/admin.css)、[配置与迁移](#配置与迁移) |
 | 供应商与任务链 | [ai_tasks.py](components/ai_tasks.py)、[registrations.py](bootstrap/registrations.py)、[providers/base.py](services/infrastructure/llm/providers/base.py)、[llm_client.py](services/infrastructure/llm/llm_client.py) |
 | 桌面配置同步 | [config.py](api/v1/config.py)、[desktop_config.py](services/domains/configuration/desktop_config.py) |
 | 附件、上传视频与语音 | [media.py](api/v1/media.py)、[sessions.py](api/v1/sessions.py)、[chat_attachments.py](services/domains/media/chat_attachments.py) |
@@ -65,6 +65,8 @@
 ## 配置与运行生命周期
 
 ### 配置与迁移
+
+管理后台由 `admin.html`、`admin.js`、`admin.css` 组成，经 `page.py` 的固定资源入口提供，无独立构建步骤。AI 配置与系统参数分别维护草稿和保存状态；切页保留草稿，切换 AI 配置对象时处理未保存修改。图形化调用链只维护已有模型引用，来源解析与总览配置检查共用继承逻辑，不代表供应商实测结果。
 
 冷启动配置依次取环境变量 → `backend/.env` → `config.toml` → [config.toml.example](config.toml.example)，文件按 Backend 目录定位。数据库、JWT、资产签名密钥、管理员凭据与数据目录属于启动配置；密钥或管理员密码为空、仍是示例值时拒绝启动。字段校验和默认值以 [Settings](components/config.py) 为准，资产签名密钥至少 32 字符。
 
