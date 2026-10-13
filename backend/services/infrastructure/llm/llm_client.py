@@ -91,7 +91,6 @@ def _chain_entry(
         model_card_id=card.id,
         context_window=card.context_window,
         max_output_tokens=card.max_output_tokens,
-        max_input_tokens=card.max_input_tokens,
         input_modalities=card.input_modalities,
         output_modalities=card.output_modalities,
     )

@@ -284,10 +284,7 @@ async def _compress_history_with_provider(
         target * CONTEXT_SUMMARY_HEADROOM_FACTOR,
         max(1, context_length // 2),
     )
-    input_budget = min(
-        context_length - output_budget - min(max(1024, context_length // 20), context_length // 4),
-        config.max_input_tokens or context_length,
-    )
+    input_budget = context_length - output_budget - min(max(1024, context_length // 20), context_length // 4)
     if input_budget <= 0:
         raise CompressionFailedError("context window cannot fit summary input and output")
     bounded = _fit_summary_block(

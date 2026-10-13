@@ -16,7 +16,7 @@ _CATALOG_URL = "https://openrouter.ai/api/v1"
 _CATALOG_TTL = 3600.0
 _CATALOG_LOCK = asyncio.Lock()
 _catalog: tuple[float, list[ModelMetadata], str] | None = None
-_FIELDS = ("context_window", "max_input_tokens", "max_output_tokens", "input_modalities", "output_modalities")
+_FIELDS = ("context_window", "max_output_tokens", "input_modalities", "output_modalities")
 
 
 def _positive(value: object) -> int | None:
@@ -100,9 +100,6 @@ def _metadata(raw: dict, source: str, *, model_name: str | None = None) -> Model
             or raw.get("context_length")
             or raw.get("max_model_len")
             or raw.get("context_window"),
-        ),
-        max_input_tokens=_positive(
-            info.get("max_input_tokens") or raw.get("inputTokenLimit") or raw.get("max_input_tokens"),
         ),
         max_output_tokens=_positive(
             info.get("max_output_tokens")

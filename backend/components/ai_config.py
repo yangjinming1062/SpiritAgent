@@ -30,7 +30,6 @@ class CapabilityCard(BaseModel):
     model_name: str = Field(min_length=1, max_length=128)
     context_window: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
     max_output_tokens: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
-    max_input_tokens: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
     input_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
     output_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
 
@@ -112,11 +111,12 @@ class AIConfig(BaseModel):
                     raise ValueError("请填写 LLM 的上下文窗口与输出 Token 上限（正整数 tokens）")
                 if ModelModality.text not in card.output_modalities:
                     raise ValueError("LLM 模型须支持文字输出")
-            if card.context_window is not None:
-                if card.max_output_tokens is not None and card.max_output_tokens > card.context_window:
-                    raise ValueError("输出 Token 上限不能超过上下文窗口")
-                if card.max_input_tokens is not None and card.max_input_tokens > card.context_window:
-                    raise ValueError("输入 Token 上限不能超过上下文窗口")
+            if (
+                card.context_window is not None
+                and card.max_output_tokens is not None
+                and card.max_output_tokens > card.context_window
+            ):
+                raise ValueError("输出 Token 上限不能超过上下文窗口")
         for feature, value in self.features.items():
             if len(value.chain) != len(set(value.chain)):
                 raise ValueError(f"功能 {AI_FEATURE_BY_ID[feature].label} 不能重复引用同一模型卡片")

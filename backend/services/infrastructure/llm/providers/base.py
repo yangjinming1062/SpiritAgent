@@ -70,7 +70,6 @@ class ProviderConfig:
     model_card_id: UUID
     context_window: int | None = None
     max_output_tokens: int | None = None
-    max_input_tokens: int | None = None
     input_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
     output_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
     feature: AiFeature | None = None

@@ -21,7 +21,7 @@ def request_output_budget(config: ProviderConfig, request: dict[str, Any]) -> in
     estimated += approx_responses_tokens("", request.get("extra_body", {}))
     headroom = min(1024, max(1, window // 20))
     available = window - estimated - headroom
-    if available <= 0 or (config.max_input_tokens is not None and estimated > config.max_input_tokens):
+    if available <= 0:
         raise LLMRuntimeError(
             ClassifiedError(FailoverReason.context_overflow, None, "输入无法容纳于当前模型卡片的上下文窗口"),
         )

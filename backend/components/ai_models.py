@@ -30,7 +30,6 @@ class ModelMetadata(BaseModel):
     display_name: str = ""
     services: list[str] = Field(default_factory=list)
     context_window: int | None = None
-    max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     input_modalities: list[ModelModality] | None = None
     output_modalities: list[ModelModality] | None = None

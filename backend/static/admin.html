@@ -549,6 +549,18 @@ input[type="file"] { font-size: 0.78rem; }
 }
 
 #aiChainBody .hint { font-size: 0.78rem; color: var(--text-3); line-height: 1.6; }
+.ai-model-list { max-height: 38vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ai-model-option { display: flex; align-items: flex-start; gap: 0.65rem; padding: 0.8rem; cursor: pointer; }
+.ai-model-option + .ai-model-option { border-top: 1px solid var(--border); }
+.ai-model-option:has(input:checked) { background: var(--primary-soft); }
+.ai-model-option:has(input:disabled) { color: var(--text-3); cursor: default; }
+.ai-model-option input { flex: none; margin-top: 0.2rem; }
+.ai-model-option > span { min-width: 0; overflow-wrap: anywhere; }
+.ai-model-option .hint { display: block; margin: 0.3rem 0 0; }
+#aiModelPickerModal .hint { font-size: 0.78rem; color: var(--text-3); line-height: 1.6; }
+#aiModelPickerModal .modal-foot { align-items: center; flex-wrap: wrap; }
+#aiModelPickerSearch { flex: 1; width: auto; min-width: 12rem; }
+#aiModelPickerCount { margin-right: auto; }
 .keybadge.inherit { color: var(--amber); background: var(--amber-soft); }
 
 .menu { position: relative; display: inline-block; vertical-align: middle; }
@@ -1358,6 +1370,36 @@ input[type="file"] { font-size: 0.78rem; }
         </div>
         <div class="modal-foot">
             <button class="btn btn--ghost" onclick="closeModal('logDetailModal')">关闭</button>
+        </div>
+    </div>
+</div>
+
+<div id="aiModelPickerModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="aiModelPickerTitle">
+    <div class="modal-card wide">
+        <div class="modal-head">
+            <h2 id="aiModelPickerTitle">添加模型</h2>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="field"><label for="aiModelPickerProvider">供应商</label>
+                <select id="aiModelPickerProvider" onchange="changeAiModelPickerProvider()"></select>
+            </div>
+            <div class="layer-actions">
+                <input type="search" id="aiModelPickerSearch" aria-label="搜索模型" placeholder="搜索模型名称或 ID" oninput="renderAiModelPickerResults()">
+                <button class="btn btn--ghost" id="aiModelPickerRefresh" onclick="loadAiModelPickerModels(true)">刷新列表</button>
+            </div>
+            <div id="aiModelPickerStatus" role="status"></div>
+            <div id="aiModelPickerList" class="ai-model-list" onchange="selectAiModelPickerModel(event)"></div>
+            <div class="field" id="aiModelPickerManualField" style="margin-top:1rem">
+                <label for="aiModelPickerManual">手动填写模型 ID（每行一个）</label>
+                <textarea id="aiModelPickerManual" rows="3" placeholder="列表中没有的模型也可以手动添加" oninput="updateAiModelPickerCount()"></textarea>
+                <p class="hint">已勾选和手填的模型会一起添加，重复项自动跳过。缺失参数可在添加后补全。</p>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <span id="aiModelPickerCount" class="hint" role="status"></span>
+            <button class="btn btn--ghost" onclick="closeModal('aiModelPickerModal')">取消</button>
+            <button class="btn btn--primary" id="aiModelPickerAdd" onclick="addAiModelPickerSelection()" disabled>添加所选模型</button>
         </div>
     </div>
 </div>
@@ -2179,7 +2221,7 @@ function renderAiChain() {
         const ownCards = modelEntries(editor.config, group, isUser ? '用户' : '系统', isUser ? system : null);
         $('#aiChainCount').textContent = ownCards.length + ' 个模型';
         const inherited = isUser ? '<section class="chain-layer"><div class="layer-head"><span class="layer-title">系统模型与默认顺序</span><span class="layer-badge">' + (ownCards.length ? '默认顺序被用户覆盖' : '继承系统默认顺序') + '</span></div>' + readonlyCallListHtml(systemCards, group) + '</section>' : '';
-        $('#aiChainBody').innerHTML = inherited + '<section class="chain-layer is-effective"><div class="layer-head"><span class="layer-tag">2</span><span class="layer-title">' + (isUser ? '用户模型与默认顺序' : '能力模型与默认顺序') + '</span></div>' + callListHtml(editorName, group) + '<p class="layer-hint">先选择已有供应商，再配置具体模型。同一供应商可反复添加。功能链可引用这些模型；未配置专用功能链时按默认顺序调用。' + (group === 'embedding' ? '向量默认只使用首张，失败时使用关键词召回。' : '失败时回退到后续可用模型。') + '</p></section>';
+        $('#aiChainBody').innerHTML = inherited + '<section class="chain-layer is-effective"><div class="layer-head"><span class="layer-tag">2</span><span class="layer-title">' + (isUser ? '用户模型与默认顺序' : '能力模型与默认顺序') + '</span></div>' + callListHtml(editorName, group) + '<p class="layer-hint">按供应商批量添加模型，再统一调整调用顺序。功能链可引用这些模型；未配置专用功能链时按默认顺序调用。' + (group === 'embedding' ? '向量默认只使用首张，失败时使用关键词召回。' : '失败时回退到后续可用模型。') + '</p></section>';
     }
     bindAiCardEvents();
 }
@@ -2219,6 +2261,7 @@ function onAiScopeChange() {
         $('#aiScopeSelect').value = aiView.scope === 'system' ? 'system' : String(aiView.scope);
         return;
     }
+    resetAiDiscovery();
     clearSettingsDirty();
     clearAiDirty();
     aiView.scope = value;
@@ -2269,6 +2312,7 @@ async function loadAiView() {
 }
 
 function showModelConfigForUserSilent(userId) {
+    resetAiDiscovery();
     const cached = tabCache.models?.items?.find(c => c.user_id == userId) ?? null;
     aiEditors.user.config = normalizeAiConfig(cached?.ai_config);
     aiEditors.user.support = tabCache.models?.ai_provider_support ?? {};
@@ -2298,6 +2342,7 @@ async function saveAiScope() {
 }
 
 async function refreshAiCache() {
+    resetAiDiscovery();
     try {
         const resp = await apiFetch('/api/admin/model-configs');
         tabCache.models = await resp.json();
@@ -2323,6 +2368,7 @@ function clearAiDirty() {
 }
 
 function discardAiEdits() {
+    resetAiDiscovery();
     if (aiView.scope === 'system') {
         aiEditors.system.config = normalizeAiConfig(lastSystemAiRaw);
         clearSettingsDirty();
@@ -2366,6 +2412,7 @@ async function deleteModelConfig(userId) {
 // 用户视图「编辑覆盖」入口：跳到 AI 视图并定位该用户。
 function openAiUserScope(userId) {
     if ((settingsDirty || aiUserDirty) && !confirm('系统设置或 AI 配置有未保存的修改，切换将丢弃，确定？')) return;
+    resetAiDiscovery();
     clearSettingsDirty();
     clearAiDirty();
     showTab('ai');
@@ -2394,7 +2441,9 @@ let lastSystemAiRaw = null;
 let aiDrag = null;
 // 点过“清除”的卡片：API Key 留空保持清除，填写后以新密钥为准；卡片对象原样提交（接口禁止额外字段），故不把标记写进卡片。
 const clearedKeyCards = new WeakSet();
-const aiModelDiscovery = new WeakMap();
+let aiModelDiscovery = new WeakMap();
+const aiProviderDiscovery = new Map();
+let aiModelPicker = null;
 const AI_MODALITIES = { text: '文字', image: '图片', audio: '音频', video: '视频', embeddings: '向量' };
 const AI_OUTPUTS = { llm: 'text', stt: 'text', tts: 'audio', image_gen: 'image', video_gen: 'video', embedding: 'embeddings' };
 let aiSettingsLoaded = false;
@@ -2505,11 +2554,8 @@ function validateAiCards(editorName) {
                 const window = parseAiContextWindow(card.context_window);
                 if (window === null) return fail('请填写有效的上下文窗口，例如 32k、1M 或 32768');
                 const output = parseAiContextWindow(card.max_output_tokens);
-                const input = card.max_input_tokens == null || card.max_input_tokens === '' ? null : parseAiContextWindow(card.max_input_tokens);
                 if (!output || output > window) return fail('输出 Token 上限须为正整数，且不能超过上下文窗口');
-                if (card.max_input_tokens != null && card.max_input_tokens !== '' && (!input || input > window)) return fail('输入 Token 上限须为正整数，且不能超过上下文窗口');
                 card.max_output_tokens = output;
-                card.max_input_tokens = input;
                 windows.push([card, window]);
             }
         }
@@ -2629,6 +2675,7 @@ function callListHtml(editorName, group) {
                 <button class="btn btn--ghost" draggable="true" data-ai-handle aria-label="拖拽排序" title="拖拽排序">⠿</button>
                 <span class="num">${index + 1}</span><span class="prov">${esc(summary)}</span><span class="spacer"></span>
                 ${library ? `<span class="keybadge ${keySet ? 'on' : 'off'}">${keySet ? '密钥已设置' : '未设置密钥'}</span>` : ''}
+                ${!library && !feature && aiModelNeedsConfiguration(card, service) ? '<span class="keybadge off">待补全</span>' : ''}
                 <button class="btn btn--ghost" data-ai-action="up" aria-label="上移" title="上移"${index === 0 ? ' disabled' : ''}>↑</button>
                 <button class="btn btn--ghost" data-ai-action="down" aria-label="下移" title="下移"${index === cards.length - 1 ? ' disabled' : ''}>↓</button>
                 <button class="btn btn--ghost" data-ai-action="remove" aria-label="移除卡片" title="移除卡片">✕</button>
@@ -2645,9 +2692,9 @@ function callListHtml(editorName, group) {
         <div class="call-list">${items}</div>
         ${cards.length ? '' : `<p class="hint">${hint}</p>`}
         <div class="layer-actions">
-            <select aria-label="${library ? '选择供应商类型' : feature ? '选择已有模型卡片' : '选择已有供应商'}" data-ai-add-source>
+            ${library || feature ? `<select aria-label="${library ? '选择供应商类型' : '选择已有模型卡片'}" data-ai-add-source>
                 ${options || '<option value="">暂无可选择的配置</option>'}
-            </select>
+            </select>` : ''}
             ${library ? '<input type="text" data-ai-provider-name placeholder="供应商名称，支持中文和大写" maxlength="128" style="width:14rem">' : ''}
             <button class="btn btn--primary btn--sm" data-ai-action="add"${!options || (feature?.service === 'embedding' && cards.length) ? ' disabled' : ''}>
                 ＋ ${library ? '添加供应商' : feature ? '引用模型' : '添加模型'}
@@ -2677,7 +2724,13 @@ function newAiId() {
 function newAiModel(providerId, service, providerType) {
     return { id: newAiId(), provider_id: providerId, model_name: service === 'image_gen' && providerType === 'local' ? 'qwen' : '',
         input_modalities: [service === 'stt' ? 'audio' : 'text'], output_modalities: [AI_OUTPUTS[service]],
-        ...(service === 'llm' ? { context_window: '', max_output_tokens: '', max_input_tokens: null } : {}) };
+        ...(service === 'llm' ? { context_window: '', max_output_tokens: '' } : {}) };
+}
+
+function aiModelNeedsConfiguration(card, service) {
+    const window = parseAiContextWindow(card.context_window);
+    const output = parseAiContextWindow(card.max_output_tokens);
+    return !card.model_name?.trim() || (service === 'llm' && (!window || !output || output > window));
 }
 
 function aiTokenField(card, field, label, choices, required = false) {
@@ -2687,27 +2740,27 @@ function aiTokenField(card, field, label, choices, required = false) {
 }
 
 function aiModelFields(card, service, settings, localImage) {
-    const state = aiModelDiscovery.get(card) ?? {};
-    const choices = (state.models ?? []).filter(model => !model.services?.length || model.services.includes(service));
+    const state = aiModelDiscoveryState(card, service);
+    const choices = aiCatalogModels(state.catalog, service);
     const selected = state.metadata;
     const candidates = state.candidates?.[card.model_name] ?? [];
     const types = (field, title) => `<div class="field"><span>${title}</span><div>${Object.entries(AI_MODALITIES).filter(([type]) => type !== 'embeddings' || field === 'output_modalities').map(([type, label]) => `<label style="display:inline-flex;gap:.35rem;margin-right:1rem"><input type="checkbox" data-ai-modality="${field}" value="${type}"${(card[field] ?? []).includes(type) ? ' checked' : ''}>${label}</label>`).join('')}</div></div>`;
     return `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" list="models-${card.id}" value="${esc(card.model_name)}" placeholder="搜索列表或填写供应商模型 ID" required${localImage ? ' readonly' : ''}></label>
         <datalist id="models-${card.id}">${choices.map(model => `<option value="${esc(model.model_name)}">${esc(model.display_name || model.model_name)}</option>`).join('')}</datalist>
-        <div class="layer-actions"><button class="btn btn--ghost" data-ai-action="discover-models"${state.loading ? ' disabled' : ''}>获取模型列表</button><button class="btn btn--ghost" data-ai-action="model-info"${state.loading || !card.model_name ? ' disabled' : ''}>获取模型信息</button><button class="btn btn--ghost" data-ai-action="refresh-models"${state.loading ? ' disabled' : ''}>刷新目录</button></div>
+        <div class="layer-actions"><button class="btn btn--ghost" data-ai-action="model-info"${state.loading || !card.model_name ? ' disabled' : ''}>获取模型信息</button></div>
         ${state.loading ? '<p class="hint">正在获取模型信息…</p>' : ''}
         ${(state.warnings ?? []).map(message => `<p class="hint">${esc(message)}</p>`).join('')}
-        ${candidates.length ? `<label>请选择对应的 OpenRouter 模型<select data-ai-catalog-choice><option value="">模型名称有多个匹配</option>${candidates.map(model => option(model.catalog_id || model.model_name, model.display_name + ' · ' + model.model_name)).join('')}</select></label>` : ''}
-        ${selected ? `<p class="hint">${Object.entries(selected.field_sources ?? {}).map(([field, source]) => esc(({context_window:'窗口',max_input_tokens:'输入上限',max_output_tokens:'输出上限',input_modalities:'输入类型',output_modalities:'输出类型'})[field] || field) + '：' + esc(source) + ' ' + esc(Array.isArray(selected[field]) ? selected[field].map(type => AI_MODALITIES[type] || type).join('、') : selected[field] ?? '')).join(' · ')}${selected.catalog_url ? ` · <a href="${esc(selected.catalog_url)}" target="_blank" rel="noopener noreferrer">OpenRouter 详情</a>` : ''}</p><button class="btn btn--ghost" data-ai-action="apply-model-info">填入建议值</button>` : ''}
+        ${candidates.length ? `<label>请选择对应的 OpenRouter 模型<select data-ai-catalog-choice><option value="">模型名称有多个匹配</option>${candidates.map(model => `<option value="${esc(model.catalog_id || model.model_name)}">${esc(model.display_name + ' · ' + model.model_name)}</option>`).join('')}</select></label>` : ''}
+        ${selected ? `<p class="hint">${aiModelMetadataHtml(selected)}</p><button class="btn btn--ghost" data-ai-action="apply-model-info">填入建议值</button>` : ''}
         ${localImage ? '<p class="hint">固定 Qwen 工作流，模型文件由服务匹配。</p>' : ''}
         ${settings.voice_design_model ? `<p class="hint">自定义音色设计须配置 ${esc(settings.voice_design_model)} 模型。</p>` : ''}</div>
-        ${service === 'llm' ? aiTokenField(card, 'context_window', '上下文窗口（tokens）', [32768, 131072, 256000, 1048576], true) + aiTokenField(card, 'max_output_tokens', '输出 Token 上限（含推理）', [8192, 16384, 32768, 65536, 131072], true) + aiTokenField(card, 'max_input_tokens', '独立输入 Token 上限（选填）', [32768, 131072, 256000, 1048576]) + '<p class="hint">按实际供应商或部署填写；k = 1000，M = 1000000。建议值可修改，保存后即时生效。</p>' : ''}
+        ${service === 'llm' ? aiTokenField(card, 'context_window', '上下文窗口（tokens）', [32768, 131072, 256000, 1048576], true) + aiTokenField(card, 'max_output_tokens', '输出 Token 上限（含推理）', [8192, 16384, 32768, 65536, 131072], true) + '<p class="hint">上下文窗口容纳输入与输出，输出上限包含推理。按实际供应商或部署填写；k = 1000，M = 1000000。建议值可修改，保存后即时生效。</p>' : ''}
         ${types('input_modalities', '支持的输入类型')}${types('output_modalities', '支持的输出类型')}
         <p class="hint">当前适配器可传递的输入：${(settings.input_modalities ?? []).map(type => esc(AI_MODALITIES[type] || type)).join('、')}。功能按模型配置与协议支持共同筛选。</p>`;
 }
 
 function applyAiModelMetadata(card, metadata) {
-    for (const field of ['context_window', 'max_input_tokens', 'max_output_tokens', 'input_modalities', 'output_modalities']) {
+    for (const field of ['context_window', 'max_output_tokens', 'input_modalities', 'output_modalities']) {
         if (metadata[field] != null) card[field] = structuredClone(metadata[field]);
     }
 }
@@ -2720,34 +2773,224 @@ function openAiModelCard(cardId) {
     if (item?.querySelector('.call-item-body')) { item.querySelector('.call-item-body').hidden = false; item.classList.add('open'); }
 }
 
-async function discoverAiModels(editorName, group, card, action, catalogId = null) {
+function resetAiDiscovery() {
+    aiProviderDiscovery.clear();
+    aiModelDiscovery = new WeakMap();
+    if (aiModelPicker) closeModal('aiModelPickerModal');
+}
+
+function invalidateAiProviderDiscovery(providerId) {
+    for (const [key, state] of aiProviderDiscovery) {
+        if (state.providerId === providerId) aiProviderDiscovery.delete(key);
+    }
+}
+
+function aiDiscoveryProvider(provider) {
+    return { id: provider.id, name: provider.name, provider_type: provider.provider_type, base_url: provider.base_url || '', api_key: provider.api_key || '', api_key_set: Boolean(provider.api_key_set), clear_api_key: Boolean(provider.clear_api_key) };
+}
+
+function aiProviderDiscoveryState(editorName, group, providerId) {
     const editor = aiEditors[editorName];
-    const provider = aiSource(editor, card.provider_id);
-    if (!provider) return;
-    const snapshot = JSON.stringify(provider);
-    const scope = aiView.scope;
-    const userId = aiView.userId;
+    const provider = aiSource(editor, providerId);
+    if (!provider) return null;
+    const snapshot = JSON.stringify(aiDiscoveryProvider(provider));
+    const key = JSON.stringify([editorName, aiView.userId, group, providerId]);
+    let state = aiProviderDiscovery.get(key);
+    if (!state || state.snapshot !== snapshot || state.config !== editor.config) {
+        state = { key, snapshot, editorName, config: editor.config, scope: aiView.scope, userId: aiView.userId, group, providerId,
+            models: [], candidates: {}, warnings: [], loaded: false, loading: false };
+        aiProviderDiscovery.set(key, state);
+    }
+    return state;
+}
+
+function aiDiscoveryIsCurrent(state) {
+    const editor = aiEditors[state.editorName];
+    const provider = aiSource(editor, state.providerId);
+    return aiProviderDiscovery.get(state.key) === state && editor.config === state.config && aiView.scope === state.scope && aiView.userId === state.userId
+        && provider && JSON.stringify(aiDiscoveryProvider(provider)) === state.snapshot;
+}
+
+function aiCatalogModels(state, service) {
+    return (state?.models ?? []).filter(model => !model.services?.length || model.services.includes(service));
+}
+
+function aiModelDiscoveryState(card, group) {
+    const catalog = aiProviderDiscoveryState(aiView.scope === 'system' ? 'system' : 'user', group, card.provider_id);
+    const detail = aiModelDiscovery.get(card);
+    if (detail?.catalog === catalog && detail?.modelName === card.model_name) return detail;
+    if (detail) aiModelDiscovery.delete(card);
+    return { catalog, metadata: catalog?.models.find(model => model.model_name === card.model_name), candidates: catalog?.candidates ?? {} };
+}
+
+function aiModelMetadataHtml(metadata) {
+    const fields = { context_window: '窗口', max_output_tokens: '输出上限', input_modalities: '输入类型', output_modalities: '输出类型' };
+    const values = Object.entries(fields).filter(([field]) => metadata[field] != null).map(([field, label]) => {
+        const value = metadata[field];
+        const source = metadata.field_sources?.[field];
+        return esc(label) + '：' + esc(Array.isArray(value) ? value.map(type => AI_MODALITIES[type] || type).join('、') : value)
+            + (source ? '（' + esc(source) + '）' : '');
+    });
+    if (metadata.catalog_url) values.push(`<a href="${esc(metadata.catalog_url)}" target="_blank" rel="noopener noreferrer">OpenRouter 详情</a>`);
+    return values.join(' · ');
+}
+
+async function requestAiModelDiscovery(state, options = {}) {
+    const response = await apiFetch('/api/admin/ai/models/discover', { method: 'POST', body: JSON.stringify({
+        provider: JSON.parse(state.snapshot), user_id: state.editorName === 'system' ? null : Number(state.userId), service: aiService(state.group), ...options
+    }) });
+    return response.json();
+}
+
+function openAiModelPicker(editorName, group) {
+    const editor = aiEditors[editorName];
+    const providers = aiProviderOptions(editor, aiService(group));
+    if (!providers.length) { toast('请先配置供应商', 'err'); return; }
+    aiModelPicker = { editorName, group, selected: new Set(), returnFocus: document.activeElement };
+    $('#aiModelPickerTitle').textContent = '添加模型 · ' + AI_SERVICES[aiService(group)];
+    $('#aiModelPickerProvider').innerHTML = providers.map(provider => `<option value="${esc(provider.id)}">${esc(provider.scope + ' · ' + provider.name)}</option>`).join('');
+    openModal('aiModelPickerModal');
+    changeAiModelPickerProvider();
+    $('#aiModelPickerProvider').focus();
+}
+
+function changeAiModelPickerProvider() {
+    const picker = aiModelPicker;
+    if (!picker) return;
+    picker.providerId = $('#aiModelPickerProvider').value;
+    picker.selected.clear();
+    picker.catalog = aiProviderDiscoveryState(picker.editorName, picker.group, picker.providerId);
+    $('#aiModelPickerSearch').value = '';
+    $('#aiModelPickerManual').value = '';
+    const provider = aiSource(aiEditors[picker.editorName], picker.providerId);
+    $('#aiModelPickerManualField').hidden = picker.group === 'image_gen' && provider?.provider_type === 'local';
+    void loadAiModelPickerModels();
+}
+
+async function loadAiModelPickerModels(refresh = false) {
+    const state = aiModelPicker?.catalog;
+    if (!state) return;
+    if (!refresh && (state.loaded || state.loading)) { renderAiModelPickerResults(); return; }
+    if (refresh) {
+        for (const card of aiList(aiEditors[state.editorName], state.group)) {
+            if (card.provider_id === state.providerId) aiModelDiscovery.delete(card);
+        }
+    }
+    const request = {};
+    Object.assign(state, { models: [], candidates: {}, warnings: [], loaded: false, loading: true, request });
+    aiModelPicker.selected.clear();
+    renderAiModelPickerResults();
+    try {
+        const data = await requestAiModelDiscovery(state, { refresh });
+        if (!aiDiscoveryIsCurrent(state) || state.request !== request) return;
+        Object.assign(state, { models: data.models ?? [], candidates: data.candidates ?? {}, warnings: data.warnings ?? [], loaded: true });
+    } catch (error) {
+        if (!aiDiscoveryIsCurrent(state) || state.request !== request) return;
+        state.warnings = [error.message];
+    } finally {
+        if (state.request === request) state.loading = false;
+        if (aiModelPicker?.catalog === state && aiDiscoveryIsCurrent(state)) renderAiModelPickerResults();
+    }
+}
+
+function aiModelPickerExisting() {
+    const picker = aiModelPicker;
+    return new Set(aiList(aiEditors[picker.editorName], picker.group).filter(card => card.provider_id === picker.providerId).map(card => card.model_name.trim()));
+}
+
+function aiModelPickerSelection() {
+    const picker = aiModelPicker;
+    const existing = aiModelPickerExisting();
+    const selected = aiCatalogModels(picker.catalog, aiService(picker.group)).filter(model => picker.selected.has(model.model_name)).map(model => model.model_name);
+    const manual = $('#aiModelPickerManualField').hidden ? [] : $('#aiModelPickerManual').value.split(/\r?\n/).map(name => name.trim()).filter(Boolean);
+    return [...new Set([...selected, ...manual])].filter(name => !existing.has(name));
+}
+
+function updateAiModelPickerCount() {
+    if (!aiModelPicker) return;
+    const names = aiModelPickerSelection();
+    const invalid = names.some(name => name.length > 128);
+    $('#aiModelPickerCount').textContent = invalid ? '模型 ID 不能超过 128 个字符' : '将添加 ' + names.length + ' 个模型';
+    $('#aiModelPickerAdd').disabled = !names.length || invalid;
+}
+
+function renderAiModelPickerResults() {
+    const picker = aiModelPicker;
+    if (!picker) return;
+    const state = picker.catalog;
+    const existing = aiModelPickerExisting();
+    const search = $('#aiModelPickerSearch').value.trim().toLocaleLowerCase();
+    const models = aiCatalogModels(state, aiService(picker.group)).filter(model => (model.model_name + ' ' + model.display_name).toLocaleLowerCase().includes(search));
+    $('#aiModelPickerRefresh').disabled = Boolean(state?.loading);
+    $('#aiModelPickerStatus').innerHTML = (state?.loading ? '<p class="hint">正在获取模型列表…</p>' : '')
+        + (state?.warnings ?? []).map(message => `<p class="hint">${esc(message)}</p>`).join('')
+        + (!state?.loading && !models.length ? '<p class="hint">没有可选模型，可调整搜索或手动填写模型 ID。</p>' : '');
+    $('#aiModelPickerList').innerHTML = models.map(model => {
+        const added = existing.has(model.model_name);
+        const pending = aiModelNeedsConfiguration(model, aiService(picker.group));
+        const ambiguous = state.candidates[model.model_name]?.length;
+        return `<label class="ai-model-option"><input type="checkbox" data-ai-pick-model="${esc(model.model_name)}"${added ? ' disabled' : picker.selected.has(model.model_name) ? ' checked' : ''}>
+            <span><strong>${esc(model.model_name)}</strong> ${added ? '<span class="keybadge">已添加</span>' : pending ? '<span class="keybadge off">待补全</span>' : ''}
+                ${model.display_name && model.display_name !== model.model_name ? `<span class="hint">${esc(model.display_name)}</span>` : ''}
+                <span class="hint">${aiModelMetadataHtml(model) || '暂无参数信息，添加后可手动配置。'}</span>
+                ${ambiguous ? '<span class="hint">存在多个目录匹配，添加后请选择对应模型。</span>' : ''}
+            </span></label>`;
+    }).join('');
+    $('#aiModelPickerList').hidden = !models.length;
+    updateAiModelPickerCount();
+}
+
+function selectAiModelPickerModel(event) {
+    const name = event.target.dataset.aiPickModel;
+    if (!aiModelPicker || !name) return;
+    if (event.target.checked) aiModelPicker.selected.add(name); else aiModelPicker.selected.delete(name);
+    updateAiModelPickerCount();
+}
+
+function addAiModelPickerSelection() {
+    const picker = aiModelPicker;
+    if (!picker) return;
+    if (!picker.catalog || !aiDiscoveryIsCurrent(picker.catalog) || aiView.group !== picker.group) {
+        closeModal('aiModelPickerModal'); toast('配置已变化，请重新选择供应商', 'err'); return;
+    }
+    const names = aiModelPickerSelection();
+    if (!names.length || names.some(name => name.length > 128)) return;
+    const editor = aiEditors[picker.editorName];
+    const provider = aiSource(editor, picker.providerId);
+    const cards = names.map(name => {
+        const card = { ...newAiModel(provider.id, aiService(picker.group), provider.provider_type), model_name: name };
+        const metadata = picker.catalog.models.find(model => model.model_name === name);
+        if (metadata) applyAiModelMetadata(card, metadata);
+        return card;
+    });
+    aiList(editor, picker.group).push(...cards);
+    markAiDirty(picker.editorName);
+    renderAiTree();
+    const pending = cards.find(card => aiModelNeedsConfiguration(card, aiService(picker.group)));
+    if (pending) openAiModelCard(pending.id); else renderAiChain();
+    closeModal('aiModelPickerModal');
+    toast('已添加 ' + cards.length + ' 个模型' + (pending ? '，请补全标记的模型参数后保存' : '，保存后生效'));
+}
+
+async function discoverAiModelInfo(editorName, group, card, catalogId = null) {
+    const editor = aiEditors[editorName];
+    const catalog = aiProviderDiscoveryState(editorName, group, card.provider_id);
+    if (!catalog) return;
     const modelName = card.model_name;
     const request = {};
-    const current = () => aiView.scope === scope && aiView.userId === userId && aiView.group === group && aiList(editor, group).includes(card) && aiModelDiscovery.get(card)?.request === request && JSON.stringify(aiSource(editor, card.provider_id)) === snapshot && card.model_name === modelName;
-    aiModelDiscovery.set(card, { ...(aiModelDiscovery.get(card) ?? {}), loading: true, request });
+    const current = () => aiDiscoveryIsCurrent(catalog) && aiView.group === group && aiList(editor, group).includes(card) && aiModelDiscovery.get(card)?.request === request && card.model_name === modelName && card.provider_id === catalog.providerId;
+    aiModelDiscovery.set(card, { ...aiModelDiscoveryState(card, group), catalog, modelName, loading: true, request });
     openAiModelCard(card.id);
     try {
-        const result = await apiFetch('/api/admin/ai/models/discover', { method: 'POST', body: JSON.stringify({
-            provider: { id: provider.id, name: provider.name, provider_type: provider.provider_type, base_url: provider.base_url || '', api_key: provider.api_key || '', api_key_set: Boolean(provider.api_key_set), clear_api_key: Boolean(provider.clear_api_key) },
-            user_id: editorName === 'system' ? null : Number(userId), service: aiService(group),
-            ...(action === 'model-info' ? { model_name: modelName } : {}), ...(catalogId ? { catalog_id: catalogId } : {}), refresh: action === 'refresh-models'
-        }) });
-        const data = await result.json();
-        if (!current()) { if (aiModelDiscovery.get(card)?.request === request) aiModelDiscovery.set(card, { ...aiModelDiscovery.get(card), loading: false }); return; }
+        const data = await requestAiModelDiscovery(catalog, { model_name: modelName, ...(catalogId ? { catalog_id: catalogId } : {}) });
+        if (!current()) return;
         const metadata = data.models?.find(model => model.model_name === card.model_name) ?? null;
-        aiModelDiscovery.set(card, { ...(aiModelDiscovery.get(card) ?? {}), loading: false, models: action === 'model-info' ? aiModelDiscovery.get(card)?.models ?? [] : data.models ?? [], metadata, candidates: data.candidates ?? {}, warnings: data.warnings ?? [] });
-        openAiModelCard(card.id);
+        aiModelDiscovery.set(card, { ...aiModelDiscovery.get(card), metadata, candidates: data.candidates ?? {}, warnings: data.warnings ?? [] });
     } catch (error) {
-        if (aiModelDiscovery.get(card)?.request !== request) return;
-        if (!current()) { aiModelDiscovery.set(card, { ...aiModelDiscovery.get(card), loading: false }); return; }
-        aiModelDiscovery.set(card, { ...(aiModelDiscovery.get(card) ?? {}), loading: false, warnings: [error.message] });
-        if (aiView.scope === scope && aiView.userId === userId && aiView.group === group) openAiModelCard(card.id);
+        if (current()) aiModelDiscovery.set(card, { ...aiModelDiscovery.get(card), warnings: [error.message] });
+    } finally {
+        if (aiModelDiscovery.get(card)?.request === request) aiModelDiscovery.get(card).loading = false;
+        if (current()) openAiModelCard(card.id);
     }
 }
 
@@ -2778,6 +3021,7 @@ function bindAiCardEvents() {
         const index = Number(event.target.closest('[data-ai-index]').dataset.aiIndex);
         const card = aiList(aiEditors[editorName()], group)[index];
         card[field] = event.target.value;
+        if (group === 'providers' && ['api_key', 'base_url'].includes(field)) invalidateAiProviderDiscovery(card.id);
         event.target.setCustomValidity('');
         if (field === 'api_key' && clearedKeyCards.has(card)) card.clear_api_key = !event.target.value.trim();
         markAiDirty(editorName());
@@ -2786,14 +3030,15 @@ function bindAiCardEvents() {
         const cardIndex = Number(event.target.closest('[data-ai-index]')?.dataset.aiIndex);
         const currentGroup = event.target.closest('[data-ai-group]')?.dataset.aiGroup;
         const currentCard = currentGroup ? aiList(aiEditors[editorName()], currentGroup)[cardIndex] : null;
-        if (event.target.dataset.aiCatalogChoice !== undefined && currentCard && event.target.value) { void discoverAiModels(editorName(), currentGroup, currentCard, 'model-info', event.target.value); return; }
+        if (event.target.dataset.aiCatalogChoice !== undefined && currentCard && event.target.value) { void discoverAiModelInfo(editorName(), currentGroup, currentCard, event.target.value); return; }
         if (event.target.dataset.aiField === 'model_name' && currentCard) {
-            const metadata = aiModelDiscovery.get(currentCard)?.models?.find(model => model.model_name === currentCard.model_name);
+            const catalog = aiModelDiscoveryState(currentCard, currentGroup).catalog;
+            const metadata = catalog?.models.find(model => model.model_name === currentCard.model_name);
             currentCard.input_modalities = metadata?.input_modalities ?? [aiService(currentGroup) === 'stt' ? 'audio' : 'text'];
             currentCard.output_modalities = metadata?.output_modalities ?? [AI_OUTPUTS[aiService(currentGroup)]];
-            if (aiService(currentGroup) === 'llm') { currentCard.context_window = ''; currentCard.max_output_tokens = ''; currentCard.max_input_tokens = null; }
+            if (aiService(currentGroup) === 'llm') { currentCard.context_window = ''; currentCard.max_output_tokens = ''; }
             if (metadata) applyAiModelMetadata(currentCard, metadata);
-            aiModelDiscovery.set(currentCard, { ...(aiModelDiscovery.get(currentCard) ?? {}), metadata: metadata ?? null });
+            aiModelDiscovery.set(currentCard, { catalog, modelName: currentCard.model_name, metadata: metadata ?? null, candidates: catalog?.candidates ?? {} });
             openAiModelCard(currentCard.id); markAiDirty(editorName());
             return;
         }
@@ -2833,9 +3078,9 @@ function bindAiCardEvents() {
         const cards = aiList(editor, group);
         const index = Number(button.closest('[data-ai-index]')?.dataset.aiIndex);
         const action = button.dataset.aiAction;
-        if (['discover-models', 'refresh-models', 'model-info'].includes(action)) { void discoverAiModels(editorName(), group, cards[index], action); return; }
+        if (action === 'model-info') { void discoverAiModelInfo(editorName(), group, cards[index]); return; }
         if (action === 'apply-model-info') {
-            const metadata = aiModelDiscovery.get(cards[index])?.metadata;
+            const metadata = aiModelDiscoveryState(cards[index], group).metadata;
             if (metadata) { applyAiModelMetadata(cards[index], metadata); openAiModelCard(cards[index].id); markAiDirty(editorName()); }
             return;
         }
@@ -2852,6 +3097,7 @@ function bindAiCardEvents() {
             return;
         }
         if (action === 'add') {
+            if (group !== 'providers' && !aiFeature(group)) { openAiModelPicker(editorName(), group); return; }
             const value = section.querySelector('[data-ai-add-source]').value;
             if (!value) return;
             if (aiFeature(group)) {
@@ -2863,20 +3109,18 @@ function bindAiCardEvents() {
                     return;
                 }
                 cards.push({ id: newAiId(), name: section.querySelector('[data-ai-provider-name]').value.trim() || AI_NAMES[value] || value, provider_type: value, api_key: '', base_url: '' });
-            } else {
-                const provider = aiSource(editor, value);
-                if (!provider) { toast('请先配置供应商', 'err'); return; }
-                cards.push(newAiModel(value, aiService(group), provider.provider_type));
             }
         } else if (action === 'remove') {
             if (!aiFeature(group)) {
                 const references = aiRemovalReferences(editor, group, cards[index].id);
                 if (references.length) { toast('请先移除引用：' + references.join('；'), 'err'); return; }
             }
+            if (group === 'providers') invalidateAiProviderDiscovery(cards[index].id);
             cards.splice(index, 1);
         } else if (action === 'clear-key') {
             Object.assign(cards[index], { api_key: '', api_key_set: false, clear_api_key: true });
             clearedKeyCards.add(cards[index]);
+            invalidateAiProviderDiscovery(cards[index].id);
         } else {
             const target = index + (action === 'up' ? -1 : 1);
             if (target < 0 || target >= cards.length) return;
@@ -3224,6 +3468,7 @@ async function loadSystemSettings({ silent = false } = {}) {
 
 function renderSystemSettings(data) {
     if (!data) return;
+    resetAiDiscovery();
     lastSystemAiRaw = data.ai_config;
     aiEditors.system.config = normalizeAiConfig(data.ai_config);
     aiEditors.system.support = data.ai_provider_support;
@@ -3431,7 +3676,16 @@ $('#uploadForm').addEventListener('submit', async (e) => {
 });
 
 function openModal(id) { $('#' + id).classList.add('open'); document.body.style.overflow = 'hidden'; }
-function closeModal(id) { $('#' + id).classList.remove('open'); document.body.style.overflow = ''; }
+function closeModal(id) {
+    $('#' + id).classList.remove('open');
+    document.body.style.overflow = '';
+    if (id === 'aiModelPickerModal' && aiModelPicker) {
+        const target = aiModelPicker.returnFocus;
+        aiModelPicker = null;
+        if (target?.isConnected) target.focus();
+        else $('#aiChainBody [data-ai-action="add"]')?.focus();
+    }
+}
 
 document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
@@ -3455,6 +3709,16 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAllMenus();
         $$('.modal.open').forEach(m => closeModal(m.id));
+        return;
+    }
+    if (aiModelPicker) {
+        if (e.key === 'Tab') {
+            const controls = $$('button:not(:disabled), input:not(:disabled), select, textarea, a[href]', $('#aiModelPickerModal')).filter(el => el.getClientRects().length);
+            const first = controls[0], last = controls.at(-1);
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') e.preventDefault();
         return;
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S') && ($('#panel-settings')?.classList.contains('active') || $('#panel-ai')?.classList.contains('active'))) {
