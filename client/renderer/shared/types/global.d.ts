@@ -66,6 +66,7 @@ declare global {
         accounts: AsyncIpc<IpcInvokeContract['spiritagent:desktop:accounts']>
         switchAccount: AsyncIpc<IpcInvokeContract['spiritagent:desktop:switch-account']>
         addAccount: AsyncIpc<IpcInvokeContract['spiritagent:desktop:add-account']>
+        removeAccount: AsyncIpc<IpcInvokeContract['spiritagent:desktop:remove-account']>
         quit: AsyncIpc<IpcInvokeContract['spiritagent:desktop:quit']>
         onNavigate: EventSubscription<'spiritagent:desktop:navigate'>
       }

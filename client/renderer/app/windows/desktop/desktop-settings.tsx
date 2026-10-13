@@ -19,6 +19,11 @@ const ACCOUNT_SUBMENU_WIDTH = 224
 const ACCOUNT_SUBMENU_GAP = 8
 
 type AccountSubmenuSide = 'below' | 'left' | 'right'
+type AccountSubmenu = 'remove' | 'switch'
+
+function selectableAccountIndexes(accounts: Accounts | null, submenu: AccountSubmenu): number[] {
+  return (accounts ?? []).flatMap((account, index) => (submenu === 'switch' && account.active ? [] : [index]))
+}
 
 export function DesktopSettings({
   onSettings,
@@ -95,16 +100,16 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0)
-  const [switchOpen, setSwitchOpen] = useState(false)
+  const [submenu, setSubmenu] = useState<AccountSubmenu | null>(null)
   const [submenuSide, setSubmenuSide] = useState<AccountSubmenuSide>('right')
   const beginAsync = useAsyncGuard()
   const menuRef = useRef<HTMLDivElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  const triggerRefs = useRef<Record<AccountSubmenu, HTMLButtonElement | null>>({ remove: null, switch: null })
   const accountOptionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const focusOptionOnOpen = useRef(false)
   const focusDirectionOnOpen = useRef<'first' | 'last'>('first')
-  const suppressTriggerOpen = useRef(false)
+  const suppressTriggerOpen = useRef<AccountSubmenu | null>(null)
   useInteractiveRegion('desktop-accounts-popup', popupRef)
 
   const updateSubmenuSide = (): void => {
@@ -128,7 +133,7 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
   }
 
   useLayoutEffect(() => {
-    if (!switchOpen) {
+    if (!submenu) {
       return
     }
 
@@ -136,19 +141,17 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
     window.addEventListener('resize', updateSubmenuSide)
 
     return () => window.removeEventListener('resize', updateSubmenuSide)
-  }, [switchOpen])
+  }, [submenu])
 
-  const closeSwitcher = (): void => {
+  const closeSubmenu = (): void => {
     focusOptionOnOpen.current = false
     focusDirectionOnOpen.current = 'first'
-    setSwitchOpen(false)
+    setSubmenu(null)
   }
 
   const focusAccountOption = useCallback(
-    (direction: 'first' | 'last' = 'first'): void => {
-      const selectable = (accounts ?? [])
-        .map((account, index) => (account.active ? -1 : index))
-        .filter(index => index >= 0)
+    (mode: AccountSubmenu, direction: 'first' | 'last' = 'first'): void => {
+      const selectable = selectableAccountIndexes(accounts, mode)
 
       const index = direction === 'last' ? selectable.at(-1) : selectable[0]
 
@@ -159,28 +162,34 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
     [accounts]
   )
 
-  const openSwitcher = (focusOption = false, direction: 'first' | 'last' = 'first'): void => {
+  const openSubmenu = (mode: AccountSubmenu, focusOption = false, direction: 'first' | 'last' = 'first'): void => {
+    if (busy) {
+      return
+    }
+
     if (focusOption) {
-      if (switchOpen && accounts) {
+      if (submenu === mode && accounts) {
         focusOptionOnOpen.current = false
-        focusAccountOption(direction)
+        focusAccountOption(mode, direction)
       } else {
         focusOptionOnOpen.current = true
         focusDirectionOnOpen.current = direction
       }
+    } else {
+      focusOptionOnOpen.current = false
     }
 
-    setSwitchOpen(true)
+    setSubmenu(mode)
   }
 
   useEffect(() => {
-    if (!switchOpen || !focusOptionOnOpen.current || !accounts) {
+    if (!submenu || !focusOptionOnOpen.current || !accounts) {
       return
     }
 
     focusOptionOnOpen.current = false
-    focusAccountOption(focusDirectionOnOpen.current)
-  }, [accounts, focusAccountOption, switchOpen])
+    focusAccountOption(submenu, focusDirectionOnOpen.current)
+  }, [accounts, focusAccountOption, submenu])
 
   useEffect(() => {
     let disposed = false
@@ -210,7 +219,7 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
   const run = async (action: () => Promise<unknown>): Promise<void> => {
     const isLive = beginAsync()
     setBusy(true)
-    closeSwitcher()
+    closeSubmenu()
     onClose()
 
     try {
@@ -239,27 +248,30 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
 
   const handlePopupBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
     if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
-      closeSwitcher()
+      closeSubmenu()
     }
   }
 
-  const handleSwitchKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>): void => {
+  const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, mode: AccountSubmenu): void => {
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
-      openSwitcher(true)
+      openSubmenu(mode, true)
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      openSwitcher(true, 'last')
-    } else if (event.key === 'ArrowLeft' && switchOpen) {
+      openSubmenu(mode, true, 'last')
+    } else if ((event.key === 'ArrowLeft' || event.key === 'Escape') && submenu === mode) {
       event.preventDefault()
-      closeSwitcher()
+      event.stopPropagation()
+      closeSubmenu()
     }
   }
 
   const handleAccountOptionKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number): void => {
-    const selectable = (accounts ?? [])
-      .map((account, optionIndex) => (account.active ? -1 : optionIndex))
-      .filter(optionIndex => optionIndex >= 0)
+    if (!submenu) {
+      return
+    }
+
+    const selectable = selectableAccountIndexes(accounts, submenu)
 
     const current = selectable.indexOf(index)
 
@@ -284,18 +296,50 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
       }
     } else if (event.key === 'Escape' || event.key === 'ArrowLeft') {
       event.preventDefault()
-      suppressTriggerOpen.current = true
-      closeSwitcher()
-      triggerRef.current?.focus()
+      event.stopPropagation()
+      suppressTriggerOpen.current = submenu
+      closeSubmenu()
+      triggerRefs.current[submenu]?.focus()
     }
   }
+
+  const submenuTrigger = (mode: AccountSubmenu, label: string): React.JSX.Element => (
+    <div className={styles.accountSwitch} onPointerEnter={() => openSubmenu(mode)}>
+      <button
+        aria-expanded={submenu === mode}
+        aria-haspopup="menu"
+        className={styles.menuAction}
+        data-destructive={mode === 'remove'}
+        disabled={busy}
+        onClick={() => openSubmenu(mode)}
+        onFocus={() => {
+          const suppressed = suppressTriggerOpen.current === mode
+          suppressTriggerOpen.current = null
+
+          if (!suppressed) {
+            openSubmenu(mode)
+          }
+        }}
+        onKeyDown={event => handleTriggerKeyDown(event, mode)}
+        ref={element => {
+          triggerRefs.current[mode] = element
+        }}
+        type="button"
+      >
+        <span>{label}</span>
+        <ArrowRight aria-hidden="true" size={14} />
+      </button>
+    </div>
+  )
+
+  const submenuLabel = submenu === 'remove' ? t.removableAccounts : t.accountList
 
   return (
     <div
       className={styles.accountPopup}
       data-side={submenuSide}
       onBlur={handlePopupBlur}
-      onPointerLeave={closeSwitcher}
+      onPointerLeave={closeSubmenu}
       ref={popupRef}
     >
       <div className={`${styles.menuContent} ${styles.accountMenu}`} ref={menuRef}>
@@ -310,32 +354,14 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
             </span>
           )}
         </div>
-        <div className={styles.accountSwitch} onPointerEnter={() => openSwitcher()}>
-          <button
-            aria-expanded={switchOpen}
-            aria-haspopup="menu"
-            className={styles.menuAction}
-            onClick={() => openSwitcher()}
-            onFocus={() => {
-              if (suppressTriggerOpen.current) {
-                suppressTriggerOpen.current = false
-              } else {
-                openSwitcher()
-              }
-            }}
-            onKeyDown={handleSwitchKeyDown}
-            ref={triggerRef}
-            type="button"
-          >
-            <span>{t.switchAccount}</span>
-            <ArrowRight aria-hidden="true" size={14} />
-          </button>
-        </div>
+        {submenuTrigger('switch', t.switchAccount)}
         {failed && (
           <button
             className={styles.menuAction}
             onClick={() => setRetry(value => value + 1)}
-            tabIndex={switchOpen ? -1 : 0}
+            onFocus={closeSubmenu}
+            onPointerEnter={closeSubmenu}
+            tabIndex={submenu ? -1 : 0}
             type="button"
           >
             {t.retry}
@@ -345,32 +371,43 @@ export function DesktopAccounts({ onClose }: { onClose: () => void }): React.JSX
           className={styles.menuAction}
           disabled={busy}
           onClick={() => void run(() => window.spiritagent.desktop.addAccount())}
-          tabIndex={switchOpen ? -1 : 0}
+          onFocus={closeSubmenu}
+          onPointerEnter={closeSubmenu}
+          tabIndex={submenu ? -1 : 0}
           type="button"
         >
           {t.addAccount}
         </button>
+        {submenuTrigger('remove', t.removeAccount)}
       </div>
-      {switchOpen && (
-        <div aria-label={t.accountList} className={styles.accountSubmenu} role="menu">
+      {submenu && (
+        <div aria-label={submenuLabel} className={styles.accountSubmenu} role="menu">
           <div aria-hidden="true" className={styles.accountSubmenuTitle}>
-            {t.accountList}
+            {submenuLabel}
           </div>
           {accounts === null && !failed && <span className={styles.menuStatus}>{t.accountLoading}</span>}
           {failed && <span className={styles.menuStatus}>{t.accountLoadFailed}</span>}
           {accounts?.map((account, index) => (
             <button
-              aria-checked={account.active}
+              aria-checked={submenu === 'switch' ? account.active : undefined}
+              aria-current={submenu === 'remove' && account.active ? 'true' : undefined}
               className={styles.accountOption}
-              disabled={busy || account.active}
+              data-destructive={submenu === 'remove'}
+              disabled={busy || (submenu === 'switch' && account.active)}
               key={account.id}
-              onClick={() => void run(() => window.spiritagent.desktop.switchAccount(account.id))}
+              onClick={() =>
+                void run(() =>
+                  submenu === 'remove'
+                    ? window.spiritagent.desktop.removeAccount(account.id)
+                    : window.spiritagent.desktop.switchAccount(account.id)
+                )
+              }
               onKeyDown={event => handleAccountOptionKeyDown(event, index)}
               ref={element => {
                 accountOptionRefs.current[index] = element
               }}
-              role="menuitemradio"
-              tabIndex={account.active || index !== accounts.findIndex(item => !item.active) ? -1 : 0}
+              role={submenu === 'remove' ? 'menuitem' : 'menuitemradio'}
+              tabIndex={index === accounts.findIndex(item => submenu === 'remove' || !item.active) ? 0 : -1}
               title={account.baseUrl}
               type="button"
             >

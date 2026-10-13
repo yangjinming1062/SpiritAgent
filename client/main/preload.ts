@@ -121,6 +121,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
     accounts: () => invoke(IPC.invoke.desktopAccounts),
     switchAccount: (id: string) => invoke(IPC.invoke.desktopSwitchAccount, id),
     addAccount: () => invoke(IPC.invoke.desktopAddAccount),
+    removeAccount: (id: string) => invoke(IPC.invoke.desktopRemoveAccount, id),
     quit: () => invoke(IPC.invoke.desktopQuit),
     onNavigate: (cb: EventCallback<typeof IPC.event.desktopNavigate>) => subscribe(IPC.event.desktopNavigate, cb)
   },

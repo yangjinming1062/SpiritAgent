@@ -786,6 +786,10 @@
 .menuAction:hover {
   background: var(--ui-fill-hover);
 }
+.menuAction[data-destructive='true'],
+.accountOption[data-destructive='true'] {
+  color: var(--ui-danger-fg);
+}
 .menuAction:focus-visible,
 .accountOption:focus-visible {
   background: var(--ui-fill-hover);

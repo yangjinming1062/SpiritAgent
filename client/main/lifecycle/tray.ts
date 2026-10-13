@@ -12,6 +12,7 @@ import {
 import { IPC, type IpcEventChannel, type IpcEventContract, type PresentationMode, type SurfaceId } from '@ipc/contracts'
 
 import type { BackendSessionPort } from '../shared/backend-port'
+import { confirmAccountRemoval, showAccountRemovalError } from '../shared/lib/account-removal'
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, isWindowShown, sendToWindow } from '../shared/utils'
@@ -31,7 +32,7 @@ interface TrayDeps {
   getAppIconPath: () => null | string
   nativeImage: typeof nativeImage
   rememberLog: (chunk: string) => void
-  removeAccount: (accountId: string) => Promise<void>
+  removeAccount: (accountId: string, isLive?: () => boolean) => Promise<void>
   surfaces?: SurfacesManager
   presentation?: Pick<DesktopPresentation, 'getState' | 'setMode'>
   switchAccount: (accountId: string) => Promise<unknown>
@@ -44,13 +45,7 @@ const TRAY_STRINGS = {
     accountSwitch: '切换账户',
     addAccount: '添加账户…',
     removeAccount: '移除账户',
-    removeConfirm: (username: string) => `从本机移除「${username}」？之后若想使用此账户，需要重新输入激活码。`,
-    removeCurrentConfirm: (username: string) =>
-      `从本机移除当前账户「${username}」并退出登录？之后若想使用此账户，需要重新输入激活码。`,
-    confirmRemove: '移除',
-    cancel: '取消',
     switchFailed: '切换账户失败',
-    removeFailed: '移除账户失败',
     hide: '隐藏',
     language: '语言 / Language',
     living: '生活空间',
@@ -69,14 +64,7 @@ const TRAY_STRINGS = {
     accountSwitch: 'Switch Account',
     addAccount: 'Add Account…',
     removeAccount: 'Remove Account',
-    removeConfirm: (username: string) =>
-      `Remove “${username}” from this device? You will need its activation code to add it again.`,
-    removeCurrentConfirm: (username: string) =>
-      `Remove the current account “${username}” and sign out? You will need its activation code to add it again.`,
-    confirmRemove: 'Remove',
-    cancel: 'Cancel',
     switchFailed: 'Could not switch account',
-    removeFailed: 'Could not remove account',
     hide: 'Hide',
     language: 'Language / 语言',
     living: 'Living Space',
@@ -180,33 +168,35 @@ async function changePresentationFromTray(mode: PresentationMode): Promise<void>
   }
 }
 
-async function removeFromTray(accountId: string, username: string, active: boolean): Promise<void> {
+async function removeFromTray(accountId: string): Promise<void> {
   if (!trayDeps || accountOperationBusy) {
     return
   }
 
-  const t = TRAY_STRINGS[getCurrentLanguage()]
+  const session = trayDeps.ensureBackendSession?.()
+  const account = session?.listAccounts().find(item => item.id === accountId)
 
-  const result = await trayDeps.dialog.showMessageBox({
-    buttons: [t.cancel, t.confirmRemove],
-    cancelId: 0,
-    defaultId: 0,
-    message: active ? t.removeCurrentConfirm(username) : t.removeConfirm(username),
-    noLink: true,
-    type: 'warning'
-  })
-
-  if (result.response !== 1) {
+  if (!session || !account) {
     return
   }
+
+  const sessionId = session.getSession()?.sessionId
+  const selectedAccountId = session.getSelectedAccountId()
+
+  const isLive = (): boolean =>
+    session.getSession()?.sessionId === sessionId &&
+    session.getSelectedAccountId() === selectedAccountId &&
+    session.listAccounts().some(item => item.id === accountId)
 
   accountOperationBusy = true
   rebuildTrayMenu()
 
   try {
-    await trayDeps.removeAccount(accountId)
+    if ((await confirmAccountRemoval({ account, dialog: trayDeps.dialog })) && isLive()) {
+      await trayDeps.removeAccount(accountId, isLive)
+    }
   } catch (error) {
-    trayDeps.dialog.showErrorBox(t.removeFailed, errorMessage(error))
+    showAccountRemovalError(trayDeps.dialog, error)
   } finally {
     accountOperationBusy = false
     rebuildTrayMenu()
@@ -372,7 +362,7 @@ function buildTrayMenu(): Menu | null {
       label: t.removeAccount,
       submenu: accounts.map(account => ({
         click: () => {
-          void removeFromTray(account.id, account.username, account.active)
+          void removeFromTray(account.id)
         },
         label: labelOf(account)
       }))

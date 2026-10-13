@@ -460,6 +460,7 @@ export interface IpcInvokeContract {
   'spiritagent:desktop:accounts': () => Promise<DesktopAccount[]>
   'spiritagent:desktop:switch-account': (id: string) => Promise<void>
   'spiritagent:desktop:add-account': () => Promise<void>
+  'spiritagent:desktop:remove-account': (id: string) => Promise<void>
   'spiritagent:desktop:quit': () => void
   'spiritagent:background:ready': () => void
   'spiritagent:background:acknowledge': (playback: DesktopBackgroundPlayback) => void
@@ -705,6 +706,7 @@ export const IPC = {
     desktopAccounts: 'spiritagent:desktop:accounts',
     desktopSwitchAccount: 'spiritagent:desktop:switch-account',
     desktopAddAccount: 'spiritagent:desktop:add-account',
+    desktopRemoveAccount: 'spiritagent:desktop:remove-account',
     desktopQuit: 'spiritagent:desktop:quit',
     backgroundReady: 'spiritagent:background:ready',
     backgroundAcknowledge: 'spiritagent:background:acknowledge',

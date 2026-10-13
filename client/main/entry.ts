@@ -513,6 +513,7 @@ registerSpriteIpc({
 
 registerDesktopAccountIpc({
   deps: {
+    dialog,
     ensureBackendSession,
     isDesktopSender: sender => presentation?.isDesktopSender(sender) ?? false,
     onLeavingDesktop: () => presentation?.accountChanged() ?? Promise.resolve(),
@@ -521,6 +522,7 @@ registerDesktopAccountIpc({
       sendToWindow(mainWindow, IPC.event.trayActivate)
     },
     quitApp: () => app.quit(),
+    removeAccount: authActions.removeAccount,
     switchAccount: authActions.switchAccount
   },
   ipcMain

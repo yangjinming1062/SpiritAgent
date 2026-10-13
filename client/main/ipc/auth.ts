@@ -1,4 +1,4 @@
-import type { IpcMain, WebContents } from 'electron'
+import { BrowserWindow, type dialog, type IpcMain, type WebContents } from 'electron'
 
 import {
   type DesktopActivatePayload,
@@ -10,6 +10,7 @@ import {
 
 import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'
+import { confirmAccountRemoval, showAccountRemovalError } from '../shared/lib/account-removal'
 import { broadcastToAllWindows, createSerialQueue, errorMessage } from '../shared/utils'
 
 interface AuthBroadcasterDeps {
@@ -122,7 +123,7 @@ export function registerAuthIpc({
   deps: AuthIpcDeps
   ipcMain: IpcMain
 }): {
-  removeAccount: (accountId: string) => Promise<void>
+  removeAccount: (accountId: string, isLive?: () => boolean) => Promise<void>
   switchAccount: (accountId: string) => Promise<null | SessionSnapshotPort>
 } {
   const enqueueAction = createSerialQueue()
@@ -178,8 +179,13 @@ export function registerAuthIpc({
     })
   }
 
-  function removeAccount(accountId: string): Promise<void> {
+  function removeAccount(accountId: string, isLive?: () => boolean): Promise<void> {
     return enqueueAction(async () => {
+      // 确认框结束后仍可能等待其他账户操作；在真正执行清理前复核来源与身份。
+      if (isLive && !isLive()) {
+        return
+      }
+
       const session = deps.ensureBackendSession()
       const previous = session.getSession()
       const selectedAccountId = session.getSelectedAccountId()
@@ -269,17 +275,21 @@ export function registerAuthIpc({
 }
 
 interface DesktopAccountIpcDeps {
+  dialog: Pick<typeof dialog, 'showErrorBox' | 'showMessageBox'>
   ensureBackendSession: () => BackendSessionPort
   /** 桌面模式离开与窗口切换；presentation 由入口晚绑定，读取得在调用时发生。 */
   onLeavingDesktop: () => Promise<void>
   /** 打开主窗口并触发与托盘「打开」一致的激活流程。 */
   openMainWindow: () => void
   switchAccount: (accountId: string) => Promise<null | SessionSnapshotPort>
+  removeAccount: (accountId: string, isLive?: () => boolean) => Promise<void>
   isDesktopSender: (sender: WebContents) => boolean
   quitApp: () => void
 }
 
 export function registerDesktopAccountIpc({ deps, ipcMain }: { deps: DesktopAccountIpcDeps; ipcMain: IpcMain }): void {
+  let removalBusy = false
+
   const assertDesktopAccountSender = (sender: WebContents): void => {
     if (!deps.isDesktopSender(sender)) {
       throw new Error('仅桌面入口允许此操作。')
@@ -307,6 +317,44 @@ export function registerDesktopAccountIpc({ deps, ipcMain }: { deps: DesktopAcco
     assertDesktopAccountSender(event.sender)
     await deps.onLeavingDesktop()
     deps.openMainWindow()
+  })
+
+  ipcMain.handle(IPC.invoke.desktopRemoveAccount, async (event, id: unknown) => {
+    assertDesktopAccountSender(event.sender)
+
+    const session = deps.ensureBackendSession()
+    const account = typeof id === 'string' ? session.listAccounts().find(item => item.id === id) : undefined
+    const parent = BrowserWindow.fromWebContents(event.sender)
+
+    if (!account || !parent || parent.isDestroyed()) {
+      throw new Error('无效账户或桌面窗口。')
+    }
+
+    if (removalBusy) {
+      return
+    }
+
+    const sessionId = session.getSession()?.sessionId
+    const selectedAccountId = session.getSelectedAccountId()
+
+    const isLive = (): boolean =>
+      !event.sender.isDestroyed() &&
+      deps.isDesktopSender(event.sender) &&
+      session.getSession()?.sessionId === sessionId &&
+      session.getSelectedAccountId() === selectedAccountId &&
+      session.listAccounts().some(item => item.id === account.id)
+
+    removalBusy = true
+
+    try {
+      if ((await confirmAccountRemoval({ account, dialog: deps.dialog, parent })) && isLive()) {
+        await deps.removeAccount(account.id, isLive)
+      }
+    } catch (error) {
+      showAccountRemovalError(deps.dialog, error)
+    } finally {
+      removalBusy = false
+    }
   })
 
   ipcMain.handle(IPC.invoke.desktopQuit, event => {
