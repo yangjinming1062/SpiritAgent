@@ -22,6 +22,7 @@ from PIL import Image, ImageOps
 from prompts.desktop_videos import (
     DESKTOP_ACTION_DESIGN,
     DESKTOP_POSE_IMAGE_TEMPLATE,
+    DESKTOP_VIDEO_BASE,
     DESKTOP_VIDEO_LOOP,
     DESKTOP_VIDEO_MOTION_TEMPLATE,
     DESKTOP_VIDEO_ONCE,
@@ -35,7 +36,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.actions import (
     DesktopVideoStateError,
     desktop_action,
-    desktop_action_description,
     desktop_progress,
     desktop_state,
     emit_desktop_play,
@@ -102,8 +102,10 @@ _JOBS: dict[int, asyncio.Task[None]] = {}
 
 class DesktopVideoScript(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    pose_prompt: str = Field(min_length=1, max_length=1500)
-    motion_prompt: str = Field(min_length=1, max_length=2000)
+    feasible: bool
+    reason: str = Field(max_length=200)
+    pose_prompt: str = Field(max_length=1500)
+    motion_prompt: str = Field(max_length=2000)
 
 
 class DesktopVideoReview(BaseModel):
@@ -200,30 +202,34 @@ async def resolve_desktop_video_plan(
     *,
     kind: str,
     duration_seconds: int,
+    continuity: str = "independent",
+    require_image: bool = True,
 ) -> tuple[int, list[FrozenMediaProvider]]:
+    needs_last_frame = kind == "loop" or continuity == "base"
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.desktop_life)
         if not await resolve_vision_chain(db, user_id, task=AiTaskKey.desktop_life):
             raise DesktopVideoStateError("请先配置视觉模型")
-        images, error = await resolve_image_gen_chain(
-            db,
-            user_id,
-            has_reference=True,
-            multiple_references=True,
-            task=AiTaskKey.desktop_life,
-        )
-        if not images:
-            raise DesktopVideoStateError(error or "请配置支持当前穿着参考的图片模型")
+        if require_image:
+            images, error = await resolve_image_gen_chain(
+                db,
+                user_id,
+                has_reference=True,
+                multiple_references=True,
+                task=AiTaskKey.desktop_life,
+            )
+            if not images:
+                raise DesktopVideoStateError(error or "请配置支持当前穿着参考的图片模型")
     configured = [(config, build_provider(config, VideoGenProvider)) for config in chain]
     for index, (_, provider) in enumerate(configured):
-        if not provider.supports_first_frame or (kind == "loop" and not provider.supports_loop_frames):
+        if not provider.supports_first_frame or (needs_last_frame and not provider.supports_loop_frames):
             continue
         seconds = next(
             (
                 value
                 for value in sorted(provider.durations or (duration_seconds,))
                 if duration_seconds <= value <= 15
-                and provider.max_resolution(duration=value, first_frame=True, last_frame=kind == "loop")
+                and provider.max_resolution(duration=value, first_frame=True, last_frame=needs_last_frame)
             ),
             None,
         )
@@ -231,18 +237,18 @@ async def resolve_desktop_video_plan(
             continue
         providers: list[FrozenMediaProvider] = []
         for config, current in configured[index:]:
-            if not current.supports_first_frame or (kind == "loop" and not current.supports_loop_frames):
+            if not current.supports_first_frame or (needs_last_frame and not current.supports_loop_frames):
                 continue
             if current.durations is not None and seconds not in current.durations:
                 continue
-            resolution = current.max_resolution(duration=seconds, first_frame=True, last_frame=kind == "loop")
+            resolution = current.max_resolution(duration=seconds, first_frame=True, last_frame=needs_last_frame)
             if resolution:
                 frozen = FrozenMediaProvider.from_config(config)
                 frozen.video_resolution = resolution
                 providers.append(frozen)
         if providers:
             return seconds, providers
-    raise DesktopVideoStateError("请配置支持首帧（循环动作还需首尾帧）及所需时长的视频模型")
+    raise DesktopVideoStateError("请配置支持所需时长与首帧的视频模型；循环或衔接动作还需支持首尾帧")
 
 
 async def _job_inputs(
@@ -325,8 +331,14 @@ async def _prepare_pose(
         await _require_paid_job(user_id, action.id, progress.generation_id)
 
     if not progress.pose_prompt:
-        progress.action_description = progress.action_description or desktop_action_description(action)
         await _save_progress(user_id, action.id, progress, stage="design")
+        base = (
+            await asyncio.to_thread(read_valid_image_data_uri, progress.base_image_path)
+            if progress.base_image_path
+            else None
+        )
+        if progress.base_image_path and not base:
+            raise DesktopVideoStateError("基础画面无法读取，请重做安静相伴并更新基础画面")
         raw = await vision_chat(
             user_id,
             DESKTOP_ACTION_DESIGN,
@@ -342,16 +354,26 @@ async def _prepare_pose(
                     "feedback": progress.feedback,
                     "use_when": json.loads(action.use_when_json),
                     "avoid_when": json.loads(action.avoid_when_json),
+                    "continuity": progress.continuity,
+                    "has_base_reference": bool(base),
                 },
                 ensure_ascii=False,
             ),
-            reference_images=(portrait, outfit),
+            reference_images=(portrait, outfit, base) if base else (portrait, outfit),
             before_submit=before_submit,
             task=AiTaskKey.desktop_life,
         )
         script = DesktopVideoScript.model_validate(parse_llm_json(raw))
+        if not script.feasible:
+            raise DesktopVideoStateError(script.reason or "当前身体、环境或时长无法完成这个活动")
+        if not script.pose_prompt.strip() or not script.motion_prompt.strip():
+            raise DesktopVideoStateError("动作设计没有给出完整的画面与运动描述")
         progress.pose_prompt, progress.motion_prompt = script.pose_prompt, script.motion_prompt
         await _save_progress(user_id, action.id, progress, stage="image")
+    if progress.continuity == "base" and progress.base_image_path:
+        progress.pose_path = progress.base_image_path
+        await _save_progress(user_id, action.id, progress, stage="video")
+        return
     image_state = (
         ImageChainState.model_validate_json(progress.image_chain_json)
         if progress.image_chain_json
@@ -399,6 +421,8 @@ async def _prepare_pose(
         ext="png",
         directory=directory,
     )
+    if progress.continuity == "base":
+        progress.base_image_path = progress.pose_path
     await _save_progress(user_id, action.id, progress, stage="video")
 
 
@@ -458,6 +482,9 @@ async def _process_candidate(
         width=result.width,
         height=result.height,
         duration_ms=result.duration_ms,
+        continuity=progress.continuity,
+        base_version=progress.base_version,
+        base_image_path=progress.base_image_path,
     )
 
 
@@ -508,6 +535,13 @@ async def _evaluate_candidate(
             return
     if progress.review_verdict is None:
         try:
+            base = (
+                await asyncio.to_thread(read_valid_image_data_uri, progress.base_image_path)
+                if progress.base_image_path
+                else None
+            )
+            if progress.continuity == "base" and not base:
+                raise DesktopVideoStateError("基础画面无法读取，无法验证衔接")
             raw = await vision_chat(
                 user_id,
                 DESKTOP_VIDEO_REVIEW,
@@ -516,18 +550,19 @@ async def _evaluate_candidate(
                         "identity": snapshot.identity.features.model_dump(),
                         "outfit": snapshot.outfit_description,
                         "environment": snapshot.scene_description,
-                        # 旧进度未冻结用途时保留当时的描述。
-                        "action": progress.action_description or action.description,
+                        "action": progress.action_description,
                         "motion_prompt": progress.motion_prompt,
                         "feedback": progress.feedback,
                         "kind": action.kind,
                         "duration_seconds": progress.duration_seconds,
                         "frame_times_seconds": samples.times_seconds,
                         "output_language": language,
+                        "continuity": progress.continuity,
+                        "base_reference_image_number": 3 + len(uris) if base else None,
                     },
                     ensure_ascii=False,
                 ),
-                reference_images=(portrait, outfit, *uris),
+                reference_images=(portrait, outfit, *uris, base) if base else (portrait, outfit, *uris),
                 before_submit=before_submit,
                 task=AiTaskKey.desktop_life,
             )
@@ -720,13 +755,17 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                     request = VideoGenRequest(
                         prompt=DESKTOP_VIDEO_MOTION_TEMPLATE.format(
                             duration_seconds=progress.duration_seconds,
-                            cycle=DESKTOP_VIDEO_LOOP if action.kind == "loop" else DESKTOP_VIDEO_ONCE,
+                            cycle=DESKTOP_VIDEO_BASE
+                            if progress.continuity == "base"
+                            else DESKTOP_VIDEO_LOOP
+                            if action.kind == "loop"
+                            else DESKTOP_VIDEO_ONCE,
                             motion=progress.motion_prompt,
                         ),
                         duration=progress.duration_seconds,
                         resolution=chain.providers[index].video_resolution,
                         first_frame_image=pose,
-                        last_frame_image=pose if action.kind == "loop" else None,
+                        last_frame_image=pose if action.kind == "loop" or progress.continuity == "base" else None,
                         aspect_ratio="16:9",
                     )
                     async with media_call_duration(config, chain) as call_config:

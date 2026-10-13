@@ -72,7 +72,8 @@ export function useDesktopVideoWallpaper(): void {
     claimed &&
     claimed.set_id === current?.id &&
     claimed.set_epoch === state?.set_epoch &&
-    (claimed.kind !== 'loop' || !claimedAction || claimedAction.version <= claimed.version)
+    claimedAction?.version === claimed.version &&
+    (claimed.continuity !== 'base' || claimed.base_version === current.base_version)
       ? claimed
       : null
 
@@ -294,6 +295,12 @@ export function useDesktopVideoWallpaper(): void {
         return
       }
 
+      await refreshDesktopVideos()
+
+      if (disposed || !scope?.()) {
+        return
+      }
+
       if (await claimDesktopVideoPlay(requested.play_id, clientId)) {
         if (disposed || !scope?.()) {
           if (scope?.()) {
@@ -338,7 +345,10 @@ export function useDesktopVideoWallpaper(): void {
     })
   }, [authSessionId, recordReceipt])
 
-  const firstPoster = firstNonBlank(state?.current?.actions.find(action => action.key === 'idle')?.poster_url)
+  const firstPoster = firstNonBlank(
+    state?.current?.actions.find(action => action.key === 'idle')?.poster_url,
+    state?.current?.base_image_url
+  )
 
   const fallbackAction = state?.fallback?.actions.find(
     action => action.kind === 'loop' && action.enabled && action.video_url
@@ -366,9 +376,12 @@ export function useDesktopVideoWallpaper(): void {
         playId: activeCommand?.play_id ?? null,
         setId: activeCommand?.set_id ?? baseline?.set_id ?? null,
         actionId: activeCommand?.action_id ?? baseline?.id ?? null,
+        actionVersion: activeCommand?.version ?? baseline?.version ?? null,
         setEpoch: activeCommand?.set_epoch ?? state?.set_epoch ?? 0,
         expiresAt: activeCommand?.expires_at ?? null,
         kind: activeCommand?.kind ?? 'loop',
+        continuity: activeCommand?.continuity ?? baseline?.continuity ?? 'independent',
+        baseVersion: activeCommand ? activeCommand.base_version : (baseline?.base_version ?? null),
         theme,
         reduceMotion,
         paused,
@@ -395,6 +408,9 @@ export function useDesktopVideoWallpaper(): void {
     activeCommand,
     baseline?.id,
     baseline?.set_id,
+    baseline?.version,
+    baseline?.continuity,
+    baseline?.base_version,
     videoUrl,
     posterUrl,
     scene?.assetUrl,

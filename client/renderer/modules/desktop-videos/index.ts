@@ -21,6 +21,7 @@ export {
 } from './desktop-video-store'
 export type {
   DesktopVideoAction,
+  DesktopVideoContinuity,
   DesktopVideoKind,
   DesktopVideoPlayCommand,
   DesktopVideoPrompt,
@@ -28,5 +29,6 @@ export type {
   DesktopVideoProposal,
   DesktopVideoReceiptStatus,
   DesktopVideoSet,
-  DesktopVideoState
+  DesktopVideoState,
+  DesktopVideoTrigger
 } from './types'

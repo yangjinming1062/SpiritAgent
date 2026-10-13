@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .character_card import CharacterCardSnapshot
 
@@ -50,6 +50,18 @@ class DesktopVideoAsset(BaseModel):
     duration_ms: int = Field(gt=0)
     width: int = Field(gt=0)
     height: int = Field(gt=0)
+    continuity: Literal["independent", "base"] = "independent"
+    base_version: int | None = Field(default=None, gt=0, strict=True)
+    base_image_path: str | None = None
+
+    @model_validator(mode="after")
+    def valid_continuity(self) -> "DesktopVideoAsset":
+        if self.continuity == "base":
+            if self.base_version is None or not self.base_image_path or not self.base_image_path.strip():
+                raise ValueError("相接视频须保留基础画面及其版本")
+        elif self.base_version is not None or self.base_image_path is not None:
+            raise ValueError("独立视频不能声明基础画面")
+        return self
 
 
 class DesktopVideoProgress(BaseModel):
@@ -60,6 +72,10 @@ class DesktopVideoProgress(BaseModel):
     feedback: str = ""
     action_description: str = ""
     duration_seconds: int
+    continuity: Literal["independent", "base"] = "independent"
+    base_version: int | None = Field(default=None, gt=0, strict=True)
+    base_image_path: str | None = None
+    replace_base: bool = False
     pose_prompt: str = ""
     motion_prompt: str = ""
     pose_path: str = ""
@@ -75,6 +91,17 @@ class DesktopVideoProgress(BaseModel):
     submission_unknown: bool = False
     failure_reason: str = ""
 
+    @model_validator(mode="after")
+    def valid_continuity(self) -> "DesktopVideoProgress":
+        if self.continuity == "base":
+            if self.base_version is None:
+                raise ValueError("相接制作须冻结基础画面版本")
+            if self.base_image_path is not None and not self.base_image_path.strip():
+                raise ValueError("基础画面引用不能为空")
+        elif self.base_version is not None or self.base_image_path is not None or self.replace_base:
+            raise ValueError("独立制作不能声明或更新基础画面")
+        return self
+
 
 class DesktopVideoActionResponse(BaseModel):
     id: int
@@ -84,6 +111,7 @@ class DesktopVideoActionResponse(BaseModel):
     description: str
     kind: Literal["loop", "once"]
     duration_seconds: int
+    target_duration_seconds: int
     status: Literal["queued", "processing", "ready", "failed", "review_pending"]
     stage: str
     error: str | None = None
@@ -91,6 +119,9 @@ class DesktopVideoActionResponse(BaseModel):
     preset: bool
     use_when: list[str] = Field(default_factory=list)
     avoid_when: list[str] = Field(default_factory=list)
+    allowed_triggers: list[Literal["periodic", "user_return", "chat", "manual"]] = Field(default_factory=list)
+    continuity: Literal["independent", "base"] = "independent"
+    base_version: int | None = Field(default=None, gt=0, strict=True)
     poster_url: str = ""
     video_url: str = ""
     candidate_video_url: str = ""
@@ -121,6 +152,8 @@ class DesktopVideoSetResponse(BaseModel):
     proposals: list[DesktopVideoProposalResponse] = Field(default_factory=list)
     created_at: datetime
     is_current: bool = False
+    base_image_url: str = ""
+    base_version: int = Field(default=0, ge=0, strict=True)
 
 
 class DesktopVideoStateResponse(BaseModel):
@@ -144,6 +177,7 @@ class DesktopVideoListResponse(BaseModel):
 class DesktopVideoGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feedback: str = Field(default="", max_length=600)
+    replace_base: bool = False
 
 
 class DesktopVideoExternalPromptRequest(BaseModel):
@@ -186,6 +220,12 @@ class DesktopVideoDesignRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     motion_description: str = Field(min_length=10, max_length=600)
     kind: Literal["loop", "once"] = "once"
+    continuity: Literal["independent", "base"] = "independent"
+    allowed_triggers: list[Literal["periodic", "user_return", "chat", "manual"]] = Field(
+        default_factory=lambda: ["chat", "manual"],
+        min_length=1,
+        max_length=4,
+    )
     duration_seconds: int = Field(default=6, ge=1, le=15, strict=True)
     use_when: list[str] = Field(default_factory=list, max_length=8)
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
@@ -206,6 +246,13 @@ class DesktopVideoDesignRequest(BaseModel):
             raise ValueError("动作条件须为不超过120字的非空文字")
         return value
 
+    @field_validator("allowed_triggers")
+    @classmethod
+    def unique_triggers(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("允许触发情境不能重复")
+        return value
+
 
 class DesktopVideoPlayRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -224,6 +271,8 @@ class DesktopVideoPlayCommand(BaseModel):
     video_url: str
     poster_url: str
     version: int
+    continuity: Literal["independent", "base"]
+    base_version: int | None = Field(default=None, gt=0, strict=True)
 
 
 class DesktopVideoClaimRequest(BaseModel):

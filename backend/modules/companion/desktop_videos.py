@@ -22,6 +22,8 @@ class DesktopVideoSet(ModelBase, TimestampMixin):
     context_json: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(String(160), default="", server_default=text("''"))
     status: Mapped[str] = mapped_column(String(24), default="preparing", server_default=text("'preparing'"))
+    base_image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    base_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
 
 class DesktopVideoAction(ModelBase, TimestampMixin):
@@ -35,7 +37,14 @@ class DesktopVideoAction(ModelBase, TimestampMixin):
     description: Mapped[str] = mapped_column(Text)
     preset: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     kind: Mapped[str] = mapped_column(String(8), default="loop", server_default=text("'loop'"))
-    duration_seconds: Mapped[int] = mapped_column(Integer, default=10, server_default=text("10"))
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=6, server_default=text("6"))
+    target_duration_seconds: Mapped[int] = mapped_column(Integer, default=6, server_default=text("6"))
+    continuity: Mapped[str] = mapped_column(String(16), default="independent", server_default=text("'independent'"))
+    allowed_triggers_json: Mapped[str] = mapped_column(
+        Text,
+        default='["chat", "manual"]',
+        server_default=text('\'["chat", "manual"]\''),
+    )
     use_when_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     avoid_when_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
@@ -65,6 +74,7 @@ class DesktopVideoState(ModelBase, TimestampMixin):
         ForeignKey("desktop_video_actions.id", ondelete="SET NULL"),
         nullable=True,
     )
+    loop_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     set_epoch: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
@@ -98,8 +108,10 @@ class DesktopVideoPlayback(ModelBase, TimestampMixin):
     play_id: Mapped[str] = mapped_column(String(36), unique=True)
     set_epoch: Mapped[int] = mapped_column(Integer)
     presentation_revision: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    asset_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="queued", server_default=text("'queued'"))
     source: Mapped[str] = mapped_column(String(24))
     client_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

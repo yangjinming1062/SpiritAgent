@@ -192,8 +192,15 @@ export async function ensureDesktopVideoCurrent(
   }
 }
 
-export async function generateDesktopVideoAction(actionId: number, feedback?: string): Promise<void> {
-  await mutation<DesktopVideoAction>(`/actions/${actionId}/generate`, feedback ? { feedback } : {})
+export async function generateDesktopVideoAction(
+  actionId: number,
+  feedback?: string,
+  replaceBase = false
+): Promise<void> {
+  await mutation<DesktopVideoAction>(`/actions/${actionId}/generate`, {
+    feedback: feedback ?? '',
+    replace_base: replaceBase
+  })
   await refreshDesktopVideos()
 }
 
@@ -314,6 +321,10 @@ function isPlayCommand(value: unknown): value is DesktopVideoPlayCommand {
     typeof item.video_url === 'string' &&
     (item.poster_url === null || typeof item.poster_url === 'string') &&
     (item.kind === 'loop' || item.kind === 'once') &&
+    (item.continuity === 'base' || item.continuity === 'independent') &&
+    (item.base_version === null || (Number.isSafeInteger(item.base_version) && Number(item.base_version) > 0)) &&
+    (item.continuity !== 'base' || item.base_version !== null) &&
+    (item.continuity !== 'independent' || item.base_version === null) &&
     typeof item.version === 'number'
   )
 }

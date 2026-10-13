@@ -274,6 +274,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       loadedBackground &&
       request.playId === loadedBackground.playId &&
       request.setEpoch === loadedBackground.setEpoch &&
+      request.setId === loadedBackground.setId &&
+      request.actionId === loadedBackground.actionId &&
+      request.actionVersion === loadedBackground.actionVersion &&
+      request.continuity === loadedBackground.continuity &&
+      request.baseVersion === loadedBackground.baseVersion &&
       sameMedia(request.video, loadedBackground.video) &&
       sameMedia(request.poster, loadedBackground.poster)
 

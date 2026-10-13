@@ -1680,7 +1680,9 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     register("companion.set_timezone", companion_set_timezone)
 
     async def companion_idle_expression(params: dict) -> dict:
-        # desktop idle 监视器在阈值+冷却后调用；LLM 决定是否播一个动作，播放走统一 play_requested。
+        trigger = params.get("trigger", "periodic")
+        if not isinstance(trigger, str) or trigger not in {"periodic", "user_return"}:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "trigger must be periodic or user_return")
         if await get_disturbance_tier(user_id) != "autonomous":
             return {"expressed": False, "action_id": None, "reason": "autonomous tier required"}
         now = time.monotonic()
@@ -1702,7 +1704,9 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         presentation = get_presentation_snapshot(user_id)
         contact_revision = get_user_proactive_record(user_id).contact_revision
         if presentation is not None and presentation.mode == "desktop":
-            return await choose_idle_desktop_action(user_id, idle_seconds, local_hour)
+            return await choose_idle_desktop_action(user_id, idle_seconds, local_hour, trigger=trigger)
+        if trigger == "user_return":
+            return {"expressed": False, "action_id": None, "reason": "desktop required"}
         llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive)
         result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
         if (

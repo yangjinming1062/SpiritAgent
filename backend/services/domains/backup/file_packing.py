@@ -309,14 +309,20 @@ def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewr
         elif table == "desktop_video_sets":
             context = json.loads(row["context_json"])
             required.extend((context.get("identity_path"), context.get("outfit_path")))
+            if row["base_image_path"]:
+                required.append(row["base_image_path"])
         elif table == "desktop_video_actions":
             if row.get("accepted_asset_json"):
                 asset = json.loads(row["accepted_asset_json"])
                 required.extend((asset.get("video_path"), asset.get("poster_path")))
+                if asset["base_image_path"]:
+                    required.append(asset["base_image_path"])
             if row.get("status") == "review_pending" and row.get("generation_state_json"):
                 candidate = json.loads(row["generation_state_json"]).get("candidate")
                 if candidate:
                     required.extend((candidate.get("video_path"), candidate.get("poster_path")))
+                    if candidate["base_image_path"]:
+                        required.append(candidate["base_image_path"])
         elif table == "companion_posts":
             if row.get("content_type") != "text":
                 required.append(row.get("media_url"))

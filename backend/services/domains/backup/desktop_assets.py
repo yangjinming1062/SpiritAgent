@@ -46,6 +46,15 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
         )
         payload["context_json"] = snapshot.model_dump_json()
         payload["context_hash"] = desktop_visual_hash(snapshot)
+        base_version = payload["base_version"]
+        base_path = payload["base_image_path"]
+        if (
+            type(base_version) is not int
+            or base_version < 0
+            or (base_path is not None and (not isinstance(base_path, str) or not base_path.strip()))
+            or bool(base_path) != (base_version > 0)
+        ):
+            raise ValueError("桌面生活基础画面版本或引用无效。")
         if payload.get("status") == "preparing":
             payload["status"] = "failed"
     elif table == "desktop_video_actions":
@@ -53,6 +62,21 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             raise ValueError("桌面生活动作的组合或播放方式无效。")
         if type(payload.get("duration_seconds")) is not int or not 1 <= payload["duration_seconds"] <= 15:
             raise ValueError("桌面生活动作时长无效。")
+        if type(payload["target_duration_seconds"]) is not int or not 1 <= payload["target_duration_seconds"] <= 15:
+            raise ValueError("桌面生活动作目标时长无效。")
+        if not isinstance(payload["continuity"], str) or payload["continuity"] not in {"base", "independent"}:
+            raise ValueError("桌面生活动作衔接方式无效。")
+        triggers = json.loads(payload["allowed_triggers_json"])
+        if (
+            not isinstance(triggers, list)
+            or not triggers
+            or any(
+                not isinstance(item, str) or item not in {"periodic", "user_return", "chat", "manual"}
+                for item in triggers
+            )
+            or len(set(triggers)) != len(triggers)
+        ):
+            raise ValueError("桌面生活动作触发条件无效。")
         for field in ("enabled", "preset"):
             if type(payload.get(field)) is not bool:
                 raise ValueError("桌面生活动作开关无效。")
@@ -105,6 +129,8 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
 
 def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
     references: list[str] = []
+    if payload.get("base_image_path"):
+        references.append(payload["base_image_path"])
     if payload.get("context_json"):
         snapshot = DesktopVisualSnapshot.model_validate_json(payload["context_json"])
         references.extend((snapshot.identity_path, snapshot.outfit_path))
@@ -149,7 +175,19 @@ def validate_desktop_files(
                 return target
         return source
 
+    def validate_base_image(reference: str | None) -> None:
+        if not reference:
+            return
+        try:
+            with Image.open(effective_file(reference)) as image:
+                image.load()
+                if abs(image.width / image.height - 16 / 9) > 0.01:
+                    raise ValueError("桌面生活基础画面画幅无效。")
+        except OSError as exc:
+            raise ValueError("桌面生活基础画面缺失或无法读取。") from exc
+
     for row in rows.get("desktop_video_sets", []):
+        validate_base_image(row["base_image_path"])
         snapshot = DesktopVisualSnapshot.model_validate_json(row["context_json"])
         if row.get("context_hash") != desktop_visual_hash(snapshot):
             raise ValueError("桌面生活组合内容版本不匹配。")
@@ -173,9 +211,11 @@ def validate_desktop_files(
             assets.append(DesktopVideoAsset.model_validate_json(row["accepted_asset_json"]))
         if row.get("generation_state_json"):
             progress = DesktopVideoProgress.model_validate_json(row["generation_state_json"])
+            validate_base_image(progress.base_image_path)
             if row.get("status") == "review_pending" and progress.candidate:
                 assets.append(progress.candidate)
         for asset in assets:
+            validate_base_image(asset.base_image_path)
             video, poster = effective_file(asset.video_path), effective_file(asset.poster_path)
             if not video.is_file() or not poster.is_file():
                 raise ValueError("桌面生活视频或封面缺失。")

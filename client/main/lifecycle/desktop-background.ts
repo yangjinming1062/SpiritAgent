@@ -41,11 +41,16 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     (value.playId !== null && (typeof value.playId !== 'string' || !value.playId || value.playId.length > 128)) ||
     !validId(value.setId) ||
     !validId(value.actionId) ||
+    (value.actionVersion !== null && (!Number.isSafeInteger(value.actionVersion) || Number(value.actionVersion) < 0)) ||
     !Number.isSafeInteger(value.setEpoch) ||
     Number(value.setEpoch) < 0 ||
     (value.expiresAt !== null &&
       (typeof value.expiresAt !== 'string' || !Number.isFinite(Date.parse(value.expiresAt)))) ||
     (value.kind !== 'loop' && value.kind !== 'once') ||
+    (value.continuity !== 'base' && value.continuity !== 'independent') ||
+    !validId(value.baseVersion) ||
+    (value.continuity === 'base' && value.baseVersion === null) ||
+    (value.continuity === 'independent' && value.baseVersion !== null) ||
     typeof value.theme !== 'string' ||
     typeof value.reduceMotion !== 'boolean' ||
     typeof value.paused !== 'boolean' ||
@@ -61,9 +66,12 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     playId: value.playId,
     setId: value.setId as number | null,
     actionId: value.actionId as number | null,
+    actionVersion: value.actionVersion as number | null,
     setEpoch: value.setEpoch!,
     expiresAt: value.expiresAt,
     kind: value.kind,
+    continuity: value.continuity,
+    baseVersion: value.baseVersion as number | null,
     theme: normalizeUiTheme(value.theme),
     reduceMotion: value.reduceMotion,
     paused: value.paused,
@@ -80,9 +88,12 @@ export function emptyDesktopBackground(accountEpoch: number, revision: number, t
     playId: null,
     setId: null,
     actionId: null,
+    actionVersion: null,
     setEpoch: 0,
     expiresAt: null,
     kind: 'loop',
+    continuity: 'independent',
+    baseVersion: null,
     theme,
     reduceMotion: false,
     paused: true,

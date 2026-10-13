@@ -32,6 +32,15 @@ const zh = {
   actionName: '动作名称',
   actionDescription: '生活姿态与画面描述',
   duration: '时长（秒）',
+  targetDuration: '目标',
+  actualDuration: '成片',
+  creationDuration: '制作',
+  useWhen: '适合',
+  avoidWhen: '不适合',
+  baseReturn: '沿用基础画面，自然返回',
+  basePending: '制作时沿用基础画面并返回',
+  independentScene: '独立画面，切换后播放',
+  replaceBase: '重新设计基础画面；已有短动作仍可播放，但不再自动衔接新构图。',
   submitDesign: '提交设计并制作',
   designSubmitted: '设计已提交，可在动作列表查看后续结果。',
   external: '外部制作',
@@ -71,19 +80,14 @@ const zh = {
   fail: '桌面画面暂时不可用',
   actionNames: {
     idle: '安静相伴',
-    focus: '专注活动',
-    relax: '放松休息',
-    look: '看向你',
-    smile: '微笑回应',
-    stretch: '舒展身体'
-  },
-  actionDescriptions: {
-    idle: '以舒服自然的姿态安静相伴，以稳定舒适为主；未明确要求时只保留自然带出的不显眼变化。',
-    focus: '在当前环境中专注于适合自身身体与性格的安静活动。',
-    relax: '以自然的坐卧或休息姿态放松，保持轻微而连续的动作。',
-    look: '自然地把注意力转向你，短暂关注后平静收束。',
-    smile: '用符合自身性格的柔和神态短暂回应你。',
-    stretch: '适度舒展身体，结束后重新放松。'
+    focus: '专注做事',
+    relax: '闭目小憩',
+    look: '注意到你',
+    smile: '认可鼓励',
+    stretch: '舒展身体',
+    drink: '喝口水',
+    groom: '整理仪容',
+    dance: '跳一小段'
   },
   statuses: {
     queued: '尚未制作',
@@ -125,6 +129,16 @@ const en: typeof zh = {
   actionName: 'Action name',
   actionDescription: 'Describe the pose, activity, and scene',
   duration: 'Duration (seconds)',
+  targetDuration: 'Target',
+  actualDuration: 'Video',
+  creationDuration: 'Creation',
+  useWhen: 'Suitable when',
+  avoidWhen: 'Avoid when',
+  baseReturn: 'Uses the base scene and returns naturally',
+  basePending: 'Will use the base scene and return to it',
+  independentScene: 'Plays as a separate shot',
+  replaceBase:
+    'Redesign the base scene. Existing brief actions stay playable but will no longer join the new composition automatically.',
   submitDesign: 'Submit design and create',
   designSubmitted: 'Design submitted. Follow its progress in the action list.',
   external: 'Use an external video',
@@ -165,18 +179,13 @@ const en: typeof zh = {
   actionNames: {
     idle: 'Quiet company',
     focus: 'Focused activity',
-    relax: 'Relaxing',
-    look: 'Look at you',
-    smile: 'Smile back',
-    stretch: 'Stretch'
-  },
-  actionDescriptions: {
-    idle: 'Keep you company in a comfortable pose, favoring a stable, relaxed state; unless explicitly required, only subtle changes that arise naturally.',
-    focus: 'Focus on a quiet activity suited to their body, personality, and surroundings.',
-    relax: 'Relax in a natural seated or reclining pose with gentle, continuous movement.',
-    look: 'Turn their attention toward you briefly, then settle comfortably.',
-    smile: 'Respond to you briefly with a gentle expression suited to their personality.',
-    stretch: 'Stretch comfortably, then relax again.'
+    relax: 'Taking a nap',
+    look: 'Notice you',
+    smile: 'Encouragement',
+    stretch: 'Stretch',
+    drink: 'Take a drink',
+    groom: 'Freshen up',
+    dance: 'A little dance'
   },
   statuses: {
     queued: 'Not created',

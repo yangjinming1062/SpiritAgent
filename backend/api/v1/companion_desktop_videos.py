@@ -96,6 +96,7 @@ async def generate_action(
             user.id,
             action_id,
             feedback=body.feedback if body else "",
+            replace_base=body.replace_base if body else False,
             source="user_requested",
         )
     except DesktopVideoError as exc:

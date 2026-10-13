@@ -14,6 +14,7 @@ interface VideoSlot {
   started: boolean
   terminal: boolean
   timeout: ReturnType<typeof setTimeout> | null
+  frameCallback: number | null
   generation: number
 }
 
@@ -87,11 +88,17 @@ function DesktopWallpaper() {
       started: false,
       terminal: false,
       timeout: null,
+      frameCallback: null,
       generation: 0
     }))
 
     let active: number | null = null
     let retainedLoop: number | null = null
+    let pending: number | null = null
+    let returningLoop: number | null = null
+    let returningFrom: number | null = null
+    let notifyReturnFrame = false
+    let deferredMedia: DesktopBackground | null = null
     let accountEpoch = -1
     let revision = -1
     let paused = false
@@ -99,7 +106,6 @@ function DesktopWallpaper() {
     let fillPosterUrl: string | null = null
     let disposed = false
     const settled = new Set<string>()
-    const fadeTimers = new Set<ReturnType<typeof setTimeout>>()
 
     const setFill = (url: string | null): void => {
       fillPosterUrl = url
@@ -141,8 +147,37 @@ function DesktopWallpaper() {
         .catch(failure => console.warn('Desktop background acknowledgment failed', failure))
     }
 
+    const interruptDeferred = (): void => {
+      if (!deferredMedia?.playId || disposed) {
+        return
+      }
+
+      settled.add(deferredMedia.playId)
+      void bridge
+        .acknowledge({
+          accountEpoch: deferredMedia.accountEpoch,
+          revision: deferredMedia.revision,
+          playId: deferredMedia.playId,
+          status: 'interrupted'
+        })
+        .catch(failure => console.warn('Desktop background acknowledgment failed', failure))
+    }
+
     const reset = (slot: VideoSlot): void => {
       slot.generation += 1
+
+      if (slot.frameCallback !== null) {
+        slot.element.cancelVideoFrameCallback(slot.frameCallback)
+        slot.frameCallback = null
+      }
+
+      if (pending !== null && slots[pending] === slot) {
+        pending = null
+
+        if (active !== null && slots[active].media?.kind === 'loop') {
+          slots[active].element.loop = true
+        }
+      }
 
       if (slot.timeout) {
         clearTimeout(slot.timeout)
@@ -218,13 +253,17 @@ function DesktopWallpaper() {
 
       if (!slot.started && slot.media?.expiresAt && Date.parse(slot.media.expiresAt) <= Date.now()) {
         acknowledge(slot, 'failed', 'Playback request expired before playback started')
+        restoreLoop()
 
         return
       }
 
+      const generation = slot.generation
+
       void slot.element.play().catch(error => {
-        if (!paused && slot.ready && !slot.terminal) {
+        if (!paused && slot.generation === generation && slot.ready && !slot.terminal) {
           acknowledge(slot, 'failed', String(error))
+          restoreLoop()
         }
       })
     }
@@ -248,9 +287,125 @@ function DesktopWallpaper() {
       start(slot)
     }
 
-    const restoreLoop = (): void => {
-      if (retainedLoop !== null && slots[retainedLoop].ready && !slots[retainedLoop].terminal) {
-        show(retainedLoop)
+    const waitForFrame = (slot: VideoSlot, ready: () => void): void => {
+      if (slot.frameCallback !== null) {
+        slot.element.cancelVideoFrameCallback(slot.frameCallback)
+      }
+
+      const generation = slot.generation
+      slot.frameCallback = slot.element.requestVideoFrameCallback(() => {
+        slot.frameCallback = null
+
+        if (slot.generation === generation && !disposed) {
+          ready()
+        }
+      })
+    }
+
+    const finishReturn = (index: number): void => {
+      const slot = slots[index]
+
+      if (returningLoop !== index || !slot.ready || slot.terminal) {
+        return
+      }
+
+      const previous = returningFrom
+      returningLoop = null
+      returningFrom = null
+
+      if (notifyReturnFrame) {
+        acknowledge(slot, 'first-frame')
+        notifyReturnFrame = false
+      }
+
+      show(index)
+
+      if (previous !== null && previous !== index) {
+        acknowledge(slots[previous], 'interrupted')
+        reset(slots[previous])
+      }
+
+      const next = deferredMedia
+      deferredMedia = null
+
+      if (next) {
+        receive(next)
+      }
+    }
+
+    const restoreLoop = (notifyFirstFrame = false): void => {
+      if (retainedLoop === null || !slots[retainedLoop].ready || slots[retainedLoop].terminal) {
+        return
+      }
+
+      const slot = slots[retainedLoop]
+      returningLoop = retainedLoop
+      returningFrom = active
+      notifyReturnFrame = notifyFirstFrame
+      slot.element.pause()
+      slot.element.loop = true
+
+      if (slot.element.currentTime === 0 && !slot.element.seeking) {
+        finishReturn(retainedLoop)
+      } else {
+        // 保留短动作的末帧，直到持续画面的起点完成寻帧与呈现。
+        slot.element.currentTime = 0
+      }
+    }
+
+    const sharesBase = (loop: DesktopBackground | null, candidate: DesktopBackground): boolean =>
+      loop?.kind === 'loop' &&
+      loop.setId === candidate.setId &&
+      loop.setEpoch === candidate.setEpoch &&
+      loop.continuity === 'base' &&
+      candidate.continuity === 'base' &&
+      loop.baseVersion !== null &&
+      loop.baseVersion === candidate.baseVersion
+
+    const activate = (index: number): void => {
+      const slot = slots[index]
+
+      if (!slot.media || !slot.ready || slot.terminal) {
+        return
+      }
+
+      if (slot.media.expiresAt && Date.parse(slot.media.expiresAt) <= Date.now()) {
+        acknowledge(slot, 'failed', 'Playback request expired before playback started')
+        reset(slot)
+
+        if (active !== null) {
+          slots[active].element.loop = slots[active].media?.kind === 'loop'
+          start(slots[active])
+        }
+
+        return
+      }
+
+      if (slot.timeout) {
+        clearTimeout(slot.timeout)
+        slot.timeout = null
+      }
+
+      pending = null
+      const previous = active
+
+      if (
+        slot.media.kind === 'once' &&
+        previous !== null &&
+        slots[previous].media?.kind === 'loop' &&
+        slots[previous].media?.setId === slot.media.setId &&
+        slots[previous].media?.setEpoch === slot.media.setEpoch
+      ) {
+        retainedLoop = previous
+      } else {
+        retainedLoop = null
+      }
+
+      show(index)
+
+      if (previous !== null && previous !== index && previous !== retainedLoop) {
+        acknowledge(slots[previous], 'interrupted')
+        reset(slots[previous])
       }
     }
 
@@ -276,38 +431,42 @@ function DesktopWallpaper() {
       slot.ready = true
       updateVideoFit(slot)
       acknowledge(slot, 'first-frame')
-      const previous = active
 
-      if (slot.media.kind === 'once' && previous !== null && slots[previous].media?.kind === 'loop') {
-        retainedLoop = previous
-      } else if (slot.media.kind === 'loop') {
-        retainedLoop = null
+      if (slot.media.kind === 'once' && active !== null && sharesBase(slots[active].media, slot.media)) {
+        pending = index
+        // 保底循环继续到自然结束，已解码的短动作从共同基础画面开始。
+        slots[active].element.loop = false
+
+        if (slot.media.expiresAt) {
+          slot.timeout = setTimeout(
+            () => {
+              if (pending === index) {
+                acknowledge(slot, 'failed', 'Playback request expired while waiting for the loop boundary')
+                reset(slot)
+              }
+            },
+            Math.max(0, Date.parse(slot.media.expiresAt) - Date.now())
+          )
+        }
+
+        return
       }
 
-      show(index)
-
-      if (previous !== null && previous !== index && previous !== retainedLoop) {
-        const old = slots[previous]
-        acknowledge(old, 'interrupted')
-        const oldGeneration = old.generation
-
-        const timer = setTimeout(
-          () => {
-            fadeTimers.delete(timer)
-
-            if (active !== previous && slots[previous].generation === oldGeneration && retainedLoop !== previous) {
-              reset(slots[previous])
-            }
-          },
-          slot.media.reduceMotion ? 0 : 350
-        )
-
-        fadeTimers.add(timer)
-      }
+      activate(index)
     }
 
     const listeners = slots.map((slot, index) => {
-      const loaded = (): void => onLoaded(index)
+      const loaded = (): void => {
+        if (slot.media && !slot.ready && !slot.terminal && slot.frameCallback === null) {
+          waitForFrame(slot, () => onLoaded(index))
+        }
+      }
+
+      const seeked = (): void => {
+        if (returningLoop === index) {
+          waitForFrame(slot, () => finishReturn(index))
+        }
+      }
 
       const playing = (): void => {
         if (active === index && !slot.started && !slot.terminal) {
@@ -317,7 +476,13 @@ function DesktopWallpaper() {
       }
 
       const ended = (): void => {
-        if (active === index && slot.media?.kind === 'once') {
+        if (active !== index) {
+          return
+        }
+
+        if (slot.media?.kind === 'loop' && pending !== null) {
+          activate(pending)
+        } else if (slot.media?.kind === 'once') {
           acknowledge(slot, 'completed')
           restoreLoop()
         }
@@ -329,17 +494,21 @@ function DesktopWallpaper() {
 
           if (active === index) {
             restoreLoop()
+          } else {
+            reset(slot)
           }
         }
       }
 
       slot.element.addEventListener('loadeddata', loaded)
+      slot.element.addEventListener('seeked', seeked)
       slot.element.addEventListener('playing', playing)
       slot.element.addEventListener('ended', ended)
       slot.element.addEventListener('error', failed)
 
       return () => {
         slot.element.removeEventListener('loadeddata', loaded)
+        slot.element.removeEventListener('seeked', seeked)
         slot.element.removeEventListener('playing', playing)
         slot.element.removeEventListener('ended', ended)
         slot.element.removeEventListener('error', failed)
@@ -347,6 +516,12 @@ function DesktopWallpaper() {
     })
 
     const clear = (): void => {
+      returningLoop = null
+      returningFrom = null
+      notifyReturnFrame = false
+      interruptDeferred()
+      deferredMedia = null
+
       for (const slot of slots) {
         acknowledge(slot, 'interrupted')
         reset(slot)
@@ -354,6 +529,7 @@ function DesktopWallpaper() {
 
       active = null
       retainedLoop = null
+      pending = null
       settled.clear()
 
       if (fallbackPoster) {
@@ -366,8 +542,8 @@ function DesktopWallpaper() {
       showPoster(null)
     }
 
-    const off = bridge.onMedia(media => {
-      if (media.accountEpoch === accountEpoch && media.revision < revision) {
+    const receive = (media: DesktopBackground): void => {
+      if (media.accountEpoch < accountEpoch || (media.accountEpoch === accountEpoch && media.revision < revision)) {
         return
       }
 
@@ -382,8 +558,6 @@ function DesktopWallpaper() {
       document.documentElement.dataset.palette = media.theme.startsWith('night') ? 'night' : 'day'
 
       for (const slot of slots) {
-        slot.element.style.transition = media.reduceMotion ? 'none' : 'opacity 300ms ease'
-
         if (slot.media?.playId === media.playId && (media.playId !== null || slot.media.revision === media.revision)) {
           slot.media = { ...slot.media, revision: media.revision, paused, reduceMotion: media.reduceMotion }
         }
@@ -400,6 +574,55 @@ function DesktopWallpaper() {
         if (active !== null) {
           start(slots[active])
         }
+
+        return
+      }
+
+      if (returningLoop !== null) {
+        if (deferredMedia?.playId && deferredMedia.playId !== media.playId) {
+          interruptDeferred()
+        }
+
+        deferredMedia = media
+
+        return
+      }
+
+      const reusableLoop = slots.findIndex(
+        slot =>
+          slot.media?.kind === 'loop' &&
+          media.kind === 'loop' &&
+          slot.ready &&
+          !slot.terminal &&
+          slot.media.setId === media.setId &&
+          slot.media.setEpoch === media.setEpoch &&
+          slot.media.actionId === media.actionId &&
+          slot.media.actionVersion === media.actionVersion &&
+          slot.media.continuity === media.continuity &&
+          slot.media.baseVersion === media.baseVersion
+      )
+
+      if (media.video && reusableLoop !== -1) {
+        if (pending !== null) {
+          acknowledge(slots[pending], 'interrupted')
+          reset(slots[pending])
+        }
+
+        const slot = slots[reusableLoop]
+        acknowledge(slot, 'interrupted')
+        slot.media = media
+        slot.started = false
+        slot.terminal = false
+
+        if (active === reusableLoop && media.playId === null) {
+          retainedLoop = null
+          start(slot)
+
+          return
+        }
+
+        retainedLoop = reusableLoop
+        restoreLoop(true)
 
         return
       }
@@ -431,6 +654,12 @@ function DesktopWallpaper() {
       if (active !== null && slots[active].media?.kind === 'once' && retainedLoop !== null) {
         acknowledge(slots[active], 'interrupted')
         restoreLoop()
+
+        if (returningLoop !== null) {
+          deferredMedia = media
+
+          return
+        }
       }
 
       const next = active === 0 ? 1 : 0
@@ -467,11 +696,14 @@ function DesktopWallpaper() {
         }
       }, 30000)
       slot.element.load()
+      waitForFrame(slot, () => onLoaded(next))
 
       if (active !== null && paused) {
         slots[active].element.pause()
       }
-    })
+    }
+
+    const off = bridge.onMedia(receive)
 
     window.addEventListener('resize', updateAllVideoFits)
 
@@ -482,7 +714,6 @@ function DesktopWallpaper() {
       clear()
       disposed = true
       listeners.forEach(remove => remove())
-      fadeTimers.forEach(timer => clearTimeout(timer))
       window.removeEventListener('resize', updateAllVideoFits)
     }
   }, [])

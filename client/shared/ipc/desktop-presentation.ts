@@ -56,9 +56,12 @@ export interface DesktopBackgroundRequest {
   playId: string | null
   setId: number | null
   actionId: number | null
+  actionVersion: number | null
   setEpoch: number
   expiresAt: string | null
   kind: 'loop' | 'once'
+  continuity: 'base' | 'independent'
+  baseVersion: number | null
   theme: string
   reduceMotion: boolean
   paused: boolean

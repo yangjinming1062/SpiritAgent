@@ -1,4 +1,6 @@
 export type DesktopVideoKind = 'loop' | 'once'
+export type DesktopVideoContinuity = 'base' | 'independent'
+export type DesktopVideoTrigger = 'periodic' | 'user_return' | 'chat' | 'manual'
 
 export interface DesktopVideoAction {
   id: number
@@ -7,6 +9,7 @@ export interface DesktopVideoAction {
   name: string
   description: string
   kind: DesktopVideoKind
+  target_duration_seconds: number
   duration_seconds: number
   status: 'queued' | 'processing' | 'ready' | 'failed' | 'review_pending'
   stage: string
@@ -15,6 +18,9 @@ export interface DesktopVideoAction {
   preset: boolean
   use_when: string[]
   avoid_when: string[]
+  allowed_triggers: DesktopVideoTrigger[]
+  continuity: DesktopVideoContinuity
+  base_version: number | null
   poster_url: string | null
   video_url: string | null
   candidate_video_url?: string | null
@@ -44,6 +50,8 @@ export interface DesktopVideoSet {
   outfit_id: number | null
   scene_id: number | null
   context_hash: string
+  base_image_url: string | null
+  base_version: number
   status: string
   actions: DesktopVideoAction[]
   proposals?: DesktopVideoProposal[]
@@ -81,6 +89,8 @@ export interface DesktopVideoPlayCommand {
   action_id: number
   set_epoch: number
   kind: DesktopVideoKind
+  continuity: DesktopVideoContinuity
+  base_version: number | null
   expires_at: string
   video_url: string
   poster_url: string | null

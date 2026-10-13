@@ -31,6 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.assets import enqueue_asset_cleanup
 from services.infrastructure.assets import client_asset_url, resolve_asset_reference
 
+from .desktop_policy import desktop_autonomous_block_reason
+
 
 class DesktopVideoError(RuntimeError):
     """可展示的桌面生活错误。"""
@@ -93,9 +95,9 @@ async def desktop_action(db: AsyncSession, user_id: int, action_id: int) -> Desk
 def desktop_action_description(action: DesktopVideoAction) -> str:
     """预设用途按当前定义读取，自定义动作保留已评审的设计。"""
     if action.preset:
-        for key, _, description, _, _ in DESKTOP_PRESETS:
-            if key == action.key:
-                return description
+        for preset in DESKTOP_PRESETS:
+            if preset.key == action.key:
+                return preset.description
     return action.description
 
 
@@ -112,6 +114,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         description=desktop_action_description(action),
         kind=action.kind,
         duration_seconds=action.duration_seconds,
+        target_duration_seconds=action.target_duration_seconds,
         status="queued" if action.status == "ready" and accepted is None else action.status,
         stage=action.stage,
         error=action.error,
@@ -119,6 +122,9 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         preset=action.preset,
         use_when=json.loads(action.use_when_json),
         avoid_when=json.loads(action.avoid_when_json),
+        allowed_triggers=json.loads(action.allowed_triggers_json),
+        continuity=accepted.continuity if accepted else action.continuity,
+        base_version=accepted.base_version if accepted else None,
         version=action.version,
         poster_url=client_asset_url(poster) if poster else "",
         video_url=client_asset_url(accepted.video_path) if accepted else "",
@@ -175,6 +181,8 @@ async def desktop_set_response(
         is_current=row.id == current_id,
         actions=[desktop_action_response(action) for action in actions],
         proposals=proposal_responses,
+        base_image_url=client_asset_url(row.base_image_path) if row.base_image_path else "",
+        base_version=row.base_version,
     )
 
 
@@ -263,6 +271,16 @@ async def emit_desktop_play(
         raise DesktopVideoStateError("这个桌面动作尚未就绪")
     if source == "autonomous" and (state.pinned or not state.autonomous_enabled):
         raise DesktopVideoStateError("桌面动作已固定或自主切换已关闭")
+    if source == "autonomous":
+        blocked = await desktop_autonomous_block_reason(
+            db,
+            state,
+            action,
+            asset,
+            presentation_revision=presentation_revision,
+        )
+        if blocked is not None:
+            raise DesktopVideoStateError(f"当前不适合自主切换桌面动作：{blocked}")
     playback = DesktopVideoPlayback(
         user_id=user_id,
         set_id=action.set_id,
@@ -272,9 +290,12 @@ async def emit_desktop_play(
         presentation_revision=presentation_revision,
         status="queued",
         source=source,
+        asset_version=action.version,
         expires_at=utc_now() + timedelta(seconds=30),
     )
     db.add(playback)
+    current_set = await db.get(DesktopVideoSet, action.set_id)
+    matches_base = current_set is not None and asset.base_version == current_set.base_version
     command = DesktopVideoPlayCommand(
         play_id=playback.play_id,
         set_id=action.set_id,
@@ -285,6 +306,8 @@ async def emit_desktop_play(
         video_url=client_asset_url(asset.video_path),
         poster_url=client_asset_url(asset.poster_path),
         version=action.version,
+        continuity=asset.continuity if matches_base else "independent",
+        base_version=asset.base_version if matches_base else None,
     )
     emit_ws_event(
         db,
@@ -333,7 +356,24 @@ async def fulfill_desktop_play_intents(
         ):
             play.status = "rejected"
             continue
+        if (
+            play.source == "autonomous"
+            and await desktop_autonomous_block_reason(
+                db,
+                state,
+                action,
+                asset,
+                presentation_revision=presentation_revision,
+                excluded_play_id=play.play_id,
+            )
+            is not None
+        ):
+            play.status = "rejected"
+            continue
         play.status, play.expires_at = "queued", utc_now() + timedelta(seconds=30)
+        play.asset_version = action.version
+        current_set = await db.get(DesktopVideoSet, action.set_id)
+        matches_base = current_set is not None and asset.base_version == current_set.base_version
         command = DesktopVideoPlayCommand(
             play_id=play.play_id,
             set_id=action.set_id,
@@ -344,6 +384,8 @@ async def fulfill_desktop_play_intents(
             video_url=client_asset_url(asset.video_path),
             poster_url=client_asset_url(asset.poster_path),
             version=action.version,
+            continuity=asset.continuity if matches_base else "independent",
+            base_version=asset.base_version if matches_base else None,
         )
         emit_ws_event(
             db,
@@ -362,6 +404,7 @@ async def claim_desktop_play(
     client_id: str,
     *,
     presentation_revision: int,
+    allow_autonomous: bool,
 ) -> bool:
     state = await desktop_state(db, user_id, lock=True)
     play = await db.scalar(
@@ -382,18 +425,39 @@ async def claim_desktop_play(
         return False
     if play.client_id is not None and play.client_id != client_id:
         return False
-    if state.selected_play_id:
-        selected = await db.scalar(
-            select(DesktopVideoPlayback).where(
-                DesktopVideoPlayback.user_id == user_id,
-                DesktopVideoPlayback.play_id == state.selected_play_id,
-                DesktopVideoPlayback.set_id == state.current_set_id,
-                DesktopVideoPlayback.set_epoch == state.set_epoch,
-            ),
+    action = await desktop_action(db, user_id, play.action_id)
+    asset = desktop_accepted_asset(action)
+    if not action.enabled or asset is None or play.asset_version != action.version:
+        play.status = "rejected"
+        return False
+    if play.source == "autonomous" and (
+        not allow_autonomous
+        or await desktop_autonomous_block_reason(
+            db,
+            state,
+            action,
+            asset,
+            presentation_revision=presentation_revision,
+            excluded_play_id=play.play_id,
         )
-        if selected is not None and selected.id > play.id:
-            play.status = "rejected"
-            return False
+        is not None
+    ):
+        play.status = "rejected"
+        return False
+    latest_started = await db.scalar(
+        select(DesktopVideoPlayback)
+        .where(
+            DesktopVideoPlayback.user_id == user_id,
+            DesktopVideoPlayback.set_id == state.current_set_id,
+            DesktopVideoPlayback.set_epoch == state.set_epoch,
+            DesktopVideoPlayback.started_at.is_not(None),
+        )
+        .order_by(DesktopVideoPlayback.id.desc())
+        .limit(1),
+    )
+    if latest_started is not None and latest_started.id > play.id:
+        play.status = "rejected"
+        return False
     play.client_id = client_id
     play.status = "claimed"
     return True
@@ -425,23 +489,41 @@ async def record_desktop_receipt(
         if play.status == "started":
             return
         play.status = "started"
+        play.started_at = utc_now()
         if not current or play.presentation_revision != presentation_revision:
             return
-        if state.selected_play_id:
-            selected = await db.scalar(
-                select(DesktopVideoPlayback).where(
-                    DesktopVideoPlayback.user_id == user_id,
-                    DesktopVideoPlayback.play_id == state.selected_play_id,
-                    DesktopVideoPlayback.set_id == state.current_set_id,
-                    DesktopVideoPlayback.set_epoch == state.set_epoch,
-                ),
+        latest_started = await db.scalar(
+            select(DesktopVideoPlayback)
+            .where(
+                DesktopVideoPlayback.user_id == user_id,
+                DesktopVideoPlayback.set_id == state.current_set_id,
+                DesktopVideoPlayback.set_epoch == state.set_epoch,
+                DesktopVideoPlayback.started_at.is_not(None),
             )
-            if selected is not None and selected.id > play.id:
-                return
+            .order_by(DesktopVideoPlayback.id.desc())
+            .limit(1),
+        )
+        if latest_started is not None and latest_started.id > play.id:
+            return
         action = await desktop_action(db, user_id, play.action_id)
         state.selected_play_id = play.play_id
         state.selected_action_id = action.id
         if action.kind == "loop":
+            prior_loop_start = await db.scalar(
+                select(DesktopVideoPlayback.id)
+                .where(
+                    DesktopVideoPlayback.user_id == user_id,
+                    DesktopVideoPlayback.set_id == state.current_set_id,
+                    DesktopVideoPlayback.set_epoch == state.set_epoch,
+                    DesktopVideoPlayback.action_id == action.id,
+                    DesktopVideoPlayback.started_at.is_not(None),
+                    DesktopVideoPlayback.play_id != play.play_id,
+                )
+                .limit(1),
+            )
+            first_loop_start = prior_loop_start is None
+            if first_loop_start or state.loop_action_id != action.id or state.loop_changed_at is None:
+                state.loop_changed_at = play.started_at
             state.loop_action_id = action.id
         await touch_desktop_state(db, user_id)
         return
@@ -457,29 +539,44 @@ async def record_desktop_receipt(
         current
         and play.presentation_revision == presentation_revision
         and state.selected_play_id == play.play_id
-        and receipt.status == "completed"
+        and receipt.status in {"completed", "interrupted", "failed"}
     ):
-        state.selected_action_id = state.loop_action_id
-        await touch_desktop_state(db, user_id)
+        action = await desktop_action(db, user_id, play.action_id)
+        if action.kind == "once":
+            state.selected_action_id = state.loop_action_id
+            state.selected_play_id = None
+            await touch_desktop_state(db, user_id)
 
 
 async def publish_desktop_asset(db: AsyncSession, action: DesktopVideoAction, asset: DesktopVideoAsset) -> None:
     if resolve_asset_reference(asset.video_path) is None or resolve_asset_reference(asset.poster_path) is None:
         raise DesktopVideoStateError("视频或封面缺失，请重新制作这个动作")
     previous = desktop_accepted_asset(action)
+    row = await db.get(DesktopVideoSet, action.set_id)
+    if row is not None and action.key == "idle" and asset.continuity == "base":
+        if asset.base_version not in {row.base_version, row.base_version + 1}:
+            raise DesktopVideoStateError("基础画面已变化，请重新制作安静相伴")
+        if asset.base_version == row.base_version and asset.base_image_path != row.base_image_path:
+            raise DesktopVideoStateError("基础画面已变化，请重新制作安静相伴")
+        row.base_image_path, row.base_version = asset.base_image_path, asset.base_version
     action.accepted_asset_json = asset.model_dump_json()
     action.version += 1
     action.status, action.stage, action.error = "ready", "complete", None
-    row = await db.get(DesktopVideoSet, action.set_id)
     if row is not None and action.key == "idle":
         row.status = "ready"
     state = await touch_desktop_state(db, action.user_id)
     if state.current_set_id == action.set_id and state.selected_action_id is None and action.key == "idle":
         state.selected_action_id = state.loop_action_id = action.id
+        state.loop_changed_at = utc_now()
     if previous is not None:
         await enqueue_asset_cleanup(
             db,
             action.user_id,
-            {previous.video_path, previous.poster_path} - {asset.video_path, asset.poster_path},
+            {
+                previous.video_path,
+                previous.poster_path,
+                *([previous.base_image_path] if previous.base_image_path else []),
+            }
+            - {asset.video_path, asset.poster_path, *([asset.base_image_path] if asset.base_image_path else [])},
             not_before=utc_now() + timedelta(hours=24),
         )

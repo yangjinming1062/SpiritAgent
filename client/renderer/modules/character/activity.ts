@@ -42,11 +42,18 @@ export const $focusContext = atom<FocusContext | null>(null)
 const POLL_INTERVAL_MS = 30_000
 const IDLE_THRESHOLD_SECONDS = 30 * 60
 const CHECK_COOLDOWN_MS = 60 * 60 * 1000
+const DESKTOP_CHECK_MIN_MS = 5 * 60 * 1000
+const DESKTOP_CHECK_MAX_MS = 10 * 60 * 1000
+const USER_RETURN_IDLE_SECONDS = 5 * 60
 const STATS_POST_THROTTLE_MS = 60_000
 
 let timer: ReturnType<typeof setInterval> | null = null
 let lastIdleExpressionAt = 0
 let idleExpressionInFlight = false
+let idleExpressionRequest = 0
+let desktopExpressionScope: string | null = null
+let nextDesktopExpressionAt: number | null = null
+let previousDesktopActivity: { idleSeconds: number; locked: boolean } | null = null
 let lastTierPushed: DisturbanceTier | null = null
 let runnerReady = false
 let unsubs: Array<() => void> = []
@@ -60,9 +67,46 @@ let companionAvailable = false
 let localChatTurnCount = 0
 let lastChatTurnSentAt = 0
 
+function resetDesktopExpression(): void {
+  desktopExpressionScope = null
+  nextDesktopExpressionAt = null
+  previousDesktopActivity = null
+  idleExpressionRequest += 1
+  idleExpressionInFlight = false
+}
+
+function nextDesktopCheck(now: number): number {
+  return now + DESKTOP_CHECK_MIN_MS + Math.random() * (DESKTOP_CHECK_MAX_MS - DESKTOP_CHECK_MIN_MS)
+}
+
 function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void {
   const presentation = $presentation.get()
   const desktop = presentation.effectiveMode === 'desktop'
+  const auth = $auth.get()
+  const scope = auth.kind === 'authenticated' ? `${auth.snapshot.sessionId}:${presentation.stageEpoch}` : null
+  let userReturned = false
+
+  if (desktop) {
+    if (scope !== desktopExpressionScope) {
+      resetDesktopExpression()
+      desktopExpressionScope = scope
+    }
+
+    if (!scope || !Number.isFinite(idleSeconds) || idleSeconds < 0) {
+      previousDesktopActivity = null
+      nextDesktopExpressionAt = null
+
+      return
+    }
+
+    userReturned =
+      previousDesktopActivity !== null &&
+      ((previousDesktopActivity.idleSeconds >= USER_RETURN_IDLE_SECONDS && idleSeconds < POLL_INTERVAL_MS / 1000) ||
+        (previousDesktopActivity.locked && !locked))
+    previousDesktopActivity = { idleSeconds, locked }
+  } else if (desktopExpressionScope !== null) {
+    resetDesktopExpression()
+  }
 
   const visible = desktop ? presentation.status === 'active' && !presentation.fullscreen : isCompanionStageVisible()
 
@@ -74,14 +118,25 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
     locked ||
     $chatVisible.get() ||
     !visible ||
-    idleSeconds < IDLE_THRESHOLD_SECONDS
+    (desktop ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : idleSeconds < IDLE_THRESHOLD_SECONDS)
   ) {
+    if (desktop && !idleExpressionInFlight) {
+      nextDesktopExpressionAt = null
+    }
+
     return
   }
 
   const now = Date.now()
+  const monotonicNow = performance.now()
 
-  if (now - lastIdleExpressionAt < CHECK_COOLDOWN_MS) {
+  if (desktop) {
+    nextDesktopExpressionAt ??= nextDesktopCheck(monotonicNow)
+
+    if (!userReturned && monotonicNow < nextDesktopExpressionAt) {
+      return
+    }
+  } else if (now - lastIdleExpressionAt < CHECK_COOLDOWN_MS) {
     return
   }
 
@@ -90,22 +145,31 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
 
   const gateway = $gateway.get()
 
-  if (!gateway) {
+  if (!gateway || gateway.connectionState !== 'open') {
     return
   }
 
-  lastIdleExpressionAt = now
+  if (desktop) {
+    nextDesktopExpressionAt = nextDesktopCheck(monotonicNow)
+  } else {
+    lastIdleExpressionAt = now
+  }
+
+  const request = ++idleExpressionRequest
   idleExpressionInFlight = true
   void gateway
     .request('companion.idle_expression', {
       idle_seconds: idleSeconds,
-      local_hour: hour
+      local_hour: hour,
+      ...(desktop ? { trigger: userReturned ? 'user_return' : 'periodic' } : {})
     })
     .catch(error => {
       log.warn('activity', 'companion.idle_expression failed', error)
     })
     .finally(() => {
-      idleExpressionInFlight = false
+      if (request === idleExpressionRequest) {
+        idleExpressionInFlight = false
+      }
     })
 }
 
@@ -320,6 +384,7 @@ async function pollSnapshot(generation: number): Promise<void> {
   if (snapshotResult === null) {
     // 探测失败：空闲时长置未知，锁屏与焦点保留上次值；档位覆盖仍重算并上报当前生效档位。
     $lastIdleSeconds.set(-1)
+    previousDesktopActivity = null
     maybePushTierOverride()
     await reportCompanionSignal(false)
 
@@ -343,6 +408,7 @@ async function pollSnapshot(generation: number): Promise<void> {
   // 非有限空闲值按缺失信号处理（NaN 会透传进后端 LLM prompt）。
   if (!Number.isFinite(idleSeconds)) {
     $lastIdleSeconds.set(-1)
+    previousDesktopActivity = null
     await reportCompanionSignal(false)
 
     return
@@ -423,7 +489,7 @@ async function pollSnapshot(generation: number): Promise<void> {
     return
   }
 
-  maybeTriggerIdleExpression(snapshot.locked !== undefined ? idleSeconds : -1, $screenLocked.get())
+  maybeTriggerIdleExpression(snapshot.locked !== undefined && fullscreenProbeOk ? idleSeconds : -1, $screenLocked.get())
 }
 
 export function applyStageActivity(activity: StageActivity): void {
@@ -456,6 +522,23 @@ export function startActivityMonitor(): () => void {
   }
 
   unsubs.push($presentation.listen(syncPresentation))
+  const initialAuth = $auth.get()
+  let authSessionId = initialAuth.kind === 'authenticated' ? initialAuth.snapshot.sessionId : null
+  unsubs.push(
+    $auth.listen(auth => {
+      const nextSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
+
+      if (nextSessionId !== authSessionId) {
+        authSessionId = nextSessionId
+        resetDesktopExpression()
+        lastIdleExpressionAt = 0
+        lastSignalContext = null
+        pendingSignalContextChange = false
+        monitorGeneration += 1
+        polling = false
+      }
+    })
+  )
   unsubs.push(
     $gatewayState.subscribe(state => {
       if (state === 'open') {
@@ -562,6 +645,7 @@ export function startActivityMonitor(): () => void {
         monitorGeneration += 1
         polling = false
         $lastIdleSeconds.set(-1)
+        resetDesktopExpression()
         void reportCompanionSignal(false)
       }
     })
@@ -585,6 +669,7 @@ function stopActivityMonitor(): void {
   $lastIdleSeconds.set(-1)
   lastSignalContext = null
   pendingSignalContextChange = false
+  resetDesktopExpression()
 
   for (const unsub of unsubs) {
     unsub()

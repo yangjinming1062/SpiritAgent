@@ -28,6 +28,7 @@ from .desktop import (
     require_desktop_current,
     touch_desktop_state,
 )
+from .desktop_policy import desktop_autonomous_block_reason
 from .materials import (
     AcceptedActionAsset,
     AcceptedImageActionAsset,
@@ -76,6 +77,7 @@ __all__ = [
     "DesktopVideoError",
     "DesktopVideoNotFoundError",
     "DesktopVideoStateError",
+    "desktop_autonomous_block_reason",
     "claim_desktop_play",
     "desktop_accepted_asset",
     "desktop_action",

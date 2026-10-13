@@ -191,6 +191,7 @@ export function DesktopLifePage(): React.JSX.Element {
   const [selectedSetId, setSelectedSetId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState<Record<number, string>>({})
+  const [replaceBase, setReplaceBase] = useState<Record<number, boolean>>({})
   const [design, setDesign] = useState({ name: '', description: '', kind: 'loop' as 'loop' | 'once', duration: 10 })
   const [designMessage, setDesignMessage] = useState<string | null>(null)
   const [externalAction, setExternalAction] = useState<DesktopVideoAction | null>(null)
@@ -236,6 +237,7 @@ export function DesktopLifePage(): React.JSX.Element {
     setExternalReferenceZoom(null)
     setExternalPromptLoading(false)
     setExternalUploading(false)
+    setReplaceBase({})
   }, [authSessionId])
 
   useEffect(() => {
@@ -479,18 +481,44 @@ export function DesktopLifePage(): React.JSX.Element {
                         : action.name}
                     </h4>
                     <p className="mt-1 text-xs text-muted">
-                      {action.kind === 'loop' ? t.loop : t.once} · {action.duration_seconds}s ·{' '}
-                      {isActionPaused(action) ? t.paused : t.statuses[action.status]}
+                      {action.kind === 'loop' ? t.loop : t.once} · {t.targetDuration} {action.target_duration_seconds}s
+                      {action.actual_duration_ms !== null && (
+                        <>
+                          {' '}
+                          · {t.actualDuration} {(action.actual_duration_ms / 1000).toFixed(1)}s
+                        </>
+                      )}
+                      {action.actual_duration_ms === null &&
+                        action.duration_seconds !== action.target_duration_seconds && (
+                          <>
+                            {' '}
+                            · {t.creationDuration} {action.duration_seconds}s
+                          </>
+                        )}{' '}
+                      · {isActionPaused(action) ? t.paused : t.statuses[action.status]}
                     </p>
                   </div>
                   {state?.current?.id === selected.id && state.selected_action_id === action.id && (
                     <span className="text-xs text-accent">{t.playing}</span>
                   )}
                 </div>
-                <p className="text-xs leading-relaxed text-body">
-                  {action.preset
-                    ? t.actionDescriptions[action.key as keyof typeof t.actionDescriptions] || action.description
-                    : action.description}
+                <p className="text-xs leading-relaxed text-body">{action.description}</p>
+                {action.use_when.length > 0 && (
+                  <p className="text-xs leading-relaxed text-muted">
+                    {t.useWhen}：{action.use_when.join('；')}
+                  </p>
+                )}
+                {action.avoid_when.length > 0 && (
+                  <p className="text-xs leading-relaxed text-muted">
+                    {t.avoidWhen}：{action.avoid_when.join('；')}
+                  </p>
+                )}
+                <p className="text-xs text-muted">
+                  {action.continuity === 'base' && action.base_version === null
+                    ? t.basePending
+                    : action.continuity === 'base' && action.base_version === selected.base_version
+                      ? t.baseReturn
+                      : t.independentScene}
                 </p>
                 {action.error && (
                   <p className="text-xs text-warning" role="status">
@@ -512,6 +540,17 @@ export function DesktopLifePage(): React.JSX.Element {
                     value={feedback[action.id] ?? ''}
                   />
                 )}
+                {action.key === 'idle' && selected.base_image_url && !isActionPaused(action) && (
+                  <label className="flex items-start gap-2 text-xs text-muted">
+                    <input
+                      checked={replaceBase[action.id] ?? false}
+                      disabled={busy || action.status === 'processing'}
+                      onChange={event => setReplaceBase(current => ({ ...current, [action.id]: event.target.checked }))}
+                      type="checkbox"
+                    />
+                    <span>{t.replaceBase}</span>
+                  </label>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <button
                     className={BTN_SUBTLE}
@@ -525,11 +564,20 @@ export function DesktopLifePage(): React.JSX.Element {
                   <button
                     className={isActionPaused(action) ? BTN_PRIMARY : BTN_SUBTLE}
                     disabled={busy || action.status === 'processing'}
-                    onClick={() =>
-                      void run(() =>
-                        generateDesktopVideoAction(action.id, isActionPaused(action) ? undefined : feedback[action.id])
-                      )
-                    }
+                    onClick={() => {
+                      const scope = captureAuthScope()
+                      void run(async () => {
+                        await generateDesktopVideoAction(
+                          action.id,
+                          isActionPaused(action) ? undefined : feedback[action.id],
+                          !isActionPaused(action) && (replaceBase[action.id] ?? false)
+                        )
+
+                        if (scope?.()) {
+                          setReplaceBase(current => ({ ...current, [action.id]: false }))
+                        }
+                      })
+                    }}
                     type="button"
                   >
                     {isActionPaused(action)
