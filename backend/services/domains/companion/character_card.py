@@ -123,7 +123,7 @@ def render_character_video_identity(snapshot: CharacterCardSnapshot | None) -> s
     if snapshot is None:
         return ""
     return VIDEO_IDENTITY_TEMPLATE.format(
-        features=json.dumps(snapshot.features.model_dump(), ensure_ascii=False),
+        features=json.dumps(snapshot.features.model_dump(exclude_defaults=True), ensure_ascii=False),
     )
 
 

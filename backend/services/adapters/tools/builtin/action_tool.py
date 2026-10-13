@@ -192,7 +192,7 @@ def register(registry: ToolsRegistry) -> None:
                     "type": "string",
                     "minLength": 10,
                     "maxLength": 600,
-                    "description": "单主体运动描述：可见的姿态、节奏与神态；不含场景、镜头或产品概念。",
+                    "description": "角色独立完成一个表达目标所需的可见姿态、运动过程、节奏与神态。",
                 },
                 "use_when": {
                     "type": "array",

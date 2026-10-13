@@ -351,27 +351,27 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="action.design",
         phase=25,
-        description="为当前形象提交一个可反复使用的新动作提案（如张开双臂、打哈欠、一段舞蹈），不是一次性视频作品。"
-        "先查看 autonomous_context.actions.library 的动作内容和适用条件，以及同处的 in_flight_proposals、recent_rejections；"
-        "提案的 design 是原设计，review_reason 是评审理由，status 与 action_status 分别说明评审和制作进展；"
-        "action_outfit 是动作素材中的着装，新动作按它设计。"
+        description="为当前呈现方式提交一个可反复使用的新动作提案。"
+        "先根据 autonomous_context.actions.presentation_mode 查看已有动作：窗口模式查看 library、in_flight_proposals 与 recent_rejections；"
+        "桌面模式查看 ready_actions。已有提案的 design 是原设计，review_reason 是评审理由，status 与 action_status 分别说明评审和制作进展。"
         "确有缺口才使用；无明确价值时选择不使用。"
-        "name 是动作显示名称；motion_description 写单主体可见的姿态、节奏与神态，"
-        "不含场景、镜头或产品概念；在不削弱明确目标的前提下自然感优先，只写完成表达目标所需的动作；未明确要求时不把反复呼吸、眨眼或其他微动作作为时长填充；"
+        "name 是动作显示名称；motion_description 用简洁、正面的描述表达目标需要的可见状态与动作，复杂动作再说明关键步骤。"
+        "保持姿态也可以是完整目标；幅度、节奏、接触和受力符合身体结构，动作自然连贯。"
         "use_when / avoid_when 说明何时适用或避免；reason 说明为何需要新动作。"
-        "duration_seconds 为 1–15 的整秒数；clip_kind 为 loop（连续运动周期）或 once（完整动作自然收束）。"
-        "once 制作后仍可重复使用。窗口模式使用单主体原地运动、固定镜头、全身入画；桌面模式使用当前环境中的自然生活构图。"
-        "两种模式都保持身体结构与穿着，不新增不相容的人物、道具、对话或音轨。动作素材属于当前使用的动作形象，今晚的换装不会改变它，因此不依赖换装动作。"
+        "duration_seconds 按动作本身需要选择 1–15 的整秒数；clip_kind 为 loop（可持续的状态或首尾连续的运动周期）或 once（完整动作自然收束）。"
+        "once 制作后仍可重复使用。两种模式都保持已确认身份与造型，制作无声画面。"
+        "窗口模式按 action_outfit 设计单主体原地运动，固定镜头、全身入画、透明背景；其动作素材中的着装不随今晚换装变化，因此不依赖换装动作。"
+        "桌面模式按当前穿着和环境设计自然生活构图，片段内镜头稳定；本项绑定规划时的当前生活画面，穿着、场景或呈现方式变化后可能被阻止。"
         "受理仅表示申请成功，评审和制作随后进行；"
         "后续动态或联系不能以依赖此项为依据宣称动作已做好或已表演。",
         arguments={
             "name": "string（1–64 字符）：动作的简短显示名称，不是动作标识或运动脚本。",
-            "motion_description": "string（10–600 字符）：单主体可见的姿态、运动过程、节奏与神态；不写场景、镜头或制作流程，保持已有身体结构与穿着。",
+            "motion_description": "string（10–600 字符）：目标需要的可见状态与动作，复杂动作才写关键步骤；窗口模式聚焦单主体原地姿态与运动，桌面模式可写当前环境内的必要接触与构图；保持身体结构与造型。",
             "use_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：适合使用该动作的交流情境，省略或空列表表示没有补充适用条件。",
             "avoid_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：应避免使用该动作的情境，省略或空列表表示没有补充避免条件。",
             "reason": "string（1–400 字符）：现有动作无法满足的表达需要，以及本次新增动作的具体价值。",
             "duration_seconds": "integer（1–15）：单个动作片段的时长，单位为秒；按该时长安排循环周期或完整的一次性动作。",
-            "clip_kind": "string：loop 表示首尾连续的循环，once 表示有自然收束的一次完整动作；选其中一项，once 制作后也可重复使用。",
+            "clip_kind": "string：loop 表示可持续的状态或首尾连续的运动周期，once 表示有自然收束的一次完整动作；选其中一项，once 制作后也可重复使用。",
         },
         paid=True,
     ),

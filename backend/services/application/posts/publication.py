@@ -368,11 +368,13 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
     else:
         job_id = progress.get("job_id")
         if job_id is None:
-            references, prompt = (), build_plain_video_prompt(plan.prompt)
+            references = ()
             if visual is not None:
                 visual_plan = apply_outfit_override(visual, None)
                 references = self_video_references(visual_plan)
-                prompt = build_self_video_prompt(visual_plan, prompt, has_outfit_reference=len(references) > 1)
+                prompt = build_self_video_prompt(visual_plan, plan.prompt, has_outfit_reference=len(references) > 1)
+            else:
+                prompt = build_plain_video_prompt(plan.prompt)
             resolution = await select_video_resolution(
                 row.user_id,
                 reference_images=bool(references),

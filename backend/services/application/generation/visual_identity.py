@@ -1,11 +1,12 @@
 """出镜媒体共用的固定身份、本次生成造型及视频参考准备。衣柜已启用外观提供默认造型，本次生成造型可单独覆盖；`outfit_override` 只作用于本次产物，不改衣柜或场景。无角色出镜的图片与视频在此补上统一的真实拍摄要求。"""
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from components import SESSION_LOCAL, AiTaskKey
-from modules.companion import AvatarAsset, CharacterCardSnapshot, CompanionOutfit
+from modules.companion import AvatarAsset, BodyFeatures, CharacterCardSnapshot, CompanionOutfit
 from prompts.generation import (
     CHARACTER_APPEARANCE_ALIGNMENT_REFERENCES,
     CHARACTER_APPEARANCE_REFERENCE_ALIGN,
@@ -16,6 +17,8 @@ from prompts.generation import (
     SELF_IMAGE_OUTFIT_DESCRIPTION,
     SELF_IMAGE_OUTFIT_REFERENCE,
     SELF_IMAGE_REFERENCE_TEMPLATE,
+    SELF_VIDEO_OUTFIT_REFERENCE,
+    SELF_VIDEO_PORTRAIT_REFERENCE,
     SELF_VIDEO_REFERENCE_TEMPLATE,
 )
 from sqlalchemy import select
@@ -164,17 +167,18 @@ def self_video_references(plan: SelfVisualPlan, reference_image: str | None = No
 def build_self_video_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_reference: bool) -> str:
     outfit = plan.override_outfit_description or plan.context.outfit_description
     if has_outfit_reference:
-        outfit_instructions = SELF_IMAGE_OUTFIT_REFERENCE.format(outfit="未提供")
+        outfit_instructions = SELF_VIDEO_OUTFIT_REFERENCE
     elif outfit:
         outfit_instructions = SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=outfit)
     else:
         outfit_instructions = SELF_IMAGE_CURRENT_OUTFIT
-    return (
-        SELF_VIDEO_REFERENCE_TEMPLATE.format(
-            reference="图 1 头像" if has_outfit_reference else "头像参考图",
-            outfit=outfit_instructions,
-            prompt=prompt,
-        )
-        + "\n"
-        + render_character_identity(plan.context.identity)
+    reference = SELF_VIDEO_PORTRAIT_REFERENCE
+    if not has_outfit_reference:
+        body = plan.context.identity.features.model_dump(include=set(BodyFeatures.model_fields), exclude_defaults=True)
+        if body:
+            reference += "身体特征补充资料（JSON）：" + json.dumps(body, ensure_ascii=False) + "。"
+    return SELF_VIDEO_REFERENCE_TEMPLATE.format(
+        reference=reference,
+        outfit=outfit_instructions,
+        prompt=prompt,
     )

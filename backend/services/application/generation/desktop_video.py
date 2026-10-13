@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.actions import (
     DesktopVideoStateError,
     desktop_action,
+    desktop_action_description,
     desktop_progress,
     desktop_state,
     emit_desktop_play,
@@ -324,6 +325,7 @@ async def _prepare_pose(
         await _require_paid_job(user_id, action.id, progress.generation_id)
 
     if not progress.pose_prompt:
+        progress.action_description = progress.action_description or desktop_action_description(action)
         await _save_progress(user_id, action.id, progress, stage="design")
         raw = await vision_chat(
             user_id,
@@ -334,7 +336,7 @@ async def _prepare_pose(
                     "identity": snapshot.identity.features.model_dump(),
                     "outfit": snapshot.outfit_description,
                     "environment": snapshot.scene_description,
-                    "action": action.description,
+                    "action": progress.action_description,
                     "kind": action.kind,
                     "duration_seconds": progress.duration_seconds,
                     "feedback": progress.feedback,
@@ -514,8 +516,12 @@ async def _evaluate_candidate(
                         "identity": snapshot.identity.features.model_dump(),
                         "outfit": snapshot.outfit_description,
                         "environment": snapshot.scene_description,
-                        "action": action.description,
+                        # 旧进度未冻结用途时保留当时的描述。
+                        "action": progress.action_description or action.description,
+                        "motion_prompt": progress.motion_prompt,
+                        "feedback": progress.feedback,
                         "kind": action.kind,
+                        "duration_seconds": progress.duration_seconds,
                         "frame_times_seconds": samples.times_seconds,
                         "output_language": language,
                     },

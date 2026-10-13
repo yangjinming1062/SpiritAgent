@@ -85,7 +85,13 @@ VIDEO_GENERATION_DESC = (
 )
 
 VIDEO_GENERATION_PARAM_DESCS = {
-    "prompt": "Describe the video: setting, ordered motion and camera movement. Natural, continuous motion comes first: include only actions needed for the request and, unless explicitly required, do not use repetitive breathing, blinking, or other filler movement. Videos are always rendered as real footage; do not name an art style. With subject='self', describe the scene and action only; the character's appearance is applied automatically.",
+    "prompt": (
+        "Use concise, positive descriptions of the requested scene and action. Give the necessary starting state "
+        "and target action, with key steps for complex motion; add timing, setting details and camera changes "
+        "when the request needs them. For a held pose, describe its sustained posture and expression. Match the "
+        "action's progression to the clip length. Describe the result as real footage. With subject='self', "
+        "focus on the present scene and action; the character's appearance and styling are applied automatically."
+    ),
     "subject": "Set to 'self' when the current character appears; their appearance and current outfit are supplied automatically.",
     "duration": "Clip length in seconds, 4 to 15, default 6.",
     "resolution": "Output resolution, default 768P. If it is unavailable, the error lists the options.",

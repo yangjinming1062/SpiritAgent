@@ -42,14 +42,11 @@ from modules.settings import get_user_setting
 from prompts.desktop_videos import (
     DESKTOP_ACTION_REVIEW,
     DESKTOP_CONTEXT_GUIDANCE,
+    DESKTOP_EXTERNAL_VIDEO_TEMPLATES,
     DESKTOP_IDLE_EXPRESSION,
-    DESKTOP_IMAGE_1_PRESERVE_EN,
-    DESKTOP_IMAGE_1_PRESERVE_ZH,
-    DESKTOP_IMAGE_1_REFERENCE_EN,
-    DESKTOP_IMAGE_1_REFERENCE_ZH,
-    DESKTOP_IMAGE_2_REFERENCE_EN,
-    DESKTOP_IMAGE_2_REFERENCE_ZH,
     DESKTOP_PRESETS,
+    DESKTOP_VIDEO_LOOP,
+    DESKTOP_VIDEO_ONCE,
 )
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -73,6 +70,7 @@ from services.domains.actions import (
     consume_create_slot,
     desktop_accepted_asset,
     desktop_action,
+    desktop_action_description,
     desktop_action_response,
     desktop_preferences,
     desktop_progress,
@@ -198,32 +196,35 @@ async def get_desktop_external_prompt(
         references.append(DesktopVideoReference(label=label, url=url))
     language = resolve_language(await get_user_setting(db, user_id, "language"))
     extra = requirements.strip()
+    description = desktop_action_description(action)
     if language == "en":
-        prompt = (
-            f"Create a {action.duration_seconds}-second {action.kind} video from the supplied images in order: "
-            f"{DESKTOP_IMAGE_1_REFERENCE_EN} {DESKTOP_IMAGE_2_REFERENCE_EN} Image 3 provides the desktop-scene environment. "
-            f"{DESKTOP_IMAGE_1_PRESERVE_EN} Use image 3 only for the environment, and keep the scene, "
-            f"lighting and camera stable; show only this action: {action.description}. Natural, continuous motion is the priority: "
-            f"include only what this action needs; unless explicitly required, do not use repetitive breathing, blinking or filler movement. Keep motion physically natural and "
-            f"suitable for the character. Do not add people, subtitles, logos, watermarks, cuts or split screens. "
-            f"Do not change the framing unless needed for the action."
+        kind = "looping" if action.kind == "loop" else "single-action"
+        cycle = (
+            "The ending joins the opening naturally in pose, gaze and object positions for continuous looping."
+            if action.kind == "loop"
+            else "Complete the target action once, then hold its natural finishing state."
         )
-        if extra:
-            prompt += f" Additional user requirements: {extra}"
     else:
-        prompt = (
-            f"制作一段 {action.duration_seconds} 秒的{('循环' if action.kind == 'loop' else '单次')}视频，按顺序使用所提供的图片：{DESKTOP_IMAGE_1_REFERENCE_ZH}{DESKTOP_IMAGE_2_REFERENCE_ZH}图 3 提供桌景环境。"
-            f"{DESKTOP_IMAGE_1_PRESERVE_ZH}图 3 只用于环境，并保持桌景、光线和镜头稳定，只表现以下动作：{action.description}"
-            "。自然感优先，只表现完成该动作所需的连贯变化；未明确要求时不把反复呼吸、眨眼或其他微动作作为填充。动作要符合身体结构，受力、接触和衣物变化自然。不要新增人物，不要字幕、标志、水印、切镜或分屏；"
-            "不要改变取景，除非动作确实需要。"
+        kind = "循环" if action.kind == "loop" else "单次"
+        cycle = DESKTOP_VIDEO_LOOP if action.kind == "loop" else DESKTOP_VIDEO_ONCE
+    prompt = DESKTOP_EXTERNAL_VIDEO_TEMPLATES[language].format(
+        duration_seconds=action.duration_seconds,
+        kind=kind,
+        motion=description,
+        cycle=cycle,
+    )
+    if extra:
+        prompt += (
+            "\nAdditional user requirements (take precedence for the specified activity, expression and opening framing; "
+            f"preserve the identity, styling, environment and playback mode above): {extra}"
+            if language == "en"
+            else f"\n用户补充要求（对应的活动、神态与开场构图细节以此为准，身份、造型、环境与播放方式沿用上述要求）：{extra}"
         )
-        if extra:
-            prompt += f" 用户补充要求：{extra}"
     return DesktopVideoExternalPromptResponse(
         action_id=action.id,
         set_id=action.set_id,
         name=action.name,
-        description=action.description,
+        description=description,
         kind=action.kind,
         duration_seconds=action.duration_seconds,
         prompt=prompt,
@@ -389,12 +390,13 @@ async def generate_desktop_action(
                 )
             except ActionPolicyError as exc:
                 raise DesktopVideoStateError(str(exc)) from exc
-            from_chain = {"providers": [provider.model_dump() for provider in providers]}
+            from_chain = {"providers": [provider.model_dump(mode="json") for provider in providers]}
             old_paths = asset_paths(action.generation_state_json, user_id)
             progress = DesktopVideoProgress(
                 generation_id=uuid4().hex,
                 source=source,
                 feedback=feedback,
+                action_description=desktop_action_description(action),
                 duration_seconds=seconds,
                 video_chain_json=json.dumps(from_chain),
             )
@@ -795,7 +797,7 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int, *, allow_gene
                 {
                     "id": action.id,
                     "name": action.name,
-                    "description": action.description,
+                    "description": desktop_action_description(action),
                     "kind": action.kind,
                     "duration_seconds": action.duration_seconds,
                     "use_when": json.loads(action.use_when_json),

@@ -58,6 +58,7 @@ class DesktopVideoProgress(BaseModel):
     generation_id: str
     source: Literal["user_requested", "autonomous", "external_upload"]
     feedback: str = ""
+    action_description: str = ""
     duration_seconds: int
     pose_prompt: str = ""
     motion_prompt: str = ""

@@ -24,6 +24,7 @@ from modules.companion import (
     DesktopVideoStateResponse,
 )
 from modules.ws import emit_ws_event
+from prompts.desktop_videos import DESKTOP_PRESETS
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -89,6 +90,15 @@ async def desktop_action(db: AsyncSession, user_id: int, action_id: int) -> Desk
     return action
 
 
+def desktop_action_description(action: DesktopVideoAction) -> str:
+    """预设用途按当前定义读取，自定义动作保留已评审的设计。"""
+    if action.preset:
+        for key, _, description, _, _ in DESKTOP_PRESETS:
+            if key == action.key:
+                return description
+    return action.description
+
+
 def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionResponse:
     accepted = desktop_accepted_asset(action)
     progress = desktop_progress(action)
@@ -99,7 +109,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         set_id=action.set_id,
         key=action.key,
         name=action.name,
-        description=action.description,
+        description=desktop_action_description(action),
         kind=action.kind,
         duration_seconds=action.duration_seconds,
         status="queued" if action.status == "ready" and accepted is None else action.status,
