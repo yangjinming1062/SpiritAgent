@@ -671,7 +671,6 @@ def upgrade() -> None:
         sa.Column("entry_date", sa.Date(), nullable=False),
         sa.Column("title", sa.String(length=128), server_default=sa.text("''"), nullable=False),
         sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("mood", sa.String(length=32), nullable=True),
         sa.Column("is_read", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("post_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),

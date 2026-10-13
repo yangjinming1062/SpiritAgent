@@ -112,7 +112,6 @@ async def _compose_diary(
         "previous_reflection": previous_reflection,
         "max_body_chars": DIARY_BODY_MAX_CHARS,
         "persona": persona,
-        "language": language,
     }
     return await call_llm_json(
         llm_cfg,

@@ -11,7 +11,6 @@ export interface DiaryEntry {
   date: string
   id: string
   postIds: string[]
-  mood: string | null
   title: string
   updatedAt: string | null
 }
@@ -22,7 +21,6 @@ interface DiaryWire {
   entry_date: string
   id: string
   post_ids: string[]
-  mood: string | null
   title: string
   updated_at: string | null
 }
@@ -47,7 +45,6 @@ function toDiary(w: DiaryWire): DiaryEntry {
     date: w.entry_date,
     id: w.id,
     postIds: w.post_ids,
-    mood: w.mood,
     title: w.title,
     updatedAt: w.updated_at
   }
@@ -137,7 +134,6 @@ function isDiaryWire(value: unknown): value is DiaryWire {
     typeof value.entry_date === 'string' &&
     typeof value.body === 'string' &&
     typeof value.title === 'string' &&
-    (value.mood === null || typeof value.mood === 'string') &&
     (value.created_at === null || typeof value.created_at === 'string') &&
     (value.updated_at === null || typeof value.updated_at === 'string') &&
     Array.isArray(value.post_ids) &&

@@ -13,7 +13,6 @@ class DiaryContent(BaseModel):
 
     title: str = Field(min_length=1, max_length=128)
     body: str = Field(min_length=1, max_length=DIARY_BODY_MAX_CHARS)
-    mood: str | None = Field(default=None, max_length=32)
 
 
 class DiaryEntryResponse(BaseModel):
@@ -21,7 +20,6 @@ class DiaryEntryResponse(BaseModel):
     entry_date: date
     title: str
     body: str
-    mood: str | None = None
     post_ids: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None

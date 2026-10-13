@@ -50,7 +50,7 @@ def parse_diary_decision(parsed: Any) -> DiaryContent | Literal[False]:
     decision = DIARY_DECISION.validate_python(parsed)
     if isinstance(decision, DeclinedDiary):
         return False
-    return DiaryContent(title=decision.title, body=decision.body, mood=decision.mood)
+    return DiaryContent(title=decision.title, body=decision.body)
 
 
 class ReflectionOutput(BaseModel):

@@ -57,7 +57,6 @@ export interface Diary {
   entry_date: string
   title: string
   body: string
-  mood: string | null
 }
 
 export interface Memory {

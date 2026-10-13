@@ -198,7 +198,6 @@ function DiaryView({ api, refresh }: { api: RemoteApi; refresh: number }): React
           </button>
           <p className="eyebrow">{entry.entry_date}</p>
           <h2>{entry.title}</h2>
-          {entry.mood ? <span className="pill">{entry.mood}</span> : null}
           <div className="diary-body">{entry.body}</div>
         </article>
       ) : entries.length ? (
@@ -208,7 +207,6 @@ function DiaryView({ api, refresh }: { api: RemoteApi; refresh: number }): React
               <time>{value.entry_date}</time>
               <h3>{value.title}</h3>
               <p>{value.body}</p>
-              {value.mood ? <span className="pill">{value.mood}</span> : null}
             </button>
           ))}
         </div>

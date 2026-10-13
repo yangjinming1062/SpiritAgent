@@ -1024,7 +1024,6 @@ export const dict = {
     diary: {
       loading: '翻开日记本中…',
       todayBadge: '今日',
-      mood: (mood: string) => `心情 · ${mood}`,
       signature: (name: string) => `—— ${name} 的日记`,
       emptyTitle: '这一天还没有日记',
       emptyHintToday: '伙伴会在一天结束后决定是否留下日记。',

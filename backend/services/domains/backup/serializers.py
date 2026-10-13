@@ -304,7 +304,7 @@ async def insert_rows(
         if table == "companion_diary_entries":
             if not isinstance(payload.get("is_read"), bool):
                 raise ValueError("Invalid diary read state")
-            content = DiaryContent.model_validate({key: payload.get(key) for key in ("title", "body", "mood")})
+            content = DiaryContent.model_validate({key: payload.get(key) for key in ("title", "body")})
             payload.update(content.model_dump())
         if table == "companion_post_comments" and payload.get("role") not in {role.value for role in PostCommentRole}:
             raise ValueError("Invalid post comment role")

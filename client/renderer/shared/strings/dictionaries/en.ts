@@ -1084,7 +1084,6 @@ export const dict: Dictionary = {
     diary: {
       loading: 'Opening the journal…',
       todayBadge: 'Today',
-      mood: (mood: string) => `Mood · ${mood}`,
       signature: (name: string) => `— ${name}'s diary`,
       emptyTitle: 'No diary entry for this day',
       emptyHintToday: 'Your companion may leave an entry after the day ends.',

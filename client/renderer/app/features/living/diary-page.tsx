@@ -274,7 +274,6 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
         <header className={styles.entryHeader}>
           <h2 className={styles.entryDate}>{formatSelectedDate(selectedDate, t)}</h2>
           {isToday && <span className={styles.todayBadge}>{t.todayBadge}</span>}
-          {entry?.mood && <span className={styles.mood}>{t.mood(entry.mood)}</span>}
         </header>
 
         {loading ? (

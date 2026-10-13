@@ -44,7 +44,6 @@ class CompanionDiaryEntry(ModelBase, TimestampMixin):
         server_default=text("''"),
     )
     body: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
-    mood: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     post_ids: Mapped[list[str]] = mapped_column(
         ARRAY(String),

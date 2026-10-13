@@ -147,16 +147,6 @@
   color: var(--ui-text-strong);
 }
 
-.mood {
-  background: var(--ui-accent-soft);
-  border: 1px solid var(--ui-accent-line);
-  border-radius: 9999px;
-  color: var(--ui-accent);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 10px;
-}
-
 .todayBadge {
   background: var(--ui-fill-faint);
   border: 1px solid var(--ui-line-hairline);
