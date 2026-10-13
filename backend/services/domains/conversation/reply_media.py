@@ -41,11 +41,12 @@ async def load_media_turn(
     db: AsyncSession,
     conv: Conversation,
     *,
+    task: str,
     structured_reply: bool,
     request: str,
     retry_after_message_id: int | None = None,
 ) -> MediaTurnState:
-    state = MediaTurnState(conv.user_id, str(conv.id), structured_reply, request)
+    state = MediaTurnState(conv.user_id, str(conv.id), task, structured_reply, request)
     producer_calls: set[str] = set()
     for message in await load_context_messages(db, conv):
         if message.reply_json:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from components import (
     SESSION_LOCAL,
-    AiFeature,
+    AiTaskKey,
     get_logger,
     parse_llm_json,
     safe_json_loads,
@@ -101,10 +101,10 @@ ALLOWED_AVATAR_UPLOAD_MIME_TYPES: frozenset[str] = frozenset(_UPLOAD_EXTS)
 _AVATAR_JOB_LOCKS: dict[int, asyncio.Lock] = {}
 
 
-async def _sanitize_prompt_for_moderation(user_id: int, prompt: str) -> str:
-    """合规改写被审核拒绝的提示词，失败时返回原文。"""
+async def _sanitize_prompt_for_moderation(user_id: int, prompt: str, task: AiTaskKey) -> str:
+    """合规改写被审核拒绝的提示词，失败时返回原文；沿发起流水线的任务链。"""
     try:
-        raw = await chat(user_id, MODERATION_SANITIZATION_PROMPT, prompt, feature=AiFeature.moderation_rewrite)
+        raw = await chat(user_id, MODERATION_SANITIZATION_PROMPT, prompt, task=task)
         payload = parse_llm_json(raw)
         sanitized = payload.get("prompt") if isinstance(payload, dict) and set(payload) == {"prompt"} else None
         if isinstance(sanitized, str) and sanitized.strip():
@@ -127,7 +127,13 @@ async def _sanitize_prompt_for_moderation(user_id: int, prompt: str) -> str:
         return prompt
 
 
-async def generate_with_moderation_retry[T](user_id: int, prompt: str, generate: Callable[[str], Awaitable[T]]) -> T:
+async def generate_with_moderation_retry[T](
+    user_id: int,
+    prompt: str,
+    generate: Callable[[str], Awaitable[T]],
+    *,
+    task: AiTaskKey,
+) -> T:
     """命中内容审核时用合规改写后的提示词重试一次；结果未知或改写无变化时保留原错误。"""
     try:
         return await generate(prompt)
@@ -135,7 +141,7 @@ async def generate_with_moderation_retry[T](user_id: int, prompt: str, generate:
         if exc.result_unknown or not is_content_policy_error_message(exc.internal):
             raise
         logger.info("image generation blocked by moderation, sanitizing prompt", extra={"user_id": user_id})
-        sanitized = await _sanitize_prompt_for_moderation(user_id, prompt)
+        sanitized = await _sanitize_prompt_for_moderation(user_id, prompt, task)
         if sanitized == prompt:
             raise
         first_internal = exc.internal
@@ -206,7 +212,7 @@ async def extract_card_features[F: BaseModel](
             json.dumps({"source": source, "schema": schema}, ensure_ascii=False),
             reference_images=(uri,),
             before_submit=before_submit,
-            feature=AiFeature.character_card,
+            task=AiTaskKey.appearance,
         )
     payload = parse_llm_json(raw)
     if not isinstance(payload, dict) or set(payload) != set(model.model_fields):
@@ -475,7 +481,7 @@ async def _generate_portrait(
     prompt: str,
     user_id: int,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
     persist: bool,
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
@@ -489,7 +495,7 @@ async def _generate_portrait(
         return await generate_images(
             text,
             user_id=user_id,
-            feature=feature,
+            task=task,
             size=size,
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
@@ -498,7 +504,7 @@ async def _generate_portrait(
         )
 
     try:
-        urls = await generate_with_moderation_retry(user_id, prompt, generate)
+        urls = await generate_with_moderation_retry(user_id, prompt, generate, task=task)
     except ImageGenerationError as exc:
         logger.warning("portrait image generation failed", extra={"user_id": user_id, "error": exc.internal})
         # ImageGenerationError 的 str 按契约是公开文案（含编辑能力缺失等可行动指引），透传不替换。
@@ -588,7 +594,7 @@ async def _generate_avatar_step(
         reference_image=reference_image,
         secondary_reference_image=secondary_reference_image,
         image_edit=image_edit,
-        feature=AiFeature.avatar_image,
+        task=AiTaskKey.appearance,
     )
     return await _write_avatar_step(
         user_id,
@@ -1025,7 +1031,7 @@ async def generate_fullbody_reference(
                 size=FULLBODY_SIZE,
                 image_edit=mode == "edit",
                 prefer_transparent_background=True,
-                feature=AiFeature.fullbody_image,
+                task=AiTaskKey.appearance,
             )
         except AvatarGenerationError as exc:
             raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc

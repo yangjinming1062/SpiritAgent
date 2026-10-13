@@ -5,7 +5,7 @@ from typing import Any
 from components import (
     CONTEXT_SUMMARY_HEADROOM_FACTOR,
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     get_logger,
     resolve_prompt_text,
 )
@@ -217,13 +217,14 @@ async def compress_history(
     context: dict[str, Any],
     *,
     user_id: int,
+    task: AiTaskKey,
     temperature: float,
     language: str,
     context_length: int,
     companion: bool = False,
 ) -> tuple[dict[str, Any], CompressionInfo | None]:
-    """摘要沿独立功能链回退；每家都从原历史计算完整批次的覆盖边界。"""
-    config = await load_user_llm_config(user_id, AiFeature.context_compression)
+    """摘要沿所属任务的调用链回退；每家都从原历史计算完整批次的覆盖边界。"""
+    config = await load_user_llm_config(user_id, task)
 
     async def summarize(provider: ChatProvider) -> tuple[dict[str, Any], CompressionInfo | None]:
         return await _compress_history_with_provider(

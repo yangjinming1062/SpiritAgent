@@ -11,7 +11,6 @@ import YAML from 'yaml'
 
 import { sleep } from '@runtime'
 
-import type { BackendSessionLike } from '../shared/backend-port'
 import { errorMessage } from '../shared/utils'
 
 import { runnerServerPyFor, venvPythonFor } from './venv'
@@ -45,7 +44,7 @@ interface PendingRunnerSentinel {
 
 export interface MinimalRunnerBridge {
   getStatus: () => { phase: string }
-  start: (options: { backendSession?: BackendSessionLike | null; readyTimeoutMs?: number }) => Promise<unknown>
+  start: (options: { readyTimeoutMs?: number }) => Promise<unknown>
   stop: (options: { reason: string }) => Promise<unknown>
 }
 
@@ -59,7 +58,6 @@ function bridgeBusy(bridge: MinimalRunnerBridge): boolean {
 export interface RunnerUpdaterDeps {
   runtime: {
     spiritagentHome: string
-    ensureBackendSession?: () => BackendSessionLike | null | undefined
     getRunnerBridge?: () => null | MinimalRunnerBridge
   }
   fetchImpl?: typeof globalThis.fetch
@@ -257,7 +255,6 @@ export class RunnerUpdater {
       } else if (bridge) {
         try {
           await bridge.start({
-            backendSession: this.runtime.ensureBackendSession?.(),
             readyTimeoutMs: 10_000
           })
           startedNew = true
@@ -279,7 +276,6 @@ export class RunnerUpdater {
       if (stopResult && !startedNew && bridge && !bridgeBusy(bridge)) {
         try {
           await bridge.start({
-            backendSession: this.runtime.ensureBackendSession?.(),
             readyTimeoutMs: 8_000
           })
         } catch (err: unknown) {

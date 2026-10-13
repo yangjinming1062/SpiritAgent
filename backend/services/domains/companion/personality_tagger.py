@@ -1,6 +1,6 @@
 import json
 
-from components import AiFeature, parse_llm_json
+from components import AiTaskKey, parse_llm_json
 from prompts.companion import PERSONALITY_TAGGER_PROMPT
 
 from services.infrastructure.llm import chat
@@ -19,7 +19,7 @@ def personality_tag_inputs(definition: dict[str, str]) -> dict[str, str]:
 async def analyze_personality_tags(definition: dict[str, str], user_id: int) -> list[str]:
     """LLM 分析人设，返回最多 10 个去重后的性格标签；无依据时可为空。调用失败或输出不是数组时抛出，由调用方重试。"""
     user_payload = json.dumps(personality_tag_inputs(definition), ensure_ascii=False)
-    raw = await chat(user_id, PERSONALITY_TAGGER_PROMPT, user_payload, feature=AiFeature.personality_tags)
+    raw = await chat(user_id, PERSONALITY_TAGGER_PROMPT, user_payload, task=AiTaskKey.appearance)
     parsed = parse_llm_json(raw)
     if not isinstance(parsed, list):
         raise ValueError("Personality tagger response is not a JSON array")

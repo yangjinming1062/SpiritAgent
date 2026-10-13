@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import ClassVar, Literal
 from uuid import UUID
 
-from components import AiFeature, ModelModality, get_logger
+from components import AiTaskKey, ModelModality, get_logger
 from modules.media import SpeechStyle
 from openai import AsyncOpenAI
 
@@ -72,10 +72,12 @@ class ProviderConfig:
     max_output_tokens: int | None = None
     input_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
     output_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
-    feature: AiFeature | None = None
+    task: AiTaskKey | None = None
     config_source: str = "system_default"
     attempt_timeout_seconds: float | None = None
     total_timeout_seconds: float | None = None
+    # 自主判断类调用：总预算最多 20 秒，多模型时默认单模型 8 秒（见 llm_fallback）。
+    fast_decision: bool = False
 
 
 class BaseProvider(ABC):

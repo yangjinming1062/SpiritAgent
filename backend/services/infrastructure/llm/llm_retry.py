@@ -8,7 +8,7 @@ from typing import Any
 from components import LLM_RETRY_MIN_TIMEOUT, SETTINGS, get_logger
 from openai import AsyncOpenAI
 
-from .call_budget import current_call_feature, provider_request_timeout, remaining_chain_seconds, response_started
+from .call_budget import current_call_task, provider_request_timeout, remaining_chain_seconds, response_started
 from .error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, LLMRuntimeError, classify_api_error
 from .llm_debug import (
     log_event,
@@ -41,7 +41,7 @@ def _record_usage(
     status: str,
     stream: bool,
     accumulator: LlmUsageAccumulator | None,
-    feature: str | None,
+    task: str | None,
 ) -> None:
     usage = read_llm_usage(raw)
     if accumulator is not None:
@@ -54,7 +54,7 @@ def _record_usage(
             "provider_id": str(config.provider_id),
             "model": config.model,
             "model_card_id": str(config.model_card_id),
-            "feature": feature,
+            "task": task,
             "status": status,
             "stream": stream,
             "latency_ms": int((time.monotonic() - call_started) * 1000),
@@ -73,7 +73,7 @@ async def _guarded_stream(
     call_started: float,
     config: ProviderConfig,
     accumulator: LlmUsageAccumulator | None,
-    feature: str | None,
+    task: str | None,
 ) -> AsyncGenerator[Any]:
     """流式迭代：chunk 间静默期受 idle 超时约束、整流受 budget 总预算约束（httpx read 是按次读超时，不等价）；流中异常分类后以 LLMRuntimeError 抛出；结束时关闭底层流避免连接泄漏到 SDK 池。"""
     loop = asyncio.get_running_loop()
@@ -147,7 +147,7 @@ async def _guarded_stream(
             ),
             stream=True,
             accumulator=accumulator,
-            feature=feature,
+            task=task,
         )
         with contextlib.suppress(Exception):
             await stream.close()
@@ -225,7 +225,7 @@ async def call_with_retry(
     call_site = client.base_url.host or str(client.base_url)
     call_started = time.monotonic()
     accumulator = current_usage_accumulator()
-    feature = current_call_feature()
+    task = current_call_task()
 
     log_event(
         call_id=call_id,
@@ -238,7 +238,7 @@ async def call_with_retry(
         stream=is_stream,
         context_length=context_length,
         timeout_seconds=budget,
-        feature=current_call_feature(),
+        task=current_call_task(),
     )
 
     try:
@@ -252,7 +252,7 @@ async def call_with_retry(
             status="cancelled" if isinstance(exc, asyncio.CancelledError) else "blocked",
             stream=is_stream,
             accumulator=accumulator,
-            feature=feature,
+            task=task,
         )
         raise
     except Exception as exc:
@@ -264,7 +264,7 @@ async def call_with_retry(
             status="error",
             stream=is_stream,
             accumulator=accumulator,
-            feature=feature,
+            task=task,
         )
         classified = classify_api_error(
             exc,
@@ -300,7 +300,7 @@ async def call_with_retry(
             call_started=call_started,
             config=config,
             accumulator=accumulator,
-            feature=feature,
+            task=task,
         )
     _record_usage(
         getattr(result, "usage", None),
@@ -310,7 +310,7 @@ async def call_with_retry(
         status=str(getattr(result, "status", "unknown")),
         stream=False,
         accumulator=accumulator,
-        feature=feature,
+        task=task,
     )
     log_event(
         call_id=call_id,

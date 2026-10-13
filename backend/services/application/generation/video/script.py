@@ -4,7 +4,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Literal
 
-from components import AiFeature, get_logger, parse_llm_json
+from components import AiTaskKey, get_logger, parse_llm_json
 from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS, CharacterCardSnapshot, PeekGeometry
 from prompts.generation import (
     ACTION_IMAGE_DESCRIPTION_INSTRUCTIONS,
@@ -152,6 +152,7 @@ class ImageActionDescriptions(BaseModel):
 async def compose_action_image_descriptions(
     user_id: int,
     *,
+    task: AiTaskKey,
     reference_image: str,
     identity: CharacterCardSnapshot,
     persona_definition: dict[str, str],
@@ -187,7 +188,7 @@ async def compose_action_image_descriptions(
             json.dumps(payload, ensure_ascii=False),
             reference_images=(reference_image,),
             before_submit=before_submit,
-            feature=AiFeature.action_image_description,
+            task=task,
         )
         try:
             result = ImageActionDescriptions.model_validate(parse_llm_json(raw))
@@ -214,6 +215,7 @@ def build_action_image_prompt(entry: ImageActionScriptEntry, identity: Character
 async def compose_action_script(
     user_id: int,
     *,
+    task: AiTaskKey,
     reference_image: str,
     identity: CharacterCardSnapshot,
     persona_definition: dict[str, str],
@@ -251,7 +253,7 @@ async def compose_action_script(
             json.dumps(payload, ensure_ascii=False),
             reference_images=(reference_image,),
             before_submit=before_submit,
-            feature=AiFeature.action_script,
+            task=task,
         )
         try:
             script = ActionScript.model_validate(parse_llm_json(raw))
@@ -276,6 +278,7 @@ async def inspect_peek_geometry(
     identity_uri: str,
     image_uri: str,
     *,
+    task: AiTaskKey,
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> PeekGeometry | None:
     """定位成品图片的遮挡线；不可用时返回 None。"""
@@ -289,7 +292,7 @@ async def inspect_peek_geometry(
             json.dumps({"expected_side": expected_side}),
             reference_images=(identity_uri, image_uri),
             before_submit=before_submit,
-            feature=AiFeature.peek_geometry,
+            task=task,
         )
         payload = parse_llm_json(raw)
         if not isinstance(payload, dict) or payload.get("usable") is not True:

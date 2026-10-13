@@ -3,7 +3,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
-from components import AI_FEATURE_BY_ID, SETTINGS, AiFeature, ModelModality, get_logger, log_paid_call
+from components import SETTINGS, AiTaskKey, ModelModality, get_logger, log_paid_call
 
 from .call_budget import attempt_budget, chain_budget, remaining_chain_seconds
 from .error_classifier import ClassifiedError, FailoverReason, LlmCallBlockedError, LLMRuntimeError, classify_api_error
@@ -33,7 +33,7 @@ async def execute_media_with_fallback[T](
     user_id: int | None,
     stream_started: Callable[[], bool] | None = None,
 ) -> T:
-    """原生音频优先；转写和文本回退共用同一功能期限，不能跨过流已开始的边界。"""
+    """原生音频优先；转写和文本回退共用同一任务期限，不能跨过流已开始的边界。"""
     text_requirements = required_modalities - {ModelModality.audio}
     native = [config for config in chain if required_modalities <= effective_input_modalities(config)]
     text = [config for config in chain if text_requirements <= effective_input_modalities(config)]
@@ -48,7 +48,7 @@ async def execute_media_with_fallback[T](
     if not chain:
         raise MissingLlmConfigError("未配置可用模型")
     total = chain[0].total_timeout_seconds
-    if chain[0].feature is not None and AI_FEATURE_BY_ID[chain[0].feature].fast_decision:
+    if chain[0].fast_decision:
         total = min(total, 20.0) if total is not None else 20.0
     timeout = asyncio.timeout(total)
     try:
@@ -81,7 +81,7 @@ async def execute_media_with_fallback[T](
         if not timeout.expired():
             raise
         raise LLMRuntimeError(
-            ClassifiedError(FailoverReason.timeout, None, "AI feature call budget exhausted"),
+            ClassifiedError(FailoverReason.timeout, None, "AI task call budget exhausted"),
         ) from exc
 
 
@@ -95,7 +95,7 @@ async def execute_with_fallback[P: BaseProvider, T](
 ) -> T:
     if not chain:
         raise MissingLlmConfigError("no provider configured")
-    fast = chain[0].feature is not None and AI_FEATURE_BY_ID[chain[0].feature].fast_decision
+    fast = chain[0].fast_decision
     total = chain[0].total_timeout_seconds
     if fast:
         total = min(total, 20.0) if total is not None else 20.0
@@ -115,11 +115,11 @@ async def execute_with_fallback[P: BaseProvider, T](
             raise
         if (
             issubclass(provider_type, (ImageGenProvider, VideoGenProvider, TTSProvider, STTProvider))
-            or chain[0].feature == AiFeature.voice_design
+            or chain[0].task == AiTaskKey.voice_design
         ):
             raise ProviderResultUnknownError("POST", chain[-1].base_url) from exc
         raise LLMRuntimeError(
-            ClassifiedError(FailoverReason.timeout, None, "AI feature call budget exhausted"),
+            ClassifiedError(FailoverReason.timeout, None, "AI task call budget exhausted"),
         ) from exc
 
 
@@ -151,14 +151,14 @@ async def _execute_with_fallback[P: BaseProvider, T](
             chain_index=idx,
             chain_size=chain_size,
             user_id=user_id,
-            feature=config.feature.value if config.feature is not None else None,
+            task=config.task.value if config.task is not None else None,
             config_source=config.config_source,
         )
         provider = build_provider(config, provider_type)
         log(phase="chain_attempt")
         started = time.monotonic()
         try:
-            fast = config.feature is not None and AI_FEATURE_BY_ID[config.feature].fast_decision
+            fast = config.fast_decision
             seconds = config.attempt_timeout_seconds
             if seconds is None:
                 seconds = (8.0 if chain_size > 1 else 20.0) if fast else float(SETTINGS.llm_request_timeout_seconds)
@@ -168,7 +168,7 @@ async def _execute_with_fallback[P: BaseProvider, T](
                     with (
                         attempt_budget(
                             timeout,
-                            feature=config.feature,
+                            task=config.task,
                             request_timeout=max(seconds, float(SETTINGS.llm_request_timeout_seconds)),
                         ),
                         generation_timeout_scope(timeout),
@@ -179,7 +179,7 @@ async def _execute_with_fallback[P: BaseProvider, T](
                     raise
                 if (
                     isinstance(provider, (ImageGenProvider, VideoGenProvider, TTSProvider, STTProvider))
-                    or config.feature == AiFeature.voice_design
+                    or config.task == AiTaskKey.voice_design
                 ):
                     raise ProviderResultUnknownError("POST", config.base_url) from exc
                 raise LLMRuntimeError(

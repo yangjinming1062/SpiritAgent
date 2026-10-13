@@ -6,7 +6,7 @@ from dataclasses import asdict, replace
 from typing import Literal, get_args
 from uuid import uuid4
 
-from components import SESSION_LOCAL, AiFeature, get_logger, parse_llm_json, tool_error
+from components import SESSION_LOCAL, AiTaskKey, get_logger, parse_llm_json, tool_error
 from modules.companion import CharacterCardSnapshot
 from prompts.generation import CHAT_IMAGE_CORRECTION_PREFIX
 from prompts.tools import MEDIA_INSPECTION_INSTRUCTIONS
@@ -80,6 +80,7 @@ async def _generate_batch(
     plan: ImagePlan,
     user_id: int,
     directory: str,
+    task: AiTaskKey,
     n: int,
 ) -> list[tuple[str | None, int | None, str | None]]:
     """为同 request 的 n 张产出 per-slot (url, score, error)；硬失败整体抛出，由调用方按 request 落状态。"""
@@ -93,7 +94,7 @@ async def _generate_batch(
             user_id=user_id,
             persist_user_assets=True,
             storage_directory=directory,
-            feature=AiFeature.chat_image,
+            task=task,
         )
 
     identity = CharacterCardSnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
@@ -136,7 +137,7 @@ async def _generate_batch(
         identity_reference=plan.reference_image or "",
         identity_text=render_character_identity(identity),
         state=state,
-        feature=AiFeature.chat_image,
+        task=task,
     )
     delivered: list[str] = []
     for slot in range(n):
@@ -155,8 +156,8 @@ async def _generate_batch(
     return results
 
 
-async def _generate(plan: ImagePlan, user_id: int, directory: str) -> tuple[str, int | None]:
-    url, score, error = (await _generate_batch(plan, user_id, directory, 1))[0]
+async def _generate(plan: ImagePlan, user_id: int, directory: str, task: AiTaskKey) -> tuple[str, int | None]:
+    url, score, error = (await _generate_batch(plan, user_id, directory, task, 1))[0]
     if url is None:
         raise ImageGenerationError(error or "图片生成服务没有返回图片")
     return url, score
@@ -178,7 +179,12 @@ def _fail_all(artifacts: list[MediaArtifact], status: str, error: str) -> None:
 
 async def _produce(state: MediaTurnState, artifact: MediaArtifact, plan: ImagePlan) -> None:
     try:
-        artifact.url, artifact.identity_score = await _generate(plan, state.user_id, state.asset_directory)
+        artifact.url, artifact.identity_score = await _generate(
+            plan,
+            state.user_id,
+            state.asset_directory,
+            AiTaskKey(state.task),
+        )
         artifact.status = "ready"
     except asyncio.CancelledError as exc:
         artifact.status, artifact.error = _artifact_failure(exc)
@@ -265,7 +271,13 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
             state.plans[artifact.goal_id] = plan
         # 合批后一次失败波及这次调用的全部图片，硬失败不再逐张隔离。
         try:
-            results = await _generate_batch(plan, state.user_id, state.asset_directory, len(artifacts))
+            results = await _generate_batch(
+                plan,
+                state.user_id,
+                state.asset_directory,
+                AiTaskKey(state.task),
+                len(artifacts),
+            )
         except asyncio.CancelledError as exc:
             _fail_all(artifacts, *_artifact_failure(exc))
             raise
@@ -326,7 +338,7 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
                     ensure_ascii=False,
                 ),
                 reference_images=(uri,),
-                feature=AiFeature.chat_image_inspection,
+                task=AiTaskKey(state.task),
             )
             result = InspectionResult.model_validate(parse_llm_json(raw))
             issues = tuple(issue.strip()[:1000] for issue in result.issues if issue.strip())

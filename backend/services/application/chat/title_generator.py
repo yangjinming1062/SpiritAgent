@@ -7,7 +7,7 @@ from components import (
     TITLE_GENERATION_TEMPERATURE,
     TITLE_MAX_CHARS,
     TITLE_SNIPPET_MAX_CHARS,
-    AiFeature,
+    AiTaskKey,
     get_logger,
     resolve_prompt_text,
 )
@@ -41,6 +41,8 @@ async def auto_generate_title(
     user_message: str,
     assistant_response: str | list[str],
     user_id: int,
+    *,
+    task: AiTaskKey,
     language: str = DEFAULT_LANGUAGE,
     temperature: float | None = None,
 ) -> None:
@@ -55,7 +57,7 @@ async def auto_generate_title(
                     .limit(1),
                 )
                 user_message = message_text(first_user) if first_user is not None else ""
-        llm_config = await load_user_llm_config(user_id, AiFeature.conversation_title)
+        llm_config = await load_user_llm_config(user_id, task)
         assistant_snippet: str | list[str]
         if isinstance(assistant_response, str):
             assistant_snippet = assistant_response[:TITLE_SNIPPET_MAX_CHARS]

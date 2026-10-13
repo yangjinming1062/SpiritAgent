@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Literal
 
 import httpx
-from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, AiFeature, download_capped, get_logger
+from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, AiTaskKey, download_capped, get_logger
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -306,7 +306,7 @@ async def generate_character_images(
     prompt: str,
     *,
     user_id: int,
-    feature: AiFeature,
+    task: AiTaskKey,
     storage_directory: str,
     reference_image: str,
     identity_reference: str,
@@ -352,7 +352,7 @@ async def generate_character_images(
             chain, error = await resolve_image_gen_chain(
                 db,
                 user_id,
-                feature=feature,
+                task=task,
                 has_reference=bool(reference_image),
                 image_edit=image_edit,
                 multiple_references=bool(secondary_reference_image),
@@ -380,6 +380,7 @@ async def generate_character_images(
     return await _run_image_chain(
         state,
         user_id=user_id,
+        task=task,
         configs=configs,
         save_progress=save_progress,
         store_attempts=store_attempts,
@@ -423,7 +424,7 @@ async def generate_scene_images(
             chain, error = await resolve_image_gen_chain(
                 db,
                 user_id,
-                feature=AiFeature.scene_image,
+                task=AiTaskKey.scene,
                 has_reference=bool(reference_image),
                 prompt_chars=len(prompt),
                 environment_reference=True,
@@ -456,6 +457,7 @@ async def generate_scene_images(
     return await _run_image_chain(
         state,
         user_id=user_id,
+        task=AiTaskKey.scene,
         configs=configs,
         save_progress=save_progress,
         store_attempts=store_attempts,
@@ -467,6 +469,7 @@ async def _run_image_chain(
     state: ImageChainState,
     *,
     user_id: int,
+    task: AiTaskKey,
     configs: dict[int, ProviderConfig],
     save_progress: ImageProgressWriter | None,
     store_attempts: int,
@@ -597,6 +600,7 @@ async def _run_image_chain(
                                 user_id,
                                 (identity_uri or "", secondary_uri),
                                 uri,
+                                task=task,
                                 identity_text=inputs.identity_text,
                                 before_submit=before_submit,
                             )
@@ -605,6 +609,7 @@ async def _run_image_chain(
                                 user_id,
                                 identity_uri,
                                 uri,
+                                task=task,
                                 identity_text=inputs.identity_text,
                                 before_submit=before_submit,
                             )
@@ -655,7 +660,7 @@ async def _run_image_chain(
                         size=provider.image_size or inputs.size,
                         n=len(slots),
                         user_id=user_id,
-                        feature=config.feature,
+                        task=task,
                         reference_image=reference_uri,
                         secondary_reference_image=secondary_uri if isinstance(inputs, CharacterImageInput) else None,
                         image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,

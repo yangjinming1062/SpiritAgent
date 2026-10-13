@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from components import NIGHTLY_REASONING_EFFORT, SESSION_LOCAL, SETTINGS, AiFeature, resolve_prompt_text, utc_now
+from components import NIGHTLY_REASONING_EFFORT, SESSION_LOCAL, SETTINGS, AiTaskKey, resolve_prompt_text, utc_now
 from modules.companion import DIARY_BODY_MAX_CHARS, DiaryContent
 from prompts.nightly import JOURNAL_DIARY_TEXTS, NIGHTLY_JSON_REPAIR_TEXTS
 
@@ -62,7 +62,7 @@ async def project_today(
     if not in_nightly_window(utc_now(), ZoneInfo(user_timezone)):
         return False
     composed = await _compose_diary(
-        await load_user_llm_config(user_id, AiFeature.nightly_diary),
+        await load_user_llm_config(user_id, AiTaskKey.nightly),
         messages,
         target_date,
         nightly_actions,

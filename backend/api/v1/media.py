@@ -8,7 +8,7 @@ from components import (
     SETTINGS,
     STT_MAX_AUDIO_BYTES,
     TTS_MAX_TEXT_CHARS,
-    AiFeature,
+    AiTaskKey,
     DbSession,
     get_file_path,
     get_logger,
@@ -321,7 +321,7 @@ async def text_to_speech(request: Request, body: TtsRequest, user: CurrentUser) 
         )
 
     try:
-        result = await synthesize_speech(user.id, text, voice, language, feature=AiFeature.speech_preview)
+        result = await synthesize_speech(user.id, text, voice, language, task=AiTaskKey.speech_preview)
     except MissingLlmConfigError:
         raise missing_config_http("语音合成服务")
     except Exception as e:

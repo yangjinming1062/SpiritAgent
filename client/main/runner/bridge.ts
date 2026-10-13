@@ -6,11 +6,9 @@ import path from 'node:path'
 
 import { sleep } from '@runtime'
 
-import type { BackendSessionLike } from '../shared/backend-port'
 import { atomicWriteFile, createSerialQueue, errorMessage, RunnerNotConnectedError } from '../shared/utils'
 
 import type { RunnerProcess, RunnerProcessState } from './process'
-import type { ReverseRpcOptions } from './reverse-rpc'
 import type {
   CreateRunnerWsServerOptions,
   RunnerCapabilities,
@@ -45,8 +43,6 @@ function computeDesktopEndpoint(spiritagentHome?: null | string): { path: string
 }
 
 export interface RunnerBridgeStartOptions {
-  /** 缺失时 start 直接拒绝：反向 RPC 必须持有会话。 */
-  backendSession?: BackendSessionLike | null
   readyTimeoutMs?: number
 }
 
@@ -55,7 +51,6 @@ export interface RunnerBridgeOptions {
   log?: (chunk: string) => void
   processFactory: () => RunnerProcess
   pushConfig: (server: RunnerWsServer, force?: boolean) => Promise<boolean>
-  reverseRpcFactory: (options: ReverseRpcOptions) => (method: string, params?: unknown) => Promise<unknown>
   wsServerFactory: (options: CreateRunnerWsServerOptions) => RunnerWsServer
 }
 
@@ -115,7 +110,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     return () => emitter.off('event', callback)
   }
 
-  const { processFactory, pushConfig, reverseRpcFactory, wsServerFactory } = options
+  const { processFactory, pushConfig, wsServerFactory } = options
 
   let runnerProcess: null | RunnerProcess = null
   let wsServer: null | RunnerWsServer = null
@@ -299,12 +294,6 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   }
 
   async function startRuntime(args: RunnerBridgeStartOptions): Promise<RunnerBridgeStatus> {
-    const backendSession = args.backendSession
-
-    if (!backendSession) {
-      throw new Error('Runner bridge start requires a backend session.')
-    }
-
     const gen = ++opGeneration
     hasBeenReady = false
 
@@ -348,8 +337,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
     const wsInstance = wsServerFactory({
       authToken,
-      log: options.log,
-      onReverseRpc: reverseRpcFactory({ backendSession, log })
+      log: options.log
     })
 
     wsServer = wsInstance

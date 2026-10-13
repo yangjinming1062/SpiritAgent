@@ -1,4 +1,4 @@
-from components import SESSION_LOCAL, AiFeature, get_logger, resolve_prompt_text
+from components import SESSION_LOCAL, AiTaskKey, get_logger, resolve_prompt_text
 from modules.companion import Persona
 from modules.ws import emit_ws_event
 from prompts.companion import MOOD_INSTRUCTIONS
@@ -52,7 +52,7 @@ async def update_mood_from_companion_turn(
     recent_bubbles.reverse()
     parsed, fail_reason = await run_prompt_json(
         user_id,
-        await load_user_llm_config(user_id, AiFeature.mood_update),
+        await load_user_llm_config(user_id, AiTaskKey.companion_chat),
         resolve_prompt_text(MOOD_INSTRUCTIONS, ctx.language),
         {
             "output_language": ctx.language,

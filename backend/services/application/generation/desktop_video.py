@@ -4,7 +4,7 @@ import asyncio
 import json
 from io import BytesIO
 
-from components import SESSION_LOCAL, AiFeature, get_logger, parse_llm_json, resolve_language, track_user_task
+from components import SESSION_LOCAL, AiTaskKey, get_logger, parse_llm_json, resolve_language, track_user_task
 from modules.companion import (
     AvatarAsset,
     CompanionOutfit,
@@ -202,15 +202,15 @@ async def resolve_desktop_video_plan(
     duration_seconds: int,
 ) -> tuple[int, list[FrozenMediaProvider]]:
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen", feature=AiFeature.desktop_video)
-        if not await resolve_vision_chain(db, user_id, feature=AiFeature.desktop_action_design):
+        chain = await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.desktop_life)
+        if not await resolve_vision_chain(db, user_id, task=AiTaskKey.desktop_life):
             raise DesktopVideoStateError("请先配置视觉模型")
         images, error = await resolve_image_gen_chain(
             db,
             user_id,
             has_reference=True,
             multiple_references=True,
-            feature=AiFeature.desktop_pose_image,
+            task=AiTaskKey.desktop_life,
         )
         if not images:
             raise DesktopVideoStateError(error or "请配置支持当前穿着参考的图片模型")
@@ -346,7 +346,7 @@ async def _prepare_pose(
             ),
             reference_images=(portrait, outfit),
             before_submit=before_submit,
-            feature=AiFeature.desktop_action_design,
+            task=AiTaskKey.desktop_life,
         )
         script = DesktopVideoScript.model_validate(parse_llm_json(raw))
         progress.pose_prompt, progress.motion_prompt = script.pose_prompt, script.motion_prompt
@@ -385,7 +385,7 @@ async def _prepare_pose(
         state=image_state,
         save_progress=save_image,
         before_submit=before_submit,
-        feature=AiFeature.desktop_pose_image,
+        task=AiTaskKey.desktop_life,
     )
     resolved = resolve_asset_reference(paths[0])
     if resolved is None:
@@ -497,6 +497,7 @@ async def _evaluate_candidate(
             (portrait, outfit),
             uris,
             DESKTOP_VIDEO_SCORE,
+            task=AiTaskKey.desktop_life,
             identity_text=render_character_identity(snapshot.identity),
             before_submit=before_submit,
         )
@@ -523,7 +524,7 @@ async def _evaluate_candidate(
                 ),
                 reference_images=(portrait, outfit, *uris),
                 before_submit=before_submit,
-                feature=AiFeature.desktop_video_review,
+                task=AiTaskKey.desktop_life,
             )
             review = DesktopVideoReview.model_validate(parse_llm_json(raw))
             progress.review_verdict, progress.review_reason = review.verdict, review.reason

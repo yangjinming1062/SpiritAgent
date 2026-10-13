@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 from weakref import WeakValueDictionary
 
-from components import AiFeature, get_logger, session_scope
+from components import AiTaskKey, get_logger, session_scope
 from modules.auth import User
 from modules.system import ChatMessageRequest, ChatRequest
 from modules.ws import emit_ws_event
@@ -64,7 +64,7 @@ async def _execute_standard_turn(
     try:
         conversation_id = await resolve_job_conversation(user_id, job_id, conversation_id, name)
         async with session_scope() as db:
-            llm_config = await resolve_user_llm_config(db, user_id, feature=AiFeature.scheduled_task)
+            llm_config = await resolve_user_llm_config(db, user_id, AiTaskKey.scheduled_task)
         emitter = HeadlessEmitter()
         request = ChatRequest(
             session_id=str(conversation_id),

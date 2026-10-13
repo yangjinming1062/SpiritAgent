@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Literal
 from uuid import UUID, uuid4
 
-from components import AI_FEATURE_BY_ID, SESSION_LOCAL, AiFeature, get_logger, track_user_task
+from components import AI_TASK_BY_ID, SESSION_LOCAL, AiTaskKey, get_logger, track_user_task
 from modules.companion import RemovedActionVideoTask
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,7 +35,7 @@ class MediaProviderFailedError(RuntimeError):
 
 
 _VIDEO_FAILURE_COPY: dict[str, str] = {
-    "call_budget_exhausted": "供应商调用预算已用完，请调整功能预算后重做",
+    "call_budget_exhausted": "供应商调用预算已用完，请调整任务预算后重做",
     "result_unknown": "视频提交结果不确定，供应商可能已接单；为避免重复计费，系统没有自动重试",
     "submit_failed": "视频提交失败，请稍后重试",
     "provider_unavailable": "视频生成服务配置已变更，请稍后重试",
@@ -69,7 +69,7 @@ class FrozenMediaProvider(BaseModel):
     provider: str
     model: str
     base_url: str
-    feature: AiFeature
+    task: AiTaskKey
     provider_id: UUID
     model_card_id: UUID
     max_images_per_request: int | None = Field(default=None, ge=1)
@@ -82,13 +82,13 @@ class FrozenMediaProvider(BaseModel):
 
     @classmethod
     def from_config(cls, config: ProviderConfig) -> "FrozenMediaProvider":
-        if config.feature is None or AI_FEATURE_BY_ID[config.feature].service != config.service_type:
-            raise ValueError("media task requires an AI feature")
+        if config.task is None or config.service_type.value not in AI_TASK_BY_ID[config.task].services:
+            raise ValueError("media task requires an AI task")
         return cls(
             provider=config.provider_name,
             model=config.model,
             base_url=config.base_url,
-            feature=config.feature,
+            task=config.task,
             provider_id=config.provider_id,
             model_card_id=config.model_card_id,
         )
@@ -188,7 +188,7 @@ async def media_call_budget(config: ProviderConfig, state: MediaChainState) -> A
 
 def require_media_call_budget(config: ProviderConfig, state: MediaChainState) -> None:
     if config.total_timeout_seconds is not None and state.call_seconds >= config.total_timeout_seconds:
-        raise MediaProviderFailedError("供应商调用预算已用完，请调整功能预算后重做", reason="call_budget_exhausted")
+        raise MediaProviderFailedError("供应商调用预算已用完，请调整任务预算后重做", reason="call_budget_exhausted")
 
 
 async def resolve_frozen_media_provider(
@@ -198,7 +198,7 @@ async def resolve_frozen_media_provider(
 ) -> ProviderConfig | None:
     """凭据实时读取；任务模型与端点保持冻结，端点改变后不向新地址发送旧任务。"""
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, service, feature=frozen.feature)
+        chain = await resolve_provider_chain(db, user_id, service, task=frozen.task)
     current = next(
         (
             config

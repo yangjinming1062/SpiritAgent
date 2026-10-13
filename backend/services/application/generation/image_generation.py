@@ -4,7 +4,7 @@ import base64
 from components import (
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     SESSION_LOCAL,
-    AiFeature,
+    AiTaskKey,
     ModelModality,
     download_capped,
     get_logger,
@@ -62,7 +62,7 @@ async def resolve_image_gen_chain(
     db: AsyncSession,
     user_id: int,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
     has_reference: bool,
     image_edit: bool = False,
     multiple_references: bool = False,
@@ -70,7 +70,7 @@ async def resolve_image_gen_chain(
     environment_reference: bool = False,
 ) -> tuple[list[ProviderConfig], str | None]:
     """按参考图/图像编辑能力过滤 image_gen 链；给出 ``prompt_chars`` 时跳过提示词放不下的供应商。"""
-    full = await resolve_provider_chain(db, user_id, "image_gen", feature=feature)
+    full = await resolve_provider_chain(db, user_id, "image_gen", task=task)
 
     def _fits(cfg: ProviderConfig) -> bool:
         limit = resolve(ServiceType.image_gen, cfg.provider_name).max_prompt_chars
@@ -129,7 +129,7 @@ async def generate_images(
     prompt: str,
     *,
     user_id: int,
-    feature: AiFeature,
+    task: AiTaskKey,
     size: str = "1024x1024",
     n: int = 1,
     reference_image: str | None = None,
@@ -187,7 +187,7 @@ async def generate_images(
                 chain, err = await resolve_image_gen_chain(
                     db,
                     user_id,
-                    feature=feature,
+                    task=task,
                     has_reference=bool(reference_image),
                     image_edit=image_edit,
                     multiple_references=bool(secondary_reference_image),

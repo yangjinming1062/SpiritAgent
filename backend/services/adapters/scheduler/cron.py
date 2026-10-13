@@ -8,7 +8,7 @@ from typing import Any
 
 from components import (
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     BackgroundTask,
     TaskBag,
     begin_local_scope,
@@ -438,7 +438,7 @@ async def _review_scope_memories(scope: MemoryScope) -> bool:
     async with session_scope() as db:
         if not await db.scalar(select(User.is_active).where(User.id == scope.user_id)):
             return False
-        llm_config = await resolve_user_llm_config(db, scope.user_id, feature=AiFeature.memory_review)
+        llm_config = await resolve_user_llm_config(db, scope.user_id, AiTaskKey.memory_review)
     if not llm_config.is_configured:
         logger.info("memory_review: skipped, missing llm config", extra={"user_id": scope.user_id})
         return False

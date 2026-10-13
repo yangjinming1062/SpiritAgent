@@ -40,9 +40,6 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
     if path == "/api/companion/video-packs":
         # 12 个 32 MiB 片段经 base64 编码后的总量，加上 JSON 字段开销。
         return 512 * _MIB + _DEFAULT_MAX_BYTES, False
-    if path == "/api/llm/completion":
-        # Client / Runner 的视觉补全载荷预算为 10 MiB。
-        return 10 * _MIB + _DEFAULT_MAX_BYTES, False
     if path == "/api/media/videos":
         return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
     if _DESKTOP_VIDEO_UPLOAD_PATH.fullmatch(path):

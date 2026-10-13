@@ -10,7 +10,7 @@ from pathlib import Path
 from components import (
     SESSION_LOCAL,
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     TaskBag,
     get_logger,
     is_user_in_maintenance,
@@ -583,12 +583,12 @@ async def create_pack_from_reference(
                 return reusable
         system_seconds: float | None = None
         system_providers: list[FrozenMediaProvider] = []
-        if not await resolve_vision_chain(db, user_id, feature=AiFeature.action_script):
+        if not await resolve_vision_chain(db, user_id, task=AiTaskKey.window_action):
             raise VideoPackStateError("未配置视觉模型，无法根据角色参考图撰写动作脚本")
         alignment_chain, alignment_error = await resolve_image_gen_chain(
             db,
             user_id,
-            feature=AiFeature.action_alignment_image,
+            task=AiTaskKey.window_action,
             has_reference=True,
             multiple_references=True,
         )
@@ -597,7 +597,7 @@ async def create_pack_from_reference(
         image_chain, image_error = await resolve_image_gen_chain(
             db,
             user_id,
-            feature=AiFeature.action_pose_image,
+            task=AiTaskKey.window_action,
             has_reference=True,
             image_edit=True,
         )
@@ -1169,6 +1169,7 @@ async def _review_pack_identity(
             user_id,
             reference_uri,
             tuple(frame_uris),
+            task=AiTaskKey.window_action,
             pack_wide=True,
             identity_text=render_character_profile(context.identity),
             before_submit=before_submit,
@@ -1361,7 +1362,7 @@ async def _resolve_action_video_plan(
         raise VideoPackStateError("动作时长须为 1–15 的整秒数")
     requested = int(round(duration_seconds))
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen", feature=AiFeature.action_video)
+        chain = await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.window_action)
     configured = [(config, build_provider(config, VideoGenProvider)) for config in chain]
     for index, (_config, provider) in enumerate(configured):
         available = provider.durations if provider.durations is not None else (requested,)
@@ -1459,6 +1460,7 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
         outfit_reference,
         context.identity,
         "",
+        task=AiTaskKey.window_action,
         identity_reference=portrait_source,
         storage_directory=_pack_dir(pack),
         state=context.reference_chain,
@@ -1546,6 +1548,7 @@ async def _compose_scripts(
     if image_specs:
         images = await compose_action_image_descriptions(
             pack.user_id,
+            task=AiTaskKey.window_action,
             reference_image=reference,
             identity=context.identity,
             persona_definition=context.persona_definition,
@@ -1559,6 +1562,7 @@ async def _compose_scripts(
     if video_specs:
         videos = await compose_action_script(
             pack.user_id,
+            task=AiTaskKey.window_action,
             reference_image=reference,
             identity=context.identity,
             persona_definition=context.persona_definition,
@@ -1768,7 +1772,7 @@ async def _prepare_action_pose(
         state=pose_state,
         save_progress=save_pose,
         before_submit=lambda: _require_new_paid_step(pack, context),
-        feature=AiFeature.action_pose_image,
+        task=AiTaskKey.window_action,
     )
     job.pose_path = action_pose_asset_path(
         pack.user_id,
@@ -1833,6 +1837,7 @@ async def _run_image_pipeline(
             job.system_slot,
             identity_uri,
             sample_uri,
+            task=AiTaskKey.window_action,
             before_submit=lambda: _require_new_paid_step(pack, context),
         )
         result = result.model_copy(update={"clip": result.clip.model_copy(update={"peek_geometry": geometry})})
@@ -1843,6 +1848,7 @@ async def _run_image_pipeline(
             pack.user_id,
             identity_uri,
             await _action_sample_uris(result.clip),
+            task=AiTaskKey.window_action,
             image=True,
             identity_text=render_character_profile(context.identity),
             before_submit=lambda: _require_new_paid_step(pack, context),
@@ -1965,6 +1971,7 @@ async def _run_action_pipeline(
                         pack.user_id,
                         identity_uri,
                         await _clip_frame_uris(result.clip),
+                        task=AiTaskKey.window_action,
                         identity_text=render_character_profile(context.identity),
                         before_submit=lambda: _require_new_paid_step(pack, context),
                     )
@@ -2019,6 +2026,7 @@ async def _run_action_pipeline(
                 pack.user_id,
                 identity_uri,
                 frames,
+                task=AiTaskKey.window_action,
                 identity_text=render_character_profile(context.identity),
                 before_submit=lambda: _require_new_paid_step(pack, context),
             )

@@ -9,6 +9,7 @@ from components import (
     ATTACHMENT_TYPE_VIDEO,
     DEFAULT_SESSION_TITLE,
     TITLE_GENERATION_TEMPERATURE,
+    AiTaskKey,
     TaskBag,
     get_logger,
     resolve_language,
@@ -264,6 +265,7 @@ async def _persist_assistant_no_tool_turn(
     user_id: int,
     result: _LLMTurnResult,
     *,
+    task: AiTaskKey,
     emitter: Emitter,
     effective_settings: dict[str, Any],
     user_text: str,
@@ -344,6 +346,7 @@ async def _persist_assistant_no_tool_turn(
                 first_user_msg_content,
                 reply_bubbles if reply_bubbles is not None else turn_content,
                 user_id,
+                task=task,
                 language=resolve_language(effective_settings.get("language")),
                 temperature=parse_temperature(
                     effective_settings.get("chat.title_generation_temperature"),

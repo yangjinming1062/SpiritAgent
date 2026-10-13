@@ -8,10 +8,11 @@ from functools import partial
 from uuid import UUID
 
 from components import (
-    AI_FEATURE_BY_ID,
+    AI_TASK_BY_ID,
+    SERVICE_REQUIRED_INPUT_MODALITIES,
     SETTINGS,
     AIConfig,
-    AiFeature,
+    AiTaskKey,
     CapabilityCard,
     ModelModality,
     ProviderCard,
@@ -29,8 +30,8 @@ from .providers import (
     ProviderConfig,
     ServiceType,
     configured_base_url,
-    effective_input_modalities,
-    model_supports_feature,
+    model_supports_service,
+    provider_configuration_defaults,
     provider_requires_api_key,
     providers_supporting,
     resolve,
@@ -110,7 +111,7 @@ def _chain_from_ai_config(
         for model_id in card_ids:
             model = config.find_model(model_id, system)
             if model is None or model[0] != service_type:
-                raise MissingLlmConfigError(f"功能引用的模型卡片无效：{model_id}")
+                raise MissingLlmConfigError(f"任务引用的模型卡片无效：{model_id}")
             models.append((model[1], model[2]))
     # 向量先选模型再核对凭据；首张失效不能改用另一向量空间。
     if service_type == ServiceType.embedding:
@@ -131,25 +132,32 @@ async def resolve_provider_chain(
     user_id: int | None,
     service_type: str,
     *,
-    feature: AiFeature | None = None,
+    task: AiTaskKey,
+    required_modalities: frozenset[ModelModality] | None = None,
+    fast_decision: bool = False,
 ) -> list[ProviderConfig]:
     service = ServiceType(service_type)
-    if feature is not None and AI_FEATURE_BY_ID[feature].service != service:
-        raise ValueError(f"AI feature {feature.value!r} does not use {service.value!r}")
+    if service.value not in AI_TASK_BY_ID[task].services:
+        raise ValueError(f"AI task {task.value!r} does not use {service.value!r}")
+    required = (
+        required_modalities if required_modalities is not None else SERVICE_REQUIRED_INPUT_MODALITIES[service.value]
+    )
     user_cfg = await _load_user_config(db, user_id)
     user_ai = AIConfig.model_validate(user_cfg.ai_config) if user_cfg is not None else AIConfig()
     system_ai = SETTINGS.ai_config
-    user_feature = user_ai.features.get(feature) if feature is not None else None
-    system_feature = system_ai.features.get(feature) if feature is not None else None
-    if user_feature is not None and user_feature.chain:
-        owner, card_ids, source = user_ai, user_feature.chain, "user_feature"
-    elif system_feature is not None and system_feature.chain:
-        owner, card_ids, source = system_ai, system_feature.chain, "system_feature"
+    user_task = user_ai.tasks.get(task)
+    system_task = system_ai.tasks.get(task)
+    user_policy = user_task.chains.get(service.value) if user_task is not None else None
+    system_policy = system_task.chains.get(service.value) if system_task is not None else None
+    if user_policy is not None and user_policy.chain:
+        owner, card_ids, source = user_ai, user_policy.chain, "user_task"
+    elif system_policy is not None and system_policy.chain:
+        owner, card_ids, source = system_ai, system_policy.chain, "system_task"
     elif getattr(user_ai.capabilities, service):
         owner, card_ids, source = user_ai, None, "user_default"
     else:
         owner, card_ids, source = system_ai, None, "system_default"
-    policies = [value for value in (user_feature, system_feature) if value is not None]
+    policies = [value for value in (user_policy, system_policy) if value is not None]
     attempt = next(
         (value.attempt_timeout_seconds for value in policies if value.attempt_timeout_seconds is not None),
         None,
@@ -158,10 +166,11 @@ async def resolve_provider_chain(
     chain = [
         replace(
             config,
-            feature=feature,
+            task=task,
             config_source=source,
             attempt_timeout_seconds=attempt,
             total_timeout_seconds=total,
+            fast_decision=fast_decision,
         )
         for config in _chain_from_ai_config(
             owner,
@@ -170,21 +179,25 @@ async def resolve_provider_chain(
             card_ids=card_ids,
         )
     ]
-    return (
-        [
+    if task == AiTaskKey.voice_design:
+        defaults = provider_configuration_defaults().get(service.value, {})
+        chain = [
             config
             for config in chain
-            if model_supports_feature(
-                config.provider_name,
-                config.model,
-                feature,
-                input_modalities=config.input_modalities,
-                output_modalities=config.output_modalities,
-            )
+            if (settings := defaults[config.provider_name]).supports_voice_design
+            and (settings.voice_design_model is None or config.model == settings.voice_design_model)
         ]
-        if feature is not None
-        else chain
-    )
+    return [
+        config
+        for config in chain
+        if model_supports_service(
+            config.provider_name,
+            service,
+            required_modalities=required,
+            input_modalities=config.input_modalities,
+            output_modalities=config.output_modalities,
+        )
+    ]
 
 
 async def resolve_provider_config(
@@ -192,10 +205,19 @@ async def resolve_provider_config(
     user_id: int | None,
     service_type: str,
     *,
-    feature: AiFeature | None = None,
+    task: AiTaskKey,
+    required_modalities: frozenset[ModelModality] | None = None,
+    fast_decision: bool = False,
 ) -> ProviderConfig:
     """返回已解析调用链首项；链为空时抛出 ``MissingLlmConfigError``。"""
-    chain = await resolve_provider_chain(db, user_id, service_type, feature=feature)
+    chain = await resolve_provider_chain(
+        db,
+        user_id,
+        service_type,
+        task=task,
+        required_modalities=required_modalities,
+        fast_decision=fast_decision,
+    )
     if not chain:
         raise MissingLlmConfigError(
             f"no provider configured for service {service_type!r}",
@@ -203,46 +225,53 @@ async def resolve_provider_config(
     return chain[0]
 
 
-def _vision_configs(configs: Sequence[ProviderConfig]) -> list[ProviderConfig]:
-    """按视觉能力筛选，实际模型始终由能力卡片指定。"""
-    return [cfg for cfg in configs if ModelModality.image in effective_input_modalities(cfg)]
-
-
 async def resolve_vision_chain(
     db: AsyncSession | None,
     user_id: int | None,
     *,
-    feature: AiFeature | None = None,
+    task: AiTaskKey,
+    fast_decision: bool = False,
 ) -> list[ProviderConfig]:
-    return _vision_configs(await resolve_provider_chain(db, user_id, ServiceType.llm, feature=feature))
+    return await resolve_provider_chain(
+        db,
+        user_id,
+        ServiceType.llm,
+        task=task,
+        required_modalities=frozenset({ModelModality.text, ModelModality.image}),
+        fast_decision=fast_decision,
+    )
 
 
 async def resolve_video_chain(
     db: AsyncSession | None,
     user_id: int | None,
     *,
-    feature: AiFeature | None = None,
+    task: AiTaskKey,
 ) -> list[ProviderConfig]:
     """筛选接受 input_video 的 chat 供应商。"""
-    return [
-        cfg
-        for cfg in await resolve_provider_chain(db, user_id, ServiceType.llm, feature=feature)
-        if ModelModality.video in effective_input_modalities(cfg)
-    ]
+    return await resolve_provider_chain(
+        db,
+        user_id,
+        ServiceType.llm,
+        task=task,
+        required_modalities=frozenset({ModelModality.text, ModelModality.video}),
+    )
 
 
 async def resolve_media_chain(
     db: AsyncSession | None,
     user_id: int | None,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
     required_modalities: frozenset[ModelModality],
 ) -> list[ProviderConfig]:
-    return [
-        config
-        for config in await resolve_provider_chain(db, user_id, ServiceType.llm, feature=feature)
-        if required_modalities <= effective_input_modalities(config)
-    ]
+    return await resolve_provider_chain(
+        db,
+        user_id,
+        ServiceType.llm,
+        task=task,
+        required_modalities=required_modalities,
+    )
 
 
 def provider_from_config(config: ProviderConfig) -> BaseProvider:
@@ -262,9 +291,9 @@ async def resolve_embedding_provider(
     db: AsyncSession,
     user_id: int,
 ) -> EmbeddingProvider | None:
-    """记忆向量功能的 embedding 供应商；未配置或解析失败时返回 None，降级为关键词召回。"""
+    """记忆向量任务的 embedding 供应商；未配置或解析失败时返回 None，降级为关键词召回。"""
     try:
-        chain = await resolve_provider_chain(db, user_id, ServiceType.embedding, feature=AiFeature.memory_embedding)
+        chain = await resolve_provider_chain(db, user_id, ServiceType.embedding, task=AiTaskKey.memory_embedding)
         return build_provider(chain[0], EmbeddingProvider) if chain else None
     except Exception:
         logger.warning(

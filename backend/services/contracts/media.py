@@ -56,6 +56,7 @@ class MediaInspection:
 class MediaTurnState:
     user_id: int
     session_id: str
+    task: str
     structured_reply: bool = False
     original_request: str = ""
     source_message_id: int | None = None

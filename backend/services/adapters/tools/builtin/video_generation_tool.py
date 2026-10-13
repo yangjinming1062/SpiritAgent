@@ -3,7 +3,7 @@ import json
 from datetime import timedelta
 from uuid import uuid4
 
-from components import SESSION_LOCAL, SETTINGS, AiFeature, get_logger, tool_error, utc_now
+from components import SESSION_LOCAL, SETTINGS, AiTaskKey, get_logger, tool_error, utc_now
 from modules.media import VideoGenJob
 from prompts.generation import (
     VIDEO_REFERENCE_TEMPLATE,
@@ -72,6 +72,7 @@ async def _submit_video(
     aspect_ratio: str,
     *,
     user_id: int,
+    task: AiTaskKey,
     parent_session_id: str,
     source_message_id: int | None,
     asset_directory: str,
@@ -113,7 +114,7 @@ async def _submit_video(
                 identity=visual.identity if visual is not None else None,
                 structured_reply=structured_reply,
                 media_id=media_id,
-                feature=AiFeature.chat_video,
+                task=task,
             )
     except MissingLlmConfigError:
         # 任务行写入前抛出，确定未提交；其余异常可能发生在任务行提交、供应商受理之后，交给调用方按结果未知处理。
@@ -198,7 +199,7 @@ async def video_generation_tool(
             resolution=resolution,
             allowed_durations=_DURATIONS,
             allowed_resolutions=_RESOLUTIONS,
-            feature=AiFeature.chat_video,
+            task=AiTaskKey(media_turn.task),
         )
     except MissingLlmConfigError as e:
         return tool_error(str(e))
@@ -230,6 +231,7 @@ async def video_generation_tool(
             reference_image,
             aspect_ratio or "9:16",
             user_id=media_turn.user_id,
+            task=AiTaskKey(media_turn.task),
             parent_session_id=media_turn.session_id,
             source_message_id=media_turn.source_message_id,
             asset_directory=media_turn.asset_directory,

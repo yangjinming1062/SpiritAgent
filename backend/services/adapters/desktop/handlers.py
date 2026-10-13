@@ -29,7 +29,7 @@ from components import (
     SESSION_HISTORY_TRUNCATE_THRESHOLD,
     SESSION_LOCAL,
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     adopt_inbound,
     attachments_gc_session,
     coerce_hour_0_23,
@@ -110,7 +110,7 @@ from services.domains.conversation import (
     UndoNotAllowedError,
     build_session_messages,
     cancel_reply_audio,
-    conversation_ai_feature,
+    conversation_ai_task,
     conversation_memory_scope,
     count_conversation_bubbles,
     fork_conversation_from_message,
@@ -562,10 +562,10 @@ async def _require_owned_conv(db: AsyncSession, user_id: int, session_id: str) -
     return conv
 
 
-async def _resolve_llm_config(user_id: int, feature: AiFeature) -> UserLlmConfig:
-    """每次调用现读用户能力链，管理端改配置后已连接的桌面无需重连即生效。"""
+async def _resolve_llm_config(user_id: int, task: AiTaskKey, *, fast_decision: bool = False) -> UserLlmConfig:
+    """每次调用现读用户任务链，管理端改配置后已连接的桌面无需重连即生效。"""
     async with SESSION_LOCAL() as db:
-        return await resolve_user_llm_config(db, user_id, feature)
+        return await resolve_user_llm_config(db, user_id, task, fast_decision=fast_decision)
 
 
 def _reject_read_only_session(runtime: RuntimeSession) -> None:
@@ -915,7 +915,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     async def _runtime_info(runtime: RuntimeSession, conv: Conversation) -> SessionRuntimeInfo:
         async with SESSION_LOCAL() as db:
             user_settings = await load_user_settings(db, user_id)
-            llm_config = await resolve_user_llm_config(db, user_id, conversation_ai_feature(conv))
+            llm_config = await resolve_user_llm_config(db, user_id, conversation_ai_task(conv))
         effective = merge_session_settings(user_settings, runtime.settings, conv=conv)
         settings = runtime.settings | asdict(resolve_inference_settings(effective, conv=conv))
         return build_runtime_info(llm_config, runtime, settings, system_preset_id=conv.system_preset_id)
@@ -1515,7 +1515,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 await record_submission_state(user_id, params["request_id"], "running")
                 async with SESSION_LOCAL() as db:
                     current_conv = await _require_owned_conv(db, user_id, req.session_id)
-                    llm_config = await resolve_user_llm_config(db, user_id, conversation_ai_feature(current_conv))
+                    llm_config = await resolve_user_llm_config(db, user_id, conversation_ai_task(current_conv))
                 await run_chat_turn(
                     req,
                     llm_config,
@@ -1704,7 +1704,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             return await choose_idle_desktop_action(user_id, idle_seconds, local_hour)
         try:
             async with asyncio.timeout(_COMPANION_DECISION_TIMEOUT_SECONDS):
-                llm_config = await _resolve_llm_config(user_id, AiFeature.idle_expression)
+                llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive, fast_decision=True)
                 result = await check_idle_expression(user_id, idle_seconds, local_hour, llm_config)
         except TimeoutError:
             logger.warning("companion.idle_expression decision timed out", extra={"user_id": user_id})
@@ -1797,7 +1797,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         presentation = get_presentation_snapshot(user_id)
         try:
             async with asyncio.timeout(_COMPANION_DECISION_TIMEOUT_SECONDS):
-                llm_config = await _resolve_llm_config(user_id, AiFeature.spatial_decision)
+                llm_config = await _resolve_llm_config(user_id, AiTaskKey.proactive, fast_decision=True)
                 res = await should_act(
                     user_id=user_id,
                     idle_seconds=idle_seconds,

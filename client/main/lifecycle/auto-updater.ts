@@ -6,7 +6,6 @@ import log from 'electron-log/main'
 // CJS 包没有 named export，使用处从 default import 解构 autoUpdater。
 import electronUpdaterPkg from 'electron-updater'
 
-import type { BackendSessionLike } from '../shared/backend-port'
 import { resolveNormalizedBackendUrl } from '../shared/config'
 import { errorMessage } from '../shared/utils'
 
@@ -23,12 +22,11 @@ interface RunnerUpdaterPort {
   }) => Promise<void>
 }
 
-/** 仅更新器需要的会话/桥视图；结构对齐 RunnerUpdaterDeps，不 import runner。 */
+/** 更新器需要的桥视图；结构对齐 RunnerUpdaterDeps，不 import runner。 */
 interface RuntimeForUpdater {
-  ensureBackendSession?: () => BackendSessionLike | null | undefined
   getRunnerBridge?: () => null | {
     getStatus: () => { phase: string }
-    start: (options: { backendSession?: BackendSessionLike | null; readyTimeoutMs?: number }) => Promise<unknown>
+    start: (options: { readyTimeoutMs?: number }) => Promise<unknown>
     stop: (options: { reason: string }) => Promise<unknown>
   }
   spiritagentHome: string

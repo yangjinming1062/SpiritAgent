@@ -9,7 +9,7 @@
 | `entry.ts` | 唯一组合根，显式装配，不展开业务逻辑 |
 | `preload.ts` | 沙盒 preload，暴露 `window.spiritagent` |
 | `backend` | 多账户凭据、会话与 HTTP |
-| `runner` | 进程、本地 RPC、反向模型代理及 Runner 更新 |
+| `runner` | 进程、本地 RPC 及 Runner 更新 |
 | `lifecycle` | 窗口、托盘、退出与桌面更新 |
 | `ipc` | 注册能力通道，装配 Runner 宿主及资产、历史、语音缓存 |
 | `security` | sender、路径与能力准入 |

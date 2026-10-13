@@ -9,7 +9,7 @@ from uuid import uuid4
 from components import (
     SESSION_LOCAL,
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     get_logger,
     parse_llm_json,
     resolve_language,
@@ -837,7 +837,7 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int, *, allow_gene
             ),
             reference_images=(portrait, outfit),
             before_submit=before_submit,
-            feature=AiFeature.desktop_action_proposal,
+            task=AiTaskKey.desktop_life,
         )
         verdict = DesktopProposalVerdict.model_validate(parse_llm_json(raw))
         if verdict.decision == "reuse" and verdict.reuse_action_id not in {action["id"] for action in existing_payload}:
@@ -1034,7 +1034,8 @@ async def choose_idle_desktop_action(user_id: int, idle_seconds: float, local_ho
             },
             ensure_ascii=False,
         ),
-        feature=AiFeature.desktop_idle_expression,
+        task=AiTaskKey.proactive,
+        fast_decision=True,
     )
     choice = DesktopIdleChoice.model_validate(parse_llm_json(raw))
     if (

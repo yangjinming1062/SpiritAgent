@@ -3,7 +3,7 @@ import json
 
 from components import (
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     begin_user_request,
     end_user_request,
     get_logger,
@@ -142,7 +142,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
         async with asyncio.timeout(min(SETTINGS.companion_turn_timeout_seconds, max(0.0, remaining))):
             async with session_scope() as db:
                 conversation = await get_or_create_special_conversation(db, user_id, "companion")
-                llm_config = await resolve_user_llm_config(db, user_id, feature=AiFeature.proactive_companion)
+                llm_config = await resolve_user_llm_config(db, user_id, AiTaskKey.proactive)
                 message_id = await latest_user_message_id(db, user_id)
                 disturbance_tier = await get_disturbance_tier(user_id, db=db)
                 language = resolve_language(await get_user_setting(db, user_id, "language"))

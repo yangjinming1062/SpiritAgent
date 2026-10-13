@@ -1,4 +1,4 @@
-from components import AiFeature, session_scope
+from components import AiTaskKey, session_scope
 from modules.companion import VoiceEntry, VoiceMatchResponse, VoicesListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +8,6 @@ from services.infrastructure.llm import (
     TTSProvider,
     VoiceDesignResult,
     execute_with_fallback,
-    resolve,
     resolve_provider_chain,
     try_resolve,
     voices_for_provider,
@@ -50,9 +49,9 @@ def _chain_voices(chain: list[ProviderConfig], language: str | None) -> list[Voi
 
 async def list_tts_voices(db: AsyncSession, user_id: int, language: str | None = None) -> VoicesListResponse:
     """返回全部已配置 TTS 供应商的音色目录，并按当前界面语言收敛。"""
-    chain = await resolve_provider_chain(db, user_id, "tts", feature=AiFeature.companion_voice)
+    chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.companion_voice)
     voices = _sort_voices_by_language(_chain_voices(chain, language))
-    design_chain = await resolve_provider_chain(db, user_id, "tts", feature=AiFeature.voice_design)
+    design_chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.voice_design)
     design_cls = next(
         (
             cls
@@ -119,7 +118,7 @@ async def match_user_voice(
 ) -> VoiceMatchResponse:
     """按用户偏好文本在全部已配置 TTS 供应商的当前语言音色中挑选。"""
     voices = _chain_voices(
-        await resolve_provider_chain(db, user_id, "tts", feature=AiFeature.companion_voice),
+        await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.companion_voice),
         language,
     )
     best, alternatives = match_voice(preference or "", voices)
@@ -129,16 +128,11 @@ async def match_user_voice(
 async def design_voice(user_id: int, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
     """调用当前 TTS 供应商的音色设计能力生成自定义音色；短会话解析供应商链，付费设计调用期间不占数据库连接。"""
     async with session_scope() as db:
-        chain = await resolve_provider_chain(db, user_id, "tts", feature=AiFeature.voice_design)
+        chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.voice_design)
     if not chain:
-        raise ValueError("no TTS provider configured")
-    capable = [
-        config for config in chain if resolve(ServiceType.tts, config.provider_name).VOICE_DESIGN_GUIDE is not None
-    ]
-    if not capable:
         raise ValueError("Configured providers do not support voice design")
     return await execute_with_fallback(
-        capable,
+        chain,
         TTSProvider,
         lambda provider: provider.design_voice(prompt, preview_text=preview_text),
         user_id=user_id,

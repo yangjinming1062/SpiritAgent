@@ -33,7 +33,6 @@ export interface RunnerCapabilities {
 export interface CreateRunnerWsServerOptions {
   authToken?: string
   log?: (chunk: string) => void
-  onReverseRpc?: null | ((method: string, params?: unknown) => Promise<unknown>)
 }
 
 export interface RunnerWsStatus {
@@ -92,7 +91,6 @@ interface JsonRpcMessage {
 
 export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}): RunnerWsServer {
   const log = typeof options.log === 'function' ? options.log : () => {}
-  const onReverseRpc = typeof options.onReverseRpc === 'function' ? options.onReverseRpc : null
   const authToken = typeof options.authToken === 'string' ? options.authToken : ''
   const emitter = new EventEmitter()
 
@@ -183,9 +181,13 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
       return
     }
 
-    // Runner 发来的入站请求（同时有 id 和 method）——反向 RPC
+    // 此端只接收响应和通知，入站请求按 JSON-RPC 返回 method not found。
     if (id !== undefined && id !== null && method) {
-      void handleReverseRpc(id, method, message.params || {})
+      sendToRunner({
+        error: { code: -32601, message: `Unknown method: ${method}` },
+        id,
+        jsonrpc: JSON_RPC_VERSION
+      })
 
       return
     }
@@ -206,30 +208,6 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
       }
 
       return
-    }
-  }
-
-  async function handleReverseRpc(id: number | string, method: string, params: unknown): Promise<void> {
-    if (!onReverseRpc) {
-      sendToRunner({
-        error: { code: -32601, message: `No handler for reverse RPC: ${method}` },
-        id,
-        jsonrpc: JSON_RPC_VERSION
-      })
-
-      return
-    }
-
-    try {
-      const result = await onReverseRpc(method, params)
-      sendToRunner({ id, jsonrpc: JSON_RPC_VERSION, result })
-    } catch (error: unknown) {
-      const err = error as { code?: number; message?: string } | undefined
-      sendToRunner({
-        error: { code: err?.code ?? -32000, message: err?.message || String(error) },
-        id,
-        jsonrpc: JSON_RPC_VERSION
-      })
     }
   }
 

@@ -9,7 +9,7 @@ from datetime import timedelta
 from components import (
     SESSION_LOCAL,
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     get_logger,
     is_user_in_maintenance,
     parse_llm_json,
@@ -287,11 +287,11 @@ async def _generate_outfit_fullbody(
             size=FULLBODY_SIZE,
             image_edit=image_edit,
             prefer_transparent_background=True,
-            feature=AiFeature.outfit_image,
+            task=AiTaskKey.outfit,
         )
 
     try:
-        paths = await generate_with_moderation_retry(user_id, prompt, generate)
+        paths = await generate_with_moderation_retry(user_id, prompt, generate, task=AiTaskKey.outfit)
     except ImageGenerationError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
     except Exception as exc:
@@ -910,7 +910,7 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
             user_id,
             OUTFIT_DESCRIBE_SYSTEM,
             json.dumps(payload, ensure_ascii=False),
-            feature=AiFeature.outfit_description,
+            task=AiTaskKey.outfit,
         )
         parsed = parse_llm_json(raw)
         if not isinstance(parsed, dict):

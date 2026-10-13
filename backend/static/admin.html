@@ -956,7 +956,7 @@ input[type="file"] { font-size: 0.78rem; }
                     <div class="nav-label">AI 能力</div>
                     <button class="nav-item" data-tab="ai" onclick="showTab('ai')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
-                        <span>功能调用链配置</span>
+                        <span>任务调用链配置</span>
                         <span class="nav-badge" id="aiNavBadge" hidden></span>
                     </button>
                 </div>
@@ -1028,7 +1028,7 @@ input[type="file"] { font-size: 0.78rem; }
                                 <h2>能力就绪度</h2>
                                 <span class="count" id="ovMatrixCount"></span>
                                 <span class="spacer"></span>
-                                <button class="btn btn--ghost btn--sm" onclick="showTab('ai')">配置功能调用链 →</button>
+                                <button class="btn btn--ghost btn--sm" onclick="showTab('ai')">配置任务调用链 →</button>
                             </div>
                             <div class="table-scroll">
                                 <table>
@@ -1054,7 +1054,7 @@ input[type="file"] { font-size: 0.78rem; }
                                 <div class="card-head"><h2>快速操作</h2></div>
                                 <div class="card-pad">
                                     <div class="dash-actions">
-                                        <button class="btn btn--primary" onclick="showTab('ai')">配置 / 检查功能调用链</button>
+                                        <button class="btn btn--primary" onclick="showTab('ai')">配置 / 检查任务调用链</button>
                                         <button class="btn btn--ghost" onclick="showCreateUser()">创建用户并生成激活码</button>
                                         <button class="btn btn--ghost" onclick="showTab('versions')">上传桌面端更新包</button>
                                         <button class="btn btn--ghost" onclick="showTab('settings')">调整运行与限流参数</button>
@@ -1134,7 +1134,7 @@ input[type="file"] { font-size: 0.78rem; }
                                 <div class="settings-bar">
                                     <div>
                                         <div class="lead">系统参数设置</div>
-                                        <div class="status">保存后即刻在内存与数据库中生效，无需重启服务 · 供应商与能力链已移至「AI 功能调用链配置」</div>
+                                        <div class="status">保存后即刻生效 · 供应商与能力模型在「AI 任务调用链配置」维护</div>
                                     </div>
                                 </div>
 
@@ -1414,7 +1414,7 @@ const tabCache = { users: null, models: null, logs: null, versions: null };
 const TABS = {
     overview: { title: '总览', desc: '系统健康、能力就绪度与最近动态' },
     users:    { title: '用户管理', desc: '管理可登录客户端的账户、使用权限与激活码' },
-    ai:       { title: 'AI 功能调用链配置', desc: '供应商信息库 → 能力模型配置 → 功能调用链（保存后热生效）' },
+    ai:       { title: 'AI 任务调用链配置', desc: '供应商信息库 → 能力模型配置 → 任务调用链' },
     settings: { title: '系统参数', desc: '全局业务参数与运行时调优（实时热生效，无需重启容器）' },
     versions: { title: '版本与日志', desc: '更新包分发与夜间活动流水线记录' },
 };
@@ -1624,8 +1624,8 @@ function userOverrideSummary(id) {
     const groups = Object.entries(item.ai_config?.capabilities ?? {})
         .filter(([, cards]) => (cards ?? []).length > 0)
         .map(([group]) => READINESS_KEY_LABELS[group] ?? group);
-    for (const [featureId, value] of Object.entries(item.ai_config?.features ?? {})) {
-        if (hasFeatureOverride(value)) groups.push(aiFeature(`feature:${featureId}`)?.label ?? featureId);
+    for (const [taskId, value] of Object.entries(item.ai_config?.tasks ?? {})) {
+        if (Object.values(value.chains ?? {}).some(hasChainOverride)) groups.push((tabCache.models?.ai_tasks ?? []).find(task => task.id === taskId)?.label ?? taskId);
     }
     return groups.length ? groups : null;
 }
@@ -2034,19 +2034,22 @@ const READINESS_KEY_LABELS = Object.freeze({
 });
 
 function userOverrideCount(group) {
-    const feature = aiFeature(group);
-    if (feature) return (tabCache.models?.items ?? []).filter(item => hasFeatureOverride(item.ai_config?.features?.[feature.id])).length;
+    const task = aiTaskChain(group);
+    if (task) return (tabCache.models?.items ?? []).filter(item => hasChainOverride(item.ai_config?.tasks?.[task.id]?.chains?.[task.service])).length;
     return (tabCache.models?.items ?? []).filter(c => (c.ai_config?.capabilities?.[group] ?? []).length > 0).length;
 }
 
 // 就绪度核对引用、模型与供应商凭据，不以卡片数量判断可调用性。
 function computeReadiness(systemConfig) {
     const result = {};
-    for (const feature of tabCache.models?.ai_features ?? []) {
-        const group = `feature:${feature.id}`;
-        const { cards, source } = effectiveFeatureChain(systemConfig, emptyAiConfig(), feature);
-        const status = !cards.some(card => card.available) ? 'bad' : cards.some(card => !card.available) ? 'warn' : 'ok';
-        result[group] = { label: feature.label, service: feature.service, groupLabel: feature.group, source, status, cards };
+    for (const definition of tabCache.models?.ai_tasks ?? []) {
+        for (const service of definition.services) {
+            const task = { ...definition, service };
+            const group = `task:${task.id}:${service}`;
+            const { cards, source } = effectiveTaskChain(systemConfig, emptyAiConfig(), task);
+            const status = !cards.some(card => card.available) ? 'bad' : cards.some(card => !card.available) ? 'warn' : 'ok';
+            result[group] = { label: task.label + ' · ' + READINESS_KEY_LABELS[service], service, groupLabel: task.group, source, status, cards };
+        }
     }
     return result;
 }
@@ -2113,7 +2116,7 @@ async function loadOverview() {
         const notOk = Object.values(readiness).filter(r => r.status !== 'ok');
         $('#ovReadyMeta').textContent = notOk.length
             ? `${notOk.slice(0, 3).map(r => r.label).join('、')}${notOk.length > 3 ? `等 ${notOk.length} 项` : ''}未配置或不完整`
-            : '全部功能调用已配置';
+            : '全部任务调用已配置';
         $('#ovReadyMeta').className = 'meta' + (notOk.length ? ' bad' : ' good');
 
         const logItems = getItems(logs);
@@ -2126,7 +2129,7 @@ async function loadOverview() {
             : '暂无夜间活动记录';
         $('#ovNightlyMeta').className = 'meta' + (recent.length && okCount < recent.length ? ' bad' : ' good');
 
-        const overrideUsers = (tabCache.models.items ?? []).filter(c => Object.values(c.ai_config?.capabilities ?? {}).some(list => (list ?? []).length > 0) || Object.values(c.ai_config?.features ?? {}).some(hasFeatureOverride));
+        const overrideUsers = (tabCache.models.items ?? []).filter(c => Object.values(c.ai_config?.capabilities ?? {}).some(list => (list ?? []).length > 0) || Object.values(c.ai_config?.tasks ?? {}).some(task => Object.values(task.chains ?? {}).some(hasChainOverride)));
         $('#ovOverrides').textContent = String(overrideUsers.length);
         $('#ovOverridesMeta').textContent = overrideUsers.length
             ? overrideUsers.slice(0, 3).map(c => `#${c.user_id}`).join('、') + (overrideUsers.length > 3 ? ' 等' : '')
@@ -2187,15 +2190,15 @@ function renderAiTree() {
     const node = (key, label, sub, child = false) => '<button type="button" class="tree-item' + (child ? ' child' : '') + (aiView.group === key ? ' active' : '') + '" onclick="aiSelectNode(\'' + key + '\')"><span>' + esc(label) + '</span><span class="tree-sub">' + esc(sub) + '</span></button>';
     const groups = Object.keys(READINESS_KEY_LABELS).map(group => node(group, READINESS_KEY_LABELS[group], config.capabilities[group].length ? config.capabilities[group].length + ' 模型' : aiView.scope === 'system' ? '空' : '继承', true)).join('');
     const sections = new Map();
-    for (const feature of tabCache.models?.ai_features ?? []) {
-        if (!sections.has(feature.group)) sections.set(feature.group, []);
-        sections.get(feature.group).push(feature);
+    for (const task of tabCache.models?.ai_tasks ?? []) {
+        if (!sections.has(task.group)) sections.set(task.group, []);
+        sections.get(task.group).push(task);
     }
-    const features = [...sections].map(([label, values]) => '<details' + (values.some(feature => aiView.group === 'feature:' + feature.id) ? ' open' : '') + '><summary class="tree-label">' + esc(label) + '</summary>' + values.map(feature => {
-        const count = config.features[feature.id]?.chain?.length || 0;
-        return node('feature:' + feature.id, feature.label, count ? count + ' 引用' : '继承', true);
-    }).join('') + '</details>').join('');
-    $('#aiTree').innerHTML = '<div class="tree-label">1 · 供应商信息库</div>' + node('providers', '供应商', config.providers.length + ' 条') + '<div class="tree-label">2 · 能力模型配置</div>' + groups + '<div class="tree-label">3 · 功能调用链</div>' + features;
+    const tasks = [...sections].map(([label, values]) => '<details' + (values.some(task => task.services.some(service => aiView.group === `task:${task.id}:${service}`)) ? ' open' : '') + '><summary class="tree-label">' + esc(label) + '</summary>' + values.flatMap(task => task.services.map(service => {
+        const count = config.tasks[task.id]?.chains?.[service]?.chain?.length || 0;
+        return node(`task:${task.id}:${service}`, task.label + ' · ' + READINESS_KEY_LABELS[service], count ? count + ' 引用' : '继承', true);
+    })).join('') + '</details>').join('');
+    $('#aiTree').innerHTML = '<div class="tree-label">1 · 供应商信息库</div>' + node('providers', '供应商', config.providers.length + ' 条') + '<div class="tree-label">2 · 能力模型配置</div>' + groups + '<div class="tree-label">3 · 任务调用链</div>' + tasks;
 }
 
 function aiActiveEditor() {
@@ -2208,8 +2211,8 @@ function renderAiChain() {
     const isUser = editorName === 'user';
     $('#aiChainTitle').textContent = aiGroupLabel(aiView.group) + '（' + (isUser ? '用户 #' + aiView.scope : '系统') + '）';
     $('#aiDeleteBtn').hidden = !isUser;
-    const feature = aiFeature(aiView.group);
-    if (feature) { renderAiFeatureChain(editorName, editor, feature); return; }
+    const task = aiTaskChain(aiView.group);
+    if (task) { renderAiTaskChain(editorName, editor, task); return; }
     if (aiView.group === 'providers') {
         $('#aiChainCount').textContent = editor.config.providers.length + ' 条';
         const inherited = isUser ? '<section class="chain-layer"><div class="layer-head"><span class="layer-title">可引用的系统供应商</span></div>' + providerSummaryHtml(aiSystemConfig(editor).providers) + '</section>' : '';
@@ -2221,7 +2224,7 @@ function renderAiChain() {
         const ownCards = modelEntries(editor.config, group, isUser ? '用户' : '系统', isUser ? system : null);
         $('#aiChainCount').textContent = ownCards.length + ' 个模型';
         const inherited = isUser ? '<section class="chain-layer"><div class="layer-head"><span class="layer-title">系统模型与默认顺序</span><span class="layer-badge">' + (ownCards.length ? '默认顺序被用户覆盖' : '继承系统默认顺序') + '</span></div>' + readonlyCallListHtml(systemCards, group) + '</section>' : '';
-        $('#aiChainBody').innerHTML = inherited + '<section class="chain-layer is-effective"><div class="layer-head"><span class="layer-tag">2</span><span class="layer-title">' + (isUser ? '用户模型与默认顺序' : '能力模型与默认顺序') + '</span></div>' + callListHtml(editorName, group) + '<p class="layer-hint">按供应商批量添加模型，再统一调整调用顺序。功能链可引用这些模型；未配置专用功能链时按默认顺序调用。' + (group === 'embedding' ? '向量默认只使用首张，失败时使用关键词召回。' : '失败时回退到后续可用模型。') + '</p></section>';
+        $('#aiChainBody').innerHTML = inherited + '<section class="chain-layer is-effective"><div class="layer-head"><span class="layer-tag">2</span><span class="layer-title">' + (isUser ? '用户模型与默认顺序' : '能力模型与默认顺序') + '</span></div>' + callListHtml(editorName, group) + '<p class="layer-hint">任务链可引用这些模型；未配置任务链时按默认顺序调用。' + (group === 'embedding' ? '向量默认只使用首张，失败时使用关键词召回。' : '失败时回退到后续可用模型。') + '</p></section>';
     }
     bindAiCardEvents();
 }
@@ -2231,20 +2234,20 @@ function providerSummaryHtml(providers) {
     return '<div class="provider-grid">' + providers.map(provider => '<div class="provider-card"><div class="p-name">' + esc(provider.name) + '</div><div class="p-row"><span>API Key</span><b>' + (provider.api_key_set ? '已设置' : '未设置') + '</b></div><div class="p-row"><span>Base URL</span><b>' + esc(provider.base_url || '使用适配器默认地址') + '</b></div></div>').join('') + '</div>';
 }
 
-function hasFeatureOverride(value) {
+function hasChainOverride(value) {
     return Boolean(value && (value.chain?.length || value.attempt_timeout_seconds != null || value.total_timeout_seconds != null));
 }
 
-function renderAiFeatureChain(editorName, editor, feature) {
+function renderAiTaskChain(editorName, editor, task) {
     const system = editorName === 'system' ? editor.config : aiSystemConfig(editor);
     const user = editorName === 'user' ? editor.config : emptyAiConfig();
-    const { cards, source } = effectiveFeatureChain(system, user, feature);
-    const group = 'feature:' + feature.id;
-    const policy = editor.config.features[feature.id] ?? {};
-    const inheritedPolicy = editorName === 'user' ? system.features[feature.id] ?? {} : {};
+    const { cards, source } = effectiveTaskChain(system, user, task);
+    const group = `task:${task.id}:${task.service}`;
+    const policy = editor.config.tasks[task.id]?.chains?.[task.service] ?? {};
+    const inheritedPolicy = editorName === 'user' ? system.tasks[task.id]?.chains?.[task.service] ?? {} : {};
     $('#aiChainCount').textContent = cards.length + ' 张卡片 · ' + source;
-    const budgets = ['attempt_timeout_seconds', 'total_timeout_seconds'].map((key, index) => '<div class="field"><label>' + (index === 0 ? '单模型调用预算' : '调用链总预算') + '（秒）<input type="number" min="0.001" max="86400" step="any" data-ai-policy="' + key + '" value="' + esc(policy[key] ?? '') + '" placeholder="' + esc(inheritedPolicy[key] ?? '沿用功能默认预算') + '"></label></div>').join('');
-    $('#aiChainBody').innerHTML = '<div class="chain-flow"><section class="chain-layer is-effective"><div class="layer-head"><span class="layer-title">实际生效：' + esc(source) + '</span><span class="layer-badge">' + esc(AI_SERVICES[feature.service]) + (feature.required_input_modalities?.includes('image') ? ' · 需要图像理解' : '') + '</span></div>' + readonlyCallListHtml(cards, group) + '</section><section class="chain-layer"><div class="layer-head"><span class="layer-tag">3</span><span class="layer-title">' + (editorName === 'system' ? '系统功能链' : '用户功能链') + '</span></div>' + callListHtml(editorName, group) + '<p class="layer-hint">这里只选择、移除和排序已有模型卡片。模型参数在能力层统一维护。留空按用户功能链 → 系统功能链 → 用户默认能力链 → 系统默认能力链继承。</p><div class="call-item-body" style="display:grid">' + budgets + '</div><p class="layer-hint">预算留空继承系统功能配置，之后沿用功能默认值。' + (feature.fast_decision ? '自主判断总预算最多 20 秒；多模型时默认单模型 8 秒。' : '重试与格式修复共用预算。') + (feature.service === 'embedding' ? '向量只能选择一张模型卡片，失败时使用关键词召回。' : '') + '</p></section></div>';
+    const budgets = ['attempt_timeout_seconds', 'total_timeout_seconds'].map((key, index) => '<div class="field"><label>' + (index === 0 ? '单模型调用预算' : '调用链总预算') + '（秒）<input type="number" min="0.001" max="86400" step="any" data-ai-policy="' + key + '" value="' + esc(policy[key] ?? '') + '" placeholder="' + esc(inheritedPolicy[key] ?? '沿用调用默认预算') + '"></label></div>').join('');
+    $('#aiChainBody').innerHTML = '<p class="layer-hint">' + esc(task.steps.join(' · ')) + '</p><div class="chain-flow"><section class="chain-layer is-effective"><div class="layer-head"><span class="layer-title">实际生效：' + esc(source) + '</span><span class="layer-badge">' + esc(AI_SERVICES[task.service]) + '</span></div>' + readonlyCallListHtml(cards, group) + '</section><section class="chain-layer"><div class="layer-head"><span class="layer-tag">3</span><span class="layer-title">' + (editorName === 'system' ? '系统任务链' : '用户任务链') + '</span></div>' + callListHtml(editorName, group) + '<p class="layer-hint">用户任务链 → 系统任务链 → 用户默认能力链 → 系统默认能力链。</p><div class="call-item-body" style="display:grid">' + budgets + '</div><p class="layer-hint">预算逐字段继承系统任务配置。重试与格式修复共用预算。' + (task.service === 'embedding' ? '向量只能选择一张模型卡片，失败时使用关键词召回。' : '') + '</p></section></div>';
     bindAiCardEvents();
 }
 
@@ -2329,7 +2332,7 @@ async function saveAiScope() {
                 method: 'PUT',
                 body: JSON.stringify({ ai_config: aiEditors.system.config }),
             });
-            toast('AI 功能配置已保存并实时生效');
+            toast('AI 任务配置已保存并实时生效');
             clearSettingsDirty();
             clearAiDirty();
             await refreshAiCache();
@@ -2424,12 +2427,12 @@ function openAiUserScope(userId) {
 
 const AI_NAMES = { deepseek: 'DeepSeek', mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问', local: '本地 Local', custom: '自定义' };
 const AI_SERVICES = { llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成', embedding: '向量嵌入 Embedding' };
-function emptyAiConfig() { return { providers: [], capabilities: { llm: [], stt: [], tts: [], image_gen: [], video_gen: [], embedding: [] }, features: {} }; }
+function emptyAiConfig() { return { providers: [], capabilities: { llm: [], stt: [], tts: [], image_gen: [], video_gen: [], embedding: [] }, tasks: {} }; }
 function normalizeAiConfig(raw) {
     const config = structuredClone(raw ?? emptyAiConfig());
     config.providers = config.providers || [];
     config.capabilities = config.capabilities || {};
-    config.features = config.features || {};
+    config.tasks = config.tasks || {};
     for (const key of Object.keys(AI_SERVICES)) config.capabilities[key] = config.capabilities[key] || [];
     return config;
 }
@@ -2450,21 +2453,29 @@ let aiSettingsLoaded = false;
 let settingsDirty = false;
 
 function aiList(editor, group) {
-    const feature = aiFeature(group);
-    if (feature) return (editor.config.features[feature.id] ??= { chain: [], attempt_timeout_seconds: null, total_timeout_seconds: null }).chain;
+    const task = aiTaskChain(group);
+    if (task) return aiTaskPolicy(editor, task).chain;
     return group === 'providers' ? editor.config.providers : editor.config.capabilities[group];
 }
 
-function aiFeature(group) {
-    return (tabCache.models?.ai_features ?? []).find(feature => group === `feature:${feature.id}`);
+function aiTaskChain(group) {
+    const [, taskId, service] = group.split(':');
+    const task = (tabCache.models?.ai_tasks ?? []).find(task => group.startsWith('task:') && task.id === taskId && task.services.includes(service));
+    return task ? { ...task, service } : null;
+}
+
+function aiTaskPolicy(editor, task) {
+    const value = editor.config.tasks[task.id] ??= { chains: {} };
+    return value.chains[task.service] ??= { chain: [], attempt_timeout_seconds: null, total_timeout_seconds: null };
 }
 
 function aiService(group) {
-    return aiFeature(group)?.service ?? group;
+    return aiTaskChain(group)?.service ?? group;
 }
 
 function aiGroupLabel(group) {
-    return aiFeature(group)?.label ?? READINESS_KEY_LABELS[group] ?? '供应商信息库';
+    const task = aiTaskChain(group);
+    return task ? task.label + ' · ' + READINESS_KEY_LABELS[task.service] : READINESS_KEY_LABELS[group] ?? '供应商信息库';
 }
 
 function aiSystemConfig(editor) {
@@ -2488,29 +2499,29 @@ function aiModels(editor, service) {
     return [...modelEntries(editor.config, service, isSystem ? '系统' : '用户', isSystem ? null : system), ...(isSystem ? [] : modelEntries(system, service, '系统'))];
 }
 
-function aiModelSupportsFeature(card, feature) {
-    const supported = tabCache.models?.ai_feature_support?.[feature.id] ?? [];
+function aiModelSupportsTask(card, task) {
+    const supported = tabCache.models?.ai_provider_support?.[task.service] ?? [];
     if (!supported.includes(card.provider)) return false;
-    const protocol = (tabCache.models?.ai_provider_defaults ?? aiEditors.system.defaults)?.[feature.service]?.[card.provider]?.input_modalities ?? [];
-    if (!(feature.required_input_modalities ?? ['text']).every(type => (card.input_modalities ?? []).includes(type) && protocol.includes(type))) return false;
-    if (!(card.output_modalities ?? []).includes(AI_OUTPUTS[feature.service])) return false;
-    const requiredModel = (tabCache.models?.ai_provider_defaults ?? aiEditors.system.defaults)?.[feature.service]?.[card.provider]?.voice_design_model;
-    return feature.id !== 'voice_design' || !requiredModel || card.model_name === requiredModel;
+    const settings = (tabCache.models?.ai_provider_defaults ?? aiEditors.system.defaults)?.[task.service]?.[card.provider];
+    const required = task.service === 'stt' ? ['audio'] : ['text'];
+    if (!required.every(type => (card.input_modalities ?? []).includes(type) && (settings?.input_modalities ?? []).includes(type))) return false;
+    if (!(card.output_modalities ?? []).includes(AI_OUTPUTS[task.service])) return false;
+    return task.id !== 'voice_design' || (settings.supports_voice_design && (!settings.voice_design_model || card.model_name === settings.voice_design_model));
 }
 
-function effectiveFeatureChain(system, user, feature) {
+function effectiveTaskChain(system, user, task) {
     const layers = [
-        { values: user.features[feature.id]?.chain, owner: user, scope: '用户', refs: true, source: '用户功能链' },
-        { values: system.features[feature.id]?.chain, owner: system, scope: '系统', refs: true, source: '系统功能链' },
-        { values: user.capabilities[feature.service], owner: user, scope: '用户', source: '用户默认能力链' },
-        { values: system.capabilities[feature.service], owner: system, scope: '系统', source: '系统默认能力链' },
+        { values: user.tasks[task.id]?.chains?.[task.service]?.chain, owner: user, scope: '用户', refs: true, source: '用户任务链' },
+        { values: system.tasks[task.id]?.chains?.[task.service]?.chain, owner: system, scope: '系统', refs: true, source: '系统任务链' },
+        { values: user.capabilities[task.service], owner: user, scope: '用户', source: '用户默认能力链' },
+        { values: system.capabilities[task.service], owner: system, scope: '系统', source: '系统默认能力链' },
     ];
     const layer = layers.find(item => item.values?.length);
     if (!layer) return { cards: [], source: '未配置' };
-    let values = feature.service === 'embedding' ? layer.values.slice(0, 1) : layer.values;
-    const catalog = [...modelEntries(layer.owner, feature.service, layer.scope, layer.owner === user ? system : null), ...(layer.owner === user ? modelEntries(system, feature.service, '系统') : [])];
+    let values = task.service === 'embedding' ? layer.values.slice(0, 1) : layer.values;
+    const catalog = [...modelEntries(layer.owner, task.service, layer.scope, layer.owner === user ? system : null), ...(layer.owner === user ? modelEntries(system, task.service, '系统') : [])];
     values = values.map(value => catalog.find(card => card.id === (layer.refs ? value : value.id)) ?? { id: value, model_name: '模型引用失效', provider_name: '模型不存在', available: false, issue: '模型引用失效' });
-    return { cards: values.filter(card => !card.provider || aiModelSupportsFeature(card, feature)), source: layer.source };
+    return { cards: values.filter(card => !card.provider || aiModelSupportsTask(card, task)), source: layer.source };
 }
 
 function aiProviderLabel(provider) {
@@ -2560,16 +2571,19 @@ function validateAiCards(editorName) {
             }
         }
     }
-    for (const [featureId, policy] of Object.entries(editor.config.features)) {
-        const feature = aiFeature('feature:' + featureId);
-        if (!feature) return fail('存在未知的功能配置，请重新加载');
-        const chain = policy.chain ?? [];
-        const models = aiModels(editor, feature.service);
-        if (new Set(chain).size !== chain.length) return fail(feature.label + '：不能重复引用同一模型卡片');
-        if (feature.service === 'embedding' && chain.length > 1) return fail('记忆向量只能选择一张模型卡片');
-        if (chain.some(id => !models.some(card => card.id === id && aiModelSupportsFeature(card, feature)))) return fail(feature.label + '：请引用支持此功能的已有模型卡片');
-        for (const key of ['attempt_timeout_seconds', 'total_timeout_seconds']) {
-            if (policy[key] != null && (!Number.isFinite(policy[key]) || policy[key] <= 0 || policy[key] > 86400)) return fail(feature.label + '：预算必须是 0 至 86400 之间的正数');
+    for (const [taskId, value] of Object.entries(editor.config.tasks)) {
+        if (!(tabCache.models?.ai_tasks ?? []).some(task => task.id === taskId)) return fail('存在未知的任务配置，请重新加载');
+        for (const [service, policy] of Object.entries(value.chains ?? {})) {
+            const task = aiTaskChain(`task:${taskId}:${service}`);
+            if (!task) return fail('任务包含不支持的能力，请重新加载');
+            const chain = policy.chain ?? [];
+            const models = aiModels(editor, service);
+            if (new Set(chain).size !== chain.length) return fail(task.label + '：不能重复引用同一模型卡片');
+            if (service === 'embedding' && chain.length > 1) return fail('记忆向量只能选择一张模型卡片');
+            if (chain.some(id => !models.some(card => card.id === id && aiModelSupportsTask(card, task)))) return fail(task.label + '：请引用支持此能力的已有模型卡片');
+            for (const key of ['attempt_timeout_seconds', 'total_timeout_seconds']) {
+                if (policy[key] != null && (!Number.isFinite(policy[key]) || policy[key] <= 0 || policy[key] > 86400)) return fail(task.label + '：预算必须是 0 至 86400 之间的正数');
+            }
         }
     }
     for (const [card, window] of windows) card.context_window = window;
@@ -2611,7 +2625,9 @@ function aiRemovalReferences(editor, group, id) {
                 for (const card of cards) if (card.provider_id === id) references.push(label + ' · ' + AI_SERVICES[service] + ' · ' + card.model_name);
             }
         } else {
-            for (const [feature, policy] of Object.entries(config.features)) if (policy.chain?.includes(id)) references.push(label + ' · ' + aiGroupLabel('feature:' + feature));
+            for (const [taskId, task] of Object.entries(config.tasks)) {
+                for (const [service, policy] of Object.entries(task.chains ?? {})) if (policy.chain?.includes(id)) references.push(label + ' · ' + aiGroupLabel(`task:${taskId}:${service}`));
+            }
         }
     }
     return references;
@@ -2621,7 +2637,7 @@ function callListHtml(editorName, group) {
     const editor = aiEditors[editorName];
     const service = aiService(group);
     const library = group === 'providers';
-    const feature = aiFeature(group);
+    const task = aiTaskChain(group);
     const cards = aiList(editor, group);
     const models = library ? [] : aiModels(editor, service);
     const suppliers = library ? [] : aiProviderOptions(editor, service);
@@ -2629,20 +2645,19 @@ function callListHtml(editorName, group) {
         `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
     const options = library
         ? aiAvailableProviderTypes(editor).map(type => option(type, aiProviderLabel(type))).join('')
-        : feature
-            ? models.filter(card => aiModelSupportsFeature(card, feature) && !cards.includes(card.id)).map(card => option(card.id, aiModelLabel(card))).join('')
+        : task
+            ? models.filter(card => aiModelSupportsTask(card, task) && !cards.includes(card.id)).map(card => option(card.id, aiModelLabel(card))).join('')
             : suppliers.map(card => option(card.id, card.scope + ' · ' + card.name + ' (' + aiProviderLabel(card.provider_type) + ')')).join('');
     const items = cards.map((value, index) => {
-        const card = feature ? models.find(item => item.id === value) : value;
+        const card = task ? models.find(item => item.id === value) : value;
         const provider = library ? card : aiSource(editor, card?.provider_id);
         const summary = library
             ? provider.name
             : card
-                ? feature ? aiModelLabel(card) : (provider?.name ?? '供应商引用失效') + ' · ' + card.model_name + (service === 'llm' ? ' · 窗 ' + (card.context_window ?? '未填写') : '')
+                ? task ? aiModelLabel(card) : (provider?.name ?? '供应商引用失效') + ' · ' + card.model_name + (service === 'llm' ? ' · 窗 ' + (card.context_window ?? '未填写') : '')
                 : '模型引用失效';
         const keySet = library && Boolean(card.api_key || (card.api_key_set && !card.clear_api_key));
-        const localImage = !library && !feature && service === 'image_gen' && provider?.provider_type === 'local';
-        const voiceDesignModel = !library && !feature && editor.defaults?.[service]?.[provider?.provider_type]?.voice_design_model;
+        const localImage = !library && !task && service === 'image_gen' && provider?.provider_type === 'local';
         let body = '';
         if (library) {
             body = `
@@ -2658,7 +2673,7 @@ function callListHtml(editorName, group) {
                     <input type="text" data-ai-field="base_url" value="${esc(card.base_url)}"
                         placeholder="${card.provider_type === 'custom' ? '如 https://host/v1' : '留空使用该能力的适配器默认地址'}">
                 </label></div>`;
-        } else if (!feature) {
+        } else if (!task) {
             body = `
                 <div class="field"><label>供应商
                     <select data-ai-field="provider_id">
@@ -2667,7 +2682,7 @@ function callListHtml(editorName, group) {
                 </label></div>
                 ${aiModelFields(card, service, editor.defaults?.[service]?.[provider?.provider_type] ?? {}, localImage)}`;
         }
-        const configuration = feature
+        const configuration = task
             ? card ? `<button class="btn btn--ghost" data-ai-action="model-config" data-ai-model-id="${card.id}">查看模型配置</button>` : ''
             : '<button class="btn btn--ghost" data-ai-action="toggle" aria-label="展开配置" title="展开配置">配置</button>';
         return `<article class="call-item" data-ai-index="${index}">
@@ -2675,7 +2690,7 @@ function callListHtml(editorName, group) {
                 <button class="btn btn--ghost" draggable="true" data-ai-handle aria-label="拖拽排序" title="拖拽排序">⠿</button>
                 <span class="num">${index + 1}</span><span class="prov">${esc(summary)}</span><span class="spacer"></span>
                 ${library ? `<span class="keybadge ${keySet ? 'on' : 'off'}">${keySet ? '密钥已设置' : '未设置密钥'}</span>` : ''}
-                ${!library && !feature && aiModelNeedsConfiguration(card, service) ? '<span class="keybadge off">待补全</span>' : ''}
+                ${!library && !task && aiModelNeedsConfiguration(card, service) ? '<span class="keybadge off">待补全</span>' : ''}
                 <button class="btn btn--ghost" data-ai-action="up" aria-label="上移" title="上移"${index === 0 ? ' disabled' : ''}>↑</button>
                 <button class="btn btn--ghost" data-ai-action="down" aria-label="下移" title="下移"${index === cards.length - 1 ? ' disabled' : ''}>↓</button>
                 <button class="btn btn--ghost" data-ai-action="remove" aria-label="移除卡片" title="移除卡片">✕</button>
@@ -2685,26 +2700,26 @@ function callListHtml(editorName, group) {
         </article>`;
     }).join('');
     const hint = library ? '先添加供应商并填写凭据与地址。'
-        : feature ? '未选择专用模型时继承默认调用链。'
+        : task ? '继承默认调用链。'
         : editorName === 'user' ? '尚未添加用户模型，默认顺序继承系统。'
         : '先在供应商信息库建立配置，再添加模型。';
     return `<div data-ai-group="${group}">
         <div class="call-list">${items}</div>
         ${cards.length ? '' : `<p class="hint">${hint}</p>`}
         <div class="layer-actions">
-            ${library || feature ? `<select aria-label="${library ? '选择供应商类型' : '选择已有模型卡片'}" data-ai-add-source>
+            ${library || task ? `<select aria-label="${library ? '选择供应商类型' : '选择已有模型卡片'}" data-ai-add-source>
                 ${options || '<option value="">暂无可选择的配置</option>'}
             </select>` : ''}
             ${library ? '<input type="text" data-ai-provider-name placeholder="供应商名称，支持中文和大写" maxlength="128" style="width:14rem">' : ''}
-            <button class="btn btn--primary btn--sm" data-ai-action="add"${!options || (feature?.service === 'embedding' && cards.length) ? ' disabled' : ''}>
-                ＋ ${library ? '添加供应商' : feature ? '引用模型' : '添加模型'}
+            <button class="btn btn--primary btn--sm" data-ai-action="add"${!options || (task?.service === 'embedding' && cards.length) ? ' disabled' : ''}>
+                ＋ ${library ? '添加供应商' : task ? '引用模型' : '添加模型'}
             </button>
         </div>
     </div>`;
 }
 
 function readonlyCallListHtml(cards) {
-    if (!cards.length) return '<p class="hint">本功能没有可用的模型卡片。</p>';
+    if (!cards.length) return '<p class="hint">本任务没有可用的模型卡片。</p>';
     return `<div class="call-list">${cards.map((card, index) => `
         <div class="call-item"><div class="call-item-head">
             <span class="num">${index + 1}</span><span class="prov">${esc(aiModelLabel(card))}</span>
@@ -3009,8 +3024,8 @@ function bindAiCardEvents() {
         }
         const policyKey = event.target.dataset.aiPolicy;
         if (policyKey) {
-            const feature = aiFeature(aiView.group);
-            const config = aiEditors[editorName()].config.features[feature.id] ??= { chain: [], attempt_timeout_seconds: null, total_timeout_seconds: null };
+            const task = aiTaskChain(aiView.group);
+            const config = aiTaskPolicy(aiEditors[editorName()], task);
             config[policyKey] = event.target.value.trim() ? Number(event.target.value) : null;
             markAiDirty(editorName());
             return;
@@ -3097,10 +3112,10 @@ function bindAiCardEvents() {
             return;
         }
         if (action === 'add') {
-            if (group !== 'providers' && !aiFeature(group)) { openAiModelPicker(editorName(), group); return; }
+            if (group !== 'providers' && !aiTaskChain(group)) { openAiModelPicker(editorName(), group); return; }
             const value = section.querySelector('[data-ai-add-source]').value;
             if (!value) return;
-            if (aiFeature(group)) {
+            if (aiTaskChain(group)) {
                 if (cards.includes(value) || (aiService(group) === 'embedding' && cards.length)) return;
                 cards.push(value);
             } else if (group === 'providers') {
@@ -3111,7 +3126,7 @@ function bindAiCardEvents() {
                 cards.push({ id: newAiId(), name: section.querySelector('[data-ai-provider-name]').value.trim() || AI_NAMES[value] || value, provider_type: value, api_key: '', base_url: '' });
             }
         } else if (action === 'remove') {
-            if (!aiFeature(group)) {
+            if (!aiTaskChain(group)) {
                 const references = aiRemovalReferences(editor, group, cards[index].id);
                 if (references.length) { toast('请先移除引用：' + references.join('；'), 'err'); return; }
             }
@@ -3271,8 +3286,6 @@ const SETTINGS_SECTIONS = [
             ['field', bool('rate_limit_enabled', '开启接口速率限制 (Rate Limiting)')],
             ['grid', [
                 num('login_rate_limit_per_minute', '登录频次上限 (/分钟)', 1, { min: 1 }),
-                num('llm_completion_rate_limit_per_minute', '单用户 LLM 对话补全 (/分钟)', 1, { min: 1 }),
-                num('llm_completion_rate_limit_per_ip_per_minute', '单 IP LLM 对话补全 (/分钟)', 1, { min: 1 }),
                 num('media_stt_rate_limit_per_minute', '语音识别 STT (/分钟)', 1, { min: 1 }),
                 num('media_tts_rate_limit_per_minute', '语音合成 TTS (/分钟)', 1, { min: 1 }),
                 num('media_video_rate_limit_per_minute', '视频附件上传 (/分钟)', 1, { min: 1 }),

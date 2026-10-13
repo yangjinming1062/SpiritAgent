@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime
 from typing import Any
 
-from components import AiFeature, get_logger, session_scope, tool_error, utc_now
+from components import AiTaskKey, get_logger, session_scope, tool_error, utc_now
 from sqlalchemy.exc import SQLAlchemyError
 
 from services.contracts import MemoryScope, MemorySource
@@ -28,9 +28,10 @@ def _is_memory_id(value: object) -> bool:
 
 
 class NativeMemory:
-    def __init__(self, scope: MemoryScope, *, source: MemorySource) -> None:
+    def __init__(self, scope: MemoryScope, *, source: MemorySource, task: AiTaskKey) -> None:
         self._scope = scope
         self._source = source
+        self._task = task
         self._inspection: MemoryReviewContext | None = None
 
     async def execute_tool(self, tool_name: str, args: dict[str, Any]) -> str:
@@ -65,7 +66,7 @@ class NativeMemory:
                     return tool_error("Call memory_inspect first to obtain original evidence and current versions")
                 proposal = MemoryDecisions.model_validate(args)
                 async with session_scope() as db:
-                    config = await resolve_user_llm_config(db, self._scope.user_id, feature=AiFeature.memory_proposal)
+                    config = await resolve_user_llm_config(db, self._scope.user_id, self._task)
                 rows = await assess_memory_changes(
                     self._scope,
                     self._source,

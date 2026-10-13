@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from components import SESSION_LOCAL, AiFeature
+from components import SESSION_LOCAL, AiTaskKey
 from modules.companion import AvatarAsset, CharacterCardSnapshot, CompanionOutfit
 from prompts.generation import (
     CHARACTER_APPEARANCE_ALIGNMENT_REFERENCES,
@@ -121,6 +121,7 @@ async def align_character_reference(
     identity: CharacterCardSnapshot,
     outfit_description: str,
     *,
+    task: AiTaskKey,
     identity_reference: str,
     storage_directory: str,
     state: ImageChainState | None = None,
@@ -138,6 +139,7 @@ async def align_character_reference(
         + "\n"
         + CHARACTER_APPEARANCE_VISUAL_STYLE,
         user_id=user_id,
+        task=task,
         storage_directory=storage_directory,
         reference_image=identity_reference,
         secondary_reference_image=outfit_image,
@@ -148,7 +150,6 @@ async def align_character_reference(
         state=state,
         save_progress=save_progress,
         before_submit=before_submit,
-        feature=AiFeature.action_alignment_image,
     )
     return paths[0]
 

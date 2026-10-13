@@ -2,7 +2,7 @@ import json
 from typing import Any
 
 from components import (
-    AI_FEATURES,
+    AI_TASKS,
     CAPABILITY_SERVICES,
     SETTINGS,
     AIConfig,
@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.configuration import prepare_ai_config, public_ai_config, validate_ai_config
 from services.infrastructure.llm import (
     provider_configuration_defaults,
-    providers_for_feature,
     providers_supporting,
     rotate_http_clients,
 )
@@ -144,8 +143,7 @@ def get_system_settings_for_admin() -> dict[str, Any]:
         service: {name: value.model_dump() for name, value in defaults.items()}
         for service, defaults in provider_configuration_defaults().items()
     }
-    result["ai_features"] = [feature.model_dump(mode="json") for feature in AI_FEATURES]
-    result["ai_feature_support"] = {feature.id.value: providers_for_feature(feature.id) for feature in AI_FEATURES}
+    result["ai_tasks"] = [task.model_dump(mode="json") for task in AI_TASKS]
     return result
 
 

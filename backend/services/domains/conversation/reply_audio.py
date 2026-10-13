@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from weakref import WeakValueDictionary
 
-from components import AiFeature, get_logger, session_scope, utc_now
+from components import AiTaskKey, get_logger, session_scope, utc_now
 from modules.conversation import CompanionReply, Conversation, MediaBubble, Message, ReplyAudio, VoiceBubble
 from modules.settings import resolve_user_timezone
 from modules.ws import emit_ws_event
@@ -75,7 +75,7 @@ async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, deadline: float,
             bubble.language,
             bubble.speech,
             preserve_performance=True,
-            feature=AiFeature.companion_voice,
+            task=AiTaskKey.companion_voice,
         )
         duration, ext = await asyncio.to_thread(_audio_info, audio.audio)
         path = await save_companion_asset_async(

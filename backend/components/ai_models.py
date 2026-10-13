@@ -20,6 +20,16 @@ SERVICE_OUTPUT_MODALITY: dict[str, ModelModality] = {
     "embedding": ModelModality.embeddings,
 }
 
+# 各能力的最低输入要求：链解析与管理页卡片筛选共用；具体请求的媒体需求由调用方另传。
+SERVICE_REQUIRED_INPUT_MODALITIES: dict[str, frozenset[ModelModality]] = {
+    "llm": frozenset({ModelModality.text}),
+    "stt": frozenset({ModelModality.audio}),
+    "tts": frozenset({ModelModality.text}),
+    "image_gen": frozenset({ModelModality.text}),
+    "video_gen": frozenset({ModelModality.text}),
+    "embedding": frozenset({ModelModality.text}),
+}
+
 
 class ModelMetadata(BaseModel):
     """目录建议值；保存后的模型卡片才是调用配置。None 表示接口未提供该字段。"""

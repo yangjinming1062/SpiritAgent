@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from components import SESSION_LOCAL, SETTINGS, AiFeature, parse_llm_json, utc_now
+from components import SESSION_LOCAL, SETTINGS, AiTaskKey, parse_llm_json, utc_now
 from modules.companion import (
     ActionProposal,
     CharacterCardSnapshot,
@@ -231,7 +231,7 @@ async def _request_verdict(
                 json.dumps(payload, ensure_ascii=False),
                 reference_images=(reference_image,),
                 before_submit=before_submit,
-                feature=AiFeature.action_proposal,
+                task=AiTaskKey.window_action,
             )
             verdict = ReviewVerdict.model_validate(parse_llm_json(raw))
             if verdict.decision == "reuse":

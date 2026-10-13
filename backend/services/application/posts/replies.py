@@ -4,7 +4,7 @@ import asyncio
 
 from components import (
     SESSION_LOCAL,
-    AiFeature,
+    AiTaskKey,
     TaskBag,
     format_local_iso,
     get_logger,
@@ -123,7 +123,7 @@ async def _generate_reply(user_id: int, post_id: str, comment_id: str) -> None:
                 for i, c in enumerate(thread)
             ],
         }
-        config = await resolve_user_llm_config(db, user_id, feature=AiFeature.post_reply)
+        config = await resolve_user_llm_config(db, user_id, AiTaskKey.posts)
         await db.commit()
     if not config.is_configured:
         raise RuntimeError("LLM is not configured")

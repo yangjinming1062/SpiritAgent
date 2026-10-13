@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from components import (
     NIGHTLY_REASONING_EFFORT,
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     format_local_iso,
     get_logger,
     resolve_language,
@@ -135,7 +135,7 @@ async def _stage_4_reflection(
     }
     max_content_chars = SETTINGS.reflection_max_content_chars
     content = await call_llm_json(
-        await load_user_llm_config(scope.user_id, AiFeature.nightly_reflection),
+        await load_user_llm_config(scope.user_id, AiTaskKey.nightly),
         resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language),
         payload,
         schema=reflection_schema(max_content_chars),
@@ -307,7 +307,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         try:
             await review_memories(
                 scope,
-                feature=AiFeature.nightly_memory,
+                task=AiTaskKey.nightly,
                 before_call=partial(require_nightly_window, ZoneInfo(tz_str)),
                 reasoning_effort=NIGHTLY_REASONING_EFFORT,
             )

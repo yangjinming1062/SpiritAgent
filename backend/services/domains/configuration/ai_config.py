@@ -1,21 +1,24 @@
 from components import (
-    AI_FEATURE_BY_ID,
+    AI_TASK_BY_ID,
     CAPABILITY_SERVICES,
+    SERVICE_REQUIRED_INPUT_MODALITIES,
     AIConfig,
     AIConfigPublic,
     AIConfigUpdate,
+    AiTaskKey,
     ProviderCard,
     ProviderCardUpdate,
 )
 from pydantic import ValidationError
 
-from services.infrastructure.llm import model_supports_feature, providers_supporting
+from services.infrastructure.llm import model_supports_service, provider_configuration_defaults, providers_supporting
 
 
 def validate_ai_config(config: AIConfig, system: AIConfig | None = None) -> None:
     """校验当前作用域的引用与适配器能力；系统卡片始终从系统信息库解析。"""
     config.validate_references(system)
     registered = {name for service in CAPABILITY_SERVICES for name in providers_supporting(service)}
+    defaults = provider_configuration_defaults()
     for provider in config.providers:
         if provider.provider_type not in registered:
             raise ValueError(f"供应商 {provider.name} 的类型未注册：{provider.provider_type}")
@@ -23,21 +26,29 @@ def validate_ai_config(config: AIConfig, system: AIConfig | None = None) -> None
         provider = config.find_provider(card.provider_id, system)
         if provider is None or provider.provider_type not in providers_supporting(service):
             raise ValueError(f"模型 {card.model_name} 的供应商不支持 {service} 能力")
-    for feature, value in config.features.items():
-        for model_id in value.chain:
-            model = config.find_model(model_id, system)
-            if model is None:
-                raise ValueError(f"功能 {feature.value} 引用的模型卡片不存在：{model_id}")
-            _, card, owner = model
-            provider = owner.find_provider(card.provider_id, system if owner is config else None)
-            if provider is None or not model_supports_feature(
-                provider.provider_type,
-                card.model_name,
-                feature,
-                input_modalities=card.input_modalities,
-                output_modalities=card.output_modalities,
-            ):
-                raise ValueError(f"模型 {card.model_name} 不支持功能 {AI_FEATURE_BY_ID[feature].label}")
+    for task, value in config.tasks.items():
+        definition = AI_TASK_BY_ID[task]
+        for service, policy in value.chains.items():
+            for model_id in policy.chain:
+                model = config.find_model(model_id, system)
+                if model is None:
+                    raise ValueError(f"任务 {definition.label} 引用的模型卡片不存在：{model_id}")
+                _, card, owner = model
+                provider = owner.find_provider(card.provider_id, system if owner is config else None)
+                if provider is None or not model_supports_service(
+                    provider.provider_type,
+                    service,
+                    required_modalities=SERVICE_REQUIRED_INPUT_MODALITIES[service],
+                    input_modalities=card.input_modalities,
+                    output_modalities=card.output_modalities,
+                ):
+                    raise ValueError(f"模型 {card.model_name} 不支持任务 {definition.label} 的 {service} 能力")
+                if task == AiTaskKey.voice_design:
+                    settings = defaults[service][provider.provider_type]
+                    if not settings.supports_voice_design or (
+                        settings.voice_design_model is not None and card.model_name != settings.voice_design_model
+                    ):
+                        raise ValueError(f"模型 {card.model_name} 不支持音色设计")
 
 
 def prepare_ai_config(

@@ -75,7 +75,6 @@ import { createWindowHandlers } from './lifecycle/window-handlers'
 import { createZoomPersistence } from './lifecycle/zoom-persistence'
 import { createRunnerBridge } from './runner/bridge'
 import { createRunnerProcess } from './runner/process'
-import { createReverseRpc } from './runner/reverse-rpc'
 import { createRunnerWsServer } from './runner/rpc-ws'
 import { RunnerUpdater } from './runner/updater'
 import {
@@ -417,7 +416,6 @@ registerMediaIpc({
 })
 
 runnerHost = createRunnerHost({
-  createReverseRpc,
   createRunnerBridge,
   createRunnerProcess,
   createRunnerWsServer,
@@ -431,7 +429,6 @@ runnerHost = createRunnerHost({
 const autoUpdater = createAutoUpdater({
   app,
   runtime: {
-    ensureBackendSession,
     getRunnerBridge: () => runnerHost.getBridge(),
     spiritagentHome: SPIRITAGENT_HOME
   },

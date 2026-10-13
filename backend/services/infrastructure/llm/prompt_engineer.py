@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from components import (
     SESSION_LOCAL,
-    AiFeature,
+    AiTaskKey,
     get_logger,
     parse_llm_json,
     strip_outer_code_fence,
@@ -84,11 +84,18 @@ async def chat(
     system_prompt: str,
     user_payload: str,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
+    fast_decision: bool = False,
 ) -> str:
-    """在独立短会话中解析功能链，模型调用期间不占数据库连接；空内容视为错误。"""
+    """在独立短会话中解析任务链，模型调用期间不占数据库连接；空内容视为错误。"""
     async with SESSION_LOCAL() as config_db:
-        chain = await resolve_provider_chain(config_db, user_id, ServiceType.llm, feature=feature)
+        chain = await resolve_provider_chain(
+            config_db,
+            user_id,
+            ServiceType.llm,
+            task=task,
+            fast_decision=fast_decision,
+        )
     config = UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
     text = (await call_llm_once(config, system_prompt, user_payload)).strip()
     return text
@@ -143,7 +150,7 @@ async def call_llm_once(
     temperature: float | None = None,
     before_call: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
-    """沿已解析的功能链执行单次非流式调用；温度与推理档位按当前供应商换算。"""
+    """沿已解析的任务链执行单次非流式调用；温度与推理档位按当前供应商换算。"""
     user_content = (
         json.dumps(user_payload, ensure_ascii=False) if isinstance(user_payload, dict | list) else str(user_payload)
     )
@@ -363,7 +370,8 @@ async def vision_chat(
     system_prompt: str,
     user_payload: str,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
+    fast_decision: bool = False,
     reference_images: tuple[str, ...],
     before_submit: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
@@ -371,7 +379,7 @@ async def vision_chat(
     if not reference_images or any(not uri for uri in reference_images):
         raise ValueError("visual reasoning requires readable reference images")
     async with SESSION_LOCAL() as chain_db:
-        chain = await resolve_vision_chain(chain_db, user_id, feature=feature)
+        chain = await resolve_vision_chain(chain_db, user_id, task=task, fast_decision=fast_decision)
     if not chain:
         raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
     content = [{"type": "input_image", "image_url": uri} for uri in reference_images]

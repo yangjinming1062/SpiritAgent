@@ -27,15 +27,11 @@ export interface SessionSnapshotPort {
   user: null | { id: null | number; username: null | string }
 }
 
-/** Runner 侧 reverse-rpc / bridge 需要的会话面。 */
-export interface BackendSessionLike {
+/** 会话运行时需要的完整会话面（activate/restore/logout/refresh）。 */
+export interface BackendSessionPort {
   client: () => BackendClientPort
   getSession: () => null | SessionSnapshotPort
   getToken: () => null | string
-}
-
-/** 会话运行时需要的完整会话面（activate/restore/logout/refresh）。 */
-export interface BackendSessionPort extends BackendSessionLike {
   activate: (payload?: { clientContext?: unknown; code?: string }) => Promise<null | SessionSnapshotPort>
   /** Token 失效后仍返回本机选中的账户。 */
   getSelectedAccountId: () => null | string

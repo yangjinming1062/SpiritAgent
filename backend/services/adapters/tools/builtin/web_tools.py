@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from components import SETTINGS, AiFeature, coerce_int, get_logger, tool_error
+from components import SETTINGS, coerce_int, get_logger, tool_error
 from prompts.tools import (
     WEB_EXTRACT_DESC,
     WEB_EXTRACT_PARAM_DESCS,
@@ -10,7 +10,7 @@ from prompts.tools import (
     WEB_SUMMARY_INSTRUCTIONS,
 )
 
-from services.infrastructure.llm import UserLlmConfig, call_llm_once, load_user_llm_config
+from services.infrastructure.llm import UserLlmConfig, call_llm_once
 from services.infrastructure.tool_runtime import ToolsRegistry
 from services.infrastructure.web import WebDocument, resolve_extract_provider, resolve_search_provider
 
@@ -79,7 +79,7 @@ async def web_search_tool(query: str, limit: int | None = None, **_: object) -> 
 
 async def web_extract_tool(
     urls: list[str],
-    user_id: int,
+    llm_config: UserLlmConfig,
     use_llm_processing: bool = True,
     **_: object,
 ) -> str:
@@ -97,8 +97,8 @@ async def web_extract_tool(
         return tool_error(f"Extraction error: {e!s}")
 
     if use_llm_processing:
-        # 并行展开摘要，10 URL 提取的耗时由最慢的那一份决定，而非 10 倍叠加。
-        await _summarize_documents(documents, await load_user_llm_config(user_id, AiFeature.web_summary))
+        # 并行展开摘要，10 URL 提取的耗时由最慢的那一份决定，而非 10 倍叠加；摘要沿本回合任务链（注入的 llm_config）。
+        await _summarize_documents(documents, llm_config)
     return json.dumps(
         {
             "success": True,

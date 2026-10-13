@@ -31,7 +31,7 @@ from services.domains.companion import (
 from services.domains.conversation import (
     COMPANION_PRESET_ID,
     SPECIAL_KIND,
-    conversation_ai_feature,
+    conversation_ai_task,
     conversation_memory_scope,
     load_context_messages,
     load_media_turn,
@@ -123,12 +123,23 @@ async def compress_session_history(
     """手动压缩会话历史：短会话装配上下文 → 不占会话调用摘要模型 → 短会话写入检查点并重新估算用量；摘要失败抛 CompressionFailedError。调用方负责会话互斥与在途回合校验。"""
     req = ChatRequest(session_id=str(conv.id), message=ChatMessageRequest(content=""))
     memory_scope = conversation_memory_scope(conv, user_id)
+    task = conversation_ai_task(conv)
     async with session_scope() as db:
         effective_settings = merge_session_settings(await load_user_settings(db, user_id), session_settings, conv=conv)
-        inputs = await build_turn_inputs(db, conv, user_id, req, client_context, effective_settings, memory_scope)
+        inputs = await build_turn_inputs(
+            db,
+            conv,
+            user_id,
+            req,
+            client_context,
+            effective_settings,
+            memory_scope,
+            task=task,
+        )
     _, info = await compress_history(
         inputs.context,
         user_id=user_id,
+        task=task,
         temperature=_compression_temperature(effective_settings),
         language=inputs.language,
         context_length=inputs.ctx_length,
@@ -142,7 +153,16 @@ async def compress_session_history(
         )
     async with session_scope() as db:
         await persist_compression_checkpoint(db, conv.id, info)
-        compressed = await build_turn_inputs(db, conv, user_id, req, client_context, effective_settings, memory_scope)
+        compressed = await build_turn_inputs(
+            db,
+            conv,
+            user_id,
+            req,
+            client_context,
+            effective_settings,
+            memory_scope,
+            task=task,
+        )
     return ManualCompressionResult(
         info=info,
         total_tokens=compressed.estimated_tokens,
@@ -259,8 +279,13 @@ async def _run_chat_turn(
                 language = await get_user_setting(db, user_id, "language")
                 await emit_conversation_unavailable(emitter, language, str(exc))
                 return
-            feature = conversation_ai_feature(conv, proactive=ephemeral)
-            llm_config = await resolve_user_llm_config(db, user_id, feature)
+            # 委派沿用父回合的任务，普通入口由会话和主动回合标志决定。
+            task = (
+                llm_config.config.task
+                if llm_config.config is not None and llm_config.config.task is not None
+                else conversation_ai_task(conv, proactive=ephemeral)
+            )
+            llm_config = await resolve_user_llm_config(db, user_id, task)
             # 主动回合与自动化任务不算用户接触。
             turn_scope.enter_context(user_turn_activity(user_id, enabled=not ephemeral and not conv.is_automation))
 
@@ -309,6 +334,7 @@ async def _run_chat_turn(
                     session_client_context,
                     effective_settings,
                     memory_scope,
+                    task=task,
                     proactive_memory_query=memory_query,
                     proactive_memory_embedding=memory_embedding,
                     companion_proactive_turn=ephemeral,
@@ -367,6 +393,7 @@ async def _run_chat_turn(
                 compressed_context, compress_info = await compress_history(
                     inputs.context,
                     user_id=user_id,
+                    task=task,
                     temperature=_compression_temperature(effective_settings),
                     language=inputs.language,
                     context_length=inputs.ctx_length,
@@ -421,6 +448,7 @@ async def _run_chat_turn(
             media_turn = await load_media_turn(
                 db,
                 conv,
+                task=task.value,
                 structured_reply=companion_reply,
                 request=req.message.content,
                 retry_after_message_id=persisted_message_id if final_reply_only else None,
@@ -583,7 +611,7 @@ async def _run_chat_turn(
                         db,
                         user_id,
                         "llm",
-                        feature=feature,
+                        task=task,
                     )
                 llm_result = await execute_media_with_fallback(
                     llm_chain,
@@ -628,6 +656,7 @@ async def _run_chat_turn(
                     conv,
                     user_id,
                     llm_result,
+                    task=task,
                     emitter=emitter,
                     effective_settings=effective_settings,
                     user_text=req.message.content,

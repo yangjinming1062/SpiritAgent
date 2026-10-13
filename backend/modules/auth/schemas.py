@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from components import AIConfigPublic, AIConfigUpdate, AiFeatureDefinition, ProviderDefaults
+from components import AIConfigPublic, AIConfigUpdate, AiTaskDefinition, ProviderDefaults
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -55,8 +55,7 @@ class UserModelConfigListResponse(BaseModel):
     ai_provider_support: dict[str, list[str]]
     ai_provider_defaults: dict[str, dict[str, ProviderDefaults]]
     system_ai_config: AIConfigPublic
-    ai_features: list[AiFeatureDefinition]
-    ai_feature_support: dict[str, list[str]]
+    ai_tasks: list[AiTaskDefinition]
 
 
 class AdminLoginRequest(BaseModel):

@@ -11,7 +11,6 @@
 | Backend ↔ Client | `/api/chat/ws`，连接前以 Bearer JWT 请求 `POST /api/user/ws-ticket`，使用短时、`purpose=ws` 的 ticket 握手；签发与有效期见 [user.py](../backend/api/v1/user.py) |
 | 手机浏览器 ↔ Backend | `/remote/` 同源页面，独立设备 Cookie；`POST /api/remote/ws-ticket` 签发票据后连接 `/api/remote/ws`，身份约束见 [远程访问](#远程访问) |
 | Client ↔ Runner | Windows 命名管道 / macOS UDS 承载 WebSocket 帧，以本次启动 token 鉴权 |
-| Runner → Client → Backend | `request_llm` 经 Client 代理至 `/api/llm/completion`，后端身份由 Client 提供 |
 
 WS 和本地 IPC 使用 JSON-RPC 2.0；REST、上传及下载不套 RPC 信封。请求带 `id`，响应以相同 `id` 返回 `result` 或 `error`；通知不带 `id`，不应被响应。Backend WS 的心跳与 `session.ack` 均使用普通 RPC 请求；Client 与 Runner 的本地连接以 WebSocket 协议层 ping/pong 探活。
 
@@ -168,7 +167,7 @@ flowchart TD
 
 用户录音经 `POST /api/media/audios` 上传到当前账户的会话，返回 URL、实际格式与时长；`audio` 附件只接受本会话已上传且仍存在的文件，回放 GET 同时校验账户与会话归属。原始录音保留，供应商请求使用按需转换的 WAV 副本。桌面录完即提交，远程页面录完作为待发附件确认提交；图片、视频与音频可混合。
 
-存在音频的请求先按配置顺序尝试支持全部输入的原生音频模型；没有可用模型或可回退尝试耗尽时，按语音识别功能链转写，再沿原功能链尝试保留其他媒体要求的文本调用。两阶段共用功能期限，流已开始、结果未知和取消不能触发转写回退。成功转写按会话音频引用复用，保存到原用户消息，`message.audio` 更新时长或转写；标题、记忆与心情等回合后处理按需读取同一缓存，转写失败不撤销已完成原生回复。千问按 Responses 音频协议装配，MiMo 音视频请求使用 Chat Completions 并归一化到统一消费契约。
+存在音频的请求先按配置顺序尝试支持全部输入的原生音频模型；没有可用模型或可回退尝试耗尽时，按语音输入任务链转写，再沿原任务链尝试保留其他媒体要求的文本调用。两阶段共用任务期限，流已开始、结果未知和取消不能触发转写回退。成功转写按会话音频引用复用，保存到原用户消息，`message.audio` 更新时长或转写；标题、记忆与心情等回合后处理按需读取同一缓存，转写失败不撤销已完成原生回复。千问按 Responses 音频协议装配，MiMo 音视频请求使用 Chat Completions 并归一化到统一消费契约。
 
 音频与视频共享会话附件配额、派生复制、删除和备份路径重映射；清理文件前提交引用改写，有转写时保留转写，无内容时保留明确占位。重试复用原录音，不重新上传。
 - 后端先保存回复，再有界并行合成音频。气泡按原顺序经 `message.bubble` 交付，前一泡未就绪时后续泡等待；语音在音频保存后交付，失败则保留类型、台词与演绎并以空音频交付。`message.complete` 收尾并携带完整气泡，客户端按消息 ID 与气泡索引对账补建。取消不回滚已保存回复；消息改删或合成中断时清理未提交音频。
@@ -185,8 +184,8 @@ flowchart TD
 
 ### 模型失败与重试预算
 
-- 模型调用按功能解析有序链，先筛选本次输入所需能力，再沿配置顺序尝试；供应商报错时结果未知除外，仍有下一家就回退。聊天回合在流首事件或非流式响应到达后锁定供应商；独立文本调用可对未完成、空正文或要求 JSON 对象却格式无效的响应回退，视觉分析也可对空结果回退。每家按自身模型能力重新计算参数；嵌入固定同一模型，失败使用关键词召回。实现见 [llm_fallback.py](../backend/services/infrastructure/llm/llm_fallback.py)、[error_classifier.py](../backend/services/infrastructure/llm/error_classifier.py) 与 [prompt_engineer.py](../backend/services/infrastructure/llm/prompt_engineer.py)。媒体候选择优与下载、评分边界归 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
-- 功能可配置单家调用与调用链总预算，预算逐字段取用户功能覆盖、系统功能配置，再使用原流程默认。统一调用入口的网络重试与格式修复共用预算；流首事件后解除单家首事件等待期限，流总预算和静默期限继续生效。自主移动、窗口空闲表达和桌面生活动作选择默认总预算 20 秒，多家时默认单家 8 秒、单家时 20 秒，配置不能延长原业务期限。媒体质量尝试累计提交调用用时；已接单本地生图等待与句柄轮询使用独立预算。外部取消及付费提交结果未知不得自动重交。
+- 模型调用按任务与能力解析有序链，先筛选本次输入所需能力，再沿配置顺序尝试；供应商报错时结果未知除外，仍有下一家就回退。聊天回合在流首事件或非流式响应到达后锁定供应商；独立文本调用可对未完成、空正文或要求 JSON 对象却格式无效的响应回退，视觉分析也可对空结果回退。每家按自身模型能力重新计算参数；嵌入固定同一模型，失败使用关键词召回。实现见 [llm_fallback.py](../backend/services/infrastructure/llm/llm_fallback.py)、[error_classifier.py](../backend/services/infrastructure/llm/error_classifier.py) 与 [prompt_engineer.py](../backend/services/infrastructure/llm/prompt_engineer.py)。媒体候选择优与下载、评分边界归 [PIPELINE](PIPELINE.md#供应商选择与失败恢复)。
+- 任务内各能力可配置单家调用与调用链总预算，预算逐字段取用户任务覆盖、系统任务配置，再使用原流程默认。统一调用入口的网络重试与格式修复共用预算；流首事件后解除单家首事件等待期限，流总预算和静默期限继续生效。自主移动、窗口空闲表达和桌面生活动作选择默认总预算 20 秒，多家时默认单家 8 秒、单家时 20 秒，配置不能延长原业务期限。媒体质量尝试累计提交调用用时；已接单本地生图等待与句柄轮询使用独立预算。外部取消及付费提交结果未知不得自动重交。
 - 同一端点的网络自动重试只用于幂等方法、显式幂等键或可确认未发送的连接失败，且请求体可重放；非幂等请求在写入或等待响应时断线按结果未知处理，不能换供应商重交。
 - 未交付正文、非内容过滤的不完整终态可在同供应商同参数重试，完成响应却没有任何正文的用户回复同样按此处理；所有供应商的陪伴回复在结构、日常分句、演绎或媒体校验失败时，都在同供应商进行独立格式修正。
 - 模型把完整的最终回复对象写成对未提供工具的单个调用时，参数视为本次响应的正文，走同一套校验与修正，不当作工具失败再试一轮。
@@ -414,7 +413,7 @@ sequenceDiagram
 | `get_tools` | Runner 实际工具清单 |
 | `execute_tool`、`execute_scoped_tool` | 普通及带学习域的执行 |
 | `spiritagent.call_result`、`spiritagent.cancel` | 查询已派发结果与取消请求 |
-| `spiritagent.config.update`、`request_llm` | 完整配置与反向模型请求 |
+| `spiritagent.config.update` | 完整配置推送 |
 
 启动和 Runner 重启均执行上述同步。`get_tools` 的工具说明按 Runner 当前配置生成（如终端说明随 `terminal.env_type`）；运行中配置推送成功后 Client 重新读取清单，有变化时按重连同样发布并由宿主重新 `tools.sync`，读取失败保留原清单。未同步或清单为空时，本机工具不可见、不可派发；撤销资格后，已派发调用仍按结果与超时收尾。Runner 握手、配置推送与 `get_tools` 由 Client 主进程的 [bridge](../client/main/runner/bridge.ts) 完成；`tools.sync` 与撤销由精灵宿主的 [host-runtime](../client/renderer/app/runtime/host-runtime.ts) 按 Runner 状态发起；Backend 侧注册见 [registry](../backend/services/infrastructure/tool_runtime/registry.py)，派发见 [tool_dispatch](../backend/services/application/chat/tool_dispatch.py)。
 
@@ -451,10 +450,6 @@ sequenceDiagram
 设备调用的时限由内向外递增：Runner 工具自身时限（终端前台上限默认 600 秒）短于 Client 派发上限（[ipc/runner.ts](../client/main/ipc/runner.ts)，11 分钟），再短于 Backend 等待上限（`ipc_future_timeout_seconds`，默认 720 秒）。外层短于内层会把仍在正常执行的工具报成结果未知，调整任一层时保持次序。
 
 断连宽限结束后以可处理错误收尾未决等待，使等待工具的回合仍能说明失败。丢弃等待不等于撤销本机执行；等待登记、超时与释放见 [ipc](../backend/services/infrastructure/desktop/ipc.py)，派发前检查见 [tool_dispatch](../backend/services/application/chat/tool_dispatch.py)，恢复决策见[调用日志与未知结果](#调用日志与未知结果)。
-
-### 反向模型请求
-
-Runner 保留 `request_llm` 通道请求 Client 代理模型（经 Backend `/api/llm/completion`），不获取 Backend JWT 或供应商密钥；当前内置工具不发起该请求。Client 校验消息数量和载荷，累计预算随每次桥启动新建、WS 重连不清零；Runner 另有单连接预算，重连清零；文字与带图请求使用不同大小边界。具体限制见 [reverse-rpc](../client/main/runner/reverse-rpc.ts) 与 [server.py](../runner/server.py)。
 
 ### 图片工具结果
 
@@ -583,7 +578,7 @@ Runner 只持工具所需本机配置。终端、SSH 密码及凭据文件不上
 
 ### AI 配置与密钥
 
-配置分为供应商信息库、能力模型卡片和功能调用链，以稳定 UUID 引用。信息库独占 API Key 与 Base URL，名称仅供显示，`provider_type` 决定适配器。管理页允许 `local`、`custom` 多实例，其余类型在系统和所有用户中合计一条；该限制仅由前端实施，不合并已有重复项。结构、功能要求与适配器能力分别见 [ai_config.py](../backend/components/ai_config.py)、[ai_features.py](../backend/components/ai_features.py) 和 [registrations.py](../backend/bootstrap/registrations.py)。
+配置分为供应商信息库、能力模型卡片和任务调用链，以稳定 UUID 引用。信息库独占 API Key 与 Base URL，名称仅供显示，`provider_type` 决定适配器。管理页允许 `local`、`custom` 多实例，其余类型在系统和所有用户中合计一条；该限制仅由前端实施。结构、任务目录与适配器能力分别见 [ai_config.py](../backend/components/ai_config.py)、[ai_tasks.py](../backend/components/ai_tasks.py) 和 [registrations.py](../backend/bootstrap/registrations.py)。
 
 能力卡片保存实际模型 ID、输入/输出类型和 Token 配置。LLM 必填上下文窗口与输出上限：窗口容纳输入与输出，输出包含推理与正文，数值支持 k = 1,000、M = 1,000,000。模型按供应商批量加入草稿、统一排序，保存后生效；添加时跳过当前作用域、能力和供应商下的重复模型，缺参须补全。
 
@@ -591,13 +586,15 @@ Runner 只持工具所需本机配置。终端、SSH 密码及凭据文件不上
 
 地址留空取适配器默认值；千问按能力转换标准 API 后缀并保留代理前缀。DeepSeek 对话使用原生 Responses，默认地址为 `https://api.deepseek.com`，图片支持仍由模型卡片声明。`custom` 须配置地址与模型，Base URL 填到版本前缀（如 `https://host/v1`），对话用 `/responses`、向量用 `/embeddings`。输入类型取卡片声明与适配器支持的交集，混合输入须全部满足，输出类型独立配置。本地 ComfyUI 固定 `qwen` 且无需密钥；MiMo 音色设计与自定义音色合成使用 `mimo-v2.5-tts-voicedesign`。
 
-功能链保存模型引用顺序与预算，按用户功能链 → 系统功能链 → 用户默认能力链 → 系统默认能力链继承；清空引用恢复继承，预算逐字段继承，选定链不可用时不改取其他层。用户可引用本用户或系统条目，系统模型始终使用系统凭据。各功能的可用性检查、提交与恢复共用功能标识。
+任务按能力分别保存模型引用顺序与预算，按用户任务能力链 → 系统任务能力链 → 用户默认能力链 → 系统默认能力链继承；清空引用恢复继承，预算逐字段继承，选定链不可用时不改取其他层。用户可引用本用户或系统条目，系统模型始终使用系统凭据。管理页的环节说明不构成独立配置层；实际请求按所需媒体筛选任务链。
 
-LLM 在实际提交时读取模型卡片，输出预算取卡片上限、请求限额与剩余窗口的最小值；完整请求参与输入估算，超限按完整批次缩减历史，仍无法容纳则报错。流式、辅助调用、格式修复与回退均重算预算，不使用默认模型或固定预算；Runner 指定模型也受当前功能链约束。客户端窗口容量只取后端配置或实际响应。
+标题、压缩、网页摘要、即时记忆提案、委派和聊天媒体沿用发起回合的任务；主动陪伴及其媒体使用主动陪伴任务，空闲动作与移动判断另限制为快速调用预算。独立记忆审阅、向量、夜间、动态、形象、换装、场景及动作制作使用各自任务；语音输入、伙伴回复合成、朗读试听与音色设计各自配置。可用性检查、提交、质量复核与恢复共用任务标识。
 
-向量调用只用首张或功能指定的一张卡片，失败退到关键词召回，见 [记忆读取与恢复](../backend/services/domains/memory/README.md#读取召回与恢复)。音色目录取伙伴回复链并按适配器去重，设计能力取音色设计链；演绎绑定实际供应商、模型与音色。
+LLM 在实际提交时读取模型卡片，输出预算取卡片上限、请求限额与剩余窗口的最小值；完整请求参与输入估算，超限按完整批次缩减历史，仍无法容纳则报错。流式、辅助调用、格式修复与回退均重算预算，不使用默认模型或固定预算。客户端窗口容量只取后端配置或实际响应。
 
-保存、启动与恢复均校验引用和能力，缺少必需凭据或地址的卡片不可用；被引用条目不能删除，系统变更须核查用户依赖。配置写入与恢复共用串行锁，失败不改运行态。REST 只返回密钥状态，留空按供应商 ID 保留密钥，显式清除置空；备份含用户密钥、不含系统密钥，恢复要求系统引用仍有效。媒体任务冻结供应商与模型卡片 ID、功能、模型及端点，凭据实时读取；实例或端点失效后不向其他配置发送旧句柄。
+向量调用只用首张或任务指定的一张卡片，失败退到关键词召回，见 [记忆读取与恢复](../backend/services/domains/memory/README.md#读取召回与恢复)。音色目录取伙伴回复链并按适配器去重，设计能力取音色设计链并核对适配器及指定模型；演绎绑定实际供应商、模型与音色。
+
+保存、启动与恢复均校验引用和能力，缺少必需凭据或地址的卡片不可用；被引用条目不能删除，系统变更须核查用户依赖。配置写入与恢复共用串行锁，失败不改运行态。REST 只返回密钥状态，留空按供应商 ID 保留密钥，显式清除置空；备份含用户密钥、不含系统密钥，恢复要求系统引用仍有效。媒体任务冻结供应商与模型卡片 ID、任务、模型及端点，凭据实时读取；实例或端点失效后不向其他配置发送旧句柄。配置仅接受当前任务结构，旧功能配置与媒体快照不兼容。
 
 ### 自更新签名
 

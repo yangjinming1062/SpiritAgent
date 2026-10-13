@@ -9,7 +9,7 @@ from components import (
     SCENE_DOWNLOAD_MAX_BYTES,
     SESSION_LOCAL,
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     get_logger,
     is_user_in_maintenance,
     parse_llm_json,
@@ -558,7 +558,7 @@ async def _describe_image(user_id: int, path: str) -> SceneDescriptionRequest:
         json.dumps({"output_language": language}),
         reference_images=(data_uri,),
         before_submit=lambda: _scene_paid_boundary(user_id),
-        feature=AiFeature.scene_description,
+        task=AiTaskKey.scene,
     )
     return SceneDescriptionRequest.model_validate(parse_llm_json(raw))
 

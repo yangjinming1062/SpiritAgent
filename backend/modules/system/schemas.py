@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,11 +15,6 @@ class DesktopConfigResponse(BaseModel):
 
 class DesktopConfigPutRequest(BaseModel):
     config: dict
-
-
-class CompletionResponse(BaseModel):
-    content: str
-    usage: dict[str, Any] | None = None
 
 
 class ReleaseManifestFileItem(BaseModel):

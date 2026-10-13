@@ -39,9 +39,7 @@ from utils import (
     redact_sensitive_text,
     reset_cancel_event,
     set_cancel_event,
-    set_handler,
     set_inmemory_config,
-    set_main_loop,
     snapshot,
 )
 
@@ -58,7 +56,6 @@ def _require_supported_host() -> None:
 
 
 _ACTIVE_WS: Any | None = None
-_PENDING_RPC: dict[str, asyncio.Future[Any]] = {}
 _STARTED_AT = time.time()
 _RECONNECT_COUNT = 0
 _current_reconnect_streak = 0
@@ -88,41 +85,6 @@ _INFLIGHT: dict[str, _InflightCall] = {}
 
 # 清单装配与配置快照串行；实际探测在线程执行，取消与 IPC 处理仍可继续。
 _CONFIG_LOCK = asyncio.Lock()
-
-# PROTOCOL「反向模型请求」 Runner 单连接守卫：累计 200 帧 / 1MB 文本 / 10MB 视觉，重连清零，防止工具失控刷爆 LLM。
-MAX_LLM_REQUESTS_PER_SESSION = 200
-MAX_LLM_TEXT_BYTES_PER_SESSION = 1 * 1024 * 1024  # 1 MiB
-MAX_LLM_VISION_BYTES_PER_SESSION = 10 * 1024 * 1024  # 10 MiB
-
-_llm_requests_count = 0
-_llm_bytes_count = 0
-
-
-def _has_vision_content(kwargs: dict[str, Any]) -> bool:
-    def _is_image_part(p: Any) -> bool:
-        return isinstance(p, dict) and (
-            p.get("type") in ("input_image", "image_url", "image") or "image_url" in p or "image" in p
-        )
-
-    for field in ("messages", "input"):
-        items = kwargs.get(field)
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict):
-                    content = item.get("content")
-                    if isinstance(content, list) and any(_is_image_part(p) for p in content):
-                        return True
-                    parts = item.get("parts")
-                    if isinstance(parts, list) and any(_is_image_part(p) for p in parts):
-                        return True
-    return False
-
-
-def reset_llm_rate_limits() -> None:
-    """重置单连接反向 RPC 累计计数器（建立新连接时调用）。"""
-    global _llm_requests_count, _llm_bytes_count
-    _llm_requests_count = 0
-    _llm_bytes_count = 0
 
 
 async def _send(ws: Any, req_id: Any, **fields: Any) -> None:
@@ -155,54 +117,9 @@ def _parse_tool_request(
     return name, args, call_id, skill_scope
 
 
-async def _send_notification(ws: Any, method: str, params: dict[str, Any], id: Any = None) -> None:
+async def _send_notification(ws: Any, method: str, params: dict[str, Any]) -> None:
     body: dict[str, Any] = {"jsonrpc": "2.0", "method": method, "params": params}
-    if id is not None:
-        body["id"] = id
     await ws.send(json.dumps(body))
-
-
-async def request_llm_from_desktop(kwargs: dict[str, Any]) -> str:
-    """经 Client 反向 request_llm 取模型文本；Runner 不持凭据。缺文本字段按协议错误拒绝。"""
-    global _llm_requests_count, _llm_bytes_count
-
-    if (ws := _ACTIVE_WS) is None:
-        raise RuntimeError("No active WebSocket connection")
-
-    payload_bytes = len(json.dumps(kwargs, default=str).encode("utf-8"))
-    max_bytes = MAX_LLM_VISION_BYTES_PER_SESSION if _has_vision_content(kwargs) else MAX_LLM_TEXT_BYTES_PER_SESSION
-
-    if _llm_requests_count >= MAX_LLM_REQUESTS_PER_SESSION:
-        raise RuntimeError("request_llm rate-limited by runner: exceeded maximum requests per session (200)")
-
-    if _llm_bytes_count + payload_bytes > max_bytes:
-        raise RuntimeError("request_llm rate-limited by runner: exceeded maximum payload bytes per session")
-
-    # 尊重调用方传入的 per-call 超时: 下限设 1.0s 避免出现 0 秒等; 不设上限, 上限由调用方在业务预算处自行约束。
-    try:
-        timeout_s = float(kwargs.get("timeout", 120.0))
-    except (TypeError, ValueError):
-        timeout_s = 120.0
-    timeout_s = max(timeout_s, 1.0)
-
-    req_id = f"req_llm_{uuid.uuid4().hex[:8]}"
-    fut: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-    _PENDING_RPC[req_id] = fut
-
-    _llm_requests_count += 1
-    _llm_bytes_count += payload_bytes
-
-    try:
-        await _send_notification(ws, "request_llm", kwargs, id=req_id)
-        result = await asyncio.wait_for(fut, timeout=timeout_s)
-    except TimeoutError as e:
-        raise TimeoutError(f"request_llm: no response within {timeout_s:.0f}s") from e
-    finally:
-        _PENDING_RPC.pop(req_id, None)
-
-    if not isinstance(result, dict) or not isinstance(content := result.get("content"), str):
-        raise RuntimeError(f"request_llm: response has no string 'content' ({type(result).__name__})")
-    return content
 
 
 async def process_request(ws: Any, req: dict[str, Any]) -> None:
@@ -349,28 +266,6 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             await _send(ws, req_id, error={"code": -32000, "message": redact_sensitive_text(str(e))})
 
 
-def _resolve_pending_rpc(data: dict[str, Any]) -> None:
-    """把 Client 对 ``request_llm`` 的响应交给等待方；等待方已超时或取消时丢弃迟到响应。"""
-    req_id = data.get("id")
-    fut = _PENDING_RPC.pop(req_id, None) if isinstance(req_id, str) else None
-    if fut is None or fut.done():
-        logger.debug("Dropping response for unknown or settled request id %r", req_id)
-        return
-    if "error" in data:
-        err = data["error"]
-        fut.set_exception(RuntimeError(err.get("message", str(err)) if isinstance(err, dict) else str(err)))
-    else:
-        fut.set_result(data.get("result"))
-
-
-def _fail_pending_rpcs(reason: str) -> None:
-    """对 in-flight request_llm future set_exception（透传断连原因），已 done 的跳过。"""
-    for fut in list(_PENDING_RPC.values()):
-        if not fut.done():
-            fut.set_exception(ConnectionError(reason))
-    _PENDING_RPC.clear()
-
-
 async def runner_loop(endpoint: DesktopEndpoint) -> None:
     """与 Desktop IPC 的长连接主循环: 维护持久连接、处理重连退避、派发 RPC、Ready 时主动通知。"""
     global _ACTIVE_WS, _RECONNECT_COUNT, _current_reconnect_streak, _CAPS_WATCH_BASELINE
@@ -390,7 +285,6 @@ async def runner_loop(endpoint: DesktopEndpoint) -> None:
                 async with connection as ws:
                     _ACTIVE_WS = ws
                     try:
-                        reset_llm_rate_limits()
                         ready_payload = await _runner_ready_payload()
                         await _send_notification(ws, "runner_ready", ready_payload)
                         # 握手快照即探测基线，能力未变化时不重复通知。
@@ -411,15 +305,12 @@ async def runner_loop(endpoint: DesktopEndpoint) -> None:
                                 logger.error("Non-object JSON frame received: %r", type(data).__name__)
                                 continue
                             if "method" not in data:
-                                _resolve_pending_rpc(data)
                                 continue
                             t = asyncio.create_task(process_request(ws, data))
                             _BG_TASKS.add(t)
                             t.add_done_callback(_BG_TASKS.discard)
                     finally:
                         _ACTIVE_WS = None
-                        # 排空待发 request_llm future, 让调用方 ``wait_for`` 携带断连原因迅速返回。
-                        _fail_pending_rpcs("Runner WS disconnected before response arrived")
 
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("WebSocket connection closed by Desktop.")
@@ -527,7 +418,6 @@ async def _build_info() -> dict[str, Any]:
 
 
 async def _runner_main(endpoint: DesktopEndpoint) -> None:
-    set_main_loop(asyncio.get_running_loop())
     # 启动核对：上次运行中断的认领（持有进程已死且无终态）标 unknown 待核对，过期终态清理。
     stale = await asyncio.to_thread(call_journal.sweep_stale_claims, os.getpid())
     if stale:
@@ -561,7 +451,6 @@ def main() -> None:
 
     if import_failures := discover_builtin_tools():
         logger.error("Some builtin tool modules failed to load: %s", import_failures)
-    set_handler(request_llm_from_desktop)
 
     try:
         asyncio.run(_runner_main(DesktopEndpoint(path=args.desktop_endpoint, token=token)))

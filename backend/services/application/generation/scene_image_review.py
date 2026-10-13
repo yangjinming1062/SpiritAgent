@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 
-from components import SESSION_LOCAL, AiFeature, get_logger, parse_llm_json
+from components import SESSION_LOCAL, AiTaskKey, get_logger, parse_llm_json
 from modules.companion import AvatarAsset, Persona
 from prompts.generation import SCENE_IMAGE_REVIEW_SYSTEM
 from sqlalchemy import select
@@ -58,7 +58,7 @@ async def review_scene_image(
             json.dumps({"image_count": 2}, ensure_ascii=False),
             reference_images=(companion_uri, candidate_uri),
             before_submit=before_submit,
-            feature=AiFeature.scene_review,
+            task=AiTaskKey.scene,
         )
         payload = parse_llm_json(raw)
         if (

@@ -2,7 +2,7 @@
 
 import json
 
-from components import AiFeature, strip_outer_code_fence
+from components import AiTaskKey, strip_outer_code_fence
 from modules.companion import Persona, parse_persona_definition
 from prompts.generation import (
     AVATAR_IMAGE_RULES,
@@ -88,7 +88,7 @@ async def enhance_avatar_prompt(
         visual = {key: visual[key] for key in ("personality", "feedback")}
     payload = {**visual, "has_reference": has_reference}
     user_payload = json.dumps(payload, ensure_ascii=False)
-    raw = await chat(user_id, AVATAR_SYSTEM_PROMPT, user_payload, feature=AiFeature.avatar_prompt)
+    raw = await chat(user_id, AVATAR_SYSTEM_PROMPT, user_payload, task=AiTaskKey.appearance)
     description = strip_outer_code_fence(raw)
     if has_reference:
         return description
@@ -98,7 +98,7 @@ async def enhance_avatar_prompt(
 async def describe_character_form(
     user_id: int | None,
     *,
-    feature: AiFeature = AiFeature.fullbody_guidance,
+    task: AiTaskKey = AiTaskKey.appearance,
     species: str,
     personality: str,
     feedback: str = "",
@@ -129,7 +129,7 @@ async def describe_character_form(
             ensure_ascii=False,
         ),
         reference_images=reference_images,
-        feature=feature,
+        task=task,
     )
 
 
@@ -156,7 +156,7 @@ async def build_outfit_prompt(
         previous_feedback=previous_feedback,
         outfit_description=requirement,
         reference_images=(reference_image,),
-        feature=AiFeature.outfit_guidance,
+        task=AiTaskKey.outfit,
     )
     prompt = "\n".join(
         (
@@ -195,5 +195,5 @@ async def describe_garment_image(
         GARMENT_DESCRIBE_SYSTEM,
         json.dumps({"requirement": requirement.strip()}, ensure_ascii=False),
         reference_images=(image_uri,),
-        feature=AiFeature.garment_analysis,
+        task=AiTaskKey.outfit,
     )

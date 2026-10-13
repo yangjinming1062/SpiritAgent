@@ -11,8 +11,14 @@ from .ai_config import (
     ProviderCardUpdate,
     ProviderDefaults,
 )
-from .ai_features import AI_FEATURE_BY_ID, AI_FEATURES, AiFeature, AiFeatureDefinition
-from .ai_models import SERVICE_OUTPUT_MODALITY, ModelDiscoveryResponse, ModelMetadata, ModelModality
+from .ai_models import (
+    SERVICE_OUTPUT_MODALITY,
+    SERVICE_REQUIRED_INPUT_MODALITIES,
+    ModelDiscoveryResponse,
+    ModelMetadata,
+    ModelModality,
+)
+from .ai_tasks import AI_TASK_BY_ID, AI_TASKS, AiTaskDefinition, AiTaskKey
 from .attachments import attachment_root, session_dir
 from .attachments import gc_session as attachments_gc_session
 from .background import BackgroundTask, TaskBag
@@ -117,10 +123,11 @@ __all__ = [
     "ModelMetadata",
     "ModelModality",
     "SERVICE_OUTPUT_MODALITY",
-    "AI_FEATURES",
-    "AI_FEATURE_BY_ID",
-    "AiFeature",
-    "AiFeatureDefinition",
+    "SERVICE_REQUIRED_INPUT_MODALITIES",
+    "AI_TASKS",
+    "AI_TASK_BY_ID",
+    "AiTaskDefinition",
+    "AiTaskKey",
     "AIConfig",
     "AIConfigPublic",
     "AIConfigUpdate",

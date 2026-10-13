@@ -11,7 +11,7 @@ from weakref import WeakValueDictionary
 from components import (
     SESSION_LOCAL,
     SETTINGS,
-    AiFeature,
+    AiTaskKey,
     TaskBag,
     backoff_for_poll,
     get_logger,
@@ -95,6 +95,7 @@ class _VideoJobParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    task: AiTaskKey
     duration: int
     resolution: str
     reference_images: tuple[str, ...] = ()
@@ -210,6 +211,7 @@ async def _score_self_video(
     video_url: str,
     identity_path: str | None,
     *,
+    task: AiTaskKey,
     identity_uri: str | None,
     outfit_uri: str | None = None,
     identity_text: str = "",
@@ -255,6 +257,7 @@ async def _score_self_video(
             (identity_uri, outfit_uri),
             frame_uris,
             CHARACTER_MEDIA_SELF_VIDEO_SCORE,
+            task=task,
             identity_text=identity_text,
             before_submit=before_submit,
         )
@@ -342,7 +345,7 @@ def _compatible_video_configs(
 async def ensure_video_capability(
     user_id: int,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
     reference_images: bool,
     duration: int,
     resolution: str,
@@ -351,7 +354,7 @@ async def ensure_video_capability(
 ) -> None:
     """占用视频名额前核对参考模式、时长与分辨率，并在调用方允许的范围内给出可用档位。"""
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen", feature=feature)
+        chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     if not chain:
         raise MissingLlmConfigError("视频生成服务未配置")
     if _compatible_video_configs(chain, reference_images=reference_images, duration=duration, resolution=resolution):
@@ -387,14 +390,14 @@ async def ensure_video_capability(
 async def select_video_resolution(
     user_id: int,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
     reference_images: bool,
     duration: int,
     preferred: Sequence[str],
 ) -> str | None:
     """按偏好顺序返回供应商链里有能接单的第一档分辨率，大小写写法沿用首个可接单供应商的声明；没有则返回 None，由调用方在付费前处理。"""
     async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen", feature=feature)
+        chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     for resolution in preferred:
         compatible = _compatible_video_configs(
             chain,
@@ -412,7 +415,7 @@ async def enqueue_video_job(
     db: AsyncSession,
     *,
     user_id: int,
-    feature: AiFeature,
+    task: AiTaskKey,
     session_id: str | None,
     prompt: str,
     source_message_id: int | None = None,
@@ -429,7 +432,7 @@ async def enqueue_video_job(
     """冻结能力链并提交首个任务；轮询绑定实际接单供应商，低分才推进链尾。"""
     if identity is not None and (not identity_reference_path or not reference_images):
         raise ValueError("Self video requires an identity reference and snapshot")
-    chain = await resolve_provider_chain(db, user_id, "video_gen", feature=feature)
+    chain = await resolve_provider_chain(db, user_id, "video_gen", task=task)
     compatible = _compatible_video_configs(
         chain,
         reference_images=bool(reference_images),
@@ -456,6 +459,7 @@ async def enqueue_video_job(
         if source is None:
             raise ValueError("Video source message is no longer available")
     params = _VideoJobParams(
+        task=task,
         duration=duration,
         asset_directory=asset_directory,
         resolution=resolution,
@@ -637,6 +641,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
             user_id,
             candidate,
             params.identity_reference_path,
+            task=params.task,
             identity_uri=params.reference_images[0] if snapshot is not None else None,
             outfit_uri=params.reference_images[1]
             if snapshot is not None and len(params.reference_images) > 1

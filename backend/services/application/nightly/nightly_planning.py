@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from components import (
     NIGHTLY_REASONING_EFFORT,
     SESSION_LOCAL,
-    AiFeature,
+    AiTaskKey,
     get_logger,
     resolve_language,
     resolve_prompt_text,
@@ -419,10 +419,10 @@ async def _provider_available(
     user_id: int,
     service_type: str,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
 ) -> bool:
     try:
-        return bool(await resolve_provider_chain(db, user_id, service_type, feature=feature))
+        return bool(await resolve_provider_chain(db, user_id, service_type, task=task))
     except Exception:
         logger.warning(
             "nightly capability availability check failed",
@@ -436,11 +436,11 @@ async def _image_provider_available(
     db: AsyncSession,
     user_id: int,
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
     has_reference: bool,
 ) -> bool:
     try:
-        chain, _ = await resolve_image_gen_chain(db, user_id, feature=feature, has_reference=has_reference)
+        chain, _ = await resolve_image_gen_chain(db, user_id, task=task, has_reference=has_reference)
         return bool(chain)
     except Exception:
         logger.warning(
@@ -509,22 +509,22 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         reference_image_available = await _image_provider_available(
             db,
             user_id,
-            feature=AiFeature.outfit_image,
+            task=AiTaskKey.outfit,
             has_reference=True,
         )
         text_image_available = await _image_provider_available(
             db,
             user_id,
-            feature=AiFeature.scene_image,
+            task=AiTaskKey.scene,
             has_reference=False,
         )
         presentation = get_presentation_snapshot(user_id)
-        video_feature = (
-            AiFeature.desktop_video
+        video_task = (
+            AiTaskKey.desktop_life
             if presentation is not None and presentation.mode == "desktop"
-            else AiFeature.action_video
+            else AiTaskKey.window_action
         )
-        video_available = await _provider_available(db, user_id, "video_gen", feature=video_feature)
+        video_available = await _provider_available(db, user_id, "video_gen", task=video_task)
         recent_actions = (
             await db.scalars(
                 select(NightlyActivityAction)
@@ -1215,7 +1215,7 @@ async def run_nightly_planning(
             **anomaly_stats,
         }
         plan = await call_llm_json(
-            await load_user_llm_config(user_id, AiFeature.nightly_planning),
+            await load_user_llm_config(user_id, AiTaskKey.nightly),
             PLANNING_SYSTEM_PROMPT,
             payload,
             schema=NightlyPlanOutput.model_json_schema(),

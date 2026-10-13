@@ -5,30 +5,30 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from components import AiFeature
+from components import AiTaskKey
 
 _ATTEMPT: ContextVar[asyncio.Timeout | None] = ContextVar("ai_attempt_timeout", default=None)
 _CHAIN_DEADLINES: ContextVar[tuple[asyncio.Timeout, ...]] = ContextVar("ai_chain_deadlines", default=())
-_FEATURE: ContextVar[AiFeature | None] = ContextVar("ai_call_feature", default=None)
+_TASK: ContextVar[AiTaskKey | None] = ContextVar("ai_call_task", default=None)
 _REQUEST_TIMEOUT: ContextVar[float | None] = ContextVar("ai_request_timeout", default=None)
 
 
 @contextmanager
-def attempt_budget(timeout: asyncio.Timeout, *, feature: AiFeature | None, request_timeout: float) -> Iterator[None]:
+def attempt_budget(timeout: asyncio.Timeout, *, task: AiTaskKey | None, request_timeout: float) -> Iterator[None]:
     token = _ATTEMPT.set(timeout)
-    feature_token = _FEATURE.set(feature)
+    task_token = _TASK.set(task)
     request_token = _REQUEST_TIMEOUT.set(request_timeout)
     try:
         yield
     finally:
         _ATTEMPT.reset(token)
-        _FEATURE.reset(feature_token)
+        _TASK.reset(task_token)
         _REQUEST_TIMEOUT.reset(request_token)
 
 
-def current_call_feature() -> str | None:
-    feature = _FEATURE.get()
-    return feature.value if feature is not None else None
+def current_call_task() -> str | None:
+    task = _TASK.get()
+    return task.value if task is not None else None
 
 
 def provider_request_timeout(default: float) -> float:

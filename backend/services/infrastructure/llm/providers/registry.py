@@ -1,6 +1,6 @@
 from collections.abc import Collection
 
-from components import AI_FEATURE_BY_ID, SERVICE_OUTPUT_MODALITY, AiFeature, ModelModality, ProviderDefaults
+from components import SERVICE_OUTPUT_MODALITY, ModelModality, ProviderDefaults
 
 from .base import (
     BaseProvider,
@@ -105,20 +105,6 @@ def effective_input_modalities(config: ProviderConfig) -> frozenset[ModelModalit
     return config.input_modalities & provider_input_modalities(config.service_type, config.provider_name)
 
 
-def providers_for_feature(feature: AiFeature) -> list[str]:
-    definition = AI_FEATURE_BY_ID[feature]
-    service = ServiceType(definition.service)
-    names = providers_supporting(service)
-    names = [name for name in names if definition.required_input_modalities <= provider_input_modalities(service, name)]
-    if feature == AiFeature.voice_design:
-        names = [
-            name
-            for name in names
-            if issubclass(provider := resolve(service, name), TTSProvider) and provider.VOICE_DESIGN_GUIDE is not None
-        ]
-    return names
-
-
 def provider_configuration_defaults() -> dict[str, dict[str, ProviderDefaults]]:
     """端点与协议能力；不包含任何模型或 Token 预算默认值。"""
     result: dict[str, dict[str, ProviderDefaults]] = {}
@@ -126,32 +112,31 @@ def provider_configuration_defaults() -> dict[str, dict[str, ProviderDefaults]]:
         result.setdefault(service.value, {})[name] = ProviderDefaults(
             base_url=cls.DEFAULT_BASE_URL,
             requires_api_key=cls.requires_api_key,
+            supports_voice_design=issubclass(cls, TTSProvider) and cls.VOICE_DESIGN_GUIDE is not None,
             voice_design_model=cls.VOICE_DESIGN_MODEL if issubclass(cls, TTSProvider) else None,
             input_modalities=provider_input_modalities(service, name),
         )
     return result
 
 
-def model_supports_feature(
+def model_supports_service(
     provider_name: str,
-    model_name: str,
-    feature: AiFeature,
+    service: ServiceType | str,
     *,
+    required_modalities: Collection[ModelModality],
     input_modalities: Collection[ModelModality],
     output_modalities: Collection[ModelModality],
 ) -> bool:
-    if provider_name not in providers_for_feature(feature):
+    """卡片与供应商在给定能力下可用：供应商注册该能力且协议、卡片的输入模态覆盖需求，卡片输出模态匹配能力输出。"""
+    svc = ServiceType(service)
+    if provider_name not in providers_supporting(svc):
         return False
-    definition = AI_FEATURE_BY_ID[feature]
-    if not definition.required_input_modalities <= set(input_modalities):
-        return False
-    if SERVICE_OUTPUT_MODALITY[definition.service] not in output_modalities:
-        return False
-    if feature == AiFeature.voice_design:
-        cls = resolve(ServiceType.tts, provider_name)
-        if issubclass(cls, TTSProvider) and cls.VOICE_DESIGN_MODEL is not None:
-            return model_name == cls.VOICE_DESIGN_MODEL
-    return True
+    required = set(required_modalities)
+    return (
+        required <= provider_input_modalities(svc, provider_name)
+        and required <= set(input_modalities)
+        and SERVICE_OUTPUT_MODALITY[svc.value] in output_modalities
+    )
 
 
 def resolve_context_tokens(config: ProviderConfig) -> int:

@@ -4,8 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .ai_features import AI_FEATURE_BY_ID, AiFeature
 from .ai_models import ModelModality
+from .ai_tasks import AI_TASK_BY_ID, AiTaskKey
 
 CAPABILITY_SERVICES = ("llm", "stt", "tts", "image_gen", "video_gen", "embedding")
 
@@ -45,7 +45,9 @@ class CapabilityChains(BaseModel):
     embedding: list[CapabilityCard] = Field(default_factory=list)
 
 
-class FeatureChain(BaseModel):
+class ChainPolicy(BaseModel):
+    """任务内单一能力的调用链与预算；留空继承下一层。"""
+
     model_config = ConfigDict(extra="forbid")
 
     chain: list[UUID] = Field(default_factory=list)
@@ -53,12 +55,18 @@ class FeatureChain(BaseModel):
     total_timeout_seconds: float | None = Field(default=None, gt=0, le=86400, allow_inf_nan=False)
 
 
+class TaskConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chains: dict[str, ChainPolicy] = Field(default_factory=dict)
+
+
 class AIConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     providers: list[ProviderCard] = Field(default_factory=list)
     capabilities: CapabilityChains = Field(default_factory=CapabilityChains)
-    features: dict[AiFeature, FeatureChain] = Field(default_factory=dict)
+    tasks: dict[AiTaskKey, TaskConfig] = Field(default_factory=dict)
 
     def models(self) -> Iterator[tuple[str, CapabilityCard]]:
         for service in CAPABILITY_SERVICES:
@@ -91,14 +99,17 @@ class AIConfig(BaseModel):
                 raise ValueError(f"{service} 模型 {card.model_name} 引用的供应商不存在：{card.provider_id}")
             if service == "image_gen" and provider.provider_type == "local" and card.model_name != "qwen":
                 raise ValueError("本地生图使用固定 Qwen 工作流，不支持自选模型名称")
-        for feature, value in self.features.items():
-            definition = AI_FEATURE_BY_ID[feature]
-            for model_id in value.chain:
-                model = self.find_model(model_id, system)
-                if model is None:
-                    raise ValueError(f"功能 {definition.label} 引用的模型卡片不存在：{model_id}")
-                if model[0] != definition.service:
-                    raise ValueError(f"功能 {definition.label} 只能引用 {definition.service} 模型卡片")
+        for task, value in self.tasks.items():
+            definition = AI_TASK_BY_ID[task]
+            for service, policy in value.chains.items():
+                if service not in definition.services:
+                    raise ValueError(f"任务 {definition.label} 不支持 {service} 能力")
+                for model_id in policy.chain:
+                    model = self.find_model(model_id, system)
+                    if model is None:
+                        raise ValueError(f"任务 {definition.label} 引用的模型卡片不存在：{model_id}")
+                    if model[0] != service:
+                        raise ValueError(f"任务 {definition.label} 的 {service} 链只能引用 {service} 模型卡片")
 
     @model_validator(mode="after")
     def validate_cards(self) -> Self:
@@ -117,11 +128,15 @@ class AIConfig(BaseModel):
                 and card.max_output_tokens > card.context_window
             ):
                 raise ValueError("输出 Token 上限不能超过上下文窗口")
-        for feature, value in self.features.items():
-            if len(value.chain) != len(set(value.chain)):
-                raise ValueError(f"功能 {AI_FEATURE_BY_ID[feature].label} 不能重复引用同一模型卡片")
-            if AI_FEATURE_BY_ID[feature].service == "embedding" and len(value.chain) > 1:
-                raise ValueError("记忆向量只能选择一个模型；失败时使用关键词召回")
+        for task, value in self.tasks.items():
+            definition = AI_TASK_BY_ID[task]
+            for service, policy in value.chains.items():
+                if service not in definition.services:
+                    raise ValueError(f"任务 {definition.label} 不支持 {service} 能力")
+                if len(policy.chain) != len(set(policy.chain)):
+                    raise ValueError(f"任务 {definition.label} 的 {service} 链不能重复引用同一模型卡片")
+                if service == "embedding" and len(policy.chain) > 1:
+                    raise ValueError("记忆向量只能选择一个模型；失败时使用关键词召回")
         return self
 
 
@@ -135,7 +150,7 @@ class AIConfigUpdate(BaseModel):
 
     providers: list[ProviderCardUpdate]
     capabilities: CapabilityChains
-    features: dict[AiFeature, FeatureChain] = Field(default_factory=dict)
+    tasks: dict[AiTaskKey, TaskConfig] = Field(default_factory=dict)
 
 
 class ProviderCardPublic(ProviderCard):
@@ -147,7 +162,7 @@ class AIConfigPublic(BaseModel):
 
     providers: list[ProviderCardPublic] = Field(default_factory=list)
     capabilities: CapabilityChains = Field(default_factory=CapabilityChains)
-    features: dict[AiFeature, FeatureChain] = Field(default_factory=dict)
+    tasks: dict[AiTaskKey, TaskConfig] = Field(default_factory=dict)
 
 
 class ProviderDefaults(BaseModel):
@@ -155,6 +170,7 @@ class ProviderDefaults(BaseModel):
 
     base_url: str
     requires_api_key: bool
+    supports_voice_design: bool = False
     voice_design_model: str | None = None
     input_modalities: frozenset[ModelModality] = frozenset()
 

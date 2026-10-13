@@ -49,7 +49,6 @@ from .path_helpers import append_sane_path_entries, find_bash, find_python, msys
 from .pid import pid_exists
 from .process_tree import terminate_tree
 from .redact import SECRET_PREFIX_RE, masked_lines, redact_sensitive_text
-from .reverse_rpc import call_llm_sync, set_handler, set_main_loop
 from .url_safety import (
     async_is_safe_url,
     check_website_access,
@@ -71,7 +70,6 @@ __all__ = [
     "async_is_safe_url",
     "atomic_replace",
     "call_journal",
-    "call_llm_sync",
     "cfg_bool",
     "cfg_get",
     "cfg_int",
@@ -117,9 +115,7 @@ __all__ = [
     "safe_schedule_threadsafe",
     "sanitize_subprocess_env",
     "set_cancel_event",
-    "set_handler",
     "set_inmemory_config",
-    "set_main_loop",
     "snapshot",
     "strip_ansi",
     "terminate_tree",

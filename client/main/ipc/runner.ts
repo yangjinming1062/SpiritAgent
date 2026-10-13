@@ -5,7 +5,6 @@ import { sleep } from '@runtime'
 
 import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
 import type { CreateRunnerProcessOptions, RunnerProcess } from '../runner/process'
-import type { ReverseRpcOptions } from '../runner/reverse-rpc'
 import type { CreateRunnerWsServerOptions, RunnerWsServer } from '../runner/rpc-ws'
 import { assertGatewayHost } from '../security/ipc-trust'
 import type { BackendSessionPort } from '../shared/backend-port'
@@ -13,7 +12,6 @@ import * as store from '../shared/lib/runner-config-store'
 import { errorMessage, RunnerNotConnectedError, RunnerRpcError, sendToWindow } from '../shared/utils'
 
 export interface RunnerHostOptions {
-  createReverseRpc: (options: ReverseRpcOptions) => (method: string, params?: unknown) => Promise<unknown>
   createRunnerBridge: (options: RunnerBridgeOptions) => RunnerBridge
   createRunnerProcess: (options: CreateRunnerProcessOptions) => RunnerProcess
   createRunnerWsServer: (options: CreateRunnerWsServerOptions) => RunnerWsServer
@@ -111,7 +109,6 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
           repoRoot: process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT || null
         }),
       pushConfig,
-      reverseRpcFactory: options.createReverseRpc,
       wsServerFactory: options.createRunnerWsServer
     })
 
@@ -152,9 +149,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     }
 
     try {
-      const next = await bridge.start({
-        backendSession: options.ensureBackendSession()
-      })
+      const next = await bridge.start()
 
       return { ok: true, status: next }
     } catch (error: unknown) {

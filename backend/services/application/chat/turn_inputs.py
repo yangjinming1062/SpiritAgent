@@ -9,7 +9,7 @@ from components import (
     SETTINGS,
     TEMPERATURE_MAX,
     TEMPERATURE_MIN,
-    AiFeature,
+    AiTaskKey,
     format_day_marker,
     format_local_date_str,
     format_time_anchor,
@@ -42,7 +42,6 @@ from services.domains.conversation import (
     SPECIAL_KIND,
     InferenceDefaults,
     companion_context_content,
-    conversation_ai_feature,
     load_context_messages,
     message_text,
     resolve_preset_meta,
@@ -206,21 +205,21 @@ async def resolve_context_provider_chain(
     user_id: int,
     input_items: list[dict[str, Any]],
     *,
-    feature: AiFeature,
+    task: AiTaskKey,
 ) -> list[ProviderConfig]:
     """仅按本次请求仍携带的媒体选链，包括多模态工具结果。"""
     required = request_input_modalities(input_items)
     chain = await resolve_media_chain(
         db,
         user_id,
-        feature=feature,
+        task=task,
         required_modalities=required,
     )
     if not chain and "audio" in required:
         chain = await resolve_media_chain(
             db,
             user_id,
-            feature=feature,
+            task=task,
             required_modalities=required - {"audio"},
         )
     if not chain:
@@ -342,6 +341,7 @@ async def build_turn_inputs(
     user_settings: dict[str, Any],
     memory_scope: MemoryScope | None,
     *,
+    task: AiTaskKey,
     proactive_memory_query: str = "",
     proactive_memory_embedding: MemoryEmbedding | None = None,
     companion_proactive_turn: bool = False,
@@ -358,12 +358,12 @@ async def build_turn_inputs(
     # 标题只依据文字：多模态行的正文是 part 数组 JSON，附件地址不进标题请求。
     first_user_msg_content = message_text(first_user_msg) if first_user_msg else None
 
-    # 基础链用于估算当前对话窗口；压缩独立解析功能链，实际回合按截断和视频内联后幸存的媒体选链。
+    # 基础链用于估算当前对话窗口；压缩沿所属任务链解析，实际回合按截断和视频内联后幸存的媒体选链。
     llm_chain = await resolve_provider_chain(
         db,
         user_id,
         "llm",
-        feature=conversation_ai_feature(conv, proactive=companion_proactive_turn),
+        task=task,
     )
     if not llm_chain:
         raise MissingLlmConfigError("no provider configured for service 'llm'")
@@ -441,7 +441,7 @@ async def build_turn_inputs(
 
     # 不绑定 session：每次 memory 工具调用各自开 session，连接不跨 LLM 循环持续占用。
     native_memory = (
-        NativeMemory(memory_scope, source=MemorySource("tool", session_id=conv.id)) if memory_scope else None
+        NativeMemory(memory_scope, source=MemorySource("tool", session_id=conv.id), task=task) if memory_scope else None
     )
 
     # Token 估算结合 Responses 权威基线与 CJK 全量/增量估算。
