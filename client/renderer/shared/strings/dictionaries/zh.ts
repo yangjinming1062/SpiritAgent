@@ -893,6 +893,13 @@ export const dict = {
       statsTokens: 'Tokens',
       statsNodeAt: (pct: number) => `节点 ${pct}%`,
 
+      cacheUsageTitle: '最近完成回合 · 缓存命中率',
+      cacheUsagePending: '暂无本次运行的回合统计',
+      cacheUsageUnavailable: '供应商未提供',
+      cacheUsagePartial: '部分数据',
+      cacheUsageTokens: (cached: string, input: string) => `命中 / 输入：${cached} / ${input} Tokens`,
+      cacheUsageRequests: (reported: number, total: number) => `已报告请求：${reported} / ${total}`,
+
       statusHealthy: '上下文空间充裕，对话可以顺畅进行。',
       statusWarning: '上下文逐渐累积，靠近自动压缩阈值，可随时整理。',
       statusCritical: '上下文负荷较高，已达到自动压缩线，建议立即压缩。',

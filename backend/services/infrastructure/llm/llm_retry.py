@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import asdict
 from typing import Any
 
 from components import LLM_RETRY_MIN_TIMEOUT, SETTINGS, get_logger
@@ -26,8 +27,40 @@ from .providers import (
 )
 from .responses import approx_responses_tokens, request_input_modalities
 from .token_budget import request_output_budget
+from .usage import LlmUsageAccumulator, current_usage_accumulator, read_llm_usage
 
 logger = get_logger(__name__)
+
+
+def _record_usage(
+    raw: object,
+    *,
+    config: ProviderConfig,
+    call_id: str,
+    call_started: float,
+    status: str,
+    stream: bool,
+    accumulator: LlmUsageAccumulator | None,
+    feature: str | None,
+) -> None:
+    usage = read_llm_usage(raw)
+    if accumulator is not None:
+        accumulator.add(usage)
+    logger.info(
+        "LLM usage",
+        extra={
+            "call_id": call_id,
+            "provider": config.provider_name,
+            "provider_id": str(config.provider_id),
+            "model": config.model,
+            "model_card_id": str(config.model_card_id),
+            "feature": feature,
+            "status": status,
+            "stream": stream,
+            "latency_ms": int((time.monotonic() - call_started) * 1000),
+            "usage": {**asdict(usage), "cache_hit_rate": usage.cache_hit_rate},
+        },
+    )
 
 
 async def _guarded_stream(
@@ -38,6 +71,9 @@ async def _guarded_stream(
     call_site: str,
     model: str,
     call_started: float,
+    config: ProviderConfig,
+    accumulator: LlmUsageAccumulator | None,
+    feature: str | None,
 ) -> AsyncGenerator[Any]:
     """流式迭代：chunk 间静默期受 idle 超时约束、整流受 budget 总预算约束（httpx read 是按次读超时，不等价）；流中异常分类后以 LLMRuntimeError 抛出；结束时关闭底层流避免连接泄漏到 SDK 池。"""
     loop = asyncio.get_running_loop()
@@ -50,6 +86,7 @@ async def _guarded_stream(
     function_call_count = 0
     first_chunk_at: float | None = None
     error: BaseException | None = None
+    terminal_status: str | None = None
     try:
         while True:
             remaining_total = deadline - loop.time()
@@ -72,13 +109,16 @@ async def _guarded_stream(
                 and getattr(getattr(chunk, "item", None), "type", None) == "function_call"
             ):
                 function_call_count += 1
-            if event_type in {"response.completed", "response.incomplete"}:
+            if event_type in {"response.completed", "response.incomplete", "response.failed"}:
                 response = getattr(chunk, "response", None)
-                usage = getattr(response, "usage", usage)
+                usage = getattr(response, "usage", None) or usage
+                terminal_status = event_type.removeprefix("response.")
                 details = getattr(response, "incomplete_details", None)
                 finish_reason = getattr(details, "reason", None) or getattr(response, "status", None)
             elif (event_usage := getattr(chunk, "usage", None)) is not None:
                 usage = event_usage
+            if event_type == "error":
+                terminal_status = "error"
             yield chunk
     except Exception as exc:
         classified = classify_api_error(exc)
@@ -92,6 +132,23 @@ async def _guarded_stream(
         error = exc
         raise
     finally:
+        # 音视频适配器可能在终态之前获得 Chat 用量，失败时仍保留已报告的数据。
+        usage = usage or getattr(stream, "usage", None)
+        _record_usage(
+            usage,
+            config=config,
+            call_id=call_id,
+            call_started=call_started,
+            status=(
+                "error"
+                if error is not None and not isinstance(error, (asyncio.CancelledError, GeneratorExit))
+                else terminal_status
+                or ("cancelled" if isinstance(error, (asyncio.CancelledError, GeneratorExit)) else "error")
+            ),
+            stream=True,
+            accumulator=accumulator,
+            feature=feature,
+        )
         with contextlib.suppress(Exception):
             await stream.close()
         response_summary: dict[str, Any] | None = None
@@ -105,11 +162,7 @@ async def _guarded_stream(
                 "function_call_count": function_call_count,
             }
             if usage is not None:
-                response_summary["usage"] = {
-                    "input_tokens": getattr(usage, "input_tokens", None),
-                    "output_tokens": getattr(usage, "output_tokens", None),
-                    "total_tokens": getattr(usage, "total_tokens", None),
-                }
+                response_summary["usage"] = asdict(read_llm_usage(usage))
         extras: dict[str, Any] = {"stream": True}
         if first_chunk_at is not None:
             extras["time_to_first_chunk_ms"] = int((first_chunk_at - call_started) * 1000)
@@ -171,6 +224,8 @@ async def call_with_retry(
     # SDK 客户端不携带供应商标签，以 base_url 的 host 标识。
     call_site = client.base_url.host or str(client.base_url)
     call_started = time.monotonic()
+    accumulator = current_usage_accumulator()
+    feature = current_call_feature()
 
     log_event(
         call_id=call_id,
@@ -188,9 +243,29 @@ async def call_with_retry(
 
     try:
         result = await client.responses.create(**create_kwargs, extra_headers={"Idempotency-Key": call_id})
-    except LlmCallBlockedError:
+    except (LlmCallBlockedError, asyncio.CancelledError) as exc:
+        _record_usage(
+            None,
+            config=config,
+            call_id=call_id,
+            call_started=call_started,
+            status="cancelled" if isinstance(exc, asyncio.CancelledError) else "blocked",
+            stream=is_stream,
+            accumulator=accumulator,
+            feature=feature,
+        )
         raise
     except Exception as exc:
+        _record_usage(
+            None,
+            config=config,
+            call_id=call_id,
+            call_started=call_started,
+            status="error",
+            stream=is_stream,
+            accumulator=accumulator,
+            feature=feature,
+        )
         classified = classify_api_error(
             exc,
             approx_tokens=approx_responses_tokens(str(create_kwargs.get("instructions") or ""), input_items),
@@ -223,7 +298,20 @@ async def call_with_retry(
             call_site=call_site,
             model=model,
             call_started=call_started,
+            config=config,
+            accumulator=accumulator,
+            feature=feature,
         )
+    _record_usage(
+        getattr(result, "usage", None),
+        config=config,
+        call_id=call_id,
+        call_started=call_started,
+        status=str(getattr(result, "status", "unknown")),
+        stream=False,
+        accumulator=accumulator,
+        feature=feature,
+    )
     log_event(
         call_id=call_id,
         service="llm",

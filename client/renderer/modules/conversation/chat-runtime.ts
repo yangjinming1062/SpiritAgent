@@ -9,6 +9,7 @@ import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type {
   ActiveTurnSnapshot,
+  CacheUsageSummary,
   ChatAttachment,
   ChatMediaItem,
   CompanionBubble,
@@ -312,6 +313,37 @@ export function createConversationRuntime(sessionId: string | null) {
     contextLimit: 0
   })
 
+  const $sessionCacheUsage = atom<CacheUsageSummary | null>(null)
+
+  function setSessionCacheUsage(usage?: CacheUsageSummary): void {
+    const validCount = (value: unknown): value is number =>
+      typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+    if (
+      !usage ||
+      !validCount(usage.request_count) ||
+      !validCount(usage.reported_request_count) ||
+      usage.reported_request_count > usage.request_count ||
+      (usage.reported_request_count === 0
+        ? usage.input_tokens !== null || usage.cached_input_tokens !== null || usage.cache_hit_rate !== null
+        : !validCount(usage.input_tokens) ||
+          !validCount(usage.cached_input_tokens) ||
+          usage.cached_input_tokens > usage.input_tokens ||
+          (usage.input_tokens === 0
+            ? usage.cache_hit_rate !== null
+            : typeof usage.cache_hit_rate !== 'number' ||
+              !Number.isFinite(usage.cache_hit_rate) ||
+              usage.cache_hit_rate < 0 ||
+              usage.cache_hit_rate > 1))
+    ) {
+      $sessionCacheUsage.set(null)
+
+      return
+    }
+
+    $sessionCacheUsage.set(usage)
+  }
+
   function setSessionContextUsage(usage: Partial<SessionContextUsage>): void {
     const current = $sessionContextUsage.get()
     const promptTokens = usage.promptTokens ?? current.promptTokens
@@ -334,6 +366,7 @@ export function createConversationRuntime(sessionId: string | null) {
   }
 
   function resetSessionContextUsage(contextLimit?: null | number, totalTokens = 0): void {
+    $sessionCacheUsage.set(null)
     $sessionContextUsage.set({
       promptTokens: 0,
       completionTokens: 0,
@@ -1788,6 +1821,7 @@ export function createConversationRuntime(sessionId: string | null) {
   // 重置消息列表与 bodies，不触碰 $chatSessionId 与 pending batch。
   function resetChatMessages(): void {
     historyReplacementRevision++
+    $sessionCacheUsage.set(null)
     mediaUpdates.clear()
     inflightReply = null
     conversationVoiceSink().cancel($chatSessionId.get())
@@ -1935,6 +1969,8 @@ export function createConversationRuntime(sessionId: string | null) {
     $sessionContextUsage,
     setSessionContextUsage,
     resetSessionContextUsage,
+    $sessionCacheUsage,
+    setSessionCacheUsage,
     hydrateEditedChatMessages,
     hydrateChatMessages,
     pushProactiveMessage,

@@ -43,8 +43,10 @@ from services.infrastructure.assets import asset_write_context, dated_asset_dire
 from services.infrastructure.llm import (
     ChatProvider,
     LLMRuntimeError,
+    LlmUsageAccumulator,
     MissingLlmConfigError,
     UserLlmConfig,
+    collect_llm_usage,
     execute_media_with_fallback,
     generation_timeout_scope,
     request_input_modalities,
@@ -458,6 +460,7 @@ async def _run_chat_turn(
             await emitter.send_json({"type": "message.start"})
         base_instructions = current_context["instructions"]
         audio_transcripts: dict[str, str | Exception] = {}
+        turn_usage = LlmUsageAccumulator()
         for step in range(max_loop_turns):
             instruction_parts = [base_instructions]
             action_tools_not_ready: frozenset[str] = frozenset()
@@ -532,31 +535,32 @@ async def _run_chat_turn(
                 reply_format_error = None
                 while True:
                     try:
-                        result = await _generate_llm_response(
-                            emitter,
-                            provider.config.model,
-                            call_context,
-                            active_schemas,
-                            resolve_context_tokens(provider.config),
-                            provider,
-                            delivery=delivery,
-                            on_response_started=set_response_started,
-                            reasoning_effort=inference.reasoning_effort,
-                            temperature=inference.temperature,
-                            turn_request=req.message.content,
-                            user_local_tz=inputs.user_local_tz,
-                            lang=inputs.language,
-                            speech_config=inputs.speech_config if companion_reply else None,
-                            reply_preference=inputs.response_preference if companion_reply else None,
-                            reply_persona=inputs.reply_persona,
-                            voice_id=inputs.speech_voice,
-                            allow_silence=ephemeral and companion_reply,
-                            reply_format_error=reply_format_error,
-                            media_turn=media_turn,
-                            pace_bubbles=has_viewer and not headless,
-                            final_reply_only=reply_only,
-                            allow_voice_fallback=not retry_available,
-                        )
+                        with collect_llm_usage(turn_usage):
+                            result = await _generate_llm_response(
+                                emitter,
+                                provider.config.model,
+                                call_context,
+                                active_schemas,
+                                resolve_context_tokens(provider.config),
+                                provider,
+                                delivery=delivery,
+                                on_response_started=set_response_started,
+                                reasoning_effort=inference.reasoning_effort,
+                                temperature=inference.temperature,
+                                turn_request=req.message.content,
+                                user_local_tz=inputs.user_local_tz,
+                                lang=inputs.language,
+                                speech_config=inputs.speech_config if companion_reply else None,
+                                reply_preference=inputs.response_preference if companion_reply else None,
+                                reply_persona=inputs.reply_persona,
+                                voice_id=inputs.speech_voice,
+                                allow_silence=ephemeral and companion_reply,
+                                reply_format_error=reply_format_error,
+                                media_turn=media_turn,
+                                pace_bubbles=has_viewer and not headless,
+                                final_reply_only=reply_only,
+                                allow_voice_fallback=not retry_available,
+                            )
                         current_context["input"].extend(call_context["input"][input_length:])
                         return result
                     except _IncompleteResponseError as exc:
@@ -631,6 +635,7 @@ async def _run_chat_turn(
                     memory_scope=memory_scope,
                     media=None if companion_reply else media_turn.text_reply_media(),
                     turn_reasoning="\n\n".join(turn_reasoning_parts) or None,
+                    cache_usage=turn_usage.summary(),
                     persist=not ephemeral,
                     track_task=track_task,
                 )

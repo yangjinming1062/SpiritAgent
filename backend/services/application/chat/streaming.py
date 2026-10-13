@@ -114,7 +114,7 @@ def _usage_payload(usage: Any) -> dict[str, Any]:
         "output_tokens": usage.output_tokens,
     }
     if details := getattr(usage, "output_tokens_details", None):
-        payload["reasoning_tokens"] = getattr(details, "reasoning_tokens", 0)
+        payload["reasoning_tokens"] = getattr(details, "reasoning_tokens", None)
     return payload
 
 

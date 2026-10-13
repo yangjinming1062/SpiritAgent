@@ -14,7 +14,14 @@ import {
 } from '@/modules/conversation'
 import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
-import type { ChatMediaItem, CompanionBubble, SessionMessage, SessionResumeResponse, UndoAnchor } from '@protocol'
+import type {
+  CacheUsageSummary,
+  ChatMediaItem,
+  CompanionBubble,
+  SessionMessage,
+  SessionResumeResponse,
+  UndoAnchor
+} from '@protocol'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
@@ -49,6 +56,7 @@ export function handleConversationEvent(
     hydrateEditedChatMessages,
     markAssistantTerminal,
     pushStatusPill,
+    setSessionCacheUsage,
     setSessionContextUsage,
     setTurnHadBubbleBreak,
     submitPendingBatch,
@@ -284,6 +292,7 @@ export function handleConversationEvent(
     case 'message.complete': {
       const payload = decodePayload<{
         bubbles?: CompanionBubble[]
+        cache_usage?: CacheUsageSummary
         media?: ChatMediaItem[]
         message_id?: number
         reasoning?: string
@@ -299,6 +308,8 @@ export function handleConversationEvent(
       const replyExists =
         payload.message_id !== undefined &&
         runtime.$chatMessageList.get().some(item => item.backendMessageId === payload.message_id)
+
+      setSessionCacheUsage(payload.cache_usage)
 
       if (payload.usage) {
         setSessionContextUsage({

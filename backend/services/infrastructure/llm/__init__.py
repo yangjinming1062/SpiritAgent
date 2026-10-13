@@ -86,11 +86,15 @@ from .tts_service import (
     resolve_reply_voice,
     synthesize_speech,
 )
+from .usage import CacheUsageSummary, LlmUsageAccumulator, collect_llm_usage
 from .user_config import UserLlmConfig, load_user_llm_config, resolve_user_llm_config
 from .voice_catalog import voices_for_provider
 from .wait_budget import accepted_image_job_wait, generation_timeout_scope
 
 __all__ = [
+    "CacheUsageSummary",
+    "LlmUsageAccumulator",
+    "collect_llm_usage",
     "request_output_budget",
     "discover_models",
     "TTSProvider",

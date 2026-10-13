@@ -952,6 +952,13 @@ export const dict: Dictionary = {
       statsTokens: 'Tokens',
       statsNodeAt: (pct: number) => `Threshold ${pct}%`,
 
+      cacheUsageTitle: 'Last completed turn · cache hit rate',
+      cacheUsagePending: 'No turn statistics in this run yet',
+      cacheUsageUnavailable: 'Not provided by the provider',
+      cacheUsagePartial: 'Partial data',
+      cacheUsageTokens: (cached: string, input: string) => `Cached / input: ${cached} / ${input} tokens`,
+      cacheUsageRequests: (reported: number, total: number) => `Reported requests: ${reported} / ${total}`,
+
       statusHealthy: 'Plenty of context headroom for smooth conversation.',
       statusWarning: 'Context is filling up — nearing the auto-compress threshold; tidy anytime.',
       statusCritical: 'Context is heavy — past the auto-compress line; compress now.',

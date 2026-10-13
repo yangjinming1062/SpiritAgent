@@ -53,6 +53,16 @@ export interface ReplyAudio {
   url: string
   duration: number
 }
+
+/** 最近成功回合的直接模型调用汇总；Token 合计仅包含有效报告缓存用量的请求。 */
+export interface CacheUsageSummary {
+  request_count: number
+  reported_request_count: number
+  input_tokens: number | null
+  cached_input_tokens: number | null
+  cache_hit_rate: number | null
+}
+
 export interface CompanionMediaBubble {
   type: 'image' | 'video'
   media_id: string

@@ -7,6 +7,7 @@ from typing import Any, Literal, Self
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
+from openai.types.completion_usage import CompletionUsage
 from openai.types.responses import Response, ResponseOutputItem
 
 from ._companion_format import chat_completion_response
@@ -146,6 +147,7 @@ class AudioChatStream:
         self._stream = stream
         self._model = model
         self._iterator = self._events()
+        self.usage: CompletionUsage | None = None
 
     def __aiter__(self) -> Self:
         return self
@@ -170,6 +172,7 @@ class AudioChatStream:
                 response_id = chunk.id or response_id
                 created = chunk.created or created
                 usage = chunk.usage or usage
+                self.usage = usage
                 if first:
                     first = False
                     yield AudioResponseEvent("response.created")

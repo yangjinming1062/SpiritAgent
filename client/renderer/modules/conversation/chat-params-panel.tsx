@@ -224,6 +224,7 @@ export function ChatParamsPanel({
 
   const {
     $chatSessionId,
+    $sessionCacheUsage,
     $sessionSettings,
     hydrateChatMessages,
     hydrateSessionSettings,
@@ -233,6 +234,7 @@ export function ChatParamsPanel({
 
   const dict = useStrings()
   const params = dict.chat.params
+  const cacheUsage = useStore($sessionCacheUsage)
   const settings = useStore($sessionSettings)
   const gateway = useStore($gateway)
   const gatewayState = useStore($gatewayState)
@@ -493,6 +495,39 @@ export function ChatParamsPanel({
               <span className="font-mono text-xs font-semibold text-strong">{contextStatus.pct.toFixed(1)}%</span>
               <span className="text-[9px] text-faint">{params.statsNodeAt(Math.round(thresholdPct))}</span>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5 rounded-xl border border-line-hairline bg-fill-faint p-2.5">
+            <div className="flex items-center justify-between gap-2 text-[10px] text-muted">
+              <span>{params.cacheUsageTitle}</span>
+              {cacheUsage && cacheUsage.reported_request_count > 0 && (
+                <span className="font-mono text-xs font-semibold text-strong">
+                  {cacheUsage.cache_hit_rate === null ? '—' : `${(cacheUsage.cache_hit_rate * 100).toFixed(1)}%`}
+                </span>
+              )}
+            </div>
+            {!cacheUsage || cacheUsage.reported_request_count === 0 ? (
+              <span className="text-[11px] text-faint">
+                {cacheUsage ? params.cacheUsageUnavailable : params.cacheUsagePending}
+              </span>
+            ) : (
+              <>
+                <span className="text-[11px] text-body">
+                  {params.cacheUsageTokens(
+                    cacheUsage.cached_input_tokens?.toLocaleString() ?? '—',
+                    cacheUsage.input_tokens?.toLocaleString() ?? '—'
+                  )}
+                </span>
+                {cacheUsage.reported_request_count < cacheUsage.request_count && (
+                  <span className="text-[10px] text-muted">{params.cacheUsagePartial}</span>
+                )}
+              </>
+            )}
+            {cacheUsage && (
+              <span className="text-[10px] text-faint">
+                {params.cacheUsageRequests(cacheUsage.reported_request_count, cacheUsage.request_count)}
+              </span>
+            )}
           </div>
 
           <DraggableThresholdBar

@@ -120,12 +120,14 @@ class JsonRpcEmitter:
             }
         if raw_type == "message.complete":
             usage = data.get("usage")
+            cache_usage = data.get("cache_usage")
             return {
                 **({"text": data["text"]} if "text" in data else {}),
                 **({"bubbles": data["bubbles"]} if isinstance(data.get("bubbles"), list) else {}),
                 **({"reasoning": data["reasoning"]} if data.get("reasoning") else {}),
                 **({"media": data["media"]} if isinstance(data.get("media"), list) else {}),
                 **({"usage": usage} if isinstance(usage, dict) else {}),
+                **({"cache_usage": cache_usage} if isinstance(cache_usage, dict) else {}),
                 **({"message_id": data["message_id"]} if isinstance(data.get("message_id"), int) else {}),
             }
         if raw_type == "message.persisted":

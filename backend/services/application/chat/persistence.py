@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Coroutine
+from dataclasses import asdict
 from typing import Any, Literal
 
 from components import (
@@ -29,7 +30,7 @@ from services.domains.conversation import (
     synthesize_reply_audio,
 )
 from services.domains.media import ensure_audio_transcripts, prune_media_in_range
-from services.infrastructure.llm import message_to_response_items
+from services.infrastructure.llm import CacheUsageSummary, message_to_response_items
 from services.infrastructure.tool_runtime import REGISTRY
 
 from .background_review import run_background_memory_review
@@ -270,6 +271,7 @@ async def _persist_assistant_no_tool_turn(
     memory_scope: MemoryScope | None,
     media: list[dict[str, str]] | None,
     turn_reasoning: str | None,
+    cache_usage: CacheUsageSummary,
     persist: bool,
     track_task: TrackTask | None,
 ) -> None:
@@ -377,6 +379,7 @@ async def _persist_assistant_no_tool_turn(
             **({"reasoning": turn_reasoning} if turn_reasoning else {}),
             **({"media": client_media_entries(media)} if media else {}),
             **({"usage": result.final_usage_payload} if result.final_usage_payload else {}),
+            "cache_usage": asdict(cache_usage),
             **({"message_id": assistant_message_id} if assistant_message_id is not None else {}),
         },
     )

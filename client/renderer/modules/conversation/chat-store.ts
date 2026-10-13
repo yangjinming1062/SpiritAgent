@@ -272,6 +272,8 @@ export function setChatSession(id: string | null): void {
 
   if (id !== previous) {
     conversationVoiceSink().cancel(previous, 'selection')
+    runtimes.get(previous)?.setSessionCacheUsage()
+    runtimes.get(id)?.setSessionCacheUsage()
   }
 
   getConversationRuntime(id)

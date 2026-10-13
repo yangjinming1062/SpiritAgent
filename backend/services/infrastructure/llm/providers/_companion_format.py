@@ -3,7 +3,10 @@ from typing import Any, Literal
 
 from openai import APIStatusError, AsyncOpenAI
 from openai.types.chat import ChatCompletion
-from openai.types.responses import Response
+from openai.types.responses import Response, ResponseUsage
+from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
+
+from ..usage import read_llm_usage
 
 
 class ChatSchemaResponsesClient:
@@ -185,6 +188,7 @@ def chat_completion_response(completion: ChatCompletion) -> Response:
             },
         )
     usage = completion.usage
+    parsed_usage = read_llm_usage(usage)
     return Response.model_validate(
         {
             "id": completion.id,
@@ -197,18 +201,19 @@ def chat_completion_response(completion: ChatCompletion) -> Response:
             "tool_choice": "none",
             "tools": [],
             "output": output,
-            "usage": {
-                "input_tokens": usage.prompt_tokens,
-                "output_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens,
-                "input_tokens_details": {
-                    "cached_tokens": getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0,
-                    "cache_write_tokens": getattr(usage.prompt_tokens_details, "cache_write_tokens", 0) or 0,
-                },
-                "output_tokens_details": {
-                    "reasoning_tokens": getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0,
-                },
-            }
+            # SDK 声明详情为必填整数，但兼容供应商可能省略；不能用零冒充未提供的数据。
+            "usage": ResponseUsage.model_construct(
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                input_tokens_details=InputTokensDetails.model_construct(
+                    cached_tokens=parsed_usage.cached_input_tokens,
+                    cache_write_tokens=parsed_usage.cache_write_tokens,
+                ),
+                output_tokens_details=OutputTokensDetails.model_construct(
+                    reasoning_tokens=parsed_usage.reasoning_tokens,
+                ),
+            )
             if usage
             else None,
         },

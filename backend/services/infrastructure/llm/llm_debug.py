@@ -1,7 +1,10 @@
 import uuid
+from dataclasses import asdict
 from typing import Any
 
 from components import SETTINGS, get_logger
+
+from .usage import read_llm_usage
 
 _debug_logger = get_logger("llm.debug")
 
@@ -95,13 +98,7 @@ def summarize_llm_response(response: Any) -> dict[str, Any] | None:
     if details := getattr(response, "incomplete_details", None):
         out["incomplete_reason"] = getattr(details, "reason", None)
     if usage := getattr(response, "usage", None):
-        out["usage"] = {
-            "input_tokens": getattr(usage, "input_tokens", None),
-            "output_tokens": getattr(usage, "output_tokens", None),
-            "total_tokens": getattr(usage, "total_tokens", None),
-        }
-        if details := getattr(usage, "output_tokens_details", None):
-            out["usage"]["reasoning_tokens"] = getattr(details, "reasoning_tokens", None)
+        out["usage"] = asdict(read_llm_usage(usage))
     return out
 
 
