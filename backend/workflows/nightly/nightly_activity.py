@@ -13,6 +13,7 @@ from features.configuration.settings.values import get_user_setting
 from features.conversation.evidence import OriginalMessageSnapshot, nightly_messages, nightly_user_message_count
 from features.memory.memory_admin import list_memories
 from features.memory.memory_bootstrap import read_user_profile
+from features.memory.memory_format import format_memory_record
 from features.memory.memory_narratives import load_companion_reflection, narrative_date, save_companion_reflection
 from features.memory.memory_review import review_memories
 from features.memory.memory_store import backfill_memory_embeddings, store_slotted_memory
@@ -343,8 +344,16 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         "today_msg_count": today_msg_count,
         "seven_day_avg": round(past_7_count / 7.0, 2),
     }
-    contextual_memories = {str(r.id): f"[{r.basis}] {r.content}" for r in recall_rows if r.usage == "contextual"}
-    background_memories = {str(r.id): r.content for r in recall_rows if r.usage == "background"}
+    contextual_memories = {
+        str(r.id): format_memory_record(r.content, r.basis, r.context, language=user_language)
+        for r in recall_rows
+        if r.usage == "contextual"
+    }
+    background_memories = {
+        str(r.id): format_memory_record(r.content, r.basis, r.context, language=user_language)
+        for r in recall_rows
+        if r.usage == "background"
+    }
 
     action_results: dict[str, ActionExecutionResult] = {}
     if user.nightly_activity_enabled and in_nightly_window(utc_now(), ZoneInfo(tz_str)):

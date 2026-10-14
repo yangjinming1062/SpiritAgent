@@ -21,7 +21,14 @@ from features.memory.prompts import (
 _SLOT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
 
 
-def _format_record(content: str, basis: str, context: str | None, language: str, local_date: str | None = None) -> str:
+def format_memory_record(
+    content: str,
+    basis: str,
+    context: str | None,
+    *,
+    language: str = DEFAULT_LANGUAGE,
+    local_date: str | None = None,
+) -> str:
     """显示依据、话题或所属日期，隐藏内部命名空间。"""
     labels = MEMORY_BASIS_LABELS[resolve_language(language)]
     parts = [labels.get(basis, basis)]
@@ -56,7 +63,7 @@ async def format_memories_block(db: AsyncSession, scope: MemoryScope, *, languag
             )
         ).all(),
     )
-    return "\n".join(_format_record(r.content, r.basis, r.context, language) for r in rows)
+    return "\n".join(format_memory_record(r.content, r.basis, r.context, language=language) for r in rows)
 
 
 async def format_background_memory_block(
@@ -85,7 +92,7 @@ async def format_background_memory_block(
     return (
         resolve_prompt_text(BACKGROUND_MEMORY_LABELS_TEXTS, language)
         + "\n"
-        + "\n".join(_format_record(r.content, r.basis, r.context, language) for r in rows)
+        + "\n".join(format_memory_record(r.content, r.basis, r.context, language=language) for r in rows)
     )
 
 
@@ -95,7 +102,10 @@ def format_proactive_memory_block(memories: list[MemoryRecallResult], *, languag
     return (
         resolve_prompt_text(PROACTIVE_MEMORY_LABELS_TEXTS, language)
         + "\n"
-        + "\n".join(_format_record(m.content, m.basis, m.context, language, m.local_date) for m in memories)
+        + "\n".join(
+            format_memory_record(m.content, m.basis, m.context, language=language, local_date=m.local_date)
+            for m in memories
+        )
     )
 
 
@@ -111,5 +121,11 @@ async def format_companion_reflection_block(
     return (
         resolve_prompt_text(COMPANION_REFLECTION_LABELS, language)
         + "\n"
-        + _format_record(row.content, row.basis, row.context, language, narrative_date(row.context, row.source_refs))
+        + format_memory_record(
+            row.content,
+            row.basis,
+            row.context,
+            language=language,
+            local_date=narrative_date(row.context, row.source_refs),
+        )
     )
