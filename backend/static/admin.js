@@ -2054,7 +2054,7 @@ async function saveSystemSettingsForm() {
     finally { settingsSaving = false; $('#panel-settings').inert = false; updateSaveActions(); syncXhsLoginVisibility(); }
 }
 
-const xhsLogin = { revision: 0, controller: null, pollTimer: null, expiryTimer: null, image: null, sessionId: null, expiresAt: 0, busy: false, status: 'unchecked', message: '尚未检查登录状态', error: '', verificationError: '' };
+const xhsLogin = { revision: 0, controller: null, pollTimer: null, expiryTimer: null, image: null, sessionId: null, expiresAt: 0, busy: false, status: 'unchecked', message: '尚未检查登录状态', error: '', verificationError: '', sourceErrors: 0 };
 
 function xhsConfigHasDraft() {
     return settingsLoaded && (
@@ -2076,17 +2076,18 @@ function renderXhsLogin() {
     const draft = xhsConfigHasDraft();
     const enabled = settingsLoaded && hasAddress && !draft && !settingsSaving && xhsLoginViewVisible();
     const status = $('#xhsLoginStatus');
-    const labels = { logged_in: '已登录', awaiting_scan: '等待扫码', sms_required: '等待短信验证', verification_required: '需要其他验证', expired: '已到期' };
+    const labels = { logged_in: '已登录', awaiting_scan: '等待扫码', sms_required: '等待短信验证', verifying: '正在验证', verification_required: '需要其他验证', expired: '已到期' };
     status.textContent = labels[xhsLogin.status] || (hasAddress ? '待检查' : '未配置');
     status.className = 'pill pill--' + (xhsLogin.status === 'logged_in' ? 'green' : xhsLogin.image ? 'amber' : 'muted');
     $('#xhsLoginHint').textContent = draft ? '服务地址或令牌有未保存的修改，请先保存后再操作。'
-        : !hasAddress ? '请先填写并保存小红书服务地址，再获取登录二维码。' : xhsLogin.message;
+        : !hasAddress ? '请先填写并保存小红书服务地址，再获取登录二维码。'
+            : xhsLogin.sourceErrors >= 3 ? '连续检查失败，已暂停自动检查；可点击“检查登录状态”重试。' : xhsLogin.message;
     $('#xhsQrButton').disabled = !enabled || xhsLogin.busy;
     $('#xhsQrButton').textContent = xhsLogin.busy ? '正在处理…' : xhsLogin.image || xhsLogin.status === 'expired' ? '刷新二维码' : '获取登录二维码';
     $('#xhsStatusButton').disabled = !enabled || xhsLogin.busy;
     $('#xhsClearButton').disabled = !enabled || xhsLogin.busy;
     $('#xhsStopButton').hidden = !xhsLogin.image && !xhsLogin.busy;
-    $('#xhsQrRegion').hidden = !xhsLogin.image || ['sms_required', 'verification_required'].includes(xhsLogin.status);
+    $('#xhsQrRegion').hidden = !xhsLogin.image || ['sms_required', 'verifying', 'verification_required'].includes(xhsLogin.status);
     const image = $('#xhsQrImage');
     const secondsLeft = Math.max(0, Math.ceil((xhsLogin.expiresAt - Date.now()) / 1000));
     if (xhsLogin.image) {
@@ -2120,6 +2121,7 @@ function stopXhsLogin(message = '已停止本页面登录检查，可重新检�
     xhsLogin.busy = false;
     xhsLogin.error = '';
     xhsLogin.verificationError = '';
+    xhsLogin.sourceErrors = 0;
     const code = $('#xhsVerificationCode');
     if (code) code.value = '';
     if (message) { xhsLogin.status = 'unchecked'; xhsLogin.message = message; }
@@ -2145,15 +2147,19 @@ async function xhsLoginRequest(path, { method = 'GET', body, polling = false } =
     const controller = new AbortController();
     xhsLogin.controller = controller;
     xhsLogin.busy = !polling;
-    if (!polling) xhsLogin.error = '';
+    if (!polling) xhsLogin.sourceErrors = 0;
     renderXhsLogin();
     const current = () => xhsLogin.controller === controller && xhsLogin.revision === revision && getToken() === token && xhsLoginViewVisible() && !xhsConfigHasDraft();
     try {
         const response = await apiFetch(`/api/admin/social/xiaohongshu/login${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}), signal: controller.signal, cache: 'no-store' });
         const result = await response.json();
+        if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('服务返回的登录状态无法读取。');
         return current() ? result : null;
     } catch (error) {
-        if (current() && error.name !== 'AbortError') xhsLogin.error = error.message || '小红书登录操作失败';
+        if (current() && error.name !== 'AbortError') {
+            xhsLogin.error = error.message || '小红书登录操作失败';
+            xhsLogin.sourceErrors++;
+        }
         return null;
     } finally {
         if (xhsLogin.controller === controller) { xhsLogin.controller = null; xhsLogin.busy = false; renderXhsLogin(); }
@@ -2165,10 +2171,10 @@ function armXhsQrTimers() {
     clearTimeout(xhsLogin.expiryTimer);
     if (!xhsLogin.image || !xhsLoginViewVisible()) return;
     const revision = xhsLogin.revision;
-    if (xhsLogin.status !== 'verification_required' && !xhsLogin.error) xhsLogin.pollTimer = setTimeout(async () => {
+    if (xhsLogin.status !== 'verification_required' && xhsLogin.sourceErrors < 3) xhsLogin.pollTimer = setTimeout(async () => {
         if (revision !== xhsLogin.revision || !xhsLogin.image || !xhsLoginViewVisible()) return;
         await checkXhsLogin(true);
-        if (revision === xhsLogin.revision && xhsLogin.image && !xhsLogin.error) armXhsQrTimers();
+        if (revision === xhsLogin.revision && xhsLogin.image) armXhsQrTimers();
     }, 3000);
     const tick = () => {
         if (revision !== xhsLogin.revision || !xhsLogin.image || !xhsLoginViewVisible()) return;
@@ -2212,6 +2218,7 @@ async function startXhsQrLogin() {
 function applyXhsLoginStatus(result) {
     if (typeof result.configured !== 'boolean' || typeof result.is_logged_in !== 'boolean') {
         xhsLogin.error = '服务返回的登录状态无法读取。';
+        xhsLogin.sourceErrors++;
     } else if (result.is_logged_in) {
         stopXhsLogin();
         xhsLogin.status = 'logged_in';
@@ -2221,13 +2228,15 @@ function applyXhsLoginStatus(result) {
         xhsLogin.message = '服务尚未配置，请保存服务地址后重试。';
     } else if (xhsLogin.sessionId) {
         const expiresAt = Date.parse(result.expires_at);
-        if (result.session_id !== xhsLogin.sessionId || !['awaiting_scan', 'sms_required', 'verification_required', 'expired'].includes(result.state) || !Number.isFinite(expiresAt)) {
+        if (result.session_id !== xhsLogin.sessionId || !['awaiting_scan', 'sms_required', 'verifying', 'verification_required', 'expired'].includes(result.state) || !Number.isFinite(expiresAt)) {
             xhsLogin.error = '服务返回的登录验证状态无法读取，请刷新二维码重试。';
+            xhsLogin.sourceErrors++;
         } else if (result.state === 'expired' || expiresAt <= Date.now()) {
             stopXhsLogin();
             xhsLogin.status = 'expired';
             xhsLogin.message = '本次登录验证已到期，请刷新二维码后重新扫码。';
         } else {
+            xhsLogin.sourceErrors = 0;
             xhsLogin.expiresAt = Math.min(xhsLogin.expiresAt, expiresAt);
             xhsLogin.status = result.state;
             if (result.state === 'sms_required') {
@@ -2236,13 +2245,17 @@ function applyXhsLoginStatus(result) {
             } else {
                 $('#xhsVerificationCode').value = '';
                 xhsLogin.verificationError = '';
+                if (result.state === 'verifying') xhsLogin.error = '';
                 xhsLogin.message = result.state === 'verification_required' ? '本次登录需要其他安全验证，当前采集服务暂不支持这类验证；请在小红书中完成验证后重新登录。'
+                    : result.state === 'verifying' ? '平台正在处理本次登录验证，请稍候；本页面会继续检查登录结果。'
                     : '尚未完成扫码，请使用小红书 App 扫描本次二维码。';
             }
         }
     } else if (xhsLogin.image) {
+        xhsLogin.sourceErrors = 0;
         xhsLogin.message = '当前采集服务不支持在管理页提交短信验证码；如收到验证码，请先升级采集服务。';
     } else {
+        xhsLogin.sourceErrors = 0;
         xhsLogin.status = 'unchecked';
         xhsLogin.message = '采集账号尚未登录，可获取二维码进行登录。';
     }
@@ -2252,9 +2265,8 @@ function applyXhsLoginStatus(result) {
 async function checkXhsLogin(polling = false) {
     const path = '/status' + (xhsLogin.sessionId ? '?session_id=' + encodeURIComponent(xhsLogin.sessionId) : '');
     const result = await xhsLoginRequest(path, { polling });
-    if (!result) return;
-    applyXhsLoginStatus(result);
-    if (!polling && xhsLogin.image && !xhsLogin.error) armXhsQrTimers();
+    if (result) applyXhsLoginStatus(result);
+    if (!polling && xhsLogin.image) armXhsQrTimers();
 }
 
 async function submitXhsVerification(event) {

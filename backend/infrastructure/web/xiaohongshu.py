@@ -24,8 +24,14 @@ _MAX_RESPONSE_BYTES = 1500000
 _MAX_QR_BYTES = 512000
 _TIMEOUT_SECONDS = 60
 _SESSION_ID_PATTERN = r"^[A-Za-z0-9_-]{16,96}$"
+_LOGIN_FAILURE_REASONS = {
+    "LOGIN_PAGE_CHECK_FAILED": "login_page_check_failed",
+    "LOGIN_CODE_INPUT_FAILED": "login_code_input_failed",
+    "LOGIN_CONFIRM_BUTTON_FAILED": "login_confirm_button_failed",
+    "LOGIN_COOKIE_SAVE_FAILED": "login_cookie_save_failed",
+}
 
-LoginState = Literal["awaiting_scan", "sms_required", "verification_required", "logged_in", "expired"]
+LoginState = Literal["awaiting_scan", "sms_required", "verifying", "verification_required", "logged_in", "expired"]
 
 
 class XhsLoginStatus(BaseModel):
@@ -169,25 +175,7 @@ class XiaohongshuServiceClient:
                         params=params,
                         **({"json": payload} if payload is not None else {}),
                     ) as response:
-                        if not 200 <= response.status_code < 300:
-                            raise SocialSourceError(
-                                "Xiaohongshu service rejected the operation",
-                                code=response.status_code,
-                                reason=(
-                                    "verification_unavailable"
-                                    if response.status_code == 404
-                                    and path in {"/api/v1/login/session", "/api/v1/login/verification"}
-                                    else "session_expired"
-                                    if response.status_code == 410
-                                    else "session_conflict"
-                                    if response.status_code == 409
-                                    else "login_required"
-                                    if response.status_code in {401, 403}
-                                    else "rate_limited"
-                                    if response.status_code == 429
-                                    else "source_failed"
-                                ),
-                            )
+                        status_code = response.status_code
                         body = bytearray()
                         async for chunk in response.aiter_bytes():
                             if len(body) + len(chunk) > _MAX_RESPONSE_BYTES:
@@ -197,7 +185,16 @@ class XiaohongshuServiceClient:
                                     reason="response_invalid",
                                 )
                             body.extend(chunk)
-            raw = json.loads(body)
+            try:
+                raw = json.loads(body)
+            except (ValueError, UnicodeError, RecursionError):
+                if 200 <= status_code < 300:
+                    raise SocialSourceError(
+                        "Xiaohongshu service response is invalid",
+                        code=422,
+                        reason="response_invalid",
+                    ) from None
+                raw = None
         except (httpx.HTTPError, TimeoutError):
             raise SocialSourceError("Xiaohongshu service is unavailable", reason="network_error") from None
         except (ValueError, UnicodeError, RecursionError):
@@ -206,6 +203,28 @@ class XiaohongshuServiceClient:
                 code=422,
                 reason="response_invalid",
             ) from None
+        if not 200 <= status_code < 300:
+            reason = (
+                "verification_unavailable"
+                if status_code == 404 and path in {"/api/v1/login/session", "/api/v1/login/verification"}
+                else "session_expired"
+                if status_code == 410
+                else "session_conflict"
+                if status_code == 409
+                else "login_required"
+                if status_code in {401, 403}
+                else "rate_limited"
+                if status_code == 429
+                else "source_failed"
+            )
+            if (
+                status_code == 502
+                and (method, path) in {("GET", "/api/v1/login/session"), ("POST", "/api/v1/login/verification")}
+                and isinstance(raw, dict)
+                and isinstance(raw.get("code"), str)
+            ):
+                reason = _LOGIN_FAILURE_REASONS.get(raw["code"], reason)
+            raise SocialSourceError("Xiaohongshu service rejected the operation", code=status_code, reason=reason)
         if not isinstance(raw, dict) or raw.get("success") is not True or not isinstance(raw.get("data"), dict):
             raise SocialSourceError(
                 "Xiaohongshu service returned an invalid result",

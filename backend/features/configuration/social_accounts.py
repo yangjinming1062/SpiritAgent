@@ -30,13 +30,18 @@ def _client() -> XiaohongshuServiceClient:
 
 
 def _request_failure(error: SocialSourceError) -> RequestError:
-    session_errors = {
+    known_errors = {
         "verification_unavailable": (409, "当前小红书服务不支持短信验证，请升级为随项目构建的采集服务后重新扫码。"),
         "session_expired": (410, "小红书登录会话已到期，请重新获取二维码。"),
         "session_conflict": (409, "小红书登录会话已被替换或当前无需短信验证码，请重新检查登录状态。"),
+        "login_page_check_failed": (502, "小红书登录页面状态检查失败，请重新检查登录状态；若持续失败，请刷新二维码。"),
+        "login_code_input_failed": (502, "小红书验证码输入失败，请重新检查登录状态后重试。"),
+        "login_confirm_button_failed": (502, "小红书验证码确认操作失败，请先检查登录状态，再决定是否重新提交。"),
+        "login_cookie_save_failed": (502, "小红书登录凭据保存失败，请检查采集服务的数据卷与写入权限。"),
+        "response_invalid": (502, "小红书采集服务返回的登录状态格式无法解析，请确认后端和采集服务均已更新。"),
     }
-    if error.reason in session_errors:
-        status_code, detail = session_errors[error.reason]
+    if error.reason in known_errors:
+        status_code, detail = known_errors[error.reason]
         return RequestError(status_code=status_code, detail=detail)
     detail = (
         "无法连接小红书自托管服务，请检查服务地址与运行状态。"

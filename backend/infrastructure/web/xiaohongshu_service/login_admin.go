@@ -16,7 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/cdp"
 	"github.com/go-rod/rod/lib/proto"
+	"github.com/sirupsen/logrus"
 	"github.com/xpzouying/xiaohongshu-mcp/browser"
 	"github.com/xpzouying/xiaohongshu-mcp/configs"
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
@@ -32,6 +34,10 @@ var (
 	errLoginExpiry = errors.New("login session has expired")
 	errLoginFailed = errors.New("login session failed")
 	errLoginSMS    = errors.New("login session is not awaiting an SMS code")
+	errLoginCheck  = errors.New("login page check failed")
+	errLoginInput  = errors.New("login code input failed")
+	errLoginButton = errors.New("login confirm button failed")
+	errLoginCookie = errors.New("login cookie save failed")
 )
 
 type adminLoginSessions struct {
@@ -41,15 +47,18 @@ type adminLoginSessions struct {
 }
 
 type adminLoginSession struct {
-	mu        sync.Mutex
-	id        string
-	expiresAt time.Time
-	state     string
-	invalid   bool
-	failed    bool
-	page      *rod.Page
-	close     func()
-	cancel    context.CancelFunc
+	mu           sync.Mutex
+	id           string
+	expiresAt    time.Time
+	state        string
+	invalid      bool
+	failure      error
+	submitted    bool
+	confirmed    bool
+	staleInvalid bool
+	page         *rod.Page
+	close        func()
+	cancel       context.CancelFunc
 }
 
 type loginSessionResponse struct {
@@ -64,7 +73,7 @@ const loginDOMScript = `
 	const visible = el => el && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0
 		&& getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
 	const inputSelector = 'input.r-input-inner[placeholder="请输入验证码"],input[autocomplete="one-time-code"]';
-	const confirmLabel = /^(确认|提交|验证|确定|确认验证)$/;
+	const confirmLabel = /^(确认|提交|验证|确定|确认验证|验证中|正在验证)$/;
 	const headers = [...document.querySelectorAll('.captcha-modal__header,.captcha-modal-title')].filter(visible);
 	const findSMSRoot = () => {
 		const roots = new Set();
@@ -72,7 +81,7 @@ const loginDOMScript = `
 			let root = header.parentElement;
 			for (let depth = 0; root && root !== document.body && depth < 6; depth++, root = root.parentElement) {
 				if (!root.matches('[class*="captcha-modal"],[role="dialog"]')) continue;
-				const inputs = [...root.querySelectorAll(inputSelector)].filter(el => visible(el) && !el.disabled && !el.readOnly);
+				const inputs = [...root.querySelectorAll(inputSelector)].filter(visible);
 				const buttons = [...root.querySelectorAll('.btn.btn-block')].filter(el => visible(el) && confirmLabel.test(el.textContent.trim()));
 				if (inputs.length === 1 && buttons.length === 1) { roots.add(root); break; }
 			}
@@ -89,17 +98,19 @@ const loginStateScript = `() => {` + loginDOMScript + `
 		&& user && user.guest !== true && typeof (user.userId || user.user_id) === 'string'
 		&& Boolean(user.userId || user.user_id);
 	const smsRoot = findSMSRoot();
-	const otherChallenge = [...document.querySelectorAll('.captcha-modal__header,.captcha-modal-title,.geetest_panel,.geetest_holder,[role="dialog"]')]
-		.some(el => visible(el) && /验证|滑块|拼图/.test(el.textContent));
+	const otherChallenge = [...document.querySelectorAll('.geetest_panel,.geetest_holder,.mask-slider-captcha,.point-captcha,.rotate-captcha,.red-captcha-slider')]
+		.some(visible) || headers.some(el => /滑块|拼图|拖动|点选|旋转/.test(el.textContent));
+	const pending = smsRoot && ([...smsRoot.querySelectorAll(inputSelector)].some(el => el.disabled || el.readOnly)
+		|| [...smsRoot.querySelectorAll('.btn.btn-block')].some(el => visible(el) && /验证中|正在验证/.test(el.textContent)));
 	const invalid = smsRoot && [...smsRoot.querySelectorAll('.error-box span')]
 		.some(el => visible(el) && /验证码.*(错误|失效|过期|不正确)|验证码不正确/.test(el.textContent));
-	return JSON.stringify({logged_in: Boolean(loggedIn), sms: Boolean(smsRoot), challenge: Boolean(headers.length || otherChallenge), invalid: Boolean(invalid)});
+	return JSON.stringify({logged_in: Boolean(loggedIn), sms: Boolean(smsRoot), challenge: Boolean(otherChallenge), pending: Boolean(pending || (!smsRoot && headers.length)), invalid: Boolean(invalid)});
 }`
 
 func inspectLoginPage(ctx context.Context, page *rod.Page) (state string, invalid bool, err error) {
 	info, err := (proto.TargetGetTargetInfo{TargetID: page.TargetID}).Call(page.Context(ctx).Timeout(5 * time.Second))
 	if err != nil {
-		return "", false, errLoginFailed
+		return "", false, errLoginCheck
 	}
 	origin, err := url.Parse(info.TargetInfo.URL)
 	if err != nil || origin.Scheme != "https" || (origin.Hostname() != "www.xiaohongshu.com" && origin.Hostname() != "xiaohongshu.com") {
@@ -107,27 +118,38 @@ func inspectLoginPage(ctx context.Context, page *rod.Page) (state string, invali
 	}
 	result, err := page.Context(ctx).Timeout(5 * time.Second).Eval(loginStateScript)
 	if err != nil {
-		return "", false, errLoginFailed
+		if transientLoginPageError(err) {
+			return "verifying", false, nil
+		}
+		return "", false, errLoginCheck
 	}
 	var flags struct {
 		LoggedIn  bool `json:"logged_in"`
 		SMS       bool `json:"sms"`
 		Challenge bool `json:"challenge"`
+		Pending   bool `json:"pending"`
 		Invalid   bool `json:"invalid"`
 	}
 	if json.Unmarshal([]byte(result.Value.String()), &flags) != nil {
-		return "", false, errLoginFailed
+		return "", false, errLoginCheck
 	}
 	switch {
-	case flags.SMS:
-		return "sms_required", flags.Invalid, nil
 	case flags.Challenge:
 		return "verification_required", false, nil
+	case flags.Pending:
+		return "verifying", false, nil
+	case flags.SMS:
+		return "sms_required", flags.Invalid, nil
 	case flags.LoggedIn:
 		return "logged_in", false, nil
 	default:
 		return "awaiting_scan", false, nil
 	}
+}
+
+func transientLoginPageError(err error) bool {
+	var missing *rod.ObjectNotFoundError
+	return errors.Is(err, cdp.ErrCtxNotFound) || errors.Is(err, cdp.ErrCtxDestroyed) || errors.Is(err, cdp.ErrObjNotFound) || errors.As(err, &missing)
 }
 
 func (s *adminLoginSession) closeLocked() {
@@ -167,8 +189,8 @@ func (s *adminLoginSession) inspectLocked(ctx context.Context) error {
 		s.closeLocked()
 		return errLoginExpiry
 	}
-	if s.failed {
-		return errLoginFailed
+	if s.failure != nil {
+		return s.failure
 	}
 	if s.state == "logged_in" {
 		return nil
@@ -179,12 +201,34 @@ func (s *adminLoginSession) inspectLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if s.staleInvalid && invalid {
+		invalid = false
+	} else {
+		s.staleInvalid = false
+	}
+	if state == "awaiting_scan" && s.submitted {
+		state = "verifying"
+	}
+	if state == "verifying" && s.submitted {
+		s.confirmed = true
+		s.staleInvalid = false
+	}
+	if state == "sms_required" && s.confirmed && !invalid {
+		state = "verifying"
+	}
 	s.state, s.invalid = state, invalid
+	if invalid {
+		s.submitted, s.confirmed = false, false
+	}
 	if state == "logged_in" {
-		if saveLoginCookies(ctx, s.page) != nil {
-			s.failed = true
+		// Cookie publication belongs to the session; an administrator closing a poll must not cancel it.
+		saveCtx, cancelSave := context.WithDeadline(context.Background(), s.expiresAt)
+		saveErr := saveLoginCookies(saveCtx, s.page)
+		cancelSave()
+		if saveErr != nil {
+			s.failure = errLoginCookie
 			s.closeLocked()
-			return errLoginFailed
+			return errLoginCookie
 		}
 		s.closeLocked()
 	}
@@ -331,7 +375,16 @@ func loginAdminError(c *gin.Context, err error) {
 		status, code = http.StatusGone, "LOGIN_SESSION_EXPIRED"
 	case errLoginSMS:
 		status, code = http.StatusConflict, "LOGIN_SMS_NOT_REQUIRED"
+	case errLoginCheck:
+		code = "LOGIN_PAGE_CHECK_FAILED"
+	case errLoginInput:
+		code = "LOGIN_CODE_INPUT_FAILED"
+	case errLoginButton:
+		code = "LOGIN_CONFIRM_BUTTON_FAILED"
+	case errLoginCookie:
+		code = "LOGIN_COOKIE_SAVE_FAILED"
 	}
+	logrus.WithField("code", code).Warn("login operation did not complete")
 	respondError(c, status, code, "登录操作未完成", nil)
 }
 
@@ -373,44 +426,101 @@ func (s *AppServer) loginVerificationHandler(c *gin.Context) {
 		loginAdminError(c, err)
 		return
 	}
-	if session.state == "logged_in" {
-		respondSuccess(c, session.responseLocked(), "已登录")
+	if session.state == "logged_in" || session.state == "verifying" {
+		respondSuccess(c, session.responseLocked(), "登录状态已检查")
 		return
 	}
 	if session.state != "sms_required" {
 		loginAdminError(c, errLoginSMS)
 		return
 	}
-	operationCtx, cancelOperation := context.WithDeadline(c.Request.Context(), session.expiresAt)
-	defer cancelOperation()
-	page := session.page.Context(operationCtx).Timeout(5 * time.Second)
-	root, err := page.Sleeper(rod.NotFoundSleeper).ElementByJS(rod.Eval(`() => {` + loginDOMScript + `return findSMSRoot(); }`))
-	if err != nil {
-		loginAdminError(c, errLoginSMS)
-		return
-	}
-	input, err := visibleLoginElement(root, `input.r-input-inner[placeholder="请输入验证码"],input[autocomplete="one-time-code"]`)
-	if err != nil || input.SelectAllText() != nil || input.Input(request.Code) != nil {
-		loginAdminError(c, errLoginFailed)
-		return
-	}
-	button, err := root.ElementByJS(rod.Eval(`() => {
-		const visible = el => el && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0
-			&& getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
-		const buttons = [...this.querySelectorAll('.btn.btn-block:not(.btn-disabled)')]
-			.filter(el => visible(el) && !el.disabled && /^(确认|提交|验证|确定|确认验证)$/.test(el.textContent.trim()));
-		return buttons.length === 1 ? buttons[0] : null;
-	}`))
-	if err != nil || button.Click(proto.InputMouseButtonLeft, 1) != nil {
-		loginAdminError(c, errLoginFailed)
-		return
-	}
-	session.invalid = false
-	if err := session.inspectLocked(c.Request.Context()); err != nil {
+	if err := session.submitCodeLocked(c.Request.Context(), request.Code); err != nil {
 		loginAdminError(c, err)
 		return
 	}
 	respondSuccess(c, session.responseLocked(), "验证码已提交")
+}
+
+func (s *adminLoginSession) submitCodeLocked(ctx context.Context, code string) error {
+	ctx, cancel := context.WithDeadline(ctx, s.expiresAt)
+	defer cancel()
+	ctx, cancelOperation := context.WithTimeout(ctx, 18*time.Second)
+	defer cancelOperation()
+	page := s.page.Context(ctx).Timeout(5 * time.Second)
+	root, err := page.Sleeper(rod.NotFoundSleeper).ElementByJS(rod.Eval(`() => {` + loginDOMScript + `return findSMSRoot(); }`))
+	if err != nil {
+		return errLoginInput
+	}
+	input, err := visibleLoginElement(root, `input.r-input-inner[placeholder="请输入验证码"],input[autocomplete="one-time-code"]`)
+	if err != nil || input.SelectAllText() != nil {
+		return errLoginInput
+	}
+	editable, err := input.Eval(`() => document.activeElement === this && !this.disabled && !this.readOnly`)
+	if err != nil || !editable.Value.Bool() || page.InsertText(code) != nil {
+		return errLoginInput
+	}
+	// Native insertion already emits input. Rod.Input emits it again, which can submit the code twice.
+	s.submitted, s.confirmed, s.staleInvalid, s.invalid = true, false, s.invalid, false
+	if err := s.inspectLocked(ctx); err != nil {
+		return err
+	}
+	if s.state != "sms_required" || s.invalid {
+		return nil
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			if !time.Now().Before(s.expiresAt) {
+				return s.inspectLocked(context.Background())
+			}
+			return errLoginButton
+		case <-ticker.C:
+		}
+		if err := s.inspectLocked(ctx); err != nil {
+			return err
+		}
+		if s.state != "sms_required" || s.invalid {
+			return nil
+		}
+		// The input event may submit automatically, rebuild the dialog, or temporarily disable its button.
+		button, err := s.page.Context(ctx).Timeout(3 * time.Second).Sleeper(rod.NotFoundSleeper).ElementByJS(rod.Eval(`code => {`+loginDOMScript+`
+			const root = findSMSRoot();
+			if (!root) return null;
+			const inputs = [...root.querySelectorAll(inputSelector)].filter(el => visible(el) && !el.disabled && !el.readOnly);
+			if (inputs.length !== 1 || inputs[0].value !== code) return null;
+			const buttons = [...root.querySelectorAll('.btn.btn-block:not(.btn-disabled)')]
+				.filter(el => visible(el) && !el.disabled && !el.hasAttribute('disabled') && /^(确认|提交|验证|确定|确认验证)$/.test(el.textContent.trim()));
+			return buttons.length === 1 ? buttons[0] : null;
+		}`, code))
+		if err != nil {
+			var notFound *rod.ElementNotFoundError
+			if errors.As(err, &notFound) || transientLoginPageError(err) {
+				continue
+			}
+			return errLoginButton
+		}
+		if err := button.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			if transientLoginPageError(err) {
+				if checkErr := s.inspectLocked(ctx); checkErr != nil {
+					return checkErr
+				}
+				if s.state != "sms_required" {
+					return nil
+				}
+			}
+			return errLoginButton
+		}
+		s.confirmed, s.staleInvalid = true, false
+		if err := s.inspectLocked(ctx); err != nil {
+			return err
+		}
+		if s.state == "sms_required" && !s.invalid {
+			s.state = "verifying"
+		}
+		return nil
+	}
 }
 
 func visibleLoginElement(root *rod.Element, selector string) (*rod.Element, error) {
