@@ -207,6 +207,9 @@ summary { cursor: pointer; }
 .call-item-body { padding: 16px; border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .layer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .layer-actions select { flex: 1; width: auto; }
+.provider-add-slot .call-item { margin-top: 12px; }
+.provider-add .call-item-head strong { font-size: 13px; }
+.provider-add .call-item-body .layer-actions { grid-column: 1 / -1; justify-content: flex-end; margin-top: 0; }
 .layer-hint { font-size: 12px; color: var(--text-3); margin: 12px 0; }
 .field { min-width: 0; }
 .field > label, .field .label-row label { display: block; margin-bottom: 6px; color: var(--text-2); font-size: 12px; }

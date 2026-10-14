@@ -1224,9 +1224,64 @@ function callListHtml(editorName, group) {
         const body = library ? `<div class="field"><label>供应商名称<input data-ai-field="name" maxlength="128" value="${esc(card.name)}" required></label></div><div class="field"><label>API Key <span class="keybadge ${keySet ? 'on' : 'off'}">${keySet ? '已设置' : '未设置'}</span><input type="password" autocomplete="new-password" data-ai-field="api_key" value="${esc(card.api_key)}" placeholder="${keySet ? '留空保持已保存密钥' : '填写 API Key'}"></label><button class="btn btn--text" data-ai-action="clear-key">清除密钥</button></div><div class="field"><label>Base URL<input data-ai-field="base_url" value="${esc(card.base_url)}" placeholder="${card.provider_type === 'custom' ? '如 https://host/v1' : '留空使用适配器默认地址'}"></label></div>` : '';
         return `<article class="call-item" data-ai-index="${index}"><div class="call-item-head"><button class="btn btn--ghost" draggable="true" data-ai-handle aria-label="拖拽排序 ${esc(summary)}" title="拖拽排序">⠿</button><span class="num">${String(index + 1).padStart(2, '0')}</span><span class="prov">${esc(summary)}</span>${library ? `<span class="keybadge ${keySet ? 'on' : 'off'}">${keySet ? '密钥已设置' : '未设置密钥'}</span>` : aiModelNeedsConfiguration(card, group) ? '<span class="keybadge off">待补全</span>' : ''}<button class="btn btn--ghost" data-ai-action="up" aria-label="上移 ${esc(card.model_name ?? card.name)}" title="上移"${index ? '' : ' disabled'}>↑</button><button class="btn btn--ghost" data-ai-action="down" aria-label="下移 ${esc(card.model_name ?? card.name)}" title="下移"${index < cards.length - 1 ? '' : ' disabled'}>↓</button><button class="btn btn--text" data-ai-action="remove" aria-label="移除 ${esc(card.model_name ?? card.name)}" title="移除">×</button>${library ? '<button class="btn btn--ghost" data-ai-action="toggle">配置</button>' : `<button class="btn btn--ghost" data-ai-action="model-config" data-ai-model-id="${card.id}">详情</button>`}</div>${body ? `<div class="call-item-body" hidden>${body}</div>` : ''}</article>`;
     }).join('');
-    const options = library ? aiAvailableProviderTypes(editor).map(type => `<option value="${esc(type)}">${esc(aiProviderLabel(type))}</option>`).join('') : '';
-    const hint = library ? '添加供应商后，可在能力模型中选择。' : editorName === 'user' ? '暂无用户模型，沿用系统默认顺序。' : '先选择供应商，再添加能力模型。';
-    return `<div data-ai-group="${group}"><div class="call-list">${items}</div>${cards.length ? '' : `<p class="layer-hint">${hint}</p>`}<div class="layer-actions">${library ? `<select data-ai-add-source aria-label="选择供应商类型">${options || '<option value="">暂无可添加的供应商</option>'}</select><input data-ai-provider-name placeholder="供应商名称" maxlength="128" aria-label="新供应商名称">` : ''}<button class="btn btn--primary btn--sm" data-ai-action="add"${library && !options ? ' disabled' : ''}>＋ ${library ? '添加供应商' : '添加模型'}</button></div>${group === 'embedding' ? '<p class="layer-hint">向量默认仅使用首个模型，失败时使用关键词召回。</p>' : ''}</div>`;
+    const addTypes = library ? aiAvailableProviderTypes(editor) : [];
+    const hint = library ? '在下方填写凭据添加供应商，添加后可在能力模型中选择。' : editorName === 'user' ? '暂无用户模型，沿用系统默认顺序。' : '先选择供应商，再添加能力模型。';
+    // 类型默认选中列表首个可用项并直接展开表单，切换类型才换字段。
+    const add = library
+        ? `<div class="layer-actions"><select data-ai-add-source aria-label="选择供应商类型"${addTypes.length ? '' : ' disabled'}>${addTypes.length ? addTypes.map((type, index) => `<option value="${esc(type)}"${index ? '' : ' selected'}>${esc(aiProviderLabel(type))}</option>`).join('') : '<option value="">暂无可添加的供应商</option>'}</select></div><div class="provider-add-slot">${addTypes.length ? aiProviderAddFormHtml(editorName, addTypes[0]) : ''}</div>`
+        : '<div class="layer-actions"><button class="btn btn--primary btn--sm" data-ai-action="add">＋ 添加模型</button></div>';
+    return `<div data-ai-group="${group}"><div class="call-list">${items}</div>${cards.length ? '' : `<p class="layer-hint">${hint}</p>`}${add}${group === 'embedding' ? '<p class="layer-hint">向量默认仅使用首个模型，失败时使用关键词召回。</p>' : ''}</div>`;
+}
+
+// 信息库新增供应商：下拉只决定类型，配置在表单里填完才生成卡片，避免建卡后再逐个点开配置。
+function aiProviderRequirements(editor, type) {
+    const entries = Object.values(editor.defaults ?? {}).map(group => group[type]).filter(Boolean);
+    return { apiKey: entries.some(item => item.requires_api_key), baseUrl: entries.length > 0 && entries.every(item => !item.base_url) };
+}
+
+function aiProviderAddFormHtml(editorName, type) {
+    const needs = aiProviderRequirements(aiEditors[editorName], type);
+    const keyHint = needs.apiKey ? '该类型必填' : '该类型可不填';
+    // 单一实例的品牌供应商按类型命名，只有可多实例的 local/custom 才需要区分条目名。
+    const fixedName = type === 'local' || type === 'custom' ? '' : AI_NAMES[type] ?? '';
+    const nameField = fixedName
+        ? `<div class="field"><label>供应商名称 <span class="hint">按类型自动命名，可在卡片配置中修改</span><input name="name" maxlength="128" value="${esc(fixedName)}" readonly></label></div>`
+        : `<div class="field"><label>供应商名称<input name="name" maxlength="128" required placeholder="${esc(AI_NAMES[type] ?? type)}"></label></div>`;
+    return `<form class="call-item provider-add" data-ai-provider-form="${esc(type)}" autocomplete="off">
+        <div class="call-item-head"><strong>添加 ${esc(aiProviderLabel(type))} 供应商</strong><span class="hint">填写完整后加入信息库，保存后生效</span></div>
+        <div class="call-item-body">
+            ${nameField}
+            <div class="field"><label>API Key <span class="hint">${keyHint}</span><input name="api_key" type="password" autocomplete="new-password"${needs.apiKey ? ' required' : ''} placeholder="${needs.apiKey ? '填写 API Key' : '留空即可'}"></label></div>
+            <div class="field"><label>Base URL<input name="base_url" maxlength="2048"${needs.baseUrl ? ' required' : ''} placeholder="${needs.baseUrl ? '如 https://host/v1' : '留空使用适配器默认地址'}"></label></div>
+            <div class="layer-actions"><button type="submit" class="btn btn--primary btn--sm">添加供应商</button></div>
+        </div></form>`;
+}
+
+function renderAiProviderAddForm(section, type) {
+    const slot = section?.querySelector('.provider-add-slot');
+    if (!slot) return;
+    slot.innerHTML = type && aiAvailableProviderTypes(aiActiveEditor()).includes(type) ? aiProviderAddFormHtml(aiEditorName(), type) : '';
+    slot.querySelector('input:not([readonly])')?.focus();
+}
+
+function submitAiProviderAddForm(form) {
+    if (aiSaving) return;
+    const section = form.closest('[data-ai-group]');
+    const type = form.dataset.aiProviderForm;
+    if (section?.dataset.aiGroup !== 'providers' || !aiAvailableProviderTypes(aiActiveEditor()).includes(type)) { toast('该供应商类型已不可用，请重新选择', 'err'); return; }
+    const fields = { name: form.elements.namedItem('name'), api_key: form.elements.namedItem('api_key'), base_url: form.elements.namedItem('base_url') };
+    const card = { id: newAiId(), provider_type: type, name: fields.name.value.trim(), api_key: fields.api_key.value.trim(), base_url: fields.base_url.value.trim() };
+    const needs = aiProviderRequirements(aiActiveEditor(), type);
+    const required = [[card.name, fields.name, '请填写供应商名称']];
+    if (needs.apiKey) required.push([card.api_key, fields.api_key, '请填写该类型的 API Key']);
+    if (needs.baseUrl) required.push([card.base_url, fields.base_url, '请填写该类型的 Base URL']);
+    const missing = required.find(([value]) => !value);
+    if (missing) { missing[1].setCustomValidity(missing[2]); missing[1].reportValidity(); return; }
+    aiActiveEditor().config.providers.push(card);
+    markAiDirty(aiEditorName());
+    renderAiScope();
+    focusAiModel('providers', card.id);
+    toast('已添加供应商，保存后生效');
 }
 
 function newAiId() {
@@ -1544,9 +1599,16 @@ function aiEventCard(target) {
 }
 function bindAiCardEvents() {
     for (const root of [$('#aiChainBody'), $('#modelDetailBody')]) {
+        root.onsubmit = event => {
+            const form = event.target.closest('[data-ai-provider-form]');
+            if (!form) return;
+            event.preventDefault();
+            submitAiProviderAddForm(form);
+        };
         root.oninput = event => {
             if (aiSaving) return;
             const target = event.target;
+            if (target.closest('[data-ai-provider-form]')) { target.setCustomValidity(''); return; }
             const context = aiEventCard(target);
             if (!context) return;
             const { group, card } = context;
@@ -1566,6 +1628,8 @@ function bindAiCardEvents() {
         root.onchange = event => {
             if (aiSaving) return;
             const target = event.target;
+            const source = target.closest('[data-ai-add-source]');
+            if (source) { renderAiProviderAddForm(source.closest('[data-ai-group]'), source.value); return; }
             const context = aiEventCard(target);
             if (!context) return;
             const { group, card } = context;
@@ -1614,12 +1678,8 @@ function bindAiCardEvents() {
                 body.hidden = !body.hidden;
                 button.textContent = body.hidden ? '配置' : '收起'; return;
             }
-            if (action === 'add') {
-                if (group !== 'providers') { openAiModelPicker(aiEditorName(), group); return; }
-                const value = section.querySelector('[data-ai-add-source]').value;
-                if (!value || !aiAvailableProviderTypes(aiActiveEditor()).includes(value)) return;
-                cards.push({ id: newAiId(), name: section.querySelector('[data-ai-provider-name]').value.trim() || AI_NAMES[value] || value, provider_type: value, api_key: '', base_url: '' });
-            } else if (action === 'remove') {
+            if (action === 'add') { openAiModelPicker(aiEditorName(), group); return; }
+            if (action === 'remove') {
                 if (!aiTaskChain(group)) {
                     const references = aiRemovalReferences(aiActiveEditor(), group, cards[index].id);
                     if (references.length) { toast('请先移除引用：' + references.join('；'), 'err'); return; }
