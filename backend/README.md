@@ -172,7 +172,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 | 文本 | 装配与消费 |
 |---|---|
 | [聊天](workflows/chat/prompts.py)、[会话](features/conversation/prompts.py)、[语音](infrastructure/ai/speech_guidance.py) | 预设、回复/压缩、标题、图片修正与朗读；`system_prompt`、`streaming`、`context_compressor`、`title_generation`、聊天图片流程和供应商 `speech_style` |
-| [陪伴](features/companion/prompts.py) | 人设、心情、环境、问候和主动回合；`prompt_runtime`、`first_greeting` 与主动流程 |
+| [陪伴](features/companion/prompts.py)、[创作内容审阅](features/companion/narrative_prompts.py) | 人设、心情、环境、问候和主动回合；`prompt_runtime`、`first_greeting` 与主动流程；动态计划及日记的 `narrative_quality` 审阅与有界修订 |
 | [外观](features/appearance/prompts.py)、[场景](features/scenes/prompts.py) | 头像、全身、衣柜、角色卡及环境；各模块的 `prompt_assembly`、提取和制作服务 |
 | [媒体](features/media/prompts.py) | 共享视觉质感、身份参考、审核与评分；图像/视频质量链和出镜装配 |
 | [窗口动作](features/actions/prompts.py)、[桌面生活](features/desktop_life/prompts.py) | 提案、评审、姿态/运动、探身、外部视频提示词和成品检查 |

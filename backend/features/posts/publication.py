@@ -6,7 +6,7 @@ from typing import Any, Literal, get_args
 from weakref import WeakValueDictionary
 
 from infrastructure.ai.llm_client import resolve_provider_chain
-from infrastructure.ai.prompt_engineer import call_llm_once
+from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_json
 from infrastructure.ai.providers.http import ProviderResultUnknownError
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.tts_service import synthesize_speech
@@ -20,7 +20,7 @@ from infrastructure.assets.asset_store import (
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.text import format_local_iso, parse_llm_json, resolve_language, utc_now
+from infrastructure.text import format_local_iso, resolve_language, resolve_prompt_text, utc_now
 from runtime.background import TaskBag
 from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import or_, select, update
@@ -40,6 +40,8 @@ from features.appearance.visual_identity import (
     self_video_references,
 )
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
+from features.companion.narrative_prompts import NARRATIVE_REVISION_TEXTS
+from features.companion.narrative_quality import NarrativeQualityError, review_narrative
 from features.companion.queries import complete_user_ids
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.configuration.settings.values import get_user_setting, load_user_settings
@@ -60,8 +62,9 @@ from features.media.video_jobs import (
 )
 from features.posts.context import load_post_prompt_context, post_prompt_entry
 from features.posts.models import CompanionPost, PostContentType, PostPublication
+from features.posts.output_contracts import POST_DECISION, parse_post_decision
 from features.posts.prompt_contract import render_post_instructions
-from features.posts.prompts import POST_PUBLISH_INSTRUCTIONS
+from features.posts.prompts import POST_DECISION_REPAIR_TEXTS, POST_PUBLISH_INSTRUCTIONS
 from features.posts.schemas import (
     PostContext,
     PostPlan,
@@ -170,25 +173,52 @@ async def compose_plan(user_id: int, payload: dict) -> PostPlan | None:
         config = await resolve_user_llm_config(db, user_id, AiTaskKey.posts)
     if not config.is_configured:
         raise PostError("模型配置不可用")
-    raw = await call_llm_once(
-        config,
-        render_post_instructions(POST_PUBLISH_INSTRUCTIONS, payload["output_language"]),
-        payload,
-        json_output=True,
-    )
-    data = parse_llm_json(raw)
-    if not isinstance(data, dict) or type(data.get("post")) is not bool:
-        raise PostError("发布决策格式无效")
-    if not data["post"]:
-        if set(data) != {"post"}:
-            raise PostError("发布决策含无关字段")
-        return None
-    if set(data) != {"post", "plan"}:
-        raise PostError("发布决策字段无效")
-    plan = PostPlan.model_validate(data["plan"])
-    if plan.content_type.value not in payload["available_types"]:
-        raise PostError("发布决策选择了不可用的类型")
-    return _drop_inapplicable_fields(user_id, plan, payload["available_types"])
+    language = payload["output_language"]
+    instructions = render_post_instructions(POST_PUBLISH_INSTRUCTIONS, language)
+    creation_payload = payload
+
+    def parse_output(value: Any) -> PostPlan | None:
+        plan = parse_post_decision(value)
+        if plan is not None and plan.content_type.value not in payload["available_types"]:
+            raise LlmJsonValidationError("unavailable_post_type", fields=("content_type",))
+        return plan
+
+    for revision in range(2):
+        plan = await call_llm_json(
+            config,
+            instructions,
+            creation_payload,
+            schema=POST_DECISION.json_schema(),
+            schema_name="post_decision",
+            parse_output=parse_output,
+            repair_prompt=resolve_prompt_text(POST_DECISION_REPAIR_TEXTS, language),
+        )
+        if plan is None:
+            return None
+        plan = _drop_inapplicable_fields(user_id, plan, payload["available_types"])
+        review = await review_narrative(
+            config,
+            payload,
+            {
+                field: value
+                for field in ("publication_intent", "title", "body", "text", "narration")
+                if (value := getattr(plan, field))
+            },
+            language,
+        )
+        if not review.issues:
+            return plan
+        if revision:
+            raise NarrativeQualityError(review)
+        creation_payload = {
+            **payload,
+            "narrative_revision": {
+                "draft": {"post": True, "plan": plan.model_dump(mode="json")},
+                "issues": review.model_dump()["issues"],
+            },
+        }
+        instructions += resolve_prompt_text(NARRATIVE_REVISION_TEXTS, language)
+    raise AssertionError("unreachable narrative revision state")
 
 
 def _drop_inapplicable_fields(user_id: int, plan: PostPlan, types: list[str]) -> PostPlan:

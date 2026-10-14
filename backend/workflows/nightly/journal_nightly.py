@@ -6,6 +6,8 @@ from functools import partial
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
+from features.companion.narrative_prompts import NARRATIVE_REVISION_TEXTS
+from features.companion.narrative_quality import NarrativeQualityError, review_narrative
 from features.journal.journal_service import get_diary_by_date, publish_diary
 from features.journal.schemas import DIARY_BODY_MAX_CHARS, DiaryContent
 from features.memory.memory_narratives import backfill_diary_embeddings, load_companion_reflection, narrative_date
@@ -117,15 +119,41 @@ async def _compose_diary(
         "max_body_chars": DIARY_BODY_MAX_CHARS,
         "persona": persona,
     }
-    return await call_llm_json(
-        llm_cfg,
-        resolve_prompt_text(JOURNAL_DIARY_TEXTS, language),
-        payload,
-        reasoning_effort=NIGHTLY_REASONING_EFFORT,
-        schema=DIARY_DECISION.json_schema(),
-        schema_name="nightly_diary",
-        parse_output=parse_diary_decision,
-        repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, language),
-        before_call=before_call,
-        diagnostics=diagnostics,
-    )
+    instructions = resolve_prompt_text(JOURNAL_DIARY_TEXTS, language)
+    creation_payload = payload
+    for revision in range(2):
+        diary = await call_llm_json(
+            llm_cfg,
+            instructions,
+            creation_payload,
+            reasoning_effort=NIGHTLY_REASONING_EFFORT,
+            schema=DIARY_DECISION.json_schema(),
+            schema_name="nightly_diary",
+            parse_output=parse_diary_decision,
+            repair_prompt=resolve_prompt_text(NIGHTLY_JSON_REPAIR_TEXTS, language),
+            before_call=before_call,
+            diagnostics=diagnostics,
+        )
+        if diary is False:
+            return False
+        review = await review_narrative(
+            llm_cfg,
+            payload,
+            diary.model_dump(),
+            language,
+            before_call=before_call,
+            diagnostics=diagnostics,
+        )
+        if not review.issues:
+            return diary
+        if revision:
+            raise NarrativeQualityError(review)
+        creation_payload = {
+            **payload,
+            "narrative_revision": {
+                "draft": {"publish": True, **diary.model_dump()},
+                "issues": review.model_dump()["issues"],
+            },
+        }
+        instructions += resolve_prompt_text(NARRATIVE_REVISION_TEXTS, language)
+    raise AssertionError("unreachable narrative revision state")
