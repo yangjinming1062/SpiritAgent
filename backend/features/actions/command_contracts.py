@@ -13,7 +13,6 @@ class ActionPackSnapshot(BaseModel):
     user_id: int
     avatar_id: int | None
     outfit_id: int | None
-    pack_version: int
     reference_path: str
     reference_hash: str
     character_snapshot: str

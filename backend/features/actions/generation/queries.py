@@ -29,18 +29,53 @@ def _action_order(action: str) -> tuple[int, str]:
     return (SYSTEM_SLOTS.index(action) if action in SYSTEM_SLOTS else len(SYSTEM_SLOTS), action)
 
 
+def _job_result_unresolved(job: CompanionAction) -> bool:
+    """当前尝试仍在制或付费提交未结算；旧候选与已采纳素材不能替代本次结果。"""
+    if job.status in ("queued", "processing", "result_unknown"):
+        return True
+    terminal_failures = {"submit_failed", "provider_failed", "content_policy_blocked"}
+    video_state = MediaChainState.model_validate_json(job.generation_state_json) if job.generation_state_json else None
+    pose_state = (
+        ImageChainState.model_validate_json(job.pose_generation_state_json) if job.pose_generation_state_json else None
+    )
+    for state in (video_state, pose_state):
+        if state is None:
+            continue
+        if state.stop_reason == "result_unknown":
+            return True
+        if (
+            state.phase in ("submitting", "processing")
+            and state.stop_reason not in terminal_failures
+            and (state.phase == "submitting" or not (state.result_url or state.source_path))
+        ):
+            return True
+    return bool(
+        job.provider_task_id
+        and job.status not in ("succeeded", "review")
+        and not job.artifact_path
+        and (
+            video_state is None
+            or (
+                not video_state.result_url
+                and not video_state.source_path
+                and video_state.stop_reason not in terminal_failures
+            )
+        ),
+    )
+
+
 def _can_resume_job(job: CompanionAction) -> bool:
-    if job.status in ("succeeded", "review") or job.stage in ("merged", "invalid_asset"):
+    if job.status in ("succeeded", "review", "result_unknown") or job.stage == "invalid_asset":
         return False
     if job.generation_state_json:
         state = MediaChainState.model_validate_json(job.generation_state_json)
-        if (state.phase == "submitting" or state.stop_reason == "result_unknown") and state.best() is None:
+        if state.phase == "submitting" or state.stop_reason == "result_unknown":
             return False
         if state.phase == "ready" and not state.needs_next() and state.best() is None:
             return False
     if job.pose_generation_state_json:
         pose = ImageChainState.model_validate_json(job.pose_generation_state_json)
-        if (pose.phase == "submitting" or pose.stop_reason == "result_unknown") and pose.best() is None:
+        if pose.phase == "submitting" or pose.stop_reason == "result_unknown":
             return False
     return bool(
         job.provider_task_id
@@ -50,13 +85,6 @@ def _can_resume_job(job: CompanionAction) -> bool:
         or job.stage == "script"
         or (job.stage == "pose" and job.pose_path),
     )
-
-
-def _inheritable_job(job: CompanionAction | None) -> CompanionAction | None:
-    """已迁出续跑入口的任务行不参与继承与再清理。"""
-    if job is None or job.stage == "merged":
-        return None
-    return job
 
 
 def _must_succeed_actions(context_must: list[str]) -> set[str]:
@@ -70,20 +98,6 @@ def _can_publish_jobs(jobs: Sequence[CompanionAction], context_must: list[str]) 
         if job is None or accepted_action_asset(job) is None:
             return False
     return True
-
-
-async def _newer_ready_pack(db: AsyncSession, pack: CompanionActionPack) -> CompanionActionPack | None:
-    return await db.scalar(
-        select(CompanionActionPack)
-        .where(
-            CompanionActionPack.user_id == pack.user_id,
-            CompanionActionPack.outfit_id == pack.outfit_id,
-            CompanionActionPack.pack_version > pack.pack_version,
-            CompanionActionPack.status == "ready",
-        )
-        .order_by(CompanionActionPack.pack_version.desc())
-        .limit(1),
-    )
 
 
 async def _jobs_by_pack(db: AsyncSession, *conditions: ColumnElement[bool]) -> dict[int, list[CompanionAction]]:
@@ -100,8 +114,8 @@ def _load_generation_context(pack: CompanionActionPack) -> GenerationContext | N
 
 
 def _has_pending_work(pack_id: int, jobs: Sequence[CompanionAction]) -> bool:
-    """包上有在途或已排队的动作制作；此时删除任务行会让任务之后落盘的素材无人引用。"""
-    return pack_id in _GEN_INFLIGHT or any(job.status in ("queued", "processing") for job in jobs)
+    """在途、排队或未确认结果的任务须保留，避免丢失句柄与后续素材引用。"""
+    return pack_id in _GEN_INFLIGHT or any(_job_result_unresolved(job) for job in jobs)
 
 
 async def _get_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionActionPack | None:

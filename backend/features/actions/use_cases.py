@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.actions.asset_retirement import action_asset_paths, retire_action_assets
 from features.actions.design import accept_proposal
+from features.actions.generation.execution_state import _ACTION_INFLIGHT
+from features.actions.generation.queries import _job_result_unresolved
 from features.actions.models import REQUIRED_SYSTEM_SLOTS, CompanionAction
 from features.actions.pipeline import schedule_accepted_proposal
-from features.actions.policy import get_daily_budget_status
+from features.actions.policy import get_action_accept_lock, get_daily_budget_status
 from features.actions.publishing import emit_catalog_changed, publish_action_catalog
 from features.actions.repository import get_action, get_active_pack, get_playback
 from features.actions.schemas import (
@@ -20,6 +22,7 @@ from features.actions.schemas import (
     ActionPlaybackReceipt,
 )
 from features.actions.usage import record_play_result
+from features.appearance.avatar_service import get_avatar_job_lock
 from features.companion.schemas import CompanionOperationResponse
 from features.media.review_service import reject_pending_action_reviews
 
@@ -110,15 +113,21 @@ async def set_action_enabled(action_id: int, enabled: bool, user_id: int, db: As
 
 
 async def delete_action(action_id: int, user_id: int, db: AsyncSession) -> CompanionOperationResponse:
-    """删除动作与素材版本行；必需系统槽位一律不可删除。素材文件在 manifest 与版本引用释放后按引用回收，不在本请求内同步删文件；删除后同步发布目录。"""
-    action = await _owned_action(db, user_id, action_id)
-    if action.system_slot in REQUIRED_SYSTEM_SLOTS:
-        raise RequestError(status_code=400, detail=f"必需系统动作（{action.system_slot}）不可删除")
-    if action.status in ("queued", "processing"):
-        raise RequestError(status_code=409, detail="动作正在制作，请等待完成后再删除")
-    await reject_pending_action_reviews(db, user_id=action.user_id, action_id=action.id, media_type=action.media_type)
-    await retire_action_assets(db, user_id, action_asset_paths(action))
-    await db.delete(action)
     await db.commit()
-    await _republish_catalog(db, user_id)
+    async with get_action_accept_lock(user_id), get_avatar_job_lock(user_id):
+        action = await _owned_action(db, user_id, action_id)
+        if action.system_slot in REQUIRED_SYSTEM_SLOTS:
+            raise RequestError(status_code=400, detail=f"必需系统动作（{action.system_slot}）不可删除")
+        if _job_result_unresolved(action) or action.id in _ACTION_INFLIGHT:
+            raise RequestError(status_code=409, detail="动作正在制作或结果待核对，请取得明确结果后再删除")
+        await reject_pending_action_reviews(
+            db,
+            user_id=action.user_id,
+            action_id=action.id,
+            media_type=action.media_type,
+        )
+        await retire_action_assets(db, user_id, action_asset_paths(action))
+        await db.delete(action)
+        await db.commit()
+        await _republish_catalog(db, user_id)
     return CompanionOperationResponse(ok=True)

@@ -261,7 +261,6 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("avatar_id", sa.Integer(), nullable=True),
         sa.Column("outfit_id", sa.Integer(), nullable=True),
-        sa.Column("pack_version", sa.Integer(), server_default=sa.text("1"), nullable=False),
         sa.Column("reference_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("reference_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
         sa.Column("character_snapshot", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
@@ -284,6 +283,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["outfit_id"], ["companion_outfits.id"]),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "outfit_id", name="uq_companion_action_packs_user_outfit"),
     )
     op.create_index(op.f("ix_companion_action_packs_user_id"), "companion_action_packs", ["user_id"], unique=False)
     op.create_index(op.f("ix_companion_action_packs_status"), "companion_action_packs", ["status"], unique=False)

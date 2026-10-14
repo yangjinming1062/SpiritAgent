@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.queries import list_user_ids
+from features.actions.generation.queries import _has_pending_work
 from features.actions.models import ActionAssetRetirement, CompanionAction, CompanionActionPack, removed_video_tasks
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup, enqueue_asset_cleanup_entries
 from features.assets.references import ACTION_ASSET_FIELDS, PACK_ASSET_FIELDS, asset_paths
@@ -79,7 +80,7 @@ async def delete_outfit_action_packs(
     user_id: int,
     outfit_id: int,
 ) -> list[RemovedActionVideoTask]:
-    """调用方持外观锁；拒绝在用/制作中的包，其余关联包同事务删除并延迟回收；返回待撤销的远端视频句柄供调用方提交后处理。"""
+    """调用方持外观锁；在用、制作或结果未确定的动作组保留，其余同事务删除并延迟回收。"""
     packs = (
         await db.scalars(
             select(CompanionActionPack).where(
@@ -92,10 +93,8 @@ async def delete_outfit_action_packs(
         return []
     pack_ids = {pack.id for pack in packs}
     actions = (await db.scalars(select(CompanionAction).where(CompanionAction.pack_id.in_(pack_ids)))).all()
-    if any(pack.active or pack.status == "processing" for pack in packs) or any(
-        action.status in ("queued", "processing") for action in actions
-    ):
-        raise ValueError("使用中或制作中的动作包不能删除，请等待制作完成")
+    if any(pack.active or pack.status == "processing" or _has_pending_work(pack.id, actions) for pack in packs):
+        raise ValueError("使用中、制作中或结果待核对的动作不能随着装删除")
     paths = set().union(
         *(pack_asset_paths(pack) for pack in packs),
         *(action_asset_paths(action) for action in actions),

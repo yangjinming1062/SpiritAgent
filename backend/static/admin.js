@@ -1886,7 +1886,6 @@ const SETTINGS_SECTIONS = [
                 num('media_tts_rate_limit_per_minute', '语音合成 TTS (/分钟)', 1, { min: 1 }),
                 num('media_video_rate_limit_per_minute', '视频附件上传 (/分钟)', 1, { min: 1 }),
                 num('companion_avatar_generate_rate_limit_per_minute', '伙伴头像生成 (/分钟)', 1, { min: 1 }),
-                num('companion_outfit_generate_rate_limit_per_hour', '伙伴换装外观生成 (/小时)', 1, { min: 1 }),
             ]],
             ['sub', '场景、动态与安全配额'],
             ['grid', [

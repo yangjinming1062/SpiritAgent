@@ -83,7 +83,7 @@ class VideoPackCreateRequest(BaseModel):
 
 
 class VideoPackGenerateRequest(BaseModel):
-    """按参考生成动作包：缺省取当前激活且已确认的外观；force 跳过同参考版本的包复用。
+    """按参考生成动作：缺省取当前激活且已确认的着装；force 跳过当前动作组复用。
     source_pack_id + action 为单动作请求（补齐缺失动作或重做已有动作）。"""
 
     model_config = ConfigDict(extra="forbid")
@@ -91,7 +91,7 @@ class VideoPackGenerateRequest(BaseModel):
     outfit_id: int | None = None
     force: bool = False
     source_pack_id: int | None = None
-    action: Literal["idle", "walk_left", "walk_right", "drag", "peek_left", "peek_right"] | None = None
+    action: str | None = Field(default=None, min_length=1, max_length=32)
     feedback: str = Field(default="", max_length=1000)
 
 
@@ -101,6 +101,14 @@ class VideoPackEnsureSystemActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["peek_left", "peek_right"]
+
+
+class PendingActionReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    media_type: Literal["image", "video"]
+    media_url: str
 
 
 class ActionMediaResponse(BaseModel):
@@ -114,6 +122,10 @@ class ActionMediaResponse(BaseModel):
     stage: str
     error: str | None = None
     media_url: str | None = None
+    current_media_url: str | None = None
+    pending_review: PendingActionReview | None = None
+    has_ready_asset: bool = False
+    can_regenerate: bool = False
     feedback: str = ""
     peek_geometry: PeekGeometry | None = None
     content_rect: tuple[float, float, float, float] | None = None
@@ -137,7 +149,6 @@ VideoActionResponse = Annotated[
 class VideoPackResponse(BaseModel):
     id: int
     outfit_id: int | None = None
-    pack_version: int
     status: str
     active: bool = False
     identity_review: Literal["none", "pass", "review", "accepted"] = "none"
@@ -146,6 +157,7 @@ class VideoPackResponse(BaseModel):
     manifest_url: str | None = None
     can_retry: bool = False
     can_regenerate: bool = False
+    can_regenerate_pack: bool = False
     actions: list[VideoActionResponse] = Field(default_factory=list)
     error: str | None = None
 

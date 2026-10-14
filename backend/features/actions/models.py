@@ -50,17 +50,17 @@ def make_action_reference_hash(
 
 
 class CompanionActionPack(ModelBase, TimestampMixin):
-    """单外观冻结动作包；动作按外观快照隔离，生成任务只向当前 pack 追加。catalog_version CAS 推进提供不可变目录快照；appearance_epoch 为激活代次（重穿同一包也推进）。"""
+    """每套外观的唯一动作组；目录以 catalog_version CAS 发布，appearance_epoch 标识穿着代次。"""
 
     __tablename__ = "companion_action_packs"
     __table_args__ = (
+        UniqueConstraint("user_id", "outfit_id", name="uq_companion_action_packs_user_outfit"),
         Index("uq_companion_action_packs_one_active", "user_id", unique=True, postgresql_where=text("active")),
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id"), nullable=True, default=None)
-    pack_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     reference_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     reference_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     character_snapshot: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))

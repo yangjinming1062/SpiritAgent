@@ -1,4 +1,5 @@
-/** 动作包生成流程 store：衣柜页发起生成、进度状态与包列表；可用清单与播放实例由 actions 维护；渲染层不得经本 store 触发付费（缺失动作由显式服务流程统一鉴权、去重、记账）。 */
+/** 动作包生成流程 store：衣柜页发起生成、进度状态与包列表；可用清单与播放实例由 actions 维护；渲染层不得经本 store 触发付费（缺失动作由显式服务流程统一鉴权、去重、记账）。
+ * 着装及不同动作可并行生成；同一动作在结果确定前不重复提交。 */
 
 import { atom } from 'nanostores'
 
@@ -12,21 +13,26 @@ import { getStrings } from '@/shared/strings'
 
 export const $videoPacks = atom<ActionPackWire[]>([])
 
-/** 生成/失败归属：按着装与动作包隔离展示，避免 A 的错误串到 B。 */
+/** 生成/失败归属：按着装、动作包与动作隔离展示。 */
 export interface VideoGenScope {
   outfitId: number | null
   packId: number | null
+  action: string | null
 }
 
 export interface VideoGenError extends VideoGenScope {
   message: string
+  source: 'request' | 'generation'
 }
 
-// 生成状态机：事件驱动（progress/failed）优先，hydrate 用包列表兜底识别 processing 包；failed 携带后端公开文案可重试。
+// 请求、包、单动作与进度共同派生全局生成态；事件与水合统一收敛。
 export const $videoGenState = atom<'idle' | 'generating' | 'failed'>('idle')
-export const $videoGenStage = atom<VideoGenStage | null>(null)
-export const $videoGenError = atom<VideoGenError | null>(null)
-/** 当前生成/最近失败的归属；与错误一起决定界面是否展示。 */
+/** 按包隔离的生成阶段（键 = packId）；只在事件携带 packId 时写入。 */
+export const $videoGenStages = atom<Record<number, VideoGenStage>>({})
+/** 按归属隔离的错误（键 = scopeKey）；进度/就绪只清同 scope 的错误。 */
+export const $videoGenErrors = atom<Record<string, VideoGenError>>({})
+export const $videoGenRequests = atom<Record<string, VideoGenScope>>({})
+/** 最近一次生成/失败的归属，用于补全同包进度缺失的着装信息。 */
 export const $videoGenScope = atom<VideoGenScope | null>(null)
 
 const VIDEO_GEN_STAGES = ['script', 'pose', 'submit', 'generate', 'download', 'process', 'publish'] as const
@@ -36,20 +42,200 @@ export type VideoGenStage = (typeof VIDEO_GEN_STAGES)[number]
 
 let inflight: Promise<boolean> | null = null
 let generationRevision = 0
-let requestingGeneration = false
+const scopeRevisions = new Map<string, number>()
+const activeStages = new Map<number, Map<string | null, VideoGenStage>>()
+
+function scopeKey(scope: VideoGenScope): string {
+  if (scope.action != null) {
+    const owner = scope.outfitId != null ? `outfit:${scope.outfitId}` : `pack:${scope.packId ?? 'unknown'}`
+
+    return `${owner}:action:${scope.action}`
+  }
+
+  return scope.packId != null ? `pack:${scope.packId}` : `outfit:${scope.outfitId ?? 'unknown'}`
+}
+
+export function videoActionIsPending(status: string): boolean {
+  return ['queued', 'running', 'processing', 'result_unknown'].includes(status)
+}
+
+/** 同着装同动作跨包去重；整包初建尚未创建目标行时也不能重复提交。 */
+export function videoActionIsBusy(
+  packs: ActionPackWire[],
+  requests: Record<string, VideoGenScope>,
+  outfitId: number | null,
+  packId: number | null,
+  action: string
+): boolean {
+  if (
+    Object.values(requests).some(
+      scope =>
+        (scope.outfitId != null ? scope.outfitId === outfitId : scope.packId === packId) &&
+        (scope.action == null || scope.action === action)
+    )
+  ) {
+    return true
+  }
+
+  return packs.some(pack => {
+    if (outfitId != null ? pack.outfit_id !== outfitId : pack.id !== packId) {
+      return false
+    }
+
+    const entry = pack.actions.find(candidate => candidate.action === action)
+
+    return entry ? videoActionIsPending(entry.status) || entry.can_regenerate === false : pack.status === 'processing'
+  })
+}
+
+export function videoPackIsGenerating(pack: ActionPackWire): boolean {
+  return (
+    pack.status === 'processing' ||
+    pack.actions.some(action => ['queued', 'running', 'processing'].includes(action.status))
+  )
+}
+
+function refreshDerivedState(): void {
+  const processing = $videoPacks.get().some(videoPackIsGenerating)
+
+  if (processing || Object.keys($videoGenRequests.get()).length > 0 || Object.keys($videoGenStages.get()).length > 0) {
+    $videoGenState.set('generating')
+
+    return
+  }
+
+  const hasError = Object.keys($videoGenErrors.get()).length > 0
+  $videoGenState.set(hasError ? 'failed' : 'idle')
+}
+
+function setScopedError(scope: VideoGenScope, message: string, source: VideoGenError['source'] = 'request'): void {
+  $videoGenErrors.set({ ...$videoGenErrors.get(), [scopeKey(scope)]: { message, source, ...scope } })
+  $videoGenScope.set(scope)
+  refreshDerivedState()
+}
+
+function clearScopedErrors(scope: VideoGenScope, clearGroupActionErrors = false): void {
+  const next = { ...$videoGenErrors.get() }
+  const clearGroup = clearGroupActionErrors && scope.action == null
+  let changed = false
+
+  for (const [key, error] of Object.entries(next)) {
+    if (!videoGenScopeMatches(error, scope.outfitId, scope.packId, clearGroup ? undefined : scope.action)) {
+      continue
+    }
+
+    if (
+      clearGroup &&
+      error.action != null &&
+      Object.values($videoGenRequests.get()).some(
+        request =>
+          videoGenScopeMatches(request, scope.outfitId, scope.packId) &&
+          (request.action == null || request.action === error.action)
+      )
+    ) {
+      continue
+    }
+
+    delete next[key]
+    changed = true
+  }
+
+  if (changed) {
+    $videoGenErrors.set(next)
+  }
+}
+
+function setScopedStage(packId: number, stage: VideoGenStage | null, action: string | null = null): void {
+  const stages = activeStages.get(packId) ?? new Map<string | null, VideoGenStage>()
+  stages.delete(action)
+
+  if (stage != null) {
+    stages.set(action, stage)
+  }
+
+  if (stages.size > 0) {
+    activeStages.set(packId, stages)
+  } else {
+    activeStages.delete(packId)
+  }
+
+  // 对外仍按包展示最近进度；一个动作结束不能清掉同包另一个动作的在途信号。
+  const currentStage = [...stages.values()].at(-1) ?? null
+  const next = { ...$videoGenStages.get() }
+
+  if (currentStage == null) {
+    if (packId in next) {
+      delete next[packId]
+      $videoGenStages.set(next)
+    }
+
+    return
+  }
+
+  if (next[packId] !== currentStage) {
+    next[packId] = currentStage
+    $videoGenStages.set(next)
+  }
+}
+
+function clearStaleStages(): void {
+  const packs = $videoPacks.get()
+  const current = $videoGenStages.get()
+  const packIds = new Set(packs.filter(videoPackIsGenerating).map(pack => pack.id))
+  const next: Record<number, VideoGenStage> = {}
+
+  for (const [packId, stage] of Object.entries(current)) {
+    if (packIds.has(Number(packId))) {
+      next[Number(packId)] = stage
+    } else {
+      activeStages.delete(Number(packId))
+    }
+  }
+
+  $videoGenStages.set(next)
+}
 
 /** 事件优先于旧请求响应；终态事件要求在已有水合之后重新读取。 */
-export function videoPackEventReceived(): void {
+export function videoPackEventReceived(scope?: Partial<VideoGenScope>): void {
   generationRevision += 1
+
+  if (scope) {
+    const resolved = resolveGenScope({ outfitId: scope.outfitId, action: scope.action }, scope.packId)
+    scopeRevisions.set(scopeKey(resolved), generationRevision)
+
+    if (resolved.action != null && resolved.packId != null) {
+      scopeRevisions.set(`pack:${resolved.packId}:action:${resolved.action}`, generationRevision)
+    }
+
+    if (resolved.outfitId != null && resolved.action == null) {
+      scopeRevisions.set(`outfit:${resolved.outfitId}`, generationRevision)
+    }
+  }
+}
+
+function scopeRevision(scope: VideoGenScope): number {
+  if (scope.action != null) {
+    return Math.max(
+      scopeRevisions.get(scopeKey(scope)) ?? 0,
+      scopeRevisions.get(`pack:${scope.packId}:action:${scope.action}`) ?? 0
+    )
+  }
+
+  return Math.max(
+    scopeRevisions.get(scopeKey(scope)) ?? 0,
+    scopeRevisions.get(`pack:${scope.packId}`) ?? 0,
+    scopeRevisions.get(`outfit:${scope.outfitId}`) ?? 0
+  )
 }
 
 /** 当前视图是否命中该归属；归属缺少着装时必须凭 packId 精确匹配。 */
 export function videoGenScopeMatches(
   scope: VideoGenScope | null,
   outfitId: number | null,
-  packId: number | null
+  packId: number | null,
+  action?: string | null
 ): boolean {
-  if (!scope) {
+  if (!scope || (action !== undefined && scope.action !== action)) {
     return false
   }
 
@@ -68,8 +254,24 @@ export function videoGenScopeMatches(
   return true
 }
 
+/** 视图命中的第一条错误：沿用 scope 匹配语义——包精确命中或按着装兜底（未选包时也能看到本外观的错误）。 */
+export function scopedGenError(
+  errors: Record<string, VideoGenError>,
+  outfitId: number | null,
+  packId: number | null,
+  action?: string | null
+): VideoGenError | null {
+  for (const error of Object.values(errors)) {
+    if (videoGenScopeMatches(error, outfitId, packId, action)) {
+      return error
+    }
+  }
+
+  return null
+}
+
 function resolveGenScope(
-  opts: { outfitId?: number | null; sourcePackId?: number; retryPackId?: number },
+  opts: { outfitId?: number | null; sourcePackId?: number; retryPackId?: number; action?: string | null },
   packId?: number | null
 ): VideoGenScope {
   const resolvedPackId = packId ?? opts.sourcePackId ?? opts.retryPackId ?? null
@@ -77,67 +279,74 @@ function resolveGenScope(
 
   return {
     outfitId: opts.outfitId ?? pack?.outfit_id ?? null,
-    packId: resolvedPackId
+    packId: resolvedPackId,
+    action: opts.action ?? null
   }
 }
 
-function setGenFailed(message: string, scope: VideoGenScope): void {
-  $videoGenState.set('failed')
-  $videoGenStage.set(null)
-  $videoGenScope.set(scope)
-  $videoGenError.set({ message, ...scope })
-}
-
-function setGenIssue(message: string, scope: VideoGenScope): void {
-  $videoGenError.set({ message, ...scope })
-}
-
-function clearGenIssue(): void {
-  $videoGenError.set(null)
-}
-
 function eventScope(scope: Partial<VideoGenScope>): VideoGenScope {
-  return { outfitId: scope.outfitId ?? null, packId: scope.packId ?? null }
+  return { outfitId: scope.outfitId ?? null, packId: scope.packId ?? null, action: scope.action ?? null }
 }
 
-/** 动作包就绪 / 激活事件：生成态收敛为空闲，归属取事件载荷。 */
-export function videoGenReady(scope: Partial<VideoGenScope>): void {
-  videoPackEventReceived()
-  $videoGenState.set('idle')
-  $videoGenStage.set(null)
-  clearGenIssue()
-  $videoGenScope.set(eventScope(scope))
+/** 就绪 / 激活事件：整组就绪可收敛已结束动作的错误，激活只清同 scope。 */
+export function videoGenReady(scope: Partial<VideoGenScope>, clearGroupActionErrors = false): void {
+  videoPackEventReceived(scope)
+  const resolved = resolveGenScope({ outfitId: scope.outfitId, action: scope.action }, scope.packId)
+
+  clearScopedErrors(resolved, clearGroupActionErrors)
+
+  if (resolved.packId != null) {
+    setScopedStage(resolved.packId, null, resolved.action)
+  }
+
+  $videoGenScope.set(resolved)
+  refreshDerivedState()
 }
 
 /** 生成阶段事件：未知阶段按无阶段处理；事件缺少着装时依次取包列表、同一动作包上次的归属。 */
 export function videoGenProgress(stage: string | undefined, scope: Partial<VideoGenScope>): void {
-  const { outfitId, packId } = resolveGenScope({ outfitId: scope.outfitId }, scope.packId)
+  const resolved = resolveGenScope({ outfitId: scope.outfitId, action: scope.action }, scope.packId)
   const previous = $videoGenScope.get()
 
-  videoPackEventReceived()
-  $videoGenState.set('generating')
-  $videoGenStage.set(VIDEO_GEN_STAGES.find(known => known === stage) ?? null)
-  clearGenIssue()
+  videoPackEventReceived(scope)
+  clearScopedErrors(resolved)
+
+  if (resolved.packId != null) {
+    setScopedStage(resolved.packId, VIDEO_GEN_STAGES.find(known => known === stage) ?? null, resolved.action)
+  }
+
   $videoGenScope.set({
-    outfitId: outfitId ?? (packId !== null && previous?.packId === packId ? previous.outfitId : null),
-    packId
+    outfitId:
+      resolved.outfitId ??
+      (resolved.packId !== null && previous?.packId === resolved.packId ? previous.outfitId : null),
+    packId: resolved.packId,
+    action: resolved.action
   })
+  refreshDerivedState()
 }
 
 /** 生成失败事件：文案取后端公开原因，缺省用通用提示。 */
 export function videoGenFailed(reason: string | undefined, scope: Partial<VideoGenScope>): void {
-  videoPackEventReceived()
-  setGenFailed(reason || getStrings().living.appearance.videoGenRequestFailed, eventScope(scope))
+  videoPackEventReceived(scope)
+  const resolved = eventScope(scope)
+
+  if (resolved.packId != null) {
+    setScopedStage(resolved.packId, null, resolved.action)
+  }
+
+  setScopedError(resolved, reason || getStrings().living.appearance.videoGenRequestFailed, 'generation')
 }
 
 registerStorageClearHandler(() => {
   inflight = null
   generationRevision += 1
-  requestingGeneration = false
+  scopeRevisions.clear()
+  activeStages.clear()
+  $videoGenRequests.set({})
   $videoPacks.set([])
   $videoGenState.set('idle')
-  $videoGenStage.set(null)
-  $videoGenError.set(null)
+  $videoGenStages.set({})
+  $videoGenErrors.set({})
   $videoGenScope.set(null)
 })
 
@@ -179,33 +388,38 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
 
       const packs = res.value.packs ?? []
       $videoPacks.set(packs)
-      const scope = $videoGenScope.get()
 
-      const matchesScope = (p: ActionPackWire): boolean => videoGenScopeMatches(scope, p.outfit_id, p.id)
+      // 请求拒绝不因列表仍为 ready 而消失；生成失败在回源确认恢复后清除。
+      const errors = { ...$videoGenErrors.get() }
 
-      const processing =
-        packs.find(p => p.status === 'processing' && matchesScope(p)) ?? packs.find(p => p.status === 'processing')
+      for (const [key, error] of Object.entries(errors)) {
+        const related = packs.filter(pack => videoGenScopeMatches(error, pack.outfit_id, pack.id))
 
-      if (processing) {
-        $videoGenState.set('generating')
-        $videoGenScope.set({ outfitId: processing.outfit_id, packId: processing.id })
-        clearGenIssue()
-      } else if ($videoGenState.get() === 'generating') {
-        // 服务端已无进行中任务（进程重启按失败落库）时本地生成态收敛；失败文案以 companion.video.failed 事件为准。
-        const failed =
-          packs.find(p => p.status === 'failed' && matchesScope(p)) ?? packs.find(p => p.status === 'failed') ?? null
-
-        if (failed) {
-          setGenFailed(failed.error || getStrings().living.appearance.videoGenRequestFailed, {
-            outfitId: failed.outfit_id,
-            packId: failed.id
-          })
-        } else {
-          $videoGenState.set('idle')
-          $videoGenStage.set(null)
-          clearGenIssue()
+        if (
+          (error.packId != null && related.length === 0) ||
+          (error.source === 'generation' && related.length > 0 && related.every(pack => pack.status === 'ready'))
+        ) {
+          delete errors[key]
         }
       }
+
+      for (const pack of packs) {
+        const scope = { outfitId: pack.outfit_id, packId: pack.id, action: null }
+        const key = scopeKey(scope)
+
+        if (pack.status === 'failed' && !errors[key]) {
+          errors[key] = {
+            ...scope,
+            message: pack.error || getStrings().living.appearance.videoGenRequestFailed,
+            source: 'generation'
+          }
+        }
+      }
+
+      $videoGenErrors.set(errors)
+
+      clearStaleStages()
+      refreshDerivedState()
 
       return true
     } catch (err) {
@@ -231,7 +445,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
   return load
 }
 
-/** 发起按参考生成（图片姿态或视频演绎 → 服务端处理），进度与结果经 companion.video 事件回流；请求被拒绝时把后端公开文案写入失败态，不进入 generating。 */
+/** 发起按参考生成，进度与结果经 companion.video 事件回流；同一动作在结果确定前拒绝重复提交。 */
 export async function generateVideoPack(
   opts: {
     force?: boolean
@@ -246,65 +460,112 @@ export async function generateVideoPack(
     return false
   }
 
-  if (requestingGeneration || $videoGenState.get() === 'generating') {
+  const scope = resolveGenScope(opts)
+  const key = scope.action == null && scope.outfitId != null ? `outfit:${scope.outfitId}` : scopeKey(scope)
+
+  const relatedPacks = $videoPacks
+    .get()
+    .filter(pack => (scope.outfitId != null ? pack.outfit_id === scope.outfitId : pack.id === scope.packId))
+
+  const requestPending = Object.values($videoGenRequests.get()).some(request =>
+    request.outfitId != null ? request.outfitId === scope.outfitId : request.packId === scope.packId
+  )
+
+  const retryPack = opts.retryPackId != null ? relatedPacks.find(pack => pack.id === opts.retryPackId) : null
+
+  // 恢复只推进后端明确允许续查的任务；同组未知结果不阻止其他已知任务安全恢复。
+  const busy =
+    opts.retryPackId != null
+      ? !retryPack?.can_retry || requestPending || videoPackIsGenerating(retryPack)
+      : scope.action != null
+        ? videoActionIsBusy($videoPacks.get(), $videoGenRequests.get(), scope.outfitId, scope.packId, scope.action)
+        : requestPending ||
+          relatedPacks.some(
+            pack =>
+              pack.status === 'processing' ||
+              pack.actions.some(action => videoActionIsPending(action.status) || action.can_regenerate === false)
+          )
+
+  if (busy) {
     // 仅记录本次被拒请求的归属，不把进行中的任务改写成 failed。
-    setGenIssue(getStrings().living.appearance.videoGenBusy, resolveGenScope(opts))
+    setScopedError(scope, getStrings().living.appearance.videoGenBusy)
+    refreshDerivedState()
+
+    return false
+  }
+
+  if (
+    opts.force &&
+    scope.action == null &&
+    relatedPacks.some(pack => pack.actions.some(action => action.has_ready_asset))
+  ) {
+    setScopedError(scope, getStrings().living.appearance.videoPackHasReadyActions)
 
     return false
   }
 
   const epoch = currentClearEpoch()
   const revision = generationRevision
-  requestingGeneration = true
+  $videoGenRequests.set({ ...$videoGenRequests.get(), [key]: scope })
+  clearScopedErrors(scope)
+  refreshDerivedState()
 
-  const res = await authedApi<ActionPackWire>({
-    body: {
-      force: opts.force === true,
-      outfit_id: opts.outfitId,
-      source_pack_id: opts.sourcePackId,
-      action: opts.action,
-      feedback: opts.feedback
-    },
-    method: 'POST',
-    path: opts.retryPackId
-      ? `/api/companion/video-packs/${opts.retryPackId}/retry`
-      : '/api/companion/video-packs/generate'
-  })
+  try {
+    const res = await authedApi<ActionPackWire>({
+      body: {
+        force: opts.force === true,
+        outfit_id: opts.outfitId,
+        source_pack_id: opts.sourcePackId,
+        action: opts.action,
+        feedback: opts.feedback
+      },
+      method: 'POST',
+      path: opts.retryPackId
+        ? `/api/companion/video-packs/${opts.retryPackId}/retry`
+        : '/api/companion/video-packs/generate'
+    })
 
-  if (epoch !== currentClearEpoch()) {
-    return false
-  }
-
-  requestingGeneration = false
-
-  if (revision !== generationRevision) {
-    return res.ok
-  }
-
-  if (!res.ok) {
-    if (res.reason === 'err') {
-      setGenFailed(
-        backendDetailMessage(res.error, getStrings().living.appearance.videoGenRequestFailed),
-        resolveGenScope(opts)
-      )
+    if (epoch !== currentClearEpoch()) {
+      return false
     }
 
-    return false
+    if (!res.ok) {
+      if (res.reason === 'err' && scopeRevision(scope) <= revision) {
+        setScopedError(scope, backendDetailMessage(res.error, getStrings().living.appearance.videoGenRequestFailed))
+        refreshDerivedState()
+      }
+
+      return false
+    }
+
+    if (!res.value) {
+      return false
+    }
+
+    const resolvedScope = resolveGenScope({ ...opts, outfitId: opts.outfitId ?? res.value.outfit_id }, res.value.id)
+
+    if (scopeRevision(resolvedScope) <= revision) {
+      clearScopedErrors(resolvedScope)
+      $videoGenScope.set(resolvedScope)
+
+      if (res.value.status === 'processing') {
+        setScopedStage(res.value.id, 'script', resolvedScope.action)
+      }
+    }
+
+    refreshDerivedState()
+
+    await hydrateVideoPack(true)
+
+    return true
+  } finally {
+    if (epoch === currentClearEpoch()) {
+      const requests = { ...$videoGenRequests.get() }
+      delete requests[key]
+      $videoGenRequests.set(requests)
+      refreshDerivedState()
+    }
   }
-
-  if (!res.value) {
-    return false
-  }
-
-  const scope = resolveGenScope(opts, res.value.id)
-  $videoGenState.set(res.value.status === 'processing' ? 'generating' : 'idle')
-  $videoGenStage.set(res.value.status === 'processing' ? 'script' : null)
-  $videoGenScope.set(scope)
-  clearGenIssue()
-
-  await hydrateVideoPack(true)
-
-  return true
 }
 
 export async function activateVideoPack(packId: number): Promise<boolean> {
@@ -318,19 +579,20 @@ export async function activateVideoPack(packId: number): Promise<boolean> {
   if (!res.ok) {
     if (res.reason === 'err') {
       // 穿着失败也要进入失败态，界面才能标红并展示原因。
-      setGenFailed(
-        backendDetailMessage(res.error, getStrings().living.appearance.videoActivateFailed),
-        resolveGenScope({}, packId)
+      setScopedError(
+        resolveGenScope({}, packId),
+        backendDetailMessage(res.error, getStrings().living.appearance.videoActivateFailed)
       )
+      refreshDerivedState()
     }
 
     return false
   }
 
-  $videoGenState.set('idle')
-  $videoGenStage.set(null)
   $videoGenScope.set(null)
-  clearGenIssue()
+  clearScopedErrors(resolveGenScope({}, packId))
+  setScopedStage(packId, null)
+  refreshDerivedState()
   await hydrateVideoPack(true)
 
   return true

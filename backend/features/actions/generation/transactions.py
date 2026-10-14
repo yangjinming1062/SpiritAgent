@@ -15,6 +15,7 @@ from features.actions.materials import accept_action_asset, accepted_action_asse
 from features.actions.media_contracts import ActionResult
 from features.actions.models import CompanionAction, CompanionActionPack, removed_video_tasks
 from features.actions.publishing import emit_catalog_changed, publish_action_catalog
+from features.actions.repository import clear_action_attempt
 from features.appearance.activation import activate_outfit_for_pack
 from features.appearance.queries import mark_initial_video_started
 from features.appearance.query_contracts import AvatarSnapshot, OutfitSnapshot
@@ -23,12 +24,12 @@ from features.media.character_images import ImageChainState
 from features.media.contracts import RemovedActionVideoTask
 from features.media.review_service import reject_pending_action_reviews
 
-from .errors import _generation_error, _GenerationRowGoneError
-from .execution_state import logger
-from .queries import _jobs_by_pack, _load_generation_context
+from .errors import VideoPackStateError, _generation_error, _GenerationRowGoneError
+from .execution_state import _ACTION_INFLIGHT, logger
+from .queries import _job_result_unresolved, _jobs_by_pack, _load_generation_context
 
 
-async def _insert_pack(
+async def _create_or_reset_pack(
     db: AsyncSession,
     user_id: int,
     *,
@@ -36,6 +37,48 @@ async def _insert_pack(
     outfit: OutfitSnapshot,
     reference_hash: str,
 ) -> CompanionActionPack:
+    """每套着装保留唯一动作组；零就绪且所有尝试已结算时复用组与动作身份。"""
+    pack = await db.scalar(
+        select(CompanionActionPack)
+        .where(CompanionActionPack.user_id == user_id, CompanionActionPack.outfit_id == outfit.id)
+        .with_for_update(),
+    )
+    if pack is not None:
+        jobs = (
+            await db.scalars(
+                select(CompanionAction).where(CompanionAction.pack_id == pack.id).with_for_update(),
+            )
+        ).all()
+        if any(accepted_action_asset(job) is not None for job in jobs):
+            raise VideoPackStateError("该着装已有就绪动作，请按需重新生成单个动作")
+        if pack.status == "processing" or any(
+            _job_result_unresolved(job) or job.id in _ACTION_INFLIGHT for job in jobs
+        ):
+            raise VideoPackStateError("该着装仍有动作等待结果，请等待或核对原任务")
+        context = _load_generation_context(pack)
+        if context is not None and (
+            context.reference_chain.phase == "submitting" or context.reference_chain.stop_reason == "result_unknown"
+        ):
+            raise VideoPackStateError("动作参考生成结果尚未确认，请先核对原任务")
+        retired = _pack_assets(pack, list(jobs))
+        for job in jobs:
+            await reject_pending_action_reviews(db, user_id=user_id, action_id=job.id, media_type=job.media_type)
+            clear_action_attempt(job)
+            job.metadata_revision += 1
+            job.status, job.stage, job.error = "failed", "design", None
+            job.reference_hash = reference_hash
+        pack.reference_path = pack.manifest_path = ""
+        pack.cover_path = None
+        pack.content_hash = ""
+        pack.context_json = None
+        pack.character_snapshot = pack.outfit_snapshot = pack.canvas_spec = "{}"
+        pack.identity_review, pack.identity_review_reason = "none", ""
+        pack.status, pack.error, pack.active = "processing", None, False
+        pack.avatar_id = avatar.id if avatar is not None else None
+        pack.reference_hash = reference_hash
+        await retire_action_assets(db, user_id, retired)
+        await db.flush()
+        return pack
     if outfit.is_initial:
         await mark_initial_video_started(db, user_id, outfit.id)
         emit_ws_event(
@@ -51,16 +94,6 @@ async def _insert_pack(
         status="processing",
         reference_hash=reference_hash,
     )
-    # 版本号 = 同外观历史最大版本 + 1；版本不可覆盖，单动作请求即新版本。
-    latest_version = (
-        await db.execute(
-            select(CompanionActionPack.pack_version)
-            .where(CompanionActionPack.user_id == user_id, CompanionActionPack.outfit_id == outfit.id)
-            .order_by(CompanionActionPack.pack_version.desc())
-            .limit(1),
-        )
-    ).scalar_one_or_none()
-    pack.pack_version = (latest_version or 0) + 1
     db.add(pack)
     await db.flush()
     return pack
@@ -274,7 +307,7 @@ async def _activate_locked(db: AsyncSession, pack: CompanionActionPack) -> None:
         db,
         user_id=pack.user_id,
         event_type="companion.video.activated",
-        payload={"packId": pack.id, "packVersion": pack.pack_version, "outfitId": pack.outfit_id},
+        payload={"packId": pack.id, "outfitId": pack.outfit_id},
     )
     emit_catalog_changed(db, pack)
 

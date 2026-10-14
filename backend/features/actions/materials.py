@@ -80,11 +80,7 @@ def parse_accepted_action_asset_json(value: str) -> AcceptedActionAsset:
 
 
 def accepted_action_asset(action: CompanionAction) -> AcceptedActionAsset | None:
-    if action.accepted_asset_json:
-        return parse_accepted_action_asset_json(action.accepted_asset_json)
-    if action.status != "succeeded" or not action.result_json or not action.media_path:
-        return None
-    return _current_asset(action)
+    return parse_accepted_action_asset_json(action.accepted_asset_json) if action.accepted_asset_json else None
 
 
 def _current_asset(action: CompanionAction) -> AcceptedActionAsset:
@@ -95,8 +91,3 @@ def _current_asset(action: CompanionAction) -> AcceptedActionAsset:
 
 def accept_action_asset(action: CompanionAction) -> None:
     action.accepted_asset_json = _current_asset(action).model_dump_json()
-
-
-def preserve_action_asset(action: CompanionAction) -> None:
-    if not action.accepted_asset_json and action.status == "succeeded" and action.result_json and action.media_path:
-        accept_action_asset(action)

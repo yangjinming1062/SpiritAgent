@@ -24,13 +24,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.actions.materials import (
     AcceptedActionAsset,
     AcceptedImageActionAsset,
-    AcceptedVideoActionAsset,
     accepted_action_asset,
     parse_accepted_action_asset_json,
 )
 from features.actions.models import CompanionAction, CompanionActionPack, make_action_reference_hash
 from features.actions.publishing import build_catalog_manifest
 from features.media.identity_contracts import CharacterCardSnapshot
+
+
+def _rewrite_restored_asset_paths(value: Any, paths: dict[str, str], depth: int = 0) -> Any:
+    if depth > 64:
+        raise ValueError("Action asset metadata is nested too deeply")
+    if isinstance(value, dict):
+        return {key: _rewrite_restored_asset_paths(item, paths, depth + 1) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_rewrite_restored_asset_paths(item, paths, depth + 1) for item in value]
+    if isinstance(value, str):
+        if value in paths:
+            return paths[value]
+        if value.lstrip().startswith(("{", "[")):
+            try:
+                parsed = json.loads(value)
+            except RecursionError:
+                raise ValueError("Action asset metadata is nested too deeply") from None
+            except json.JSONDecodeError:
+                return value
+            rewritten = _rewrite_restored_asset_paths(parsed, paths, depth + 1)
+            return json.dumps(rewritten, ensure_ascii=False) if rewritten != parsed else value
+    return value
 
 
 def restore_action_payload(
@@ -47,16 +68,13 @@ def restore_action_payload(
         if len(parts) >= 3 and parts[0] == "companion-assets":
             asset_paths[path] = PurePosixPath("companion-assets", str(user_id), *parts[2:]).as_posix()
     # 已清理的中间文件不在复制清单中，仍须迁移引用，避免后续清理触及源用户目录。
-    payload.update(BackupPathRewriter(asset_paths).rewrite(payload))
+    payload.update(_rewrite_restored_asset_paths(payload, asset_paths))
     if table == "companion_actions":
-        _validate_action_media_type(payload)
-        if payload.get("accepted_asset_json"):
-            payload["accepted_asset_json"] = parse_accepted_action_asset_json(
-                payload["accepted_asset_json"],
-            ).model_dump_json()
+        if (accepted := _backup_accepted_asset(payload)) is not None:
+            payload["accepted_asset_json"] = accepted.model_dump_json()
         if payload.get("pack_id") is None:
             raise ValueError("Action pack is missing from backup")
-        if payload.get("status") in {"queued", "processing", "result_unknown", "review"}:
+        if payload.get("status") in {"queued", "processing", "review"}:
             payload["status"] = "failed"
             payload["error"] = "恢复的动作任务需要手动处理；请先核对已有生成结果"
         # 保留句柄、提交未知标记与已付费产物，手动重试仍遵循原任务的幂等守卫。
@@ -103,10 +121,9 @@ def _backup_accepted_asset(row: dict[str, Any]) -> AcceptedActionAsset | None:
     _validate_action_media_type(row)
     if row.get("accepted_asset_json"):
         return parse_accepted_action_asset_json(row["accepted_asset_json"])
-    if row.get("status") != "succeeded":
-        return None
-    model = AcceptedImageActionAsset if row["media_type"] == "image" else AcceptedVideoActionAsset
-    return model.model_validate({field: row.get(field) for field in model.model_fields})
+    if row.get("status") == "succeeded":
+        raise ValueError("Ready action is missing its accepted asset")
+    return None
 
 
 def _validate_image_asset(path: Path, asset: AcceptedImageActionAsset) -> None:
@@ -192,6 +209,14 @@ def validate_action_files(
     target_user_id: int,
 ) -> None:
     """清理目标行前验证路径和可播素材；根目录资产在目标已有同名文件时按恢复规则检查其内容。"""
+    seen_outfits: set[str] = set()
+    for pack in rows.get("companion_action_packs", []):
+        if (outfit_id := pack.get("outfit_id")) is None:
+            continue
+        outfit_key = str(outfit_id)
+        if outfit_key in seen_outfits:
+            raise ValueError("同一着装只能恢复一组动作")
+        seen_outfits.add(outfit_key)
     source_root = (extract_root / "files").resolve()
     target_root = Path(SETTINGS.data_dir).resolve()
 

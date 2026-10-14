@@ -124,19 +124,23 @@ export {
 export type { CompanionFallbackStatus } from './presentation'
 export { handleDragEndInteraction } from './reactions/reaction-audio'
 export {
-  $videoGenError,
+  $videoGenErrors,
+  $videoGenRequests,
   $videoGenScope,
-  $videoGenStage,
+  $videoGenStages,
   $videoGenState,
   $videoPacks,
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
+  scopedGenError,
+  videoActionIsBusy,
   videoGenFailed,
   videoGenProgress,
   videoGenReady,
   videoGenScopeMatches,
-  videoPackEventReceived
+  videoPackEventReceived,
+  videoPackIsGenerating
 } from './rendering/video/video-pack-store'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {

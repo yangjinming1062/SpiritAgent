@@ -10,7 +10,7 @@
 | [generation/commands.py](generation/commands.py) | 上传/参考创建、重试、启用与删除 |
 | [generation/planning.py](generation/planning.py)、[generation/pipeline.py](generation/pipeline.py) | 静态/运动规划与逐阶段制作 |
 | [generation/transactions.py](generation/transactions.py)、[generation/tasks.py](generation/tasks.py) | 事务内状态推进、单飞、恢复与关闭 |
-| [generation/references.py](generation/references.py)、[generation/catalog.py](generation/catalog.py) | 冻结身份、素材继承与响应装配 |
+| [generation/references.py](generation/references.py)、[generation/catalog.py](generation/catalog.py) | 冻结身份、目录收尾与响应装配 |
 | [repository.py](repository.py)、[materials.py](materials.py) | 包、动作和当前尝试/已采纳素材 |
 | [publishing.py](publishing.py)、[asset_retirement.py](asset_retirement.py) | 目录 CAS 发布、引用退役与补偿 |
 | [policy.py](policy.py)、[playback.py](playback.py)、[usage.py](usage.py) | 额度与开关、点播、回执和延迟意图 |
@@ -22,14 +22,14 @@
 
 ## 评审输入与额度
 
-评审只读所属包冻结参考与实际提供的动作候选，模型复用 ID 必须来自候选集合。重启恢复 pending，deferred 仅在创建窗口内恢复，避免旧提案每次启动付费重审。新付费步骤重查抠像模型与维护状态，已有句柄继续查询下载；未知结果不重新提交。
+评审只读所属包冻结参考与实际提供的动作候选，模型复用 ID 必须来自候选集合。重启恢复 pending，deferred 仅在创建窗口内恢复，避免旧提案每次启动付费重审。新付费步骤重查抠像模型与维护状态，恢复边界归 [PIPELINE](../../../docs/PIPELINE.md#恢复与资产回收)。
 
-制作文件按用途拆分，所有阶段仍使用原业务状态机。系统 drag 和左右探身是静态图像流程，不进入视频链；上传必须符合真实 alpha 规格。继承素材时复制并改写嵌套路径，待复核候选留在原动作，不能复制悬空复核状态。
+制作文件按用途拆分，共用逐动作状态机；图片与视频分支见 [系统动作与动态动作](../../../docs/PIPELINE.md#系统动作与动态动作)。
 
 ## 采纳与发布
 
-`accepted_asset_json` 保存已采纳版本，制作列仅代表当前尝试；重做失败或待复核期间旧版本继续可播。目录与播放只消费已采纳版本。`metadata_revision` 同时进入目录和播放指令，必需槽位不齐不发布。
+`accepted_asset_json` 保存当前已采纳素材，制作列代表本次尝试；目录与播放只消费已采纳内容。采纳事务与自动穿着守卫归 [媒体复核与激活](../../../docs/PROTOCOL.md#媒体复核与激活)。
 
-每次 CAS 发布使用独立文件，冲突删除落败文件、刷新状态后有限重试，失败不重新制作。`emit_catalog_changed` 是目录事件的唯一发送入口，调用方在发布/激活事务内发送。备份由本模块重建 manifest，不走正常 CAS 制作路径。队列收尾处理新动作唤醒和推迟的旧包退役，空队列停止。
+`emit_catalog_changed` 是目录事件的唯一发送入口，调用方在发布/激活事务内发送；CAS 发布规则归 [目录发布与并发](../../../docs/PIPELINE.md#目录发布与并发)。备份由本模块重建 manifest，不走正常 CAS 制作路径。生成任务按动作登记单飞，同包共享并发预算；任务计数在最后一个任务结束后释放包保护，结果未知的任务仍保留供核对。包收尾等待所有排队与制作动作取得结果，发布前再次核对素材与新入队动作。
 
 验证归 [Scripts](../../../scripts/README.md)。核对同名并发、幂等来源、重试占额、旧资产保留、冻结评审、CAS、播放回执和引用退役；制作与呈现分别验收。

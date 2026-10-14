@@ -254,11 +254,6 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="COMPANION_AVATAR_GENERATE_RATE_LIMIT_PER_MINUTE",
     )
-    companion_outfit_generate_rate_limit_per_hour: int = Field(
-        default=1,
-        gt=0,
-        validation_alias="COMPANION_OUTFIT_GENERATE_RATE_LIMIT_PER_HOUR",
-    )
     # 小于等于 0 表示不限额，因此不设下界。
     scene_llm_create_per_24h: int = Field(default=1, validation_alias="SCENE_LLM_CREATE_PER_24H")
     scene_store_max_attempts: int = Field(default=3, gt=0, validation_alias="SCENE_STORE_MAX_ATTEMPTS")

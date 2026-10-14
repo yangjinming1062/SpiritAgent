@@ -13,7 +13,6 @@ def _summary(pack: CompanionActionPack) -> VideoPackResponse:
     return VideoPackResponse(
         id=pack.id,
         outfit_id=pack.outfit_id,
-        pack_version=pack.pack_version,
         status=pack.status,
         active=pack.active,
     )

@@ -10,11 +10,9 @@ from infrastructure.assets.asset_store import (
     build_data_uri,
     image_mime_for_extension,
     pack_asset_directory,
-    resolve_companion_asset_path,
     save_companion_asset_async,
     sniff_media_ext,
 )
-from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.config import SETTINGS
 from infrastructure.video_processing.frames import action_frame_video_input
 from infrastructure.video_processing.process import HITMASK_FPS, HITMASK_GRID_H, HITMASK_GRID_W, sample_key_frames
@@ -24,7 +22,7 @@ from features.actions.models import CompanionActionPack, make_action_reference_h
 from features.appearance.avatar_service import load_avatar_bytes_as_data_uri, read_portrait_bytes
 from features.appearance.query_contracts import AvatarSnapshot, OutfitSnapshot
 
-from .errors import VideoPackError, VideoPackStateError
+from .errors import VideoPackError
 from .execution_state import _SOURCE_EXT_BY_MIME
 
 
@@ -66,48 +64,6 @@ async def _copy_portrait_asset(path: str, *, user_id: int, label: str, directory
         ext=sniff_media_ext(data) or "png",
         directory=directory,
     )
-
-
-async def _copy_pack_value(
-    value: object,
-    pack: CompanionActionPack,
-    copied: dict[str, str],
-) -> object:
-    if isinstance(value, list):
-        return [await _copy_pack_value(item, pack, copied) for item in value]
-    if isinstance(value, dict):
-        return {
-            key: _pack_dir(pack) if key == "storage_directory" else await _copy_pack_value(item, pack, copied)
-            for key, item in value.items()
-        }
-    if not isinstance(value, str):
-        return value
-    parsed = parse_companion_asset_path(value)
-    if parsed is not None:
-        if parsed[0] != pack.user_id:
-            raise VideoPackStateError("继承素材不属于当前账户")
-        if value not in copied:
-            directory = _pack_dir(pack)
-            resolved = resolve_companion_asset_path(*parsed)
-            if resolved is None:
-                # 进度会预登记尚未落盘的源素材；恢复时仍使用目标包的确定性路径。
-                return f"companion-assets/{pack.user_id}/{directory}/{parsed[1].rsplit('/', 1)[-1]}"
-            else:
-                copied[value] = await save_companion_asset_async(
-                    await _process_thread(resolved[0].read_bytes),
-                    user_id=pack.user_id,
-                    directory=directory,
-                    label=resolved[0].stem,
-                    ext=resolved[0].suffix.lstrip("."),
-                )
-        return copied[value]
-    if value.startswith(("{", "[")):
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError:
-            return value
-        return json.dumps(await _copy_pack_value(decoded, pack, copied), ensure_ascii=False)
-    return value
 
 
 def _source_ext(content_type: str) -> str:

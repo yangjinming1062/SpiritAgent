@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.actions.command_contracts import ActionPackSnapshot
 from features.actions.generation.state import GenerationContext
-from features.actions.materials import accepted_action_asset
 from features.actions.models import (
     REQUIRED_SYSTEM_SLOTS,
     SYSTEM_ACTION_MEDIA_TYPES,
@@ -21,6 +20,7 @@ from features.actions.models import (
     CompanionAction,
     CompanionActionPack,
 )
+from features.actions.policy import get_action_accept_lock
 from features.appearance.avatar_service import get_avatar_job_lock
 from features.appearance.character_card import (
     character_snapshot_is_current,
@@ -33,10 +33,10 @@ from features.companion.visual_state import ensure_persona_snapshot
 from features.media.chain import FrozenMediaProvider, spawn_removed_action_task_cancellation
 from features.media.image_generation import resolve_image_gen_chain
 
-from .catalog import _copy_job_to_pack, _publish_dynamic_catalog, _retire_superseded_locked
+from .catalog import _publish_dynamic_catalog
 from .errors import VideoPackError, VideoPackNotFoundError, VideoPackStateError
-from .execution_state import _DEFAULT_CANVAS, _GEN_INFLIGHT, _SYSTEM_ACTION_SECONDS
-from .helpers import _artifact_abs_path, _copy_pack_value, _copy_portrait_asset, _pack_dir, _reference_hash
+from .execution_state import _ACTION_INFLIGHT, _DEFAULT_CANVAS, _SYSTEM_ACTION_SECONDS
+from .helpers import _artifact_abs_path, _copy_portrait_asset, _pack_dir, _reference_hash
 from .queries import (
     _action_order,
     _active_avatar,
@@ -45,22 +45,40 @@ from .queries import (
     _can_resume_job,
     _get_pack,
     _has_pending_work,
-    _inheritable_job,
     _jobs_by_pack,
     _load_generation_context,
-    _must_succeed_actions,
-    _newer_ready_pack,
 )
 from .references import (
     _freeze_action_video_plan,
     _reject_concurrent_build,
+    _reject_pack_regeneration,
     _require_current_identity_image,
     _resolve_action_video_plan,
-    _same_generation_lineage,
     require_action_matting_model,
 )
 from .tasks import _kick_build, _kick_generate, _queue_in_place_redo, kick_dynamic_action
-from .transactions import _activate_locked, _insert_pack, _remove_packs
+from .transactions import _activate_locked, _create_or_reset_pack, _remove_packs
+
+
+async def _system_action_row(
+    db: AsyncSession,
+    pack: CompanionActionPack,
+    action: str,
+    *,
+    media_type: str,
+) -> CompanionAction:
+    job = await db.scalar(
+        select(CompanionAction).where(CompanionAction.pack_id == pack.id, CompanionAction.key == action),
+    )
+    if job is None:
+        job = CompanionAction(user_id=pack.user_id, pack_id=pack.id, outfit_id=pack.outfit_id, key=action)
+        db.add(job)
+    job.system_slot, job.media_type = action, media_type
+    job.kind = "loop" if media_type == "video" else None
+    job.target_duration_seconds = job.actual_duration_ms = job.frames = job.loopable = job.hitmask_fps = None
+    job.reference_hash = pack.reference_hash
+    job.status, job.error = "queued", None
+    return job
 
 
 async def create_pack_from_clips(
@@ -83,12 +101,13 @@ async def create_pack_from_clips(
         persona = await ensure_persona_snapshot(db, user_id)
         if not persona.is_complete:
             raise VideoPackStateError("请先完成角色设定再创建动作包")
-        await _reject_concurrent_build(db, user_id)
         outfit = await outfit_snapshot(db, user_id, outfit_id)
         if outfit is None:
             raise VideoPackError("找不到对应的外观")
         if outfit.status != "ready":
             raise VideoPackStateError("外观尚未确认，无法创建动作包")
+        await _reject_concurrent_build(db, user_id, outfit.id)
+        await _reject_pack_regeneration(db, user_id, outfit.id)
         avatar = await _active_avatar(db, user_id)
         reference_hash = await _reference_hash(outfit, avatar)
 
@@ -96,24 +115,12 @@ async def create_pack_from_clips(
             if len(data) > MAX_SOURCE_BYTES:
                 raise VideoPackError("动作片段超过大小上限")
 
-        pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
+        pack = await _create_or_reset_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
         pack.canvas_spec = json.dumps({"width": canvas_w, "height": canvas_h})
         for action, (_data, content_type) in clips.items():
             media_type = "image" if content_type.startswith("image/") else "video"
-            db.add(
-                CompanionAction(
-                    user_id=user_id,
-                    pack_id=pack.id,
-                    outfit_id=outfit.id,
-                    key=action,
-                    system_slot=action,
-                    media_type=media_type,
-                    kind="loop" if media_type == "video" else None,
-                    status="queued",
-                    stage="process",
-                    reference_hash=reference_hash,
-                ),
-            )
+            job = await _system_action_row(db, pack, action, media_type=media_type)
+            job.stage = "process"
         await db.commit()
         await db.refresh(pack)
 
@@ -138,78 +145,65 @@ async def create_pack_from_reference(
     action: str | None = None,
     feedback: str = "",
 ) -> ActionPackSnapshot:
-    """按参考生成：单个系统动作在 ready 包原地重做（保 pack_id 只推进素材版本），包未 ready 时才形成新版本并复用冻结参考。"""
-    if (source_pack_id is None) != (action is None) or (action is not None and action not in SYSTEM_SLOTS):
+    """动作原地重做；已有就绪动作时只允许单项制作，不新建整包。"""
+    if (source_pack_id is None) != (action is None) or (action is not None and not action.strip()):
         raise VideoPackStateError("单动作请求必须指定有效动作包与动作")
-    async with get_avatar_job_lock(user_id), contextlib.AsyncExitStack() as pending_assets:
+    async with (
+        get_action_accept_lock(user_id),
+        get_avatar_job_lock(user_id),
+        contextlib.AsyncExitStack() as pending_assets,
+    ):
         persona = await ensure_persona_snapshot(db, user_id)
         if not persona.is_complete:
             raise VideoPackStateError("请先完成角色设定")
         source = await _get_pack(db, user_id, source_pack_id) if source_pack_id is not None else None
         if source_pack_id is not None and (
-            source is None or source.status not in ("ready", "failed") or not source.reference_path
+            source is None or source.status not in ("processing", "ready", "failed") or not source.reference_path
         ):
             raise VideoPackStateError("该动作包不能生成该动作")
-        # 同一外观快照：ready 包上单动作原地重做，不新建 pack。
-        if source is not None and action is not None and source.status == "ready":
-            await _reject_concurrent_build(db, user_id)
+        if source is not None and action is not None:
             require_action_matting_model()
             source_context = _load_generation_context(source)
             if source_context is None:
                 raise VideoPackStateError("该动作包的制作资料不完整，请重新生成动作包")
+            if source_context.reference_alignment != "ready":
+                raise VideoPackStateError("动作参考尚未准备完成，请等待原任务")
             await _require_current_identity_image(source_context, await _active_avatar(db, user_id))
             job = await _queue_in_place_redo(db, source, action, feedback)
+            if source.status == "failed":
+                source.status, source.error = "processing", None
             await db.commit()
             kick_dynamic_action(source.id, job.id, user_id)
             await db.refresh(source)
             return ActionPackSnapshot.model_validate(source)
-        if source is not None:
-            outfit_id = source.outfit_id
         outfit = await ready_outfit_snapshot(db, user_id, outfit_id)
         if outfit is None:
             raise VideoPackStateError("请先确认外观参考图")
         if initial_only:
             existing = await db.scalar(
-                select(CompanionActionPack)
-                .where(
+                select(CompanionActionPack).where(
                     CompanionActionPack.user_id == user_id,
                     CompanionActionPack.outfit_id == outfit.id,
-                )
-                .order_by(CompanionActionPack.id.desc())
-                .limit(1),
+                ),
             )
             if existing is not None:
                 return ActionPackSnapshot.model_validate(existing)
             if outfit.initial_video_started:
                 raise VideoPackStateError("默认动作包任务已移除，请在外观页重新生成")
-        await _reject_concurrent_build(db, user_id)
+        await _reject_concurrent_build(db, user_id, outfit.id)
         avatar = await _active_avatar(db, user_id)
-        if source is not None and (avatar is None or source.avatar_id != avatar.id):
-            raise VideoPackStateError("角色形象已切换，请重新生成动作包")
-        reference_hash = source.reference_hash if source is not None else await _reference_hash(outfit, avatar)
-        source_context = _load_generation_context(source) if source is not None else None
-        if source is not None and source_context is None:
-            raise VideoPackStateError("该动作包的制作资料不完整，请重新生成动作包")
-        if source_context is not None:
-            await _require_current_identity_image(source_context, avatar)
-        identity = (
-            source_context.identity if source_context is not None else await require_character_snapshot(db, user_id)
-        )
-        if source_context is not None and source_context.reference_alignment != "ready":
-            raise VideoPackStateError("参考图尚未准备完成，请重新生成动作包")
-        if not force and source is None:
+        reference_hash = await _reference_hash(outfit, avatar)
+        identity = await require_character_snapshot(db, user_id)
+        if not force:
             reusable = (
                 await db.execute(
-                    select(CompanionActionPack)
-                    .where(
+                    select(CompanionActionPack).where(
                         CompanionActionPack.user_id == user_id,
                         CompanionActionPack.outfit_id == outfit.id,
                         CompanionActionPack.reference_hash == reference_hash,
                         CompanionActionPack.status == "ready",
                         CompanionActionPack.reference_path != "",
-                    )
-                    .order_by(CompanionActionPack.pack_version.desc())
-                    .limit(1),
+                    ),
                 )
             ).scalar_one_or_none()
             reusable_context = _load_generation_context(reusable) if reusable is not None else None
@@ -218,15 +212,13 @@ async def create_pack_from_reference(
                 and reusable_context is not None
                 and reusable_context.identity == identity
                 and await character_snapshot_is_current(db, user_id, identity)
-                and await _newer_ready_pack(db, reusable) is None
             ):
                 await _activate_locked(db, reusable)
-                _, removed = await _retire_superseded_locked(db, reusable)
                 await db.commit()
-                spawn_removed_action_task_cancellation(user_id, removed)
                 await db.refresh(reusable)
 
                 return ActionPackSnapshot.model_validate(reusable)
+        await _reject_pack_regeneration(db, user_id, outfit.id)
         system_seconds: float | None = None
         system_providers: list[FrozenMediaProvider] = []
         if not await resolve_vision_chain(db, user_id, task=AiTaskKey.window_action):
@@ -250,83 +242,41 @@ async def create_pack_from_reference(
         if not image_chain:
             raise VideoPackStateError(image_error or "请配置图像编辑供应商以生成动作姿态")
         require_action_matting_model()
-        pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
+        pack = await _create_or_reset_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
         directory = _pack_dir(pack)
-        previous: dict[str, CompanionAction] = {}
-        if source is not None:
-            previous = {
-                job.key: job
-                for job in (
-                    await db.execute(select(CompanionAction).where(CompanionAction.pack_id == source.id))
-                ).scalars()
-            }
-            # 必需动作结果未知且不是本次目标时拒绝，避免目标动作付费完成后整包仍无法发布。
-            for key in REQUIRED_SYSTEM_SLOTS:
-                if key == action:
-                    continue
-                old = _inheritable_job(previous.get(key))
-                if old is not None and accepted_action_asset(old) is None and not _can_resume_job(old):
-                    raise VideoPackStateError("请先重做失败的必需动作，再补齐其他动作")
-            copied_reference = await _copy_portrait_asset(
-                source.reference_path,
-                user_id=user_id,
-                label="video_reference",
-                directory=directory,
-            )
-            if copied_reference is None:
-                raise VideoPackStateError("该动作包的参考图无法读取")
-            reference_path = copied_reference
-            pending_assets.callback(unlink_companion_asset, reference_path)
-        else:
-            copied = await _copy_portrait_asset(
-                outfit.fullbody_url,
-                user_id=user_id,
-                label="video_reference",
-                directory=directory,
-            )
-            if copied is None:
-                raise VideoPackStateError("外观参考图不可读")
-            reference_path = copied
-            pending_assets.callback(unlink_companion_asset, reference_path)
+        reference_path = await _copy_portrait_asset(
+            outfit.fullbody_url,
+            user_id=user_id,
+            label="video_reference",
+            directory=directory,
+        )
+        if reference_path is None:
+            raise VideoPackStateError("外观参考图不可读")
+        pending_assets.callback(unlink_companion_asset, reference_path)
         active_outfit_id = await _active_outfit_id(db, user_id)
-        if source_context is not None:
-            action_feedback = dict(source_context.action_feedback)
-            if action is not None:
-                action_feedback[action] = feedback.strip()[:1000]
-            copied: dict[str, str] = {source.reference_path: reference_path}
-            try:
-                context = GenerationContext.model_validate(
-                    await _copy_pack_value(source_context.model_dump(), pack, copied),
-                )
-            finally:
-                for path in copied.values():
-                    pending_assets.callback(unlink_companion_asset, path)
-            context.action_feedback = action_feedback
-            context.active_outfit_id = active_outfit_id
-        else:
-            seed_path = avatar.seed_fullbody_url if avatar else ""
-            identity_reference_path = await _copy_portrait_asset(
-                seed_path,
-                user_id=user_id,
-                label="video_identity",
-                directory=directory,
-            )
-            if identity_reference_path is None:
-                raise VideoPackStateError("全身形象无法读取")
-            pending_assets.callback(unlink_companion_asset, identity_reference_path)
-            context = GenerationContext(
-                identity=identity,
-                identity_reference_path=identity_reference_path,
-                # 全身身份图只用于版本守卫；动作包参考由头像与当前着装图合成。
-                reference_alignment="pending",
-                persona_definition=load_persona_definition(persona),
-                personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
-                outfit_description=outfit.description or "",
-                outfit_description_frozen=bool(outfit.description),
-                feedback=feedback,
-                active_outfit_id=outfit.id if initial_only else active_outfit_id,
-                must_actions=[],
-            )
+        seed_path = avatar.seed_fullbody_url if avatar else ""
+        identity_reference_path = await _copy_portrait_asset(
+            seed_path,
+            user_id=user_id,
+            label="video_identity",
+            directory=directory,
+        )
+        if identity_reference_path is None:
+            raise VideoPackStateError("全身形象无法读取")
+        pending_assets.callback(unlink_companion_asset, identity_reference_path)
+        context = GenerationContext(
+            identity=identity,
+            identity_reference_path=identity_reference_path,
+            # 全身身份图只用于版本守卫；动作包参考由头像与当前着装图合成。
+            reference_alignment="pending",
+            persona_definition=load_persona_definition(persona),
+            personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
+            outfit_description=outfit.description or "",
+            outfit_description_frozen=bool(outfit.description),
+            feedback=feedback,
+            active_outfit_id=outfit.id if initial_only else active_outfit_id,
+            must_actions=list(REQUIRED_SYSTEM_SLOTS),
+        )
         context.storage_directory = directory
         context.reference_chain.storage_directory = directory
         pack.reference_path = reference_path
@@ -338,48 +288,18 @@ async def create_pack_from_reference(
             ensure_ascii=False,
         )
         pack.outfit_snapshot = json.dumps({"description": context.outfit_description}, ensure_ascii=False)
-        # 新整包只建必需动作；单动作继承源包动作并补齐/重做目标。成功直接复用，可续跑失败重新排队，未知失败不阻塞。must_actions 为本版本必须成功的集合。
-        if source is not None:
-            action_keys = set(previous) | {action, *REQUIRED_SYSTEM_SLOTS}
-        else:
-            action_keys = set(REQUIRED_SYSTEM_SLOTS)
-        must_actions: set[str] = set(REQUIRED_SYSTEM_SLOTS)
-        for key in sorted(action_keys, key=_action_order):
-            old = _inheritable_job(previous.get(key)) if key != action else None
-            if old is None:
-                media_type = SYSTEM_ACTION_MEDIA_TYPES.get(key, "video")
-                if media_type == "video" and not system_providers:
-                    system_seconds, system_providers = await _resolve_action_video_plan(
-                        user_id,
-                        needs_loop_frames=True,
-                        duration_seconds=_SYSTEM_ACTION_SECONDS,
-                    )
-                job = CompanionAction(
-                    user_id=user_id,
-                    pack_id=pack.id,
-                    outfit_id=outfit.id,
-                    key=key,
-                    system_slot=key if key in SYSTEM_SLOTS else "",
-                    media_type=media_type,
-                    kind=("loop" if key in SYSTEM_SLOTS else "once") if media_type == "video" else None,
-                    target_duration_seconds=system_seconds if media_type == "video" else None,
-                    status="queued",
-                    stage="script",
-                    reference_hash=reference_hash,
+        for key in sorted(REQUIRED_SYSTEM_SLOTS, key=_action_order):
+            media_type = SYSTEM_ACTION_MEDIA_TYPES[key]
+            if media_type == "video" and not system_providers:
+                system_seconds, system_providers = await _resolve_action_video_plan(
+                    user_id,
+                    needs_loop_frames=True,
+                    duration_seconds=_SYSTEM_ACTION_SECONDS,
                 )
-                if media_type == "video" and system_seconds is not None:
-                    _freeze_action_video_plan(job, system_seconds, system_providers)
-                must_actions.add(key)
-            else:
-                job = await _copy_job_to_pack(old, pack)
-                job.outfit_id, job.reference_hash = outfit.id, reference_hash
-                if accepted_action_asset(job) is not None:
-                    must_actions.add(key)
-                elif _can_resume_job(old):
-                    job.status, job.error = "queued", None
-                    must_actions.add(key)
-            db.add(job)
-        context = context.model_copy(update={"must_actions": sorted(must_actions, key=_action_order)})
+            job = await _system_action_row(db, pack, key, media_type=media_type)
+            job.stage = "script"
+            if media_type == "video" and system_seconds is not None:
+                _freeze_action_video_plan(job, system_seconds, system_providers)
         pack.context_json = context.model_dump_json()
         await db.commit()
         pending_assets.pop_all()
@@ -391,10 +311,10 @@ async def create_pack_from_reference(
 async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionPackSnapshot:
     """只恢复已知任务或本地素材；不自动重发结果未知的生成请求。"""
     async with get_avatar_job_lock(user_id):
-        await _reject_concurrent_build(db, user_id)
         pack = await _get_pack(db, user_id, pack_id)
         if pack is None or pack.status != "failed" or not pack.reference_path:
             raise VideoPackStateError("该动作包没有可继续的任务")
+        await _reject_concurrent_build(db, user_id, pack.outfit_id)
         outfit = await outfit_snapshot(db, pack.user_id, pack.outfit_id)
         avatar = await _active_avatar(db, user_id)
         if outfit is None or avatar is None or pack.avatar_id != avatar.id:
@@ -404,53 +324,18 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionPack
         context = _load_generation_context(pack)
         if context is None:
             raise VideoPackStateError("该动作包的制作资料不完整，请重新生成动作包")
-        if context.reference_chain.phase == "submitting" and context.reference_chain.best() is None:
-            raise VideoPackStateError("参考图生成结果未知，请核对后重新生成动作包")
+        if context.reference_chain.phase == "submitting" or context.reference_chain.stop_reason == "result_unknown":
+            raise VideoPackStateError("参考图生成结果尚未确认，请先核对原任务")
         jobs = list(
             (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars(),
         )
-        newer = await _newer_ready_pack(db, pack)
-        if newer is not None and not _same_generation_lineage(pack, newer):
-            newer = None
-        if newer is not None:
-            by_action = {job.key: job for job in jobs}
-            newer_jobs = (
-                (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == newer.id))).scalars().all()
-            )
-            for job in newer_jobs:
-                # 最新成功结果优先；尚未完成的动作沿用原任务句柄和脚本。
-                if accepted_action_asset(job) is not None or job.key not in by_action:
-                    by_action[job.key] = job
-            jobs = sorted(by_action.values(), key=lambda job: _action_order(job.key))
-            must_actions = _must_succeed_actions(context.must_actions)
-            must_actions.update(
-                job.key for job in jobs if accepted_action_asset(job) is not None or _can_resume_job(job)
-            )
-            context = context.model_copy(update={"must_actions": sorted(must_actions, key=_action_order)})
+        if any(job.id in _ACTION_INFLIGHT for job in jobs):
+            raise VideoPackStateError("动作任务仍在收尾，请等待完成后继续")
         recoverable = [job for job in jobs if _can_resume_job(job)]
         if not recoverable and not _can_publish_jobs(jobs, context.must_actions):
-            raise VideoPackStateError("提交结果未知，请核对供应商任务后选择重做动作")
+            raise VideoPackStateError("没有可继续的动作任务，请先核对原任务结果")
         if recoverable:
             require_action_matting_model()
-        if newer is not None:
-            # 旧包不能原地变成更旧的激活版本；合并结果走新不可变版本，沿用原包冻结参考与快照。
-            origin = pack
-            pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=origin.reference_hash)
-            pack.reference_path = origin.reference_path
-            pack.canvas_spec = origin.canvas_spec
-            pack.character_snapshot = origin.character_snapshot
-            pack.outfit_snapshot = origin.outfit_snapshot
-            pack.context_json = context.model_dump_json()
-            merged = jobs
-            jobs = [await _copy_job_to_pack(job, pack) for job in merged]
-            db.add_all(jobs)
-            for original in merged:
-                # 续跑入口迁到新版本，避免同一句柄或脚本任务在新旧包重复排队。
-                if _can_resume_job(original):
-                    original.stage = "merged"
-                    original.provider_task_id = None
-                    original.error = "已并入新版本"
-            recoverable = [job for job in jobs if _can_resume_job(job)]
         for job in recoverable:
             job.status, job.error = "queued", None
         pack.status, pack.error = "processing", None
@@ -503,7 +388,7 @@ async def ensure_system_action(
                 ),
             )
         ).scalar_one_or_none()
-        if job is None or job.status == "queued" or (job.status == "processing" and pack.id not in _GEN_INFLIGHT):
+        if job is None or job.status == "queued" or (job.status == "processing" and job.id not in _ACTION_INFLIGHT):
             require_action_matting_model()
             if job is None:
                 job = CompanionAction(
@@ -541,8 +426,6 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionP
             raise VideoPackNotFoundError("找不到动作包")
         if pack.status != "ready":
             raise VideoPackStateError("动作包尚未就绪")
-        if await _newer_ready_pack(db, pack) is not None:
-            raise VideoPackStateError("该外观已有更新的动作包，请启用最新版本")
         outfit = await outfit_snapshot(db, pack.user_id, pack.outfit_id)
         avatar = await _active_avatar(db, user_id)
         if outfit is None or await _reference_hash(outfit, avatar) != pack.reference_hash:
@@ -553,9 +436,7 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionP
         if pack.identity_review == "review":
             pack.identity_review = "accepted"
         await _activate_locked(db, pack)
-        _, removed = await _retire_superseded_locked(db, pack)
         await db.commit()
-        spawn_removed_action_task_cancellation(user_id, removed)
         await db.refresh(pack)
 
     return ActionPackSnapshot.model_validate(pack)

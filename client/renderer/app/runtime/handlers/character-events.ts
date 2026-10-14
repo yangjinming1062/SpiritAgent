@@ -176,7 +176,7 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     case 'companion.action.job_updated': {
       // 动作生成进度：驱动生成态文案；具体阶段文本由衣柜页消费包列表渲染。
       if (authed()) {
-        videoPackEventReceived()
+        videoPackEventReceived(decodePayload<{ packId?: number; action?: string }>(event.payload))
         void hydrateVideoPack(true)
       }
 
@@ -219,7 +219,10 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     case 'companion.video.activated': {
       // 视频包就绪 / 激活：生成态收敛并重新水合激活包（写持久化状态前先走 authedApi）。
       if (authed()) {
-        videoGenReady(decodePayload<{ packId?: number; outfitId?: number | null }>(event.payload))
+        videoGenReady(
+          decodePayload<{ packId?: number; outfitId?: number | null; action?: string }>(event.payload),
+          event.type === 'companion.video.ready'
+        )
         void hydrateVideoPack(true)
       }
 
@@ -229,7 +232,9 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     case 'companion.video.progress': {
       // 按参考生成的阶段推进：只更新生成态文案，不触碰已激活包的显示。
       if (authed()) {
-        const p = decodePayload<{ stage?: string; packId?: number; outfitId?: number | null }>(event.payload)
+        const p = decodePayload<{ stage?: string; packId?: number; outfitId?: number | null; action?: string }>(
+          event.payload
+        )
 
         videoGenProgress(p.stage, p)
       }
@@ -238,7 +243,10 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     }
 
     case 'companion.video.failed': {
-      const p = decodePayload<{ reason?: string; packId?: number; outfitId?: number | null }>(event.payload)
+      const p = decodePayload<{ reason?: string; packId?: number; outfitId?: number | null; action?: string }>(
+        event.payload
+      )
+
       log.warn('events', 'video pack failed:', p.reason)
 
       if (authed()) {

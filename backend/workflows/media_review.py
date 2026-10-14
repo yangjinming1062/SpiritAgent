@@ -1,6 +1,12 @@
 """媒体复核与动作采纳的跨业务事务。"""
 
-from features.actions.reviewed_assets import ActionReviewStateError, accept_reviewed_action, reject_reviewed_action
+from features.actions.reviewed_assets import (
+    ActionReviewStateError,
+    accept_reviewed_action,
+    finish_reviewed_pack,
+    reject_reviewed_action,
+)
+from features.appearance.avatar_service import get_avatar_job_lock
 from features.media.review_service import (
     MediaReviewSnapshot,
     get_media_review,
@@ -15,12 +21,14 @@ class MediaReviewStateError(RuntimeError):
 
 
 async def accept_media_review(user_id: int, review_id: int) -> MediaReviewSnapshot | None:
-    async with SESSION_LOCAL() as db:
+    pack_id: int | None = None
+    async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
         row = await lock_media_review(db, user_id, review_id)
         if row is None or row.status != "pending":
             return row
         await set_media_review_status(db, user_id, review_id, "accepted")
         if row.publication is not None:
+            pack_id = row.publication.pack_id
             try:
                 adopted = await accept_reviewed_action(
                     db,
@@ -36,11 +44,13 @@ async def accept_media_review(user_id: int, review_id: int) -> MediaReviewSnapsh
                 await db.commit()
                 raise MediaReviewStateError("待确认动作已失效，请刷新后重试")
         await db.commit()
+    if pack_id is not None:
+        await finish_reviewed_pack(user_id, pack_id)
     return await get_media_review(user_id, review_id)
 
 
 async def reject_media_review(user_id: int, review_id: int) -> MediaReviewSnapshot | None:
-    async with SESSION_LOCAL() as db:
+    async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
         row = await lock_media_review(db, user_id, review_id)
         if row is None or row.status != "pending":
             return row

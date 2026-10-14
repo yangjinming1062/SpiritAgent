@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.actions.asset_retirement import retire_action_assets
 from features.actions.generation.state import GenerationContext
+from features.actions.materials import accepted_action_asset
 from features.actions.models import CompanionAction, CompanionActionPack
 from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS
 from features.appearance.avatar_service import load_avatar_bytes_as_data_uri, read_portrait_bytes
@@ -29,7 +30,7 @@ from features.media.character_images import ImageChainState
 
 from .errors import VideoPackError, VideoPackStateError, _GenerationRowGoneError
 from .helpers import _artifact_abs_path, _image_data_uri, _pack_dir, _process_thread
-from .queries import _active_avatar, _get_pack, _load_generation_context
+from .queries import _active_avatar, _get_pack, _job_result_unresolved, _load_generation_context
 
 
 async def _require_new_paid_step(pack: CompanionActionPack, context: GenerationContext) -> None:
@@ -59,18 +60,33 @@ def require_action_matting_model() -> None:
         raise VideoPackStateError(str(exc)) from exc
 
 
-async def _reject_concurrent_build(db: AsyncSession, user_id: int) -> None:
-    """同一用户同时只允许一个构建中的动作包，避免发布与激活竞态。"""
+async def _reject_concurrent_build(db: AsyncSession, user_id: int, outfit_id: int) -> None:
+    """同一外观同时只允许一个构建中的动作包，避免发布与激活竞态；不同外观可并行制作。"""
     processing = (
         await db.execute(
             select(CompanionActionPack.id).where(
                 CompanionActionPack.user_id == user_id,
+                CompanionActionPack.outfit_id == outfit_id,
                 CompanionActionPack.status == "processing",
             ),
         )
     ).scalar_one_or_none()
     if processing is not None:
-        raise VideoPackStateError("已有动作包任务进行中，请等待完成后再试")
+        raise VideoPackStateError("该外观已有动作包任务进行中，请等待完成后再试")
+
+
+async def _reject_pack_regeneration(db: AsyncSession, user_id: int, outfit_id: int) -> None:
+    jobs = (
+        await db.scalars(
+            select(CompanionAction)
+            .join(CompanionActionPack, CompanionAction.pack_id == CompanionActionPack.id)
+            .where(CompanionActionPack.user_id == user_id, CompanionActionPack.outfit_id == outfit_id),
+        )
+    ).all()
+    if any(accepted_action_asset(job) is not None for job in jobs):
+        raise VideoPackStateError("该着装已有就绪动作，请按需重新生成单个动作")
+    if any(_job_result_unresolved(job) for job in jobs):
+        raise VideoPackStateError("该着装仍有动作等待结果，请等待或核对原任务")
 
 
 def _action_resolution(
@@ -231,17 +247,3 @@ async def _require_current_identity_image(context: GenerationContext, avatar: Av
         raise VideoPackStateError("全身形象无法读取，暂不能启用该动作包")
     if frozen[0] != current[0]:
         raise VideoPackStateError("动作包使用旧身体资料，请先制作新的动作包")
-
-
-def _same_generation_lineage(kept: CompanionActionPack, other: CompanionActionPack) -> bool:
-    """迁移前核对冻结参考与角色身份，避免旧身份句柄混入新包。"""
-    if (
-        not kept.reference_path
-        or kept.reference_path != other.reference_path
-        or not kept.reference_hash
-        or kept.reference_hash != other.reference_hash
-    ):
-        return False
-    kept_ctx = _load_generation_context(kept)
-    other_ctx = _load_generation_context(other)
-    return kept_ctx is not None and other_ctx is not None and kept_ctx.identity == other_ctx.identity

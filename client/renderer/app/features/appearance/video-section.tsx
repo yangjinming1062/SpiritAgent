@@ -4,21 +4,23 @@ import { useEffect, useState } from 'react'
 
 import {
   $outfits,
-  $videoGenError,
-  $videoGenScope,
-  $videoGenStage,
-  $videoGenState,
+  $videoGenErrors,
+  $videoGenRequests,
+  $videoGenStages,
   $videoPacks,
   type ActionWire,
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
+  scopedGenError,
   SYSTEM_ACTION_KEYS,
   type SystemActionKey,
   systemActionNames,
   VIDEO_GEN_STAGE_TEXT_KEYS,
-  videoGenScopeMatches
+  videoActionIsBusy,
+  videoPackIsGenerating
 } from '@/modules/character'
+import { ChatMediaCard } from '@/modules/conversation'
 import { useResolvedMediaSrc } from '@/modules/media'
 import { ArrowLeft } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
@@ -34,6 +36,8 @@ interface ActionEntry {
   status: string
   error: string | null
   mediaUrl: string | null
+  pendingReview: ActionWire['pending_review']
+  hasReadyAsset: boolean
   mediaType: 'image' | 'video' | null
   motionPrompt: string
   feedback: string
@@ -69,30 +73,27 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   const authKind = useStore($auth).kind
   const packs = useStore($videoPacks)
   const outfits = useStore($outfits)
-  const genState = useStore($videoGenState)
-  const genStage = useStore($videoGenStage)
-  const genError = useStore($videoGenError)
-  const genScope = useStore($videoGenScope)
+  const genStages = useStore($videoGenStages)
+  const genErrors = useStore($videoGenErrors)
+  const genRequests = useStore($videoGenRequests)
   const dict = useStrings()
   const t = dict.living.appearance
   const [regenConfirmOpen, setRegenConfirmOpen] = useState(false)
   const [packsStatus, setPacksStatus] = useState<'loading' | 'loaded' | 'failed'>('loading')
   const [packsReloadKey, setPacksReloadKey] = useState(0)
-  const [selectedPackId, setSelectedPackId] = useState<number | null>(null)
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null)
   const [actionFilter, setActionFilter] = useState('')
   const [editing, setEditing] = useState<{ key: string; feedback: string } | null>(null)
 
   const selectedOutfit = outfits.find(outfit => outfit.id === outfitId) ?? null
-  const outfitPacks = selectedOutfit ? packs.filter(pack => pack.outfit_id === selectedOutfit.id) : []
-  // 接口按新→旧返回；默认选最新包，旧版本从版本选择器切换。
-  const selectedPack = outfitPacks.find(pack => pack.id === selectedPackId) ?? outfitPacks[0] ?? null
-  const globalBusy = genState === 'generating'
-  // 生成/失败按着装与包归属过滤：A 的进度或错误不落到 B 的标题下。
-  const scopedBusy = globalBusy && videoGenScopeMatches(genScope, outfitId, selectedPack?.id ?? null)
+  const selectedPack = selectedOutfit ? (packs.find(pack => pack.outfit_id === selectedOutfit.id) ?? null) : null
 
-  const scopedError =
-    genError && videoGenScopeMatches(genError, outfitId, selectedPack?.id ?? null) ? genError.message : null
+  // 整包操作等待本着装任务收敛；单动作操作只等待同一动作。
+  const scopedBusy =
+    (!!selectedPack && videoPackIsGenerating(selectedPack)) ||
+    Object.values(genRequests).some(scope =>
+      scope.outfitId != null ? scope.outfitId === outfitId : scope.packId === selectedPack?.id
+    )
 
   const initialVideoError = selectedOutfit?.initialVideoError ?? null
   // 列表加载失败不能按“尚未生成”展示，避免网络错误引导用户重复发起付费生成。
@@ -117,7 +118,9 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
         entry.action.replace(/_/g, ' '),
       status: entry.status,
       error: entry.error,
-      mediaUrl: entry.media_url,
+      mediaUrl: entry.current_media_url,
+      pendingReview: entry.pending_review,
+      hasReadyAsset: entry.has_ready_asset,
       mediaType: entry.media_type,
       motionPrompt: entry.media_type === 'video' ? entry.motion_prompt : '',
       feedback: entry.feedback ?? '',
@@ -134,6 +137,8 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
         feedback: '',
         error: null,
         mediaUrl: null,
+        pendingReview: null,
+        hasReadyAsset: false,
         mediaType: null,
         motionPrompt: '',
         peekGeometry: null
@@ -147,12 +152,24 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
 
   // 搜索只过滤列表；已选动作仍保留在详情区，避免输入时预览被抢走。
   const selectedAction = actions.find(action => action.key === selectedActionKey) ?? visibleActions[0] ?? null
-  const actionIsGenerating = !!selectedAction && isActionInProgress(selectedAction.status)
-  const selectedActionFailed = !!selectedAction && (selectedAction.status === 'failed' || !!selectedAction.error)
-  const actionRetryWaiting = selectedActionFailed && selectedPack?.status === 'processing'
+
+  const actionIsBusy =
+    !!selectedAction && videoActionIsBusy(packs, genRequests, outfitId, selectedPack?.id ?? null, selectedAction.key)
+
+  const scopedError =
+    (selectedAction
+      ? scopedGenError(genErrors, outfitId, selectedPack?.id ?? null, selectedAction.key)?.message
+      : null) ??
+    scopedGenError(genErrors, outfitId, selectedPack?.id ?? null, null)?.message ??
+    null
+
+  const canRegeneratePack =
+    !!selectedPack?.can_regenerate_pack && !selectedPack.actions.some(action => action.has_ready_asset) && !scopedBusy
 
   const stageText =
-    scopedBusy && selectedPack?.status === 'processing' && genStage ? t[VIDEO_GEN_STAGE_TEXT_KEYS[genStage]] : null
+    scopedBusy && selectedPack?.status === 'processing' && selectedPack.id in genStages
+      ? t[VIDEO_GEN_STAGE_TEXT_KEYS[genStages[selectedPack.id]]]
+      : null
 
   const statusLine = ((): string => {
     // 包自身 processing 时优先展示进度；阶段文案仅在归属命中时展开。
@@ -183,7 +200,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     }
 
     if (selectedPack?.status === 'ready') {
-      return t.videoReady(selectedPack.pack_version, selectedPack.actions.filter(action => !!action.media_url).length)
+      return t.videoReady(selectedPack.actions.filter(action => action.has_ready_asset).length)
     }
 
     if (selectedOutfit) {
@@ -215,8 +232,11 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     }
   }, [authKind, packsReloadKey])
 
+  // 包、单动作或先于列表到达的进度仍在途时，轮询收敛失败及遗漏的终态事件。
+  const anyPackGenerating = packs.some(videoPackIsGenerating) || Object.keys(genStages).length > 0
+
   useEffect(() => {
-    if (!globalBusy) {
+    if (!anyPackGenerating) {
       return
     }
 
@@ -234,16 +254,10 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [globalBusy])
+  }, [anyPackGenerating])
 
   const requestActionGeneration = (feedback: string): void => {
-    if (
-      !selectedPack ||
-      !selectedAction ||
-      !isSystemActionKey(selectedAction.key) ||
-      !selectedPack.can_regenerate ||
-      globalBusy
-    ) {
+    if (!selectedPack || !selectedAction || !selectedPack.can_regenerate || actionIsBusy) {
       return
     }
 
@@ -256,18 +270,34 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
         return
       }
 
-      setSelectedPackId(null)
-      setEditing(null)
+      setEditing(current => (current?.key === selectedAction.key ? null : current))
     })
   }
 
   const actionStatus = (action: ActionEntry): { label: string; hint?: string; className: string } => {
-    if (isActionInProgress(action.status)) {
+    if (
+      action.status === 'result_unknown' ||
+      selectedPack?.actions.some(
+        candidate =>
+          candidate.action === action.key &&
+          (candidate.status === 'result_unknown' ||
+            (candidate.can_regenerate === false && !isActionInProgress(candidate.status)))
+      )
+    ) {
+      return { label: t.videoActionResultUnknown, hint: t.videoActionResultUnknownHint, className: 'bg-amber-400' }
+    }
+
+    if (
+      isActionInProgress(action.status) ||
+      videoActionIsBusy(packs, genRequests, outfitId, selectedPack?.id ?? null, action.key)
+    ) {
       return { label: t.videoActionGenerating, className: 'bg-amber-400' }
     }
 
-    if (action.status === 'result_unknown') {
-      return { label: t.videoActionResultUnknown, hint: t.videoActionResultUnknownHint, className: 'bg-amber-400' }
+    const requestError = scopedGenError(genErrors, outfitId, selectedPack?.id ?? null, action.key)?.message
+
+    if (requestError) {
+      return { label: t.videoActionFailed, hint: requestError, className: 'bg-danger-fg' }
     }
 
     if (action.status === 'review') {
@@ -295,12 +325,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
 
   const selectedStatus = selectedAction ? actionStatus(selectedAction) : null
 
-  const canGenerateAction =
-    !!selectedPack?.can_regenerate &&
-    !!selectedAction &&
-    isSystemActionKey(selectedAction.key) &&
-    !globalBusy &&
-    !actionIsGenerating
+  const canGenerateAction = !!selectedPack?.can_regenerate && !!selectedAction && !actionIsBusy
 
   return (
     <section
@@ -338,36 +363,10 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {outfitPacks.length > 1 ? (
-              <select
-                aria-label={t.videoVersions}
-                className={cn(INPUT_CLASS, 'h-8 w-44 py-1 text-[11px]')}
-                onChange={event => {
-                  setSelectedPackId(Number(event.target.value))
-                  setSelectedActionKey(null)
-                  setEditing(null)
-                }}
-                value={selectedPack?.id ?? ''}
-              >
-                {outfitPacks.map(pack => (
-                  <option key={pack.id} value={pack.id}>
-                    {t.videoVersion(pack.pack_version)}
-                    {pack.active ? ` · ${t.videoActive}` : ''}
-                    {pack.status === 'processing' ? ` · ${t.videoActionGenerating}` : ''}
-                    {pack.status === 'failed' ? ` · ${t.videoActionFailed}` : ''}
-                  </option>
-                ))}
-              </select>
-            ) : selectedPack ? (
-              <span className="rounded-md border border-line-hairline px-2 py-1 text-[10px] text-muted">
-                {t.videoVersion(selectedPack.pack_version)}
-              </span>
-            ) : null}
-
             {selectedPack?.can_retry ? (
               <button
                 className={BTN_SUBTLE}
-                disabled={globalBusy}
+                disabled={scopedBusy}
                 onClick={() => void generateVideoPack({ retryPackId: selectedPack.id })}
                 type="button"
               >
@@ -377,7 +376,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
             {!selectedPack && packsStatus === 'loaded' && selectedOutfit?.status === 'ready' ? (
               <button
                 className={BTN_PRIMARY}
-                disabled={globalBusy || authKind !== 'authenticated'}
+                disabled={scopedBusy || authKind !== 'authenticated'}
                 onClick={() => void generateVideoPack({ outfitId: selectedOutfit.id })}
                 type="button"
               >
@@ -385,19 +384,14 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
               </button>
             ) : null}
             {selectedPack?.status === 'ready' && !selectedPack.active ? (
-              <button
-                className={BTN_PRIMARY}
-                disabled={globalBusy}
-                onClick={() => void activateVideoPack(selectedPack.id)}
-                type="button"
-              >
+              <button className={BTN_PRIMARY} onClick={() => void activateVideoPack(selectedPack.id)} type="button">
                 {selectedPack.identity_review === 'review' ? t.videoIdentityReviewActivate : t.videoActivate}
               </button>
             ) : null}
-            {(selectedPack?.status === 'ready' || selectedPack?.status === 'failed') && selectedPack.can_regenerate ? (
+            {canRegeneratePack ? (
               <button
                 className={BTN_SUBTLE}
-                disabled={globalBusy}
+                disabled={scopedBusy}
                 onClick={() => setRegenConfirmOpen(true)}
                 type="button"
               >
@@ -472,19 +466,46 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                   </div>
                 </div>
 
-                <div className="mt-3 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-fill-trough">
-                  {selectedAction.mediaUrl && selectedAction.mediaType ? (
-                    <ActionPreview type={selectedAction.mediaType} url={selectedAction.mediaUrl} />
-                  ) : (
-                    <div className="max-w-md px-5 text-center">
-                      <p className="text-xs text-body">
-                        {selectedAction.status === 'missing' ? t.videoActionOnDemand : selectedStatus.label}
-                      </p>
-                      {selectedAction.error ? (
-                        <p className="mt-1 text-[11px] text-danger-fg">{selectedAction.error}</p>
-                      ) : null}
-                    </div>
+                <div
+                  className={cn(
+                    'mt-3 grid min-h-0 flex-1 gap-3 overflow-y-auto',
+                    selectedAction.pendingReview && selectedAction.mediaUrl ? 'xl:grid-cols-2' : 'grid-cols-1'
                   )}
+                >
+                  {selectedAction.mediaUrl && selectedAction.mediaType ? (
+                    <div className="flex min-h-48 min-w-0 flex-col rounded-lg bg-fill-trough p-2">
+                      <p className="mb-2 text-[11px] text-muted">{t.videoActionCurrent}</p>
+                      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+                        <ActionPreview type={selectedAction.mediaType} url={selectedAction.mediaUrl} />
+                      </div>
+                    </div>
+                  ) : !selectedAction.pendingReview ? (
+                    <div className="flex items-center justify-center rounded-lg bg-fill-trough px-5 text-center">
+                      <div className="max-w-md">
+                        <p className="text-xs text-body">
+                          {selectedAction.status === 'missing' ? t.videoActionOnDemand : selectedStatus.label}
+                        </p>
+                        {selectedAction.error ? (
+                          <p className="mt-1 text-[11px] text-danger-fg">{selectedAction.error}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                  {selectedAction.pendingReview ? (
+                    <div className="min-w-0 space-y-2 overflow-y-auto [&_img]:max-h-64 [&_video]:max-h-64">
+                      <p className="text-[11px] text-muted">{t.videoActionPending}</p>
+                      <ChatMediaCard
+                        item={{
+                          type: selectedAction.pendingReview.media_type,
+                          url: selectedAction.pendingReview.media_url,
+                          review_id: String(selectedAction.pendingReview.id)
+                        }}
+                        key={selectedAction.pendingReview.id}
+                        onReviewed={() => void hydrateVideoPack(true)}
+                      />
+                      <p className="text-[11px] text-muted">{t.videoActionPendingHint}</p>
+                    </div>
+                  ) : null}
                 </div>
 
                 {selectedAction.motionPrompt ? (
@@ -518,23 +539,9 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                         onClick={() => requestActionGeneration(editing.feedback)}
                         type="button"
                       >
-                        {selectedAction.mediaUrl ? t.videoRedoAction : t.videoGenMissingAction}
+                        {selectedAction.hasReadyAsset ? t.videoRedoAction : t.videoGenMissingAction}
                       </button>
                     </div>
-                  </div>
-                ) : actionRetryWaiting && isSystemActionKey(selectedAction.key) ? (
-                  <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                    <span className="text-[10px] text-muted" id="video-action-retry-wait-hint" role="status">
-                      {t.videoActionRetryWaitHint}
-                    </span>
-                    <button
-                      aria-describedby="video-action-retry-wait-hint"
-                      className={BTN_SUBTLE}
-                      disabled
-                      type="button"
-                    >
-                      {t.videoRedoAction}
-                    </button>
                   </div>
                 ) : canGenerateAction ? (
                   <div className="mt-3 flex justify-end">
@@ -543,7 +550,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                       onClick={() => setEditing({ key: selectedAction.key, feedback: selectedAction.feedback })}
                       type="button"
                     >
-                      {selectedAction.mediaUrl ? t.videoRedoAction : t.videoGenMissingAction}
+                      {selectedAction.hasReadyAsset ? t.videoRedoAction : t.videoGenMissingAction}
                     </button>
                   </div>
                 ) : null}
@@ -587,7 +594,10 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
         confirmLabel={t.videoRegenAction}
         description={t.videoRegenBody}
         onConfirm={() => {
-          setSelectedPackId(null)
+          if (!canRegeneratePack) {
+            return
+          }
+
           void generateVideoPack({ force: true, outfitId: selectedOutfit?.id })
         }}
         onOpenChange={setRegenConfirmOpen}

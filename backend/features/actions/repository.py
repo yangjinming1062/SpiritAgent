@@ -8,7 +8,6 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.actions.materials import preserve_action_asset
 from features.actions.models import ActionPlayback, CompanionAction, CompanionActionPack
 
 
@@ -106,7 +105,6 @@ async def create_action(
 
 def clear_action_attempt(action: CompanionAction) -> None:
     """作废动作当前的生成尝试与成品，下一次制作从独立的新尝试开始；不改状态与元信息，也不删除文件。"""
-    preserve_action_asset(action)
     action.provider_task_id = None
     action.artifact_path = None
     action.pose_path = None

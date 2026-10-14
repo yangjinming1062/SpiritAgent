@@ -44,6 +44,7 @@ from features.actions.generation.script import (
     inspect_peek_geometry,
 )
 from features.actions.generation.state import GenerationContext
+from features.actions.materials import accepted_action_asset
 from features.actions.media_contracts import ActionResult, ImageClipSpec, VideoClipSpec
 from features.actions.models import REQUIRED_SYSTEM_SLOTS, CompanionAction, CompanionActionPack
 from features.appearance.avatar_service import FULLBODY_SIZE
@@ -279,7 +280,7 @@ async def _run_image_pipeline(
         await _emit_pack_event(
             pack.user_id,
             "companion.video.progress",
-            {"packId": pack.id, "stage": "process", "action": job.key},
+            {"packId": pack.id, "outfitId": pack.outfit_id, "stage": "process", "action": job.key},
         )
         if not job.pose_path:
             raise VideoPackError("动作图片不可读")
@@ -312,7 +313,8 @@ async def _run_image_pipeline(
         )
         result = result.model_copy(update={"clip": result.clip.model_copy(update={"peek_geometry": geometry})})
     review_id = None
-    if pack.status == "ready":
+    replacing_current = accepted_action_asset(job) is not None
+    if pack.status == "ready" or replacing_current:
         identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
         verdict, reason = await review_character_frames(
             pack.user_id,
@@ -323,12 +325,12 @@ async def _run_image_pipeline(
             identity_text=render_character_profile(context.identity),
             before_submit=lambda: _require_new_paid_step(pack, context),
         )
-        if verdict == "review":
+        if verdict == "review" or replacing_current:
             review_id = await create_media_review(
                 pack.user_id,
                 "image",
                 result.clip.path,
-                reason,
+                reason if verdict == "review" else "新动作已生成，请预览后确认是否替换当前动作",
                 publication=MediaReviewPublication(
                     kind="action",
                     pack_id=pack.id,
@@ -460,9 +462,10 @@ async def _run_action_pipeline(
             # 只有明确未提交成功的 API 错误允许技术回退；轮询、下载、后处理继续原任务。
             if can_continue and (state.phase == "submitting" or isinstance(exc, MediaProviderFailedError)):
                 state.phase = "ready"
+                job.provider_task_id = None
                 if state.next_index >= len(state.providers):
                     state.stop_reason = reason
-                await _save_action_state(job, state)
+                await _save_action_state(job, state, provider_task_id=None)
                 continue
             if state.best() is None and state.phase != "submitting":
                 await _save_action_state(job, state)
@@ -484,7 +487,8 @@ async def _run_action_pipeline(
     spec = result.clip
     review_id = None
     frames: tuple[str, ...] = ()
-    if pack.status == "ready":
+    replacing_current = accepted_action_asset(job) is not None
+    if pack.status == "ready" or replacing_current:
         try:
             frames = await _clip_frame_uris(spec)
         except Exception:
@@ -504,12 +508,12 @@ async def _run_action_pipeline(
             raise
         except Exception:
             verdict, reason = "review", "动作视频的自动检查未完成，请预览确认"
-        if verdict == "review":
+        if verdict == "review" or replacing_current:
             review_id = await create_media_review(
                 pack.user_id,
                 "video",
                 spec.path,
-                reason,
+                reason if verdict == "review" else "新动作已生成，请预览后确认是否替换当前动作",
                 publication=MediaReviewPublication(
                     kind="action",
                     pack_id=pack.id,
@@ -518,23 +522,35 @@ async def _run_action_pipeline(
                     system_slot=job.system_slot,
                 ),
             )
-    state.finish()
+    unresolved = (
+        state.stop_reason == "result_unknown"
+        or state.phase == "submitting"
+        or (bool(job.provider_task_id) and not (state.result_url or state.source_path))
+    )
+    if unresolved:
+        # 旧最佳素材可以预览或采纳；当前已付费任务仍需保留，不能借旧候选宣告本次提交已结算。
+        state.stop_reason = "result_unknown"
+    else:
+        state.finish()
     await _save_action_state(
         job,
         state,
         stage="publish",
         status="review" if review_id else "succeeded",
         **_clip_row_values(result),
-        artifact_path=best.artifacts[0],
-        provider=state.providers[best.attempt].provider,
-        model=state.providers[best.attempt].model,
-        provider_task_id=None,
+        artifact_path=job.artifact_path if unresolved else best.artifacts[0],
+        provider=job.provider if unresolved else state.providers[best.attempt].provider,
+        model=job.model if unresolved else state.providers[best.attempt].model,
+        provider_task_id=job.provider_task_id if unresolved else None,
         kind=entry.clip_kind,
         target_duration_seconds=entry.duration_seconds,
         loopable=entry.clip_kind == "loop",
         error="后续提交结果未确认，已保留最佳素材" if state.stop_reason == "result_unknown" else None,
     )
     keep = set(best.artifacts) | {pack.reference_path, context.identity_reference_path, job.pose_path}
+    if unresolved:
+        keep.update(path for path in (job.artifact_path, state.source_path) if path)
+        keep.update(path for candidate in state.candidates for path in (candidate.path, *candidate.artifacts))
     if unused_source and unused_source not in keep:
         await asyncio.to_thread(unlink_companion_asset, unused_source)
     for candidate in state.candidates:

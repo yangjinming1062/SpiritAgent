@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.actions.asset_retirement import action_asset_paths, retire_action_assets
 from features.actions.generation.errors import VideoPackStateError
+from features.actions.generation.execution_state import _ACTION_INFLIGHT
+from features.actions.generation.queries import _job_result_unresolved
 from features.actions.generation.references import require_action_matting_model, require_pack_generation_identity
 from features.actions.materials import accepted_action_asset
 from features.actions.models import ActionProposal, CompanionAction
@@ -31,6 +33,7 @@ from features.actions.repository import (
     normalize_action_name,
 )
 from features.actions.schemas import ActionDesignRequest, ActionDesignResult
+from features.appearance.avatar_service import get_avatar_job_lock
 from features.media.review_service import has_pending_action_review
 
 ExistingActionState = Literal["in_production", "awaiting_review", "redo_requested"]
@@ -59,7 +62,7 @@ async def accept_proposal(
     source: str,
 ) -> ProposalAcceptance:
     """受理提案；不阻塞等待评审与视频。取受理锁前不访问数据库（传入会话须未开启事务），排在在途评审之后等待时不占用连接。"""
-    async with get_action_accept_lock(user_id):
+    async with get_action_accept_lock(user_id), get_avatar_job_lock(user_id):
         pack = await get_active_pack(db, user_id)
         if pack is None:
             return ProposalAcceptance(ActionDesignResult(outcome="rejected", message="当前没有可用的形象动作"))
@@ -202,9 +205,9 @@ async def _accept_same_key(
         )
     if existing.status in ("queued", "processing"):
         return _pending_action(existing.id, f"相似动作「{name}」已在制作中"), "in_production"
-    if existing.status == "result_unknown":
+    if _job_result_unresolved(existing) or existing.id in _ACTION_INFLIGHT:
         # 结果未知的素材不自动重做，避免重复付费提交。
-        return _pending_action(existing.id, f"相似动作「{name}」上次制作结果未知，不会自动重做"), "in_production"
+        return _pending_action(existing.id, f"相似动作「{name}」上次制作结果尚未确认，不会自动重做"), "in_production"
     if existing.status == "review" and await has_pending_action_review(
         db,
         user_id=existing.user_id,
@@ -232,6 +235,7 @@ async def _accept_same_key(
     existing.status = "queued"
     existing.stage = "design"
     existing.error = None
+    existing.metadata_revision += 1
     await db.flush()
     return (
         _pending_action(

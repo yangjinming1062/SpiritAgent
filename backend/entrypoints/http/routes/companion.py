@@ -601,9 +601,7 @@ async def patch_outfit_policy(body: OutfitPolicyRequest, user: CurrentUser, db: 
 
 # 换装路由不检查形象锁定：服装/发型是可换元素而非身份变更（见 DESIGN「身份、穿着与动态能力」）
 @router.post("/outfits", response_model=OutfitResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit(
-    request: Request,  # required by @limiter.limit
     body: OutfitCreateRequest,
     user: CurrentUser,
     db: DbSession,
@@ -632,9 +630,7 @@ async def post_outfit(
 
 
 @router.post("/outfits/prompt", response_model=ImagePromptResponse)
-@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit_prompt(
-    request: Request,  # required by @limiter.limit
     body: OutfitPromptRequest,
     user: CurrentUser,
     db: DbSession,
@@ -661,9 +657,7 @@ async def post_outfit_prompt(
 
 
 @router.post("/outfits/adopt", response_model=OutfitResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit_adopt(
-    request: Request,  # required by @limiter.limit
     body: OutfitAdoptRequest,
     user: CurrentUser,
     db: DbSession,
@@ -684,9 +678,7 @@ async def post_outfit_adopt(
 
 
 @router.post("/outfits/{outfit_id}/regenerate", response_model=OutfitResponse)
-@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit_regenerate(
-    request: Request,  # required by @limiter.limit
     outfit_id: int,
     body: OutfitRegenerateRequest,
     user: CurrentUser,
@@ -707,9 +699,7 @@ async def post_outfit_regenerate(
 
 
 @router.post("/outfits/{outfit_id}/prompt", response_model=ImagePromptResponse)
-@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit_regenerate_prompt(
-    request: Request,  # required by @limiter.limit
     outfit_id: int,
     body: OutfitRegeneratePromptRequest,
     user: CurrentUser,
@@ -730,9 +720,7 @@ async def post_outfit_regenerate_prompt(
 
 
 @router.post("/outfits/{outfit_id}/adopt", response_model=OutfitResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit_regenerate_adopt(
-    request: Request,  # required by @limiter.limit
     outfit_id: int,
     body: ImageAdoptRequest,
     user: CurrentUser,

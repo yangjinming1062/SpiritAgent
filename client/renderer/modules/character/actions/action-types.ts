@@ -79,6 +79,10 @@ interface ActionWireBase {
   stage: string
   error: string | null
   media_url: string | null
+  current_media_url: string | null
+  pending_review: { id: number; media_type: 'image' | 'video'; media_url: string } | null
+  has_ready_asset: boolean
+  can_regenerate: boolean
   feedback?: string
   peek_geometry?: PeekGeometry | null
 }
@@ -88,7 +92,6 @@ export type ActionWire = ActionWireBase & ({ media_type: 'image' } | { media_typ
 /** 动作包响应（`/api/companion/video-packs`：列表取 `packs`，generate / retry 返回单个包）。 */
 export interface ActionPackWire {
   id: number
-  pack_version: number
   outfit_id: number | null
   error: string | null
   actions: ActionWire[]
@@ -98,4 +101,5 @@ export interface ActionPackWire {
   manifest_url: string | null
   can_retry: boolean
   can_regenerate: boolean
+  can_regenerate_pack: boolean
 }

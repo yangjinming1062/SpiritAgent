@@ -3,7 +3,7 @@ import type React from 'react'
 
 import {
   $actionCatalogStatus,
-  $videoGenStage,
+  $videoGenStages,
   $videoGenState,
   hydrateActionCatalog,
   hydrateVideoPack,
@@ -19,11 +19,14 @@ type CompanionPresentation = ReturnType<typeof resolveCompanionPresentation>
 export function useCompanionPresentation(): CompanionPresentation {
   const catalogStatus = useStore($actionCatalogStatus)
   const generationState = useStore($videoGenState)
-  const generationStage = useStore($videoGenStage)
+  const generationStages = useStore($videoGenStages)
   // 兜底文案由 resolveCompanionPresentation 按当前语言读取，订阅语言使其随切换更新。
   useStrings()
 
-  return resolveCompanionPresentation({ catalogStatus, generationStage, generationState })
+  // 蛋形兜底无着装语境：取任一在途包的阶段（引导期只有一个包，正常情况即当前包）。
+  const stage = Object.values(generationStages)[0] ?? null
+
+  return resolveCompanionPresentation({ catalogStatus, generationStage: stage, generationState })
 }
 
 // 蛋形兜底：失败时进入外观页重试，其余状态重新拉取动作目录与视频包。
