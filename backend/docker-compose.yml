@@ -68,6 +68,9 @@ services:
   xiaohongshu-mcp:
     build:
       context: ./infrastructure/web/xiaohongshu_service
+      args:
+        GOPROXY: ${XHS_BUILD_GOPROXY:-https://goproxy.cn,direct}
+        GOSUMDB: ${XHS_BUILD_GOSUMDB:-sum.golang.google.cn}
     platform: linux/amd64
     restart: unless-stopped
     environment:
