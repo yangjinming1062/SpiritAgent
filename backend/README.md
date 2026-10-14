@@ -6,61 +6,53 @@
 
 | 任务 | 入口 |
 |---|---|
-| 对话、语音、上下文与工具循环 | [对话编排](services/application/chat/README.md) |
-| 记忆召回、证据、编辑与遗忘 | [记忆领域](services/domains/memory/README.md) |
-| 头像、角色卡、衣柜、场景与媒体 | [生成服务](services/application/generation/README.md) |
-| 动作提案、评审、目录与播放 | [动作编排](services/application/actions/README.md)、[动作领域](services/domains/actions/README.md) |
-| Cron、主动陪伴与夜间 | [cron.py](services/adapters/scheduler/cron.py)、[业务调度](#业务调度) |
-| 动态与日记 | [动态编排](services/application/posts/README.md)、[journal_service.py](services/domains/journal/journal_service.py)；REST 在 `api/v1/companion_posts.py`、`companion_journal.py` |
-| 手机扫码与远程访问 | [远程网页](#远程网页)、[remote.py](api/v1/remote.py) |
-| 激活、登录、WS 票据与凭据 | [user.py](api/v1/user.py)、[page.py](api/v1/page.py)、[modules/auth](modules/auth/) |
-| 管理后台、配置与用户维护 | [admin.py](api/v1/admin.py)、[后台结构](static/admin.html)、[交互](static/admin.js)、[样式](static/admin.css)、[配置与迁移](#配置与迁移) |
-| 供应商与任务链 | [ai_tasks.py](components/ai_tasks.py)、[registrations.py](bootstrap/registrations.py)、[providers/base.py](services/infrastructure/llm/providers/base.py)、[llm_client.py](services/infrastructure/llm/llm_client.py) |
-| 桌面配置同步 | [config.py](api/v1/config.py)、[desktop_config.py](services/domains/configuration/desktop_config.py) |
-| 附件、上传视频与语音 | [media.py](api/v1/media.py)、[sessions.py](api/v1/sessions.py)、[chat_attachments.py](services/domains/media/chat_attachments.py) |
-| 正式资产写入、签名与回收 | [asset_store.py](services/infrastructure/assets/asset_store.py)、[资产领域](services/domains/assets/README.md) |
-| 桌面与 Runner 更新分发 | [update.py](api/v1/update.py)、[update_releases.py](services/domains/update_releases.py) |
-| 备份与覆盖恢复 | [admin.py](api/v1/admin.py)、[backup](services/domains/backup/)、[maintenance.py](services/adapters/maintenance.py) |
-| 提示词、装配与任务恢复 | [提示词索引](prompts/README.md)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py) |
+| 对话、语音、上下文与工具循环 | [对话编排](workflows/chat/README.md) |
+| 记忆召回、证据、编辑与遗忘 | [记忆领域](features/memory/README.md) |
+| 头像、角色卡与衣柜 | [外观](features/appearance/README.md) |
+| 场景制作、重生成与激活 | [场景](features/scenes/README.md) |
+| 动作提案、制作、目录与播放 | [窗口动作](features/actions/README.md) |
+| 桌面生活组合、制作与播放 | [桌面生活](features/desktop_life/README.md) |
+| 公共媒体制作与复核 | [媒体](features/media/README.md) |
+| Cron、主动陪伴与夜间 | [cron.py](entrypoints/scheduler/cron.py)、[业务调度](#业务调度) |
+| 动态与日记 | [动态](features/posts/README.md)、[journal_service.py](features/journal/journal_service.py)；REST 在 `entrypoints/http/routes/companion_posts.py`、`companion_journal.py` |
+| 手机扫码与远程访问 | [远程网页](#远程网页)、[remote.py](entrypoints/http/routes/remote.py) |
+| 激活、登录、WS 票据与凭据 | [user.py](entrypoints/http/routes/user.py)、[账户](features/accounts/)、[远程身份](features/accounts/remote/README.md) |
+| 管理后台、配置与用户维护 | [admin.py](entrypoints/http/routes/admin.py)、[后台结构](static/admin.html)、[交互](static/admin.js)、[样式](static/admin.css)、[配置与迁移](#配置与迁移) |
+| 供应商与任务链 | [ai_tasks.py](infrastructure/ai/tasks.py)、[registrations.py](bootstrap/registrations.py)、[providers/base.py](infrastructure/ai/providers/base.py)、[llm_client.py](infrastructure/ai/llm_client.py) |
+| 桌面配置同步 | [config.py](entrypoints/http/routes/config.py)、[desktop_config.py](features/configuration/desktop_config.py) |
+| 附件、上传视频与语音 | [media.py](entrypoints/http/routes/media.py)、[sessions.py](entrypoints/http/routes/sessions.py)、[chat_attachments.py](features/conversation/attachments.py) |
+| 正式资产写入、签名与回收 | [asset_store.py](infrastructure/assets/asset_store.py)、[资产领域](features/assets/README.md) |
+| 桌面与 Runner 更新分发 | [update.py](entrypoints/http/routes/update.py)、[update_releases.py](features/updates/releases.py) |
+| 备份与覆盖恢复 | [admin.py](entrypoints/http/routes/admin.py)、[backup](workflows/maintenance/backup/)、[maintenance.py](workflows/maintenance/user.py) |
+| 提示词、装配与任务恢复 | [提示词索引](README.md#提示词定位)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py) |
 
 ## 代码与依赖
 
 | 目录 | 职责 |
 |---|---|
-| `main.py` / `bootstrap` | 薄入口、显式注册、启停与恢复 |
-| `api` | 鉴权、限流、DTO 与服务调用 |
-| `services/adapters` | HTTP、桌面与远程 WS、调度器和工具协议适配 |
-| `services/application` | 回合、生成、动态、夜间等跨域流程 |
-| `services/domains` | 业务状态、策略与持久化 |
-| `services/infrastructure` / `contracts` | 供应商、传输、文件等基础能力 / 跨层值对象 |
-| `modules` | ORM、跨边界 schema、鉴权、设置和事务内事件入口 |
-| `components` / `common` | 配置、数据库、任务、日志、网络及少量框架工具 |
-| `prompts` / `alembic` | 指令文本与纯常量 / 独立迁移 |
+| `main.py` / `bootstrap` | 薄入口、模型/路由/供应商/业务端口的显式装配、启停与恢复 |
+| `entrypoints` | HTTP、桌面与远程 WS、工具和调度入口；解析、鉴权、调用及错误转换 |
+| `workflows` | 聊天、初始化、主动与定时回合、夜间、账户删除及备份恢复等跨业务编排 |
+| `features` | 各业务的数据、规则、公开操作与查询、提示词、持久任务状态及恢复 |
+| `runtime` | 账户回合与锁、连接和调用关联、任务监督、事件交付与公共运行时类型 |
+| `infrastructure` | 数据库、配置加载、网络、供应商、文件和媒体处理 |
+| `alembic` | 全新数据库结构基线；不承接历史部署兼容 |
 
-### services 依赖边界
+### 模块依赖边界
 
-主要方向为 `adapters → application → domains`；application 和 domains 可调用 infrastructure，各层可用 contracts。`contracts`、`modules`、`components`、`common`、`prompts` 不导入服务实现；application 不依赖 adapters，domains 不依赖 application，infrastructure 不反向依赖业务。能力包经 `__init__.py` 公开入口，`services` 根包不汇总导出。跨边界校验结构用 Pydantic，进程内值对象用 dataclass，不另设 `TypedDict` 或重复 schema。
+`entrypoints → workflows / features`，`workflows → features / runtime`，`features → runtime / infrastructure`，`runtime → infrastructure`。基础设施不反向导入业务，业务不导入流程或协议入口；双向协调放入流程，反向通知使用 bootstrap 登记的明确回调。各模块直接从能力所属文件导入，不经包级 facade。
 
-以下单向依赖与 [分层检查器](../scripts/check_services_architecture.py) 对应，新增依赖同时说明业务理由：
+ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照，写入使用公开操作；普通用例管理短事务，需原子完成的跨模块流程通过各模块提供的事务内操作共享同一事务。供应商等待始终在事务外。Pydantic 用于校验结构，dataclass 用于进程内值对象。
 
-| 依赖 | 原因 |
-|---|---|
-| 各领域 → conversation | 共用会话底座 |
-| conversation / actions / backup → assets | 引用核查与事务性释放 |
-| companion / journal → memory | 陪伴召回与日记派生索引 |
-| companion → actions | 读取当前包目录快照 |
-| backup → actions / memory | 重建动作目录与日记索引 |
-| backup → configuration | 预检 AI 配置引用与能力 |
-| automation → chat | 复用 `run_chat_turn` 与 `HeadlessEmitter` |
-| nightly → generation / posts / actions | 夜间制作、发布与动作上下文 |
-| posts / application/actions → generation | 制作动态媒体与动作素材 |
-| chat → application/actions | 读取动作上下文 |
+业务实现依赖保持单向；例如动作读取外观和媒体，动态使用媒体并读取陪伴/记忆，陪伴读取记忆和会话证据。媒体不读取动态表或修改消息，分别通过显式任务关联和事务内结果处理器交付。外观就绪、动作目录读取和衣柜动作清理等协作端口由 [registrations.py](bootstrap/registrations.py) 装配。纯 DTO、枚举与静态词表不承担业务操作。
+
+[依赖检查器](../scripts/check_services_architecture.py) 检查目录方向、模块与业务实现环、跨业务 ORM 和私有入口、公开返回 ORM、入口 SQL、旧根目录及缺失导入。新增公开依赖须说明数据所有者和业务理由；检查器的通过不替代事务、权限和行为验证。
 
 ### API 入口
 
-`api/v1/*.py` 通过 `get_router()` 自动发现，默认前缀为 `/api/<文件名>`；部分资源另显式声明 `/api/companion/...` 等路径，入口以路由定义为准。`/api` 同时用于资产、备份、限流及客户端，不能作为部署配置修改。
+[routes/__init__.py](entrypoints/http/routes/__init__.py) 显式登记资源路由，每个路由保存现有前缀、名称与响应结构。`/api` 同时用于资产、备份、限流及客户端，不能作为部署配置修改。文件与业务错误由协议适配层转换，业务操作不返回 FastAPI 响应对象。
 
-[body_limit.py](services/adapters/http/body_limit.py) 在解析前限制请求体，实际流超限也返回 413，大载荷入口先验证当前登录。WS 入口是 [chat.py](api/v1/chat.py)，RPC 和斜杠命令分别在 [handlers.py](services/adapters/desktop/handlers.py)、[slash_commands.py](services/adapters/desktop/slash_commands.py)；`command.dispatch` 是命令执行权威，Client 只镜像补全和确认元数据。管理页面可加载不代表管理 API 免鉴权。
+[body_limit.py](entrypoints/http/body_limit.py) 在解析前限制请求体，实际流超限也返回 413，大载荷入口先验证当前登录。WS 入口是 [chat.py](entrypoints/http/routes/chat.py)，RPC 和斜杠命令分别在 [handlers.py](entrypoints/desktop/handlers.py)、[slash_commands.py](features/conversation/slash_commands.py)；`command.dispatch` 是命令执行权威，Client 只镜像补全和确认元数据。管理页面可加载不代表管理 API 免鉴权。
 
 ## 配置与运行生命周期
 
@@ -68,11 +60,11 @@
 
 管理后台由 `admin.html`、`admin.js`、`admin.css` 组成，经 `page.py` 的固定资源入口提供，无独立构建步骤。AI 配置与系统参数分别维护草稿和保存状态；切页保留草稿，切换 AI 配置对象时处理未保存修改。图形化调用链只维护已有模型引用，来源解析与总览配置检查共用继承逻辑，不代表供应商实测结果。
 
-冷启动配置依次取环境变量 → `backend/.env` → `config.toml` → [config.toml.example](config.toml.example)，文件按 Backend 目录定位。数据库、JWT、资产签名密钥、管理员凭据与数据目录属于启动配置；密钥或管理员密码为空、仍是示例值时拒绝启动。字段校验和默认值以 [Settings](components/config.py) 为准，资产签名密钥至少 32 字符。
+冷启动配置依次取环境变量 → `backend/.env` → `config.toml` → [config.toml.example](config.toml.example)，文件按 Backend 目录定位。数据库、JWT、资产签名密钥、管理员凭据与数据目录属于启动配置；密钥或管理员密码为空、仍是示例值时拒绝启动。字段校验和默认值以 [Settings](infrastructure/config.py) 为准，资产签名密钥至少 32 字符。
 
-运营参数由 [system_settings.py](services/application/configuration/system_settings.py) 管理：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新日志或连接池。数据库动态值在启动时再次覆盖环境变量和 TOML；启动专用键不能从后台修改。校验或提交失败不改运行时，非法持久值中止启动。保存接口执行数值边界校验，管理页输入范围只作提示；升级前须核查存量配置。
+运营参数由 [system_settings.py](features/configuration/system_settings.py) 管理：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新日志或连接池。数据库动态值在启动时再次覆盖环境变量和 TOML；启动专用键不能从后台修改。校验或提交失败不改运行时，非法持久值中止启动。保存接口执行数值边界校验，管理页输入范围只作提示；升级前须核查存量配置。
 
-`system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [modules/settings](modules/settings/values.py) 读写，消费方取得解码值，不再自行解析。
+`system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方取得解码值，不再自行解析。
 
 启动自动执行 Alembic 升级。比对 ORM 类型、默认值及索引；autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
 
@@ -82,13 +74,15 @@
 
 [lifecycle.py](bootstrap/lifecycle.py) 的启动顺序为：安全配置检查与迁移 → 配置水合、目录和更新存储恢复 → 描述中断标记与清理 → 调度器、事件回路 → 视频、动作、提案、角色卡、场景、初始资产、动态及评论恢复 → 正式资产核查。
 
-停机先关闭清理任务、调度与事件入口，再并发收敛各模块任务，最后释放数据库、Web 供应商和 LLM 连接池。后台任务须登记所有者与用户归属，纳入停机和账户维护；`MANAGER`、用户锁及等待表遵守单进程部署边界。
+模块的准备、恢复、维护和关闭能力在 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 显式登记。停机关闭清理、调度与事件生产入口，收敛已受理回合和各模块任务，再释放数据库、Web 供应商和 LLM 连接池。[task_supervisor.py](runtime/task_supervisor.py) 统一登记所有者、账户、单飞任务和错误回报；任务状态机及付费恢复语义仍归业务模块。
+
+[chat_accounts.py](runtime/chat_accounts.py) 持有账户受理回合，会话互斥和工具调用关联不依附发起连接。连接持有身份权限、ACK、重放和断线宽限；桌面与 Remote 共用聊天用例，各自检查连接权限。`MANAGER`、账户运行态及等待表遵守单进程部署边界。
 
 ### 事件与交付
 
-事务内异步通知经 `emit_ws_event` 写 outbox，聊天流另走会话 emitter。持久化与端到端恢复语义归 PROTOCOL；实现入口为 [event_store/loop.py](services/infrastructure/event_store/loop.py)。
+事务内异步通知经 `emit_ws_event` 写 outbox，聊天流另走会话 emitter。持久化与端到端恢复语义归 PROTOCOL；实现入口为 [event_store/loop.py](runtime/events/loop.py)。
 
-回路只认领本进程持有桌面 dispatcher 的用户（含断线宽限）。内部处理器派生任务即标记送达，投递失败按预算退避并转死信。LISTEN 专线探活、重连与周期扫描共同唤醒；[outbox_gc.py](services/infrastructure/event_store/outbox_gc.py) 不过期清理普通离线待投递行，过期主动回合请求另行处理。
+回路只认领本进程持有桌面 dispatcher 的用户（含断线宽限）。内部处理器派生任务即标记送达，投递失败按预算退避并转死信。LISTEN 专线探活、重连与周期扫描共同唤醒；[outbox_gc.py](runtime/events/outbox_gc.py) 不过期清理普通离线待投递行，过期主动回合请求另行处理。
 
 ## 数据与运行可靠性
 
@@ -98,27 +92,29 @@
 
 本机派发先注册等待对象，再发送并检查入队结果；直接持对象等待，避免极速返回后查表丢失。桌面离线以业务错误结束等待，不能用统一取消异常使对话回合静默退出。
 
-覆盖恢复和删除用户先经 `maintenance.py` 阻止新操作并收敛在途任务，完成后重读持久状态恢复可继续任务。用户文件只落正式资产 `companion-assets/{user_id}/`、会话附件 `desktop-attachments/{session_id}/`、带用户元数据的 `temp-media/`；新增路径须同时纳入删除和备份。删除正式资产或会话附件失败保留用户行供重试，临时文件另由逐文件和过期清理兜底。备份类别、密钥范围及覆盖规则统一见 PROTOCOL。
+覆盖恢复和删除用户先经 `user.py` 阻止新操作并通过统一生命周期登记收敛在途任务，完成后重读持久状态恢复可继续任务。用户文件只落正式资产 `companion-assets/{user_id}/`、会话附件 `desktop-attachments/{session_id}/`、带用户元数据的 `temp-media/`；新增路径须同时纳入删除和备份。删除正式资产或会话附件失败保留用户行供重试，临时文件另由逐文件和过期清理兜底。备份类别、密钥范围及覆盖规则统一见 PROTOCOL。
+
+[backup.py](bootstrap/backup.py) 显式登记各模块的表贡献者；所属模块提供导出、校验、恢复和引用重建，备份流程消费描述与快照，不直接操作业务 ORM。动作目录与日记索引分别由动作、日记模块重建。新结构和新版备份共同交付，不增加旧结构分支。
 
 ## 业务调度
 
 ### 夜间批处理
 
-`cron.py` 为活跃账户的陪伴域启动单飞流水线，关闭入口时取消并等待；专业预设的记忆维护另由定期审阅覆盖。执行入口 [nightly_activity.py](services/application/nightly/nightly_activity.py) 组织 [nightly_planning.py](services/application/nightly/nightly_planning.py)、[阶段账本](services/application/nightly/stage_state.py)和日记、反思执行；阶段、窗口、账本和恢复语义见 [夜间流水线](../docs/PROTOCOL.md#夜间流水线)。
+`cron.py` 为活跃账户的陪伴域启动单飞流水线，关闭入口时取消并等待；专业预设的记忆维护另由定期审阅覆盖。执行入口 [nightly_activity.py](workflows/nightly/nightly_activity.py) 组织 [nightly_planning.py](workflows/nightly/nightly_planning.py)、[阶段账本](workflows/nightly/stage_state.py)和日记、反思执行；阶段、窗口、账本和恢复语义见 [夜间流水线](../docs/PROTOCOL.md#夜间流水线)。
 
 ### 陪伴调度与恢复
 
-[companion/intents.py](services/domains/companion/intents.py) 管理条件、认领与原子终态；[companion_turns.py](services/application/automation/companion_turns.py) 管理有界回合和提交；普通任务由 [standard_turns.py](services/application/automation/standard_turns.py) 串行执行。交付和副作用恢复归 [Cron 双轨](../docs/PROTOCOL.md#cron-双轨)。
+[companion/intents.py](features/companion/intents.py) 管理条件、认领与原子终态；[companion_turns.py](workflows/automation/companion_turns.py) 管理有界回合和提交；普通任务由 [standard_turns.py](workflows/automation/standard_turns.py) 串行执行。交付和副作用恢复归 [Cron 双轨](../docs/PROTOCOL.md#cron-双轨)。
 
 ### 远程网页
 
-[remote.py](api/v1/remote.py) 管理扫码授权与设备会话；独立 [Remote](../remote/README.md) 网页直接复用账户内容接口和对话编排。设备会话独立于桌面登录，本机工具仍由桌面 Runner 执行。身份、撤权与多端恢复契约见 [远程访问](../docs/PROTOCOL.md#远程访问)。
+[remote.py](entrypoints/http/routes/remote.py) 管理扫码授权与设备会话；独立 [Remote](../remote/README.md) 网页直接复用账户内容接口和对话编排。设备会话独立于桌面登录，本机工具仍由桌面 Runner 执行。身份、撤权与多端恢复契约见 [远程访问](../docs/PROTOCOL.md#远程访问)。
 
 ## 供应商与网络错误
 
-通用回退、安全重试与结果未知归 [模型失败与重试预算](../docs/PROTOCOL.md#模型失败与重试预算)。实现分别在 [llm_fallback.py](services/infrastructure/llm/llm_fallback.py)、[error_classifier.py](services/infrastructure/llm/error_classifier.py)、[providers/http.py](services/infrastructure/llm/providers/http.py)；媒体质量链由 [media_chain.py](services/application/generation/media_chain.py) 管理，选材与恢复归 PIPELINE。
+通用回退、安全重试与结果未知归 [模型失败与重试预算](../docs/PROTOCOL.md#模型失败与重试预算)。实现分别在 [llm_fallback.py](infrastructure/ai/llm_fallback.py)、[error_classifier.py](infrastructure/ai/error_classifier.py)、[providers/http.py](infrastructure/ai/providers/http.py)；媒体质量链由 [media_chain.py](features/media/chain.py) 管理，选材与恢复归 PIPELINE。
 
-出站网络层见 [components/network.py](components/network.py)。模型、媒体下载、Tavily、Brave HTTP 请求按协议读取 `HTTP_PROXY` / `HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于 `.env`。`NO_PROXY` 支持域名、IP、端口、`*` 和 IPv4 / IPv6 CIDR，网段只匹配 URL 中的 IP；模板已排除内网和 Tailscale，短名称或自定义域名需自行添加。DDGS 的显式代理使用 `DDGS_PROXY`。
+出站网络层见 [network.py](infrastructure/network.py)。模型、媒体下载、Tavily、Brave HTTP 请求按协议读取 `HTTP_PROXY` / `HTTPS_PROXY`，回退 `ALL_PROXY`；进程环境优先于 `.env`。`NO_PROXY` 支持域名、IP、端口、`*` 和 IPv4 / IPv6 CIDR，网段只匹配 URL 中的 IP；模板已排除内网和 Tailscale，短名称或自定义域名需自行添加。DDGS 的显式代理使用 `DDGS_PROXY`。
 
 `SSRF_GUARD_ENABLED` 默认关闭以适配 DNS 污染 / fake-IP 代理，可后台热切换。开启后拒绝保留网段，`SSRF_ALLOWED_CIDRS` 不能豁免域名黑名单、云元数据及 CGNAT。代理地址也受守卫检查，目标另做本地 DNS 校验；代理实际建连须由代理端限制。`NO_PROXY` 不取消守卫，下载的大小、协议和 HTTPS 降级检查始终生效。
 
@@ -149,19 +145,19 @@ Compose 和后端共用 `.env` 的 PostgreSQL 凭据，后端默认连接 `postg
 
 Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 仅绑定宿主回环。本机测试可直接使用 `http://127.0.0.1:10620`。
 
-全身、着装与动作制作需在数据卷放置 `models/<matting_model>.onnx`，默认 ISNet 文件名及解析见 [matting.py](services/infrastructure/video_processing/matting.py)，镜像不自动下载。新付费步骤前校验模型；已有源素材保留供恢复。全身和着装上传可本地抠图，动作上传须自带有效 alpha，处理入口是 [image.py](services/infrastructure/video_processing/image.py)。
+全身、着装与动作制作需在数据卷放置 `models/<matting_model>.onnx`，默认 ISNet 文件名及解析见 [matting.py](infrastructure/video_processing/matting.py)，镜像不自动下载。新付费步骤前校验模型；已有源素材保留供恢复。全身和着装上传可本地抠图，动作上传须自带有效 alpha，处理入口是 [image.py](infrastructure/video_processing/image.py)。
 
 ### 本地供应商
 
-`local` 对接 Responses 服务、embedding 和 ComfyUI，默认地址见 [适配器](services/infrastructure/llm/providers/local/)。信息库地址须从 Backend（含容器）可达，不同地址分别建条目。无鉴权服务可留空密钥；启用 SSRF 守卫时私网地址须加入允许 CIDR，CGNAT 和云元数据地址不可豁免。
+`local` 对接 Responses 服务、embedding 和 ComfyUI，默认地址见 [适配器](infrastructure/ai/providers/local/)。信息库地址须从 Backend（含容器）可达，不同地址分别建条目。无鉴权服务可留空密钥；启用 SSRF 守卫时私网地址须加入允许 CIDR，CGNAT 和云元数据地址不可豁免。
 
 - ComfyUI 自动匹配 Qwen 权重，卡片要求见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)；图像能力与长等待归 PIPELINE。
 - LLM 支持 Responses API；能力卡片须填写已部署模型 ID 、模型服务实际加载的上下文窗口与输出 Token 上限，供压缩、调用预算和会话容量展示使用。适配器按地址缓存 `/props` 探测结果；无工具结构输出中，llama.cpp 使用 `response_format.json_schema`，Strata 使用 `text.format`。两者按会话或任务的推理强度下发 `reasoning.effort`（`none` 关闭思考），未识别服务不下发推理参数和原生结构约束。其余由提示词与应用校验约束。归一化温度按 1:1 下发（界面 0.7 即 0.7），本地模型的推荐值多在 0–1。
-- embedding 固定使用记忆向量任务配置的模型；链为空、无效或调用失败时记忆用关键词召回。维度适配见 [embedding.py](services/infrastructure/llm/providers/local/embedding.py)：仅默认模型允许 MRL 截断，短向量归一化补零，其他超宽向量拒绝。向量空间与补齐规则见 [记忆读取与恢复](services/domains/memory/README.md#读取召回与恢复)。
+- embedding 固定使用记忆向量任务配置的模型；链为空、无效或调用失败时记忆用关键词召回。维度适配见 [embedding.py](infrastructure/ai/providers/local/embedding.py)：仅默认模型允许 MRL 截断，短向量归一化补零，其他超宽向量拒绝。向量空间与补齐规则见 [记忆读取与恢复](features/memory/README.md#读取召回与恢复)。
 
 ### 运营参数
 
-`/admin/` 维护三级 AI 配置、用户覆盖与运营参数，保存即时生效；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。AI 配置仅支持引用格式，部署需全新数据库并重新配置；旧配置与旧备份不兼容。自主动态快照的保留期由 [publication.py](services/application/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
+`/admin/` 维护三级 AI 配置、用户覆盖与运营参数，保存即时生效；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。AI 配置仅支持引用格式，部署需全新数据库并重新配置；旧配置与旧备份不兼容。自主动态快照的保留期由 [publication.py](features/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
 
 ### LLM 调试日志
 
@@ -169,6 +165,27 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 
 排障时临时启用 LLM 调试并将日志级别设为 DEBUG，可能包含原始对话。验证材料须另行脱敏，基础提示词预览不能代表完整发送请求。
 
+## 提示词定位
+
+文本随业务或流程维护，数据库里的生成提示词仅是审计快照。双语常量经 `resolve_prompt_text` 取值，直接从所属文件导入，不设转发别名。修改规范归 [RULES](../RULES.md#提示词设计与修改规范)，参考与验收归 PIPELINE。
+
+| 文本 | 装配与消费 |
+|---|---|
+| [聊天](workflows/chat/prompts.py)、[会话](features/conversation/prompts.py)、[语音](infrastructure/ai/speech_guidance.py) | 预设、回复/压缩、标题、图片修正与朗读；`system_prompt`、`streaming`、`context_compressor`、`title_generation`、聊天图片流程和供应商 `speech_style` |
+| [陪伴](features/companion/prompts.py) | 人设、心情、环境、问候和主动回合；`prompt_runtime`、`first_greeting` 与主动流程 |
+| [外观](features/appearance/prompts.py)、[场景](features/scenes/prompts.py) | 头像、全身、衣柜、角色卡及环境；各模块的 `prompt_assembly`、提取和制作服务 |
+| [媒体](features/media/prompts.py) | 共享视觉质感、身份参考、审核与评分；图像/视频质量链和出镜装配 |
+| [窗口动作](features/actions/prompts.py)、[桌面生活](features/desktop_life/prompts.py) | 提案、评审、姿态/运动、探身、外部视频提示词和成品检查 |
+| [记忆](features/memory/prompts.py)、[动态](features/posts/prompts.py) | 维护政策、召回资料、独立创作与线程回复；记忆模块、动态 `context`/`prompt_contract`/`publication`/`replies` |
+| [夜间](workflows/nightly/prompts.py) | 规划、阶段账本、检查点、日记与反思 |
+| [工具](runtime/tools/prompts.py)、[桌面工具](runtime/tools/desktop_prompts.py) | 工具说明、验图、网页摘要与本机操作；参数类型与必填项仍在工具 schema |
+
+检查文本同时检查动态装配：聊天 `prompt_blocks`/`system_prompt` 的工具开关、时间和模式，`streaming`/`reply_delivery` 的实际语音与媒体能力，`tool_availability` 的可执行集合，夜间能力目录与预算，动态 `prompt_contract` 的 schema 约束，以及场景检查、出镜参考、动作脚本和桌面视频的各自分支。基础预设预览不代表最终请求。
+
+各 TTS 供应商的 `VOICE_DESIGN_GUIDE` 只用于设计音色，不装入语音正文。Runner 的工具 schema 独立维护，发布脚本 [gen_release_notes.py](../scripts/gen_release_notes.py) 自行维护摘要指令。验证沿实际请求、原始返回、解析、存储和呈现核对，静态等价与真实模型质量分别报告；命令归 [提示词调试](../scripts/README.md#提示词调试)。
+
 ## 契约与验证
 
 检查命令归 [Scripts](../scripts/README.md)。API、事件、资产和恢复变更核对生产者、消费方及持久化；配置变更核对 Settings、启动专用键和提交失败语义；依赖变更核对本页允许边并执行分层检查；提示词沿文本索引检查实际请求与解析。文档变更核对代码事实、路径、锚点和 `git diff --check`，无需触发付费制作。
+
+本次模块化基线的版本、验证范围、判定依据与未完成的真实供应商/呈现验收记录在 [backend-refactor.json](../docs/validation/backend-refactor.json)，不包含临时测试代码或用户原始内容。

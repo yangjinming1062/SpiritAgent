@@ -25,7 +25,7 @@
 uv tool run --python 3.13 pre-commit run -a
 ```
 
-hook 包含自动修正，执行后检查差异并复验。局部可先用 `--files`，不替代提交前全量检查；hook 不包含 Client typecheck、Backend 分层检查或原生验收。构建可能修改构建信息和版本清单，交付时区分静态、构建与真实运行结果。
+hook 包含自动修正，仅在修改完成、准备提交时执行，随后检查差异并复验；开发过程使用只读专项检查，不反复运行格式化。hook 不包含 Client typecheck、Backend 架构检查或原生验收。构建可能修改构建信息和版本清单，交付时区分静态、构建与真实运行结果。
 
 ## Windows 桌面验收
 
@@ -59,13 +59,13 @@ uv run --no-project --python 3.13 python scripts/check_imports.py --fix
 
 默认跳过模块根目录的 `build/`、`dist/` 及各层 `.venv`、`__pycache__`，避免旧构建副本与当前源码导出表混用；显式传入文件仍逐个检查。实际 wheel 另由 `check_runner_facade.py` 校验。
 
-## Backend 分层检查
+## Backend 架构检查
 
 ```bash
 uv run --no-project --python 3.13 python scripts/check_services_architecture.py
 ```
 
-[`check_services_architecture.py`](check_services_architecture.py) 覆盖导入解析、包级环、层间及跨域依赖。允许边以脚本声明为准，修改边界时同步 [Backend](../backend/README.md#services-依赖边界) 的设计理由。
+[`check_services_architecture.py`](check_services_architecture.py) 覆盖导入解析、模块与业务实现环、目录方向、跨业务 ORM/私有入口、公开返回 ORM、入口 SQL 和旧根目录。纯 DTO、类型别名与静态词表不构成业务实现依赖。默认检查 Backend；`--backend <目录>` 可对临时样例验证规则。修改边界时同步 [Backend](../backend/README.md#模块依赖边界) 的数据归属与设计理由。
 
 ## 提示词调试
 

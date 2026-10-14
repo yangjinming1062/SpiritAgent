@@ -1,273 +1,520 @@
-"""backend 服务分层架构检查（规则与例外理由见 backend/README.md「services 依赖边界」）。"""
+"""Backend 模块边界：导入方向、持久模型所有权、公共返回值和入口 SQL。"""
 
+import argparse
 import ast
 import os
-import sys
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-BACKEND = REPO_ROOT / "backend"
-SKIP_DIRS = {".venv", "__pycache__", ".git", "node_modules", "alembic"}
-
-# rank 越小越底层；导入方向必须 rank(importer) >= rank(target)。
-RANK = {
-    "services.contracts": 0,
-    "services.domains": 1,
-    "services.infrastructure": 2,
-    "services.application": 3,
-    "services.adapters": 4,
-    "api": 5,
-    "bootstrap": 6,
-    "main": 6,
+BACKEND = Path(__file__).resolve().parent.parent / "backend"
+ROOTS = {"bootstrap", "entrypoints", "workflows", "features", "runtime", "infrastructure", "main"}
+RETIRED = {"api", "services", "modules", "components", "common", "prompts"}
+SQL_OPERATIONS = {
+    "execute",
+    "scalar",
+    "scalars",
+    "add",
+    "add_all",
+    "delete",
+    "flush",
+    "refresh",
+    "commit",
+    "rollback",
+    "connection",
 }
-# rank 例外：允许向更高 rank 导入。
-UPWARD_ALLOWED = {
-    ("services.domains", "services.infrastructure"),
-}
-# application 包级单向流程依赖（理由见 backend/README.md）。
-APPLICATION_FLOW_EDGES = {
-    ("services.application.nightly", "services.application.posts"),
-    ("services.application.posts", "services.application.generation"),
-    ("services.application.automation", "services.application.chat"),
-    ("services.application.nightly", "services.application.generation"),
-    ("services.application.actions", "services.application.generation"),
-    ("services.application.chat", "services.application.actions"),
-    ("services.application.nightly", "services.application.actions"),
-}
-# domains 跨域单向依赖（理由见 backend/README.md「services 依赖边界」）。
-DOMAIN_FLOW_EDGES = {
-    ("services.domains.backup", "services.domains.assets"),
-    ("services.domains.conversation", "services.domains.assets"),
-    ("services.domains.actions", "services.domains.assets"),
-    ("services.domains.backup", "services.domains.actions"),
-    ("services.domains.backup", "services.domains.memory"),
-    ("services.domains.backup", "services.domains.configuration"),
-    ("services.domains.companion", "services.domains.memory"),
-    ("services.domains.journal", "services.domains.memory"),
-    ("services.domains.companion", "services.domains.actions"),
-}
-# 各域可单向导入的底座域。
-DOMAIN_BASE = "services.domains.conversation"
-BOTTOM = ("common", "components", "modules", "prompts")
 
 
-def pkg_of(module: str) -> str:
-    if module.startswith("services."):
-        parts = module.split(".")
-        if len(parts) >= 3 and parts[1] in ("contracts", "domains", "application", "infrastructure", "adapters"):
-            return ".".join(parts[:2])
-        return "services"
-    if module == "services":
-        return "services"
-    return module.split(".", maxsplit=1)[0]
+def runtime_nodes(node: ast.AST) -> Iterator[ast.AST]:
+    yield node
+    if isinstance(node, ast.If) and (
+        isinstance(node.test, ast.Name)
+        and node.test.id == "TYPE_CHECKING"
+        or isinstance(node.test, ast.Attribute)
+        and node.test.attr == "TYPE_CHECKING"
+    ):
+        for child in node.orelse:
+            yield from runtime_nodes(child)
+        return
+    for child in ast.iter_child_nodes(node):
+        yield from runtime_nodes(child)
 
 
-def domain_of(module: str) -> str:
-    """取 services.domains.X / services.application.X 的域级包名。"""
+def owner(module: str) -> str:
     parts = module.split(".")
-    if len(parts) >= 3 and parts[0] == "services" and parts[1] in ("domains", "application"):
-        return ".".join(parts[:3])
-    return module
+    return ".".join(parts[:2]) if parts[0] in {"features", "workflows", "runtime"} and len(parts) > 1 else parts[0]
 
 
-def layer_of(pkg: str) -> str | None:
-    if pkg in ("common", "components", "modules", "prompts"):
-        return pkg
-    if pkg in RANK:
-        return pkg
-    if pkg == "services":
-        return "services.contracts"  # 根包视为词汇层
-    if pkg == "api" or pkg.startswith("api."):
-        return "api"
-    if pkg == "bootstrap" or pkg.startswith("bootstrap."):
-        return "bootstrap"
-    if pkg == "main":
-        return "main"
-    return None
+def import_target(module: str, path: Path, node: ast.ImportFrom) -> str:
+    if not node.level:
+        return node.module or ""
+    parts = module.split(".") if path.name == "__init__.py" else module.split(".")[:-1]
+    parts = parts[: len(parts) - node.level + 1]
+    return ".".join([*parts, *([node.module] if node.module else [])])
+
+
+def annotation_names(annotation: ast.AST | None) -> set[str]:
+    if annotation is None:
+        return set()
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval")
+        except SyntaxError:
+            return set()
+    if isinstance(annotation, ast.Name):
+        return {annotation.id}
+    if isinstance(annotation, ast.Attribute):
+        return {ast.unparse(annotation), *annotation_names(annotation.value)}
+    if isinstance(annotation, ast.Subscript):
+        base = ast.unparse(annotation.value).rsplit(".", 1)[-1]
+        names = annotation_names(annotation.value)
+        if base == "Literal":
+            return names
+        if base == "Annotated" and isinstance(annotation.slice, ast.Tuple):
+            return names | annotation_names(annotation.slice.elts[0])
+    return set().union(*(annotation_names(child) for child in ast.iter_child_nodes(annotation)))
+
+
+def cycles(graph: dict[str, set[str]]) -> list[list[str]]:
+    indexes: dict[str, int] = {}
+    lows: dict[str, int] = {}
+    stack: list[str] = []
+    active: set[str] = set()
+    found: list[list[str]] = []
+
+    def visit(module: str) -> None:
+        indexes[module] = lows[module] = len(indexes)
+        stack.append(module)
+        active.add(module)
+        for target in sorted(graph.get(module, ())):
+            if target not in indexes:
+                visit(target)
+                lows[module] = min(lows[module], lows[target])
+            elif target in active:
+                lows[module] = min(lows[module], indexes[target])
+        if lows[module] == indexes[module]:
+            component: list[str] = []
+            while True:
+                target = stack.pop()
+                active.remove(target)
+                component.append(target)
+                if target == module:
+                    break
+            if len(component) > 1:
+                found.append(sorted(component))
+
+    for module in sorted(graph):
+        if module not in indexes:
+            visit(module)
+    return found
+
+
+def check(backend: Path) -> list[str]:
+    modules: dict[str, tuple[Path, ast.Module]] = {}
+    errors: list[str] = []
+    paths: list[Path] = []
+    for directory, names, files in os.walk(backend):
+        skipped = {".venv", "__pycache__", ".ruff_cache"}
+        if Path(directory) == backend:
+            skipped |= {"data", "updates", "alembic"}
+        names[:] = [name for name in names if name not in skipped]
+        paths.extend(Path(directory, name) for name in files if name.endswith(".py"))
+    for path in sorted(paths):
+        module = ".".join(path.relative_to(backend).with_suffix("").parts).removesuffix(".__init__")
+        try:
+            modules[module] = (path, ast.parse(path.read_text(encoding="utf-8-sig")))
+        except SyntaxError as exc:
+            errors.append(f"[syntax] {path}:{exc.lineno}: {exc.msg}")
+
+    models: set[tuple[str, str]] = set()
+    imports: dict[str, dict[str, tuple[str, str]]] = defaultdict(dict)
+    definitions: dict[tuple[str, str], ast.AST] = {}
+    mutated_globals: dict[str, set[str]] = defaultdict(set)
+    graph: dict[str, set[str]] = defaultdict(set)
+    occurrences: list[tuple[str, str, str, int]] = []
+    for module, (path, tree) in modules.items():
+        for node in tree.body:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                definitions[(module, node.name)] = node
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        definitions[(module, target.id)] = node
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                definitions[(module, node.target.id)] = node
+            elif isinstance(node, ast.TypeAlias):
+                definitions[(module, node.name.id)] = node
+            if isinstance(node, ast.ClassDef) and any(
+                isinstance(child, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "__tablename__" for target in child.targets)
+                for child in node.body
+            ):
+                models.add((module, node.name))
+        for node in runtime_nodes(tree):
+            if isinstance(node, ast.Global):
+                mutated_globals[module].update(node.names)
+            elif (
+                isinstance(node, (ast.Subscript, ast.Attribute))
+                and isinstance(node.ctx, ast.Store)
+                and isinstance(node.value, ast.Name)
+            ):
+                mutated_globals[module].add(node.value.id)
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.attr
+                in {
+                    "add",
+                    "add_done_callback",
+                    "append",
+                    "clear",
+                    "configure",
+                    "discard",
+                    "extend",
+                    "insert",
+                    "pop",
+                    "register",
+                    "remove",
+                    "setdefault",
+                    "update",
+                }
+            ):
+                mutated_globals[module].add(node.func.value.id)
+            if isinstance(node, ast.ImportFrom):
+                target = import_target(module, path, node)
+                for alias in node.names:
+                    imports[module][alias.asname or alias.name] = (target, alias.name)
+                root = target.split(".")[0]
+                if root in RETIRED:
+                    errors.append(f"[retired] {path}:{node.lineno}: {target}")
+                if root not in ROOTS:
+                    continue
+                if target not in modules:
+                    errors.append(f"[unresolved] {path}:{node.lineno}: from {target}")
+                    continue
+                if target != module:
+                    graph[module].add(target)
+                for alias in node.names:
+                    occurrences.append((module, target, alias.name, node.lineno))
+                    child = f"{target}.{alias.name}"
+                    if child in modules and child != module:
+                        graph[module].add(child)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    target = alias.name
+                    imports[module][alias.asname or target.split(".")[0]] = (
+                        target if alias.asname else target.split(".")[0],
+                        "",
+                    )
+                    if target.split(".")[0] in RETIRED:
+                        errors.append(f"[retired] {path}:{node.lineno}: {target}")
+                    if target.split(".")[0] not in ROOTS:
+                        continue
+                    if target not in modules:
+                        errors.append(f"[unresolved] {path}:{node.lineno}: import {target}")
+                    elif target != module:
+                        graph[module].add(target)
+                    occurrences.append((module, target, "", node.lineno))
+
+    def resolve_symbol(module: str, symbol: str, visited: set[tuple[str, str]] | None = None) -> tuple[str, str]:
+        visited = set() if visited is None else visited
+        key = (module, symbol)
+        if key in visited:
+            return key
+        visited.add(key)
+        if "." in symbol:
+            first, remainder = symbol.split(".", 1)
+            target, name = resolve_symbol(module, first, visited)
+            if name:
+                return key
+            full = f"{target}.{remainder}"
+            parts = full.split(".")
+            for length in range(len(parts), 0, -1):
+                prefix = ".".join(parts[:length])
+                if prefix in modules:
+                    return resolve_symbol(prefix, ".".join(parts[length:]), visited)
+            return key
+        if symbol in imports[module]:
+            target, name = imports[module][symbol]
+            child = f"{target}.{name}" if name else target
+            if child in modules and (target, name) not in definitions:
+                return child, ""
+            return resolve_symbol(target, name, visited)
+        definition = definitions.get(key)
+        if isinstance(definition, (ast.Assign, ast.AnnAssign)) and isinstance(
+            definition.value,
+            (ast.Name, ast.Attribute),
+        ):
+            return resolve_symbol(module, ast.unparse(definition.value), visited)
+        if definition is None and symbol and f"{module}.{symbol}" in modules:
+            return f"{module}.{symbol}", ""
+        return key
+
+    def referenced_models(
+        module: str,
+        expression: ast.AST | None,
+        *,
+        annotation: bool = False,
+        seen: set[tuple[str, str]] | None = None,
+    ) -> set[tuple[str, str]]:
+        if expression is None:
+            return set()
+        seen = set() if seen is None else seen
+        names = (
+            annotation_names(expression)
+            if annotation
+            else {ast.unparse(node) for node in ast.walk(expression) if isinstance(node, (ast.Name, ast.Attribute))}
+        )
+        result: set[tuple[str, str]] = set()
+        for name in names:
+            resolved = resolve_symbol(module, name)
+            if resolved in models:
+                result.add(resolved)
+            elif resolved not in seen:
+                definition = definitions.get(resolved)
+                if isinstance(definition, (ast.Assign, ast.AnnAssign, ast.TypeAlias)):
+                    result |= referenced_models(
+                        resolved[0],
+                        definition.value,
+                        annotation=annotation,
+                        seen=seen | {resolved},
+                    )
+        return result
+
+    def value_class(module: str, definition: ast.ClassDef, seen: set[tuple[str, str]]) -> bool:
+        key = module, definition.name
+        if key in models or key in seen:
+            return False
+        for decorator in definition.decorator_list:
+            decorated = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if resolve_symbol(module, ast.unparse(decorated)) == ("dataclasses", "dataclass"):
+                return True
+        for base in definition.bases:
+            declared_base = base.value if isinstance(base, ast.Subscript) else base
+            resolved = resolve_symbol(module, ast.unparse(declared_base))
+            if resolved in {
+                ("pydantic", "BaseModel"),
+                ("pydantic", "RootModel"),
+                ("pydantic.main", "BaseModel"),
+                ("typing", "Protocol"),
+                ("enum", "Enum"),
+                ("enum", "StrEnum"),
+                ("enum", "IntEnum"),
+                ("enum", "IntFlag"),
+            }:
+                return True
+            parent = definitions.get(resolved)
+            if isinstance(parent, ast.ClassDef) and value_class(resolved[0], parent, seen | {key}):
+                return True
+            if (
+                parent is None
+                and isinstance(base, ast.Name)
+                and base.id in {"Exception", "RuntimeError", "ValueError", "TypeError", "KeyError"}
+            ):
+                return True
+        return False
+
+    def type_alias(module: str, definition: ast.AST) -> bool:
+        if isinstance(definition, ast.TypeAlias):
+            return True
+        if isinstance(definition, ast.AnnAssign) and any(
+            resolve_symbol(module, name) == ("typing", "TypeAlias") for name in annotation_names(definition.annotation)
+        ):
+            return True
+        if isinstance(definition, (ast.Assign, ast.AnnAssign)) and isinstance(definition.value, ast.Subscript):
+            base = resolve_symbol(module, ast.unparse(definition.value.value))
+            return (
+                base[0] in {"typing", "collections.abc"}
+                or isinstance(definition.value.value, ast.Name)
+                and definition.value.value.id in {"tuple", "list", "dict", "set", "frozenset", "type"}
+            )
+        return False
+
+    def static_value(module: str, expression: ast.AST | None, seen: set[tuple[str, str]]) -> bool:
+        if expression is None or isinstance(expression, ast.Constant):
+            return True
+        if isinstance(expression, (ast.Name, ast.Attribute)):
+            resolved = resolve_symbol(module, ast.unparse(expression))
+            if resolved in seen or resolved in models:
+                return False
+            definition = definitions.get(resolved)
+            if isinstance(definition, ast.ClassDef):
+                return value_class(resolved[0], definition, set())
+            if isinstance(definition, (ast.Assign, ast.AnnAssign, ast.TypeAlias)):
+                return resolved[1] not in mutated_globals[resolved[0]] and static_value(
+                    resolved[0],
+                    definition.value,
+                    seen | {resolved},
+                )
+            if definition is None:
+                return (
+                    isinstance(expression, ast.Name)
+                    and expression.id
+                    in {"str", "int", "float", "bool", "bytes", "object", "tuple", "list", "dict", "set", "frozenset"}
+                    or resolved[0] in {"typing", "types"}
+                    or resolved == ("datetime", "UTC")
+                )
+            return False
+        if isinstance(expression, ast.Call):
+            resolved = resolve_symbol(module, ast.unparse(expression.func))
+            definition = definitions.get(resolved)
+            constructor = isinstance(definition, ast.ClassDef) and value_class(resolved[0], definition, set())
+            constructor |= isinstance(expression.func, ast.Name) and expression.func.id in {
+                "tuple",
+                "list",
+                "dict",
+                "set",
+                "frozenset",
+            }
+            constructor |= resolved in {
+                ("datetime", "timedelta"),
+                ("datetime", "date"),
+                ("re", "compile"),
+                ("typing", "TypeVar"),
+                ("typing", "ParamSpec"),
+                ("typing", "NewType"),
+                ("pydantic", "TypeAdapter"),
+            }
+            return (
+                constructor
+                and all(static_value(module, arg, seen) for arg in expression.args)
+                and all(static_value(module, arg.value, seen) for arg in expression.keywords)
+            )
+        if isinstance(expression, (ast.List, ast.Tuple, ast.Set)):
+            return all(static_value(module, item, seen) for item in expression.elts)
+        if isinstance(expression, ast.Dict):
+            return all(static_value(module, item, seen) for item in [*expression.keys, *expression.values])
+        if isinstance(expression, (ast.Subscript, ast.BinOp, ast.UnaryOp)):
+            return all(
+                static_value(module, child, seen)
+                for child in ast.iter_child_nodes(expression)
+                if not isinstance(child, (ast.expr_context, ast.operator, ast.unaryop))
+            )
+        return False
+
+    def public_value(module: str, symbol: str) -> bool:
+        resolved = resolve_symbol(module, symbol)
+        if resolved in models:
+            return False
+        definition = definitions.get(resolved)
+        if isinstance(definition, ast.ClassDef):
+            return value_class(resolved[0], definition, set())
+        if isinstance(definition, (ast.Assign, ast.AnnAssign, ast.TypeAlias)):
+            if resolved[1] in mutated_globals[resolved[0]]:
+                return False
+            if type_alias(resolved[0], definition):
+                return not referenced_models(resolved[0], definition.value, annotation=True)
+            return static_value(resolved[0], definition.value, {resolved})
+        return False
+
+    model_modules = {module for module, _ in models}
+    feature_graph: dict[str, set[str]] = defaultdict(set)
+    feature_origins: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for source, target, symbol, lineno in occurrences:
+        path = modules[source][0]
+        source_root, target_root = source.split(".")[0], target.split(".")[0]
+        forbidden = (
+            source_root == "infrastructure"
+            and target_root in {"features", "workflows", "entrypoints", "bootstrap"}
+            or source_root == "runtime"
+            and target_root in {"features", "workflows", "entrypoints", "bootstrap"}
+            or source_root == "features"
+            and target_root in {"workflows", "entrypoints", "bootstrap"}
+            or source_root == "workflows"
+            and target_root in {"entrypoints", "bootstrap"}
+            or source_root == "entrypoints"
+            and target_root == "bootstrap"
+        )
+        if source_root == "infrastructure" and target_root == "runtime" and not public_value(target, symbol):
+            forbidden = True
+        if forbidden:
+            errors.append(f"[direction] {path}:{lineno}: {source} -> {target}")
+        if owner(source) == owner(target) or source_root == "bootstrap":
+            continue
+        resolved = resolve_symbol(target, symbol) if symbol else None
+        model_aliases = (
+            referenced_models(target, definitions.get(resolved).value)
+            if isinstance(definitions.get(resolved), (ast.Assign, ast.AnnAssign, ast.TypeAlias))
+            else set()
+        )
+        if (
+            resolved in models
+            or model_aliases
+            or not symbol
+            and target in model_modules
+            or resolved is not None
+            and not resolved[1]
+            and resolved[0] in model_modules
+        ):
+            errors.append(f"[foreign-orm] {path}:{lineno}: {target}.{symbol}")
+        if resolved is not None:
+            definition = definitions.get(resolved)
+            if isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for value in referenced_models(resolved[0], definition.returns, annotation=True):
+                    errors.append(f"[orm-return] {path}:{lineno}: {target}.{symbol} returns {value[1]}")
+        if source_root == "features" and target_root == "features" and symbol.startswith("_"):
+            errors.append(f"[private-feature] {path}:{lineno}: {target}.{symbol}")
+        if source_root == "features" and target_root == "features" and not public_value(target, symbol):
+            source_owner, target_owner = owner(source), owner(target)
+            feature_graph[source_owner].add(target_owner)
+            feature_origins[(source_owner, target_owner)].append(f"{path}:{lineno}: {target}.{symbol}")
+
+    for module, (path, tree) in modules.items():
+        for node in runtime_nodes(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            resolved = resolve_symbol(module, ast.unparse(node.func))
+            definition = definitions.get(resolved)
+            if (
+                not isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef))
+                or owner(module) == owner(resolved[0])
+                or module.startswith("bootstrap.")
+            ):
+                continue
+            for value in referenced_models(resolved[0], definition.returns, annotation=True):
+                errors.append(f"[orm-return] {path}:{node.lineno}: {resolved[0]}.{resolved[1]} returns {value[1]}")
+        if not module.startswith("entrypoints."):
+            continue
+        for node in runtime_nodes(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in SQL_OPERATIONS
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in {"db", "session"}
+            ):
+                errors.append(f"[entrypoint-sql] {path}:{node.lineno}: {node.func.value.id}.{node.func.attr}")
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "sqlalchemy"
+                and any(alias.name in {"select", "update", "delete", "insert", "text"} for alias in node.names)
+            ):
+                errors.append(f"[entrypoint-sql] {path}:{node.lineno}: SQL constructor import")
+    for component in cycles(graph):
+        errors.append("[cycle] " + " -> ".join(component))
+    for component in cycles(feature_graph):
+        members = set(component)
+        for (source, target), origins in feature_origins.items():
+            if source in members and target in members:
+                for origin in origins:
+                    errors.append(f"[feature-cycle] {source} -> {target}: {origin}")
+    return sorted(set(errors))
 
 
 def main() -> int:
-    modules: dict[str, Path] = {}
-    for dirpath, dirnames, filenames in os.walk(BACKEND):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for fn in filenames:
-            if fn.endswith(".py"):
-                rel = Path(dirpath, fn).relative_to(BACKEND)
-                name = ".".join(rel.with_suffix("").parts)
-                if name.endswith(".__init__"):
-                    name = name[: -len(".__init__")]
-                modules[name] = Path(dirpath, fn)
-    top_names = {m.split(".")[0] for m in modules}
-
-    def resolve(name: str) -> str | None:
-        parts = name.split(".")
-        for i in range(len(parts), 0, -1):
-            cand = ".".join(parts[:i])
-            if cand in modules:
-                return cand
-        return None
-
-    edges: dict[tuple[str, str], list[str]] = defaultdict(list)
-    unresolved: list[str] = []
-
-    def rel_base(name: str, is_pkg: bool, level: int, module: str | None) -> str | None:
-        """相对导入解析为绝对模块字符串（不查存在性）：level L → 所在包上溯 L-1 层。"""
-        parts = name.split(".")
-        if not is_pkg:
-            parts = parts[:-1]
-        up = level - 1
-        if len(parts) < up:
-            return None
-        base = parts[: len(parts) - up] if up else parts
-        out = ".".join(base)
-        if module:
-            out = f"{out}.{module}" if out else module
-        return out or None
-
-    for name, path in sorted(modules.items()):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError as exc:
-            unresolved.append(f"{path}: 语法错误 {exc}")
-            continue
-        rel = path.relative_to(REPO_ROOT)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    r = resolve(alias.name)
-                    if r:
-                        edges[(name, r)].append(f"{rel}:{node.lineno}")
-                    elif alias.name.split(".")[0] in top_names:
-                        unresolved.append(f"{rel}:{node.lineno} 无法解析 import {alias.name}")
-            elif isinstance(node, ast.ImportFrom):
-                if node.level == 0:
-                    target = node.module or ""
-                else:
-                    target = rel_base(name, path.name == "__init__.py", node.level, node.module) or ""
-                if not target or target.split(".")[0] not in top_names:
-                    continue
-                base = resolve(target)
-                if base is None or base != target:
-                    unresolved.append(f"{rel}:{node.lineno} 无法解析 from {target}")
-                    continue
-                edges[(name, base)].append(f"{rel}:{node.lineno}")
-                if node.level == 0:
-                    for alias in node.names:
-                        if alias.name == "*":
-                            continue
-                        r = resolve(f"{target}.{alias.name}")
-                        if r:
-                            edges[(name, r)].append(f"{rel}:{node.lineno}")
-
-    errors: list[str] = []
-
-    # 未解析导入
-    for u in unresolved:
-        errors.append(f"[unresolved] {u}")
-
-    # 包级环（严格边）
-    pkg_edges = {(pkg_of(a), pkg_of(b)) for (a, b) in edges if pkg_of(a) != pkg_of(b)}
-    sccs = _tarjan(pkg_edges)
-    for scc in sccs:
-        members = " <-> ".join(sorted(scc))
-        errors.append(f"[cycle] 包级依赖环: {members}")
-        for a, b in sorted(pkg_edges):
-            if a in scc and b in scc:
-                evs = [e for (x, y), es in edges.items() if pkg_of(x) == a and pkg_of(y) == b for e in es]
-                if evs:
-                    errors.append(f"          {a} -> {b}  [{evs[0]}]")
-
-    # 层间白名单与域隔离
-    for (a, b), evs in sorted(edges.items()):
-        la, lb = layer_of(pkg_of(a)), layer_of(pkg_of(b))
-        if la is None or lb is None or a == b:
-            continue
-        where = f"{evs[0]}"
-        if la in BOTTOM and lb not in BOTTOM:
-            errors.append(f"[bottom-up] {la} 导入 {b}  [{where}]")
-            continue
-        if la == "main" and lb != "bootstrap":
-            errors.append(f"[thin-main] main 导入 {b}（只允许 bootstrap）  [{where}]")
-            continue
-        if lb == "bootstrap" and la != "bootstrap" and la != "main":
-            errors.append(f"[bootstrap-reverse] {a} 导入 bootstrap  [{where}]")
-            continue
-        if la == "services.contracts" and lb != "services.contracts":
-            errors.append(f"[contracts-impure] contracts 导入 {b}  [{where}]")
-            continue
-        ra, rb = RANK.get(la), RANK.get(lb)
-        if ra is None or rb is None:
-            continue
-        if rb > ra and (la, lb) not in UPWARD_ALLOWED:
-            errors.append(f"[layer] {la} -> {lb} 越层  [{where}]")
-            continue
-        if la == lb and a != b:
-            da, db = domain_of(a), domain_of(b)
-            if la == "services.domains" and da != db:
-                if db != DOMAIN_BASE and (da, db) not in DOMAIN_FLOW_EDGES:
-                    errors.append(f"[domain-isolation] {a} 跨业务域导入 {b}  [{where}]")
-            elif la == "services.application" and da != db and (da, db) not in APPLICATION_FLOW_EDGES:
-                errors.append(f"[app-flow] {da} -> {db} 未声明的应用流程依赖  [{where}]")
-
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--backend", type=Path, default=BACKEND)
+    args = parser.parse_args()
+    errors = check(args.backend.resolve())
+    for error in errors:
+        print(error)
     if errors:
-        print(f"{len(errors)} 个架构问题:", file=sys.stderr)
-        for e in errors:
-            print(e, file=sys.stderr)
+        print(f"architecture failed: {len(errors)} violation(s)")
         return 1
     print("architecture ok")
     return 0
 
 
-def _tarjan(edges: set[tuple[str, str]]) -> list[set[str]]:
-    graph: dict[str, set[str]] = defaultdict(set)
-    for a, b in edges:
-        graph[a].add(b)
-    index: dict[str, int] = {}
-    low: dict[str, int] = {}
-    onstack: set[str] = set()
-    stack: list[str] = []
-    sccs: list[set[str]] = []
-    counter = 0
-    for v in sorted({x for pair in edges for x in pair}):
-        if v in index:
-            continue
-        work = [(v, iter(sorted(graph[v])))]
-        index[v] = low[v] = counter
-        counter += 1
-        stack.append(v)
-        onstack.add(v)
-        while work:
-            node, it = work[-1]
-            advanced = False
-            for w in it:
-                if w not in index:
-                    index[w] = low[w] = counter
-                    counter += 1
-                    stack.append(w)
-                    onstack.add(w)
-                    work.append((w, iter(sorted(graph[w]))))
-                    advanced = True
-                    break
-                if w in onstack:
-                    low[node] = min(low[node], index[w])
-            if advanced:
-                continue
-            work.pop()
-            if work:
-                low[work[-1][0]] = min(low[work[-1][0]], low[node])
-            if low[node] == index[node]:
-                comp = set()
-                while True:
-                    w = stack.pop()
-                    onstack.discard(w)
-                    comp.add(w)
-                    if w == node:
-                        break
-                if len(comp) > 1:
-                    sccs.append(comp)
-    return sccs
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

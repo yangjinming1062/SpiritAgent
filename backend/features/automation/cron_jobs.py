@@ -1,0 +1,236 @@
+from collections.abc import Awaitable, Callable
+from datetime import datetime
+from typing import Any
+
+from croniter import croniter
+from infrastructure.config import SETTINGS
+from infrastructure.database import session_scope
+from infrastructure.logger import get_logger
+from infrastructure.text import utc_now
+from runtime.memory_scope import MemoryScope, validate_memory_scope
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from features.accounts.models import lock_user_row
+from features.automation.models import CronJob
+from features.conversation.automation_queries import create_task_conversation, owned_task_conversation_id
+
+logger = get_logger(__name__)
+
+SPECIAL_CRON_KIND = "special"
+STANDARD_CRON_KIND = "standard"
+_CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
+# 与 CronJob.name / schedule 的列宽一致；超长值会在提交时以数据库错误失败。
+_MAX_NAME_LENGTH = 128
+_MAX_SCHEDULE_LENGTH = 128
+
+_JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id", "system_preset_id"})
+_SCHEDULE_KEYS = ("schedule", "is_paused")
+_INTENT_INVALIDATING_FIELDS = ("prompt", "schedule", "kind", "expires_at", "is_paused")
+JobIntentInvalidator = Callable[[AsyncSession, int, int], Awaitable[None]]
+_invalidate_job_intents: JobIntentInvalidator | None = None
+
+
+def set_job_intent_invalidator(fn: JobIntentInvalidator) -> None:
+    global _invalidate_job_intents
+    _invalidate_job_intents = fn
+
+
+async def _invalidate_intents(db: AsyncSession, user_id: int, job_id: int) -> None:
+    if _invalidate_job_intents is None:
+        raise RuntimeError("Cron job intent invalidator is not registered")
+    await _invalidate_job_intents(db, user_id, job_id)
+
+
+def _validate_kind(kind: str, scope: MemoryScope) -> str:
+    normalized = (kind or "").strip().lower()
+    if normalized not in _CRON_KINDS:
+        raise ValueError("kind must be one of: special, standard")
+    if normalized == SPECIAL_CRON_KIND and scope.system_preset_id != "companion":
+        raise ValueError("Special jobs require the companion preset")
+    return normalized
+
+
+def _validate_job_text(name: str | None, schedule: str | None, prompt: str | None = None) -> None:
+    """name / schedule 的入口校验：超出列宽或含 NUL（PostgreSQL 文本不接受）时抛 ValueError，消息可直接回给模型。"""
+    for field, value, limit in (("name", name, _MAX_NAME_LENGTH), ("schedule", schedule, _MAX_SCHEDULE_LENGTH)):
+        if value is None:
+            continue
+        if len(value) > limit:
+            raise ValueError(f"{field} must be at most {limit} characters")
+        if "\x00" in value:
+            raise ValueError(f"{field} must not contain NUL characters")
+    if prompt is not None and "\x00" in prompt:
+        raise ValueError("任务内容不能包含空字符，请移除后重新保存")
+
+
+def compute_next_run_at(schedule: str, base: datetime) -> datetime | None:
+    try:
+        # croniter 保留 base 的 tzinfo——aware 进 aware 出。
+        return croniter(schedule, base).get_next(datetime)
+    except Exception as exc:  # noqa: BLE001 - croniter 的公开异常集合随版本变化，非法表达式统一转为暂停任务
+        logger.error(
+            "Invalid cron expression",
+            extra={"schedule": schedule, "error": str(exc)},
+        )
+        return None
+
+
+def _refresh_schedule(job: CronJob) -> None:
+    next_run = compute_next_run_at(job.schedule, utc_now())
+    if next_run is None:
+        job.is_paused = True
+        job.next_run_at = None
+    else:
+        job.next_run_at = next_run
+
+
+async def _get_scoped_job(db: AsyncSession, scope: MemoryScope, job_id: int) -> CronJob | None:
+    return await db.scalar(
+        select(CronJob).where(
+            CronJob.id == job_id,
+            CronJob.user_id == scope.user_id,
+            CronJob.system_preset_id == scope.system_preset_id,
+        ),
+    )
+
+
+async def _create_job_conversation(db: AsyncSession, user_id: int, name: str) -> int:
+    return await create_task_conversation(db, user_id, name)
+
+
+async def _ensure_active_job_capacity(db: AsyncSession, user_id: int, candidate_job_id: int | None = None) -> None:
+    stmt = select(func.count()).select_from(CronJob).where(CronJob.user_id == user_id, CronJob.is_paused.is_(False))
+    if candidate_job_id is not None:
+        stmt = stmt.where(CronJob.id != candidate_job_id)
+    if (await db.execute(stmt)).scalar_one() >= SETTINGS.cron_max_active_per_user:
+        raise ValueError(
+            f"Maximum active cron jobs limit ({SETTINGS.cron_max_active_per_user}) reached.",
+        )
+
+
+async def create_job(
+    scope: MemoryScope,
+    prompt: str,
+    schedule: str,
+    name: str = "cron job",
+    one_shot: bool = False,
+    kind: str = STANDARD_CRON_KIND,
+    expires_at: datetime | None = None,
+) -> dict[str, Any]:
+    normalized_kind = _validate_kind(kind, scope)
+    _validate_job_text(name, schedule, prompt)
+    validate_memory_scope(scope)
+    user_id = scope.user_id
+    async with session_scope() as db:
+        await lock_user_row(db, user_id)
+        job = CronJob(
+            user_id=user_id,
+            system_preset_id=scope.system_preset_id,
+            name=name,
+            schedule=schedule,
+            prompt=prompt,
+            kind=normalized_kind,
+            is_paused=False,
+            one_shot=one_shot,
+            expires_at=expires_at,
+        )
+        _refresh_schedule(job)
+        if not job.is_paused:
+            await _ensure_active_job_capacity(db, user_id)
+        if normalized_kind == STANDARD_CRON_KIND:
+            job.conversation_id = await _create_job_conversation(db, user_id, name)
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+        return job.to_dict()
+
+
+async def get_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
+    validate_memory_scope(scope)
+    async with session_scope() as db:
+        job = await _get_scoped_job(db, scope, job_id)
+        return job.to_dict() if job else None
+
+
+async def get_user_job(user_id: int, job_id: int) -> dict[str, Any] | None:
+    """按 (id, user_id) 读取任务，不限预设；触发回合据此核对任务是否仍可执行。"""
+    async with session_scope() as db:
+        job = await db.scalar(select(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id))
+        return job.to_dict() if job else None
+
+
+async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[dict[str, Any]]:
+    validate_memory_scope(scope)
+    async with session_scope() as db:
+        stmt = select(CronJob).where(
+            CronJob.user_id == scope.user_id,
+            CronJob.system_preset_id == scope.system_preset_id,
+        )
+        if not include_paused:
+            stmt = stmt.where(CronJob.is_paused.is_(False))
+        jobs = (await db.execute(stmt)).scalars().all()
+        return [j.to_dict() for j in jobs]
+
+
+async def update_job(
+    scope: MemoryScope,
+    job_id: int,
+    updates: dict[str, Any],
+) -> dict[str, Any] | None:
+    if "kind" in updates:
+        updates["kind"] = _validate_kind(updates["kind"], scope)
+    _validate_job_text(updates.get("name"), updates.get("schedule"), updates.get("prompt"))
+    validate_memory_scope(scope)
+    user_id = scope.user_id
+    async with session_scope() as db:
+        await lock_user_row(db, user_id)
+        job = await _get_scoped_job(db, scope, job_id)
+        if not job:
+            return None
+        previous_intent = tuple(getattr(job, field) for field in _INTENT_INVALIDATING_FIELDS)
+        for key, value in updates.items():
+            if key in _JOB_IMMUTABLE_FIELDS or not hasattr(job, key):
+                continue
+            setattr(job, key, value)
+        if any(k in updates for k in _SCHEDULE_KEYS):
+            _refresh_schedule(job)
+        if not job.is_paused:
+            await _ensure_active_job_capacity(db, user_id, job.id)
+        if job.kind == STANDARD_CRON_KIND and job.conversation_id is None:
+            job.conversation_id = await _create_job_conversation(db, user_id, job.name)
+        elif job.kind == SPECIAL_CRON_KIND:
+            job.conversation_id = None
+        if previous_intent != tuple(getattr(job, field) for field in _INTENT_INVALIDATING_FIELDS):
+            await _invalidate_intents(db, user_id, job.id)
+        await db.commit()
+        return job.to_dict()
+
+
+async def remove_job(scope: MemoryScope, job_id: int) -> bool:
+    validate_memory_scope(scope)
+    user_id = scope.user_id
+    async with session_scope() as db:
+        await lock_user_row(db, user_id)
+        job = await _get_scoped_job(db, scope, job_id)
+        if not job:
+            return False
+        await _invalidate_intents(db, user_id, job.id)
+        await db.delete(job)
+        await db.commit()
+        return True
+
+
+async def resolve_job_conversation(user_id: int, job_id: int, conversation_id: int | None, name: str) -> int:
+    """返回 standard 任务的执行会话；会话已被删除时新建并回写仍存在的任务（一次性任务触发时已删除）。"""
+    async with session_scope() as db:
+        if conversation_id is not None:
+            existing = await owned_task_conversation_id(db, user_id, conversation_id)
+            if existing is not None:
+                return existing
+        created_id = await _create_job_conversation(db, user_id, name)
+        await db.execute(
+            update(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id).values(conversation_id=created_id),
+        )
+        await db.commit()
+        return created_id

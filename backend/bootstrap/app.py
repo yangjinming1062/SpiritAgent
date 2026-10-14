@@ -2,26 +2,22 @@
 
 from pathlib import Path
 
-from api import ROUTERS
-from components import (
-    SETTINGS,
-    correlated_exception_response,
-    correlation_id_middleware,
-)
+from entrypoints.http.body_limit import BodyLimitMiddleware
+from entrypoints.http.rate_limit import limiter, rate_limit_exception_handler, stash_user_id_middleware
+from entrypoints.http.remote_static import RemoteStaticFiles
+from entrypoints.http.routes import ROUTERS
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from services.adapters.http import (
-    BodyLimitMiddleware,
-    RemoteStaticFiles,
-    limiter,
-    rate_limit_exception_handler,
-    stash_user_id_middleware,
-)
+from infrastructure.config import SETTINGS
+from infrastructure.correlation import correlated_exception_response, correlation_id_middleware
 from slowapi.errors import RateLimitExceeded
 
+import bootstrap.models  # noqa: F401 -- 路由加载前显式登记完整 ORM。
+from bootstrap.backup import register_backup_tables
 from bootstrap.lifecycle import lifespan
 from bootstrap.registrations import register_all
 
+register_backup_tables()
 register_all()
 
 app = FastAPI(title=SETTINGS.app_name, lifespan=lifespan)

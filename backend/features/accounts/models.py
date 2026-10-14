@@ -1,0 +1,81 @@
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from infrastructure.models import ModelBase, TimestampMixin
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    select,
+    text,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+if TYPE_CHECKING:
+    from features.appearance.models import AvatarAsset
+    from features.automation.models import CronJob
+    from features.companion.models import Persona
+    from features.configuration.models import UserModelConfig
+    from features.configuration.settings.models import UserSetting
+    from features.conversation.models import Conversation
+    from features.memory.models import Memory
+
+
+class User(ModelBase, TimestampMixin):
+    __tablename__ = "users"
+
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    activation_code: Mapped[str] = mapped_column(Text)
+    activation_token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
+    nightly_activity_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
+
+    login_records: Mapped[list["LoginRecord"]] = relationship(back_populates="user", passive_deletes=True)
+    model_config: Mapped["UserModelConfig | None"] = relationship(
+        back_populates="user",
+        uselist=False,
+        passive_deletes=True,
+    )
+    persona: Mapped["Persona | None"] = relationship(back_populates="user", uselist=False, passive_deletes=True)
+    avatar_assets: Mapped[list["AvatarAsset"]] = relationship(back_populates="user", passive_deletes=True)
+    conversations: Mapped[list["Conversation"]] = relationship(back_populates="user", passive_deletes=True)
+    cron_jobs: Mapped[list["CronJob"]] = relationship(back_populates="user", passive_deletes=True)
+    settings: Mapped[list["UserSetting"]] = relationship(back_populates="user", passive_deletes=True)
+    memories: Mapped[list["Memory"]] = relationship(back_populates="user", passive_deletes=True)
+
+
+class LoginRecord(ModelBase):
+    __tablename__ = "login_records"
+    __table_args__ = (UniqueConstraint("token_jti", name="uq_login_records_token_jti"),)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_jti: Mapped[str] = mapped_column(String(64))
+    client_version: Mapped[str] = mapped_column(String(64), default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    user_agent: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"), index=True)
+    login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    logout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="login_records")
+
+
+# Admin token 携带 jti，疑似泄露时设 is_active=False 强制吊销。
+class AdminSession(ModelBase):
+    __tablename__ = "admin_sessions"
+    __table_args__ = (UniqueConstraint("token_jti", name="uq_admin_sessions_token_jti"),)
+
+    token_jti: Mapped[str] = mapped_column(String(64))
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+async def lock_user_row(db: AsyncSession, user_id: int) -> None:
+    """锁定用户行直到所在事务结束；序列化同用户的任务、陪伴意图、动态额度与日记状态变更。"""
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update())

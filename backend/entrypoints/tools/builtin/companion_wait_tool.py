@@ -1,0 +1,89 @@
+import json
+from typing import Literal
+
+from features.companion.intent_contracts import CompanionWaitRequest, CompanionWakeEvent
+from features.companion.intents import cancel_companion_wait, list_companion_intents, set_companion_wait
+from infrastructure.database import session_scope
+from infrastructure.text import tool_error
+from runtime.tools.prompts import COMPANION_WAIT_DESC, COMPANION_WAIT_PARAM_DESCS
+from runtime.tools.registry import ToolsRegistry
+
+COMPANION_WAIT_SCHEMA: dict[str, object] = {
+    "name": "companion_wait",
+    "description": COMPANION_WAIT_DESC,
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["schedule", "list", "cancel"],
+                "description": COMPANION_WAIT_PARAM_DESCS["action"],
+            },
+            "intent_id": {
+                "type": "integer",
+                "description": COMPANION_WAIT_PARAM_DESCS["intent_id"],
+            },
+            "intent": {
+                "type": "string",
+                "description": COMPANION_WAIT_PARAM_DESCS["intent"],
+            },
+            "after_seconds": {
+                "type": "integer",
+                "minimum": 60,
+                "maximum": 2592000,
+                "description": COMPANION_WAIT_PARAM_DESCS["after_seconds"],
+            },
+            "wake_on": {
+                "type": "string",
+                "enum": ["desktop_available", "context_changed"],
+                "description": COMPANION_WAIT_PARAM_DESCS["wake_on"],
+            },
+            "expires_seconds": {
+                "type": "integer",
+                "minimum": 120,
+                "maximum": 2592000,
+                "description": COMPANION_WAIT_PARAM_DESCS["expires_seconds"],
+            },
+        },
+        "required": ["action"],
+    },
+}
+
+
+async def companion_wait(
+    action: Literal["schedule", "list", "cancel"],
+    user_id: int,
+    intent: str | None = None,
+    intent_id: int | None = None,
+    after_seconds: int | None = None,
+    wake_on: CompanionWakeEvent | None = None,
+    expires_seconds: int = 86400,
+    **kwargs: object,
+) -> str:
+    try:
+        if action == "list":
+            async with session_scope() as db:
+                rows = await list_companion_intents(db, user_id)
+            return json.dumps({"intents": [row.model_dump(mode="json") for row in rows]}, ensure_ascii=False)
+        if action == "cancel":
+            if intent_id is None:
+                raise ValueError("intent_id is required for cancellation")
+            if not await cancel_companion_wait(user_id, intent_id):
+                raise ValueError(f"No active follow-up with intent_id {intent_id}; use list to see the saved ones")
+            return json.dumps({"cancelled": True})
+        if action != "schedule":
+            raise ValueError("action must be schedule, list or cancel")
+        request = CompanionWaitRequest(
+            intent=intent or "",
+            after_seconds=after_seconds,
+            wake_on=wake_on,
+            expires_seconds=expires_seconds,
+        )
+        result = await set_companion_wait(user_id, request, intent_id)
+        return json.dumps({"intent_id": result, "scheduled": True})
+    except ValueError as exc:
+        return tool_error(str(exc))
+
+
+def register(registry: ToolsRegistry) -> None:
+    registry.register(COMPANION_WAIT_SCHEMA, companion_wait)

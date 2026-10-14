@@ -58,20 +58,20 @@ flowchart TD
 
 - 全身、换装、微调及自备图统一保存真实透明 PNG，默认外观复制已验收的全身图。确认与候选采纳再次验收透明成品，不能把画出的棋盘格或仅带近乎不透明 alpha 的图片当作透明图。
 - 生成沿所属任务的图片链顺序调用，支持原生透明时请求透明背景，其余请求纯白背景。下载后按实际 alpha、前景覆盖率及边缘检查：有效透明图保留原 alpha，不合格图对同一产物执行 ISNet 抠像并再次检查；透明度失败不追加付费生成。换装候选先透明化，再做身份评分。
-- [共享图片处理](../backend/services/infrastructure/video_processing/image.py)保持原尺寸、主体位置和构图，不使用动作图的缩放或补边。全身与着装生图前检查抠像模型；上传在字节校验后处理，抠像或验收失败明确报错，不安装不合格图片、不改变原状态。
+- [共享图片处理](../backend/infrastructure/video_processing/image.py)保持原尺寸、主体位置和构图，不使用动作图的缩放或补边。全身与着装生图前检查抠像模型；上传在字节校验后处理，抠像或验收失败明确报错，不安装不合格图片、不改变原状态。
 
 ### 换装与连续反馈
 
 - 重新生成时，身体判断与最终生图都接收原设计、按时间排列的已接受反馈及本次反馈；新反馈仅覆盖涉及维度，其余修改与基础身份保留。微调以上一版草稿为底图，只传本次反馈，不做身体判断。
 - 反馈历史随成功草稿保存。已记录全身来源的草稿若来源变化，须按新全身图重生成，不能继续微调。
 - 全身重绘同时消费已有身体资料与当前着装；身体资料只作未修改部分默认，明确调整及兼容第二参考优先，头像特征不变。
-- 命名后的造型描述供后续桌面、视频与出镜媒体使用，保留主要衣物、颜色、轮廓、发型与辨识配饰，不只概括风格。描述有独立状态，失败由用户选择手动补全，不自动重复付费；默认动作脚本首次调用前等待描述完成并冻结，开始制作后不实时回填；明确失败按参考图兜底，等待与恢复见[生成服务](../backend/services/application/generation/README.md)。
+- 命名后的造型描述供后续桌面、视频与出镜媒体使用，保留主要衣物、颜色、轮廓、发型与辨识配饰，不只概括风格。描述有独立状态，失败由用户选择手动补全，不自动重复付费；默认动作脚本首次调用前等待描述完成并冻结，开始制作后不实时回填；明确失败按参考图兜底，等待与恢复见[生成服务](../backend/features/appearance/README.md)。
 
 ### 场景创建与描述
 
 `notes` 描述环境、陈设、光线与氛围，不写画风，可以安排其他人物、动物、肖像和雕像；仅排除伙伴本人及其可辨认的倒影、肖像或雕像，避免与窗口精灵形象重复。场景生图不接收伙伴身份图、角色卡或衣柜造型，可选参考只提供环境与画面线索。文字明确修改优先；画面统一按真实拍摄的环境照片呈现，环境参考只提供布局、元素与构图。
 
-- 生图与检查使用不同输入：生图只有环境资料；[独立视觉检查](../backend/services/application/generation/scene_image_review.py)按账户读取当前已确认全身图，必要时回落已确认头像，作为图 1，与图 2 候选比较。仅有具体可见身份特征支持是同一伙伴时拒绝；相同物种、颜色或一般轮廓不能单独认定重复。参考不可读或检查不可用时保留候选供重试，不猜测，也不把一般人物或雕像视为失败。
+- 生图与检查使用不同输入：生图只有环境资料；[独立视觉检查](../backend/features/media/scene_review.py)按账户读取当前已确认全身图，必要时回落已确认头像，作为图 1，与图 2 候选比较。仅有具体可见身份特征支持是同一伙伴时拒绝；相同物种、颜色或一般轮廓不能单独认定重复。参考不可读或检查不可用时保留候选供重试，不猜测，也不把一般人物或雕像视为失败。
 - 自动生成沿配置供应商顺序有限回退；通过画幅与重复伙伴检查后才采用，不使用身份评分的最佳低分兜底。已有壁纸不绑定身份版本，角色形象或穿着变化不使其失效。
 - 新任务固定以窗口生活空间的 2560×1440、16:9 为交付目标；每家选择最接近目标比例、足够清晰的支持尺寸，不足时取最高可用档。原图按实际请求画幅检查，随后等比居中裁切和高质量缩放，禁止拉伸。分别记录目标、原始素材、最终展示图尺寸，放大不能表示原生高分辨率；已有场景不批量适配。
 - 成品标题与描述客观记录实际画面，可包含有区分度的其他人物、动物或艺术陈设；其活动和穿着不属于伙伴，也不能推断画外经历。伙伴当前着装始终来自衣柜。初始房间只用人设性格影响氛围与陈设，不从外貌、关系或用户资料补造活动。
@@ -95,7 +95,7 @@ flowchart LR
 
 ### 场景图片重绘
 
-重绘与创建共用 [场景装配器](../backend/services/application/generation/scene_prompt.py)，冻结已保存描述和目标尺寸，不附加旧创建要求、旧场景图或衣柜造型。新候选完成检查、适配和描述后原位提交，输入与供应商进度用于恢复，未知提交不重发；提交、编辑与取消契约见[场景任务与原位换图](PROTOCOL.md#场景任务与原位换图)。
+重绘与创建共用 [场景装配器](../backend/features/scenes/prompt_assembly.py)，冻结已保存描述和目标尺寸，不附加旧创建要求、旧场景图或衣柜造型。新候选完成检查、适配和描述后原位提交，输入与供应商进度用于恢复，未知提交不重发；提交、编辑与取消契约见[场景任务与原位换图](PROTOCOL.md#场景任务与原位换图)。
 
 ### 桌面生活视频
 
@@ -132,7 +132,7 @@ flowchart LR
 
 ### 提示词与供应商输入
 
-- 所有图像与视频统一按真实拍摄的质感呈现（相机照片、摄像机视频，而非插画、渲染或 CG），不提供画风选择：只写真实光源、皮肤毛发与材质质感等可见特征，不堆叠画质标签；动漫、插画等形象的出镜图片与视频同样画成真实质感。[generation.py](../backend/prompts/generation.py) 按任务取文本：带角色参考的图像使用 `CHARACTER_VISUAL_STYLE`，视频通过 `SELF_VIDEO_REFERENCE_TEMPLATE` 或 `VIDEO_REFERENCE_TEMPLATE` 装配身份与本次画面要求，不沿用参考图的渲染质感与光影；以首帧驱动的视频沿用首帧质感；编辑与窗口动作姿态图是对已有图片的修改，沿用其质感以保持同一形象的素材一致；纯文字头像用 `DEFAULT_VISUAL_STYLE`；没有角色参考的聊天与动态图片、视频经 `build_plain_image_prompt` / `build_plain_video_prompt` 补同一要求。提示词只写比例，像素尺寸由请求与供应商处理。
+- 所有图像与视频统一按真实拍摄的质感呈现（相机照片、摄像机视频，而非插画、渲染或 CG），不提供画风选择：只写真实光源、皮肤毛发与材质质感等可见特征，不堆叠画质标签；动漫、插画等形象的出镜图片与视频同样画成真实质感。[媒体提示词](../backend/features/media/prompts.py) 按任务取文本：带角色参考的图像使用 `CHARACTER_VISUAL_STYLE`，视频通过 `SELF_VIDEO_REFERENCE_TEMPLATE` 或 `VIDEO_REFERENCE_TEMPLATE` 装配身份与本次画面要求，不沿用参考图的渲染质感与光影；以首帧驱动的视频沿用首帧质感；编辑与窗口动作姿态图是对已有图片的修改，沿用其质感以保持同一形象的素材一致；纯文字头像用 `DEFAULT_VISUAL_STYLE`；没有角色参考的聊天与动态图片、视频经 `build_plain_image_prompt` / `build_plain_video_prompt` 补同一要求。提示词只写比例，像素尺寸由请求与供应商处理。
 - 让模型自己写画面描述的入口（动态创作、图片与视频工具、场景创建与夜间规划、动作脚本与生活视频设计）同样按真实拍摄来写：用真实光源与自然取景，动作幅度克制、有重量与惯性，不用唯美、梦幻、电影大片一类修饰，也不指定画风；动态正文仍不把生成作品写成现实拍摄或已发生的经历。
 - 视频制作描述只写目标需要的可见状态、动作及必要衔接，采用肯定表述；持续保持姿态也可以是完整目标，有过程时才说明关键步骤、节奏与收束。角色与环境参考各自承担已确定的信息，首帧驱动的视频沿用首帧外观；本人出镜视频有完整着装参考时不再叠加外形清单，只有头像时补充已有身体资料。明确要求的动作、频率、速度和幅度仍按任务保留，公共画面要求只装配一次；评审中的缺陷判据不作为制作描述传入。既有任务继续复用已保存的制作描述、脚本与供应商句柄恢复。
 - 写实要求压过参考的渲染质感，但参考本身偏渲染感时效果有限：窗口动作素材与编辑沿用已有图片的质感，日常媒体的真实感因此以已确认头像与当前着装图为基础，需重新生成这两张图才会整体转为写实。身份评分与评审不把渲染质感或摄影风格的差异视为身份冲突，仍检查面容、比例与结构。
@@ -154,7 +154,7 @@ flowchart LR
 | `regenerate` | 按点位固定参考全量重绘 | 按生成链报告失败 |
 | `edit` | 以上一版产物为底图；反馈非空、旧图可读、未附加参考图，供应商声明并实现编辑能力 | 任一条件不满足即失败，不静默改为全量重绘 |
 
-身份条件化参考不等于图像编辑能力；能力位由[供应商基类](../backend/services/infrastructure/llm/providers/base.py)声明，图片链按能力筛选见 [image_generation.py](../backend/services/application/generation/image_generation.py) 的 `resolve_image_gen_chain`。
+身份条件化参考不等于图像编辑能力；能力位由[供应商基类](../backend/infrastructure/ai/providers/base.py)声明，图片链按能力筛选见 [image_generation.py](../backend/features/media/image_generation.py) 的 `resolve_image_gen_chain`。
 
 - 编辑提示词区分局部属性修改与姿态、朝向、轮廓修改：后者允许完成目标所需的身体位置、接触、遮挡、衣物褶皱及局部光影联动，仍受点位的固定身份、造型与构图约束。
 - 出镜图片按新活动安排姿态和取景，不继承身份图的独立角色背景与待机姿态；动作姿态图保留固定相机，但展开姿态时完整入画优先于原主体大小。
@@ -183,7 +183,7 @@ flowchart LR
 
 ### 角色卡与并发写入
 
-全身确认登记持久化分析任务：头像提取头部，全身图提取身体，定义见[模型](../backend/modules/companion/character_card.py)与 [CHARACTER_CARD_EXTRACTION](../backend/prompts/generation.py)。
+全身确认登记持久化分析任务：头像提取头部，全身图提取身体，定义见[模型](../backend/features/appearance/character_card_models.py)与 [CHARACTER_CARD_EXTRACTION](../backend/features/appearance/prompts.py)。
 
 - 两部分成功后原子发布并启动初始资产；来源未变只补失败部分，重启恢复中断任务。模型等待不设时长上限且不持事务，回写核对身份、源路径及批次。
 - 重提取保留已发布资料，成功合并最新用户覆盖；下游只消费生效特征。普通媒体与换装不反写角色卡，全身采纳只更新身体。
@@ -201,14 +201,14 @@ flowchart LR
 #### 本地 ComfyUI
 
 - `local` 的部署与配置见 [Backend 本地供应商](../backend/README.md#本地供应商)。
-- 固定 Qwen-Image 2.1 Turbo 工作流使用 8 步 sigma 调度，自动匹配原生或 GGUF loader；支持文生图、多参考图与原生透明 PNG，批量上限见 [供应商实现](../backend/services/infrastructure/llm/providers/local/image.py)。
+- 固定 Qwen-Image 2.1 Turbo 工作流使用 8 步 sigma 调度，自动匹配原生或 GGUF loader；支持文生图、多参考图与原生透明 PNG，批量上限见 [供应商实现](../backend/infrastructure/ai/providers/local/image.py)。
 - 增量编辑（`image_edit`）采样画布随第一张参考图；身份/造型条件化生成按请求 size/aspect 出图。
 - 已接单任务降低轮询频率并持续等待完成或明确执行失败，多张图片依次制作；暂时的只读查询故障沿同一 `prompt_id` 续查，不重新提交。等待与网络约束统一见 [模型失败与重试预算](PROTOCOL.md#模型失败与重试预算)，用户取消、主动意图到期和停机仍可停止等待。
 - 生成图使用 ComfyUI 临时预览目录，参考图上传到 ComfyUI 的 `input` 目录；部署方负责保护并管理参考图存留。
 
 ### 质量选择
 
-- 身份保持图片与视频共用可见身份评分，覆盖换装、出镜图片、身份校准图、动作姿态图，以及聊天、动态与动作视频；头像与全身候选不评分，由用户预览确认。每输出位置在每家供应商只尝试一轮质量，达到[门槛](../backend/services/application/generation/media_chain.py)即停止，全部低分保留最高分，同分取较早候选。
+- 身份保持图片与视频共用可见身份评分，覆盖换装、出镜图片、身份校准图、动作姿态图，以及聊天、动态与动作视频；头像与全身候选不评分，由用户预览确认。每输出位置在每家供应商只尝试一轮质量，达到[门槛](../backend/features/media/chain.py)即停止，全部低分保留最高分，同分取较早候选。
 - 场景壁纸的画幅门禁与重复伙伴检查见[场景创建与描述](#场景创建与描述)，不合格候选不采用。
 - 当前调用方均按单个输出位置调用质量链；聊天一次请求多张图时逐张独立择优。质量链支持多位置时只继续生成未达标的位置，并按供应商单次输出上限拆分请求。
 
@@ -216,7 +216,7 @@ flowchart LR
 |---|---|
 | 达到质量门槛 | 选定该位置的候选并停止；多图仅继续未达标位置 |
 | 已完成评分但低分 | 按同一供应商游标前进，不回到已尝试的链头 |
-| 生成异常 | 结果未知立即停止；其他供应商错误均可前进到下一家。评分、下载与本地产物处理仍按各自恢复边界，不一律重新生成；分类入口为 [media_failure_reason](../backend/services/application/generation/media_chain.py) |
+| 生成异常 | 结果未知立即停止；其他供应商错误均可前进到下一家。评分、下载与本地产物处理仍按各自恢复边界，不一律重新生成；分类入口为 [media_failure_reason](../backend/features/media/chain.py) |
 | 下载失败或付费提交结果未知 | 不按生成错误切换供应商；分别按[持久化与恢复](#持久化与恢复)续下载或停止后续生成 |
 | 无产物且明确被审核拒绝 | 头像、全身与换装允许一次合规改写，其他链不改写；不重新调用已产出低分候选的供应商 |
 | 评分服务不可用 | 停止追加付费，保留已评分最佳候选或首个可用结果 |
@@ -268,7 +268,7 @@ flowchart LR
 
 ### 系统动作与动态动作
 
-系统槽位、必需项与默认素材类型见 [动作定义](../backend/modules/companion/actions.py)，视频供应商计划见[动作编排](../backend/services/application/generation/video/service.py)，各槽位的动作语义见 [video/script.py](../backend/services/application/generation/video/script.py) 的 `SYSTEM_ACTION_SEMANTICS`。新整包只制作必需槽位（待机、拖拽）；左右行走经单动作请求补齐，左右探身在栖息需要时经探身补齐接口补齐。系统槽位不经提案与评审。动态动作有稳定 `action_id`，名称与用途开放，不占系统槽位，由 LLM 提案并经独立评审后生成。
+系统槽位、必需项与默认素材类型见 [动作定义](../backend/features/actions/models.py)，视频供应商计划见[动作编排](../backend/features/actions/generation/commands.py)，各槽位的动作语义见 [video/script.py](../backend/features/actions/generation/script.py) 的 `SYSTEM_ACTION_SEMANTICS`。新整包只制作必需槽位（待机、拖拽）；左右行走经单动作请求补齐，左右探身在栖息需要时经探身补齐接口补齐。系统槽位不经提案与评审。动态动作有稳定 `action_id`，名称与用途开放，不占系统槽位，由 LLM 提案并经独立评审后生成。
 
 drag 与左右探身生成静态图片，其余系统动作及动态动作生成视频；图片与视频规格的区分见[动作契约](PROTOCOL.md#动作目录与播放)。视频系统动作以 2 秒为设计起点，动态动作保留提案中的预计时长。视频制作前按配置的 `video_gen` 链顺序，选择首个满足帧输入、声明最高原生分辨率且能提供不短于设计时长的模型，取其最小可用整秒档；随后只保留支持该确定时长的后续模型。每家模型按实际首尾帧与片长取最高可用档，不以工具分辨率别名判断清晰度，不为提高分辨率省略循环尾帧。目标时长、供应商链及各家分辨率在脚本生成前冻结到视频动作任务，脚本与提交共用。
 
@@ -281,7 +281,7 @@ drag 与左右探身生成静态图片，其余系统动作及动态动作生成
 #### 提案与评审
 
 - 受理时冻结 pack 与设计资料，做语义去重并检查时长、整秒、拒绝抑制（自拒绝时刻起 7 天）、自主创建开关与抠像模型。同名动作的成品仍待用户确认时直接返回，复核已结束仍未采纳的按未采纳处理并重做；同一创意最近一次评审为复用且所指动作仍可播放时直接复用；已批准或已复用而动作已删除或不可用时新建提案重新评审，历史提案保留，每次批准都计入额度。
-- 独立 LLM 在后台评审（approve / reuse / defer / reject），重启时 pending 与 deferred 提案的恢复窗口见[动作编排](../backend/services/application/actions/README.md#提案处理)；输入含冻结参考图、包内角色快照与人设、着装快照及同包表达动作（超过 10 个时只取词面最相近的 10 个，见[动作编排](../backend/services/application/actions/README.md#评审输入与额度)），着装用于判断可行性。同包已有同名动作时不调用模型：该动作就绪即按复用结案，否则暂缓并写明原因；批准只新建动作行，不覆盖或重排其他提案的动作。
+- 独立 LLM 在后台评审（approve / reuse / defer / reject），重启时 pending 与 deferred 提案的恢复窗口见[动作编排](../backend/features/actions/README.md#提案处理)；输入含冻结参考图、包内角色快照与人设、着装快照及同包表达动作（超过 10 个时只取词面最相近的 10 个，见[动作编排](../backend/features/actions/README.md#评审输入与额度)），着装用于判断可行性。同包已有同名动作时不调用模型：该动作就绪即按复用结案，否则暂缓并写明原因；批准只新建动作行，不覆盖或重排其他提案的动作。
 - 评审不设日限额；approve 后占用制作额度并冻结规格到动作行；同名独立重做另占一次制作额度。窗口与来源归 [PROTOCOL](PROTOCOL.md#动作目录与播放)。
 
 #### 图片描述、脚本与姿态图
@@ -302,13 +302,13 @@ drag 与左右探身生成静态图片，其余系统动作及动态动作生成
 #### 图片交付
 
 - 图片动作仅依赖视觉描述、图像生成与透明处理能力，单独重做图片动作（drag、探身）不选择、校验或调用视频供应商。生成图片经身份评分、透明处理和共同画面门禁后，按单张成品严格身份复核；制作尝试、人工复核与已采纳素材的交接规则与视频相同。
-- [图片处理](../backend/services/infrastructure/video_processing/image.py)接收 PNG 或静态 WebP 的真实 alpha；上传图片须自带有效透明背景并通过主体与贴边门禁，不调用生图或付费抠像。生成图可经[姿态图准备](../backend/services/infrastructure/video_processing/frames.py)保留 alpha 或本地抠像，并以透明补边补足留白。
+- [图片处理](../backend/infrastructure/video_processing/image.py)接收 PNG 或静态 WebP 的真实 alpha；上传图片须自带有效透明背景并通过主体与贴边门禁，不调用生图或付费抠像。生成图可经[姿态图准备](../backend/infrastructure/video_processing/frames.py)保留 alpha 或本地抠像，并以透明补边补足留白。
 - 图片按包宽高比扩出容纳源像素的最小透明画布，水平居中、底边对齐，不缩小或放大主体；输出 PNG 成品、无损透明 WebP 封面、静态 alpha 命中遮罩及内容轮廓。
 
 #### 视频与交付
 
 - 关键帧落盘后再提交视频；使用按首帧/首尾帧与片长筛选并分别冻结最高可用分辨率的 `video_gen` 链。建整包前先检查视频链、视觉链、图像编辑链与抠像模型；就绪包原位重做、失败包续跑、探身补齐与动态动作受理也先检查抠像模型；后台制作（评审后启动与重启恢复）在参考校准、脚本、姿态图与每次视频提交前再次检查，缺失时在付费前失败并保留进度，已有句柄的任务照常续查下载，已有可用候选时按最佳收尾。
-- [关键帧准备](../backend/services/infrastructure/video_processing/frames.py)保留有效 alpha，仅对不透明图抠像；抠像后无有效透明背景或可见角色时拒绝提交视频。前景按边距要求等比缩放并居中，不补造源图裁掉的身体；提示词与图像处理共用边距定义。原始候选与透明关键帧分别保存，准备中断可复用候选。
+- [关键帧准备](../backend/infrastructure/video_processing/frames.py)保留有效 alpha，仅对不透明图抠像；抠像后无有效透明背景或可见角色时拒绝提交视频。前景按边距要求等比缩放并居中，不补造源图裁掉的身体；提示词与图像处理共用边距定义。原始候选与透明关键帧分别保存，准备中断可复用候选。
 - 视频接口不保证保留 PNG alpha，提交时将关键帧合成纯白底，透明原图独立保留；循环动作首尾帧使用同一准备结果。
 - 提示词固定首帧身份与造型、镜头、全身余量、原地动作与纯净背景，画面无台词或音效。设计与提交时长按供应商能力取整秒档；后处理完整保留模型产物，不检查成品时长上下限或与目标时长的偏差，也不自动裁剪。目录、播放计时与命中遮罩使用成品实际时长和帧数。
 - 下载后按实际 alpha 决定保留透明通道或执行抠像，再经过[透明化与一致性](#透明化与一致性)检查；不拆分动作或倒放伪造。
@@ -317,8 +317,8 @@ drag 与左右探身生成静态图片，其余系统动作及动态动作生成
 
 ### 透明化与一致性
 
-- [matting](../backend/services/infrastructure/video_processing/matting.py)负责透明视频解码与 ISNet 抠像；视频供应商未承诺原生 alpha，模型缺失时拒绝付费生成。
-- 画面门禁见 [quality](../backend/services/infrastructure/video_processing/quality.py)（可解码性、alpha、覆盖率、轮廓、贴边）。
+- [matting](../backend/infrastructure/video_processing/matting.py)负责透明视频解码与 ISNet 抠像；视频供应商未承诺原生 alpha，模型缺失时拒绝付费生成。
+- 画面门禁见 [quality](../backend/infrastructure/video_processing/quality.py)（可解码性、alpha、覆盖率、轮廓、贴边）。
 - 发布前身份复核见[身份评分与发布复核](#身份评分与发布复核)；复核不背书动作语义，也不能保证未抽样帧完全无走样。
 - WebM alpha 须用 `libvpx-vp9` 显式解码，容器声明不能代替像素校验。
 
@@ -328,7 +328,7 @@ drag 与左右探身生成静态图片，其余系统动作及动态动作生成
 
 生成在事务外进行。完成后聚合已采纳素材 → 构建[动作目录](PROTOCOL.md#动作目录与播放) → CAS 推进版本并写 outbox。必需槽位不齐跳过发布。并发以 CAS 收敛：每次发布写路径唯一的 manifest 文件，落败方删除本次文件并按最新动作行重建重试，已发布文件不被覆盖；发布失败只重试发布。
 
-manifest 只含按素材类型分支的数据、共同画布与视频播放技术参数；动作语义（`motion_description`、`use_when`、`avoid_when`）不进入目录、不下发客户端，只经动作快照、`action_search` 等模型上下文提供。实现见 [publishing](../backend/services/domains/actions/publishing.py)。
+manifest 只含按素材类型分支的数据、共同画布与视频播放技术参数；动作语义（`motion_description`、`use_when`、`avoid_when`）不进入目录、不下发客户端，只经动作快照、`action_search` 等模型上下文提供。实现见 [publishing](../backend/features/actions/publishing.py)。
 
 ### 恢复与历史包
 
@@ -336,7 +336,7 @@ manifest 只含按素材类型分支的数据、共同画布与视频播放技�
 
 新包激活后删除同外观的旧版本包（构建中、仍有可续跑任务或动作排队、制作中的包保留）；删除前把同血缘旧包上不可续跑的失败记录与新包缺少的成功结果迁入新包。身份失效后只允许收敛已有句柄与落盘素材，阻止新的付费评审、描述、图像或视频提交和评分。保留的历史包的晚到成果留在原包，不自动启用、不抢穿着；对其重试会与同血缘的新包合并为新版本发布，之后清理时其独有的成功结果迁入当前包。正在制作的旧包在其制作收尾后，若同外观已有更新的激活包，再按同一规则清理；动作排队或制作中的包不能手动删除。目录发布失败的包仍记为就绪，但不广播目录变更、不自动启用，原激活包保留。客户端媒体切换与命中见[动作契约](PROTOCOL.md#动作目录与播放)。
 
-删除非穿着外观会清理关联动作包，激活或仍有制作中的包拒绝删除。旧目录、失败尝试与替换素材登记回收，宽限期后按实际引用复核；复核结论保留，已结束复核素材按保留期释放。遗漏文件回收、播放保护与保留期见 [资产访问与缓存](PROTOCOL.md#资产访问与缓存)；实现见 [资产生命周期](../backend/services/domains/assets/README.md) 与 [动作回收](../backend/services/domains/actions/asset_retirement.py)。
+删除非穿着外观会清理关联动作包，激活或仍有制作中的包拒绝删除。旧目录、失败尝试与替换素材登记回收，宽限期后按实际引用复核；复核结论保留，已结束复核素材按保留期释放。遗漏文件回收、播放保护与保留期见 [资产访问与缓存](PROTOCOL.md#资产访问与缓存)；实现见 [资产生命周期](../backend/features/assets/README.md) 与 [动作回收](../backend/features/actions/asset_retirement.py)。
 
 上传导入包（`create_pack_from_clips`）的合法动作可提供透明图片或视频，均须自带有效透明通道；图片按实际格式拒绝动画内容并过完整入画门禁。没有冻结参考与生成上下文，不做身份复核也不自动激活，重启、用户维护或停机中断的导入都标记失败，只能重新提交。
 
@@ -348,16 +348,16 @@ manifest 只含按素材类型分支的数据、共同画布与视频播放技�
 
 | 功能 | 输入 → 中间模型 → 最终消费 | 必查分支 |
 |---|---|---|
-| 头像 | 角色资料 → [头像提示词整理](../backend/services/application/generation/appearance_prompts.py) → [头像生成](../backend/services/application/generation/avatar_service.py) → 预览确认 | 纯文字、身份单图、身份＋呈现双图、微调、外部提示词、直接自备图 |
-| 全身形象 | 头像、可选身体参考、身体默认资料与造型 → 身体判断 → [全身提示词](../backend/services/application/generation/fullbody_reference_prompt.py) → 候选分析及采纳 | 首次补全、已确认重绘、编辑当前图或候选图、外部制作、上传；只有明确采纳更新身体身份 |
-| 角色卡 | [分析任务](../backend/services/application/generation/character_card.py)将头像与全身分别送入视觉提取（`avatar_service.extract_card_features`，与全身候选分析共用）→ 严格字段校验 → 自动值与用户覆盖合并 → [任务快照与渲染](../backend/services/domains/companion/character_card.py) | 部分分析失败重试、空白字段、覆盖恢复、头部／身体分工、旧任务修订校验 |
-| 换装 | 文字＋可选服装图 → 着装转写 → 原设计与连续反馈 → 身体判断 → [换装生成](../backend/services/application/generation/outfit_service.py) → 成品转写和命名 → 后续造型 | 新建、重绘、微调、参考转写失败、外部提示词、自备图、双语成品描述 |
-| 生活场景 | 初始引导／手动／聊天工具／夜间的环境要求与固定窗口尺寸 → [场景装配](../backend/services/application/generation/scene_prompt.py) → 文生图或环境参考生成 → 重复伙伴检查 → 成品环境描述 → 当前环境；按已保存描述重绘并原位更新图片与描述 | 固定 16:9 交付、有无环境参考、伙伴本人和无关人物／动物／雕像、文图冲突、外部制作的源文件与展示图、分析重试保留候选、重绘中旧成品可用、重启冻结输入与未知提交 |
-| 出镜图片 | [聊天工具说明](../backend/prompts/tools.py)经 [chat_images.py](../backend/services/application/generation/chat_images.py) 冻结每张图的计划，或[动态发布](../backend/services/application/posts/publication.py) → [共用身份与造型装配](../backend/services/application/generation/visual_identity.py) → 图片评分选择 → 对话／动态；聊天另有验图与一次带修正资料的重做 | 默认造型、仅造型图、显式覆盖、缺图、生成前后身份修订、单／双参考、验图与重做 |
-| 出镜视频 | [视频工具](../backend/services/adapters/tools/builtin/video_generation_tool.py)或[动态发布](../backend/services/application/posts/publication.py) → 身份与造型参考装配 → [视频任务](../backend/services/application/generation/video_jobs.py) → 身份抽帧评分 → 对话／动态 | 同图去重、显式造型图、文字覆盖、参考模式能力与分辨率、后台恢复 |
-| 动态发布与评论 | 独立调度、完整共享背景、当前环境与72小时动态资料 → [独立创作](../backend/services/application/posts/publication.py) → 发布目的、正文与媒体制作计划 → 发布；本动态、目标评论、截至目标的线程资料及完整共享背景 → [回复](../backend/services/application/posts/replies.py) → 原线程评论 | 独立入口、四种内容类型、每日对话窗口、事件时间与间隔、主对话隔离、连续评论、删除与重试 |
-| 动作图片与视频 | 动态动作：提案与冻结身份／着装 → [独立评审](../backend/services/application/actions/review.py)；系统槽位由建包、原位重做或探身补齐直接排入 → [逐动作描述](../backend/services/application/generation/video/script.py) → 姿态图 → 图片成品或视频 → 机械门禁与严格身份复核 → 动作目录 | drag／左右探身图片无视频规格及运动脚本（探身另有单图定位校准）；idle／左右行走／动态动作视频、loop／once、单动作反馈、结构重试、冻结包快照 |
-| 公共回退 | 完整提示词 → [审核改写](../backend/services/application/generation/avatar_service.py)（仅头像、全身与换装）、[图片质量链](../backend/services/application/generation/character_images.py)与[身份评分](../backend/services/application/generation/identity_review.py) → 保存最佳候选或明确失败 | 安全改写空值、可见身份冲突、证据不足、低分、评分不可用、未知付费结果、恢复冻结输入 |
+| 头像 | 角色资料 → [头像提示词整理](../backend/features/appearance/prompt_assembly.py) → [头像生成](../backend/features/appearance/avatar_service.py) → 预览确认 | 纯文字、身份单图、身份＋呈现双图、微调、外部提示词、直接自备图 |
+| 全身形象 | 头像、可选身体参考、身体默认资料与造型 → 身体判断 → [全身提示词](../backend/features/appearance/fullbody_reference_prompt.py) → 候选分析及采纳 | 首次补全、已确认重绘、编辑当前图或候选图、外部制作、上传；只有明确采纳更新身体身份 |
+| 角色卡 | [分析任务](../backend/features/appearance/character_extraction.py)将头像与全身分别送入视觉提取（`avatar_service.extract_card_features`，与全身候选分析共用）→ 严格字段校验 → 自动值与用户覆盖合并 → [任务快照与渲染](../backend/features/appearance/character_card.py) | 部分分析失败重试、空白字段、覆盖恢复、头部／身体分工、旧任务修订校验 |
+| 换装 | 文字＋可选服装图 → 着装转写 → 原设计与连续反馈 → 身体判断 → [换装生成](../backend/features/appearance/outfit_service.py) → 成品转写和命名 → 后续造型 | 新建、重绘、微调、参考转写失败、外部提示词、自备图、双语成品描述 |
+| 生活场景 | 初始引导／手动／聊天工具／夜间的环境要求与固定窗口尺寸 → [场景装配](../backend/features/scenes/prompt_assembly.py) → 文生图或环境参考生成 → 重复伙伴检查 → 成品环境描述 → 当前环境；按已保存描述重绘并原位更新图片与描述 | 固定 16:9 交付、有无环境参考、伙伴本人和无关人物／动物／雕像、文图冲突、外部制作的源文件与展示图、分析重试保留候选、重绘中旧成品可用、重启冻结输入与未知提交 |
+| 出镜图片 | [聊天工具说明](../backend/runtime/tools/prompts.py)经 [chat_images.py](../backend/workflows/chat/images.py) 冻结每张图的计划，或[动态发布](../backend/features/posts/publication.py) → [共用身份与造型装配](../backend/features/appearance/visual_identity.py) → 图片评分选择 → 对话／动态；聊天另有验图与一次带修正资料的重做 | 默认造型、仅造型图、显式覆盖、缺图、生成前后身份修订、单／双参考、验图与重做 |
+| 出镜视频 | [视频工具](../backend/entrypoints/tools/builtin/video_generation_tool.py)或[动态发布](../backend/features/posts/publication.py) → 身份与造型参考装配 → [视频任务](../backend/features/media/video_jobs.py) → 身份抽帧评分 → 对话／动态 | 同图去重、显式造型图、文字覆盖、参考模式能力与分辨率、后台恢复 |
+| 动态发布与评论 | 独立调度、完整共享背景、当前环境与72小时动态资料 → [独立创作](../backend/features/posts/publication.py) → 发布目的、正文与媒体制作计划 → 发布；本动态、目标评论、截至目标的线程资料及完整共享背景 → [回复](../backend/features/posts/replies.py) → 原线程评论 | 独立入口、四种内容类型、每日对话窗口、事件时间与间隔、主对话隔离、连续评论、删除与重试 |
+| 动作图片与视频 | 动态动作：提案与冻结身份／着装 → [独立评审](../backend/features/actions/review.py)；系统槽位由建包、原位重做或探身补齐直接排入 → [逐动作描述](../backend/features/actions/generation/script.py) → 姿态图 → 图片成品或视频 → 机械门禁与严格身份复核 → 动作目录 | drag／左右探身图片无视频规格及运动脚本（探身另有单图定位校准）；idle／左右行走／动态动作视频、loop／once、单动作反馈、结构重试、冻结包快照 |
+| 公共回退 | 完整提示词 → [审核改写](../backend/features/appearance/avatar_service.py)（仅头像、全身与换装）、[图片质量链](../backend/features/media/character_images.py)与[身份评分](../backend/features/media/identity_review.py) → 保存最佳候选或明确失败 | 安全改写空值、可见身份冲突、证据不足、低分、评分不可用、未知付费结果、恢复冻结输入 |
 
 ### 验收范围
 

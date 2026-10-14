@@ -7,16 +7,16 @@ from sqlalchemy import engine_from_config, pool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import modules  # noqa: F401  导入即把全部 ORM 模型注册到 ModelBase.metadata
-from common import ModelBase
-from components import database_url
+import bootstrap.models  # noqa: F401 -- 显式登记全部 ORM，供迁移 metadata 使用。
+from infrastructure.database import database_url
+from infrastructure.models import ModelBase
 
 config = context.config
 # fileConfig 默认会替换 root logger；启动迁移（bootstrap/lifecycle.py::_run_migrations 设置 configure_logger=False，lifespan 已先 setup_logging）必须跳过，否则 web 进程会"失明"。仅 CLI 调用 alembic 时才配置日志。
 if config.config_file_name and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-# 调用方显式注入优先，否则取 components.database_url（SETTINGS 已按 环境变量 > .env > config.toml 解析）。
+# 调用方显式注入优先，否则取 database_url（SETTINGS 已按 环境变量 > .env > config.toml 解析）。
 if not config.get_main_option("sqlalchemy.url"):
     config.set_main_option("sqlalchemy.url", database_url("postgresql+psycopg").replace("%", "%%"))
 

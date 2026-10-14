@@ -1,0 +1,84 @@
+from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.user_config import load_user_llm_config
+from infrastructure.database import SESSION_LOCAL
+from infrastructure.logger import get_logger
+from infrastructure.text import resolve_prompt_text
+from runtime.events.emit import emit_ws_event
+from sqlalchemy import update
+
+from features.companion.models import Persona
+from features.companion.prompt_runtime import load_companion_prompt_context, run_prompt_json
+from features.companion.prompts import MOOD_INSTRUCTIONS
+from features.conversation.context_window import load_recent_context_window
+
+logger = get_logger(__name__)
+
+_MOOD_MAX_LEN = 200
+
+
+def normalize_mood(raw: object) -> str | None:
+    text = raw.strip() if isinstance(raw, str) else ""
+    if not text or len(text) > _MOOD_MAX_LEN:
+        return None
+    return text
+
+
+async def _save_mood(user_id: int, mood: str) -> None:
+    """持久化角色当前心情，并通过独立状态事件刷新客户端身份轨。"""
+    async with SESSION_LOCAL() as db:
+        await db.execute(update(Persona).where(Persona.user_id == user_id).values(current_mood=mood))
+        emit_ws_event(db, user_id=user_id, event_type="companion.mood", payload={"mood": mood})
+        await db.commit()
+
+
+async def update_mood_from_companion_turn(
+    user_id: int,
+    user_message: str,
+    assistant_bubbles: list[str],
+) -> str | None:
+    """在陪伴聊天完成后单独推理心情；结果不进入消息正文。"""
+    ctx = await load_companion_prompt_context(user_id)
+    if ctx is None:
+        return None
+
+    async with SESSION_LOCAL() as db:
+        recent_context = await load_recent_context_window(db, user_id) or ""
+
+    remaining = 2000
+    recent_bubbles: list[str] = []
+    for text in reversed(assistant_bubbles):
+        if remaining <= 0:
+            break
+        recent_bubbles.append(text[-remaining:])
+        remaining -= len(text)
+    recent_bubbles.reverse()
+    parsed, fail_reason = await run_prompt_json(
+        user_id,
+        await load_user_llm_config(user_id, AiTaskKey.companion_chat),
+        resolve_prompt_text(MOOD_INSTRUCTIONS, ctx.language),
+        {
+            "output_language": ctx.language,
+            "persona": ctx.persona_extras,
+            "user_message": user_message[-2000:],
+            "assistant_bubbles": recent_bubbles,
+            "user_message_truncated": len(user_message) > 2000,
+            "assistant_bubbles_truncated": sum(len(text) for text in assistant_bubbles) > 2000,
+            **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
+            **({"current_mood": ctx.current_mood} if ctx.current_mood else {}),
+            **({"recent_context": recent_context} if recent_context else {}),
+        },
+        log_prefix="mood_update",
+        temperature=0.5,
+    )
+    if parsed is None:
+        logger.info("mood_update: skipped", extra={"user_id": user_id, "reason": fail_reason})
+        return None
+
+    mood = normalize_mood(parsed.get("mood"))
+    if mood is None:
+        logger.info("mood_update: invalid mood", extra={"user_id": user_id})
+        return None
+
+    await _save_mood(user_id, mood)
+    logger.info("mood_update: emitted", extra={"user_id": user_id})
+    return mood

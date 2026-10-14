@@ -1,59 +1,102 @@
 """显式装配注册：供应商、工具、事件与域钩子在此集中登记；导入业务包无注册副作用，注册表覆盖式幂等。"""
 
-from modules.ws import COMPANION_TURN_EVENT
-from services.adapters.tools import agent_delegate, cronjob_tool, search_tools_tool
-from services.adapters.tools import memory as memory_tools
-from services.adapters.tools.builtin import (
-    register_actions,
-    register_companion_wait,
-    register_desktop_actions,
-    register_image_generation,
-    register_scene,
-    register_send_message,
-    register_video_generation,
-    register_web,
-)
-from services.application.automation import execute_companion_turn
-from services.domains.automation import set_job_intent_invalidator
-from services.domains.companion import (
-    invalidate_cron_companion_intents,
-)
-from services.infrastructure.event_store import register_internal_event_handler
-from services.infrastructure.llm import ServiceType
-from services.infrastructure.llm import register as register_provider
-from services.infrastructure.llm.providers import custom, deepseek, gemini, grok, local, mimo, minimax, qwen
-from services.infrastructure.tool_runtime import REGISTRY
+from entrypoints.desktop.handlers import terminate_remote_sessions, terminate_user_gateway
+from entrypoints.tools import agent_delegate, cronjob_tool, search_tools_tool
+from entrypoints.tools import memory as memory_tools
+from entrypoints.tools.builtin.action_tool import register as register_actions
+from entrypoints.tools.builtin.companion_wait_tool import register as register_companion_wait
+from entrypoints.tools.builtin.desktop_action_tool import register as register_desktop_actions
+from entrypoints.tools.builtin.image_generation_tool import register as register_image_generation
+from entrypoints.tools.builtin.scene_tool import register as register_scene
+from entrypoints.tools.builtin.send_message_tool import register as register_send_message
+from entrypoints.tools.builtin.video_generation_tool import register as register_video_generation
+from entrypoints.tools.builtin.web_tools import register as register_web
+from features.actions.asset_retirement import delete_outfit_action_packs
+from features.actions.expression_catalog import available_expression_prompt_entries
+from features.appearance.action_cleanup import set_outfit_action_cleanup
+from features.appearance.character_card import character_snapshot_is_current, render_character_identity
+from features.appearance.completion import set_character_ready_handler
+from features.appearance.queries import active_identity_reference, appearance_readiness, confirmed_media_reference_paths
+from features.automation.cron_jobs import set_job_intent_invalidator
+from features.companion.appearance_ports import set_appearance_readiness_reader
+from features.companion.intents import invalidate_cron_companion_intents
+from features.companion.prompt_runtime import set_expression_catalog_reader
+from features.configuration.queries import user_ai_config
+from features.conversation.reply_media import deliver_video_result
+from features.journal.journal_indexes import delete_diary_record
+from features.media.delivery import set_video_result_handler
+from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
+from features.memory.diary_hooks import set_diary_delete_handler
+from infrastructure.ai.configuration_reader import set_configuration_reader
+from infrastructure.ai.providers.base import ServiceType
+from infrastructure.ai.providers.custom.chat import CustomChatProvider
+from infrastructure.ai.providers.custom.embedding import CustomEmbeddingProvider
+from infrastructure.ai.providers.deepseek.chat import DeepSeekChatProvider
+from infrastructure.ai.providers.gemini.embedding import GeminiEmbeddingProvider
+from infrastructure.ai.providers.gemini.image import GeminiImageGenProvider
+from infrastructure.ai.providers.grok.chat import GrokChatProvider
+from infrastructure.ai.providers.grok.image import GrokImageGenProvider
+from infrastructure.ai.providers.grok.stt import GrokSTTProvider
+from infrastructure.ai.providers.grok.tts import GrokTTSProvider
+from infrastructure.ai.providers.grok.video import GrokVideoGenProvider
+from infrastructure.ai.providers.local.chat import LocalChatProvider
+from infrastructure.ai.providers.local.embedding import LocalEmbeddingProvider
+from infrastructure.ai.providers.local.image import LocalImageGenProvider
+from infrastructure.ai.providers.mimo.chat import MiMoChatProvider
+from infrastructure.ai.providers.mimo.stt import MiMoSTTProvider
+from infrastructure.ai.providers.mimo.tts import MiMoTTSProvider
+from infrastructure.ai.providers.minimax.chat import MiniMaxChatProvider
+from infrastructure.ai.providers.minimax.embedding import MiniMaxEmbeddingProvider
+from infrastructure.ai.providers.minimax.image import MiniMaxImageGenProvider
+from infrastructure.ai.providers.minimax.stt import MiniMaxSTTProvider
+from infrastructure.ai.providers.minimax.tts import MiniMaxTTSProvider
+from infrastructure.ai.providers.minimax.video import MiniMaxVideoGenProvider
+from infrastructure.ai.providers.qwen.chat import QwenChatProvider
+from infrastructure.ai.providers.qwen.embedding import QwenEmbeddingProvider
+from infrastructure.ai.providers.qwen.image import QwenImageGenProvider
+from infrastructure.ai.providers.qwen.stt import QwenSTTProvider
+from infrastructure.ai.providers.qwen.tts import QwenTTSProvider
+from infrastructure.ai.providers.qwen.video import QwenVideoGenProvider
+from infrastructure.ai.providers.registry import register as register_provider
+from runtime.channels import ChannelLifecycle, register_channel_lifecycle
+from runtime.events.contracts import COMPANION_TURN_EVENT
+from runtime.events.loop import register_internal_event_handler
+from runtime.tools.registry import REGISTRY
+from workflows.automation.companion_turns import execute_companion_turn
+from workflows.onboarding.character_ready import complete_character_initialization
+
+from bootstrap.assets import register_asset_contributions
 
 
 def register_providers() -> None:
-    register_provider(ServiceType.llm, "deepseek", deepseek.DeepSeekChatProvider)
-    register_provider(ServiceType.image_gen, "gemini", gemini.GeminiImageGenProvider)
-    register_provider(ServiceType.embedding, "gemini", gemini.GeminiEmbeddingProvider)
-    register_provider(ServiceType.llm, "grok", grok.GrokChatProvider)
-    register_provider(ServiceType.stt, "grok", grok.GrokSTTProvider)
-    register_provider(ServiceType.tts, "grok", grok.GrokTTSProvider)
-    register_provider(ServiceType.image_gen, "grok", grok.GrokImageGenProvider)
-    register_provider(ServiceType.video_gen, "grok", grok.GrokVideoGenProvider)
-    register_provider(ServiceType.llm, "mimo", mimo.MiMoChatProvider)
-    register_provider(ServiceType.stt, "mimo", mimo.MiMoSTTProvider)
-    register_provider(ServiceType.tts, "mimo", mimo.MiMoTTSProvider)
-    register_provider(ServiceType.llm, "minimax", minimax.MiniMaxChatProvider)
-    register_provider(ServiceType.image_gen, "minimax", minimax.MiniMaxImageGenProvider)
-    register_provider(ServiceType.video_gen, "minimax", minimax.MiniMaxVideoGenProvider)
-    register_provider(ServiceType.tts, "minimax", minimax.MiniMaxTTSProvider)
-    register_provider(ServiceType.stt, "minimax", minimax.MiniMaxSTTProvider)
-    register_provider(ServiceType.embedding, "minimax", minimax.MiniMaxEmbeddingProvider)
-    register_provider(ServiceType.llm, "qwen", qwen.QwenChatProvider)
-    register_provider(ServiceType.stt, "qwen", qwen.QwenSTTProvider)
-    register_provider(ServiceType.tts, "qwen", qwen.QwenTTSProvider)
-    register_provider(ServiceType.image_gen, "qwen", qwen.QwenImageGenProvider)
-    register_provider(ServiceType.video_gen, "qwen", qwen.QwenVideoGenProvider)
-    register_provider(ServiceType.embedding, "qwen", qwen.QwenEmbeddingProvider)
-    register_provider(ServiceType.llm, "local", local.LocalChatProvider)
-    register_provider(ServiceType.embedding, "local", local.LocalEmbeddingProvider)
-    register_provider(ServiceType.image_gen, "local", local.LocalImageGenProvider)
-    register_provider(ServiceType.llm, "custom", custom.CustomChatProvider)
-    register_provider(ServiceType.embedding, "custom", custom.CustomEmbeddingProvider)
+    register_provider(ServiceType.llm, "deepseek", DeepSeekChatProvider)
+    register_provider(ServiceType.image_gen, "gemini", GeminiImageGenProvider)
+    register_provider(ServiceType.embedding, "gemini", GeminiEmbeddingProvider)
+    register_provider(ServiceType.llm, "grok", GrokChatProvider)
+    register_provider(ServiceType.stt, "grok", GrokSTTProvider)
+    register_provider(ServiceType.tts, "grok", GrokTTSProvider)
+    register_provider(ServiceType.image_gen, "grok", GrokImageGenProvider)
+    register_provider(ServiceType.video_gen, "grok", GrokVideoGenProvider)
+    register_provider(ServiceType.llm, "mimo", MiMoChatProvider)
+    register_provider(ServiceType.stt, "mimo", MiMoSTTProvider)
+    register_provider(ServiceType.tts, "mimo", MiMoTTSProvider)
+    register_provider(ServiceType.llm, "minimax", MiniMaxChatProvider)
+    register_provider(ServiceType.image_gen, "minimax", MiniMaxImageGenProvider)
+    register_provider(ServiceType.video_gen, "minimax", MiniMaxVideoGenProvider)
+    register_provider(ServiceType.tts, "minimax", MiniMaxTTSProvider)
+    register_provider(ServiceType.stt, "minimax", MiniMaxSTTProvider)
+    register_provider(ServiceType.embedding, "minimax", MiniMaxEmbeddingProvider)
+    register_provider(ServiceType.llm, "qwen", QwenChatProvider)
+    register_provider(ServiceType.stt, "qwen", QwenSTTProvider)
+    register_provider(ServiceType.tts, "qwen", QwenTTSProvider)
+    register_provider(ServiceType.image_gen, "qwen", QwenImageGenProvider)
+    register_provider(ServiceType.video_gen, "qwen", QwenVideoGenProvider)
+    register_provider(ServiceType.embedding, "qwen", QwenEmbeddingProvider)
+    register_provider(ServiceType.llm, "local", LocalChatProvider)
+    register_provider(ServiceType.embedding, "local", LocalEmbeddingProvider)
+    register_provider(ServiceType.image_gen, "local", LocalImageGenProvider)
+    register_provider(ServiceType.llm, "custom", CustomChatProvider)
+    register_provider(ServiceType.embedding, "custom", CustomEmbeddingProvider)
 
 
 def register_tools() -> None:
@@ -78,6 +121,25 @@ def register_internal_event_handlers() -> None:
 def wire_domain_hooks() -> None:
     """业务域内需要触达生成流程或跨域副作用的少数入口，经装配层注入，保持域间依赖可登记、可检查。"""
     set_job_intent_invalidator(invalidate_cron_companion_intents)
+    set_video_result_handler(deliver_video_result)
+    register_asset_contributions()
+    set_configuration_reader(user_ai_config)
+    register_channel_lifecycle(
+        ChannelLifecycle(close_desktop=terminate_user_gateway, close_remote=terminate_remote_sessions),
+    )
+    set_diary_delete_handler(delete_diary_record)
+    set_media_reference_readers(
+        MediaReferenceReaders(
+            active_identity=active_identity_reference,
+            confirmed_paths=confirmed_media_reference_paths,
+            identity_is_current=character_snapshot_is_current,
+            render_identity=render_character_identity,
+        ),
+    )
+    set_character_ready_handler(complete_character_initialization)
+    set_appearance_readiness_reader(appearance_readiness)
+    set_expression_catalog_reader(available_expression_prompt_entries)
+    set_outfit_action_cleanup(delete_outfit_action_packs)
 
 
 def register_all() -> None:

@@ -1,0 +1,350 @@
+import json
+from typing import Any
+
+from features.conversation.store_contracts import CompressionInfo
+from infrastructure.ai.llm_fallback import execute_with_fallback
+from infrastructure.ai.llm_retry import call_with_retry
+from infrastructure.ai.providers.base import ChatProvider, ProviderConfig
+from infrastructure.ai.providers.registry import resolve_context_tokens
+from infrastructure.ai.responses import approx_responses_tokens, build_responses_kwargs
+from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.user_config import load_user_llm_config
+from infrastructure.config import SETTINGS
+from infrastructure.constants import CONTEXT_SUMMARY_HEADROOM_FACTOR
+from infrastructure.logger import get_logger
+from infrastructure.text import resolve_prompt_text
+
+from workflows.chat.prompts import (
+    COMPANION_CONTEXT_SUMMARY_PROMPTS,
+    COMPRESSION_CHECKPOINT_TITLE_TEXTS,
+    CONTEXT_SUMMARY_PROMPTS,
+)
+
+logger = get_logger(__name__)
+
+
+class CompressionFailedError(RuntimeError):
+    """摘要调用失败、未完成或返回空摘要；历史保持不变。"""
+
+
+def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """摘要仅接收文字与媒体引用，不把未提供视觉内容的 base64 当作文字资料。"""
+    items = []
+    for item in block:
+        if item.get("type") == "reasoning":
+            continue
+        # 多模态工具结果的媒体在 function_call_output 的 output。
+        key = "output" if item.get("type") == "function_call_output" else "content"
+        content = item.get(key)
+        if not isinstance(content, list):
+            items.append(item)
+            continue
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in ("input_image", "input_video", "input_audio"):
+                source = part.get("image_url") or part.get("video_url") or part.get("audio_url") or ""
+                reference = source if isinstance(source, str) and not source.startswith("data:") else "inline media"
+                parts.append(
+                    {
+                        "type": "input_text",
+                        "text": part.get("transcript")
+                        or f"[Media reference: {reference}; contents not supplied to this summary]",
+                    },
+                )
+            else:
+                parts.append(part)
+        items.append({**item, key: parts})
+    return items
+
+
+def _pick_compressible_block(
+    rest: list[dict[str, Any]],
+    *,
+    source_message_ids: list[int | None],
+    preserve_recent: int = 4,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """压缩连续历史前缀，保留最近输入及无持久化来源的本轮资料。"""
+    if len(rest) != len(source_message_ids):
+        raise ValueError("Every context item requires a source message ID or an explicit runtime marker")
+    if len(rest) <= preserve_recent + 1:
+        return [], rest
+    keep_start = len(rest) - preserve_recent
+    keep_start = min(keep_start, next((i for i, mid in enumerate(source_message_ids) if mid is None), len(rest)))
+    call_positions = {
+        item["call_id"]: index
+        for index, item in enumerate(rest)
+        if item.get("type") == "function_call" and item.get("call_id")
+    }
+    # 一条持久化消息可展开成多个输入项，工具批次也不可在 call/result 之间断开。
+    while keep_start:
+        previous_start = keep_start
+        for item in rest[keep_start:]:
+            if item.get("type") == "function_call_output":
+                keep_start = min(keep_start, call_positions.get(item.get("call_id"), keep_start))
+        if keep_start < len(source_message_ids):
+            while keep_start and source_message_ids[keep_start - 1] == source_message_ids[keep_start]:
+                keep_start -= 1
+        if keep_start == previous_start:
+            break
+    return rest[:keep_start], rest[keep_start:]
+
+
+def _summary_input(
+    block: list[dict[str, Any]],
+    target_tokens: int,
+    included_indices: set[int] | None,
+) -> list[dict[str, Any]]:
+    if included_indices is not None:
+        block = [item for index, item in enumerate(block) if index in included_indices]
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": json.dumps(
+                        {"target_tokens": target_tokens, "conversation_items": _summary_items(block)},
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                },
+            ],
+        },
+    ]
+
+
+def _fit_summary_block(
+    block: list[dict[str, Any]],
+    source_ids: list[int | None],
+    *,
+    input_budget: int,
+    target_tokens: int,
+    instructions: str,
+    included_indices: set[int] | None,
+) -> list[dict[str, Any]]:
+    """只总结预算内的完整原消息前缀；超长单条保留原文，不把截断资料当作完整覆盖。"""
+    pending_calls: set[str] = set()
+    boundaries = []
+    for index, item in enumerate(block):
+        call_id = item.get("call_id")
+        if item.get("type") == "function_call" and call_id:
+            pending_calls.add(call_id)
+        elif item.get("type") == "function_call_output":
+            pending_calls.discard(call_id)
+        end = index + 1
+        if not pending_calls and (end == len(block) or source_ids[index] != source_ids[end]):
+            boundaries.append(end)
+    lo, hi = 0, len(boundaries)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        tokens = approx_responses_tokens(
+            instructions,
+            _summary_input(block[: boundaries[mid]], target_tokens, included_indices),
+        )
+        if tokens <= input_budget:
+            lo = mid + 1
+        else:
+            hi = mid
+    if lo == 0:
+        raise CompressionFailedError("first complete message exceeds summary input budget")
+    return block[: boundaries[lo - 1]]
+
+
+async def _summarize_block(
+    block: list[dict[str, Any]],
+    *,
+    client: Any,
+    model: str,
+    config: ProviderConfig,
+    target_tokens: int,
+    output_budget: int,
+    temperature: float,
+    instructions: str,
+    included_indices: set[int] | None,
+    context_length: int,
+) -> tuple[str, bool, int, int]:
+    """通过 Responses API 对输入项生成摘要；响应未完成时保留原上下文。"""
+    request = build_responses_kwargs(
+        model=model,
+        instructions=instructions,
+        input_items=_summary_input(block, target_tokens, included_indices),
+        temperature=temperature,
+        max_output_tokens=output_budget,
+    )
+    response = await call_with_retry(client, config=config, **request)
+    completed = response.status == "completed"
+    usage = getattr(response, "usage", None)
+    prompt_tokens = getattr(usage, "input_tokens", 0) if usage else 0
+    completion_tokens = getattr(usage, "output_tokens", 0) if usage else 0
+    return response.output_text.strip(), completed, prompt_tokens, completion_tokens
+
+
+def compression_due(
+    context: dict[str, Any],
+    *,
+    context_length: int,
+    threshold_ratio: float,
+    current_tokens: int | None,
+) -> bool:
+    """``current_tokens`` 为空时按当前上下文全量估算。"""
+    tokens = (
+        current_tokens
+        if current_tokens is not None
+        else approx_responses_tokens(context["instructions"], context["input"])
+    )
+    return context_length > 0 and tokens >= context_length * threshold_ratio
+
+
+async def compress_history(
+    context: dict[str, Any],
+    *,
+    user_id: int,
+    task: AiTaskKey,
+    temperature: float,
+    language: str,
+    context_length: int,
+    companion: bool = False,
+) -> tuple[dict[str, Any], CompressionInfo | None]:
+    """摘要沿所属任务的调用链回退；每家都从原历史计算完整批次的覆盖边界。"""
+    config = await load_user_llm_config(user_id, task)
+
+    async def summarize(provider: ChatProvider) -> tuple[dict[str, Any], CompressionInfo | None]:
+        return await _compress_history_with_provider(
+            context,
+            client=provider.raw_client(),
+            model=provider.config.model,
+            config=provider.config,
+            temperature=provider.scale_temperature(temperature),
+            language=language,
+            context_length=min(context_length, resolve_context_tokens(provider.config)),
+            companion=companion,
+        )
+
+    try:
+        return await execute_with_fallback(config.chain, ChatProvider, summarize, user_id=user_id)
+    except Exception as exc:
+        raise CompressionFailedError("summary call failed") from exc
+
+
+async def _compress_history_with_provider(
+    context: dict[str, Any],
+    *,
+    client: Any,
+    model: str,
+    config: ProviderConfig,
+    temperature: float,
+    language: str,
+    context_length: int,
+    companion: bool = False,
+) -> tuple[dict[str, Any], CompressionInfo | None]:
+    """压缩可总结的历史前缀；成功返回压缩后的 Responses 上下文，无可压缩内容返回原上下文；摘要调用失败、未完成或为空时抛 CompressionFailedError，历史不变。"""
+    source_ids: list[int | None] = context["source_message_ids"]
+    block, keep = _pick_compressible_block(context["input"], source_message_ids=source_ids)
+    if not block:
+        return context, None
+    dialogue_ids = set(context["dialogue_message_ids"])
+    included_indices = (
+        {
+            index
+            for index, source_id in enumerate(source_ids[: len(block)])
+            if source_id in dialogue_ids or index in context.get("checkpoint_indices", ())
+        }
+        if companion
+        else None
+    )
+    if included_indices is not None:
+        if not included_indices:
+            return context, None
+        included_indices.update(context.get("time_context_indices", ()))
+    instructions = resolve_prompt_text(
+        COMPANION_CONTEXT_SUMMARY_PROMPTS if companion else CONTEXT_SUMMARY_PROMPTS,
+        language,
+    )
+    # 小窗口按比例缩小摘要与输出预留，安全余量最多占四分之一，保留完整原消息的输入空间。
+    target = min(SETTINGS.context_summary_target_tokens, max(1, context_length // 4))
+    output_budget = min(
+        config.max_output_tokens or 0,
+        target * CONTEXT_SUMMARY_HEADROOM_FACTOR,
+        max(1, context_length // 2),
+    )
+    input_budget = context_length - output_budget - min(max(1024, context_length // 20), context_length // 4)
+    if input_budget <= 0:
+        raise CompressionFailedError("context window cannot fit summary input and output")
+    bounded = _fit_summary_block(
+        block,
+        source_ids,
+        input_budget=input_budget,
+        target_tokens=target,
+        instructions=instructions,
+        included_indices=included_indices,
+    )
+    keep = [*block[len(bounded) :], *keep]
+    block = bounded
+    through_id = source_ids[len(block) - 1]
+
+    try:
+        summary, completed, prompt_tokens, completion_tokens = await _summarize_block(
+            block,
+            client=client,
+            model=model,
+            config=config,
+            target_tokens=target,
+            output_budget=output_budget,
+            temperature=temperature,
+            instructions=instructions,
+            included_indices=included_indices,
+            context_length=context_length,
+        )
+    except Exception as exc:
+        logger.warning("context_compressor: summary call failed, leaving history unchanged", exc_info=True)
+        raise CompressionFailedError("summary call failed") from exc
+
+    if not completed:
+        logger.warning(
+            "context_compressor: summary response did not complete, leaving history unchanged",
+            extra={"input_item_count": len(block)},
+        )
+        raise CompressionFailedError("summary response did not complete")
+
+    if not summary:
+        logger.warning("context_compressor: LLM returned empty summary; leaving history unchanged")
+        raise CompressionFailedError("summary response was empty")
+
+    replaced_count = len(dialogue_ids.intersection(source_ids[: len(block)]))
+    title = resolve_prompt_text(COMPRESSION_CHECKPOINT_TITLE_TEXTS, language).format(count=replaced_count)
+    checkpoint_text = f"{title}\n{summary}"
+    placeholder = {"role": "user", "content": [{"type": "input_text", "text": checkpoint_text}]}
+    kept_ids = source_ids[len(block) :]
+    kept_dialogue_ids = dialogue_ids.intersection(kept_ids)
+    compressed: dict[str, Any] = {
+        "instructions": context["instructions"],
+        "input": [placeholder, *keep],
+        "source_message_ids": [through_id, *kept_ids],
+        "dialogue_message_ids": [mid for mid in context["dialogue_message_ids"] if mid in kept_dialogue_ids],
+        "checkpoint_indices": [0],
+        "time_context_indices": [
+            index - len(block) + 1 for index in context.get("time_context_indices", ()) if index >= len(block)
+        ],
+        "user_input_indices": [
+            index - len(block) + 1 for index in context.get("user_input_indices", ()) if index >= len(block)
+        ],
+    }
+    logger.info(
+        "context_compressor: summarized history into one summary",
+        extra={
+            "replaced_count": replaced_count,
+            "input_tokens": approx_responses_tokens("", block),
+            "output_tokens": approx_responses_tokens("", [placeholder]),
+            "original_count": len(context["input"]),
+            "new_count": len(compressed["input"]),
+        },
+    )
+    return compressed, CompressionInfo(
+        summary=summary,
+        checkpoint_text=checkpoint_text,
+        replaced_count=replaced_count,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        through_message_id=through_id,
+        prune_before_message_id=min((mid for mid in kept_ids if mid is not None), default=None),
+    )

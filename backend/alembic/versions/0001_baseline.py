@@ -643,6 +643,7 @@ def upgrade() -> None:
         sa.Column("request_json", sa.JSON(), nullable=False),
         sa.Column("plan_json", sa.JSON(), nullable=True),
         sa.Column("progress_json", sa.JSON(), nullable=False),
+        sa.Column("video_job_id", sa.Integer(), nullable=True),
         sa.Column("post_id", sa.UUID(as_uuid=False), nullable=True),
         sa.Column("error", sa.String(length=160), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -664,6 +665,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_post_publications_reserved_at"), "post_publications", ["reserved_at"], unique=False)
     op.create_index(op.f("ix_post_publications_status"), "post_publications", ["status"], unique=False)
     op.create_index(op.f("ix_post_publications_user_id"), "post_publications", ["user_id"], unique=False)
+    op.create_index(op.f("ix_post_publications_video_job_id"), "post_publications", ["video_job_id"], unique=False)
     op.create_table(
         "companion_diary_entries",
         sa.Column("id", UUID(as_uuid=False), nullable=False),
@@ -906,6 +908,14 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_messages_conversation_id"), "messages", ["conversation_id"], unique=False)
     op.create_index(op.f("ix_messages_subtype"), "messages", ["subtype"], unique=False)
+    op.create_foreign_key(
+        "post_publications_video_job_id_fkey",
+        "post_publications",
+        "video_gen_jobs",
+        ["video_job_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
     # video_gen_jobs 建表早于 messages，回绑外键在此补齐。
     op.create_foreign_key(
         "video_gen_jobs_reply_message_id_fkey",
@@ -1246,6 +1256,7 @@ def downgrade() -> None:
         "remote_sessions",
         "remote_pairings",
         "asset_cleanup_pending",
+        "post_publications",
         "video_gen_jobs",
         "messages",
         "ws_events",
@@ -1253,7 +1264,6 @@ def downgrade() -> None:
         "user_model_configs",
         "nightly_activity_actions",
         "personas",
-        "post_publications",
         "companion_post_comments",
         "companion_posts",
         "companion_diary_entries",

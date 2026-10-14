@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import json
 import sys
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,17 @@ if sys.platform == "win32" and sys.stdout and hasattr(sys.stdout, "reconfigure")
     sys.stdout.reconfigure(encoding="utf-8")
 if sys.platform == "win32" and sys.stderr and hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
+
+
+@cache
+def _initialize_debug_runtime() -> None:
+    from importlib import import_module
+
+    import_module("bootstrap.models")
+    from bootstrap.registrations import register_all
+
+    register_all()
+
 
 DEFAULT_MOCK_PERSONA: dict[str, str] = {
     "name": "露娜 (Luna)",
@@ -36,8 +48,8 @@ DEFAULT_MOCK_USER_PROFILE: dict[str, str] = {
 
 
 def _build_mock_user_profile_extras(profile: dict[str, str], *, language: str = "zh") -> str:
-    from components import resolve_prompt_text
-    from prompts.memory import USER_PROFILE_LABELS_TEXTS
+    from features.memory.prompts import USER_PROFILE_LABELS_TEXTS
+    from infrastructure.text import resolve_prompt_text
 
     lines = [resolve_prompt_text(USER_PROFILE_LABELS_TEXTS, language)]
     for key, val in profile.items():
@@ -48,28 +60,21 @@ def _build_mock_user_profile_extras(profile: dict[str, str], *, language: str = 
 
 
 async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -> dict[str, Any]:
-    from bootstrap.registrations import register_tools
-    from components import SESSION_LOCAL
-    from modules.companion import Persona
-    from services.application.chat.system_prompt import build_companion_environment_prompt
-    from services.contracts.memory import MemoryScope
-    from services.domains.companion import build_system_prompt_extras, load_character_snapshot
-    from services.domains.conversation import validate_memory_scope
-    from services.domains.memory import (
-        build_user_profile_extras,
-        format_background_memory_block,
-        format_proactive_memory_block,
-    )
-    from services.infrastructure.tool_runtime import REGISTRY
-    from sqlalchemy import select
+    from features.appearance.character_card import load_character_snapshot
+    from features.companion.persona_service import build_system_prompt_extras
+    from features.companion.visual_state import persona_snapshot
+    from features.memory.memory_bootstrap import build_user_profile_extras
+    from features.memory.memory_format import format_background_memory_block, format_proactive_memory_block
+    from infrastructure.database import SESSION_LOCAL
+    from runtime.memory_scope import MemoryScope, validate_memory_scope
+    from runtime.tools.registry import REGISTRY
+    from workflows.chat.system_prompt import build_companion_environment_prompt
 
-    register_tools()
+    _initialize_debug_runtime()
     scope = MemoryScope(user_id, preset_id)
     validate_memory_scope(scope)
     async with SESSION_LOCAL() as db:
-        persona = (
-            await db.scalar(select(Persona).where(Persona.user_id == user_id)) if preset_id == "companion" else None
-        )
+        persona = await persona_snapshot(db, user_id) if preset_id == "companion" else None
         persona_extras = build_system_prompt_extras(
             persona,
             language=language,
@@ -113,19 +118,18 @@ def assemble_debug_prompt(
     from datetime import datetime
     from types import SimpleNamespace
 
-    from bootstrap.registrations import register_tools
-    from components import ensure_utc, utc_now
-    from modules.auth import ChatRequestClientContext
-    from services.application.chat.prompt_blocks import AgentPromptConfig
-    from services.application.chat.prompt_presets import preset_excluded_tool_names
-    from services.application.chat.system_prompt import build_system_prompt
-    from services.application.chat.turn_inputs import _history_to_responses_context
-    from services.domains.companion.persona_service import render_extras
-    from services.domains.conversation import SYSTEM_PRESET_CATALOG
-    from services.infrastructure.llm import approx_responses_tokens
-    from services.infrastructure.tool_runtime import REGISTRY, schema_name
+    from features.companion.persona_service import render_extras
+    from infrastructure.ai.responses import approx_responses_tokens
+    from infrastructure.text import ensure_utc, utc_now
+    from runtime.client_context import ChatRequestClientContext
+    from runtime.presets import SYSTEM_PRESET_CATALOG
+    from runtime.tools.registry import REGISTRY, schema_name
+    from workflows.chat.prompt_blocks import AgentPromptConfig
+    from workflows.chat.prompt_presets import preset_excluded_tool_names
+    from workflows.chat.system_prompt import build_system_prompt
+    from workflows.chat.turn_inputs import _history_to_responses_context
 
-    register_tools()
+    _initialize_debug_runtime()
     if db_data is not None:
         persona_extras = db_data["persona_extras"]
         user_profile_extras = db_data["user_profile_extras"]
@@ -216,7 +220,7 @@ def assemble_debug_prompt(
 
 
 def format_human_readable(result: dict[str, Any]) -> str:
-    from services.infrastructure.tool_runtime import schema_name
+    from runtime.tools.registry import schema_name
 
     meta = result["metadata"]
     lines: list[str] = []

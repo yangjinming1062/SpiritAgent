@@ -8,65 +8,26 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from components import (
-    ENGINE,
-    SESSION_LOCAL,
-    attachment_root,
-    begin_user_request,
-    cleanup_expired,
-    database_url,
-    drain_user_tasks,
-    end_user_request,
-    get_logger,
-    insecure_secret_settings,
-    setup_logging,
-)
+from entrypoints.scheduler.cron import start_scheduler
 from fastapi import FastAPI
-from modules.auth import User
-from services.adapters.desktop import drain as drain_user_sessions
-from services.adapters.scheduler import drain as drain_cron
-from services.adapters.scheduler import start_scheduler, stop_scheduler
-from services.application.actions import (
-    drain_desktop_reviews,
-    drain_proposal_reviews,
-    resume_desktop_reviews,
-    resume_proposal_reviews,
-)
-from services.application.chat import recover_interrupted_submissions
-from services.application.configuration import load_and_apply_system_settings
-from services.application.generation import (
-    cleanup_user_video_jobs,
-    drain_character_extractions,
-    drain_desktop_video_jobs,
-    drain_outfit_descriptions,
-    drain_scene_jobs,
-    drain_video_jobs,
-    drain_video_pack_generation,
-    recover_outfit_descriptions,
-    resume_character_extractions,
-    resume_desktop_video_jobs,
-    resume_initial_appearance,
-    resume_pending_video_jobs,
-    resume_scene_jobs,
-    resume_video_generation_jobs,
-)
-from services.application.posts import (
-    drain_autonomous_posts,
-    drain_publications,
-    drain_replies,
-    gc_autonomous_publications,
-    resume_publications,
-    resume_replies,
-)
-from services.domains.actions import cleanup_retired_action_assets
-from services.domains.assets import cleanup_assets
-from services.domains.companion import drain_first_greeting, drain_persona_background
-from services.domains.memory import drain_memory_embeddings
-from services.domains.update_releases import recover_update_storage
-from services.infrastructure.event_store import drain_event_tasks, start_event_loop, stop_event_loop
-from services.infrastructure.llm import aclose_all
-from services.infrastructure.web import aclose as aclose_web_providers
-from sqlalchemy import select
+from features.accounts.queries import list_user_ids
+from features.actions.asset_retirement import cleanup_retired_action_assets
+from features.assets.lifecycle import cleanup_assets
+from features.configuration.system_settings import load_and_apply_system_settings
+from features.media.video_jobs import cleanup_user_video_jobs
+from features.posts.publication import gc_autonomous_publications
+from infrastructure.ai.providers.http import aclose_all
+from infrastructure.attachments import attachment_root
+from infrastructure.config import insecure_secret_settings
+from infrastructure.database import ENGINE, SESSION_LOCAL, database_url
+from infrastructure.logger import get_logger, setup_logging
+from infrastructure.temp_files import cleanup_expired
+from infrastructure.web.web_providers import aclose as aclose_web_providers
+from runtime.events.loop import start_event_loop
+from runtime.lifecycle import RUNTIME_LIFECYCLE
+from runtime.user_maintenance import begin_user_request, end_user_request
+
+from .runtime_lifecycle import configure_runtime_lifecycle
 
 logger = get_logger(__name__)
 
@@ -84,35 +45,6 @@ async def _best_effort_shutdown(step: str, operation: Awaitable[object]) -> None
         logger.error("Backend shutdown step failed", extra={"step": step}, exc_info=True)
 
 
-async def _drain_runtime_tasks() -> None:
-    """按模块集中等待后台任务，并保留每个 drain 的失败诊断。"""
-    # 已受理回合仍可能等待生成任务，先等回合收尾再释放其依赖。
-    await _best_effort_shutdown("user_sessions", drain_user_sessions())
-    steps: tuple[tuple[str, Awaitable[object]], ...] = (
-        ("cron", drain_cron()),
-        ("posts_autonomous", drain_autonomous_posts()),
-        ("post_publications", drain_publications()),
-        ("post_replies", drain_replies()),
-        ("first_greeting", drain_first_greeting()),
-        ("persona_background", drain_persona_background()),
-        ("memory_embeddings", drain_memory_embeddings()),
-        ("character_extractions", drain_character_extractions()),
-        ("outfit_descriptions", drain_outfit_descriptions()),
-        ("scene_jobs", drain_scene_jobs()),
-        ("video_jobs", drain_video_jobs()),
-        ("video_pack_generation", drain_video_pack_generation()),
-        ("proposal_reviews", drain_proposal_reviews()),
-        ("desktop_reviews", drain_desktop_reviews()),
-        ("desktop_video_jobs", drain_desktop_video_jobs()),
-        ("event_tasks", drain_event_tasks()),
-        ("user_tasks", drain_user_tasks()),
-    )
-    results = await asyncio.gather(*(operation for _, operation in steps), return_exceptions=True)
-    for (step, _), result in zip(steps, results, strict=True):
-        if isinstance(result, BaseException):
-            logger.error("Backend task drain failed", extra={"step": step}, exc_info=result)
-
-
 def _run_migrations() -> None:
     """升级到最新 Alembic 版本。"""
     cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
@@ -124,7 +56,7 @@ def _run_migrations() -> None:
 
 async def _cleanup_formal_assets(*, discover: bool) -> None:
     async with SESSION_LOCAL() as db:
-        users = list(await db.scalars(select(User.id)))
+        users = await list_user_ids(db)
     for user_id in users:
         if not await begin_user_request(user_id):
             continue
@@ -142,6 +74,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     cleanup_task: asyncio.Task[None] | None = None
     try:
         setup_logging()
+        configure_runtime_lifecycle()
         if insecure := insecure_secret_settings():
             raise RuntimeError(f"Set non-empty, non-example values for: {', '.join(insecure)}.")
         await asyncio.to_thread(_run_migrations)
@@ -149,27 +82,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             await load_and_apply_system_settings(session)
 
         attachment_root().mkdir(parents=True, exist_ok=True)
-        await recover_update_storage()
-        await recover_outfit_descriptions()
-        await cleanup_retired_action_assets()
-        await gc_autonomous_publications()
-
-        await recover_interrupted_submissions()
+        await RUNTIME_LIFECYCLE.prepare()
         start_scheduler()
-        # LISTEN 专线：event_store 内部直连 + 断线 5s 重连；asyncpg 只接受纯 postgresql:// URL。
+        # LISTEN 专线直连 + 断线 5s 重连；asyncpg 只接受纯 postgresql:// URL。
         start_event_loop(database_url("postgresql"))
-        await resume_pending_video_jobs()
-        # 视频包凭持久化句柄续跑，不重复提交付费任务；中断的上传导入包按失败落库并广播。
-        await resume_video_generation_jobs()
-        await resume_proposal_reviews()  # pending 评审重新调度（approve 后自动接生成编排）。
-        await resume_desktop_video_jobs()
-        # 启动只恢复已持久化的评审状态；评审通过后由用户或维护恢复显式启动付费制作。
-        await resume_desktop_reviews(allow_generation=False)
-        await resume_character_extractions()
-        await resume_scene_jobs()
-        await resume_initial_appearance()
-        await resume_publications()
-        await resume_replies()
+        await RUNTIME_LIFECYCLE.recover()
         await _cleanup_formal_assets(discover=True)
 
         async def _cleanup_loop() -> None:
@@ -205,11 +122,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
                 await cleanup_task
 
         # 先停所有任务生产入口再 drain，避免收敛期间派生的新任务逃过快照。
-        await _best_effort_shutdown("scheduler", stop_scheduler())
-        await _best_effort_shutdown("event loop", stop_event_loop())
+        await RUNTIME_LIFECYCLE.stop_producers()
 
         # 释放引擎前先 drain 模块级任务集合，避免 SIGTERM 把持有连接池的协程留在 commit 中途。
-        await _best_effort_shutdown("runtime tasks", _drain_runtime_tasks())
+        await _best_effort_shutdown("runtime tasks", RUNTIME_LIFECYCLE.drain())
 
         await _best_effort_shutdown("database engine", ENGINE.dispose())
         await _best_effort_shutdown("web providers", aclose_web_providers())
