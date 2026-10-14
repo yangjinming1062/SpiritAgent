@@ -391,9 +391,9 @@ export async function createNewSession(systemPresetId: string): Promise<string |
     }
 
     if (token === navigationToken) {
-      setChatSession(res.session_id)
       const runtime = getConversationRuntime(res.session_id)
       runtime.hydrateChatMessages([], res.info)
+      setChatSession(res.session_id)
     }
 
     void fetchSessions()
@@ -502,12 +502,12 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
       nextCursor: res.next_cursor,
       truncated: res.truncated
     })
-    // 先补入本地条目，专业对话才能立即挂载对话面板而不切走；随后刷新列表对齐服务端。
+    // 先补入本地条目，派生对话立即显示来源标题；随后刷新列表对齐服务端。
     $sessions.set([forkSessionInfo(sourceSessionId, res), ...$sessions.get()])
 
     if (token === navigationToken) {
-      setChatSession(res.session_id)
       getConversationRuntime(res.session_id).hydrateChatMessages(res.messages || [], res.info)
+      setChatSession(res.session_id)
     }
 
     void fetchSessions()
@@ -694,8 +694,8 @@ export async function switchSession(sessionId: string): Promise<void> {
     if (runtime.$historyHydrated.get()) {
       setChatSession(sessionId)
     } else if (local?.info) {
-      setChatSession(sessionId)
       runtime.hydrateSyncedChatMessages(local.messages, local.info, localSnapshot)
+      setChatSession(sessionId)
     }
 
     const snapshot = runtime.captureHistorySync()
@@ -831,12 +831,13 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
         if (local) {
           if (isLatest()) {
-            setChatSession(knownCompanionId)
             const runtime = getConversationRuntime(knownCompanionId)
 
             if (!runtime.$historyHydrated.get()) {
               runtime.hydrateSyncedChatMessages(local.messages, local.info)
             }
+
+            setChatSession(knownCompanionId)
           }
 
           try {

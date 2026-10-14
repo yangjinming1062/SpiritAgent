@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import ColumnElement, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .context_window import CHECKPOINT_SUBTYPE
 from .formatting import message_contains_text, message_text
 from .main_conversation import UI_ONLY_SUBTYPES
 from .memory_scope import user_authored_conversation
@@ -28,6 +29,7 @@ def _reviewable_message() -> ColumnElement[bool]:
         Message.id > Conversation.context_after_message_id,
         Message.role.in_(("user", "assistant")),
         Message.subtype.is_(None),
+        Message.tool_calls.is_(None),
     )
 
 
@@ -175,7 +177,9 @@ def _nightly_scope(user_id: int, preset_id: str) -> ColumnElement[bool]:
         Conversation.system_preset_id == preset_id,
         Message.id > Conversation.context_after_message_id,
         user_authored_conversation(),
-        Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
+        Message.role.in_(("user", "assistant")),
+        Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
+        Message.tool_calls.is_(None),
     )
 
 
@@ -193,9 +197,8 @@ async def nightly_messages(
             _nightly_scope(user_id, preset_id),
             Message.created_at >= start,
             Message.created_at < end,
-            Message.role.in_(("user", "assistant")),
         )
-        .order_by(Message.id.asc()),
+        .order_by(Message.created_at, Message.id),
     )
     return [
         OriginalMessageSnapshot(row.id, row.conversation_id, row.role, message_text(row), row.created_at)

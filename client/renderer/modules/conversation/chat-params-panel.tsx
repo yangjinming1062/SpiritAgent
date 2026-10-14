@@ -227,7 +227,7 @@ export function ChatParamsPanel({
     $sessionCacheUsage,
     $sessionSettings,
     hydrateChatMessages,
-    hydrateSessionSettings,
+    hydrateSessionInfo,
     setSessionContextUsage,
     updateSessionSetting
   } = controller
@@ -295,7 +295,7 @@ export function ChatParamsPanel({
           revisionRef.current === revision &&
           $sessionSettings.get() === visibleSettings
         ) {
-          hydrateSessionSettings(res.info)
+          hydrateSessionInfo(res.info)
         }
 
         if (Object.values(patch).every(value => value === null)) {
@@ -314,7 +314,7 @@ export function ChatParamsPanel({
     sessionId,
     $chatSessionId,
     $sessionSettings,
-    hydrateSessionSettings,
+    hydrateSessionInfo,
     controller
   ])
 

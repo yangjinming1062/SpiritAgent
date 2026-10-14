@@ -4,7 +4,7 @@ import { chatDisplayText } from './chat-display-text'
 import { isPositiveInt } from './chat-message-rules'
 import type { ConversationState } from './chat-runtime-state'
 import type { ChatMessageBody, ChatMessageListItem } from './chat-runtime-types'
-import { $companionSessionId, nextChatMessageId } from './conversation-state'
+import { nextChatMessageId } from './conversation-state'
 import { conversationVoiceSink } from './voice-link'
 import { removeVoicePlayback } from './voice-playback'
 
@@ -15,6 +15,7 @@ export function createChatMessageController(state: ConversationState) {
     $lastAssistantStreaming,
     $chatStreamingTick,
     $chatSessionId,
+    $chatSessionPresetId,
     $turnHadBubbleBreak
   } = state.stores
 
@@ -101,9 +102,7 @@ export function createChatMessageController(state: ConversationState) {
 
   // 陪伴会话连发用户消息保留独立气泡（与 bubble.break 助手拆分对称），专业对话整段阅读不拆，避免误拆粘贴的多段内容。
   function splitUserBubblesEnabled(): boolean {
-    const id = $chatSessionId.get()
-
-    return id !== null && id === $companionSessionId.get()
+    return $chatSessionPresetId.get() === 'companion'
   }
 
   // 历史可能先于落库事件返回；活气泡替换同一后端消息的快照，沿用历史位置。

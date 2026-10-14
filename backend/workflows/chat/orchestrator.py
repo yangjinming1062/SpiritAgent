@@ -13,7 +13,6 @@ from features.configuration.settings.values import get_user_setting, load_user_s
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.attachments import inline_video_parts
 from features.conversation.audio_input import prepare_audio_input
-from features.conversation.main_conversation import SPECIAL_KIND
 from features.conversation.memory_scope import conversation_memory_scope
 from features.conversation.reply_media import load_media_turn, refresh_video_media
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
@@ -404,8 +403,8 @@ async def _run_chat_turn(
         active_tool_names = (initial_tool_names | history_unlocked) & set(schemas_by_name)
         turn_reasoning_parts: list[str] = []
 
-        # 固定陪伴会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
-        companion_reply = conv.kind == SPECIAL_KIND and conv.system_preset_id == COMPANION_PRESET_ID
+        # 陪伴用户会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
+        companion_reply = conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None
         # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量；陪伴聊天的上限独立于工作回合。
         if max_loop_turns is None:
             max_loop_turns = (

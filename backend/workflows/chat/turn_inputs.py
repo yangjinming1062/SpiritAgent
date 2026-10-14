@@ -90,10 +90,14 @@ def memory_query_text(req: ChatRequest, history: Sequence[MessageSnapshot], *, u
     return next((message_text(m) for m in reversed(history) if m.role == "user"), "")
 
 
+def _uses_preset_defaults(conv: ConversationSnapshot) -> bool:
+    return conv.kind == SPECIAL_KIND or (conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None)
+
+
 def resolve_inference_settings(settings: dict[str, Any], *, conv: ConversationSnapshot) -> InferenceDefaults:
     defaults = (
         resolve_preset_meta(conv.system_preset_id).inference_defaults
-        if conv.kind == SPECIAL_KIND
+        if _uses_preset_defaults(conv)
         else InferenceDefaults(
             DEFAULT_CONFIG["agent"]["temperature"],
             SETTINGS.context_compression_threshold,
@@ -119,8 +123,8 @@ def merge_session_settings(
     *,
     conv: ConversationSnapshot,
 ) -> dict[str, Any]:
-    """特殊会话使用场景默认值，普通会话继承工作台设置；最后合并会话覆盖。推理参数由 ``resolve_inference_settings`` 从结果解析。"""
-    isolated = conv.kind == SPECIAL_KIND
+    """固定会话与陪伴用户会话使用预设默认值，其余继承全局设置；最后合并会话覆盖。"""
+    isolated = _uses_preset_defaults(conv)
     merged = {
         key: value for key, value in user_settings.items() if not isolated or not key.startswith(("agent.", "chat."))
     }
@@ -403,7 +407,7 @@ async def build_turn_inputs(
         proactive_memory_extras=format_proactive_memory_block(proactive_rows, language=session_lang),
         user_local_tz=user_local_tz,
     )
-    # 仅陪伴预设（生活空间 / special Cron）插入时间提示与跨日分界；工作台预设只保留 volatile header 的日期。
+    # 陪伴用户会话插入时间提示与跨日分界；专业预设只保留 volatile header 的日期。
     context = _history_to_responses_context(
         history,
         build_system_prompt(agent_config, preset_id=preset_id, delegated=delegated),
@@ -429,14 +433,10 @@ async def build_turn_inputs(
     else:
         estimated_tokens = full_context_tokens
 
-    # 语音只用于陪伴固定会话；主动回合仅在自主档位提供语音能力。
+    # 陪伴用户会话提供语音；主动回合仅在自主档位提供语音能力。
     speech_config: ProviderConfig | None = None
     speech_voice = ""
-    if (
-        conv.kind == SPECIAL_KIND
-        and is_companion
-        and (not companion_proactive_turn or await get_disturbance_tier(user_id, db=db) == "autonomous")
-    ):
+    if is_companion and (not companion_proactive_turn or await get_disturbance_tier(user_id, db=db) == "autonomous"):
         selected_voice = user_settings.get("companion.voice_id")
         speech_config, speech_voice = await resolve_reply_voice(
             db,

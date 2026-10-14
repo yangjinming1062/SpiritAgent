@@ -16,7 +16,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH, aggregate_order_by
 
-from features.conversation.main_conversation import SPECIAL_KIND
 from features.conversation.models import Conversation, Message
 from features.conversation.replies import CompanionReply, CompanionReplyInput, MediaBubble, MediaBubbleInput
 from features.conversation.snapshots import MessageSnapshot
@@ -118,8 +117,8 @@ def visible_bubble_count() -> ColumnElement[int]:
         (
             and_(
                 Message.role == "user",
-                Conversation.kind == SPECIAL_KIND,
                 Conversation.system_preset_id == COMPANION_PRESET_ID,
+                Conversation.parent_id.is_(None),
                 or_(Message.subtype.is_(None), Message.subtype == ""),
             ),
             _companion_user_bubble_count(),
@@ -179,7 +178,7 @@ def format_messages_compact(
     char_cap: int | None = None,
     user_local_tz: str | None = None,
 ) -> str:
-    """保留发言归属、时间、截断与工具关联；正文中的换行不能伪装成另一条发言。"""
+    """保留会话与消息来源、发言归属、时间和工具关联；正文换行不能伪装成另一条发言。"""
     records = []
     for msg in msgs:
         content: str | list[dict[str, str]]
@@ -209,6 +208,8 @@ def format_messages_compact(
             content = text[:char_cap]
             truncated = char_cap is not None and len(text) > char_cap
         record = {
+            "session_id": str(msg.conversation_id),
+            "message_id": str(msg.id),
             "role": msg.role,
             "created_at": format_local_iso(msg.created_at, user_local_tz)
             if user_local_tz is not None and msg.created_at

@@ -8,12 +8,10 @@ import {
   $chatSessionId,
   $currentSessionTitle,
   $sessionNavigationError,
-  $sessions,
   $systemPresets,
   ChatPanel,
   ConversationViewProvider,
   getConversationRuntime,
-  isCompanionSession,
   openMainSession,
   presetDisplayName,
   switchSession,
@@ -64,8 +62,6 @@ export function ConversationPage({
   const runtime = getConversationRuntime(sessionId)
   const sessionKind = useStore(runtime.$chatSessionKind)
   const sessionPresetId = useStore(runtime.$chatSessionPresetId)
-  const sessions = useStore($sessions)
-  const current = sessions.find(session => session.id === sessionId)
   const collapsed = useStore(sidebarCollapsed.$atom)
   const [narrow, setNarrow] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -129,11 +125,8 @@ export function ConversationPage({
     capture: false
   })
 
-  const companion = Boolean(
-    (companionSessionId && sessionId === companionSessionId) ||
-    (sessionKind === 'special' && sessionPresetId === 'companion') ||
-    (current?.kind === 'special' && isCompanionSession(current))
-  )
+  const companion = sessionPresetId === 'companion'
+  const fixedCompanion = companion && sessionKind === 'special' && sessionId === companionSessionId
 
   return (
     <PanelActivityProvider active={active && visible && foreground}>
@@ -209,6 +202,7 @@ export function ConversationPage({
         >
           <MainChat
             companion={companion}
+            fixedCompanion={fixedCompanion}
             headingActions={
               <button
                 aria-controls={sidebarId}
@@ -255,11 +249,13 @@ export function ConversationPage({
 
 function MainChat({
   companion,
+  fixedCompanion,
   headingActions,
   railAction,
   reveal
 }: {
   companion: boolean
+  fixedCompanion: boolean
   headingActions: React.ReactNode
   railAction: React.ReactNode
   reveal?: { key: string; request: number }
@@ -272,10 +268,10 @@ function MainChat({
   const persona = useStore($persona)
   const title = useStore($currentSessionTitle)
   const sessionId = useStore($chatSessionId)
-  const sessions = useStore($sessions)
   const presets = useStore($systemPresets)
-  const current = sessions.find(session => session.id === sessionId)
-  const preset = presets.find(preset => preset.id === current?.system_preset_id)
+  const runtime = getConversationRuntime(sessionId)
+  const sessionPresetId = useStore(runtime.$chatSessionPresetId)
+  const preset = presets.find(preset => preset.id === sessionPresetId)
   const dict = useStrings()
   const t = useConversationStrings()
 
@@ -288,7 +284,7 @@ function MainChat({
         <div className={styles.heading}>
           {headingActions}
           <div className={styles.identity}>
-            <strong>{companion ? persona?.name || title : title}</strong>
+            <strong>{fixedCompanion ? persona?.name || title : title}</strong>
             <span>
               {readOnly ? t.readOnly : preset ? presetDisplayName(dict, preset) : companion ? t.companion : t.assistant}
             </span>

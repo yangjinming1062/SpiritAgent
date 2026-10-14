@@ -657,24 +657,21 @@ export function Chat({
         {error ? <Notice>{error}</Notice> : null}
         {showCreate ? (
           <section className="card">
-            <h3>新建工作会话</h3>
+            <h3>新建对话</h3>
             <select aria-label="选择预设" onChange={event => setPreset(event.target.value)} value={preset}>
-              {presets
-                .filter(item => item.id !== 'companion')
-                .map(item => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
+              {presets.map(item => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
             </select>
             <button
               className="primary full"
-              disabled={!connected || busy}
+              disabled={!connected || busy || !presets.some(item => item.id === preset)}
               onClick={() =>
                 run(async () => {
                   const result = await gateway.request<{ session_id: string }>('session.create', {
-                    system_preset_id:
-                      preset === 'companion' ? presets.find(item => item.id !== 'companion')?.id : preset
+                    system_preset_id: preset
                   })
 
                   await loadSessions()
@@ -703,7 +700,7 @@ export function Chat({
             <span className="chevron">›</span>
           </button>
         ) : null}
-        <h2 className="section-label">工作会话</h2>
+        <h2 className="section-label">最近对话</h2>
         <div className="session-list">
           {listed.map(item => (
             <button
@@ -713,7 +710,7 @@ export function Chat({
               onClick={() => run(() => openSession(item.id))}
               type="button"
             >
-              <span className="avatar small">{(item.title ?? '工作').slice(0, 1)}</span>
+              <span className="avatar small">{(item.title ?? '对话').slice(0, 1)}</span>
               <span className="session-copy">
                 <strong>{item.title || '新的会话'}</strong>
                 <small>{item.preview || '开始一段新的对话'}</small>
@@ -735,12 +732,12 @@ export function Chat({
             更多会话
           </button>
         ) : null}
-        {listed.length === 0 ? <Empty title="从一件想做的事开始">点击右上角，创建工作会话。</Empty> : null}
+        {listed.length === 0 ? <Empty title="开始一段新对话">点击右上角，选择预设并开始聊天。</Empty> : null}
       </div>
     )
   }
 
-  const title = selected === mainId ? '我的伙伴' : sessions.find(item => item.id === selected)?.title || '工作会话'
+  const title = selected === mainId ? '我的伙伴' : sessions.find(item => item.id === selected)?.title || '新的对话'
 
   const refreshMessages = () => {
     void run(() => resume(selected))

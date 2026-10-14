@@ -2,7 +2,7 @@ import { atom, computed, map } from 'nanostores'
 
 import type { CacheUsageSummary, SessionRuntimeInfo } from '@protocol'
 
-import { toSessionSettings } from './chat-message-rules'
+import { normalizeChatSessionKind, toSessionSettings } from './chat-message-rules'
 import type {
   ChatMessageBody,
   ChatMessageListItem,
@@ -73,7 +73,9 @@ export function createConversationState(sessionId: string | null) {
 
   const $sessionSettings = atom<SessionSettings>({})
 
-  function hydrateSessionSettings(info: SessionRuntimeInfo): void {
+  function hydrateSessionInfo(info: SessionRuntimeInfo): void {
+    $chatSessionKind.set(normalizeChatSessionKind(info.kind))
+    $chatSessionReadOnly.set(info.is_automation === true)
     $chatSessionPresetId.set(info.system_preset_id ?? null)
     $sessionSettings.set(toSessionSettings(info.settings))
   }
@@ -183,7 +185,7 @@ export function createConversationState(sessionId: string | null) {
       $sessionSettings,
       $sessionContextUsage,
       $sessionCacheUsage,
-      hydrateSessionSettings,
+      hydrateSessionInfo,
       updateSessionSetting,
       setSessionCacheUsage,
       setSessionContextUsage,

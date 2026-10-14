@@ -3,12 +3,14 @@ from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from infrastructure.text import ensure_utc, utc_now
+from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.formatting import format_messages_compact
-from features.conversation.main_conversation import UI_ONLY_SUBTYPES, get_special_conversation
+from features.conversation.main_conversation import UI_ONLY_SUBTYPES
+from features.conversation.memory_scope import user_authored_conversation
 from features.conversation.models import Conversation, Message
 from features.conversation.snapshots import ConversationSnapshot
 
@@ -62,30 +64,30 @@ async def load_companion_dialogue(
     *,
     now: datetime | None = None,
 ) -> CompanionDialogue:
-    """完整读取本地当日对话；05:00 前连同前一自然日，清空水位和发言归属保持不变。"""
+    """完整读取陪伴预设的顶层用户对话；05:00 前连同前一自然日，逐会话尊重清空水位。"""
     now = ensure_utc(now or utc_now())
     timezone = await resolve_user_timezone(db, user_id)
     zone = ZoneInfo(timezone or "UTC")
     local_now = now.astimezone(zone)
     day = local_now.date() - timedelta(days=1) if local_now.hour < 5 else local_now.date()
     start = datetime.combine(day, time.min, zone)
-    main_conv = await get_special_conversation(db, user_id, "companion")
-    if main_conv is None:
-        return CompanionDialogue(start, local_now, zone.key, bool(timezone), "")
     msgs = (
         (
             await db.execute(
                 select(Message)
+                .join(Conversation)
                 .where(
-                    Message.conversation_id == main_conv.id,
-                    Message.id > main_conv.context_after_message_id,
+                    Conversation.user_id == user_id,
+                    Conversation.system_preset_id == COMPANION_PRESET_ID,
+                    user_authored_conversation(),
+                    Message.id > Conversation.context_after_message_id,
                     Message.role.in_(("user", "assistant")),
                     Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
                     Message.tool_calls.is_(None),
                     Message.created_at >= start.astimezone(UTC),
                     Message.created_at <= now,
                 )
-                .order_by(Message.id),
+                .order_by(Message.created_at, Message.id),
             )
         )
         .scalars()

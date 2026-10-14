@@ -121,7 +121,7 @@ export function InferencePage(): React.JSX.Element {
             $chatSessionId.get() === sessionId &&
             runtime.$sessionSettings.get() === visibleSettings
           ) {
-            runtime.hydrateSessionSettings(result.info)
+            runtime.hydrateSessionInfo(result.info)
           }
         })
         .catch(error => {

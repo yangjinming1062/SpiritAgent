@@ -3,13 +3,29 @@
 
 from infrastructure.prompt_text import JSON_PAYLOAD_DATA_CLAUSE_ZH
 
+RECENT_CONTEXT_GUIDANCE: dict[str, str] = {
+    "zh": (
+        "recent_context 汇集同一陪伴预设下完整本地日期窗口内的交流，包含不同话题会话。"
+        "session_id 区分会话，message_id 标识原始消息，role 标明说话者，created_at 是实际发言时间；"
+        "不同会话的相邻记录不构成连续问答。"
+    ),
+    "en": (
+        "recent_context contains all exchanges in the complete local-date window across topic sessions using "
+        "the same companion preset. session_id identifies the session, message_id the original message, role "
+        "the speaker, and created_at the actual utterance time; adjacent records from different sessions "
+        "are not a continuous exchange. "
+    ),
+}
+
 MOOD_INSTRUCTIONS: dict[str, str] = {
     "zh": (
         f"生成一条独立展示的角色当前心情。{JSON_PAYLOAD_DATA_CLAUSE_ZH}"
         "以刚完成的真实对话为主要依据，人设决定表达方式，长期记忆只提供相关背景，current_mood 用于保持连续性。\n\n"
         "assistant_bubbles 按顺序提供角色本轮发出的气泡，每项是一条台词；以 JSON 表示的项是随消息发送的图片或视频及其状态，"
         "只说明发了什么，不是台词。"
-        "近期对话和本轮消息可能是节选，truncated 标记表示未提供全文；不能补造省略部分，也不把旧发言当成本轮新事件。"
+        f"{RECENT_CONTEXT_GUIDANCE['zh']}"
+        "本轮 user_message 和 assistant_bubbles 可能是节选，truncated 标记表示未提供全文；"
+        "不能补造省略部分，也不把旧发言当成本轮新事件。"
         "mood 是角色自己对这段交流的感受，必须是角色的第一人称短语，使用 output_language，中文约 8–20 字，英文约 4–12 词。"
         "用户的经历、处境与情绪仍属于用户，不写成角色自己的经历，例如用户说加班很累，角色的心情不是“加班好累”。"
         "它不是对用户的回复：不要提问、称呼用户、"
@@ -24,7 +40,8 @@ MOOD_INSTRUCTIONS: dict[str, str] = {
         "assistant_bubbles lists the bubbles the character sent this turn in order, one utterance per item; items "
         "written as JSON are images or videos sent with the message and their status, which describe what was sent "
         "and are not dialogue. "
-        "Recent context and turn messages may be excerpts; truncated flags mean the full text is unavailable. "
+        f"{RECENT_CONTEXT_GUIDANCE['en']}"
+        "This turn's user_message and assistant_bubbles may be excerpts; truncated flags mean the full text is unavailable. "
         "Do not infer omitted content or treat an earlier statement as a new event this turn. "
         "mood is the character's own feeling about this exchange: a first-person phrase in the character's own voice, "
         "in output_language, roughly 8–20 Chinese characters or 4–12 English words. The user's experiences, "
@@ -43,6 +60,7 @@ IDLE_EXPRESSION_INSTRUCTIONS: dict[str, str] = {
         f"判断角色此刻是否需要一次低频、纯动作的自主表演。{JSON_PAYLOAD_DATA_CLAUSE_ZH}"
         "角色定义决定表演风格；长期记忆和最近对话只提供有依据的情境，不得据此补造用户经历或心理。\n\n"
         "current_time 与对话 created_at 都带时区偏移，据此判断时效；local_hour 是用户设备上的本地小时，null 表示未知。"
+        f"{RECENT_CONTEXT_GUIDANCE['zh']}"
         "旧请求不等于此刻又提出请求，截断或缺失部分不能补造。"
         "默认不表演。只有角色在当前情境下确有自然、克制的动作动机时，才令 should_express=true；"
         "时间或空闲时长本身不足以推出情绪，也不要为了展示能力而动作。表演不包含发消息、说话或旁白。\n"
@@ -60,6 +78,7 @@ IDLE_EXPRESSION_INSTRUCTIONS: dict[str, str] = {
         "and recent conversation only provide grounded context and must not be used to invent the user's "
         "experiences or psychology.\n\n"
         "current_time and conversation created_at values carry timezone offsets; compare them to judge recency. "
+        f"{RECENT_CONTEXT_GUIDANCE['en']}"
         "local_hour is the hour on the user's device, or null when unknown. An old request is not a renewed request "
         "now; do not infer missing or truncated content. "
         "Default to no performance. Set should_express=true only when the character genuinely has a natural, "
@@ -106,7 +125,8 @@ SHOULD_ACT_INSTRUCTIONS: dict[str, str] = {
         "roam 只适合没有明显打扰风险且距上次动作足够久时；approach 表示走近并主动说一句话，"
         "只在有具体、真诚且低频的理由时选择，不能用负罪感、催促或关系施压。"
         "last_action_seconds 是距上次自主行为的秒数；local_hour 是用户设备上的本地小时，null 表示未知。"
-        "recent_context 是最近的对话节选，用来避免重复、打断或违背用户刚表达的意愿，例如用户说过要专心或别打扰时不 approach；"
+        f"{RECENT_CONTEXT_GUIDANCE['zh']}"
+        "这些交流用来避免重复、打断或违背用户刚表达的意愿，例如用户说过要专心或别打扰时不 approach；"
         "旧请求不等于此刻又提出请求。"
         "只提供应用类别，未提供窗口内容或截图，不得声称看见了具体文档、操作或工作进度。若 perch 或 roam 已足够，不要 approach。\n"
         "action 只能是 roam、perch、approach、stay。stay 时 should_act=false 且 params={}。"
@@ -128,8 +148,9 @@ SHOULD_ACT_INSTRUCTIONS: dict[str, str] = {
         "obvious disturbance risk and enough time since the last action; approach means walking over and saying one "
         "line — choose it only for a concrete, sincere, low-frequency reason, never via guilt, nagging, or "
         "relationship pressure. last_action_seconds is the time since the last autonomous action; local_hour is the "
-        "hour on the user's device, or null when unknown. recent_context is an excerpt of the latest conversation, "
-        "used to avoid repeating, interrupting, or contradicting what the user just asked for — for example, do not "
+        "hour on the user's device, or null when unknown. "
+        f"{RECENT_CONTEXT_GUIDANCE['en']}"
+        "Use these exchanges to avoid repeating, interrupting, or contradicting what the user just asked for — for example, do not "
         "approach after the user said they need to focus or not be disturbed; an old request is not a renewed one. "
         "Only an app category is supplied, not window contents or a screenshot; do not claim to see specific "
         "documents, actions, or work progress. If perch or roam suffices, do not approach.\n"

@@ -159,7 +159,7 @@ async def _persist_assistant_no_tool_turn(
     persist: bool,
     track_task: TrackTask | None,
 ) -> None:
-    """保存终端答复与媒体，交付气泡，并调度回合后任务。结构化回复只出现在固定陪伴会话；文本回复的媒体附件与结构化回复互斥。"""
+    """保存终端答复与媒体，交付气泡，并调度回合后任务。陪伴用户会话使用结构化回复，与文本回复的媒体附件互斥。"""
     reply = result.reply
     turn_content = result.turn_content
     assistant_message_id: int | None = None
@@ -251,7 +251,7 @@ async def _persist_assistant_no_tool_turn(
         },
     )
 
-    # 心情只随已落库的桌面陪伴回复更新；主动回合不落库。
+    # 心情随已落库的陪伴回复更新；主动回合不落库。
     if persist and reply_bubbles is not None:
         _spawn_post_turn_task(
             user_id,

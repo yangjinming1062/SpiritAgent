@@ -8,7 +8,6 @@ import {
   projectSessionMessages
 } from './chat-history-projection'
 import type { ChatMessageController } from './chat-message-controller'
-import { normalizeChatSessionKind } from './chat-message-rules'
 import type { ConversationState } from './chat-runtime-state'
 import type { ConversationHistorySync } from './chat-runtime-types'
 import type { ChatSubmissionController } from './chat-submission-controller'
@@ -29,14 +28,12 @@ export function createChatHistoryController(
     $chatTurnInFlight,
     $turnHadBubbleBreak,
     $pendingPromptBatch,
-    $chatSessionKind,
-    $chatSessionReadOnly,
     $chatSessionPresetId,
     $historyHydrated,
     $runtimeRevision,
     $sessionCacheUsage,
     $sessionContextUsage,
-    hydrateSessionSettings,
+    hydrateSessionInfo,
     resetSessionContextUsage
   } = state.stores
 
@@ -91,6 +88,10 @@ export function createChatHistoryController(
       conversationVoiceSink().cancel($chatSessionId.get())
     }
 
+    if (info) {
+      hydrateSessionInfo(info)
+    }
+
     const { items, bodies, totalChars } = projectSessionMessages(messages, {
       splitUserBubbles: splitUserBubblesEnabled(),
       nextMessageId: nextChatMessageId,
@@ -100,13 +101,6 @@ export function createChatHistoryController(
     $chatMessageBodies.set(bodies)
     $chatMessageList.set(items)
     $lastAssistantStreaming.set(false)
-
-    if (info) {
-      hydrateSessionSettings(info)
-      // 无 info 的本会话历史修改沿用权限，完整水合使用服务端判定。
-      $chatSessionKind.set(normalizeChatSessionKind(info.kind))
-      $chatSessionReadOnly.set(info.is_automation === true)
-    }
 
     // 估算 Token 占用（~3 字符/Token）；分项清零避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
     const approxTokens = Math.round(totalChars / 3)
@@ -134,7 +128,7 @@ export function createChatHistoryController(
 
     if (snapshot.resumed) {
       if (snapshot.info) {
-        hydrateSessionSettings(snapshot.info)
+        hydrateSessionInfo(snapshot.info)
       }
 
       if (snapshot.replayed_count === 0 && snapshot.active_turn?.running && !$chatTurnInFlight.get()) {
@@ -147,7 +141,7 @@ export function createChatHistoryController(
     if (snapshot.stream_id && typeof snapshot.current_seq === 'number') {
       if (snapshotPosition?.streamId === snapshot.stream_id && snapshot.current_seq <= snapshotPosition.seq) {
         if (snapshot.current_seq === snapshotPosition.seq && snapshot.info) {
-          hydrateSessionSettings(snapshot.info)
+          hydrateSessionInfo(snapshot.info)
         }
 
         return true

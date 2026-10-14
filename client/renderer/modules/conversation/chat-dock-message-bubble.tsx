@@ -245,8 +245,7 @@ function MessageBubbleWithBody({
     !body.cancelled &&
     !body.toolName
 
-  // 陪伴对话只有唯一陪伴上下文，不允许派生。
-  const canFork = variant === 'assistant' && sessionKind === 'standard' && canOperate
+  const canFork = sessionKind === 'standard' && canOperate
 
   // 避免误点助手行变成撤回伙伴上一句。
   const canUndo = isUser && sessionKind === 'standard' && canOperate

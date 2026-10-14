@@ -37,7 +37,6 @@ interface PresetPickerModalProps {
   onClose: () => void
 }
 
-// 新建会话只列日常辅助预设；固定陪伴由单独入口承载。
 export function PresetPickerModal({ presets, loading, onConfirm, onClose }: PresetPickerModalProps): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string>('')
   const fetched = useStore($systemPresetsFetched)
@@ -49,8 +48,7 @@ export function PresetPickerModal({ presets, loading, onConfirm, onClose }: Pres
     }
   }, [fetched])
 
-  const workPresets = presets.filter(p => p.id !== 'companion')
-  const canSubmit = selectedId !== '' && !loading && workPresets.length > 0
+  const canSubmit = selectedId !== '' && !loading && presets.some(p => p.id === selectedId)
 
   return (
     <WizardModal
@@ -77,12 +75,12 @@ export function PresetPickerModal({ presets, loading, onConfirm, onClose }: Pres
     >
       <p className="mb-3 text-[11px] leading-relaxed text-muted">{dict.chat.presetPicker.intro}</p>
       <div className="space-y-2">
-        {loading || (!fetched && workPresets.length === 0) ? (
+        {loading || (!fetched && presets.length === 0) ? (
           <div className="py-6 text-center text-xs text-faint">{dict.common.loading}</div>
-        ) : workPresets.length === 0 ? (
+        ) : presets.length === 0 ? (
           <div className="py-6 text-center text-xs text-faint">{dict.chat.presetPicker.fetchFailed}</div>
         ) : (
-          workPresets.map(p => {
+          presets.map(p => {
             const selected = selectedId === p.id
 
             return (
