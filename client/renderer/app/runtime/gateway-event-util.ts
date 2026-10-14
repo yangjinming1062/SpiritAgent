@@ -5,7 +5,7 @@ export function decodePayload<T extends object>(payload: unknown): Partial<T> {
 
 /** 路由守卫计算出的窗口角色上下文，随事件传给各能力处理器。 */
 export interface EventRouteContext {
-  /** 本窗口是否为主进程代理（生活空间 / 工作台）：代理不执行宿主专属副作用。 */
+  /** 主窗口或桌面使用代理，不执行宿主专属副作用。 */
   isProxy: boolean
 }
 

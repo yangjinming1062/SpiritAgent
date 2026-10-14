@@ -49,11 +49,11 @@
 
 ## 窗口与几何
 
-[surfaces.ts](lifecycle/surfaces.ts)串行裁决开关，生活空间与工作台最多一个可见；账户身份变化时收起完整入口并恢复窗口模式的伙伴窗，避免沿用上个账户的窗口状态。每个窗口与其面板、侧边区域及定时器由同一记录持有。内容面板矩形是几何锚点，侧边区域只调整原生窗口边界；程序调整与最大化还原期间不把中间事件写回面板。显示器变更同时校正还原位置，窗口关闭时清理几何定时器。完整入口移动时伙伴窗跟随显示器，渲染状态不传递几何。
+[surfaces.ts](lifecycle/surfaces.ts) 串行管理唯一主窗口，其面板、侧边区域及定时器归同一记录。打开主窗口隐藏精灵宿主，关闭与 Alt+F4 隐藏主窗口并恢复精灵；最小化不恢复精灵，实际销毁才释放几何定时器。账户身份变化收起主窗口并恢复精灵，目标账户视图独立恢复。内容面板矩形是几何锚点，侧边区域只调整原生窗口边界；程序调整与最大化还原期间不把中间事件写回面板。显示器变更同时校正还原位置，主窗口移动时隐藏精灵跟随显示器，渲染状态不传递几何。
 
-入口面快照仅在实际状态变化时增加版本并广播；重复几何与显隐事件不重复发布。`surface:open` 完成或失败仍回灌当前快照，纠正渲染层的乐观意图；新窗口通过 `surface:get-state` 取得当前版本。
+主窗口快照仅在实际状态变化时增加版本并广播；重复几何与显隐事件不重复发布。`surface:open` 校验统一导航目标，现存窗口经导航事件更新页面，不重载 renderer；完成或失败仍回灌当前快照。新窗口通过 `surface:get-state` 取得当前版本。
 
-生活空间窗口按 [surface-companion.ts](lifecycle/surface-companion.ts) 的初始尺寸打开并可自由缩放，不强制画幅；呈现语义见 [窗口与会话](../../docs/DESIGN.md#窗口与会话)。
+主窗口按 [surface-companion.ts](lifecycle/surface-companion.ts) 的初始尺寸打开并可自由缩放，不强制画幅；呈现语义见 [窗口与会话](../../docs/DESIGN.md#窗口与会话)。
 
 [surfaces.ts](lifecycle/surfaces.ts) 另负责播放认领（`surface:claim-play`）与锁屏跟踪：同一 `play_id` 只由一个可见舞台认领，认领随账户变化清空，规则见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
 
@@ -65,17 +65,17 @@
 
 ## 桌面承载与恢复
 
-[desktop-presentation.ts](lifecycle/desktop-presentation.ts) 管呈现模式、交互屏、舞台资格与串行恢复；`desktop-windows.ts` 拥有窗口与就绪等待，`desktop-health.ts` 拥有显示器／电源监听和模式计时器，`desktop-background-runtime.ts` 拥有媒体字节、请求代次及回执。[IPC 适配](ipc/desktop-presentation.ts) 先校验 sender、账户与载荷，再调用窄操作接口。`stop()` 只停止当前桌面模式，允许更新取消后再次启用；应用退出使用幂等 `dispose()`，释放监听和 IPC 后恢复系统。living／workbench 只代表窗口入口。
+[desktop-presentation.ts](lifecycle/desktop-presentation.ts) 管呈现模式、交互屏、舞台资格与串行恢复；`desktop-windows.ts` 拥有窗口与就绪等待，`desktop-health.ts` 拥有显示器／电源监听和模式计时器，`desktop-background-runtime.ts` 拥有媒体字节、请求代次及回执。[IPC 适配](ipc/desktop-presentation.ts) 先校验 sender、账户与载荷，再调用窄操作接口。`stop()` 只停止当前桌面模式，允许更新取消后再次启用；应用退出使用幂等 `dispose()`，释放监听和 IPC 后恢复系统。
 
 交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口。网关票及 Runner 派发仍只授予隐藏精灵宿主。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
 
-呈现切换 IPC 允许精灵宿主、生活空间、工作台和交互桌面；托盘复用主进程同一串行切换入口，菜单按实际模式与准备状态更新。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
+呈现切换 IPC 允许精灵宿主、主窗口和交互桌面；托盘复用同一串行入口。录音、转写和附件上传状态由 [ui-state.ts](ipc/ui-state.ts) 合并，切换入口共同消费阻止原因。该桥按账户在进程内持有页面、会话、主对话草稿与阅读位置，核对鉴权会话和合法 sender；主动切换等待来源捕获与目标恢复，失败保留来源界面。快照不持久化文件访问许可，主窗口与桌面通过受控导航交接。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
 
 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../desktop-host/README.md)。界面与交互屏背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
 
 桌面窗口固定页面缩放，使顶栏和 Dock 的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。挂载后用 `showInactive()` 同步 Electron 可见状态；原生层级、几何复验与工作区恢复由 [helper](../desktop-host/README.md#工作区与层级)负责。
 
-真实主指针释放请求输入焦点；生活／工作显式导航还调用 `focus()`、`moveTop()` 置前，全屏时跳过激活。主进程与 helper 在各自串行队列执行时核对窗口、账户、舞台代次和锁屏。前台广播不抢焦点，渲染层手势不能代替权限校验。焦点请求超时终止 host 并恢复，防止迟到请求继续改动焦点；视图资格与状态同步见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+真实主指针释放请求输入焦点；显式页面与会话导航还调用 `focus()`、`moveTop()` 置前，全屏时跳过激活。主进程与 helper 在各自串行队列执行时核对窗口、账户、舞台代次和锁屏。前台广播不抢焦点，渲染层手势不能代替权限校验。焦点请求超时终止 host 并恢复，防止迟到请求继续改动焦点；视图资格与状态同步见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 
 账户失效、呈现切换、显示器变化、渲染器失败与退出都先恢复系统，再销毁桌面窗口。准备期间的换号、退出、拔屏或 renderer 失败立即使当前接管失效；界面就绪与页面加载共享限时预算。休眠或唤醒时恢复窗口模式并保留桌面偏好，须由用户重新选择桌面模式，避免接管 guardian 已恢复的系统窗口。
 
@@ -101,7 +101,7 @@
 
 ## 配置镜像
 
-[runner-config.ts](ipc/runner-config.ts) 的整份配置与路径修改只接受工作台或交互桌面；其他入口使用窄通道。`prefs.ts` 只允许 `companion.*` 点键，主题、技能与工具集走 `mutate`，云端水合走 `applyCloudMirror`，账户隔离清理走 `clearSyncedMirror`。
+[runner-config.ts](ipc/runner-config.ts) 的整份配置与路径修改只接受主窗口或交互桌面；其他入口使用窄通道。`prefs.ts` 只允许 `companion.*` 点键，主题、技能与工具集走 `mutate`，云端水合走 `applyCloudMirror`，账户隔离清理走 `clearSyncedMirror`。
 
 [runner-config-store.ts](shared/lib/runner-config-store.ts) 串行落盘与推送；`patch` 拒绝原型链路径和非 JSON 值。普通修改失败回滚内存，云端水合与账户隔离清理即使落盘失败仍保留新内存值。云同步以 `flushQueued` 补跑在途编辑、`authEpoch` 隔离旧账户并抑制水合回环。白名单、所有权与冲突语义归 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
@@ -130,7 +130,7 @@
 
 - electron-updater 的 error 事件不带来源，阶段按最近发起的检查、下载或安装归属；新增触发入口须同步设置阶段。
 - 更新源在每次检查和下载前按保存的后端地址核对，不锁定首个地址；Runner 预取使用发现该版本时的更新源。
-- 安装包下载完成先广播 `preparing`，Runner 预取校验通过才广播 `downloaded`；入口只接受生活空间或交互桌面 sender。
+- 安装包下载完成先广播 `preparing`，Runner 预取校验通过才广播 `downloaded`；入口只接受主窗口或交互桌面 sender。
 - 安装入口先等待桌面恢复，再调用 `quitAndInstall`；Windows updater 会先启动安装器再发退出事件，不能仅靠退出钩子保证恢复顺序。
 - 更新状态广播给全部窗口，不假定主窗口存在；实际消费方由渲染层 `update-bridge` 挂载位置决定。
 
@@ -152,7 +152,7 @@
 
 ## 构建产物
 
-tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆盖 main 与 shared。修改导出或路径须核对实际文件名与 `package.json` 的 main。
+tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆盖 main 与 shared。Vite 的主窗口入口为 `main.html`，由 `renderer-paths.ts` 与产物检查共同消费；旧双窗口入口不再构建。修改导出或路径须核对实际文件名与 `package.json` 的 main。
 
 开发 CSP 允许 Vite 所需能力，生产保持严格策略，不能为修复开发白屏放宽生产 CSP。mac entitlements 开 JIT、关库校验，见 [security](security/)。
 

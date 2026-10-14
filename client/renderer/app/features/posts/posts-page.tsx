@@ -73,8 +73,7 @@ export function PostsPage({
   const readInFlight = useRef(false)
   const beginAsync = useAsyncGuard()
 
-  const foreground =
-    (suppliedForeground ?? (surfaceOpen === 'living' && surfaceVisible)) && !screenLocked && documentActive
+  const foreground = (suppliedForeground ?? (surfaceOpen && surfaceVisible)) && !screenLocked && documentActive
 
   const wasForeground = useRef(foreground)
 

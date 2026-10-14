@@ -10,11 +10,11 @@ export function openWhisper(sessionId?: string): void {
   $whisperOpen.set(true)
 }
 
-// 桌面陪伴提醒进入轻语，完整入口内的陪伴提醒进入生活空间；工作会话由工作台消费。
+// 精灵旁的陪伴提醒进入轻语，其余提醒定位唯一主对话。
 export function openSessionSurface(sessionId: string): void {
   if (sessionId === $companionSessionId.get()) {
-    if ($surfaceRole.get() !== 'sprite' || $surfaceOpen.get() !== null) {
-      void requestOpenSurface('living', { view: 'chat' })
+    if ($surfaceRole.get() !== 'sprite' || $surfaceOpen.get()) {
+      void requestOpenSurface({ page: 'chat', sessionId })
 
       return
     }
@@ -24,5 +24,5 @@ export function openSessionSurface(sessionId: string): void {
     return
   }
 
-  void requestOpenSurface('workbench', { sessionId, view: 'chat' })
+  void requestOpenSurface({ sessionId, page: 'chat' })
 }

@@ -86,7 +86,7 @@ function isIntegratedGpu(): boolean {
 }
 
 // 帧预算自动降级：大面积 backdrop-filter 合成持续超预算时撤销玻璃更可取；2s 连续超时才降级（抖动不触发），10s 连续达标才恢复（滞回避免临界负载来回切换）。
-/** 表面窗口（living/workbench）挂载后启动的 rAF 帧间隔监视，返回停止函数。 */
+/** 主窗口挂载后启动的 rAF 帧间隔监视，返回停止函数。 */
 export function initGlassBudgetGuard(): () => void {
   let last = 0
   let overAccum = 0

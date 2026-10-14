@@ -167,7 +167,7 @@ export function SpriteWindow(): React.JSX.Element {
         action: {
           label: voice.invalidAction,
           onClick: () => {
-            void requestOpenSurface('living', { view: 'settings/voice' })
+            void requestOpenSurface({ page: 'settings', section: 'voice' })
           }
         }
       })
@@ -201,7 +201,7 @@ export function SpriteWindow(): React.JSX.Element {
       {activationOpen && <ActivationOverlay onClose={() => setActivationOpen(false)} />}
       {showOnboarding && <OnboardingFlow onCompleted={onOnboardingComplete} />}
       <SpriteStage
-        hidden={showOnboarding || surfaceOpen === 'living' || surfaceOpen === 'workbench'}
+        hidden={showOnboarding || surfaceOpen}
         onContextMenu={e => {
           openContextMenu({ x: e.clientX, y: e.clientY })
         }}
@@ -216,8 +216,8 @@ export function SpriteWindow(): React.JSX.Element {
       </SpriteStage>
       <SpriteContextMenu
         onOpenActivation={() => setActivationOpen(true)}
-        onOpenSurface={surface => {
-          void requestOpenSurface(surface)
+        onOpenSurface={() => {
+          void requestOpenSurface()
         }}
       />
       <ProactiveBubble />

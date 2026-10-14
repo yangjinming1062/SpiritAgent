@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { $companionVoiceId, $persona, setCompanionVoiceId } from '@/modules/character'
 import {
@@ -15,6 +15,8 @@ import {
   voiceSelectionId
 } from '@/modules/speech'
 import { requestGateway } from '@/shared'
+import { usePanelActivity } from '@/shared/context/panel-activity'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { Check } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
@@ -35,7 +37,7 @@ import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 import { GENDER_FILTER_VALUES } from '@/shared/voice-catalog'
 
-// 音色页：目录筛选 / 试听 / 切换 + 专属音色设计。长页（living-settings）内嵌段。
+// 音色目录筛选、试听、切换与专属音色设计。
 export function VoicePage(): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.voice
@@ -44,6 +46,9 @@ export function VoicePage(): React.ReactElement {
   const currentVoice = useStore($companionVoiceId)
   const locale = useStore($locale)
   const gatewayState = useStore($gatewayState)
+  const active = usePanelActivity()
+  const previewAbort = useRef<AbortController | null>(null)
+  const beginAsync = useAsyncGuard()
 
   const [catalog, setCatalog] = useState<VoiceCatalog>({
     providers: [],
@@ -67,6 +72,33 @@ export function VoicePage(): React.ReactElement {
     [catalog.voices, genderFilter]
   )
 
+  useLayoutEffect(() => {
+    return () => {
+      previewAbort.current?.abort()
+      previewAbort.current = null
+    }
+  }, [active])
+
+  const beginPreview = (): AbortSignal | null => {
+    if (!active) {
+      return null
+    }
+
+    previewAbort.current?.abort()
+    const controller = new AbortController()
+    previewAbort.current = controller
+
+    return controller.signal
+  }
+
+  const previewDataUrl = (dataUrl: string): void => {
+    const signal = beginPreview()
+
+    if (signal) {
+      void playDataUrl(dataUrl, { signal })
+    }
+  }
+
   // 网关就绪后才拉取，重连时重新拉取；清理后到达的结果丢弃。
   useEffect(() => {
     if (gatewayState !== 'open') {
@@ -74,10 +106,11 @@ export function VoicePage(): React.ReactElement {
     }
 
     let cancelled = false
+    const isLive = beginAsync()
     setCatalogStatus('loading')
 
     void fetchVoiceCatalogRaw(requestGateway, locale).then(r => {
-      if (cancelled) {
+      if (cancelled || !isLive()) {
         return
       }
 
@@ -93,26 +126,44 @@ export function VoicePage(): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [locale, gatewayState, catalogReloadKey])
+  }, [locale, gatewayState, catalogReloadKey, beginAsync])
 
   const runDesign = async (): Promise<void> => {
     const prompt = designPrompt.trim()
 
-    if (!prompt) {
+    if (!prompt || designing) {
       return
     }
+
+    const signal = beginPreview()
+
+    if (!signal) {
+      return
+    }
+
+    const isLive = beginAsync()
 
     setDesigning(true)
     setDesignHint(null)
 
     try {
       const result = await designVoice(requestGateway, prompt, sampleLine(persona?.name ?? ''))
-      setDesignPreview(result)
-      void playDataUrl(result.trialAudioDataUrl)
+
+      if (isLive()) {
+        setDesignPreview(result)
+
+        if (!signal.aborted) {
+          void playDataUrl(result.trialAudioDataUrl, { signal })
+        }
+      }
     } catch {
-      setDesignHint(t.designFailed)
+      if (isLive()) {
+        setDesignHint(t.designFailed)
+      }
     } finally {
-      setDesigning(false)
+      if (isLive()) {
+        setDesigning(false)
+      }
     }
   }
 
@@ -171,9 +222,18 @@ export function VoicePage(): React.ReactElement {
               <div className="flex shrink-0 gap-1.5">
                 <VoiceActions
                   inUse={inUse}
-                  onPreview={() =>
-                    void speakScripted(sampleLine(persona?.name ?? ''), selectionId || undefined, 'voice.preview')
-                  }
+                  onPreview={() => {
+                    const signal = beginPreview()
+
+                    if (signal) {
+                      void speakScripted(
+                        sampleLine(persona?.name ?? ''),
+                        selectionId || undefined,
+                        'voice.preview',
+                        signal
+                      )
+                    }
+                  }}
                   selectionId={selectionId}
                 />
               </div>
@@ -209,7 +269,7 @@ export function VoicePage(): React.ReactElement {
               {designPreview && (
                 <VoiceActions
                   inUse={currentVoice === designPreview.voiceId}
-                  onPreview={() => void playDataUrl(designPreview.trialAudioDataUrl)}
+                  onPreview={() => previewDataUrl(designPreview.trialAudioDataUrl)}
                   selectionId={designPreview.voiceId}
                 />
               )}

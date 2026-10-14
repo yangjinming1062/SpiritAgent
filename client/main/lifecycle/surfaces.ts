@@ -1,4 +1,4 @@
-// 入口面互斥管理器：生活空间与工作台同一时刻最多一个窗口可见。
+// 主窗口生命周期、侧边伙伴几何与播放资格。
 
 import {
   BrowserWindow,
@@ -14,15 +14,13 @@ import {
   type DesktopSurfaceChangedEvent,
   type DesktopSurfaceOpenPayload,
   IPC,
-  normalizeSurfaceId,
+  normalizeAppNavigation,
   type SurfaceCompanionPreference,
-  type SurfaceCompanionState,
-  type SurfaceId
+  type SurfaceCompanionState
 } from '@ipc/contracts'
-import { clamp } from '@runtime'
+import { clamp, errorMessage } from '@runtime'
 
 import { isSenderWindow } from '../security/ipc-trust'
-import * as runnerConfigStore from '../shared/lib/runner-config-store'
 import {
   broadcastToAllWindows,
   createPlaybackClaims,
@@ -31,17 +29,20 @@ import {
   setWindowIgnoreMouseEvents
 } from '../shared/utils'
 
-import { companionSlot, outerBounds, PANEL_SIZES, panelBounds, parseCompanionPreference } from './surface-companion'
+import { companionSlot, outerBounds, PANEL_SIZE, panelBounds, parseCompanionPreference } from './surface-companion'
 import type { CreatedSurfaceWindow } from './surface-window'
 
 export interface SurfacesManager {
   closeSurface: () => Promise<void>
-  hydrateLastSurface: () => SurfaceId
+  getWindow: () => BrowserWindow | null
+  isOpen: () => boolean
   /** sender 是否为该入口面当前窗口的 webContents；用于只允许特定入口调用的通道。 */
-  isSurfaceSender: (id: SurfaceId, sender: Pick<WebContents, 'id'>) => boolean
+  isSurfaceSender: (sender: Pick<WebContents, 'id'>) => boolean
   minimizeWindow: (win: BrowserWindow) => void
-  onWindowClosed: (id: SurfaceId, win: BrowserWindow) => void
+  onWindowClosed: (win: BrowserWindow) => void
+  onWindowLoading: (win: BrowserWindow) => void
   openSurface: (payload: DesktopSurfaceOpenPayload) => Promise<void>
+  restoreMainWindow: (payload: DesktopSurfaceOpenPayload) => Promise<void>
   /** 精灵窗显示、隐藏、最小化或还原后调用，向各窗口发布含 `spriteVisible` 的新快照。 */
   publishSpriteVisibility: () => void
   registerIpcHandlers: (deps: { ipcMain: IpcMain }) => void
@@ -53,21 +54,22 @@ export interface SurfacesManager {
 }
 
 interface SurfacesManagerOptions {
-  createWindow: (id: SurfaceId, payload?: DesktopSurfaceOpenPayload) => Promise<CreatedSurfaceWindow>
-  getCompanionPreference: (id: SurfaceId) => SurfaceCompanionPreference
+  createWindow: (payload?: DesktopSurfaceOpenPayload) => Promise<CreatedSurfaceWindow>
+  getCompanionPreference: () => SurfaceCompanionPreference
   getSpriteWindow: () => BrowserWindow | null
+  isQuitting: () => boolean
+  isPreferencesSender?: (sender: WebContents) => boolean
   routeToDesktop?: (payload: DesktopSurfaceOpenPayload) => boolean
-  navigateWindow?: (win: BrowserWindow, id: SurfaceId, payload: DesktopSurfaceOpenPayload) => Promise<void> | void
-  saveCompanionPreference: (id: SurfaceId, preference: SurfaceCompanionPreference) => Promise<void>
+  prepareWindow?: (win: BrowserWindow, payload: DesktopSurfaceOpenPayload) => Promise<void>
+  navigateWindow?: (win: BrowserWindow, payload: DesktopSurfaceOpenPayload) => Promise<void> | void
+  saveCompanionPreference: (preference: SurfaceCompanionPreference) => Promise<void>
   rememberLog?: (chunk: string) => void
   syncSpriteToDisplay?: (display: Electron.Display) => void
 }
 
-const LAST_SURFACE_KEY_PATH = ['ui', 'last_surface'] as const
 const RESTORE_SETTLE_MS = 60
 
 interface SurfaceWindowState extends CreatedSurfaceWindow {
-  id: SurfaceId
   side: SurfaceCompanionPreference['side']
   reason: 'edge' | null
   expectedBounds: Rectangle | null
@@ -85,15 +87,11 @@ function clearLayoutTimers(layout: SurfaceWindowState): void {
   clearTimeout(layout.restoreTimer)
 }
 
-async function persistLastSurface(id: SurfaceId): Promise<void> {
-  await runnerConfigStore.patch(LAST_SURFACE_KEY_PATH, { value: id })
-}
-
 export function createSurfacesManager(options: SurfacesManagerOptions): SurfacesManager {
-  const windows = new Map<SurfaceId, SurfaceWindowState>()
-  let openSurfaceId: null | SurfaceId = null
+  let surfaceWindow: SurfaceWindowState | null = null
+  let loadingWindow: BrowserWindow | null = null
+  let surfaceOpen = false
   const withMutex = createSerialQueue()
-  let lastSurface: SurfaceId | null = null
   let unbindSurfaceDisplaySync: null | (() => void) = null
   let screenLocked = false
   let stateRevision = 0
@@ -102,22 +100,18 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   const playbackClaims = createPlaybackClaims()
 
   function findSurfaceWindow(win: BrowserWindow | null): SurfaceWindowState | undefined {
-    for (const surface of windows.values()) {
-      if (surface.win === win) {
-        return surface
-      }
-    }
+    return surfaceWindow && surfaceWindow.win === win ? surfaceWindow : undefined
   }
 
   function isCurrentWindow(surface: SurfaceWindowState): boolean {
-    return windows.get(surface.id) === surface && !surface.win.isDestroyed()
+    return surfaceWindow === surface && !surface.win.isDestroyed()
   }
 
-  function companionState(id: SurfaceId): SurfaceCompanionState {
-    const preference = options.getCompanionPreference(id)
-    const layout = windows.get(id)
+  function companionState(): SurfaceCompanionState {
+    const preference = options.getCompanionPreference()
+    const layout = surfaceWindow
     const win = layout?.win
-    const isOpen = openSurfaceId === id && !!win && !win.isDestroyed()
+    const isOpen = surfaceOpen && !!win && !win.isDestroyed()
     const isActive = isOpen && win.isVisible()
     const minimized = isOpen && (win.isMinimized() || !!layout?.minimizing)
     const maximized = isActive && (win.isMaximized() || !!layout?.transitioning)
@@ -150,11 +144,11 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   }
 
   function snapshot(): DesktopSurfaceChangedEvent {
-    const openWindow = openSurfaceId ? windows.get(openSurfaceId)?.win : null
+    const openWindow = surfaceOpen ? surfaceWindow?.win : null
 
     return {
-      companions: { living: companionState('living'), workbench: companionState('workbench') },
-      open: openSurfaceId,
+      companion: companionState(),
+      open: surfaceOpen,
       openVisible: isWindowShown(openWindow),
       revision: stateRevision,
       screenLocked,
@@ -184,7 +178,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   }
 
   function applyCompanionLayout(layout: SurfaceWindowState): void {
-    const { id, win } = layout
+    const { win } = layout
 
     if (!isCurrentWindow(layout)) {
       return
@@ -196,7 +190,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       return
     }
 
-    const preference = options.getCompanionPreference(id)
+    const preference = options.getCompanionPreference()
     const area = screen.getDisplayMatching(layout.panel).workArea
     const slot = companionSlot(layout.panel, preference.side, preference.enabled, area)
     const target = outerBounds(layout.panel, preference.side, slot.width)
@@ -207,7 +201,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     if (!sameBounds(win.getBounds(), target)) {
       // 收起侧栏时先放宽最小宽度；展开后再约束整个物理窗口。
       layout.expectedBounds = target
-      win.setMinimumSize(PANEL_SIZES[id].minWidth, PANEL_SIZES[id].minHeight)
+      win.setMinimumSize(PANEL_SIZE.minWidth, PANEL_SIZE.minHeight)
       win.setBounds(target)
 
       clearTimeout(layout.adjustmentTimer)
@@ -227,18 +221,17 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       }, 0)
     }
 
-    win.setMinimumSize(PANEL_SIZES[id].minWidth + slot.width, PANEL_SIZES[id].minHeight)
+    win.setMinimumSize(PANEL_SIZE.minWidth + slot.width, PANEL_SIZE.minHeight)
 
     publish()
   }
 
-  function registerSurfaceWindow(id: SurfaceId, created: CreatedSurfaceWindow): SurfaceWindowState {
+  function registerSurfaceWindow(created: CreatedSurfaceWindow): SurfaceWindowState {
     const { win } = created
-    const preference = options.getCompanionPreference(id)
+    const preference = options.getCompanionPreference()
 
     const layout: SurfaceWindowState = {
       ...created,
-      id,
       expectedBounds: null,
       preservedPanel: null,
       reason: null,
@@ -247,7 +240,11 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       minimizing: false
     }
 
-    windows.set(id, layout)
+    surfaceWindow = layout
+
+    if (loadingWindow === win) {
+      loadingWindow = null
+    }
 
     const onGeometry = (): void => {
       if (!isCurrentWindow(layout) || layout.expectedBounds) {
@@ -382,68 +379,103 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
   }
 
-  const onWindowClosed = (id: SurfaceId, win: BrowserWindow): void => {
-    const layout = windows.get(id)
+  const onWindowClosed = (win: BrowserWindow): void => {
+    if (loadingWindow === win) {
+      loadingWindow = null
+    }
+
+    const layout = surfaceWindow
 
     if (layout?.win !== win) {
       return
     }
 
     clearLayoutTimers(layout)
-    windows.delete(id)
+    surfaceWindow = null
 
-    if (openSurfaceId === id) {
+    if (surfaceOpen) {
       clearSurfaceDisplaySync()
-      openSurfaceId = null
+      surfaceOpen = false
+      restoreSpriteWindow()
       publish()
     }
   }
 
+  const onWindowLoading = (win: BrowserWindow): void => {
+    if (
+      (surfaceWindow && !surfaceWindow.win.isDestroyed() && surfaceWindow.win !== win) ||
+      (loadingWindow && !loadingWindow.isDestroyed() && loadingWindow !== win)
+    ) {
+      throw new Error('主窗口已存在。')
+    }
+
+    loadingWindow = win
+  }
+
+  function restoreSpriteWindow(): void {
+    const sprite = options.getSpriteWindow()
+
+    if (!options.isQuitting() && sprite && !sprite.isDestroyed()) {
+      sprite.showInactive()
+    }
+  }
+
   // 隐藏已打开的入口窗并清除打开状态，不发布快照。
-  const hideOpenSurface = (current: SurfaceId): void => {
-    const win = windows.get(current)?.win
+  const hideOpenSurface = (): void => {
+    const win = surfaceWindow?.win
 
     if (win && !win.isDestroyed()) {
       win.hide()
     }
 
     clearSurfaceDisplaySync()
-    openSurfaceId = null
+    surfaceOpen = false
   }
 
   const internalClose = (): void => {
-    if (openSurfaceId) {
-      hideOpenSurface(openSurfaceId)
+    if (surfaceOpen) {
+      hideOpenSurface()
+      restoreSpriteWindow()
       publish()
     }
   }
 
-  const internalOpen = async (payload: DesktopSurfaceOpenPayload, forcePublish = false): Promise<void> => {
-    if (options.routeToDesktop?.(payload)) {
+  const internalOpen = async (
+    payload: DesktopSurfaceOpenPayload,
+    forcePublish = false,
+    restore = false
+  ): Promise<void> => {
+    if (!restore && options.routeToDesktop?.(payload)) {
       publish(forcePublish)
 
       return
     }
 
-    const id = normalizeSurfaceId(payload.surface)
-
-    if (openSurfaceId && openSurfaceId !== id) {
-      hideOpenSurface(openSurfaceId)
-    }
-
-    let surface = windows.get(id)
+    let surface = surfaceWindow
 
     if (!surface || surface.win.isDestroyed()) {
-      surface = registerSurfaceWindow(id, await options.createWindow(id, payload))
-    } else if (payload.view || payload.sessionId) {
-      await options.navigateWindow?.(surface.win, id, payload)
+      surface = registerSurfaceWindow(await options.createWindow(payload))
     }
 
     const { win } = surface
 
-    // navigate/create 期间用户关窗：窗口已销毁，不能再 show/focus，也不能残留 openSurfaceId。
+    try {
+      await options.prepareWindow?.(win, payload)
+    } catch (error) {
+      if (restore) {
+        throw error
+      }
+
+      options.rememberLog?.(`[main-window] view restore failed: ${errorMessage(error)}`)
+    }
+
+    if (payload.page || payload.section || payload.sessionId || payload.messageKey) {
+      await options.navigateWindow?.(win, payload)
+    }
+
+    // navigate/create 期间用户退出：窗口已销毁，不能再 show/focus。
     if (win.isDestroyed()) {
-      onWindowClosed(id, win)
+      onWindowClosed(win)
       publish(forcePublish)
 
       return
@@ -455,16 +487,20 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
     surface.minimizing = false
 
+    surfaceOpen = true
+    const sprite = options.getSpriteWindow()
+
+    if (sprite && !sprite.isDestroyed()) {
+      sprite.hide()
+    }
+
     win.show()
     win.focus()
-    openSurfaceId = id
     bindSurfaceDisplaySync(win)
-    lastSurface = id
 
     syncSpriteToSurfaceDisplay(win)
 
     publish(forcePublish)
-    await persistLastSurface(id)
   }
 
   const openSurface = (payload: DesktopSurfaceOpenPayload): Promise<void> =>
@@ -479,14 +515,12 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     })
 
   const toggleSurface = (payload: DesktopSurfaceOpenPayload): Promise<void> => {
-    const id = normalizeSurfaceId(payload.surface)
-
     return withMutex(async () => {
       if (options.routeToDesktop?.(payload)) {
         return
       }
 
-      if (openSurfaceId === id && isWindowShown(windows.get(id)?.win)) {
+      if (surfaceOpen && isWindowShown(surfaceWindow?.win)) {
         internalClose()
 
         return
@@ -497,15 +531,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   }
 
   const closeSurface = (): Promise<void> => withMutex(internalClose)
-
-  const hydrateLastSurface = (): SurfaceId => {
-    if (lastSurface === null) {
-      const ui = runnerConfigStore.read().ui as { last_surface?: unknown } | undefined
-      lastSurface = normalizeSurfaceId(ui?.last_surface)
-    }
-
-    return lastSurface
-  }
 
   const minimizeWindow = (win: BrowserWindow): void => {
     if (win.isDestroyed()) {
@@ -545,32 +570,30 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
   }
 
-  const isSurfaceSender = (id: SurfaceId, sender: Pick<WebContents, 'id'>): boolean => {
-    return isSenderWindow(sender, windows.get(id)?.win)
+  const isSurfaceSender = (sender: Pick<WebContents, 'id'>): boolean => {
+    return isSenderWindow(sender, surfaceWindow?.win) || isSenderWindow(sender, loadingWindow)
   }
 
   const refreshCompanionGeometry = (): void => {
-    for (const layout of windows.values()) {
-      const { win } = layout
+    const layout = surfaceWindow
 
-      if (win.isDestroyed()) {
-        continue
-      }
-
-      const area = screen.getDisplayMatching(layout.panel).workArea
-
-      layout.panel = {
-        ...layout.panel,
-        x: clamp(layout.panel.x, area.x, area.x + area.width - layout.panel.width),
-        y: clamp(layout.panel.y, area.y, area.y + area.height - layout.panel.height)
-      }
-
-      if (layout.preservedPanel) {
-        layout.preservedPanel = { ...layout.panel }
-      }
-
-      applyCompanionLayout(layout)
+    if (!layout || layout.win.isDestroyed()) {
+      return
     }
+
+    const area = screen.getDisplayMatching(layout.panel).workArea
+
+    layout.panel = {
+      ...layout.panel,
+      x: clamp(layout.panel.x, area.x, area.x + Math.max(0, area.width - layout.panel.width)),
+      y: clamp(layout.panel.y, area.y, area.y + Math.max(0, area.height - layout.panel.height))
+    }
+
+    if (layout.preservedPanel) {
+      layout.preservedPanel = { ...layout.panel }
+    }
+
+    applyCompanionLayout(layout)
   }
 
   const setScreenLocked = (locked: boolean): void => {
@@ -592,13 +615,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
   const registerIpcHandlers = ({ ipcMain }: { ipcMain: IpcMain }): void => {
     ipcMain.handle(IPC.invoke.surfaceOpen, (_event, payload: unknown) => {
-      const { sessionId, surface, view } = (payload ?? {}) as { sessionId?: unknown; surface?: unknown; view?: unknown }
-
-      return openSurface({
-        sessionId: typeof sessionId === 'string' ? sessionId : undefined,
-        surface: normalizeSurfaceId(surface),
-        view: typeof view === 'string' ? view : undefined
-      })
+      return openSurface(normalizeAppNavigation(payload))
     })
 
     const resolveWindow = (event: IpcMainInvokeEvent): BrowserWindow | null => {
@@ -608,8 +625,8 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
         return fromSender
       }
 
-      if (openSurfaceId) {
-        const current = windows.get(openSurfaceId)?.win
+      if (surfaceOpen) {
+        const current = surfaceWindow?.win
 
         if (current && !current.isDestroyed()) {
           return current
@@ -646,12 +663,19 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
         const surface = findSurfaceWindow(BrowserWindow.fromWebContents(event.sender))
         const preference = parseCompanionPreference(raw)
 
-        if (!surface || !preference) {
+        if ((!surface && !options.isPreferencesSender?.(event.sender)) || !preference) {
           throw new Error('Invalid companion preference or surface sender')
         }
 
-        await options.saveCompanionPreference(surface.id, preference)
-        applyCompanionLayout(surface)
+        await options.saveCompanionPreference(preference)
+
+        if (surface) {
+          applyCompanionLayout(surface)
+        } else if (surfaceWindow) {
+          applyCompanionLayout(surfaceWindow)
+        }
+
+        publish()
 
         return snapshot()
       })
@@ -665,8 +689,8 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       const surface = findSurfaceWindow(sender)
 
       const allowed = surface
-        ? companionState(surface.id).visible
-        : sender === options.getSpriteWindow() && spriteWindowVisible() && openSurfaceId === null
+        ? companionState().visible
+        : sender === options.getSpriteWindow() && spriteWindowVisible() && !surfaceOpen
 
       if (!allowed) {
         return false
@@ -680,11 +704,20 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
   return {
     closeSurface,
-    hydrateLastSurface,
+    getWindow: () => {
+      if (surfaceWindow && !surfaceWindow.win.isDestroyed()) {
+        return surfaceWindow.win
+      }
+
+      return loadingWindow && !loadingWindow.isDestroyed() ? loadingWindow : null
+    },
+    isOpen: () => surfaceOpen,
     isSurfaceSender,
     minimizeWindow,
     onWindowClosed,
+    onWindowLoading,
     openSurface,
+    restoreMainWindow: payload => withMutex(() => internalOpen(payload, true, true)),
     publishSpriteVisibility: publish,
     registerIpcHandlers,
     resetPlaybackClaims: playbackClaims.reset,

@@ -40,7 +40,7 @@ export function WhisperOverlay(): React.JSX.Element | null {
   const open = useStore($whisperOpen)
   const surfaceOpen = useStore($surfaceOpen)
 
-  if (!open || surfaceOpen !== null) {
+  if (!open || surfaceOpen) {
     return null
   }
 
@@ -58,7 +58,7 @@ function WhisperOverlayContent(): React.JSX.Element {
   const isReadOnlySession = useIsReadOnlySession()
   const input = useChatInput({ gatewayState, isReadOnlySession })
 
-  // 轻语和生活空间一样加载唯一的陪伴会话——未加载或当前不在陪伴会话时定位到主陪伴会话。
+  // 轻语加载唯一的陪伴会话；未加载或当前不在陪伴会话时定位到主陪伴会话。
   useEffect(() => {
     if (gatewayState !== 'open') {
       return
@@ -79,10 +79,10 @@ function WhisperOverlayContent(): React.JSX.Element {
   return (
     <WhisperPositioner onDrop={input.handleDrop}>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ConversationSurface scrollRef={scrollRef} variant="living" />
+        <ConversationSurface scrollRef={scrollRef} variant="companion" />
       </div>
       <div className="shrink-0">
-        <ConversationInput {...input.inputProps} variant="living" />
+        <ConversationInput {...input.inputProps} variant="companion" />
       </div>
     </WhisperPositioner>
   )

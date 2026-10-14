@@ -1,13 +1,15 @@
 import { type App, BrowserWindow, screen } from 'electron'
 
-import type { DesktopSurfaceOpenPayload, SurfaceCompanionPreference, SurfaceId } from '@ipc/contracts'
-import { clamp } from '@runtime'
+import { type DesktopSurfaceOpenPayload, IPC, type SurfaceCompanionPreference } from '@ipc/contracts'
+import { clamp, errorMessage } from '@runtime'
+
+import { sendToWindow } from '../shared/utils'
 
 import {
   companionSlotMinimum,
   companionSlotWidth,
   outerBounds,
-  PANEL_SIZES,
+  PANEL_SIZE,
   preferredCompanionWidth
 } from './surface-companion'
 import type { SurfacesManager } from './surfaces'
@@ -24,41 +26,50 @@ interface SurfaceWindowDeps {
   app: Pick<App, 'dock' | 'isPackaged'>
   getAppIconPath: () => null | string
   getSurfaces: () => null | SurfacesManager
-  getCompanionPreference: (id: SurfaceId) => SurfaceCompanionPreference
+  getCompanionPreference: () => SurfaceCompanionPreference
+  isQuitting: () => boolean
   isMac: boolean
   preloadPath: string
   rebuildTrayMenu: () => void
-  rendererUrlFor: (id: SurfaceId, theme?: string) => string
+  rendererUrlFor: (id: 'main', theme?: string) => string
+  rememberLog: (message: string) => void
   seedTheme: () => string | undefined
   windowHandlers: { installSurfaceWindowHandlers: (win: BrowserWindow) => void }
   zoomPersistence: Pick<ZoomPersistence, 'restorePersistedZoomLevel'>
 }
 
 export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
-  createSurfaceWindow: (id: SurfaceId, payload?: DesktopSurfaceOpenPayload) => Promise<CreatedSurfaceWindow>
-  navigateSurfaceWindow: (win: BrowserWindow, id: SurfaceId, payload: DesktopSurfaceOpenPayload) => Promise<void>
+  createSurfaceWindow: (payload?: DesktopSurfaceOpenPayload) => Promise<CreatedSurfaceWindow>
+  navigateSurfaceWindow: (win: BrowserWindow, payload: DesktopSurfaceOpenPayload) => void
 } {
-  function surfaceLoadUrl(id: SurfaceId, payload?: DesktopSurfaceOpenPayload): string {
-    const url = new URL(deps.rendererUrlFor(id, deps.seedTheme()))
+  function surfaceLoadUrl(payload?: DesktopSurfaceOpenPayload): string {
+    const url = new URL(deps.rendererUrlFor('main', deps.seedTheme()))
 
-    if (payload?.view) {
-      url.hash = `#/${payload.view}`
+    if (payload?.section) {
+      url.hash = `#/settings/${payload.section}`
+
+      if (payload.section === 'skills' && payload.settingsTab) {
+        url.hash += `?subtab=${payload.settingsTab}`
+      }
+    } else if (payload?.page) {
+      url.hash = `#/${payload.page}`
     }
 
-    if (payload?.sessionId) {
-      url.searchParams.set('sessionId', payload.sessionId)
+    for (const key of ['sessionId', 'messageKey'] as const) {
+      const value = payload?.[key]
+
+      if (value) {
+        url.searchParams.set(key, value)
+      }
     }
 
     return url.toString()
   }
 
-  async function createSurfaceWindow(
-    id: SurfaceId,
-    payload?: DesktopSurfaceOpenPayload
-  ): Promise<CreatedSurfaceWindow> {
-    const defaults = PANEL_SIZES[id]
+  async function createSurfaceWindow(payload?: DesktopSurfaceOpenPayload): Promise<CreatedSurfaceWindow> {
+    const defaults = PANEL_SIZE
     const icon = deps.getAppIconPath() || undefined
-    const preference = deps.getCompanionPreference(id)
+    const preference = deps.getCompanionPreference()
     const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
     const initialHeight = clamp(defaults.height, defaults.minHeight, wa.height - 16)
     const desiredSlot = preference.enabled ? preferredCompanionWidth(initialHeight) : 0
@@ -91,7 +102,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       roundedCorners: false,
       show: false,
       skipTaskbar: false,
-      title: id === 'living' ? `${deps.appName} · 生活空间` : `${deps.appName} · 工作台`,
+      title: deps.appName,
       transparent: true,
       webPreferences: {
         backgroundThrottling: false,
@@ -106,24 +117,42 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       y: initialBounds.y
     })
 
-    if (deps.isMac && icon) {
-      deps.app.dock?.setIcon(icon)
-    }
-
-    deps.windowHandlers.installSurfaceWindowHandlers(win)
-
-    win.on('close', () => {
-      deps.getSurfaces()?.onWindowClosed(id, win)
-      deps.rebuildTrayMenu()
-    })
-
-    win.on('show', () => deps.rebuildTrayMenu())
-    win.on('hide', () => deps.rebuildTrayMenu())
-
     try {
-      await win.loadURL(surfaceLoadUrl(id, payload))
+      // 页面脚本可在 loadURL 完成前请求 IPC，构造后先登记唯一受控 sender。
+      deps.getSurfaces()?.onWindowLoading(win)
+
+      if (deps.isMac && icon) {
+        deps.app.dock?.setIcon(icon)
+      }
+
+      deps.windowHandlers.installSurfaceWindowHandlers(win)
+
+      win.on('close', event => {
+        if (deps.isQuitting()) {
+          return
+        }
+
+        event.preventDefault()
+        void deps
+          .getSurfaces()
+          ?.closeSurface()
+          .catch(error => {
+            deps.rememberLog(`[main-window] close failed: ${errorMessage(error)}`)
+          })
+      })
+      win.on('closed', () => {
+        deps.getSurfaces()?.onWindowClosed(win)
+        deps.rebuildTrayMenu()
+      })
+
+      win.on('show', () => deps.rebuildTrayMenu())
+      win.on('hide', () => deps.rebuildTrayMenu())
+
+      await win.loadURL(surfaceLoadUrl(payload))
+      deps.zoomPersistence.restorePersistedZoomLevel(win)
     } catch (error) {
-      // 构造与登记进 surfaces Map 之间的空窗：失败时回收，避免隐藏泄漏窗。
+      deps.getSurfaces()?.onWindowClosed(win)
+
       if (!win.isDestroyed()) {
         win.destroy()
       }
@@ -131,18 +160,11 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       throw error
     }
 
-    deps.zoomPersistence.restorePersistedZoomLevel(win)
-
     return { panel, slotWidth, win }
   }
 
-  async function navigateSurfaceWindow(
-    win: BrowserWindow,
-    id: SurfaceId,
-    payload: DesktopSurfaceOpenPayload
-  ): Promise<void> {
-    await win.loadURL(surfaceLoadUrl(id, payload))
-    deps.zoomPersistence.restorePersistedZoomLevel(win)
+  function navigateSurfaceWindow(win: BrowserWindow, payload: DesktopSurfaceOpenPayload): void {
+    sendToWindow(win, IPC.event.surfaceNavigate, payload)
   }
 
   return { createSurfaceWindow, navigateSurfaceWindow }

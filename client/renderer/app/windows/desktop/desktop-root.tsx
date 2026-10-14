@@ -2,18 +2,20 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { AccountMenu } from '@/app/features/accounts/account-menu'
 import { AppearancePage } from '@/app/features/appearance/appearance-page'
-import { DesktopLifePage } from '@/app/features/desktop-life/desktop-life-page'
+import { ConversationPage } from '@/app/features/conversation/conversation-page'
 import { useDesktopLifeStrings } from '@/app/features/desktop-life/desktop-life-strings'
 import { DiaryPage } from '@/app/features/diary/diary-page'
 import { PostsPage } from '@/app/features/posts/posts-page'
-import { RemotePage } from '@/app/features/remote/remote-page'
 import { ScenePage } from '@/app/features/scene/scene-page'
+import { AppSettings } from '@/app/features/settings/app-settings'
+import { $appPage, applyAppNavigation, setAppPage, setSettingsSection } from '@/app/navigation/app-navigation'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait, SpriteStatusBadge } from '@/modules/character'
 import {
+  $chatSessionId,
   $companionSessionId,
   ensureCompanionSession,
-  pushExternalAttachment,
   setChatSession,
   switchSession,
   useConversationUnread
@@ -35,13 +37,13 @@ import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
+import { $uiStateReady } from '@/shared/store/ui-state'
 import { useStrings } from '@/shared/strings'
 
-import { DesktopChat, DesktopWhisper } from './desktop-chat'
+import { DesktopWhisper } from './desktop-chat'
 import { DesktopDock } from './desktop-dock'
 import { DESKTOP_APPS, type DesktopApp, useDesktopLayout } from './desktop-layout'
-import { DesktopPreferences } from './desktop-preferences'
-import { DesktopAccounts, DesktopSettings } from './desktop-settings'
+import { DesktopSettings } from './desktop-settings'
 import { useDesktopStrings } from './desktop-strings'
 import { useDesktopVideoWallpaper } from './desktop-video-wallpaper'
 import { DesktopWindow } from './desktop-window'
@@ -58,7 +60,13 @@ const CONNECTION_TONE: Record<ConnectionState, ConnectionTone> = {
   open: 'online'
 }
 
-const DESKTOP_NAV_APPS = DESKTOP_APPS.filter(id => id !== 'chat' && id !== 'settings')
+type DesktopShortcut = 'remote' | 'desktopLife'
+
+const DESKTOP_NAV_APPS: (DesktopApp | DesktopShortcut)[] = [
+  ...DESKTOP_APPS.filter(id => id !== 'chat' && id !== 'settings'),
+  'desktopLife',
+  'remote'
+]
 
 export function DesktopRoot(): React.JSX.Element {
   useDesktopVideoWallpaper()
@@ -66,6 +74,8 @@ export function DesktopRoot(): React.JSX.Element {
   const desktopLife = useDesktopLifeStrings()
   const dict = useStrings()
   const auth = useStore($auth)
+  const uiStateReady = useStore($uiStateReady)
+  const appPage = useStore($appPage)
   const gatewayState = useStore($gatewayState)
   const gateway = useStore($gateway)
   const screenLocked = useStore($surfaceScreenLocked)
@@ -145,7 +155,9 @@ export function DesktopRoot(): React.JSX.Element {
         ? 'main'
         : null
 
-  const panelsEnabled = foreground && !accountOpen && !settingsOpen && !dockOverlayOpen
+  const panelsEnabled =
+    foreground && uiStateReady && auth.kind === 'authenticated' && !accountOpen && !settingsOpen && !dockOverlayOpen
+
   const activePanel = panelsEnabled && focused !== 'whisper' ? activeWindow : null
   const mainChatActive = activePanel === 'chat' && focused === 'main'
   const whisperChatActive = panelsEnabled && focused === 'whisper' && layout.whisperOpen
@@ -187,9 +199,17 @@ export function DesktopRoot(): React.JSX.Element {
   }, [])
 
   const activatePanel = useCallback(
-    (id: DesktopApp): void => {
-      activate(id)
-      setFocusedConversation(id === 'chat' ? 'main' : null)
+    (id: DesktopApp | DesktopShortcut): void => {
+      const page = id === 'remote' || id === 'desktopLife' ? 'settings' : id
+
+      if (id === 'remote' || id === 'desktopLife') {
+        setSettingsSection(id === 'remote' ? 'remote' : 'presentation')
+      } else {
+        setAppPage(page)
+      }
+
+      activate(page)
+      setFocusedConversation(page === 'chat' ? 'main' : null)
     },
     [activate]
   )
@@ -229,28 +249,24 @@ export function DesktopRoot(): React.JSX.Element {
   useEffect(
     () =>
       shellApi().desktop.onNavigate(payload => {
-        const view = payload.view?.split('/')[0]
+        void applyAppNavigation(payload)
+          .then(() => {
+            activatePanel($appPage.get())
 
-        // 工位与设置深链统一进设置窗口，具体分区由 DesktopPreferences 从 hash 解析。
-        const target: DesktopApp =
-          view !== undefined && ['inference', 'runner', 'skills', 'station'].includes(view)
-            ? 'settings'
-            : view && (DESKTOP_APPS as readonly string[]).includes(view)
-              ? (view as DesktopApp)
-              : 'chat'
-
-        activatePanel(target)
-
-        if (payload.sessionId) {
-          void switchSession(payload.sessionId)
-        }
-
-        if (payload.view) {
-          window.location.hash = `#/${payload.view}`
-        }
+            if (payload.messageKey) {
+              setUnreadReveal({ key: payload.messageKey, request: ++revealRequest.current })
+            }
+          })
+          .catch(error => notifyError(error, t.chat))
       }),
-    [activatePanel]
+    [activatePanel, t.chat]
   )
+
+  useEffect(() => {
+    if (uiStateReady) {
+      activatePanel(appPage)
+    }
+  }, [uiStateReady, appPage, activatePanel])
 
   useEffect(() => {
     document.title = `${dict.brand.name} · ${t.title}`
@@ -309,7 +325,7 @@ export function DesktopRoot(): React.JSX.Element {
   }, [auth.kind, gatewayState])
 
   useEffect(() => {
-    if (gatewayState !== 'open') {
+    if (gatewayState !== 'open' || !uiStateReady) {
       return
     }
 
@@ -324,11 +340,9 @@ export function DesktopRoot(): React.JSX.Element {
           initialized.current = true
           const target = new URLSearchParams(window.location.search).get('sessionId')
 
-          if (target) {
-            void switchSession(target)
-          } else {
-            setChatSession(id)
-          }
+          const selected = target || $chatSessionId.get() || id
+          setChatSession(selected)
+          void switchSession(selected)
         }
       })
       .catch(error => {
@@ -340,44 +354,7 @@ export function DesktopRoot(): React.JSX.Element {
     return () => {
       disposed = true
     }
-  }, [gateway, gatewayState, t.chat])
-
-  useEffect(() => {
-    if (!companionSessionId || gatewayState !== 'open') {
-      return
-    }
-
-    let disposed = false
-
-    const drain = (): void => {
-      void shellApi()
-        .chat.takePendingFeed()
-        .then(paths => {
-          if (!disposed && paths.length) {
-            pushExternalAttachment(paths)
-            openWhisper()
-          }
-        })
-        .catch(error => {
-          if (!disposed) {
-            notifyError(error, t.chat)
-          }
-        })
-    }
-
-    const off = shellApi().chat.onPendingFeed(drain)
-    // StrictMode 的首次清理不得提前取走一次性信箱内容。
-    queueMicrotask(() => {
-      if (!disposed) {
-        drain()
-      }
-    })
-
-    return () => {
-      disposed = true
-      off()
-    }
-  }, [companionSessionId, gatewayState, openWhisper, t.chat])
+  }, [gateway, gatewayState, uiStateReady, t.chat])
 
   useDismissOnOutside(menuRef, accountOpen, () => setAccountOpen(false))
   useDismissOnOutside(settingsRef, settingsOpen, () => setSettingsOpen(false))
@@ -397,14 +374,17 @@ export function DesktopRoot(): React.JSX.Element {
     switch (id) {
       case 'chat':
         return (
-          <DesktopChat
+          <ConversationPage
             active={mainChatActive}
             companionSessionId={companionSessionId}
             companionUnread={whisperHasUnread}
             containerRef={rootRef}
             foreground={foreground}
+            receiveExternalAttachments={visible && desktopVisible}
             reveal={unreadReveal}
+            viewId="desktop-main"
             visible={visible && desktopVisible}
+            windowId={1}
           />
         )
 
@@ -425,14 +405,8 @@ export function DesktopRoot(): React.JSX.Element {
       case 'appearance':
         return <AppearancePage />
 
-      case 'desktopLife':
-        return <DesktopLifePage />
-
-      case 'remote':
-        return <RemotePage />
-
       case 'settings':
-        return <DesktopPreferences />
+        return <AppSettings />
     }
   }
 
@@ -455,7 +429,12 @@ export function DesktopRoot(): React.JSX.Element {
   }
 
   return (
-    <div className={styles.desktop} data-whisper={layout.whisperOpen ? layout.whisperSide : 'closed'} ref={rootRef}>
+    <div
+      className={styles.desktop}
+      data-whisper={layout.whisperOpen ? layout.whisperSide : 'closed'}
+      inert={['starting', 'recovering'].includes(presentation.status)}
+      ref={rootRef}
+    >
       <div className={`${styles.avatarMenu} ${styles.avatarDock}`} ref={menuRef}>
         <button
           aria-expanded={accountOpen}
@@ -479,7 +458,7 @@ export function DesktopRoot(): React.JSX.Element {
           {portrait ? <img alt="" src={portrait} /> : <span>{dict.brand.name.slice(0, 1)}</span>}
           {whisperHasUnread && <span aria-hidden="true" className={styles.avatarUnread} />}
         </button>
-        {accountOpen && <DesktopAccounts onClose={() => setAccountOpen(false)} />}
+        {accountOpen && <AccountMenu onClose={() => setAccountOpen(false)} />}
       </div>
       <header className={styles.topbar} ref={topbarRef}>
         <div aria-hidden="true" className={styles.avatarSlot} />
@@ -532,7 +511,6 @@ export function DesktopRoot(): React.JSX.Element {
                 activatePanel('settings')
                 setSettingsOpen(false)
               }}
-              presentation={presentation}
             />
           )}
         </div>

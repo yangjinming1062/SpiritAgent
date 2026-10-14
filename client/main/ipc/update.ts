@@ -82,7 +82,7 @@ export function registerUpdateIpc({
     broadcastUpdate({ message: FEED_UNAVAILABLE_MESSAGE[language], phase: errorPhase, type: 'error' })
   }
 
-  // 自动检查可能早于生活空间开窗；新窗口订阅后读最新快照，补齐开窗前的状态。
+  // 自动检查可能早于主窗口打开；新窗口订阅后读取最新快照。
   ipcMain.handle(IPC.invoke.updateGetState, () => latestEvent)
 
   // 始终注册更新通道，避免渲染层调用未注册的 handler 抛出 unhandled rejection。

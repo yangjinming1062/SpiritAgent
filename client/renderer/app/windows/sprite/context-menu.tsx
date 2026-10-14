@@ -26,11 +26,10 @@ import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { requestCloseSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
-import type { SurfaceId } from '@ipc/contracts'
 
 interface ContextMenuProps {
   onOpenActivation?: () => void
-  onOpenSurface?: (surface: SurfaceId, view?: string) => void
+  onOpenSurface?: () => void
 }
 
 const MENU_ITEM_CLASS =
@@ -169,8 +168,12 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
       >
         {authed ? (
           <>
-            <MenuItem accent icon={Home} label={dict.living.title} onClick={() => onOpenSurface?.('living')} />
-            <MenuItem accent icon={Monitor} label={dict.workbench.title} onClick={() => onOpenSurface?.('workbench')} />
+            <MenuItem
+              accent
+              icon={Home}
+              label={en ? 'Open main window' : '打开主窗口'}
+              onClick={() => onOpenSurface?.()}
+            />
             {presentation.supported && presentation.effectiveMode !== 'desktop' && (
               <MenuItem
                 disabled={busy}

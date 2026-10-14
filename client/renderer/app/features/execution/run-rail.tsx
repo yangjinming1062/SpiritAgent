@@ -1,55 +1,91 @@
-// 工作台运行轨迹：本轮工具调用与本会话工件
+// 当前对话的工具调用与产物。
 
 import { useStore } from '@nanostores/react'
-import { type ReactNode, useMemo } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
-import { $isRailOpen, createRunRailStores } from '@/app/features/execution/run-rail-store'
-import { $chatSessionId, ChatMediaCard, getConversationRuntime } from '@/modules/conversation'
+import { createRunRailStores } from '@/app/features/execution/run-rail-store'
+import { ChatMediaCard, useConversationView } from '@/modules/conversation'
 import { X } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
 
 import styles from './run-rail.module.css'
 
-export function RunRail(): React.JSX.Element {
-  const sessionId = useStore($chatSessionId)
-  const runtime = getConversationRuntime(sessionId)
+export function RunRail({
+  closeLabel,
+  id,
+  onClose,
+  title
+}: {
+  closeLabel: string
+  id: string
+  onClose: () => void
+  title: string
+}): React.JSX.Element {
+  const { runtime } = useConversationView()
   const { $runRound, $artifacts } = useMemo(() => createRunRailStores(runtime), [runtime])
-  const open = useStore($isRailOpen)
   const round = useStore($runRound)
   const artifacts = useStore($artifacts)
-  const t = useStrings().workbench.runRail
+  const t = useStrings().conversation.runRail
+  const railRef = useRef<HTMLElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
 
-  // 用户手动折叠右栏后保留 0 宽，仅一个唤起条；展开恢复 320。
-  if (!open) {
-    return (
-      <aside className={styles.runRailCollapsed}>
-        <button
-          aria-label={t.expandAria}
-          className={styles.runRailExpand}
-          onClick={() => $isRailOpen.set(true)}
-          type="button"
-        >
-          <span className={styles.runRailExpandLabel}>{t.label}</span>
-        </button>
-      </aside>
-    )
-  }
+  useEffect(() => closeRef.current?.focus(), [])
 
   return (
-    <aside className={styles.runRail}>
+    <aside
+      aria-labelledby={`${id}-title`}
+      aria-modal="true"
+      className={styles.runRail}
+      id={id}
+      onKeyDown={event => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          onClose()
+
+          return
+        }
+
+        if (event.key !== 'Tab') {
+          return
+        }
+
+        const focusable = [
+          ...(railRef.current?.querySelectorAll<HTMLElement>(
+            'button, a[href], input, audio[controls], video[controls], [tabindex="0"]'
+          ) ?? [])
+        ].filter(element => !element.hasAttribute('disabled') && element.getClientRects().length > 0)
+
+        const first = focusable[0]
+        const last = focusable.at(-1)
+
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last?.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first?.focus()
+        }
+      }}
+      ref={railRef}
+      role="dialog"
+    >
       <header className={styles.runRailHeader}>
         <div className="flex items-center gap-2">
           <span className={styles.blueDot} />
           <div>
-            <h3 className={styles.runRailTitle}>{t.label}</h3>
+            <h3 className={styles.runRailTitle} id={`${id}-title`}>
+              {title}
+            </h3>
             <span className={styles.runRailSubtitle}>{round ? t.subtitle(round.steps.length) : t.idleSubtitle}</span>
           </div>
         </div>
         <button
-          aria-label={t.collapseAria}
+          aria-label={closeLabel}
           className={styles.runRailCollapse}
-          onClick={() => $isRailOpen.set(false)}
-          title={t.collapseTitle}
+          onClick={onClose}
+          ref={closeRef}
+          title={closeLabel}
           type="button"
         >
           <X className="size-3.5" />

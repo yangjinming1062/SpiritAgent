@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef } from 'react'
+import { type Dispatch, type SetStateAction, useCallback, useRef } from 'react'
 
 import { requestGateway } from '@/shared'
 import { captureAuthScope } from '@/shared/lib/authed-api'
@@ -26,6 +26,7 @@ import {
   getConversationRuntime,
   type PendingAttachment
 } from './chat-store'
+import { beginConversationInputActivity } from './conversation-input-busy'
 import { useConversationView } from './conversation-view'
 import { ensureChatSession } from './session-list-store'
 import { conversationVoiceSink } from './voice-link'
@@ -90,24 +91,11 @@ export function useChatSubmit({
   const ownerRef = useRef(controller)
   ownerRef.current = controller
   const controllerEpoch = currentClearEpoch()
-  const lifecycleRef = useRef({ mounted: true })
-  useEffect(() => {
-    const lifecycle = lifecycleRef.current
-    lifecycle.mounted = true
-
-    return () => {
-      lifecycle.mounted = false
-    }
-  }, [controller])
   const editing = useStore($chatEditDraft)
 
   const setPending: Dispatch<SetStateAction<PendingAttachment | null>> = useCallback(
     next => {
-      if (
-        !lifecycleRef.current.mounted ||
-        currentClearEpoch() !== controllerEpoch ||
-        ownerRef.current.$text !== controller.$text
-      ) {
+      if (currentClearEpoch() !== controllerEpoch) {
         return
       }
 
@@ -164,7 +152,7 @@ export function useChatSubmit({
       return
     }
 
-    if (!trimmed && !currentPending) {
+    if (!trimmed && !currentPending && externalPathsRef.current.length === 0) {
       return
     }
 
@@ -300,6 +288,7 @@ export function useChatSubmit({
     const initialSessionId = $chatSessionId.get()
     const epoch = currentClearEpoch()
     let target: ConversationRuntime = view.runtime
+    const finishPreparation = currentPending?.type === 'image' ? beginConversationInputActivity('uploading') : undefined
 
     try {
       const submit = getStrings().chat.submit
@@ -353,7 +342,7 @@ export function useChatSubmit({
         promptText = appendLine(promptText, folderDirective)
       }
 
-      // 等待期间切走的会话不再接收这条消息；附件已随切换丢弃，正文留在输入框。
+      // 等待期间切走会话时不提交，正文与附件仍归来源会话的草稿。
       if (
         !requestCurrent() ||
         !target.isCurrent() ||
@@ -429,9 +418,9 @@ export function useChatSubmit({
       ) {
         target.markAssistantTerminal({ error: errorMessage(err, getStrings().chat.sendFailed) })
         presentationPorts().setSpriteState('idle')
-        setPending(null)
       }
     } finally {
+      finishPreparation?.()
       setSending(false)
     }
   }, [
@@ -444,7 +433,6 @@ export function useChatSubmit({
     isReadOnlySession,
     onClearExternalPaths,
     onPreCheckFail,
-    setPending,
     setSending,
     setText,
     $chatEditDraft,

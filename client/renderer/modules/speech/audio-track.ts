@@ -3,6 +3,8 @@ import { log } from '@/shared/lib/log'
 export type AudioPlaybackResult = 'completed' | 'interrupted' | 'failed'
 
 export interface AudioPlaybackOptions {
+  /** 取消仅结束本次播放，不停止已接管的其他声音。 */
+  signal?: AbortSignal
   startAtSeconds?: number
   onStarted?: () => void
   onProgress?: (positionSeconds: number, completed: boolean, flush: boolean) => void
@@ -90,6 +92,10 @@ async function connectPlaybackGraph(audio: HTMLAudioElement, gen: number): Promi
 }
 
 export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions = {}): Promise<AudioPlaybackResult> {
+  if (options.signal?.aborted) {
+    return 'interrupted'
+  }
+
   stopAudio()
   const gen = nextGen()
   const audio = new Audio(dataUrl)
@@ -114,6 +120,7 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
 
     fired = true
     clearTimeout(preparationTimer)
+    options.signal?.removeEventListener('abort', stopDone)
 
     if (started) {
       position = audio.currentTime
@@ -147,6 +154,7 @@ export async function playDataUrl(dataUrl: string, options: AudioPlaybackOptions
   const stopDone = (): void => fireDone('interrupted')
 
   currentDone = stopDone
+  options.signal?.addEventListener('abort', stopDone, { once: true })
 
   audio.addEventListener('ended', () => fireDone('completed'), { signal })
   audio.addEventListener('error', () => fireDone('failed'), { signal })

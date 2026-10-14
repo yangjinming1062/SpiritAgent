@@ -341,7 +341,7 @@ export function handleConversationEvent(
         rememberReply(payload.text, bubbles, media)
       }
 
-      // 媒体已送达但对话界面收起：精灵可见时气泡只做轻量系统提示，点击打开轻语/生活空间；不可见或锁屏时不弹出，媒体已在会话历史中。
+      // 媒体已送达但对话界面收起：可见精灵用系统提示引导到轻语或主对话；不可见或锁屏时不弹出，媒体保留在会话历史。
       if (
         (media?.length ||
           bubbles?.some(bubble => (bubble.type === 'image' || bubble.type === 'video') && bubble.status === 'ready')) &&

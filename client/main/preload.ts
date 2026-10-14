@@ -79,6 +79,16 @@ function subscribe<C extends IpcEventChannel>(channel: C, callback: EventCallbac
 }
 
 const desktopBridge = {
+  uiState: {
+    get: (authSessionId: string) => invoke(IPC.invoke.uiStateGet, authSessionId),
+    update: (payload: InvokePayload<typeof IPC.invoke.uiStateUpdate>) => invoke(IPC.invoke.uiStateUpdate, payload),
+    ready: (authSessionId: string, revision: number) => invoke(IPC.invoke.uiStateReady, authSessionId, revision),
+    inputBusy: (authSessionId: string, state: Parameters<IpcInvokeContract['spiritagent:ui-state:input-busy']>[1]) =>
+      invoke(IPC.invoke.uiStateInputBusy, authSessionId, state),
+    reply: (payload: InvokePayload<typeof IPC.invoke.uiStateReply>) => invoke(IPC.invoke.uiStateReply, payload),
+    onRequest: (callback: EventCallback<typeof IPC.event.uiStateRequest>) =>
+      subscribe(IPC.event.uiStateRequest, callback)
+  },
   presentation: {
     companionActivity: (activity: InvokePayload<typeof IPC.invoke.presentationCompanionActivity>) =>
       invoke(IPC.invoke.presentationCompanionActivity, activity),
@@ -215,6 +225,7 @@ const desktopBridge = {
     maximize: () => invoke(IPC.invoke.surfaceMaximize),
     minimize: () => invoke(IPC.invoke.surfaceMinimize),
     onChanged: (cb: (payload: DesktopSurfaceChangedEvent) => void) => subscribe(IPC.event.surfaceChanged, cb),
+    onNavigate: (cb: EventCallback<typeof IPC.event.surfaceNavigate>) => subscribe(IPC.event.surfaceNavigate, cb),
     open: (payload: DesktopSurfaceOpenPayload) => invoke(IPC.invoke.surfaceOpen, payload),
     setCompanion: (preference: SurfaceCompanionPreference) => invoke(IPC.invoke.surfaceSetCompanion, preference),
     setIgnoreMouseEvents: (payload: InvokePayload<typeof IPC.invoke.surfaceSetIgnoreMouseEvents>) =>
@@ -222,8 +233,9 @@ const desktopBridge = {
   },
   chat: {
     onPendingFeed: (cb: (paths: string[]) => void) => subscribe(IPC.event.chatPendingFeed, cb),
-    setPendingFeed: (paths: string[]) => invoke(IPC.invoke.chatSetPendingFeed, paths),
-    takePendingFeed: () => invoke(IPC.invoke.chatTakePendingFeed)
+    setPendingFeed: (paths: string[], authSessionId: string) =>
+      invoke(IPC.invoke.chatSetPendingFeed, paths, authSessionId),
+    takePendingFeed: (authSessionId: string) => invoke(IPC.invoke.chatTakePendingFeed, authSessionId)
   },
   skills: {
     list: () => invoke(IPC.invoke.skillsList),

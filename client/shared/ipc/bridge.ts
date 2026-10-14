@@ -15,6 +15,14 @@ type EventSubscription<K extends keyof IpcEventContract> = IpcEventContract[K] e
   : (callback: () => void) => () => void
 
 export interface DesktopBridge {
+  uiState: {
+    get: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:get']>
+    update: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:update']>
+    ready: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:ready']>
+    inputBusy: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:input-busy']>
+    reply: AsyncIpc<IpcInvokeContract['spiritagent:ui-state:reply']>
+    onRequest: EventSubscription<'spiritagent:ui-state:request'>
+  }
   presentation: {
     companionActivity: AsyncIpc<IpcInvokeContract['spiritagent:presentation:companion-activity']>
     setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:presentation:set-ignore-mouse-events']>
@@ -122,6 +130,7 @@ export interface DesktopBridge {
     setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-ignore-mouse-events']>
     claimPlay: AsyncIpc<IpcInvokeContract['spiritagent:surface:claim-play']>
     onChanged: EventSubscription<'spiritagent:surface:changed'>
+    onNavigate: EventSubscription<'spiritagent:surface:navigate'>
   }
   chat: {
     onPendingFeed: EventSubscription<'spiritagent:chat:pending-feed'>

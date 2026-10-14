@@ -65,7 +65,8 @@ export function retainConversationRuntime(runtime: ConversationRuntime): () => v
       runtimeReferences.set(runtime, count - 1)
     }
 
-    pruneConversationRuntimes()
+    // 同步重挂载会重新 retain；等本轮 effect 清理和登记完成后再释放 runtime。
+    queueMicrotask(pruneConversationRuntimes)
   }
 }
 

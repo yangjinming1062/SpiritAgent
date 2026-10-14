@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import {
   BookOpen,
-  Globe,
   type IconComponent,
   ImageIcon,
   MessageCircle,
@@ -39,8 +38,6 @@ const APP_ICONS: Record<DesktopApp, IconComponent> = {
   diary: BookOpen,
   scene: ImageIcon,
   appearance: Shirt,
-  desktopLife: Monitor,
-  remote: Globe,
   settings: Settings
 }
 

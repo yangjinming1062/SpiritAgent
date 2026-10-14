@@ -29,7 +29,7 @@ import { createAuthBroadcaster, registerAuthIpc, registerDesktopAccountIpc } fro
 import { registerClipboardIpc } from './ipc/clipboard'
 import { createBackendAssetReader, registerConnectionIpc } from './ipc/connection'
 import { registerDesktopDock } from './ipc/desktop-dock'
-import { registerFilesIpc } from './ipc/files'
+import { clearPendingFeed, registerFilesIpc } from './ipc/files'
 import { registerGatewayIpc } from './ipc/gateway'
 import { registerLogIpc } from './ipc/log'
 import { registerMediaIpc } from './ipc/media'
@@ -240,11 +240,13 @@ const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactor
   app,
   appName: APP_NAME,
   getAppIconPath,
-  getCompanionPreference: id => surfaceCompanionPreferences.get(id),
+  getCompanionPreference: () => surfaceCompanionPreferences.get(),
   getSurfaces: () => surfaces,
   isMac: IS_MAC,
+  isQuitting: () => appQuit.isQuitting(),
   preloadPath: PRELOAD_PATH,
   rebuildTrayMenu,
+  rememberLog,
   rendererUrlFor,
   seedTheme: seedUiTheme,
   windowHandlers,
@@ -269,16 +271,26 @@ registerPrefsIpc({ ipcMain, log: rememberLog })
 
 surfaces = createSurfacesManager({
   createWindow: createSurfaceWindow,
-  getCompanionPreference: id => surfaceCompanionPreferences.get(id),
+  getCompanionPreference: () => surfaceCompanionPreferences.get(),
   getSpriteWindow: getMainWindow,
+  isQuitting: () => appQuit.isQuitting(),
   navigateWindow: navigateSurfaceWindow,
+  prepareWindow: (win, target) => presentation?.restoreUiState(win, target) ?? Promise.resolve(),
+  isPreferencesSender: sender => presentation?.isDesktopSender(sender) ?? false,
   rememberLog,
-  saveCompanionPreference: (id, preference) => surfaceCompanionPreferences.set(id, preference),
+  saveCompanionPreference: preference => surfaceCompanionPreferences.set(preference),
   syncSpriteToDisplay,
-  routeToDesktop: payload => presentation?.navigate(payload) ?? false
+  routeToDesktop: payload => {
+    const state = presentation?.getState()
+
+    if (state && ['starting', 'recovering'].includes(state.status)) {
+      throw new Error('正在切换运行模式，请稍后打开主窗口。')
+    }
+
+    return presentation?.navigate(payload) ?? false
+  }
 })
 surfaces.registerIpcHandlers({ ipcMain })
-surfaces.hydrateLastSurface()
 presentation = createDesktopPresentation({
   userData: SPIRITAGENT_HOME,
   preloadPath: PRELOAD_PATH,
@@ -290,12 +302,9 @@ presentation = createDesktopPresentation({
   rendererUrlFor,
   seedTheme: seedUiTheme,
   getSpriteWindow: getMainWindow,
-  isSettingsSender: sender =>
-    Boolean(
-      isSenderWindow(sender, getMainWindow()) ||
-      surfaces?.isSurfaceSender('living', sender) ||
-      surfaces?.isSurfaceSender('workbench', sender)
-    ),
+  getMainWindow: () => surfaces?.getWindow() ?? null,
+  restoreMain: target => surfaces?.restoreMainWindow(target) ?? Promise.resolve(),
+  isSettingsSender: sender => Boolean(isSenderWindow(sender, getMainWindow()) || surfaces?.isSurfaceSender(sender)),
   closeSurfaces: () => surfaces?.closeSurface() ?? Promise.resolve(),
   restoreSprite: () => {
     if (!appQuit.isQuitting()) {
@@ -305,6 +314,7 @@ presentation = createDesktopPresentation({
   },
   authenticated: () => Boolean(sessionRuntime.ensureBackendSession().getSession()?.hasToken),
   authIdentity: () => sessionRuntime.ensureBackendSession().getSession()?.sessionId ?? null,
+  authAccountId: () => sessionRuntime.ensureBackendSession().getSession()?.accountId ?? null,
   loadMedia: async (sender, reference) => {
     const asset = await readDesktopAsset(sender, { ...reference, preferCache: true })
 
@@ -345,6 +355,9 @@ registerClipboardIpc({
 registerLogIpc({ ipcMain, log: rememberLog })
 registerFilesIpc({
   electron: { dialog, getMainWindow },
+  authIdentity: () => sessionRuntime.ensureBackendSession().getSession()?.sessionId ?? null,
+  isFeedSender: sender => isSenderWindow(sender, getMainWindow()),
+  isFeedReceiver: sender => Boolean(surfaces?.isSurfaceSender(sender) || presentation?.isDesktopSender(sender)),
   ipcMain
 })
 registerOnboardingAudioIpc({
@@ -439,6 +452,7 @@ const autoUpdater = createAutoUpdater({
 
 const authActions = registerAuthIpc({
   clearAccountCaches: async accountId => {
+    presentation?.clearUiState(accountId)
     await Promise.all([
       assetDiskCache.clear(accountId),
       sessionHistoryDiskCache.clear(accountId),
@@ -449,12 +463,15 @@ const authActions = registerAuthIpc({
     autoStartBridge: () => runnerHost.autoStart(),
     autoStopBridge: () => runnerHost.autoStop(),
     restartBridge: () => runnerHost.restartForCurrentSession(),
+    beforeAccountSwitch: () => presentation?.captureUiState() ?? Promise.resolve(),
     broadcastAuthChanged: authBroadcaster.broadcastAuthChanged,
     buildClientContext: () => sessionRuntime.buildClientContext(),
     ensureBackendSession,
     getSessionAfterRestore: () => sessionRuntime.getSessionAfterRestore(),
     log: rememberLog,
     onAccountIdentityChanged: async () => {
+      clearPendingFeed()
+
       try {
         await presentation?.accountChanged()
         await surfaces?.closeSurface()
@@ -482,7 +499,7 @@ runnerHost.registerIpc(ipcMain)
 registerRunnerConfigIpc({
   ipcMain,
   isAuthorizedSender: event =>
-    Boolean(surfaces?.isSurfaceSender('workbench', event.sender) || presentation?.isDesktopSender(event.sender))
+    Boolean(surfaces?.isSurfaceSender(event.sender) || presentation?.isDesktopSender(event.sender))
 })
 registerSkillsIpc({
   spiritagentHome: SPIRITAGENT_HOME,
@@ -493,8 +510,7 @@ registerUpdateIpc({
   electron: { app },
   feed: autoUpdater,
   ipcMain,
-  isInstallSender: sender =>
-    Boolean(surfaces?.isSurfaceSender('living', sender) || presentation?.isDesktopSender(sender)),
+  isInstallSender: sender => Boolean(surfaces?.isSurfaceSender(sender) || presentation?.isDesktopSender(sender)),
   prepareInstall: () => presentation?.stop() ?? Promise.resolve(),
   markQuitting: () => appQuit.markQuitting()
 })
@@ -515,8 +531,16 @@ registerDesktopAccountIpc({
   deps: {
     dialog,
     ensureBackendSession,
-    isDesktopSender: sender => presentation?.isDesktopSender(sender) ?? false,
-    onLeavingDesktop: () => presentation?.accountChanged() ?? Promise.resolve(),
+    isDesktopSender: sender => Boolean(presentation?.isDesktopSender(sender) || surfaces?.isSurfaceSender(sender)),
+    onLeavingDesktop: async () => {
+      if (presentation?.getState().effectiveMode === 'desktop') {
+        await presentation.setMode('window')
+      } else {
+        await presentation?.captureUiState()
+      }
+
+      await surfaces?.closeSurface()
+    },
     openMainWindow: () => {
       showMainWindow()
       sendToWindow(mainWindow, IPC.event.trayActivate)

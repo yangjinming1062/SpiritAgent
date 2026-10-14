@@ -11,20 +11,18 @@ import { DEFAULT_SHORTCUTS, type DesktopShortcutsConfig, type DesktopShortcutsSt
 const INITIAL_STATE: DesktopShortcutsState = {
   config: { ...DEFAULT_SHORTCUTS },
   status: {
-    openLiving: { registered: false },
-    openWorkbench: { registered: false },
+    openMain: { registered: false },
     toggleVisibility: { registered: false }
   }
 }
 
 const SHORTCUT_ROWS: readonly {
-  descKey: 'openLivingDesc' | 'openWorkbenchDesc' | 'toggleVisibilityDesc'
+  descKey: 'openMainDesc' | 'toggleVisibilityDesc'
   id: keyof DesktopShortcutsConfig
-  labelKey: 'openLiving' | 'openWorkbench' | 'toggleVisibility'
+  labelKey: 'openMain' | 'toggleVisibility'
 }[] = [
   { descKey: 'toggleVisibilityDesc', id: 'toggleVisibility', labelKey: 'toggleVisibility' },
-  { descKey: 'openLivingDesc', id: 'openLiving', labelKey: 'openLiving' },
-  { descKey: 'openWorkbenchDesc', id: 'openWorkbench', labelKey: 'openWorkbench' }
+  { descKey: 'openMainDesc', id: 'openMain', labelKey: 'openMain' }
 ]
 
 export function ShortcutsPage(): React.JSX.Element {

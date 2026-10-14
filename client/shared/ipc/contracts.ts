@@ -1,4 +1,5 @@
 import type {
+  AppNavigationTarget,
   DesktopAccount,
   DesktopBackground,
   DesktopBackgroundPlayback,
@@ -10,11 +11,18 @@ import type {
   DockTask,
   PresentationMode,
   PresentationState,
-  StageActivity,
-  SurfaceId
+  StageActivity
 } from './desktop-presentation'
-export { DESKTOP_COMPANION_ACTIVITY_PRIORITY, normalizeSurfaceId } from './desktop-presentation'
+import type { MainConversationDraftSnapshot } from './ui-state'
+export {
+  APP_PAGES,
+  DESKTOP_COMPANION_ACTIVITY_PRIORITY,
+  normalizeAppNavigation,
+  SETTINGS_SECTIONS
+} from './desktop-presentation'
 export type {
+  AppNavigationTarget,
+  AppPage,
   DesktopAccount,
   DesktopBackground,
   DesktopBackgroundPlayback,
@@ -34,8 +42,8 @@ export type {
   PresentationDisplay,
   PresentationMode,
   PresentationState,
-  StageActivity,
-  SurfaceId
+  SettingsSection,
+  StageActivity
 } from './desktop-presentation'
 
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
@@ -170,11 +178,37 @@ export function normalizeUiTheme(raw: unknown): SpiritAgentUiTheme {
 /** 入口 HTML 播种参数名：主进程 loadURL 前把镜像里的主题写进查询串，渲染层首帧前消费。 */
 export const UI_THEME_URL_PARAM = 'ui_theme'
 
-export interface DesktopSurfaceOpenPayload {
-  sessionId?: string
-  surface: SurfaceId
-  view?: string
+export type DesktopSurfaceOpenPayload = AppNavigationTarget
+
+export interface MainUiStateData {
+  navigation: AppNavigationTarget
+  conversation: MainConversationDraftSnapshot
 }
+
+export interface MainUiStateSnapshot extends MainUiStateData {
+  accountId: string
+  authSessionId: string
+  revision: number
+}
+
+export interface MainUiStateUpdate extends MainUiStateData {
+  authSessionId: string
+}
+
+export interface UiInputBusyState {
+  recording: boolean
+  transcribing: boolean
+  uploading: boolean
+}
+
+export type UiStateRequest =
+  | { kind: 'capture'; requestId: string; authSessionId: string }
+  | { kind: 'restore'; requestId: string; authSessionId: string; snapshot: MainUiStateSnapshot }
+
+export type UiStateReply =
+  | { kind: 'capture'; requestId: string; authSessionId: string; data: MainUiStateData }
+  | { kind: 'capture'; requestId: string; authSessionId: string; error: string }
+  | { kind: 'restore'; requestId: string; authSessionId: string; error?: string }
 
 export type SurfaceCompanionSide = 'left' | 'right'
 
@@ -197,8 +231,8 @@ export interface SurfacePlaybackClaim {
 }
 
 export interface DesktopSurfaceChangedEvent {
-  companions: Record<SurfaceId, SurfaceCompanionState>
-  open: null | SurfaceId
+  companion: SurfaceCompanionState
+  open: boolean
   openVisible: boolean
   revision: number
   screenLocked: boolean
@@ -258,14 +292,12 @@ export interface SpiritAgentPrefsSet {
 }
 
 export interface DesktopShortcutsConfig {
-  openLiving: string
-  openWorkbench: string
+  openMain: string
   toggleVisibility: string
 }
 
 export const DEFAULT_SHORTCUTS: Readonly<DesktopShortcutsConfig> = {
-  openLiving: 'Alt+Shift+L',
-  openWorkbench: 'Alt+Shift+W',
+  openMain: 'Alt+Shift+L',
   toggleVisibility: 'Alt+Shift+H'
 } as const
 
@@ -359,6 +391,7 @@ export interface MediaSttPayload {
 }
 
 export interface AudioUploadPayload {
+  authSessionId: string
   dataUrl: string
   filename: string
   sessionId: string
@@ -378,6 +411,7 @@ export interface MediaTtsPayload {
 }
 
 export interface AttachmentVideoUploadPayload {
+  authSessionId: string
   path: string
   sessionId: string
 }
@@ -483,7 +517,7 @@ export interface IpcInvokeContract {
     | Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
   'spiritagent:auth:get-session': () => DesktopAuthSnapshot | null | Promise<DesktopAuthSnapshot | null>
 
-  // 入口面（互斥 living / workbench）
+  // 唯一主窗口
   'spiritagent:surface:open': (payload: DesktopSurfaceOpenPayload) => Promise<void> | void
   'spiritagent:surface:close': () => Promise<void> | void
   'spiritagent:surface:minimize': () => Promise<void> | void
@@ -498,6 +532,12 @@ export interface IpcInvokeContract {
     forward?: boolean
     ignore: boolean
   }) => Promise<void> | void
+
+  'spiritagent:ui-state:get': (authSessionId: string) => MainUiStateSnapshot | null
+  'spiritagent:ui-state:update': (payload: MainUiStateUpdate) => void
+  'spiritagent:ui-state:ready': (authSessionId: string, revision: number) => boolean
+  'spiritagent:ui-state:input-busy': (authSessionId: string, state: UiInputBusyState) => void
+  'spiritagent:ui-state:reply': (reply: UiStateReply) => void
 
   // 后端 API 代理
   'spiritagent:api': (request: SpiritAgentApiRequest) => Promise<unknown> | unknown
@@ -533,9 +573,9 @@ export interface IpcInvokeContract {
   'spiritagent:readFileDataUrl': (filePath: string) => Promise<string> | string
   'spiritagent:readImageForAttach': (filePath: string) => Promise<string> | string
   'spiritagent:registerUserSelectedPaths': (paths: string[]) => Promise<void> | void
-  /** 精灵窗投喂的混合文件路径信箱：写入后由生活空间窗口取走，解决跨窗口内存不共享。 */
-  'spiritagent:chat:set-pending-feed': (paths: string[]) => Promise<void> | void
-  'spiritagent:chat:take-pending-feed': () => Promise<string[]> | string[]
+  /** 精灵窗投喂的混合文件路径信箱，由当前合资格对话视图取走。 */
+  'spiritagent:chat:set-pending-feed': (paths: string[], authSessionId: string) => Promise<void> | void
+  'spiritagent:chat:take-pending-feed': (authSessionId: string) => Promise<string[]> | string[]
   'spiritagent:selectPaths': (options?: SpiritAgentSelectPathsOptions) => Promise<string[]> | string[]
   'spiritagent:writeClipboard': (text: string) => boolean | Promise<boolean>
   /** 把 data: 或用户已选 file: 图片写入系统剪贴板。 */
@@ -610,7 +650,7 @@ export interface IpcInvokeContract {
   // 更新
   'spiritagent:update:check': () => Promise<void> | void
   'spiritagent:update:download': () => Promise<void> | void
-  /** 仅生活空间可调用，且须处于 downloaded 状态。 */
+  /** 仅主窗口或交互桌面可调用，且须处于 downloaded 状态。 */
   'spiritagent:update:install': () => Promise<void> | void
   'spiritagent:update:get-state': () => DesktopUpdateEvent | null | Promise<DesktopUpdateEvent | null>
 
@@ -649,6 +689,8 @@ export interface IpcEventContract {
   'spiritagent:runner:status': [payload: DesktopRunnerStatusEvent]
   'spiritagent:shortcuts:changed': [payload: DesktopShortcutsState]
   'spiritagent:surface:changed': [payload: DesktopSurfaceChangedEvent]
+  'spiritagent:surface:navigate': [payload: AppNavigationTarget]
+  'spiritagent:ui-state:request': [payload: UiStateRequest]
   'spiritagent:sprite:default-scale-changed': [payload: DesktopSpriteScalePayload]
   'spiritagent:chat:pending-feed': [payload: string[]]
   'spiritagent:tray:activate': []
@@ -756,6 +798,11 @@ export const IPC = {
     surfaceSetCompanion: 'spiritagent:surface:set-companion',
     surfaceClaimPlay: 'spiritagent:surface:claim-play',
     surfaceSetIgnoreMouseEvents: 'spiritagent:surface:set-ignore-mouse-events',
+    uiStateGet: 'spiritagent:ui-state:get',
+    uiStateUpdate: 'spiritagent:ui-state:update',
+    uiStateReady: 'spiritagent:ui-state:ready',
+    uiStateInputBusy: 'spiritagent:ui-state:input-busy',
+    uiStateReply: 'spiritagent:ui-state:reply',
     skillsList: 'spiritagent:skills:list',
     skillSetEnabled: 'spiritagent:skill:set-enabled',
     toolsetsList: 'spiritagent:toolsets:list',
@@ -793,6 +840,8 @@ export const IPC = {
     runnerStatus: 'spiritagent:runner:status',
     shortcutsChanged: 'spiritagent:shortcuts:changed',
     surfaceChanged: 'spiritagent:surface:changed',
+    surfaceNavigate: 'spiritagent:surface:navigate',
+    uiStateRequest: 'spiritagent:ui-state:request',
     spriteDefaultScaleChanged: 'spiritagent:sprite:default-scale-changed',
     chatPendingFeed: 'spiritagent:chat:pending-feed',
     trayActivate: 'spiritagent:tray:activate',

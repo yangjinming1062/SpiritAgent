@@ -30,6 +30,7 @@ export const dict: Dictionary = {
     remove: 'Remove',
     restore: 'Restore',
     retry: 'Retry',
+    pageRestoreFailed: 'Could not restore the page',
     pickDate: 'Pick a date',
     datePicker: { year: 'Year', month: 'Month', day: 'Day' },
     imagePick: {
@@ -48,7 +49,7 @@ export const dict: Dictionary = {
     referenceHint:
       'Hand the reference image(s) and prompt to your image tool; use thumbnail actions to copy or save. Click to enlarge.',
     referenceMissing:
-      'No reference image is available right now. The prompt is anchored to the avatar — confirm the avatar in Settings → Character & Memory first, or retry later.',
+      'No reference image is available right now. The prompt is anchored to the avatar — confirm the avatar in Settings → Persona and memory first, or retry later.',
     referenceZoom: 'Reference preview',
     refs: {
       avatarSeed: 'Avatar',
@@ -155,7 +156,7 @@ export const dict: Dictionary = {
       companion: 'Companion'
     },
     companion: {
-      heading: 'Companion',
+      heading: 'Companion display',
       hint: 'Adjust the companion scale and position.',
       companionSize: 'Companion size',
       companionSizeHint: 'Default display scale of your companion.',
@@ -169,10 +170,8 @@ export const dict: Dictionary = {
         'Summon or hide the companion from anywhere on your system. Click a key field to record a new combination.',
       toggleVisibility: 'Hide / show companion',
       toggleVisibilityDesc: 'Quickly show or hide the companion window in window mode.',
-      openLiving: 'Show / hide Living Space',
-      openLivingDesc: 'Quickly summon or hide the immersive Living Space window.',
-      openWorkbench: 'Show / hide Workbench',
-      openWorkbenchDesc: 'Quickly summon or hide the productivity Workbench window.',
+      openMain: 'Show / hide main window',
+      openMainDesc: 'Open or hide the main window; open or raise the main conversation in desktop mode.',
       pressKeysPrompt: 'Press a key combination…',
       pressKeysHint: 'Press Esc to cancel, Backspace or Delete to clear',
       recordingAria: 'Recording shortcut',
@@ -189,7 +188,7 @@ export const dict: Dictionary = {
       empty: 'Not set'
     },
     remote: {
-      heading: 'Remote',
+      heading: 'Mobile access',
       intro:
         'Scan with your phone to open your personal page. Chat, read updates and manage your companion. Local tools are available while the computer is online.',
       connect: 'Connect phone',
@@ -402,7 +401,7 @@ export const dict: Dictionary = {
           body_surface: 'Body surface and markings'
         }
       },
-      title: 'Persona & memory',
+      title: 'Persona and memory',
       intro:
         'Edit the persona and review what the companion remembers — all in one place. Changes are saved automatically.',
       sectionTitle: 'Persona',
@@ -521,7 +520,7 @@ export const dict: Dictionary = {
     },
     theme: {
       heading: 'Theme',
-      hint: "Themes apply to both the Living Space and the Workbench windows; the companion's appearance is unaffected.",
+      hint: "Themes apply to the main window, whisper and desktop mode interfaces; the companion's appearance is unaffected.",
       themesHeading: 'Theme presets',
       themesAriaLabel: 'Theme presets',
       activeBadge: 'Active',
@@ -540,7 +539,7 @@ export const dict: Dictionary = {
       materialHeading: 'Material effects',
       materialTransparent: 'Clear mode (transparent)',
       materialTransparentDesc:
-        'Enables liquid glass and frosted translucency — the living-space scene flows with light, and the companion stays airy in window mode.',
+        'Enables liquid glass and frosted translucency — the scene flows with light, and the companion stays airy in window mode.',
       materialTransparentDayNight: 'Day transparent / Night transparent',
       materialSolid: 'Solid mode (classic)',
       materialSolidDesc:
@@ -746,6 +745,7 @@ export const dict: Dictionary = {
       addedImage: 'Image attached',
       removeImage: 'Remove attached image',
       uploading: 'Uploading…',
+      uploadInterrupted: 'Upload interrupted. Please retry.',
       ready: 'Ready',
       retry: 'Retry',
       removeVideo: 'Remove attached video',
@@ -810,7 +810,7 @@ export const dict: Dictionary = {
     },
 
     input: {
-      workbenchPlaceholder: 'Type a command, ask a question, or drag a file in…',
+      assistantPlaceholder: 'Type a command, ask a question, or drag a file in…',
       readOnlyHint: 'Task conversation · read-only',
       addAttachment: 'Add attachment',
       addFile: 'Add file',
@@ -874,6 +874,7 @@ export const dict: Dictionary = {
     },
 
     params: {
+      openPanel: 'Session settings',
       tabs: {
         context: 'Context',
         temperature: 'Temperature',
@@ -909,19 +910,8 @@ export const dict: Dictionary = {
         max: 'Near-ceiling reasoning — think as hard as the provider allows.',
         ultra: 'Highest product level; falls back to the provider’s top supported level automatically.'
       },
-
-      contextCapsuleAria: 'View context usage and compression',
       contextUnknown: 'Not configured',
-      contextCapsuleTitle: (used: string, total: string, pct: string, threshold: number) =>
-        `Current context: ${used} / ${total} tokens (${pct}%) · auto-compress threshold: ${threshold}% · click to expand`,
-      temperatureCapsuleAria: 'Configure current session sampling temperature',
-      temperatureCapsuleTitle: (temp: string, label: string) =>
-        `Current sampling temperature: ${temp} (${label}) · click to configure`,
-      reasoningCapsuleAria: 'Configure current session reasoning depth',
-      reasoningCapsuleTitle: (label: string) => `Current reasoning depth: ${label} · click to configure`,
       reasoningOff: 'Off',
-      reasoningCapsuleOff: 'Thinking off',
-      reasoningCapsuleOn: (label: string) => `Thinking: ${label}`,
 
       thresholdMarker: (pct: number) => `Auto-compress threshold (${pct}%)`,
 
@@ -1024,8 +1014,6 @@ export const dict: Dictionary = {
   },
 
   living: {
-    title: 'Living Space',
-    goToWorkbench: 'Open Workbench',
     rail: {
       chat: 'Chat',
       posts: 'Posts',
@@ -1231,7 +1219,7 @@ export const dict: Dictionary = {
     },
     scene: {
       intro:
-        'Scenes fill the area behind the living space window; extra parts are cropped when the window and image ratios differ. They omit a duplicate of your companion; other people, animals and statues may appear. Scenes are always rendered in a realistic, photographic style.',
+        'Scenes fill the area behind the main window; extra parts are cropped when the window and image ratios differ. They omit a duplicate of your companion; other people, animals and statues may appear. Scenes are always rendered in a realistic, photographic style.',
       referenceHint:
         'A reference guides the environment and composition. Your companion’s own appearance is not repeated in the scene image.',
       referenceLabel: 'Scene reference',
@@ -1241,19 +1229,19 @@ export const dict: Dictionary = {
       referenceError: 'Choose a valid PNG, JPEG, WebP or GIF image.',
       notesLabel: 'Environment description',
       notesPlaceholder: 'For example: an evening beach with soft sunset light across the sand and sea.',
-      targetSize: (width: number, height: number) => `Living space size: ${width} × ${height}`,
+      targetSize: (width: number, height: number) => `Scene size: ${width} × ${height}`,
       regenerationTargetSize: (width: number, height: number) => `Regeneration size: ${width} × ${height}`,
       generationTargetSize: (width: number, height: number) => `Generation target: ${width} × ${height}`,
       sourceSize: (width: number, height: number) => `Original image: ${width} × ${height}`,
       imageSize: (width: number, height: number) => `Image size: ${width} × ${height}`,
       uploadHint:
-        'Choose a background without a duplicate of your companion. The source file is kept; the display image is cropped proportionally to fit the living space.',
+        'Choose a background without a duplicate of your companion. The source file is kept; the display image is cropped proportionally to fit the scene size.',
       noScene: 'No active scene yet',
       pendingOverlay: 'Preparing scene…',
       pendingOverlayHint:
         'The image and description are saved to your library. Your current background stays in place.',
       waitingUploadOverlay: 'Waiting for a scene image',
-      waitingUploadHint: 'The source file is kept and fitted to the living space. Activate the saved scene when ready.',
+      waitingUploadHint: 'The source file is kept and fitted to the scene size. Activate the saved scene when ready.',
       waitingUploadAction: 'Upload image',
       generateButton: 'Create scene',
       generatingButton: 'Creating…',
@@ -1339,25 +1327,7 @@ export const dict: Dictionary = {
     }
   },
 
-  workbench: {
-    title: 'Workbench',
-    selectSession: 'Select a conversation on the left, or create a new one',
-    stationBadge: 'Work station',
-    stationSettingsBadge: 'Station settings',
-    stationSettingsTooltip: 'Workstation environment',
-    stationEnvironment: 'Workstation',
-    backToChat: 'Back to chat',
-    backToChatTooltip: 'Back to workstation chat (Esc)',
-    openLiving: 'Living Space',
-    openLivingTooltip: 'Switch to Living Space',
-    station: {
-      tabsAria: 'Station settings navigation',
-      tabs: {
-        inference: 'Chat',
-        runner: 'Runner',
-        skills: 'Skills'
-      }
-    },
+  conversation: {
     sessionSidebar: {
       title: 'Sessions',
       new: 'New conversation',

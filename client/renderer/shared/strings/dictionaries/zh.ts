@@ -28,6 +28,7 @@ export const dict = {
     remove: '移除',
     restore: '还原',
     retry: '重试',
+    pageRestoreFailed: '页面恢复失败',
     pickDate: '选择日期',
     datePicker: { year: '年', month: '月', day: '日' },
     imagePick: { tooLarge: '图片太大，请换一张较小的图片', readFailed: '无法读取所选图片，请重试' },
@@ -42,7 +43,7 @@ export const dict = {
     referenceTitle: '参考图（随提示词一起提供）',
     referenceHint: '把参考图和提示词一起交给外部工具；缩略图上可复制或另存，点击查看大图。',
     referenceMissing:
-      '当前没有可展示的参考图。提示词以头像为形象基准，请先在设置的“角色与记忆”中确认头像，或稍后重试。',
+      '当前没有可展示的参考图。提示词以头像为形象基准，请先在设置的“人设与记忆”中确认头像，或稍后重试。',
     referenceZoom: '参考图预览',
     refs: {
       avatarSeed: '头像',
@@ -112,7 +113,7 @@ export const dict = {
     voice: {
       invalidTitle: '音色已失效',
       invalidMessage: (name: string) =>
-        `你之前选的音色「${name}」已不在当前目录，已临时改用默认音色，请在设置的「音色」中重新选择。`,
+        `你之前选的音色「${name}」已不在当前目录，已临时改用默认音色，请在设置的「声音」中重新选择。`,
       invalidAction: '去设置'
     },
     system: {
@@ -148,7 +149,7 @@ export const dict = {
       companion: '伙伴'
     },
     companion: {
-      heading: '伙伴',
+      heading: '伙伴显示',
       hint: '调整伙伴的显示比例和位置。',
       companionSize: '伙伴大小',
       companionSizeHint: '伙伴形象的默认显示比例。',
@@ -161,10 +162,8 @@ export const dict = {
       intro: '在系统任意界面通过全局快捷键唤起或隐藏伙伴。点击按键框即可录制新组合。',
       toggleVisibility: '隐藏 / 显示伙伴',
       toggleVisibilityDesc: '快速显示或隐藏窗口模式的伙伴窗口。',
-      openLiving: '唤起 / 隐藏生活空间',
-      openLivingDesc: '快速唤起或隐藏生活空间沉浸式陪伴窗口。',
-      openWorkbench: '唤起 / 隐藏工作台',
-      openWorkbenchDesc: '快速唤起或隐藏工作台生产力窗口。',
+      openMain: '显示 / 隐藏主窗口',
+      openMainDesc: '打开或收起主窗口；桌面模式下打开或置前主对话。',
       pressKeysPrompt: '请按下组合键…',
       pressKeysHint: '按 Esc 取消录制，按 Backspace 或 Delete 清空',
       recordingAria: '正在录制快捷键',
@@ -181,8 +180,9 @@ export const dict = {
       empty: '未设置'
     },
     remote: {
-      heading: '远程',
-      intro: '用手机扫码打开你的专属页面，随时与伙伴聊天、查看动态和管理生活空间。电脑在线时还可以调用本机工具。',
+      heading: '手机访问',
+      intro:
+        '用手机扫码打开你的专属页面，随时与伙伴聊天、查看动态，管理伙伴资料、场景与衣柜。电脑在线时还可以调用本机工具。',
       connect: '连接手机',
       refreshCode: '重新生成二维码',
       cancelCode: '取消二维码',
@@ -307,7 +307,7 @@ export const dict = {
         intro:
           '控制不同场景下的模型输出随机性与创造力。界面统一使用 0–1 刻度，发起请求时会自动映射到当前供应商的实际范围。',
         chatTemperature: '普通对话默认温度',
-        chatTemperatureDesc: '工作台普通对话的默认生成温度。较低的值更严谨稳定，较高的值更发散有创意。',
+        chatTemperatureDesc: '普通对话的默认生成温度。较低的值更严谨稳定，较高的值更发散有创意。',
         titleTemperature: '标题生成温度',
         titleTemperatureDesc: '根据首轮对话自动生成会话标题的温度。建议保持较低以保证概括准确性。',
         compressionTemperature: '上下文压缩温度',
@@ -379,7 +379,7 @@ export const dict = {
           body_surface: '身体材质与标记'
         }
       },
-      title: '角色与记忆',
+      title: '人设与记忆',
       intro: '人设怎么改、记得什么，都在这里。修改后会自动保存。',
       sectionTitle: '角色',
       sectionMemory: '长期记忆',
@@ -464,7 +464,7 @@ export const dict = {
       hintHydrateFailed: '已保存，但本地刷新失败，稍后再试'
     },
     voice: {
-      title: '音色',
+      title: '声音',
       intro: '选择适合当前系统语言的说话音色，或设计一个专属音色。',
       noTtsConfigured: '尚未配置 TTS 供应商。',
       noVoicesForLanguage: '已配置的 TTS 供应商没有适配当前系统语言的音色。',
@@ -489,7 +489,7 @@ export const dict = {
     },
     theme: {
       heading: '主题',
-      hint: '主题同时应用到生活空间与工作台两个窗口，伙伴形象不受影响。',
+      hint: '主题应用到主窗口、轻语和桌面模式的界面，伙伴形象不受影响。',
       themesHeading: '主题方案',
       themesAriaLabel: '主题方案',
       activeBadge: '生效中',
@@ -501,7 +501,7 @@ export const dict = {
       },
       materialHeading: '材质效果说明',
       materialTransparent: '清透模式（透明）',
-      materialTransparentDesc: '启用液态玻璃与磨砂透视，生活空间背景透出流动光影，窗口模式中的伙伴形象保持通透。',
+      materialTransparentDesc: '启用液态玻璃与磨砂透视，场景背景透出流动光影，窗口模式中的伙伴形象保持通透。',
       materialTransparentDayNight: '日色透明 / 夜色透明',
       materialSolid: '实底模式（经典）',
       materialSolidDesc: '实体不透明表面，石墨与暖纸底板，具有极高对比度，适合复杂桌面背景环境。',
@@ -689,6 +689,7 @@ export const dict = {
       addedImage: '已附加图片',
       removeImage: '移除附加图片',
       uploading: '上传中…',
+      uploadInterrupted: '上传已中断，请重试。',
       ready: '已就绪',
       retry: '重试',
       removeVideo: '移除附加视频',
@@ -753,7 +754,7 @@ export const dict = {
     },
 
     input: {
-      workbenchPlaceholder: '输入指令、提问，或将文件拖入…',
+      assistantPlaceholder: '输入指令、提问，或将文件拖入…',
       readOnlyHint: '任务会话 · 只读',
       addAttachment: '添加附件',
       addFile: '添加文件',
@@ -817,6 +818,7 @@ export const dict = {
     },
 
     params: {
+      openPanel: '会话设置',
       tabs: {
         context: '上下文',
         temperature: '温度',
@@ -852,18 +854,8 @@ export const dict = {
         max: '逼近供应商上限的极限推理，尽量多想。',
         ultra: '产品最高档；供应商不支持时自动降级到其最高支持档。'
       },
-
-      contextCapsuleAria: '查看上下文用量与压缩管理',
       contextUnknown: '未配置',
-      contextCapsuleTitle: (used: string, total: string, pct: string, threshold: number) =>
-        `当前会话上下文：${used} / ${total} Tokens (${pct}%) · 自动压缩阈值: ${threshold}% · 点击展开管理`,
-      temperatureCapsuleAria: '配置当前会话采样温度',
-      temperatureCapsuleTitle: (temp: string, label: string) => `当前会话采样温度: ${temp} (${label}) · 点击配置`,
-      reasoningCapsuleAria: '配置当前会话思考推理深度',
-      reasoningCapsuleTitle: (label: string) => `当前会话思考推理深度: ${label} · 点击配置`,
       reasoningOff: '已关闭',
-      reasoningCapsuleOff: '思考关',
-      reasoningCapsuleOn: (label: string) => `思考: ${label}`,
 
       thresholdMarker: (pct: number) => `自动压缩阈值节点 (${pct}%)`,
 
@@ -964,8 +956,6 @@ export const dict = {
   },
 
   living: {
-    title: '生活空间',
-    goToWorkbench: '前往工作台',
     rail: {
       chat: '对话',
       posts: '动态',
@@ -1156,7 +1146,7 @@ export const dict = {
     },
     scene: {
       intro:
-        '场景铺满生活空间窗口后方，窗口画幅与图片不同时裁切多余部分。背景不重复绘制伙伴，可包含其他人物、动物或雕像。场景统一按真实拍摄的写实风格呈现。',
+        '场景铺满主窗口后方，窗口画幅与图片不同时裁切多余部分。背景不重复绘制伙伴，可包含其他人物、动物或雕像。场景统一按真实拍摄的写实风格呈现。',
       referenceHint: '参考图提供环境与构图线索，伙伴自身形象不会在场景图中重复出现。',
       referenceLabel: '场景参考图',
       chooseReference: '选择参考图',
@@ -1165,17 +1155,17 @@ export const dict = {
       referenceError: '图片无法读取，请选择有效的 PNG / JPEG / WebP / GIF 图片。',
       notesLabel: '环境描述',
       notesPlaceholder: '例如：傍晚的海边，柔和霞光映在沙滩与海面上。',
-      targetSize: (width: number, height: number) => `生活空间尺寸：${width} × ${height}`,
+      targetSize: (width: number, height: number) => `场景尺寸：${width} × ${height}`,
       regenerationTargetSize: (width: number, height: number) => `重新生成将使用：${width} × ${height}`,
       generationTargetSize: (width: number, height: number) => `生成目标：${width} × ${height}`,
       sourceSize: (width: number, height: number) => `原图尺寸：${width} × ${height}`,
       imageSize: (width: number, height: number) => `图片尺寸：${width} × ${height}`,
-      uploadHint: '建议选用不重复包含伙伴的背景图。上传源文件保留，展示图按生活空间尺寸等比裁切。',
+      uploadHint: '建议选用不重复包含伙伴的背景图。上传源文件保留，展示图按场景尺寸等比裁切。',
       noScene: '尚未启用场景',
       pendingOverlay: '场景正在准备…',
       pendingOverlayHint: '图片保存并完成描述后进入场景库，当前背景保持不变。',
       waitingUploadOverlay: '等待上传场景图片',
-      waitingUploadHint: '上传后保留源文件并适配生活空间，先保存到场景库，再由你选择启用。',
+      waitingUploadHint: '上传后保留源文件并适配场景尺寸，先保存到场景库，再由你选择启用。',
       waitingUploadAction: '选择图片上传',
       generateButton: '创建新场景',
       generatingButton: '创建中…',
@@ -1259,25 +1249,7 @@ export const dict = {
     }
   },
 
-  workbench: {
-    title: '工作台',
-    selectSession: '请选择左侧对话，或新建对话',
-    stationBadge: '工作工位',
-    stationSettingsBadge: '工位设置',
-    stationSettingsTooltip: '工位环境配置',
-    stationEnvironment: '工位环境',
-    backToChat: '返回对话',
-    backToChatTooltip: '返回工位对话 (Esc)',
-    openLiving: '生活空间',
-    openLivingTooltip: '切换到生活空间',
-    station: {
-      tabsAria: '工位设置分区导航',
-      tabs: {
-        inference: '对话',
-        runner: '执行器',
-        skills: '技能'
-      }
-    },
+  conversation: {
     sessionSidebar: {
       title: '会话',
       new: '新建对话',

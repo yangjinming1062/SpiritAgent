@@ -1,6 +1,6 @@
-// 工作台轨迹消费当前视图所属 runtime，不拥有会话数据。
+// 执行详情消费当前视图所属 runtime，不拥有会话数据。
 
-import { atom, computed } from 'nanostores'
+import { computed } from 'nanostores'
 
 import type { ConversationRuntime } from '@/modules/conversation'
 import { deepEqual } from '@/shared/lib/deep-equal'
@@ -24,8 +24,6 @@ export interface RailArtifact {
   audioUrl?: string
   url: string
 }
-
-export const $isRailOpen = atom<boolean>(true)
 
 export function createRunRailStores(runtime: ConversationRuntime) {
   const { $chatMessageList, $chatMessageBodies } = runtime

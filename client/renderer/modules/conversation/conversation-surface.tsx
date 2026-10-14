@@ -6,7 +6,7 @@ import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { cn } from '@/shared/lib/utils'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $gatewayState } from '@/shared/store/gateway'
-import { $surfaceOpen, $surfaceRole } from '@/shared/store/surfaces'
+import { $surfaceOpen, $surfaceOpenVisible, $surfaceRole } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 import { type ConversationVariant, MessageBubble } from './chat-dock-message-bubble'
@@ -34,7 +34,7 @@ export function ConversationSurface({
   groupAvatars = false,
   reveal,
   scrollRef,
-  variant = 'living'
+  variant = 'companion'
 }: ConversationSurfaceProps): React.JSX.Element {
   const view = useConversationView()
 
@@ -46,13 +46,15 @@ export function ConversationSurface({
     $chatStreamingTick,
     $chatTurnInFlight,
     $lastAssistantStreaming,
-    $pendingPromptBatch
+    $pendingPromptBatch,
+    $scrollAnchor
   } = view.controller
 
   const locked = useStore(presentationPorts().$screenLocked)
   const sessionId = useStore($chatSessionId)
+  const historyHydrated = useStore(view.runtime.$historyHydrated)
   useEffect(() => {
-    if (view.scoped || variant !== 'living') {
+    if (view.scoped || variant !== 'companion') {
       return
     }
 
@@ -62,18 +64,30 @@ export function ConversationSurface({
   }, [sessionId, variant, view.scoped])
   const pending = useStore(pendingMessages.$atom)
   const surfaceOpen = useStore($surfaceOpen)
+  const surfaceOpenVisible = useStore($surfaceOpenVisible)
   const surfaceRole = useStore($surfaceRole)
   useEffect(() => {
     if (
       sessionId &&
       !locked &&
       view.eligible &&
-      (view.scoped || (surfaceOpen !== null && surfaceOpen === surfaceRole)) &&
+      historyHydrated &&
+      (view.scoped || (surfaceRole === 'main' && surfaceOpen && surfaceOpenVisible)) &&
       pending.some(item => item.sessionId === sessionId)
     ) {
       consumePendingMessages(sessionId)
     }
-  }, [sessionId, pending, surfaceOpen, surfaceRole, locked, view.eligible, view.scoped])
+  }, [
+    sessionId,
+    pending,
+    surfaceOpen,
+    surfaceOpenVisible,
+    surfaceRole,
+    locked,
+    view.eligible,
+    view.scoped,
+    historyHydrated
+  ])
   const dict = useStrings()
 
   const $visibleMessages = useMemo(
@@ -99,9 +113,15 @@ export function ConversationSurface({
   const previousSession = useRef<string | null>(null)
   const followBottom = useRef(true)
 
+  useEffect(() => {
+    if (!view.eligible) {
+      previousSession.current = null
+    }
+  }, [view.eligible])
+
   // 流式 tick 仅驱动跟滚，不进入渲染路径—— listen 回调直接动 DOM，避免每个 token 把整个消息流（list.map + 多个 MessageBubble）重新走一遍。
   useAtomListen($chatStreamingTick, () => {
-    if (followBottom.current) {
+    if (view.eligible && followBottom.current) {
       scrollToBottom(scrollRef.current)
     }
   })
@@ -115,8 +135,31 @@ export function ConversationSurface({
     }
 
     if (previousSession.current !== sessionId) {
+      const anchor = $scrollAnchor.get()
+
+      if (anchor && !anchor.followBottom && list.length === 0 && !historyHydrated) {
+        return
+      }
+
       previousSession.current = sessionId
-      followBottom.current = true
+      followBottom.current = anchor?.followBottom ?? true
+
+      if (anchor && !anchor.followBottom) {
+        const target = anchor.messageKey
+          ? [...element.querySelectorAll<HTMLElement>('[data-message-key]')].find(
+              row => row.dataset.messageKey === anchor.messageKey
+            )
+          : undefined
+
+        element.scrollTo({
+          top: target
+            ? element.scrollTop +
+              target.getBoundingClientRect().top -
+              element.getBoundingClientRect().top -
+              anchor.offset
+            : anchor.top
+        })
+      }
     }
 
     if (reveal && revealed.current !== reveal.request) {
@@ -140,7 +183,7 @@ export function ConversationSurface({
     if (followBottom.current) {
       scrollToBottom(element)
     }
-  }, [list, reveal, scrollRef, sessionId, view.eligible])
+  }, [list, reveal, scrollRef, sessionId, view.eligible, $scrollAnchor, historyHydrated])
 
   const showTimeSet = useMemo(() => collectTimeDividerIds(visibleList), [visibleList])
   const lastVisible = visibleList.at(-1)
@@ -151,8 +194,26 @@ export function ConversationSurface({
       data-group-avatars={groupAvatars || undefined}
       data-surface={variant}
       onScroll={event => {
+        if (!view.eligible) {
+          return
+        }
+
         const element = event.currentTarget
+
         followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 64
+
+        const surfaceTop = element.getBoundingClientRect().top
+
+        const anchor = [...element.querySelectorAll<HTMLElement>('[data-message-key]')].find(
+          row => row.getBoundingClientRect().bottom > surfaceTop
+        )
+
+        $scrollAnchor.set({
+          messageKey: anchor?.dataset.messageKey,
+          offset: anchor ? anchor.getBoundingClientRect().top - surfaceTop : 0,
+          top: element.scrollTop,
+          followBottom: followBottom.current
+        })
       }}
       ref={scrollRef}
     >
@@ -161,7 +222,7 @@ export function ConversationSurface({
           <span
             className={cn(
               'text-center text-sm',
-              variant === 'living'
+              variant === 'companion'
                 ? 'inline-flex items-center gap-2 rounded-full border border-line-hairline bg-surface-card/75 px-4 py-1.5 text-xs text-strong/90 shadow-sm backdrop-blur-xl backdrop-saturate-180'
                 : 'text-faint'
             )}
@@ -192,16 +253,16 @@ export function ConversationSurface({
           {groupAvatars && lastVisible?.role === 'assistant' && isMessageGroupRow(lastVisible) ? (
             <span aria-hidden="true" className="w-8 shrink-0" />
           ) : (
-            (groupAvatars || variant === 'workbench') && <CompanionAvatar />
+            (groupAvatars || variant === 'assistant') && <CompanionAvatar />
           )}
           <div
             className={
-              variant === 'workbench'
+              variant === 'assistant'
                 ? 'flex items-center gap-1.5 rounded-2xl border border-line-standard bg-surface-card px-4 py-3 shadow-xs backdrop-blur-md'
                 : 'rounded-2xl border border-line-hairline bg-surface-card px-3.5 py-2.5 text-faint'
             }
           >
-            {variant === 'workbench' ? (
+            {variant === 'assistant' ? (
               <>
                 <span className="size-1.5 animate-bounce rounded-full bg-blue-400 [animation-delay:-0.3s]" />
                 <span className="size-1.5 animate-bounce rounded-full bg-blue-400 [animation-delay:-0.15s]" />

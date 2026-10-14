@@ -7,11 +7,11 @@ import * as store from '../shared/lib/runner-config-store'
 
 interface RunnerConfigIpcDeps {
   ipcMain: IpcMain
-  /** 仅工作台等授权窗可读写完整本机配置；缺省时全部拒绝。 */
+  /** 仅主窗口与交互桌面可读写完整本机配置；缺省时全部拒绝。 */
   isAuthorizedSender?: (event: { sender: WebContents }) => boolean
 }
 
-const ACCESS_DENIED = { error: 'runner config access is restricted to the workbench window', ok: false } as const
+const ACCESS_DENIED = { error: 'runner config access is restricted to the main application window', ok: false } as const
 
 export function registerRunnerConfigIpc({ ipcMain, isAuthorizedSender }: RunnerConfigIpcDeps): void {
   ipcMain.handle(IPC.invoke.runnerConfigRead, event => {

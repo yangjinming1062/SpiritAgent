@@ -40,7 +40,7 @@ const DISTURBANCE_TIERS: readonly DisturbanceTier[] = ['still', 'normal', 'auton
 const RECORDING_OPTIONS = [15, 30, 60, 120, 300] as const
 const DEFAULT_RECORDING_SECONDS = 60
 
-// 交互页：伙伴怎么回应（回应方式 / 打扰档位 / 智能反应与自主行为）。长页（living-settings）内嵌段。
+// 伙伴回应方式、打扰档位和自主行为。
 export function InteractionPage(): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.interaction

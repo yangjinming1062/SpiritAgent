@@ -220,7 +220,7 @@ export function ChatParamsPanel({
   onTabChange,
   sessionId
 }: ChatParamsPanelProps): React.JSX.Element {
-  const { controller } = useConversationView()
+  const { controller, eligible } = useConversationView()
 
   const {
     $chatSessionId,
@@ -238,9 +238,9 @@ export function ChatParamsPanel({
   const settings = useStore($sessionSettings)
   const gateway = useStore($gateway)
   const gatewayState = useStore($gatewayState)
-  const canEdit = gatewayState === 'open' && sessionId !== null
   // 自动化会话的历史由任务维护，手动压缩沿用只读权限。
   const isReadOnlySession = useIsReadOnlySession()
+  const canEdit = gatewayState === 'open' && sessionId !== null && eligible && !isReadOnlySession
   const contextStatus = useContextStatus()
   const [compressing, setCompressing] = useState(false)
 
@@ -426,9 +426,34 @@ export function ChatParamsPanel({
   const tempSemantics = temperatureStyleLabel(temp, params.temperatureStyles)
 
   return (
-    <div className="w-[350px] flex flex-col gap-3 rounded-2xl border border-line-standard bg-surface-card/95 p-3.5 text-left shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150 select-none">
-      <div className="flex items-center justify-between border-b border-line-hairline pb-2.5">
-        <div className="flex items-center gap-1 bg-fill-faint p-0.5 rounded-lg border border-line-hairline">
+    <div className="w-full flex flex-col gap-3 rounded-2xl border border-line-standard bg-[var(--ui-app-bg)] p-3.5 text-left shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150 select-none">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line-hairline pb-2.5">
+        <div
+          aria-label={params.openPanel}
+          className="flex items-center gap-1 bg-fill-faint p-0.5 rounded-lg border border-line-hairline"
+          onKeyDown={event => {
+            const tabs: ChatParamsTab[] = ['context', 'temperature', 'reasoning']
+            const index = tabs.indexOf(activeTab)
+
+            const next =
+              event.key === 'ArrowRight'
+                ? (index + 1) % tabs.length
+                : event.key === 'ArrowLeft'
+                  ? (index + tabs.length - 1) % tabs.length
+                  : event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? tabs.length - 1
+                      : null
+
+            if (next !== null) {
+              event.preventDefault()
+              onTabChange(tabs[next])
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+            }
+          }}
+          role="tablist"
+        >
           {(['context', 'temperature', 'reasoning'] as const).map(id => {
             const Icon = PARAM_TAB_ICONS[id]
             const active = activeTab === id
@@ -436,12 +461,15 @@ export function ChatParamsPanel({
 
             return (
               <button
+                aria-selected={active}
                 className={cn(
                   'flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition cursor-pointer select-none',
                   active ? 'bg-surface-panel text-strong shadow-xs' : 'text-muted hover:text-strong hover:bg-fill-hover'
                 )}
                 key={id}
                 onClick={() => onTabChange(id)}
+                role="tab"
+                tabIndex={active ? 0 : -1}
                 type="button"
               >
                 <Icon className="size-3.5 text-accent" />
@@ -461,7 +489,7 @@ export function ChatParamsPanel({
           {onClose && (
             <button
               aria-label={params.closePanel}
-              className="flex size-6 items-center justify-center rounded-lg text-faint hover:bg-fill-hover hover:text-strong transition cursor-pointer"
+              className="flex size-6 items-center justify-center rounded-lg text-faint hover:bg-fill-hover hover:text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent transition cursor-pointer"
               onClick={onClose}
               type="button"
             >

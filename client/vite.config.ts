@@ -19,8 +19,7 @@ export default defineConfig({
         sprite: path.resolve(__dirname, 'sprite.html'),
         desktop: path.resolve(__dirname, 'desktop.html'),
         'desktop-background': path.resolve(__dirname, 'desktop-background.html'),
-        living: path.resolve(__dirname, 'living.html'),
-        workbench: path.resolve(__dirname, 'workbench.html')
+        main: path.resolve(__dirname, 'main.html')
       },
       output: {
         manualChunks(id) {

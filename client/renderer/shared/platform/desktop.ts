@@ -42,7 +42,15 @@ type FilePort = Pick<
 >
 type ShellPort = Pick<
   DesktopBridge,
-  'presentation' | 'dock' | 'desktop' | 'surface' | 'sprite' | 'chat' | 'onTrayActivate' | 'onTrayResetPosition'
+  | 'uiState'
+  | 'presentation'
+  | 'dock'
+  | 'desktop'
+  | 'surface'
+  | 'sprite'
+  | 'chat'
+  | 'onTrayActivate'
+  | 'onTrayResetPosition'
 >
 type PreferencesPort = Pick<
   DesktopBridge,

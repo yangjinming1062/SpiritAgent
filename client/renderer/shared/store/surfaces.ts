@@ -2,41 +2,31 @@ import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
-// 渲染层入口面 store：当前哪个 surface 开着。主进程是状态权威（持有 BrowserWindow 引用与互斥锁），本 store 只是镜像。启动期 hydrateSurfaces 主动拉一次 getState，之后订阅 onChanged 维持一致；requestOpenSurface 先更新本地意图再交给主进程，本地意图用于 UI 立即反馈。
+// 主窗口与伙伴状态的主进程镜像；版本快照裁决实际显隐。
 import type {
   DesktopSurfaceChangedEvent,
   DesktopSurfaceOpenPayload,
   SurfaceCompanionPreference,
-  SurfaceCompanionState,
-  SurfaceId
+  SurfaceCompanionState
 } from '@ipc/contracts'
 
 import { $presentation } from './presentation'
 
-export const $surfaceOpen = atom<null | SurfaceId>(null)
+export const $surfaceOpen = atom(false)
 export const $surfaceOpenVisible = atom(false)
 export const $surfaceScreenLocked = atom(false)
 // 桌面精灵窗的实际显隐（托盘、快捷键、右键隐藏或最小化）；收到主进程快照前按可见处理。
 export const $surfaceSpriteVisible = atom(true)
 let appliedRevision = -1
-export const $surfaceCompanions = atom<Record<SurfaceId, SurfaceCompanionState>>({
-  living: {
-    hiddenReason: 'window-hidden',
-    preference: { enabled: true, side: 'right' },
-    slotWidth: 0,
-    outerWidth: 0,
-    visible: false
-  },
-  workbench: {
-    hiddenReason: 'window-hidden',
-    preference: { enabled: true, side: 'left' },
-    slotWidth: 0,
-    outerWidth: 0,
-    visible: false
-  }
+export const $surfaceCompanion = atom<SurfaceCompanionState>({
+  hiddenReason: 'window-hidden',
+  preference: { enabled: true, side: 'right' },
+  slotWidth: 0,
+  outerWidth: 0,
+  visible: false
 })
 
-export type SurfaceRole = 'living' | 'workbench' | 'sprite' | 'desktop'
+export type SurfaceRole = 'main' | 'sprite' | 'desktop'
 export const $surfaceRole = atom<SurfaceRole | null>(null)
 
 export function setSurfaceRole(role: SurfaceRole): void {
@@ -50,7 +40,7 @@ export function isSpriteStageShown(): boolean {
   return (
     presentation.stageOwner === 'sprite' &&
     !['starting', 'recovering'].includes(presentation.status) &&
-    $surfaceOpen.get() === null &&
+    !$surfaceOpen.get() &&
     $surfaceSpriteVisible.get()
   )
 }
@@ -70,7 +60,12 @@ export function isCompanionStageVisible(): boolean {
     return isSpriteStageShown()
   }
 
-  return role !== null && $surfaceOpen.get() === role && $surfaceCompanions.get()[role].visible
+  return (
+    role === 'main' &&
+    $presentation.get().effectiveMode === 'window' &&
+    $surfaceOpen.get() &&
+    $surfaceCompanion.get().visible
+  )
 }
 
 function applySurfaceState(state: DesktopSurfaceChangedEvent): void {
@@ -83,26 +78,15 @@ function applySurfaceState(state: DesktopSurfaceChangedEvent): void {
   $surfaceSpriteVisible.set(state.spriteVisible)
   $surfaceOpen.set(state.open)
   $surfaceOpenVisible.set(state.openVisible)
-  $surfaceCompanions.set(state.companions)
+  $surfaceCompanion.set(state.companion)
 }
 
 export async function setSurfaceCompanion(preference: SurfaceCompanionPreference): Promise<void> {
   applySurfaceState(await shellApi().surface.setCompanion(preference))
 }
 
-export type OpenSurfaceOptions = Omit<DesktopSurfaceOpenPayload, 'surface'>
-
-export async function requestOpenSurface(surface: SurfaceId, options: OpenSurfaceOptions = {}): Promise<void> {
-  const payload: DesktopSurfaceOpenPayload = {
-    sessionId: options.sessionId,
-    surface,
-    view: options.view
-  }
-
-  // 乐观回灌：把当前意图同步进 store，让按钮立即按下、UI 跟随。
-  $surfaceOpen.set(surface)
-
-  await shellApi()?.surface?.open?.(payload)
+export async function requestOpenSurface(target: DesktopSurfaceOpenPayload = {}): Promise<void> {
+  await shellApi().surface.open(target)
 }
 
 export async function requestCloseSurface(): Promise<void> {

@@ -11,7 +11,7 @@ import { MediaReviewQueue } from './media-review-queue'
 import { MemorySection } from './memory-section'
 import { PersonaSection } from './persona-editor'
 
-// 角色与记忆同页：编辑人设和角色卡、浏览及修正长期记忆。长页（living-settings）内嵌段。
+// 人设与记忆共用页面，角色卡和待复核素材按当前头像装配。
 export function PersonaPage(): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.persona

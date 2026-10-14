@@ -6,14 +6,14 @@ import { useInteractiveRegion } from '@/shared'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
-import { $surfaceCompanions, setSurfaceCompanion } from '@/shared/store/surfaces'
+import { $surfaceCompanion, setSurfaceCompanion } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
-import type { SurfaceCompanionPreference, SurfaceId } from '@ipc/contracts'
+import type { SurfaceCompanionPreference } from '@ipc/contracts'
 
 import styles from './companion-menu.module.css'
 
-export function CompanionMenu({ surface }: { surface: SurfaceId }): React.JSX.Element {
-  const state = useStore($surfaceCompanions)[surface]
+export function CompanionMenu(): React.JSX.Element {
+  const state = useStore($surfaceCompanion)
   const strings = useStrings().common.companionControl
   const [open, setOpen] = useState(false)
   const [error, setError] = useState(false)

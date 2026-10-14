@@ -401,7 +401,7 @@ export function createChatSubmissionController(
     const pendingRows = list.filter(item => pendingIds.has(item.id))
     const first = pendingRows[0]
 
-    // 工作台连发合回首条再提交；陪伴会话每条连发保留独立气泡（DB 仍合并为一行）。
+    // 专业对话连发合回首条再提交；陪伴会话每条连发保留独立气泡（DB 仍合并为一行）。
     if (first && !splitUserBubblesEnabled()) {
       const bodies = $chatMessageBodies.get()
       const displayAttachments = pendingRows.flatMap(item => bodies[item.id]?.attachments ?? [])

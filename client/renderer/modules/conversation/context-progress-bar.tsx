@@ -1,8 +1,7 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
-import { Brain, Thermometer } from '@/shared/lib/icons'
-import { REASONING_EFFORT_VALUES, type ReasoningEffort, resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
+import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 import type { SessionMessage } from '@protocol'
@@ -127,110 +126,5 @@ export function ChatContextAmbientLine(): React.JSX.Element {
         title={params.thresholdMarker(Math.round(thresholdPct))}
       />
     </div>
-  )
-}
-
-export interface ChatCapsuleProps {
-  active?: boolean
-  onClick?: () => void
-  variant?: 'workbench' | 'living'
-}
-
-function capsuleClassName(active: boolean | undefined, variant: ChatCapsuleProps['variant']): string {
-  return cn(
-    'inline-flex h-6 items-center gap-1.5 rounded-full transition cursor-pointer select-none',
-    variant === 'living'
-      ? 'border border-line-standard bg-surface-card px-2.5 text-[10.5px] text-strong shadow-xs backdrop-blur-md hover:border-line-strong hover:bg-surface-card/90'
-      : 'border border-line-hairline bg-fill-faint px-2 text-[10px] text-body hover:border-line-standard hover:bg-fill-hover hover:text-strong',
-    active && 'border-accent/40 bg-accent/15 text-accent shadow-xs'
-  )
-}
-
-/** 顶栏上下文胶囊微徽标：展示健康指示点、实时 Token 数及百分比 */
-export function ChatContextCapsule({ active, onClick, variant }: ChatCapsuleProps): React.JSX.Element {
-  const { totalTokens, contextLimit, pct, isInactive, isHealthy, isWarning, thresholdPct } = useContextStatus()
-  const params = useStrings().chat.params
-
-  const dotColor = isInactive
-    ? 'bg-muted-foreground/40'
-    : isHealthy
-      ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'
-      : isWarning
-        ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.6)]'
-        : 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.7)]'
-
-  const titleText = params.contextCapsuleTitle(
-    totalTokens.toLocaleString(),
-    contextLimit > 0 ? contextLimit.toLocaleString() : params.contextUnknown,
-    pct.toFixed(1),
-    Math.round(thresholdPct)
-  )
-
-  return (
-    <button
-      aria-label={params.contextCapsuleAria}
-      className={capsuleClassName(active, variant)}
-      onClick={onClick}
-      title={titleText}
-      type="button"
-    >
-      <span className={cn('size-1.5 rounded-full shrink-0 transition-colors', dotColor)} />
-      <span className="font-mono text-[10px] tracking-tight">
-        {formatTokenNumber(totalTokens)}
-        <span className="text-faint font-sans"> / </span>
-        <span className="text-muted">{contextLimit > 0 ? formatTokenNumber(contextLimit) : params.contextUnknown}</span>
-      </span>
-      <span className="text-[9px] text-faint">{contextLimit > 0 ? `(${pct.toFixed(0)}%)` : ''}</span>
-    </button>
-  )
-}
-
-export function ChatTemperatureCapsule({ active, onClick, variant }: ChatCapsuleProps): React.JSX.Element {
-  const { $sessionSettings } = useConversationView().controller
-
-  const settings = useStore($sessionSettings)
-  const temp = resolveTemperature(settings.temperature)
-  const params = useStrings().chat.params
-  const tempLabel = temperatureStyleLabel(temp, params.temperatureStyles)
-  const titleText = params.temperatureCapsuleTitle(temp.toFixed(2), tempLabel)
-
-  return (
-    <button
-      aria-label={params.temperatureCapsuleAria}
-      className={capsuleClassName(active, variant)}
-      onClick={onClick}
-      title={titleText}
-      type="button"
-    >
-      <Thermometer className="size-3 text-accent shrink-0" />
-      <span className="font-mono text-[10px] tracking-tight">{temp.toFixed(2)}</span>
-      {variant !== 'living' && <span className="text-[9px] text-faint">({tempLabel})</span>}
-    </button>
-  )
-}
-
-export function ChatReasoningCapsule({ active, onClick, variant }: ChatCapsuleProps): React.JSX.Element {
-  const { $sessionSettings } = useConversationView().controller
-
-  const settings = useStore($sessionSettings)
-  const reasoning = resolveReasoningEffort(settings.reasoning_effort)
-  const params = useStrings().chat.params
-  const label = params.reasoningOptions[reasoning]
-  const isOff = reasoning === 'none'
-  const titleText = params.reasoningCapsuleTitle(isOff ? params.reasoningOff : label)
-
-  return (
-    <button
-      aria-label={params.reasoningCapsuleAria}
-      className={capsuleClassName(active, variant)}
-      onClick={onClick}
-      title={titleText}
-      type="button"
-    >
-      <Brain className={cn('size-3 shrink-0', isOff ? 'text-faint' : 'text-accent')} />
-      <span className="text-[10px] tracking-tight">
-        {isOff ? params.reasoningCapsuleOff : params.reasoningCapsuleOn(label)}
-      </span>
-    </button>
   )
 }

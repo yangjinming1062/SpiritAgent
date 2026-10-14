@@ -1,5 +1,6 @@
 import { atom, computed } from 'nanostores'
 
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
@@ -15,6 +16,7 @@ import type {
   SystemPresetSummary,
   UndoResponse
 } from '@protocol'
+import { errorMessage } from '@runtime'
 
 import type { ConversationRuntime } from './chat-runtime'
 import type { ConversationHistorySync } from './chat-runtime-types'
@@ -51,6 +53,8 @@ export function isCompanionSession(session: null | SessionInfo | undefined): boo
 
 export const $sessions = atom<SessionInfo[]>([])
 export const $sessionsLoading = atom(false)
+export const $sessionsError = atom<string | null>(null)
+export const $sessionNavigationError = atom<{ sessionId: string | null; error: string } | null>(null)
 export const $sessionSort = atom<SessionSort>(parseSessionSort(storedString(SESSION_SORT_KEY)))
 export const $sessionSearch = atom('')
 export const $searchResults = atom<SessionInfo[]>([])
@@ -136,6 +140,7 @@ export function setSessionSort(sort: SessionSort): void {
 export async function fetchSessions(): Promise<void> {
   const token = ++sessionsToken
   $sessionsLoading.set(true)
+  $sessionsError.set(null)
 
   try {
     const res = await backendApi().api<{ sessions: SessionInfo[] }>({
@@ -144,7 +149,7 @@ export async function fetchSessions(): Promise<void> {
 
     if (token === sessionsToken) {
       const sessions = res.sessions || []
-      // 列表只返回一页；当前会话不在其中时沿用本地条目，避免工作台因找不到当前会话而切走。
+      // 列表只返回一页；当前会话不在其中时沿用本地条目，避免专业对话因找不到当前会话而切走。
       const activeId = $chatSessionId.get()
       const active = sessions.some(s => s.id === activeId) ? undefined : $sessions.get().find(s => s.id === activeId)
       $sessions.set(active ? [...sessions, active] : sessions)
@@ -156,6 +161,10 @@ export async function fetchSessions(): Promise<void> {
     }
   } catch (err) {
     log.error('session-list', 'Failed to fetch sessions:', err)
+
+    if (token === sessionsToken) {
+      $sessionsError.set(errorMessage(err))
+    }
   } finally {
     if (token === sessionsToken) {
       $sessionsLoading.set(false)
@@ -384,13 +393,7 @@ export async function createNewSession(systemPresetId: string): Promise<string |
     if (token === navigationToken) {
       setChatSession(res.session_id)
       const runtime = getConversationRuntime(res.session_id)
-      runtime.resetChatMessages()
-
-      if (res.info) {
-        runtime.hydrateSessionSettings(res.info)
-      }
-
-      runtime.resetSessionContextUsage(res.info?.context_window)
+      runtime.hydrateChatMessages([], res.info)
     }
 
     void fetchSessions()
@@ -499,7 +502,7 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
       nextCursor: res.next_cursor,
       truncated: res.truncated
     })
-    // 先补入本地条目，工作台才能立即挂载对话面板而不切走；随后刷新列表对齐服务端。
+    // 先补入本地条目，专业对话才能立即挂载对话面板而不切走；随后刷新列表对齐服务端。
     $sessions.set([forkSessionInfo(sourceSessionId, res), ...$sessions.get()])
 
     if (token === navigationToken) {
@@ -675,6 +678,7 @@ export async function switchSession(sessionId: string): Promise<void> {
 
   const token = ++navigationToken
   const epoch = currentClearEpoch()
+  $sessionNavigationError.set(null)
   const isCurrent = (): boolean => token === navigationToken && epoch === currentClearEpoch() && $gateway.get() === gw
   const runtime = getConversationRuntime(sessionId)
   const release = retainConversationRuntime(runtime)
@@ -689,7 +693,7 @@ export async function switchSession(sessionId: string): Promise<void> {
 
     if (runtime.$historyHydrated.get()) {
       setChatSession(sessionId)
-    } else if (local) {
+    } else if (local?.info) {
       setChatSession(sessionId)
       runtime.hydrateSyncedChatMessages(local.messages, local.info, localSnapshot)
     }
@@ -710,6 +714,80 @@ export async function switchSession(sessionId: string): Promise<void> {
   } catch (err) {
     if (isCurrent()) {
       log.error('session-list', 'Failed to switch session:', err)
+      $sessionNavigationError.set({ sessionId, error: errorMessage(err) })
+    }
+  } finally {
+    release()
+  }
+}
+
+// 模式交接须确认历史已恢复；普通列表切换仍保留原位错误提示的语义。
+export async function restoreConversationSelection(sessionId: string): Promise<void> {
+  const authCurrent = captureAuthScope()
+
+  if (!authCurrent) {
+    throw new Error('Conversation restore requires an authenticated account')
+  }
+
+  const gateway = $gateway.get()
+  const token = ++navigationToken
+  const runtime = getConversationRuntime(sessionId)
+  const release = retainConversationRuntime(runtime)
+
+  const ownerCurrent = (): boolean =>
+    authCurrent() && token === navigationToken && $gateway.get() === gateway && runtime.isCurrent()
+
+  const assertCurrent = (): void => {
+    if (!ownerCurrent()) {
+      throw new Error('Conversation restore owner changed')
+    }
+  }
+
+  $sessionNavigationError.set(null)
+
+  try {
+    const localSnapshot = runtime.captureHistorySync()
+    const local = await loadLocalSessionHistory(sessionId)
+    assertCurrent()
+
+    if (!runtime.$historyHydrated.get() && local?.info) {
+      runtime.hydrateSyncedChatMessages(local.messages, local.info, localSnapshot)
+    }
+
+    setChatSession(sessionId)
+
+    if (gateway?.connectionState === 'open') {
+      const snapshot = runtime.captureHistorySync()
+
+      try {
+        const synced = await syncSessionHistory({
+          sessionId,
+          request: body => gateway.request<SessionResumeResponse>('session.resume', { session_id: sessionId, ...body })
+        })
+
+        assertCurrent()
+
+        if (synced.session_id !== sessionId) {
+          throw new Error('Conversation restore returned a different session')
+        }
+
+        if (runtime.applyRemoteSnapshot(synced, snapshot)) {
+          void runtime.recoverUnconfirmedSubmission()
+        }
+      } catch (error) {
+        assertCurrent()
+        $sessionNavigationError.set({ sessionId, error: errorMessage(error) })
+
+        if (!runtime.$historyHydrated.get()) {
+          throw error
+        }
+      }
+    }
+
+    assertCurrent()
+
+    if ($chatSessionId.get() !== sessionId || !runtime.$historyHydrated.get()) {
+      throw new Error('Conversation history could not be restored')
     }
   } finally {
     release()
@@ -737,6 +815,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
   const token = ++navigationToken
   const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
   const isLatest = (): boolean => token === navigationToken
+  $sessionNavigationError.set(null)
 
   const load = (async () => {
     try {
@@ -832,6 +911,10 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
     } catch (err) {
       if (isCurrent()) {
         log.error('session-list', 'Failed to open main session:', err)
+
+        if (isLatest()) {
+          $sessionNavigationError.set({ sessionId: $companionSessionId.get(), error: errorMessage(err) })
+        }
       }
 
       return null
@@ -869,6 +952,8 @@ registerStorageClearHandler(() => {
   companionLoadEpoch = -1
   $sessions.set([])
   $sessionsLoading.set(false)
+  $sessionsError.set(null)
+  $sessionNavigationError.set(null)
   $sessionSort.set('recent')
   $sessionSearch.set('')
   $archivedSessions.set([])
@@ -881,7 +966,7 @@ registerStorageClearHandler(() => {
   $systemPresetsLoading.set(false)
 })
 
-export async function deleteSession(sessionId: string): Promise<void> {
+export async function deleteSession(sessionId: string): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {
@@ -889,26 +974,36 @@ export async function deleteSession(sessionId: string): Promise<void> {
   } catch (err) {
     log.error('session-list', 'Failed to delete session:', err)
 
-    return
+    return false
   }
 
   if (epoch !== currentClearEpoch()) {
-    return
+    return false
   }
 
   forgetSessionHistory(sessionId)
   removeVoicePlayback(sessionId)
 
   if ($chatSessionId.get() === sessionId) {
-    await openMainSession()
+    const companionId = $companionSessionId.get()
+
+    if (companionId && companionId !== sessionId) {
+      setChatSession(companionId)
+      await switchSession(companionId)
+    } else {
+      setChatSession(null)
+      await openMainSession()
+    }
   }
 
   if (epoch !== currentClearEpoch()) {
-    return
+    return false
   }
 
-  // 未能切回主对话时它仍是当前会话，刷新会沿用本地条目，删除时直接移除。
+  // 删除条目不随列表刷新保留。
   $sessions.set($sessions.get().filter(s => s.id !== sessionId))
   void fetchSessions()
   void fetchArchived()
+
+  return true
 }

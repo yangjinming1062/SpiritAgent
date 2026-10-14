@@ -121,7 +121,7 @@ export function EggStage({
         width: size,
         aspectRatio: '1',
         flexShrink: 0,
-        opacity: windowId === 0 && surfaceOpen !== null ? 0.25 : 1
+        opacity: windowId === 0 && surfaceOpen ? 0.25 : 1
       }}
     >
       <svg

@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { type SurfaceId, UI_THEME_URL_PARAM } from '@ipc/contracts'
+import { UI_THEME_URL_PARAM } from '@ipc/contracts'
 
 import { directoryExists, fileExists } from '../shared/utils'
 
@@ -75,8 +75,8 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
     return candidates[0]
   }
 
-  /** 入口页文件名与角色同名（`living.html`、`workbench.html`、`sprite.html`）。 */
-  function rendererUrlFor(role: SurfaceId | 'sprite' | 'desktop' | 'desktop-background', theme?: string): string {
+  /** 入口页文件名与窗口角色同名。 */
+  function rendererUrlFor(role: 'main' | 'sprite' | 'desktop' | 'desktop-background', theme?: string): string {
     const htmlFile = `${role}.html`
     const url = devServer ? new URL(`${devServer}/${htmlFile}`) : pathToFileURL(resolveRendererHtml(htmlFile))
 

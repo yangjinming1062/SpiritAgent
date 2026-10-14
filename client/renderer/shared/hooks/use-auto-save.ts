@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { currentClearEpoch } from '@/shared/lib/storage'
+
 export type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 interface UseAutoSaveOptions<T> {
@@ -28,6 +30,7 @@ export function useAutoSave<T>({
   const latestValueRef = useRef(value)
   const onErrorRef = useRef(onError)
   const onSaveRef = useRef(onSave)
+  const ownerEpochRef = useRef(currentClearEpoch())
   const pendingRef = useRef<{ revision: number; value: T } | null>(null)
   const revisionRef = useRef(0)
   const savingRef = useRef(false)
@@ -47,12 +50,19 @@ export function useAutoSave<T>({
   }, [])
 
   const flush = useCallback((): void => {
+    if (ownerEpochRef.current !== currentClearEpoch()) {
+      pendingRef.current = null
+
+      return
+    }
+
     if (savingRef.current || pendingRef.current === null) {
       return
     }
 
     const pending = pendingRef.current
     pendingRef.current = null
+
     savingRef.current = true
     let succeeded = false
 
@@ -65,11 +75,19 @@ export function useAutoSave<T>({
       .then(() => {
         succeeded = true
 
-        if (mountedRef.current && revisionRef.current === pending.revision) {
+        if (
+          mountedRef.current &&
+          ownerEpochRef.current === currentClearEpoch() &&
+          revisionRef.current === pending.revision
+        ) {
           setStatus('saved')
         }
       })
       .catch(error => {
+        if (ownerEpochRef.current !== currentClearEpoch()) {
+          return
+        }
+
         if (revisionRef.current === pending.revision && pendingRef.current === null) {
           pendingRef.current = pending
         }
@@ -82,6 +100,12 @@ export function useAutoSave<T>({
       .finally(() => {
         savingRef.current = false
 
+        if (ownerEpochRef.current !== currentClearEpoch()) {
+          pendingRef.current = null
+
+          return
+        }
+
         if (pendingRef.current !== null && (succeeded || pendingRef.current.revision !== pending.revision)) {
           queueMicrotask(() => flushRef.current())
         }
@@ -91,7 +115,7 @@ export function useAutoSave<T>({
   flushRef.current = flush
 
   useEffect(() => {
-    if (!dirty) {
+    if (!dirty || ownerEpochRef.current !== currentClearEpoch()) {
       clearTimer()
       pendingRef.current = null
 

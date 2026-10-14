@@ -69,8 +69,8 @@ function isVoiceSurfaceVisible(messageId?: string): boolean {
     return false
   }
 
-  if ($surfaceRole.get() === 'living') {
-    return $surfaceOpen.get() === 'living' && $surfaceOpenVisible.get()
+  if ($surfaceRole.get() === 'main') {
+    return $surfaceOpen.get() && $surfaceOpenVisible.get()
   }
 
   return $surfaceRole.get() === 'sprite' && $whisperOpen.get() && isSpriteStageShown()

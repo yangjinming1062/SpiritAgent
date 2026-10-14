@@ -24,7 +24,7 @@ export interface ScreenEdge {
   yRatio: number
 }
 
-export type SpatialLocale = 'home' | 'perch' | 'roam' | 'screen_peek' | 'window_peek' | 'target' | 'workbench'
+export type SpatialLocale = 'home' | 'perch' | 'roam' | 'screen_peek' | 'window_peek' | 'target'
 
 export type Locomotion = 'still' | 'walk' | 'fly' | 'drag'
 

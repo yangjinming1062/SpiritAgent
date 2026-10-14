@@ -1,5 +1,7 @@
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { fileApi } from '@/shared/platform/desktop'
+import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { SpiritAgentSelectPathsOptions } from '@ipc/contracts'
@@ -7,7 +9,8 @@ import { errorMessage } from '@runtime'
 
 import { basename } from './chat-path'
 import type { ConversationRuntime } from './chat-runtime'
-import type { PendingAttachment } from './chat-store'
+import { type PendingAttachment, retainConversationRuntime } from './chat-store'
+import { beginConversationInputActivity } from './conversation-input-busy'
 import { ensureChatSession } from './session-list-store'
 
 // 附件扩展名分拣：视频容器与后端白名单一致（mp4/mov，供应商实测 webb 被拒）；图片同步支持 HEIC/HEIF（iPhone 截图）/TIFF/AVIF/JXL（next-gen）。
@@ -48,68 +51,114 @@ function getImagePickOptions() {
 
 async function pickPath(
   options: SpiritAgentSelectPathsOptions,
-  apply: (path: string) => Promise<void> | void
+  apply: (path: string) => Promise<void> | void,
+  runtime?: ConversationRuntime
 ): Promise<void> {
+  const authCurrent = captureAuthScope()
+
+  if (!authCurrent || (runtime && !runtime.isCurrent())) {
+    return
+  }
+
+  const releaseRuntime = runtime ? retainConversationRuntime(runtime) : undefined
+
   try {
     const [path] = await fileApi().selectPaths(options)
 
-    if (!path) {
+    if (!path || !authCurrent()) {
       return
     }
 
     await apply(path)
   } catch (err) {
-    reportPickerError(err)
+    if (authCurrent()) {
+      reportPickerError(err)
+    }
+  } finally {
+    releaseRuntime?.()
   }
 }
 
 export function pickFile(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
-  return pickPath({ multiple: false, title: getStrings().chat.picker.selectFile }, async path => {
-    if (VIDEO_EXT.test(path)) {
-      await attachVideoFile(path, setPending, runtime)
-    } else if (IMAGE_EXT.test(path)) {
-      setPending({ type: 'image', value: path, fileName: basename(path) })
-    } else {
-      setPending({ type: 'file', fileName: basename(path), path })
-    }
-  })
-}
-
-export function pickFolder(setPending: SetPending, _runtime?: ConversationRuntime): Promise<void> {
-  return pickPath({ directories: true, multiple: false, title: getStrings().chat.picker.selectFolder }, path =>
-    setPending({ type: 'folder', folderName: basename(path), path })
+  return pickPath(
+    { multiple: false, title: getStrings().chat.picker.selectFile },
+    async path => {
+      if (VIDEO_EXT.test(path)) {
+        await attachVideoFile(path, setPending, runtime)
+      } else if (IMAGE_EXT.test(path)) {
+        setPending({ type: 'image', value: path, fileName: basename(path) })
+      } else {
+        setPending({ type: 'file', fileName: basename(path), path })
+      }
+    },
+    runtime
   )
 }
 
-export function pickImage(setPending: SetPending, _runtime?: ConversationRuntime): Promise<void> {
-  return pickPath(getImagePickOptions(), path => setPending({ type: 'image', value: path, fileName: basename(path) }))
+export function pickFolder(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
+  return pickPath(
+    { directories: true, multiple: false, title: getStrings().chat.picker.selectFolder },
+    path => setPending({ type: 'folder', folderName: basename(path), path }),
+    runtime
+  )
+}
+
+export function pickImage(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
+  return pickPath(
+    getImagePickOptions(),
+    path => setPending({ type: 'image', value: path, fileName: basename(path) }),
+    runtime
+  )
 }
 
 export function pickVideo(setPending: SetPending, runtime?: ConversationRuntime): Promise<void> {
-  return pickPath(getVideoUploadOptions(), path => attachVideoFile(path, setPending, runtime))
+  return pickPath(getVideoUploadOptions(), path => attachVideoFile(path, setPending, runtime), runtime)
 }
 
-// 视频附加即上传（本地后端 <1s）：本地模式下超 50MB 会被后端 413 拒绝并在 error 里给出指引。结果只回填本次加入的附件对象：切换会话、移除或重新选择后，迟到结果作废。
+// 上传结果仅回填来源草稿中本次加入的附件；移除或重新选择后不再覆盖。
 export async function attachVideoFile(
   path: string,
   setPending: SetPending,
   runtime?: ConversationRuntime
 ): Promise<void> {
+  const auth = $auth.get()
+  const authCurrent = captureAuthScope()
+
+  if (auth.kind !== 'authenticated' || !authCurrent || (runtime && !runtime.isCurrent())) {
+    return
+  }
+
   const fileName = basename(path)
   const uploading: PendingAttachment = { type: 'video', fileName, path, status: 'uploading' }
 
   setPending(uploading)
+  const finishUpload = beginConversationInputActivity('uploading')
+  const releaseRuntime = runtime ? retainConversationRuntime(runtime) : undefined
 
   try {
     const sessionId = await ensureChatSession(runtime)
-    const result = await fileApi().uploadVideoForAttach({ path, sessionId })
+
+    if (!authCurrent()) {
+      return
+    }
+
+    const result = await fileApi().uploadVideoForAttach({ path, sessionId, authSessionId: auth.snapshot.sessionId })
+
+    if (!authCurrent()) {
+      return
+    }
 
     setPending(prev =>
       prev === uploading ? { type: 'video', fileName, path, status: 'ready', url: result.url } : prev
     )
   } catch (err) {
-    setPending(prev =>
-      prev === uploading ? { type: 'video', fileName, path, status: 'error', error: errorMessage(err) } : prev
-    )
+    if (authCurrent()) {
+      setPending(prev =>
+        prev === uploading ? { type: 'video', fileName, path, status: 'error', error: errorMessage(err) } : prev
+      )
+    }
+  } finally {
+    finishUpload()
+    releaseRuntime?.()
   }
 }

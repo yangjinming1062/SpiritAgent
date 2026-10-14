@@ -112,6 +112,7 @@ interface AuthIpcDeps {
   onAccountIdentityChanged: () => Promise<void>
   resetBackendCache: () => void
   restartBridge: () => Promise<void>
+  beforeAccountSwitch: () => Promise<void>
   spiritagentHome: string
 }
 
@@ -170,6 +171,7 @@ export function registerAuthIpc({
       const previous = session.getSession()
       const selectedAccountId = session.getSelectedAccountId()
       const built = deps.buildClientContext()
+      await deps.beforeAccountSwitch()
       const next = await session.switchAccount(accountId, { clientContext: built.client_context || null })
 
       if (next && previous?.sessionId !== next.sessionId) {
@@ -310,7 +312,6 @@ export function registerDesktopAccountIpc({ deps, ipcMain }: { deps: DesktopAcco
       throw new Error('无效账户。')
     }
 
-    await deps.onLeavingDesktop()
     await deps.switchAccount(id)
   })
 

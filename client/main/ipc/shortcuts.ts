@@ -5,8 +5,7 @@ import {
   type DesktopShortcutsConfig,
   type DesktopShortcutsSetPayload,
   type DesktopShortcutsState,
-  IPC,
-  type SurfaceId
+  IPC
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
@@ -15,7 +14,7 @@ import { broadcastToAllWindows } from '../shared/utils'
 
 /** 窄接口：快捷键只需要切表面，不依赖 lifecycle/surfaces 具体类型。 */
 interface SurfaceToggler {
-  toggleSurface: (payload: { surface: SurfaceId }) => Promise<void>
+  toggleSurface: (payload: Record<string, never>) => Promise<void>
 }
 
 interface ShortcutsIpcDeps {
@@ -30,14 +29,13 @@ let deps: ShortcutsIpcDeps | null = null
 const currentRegistered = new Map<keyof DesktopShortcutsConfig, string>()
 
 const idleStatus = (): DesktopShortcutsState['status'] => ({
-  openLiving: { registered: false },
-  openWorkbench: { registered: false },
+  openMain: { registered: false },
   toggleVisibility: { registered: false }
 })
 
 let currentStatus = idleStatus()
 
-// 订阅方是生活空间设置页，不是精灵窗。
+// 设置页可位于主窗口或交互桌面。
 function broadcastShortcutsChanged(state: DesktopShortcutsState): void {
   broadcastToAllWindows(IPC.event.shortcutsChanged, state)
 }
@@ -53,8 +51,7 @@ function overlayShortcuts(source: unknown, fallback: Readonly<DesktopShortcutsCo
   }
 
   return {
-    openLiving: pick('openLiving'),
-    openWorkbench: pick('openWorkbench'),
+    openMain: pick('openMain'),
     toggleVisibility: pick('toggleVisibility')
   }
 }
@@ -67,12 +64,10 @@ function handleToggleVisibility(): void {
   deps?.toggleMainWindow()
 }
 
-function handleToggleSurface(surface: SurfaceId): () => void {
-  return () => {
-    deps?.surfaces?.toggleSurface({ surface }).catch(err => {
-      deps?.rememberLog?.(`[shortcuts] toggleSurface(${surface}) failed: ${errorMessage(err)}`)
-    })
-  }
+function handleToggleSurface(): void {
+  deps?.surfaces?.toggleSurface({}).catch(err => {
+    deps?.rememberLog?.(`[shortcuts] toggleSurface failed: ${errorMessage(err)}`)
+  })
 }
 
 function getActionHandler(action: keyof DesktopShortcutsConfig): () => void {
@@ -80,11 +75,7 @@ function getActionHandler(action: keyof DesktopShortcutsConfig): () => void {
     return handleToggleVisibility
   }
 
-  if (action === 'openLiving') {
-    return handleToggleSurface('living')
-  }
-
-  return handleToggleSurface('workbench')
+  return handleToggleSurface
 }
 
 function registerSingleShortcut(action: keyof DesktopShortcutsConfig, accelerator: string): void {
@@ -136,8 +127,7 @@ function registerSingleShortcut(action: keyof DesktopShortcutsConfig, accelerato
 
 function applyShortcuts(config: DesktopShortcutsConfig): DesktopShortcutsState {
   registerSingleShortcut('toggleVisibility', config.toggleVisibility)
-  registerSingleShortcut('openLiving', config.openLiving)
-  registerSingleShortcut('openWorkbench', config.openWorkbench)
+  registerSingleShortcut('openMain', config.openMain)
 
   return {
     config,

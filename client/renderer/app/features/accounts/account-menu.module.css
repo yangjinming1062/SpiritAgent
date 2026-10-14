@@ -1,0 +1,170 @@
+.accountPopup {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 12px;
+}
+.accountPopup[data-side='left'] {
+  right: 0;
+  left: auto;
+  flex-direction: row-reverse;
+}
+.accountPopup[data-side='below'] {
+  flex-direction: column;
+}
+.accountPopup[data-placement='above'] {
+  top: auto;
+  bottom: 0;
+  left: calc(100% + 8px);
+  padding-top: 0;
+  align-items: flex-end;
+}
+.accountPopup[data-placement='above'][data-side='left'] {
+  left: auto;
+  right: calc(100% + 8px);
+}
+.menuContent {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 256px;
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  padding: 9px;
+  background: var(--ui-app-bg);
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 12px;
+  box-shadow: 0 16px 45px rgb(0 0 0 / 0.2);
+  font-size: 12px;
+}
+.accountPopup .accountMenu {
+  position: relative;
+  top: auto;
+  left: auto;
+  max-width: calc(100vw - 24px);
+  overflow: visible;
+}
+.accountPopup[data-side='below'] .accountSubmenu {
+  width: min(256px, calc(100vw - 24px));
+}
+.menuContent > button {
+  border: 0;
+  border-radius: 6px;
+  padding: 9px;
+  display: flex;
+  justify-content: space-between;
+  text-align: left;
+  background: transparent;
+}
+.menuContent > button:hover {
+  background: var(--ui-fill-hover);
+}
+.accountSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px 10px;
+  border-bottom: 1px solid var(--ui-line-hairline);
+}
+.accountSummaryLabel {
+  color: var(--ui-text-muted);
+  font-size: 10px;
+}
+.accountSummaryName,
+.accountOptionText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.accountSummaryName {
+  font-size: 13px;
+  font-weight: 600;
+}
+.accountSummaryName small,
+.accountOptionText small {
+  overflow: hidden;
+  color: var(--ui-text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.accountSwitch {
+  position: relative;
+}
+.menuAction {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px;
+  text-align: left;
+  background: transparent;
+}
+.menuAction:hover {
+  background: var(--ui-fill-hover);
+}
+.menuAction[data-destructive='true'],
+.accountOption[data-destructive='true'] {
+  color: var(--ui-danger-fg);
+}
+.menuAction:focus-visible,
+.accountOption:focus-visible {
+  background: var(--ui-fill-hover);
+  box-shadow: inset 0 0 0 1px var(--ui-line-strong);
+}
+.menuStatus {
+  padding: 7px 9px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+.accountSubmenu {
+  display: flex;
+  width: 224px;
+  max-height: min(360px, calc(100vh - 80px));
+  flex-direction: column;
+  gap: 3px;
+  overflow: auto;
+  padding: 9px;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 12px;
+  background: var(--ui-app-bg);
+  box-shadow: 0 16px 45px rgb(0 0 0 / 0.2);
+  font-size: 12px;
+}
+.accountSubmenuTitle {
+  padding: 7px 9px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.accountOption {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 9px;
+  text-align: left;
+  background: transparent;
+}
+.accountOption:hover:not(:disabled) {
+  background: var(--ui-fill-hover);
+}
+.accountOption:disabled {
+  color: var(--ui-text-strong);
+}

@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { $chatSessionId, getConversationRuntime } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
 import { useAutoSave } from '@/shared/hooks/use-auto-save'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { BTN_SUBTLE, EmptyState, HINT_TEXT, LoadingBlock, SettingsSectionIntro } from '@/shared/panel'
@@ -73,12 +74,13 @@ export function InferencePage(): React.JSX.Element {
   const latestStateRef = useRef(form.state)
   latestStateRef.current = form.state
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true
+
+    return () => {
       mountedRef.current = false
-    },
-    []
-  )
+    }
+  }, [])
 
   // 把加载结果灌进表单 —— loader.data 一旦变化即同步。
   useEffect(() => {
@@ -88,22 +90,33 @@ export function InferencePage(): React.JSX.Element {
   }, [loader.data, reset])
 
   const persist = async (state: InferenceForm): Promise<void> => {
-    const { config } = await saveSpiritAgentConfig(toConfig(state))
+    const isCurrent = captureAuthScope()
 
-    if (mountedRef.current && sameForm(latestStateRef.current, state)) {
-      reset(config)
+    if (!isCurrent) {
+      return
     }
 
     const gateway = $gateway.get()
     const sessionId = $chatSessionId.get()
     const runtime = getConversationRuntime(sessionId)
     const visibleSettings = runtime.$sessionSettings.get()
+    const { config } = await saveSpiritAgentConfig(toConfig(state))
 
-    if (gateway?.connectionState === 'open' && sessionId) {
+    if (!isCurrent()) {
+      return
+    }
+
+    if (mountedRef.current && sameForm(latestStateRef.current, state)) {
+      reset(config)
+    }
+
+    if (gateway?.connectionState === 'open' && $gateway.get() === gateway && sessionId) {
       void gateway
         .request<{ info: SessionRuntimeInfo }>('session.set_settings', { session_id: sessionId, settings: {} })
         .then(result => {
           if (
+            isCurrent() &&
+            $gateway.get() === gateway &&
             runtime.isCurrent() &&
             $chatSessionId.get() === sessionId &&
             runtime.$sessionSettings.get() === visibleSettings
@@ -111,7 +124,11 @@ export function InferencePage(): React.JSX.Element {
             runtime.hydrateSessionSettings(result.info)
           }
         })
-        .catch(error => notifyError(error, t.chat.params.saveFailed))
+        .catch(error => {
+          if (isCurrent() && $gateway.get() === gateway) {
+            notifyError(error, t.chat.params.saveFailed)
+          }
+        })
     }
   }
 

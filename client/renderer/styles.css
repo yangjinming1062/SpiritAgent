@@ -244,8 +244,8 @@
     --ui-bubble-user-bg: color-mix(in srgb, var(--ui-accent) 22%, rgba(12, 14, 20, 0.28));
   }
 
-  /* 生活空间清透：场景图磨砂 + 更低底板；对话页更透，设置页用液态玻璃胶囊而非乳白实底。 */
-  html[data-role='living'][data-effect='clear'][data-palette='day'] {
+  /* 主窗口清透：场景图磨砂 + 更低底板；对话页更透，设置页用液态玻璃胶囊而非乳白实底。 */
+  html[data-role='main'][data-effect='clear'][data-palette='day'] {
     --glass-tint-alpha: 0.03;
     --ui-window-fill: var(--glass-tint);
     --ui-surface-panel: rgba(var(--glass-tint-rgb), 0.04);
@@ -254,18 +254,18 @@
     --ui-glass-blur: 20px;
   }
 
-  html[data-role='living'][data-effect='clear'][data-palette='day']:not([data-living-view='chat']) {
+  html[data-role='main'][data-effect='clear'][data-palette='day']:not([data-app-page='chat']) {
     --ui-surface-card: rgba(255, 255, 255, 0.12);
     --ui-glass-bg: rgba(var(--glass-tint-rgb), 0.08);
   }
 
-  html[data-role='living'][data-effect='clear'][data-palette='day'][data-living-view='settings'] {
+  html[data-role='main'][data-effect='clear'][data-palette='day'][data-app-page='settings'] {
     --glass-tint-alpha: 0.06;
     --ui-window-fill: var(--glass-tint);
     --ui-surface-card: rgba(255, 255, 255, 0.14);
   }
 
-  html[data-role='living'][data-effect='clear'][data-palette='night'] {
+  html[data-role='main'][data-effect='clear'][data-palette='night'] {
     --glass-tint-alpha: 0.14;
     --ui-window-fill: var(--glass-tint);
     --ui-surface-panel: rgba(12, 14, 20, 0.1);
@@ -274,53 +274,53 @@
     --ui-glass-blur: 20px;
   }
 
-  html[data-role='living'][data-effect='clear'][data-palette='night']:not([data-living-view='chat']) {
+  html[data-role='main'][data-effect='clear'][data-palette='night']:not([data-app-page='chat']) {
     --ui-surface-card: rgba(16, 18, 24, 0.2);
     --ui-glass-bg: rgba(12, 14, 20, 0.16);
   }
 
-  html[data-role='living'][data-effect='clear'][data-palette='night'][data-living-view='settings'] {
+  html[data-role='main'][data-effect='clear'][data-palette='night'][data-app-page='settings'] {
     --glass-tint-alpha: 0.18;
     --ui-window-fill: var(--glass-tint);
     --ui-surface-card: rgba(16, 18, 24, 0.28);
   }
 
-  html[data-role='living'][data-effect='solid'][data-palette='day'] {
+  html[data-role='main'][data-effect='solid'][data-palette='day'] {
     --ui-window-fill: rgba(248, 246, 242, 0.86);
     --ui-surface-panel: rgba(252, 250, 248, 0.18);
     --ui-surface-card: rgba(255, 255, 255, 0.42);
     --ui-glass-bg: rgba(252, 250, 248, 0.22);
   }
 
-  html[data-role='living'][data-effect='solid'][data-palette='night'] {
+  html[data-role='main'][data-effect='solid'][data-palette='night'] {
     --ui-window-fill: rgba(12, 14, 20, 0.8);
     --ui-surface-panel: rgba(14, 16, 22, 0.16);
     --ui-surface-card: rgba(16, 18, 24, 0.36);
     --ui-glass-bg: rgba(14, 16, 22, 0.2);
   }
 
-  /* 生活空间 no-blur：整窗底板加实，左栏/顶栏仍透明。 */
-  html[data-role='living'][data-effect='clear'][data-palette='day'].no-blur {
+  /* 主窗口 no-blur：整窗底板加实，左栏/顶栏仍透明。 */
+  html[data-role='main'][data-effect='clear'][data-palette='day'].no-blur {
     --glass-tint-alpha: 0.72;
     --ui-window-fill: var(--glass-tint);
     --ui-surface-card: rgba(255, 255, 255, 0.88);
     --ui-bubble-user-bg: color-mix(in srgb, var(--ui-accent) 20%, var(--ui-app-bg));
   }
 
-  html[data-role='living'][data-effect='clear'][data-palette='night'].no-blur {
+  html[data-role='main'][data-effect='clear'][data-palette='night'].no-blur {
     --glass-tint-alpha: 0.78;
     --ui-window-fill: var(--glass-tint);
     --ui-surface-card: rgba(20, 20, 24, 0.88);
     --ui-bubble-user-bg: color-mix(in srgb, var(--ui-accent) 22%, var(--ui-app-bg));
   }
 
-  html[data-role='living'][data-effect='solid'][data-palette='day'].no-blur {
+  html[data-role='main'][data-effect='solid'][data-palette='day'].no-blur {
     --ui-window-fill: rgba(248, 246, 242, 0.94);
     --ui-surface-card: rgba(255, 255, 255, 0.88);
     --ui-bubble-user-bg: color-mix(in srgb, var(--ui-accent) 25%, var(--ui-app-bg));
   }
 
-  html[data-role='living'][data-effect='solid'][data-palette='night'].no-blur {
+  html[data-role='main'][data-effect='solid'][data-palette='night'].no-blur {
     --ui-window-fill: rgba(12, 14, 20, 0.92);
     --ui-surface-card: rgba(20, 20, 24, 0.88);
     --ui-bubble-user-bg: color-mix(in srgb, var(--ui-accent) 25%, var(--ui-app-bg));
@@ -351,19 +351,16 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* 精灵窗/桌面/生活空间/工作台为无边框真透明窗体；html 也须透明——color-scheme 会铺画布底填进圆角楔形。 */
+  /* 精灵窗/桌面/主窗口为无边框真透明窗体；html 也须透明——color-scheme 会铺画布底填进圆角楔形。 */
   html[data-role='sprite'],
   html[data-role='sprite'] body,
   html[data-role='sprite'] #root,
   html[data-role='desktop'],
   html[data-role='desktop'] body,
   html[data-role='desktop'] #root,
-  html[data-role='workbench'],
-  html[data-role='workbench'] body,
-  html[data-role='workbench'] #root,
-  html[data-role='living'],
-  html[data-role='living'] body,
-  html[data-role='living'] #root {
+  html[data-role='main'],
+  html[data-role='main'] body,
+  html[data-role='main'] #root {
     background: transparent !important;
   }
 
@@ -449,18 +446,18 @@ html[data-theme='day'].no-blur .bg-glass {
   background-color: rgba(252, 247, 240, 0.9) !important;
 }
 
-html:not([data-role='living'])[data-effect='clear'][data-palette='day'].no-blur .bg-surface-panel,
-html:not([data-role='living'])[data-effect='clear'][data-palette='day'].no-blur .bg-glass {
+html:not([data-role='main'])[data-effect='clear'][data-palette='day'].no-blur .bg-surface-panel,
+html:not([data-role='main'])[data-effect='clear'][data-palette='day'].no-blur .bg-glass {
   background-color: rgba(252, 247, 240, 0.86) !important;
 }
 
-html:not([data-role='living'])[data-effect='clear'][data-palette='night'].no-blur .bg-surface-panel,
-html:not([data-role='living'])[data-effect='clear'][data-palette='night'].no-blur .bg-glass {
+html:not([data-role='main'])[data-effect='clear'][data-palette='night'].no-blur .bg-surface-panel,
+html:not([data-role='main'])[data-effect='clear'][data-palette='night'].no-blur .bg-glass {
   background-color: rgba(16, 18, 24, 0.9) !important;
 }
 
-html[data-role='living'].no-blur .bg-surface-panel,
-html[data-role='living'].no-blur .bg-glass {
+html[data-role='main'].no-blur .bg-surface-panel,
+html[data-role='main'].no-blur .bg-glass {
   background-color: var(--ui-surface-card) !important;
 }
 
@@ -490,7 +487,7 @@ html[data-role='living'].no-blur .bg-glass {
     0 8px 20px -6px var(--ui-accent-soft);
 }
 
-html[data-role='living'][data-effect='clear'] .theme-tile {
+html[data-role='main'][data-effect='clear'] .theme-tile {
   background: rgba(255, 255, 255, 0.16);
   border-color: rgba(255, 255, 255, 0.45);
   box-shadow:
@@ -498,7 +495,7 @@ html[data-role='living'][data-effect='clear'] .theme-tile {
     0 6px 18px -6px rgba(70, 96, 124, 0.12);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='night'] .theme-tile {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .theme-tile {
   background: rgba(16, 20, 30, 0.28);
   border-color: rgba(255, 255, 255, 0.16);
   box-shadow:
@@ -506,12 +503,12 @@ html[data-role='living'][data-effect='clear'][data-palette='night'] .theme-tile 
     0 8px 24px -8px rgba(0, 0, 0, 0.4);
 }
 
-html[data-role='living'][data-effect='clear'] .theme-tile.is-active {
+html[data-role='main'][data-effect='clear'] .theme-tile.is-active {
   background: color-mix(in srgb, var(--ui-accent) 12%, rgba(255, 255, 255, 0.22));
   border-color: var(--ui-accent);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='night'] .theme-tile.is-active {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .theme-tile.is-active {
   background: color-mix(in srgb, var(--ui-accent) 15%, rgba(16, 20, 30, 0.4));
   border-color: var(--ui-accent);
 }
@@ -679,7 +676,7 @@ html[data-palette='day'] .liquid-glass-overlay {
     0 20px 48px -12px rgba(0, 0, 0, 0.18);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='day'] .bg-surface-card {
+html[data-role='main'][data-effect='clear'][data-palette='day'] .bg-surface-card {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.58),
     0 10px 24px -12px rgba(70, 96, 124, 0.16);
@@ -759,9 +756,9 @@ html[data-effect='clear'] .liquid-glass-pill:hover {
 }
 
 
-/* ── 生活空间清透模式 ── */
+/* ── 主窗口清透模式 ── */
 
-html[data-role='living'][data-effect='clear'] .liquid-glass-card {
+html[data-role='main'][data-effect='clear'] .liquid-glass-card {
   background: var(--ui-surface-card);
   border-color: rgba(255, 255, 255, 0.42);
   box-shadow:
@@ -769,7 +766,7 @@ html[data-role='living'][data-effect='clear'] .liquid-glass-card {
     0 10px 28px -16px rgba(70, 96, 124, 0.22);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-card {
+html[data-role='main'][data-effect='clear'][data-palette='day'] .liquid-glass-card {
   background: rgba(255, 255, 255, 0.16);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
@@ -779,7 +776,7 @@ html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-
     0 8px 24px -12px rgba(70, 96, 124, 0.14);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glass-card {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .liquid-glass-card {
   background: rgba(14, 18, 26, 0.28);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
@@ -790,7 +787,7 @@ html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glas
 }
 
 /* 清透模式胶囊容器 */
-html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-pill {
+html[data-role='main'][data-effect='clear'][data-palette='day'] .liquid-glass-pill {
   background: rgba(255, 255, 255, 0.3);
   -webkit-backdrop-filter: blur(24px) saturate(200%) contrast(105%);
   backdrop-filter: blur(24px) saturate(200%) contrast(105%);
@@ -802,7 +799,7 @@ html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-
     0 2px 6px -1px rgba(0, 0, 0, 0.04);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-pill:hover {
+html[data-role='main'][data-effect='clear'][data-palette='day'] .liquid-glass-pill:hover {
   background: rgba(255, 255, 255, 0.4);
   border-color: rgba(255, 255, 255, 0.85);
   box-shadow:
@@ -810,7 +807,7 @@ html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-
     0 8px 24px -4px rgba(70, 96, 124, 0.18);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glass-pill {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .liquid-glass-pill {
   background: rgba(18, 22, 34, 0.45);
   -webkit-backdrop-filter: blur(24px) saturate(200%) contrast(105%);
   backdrop-filter: blur(24px) saturate(200%) contrast(105%);
@@ -822,7 +819,7 @@ html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glas
     0 2px 6px 0 rgba(0, 0, 0, 0.3);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glass-pill:hover {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .liquid-glass-pill:hover {
   background: rgba(24, 30, 46, 0.55);
   border-color: rgba(255, 255, 255, 0.32);
   box-shadow:
@@ -857,8 +854,8 @@ html[data-palette='day'][data-effect='solid'] .liquid-glass-tab-active {
 }
 
 /* 清透模式胶囊激活项 */
-html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-pill-active,
-html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-tab-active {
+html[data-role='main'][data-effect='clear'][data-palette='day'] .liquid-glass-pill-active,
+html[data-role='main'][data-effect='clear'][data-palette='day'] .liquid-glass-tab-active {
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.98);
   box-shadow:
@@ -869,8 +866,8 @@ html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-
   font-weight: 600;
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glass-pill-active,
-html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glass-tab-active {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .liquid-glass-pill-active,
+html[data-role='main'][data-effect='clear'][data-palette='night'] .liquid-glass-tab-active {
   background: rgba(255, 255, 255, 0.22);
   border: 1px solid rgba(255, 255, 255, 0.38);
   box-shadow:
@@ -882,30 +879,30 @@ html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glas
 }
 
 /* 清透模式未激活项文字清晰度 */
-html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active) {
+html[data-role='main'][data-effect='clear'][data-palette='day'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active) {
   color: #2b3240;
   font-weight: 500;
 }
-html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active):hover {
+html[data-role='main'][data-effect='clear'][data-palette='day'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active):hover {
   color: #0f131a;
   background: rgba(255, 255, 255, 0.38);
 }
 
-html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active) {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active) {
   color: #cbd5e1;
   font-weight: 500;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
-html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active):hover {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active):hover {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.1);
 }
 
 /* 消除清透主题下输入控件过于厚重的底色，恢复轻透感 */
-html[data-role='living'][data-effect='clear'] .bg-fill-faint {
+html[data-role='main'][data-effect='clear'] .bg-fill-faint {
   background: rgba(255, 255, 255, 0.08);
 }
-html[data-role='living'][data-effect='clear'][data-palette='night'] .bg-fill-faint {
+html[data-role='main'][data-effect='clear'][data-palette='night'] .bg-fill-faint {
   background: rgba(255, 255, 255, 0.05);
 }
 
@@ -1218,7 +1215,7 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
   }
 }
 
-/* 生活空间打开时精灵退到场景里：整 stage opacity 归 0，命中区一并失效，避免误触。 */
+/* 主窗口打开时隐藏独立精灵舞台，命中区一并失效，避免误触。 */
 html[data-sprite-hidden='true'] [data-sprite-stage] {
   opacity: 0 !important;
   pointer-events: none !important;

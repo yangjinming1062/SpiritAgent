@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-// 对话输入胶囊：生活空间、工作台与轻语共用。默认单行胶囊，内容超过一行自动换行增高、封顶后内部滚动；编辑消息，或工作台聚焦、挂附件、长文本时展开为多行指挥台。此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
+// 对话输入胶囊：陪伴对话、专业对话与轻语共用。默认单行胶囊，内容超过一行自动换行增高、封顶后内部滚动；编辑消息，或专业对话聚焦、挂附件、长文本时展开为多行指挥台。此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
 import type React from 'react'
 import {
   type ClipboardEvent,
@@ -62,7 +62,7 @@ export interface ConversationInputProps {
   variant?: ConversationVariant
 }
 
-// 工作台指挥台的展开阈值：超过这个长度、存在附件或聚焦时，长成多行指挥台。生活空间空闲保持单行胶囊，靠 field-sizing 自动换行增高。
+// 专业对话指挥台的展开阈值：超过这个长度、存在附件或聚焦时，长成多行指挥台。陪伴对话空闲保持单行胶囊，靠 field-sizing 自动换行增高。
 const COMMAND_LINE_THRESHOLD = 80
 
 const ATTACH_MENU = [
@@ -74,7 +74,7 @@ const ATTACH_MENU = [
 
 export function ConversationInput(props: ConversationInputProps): React.JSX.Element {
   const { controller, eligible, scoped } = useConversationView()
-  const waitingForSession = scoped && controller.$chatSessionId.get() === null
+  const waitingForSession = scoped && !controller.$historyHydrated.get()
   const { schedulePendingFlush } = controller
 
   const {
@@ -92,7 +92,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     onSetText,
     onStop,
     submit,
-    variant = 'living'
+    variant = 'companion'
   } = props
 
   const {
@@ -117,9 +117,9 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   const dict = useStrings()
   const slashMeta = useStore($slashCommandMeta)
 
-  // 工作台只在「要打字了」时升格成指挥台——空闲保持胶囊形态。
+  // 专业对话输入在编辑或有附件时展开。
   const expanded =
-    isEditing || (variant === 'workbench' && (focused || Boolean(pending) || text.length >= COMMAND_LINE_THRESHOLD))
+    isEditing || (variant === 'assistant' && (focused || Boolean(pending) || text.length >= COMMAND_LINE_THRESHOLD))
 
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -127,14 +127,19 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     editorRef.current = node
   }, [])
 
-  // 升格后把焦点同步进 textarea，避免升格瞬间丢失焦点。
+  const focusedEditRef = useRef<number | undefined>(undefined)
+
+  // 仅开始编辑消息时聚焦，抽屉关闭或窗口恢复资格不抢走返回焦点。
   useEffect(() => {
-    if (eligible && expanded && editorRef.current && document.activeElement !== editorRef.current) {
+    const startedEditing = editMessageId !== undefined && focusedEditRef.current !== editMessageId
+    focusedEditRef.current = editMessageId
+
+    if (eligible && startedEditing && editorRef.current && document.activeElement !== editorRef.current) {
       editorRef.current.focus()
       const len = editorRef.current.value.length
       editorRef.current.setSelectionRange(len, len)
     }
-  }, [editMessageId, expanded, eligible])
+  }, [editMessageId, eligible])
 
   // 仅前导 / 且尚未键入参数时，空 query 仍算命令模式，弹层展示全量。
   const slashContext = useMemo<{ active: boolean; query: string }>(() => {
@@ -193,6 +198,10 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
         (pending?.type === 'video' && pending.status !== 'ready')))
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
+    if (!eligible) {
+      return
+    }
+
     schedulePendingFlush()
     setSlashPaletteForced(false)
     setSlashDismissed(false)
@@ -274,7 +283,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   }
 
   const commonEditorProps = {
-    disabled: waitingForSession || isReadOnlySession || (isEditing && sending),
+    disabled: !eligible || waitingForSession || isReadOnlySession || (isEditing && sending),
     onBlur: () => setFocused(false),
     onChange: handleChange,
     onCompositionUpdate: () => schedulePendingFlush(),
@@ -283,13 +292,13 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     onPaste,
     placeholder: waitingForSession
       ? dict.common.loading
-      : variant === 'workbench'
-        ? dict.chat.input.workbenchPlaceholder
+      : variant === 'assistant'
+        ? dict.chat.input.assistantPlaceholder
         : dict.chat.inputPlaceholder,
     value: text
   }
 
-  // 编辑器统一用 field-sizing: content 的 textarea（Electron 42 / Chromium 123+）：高度由实际折行行数决定，min-h/max-h 夹住起步与上限；生活空间空闲态也是单行形态。
+  // 编辑器高度由实际折行决定，min-h/max-h 限定起步与上限。
   const editorElement = expanded ? (
     <textarea
       {...commonEditorProps}
@@ -308,7 +317,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     <div
       className={cn(
         'flex flex-col gap-2 shrink-0 transition-all',
-        variant === 'workbench'
+        variant === 'assistant'
           ? 'border-0 bg-transparent p-0'
           : 'w-full max-w-2xl mx-auto rounded-2xl border border-line-standard bg-surface-card shadow-lg backdrop-blur-xl p-2.5'
       )}
@@ -325,7 +334,9 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
         <div className="px-1">
           <PendingAttachmentView
             onRemove={() => onSetPending(null)}
-            onRetry={pending.type === 'video' ? () => void attachVideoFile(pending.path, onSetPending) : undefined}
+            onRetry={
+              pending.type === 'video' ? () => void attachVideoFile(pending.path, onSetPending, controller) : undefined
+            }
             pending={pending}
             sending={sending}
           />
@@ -341,7 +352,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
       <div
         className={cn(
           'relative flex w-full items-center px-3 transition',
-          variant === 'living'
+          variant === 'companion'
             ? cn(
                 'border border-line-hairline bg-fill-faint focus-within:border-accent focus-within:bg-fill-hover/40 shadow-none',
                 expanded ? 'rounded-2xl min-h-[3.6em] py-1.5' : 'rounded-xl min-h-[2.6em] py-1'

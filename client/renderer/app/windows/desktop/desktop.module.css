@@ -302,102 +302,6 @@
   );
   touch-action: none;
 }
-.chatLayout {
-  position: relative;
-  display: flex;
-  min-height: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-.sessionSidebar {
-  width: 208px;
-  flex: 0 0 208px;
-  overflow: hidden;
-  border-right: 1px solid var(--ui-line-hairline);
-  background: color-mix(in srgb, var(--ui-app-bg) 72%, transparent);
-  transition:
-    width 160ms ease,
-    flex-basis 160ms ease;
-}
-.sessionSidebar > aside {
-  width: 100%;
-  height: 100%;
-}
-.chatMain {
-  min-width: 240px;
-}
-.chatHeading {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  margin-right: auto;
-}
-.chatToolbarButton {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ui-text-muted);
-}
-.chatToolbarButton:hover,
-.chatToolbarButton:focus-visible,
-.chatToolbarButton[data-active='true'] {
-  border-color: var(--ui-line-standard);
-  background: var(--ui-fill-hover);
-  color: var(--ui-text-strong);
-  outline: none;
-}
-.chatIdentity {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-.chatIdentity strong {
-  overflow: hidden;
-  max-width: min(42vw, 420px);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-.chatIdentity span {
-  color: var(--ui-text-muted);
-  font-size: 10px;
-}
-.chatSidebarBackdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 19;
-  border: 0;
-  background: rgb(0 0 0 / 0.22);
-  cursor: default !important;
-}
-.chatLayout[data-narrow='true'] .sessionSidebar {
-  position: absolute;
-  inset: 0 auto 0 0;
-  z-index: 20;
-  width: min(300px, calc(100% - 52px));
-  flex-basis: auto;
-  border-right: 1px solid var(--ui-line-standard);
-  box-shadow: 18px 0 42px rgb(0 0 0 / 0.18);
-}
-.chatSurface {
-  padding: 18px 22px;
-}
-.chatInput {
-  padding: 8px 16px 16px;
-}
-.chatLayout > aside {
-  max-width: 250px;
-}
 .whisper {
   position: absolute;
   top: var(--desktop-bar);
@@ -671,24 +575,6 @@
   flex: 0 0 18px;
   object-fit: contain;
 }
-.accountPopup {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 60;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding-top: 12px;
-}
-.accountPopup[data-side='left'] {
-  right: 0;
-  left: auto;
-  flex-direction: row-reverse;
-}
-.accountPopup[data-side='below'] {
-  flex-direction: column;
-}
 .menuContent {
   position: absolute;
   top: calc(100% + 12px);
@@ -705,16 +591,6 @@
   border-radius: 12px;
   box-shadow: 0 16px 45px rgb(0 0 0 / 0.2);
   font-size: 12px;
-}
-.accountPopup .accountMenu {
-  position: relative;
-  top: auto;
-  left: auto;
-  max-width: calc(100vw - 24px);
-  overflow: visible;
-}
-.accountPopup[data-side='below'] .accountSubmenu {
-  width: min(256px, calc(100vw - 24px));
 }
 .settingsMenu .menuContent {
   left: auto;
@@ -734,110 +610,9 @@
   text-align: left;
   background: transparent;
 }
-.menuContent > button:hover {
+.menuContent > button:hover,
+.menuContent > button:focus-visible {
   background: var(--ui-fill-hover);
-}
-.accountSummary {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 7px 9px 10px;
-  border-bottom: 1px solid var(--ui-line-hairline);
-}
-.accountSummaryLabel {
-  color: var(--ui-text-muted);
-  font-size: 10px;
-}
-.accountSummaryName,
-.accountOptionText {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-  overflow: hidden;
-}
-.accountSummaryName {
-  font-size: 13px;
-  font-weight: 600;
-}
-.accountSummaryName small,
-.accountOptionText small {
-  overflow: hidden;
-  color: var(--ui-text-muted);
-  font-size: 10px;
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.accountSwitch {
-  position: relative;
-}
-.menuAction {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  border: 0;
-  border-radius: 6px;
-  padding: 9px;
-  text-align: left;
-  background: transparent;
-}
-.menuAction:hover {
-  background: var(--ui-fill-hover);
-}
-.menuAction[data-destructive='true'],
-.accountOption[data-destructive='true'] {
-  color: var(--ui-danger-fg);
-}
-.menuAction:focus-visible,
-.accountOption:focus-visible {
-  background: var(--ui-fill-hover);
-  box-shadow: inset 0 0 0 1px var(--ui-line-strong);
-}
-.menuStatus {
-  padding: 7px 9px;
-  color: var(--ui-text-muted);
-  font-size: 11px;
-}
-.accountSubmenu {
-  display: flex;
-  width: 224px;
-  max-height: min(360px, calc(100vh - 80px));
-  flex-direction: column;
-  gap: 3px;
-  overflow: auto;
-  padding: 9px;
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 12px;
-  background: var(--ui-app-bg);
-  box-shadow: 0 16px 45px rgb(0 0 0 / 0.2);
-  font-size: 12px;
-}
-.accountSubmenuTitle {
-  padding: 7px 9px;
-  color: var(--ui-text-muted);
-  font-size: 11px;
-  font-weight: 500;
-}
-.accountOption {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border: 0;
-  border-radius: 6px;
-  padding: 8px 9px;
-  text-align: left;
-  background: transparent;
-}
-.accountOption:hover:not(:disabled) {
-  background: var(--ui-fill-hover);
-}
-.accountOption:disabled {
-  color: var(--ui-text-strong);
 }
 .displaySelect {
   padding: 9px;
@@ -872,13 +647,6 @@
   }
   .status > :first-child {
     display: none;
-  }
-  .sessionSidebar {
-    width: 172px;
-    flex-basis: 172px;
-  }
-  .chatLayout > aside {
-    max-width: 190px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

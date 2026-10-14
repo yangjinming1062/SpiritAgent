@@ -26,6 +26,7 @@ export interface PresentationState {
   stageVisible: boolean
   stageEpoch: number
   revision: number
+  switchBlockedReason: string | null
 }
 
 export type DesktopCompanionActivityState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'working' | 'disconnected'
@@ -153,17 +154,51 @@ export interface DesktopAccount {
   active: boolean
 }
 
-// 入口面：互斥的两个 BrowserWindow；都未打开时以 null 表示。
-export type SurfaceId = 'living' | 'workbench'
+export const APP_PAGES = ['chat', 'posts', 'diary', 'appearance', 'scene', 'settings'] as const
+export type AppPage = (typeof APP_PAGES)[number]
+export const SETTINGS_SECTIONS = [
+  'persona',
+  'voice',
+  'interaction',
+  'theme',
+  'companion',
+  'presentation',
+  'inference',
+  'runner',
+  'skills',
+  'remote',
+  'shortcuts',
+  'about'
+] as const
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
-export function normalizeSurfaceId(raw: unknown): SurfaceId {
-  return raw === 'workbench' ? 'workbench' : 'living'
+export interface AppNavigationTarget {
+  page?: AppPage
+  section?: SettingsSection
+  settingsTab?: 'skills' | 'toolsets'
+  sessionId?: string
+  messageKey?: string
 }
 
-export interface DesktopNavigation {
-  surface: SurfaceId
-  view?: string
-  sessionId?: string
+export type DesktopNavigation = AppNavigationTarget
+
+export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
+  if (!raw || typeof raw !== 'object') {
+    return {}
+  }
+
+  const value = raw as Record<string, unknown>
+  const page = APP_PAGES.find(item => item === value.page)
+  const section = SETTINGS_SECTIONS.find(item => item === value.section)
+  const settingsTab = value.settingsTab === 'skills' || value.settingsTab === 'toolsets' ? value.settingsTab : undefined
+
+  return {
+    page: section ? 'settings' : page,
+    section,
+    settingsTab: section === 'skills' ? settingsTab : undefined,
+    sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
+    messageKey: typeof value.messageKey === 'string' ? value.messageKey : undefined
+  }
 }
 
 export interface StageActivity {

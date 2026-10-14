@@ -2,19 +2,13 @@ import path from 'node:path'
 
 import type { App, Rectangle } from 'electron'
 
-import type { SurfaceCompanionPreference, SurfaceCompanionSide, SurfaceId } from '@ipc/contracts'
+import type { SurfaceCompanionPreference, SurfaceCompanionSide } from '@ipc/contracts'
 
 import { atomicWriteFile, safeReadJson } from '../shared/utils'
 
-export const PANEL_SIZES: Record<SurfaceId, { height: number; minHeight: number; minWidth: number; width: number }> = {
-  living: { height: 720, minHeight: 540, minWidth: 960, width: 1280 },
-  workbench: { height: 800, minHeight: 640, minWidth: 1095, width: 1321 }
-}
+export const PANEL_SIZE = { height: 720, minHeight: 540, minWidth: 800, width: 1280 }
 
-const DEFAULT_COMPANIONS: Record<SurfaceId, SurfaceCompanionPreference> = {
-  living: { enabled: true, side: 'right' },
-  workbench: { enabled: true, side: 'left' }
-}
+const DEFAULT_COMPANION: SurfaceCompanionPreference = { enabled: true, side: 'right' }
 
 export function preferredCompanionWidth(height: number): number {
   return Math.round((height * 0.58 * 125) / 275)
@@ -81,23 +75,17 @@ export function parseCompanionPreference(raw: unknown): SurfaceCompanionPreferen
 }
 
 export function createSurfaceCompanionPreferences(app: Pick<App, 'getPath'>): {
-  get: (id: SurfaceId) => SurfaceCompanionPreference
-  set: (id: SurfaceId, next: SurfaceCompanionPreference) => Promise<void>
+  get: () => SurfaceCompanionPreference
+  set: (next: SurfaceCompanionPreference) => Promise<void>
 } {
-  const file = path.join(app.getPath('userData'), 'surface-companions.json')
-  const saved = safeReadJson<Record<string, unknown>>(file)
-
-  let preferences = {
-    living: parseCompanionPreference(saved?.living) ?? DEFAULT_COMPANIONS.living,
-    workbench: parseCompanionPreference(saved?.workbench) ?? DEFAULT_COMPANIONS.workbench
-  }
+  const file = path.join(app.getPath('userData'), 'main-window-companion.json')
+  let preference = parseCompanionPreference(safeReadJson<unknown>(file)) ?? DEFAULT_COMPANION
 
   return {
-    get: id => ({ ...preferences[id] }),
-    set: async (id, next) => {
-      const updated = { ...preferences, [id]: next }
-      await atomicWriteFile(file, JSON.stringify(updated, null, 2))
-      preferences = updated
+    get: () => ({ ...preference }),
+    set: async next => {
+      await atomicWriteFile(file, JSON.stringify(next, null, 2))
+      preference = { ...next }
     }
   }
 }

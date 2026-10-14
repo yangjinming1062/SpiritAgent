@@ -9,7 +9,12 @@ function checkDistBuilt(distDir) {
     return { ok: false, error: `no dist directory at ${distDir}` }
   }
 
-  const requiredHtmlFiles = ['sprite.html', 'living.html', 'workbench.html', 'desktop.html', 'desktop-background.html']
+  const requiredHtmlFiles = ['sprite.html', 'main.html', 'desktop.html', 'desktop-background.html']
+  for (const removed of ['living.html', 'workbench.html']) {
+    if (fs.existsSync(path.join(distDir, removed))) {
+      return { ok: false, error: `dist/${removed} is an obsolete renderer entry; rebuild dist` }
+    }
+  }
   for (const file of requiredHtmlFiles) {
     const htmlPath = path.join(distDir, file)
     const htmlStat = fs.statSync(htmlPath, { throwIfNoEntry: false })

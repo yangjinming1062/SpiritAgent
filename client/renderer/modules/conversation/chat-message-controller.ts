@@ -99,7 +99,7 @@ export function createChatMessageController(state: ConversationState) {
     )
   }
 
-  // 陪伴会话连发用户消息保留独立气泡（与 bubble.break 助手拆分对称），工作台整段阅读不拆，避免误拆粘贴的多段内容。
+  // 陪伴会话连发用户消息保留独立气泡（与 bubble.break 助手拆分对称），专业对话整段阅读不拆，避免误拆粘贴的多段内容。
   function splitUserBubblesEnabled(): boolean {
     const id = $chatSessionId.get()
 

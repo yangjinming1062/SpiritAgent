@@ -52,7 +52,7 @@ function MessageBubbleInner({
   avatar,
   message,
   showTimeLabel,
-  variant = 'living'
+  variant = 'companion'
 }: MessageBubbleProps): React.JSX.Element {
   const { $chatMessageBodies, $chatTurnInFlight } = useConversationView().controller
 
@@ -231,7 +231,7 @@ function MessageBubbleWithBody({
     )
   }
 
-  const isVoiceBarMode = variant === 'living' && !isUser && body.replyType === 'voice' && Boolean(body.replyAudio)
+  const isVoiceBarMode = variant === 'companion' && !isUser && body.replyType === 'voice' && Boolean(body.replyAudio)
   const isVoicePendingOrStreaming = isVoiceBarMode && body.streaming
 
   // 必须有后端 Message.id 才能回传；回合进行中服务端会拒绝撤回，菜单项一并隐藏。
@@ -245,8 +245,8 @@ function MessageBubbleWithBody({
     !body.cancelled &&
     !body.toolName
 
-  // 生活空间只有唯一陪伴上下文，不允许派生。
-  const canFork = variant === 'workbench' && sessionKind === 'standard' && canOperate
+  // 陪伴对话只有唯一陪伴上下文，不允许派生。
+  const canFork = variant === 'assistant' && sessionKind === 'standard' && canOperate
 
   // 避免误点助手行变成撤回伙伴上一句。
   const canUndo = isUser && sessionKind === 'standard' && canOperate
@@ -260,7 +260,7 @@ function MessageBubbleWithBody({
   const tools = body.tools?.length ? body.tools : body.toolName ? [body.toolName] : []
   const toolOnly = tools.length > 0 && !displayText && !body.error && !body.cancelled
   const showToolIndicator = !isUser && tools.length > 0
-  const showLivingToolWait = variant === 'living' && toolOnly && Boolean(body.streaming)
+  const showCompanionToolWait = variant === 'companion' && toolOnly && Boolean(body.streaming)
 
   // 只要消息具有非空可见正文且非流式传输中，即允许一键复制
   const canCopy = Boolean(displayText) && !body.streaming && !isVoicePendingOrStreaming
@@ -311,7 +311,7 @@ function MessageBubbleWithBody({
       ref={isUser ? bubbleRef : undefined}
       tabIndex={isUser ? -1 : undefined}
     >
-      {!isUser && (avatar === 'show' || (!avatar && variant === 'workbench')) && <CompanionAvatar />}
+      {!isUser && (avatar === 'show' || (!avatar && variant === 'assistant')) && <CompanionAvatar />}
       {!isUser && avatar === 'reserve' && <span aria-hidden="true" className="w-8 shrink-0" />}
       <div className="relative flex min-w-0 max-w-[80%] overflow-visible">
         <div className={cn('flex min-w-0 flex-col', isUser ? 'items-end' : 'items-start')}>
@@ -325,10 +325,13 @@ function MessageBubbleWithBody({
               ))}
             </div>
           ) : null}
-          {showToolIndicator && variant === 'workbench' ? <ToolChipTimeline active={toolOnly} tools={tools} /> : null}
+          {showToolIndicator && variant === 'assistant' ? <ToolChipTimeline active={toolOnly} tools={tools} /> : null}
           {isVoiceBarMode ? (
             isVoicePendingOrStreaming ? (
-              <div className="relative select-text cursor-text whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-xs leading-relaxed shadow-xs backdrop-blur-md border border-line-standard bg-surface-card text-strong">
+              <div
+                className="relative select-text cursor-text whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-xs leading-relaxed shadow-xs backdrop-blur-md border border-line-standard bg-surface-card text-strong"
+                data-message-text
+              >
                 <span className="animate-pulse text-faint">{dict.chat.typing}</span>
               </div>
             ) : (
@@ -343,7 +346,7 @@ function MessageBubbleWithBody({
                 text={displayText}
               />
             )
-          ) : !hideTextBubble && (!toolOnly || showLivingToolWait) ? (
+          ) : !hideTextBubble && (!toolOnly || showCompanionToolWait) ? (
             <div
               className={cn(
                 'relative select-text cursor-text whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-xs leading-relaxed shadow-sm',
@@ -351,6 +354,7 @@ function MessageBubbleWithBody({
                   ? 'border border-accent-line/45 text-strong shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.35)] backdrop-blur-xl backdrop-saturate-180'
                   : 'border border-line-standard bg-surface-card text-strong shadow-xs backdrop-blur-md'
               )}
+              data-message-text
               onContextMenu={!isUser ? handleContextMenu : undefined}
               ref={!isUser ? bubbleRef : undefined}
               style={
@@ -385,11 +389,11 @@ function MessageBubbleWithBody({
                   {body.streaming && <span className="animate-caret-pulse" />}
                 </>
               ) : (
-                <span className="animate-pulse text-faint">{variant === 'living' ? dict.chat.typing : '…'}</span>
+                <span className="animate-pulse text-faint">{variant === 'companion' ? dict.chat.typing : '…'}</span>
               )}
             </div>
           ) : null}
-          {!isUser && variant === 'workbench' && (body.reasoning || (body.streaming && !displayText)) ? (
+          {!isUser && variant === 'assistant' && (body.reasoning || (body.streaming && !displayText)) ? (
             <ReasoningBlock reasoning={body.reasoning} streaming={body.streaming} />
           ) : null}
           {body.replyMedia && body.replyMedia.status !== 'ready' ? (

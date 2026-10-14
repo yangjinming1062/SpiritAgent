@@ -9,7 +9,7 @@ import {
   type Tray
 } from 'electron'
 
-import { IPC, type IpcEventChannel, type IpcEventContract, type PresentationMode, type SurfaceId } from '@ipc/contracts'
+import { IPC, type IpcEventChannel, type IpcEventContract, type PresentationMode } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
 import type { BackendSessionPort } from '../shared/backend-port'
@@ -49,11 +49,10 @@ const TRAY_STRINGS = {
     switchFailed: '切换账户失败',
     hide: '隐藏',
     language: '语言 / Language',
-    living: '生活空间',
+    openMain: '打开主窗口',
     quit: (brandName: string) => `退出 ${brandName}`,
     resetPosition: '一键归位',
     show: '显示',
-    workbench: '工作台',
     presentation: '呈现方式',
     desktopMode: '桌面模式',
     windowMode: '窗口模式',
@@ -68,11 +67,10 @@ const TRAY_STRINGS = {
     switchFailed: 'Could not switch account',
     hide: 'Hide',
     language: 'Language / 语言',
-    living: 'Living Space',
+    openMain: 'Open Main Window',
     quit: (brandName: string) => `Quit ${brandName}`,
     resetPosition: 'Reset Position',
     show: 'Show',
-    workbench: 'Workbench',
     presentation: 'Presentation',
     desktopMode: 'Desktop mode',
     windowMode: 'Window mode',
@@ -265,15 +263,9 @@ function buildTrayMenu(): Menu | null {
       { type: 'separator' },
       {
         click: () => {
-          void openSurfaceFromTray('living')
+          void openSurfaceFromTray()
         },
-        label: t.living
-      },
-      {
-        click: () => {
-          void openSurfaceFromTray('workbench')
-        },
-        label: t.workbench
+        label: t.openMain
       }
     )
   }
@@ -282,11 +274,17 @@ function buildTrayMenu(): Menu | null {
 
   if (authed && presentation?.supported) {
     const enabled =
-      !presentationOperationBusy && presentation.status !== 'starting' && presentation.status !== 'recovering'
+      !presentationOperationBusy &&
+      !presentation.switchBlockedReason &&
+      presentation.status !== 'starting' &&
+      presentation.status !== 'recovering'
 
     template.push({
       label: t.presentation,
       submenu: [
+        ...(presentation.switchBlockedReason
+          ? [{ label: presentation.switchBlockedReason, enabled: false }, { type: 'separator' as const }]
+          : []),
         {
           type: 'radio',
           label: t.windowMode,
@@ -426,6 +424,12 @@ function hideMainWindow(): void {
 }
 
 export function showMainWindow(): void {
+  if (trayDeps?.surfaces?.isOpen() || trayDeps?.presentation?.getState().effectiveMode === 'desktop') {
+    void openSurfaceFromTray()
+
+    return
+  }
+
   const win = trayDeps?.getMainWindow?.()
 
   if (!win || win.isDestroyed()) {
@@ -492,6 +496,12 @@ function resetMainWindowPosition(): void {
 }
 
 export function toggleMainWindow(): void {
+  if (trayDeps?.surfaces?.isOpen() || trayDeps?.presentation?.getState().effectiveMode === 'desktop') {
+    void openSurfaceFromTray()
+
+    return
+  }
+
   if (isSpriteVisible()) {
     hideMainWindow()
   } else {
@@ -499,16 +509,16 @@ export function toggleMainWindow(): void {
   }
 }
 
-async function openSurfaceFromTray(id: SurfaceId): Promise<void> {
+async function openSurfaceFromTray(): Promise<void> {
   if (!trayDeps?.surfaces) {
     return
   }
 
   try {
-    await trayDeps.surfaces.openSurface({ surface: id })
+    await trayDeps.surfaces.openSurface({})
   } catch (err) {
     const message = errorMessage(err)
-    trayDeps.rememberLog(`[tray] openSurface(${id}) failed: ${message}`)
+    trayDeps.rememberLog(`[tray] openSurface failed: ${message}`)
   }
 }
 
@@ -557,8 +567,7 @@ export function installTray(deps: TrayDeps): null | Tray {
   })
 
   trayInstance.on('double-click', () => {
-    const last = trayDeps?.surfaces?.hydrateLastSurface() ?? 'living'
-    void openSurfaceFromTray(last)
+    void openSurfaceFromTray()
   })
 
   return trayInstance

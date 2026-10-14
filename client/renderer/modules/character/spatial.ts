@@ -98,7 +98,7 @@ const motion = createSpatialMotion({
   setLocomotion: locomotion => $spatialLocomotion.set(locomotion),
   getScale: () => $spatialScale.get(),
   setScale: scale => $spatialScale.set(scale),
-  canMove: () => $surfaceOpen.get() !== 'living',
+  canMove: () => !$surfaceOpen.get(),
   hasPeek: () => $spatialPeek.get() !== null,
   clampPosition: position => clampPosToViewport(position),
   minScale: MIN_SCALE,
@@ -665,7 +665,7 @@ export function initSpatial(): () => void {
       void activateScreenPeek(peekController.screenEdgeHome)
     }
 
-    if ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'workbench') {
+    if ($spatialLocale.get() === 'perch') {
       setSpatialLocale('home')
     }
 
@@ -695,12 +695,8 @@ export function initSpatial(): () => void {
 
   offs.push(
     $surfaceOpen.listen(open => {
-      if (open === 'living' || open === 'workbench') {
+      if (open) {
         pauseDesktopStage()
-
-        if (open === 'workbench') {
-          $spatialLocale.set('workbench')
-        }
       } else {
         resumeDesktopStage()
       }

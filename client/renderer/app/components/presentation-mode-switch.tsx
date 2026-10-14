@@ -20,7 +20,12 @@ export function usePresentationModeSwitch() {
   const switchMode = async (mode: PresentationMode): Promise<void> => {
     const current = $presentation.get()
 
-    if (pending.current || current.status === 'starting' || current.status === 'recovering') {
+    if (
+      pending.current ||
+      current.status === 'starting' ||
+      current.status === 'recovering' ||
+      current.switchBlockedReason
+    ) {
       return
     }
 
@@ -43,7 +48,12 @@ export function usePresentationModeSwitch() {
     }
   }
 
-  return { state, en, busy: busy || state.status === 'starting' || state.status === 'recovering', switchMode }
+  return {
+    state,
+    en,
+    busy: busy || state.status === 'starting' || state.status === 'recovering' || Boolean(state.switchBlockedReason),
+    switchMode
+  }
 }
 
 export function PresentationModeButton({ className }: { className?: string }): React.JSX.Element | null {
@@ -58,7 +68,7 @@ export function PresentationModeButton({ className }: { className?: string }): R
       className={`${className ?? ''} disabled:cursor-wait disabled:opacity-50`}
       disabled={busy}
       onClick={() => void switchMode('desktop')}
-      title={en ? 'Switch to desktop mode' : '切换到桌面模式'}
+      title={state.switchBlockedReason ?? (en ? 'Switch to desktop mode' : '切换到桌面模式')}
       type="button"
     >
       <Monitor size={13} />

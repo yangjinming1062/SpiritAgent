@@ -27,11 +27,13 @@ import {
   useSpriteBodyGesture
 } from '@/modules/character'
 import { useMediaPixelHitTest } from '@/modules/character/rendering'
-import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
+import { $companionSessionId, clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
+import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
@@ -52,7 +54,7 @@ const DRAG_THRESHOLD = 12
 const DOUBLE_TAP_MS = 320
 // 长按 ≥500ms 触发形变与粒子；拖拽一旦启动即取消等待，两条交互通道互斥。
 const LONG_PRESS_MS = 500
-// 投喂分流：纯图片/视频走轻语快速回复；混有其它文件时整批进生活空间。
+// 投喂分流：纯图片/视频走轻语；混有其他文件时整批进入主对话。
 const MEDIA_DROP_PATH_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|mov|webm|m4v|avi|mkv)$/i
 
 // 跨显示器后 pointer capture 会投递跨视口坐标，按此间隔探测主进程。
@@ -245,7 +247,7 @@ export function SpriteStage({
         const dragging = d?.moved === true
 
         // 拖拽释放比显示器切换早到时也要重映射静止位置，否则精灵停在旧视口坐标上；自主移动已算出新空间位置时跳过。
-        if (!dragging && ($spatialLocomotion.get() !== 'still' || $surfaceOpen.get() !== null)) {
+        if (!dragging && ($spatialLocomotion.get() !== 'still' || $surfaceOpen.get())) {
           return
         }
 
@@ -277,7 +279,7 @@ export function SpriteStage({
       })
   }, [])
 
-  // 文件投喂（DESIGN「拖拽与直接交互」）：纯媒体进轻语，含非媒体文件时整批进生活空间。
+  // 文件投喂：纯媒体进轻语，含非媒体文件时整批进入主对话。
   const handleDrop = (fileList: FileList | null | undefined): void => {
     const paths = resolveDroppedFiles(fileList)
 
@@ -300,15 +302,23 @@ export function SpriteStage({
       return
     }
 
-    // 跨窗：生活空间是独立 BrowserWindow，atom 互不可见，经主进程信箱转交；失败时提示重新拖入仍打开生活空间。
+    const isCurrent = captureAuthScope()
+    const auth = $auth.get()
+
+    if (!isCurrent || auth.kind !== 'authenticated') {
+      return
+    }
+
+    const sessionId = $companionSessionId.get() ?? undefined
+    // 文件经账户信箱交给主对话，仍由原文件白名单裁决访问。
     void shellApi()
-      .chat.setPendingFeed(paths)
+      .chat.setPendingFeed(paths, auth.snapshot.sessionId)
       .catch((error: unknown) => {
         log.warn('sprite-stage', 'Dropped files handoff failed', error)
         notifyError(error, getStrings().chat.filesHandoffFailed)
       })
-      .then(() => requestOpenSurface('living'))
-      .catch((error: unknown) => log.warn('sprite-stage', 'Could not open living space', error))
+      .then(() => (isCurrent() ? requestOpenSurface({ page: 'chat', sessionId }) : undefined))
+      .catch((error: unknown) => log.warn('sprite-stage', 'Could not open main window', error))
   }
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>): void => {

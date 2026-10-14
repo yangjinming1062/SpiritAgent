@@ -144,7 +144,7 @@ function executeAutonomousAction(action: string, peekIntent: WindowPeekIntent | 
 }
 
 async function consultAutonomyLLM(force = false): Promise<void> {
-  // 空间智能只服务当前可见的桌面精灵；生活空间等表面打开时精灵已收起，不发起推理。
+  // 空间智能只服务当前可见的窗口精灵；主窗口打开时精灵已收起，不发起推理。
   if (consulting || !canConsultAutonomy()) {
     return
   }

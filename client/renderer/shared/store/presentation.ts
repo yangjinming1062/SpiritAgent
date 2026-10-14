@@ -23,7 +23,8 @@ export const $presentation = atom<PresentationState>({
   stageOwner: 'sprite',
   stageVisible: true,
   stageEpoch: 0,
-  revision: -1
+  revision: -1,
+  switchBlockedReason: null
 })
 
 export function hydratePresentation(): () => void {

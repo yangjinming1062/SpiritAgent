@@ -4,6 +4,7 @@ import { type ClipboardEvent, type DragEvent, type PointerEvent, useCallback, us
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
+import { currentClearEpoch } from '@/shared/lib/storage'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
@@ -11,11 +12,12 @@ import { blobToDataUrl } from './blob-data-url'
 import { attachVideoFile } from './chat-attach-picker'
 import { $chatDraftFromUndo, $pendingExternalAttachment } from './chat-store'
 import type { ChatSubmitState, ConversationInputProps } from './conversation-input'
+import { beginConversationInputActivity } from './conversation-input-busy'
 import { useConversationView } from './conversation-view'
 import { useChatSubmit } from './use-chat-submit'
 import { useVoiceRecorder } from './use-voice-recorder'
 
-// 生活空间 / 工作台 / 轻语共享的聊天输入态：附件、提交、录音、拖拽、粘贴与撤销草稿。返回的 inputProps 直接喂给 ConversationInput；handleDrop 供外层容器接收整层拖入。
+// 主对话与轻语共享输入逻辑，草稿和附件归所属视图。
 export interface UseChatInputOptions {
   gatewayState: ConnectionState
   isReadOnlySession: boolean
@@ -41,11 +43,11 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
 
   const stageExternalPaths = useCallback(
     (paths: string[]): void => {
-      if (view.eligible && isCurrent()) {
+      if (view.eligible && !isReadOnlySession && isCurrent()) {
         $externalPaths.set([...$externalPaths.get(), ...paths])
       }
     },
-    [view.eligible, isCurrent, $externalPaths]
+    [view.eligible, isReadOnlySession, isCurrent, $externalPaths]
   )
 
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
@@ -93,6 +95,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
       $pendingExternalAttachment.subscribe(state => {
         if (
           !view.eligible ||
+          isReadOnlySession ||
           !view.receiveExternalAttachments ||
           !view.visible ||
           !state ||
@@ -106,7 +109,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
         stageExternalPaths(state.paths)
         notify({ kind: 'info', message: getStrings().chat.filesReceived(state.paths.length) })
       }),
-    [controller, view.receiveExternalAttachments, view.visible, view.eligible, stageExternalPaths]
+    [controller, isReadOnlySession, view.receiveExternalAttachments, view.visible, view.eligible, stageExternalPaths]
   )
 
   const handleDrop = (e: DragEvent): void => {
@@ -142,6 +145,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
 
     // 读取与上传期间切走会话时，其余文件不再加入新会话。
     const sessionId = $chatSessionId.get()
+    const epoch = currentClearEpoch()
 
     for (const file of files) {
       if (!isCurrent() || $chatSessionId.get() !== sessionId) {
@@ -149,10 +153,16 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
       }
 
       if (file.type.startsWith('image/')) {
-        const dataUrl = await blobToDataUrl(file).catch(() => null)
+        const finishPreparation = beginConversationInputActivity('uploading')
 
-        if (dataUrl && isCurrent() && $chatSessionId.get() === sessionId) {
-          submit.setPending({ type: 'image', value: dataUrl, fileName: file.name })
+        try {
+          const dataUrl = await blobToDataUrl(file).catch(() => null)
+
+          if (dataUrl && currentClearEpoch() === epoch) {
+            submit.setPending({ type: 'image', value: dataUrl, fileName: file.name })
+          }
+        } finally {
+          finishPreparation()
         }
 
         continue

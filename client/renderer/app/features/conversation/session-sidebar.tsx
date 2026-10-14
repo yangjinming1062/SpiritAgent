@@ -11,6 +11,7 @@ import {
   $searchResults,
   $sessions,
   $sessionSearch,
+  $sessionsError,
   $sessionsLoading,
   $sessionSort,
   $systemPresets,
@@ -24,9 +25,13 @@ import {
   fetchArchived,
   fetchSessions,
   fetchSystemPresets,
+  forgetConversationDraft,
+  getConversationRuntime,
   isCompanionSession,
+  pendingMessages,
   pinSession,
   renameSession,
+  retainConversationRuntime,
   runSessionSearch,
   sessionDisplayTitle,
   type SessionSort,
@@ -41,6 +46,7 @@ import {
   CalendarPlus,
   Clock,
   type IconComponent,
+  Loader2,
   Messages,
   Pencil,
   Pin,
@@ -53,12 +59,13 @@ import { INPUT_CLASS, SearchField } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 import type { SessionInfo } from '@protocol'
 
+import { useConversationStrings } from './conversation-strings'
 import { presetIcon, PresetPickerModal } from './preset-picker-modal'
 
-const SPECIAL_PRESET_ORDER = ['companion', 'copywriter', 'language_teacher']
+const SPECIAL_PRESET_ORDER = ['copywriter', 'language_teacher']
 
 function buildSortOptions(
-  t: ReturnType<typeof useStrings>['workbench']['sessionSidebar']
+  t: ReturnType<typeof useStrings>['conversation']['sessionSidebar']
 ): { icon: IconComponent; label: string; value: SessionSort }[] {
   return [
     { icon: Clock, label: t.sortOptions.recent, value: 'recent' },
@@ -69,7 +76,7 @@ function buildSortOptions(
 
 function formatSessionTime(
   timestamp: number | undefined,
-  tStrings: ReturnType<typeof useStrings>['workbench']['sessionSidebar']['time']
+  tStrings: ReturnType<typeof useStrings>['conversation']['sessionSidebar']['time']
 ): string {
   if (!timestamp) {
     return tStrings.now
@@ -95,16 +102,17 @@ function formatSessionTime(
 }
 
 export function SessionSidebar({
-  includeCompanion = false,
   companionUnread = false,
-  headerAction
+  headerAction,
+  onSessionSelected
 }: {
-  includeCompanion?: boolean
   companionUnread?: boolean
   headerAction?: React.ReactNode
+  onSessionSelected?: () => void
 }): React.JSX.Element {
   const sessions = useStore($sessions)
   const loading = useStore($sessionsLoading)
+  const sessionsError = useStore($sessionsError)
   const sort = useStore($sessionSort)
   const search = useStore($sessionSearch)
   const searchResults = useStore($searchResults)
@@ -117,10 +125,22 @@ export function SessionSidebar({
   const presetsLoading = useStore($systemPresetsLoading)
   const presetsFetched = useStore($systemPresetsFetched)
   const dict = useStrings()
-  const t = dict.workbench.sessionSidebar
+  const t = dict.conversation.sessionSidebar
   const tActions = t.actions
   const sortOptions = buildSortOptions(t)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const conversationStrings = useConversationStrings()
+
+  const handleSelect = async (sessionId: string): Promise<void> => {
+    onSessionSelected?.()
+    await switchSession(sessionId)
+  }
+
+  const handleDelete = async (sessionId: string): Promise<void> => {
+    if (await deleteSession(sessionId)) {
+      forgetConversationDraft(sessionId)
+    }
+  }
 
   const searchActive = search.trim().length > 0
 
@@ -156,28 +176,27 @@ export function SessionSidebar({
   const handlePickerConfirm = async (presetId: string): Promise<void> => {
     setPickerOpen(false)
     await createNewSession(presetId)
+    onSessionSelected?.()
   }
 
   // 固定对话只看 kind（PROTOCOL「会话种类与历史修改」）：普通会话与派生会话同样带预设，不能据此归入固定分组。
   const isSpecialSession = (s: SessionInfo): boolean => s.kind === 'special'
 
-  const workbenchSessions = sessions.filter(s => includeCompanion || !isCompanionSession(s))
+  const companionSessions = sessions.filter(s => isSpecialSession(s) && isCompanionSession(s))
 
-  const specialSessions = workbenchSessions
-    .filter(s => isSpecialSession(s))
+  const specialSessions = sessions
+    .filter(s => isSpecialSession(s) && !isCompanionSession(s))
     .sort((a, b) => {
       const aIdx = a.system_preset_id ? SPECIAL_PRESET_ORDER.indexOf(a.system_preset_id) : 99
       const bIdx = b.system_preset_id ? SPECIAL_PRESET_ORDER.indexOf(b.system_preset_id) : 99
 
-      return aIdx - bIdx
+      return (aIdx < 0 ? 99 : aIdx) - (bIdx < 0 ? 99 : bIdx)
     })
 
   // 用户常规会话（支持置顶与非置顶）
-  const regularSessions = workbenchSessions.filter(s => !isSpecialSession(s))
+  const regularSessions = sessions.filter(s => !isSpecialSession(s))
   const pinnedRegularSessions = regularSessions.filter(s => s.pinned)
   const unpinnedRegularSessions = regularSessions.filter(s => !s.pinned)
-
-  const visibleSearchResults = searchResults.filter(s => includeCompanion || !isCompanionSession(s))
 
   return (
     <aside className="flex h-full w-full min-h-0 flex-col overflow-hidden text-xs">
@@ -231,21 +250,33 @@ export function SessionSidebar({
 
       {/* 会话列表区域 */}
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2.5 pb-3 scrollbar-thin">
+        {sessionsError && (
+          <div className="rounded-lg border border-line-standard bg-surface-card p-3 text-xs text-muted" role="alert">
+            <p>{conversationStrings.loadFailed}</p>
+            <p className="mt-1 break-words text-[11px]">{sessionsError}</p>
+            <button
+              className="mt-2 rounded-md px-2 py-1 text-accent hover:bg-fill-hover focus-visible:ring-1 focus-visible:ring-accent"
+              onClick={() => void fetchSessions()}
+              type="button"
+            >
+              {conversationStrings.retry}
+            </button>
+          </div>
+        )}
         {searchActive ? (
           <div>
             <div className="mb-1 px-1.5 text-[11px] font-medium text-muted">{t.searchResultsHeading}</div>
             {searchLoading ? (
               <div className="py-6 text-center text-muted">{t.searching}</div>
-            ) : visibleSearchResults.length === 0 ? (
+            ) : searchResults.length === 0 ? (
               <div className="py-6 text-center text-muted">{t.noMatch}</div>
             ) : (
-              visibleSearchResults.map(s => (
+              searchResults.map(s => (
                 <SessionRow
                   badge={s.archived ? t.badgeArchived : undefined}
-                  chatStyle={includeCompanion}
                   isActive={s.id === activeSessionId}
                   key={s.id}
-                  onSwitch={switchSession}
+                  onSwitch={handleSelect}
                   session={s}
                   unread={companionUnread && isCompanionSession(s)}
                 />
@@ -254,9 +285,25 @@ export function SessionSidebar({
           </div>
         ) : (
           <>
+            {companionSessions.length > 0 && (
+              <div>
+                <div className="mb-1.5 px-1.5 text-[11px] font-semibold text-muted">
+                  {conversationStrings.companion}
+                </div>
+                {companionSessions.map(session => (
+                  <SessionRow
+                    isActive={session.id === activeSessionId}
+                    key={session.id}
+                    onSwitch={handleSelect}
+                    session={session}
+                    unread={companionUnread}
+                  />
+                ))}
+              </div>
+            )}
             <div>
               <div className="mb-1.5 flex items-center justify-between px-1.5 text-[11px] font-semibold text-muted tracking-wider">
-                <span>{includeCompanion ? t.fixedHeading : t.specialHeading}</span>
+                <span>{t.fixedHeading}</span>
                 <span className="rounded bg-fill-faint px-1 py-0.2 text-[10px] text-muted">
                   {specialSessions.length}
                 </span>
@@ -271,12 +318,9 @@ export function SessionSidebar({
                 <div className="space-y-0.5">
                   {specialSessions.map(s => (
                     <SessionRow
-                      chatStyle={includeCompanion}
-                      customIcon={presetIcon(s.system_preset_icon_key)}
                       isActive={s.id === activeSessionId}
-                      isSpecial
                       key={s.id}
-                      onSwitch={switchSession}
+                      onSwitch={handleSelect}
                       session={s}
                       unread={companionUnread && isCompanionSession(s)}
                     />
@@ -296,7 +340,7 @@ export function SessionSidebar({
                 )}
               </div>
 
-              {loading && workbenchSessions.length === 0 ? (
+              {loading && sessions.length === 0 ? (
                 <div className="py-4 text-center text-muted">{t.loadingSessions}</div>
               ) : pinnedRegularSessions.length === 0 && unpinnedRegularSessions.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-line-hairline p-4 text-center text-muted">
@@ -304,6 +348,9 @@ export function SessionSidebar({
                 </div>
               ) : (
                 <div className="space-y-0.5">
+                  {pinnedRegularSessions.length > 0 && (
+                    <div className="px-1.5 pt-1 text-[11px] font-semibold text-muted">{conversationStrings.pinned}</div>
+                  )}
                   {pinnedRegularSessions.map(s => (
                     <SessionRow
                       actions={
@@ -318,17 +365,25 @@ export function SessionSidebar({
                             label={tActions.archive}
                             onClick={() => void archiveSession(s.id, true)}
                           />
+                          <RowAction
+                            danger
+                            icon={Trash2}
+                            label={tActions.delete}
+                            onClick={() => void handleDelete(s.id)}
+                          />
                         </>
                       }
-                      chatStyle={includeCompanion}
                       isActive={s.id === activeSessionId}
                       key={s.id}
-                      onSwitch={switchSession}
+                      onSwitch={handleSelect}
                       session={s}
                     />
                   ))}
                   {pinnedRegularSessions.length > 0 && unpinnedRegularSessions.length > 0 && (
                     <div className="my-1 border-t border-line-hairline opacity-40" />
+                  )}
+                  {unpinnedRegularSessions.length > 0 && (
+                    <div className="px-1.5 pt-1 text-[11px] font-semibold text-muted">{conversationStrings.recent}</div>
                   )}
                   {unpinnedRegularSessions.map(s => (
                     <SessionRow
@@ -344,14 +399,13 @@ export function SessionSidebar({
                             danger
                             icon={Trash2}
                             label={tActions.delete}
-                            onClick={() => void deleteSession(s.id)}
+                            onClick={() => void handleDelete(s.id)}
                           />
                         </>
                       }
-                      chatStyle={includeCompanion}
                       isActive={s.id === activeSessionId}
                       key={s.id}
-                      onSwitch={switchSession}
+                      onSwitch={handleSelect}
                       session={s}
                     />
                   ))}
@@ -388,18 +442,12 @@ export function SessionSidebar({
                         label={tActions.restore}
                         onClick={() => void archiveSession(s.id, false)}
                       />
-                      <RowAction
-                        danger
-                        icon={Trash2}
-                        label={tActions.delete}
-                        onClick={() => void deleteSession(s.id)}
-                      />
+                      <RowAction danger icon={Trash2} label={tActions.delete} onClick={() => void handleDelete(s.id)} />
                     </>
                   }
-                  chatStyle={includeCompanion}
                   isActive={s.id === activeSessionId}
                   key={s.id}
-                  onSwitch={switchSession}
+                  onSwitch={handleSelect}
                   session={s}
                 />
               ))
@@ -421,40 +469,44 @@ export function SessionSidebar({
 }
 
 function SessionRow({
-  chatStyle = false,
-  unread = false,
+  unread: companionUnread = false,
   session,
   isActive,
-  isSpecial,
-  customIcon: CustomIcon,
   actions,
   badge,
   onSwitch
 }: {
-  chatStyle?: boolean
   unread?: boolean
   session: SessionInfo
   isActive: boolean
-  isSpecial?: boolean
-  customIcon?: IconComponent
   actions?: React.ReactNode
   badge?: string
   onSwitch: (id: string) => Promise<void> | void
 }): React.JSX.Element {
-  const canRename = !isSpecial
+  const special = session.kind === 'special'
+  const canRename = !special
   const [editing, setEditing] = useState(false)
+  const pending = useStore(pendingMessages.$atom)
+  const runtime = getConversationRuntime(session.id)
+  const turnInFlight = useStore(runtime.$chatTurnInFlight)
+  const pendingBatch = useStore(runtime.$pendingPromptBatch)
+  const running = turnInFlight || pendingBatch.length > 0
+  const unread = companionUnread || pending.some(message => message.sessionId === session.id)
   const presets = useStore($systemPresets)
   const dict = useStrings()
-  const tSidebar = dict.workbench.sessionSidebar
+  const tSidebar = dict.conversation.sessionSidebar
+  const conversationStrings = useConversationStrings()
+
+  useEffect(() => retainConversationRuntime(runtime), [runtime])
 
   // 固定预设会话在任何列表里都显示当前界面语言的预设名（含搜索结果）。
   const title =
     sessionDisplayTitle(dict, session, presets) ??
-    (isSpecial ? tSidebar.specialStationFallback : tSidebar.newSessionFallback)
+    (special ? tSidebar.specialStationFallback : tSidebar.newSessionFallback)
 
   const timeStr = formatSessionTime(session.last_active || session.started_at, tSidebar.time)
   const msgCount = session.message_count ?? 0
-  const RowIcon = CustomIcon ?? presetIcon(session.system_preset_icon_key)
+  const RowIcon = presetIcon(session.system_preset_icon_key)
 
   return (
     <div
@@ -466,9 +518,9 @@ function SessionRow({
           ? 'border-line-standard bg-surface-card text-strong shadow-xs backdrop-blur-md'
           : 'border-transparent bg-transparent text-muted hover:border-line-hairline hover:bg-fill-hover hover:text-strong',
         'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
-        chatStyle && 'min-h-[76px] rounded-lg py-3 pl-14 pr-3'
+        'min-h-[76px] rounded-lg py-3 pl-14 pr-3'
       )}
-      data-chat-row={chatStyle || undefined}
+      data-chat-row
       onClick={() => {
         if (!editing) {
           void onSwitch(session.id)
@@ -483,28 +535,17 @@ function SessionRow({
       role="button"
       tabIndex={0}
     >
-      {chatStyle && (
-        <div className="absolute left-3 top-3">
-          {isCompanionSession(session) ? (
-            <CompanionAvatar />
-          ) : (
-            <span className="grid size-8 place-items-center rounded-xl border border-line-hairline bg-accent-soft text-accent">
-              <RowIcon size={17} />
-            </span>
-          )}
-        </div>
-      )}
+      <div className="absolute left-3 top-3">
+        {isCompanionSession(session) ? (
+          <CompanionAvatar />
+        ) : (
+          <span className="grid size-8 place-items-center rounded-xl border border-line-hairline bg-accent-soft text-accent">
+            <RowIcon size={17} />
+          </span>
+        )}
+      </div>
       <div className="flex items-center justify-between gap-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {!chatStyle &&
-            (isActive ? (
-              <span className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_8px_var(--ui-accent)]" />
-            ) : CustomIcon ? (
-              <CustomIcon className="size-3.5 shrink-0 text-faint" />
-            ) : (
-              <span className="size-1.5 shrink-0 rounded-full bg-fill-hover" />
-            ))}
-
           {editing ? (
             <SessionTitleInput
               initialTitle={session.title ?? ''}
@@ -515,7 +556,7 @@ function SessionRow({
               }}
             />
           ) : (
-            <p className={cn('truncate text-xs font-medium', isActive ? 'font-semibold text-strong' : 'text-body')}>
+            <p className={cn('truncate text-[13px] font-medium', isActive ? 'font-semibold text-strong' : 'text-body')}>
               {title}
               {session.pinned && <Pin className="ml-1 inline size-2.5 text-accent opacity-75" />}
             </p>
@@ -523,6 +564,13 @@ function SessionRow({
         </div>
 
         <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
+          {running && (
+            <Loader2
+              aria-label={conversationStrings.running}
+              className="size-3.5 animate-spin text-accent"
+              role="status"
+            />
+          )}
           {canRename && !editing && (
             <div className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               <RowAction icon={Pencil} label={dict.chat.sessionRename.action} onClick={() => setEditing(true)} />
@@ -535,25 +583,15 @@ function SessionRow({
         </div>
       </div>
 
-      <div
-        className={cn('flex min-w-0 items-center justify-between gap-2 text-[10.5px] text-faint', !chatStyle && 'pl-4')}
-      >
-        {chatStyle ? (
-          <span className="min-w-0 flex-1 truncate text-xs">
-            {isCompanionSession(session)
-              ? tSidebar.messageCount(msgCount)
-              : chatDisplayText(session.preview ?? '').replace(/\s+/g, ' ') || tSidebar.messageCount(msgCount)}
-          </span>
-        ) : (
-          <span>{timeStr}</span>
-        )}
-        {chatStyle ? (
-          unread && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
-        ) : (
-          <span>{tSidebar.messageCount(msgCount)}</span>
-        )}
+      <div className="flex min-w-0 items-center justify-between gap-2 text-[10.5px] text-faint">
+        <span className="min-w-0 flex-1 truncate text-xs">
+          {isCompanionSession(session)
+            ? tSidebar.messageCount(msgCount)
+            : chatDisplayText(session.preview ?? '').replace(/\s+/g, ' ') || tSidebar.messageCount(msgCount)}
+        </span>
+        {unread && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />}
       </div>
-      {chatStyle && <span className="mt-0.5 text-[10px] text-faint">{timeStr}</span>}
+      <span className="mt-0.5 text-[10px] text-faint">{timeStr}</span>
     </div>
   )
 }

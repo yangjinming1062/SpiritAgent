@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { mediaApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { getSpiritAgentConfig } from '@/shared/spiritagent'
+import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
 import { errorMessage } from '@runtime'
 
 import { CHAT_AUDIO_CONSTRAINTS } from './audio-constraints'
 import { blobToDataUrl } from './blob-data-url'
 import type { ConversationRuntime } from './chat-runtime'
+import { beginConversationInputActivity } from './conversation-input-busy'
 import { ensureChatSession } from './session-list-store'
 import { conversationVoiceSink } from './voice-link'
 
@@ -96,6 +99,8 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
   const stopRef = useRef<() => Promise<void>>(async () => {})
   const unmountedRef = useRef(false)
   const operationRef = useRef(0)
+  const finishRecordingActivity = useRef<(() => void) | null>(null)
+  const finishUploadActivity = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     void getSpiritAgentConfig()
@@ -119,6 +124,8 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
   // 结束录音态；卸载后不再回写语音链路。
   const endRecording = useCallback(() => {
     setRecording(false)
+    finishRecordingActivity.current?.()
+    finishRecordingActivity.current = null
 
     if (recordingOwner === ownerToken.current) {
       recordingOwner = null
@@ -143,11 +150,20 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
 
     cancelAutoStop()
     endRecording()
+    finishUploadActivity.current?.()
+    finishUploadActivity.current = null
   }, [cancelAutoStop, endRecording])
 
   const stop = useCallback(async () => {
+    const auth = $auth.get()
+    const authCurrent = captureAuthScope()
+
+    if (auth.kind !== 'authenticated' || !authCurrent) {
+      return
+    }
+
     const operation = operationRef.current
-    const recordingCurrent = (): boolean => isCurrent() && operation === operationRef.current
+    const recordingCurrent = (): boolean => authCurrent() && isCurrent() && operation === operationRef.current
 
     if (startPendingRef.current) {
       try {
@@ -206,6 +222,8 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
     }
 
     presentationPorts().setSpriteState('thinking')
+    const finishUpload = beginConversationInputActivity('uploading')
+    finishUploadActivity.current = finishUpload
 
     try {
       if (isReadOnlySession) {
@@ -218,8 +236,15 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
         return
       }
 
+      const dataUrl = await blobToDataUrl(blob)
+
+      if (!recordingCurrent()) {
+        return
+      }
+
       const uploaded = await mediaApi().media.uploadAudio({
-        dataUrl: await blobToDataUrl(blob),
+        authSessionId: auth.snapshot.sessionId,
+        dataUrl,
         filename: `voice.${getAudioExtensionForMime(blob.type)}`,
         sessionId
       })
@@ -242,6 +267,12 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
             ? getStrings().chat.voiceInput.busy
             : errorMessage(err, getStrings().chat.sendFailed)
         })
+      }
+    } finally {
+      finishUpload()
+
+      if (finishUploadActivity.current === finishUpload) {
+        finishUploadActivity.current = null
       }
     }
   }, [
@@ -270,6 +301,7 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
     }
 
     recordingOwner = ownerToken.current
+    finishRecordingActivity.current = beginConversationInputActivity('recording')
     const operation = ++operationRef.current
     conversationVoiceSink().setRecording(true)
     let pending: Promise<void> | null = null

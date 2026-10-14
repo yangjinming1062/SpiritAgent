@@ -1,7 +1,7 @@
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $presentation } from '@/shared/store/presentation'
 import {
-  $surfaceCompanions,
+  $surfaceCompanion,
   $surfaceOpen,
   $surfaceRole,
   $surfaceScreenLocked,
@@ -24,7 +24,7 @@ export function observeActionStageVisibility(listener: (visible: boolean) => voi
     $presentation.listen(notify),
     $chatVisible.listen(notify),
     $surfaceOpen.listen(notify),
-    $surfaceCompanions.listen(notify),
+    $surfaceCompanion.listen(notify),
     $surfaceRole.listen(notify),
     $surfaceScreenLocked.listen(notify),
     $surfaceSpriteVisible.listen(notify)

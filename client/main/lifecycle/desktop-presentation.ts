@@ -4,6 +4,7 @@ import path from 'node:path'
 import { app, type BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
 
 import {
+  type AppNavigationTarget,
   DESKTOP_COMPANION_ACTIVITY_PRIORITY,
   type DesktopCompanionActivityState,
   type DesktopMediaBytes,
@@ -17,6 +18,7 @@ import {
 import { errorMessage } from '@runtime'
 
 import { registerDesktopPresentationIpc } from '../ipc/desktop-presentation'
+import { createUiStateBridge } from '../ipc/ui-state'
 import { isSenderWindow } from '../security/ipc-trust'
 import type { RunningApplicationsState } from '../shared/desktop-applications'
 import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, sendToWindow } from '../shared/utils'
@@ -36,11 +38,14 @@ interface DesktopPresentationOptions {
   rendererUrlFor: (role: 'desktop' | 'desktop-background', theme?: string) => string
   seedTheme: () => string | undefined
   getSpriteWindow: () => BrowserWindow | null
+  getMainWindow: () => BrowserWindow | null
+  restoreMain: (target: AppNavigationTarget) => Promise<void>
   isSettingsSender: (sender: WebContents) => boolean
   closeSurfaces: () => Promise<void>
   restoreSprite: () => void
   authenticated: () => boolean
   authIdentity: () => string | null
+  authAccountId: () => string | null
   loadMedia: (sender: WebContents, reference: DesktopMediaReference) => Promise<DesktopMediaBytes>
   installWindowHandlers: (win: BrowserWindow, options?: { reloadOnCrash?: boolean }) => void
   lockZoom: (win: BrowserWindow) => void
@@ -80,6 +85,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let startupGeneration = 0
   let initialized = false
   let disposed = false
+  let desktopRendererHealthy = false
   let disposal: Promise<void> | null = null
   let disposeIpc: (() => void) | null = null
   let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
@@ -101,6 +107,23 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   })
 
   const isDesktopSender = windows.isDesktopSender
+
+  const uiState = createUiStateBridge({
+    accountId: options.authAccountId,
+    authIdentity: options.authIdentity,
+    isViewSender: sender => isDesktopSender(sender) || isSenderWindow(sender, options.getMainWindow()),
+    isInputSender: sender =>
+      isDesktopSender(sender) ||
+      isSenderWindow(sender, options.getMainWindow()) ||
+      isSenderWindow(sender, options.getSpriteWindow()),
+    isActiveSender: sender =>
+      !['starting', 'recovering'].includes(status) &&
+      (effectiveMode === 'desktop' ? isDesktopSender(sender) : isSenderWindow(sender, options.getMainWindow())),
+    onBusyChanged: () => {
+      publish()
+      options.onModeChanged?.()
+    }
+  })
 
   const health = createDesktopHealth({
     onDisplaysChanged,
@@ -235,7 +258,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       stageOwner: effectiveMode === 'desktop' ? 'desktop' : 'sprite',
       stageVisible: effectiveMode !== 'desktop',
       stageEpoch,
-      revision
+      revision,
+      switchBlockedReason: uiState.blockedReason()
     }
   }
 
@@ -252,6 +276,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function destroyWindows(): void {
+    desktopRendererHealthy = false
     activityBySource.desktop = { state: 'idle', voicePreparing: false }
     windows.destroy()
     stageAvailable = false
@@ -285,6 +310,18 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
   async function leave(reason?: string, preservePreparation = false): Promise<void> {
     let finalReason = reason
+
+    const source = windows.getInteractive()
+
+    const captureSource =
+      !disposed &&
+      effectiveMode === 'desktop' &&
+      status === 'active' &&
+      desktopRendererHealthy &&
+      source &&
+      !source.isDestroyed() &&
+      uiState.isOwner(source.webContents)
+
     prepareDesktopMedia &&= preservePreparation
     health.stopMode()
     status = 'recovering'
@@ -293,6 +330,18 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     background.invalidate()
     background.interrupt()
     publish()
+
+    if (captureSource) {
+      try {
+        await uiState.capture(source)
+      } catch (error) {
+        options.log(`[desktop] preserving last view snapshot: ${errorMessage(error)}`)
+      }
+    }
+
+    if (source && !source.isDestroyed() && uiState.isOwner(source.webContents)) {
+      uiState.releaseOwner()
+    }
 
     const recording = reason
       ? Promise.resolve()
@@ -323,6 +372,18 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       try {
         destroyWindows()
         foreground = false
+
+        const main = options.getMainWindow()
+
+        if (!disposed && options.authenticated() && main && !main.isDestroyed()) {
+          try {
+            await restoreUiState(main)
+          } catch (error) {
+            options.log(`[desktop] main view restore failed: ${errorMessage(error)}`)
+            finalReason ??= `界面状态恢复失败：${errorMessage(error)}`
+          }
+        }
+
         effectiveMode = 'window'
         status = finalReason ? 'failed' : 'inactive'
         failureReason = finalReason ?? null
@@ -391,10 +452,16 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       const selected =
         allDisplays.find(display => display.id === preferences.get().displayId) ?? screen.getPrimaryDisplay()
 
-      await options.closeSurfaces()
-      assertAttempt()
       const main = windows.createInteractive(selected)
+      main.webContents.once('render-process-gone', () => {
+        desktopRendererHealthy = false
+      })
+      main.once('unresponsive', () => {
+        desktopRendererHealthy = false
+      })
       await windows.load(main, 'desktop')
+      desktopRendererHealthy = true
+      await uiState.restore(main)
       assertAttempt()
       const backgroundWindow = windows.createBackground(selected)
       await windows.load(backgroundWindow, 'desktop-background')
@@ -408,6 +475,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         }
       }
 
+      assertReady()
+
+      await options.closeSurfaces()
+      options.getSpriteWindow()?.hide()
       assertReady()
 
       await native.start({
@@ -560,6 +631,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
+  function assertModeInputAvailable(mode: PresentationMode): void {
+    const blocked = uiState.blockedReason()
+
+    if (mode !== effectiveMode && blocked) {
+      throw new Error(blocked)
+    }
+  }
+
   function setMode(mode: PresentationMode, sender?: WebContents): Promise<PresentationState> {
     if (disposed) {
       return Promise.reject(new Error('桌面呈现已关闭。'))
@@ -568,6 +647,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     if (sender) {
       assertSettings(sender)
     }
+
+    assertModeInputAvailable(mode)
 
     if (mode === 'desktop' && process.platform !== 'win32') {
       return Promise.reject(new Error('桌面模式目前仅支持 Windows。'))
@@ -584,7 +665,57 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         assertSettings(sender)
       }
 
-      await preferences.set({ mode })
+      if (mode === effectiveMode && preferences.get().mode === mode && (status === 'active' || status === 'inactive')) {
+        return snapshot()
+      }
+
+      assertModeInputAvailable(mode)
+
+      const source = effectiveMode === 'desktop' ? windows.getInteractive() : options.getMainWindow()
+      const sourceVisible = source?.isVisible() ?? false
+      const sourceMinimized = source?.isMinimized() ?? false
+      const identity = options.authIdentity()
+      const previousStatus = status
+      status = mode === 'desktop' ? 'starting' : 'recovering'
+      publish()
+
+      try {
+        if (source && !source.isDestroyed() && uiState.isOwner(source.webContents)) {
+          await uiState.capture(source)
+        }
+
+        if (identity !== options.authIdentity()) {
+          throw new Error('界面交接账户已变化。')
+        }
+
+        assertModeInputAvailable(mode)
+
+        if (mode === 'window' && effectiveMode === 'desktop') {
+          await options.restoreMain(uiState.getSnapshot()?.navigation ?? { page: 'chat' })
+        }
+
+        assertModeInputAvailable(mode)
+
+        await preferences.set({ mode })
+      } catch (error) {
+        if (mode === 'window' && effectiveMode === 'desktop') {
+          await options.closeSurfaces()
+          options.getSpriteWindow()?.hide()
+
+          if (identity === options.authIdentity() && source && !source.isDestroyed()) {
+            try {
+              await restoreUiState(source)
+            } catch (restoreError) {
+              await leave(`界面交接恢复失败：${errorMessage(restoreError)}`)
+              throw error
+            }
+          }
+        }
+
+        status = previousStatus
+        publish()
+        throw error
+      }
 
       if (mode === 'desktop' && currentGeneration !== startupGeneration) {
         return snapshot()
@@ -598,7 +729,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         try {
           await enter()
 
-          if (effectiveMode === 'desktop' && status === 'active' && existsSync(mainInterruptedFile)) {
+          if (effectiveMode === 'desktop' && snapshot().status === 'active' && existsSync(mainInterruptedFile)) {
             try {
               unlinkSync(mainInterruptedFile)
             } catch (error) {
@@ -606,16 +737,35 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
             }
           }
         } catch (error) {
-          if (status !== 'failed') {
+          if (snapshot().status !== 'failed') {
             status = 'failed'
             failureReason = errorMessage(error)
             publish()
+          }
+
+          if (
+            identity === options.authIdentity() &&
+            source &&
+            !source.isDestroyed() &&
+            (sourceVisible || sourceMinimized)
+          ) {
+            await options.restoreMain(uiState.getSnapshot()?.navigation ?? {})
+
+            if (sourceMinimized) {
+              source.minimize()
+            }
           }
 
           throw error
         }
       } else {
         await leave()
+        const target = options.getMainWindow()
+
+        if (target && !target.isDestroyed() && target.isVisible()) {
+          options.getSpriteWindow()?.hide()
+          target.focus()
+        }
       }
 
       return snapshot()
@@ -628,6 +778,18 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     return serial(async () => {
       assertSettings(sender)
+      const block = uiState.blockedReason()
+
+      if (block) {
+        throw new Error(block)
+      }
+
+      const interactive = windows.getInteractive()
+
+      if (interactive && !interactive.isDestroyed()) {
+        await uiState.capture(interactive)
+      }
+
       await preferences.set({ displayId: id })
 
       if (effectiveMode === 'desktop' && currentGeneration === startupGeneration) {
@@ -667,6 +829,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function registerIpc(ipcMain: IpcMain): void {
+    uiState.register(ipcMain)
     disposeIpc = registerDesktopPresentationIpc(
       ipcMain,
       {
@@ -737,12 +900,19 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       disposed = true
       health.dispose()
       disposeIpc?.()
+      uiState.dispose()
       disposeIpc = null
       applicationListeners.clear()
       disposal = stop()
     }
 
     return disposal
+  }
+
+  async function restoreUiState(win: BrowserWindow, target?: AppNavigationTarget): Promise<void> {
+    if (!uiState.isOwner(win.webContents)) {
+      await uiState.restore(win, target)
+    }
   }
 
   return {
@@ -779,6 +949,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       return serial(() => native.activateJumpListTask(target, taskId, eligible))
     },
     getState: snapshot,
+    captureUiState: async (): Promise<void> => {
+      const source = effectiveMode === 'desktop' ? windows.getInteractive() : options.getMainWindow()
+
+      if (source && !source.isDestroyed() && uiState.isOwner(source.webContents)) {
+        await uiState.capture(source)
+      }
+    },
+    restoreUiState,
     setMode,
     getWindow: windows.getInteractive,
     isDesktopSender,
@@ -786,7 +964,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     initialize,
     stop,
     dispose,
+    clearUiState: (removedAccountId: string) => uiState.forgetAccount(removedAccountId),
     accountChanged: () => {
+      uiState.accountChanged()
+      suppressAutoRestore = true
       prepareDesktopMedia = false
       background.accountChanged()
       activityBySource.host = { state: 'idle', voicePreparing: false }

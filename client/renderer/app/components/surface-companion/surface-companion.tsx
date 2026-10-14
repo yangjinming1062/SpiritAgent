@@ -16,16 +16,18 @@ import { useInteractiveRegion } from '@/shared'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
 import { $auth } from '@/shared/store/auth'
-import { $surfaceCompanions } from '@/shared/store/surfaces'
+import { $presentation } from '@/shared/store/presentation'
+import { $surfaceCompanion } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
-import type { SurfaceId } from '@ipc/contracts'
 
 import { CompanionEgg, useCompanionPresentation } from '../companion-presentation'
 
 import styles from './surface-companion.module.css'
 
-export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX.Element | null {
-  const state = useStore($surfaceCompanions)[surface]
+export function SurfaceCompanion(): React.JSX.Element | null {
+  const state = useStore($surfaceCompanion)
+  const mode = useStore($presentation)
+  const visible = state.visible && mode.effectiveMode === 'window'
   const hasSlot = state.slotWidth > 0
   const auth = useStore($auth)
   const lifecycle = useStore($companionLifecycle)
@@ -36,8 +38,8 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
   const presentation = useCompanionPresentation()
 
   const hitTest = useCallback(
-    (x: number, y: number): boolean => state.visible && presentation.renderer === 'media' && mediaHitTest(x, y),
-    [presentation.renderer, state.visible, mediaHitTest]
+    (x: number, y: number): boolean => visible && presentation.renderer === 'media' && mediaHitTest(x, y),
+    [presentation.renderer, visible, mediaHitTest]
   )
 
   useInteractiveRegion('surface-companion', wrapperRef, undefined, hitTest, 1)
@@ -60,14 +62,14 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
   }, [hasSlot])
 
   useEffect(() => {
-    if (auth.kind !== 'authenticated' || lifecycle !== 'ready' || !state.visible) {
+    if (auth.kind !== 'authenticated' || lifecycle !== 'ready' || !visible) {
       return
     }
 
     void hydrateActionCatalog()
     void hydrateVideoPack()
     void ensureCompanionHydrated({ hydratePersona, hydratePortrait })
-  }, [auth.kind, lifecycle, state.visible])
+  }, [auth.kind, lifecycle, visible])
 
   if (!hasSlot) {
     return null
@@ -84,13 +86,13 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
         title={strings.common.companionControl.dragTitle(strings.brand.name)}
       >
         <div className={styles.inner}>
-          {state.visible &&
+          {visible &&
             (presentation.renderer === 'fallback' ? (
               <CompanionEgg presentation={presentation} size="min(280px, 92%)" windowId={1} />
             ) : (
               <MediaStage contentAlign={state.preference.side === 'right' ? 'left' : 'right'} />
             ))}
-          {state.visible && <SpriteVfxOverlay />}
+          {visible && <SpriteVfxOverlay />}
         </div>
       </div>
     </aside>

@@ -4,6 +4,8 @@ import { createContext, type ReactNode, useContext, useEffect, useMemo } from 'r
 
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
+import { getStrings } from '@/shared/strings'
+import type { ConversationScrollAnchor, MainConversationDraftSnapshot } from '@client-shared/ipc/ui-state'
 
 import { stripAttachmentDirectives } from './chat-display-text'
 import { type ConversationRuntime } from './chat-runtime'
@@ -16,14 +18,15 @@ function createViewDraft() {
     $text: atom(''),
     $pending: atom<PendingAttachment | null>(null),
     $externalPaths: atom<string[]>([]),
-    $sending: atom(false)
+    $sending: atom(false),
+    $scrollAnchor: atom<ConversationScrollAnchor | null>(null)
   }
 }
 
 type ConversationViewDraft = ReturnType<typeof createViewDraft>
 
 function createViewController(runtime: ConversationRuntime, draft: ConversationViewDraft) {
-  const { $chatEditDraft, $text, $pending, $externalPaths, $sending } = draft
+  const { $chatEditDraft, $text, $pending, $externalPaths, $sending, $scrollAnchor } = draft
 
   const $retryableAssistantMessage = computed(
     [runtime.$retryableAssistantMessage, $chatEditDraft],
@@ -75,6 +78,7 @@ function createViewController(runtime: ConversationRuntime, draft: ConversationV
     $pending,
     $externalPaths,
     $sending,
+    $scrollAnchor,
     startEditingMessage
   }
 }
@@ -93,9 +97,96 @@ export interface ConversationViewState {
 }
 const ConversationViewContext = createContext<ConversationViewState | null>(null)
 const drafts = new Map<string, ConversationViewDraft>()
+const mainDrafts = new Map<string | null, ConversationViewDraft>()
 export const $conversationViews = atom<ConversationViewState[]>([])
+export const $mainConversationDraftRevision = atom(0)
 
-function controllerFor(viewId: string, runtime: ConversationRuntime): ConversationViewController {
+function mainDraftFor(sessionId: string | null, migratePending = true): ConversationViewDraft {
+  let draft = mainDrafts.get(sessionId)
+
+  if (!draft) {
+    const pendingDraft = sessionId === null || !migratePending ? undefined : mainDrafts.get(null)
+    draft = pendingDraft ?? createViewDraft()
+
+    if (pendingDraft) {
+      mainDrafts.delete(null)
+    } else {
+      for (const store of [
+        draft.$text,
+        draft.$pending,
+        draft.$externalPaths,
+        draft.$chatEditDraft,
+        draft.$scrollAnchor
+      ]) {
+        store.listen(() => $mainConversationDraftRevision.set($mainConversationDraftRevision.get() + 1))
+      }
+    }
+
+    mainDrafts.set(sessionId, draft)
+  }
+
+  return draft
+}
+
+export function exportMainConversationDraftSnapshot(): MainConversationDraftSnapshot {
+  return structuredClone({
+    selectedSessionId: $chatSessionId.get(),
+    drafts: [...mainDrafts].map(([sessionId, draft]) => ({
+      sessionId,
+      text: draft.$text.get(),
+      pending: draft.$pending.get(),
+      externalPaths: draft.$externalPaths.get(),
+      editing: draft.$chatEditDraft.get(),
+      scrollAnchor: draft.$scrollAnchor.get()
+    }))
+  })
+}
+
+export function importMainConversationDraftSnapshot(snapshot: MainConversationDraftSnapshot): void {
+  const incomingSessions = new Set(snapshot.drafts.map(entry => entry.sessionId))
+
+  for (const [sessionId, draft] of mainDrafts) {
+    if (!incomingSessions.has(sessionId)) {
+      mainDrafts.delete(sessionId)
+      draft.$text.set('')
+      draft.$pending.set(null)
+      draft.$externalPaths.set([])
+      draft.$chatEditDraft.set(null)
+      draft.$scrollAnchor.set(null)
+    }
+  }
+
+  for (const entry of structuredClone(snapshot.drafts)) {
+    const draft = mainDraftFor(entry.sessionId, false)
+    draft.$text.set(entry.text)
+    draft.$pending.set(
+      entry.pending?.type === 'video' && entry.pending.status === 'uploading'
+        ? { ...entry.pending, status: 'error', error: getStrings().chat.attachment.uploadInterrupted }
+        : entry.pending
+    )
+    draft.$externalPaths.set(entry.externalPaths)
+    draft.$chatEditDraft.set(entry.editing)
+    draft.$scrollAnchor.set(entry.scrollAnchor)
+  }
+}
+
+export function forgetConversationDraft(sessionId: string): void {
+  mainDrafts.delete(sessionId)
+
+  for (const key of drafts.keys()) {
+    if (key.endsWith(`:${sessionId}`)) {
+      drafts.delete(key)
+    }
+  }
+
+  $mainConversationDraftRevision.set($mainConversationDraftRevision.get() + 1)
+}
+
+function controllerFor(viewId: string, runtime: ConversationRuntime, draftScope?: 'main'): ConversationViewController {
+  if (draftScope === 'main') {
+    return createViewController(runtime, mainDraftFor(runtime.$chatSessionId.get()))
+  }
+
   const key = `${viewId}:${runtime.$chatSessionId.get() ?? 'pending'}`
   let draft = drafts.get(key)
 
@@ -122,6 +213,7 @@ export function ConversationViewProvider({
   visible = true,
   foreground = true,
   receiveExternalAttachments = false,
+  draftScope,
   children
 }: {
   viewId: string
@@ -130,11 +222,13 @@ export function ConversationViewProvider({
   visible?: boolean
   foreground?: boolean
   receiveExternalAttachments?: boolean
+  draftScope?: 'main'
   children: ReactNode
 }): React.JSX.Element {
   const locked = useStore(presentationPorts().$screenLocked)
   const runtime = getConversationRuntime(sessionId)
-  const controller = useMemo(() => controllerFor(viewId, runtime), [viewId, runtime])
+  const historyHydrated = useStore(runtime.$historyHydrated)
+  const controller = useMemo(() => controllerFor(viewId, runtime, draftScope), [viewId, runtime, draftScope])
 
   const state = useMemo<ConversationViewState>(
     () => ({
@@ -144,11 +238,22 @@ export function ConversationViewProvider({
       active,
       visible,
       foreground,
-      eligible: sessionId !== null && active && visible && foreground && !locked,
+      eligible: sessionId !== null && historyHydrated && active && visible && foreground && !locked,
       scoped: true,
       receiveExternalAttachments
     }),
-    [viewId, runtime, controller, sessionId, active, visible, foreground, receiveExternalAttachments, locked]
+    [
+      viewId,
+      runtime,
+      controller,
+      sessionId,
+      historyHydrated,
+      active,
+      visible,
+      foreground,
+      receiveExternalAttachments,
+      locked
+    ]
   )
 
   useEffect(() => retainConversationRuntime(runtime), [runtime])
@@ -196,5 +301,7 @@ export function isConversationActive(sessionId: string | null): boolean {
 
 registerStorageClearHandler(() => {
   drafts.clear()
+  mainDrafts.clear()
+  $mainConversationDraftRevision.set(0)
   $conversationViews.set([])
 })

@@ -17,13 +17,24 @@ export {
   setProactiveBubble,
   showMediaHint
 } from './chat-store'
-export { conversationRuntimes, findConversationRuntime, getConversationRuntime, runtimeForMessage } from './chat-store'
+export {
+  conversationRuntimes,
+  findConversationRuntime,
+  getConversationRuntime,
+  retainConversationRuntime,
+  runtimeForMessage
+} from './chat-store'
 export { CompanionAvatar } from './companion-avatar'
 export { ConversationInput } from './conversation-input'
+export { $conversationInputBusy, beginConversationInputActivity } from './conversation-input-busy'
 export { ConversationSurface } from './conversation-surface'
 export {
   $conversationViews,
+  $mainConversationDraftRevision,
   ConversationViewProvider,
+  exportMainConversationDraftSnapshot,
+  forgetConversationDraft,
+  importMainConversationDraftSnapshot,
   isConversationActive,
   useConversationView
 } from './conversation-view'
@@ -45,8 +56,10 @@ export {
   $currentSessionTitle,
   $searchLoading,
   $searchResults,
+  $sessionNavigationError,
   $sessions,
   $sessionSearch,
+  $sessionsError,
   $sessionsLoading,
   $sessionSort,
   $systemPresets,
@@ -64,6 +77,7 @@ export {
   openMainSession,
   pinSession,
   renameSession,
+  restoreConversationSelection,
   runSessionSearch,
   type SessionSort,
   setSessionSort,
@@ -91,3 +105,4 @@ export {
   removeVoicePlayback,
   voicePlaybackReady
 } from './voice-playback'
+export type { MainConversationDraftSnapshot } from '@client-shared/ipc/ui-state'

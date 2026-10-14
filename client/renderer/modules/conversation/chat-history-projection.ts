@@ -70,7 +70,7 @@ export function projectSessionMessages(
     totalChars +=
       m.content_type === 'companion_reply' && typeof m.content === 'string' ? m.content.length : textContent.length
 
-    // 陪伴用户行按空行拆分（与实时呈现对齐），工作台整段阅读不拆。
+    // 陪伴用户行按空行拆分（与实时呈现对齐），专业对话整段阅读不拆。
     const canSplit = !m.subtype && m.role === 'user' && splitUserBubbles
     // 后台视频送达的 system 行正文是给模型的任务记录，与实时送达一致只显示媒体卡。
     const hideText = m.role === 'system' && m.subtype === 'status_media'

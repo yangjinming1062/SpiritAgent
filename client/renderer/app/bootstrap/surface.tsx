@@ -59,23 +59,12 @@ function SurfaceGlassBudgetGuard(): null {
 }
 
 export function bootstrapSurface(label: string, RootComponent: React.ComponentType): void {
-  const isLiving = label.includes('living')
-
-  if (isLiving) {
-    setSurfaceRole('living')
-  } else if (label.includes('workbench')) {
-    setSurfaceRole('workbench')
-  }
-
+  setSurfaceRole('main')
   initRenderer()
+  const offUpdateBridge = installUpdateBridge()
 
-  if (isLiving) {
-    // 更新状态唯一消费方（设置页 about）在生活空间。
-    const offUpdateBridge = installUpdateBridge()
-
-    if (import.meta.hot) {
-      import.meta.hot.dispose(offUpdateBridge)
-    }
+  if (import.meta.hot) {
+    import.meta.hot.dispose(offUpdateBridge)
   }
 
   setPrimaryGateway(new IpcGatewayProxy())

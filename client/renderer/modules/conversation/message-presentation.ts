@@ -2,7 +2,7 @@ import { computed, type ReadableAtom } from 'nanostores'
 
 import type { ChatMessageBody, ChatMessageListItem } from './chat-runtime-types'
 
-export type ConversationVariant = 'living' | 'workbench'
+export type ConversationVariant = 'companion' | 'assistant'
 export const SYSTEM_PILL_SUBTYPES = new Set(['status_cleared', 'status_command_result', 'status_media_failed'])
 
 export function isMessageGroupRow(item: ChatMessageListItem): boolean {
@@ -30,7 +30,7 @@ export function isMessageVisible(
   const tools = body.tools?.length || body.toolName
   const toolOnly = tools && !text && !body.error && !body.cancelled
 
-  if (variant === 'living' && toolOnly && !body.streaming) {
+  if (variant === 'companion' && toolOnly && !body.streaming) {
     return false
   }
 
@@ -42,7 +42,7 @@ export function isMessageVisible(
     body.replyMedia ||
     body.error ||
     body.cancelled ||
-    (variant === 'workbench' && body.reasoning?.trim())
+    (variant === 'assistant' && body.reasoning?.trim())
   )
 }
 

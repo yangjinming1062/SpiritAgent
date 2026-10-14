@@ -332,9 +332,18 @@ export function registerMediaIpc({
   const ttsQueue = new BoundedTtsQueue()
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
 
+  const assertUploadAccount = (authSessionId: string): void => {
+    if (!authSessionId || getCurrentAuth()?.sessionId !== authSessionId) {
+      throw new Error('Attachment upload account changed')
+    }
+  }
+
   ipcMain.handle(
     IPC.invoke.mediaAudioUpload,
     async (event, payload: AudioUploadPayload): Promise<AudioUploadResult> => {
+      const authSessionId = payload?.authSessionId
+      assertUploadAccount(authSessionId)
+
       if (
         typeof payload?.dataUrl !== 'string' ||
         payload.dataUrl.length > Math.ceil((STT_MAX_AUDIO_BYTES * 4) / 3) + 256 ||
@@ -353,15 +362,19 @@ export function registerMediaIpc({
       form.append('file', new Blob([data], { type: mime }), path.basename(payload.filename))
       form.append('session_id', payload.sessionId)
 
-      const { body } = await callBackend(event.sender, connection =>
-        postBackend({
+      const { body } = await callBackend(event.sender, connection => {
+        assertUploadAccount(authSessionId)
+
+        return postBackend({
           body: form,
           fetchImpl,
           timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
           token: connection.token,
           url: `${connection.baseUrl}/api/media/audios`
         })
-      )
+      })
+
+      assertUploadAccount(authSessionId)
 
       const parsed: unknown = JSON.parse(body.toString('utf8'))
 
@@ -544,10 +557,19 @@ export function registerMediaIpc({
   ipcMain.handle(
     IPC.invoke.mediaVideoUpload,
     async (event, payload: AttachmentVideoUploadPayload): Promise<AttachmentVideoUploadResult> => {
+      const authSessionId = payload?.authSessionId
+      assertUploadAccount(authSessionId)
+
+      if (typeof payload?.path !== 'string' || !payload.path || !/^\d+$/.test(payload.sessionId)) {
+        throw new Error('Invalid video upload')
+      }
+
       const { data, resolvedPath } = await readUserSelectedFile(payload.path, {
         maxBytes: ATTACH_VIDEO_MAX_BYTES,
         purpose: 'Video attach'
       })
+
+      assertUploadAccount(authSessionId)
 
       const form = new FormData()
       const blob = new Blob([data], { type: 'application/octet-stream' })
@@ -555,15 +577,19 @@ export function registerMediaIpc({
       form.append('file', blob, path.basename(resolvedPath))
       form.append('session_id', payload.sessionId)
 
-      const { body } = await callBackend(event.sender, connection =>
-        postBackend({
+      const { body } = await callBackend(event.sender, connection => {
+        assertUploadAccount(authSessionId)
+
+        return postBackend({
           body: form,
           fetchImpl,
           timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
           token: connection.token,
           url: `${connection.baseUrl}/api/media/videos`
         })
-      )
+      })
+
+      assertUploadAccount(authSessionId)
 
       const parsed = JSON.parse(body.toString('utf8')) as {
         url?: string
