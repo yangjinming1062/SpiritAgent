@@ -71,7 +71,13 @@ export function handleConversationEvent(
       return
     }
 
-    const preview = chatDisplayText(bubbles?.findLast(bubble => 'text' in bubble)?.text ?? text ?? '')
+    const preview = chatDisplayText(
+      bubbles?.findLast(bubble => 'text' in bubble)?.text ??
+        bubbles?.findLast(bubble => bubble.type === 'link')?.title ??
+        text ??
+        ''
+    )
+
     const hasMedia = media?.length || bubbles?.some(bubble => bubble.type === 'image' || bubble.type === 'video')
 
     if (preview || hasMedia) {

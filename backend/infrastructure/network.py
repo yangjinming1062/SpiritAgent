@@ -86,7 +86,23 @@ def _evaluate_hostname(host: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _resolve_and_validate(host: str, port: int) -> list[tuple[str, int]]:
+def _evaluate_trusted_service_ip(ip_str: str) -> tuple[bool, str]:
+    ip = ipaddress.ip_address(ip_str)
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if (
+        _ip_in_blocked(ip)
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_unspecified
+        or ip.is_reserved
+        and not ip.is_loopback
+    ):
+        return False, "trusted service cannot use metadata, link-local or reserved addresses"
+    return True, ""
+
+
+def _resolve_and_validate(host: str, port: int, *, trusted_service: bool = False) -> list[tuple[str, int]]:
     """同步 DNS 解析并校验全部结果；返回通过的 (ip, port)。async 路径由调用方移出事件循环。"""
     try:
         infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
@@ -99,7 +115,7 @@ def _resolve_and_validate(host: str, port: int) -> list[tuple[str, int]]:
     allowed: list[tuple[str, int]] = []
     for info in infos:
         ip_str = info[4][0]
-        ok, reason = _evaluate_ip(ip_str)
+        ok, reason = _evaluate_trusted_service_ip(ip_str) if trusted_service else _evaluate_ip(ip_str)
         if not ok:
             logger.warning("SSRF guard blocked %s -> %s: %s", host, ip_str, reason)
             raise httpcore.ConnectError(f"refusing to connect to {ip_str} ({reason})")
@@ -110,6 +126,10 @@ def _resolve_and_validate(host: str, port: int) -> list[tuple[str, int]]:
 class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
     """出站 SSRF 守卫后端：DNS 在工作线程解析，每个目标 IP 在 socket.connect 前过策略，以已校验 IP 直连（Host/SNI/证书仍用原 host）；重定向每跳重走 connect_tcp。守卫关闭时行为与默认后端一致。"""
 
+    def __init__(self, *, trusted_endpoint: tuple[str, int] | None = None) -> None:
+        super().__init__()
+        self._trusted_endpoint = trusted_endpoint
+
     async def connect_tcp(  # type: ignore[override]
         self,
         host: str,
@@ -118,7 +138,8 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
         local_address: str | None = None,
         socket_options: Iterable[tuple] | None = None,
     ) -> httpcore._backends.base.AsyncNetworkStream:
-        if not SETTINGS.ssrf_guard_enabled:
+        trusted_service = self._trusted_endpoint == (host, port)
+        if not SETTINGS.ssrf_guard_enabled and not trusted_service:
             return await super().connect_tcp(
                 host,
                 port,
@@ -133,7 +154,9 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
             logger.warning("SSRF guard refused %s: %s", host, reason)
             raise httpcore.ConnectError(f"refusing to connect to {host} ({reason})")
 
-        validated = await anyio.to_thread.run_sync(partial(_resolve_and_validate, host, port))
+        validated = await anyio.to_thread.run_sync(
+            partial(_resolve_and_validate, host, port, trusted_service=trusted_service),
+        )
 
         await self._init_backend()
         last_error: Exception | None = None
@@ -166,14 +189,19 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
 class _SafeOutboundAsyncTransport(httpx.AsyncHTTPTransport):
     """挂载 ``_SafeOutboundAsyncBackend`` 的 httpx 传输层；``follow_redirects=False`` 与默认一致，逐跳校验交给 ``download_capped``。"""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, trusted_endpoint: tuple[str, int] | None = None, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._uses_proxy = kwargs.get("proxy") is not None
+        self._trusted_endpoint = trusted_endpoint
         # httpcore 私有属性；连接池其余配置（limits / ssl_context）由 super 接管，不重置。
-        self._pool._network_backend = _SafeOutboundAsyncBackend()
+        self._pool._network_backend = _SafeOutboundAsyncBackend(trusted_endpoint=trusted_endpoint)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        if self._uses_proxy and SETTINGS.ssrf_guard_enabled:
+        trusted_service = self._trusted_endpoint == (
+            request.url.host,
+            request.url.port or (443 if request.url.scheme == "https" else 80),
+        )
+        if self._uses_proxy and (SETTINGS.ssrf_guard_enabled or trusted_service):
             # 代理负责目标建连，socket 守卫只能看到代理地址；目标须另行校验。
             ok, reason = _evaluate_hostname(request.url.host)
             if not ok:
@@ -185,6 +213,7 @@ class _SafeOutboundAsyncTransport(httpx.AsyncHTTPTransport):
                             _resolve_and_validate,
                             request.url.host,
                             request.url.port or (443 if request.url.scheme == "https" else 80),
+                            trusted_service=trusted_service,
                         ),
                         abandon_on_cancel=True,
                     )
@@ -213,7 +242,9 @@ class _ProxySettings(BaseSettings):
 class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
     """按环境代理和 NO_PROXY 路由；CIDR 匹配 URL 中的 IP，域名沿用 HTTPX 匹配规则。"""
 
-    def __init__(self, *, trust_env: bool) -> None:
+    def __init__(self, *, trust_env: bool, trusted_origin: tuple[str, str, int] | None = None) -> None:
+        self._trusted_origin = trusted_origin
+        trusted_endpoint = (trusted_origin[1], trusted_origin[2]) if trusted_origin else None
         proxies = _ProxySettings().model_dump() if trust_env else {}
         entries = [entry.strip() for entry in proxies.get("no_proxy", "").split(",")]
         self._bypass_all = "*" in entries
@@ -246,13 +277,17 @@ class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
                 pattern = str(pattern_url.copy_with(host=str(address)))
             self._bypass_patterns.append(URLPattern(pattern))
 
-        self._direct = _SafeOutboundAsyncTransport(trust_env=trust_env)
+        self._direct = _SafeOutboundAsyncTransport(trust_env=trust_env, trusted_endpoint=trusted_endpoint)
         self._proxies: dict[str, _SafeOutboundAsyncTransport] = {}
         if not self._bypass_all:
             for scheme in ("http", "https", "all"):
                 if proxy := proxies.get(f"{scheme}_proxy"):
                     proxy = proxy if "://" in proxy else f"http://{proxy}"
-                    self._proxies[scheme] = _SafeOutboundAsyncTransport(proxy=proxy, trust_env=trust_env)
+                    self._proxies[scheme] = _SafeOutboundAsyncTransport(
+                        proxy=proxy,
+                        trust_env=trust_env,
+                        trusted_endpoint=trusted_endpoint,
+                    )
 
     def _bypass_proxy(self, url: httpx.URL) -> bool:
         if self._bypass_all:
@@ -270,6 +305,18 @@ class _ProxyRoutingAsyncTransport(httpx.AsyncBaseTransport):
         return any(candidate in network for candidate in addresses for network in self._bypass_networks)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        origin = (
+            request.url.scheme,
+            request.url.host,
+            request.url.port or (443 if request.url.scheme == "https" else 80),
+        )
+        if self._trusted_origin is not None and (
+            origin != self._trusted_origin or request.url.username or request.url.password
+        ):
+            raise httpx.ConnectError(
+                "Configured service requests must remain on their operator-approved origin",
+                request=request,
+            )
         transport = self._direct
         if not self._bypass_proxy(request.url):
             transport = self._proxies.get(request.url.scheme) or self._proxies.get("all") or self._direct
@@ -294,6 +341,36 @@ def safe_outbound_async_client(**kwargs: Any) -> httpx.AsyncClient:
 def safe_outbound_async_transport(*, trust_env: bool = True) -> httpx.AsyncBaseTransport:
     """返回带 SSRF 守卫的 transport（不附带 client）——给需要在 transport 外面再包一层（如重试 / 自定义 pool）的调用方使用。"""
     return _ProxyRoutingAsyncTransport(trust_env=trust_env)
+
+
+def trusted_service_async_client(base_url: str, **kwargs: Any) -> httpx.AsyncClient:
+    """仅供运维配置的服务地址：固定 origin 允许私网，元数据和重定向仍拒绝。"""
+    parsed = httpx.URL(base_url)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.host
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Invalid configured service URL")
+    ok, reason = _evaluate_hostname(parsed.host)
+    if not ok:
+        raise ValueError(reason)
+    try:
+        ipaddress.ip_address(parsed.host)
+    except ValueError:
+        pass
+    else:
+        ok, reason = _evaluate_trusted_service_ip(parsed.host)
+        if not ok:
+            raise ValueError(reason)
+    if kwargs.pop("follow_redirects", False):
+        raise ValueError("Configured services cannot follow redirects")
+    origin = (parsed.scheme, parsed.host, parsed.port or (443 if parsed.scheme == "https" else 80))
+    transport = _ProxyRoutingAsyncTransport(trust_env=kwargs.get("trust_env", True), trusted_origin=origin)
+    return httpx.AsyncClient(base_url=base_url, transport=transport, follow_redirects=False, **kwargs)
 
 
 _MAX_REDIRECTS = 5

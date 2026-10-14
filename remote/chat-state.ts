@@ -57,7 +57,16 @@ export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): A
     const bubbles = [...turn.bubbles]
     bubbles[payload.bubble_index] = payload.bubble as unknown as CompanionBubble
 
-    return { ...turn, bubbles }
+    const messageId = payload.message_id
+
+    return {
+      ...turn,
+      assistant_message_id:
+        typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0
+          ? messageId
+          : turn.assistant_message_id,
+      bubbles
+    }
   }
 
   if (event.type === 'tool.start' || event.type === 'tool.complete') {
@@ -115,4 +124,16 @@ export function mergeMessages(previous: SessionMessage[], incoming: SessionMessa
   incoming.forEach(message => messages.set(message.id, message))
 
   return [...messages.values()].sort((left, right) => (left.id ?? 0) - (right.id ?? 0))
+}
+
+export function activeReplyIsPersisted(turn: ActiveTurn | null, messages: SessionMessage[]): boolean {
+  return (
+    typeof turn?.assistant_message_id === 'number' &&
+    messages.some(
+      message =>
+        message.id === turn.assistant_message_id &&
+        message.role === 'assistant' &&
+        message.content_type === 'companion_reply'
+    )
+  )
 }

@@ -25,6 +25,7 @@ const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion
 const RESPONSE_PREFERENCE_STORAGE_KEY = 'da.companion.responsePreference'
 const AUTOPLAY_VOICE_STORAGE_KEY = registerCompanionStorageKey('da.companion.autoplayVoice')
 const POSTS_ENABLED_STORAGE_KEY = registerCompanionStorageKey('da.companion.postsEnabled')
+const INFORMATION_DISCOVERY_STORAGE_KEY = registerCompanionStorageKey('da.companion.informationDiscoveryEnabled')
 
 // localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经 prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
 function reportCloud(key: string, value: unknown): void {
@@ -56,12 +57,14 @@ registerStorageClearHandler(() => {
   $companionVoiceId.set('')
   $autoplayVoice.set(true)
   $postsEnabled.set(true)
+  $informationDiscoveryEnabled.set(false)
 })
 
 registerStorageRestoreHandler(() => {
   $companionVoiceId.set(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
   $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
   $postsEnabled.set(storedBoolean(POSTS_ENABLED_STORAGE_KEY, true))
+  $informationDiscoveryEnabled.set(storedBoolean(INFORMATION_DISCOVERY_STORAGE_KEY, false))
 })
 
 interface BooleanPref {
@@ -89,6 +92,13 @@ const postsEnabledPref = makeBooleanPref(POSTS_ENABLED_STORAGE_KEY, true, 'compa
 export const $postsEnabled = postsEnabledPref.$atom
 export { postsEnabledPref }
 
+export const informationDiscoveryPref = makeBooleanPref(
+  INFORMATION_DISCOVERY_STORAGE_KEY,
+  false,
+  'companion.information_discovery_enabled'
+)
+export const $informationDiscoveryEnabled = informationDiscoveryPref.$atom
+
 export const autoplayVoicePref = makeBooleanPref(AUTOPLAY_VOICE_STORAGE_KEY, true, 'companion.autoplay_voice')
 export const $autoplayVoice = autoplayVoicePref.$atom
 
@@ -100,6 +110,7 @@ export { llmAffectPref, llmAutonomyPref }
 // 云端水合时按序回写的布尔偏好（companion 节键 → 偏好）。
 const HYDRATED_BOOLEAN_PREFS = [
   ['posts_enabled', postsEnabledPref],
+  ['information_discovery_enabled', informationDiscoveryPref],
   ['llm_affect', llmAffectPref],
   ['llm_autonomy', llmAutonomyPref]
 ] as const
@@ -121,6 +132,10 @@ export function initCompanionPrefsSync(): () => void {
 
     if (event.key === accountStorageKey(POSTS_ENABLED_STORAGE_KEY) || event.key === null) {
       $postsEnabled.set(storedBoolean(POSTS_ENABLED_STORAGE_KEY, true))
+    }
+
+    if (event.key === accountStorageKey(INFORMATION_DISCOVERY_STORAGE_KEY) || event.key === null) {
+      $informationDiscoveryEnabled.set(storedBoolean(INFORMATION_DISCOVERY_STORAGE_KEY, false))
     }
 
     syncDisturbanceFromStorage(event.key)

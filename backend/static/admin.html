@@ -68,6 +68,24 @@
         </main>
     </div>
 </div>
+<template id="xhsLoginTemplate">
+    <div class="field settings-field social-login-card" id="xhsLoginManager" data-search-text="小红书 扫码 登录 二维码 账号 清除">
+        <div class="social-login-head"><h3>小红书扫码登录</h3><span class="pill pill--muted" id="xhsLoginStatus" role="status">尚未检查</span></div>
+        <p class="hint">运营者扫码登录采集账号。以下操作使用已保存的服务地址和鉴权令牌。</p>
+        <p class="hint" id="xhsLoginHint">保存小红书服务设置后，可检查登录状态或获取二维码。</p>
+        <div class="social-login-actions">
+            <button class="btn btn--primary btn--sm" id="xhsQrButton" onclick="startXhsQrLogin()" type="button">获取登录二维码</button>
+            <button class="btn btn--ghost btn--sm" id="xhsStatusButton" onclick="checkXhsLogin()" type="button">检查登录状态</button>
+            <button class="btn btn--text btn--sm" id="xhsStopButton" onclick="stopXhsLogin('已停止本页面扫码检查；现存二维码有效期内仍可完成登录。')" type="button" hidden>停止检查</button>
+            <button class="btn btn--danger btn--sm" id="xhsClearButton" onclick="clearXhsSavedLogin()" type="button">清除已保存登录</button>
+        </div>
+        <div class="social-login-qr" id="xhsQrRegion" hidden>
+            <img id="xhsQrImage" alt="小红书运营账号登录二维码" width="200" height="200">
+            <div><p id="xhsQrExpiry"></p><p class="hint">请使用小红书 App 扫码。扫码完成后，本页面会检查并显示实际登录状态。</p></div>
+        </div>
+        <p class="social-login-error" id="xhsLoginError" role="alert" hidden></p>
+    </div>
+</template>
 <div id="userModal" class="modal drawer">
     <div class="modal-card">
         <div class="modal-head">

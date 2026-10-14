@@ -1,6 +1,7 @@
 import tomllib
 from pathlib import Path
 from typing import Any, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
@@ -12,6 +13,7 @@ from sqlalchemy import URL
 
 from infrastructure.ai.config import AIConfig
 from infrastructure.constants import ATTACHMENT_VIDEO_MAX_BYTES
+from infrastructure.web.social_credentials import parse_x_search_cookies
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -139,6 +141,27 @@ class Settings(BaseSettings):
     brave_search_api_key: str = Field(default="", validation_alias="BRAVE_SEARCH_API_KEY")
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
     tavily_base_url: str = Field(default="", validation_alias="TAVILY_BASE_URL")
+
+    social_search_backend: Literal["free", "tikhub"] = Field(default="free", validation_alias="SOCIAL_SEARCH_BACKEND")
+    x_search_cookies: str = Field(default="", max_length=30000, validation_alias="X_SEARCH_COOKIES")
+    xhs_mcp_base_url: str = Field(default="", validation_alias="XHS_MCP_BASE_URL")
+    xhs_mcp_auth_token: str = Field(default="", max_length=4096, validation_alias="XHS_MCP_AUTH_TOKEN")
+    tikhub_api_key: str = Field(default="", validation_alias="TIKHUB_API_KEY")
+    tikhub_base_url: str = Field(default="https://api.tikhub.io", validation_alias="TIKHUB_BASE_URL")
+    topic_search_requests_per_night: int = Field(
+        default=6,
+        ge=0,
+        le=60,
+        validation_alias="TOPIC_SEARCH_REQUESTS_PER_NIGHT",
+    )
+    topic_candidate_limit: int = Field(default=60, ge=0, le=300, validation_alias="TOPIC_CANDIDATE_LIMIT")
+    topic_detail_requests_per_night: int = Field(
+        default=10,
+        ge=0,
+        le=60,
+        validation_alias="TOPIC_DETAIL_REQUESTS_PER_NIGHT",
+    )
+    topic_reserve_limit: int = Field(default=5, ge=0, le=5, validation_alias="TOPIC_RESERVE_LIMIT")
 
     # 与会话级覆盖同范围：会话设置中低于 0.3 的阈值按无效处理。
     context_compression_threshold: float = Field(
@@ -300,6 +323,63 @@ class Settings(BaseSettings):
         if not p.is_absolute():
             return str((BACKEND_DIR / p).resolve())
         return str(p.resolve())
+
+    @field_validator("tikhub_base_url", mode="after")
+    @classmethod
+    def _validate_tikhub_base_url(cls, value: str) -> str:
+        parsed = urlsplit(value.strip())
+        hostname = (parsed.hostname or "").lower()
+        if (
+            parsed.scheme != "https"
+            or not (hostname == "tikhub.io" or hostname.endswith(".tikhub.io"))
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in (None, 443)
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("TikHub 地址必须是官方域名下的 HTTPS 服务根地址")
+        return value.strip().rstrip("/")
+
+    @field_validator("xhs_mcp_base_url", mode="after")
+    @classmethod
+    def _validate_xhs_mcp_base_url(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port == 0
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+            or "?" in value
+            or "#" in value
+            or "\\" in value
+            or any(character.isspace() for character in value)
+        ):
+            raise ValueError("小红书服务地址必须是无凭据、查询参数和路径的 HTTP 或 HTTPS 服务根地址")
+        return value.rstrip("/")
+
+    @field_validator("xhs_mcp_auth_token", mode="after")
+    @classmethod
+    def _validate_xhs_mcp_auth_token(cls, value: str) -> str:
+        token = value.strip()
+        if value and not token or any(ord(character) < 33 or ord(character) > 126 for character in token):
+            raise ValueError("小红书服务令牌必须由无空格的可见 ASCII 字符组成")
+        return token
+
+    @field_validator("x_search_cookies", mode="after")
+    @classmethod
+    def _validate_x_search_cookies(cls, value: str) -> str:
+        if value and not parse_x_search_cookies(value):
+            raise ValueError("X 登录 Cookie 必须包含有效的 auth_token 和 ct0")
+        return value.strip()
 
 
 SETTINGS = Settings()

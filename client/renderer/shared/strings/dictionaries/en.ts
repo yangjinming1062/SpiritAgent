@@ -363,6 +363,9 @@ export const dict: Dictionary = {
       autonomyDesc:
         'On autonomy and with the companion visible in window mode, the LLM decides where to roam, perch, and approach (off uses local rules).',
       postsEnabled: 'Post creation',
+      informationDiscovery: 'Discover new content',
+      informationDiscoveryDesc:
+        'Let your companion explore recent content related to your interests overnight and share when it fits; requires server support.',
       postsEnabledDesc:
         'Let your companion create text, image, video or audio posts at any time, including while offline. All types share the posting limit.'
     },
@@ -668,6 +671,15 @@ export const dict: Dictionary = {
   },
 
   chat: {
+    topic: {
+      platforms: { x: 'X', xiaohongshu: 'Xiaohongshu', douyin: 'Douyin' },
+      open: 'View original',
+      unavailable: 'Original link unavailable',
+      like: 'More like this',
+      less: 'Less like this',
+      undo: 'Click again to undo feedback',
+      failed: 'Feedback unavailable. Click to retry.'
+    },
     defaultSessionTitle: 'Daily chat',
     inputPlaceholder: 'Say something, or drag a file over',
     typing: 'Typing...',

@@ -28,6 +28,7 @@ REMOTE_EVENT_PREFIXES = (
     "companion.outfit",
     "companion.video",
     "companion.character_card",
+    "companion.topic_feedback.updated",
     "avatar.regenerated",
     "memory.changed",
 )

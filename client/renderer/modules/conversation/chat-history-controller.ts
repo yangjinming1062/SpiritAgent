@@ -44,6 +44,7 @@ export function createChatHistoryController(
     appendAssistantDelta,
     appendAssistantReasoningDelta,
     finalizeAssistantMessage,
+    appendCompanionBubble,
     setAssistantTool
   } = messages.api
 
@@ -237,15 +238,21 @@ export function createChatHistoryController(
     }
 
     mergePersistedUserMessages(snapshot.messages ?? [], snapshot.request_id, snapshot.message_ids)
-    const endedBubbles = snapshot.bubbles.filter(bubble => bubble.type === 'text')
+    const assistantMessageId = snapshot.assistant_message_id
 
-    for (const bubble of endedBubbles) {
-      beginAssistantMessage()
-      appendAssistantDelta(bubble.text)
-      finalizeAssistantMessage()
+    if (typeof assistantMessageId === 'number') {
+      snapshot.bubbles.forEach((bubble, index) => appendCompanionBubble(assistantMessageId, index, bubble))
+    } else {
+      for (const bubble of snapshot.bubbles) {
+        if (bubble.type === 'text') {
+          beginAssistantMessage()
+          appendAssistantDelta(bubble.text)
+          finalizeAssistantMessage()
+        }
+      }
     }
 
-    $turnHadBubbleBreak.set(endedBubbles.length > 0)
+    $turnHadBubbleBreak.set(snapshot.bubbles.length > 0)
 
     if (snapshot.text || snapshot.reasoning || snapshot.tools.length) {
       beginAssistantMessage()

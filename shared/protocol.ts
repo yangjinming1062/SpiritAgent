@@ -99,10 +99,92 @@ export interface CompanionMediaBubble {
   url: string | null
   error: string | null
 }
+export interface CompanionLinkBubble {
+  type: 'link'
+  topic_id: number
+  title: string
+  platform: 'x' | 'xiaohongshu' | 'douyin'
+  url: string
+  published_at: string
+}
+
+export type TopicFeedbackValue = 'like' | 'less' | null
+
+export interface TopicFeedbackSnapshot {
+  topic_id: number
+  value: TopicFeedbackValue
+  updated_at: string | null
+}
+
+/** 链接卡仅打开对应平台的 HTTPS 原文，持久数据也必须经过此边界。 */
+export function companionLinkUrl(bubble: CompanionLinkBubble): string | null {
+  try {
+    const url = new URL(bubble.url)
+    const domains = {
+      x: ['x.com', 'twitter.com'],
+      xiaohongshu: ['xiaohongshu.com'],
+      douyin: ['douyin.com']
+    }[bubble.platform]
+
+    return url.protocol === 'https:' &&
+      !url.username &&
+      !url.password &&
+      domains?.some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`))
+      ? url.href
+      : null
+  } catch {
+    return null
+  }
+}
+
+export function isTopicFeedbackSnapshot(value: unknown): value is TopicFeedbackSnapshot {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('topic_id' in value) ||
+    !('value' in value) ||
+    !('updated_at' in value)
+  ) {
+    return false
+  }
+
+  return (
+    typeof value.topic_id === 'number' &&
+    Number.isInteger(value.topic_id) &&
+    value.topic_id > 0 &&
+    (value.value === 'like' || value.value === 'less' || value.value === null) &&
+    (value.updated_at === null ||
+      (typeof value.updated_at === 'string' && Number.isFinite(Date.parse(value.updated_at))))
+  )
+}
+
+export function topicFeedbackIsCurrent(incoming: TopicFeedbackSnapshot, current?: TopicFeedbackSnapshot): boolean {
+  if (!current || current.updated_at === null) {
+    return true
+  }
+
+  if (incoming.updated_at === null) {
+    return false
+  }
+
+  const difference = Date.parse(incoming.updated_at) - Date.parse(current.updated_at)
+
+  if (difference !== 0) {
+    return difference > 0
+  }
+
+  // PostgreSQL 时间保留微秒；Date.parse 只到毫秒，继续比较小数部分避免旧回包覆盖。
+  const fraction = (timestamp: string): string =>
+    (timestamp.match(/\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/)?.[1] ?? '').padEnd(9, '0')
+
+  return fraction(incoming.updated_at) >= fraction(current.updated_at)
+}
+
 export type CompanionBubble =
   | { type: 'text'; text: string }
   | { type: 'voice'; text: string; audio: ReplyAudio | null }
   | CompanionMediaBubble
+  | CompanionLinkBubble
 
 interface SessionMessageFields {
   content: unknown
@@ -152,6 +234,8 @@ export interface ActiveTurnSnapshot {
   request_id: string
   origin_kind: string
   message_ids: number[]
+  /** 正在逐泡交付的助手消息，恢复结构化气泡时沿用稳定身份。 */
+  assistant_message_id?: number | null
   messages?: SessionMessage[]
   text: string
   reasoning: string

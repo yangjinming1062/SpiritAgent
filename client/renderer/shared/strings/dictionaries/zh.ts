@@ -344,7 +344,9 @@ export const dict = {
       autonomyAria: '自主空间决策',
       autonomyDesc: '自主档且窗口模式显示伙伴时由 LLM 决定漫游、栖身与靠近（关闭按本地规则）',
       postsEnabled: '动态创作',
-      postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额'
+      postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额',
+      informationDiscovery: '关注新资讯',
+      informationDiscoveryDesc: '允许伙伴夜间关注与你们兴趣相关的新内容，在合适的时候分享；需要服务端支持'
     },
     persona: {
       characterCard: {
@@ -613,6 +615,15 @@ export const dict = {
   },
 
   chat: {
+    topic: {
+      platforms: { x: 'X', xiaohongshu: '小红书', douyin: '抖音' },
+      open: '查看原文',
+      unavailable: '原始链接不可用',
+      like: '喜欢这类',
+      less: '少推荐这类',
+      undo: '再次点击撤销反馈',
+      failed: '反馈暂不可用，点击重试'
+    },
     defaultSessionTitle: '日常对话',
     inputPlaceholder: '跟它说，或把文件拖过来',
     typing: '正在输入...',

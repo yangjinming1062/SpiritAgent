@@ -40,6 +40,7 @@ export function isMessageVisible(
     body.attachments?.length ||
     body.media?.length ||
     body.replyMedia ||
+    body.replyLink ||
     body.error ||
     body.cancelled ||
     (variant === 'assistant' && body.reasoning?.trim())

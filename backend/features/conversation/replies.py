@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from infrastructure.ai.speech_contracts import SPEECH_STYLE_ADAPTER, SpeechSegment, SpeechStyle
 from infrastructure.assets.paths import parse_companion_asset_path
@@ -47,6 +48,41 @@ class MediaBubbleInput(BaseModel):
     media_id: str = Field(min_length=1, max_length=128)
 
 
+class LinkBubbleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["link"]
+    topic_id: int = Field(gt=0, strict=True)
+
+
+class LinkBubble(LinkBubbleInput):
+    title: str = Field(min_length=1)
+    platform: Literal["x", "xiaohongshu", "douyin"]
+    url: str = Field(min_length=1)
+    published_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "LinkBubble":
+        hosts = {
+            "x": {"x.com", "www.x.com", "twitter.com", "www.twitter.com"},
+            "xiaohongshu": {"www.xiaohongshu.com", "xiaohongshu.com"},
+            "douyin": {"www.douyin.com", "douyin.com"},
+        }
+        url = urlsplit(self.url)
+        if url.scheme != "https" or url.hostname not in hosts[self.platform] or url.username or url.password:
+            raise ValueError("A shared source must use its platform's HTTPS URL")
+        if url.port not in (None, 443):
+            raise ValueError("A source link cannot specify a non-HTTPS port")
+        return self
+
+    @field_validator("published_at")
+    @classmethod
+    def validate_publication_time(cls, value: str) -> str:
+        if datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is None:
+            raise ValueError("A source publication time requires a timezone")
+        return value
+
+
 class MediaBubble(MediaBubbleInput):
     status: Literal["pending", "ready", "failed", "result_unknown"]
     url: str | None = None
@@ -67,7 +103,9 @@ class MediaBubble(MediaBubbleInput):
 
 
 class CompanionReplyInput(RootModel):
-    root: list[Annotated[TextBubble | VoiceBubbleInput | MediaBubbleInput, Field(discriminator="type")]]
+    root: list[
+        Annotated[TextBubble | VoiceBubbleInput | MediaBubbleInput | LinkBubbleInput, Field(discriminator="type")]
+    ]
 
 
 class ReplyAudio(BaseModel):
@@ -101,8 +139,19 @@ class CompanionReply(BaseModel):
 
     # 服务端冻结首次语音制作的本地日期；不进入模型输入或客户端气泡。
     audio_directory: str | None = Field(default=None, pattern=r"^[0-9]{8}$")
+    # 来源快照由服务端冻结；模型等待跨午夜后仍可提交已获准的当前回复。
+    topic_context_at: datetime | None = None
+    used_topic_ids: list[Annotated[int, Field(gt=0, strict=True)]] = Field(default_factory=list)
 
-    bubbles: list[Annotated[TextBubble | VoiceBubble | MediaBubble, Field(discriminator="type")]] = Field(
+    @model_validator(mode="after")
+    def validate_topic_references(self) -> "CompanionReply":
+        if len(set(self.used_topic_ids)) != len(self.used_topic_ids):
+            raise ValueError("Topic references must be unique")
+        if any(b.topic_id not in self.used_topic_ids for b in self.bubbles if isinstance(b, LinkBubble)):
+            raise ValueError("A shared source must be recorded as a used topic")
+        return self
+
+    bubbles: list[Annotated[TextBubble | VoiceBubble | MediaBubble | LinkBubble, Field(discriminator="type")]] = Field(
         min_length=1,
     )
 
@@ -119,6 +168,10 @@ class CompanionReply(BaseModel):
         if len(source.root) != len(self.bubbles):
             raise ValueError("Reply content and delivery bubbles differ")
         for raw, delivered in zip(source.root, self.bubbles, strict=True):
+            if isinstance(raw, LinkBubbleInput):
+                if not isinstance(delivered, LinkBubble) or raw.topic_id != delivered.topic_id:
+                    raise ValueError("Reply content and delivery links differ")
+                continue
             if isinstance(raw, MediaBubbleInput):
                 if not isinstance(delivered, MediaBubble) or (raw.type, raw.media_id) != (
                     delivered.type,
@@ -126,7 +179,7 @@ class CompanionReply(BaseModel):
                 ):
                     raise ValueError("Reply content and delivery media differ")
                 continue
-            if isinstance(delivered, MediaBubble):
+            if isinstance(delivered, (MediaBubble, LinkBubble)):
                 raise ValueError("Reply content and delivery bubble types differ")
             if raw.type != delivered.type or raw.text != delivered.text:
                 raise ValueError("Reply content and delivery dialogue differ")

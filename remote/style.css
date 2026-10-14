@@ -12,6 +12,34 @@
   --soft: #e7efeb;
   --line: #e6e9e3;
 }
+.topic-link {
+  display: grid;
+  gap: 10px;
+  max-width: 320px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  margin-block: 8px;
+}
+.topic-link a {
+  color: var(--accent);
+}
+.topic-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.topic-feedback button {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  font-size: 12px;
+}
+.topic-feedback button[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--soft);
+  border-color: var(--accent);
+}
 * {
   box-sizing: border-box;
 }

@@ -15,7 +15,7 @@ from features.conversation.formatting import companion_context_content, message_
 from features.conversation.main_conversation import SPECIAL_KIND
 from features.conversation.request_contracts import ChatRequest
 from features.conversation.snapshots import ConversationSnapshot, MessageSnapshot
-from features.conversation.turn_access import context_messages
+from features.conversation.turn_access import context_messages, conversation_topic_ids
 from features.memory.memory_bootstrap import build_user_profile_extras
 from features.memory.memory_format import (
     format_background_memory_block,
@@ -415,6 +415,8 @@ async def build_turn_inputs(
         lang=session_lang,
         inject_time_perception=is_companion,
     )
+    if is_companion:
+        context["historical_topic_ids"] = await conversation_topic_ids(db, conv)
 
     # 不绑定 session：每次 memory 工具调用各自开 session，连接不跨 LLM 循环持续占用。
     native_memory = (

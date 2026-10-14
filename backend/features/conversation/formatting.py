@@ -1,6 +1,7 @@
 import json
 
 from infrastructure.text import format_local_iso, safe_json_loads
+from pydantic import JsonValue
 from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import (
     ColumnElement,
@@ -17,7 +18,14 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH, aggregate_order_by
 
 from features.conversation.models import Conversation, Message
-from features.conversation.replies import CompanionReply, CompanionReplyInput, MediaBubble, MediaBubbleInput
+from features.conversation.replies import (
+    CompanionReply,
+    CompanionReplyInput,
+    LinkBubble,
+    LinkBubbleInput,
+    MediaBubble,
+    MediaBubbleInput,
+)
 from features.conversation.snapshots import MessageSnapshot
 
 # 与 chat-runtime.ts 的分段和 JavaScript trim、chatDisplayText 保持一致。
@@ -41,6 +49,37 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     )
     text_match = parts.c.value["text"].astext.icontains(query, autoescape=True)
     bubble_match = select(1).select_from(parts).where(text_match).correlate(Message).exists()
+    saved_reply = case(
+        (
+            and_(
+                Message.reply_json.op("IS JSON", is_comparison=True)(literal_column("OBJECT")),
+                func.pg_input_is_valid(Message.reply_json, "jsonb"),
+            ),
+            cast(Message.reply_json, JSONB),
+        ),
+        else_=literal_column("'{}'::jsonb"),
+    )
+    saved_bubbles = saved_reply.op("->", return_type=JSONB)("bubbles")
+    link_parts = (
+        func.jsonb_array_elements(
+            case((func.jsonb_typeof(saved_bubbles) == "array", saved_bubbles), else_=literal_column("'[]'::jsonb")),
+        )
+        .table_valued(column("value", JSONB))
+        .render_derived()
+    )
+    source_match = (
+        select(1)
+        .select_from(link_parts)
+        .where(
+            link_parts.c.value["type"].astext == "link",
+            or_(
+                link_parts.c.value["title"].astext.icontains(query, autoescape=True),
+                link_parts.c.value["url"].astext.icontains(query, autoescape=True),
+            ),
+        )
+        .correlate(Message)
+        .exists()
+    )
     text_part_match = (
         select(1)
         .select_from(parts)
@@ -59,7 +98,7 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     # 非 JSON 数组的多模态行不按原文匹配，避免把 parts 结构当文本搜。
     jsonb_array = _is_json_array()
     return case(
-        (and_(Message.content_type == "companion_reply", jsonb_array), bubble_match),
+        (and_(Message.content_type == "companion_reply", jsonb_array), or_(bubble_match, source_match)),
         (and_(Message.content_type == "multimodal_v1", jsonb_array), text_part_match),
         (Message.content_type.in_(("companion_reply", "multimodal_v1")), false()),
         else_=Message.content.icontains(query, autoescape=True),
@@ -133,19 +172,22 @@ def visible_bubble_count() -> ColumnElement[int]:
     )
 
 
-def _companion_context_items(message: Message, *, dialogue_only: bool) -> list[dict[str, str]]:
+def _companion_context_items(message: Message | MessageSnapshot, *, dialogue_only: bool) -> list[dict[str, JsonValue]]:
     source = CompanionReplyInput.model_validate_json(message.content or "")
     delivery = CompanionReply.model_validate_json(message.reply_json or "")
     media = {b.media_id: b for b in delivery.bubbles if isinstance(b, MediaBubble)}
+    links = {b.topic_id: b for b in delivery.bubbles if isinstance(b, LinkBubble)}
     return [
         {**bubble.model_dump(), "status": media[bubble.media_id].status}
         if isinstance(bubble, MediaBubbleInput)
+        else links[bubble.topic_id].model_dump()
+        if isinstance(bubble, LinkBubbleInput)
         else bubble.model_dump(include={"type", "text"} if dialogue_only else None, exclude_unset=True)
         for bubble in source.root
     ]
 
 
-def companion_context_content(message: Message, *, dialogue_only: bool = False) -> str:
+def companion_context_content(message: Message | MessageSnapshot, *, dialogue_only: bool = False) -> str:
     return json.dumps(_companion_context_items(message, dialogue_only=dialogue_only), ensure_ascii=False)
 
 
@@ -181,7 +223,7 @@ def format_messages_compact(
     """保留会话与消息来源、发言归属、时间和工具关联；正文换行不能伪装成另一条发言。"""
     records = []
     for msg in msgs:
-        content: str | list[dict[str, str]]
+        content: str | list[dict[str, JsonValue]]
         if msg.content_type == "companion_reply":
             if not (msg.content or "").strip() and not msg.tool_calls:
                 continue
@@ -193,12 +235,15 @@ def format_messages_compact(
                 if remaining is not None and remaining <= 0:
                     truncated = True
                     break
-                if bubble["type"] in {"image", "video"}:
+                if bubble["type"] in {"image", "video", "link"}:
                     content.append(bubble)
                     continue
-                dialogue = bubble["text"][:remaining]
+                original_text = bubble["text"]
+                if not isinstance(original_text, str):
+                    raise ValueError("Dialogue bubbles require text")
+                dialogue = original_text[:remaining]
                 content.append({"type": bubble["type"], "text": dialogue})
-                truncated |= dialogue != bubble["text"]
+                truncated |= dialogue != original_text
                 if remaining is not None:
                     remaining -= len(dialogue)
         else:

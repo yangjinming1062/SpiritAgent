@@ -18,10 +18,12 @@ class ChatSchemaResponsesClient:
         *,
         before_submit: Callable[[], Awaitable[None]] | None = None,
         token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens",
+        chat_extra_body: dict[str, Any] | None = None,
     ) -> None:
         self._client = client
         self._before_submit = before_submit
         self._token_parameter = token_parameter
+        self._chat_extra_body = dict(chat_extra_body or {})
         self.base_url = client.base_url
         self.responses = self
 
@@ -116,6 +118,8 @@ class ChatSchemaResponsesClient:
             },
             "store": False,
         }
+        if self._chat_extra_body:
+            request["extra_body"] = dict(self._chat_extra_body)
         for key in ("temperature", "extra_headers", "timeout"):
             if key in kwargs:
                 request[key] = kwargs[key]

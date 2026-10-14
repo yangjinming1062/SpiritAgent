@@ -37,6 +37,9 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
     {
         "brave_search_api_key",
         "tavily_api_key",
+        "tikhub_api_key",
+        "x_search_cookies",
+        "xhs_mcp_auth_token",
     },
 )
 
@@ -140,16 +143,21 @@ def get_system_settings_for_admin() -> dict[str, Any]:
 async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> None:
     """合并候选值 → 整批校验 → 事务落库 → 原位更新 SETTINGS → 副作用；校验失败抛 ValueError，不修改运行时。"""
     async with configuration_lock:
+        for key in SENSITIVE_KEYS:
+            clear_key = f"clear_{key}"
+            if updates.get(clear_key) is not None and not isinstance(updates[clear_key], bool):
+                raise ValueError(f"系统设置无效，请检查：{clear_key}")
         pending: dict[str, Any] = {}
         for key, val in updates.items():
             if key in STARTUP_ONLY_KEYS or key not in type(SETTINGS).model_fields:
                 continue
             if key in SENSITIVE_KEYS:
-                if bool(updates.get(f"clear_{key}")):
+                if updates.get(f"clear_{key}") is True:
                     val = ""
                 elif val is None or val == "":
                     continue
             pending[key] = val
+        pending.update({key: "" for key in SENSITIVE_KEYS if updates.get(f"clear_{key}") is True})
 
         try:
             if "ai_config" in pending:

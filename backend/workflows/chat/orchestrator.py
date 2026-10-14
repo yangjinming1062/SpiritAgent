@@ -61,6 +61,7 @@ from workflows.chat.streaming import (
 )
 from workflows.chat.system_prompt import build_companion_environment_prompt
 from workflows.chat.tool_dispatch import _ToolDispatchContext, available_media_tool_schemas, matched_tool_names
+from workflows.chat.topic_context import load_topic_context
 from workflows.chat.turn_errors import (
     emit_conversation_unavailable,
     emit_llm_error,
@@ -464,6 +465,18 @@ async def _run_chat_turn(
                     environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
                     instruction_parts.append(environment)
                     action_tools_not_ready = await unavailable_action_tool_names(db, user_id)
+                    if memory_scope is not None:
+                        topic_context_at = utc_now()
+                        topic_material, topic_cards = await load_topic_context(
+                            db,
+                            memory_scope,
+                            inputs.context.get("historical_topic_ids", ()),
+                            now=topic_context_at,
+                            query=memory_query,
+                        )
+                        current_context["topic_material"] = topic_material
+                        current_context["topic_cards"] = topic_cards
+                        current_context["topic_context_at"] = topic_context_at
             if (
                 desktop_interaction
                 and conv.parent_id is None

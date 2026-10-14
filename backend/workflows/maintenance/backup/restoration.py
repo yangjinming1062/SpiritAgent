@@ -14,6 +14,7 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.backup import validate_special_merges
 from features.desktop_life.backup import advance_playback_versions, playback_versions
 from features.desktop_life.backup_assets import validate_desktop_files
+from features.topics.backup import validate_batch_merges
 from infrastructure.backup import BACKUP_REGISTRY, BackupContext
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
@@ -51,7 +52,11 @@ logger = get_logger(__name__)
 _SECRET_TABLES = frozenset({"user_model_configs"})
 BACKUP_RESTORE_ORDER: tuple[str, ...] = (
     "conversations",
+    "companion_topic_batches",
+    "companion_topics",
+    "companion_topic_feedback",
     "messages",
+    "companion_topic_usages",
     *(table for table in TABLES if table not in CONVERSATION_TABLES),
 )
 # 父类覆盖会改变仍被保留的子类引用，子类未随本次恢复清理时须保留父类；None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
@@ -143,7 +148,7 @@ def load_backup_rows(
             BackupImportFailure(
                 section=table,
                 count=row_counts[table],
-                reason="会话与消息必须同时存在，无法单独恢复。",
+                reason="会话、消息与资讯来源必须同时存在，无法单独恢复。",
             )
             for table in manifest_tables
             if table in incomplete_conversation_tables
@@ -185,7 +190,7 @@ def load_backup_rows(
             reason = (
                 IDENTITY_INCOMPLETE_REASON
                 if group == IDENTITY_TABLES
-                else "会话与消息必须同时恢复。"
+                else "会话、消息与资讯来源必须同时恢复。"
                 if group == CONVERSATION_TABLES
                 else "动态与评论必须同时恢复。"
                 if group == POST_TABLES
@@ -266,6 +271,7 @@ async def _preflight_tables(
     if mode == "merge":
         try:
             await validate_special_merges(db, target_user_id, rows.get("conversations", []))
+            await validate_batch_merges(db, target_user_id, rows)
         except ValueError as exc:
             conversation_merge_conflict = str(exc)
     id_map: dict[str, dict[str, int | str]] = {}
@@ -286,7 +292,7 @@ async def _preflight_tables(
                 continue
             if table in {"desktop_video_actions", "desktop_video_states"}:
                 continue
-            if table == "messages" and "conversations" in rows:
+            if table in CONVERSATION_TABLES - {"conversations"} and "conversations" in rows:
                 continue
             if table == "companion_post_comments" and "companion_posts" in rows:
                 continue
@@ -294,7 +300,7 @@ async def _preflight_tables(
             if table in {"companion_character_cards", "personas"} and "avatar_assets" in rows:
                 continue
             if table == "conversations":
-                group = ("conversations", "messages")
+                group = tuple(member for member in BACKUP_RESTORE_ORDER if member in CONVERSATION_TABLES)
             elif table == "avatar_assets" and IDENTITY_TABLES & set(rows):
                 group = tuple(member for member in IDENTITY_GROUP if member in rows)
             elif table == "companion_action_packs":
@@ -524,7 +530,7 @@ async def _clear_compatible_rows(
             )
 
     for table in reversed(TABLES):
-        if table in ACTION_TABLES | DESKTOP_TABLES | IDENTITY_TABLES:
+        if table in ACTION_TABLES | DESKTOP_TABLES | IDENTITY_TABLES | CONVERSATION_TABLES:
             continue
         # user_preferences 就地更新用户行；messages 随 conversations 级联删除。
         if table not in remaining or table in {"user_preferences", "messages"}:
@@ -556,15 +562,26 @@ async def _clear_compatible_rows(
                     reason="目标现有数据仍被其他内容引用，无法安全覆盖此类别。",
                 ),
             )
-    if "conversations" not in remaining and "messages" in remaining:
-        remaining.pop("messages")
-        failures.append(
-            BackupImportFailure(
-                section="messages",
-                count=len(compatible_rows["messages"]),
-                reason="配套的会话无法安全覆盖，消息也已保留为目标端原数据。",
-            ),
-        )
+    if CONVERSATION_TABLES.issubset(remaining):
+        reason = None
+        if await _has_retained_dependent(db, "conversations", target_user_id, remaining):
+            reason = "目标仍有数据关联会话，已保留会话、消息与资讯来源。"
+        else:
+            try:
+                async with db.begin_nested():
+                    for member in reversed(BACKUP_RESTORE_ORDER):
+                        if member in CONVERSATION_TABLES and member != "messages":
+                            await _delete_user_rows(db, member, target_user_id)
+            except IntegrityError:
+                logger.warning(
+                    "backup conversation group could not be cleared",
+                    extra={"target_user_id": target_user_id},
+                    exc_info=True,
+                )
+                reason = "会话关联数据无法安全覆盖，已保留会话、消息与资讯来源。"
+        if reason is not None:
+            for member in sorted(CONVERSATION_TABLES):
+                failures.append(BackupImportFailure(member, len(remaining.pop(member)), reason))
     # 覆盖清理后仍须成组：身份缺一即整组不写，避免角色卡引用未写入的头像。
     if DESKTOP_TABLES.issubset(remaining):
         if not desktop_required_parents.issubset(remaining):

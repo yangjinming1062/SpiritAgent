@@ -1,12 +1,15 @@
 import json
 import re
 from collections import Counter
+from collections.abc import Mapping
 from copy import deepcopy
-from typing import Literal
+from typing import Annotated, Literal
 
 from features.conversation.replies import (
     CompanionReply,
     CompanionReplyInput,
+    LinkBubble,
+    LinkBubbleInput,
     MediaBubble,
     MediaBubbleInput,
     TextBubble,
@@ -18,7 +21,7 @@ from infrastructure.ai.providers.base import ProviderConfig
 from infrastructure.ai.providers.speech_style import speech_performance_schema, validate_speech_style
 from infrastructure.ai.speech_contracts import SpeechSegment
 from infrastructure.text import resolve_prompt_text
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
 from workflows.chat.prompts import (
     COMPANION_DIALOGUE_FIELD_GUIDANCES,
@@ -40,6 +43,7 @@ class _ReplyEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["dialogue", "written"]
     bubbles: list[dict[str, JsonValue]]
+    used_topic_ids: list[Annotated[int, Field(gt=0, strict=True)]] = Field(default_factory=list)
 
 
 # 英文句点还可用于小数、缩写和省略号，交付前单独检查句界。
@@ -118,15 +122,27 @@ def companion_reply_schema(
     allow_silence: bool,
     allow_media: bool,
     repair: bool = False,
+    topic_ids: tuple[int, ...] = (),
 ) -> dict:
     schema = _ReplyEnvelope.model_json_schema()
     definitions = CompanionReplyInput.model_json_schema()["$defs"]
     bubble_types = ["TextBubble"]
+    if topic_ids:
+        bubble_types.append("LinkBubbleInput")
     if allow_media:
         bubble_types.append("MediaBubbleInput")
     if speech_config is not None:
         bubble_types.append("VoiceBubbleInput")
     definitions = schema["$defs"] = {name: definitions[name] for name in bubble_types}
+    schema["properties"]["used_topic_ids"] = {
+        "type": "array",
+        "items": {"type": "integer", **({"enum": list(topic_ids)} if topic_ids else {})},
+        "maxItems": len(topic_ids),
+        "uniqueItems": True,
+        "description": "IDs of supplied topics actually discussed or shared; use [] when none were used.",
+    }
+    if topic_ids:
+        definitions["LinkBubbleInput"]["properties"]["topic_id"]["enum"] = list(topic_ids)
     schema["properties"]["bubbles"] = {
         "type": "array",
         # 空修正表示无可恢复内容，交付时仍使用实际回合的沉默权限。
@@ -312,10 +328,14 @@ def decode_companion_reply(
     *,
     allow_voice_fallback: bool = False,
     references: ReplyReferences = ReplyReferences(),
-) -> tuple[str, Literal["dialogue", "written"]]:
+) -> tuple[str, Literal["dialogue", "written"], list[int]]:
     """模型类型标记只用于交付校验；持久化继续使用原气泡数组契约。"""
     # 演绎与媒体在数组协议中校验，保留按 speech 字段降级的边界。
     draft = _ReplyEnvelope.model_validate_json(raw)
+    if any(type(topic_id) is not int or topic_id <= 0 for topic_id in draft.used_topic_ids):
+        raise ValueError("Topic references require positive integer IDs")
+    if len(set(draft.used_topic_ids)) != len(draft.used_topic_ids):
+        raise ValueError("Topic references must be unique")
     # 分句前核对完整地址，防止查询串中的问号被拆开后丢失校验依据。
     validate_reply_links(draft.bubbles, kind=draft.kind, references=references)
     values = draft.bubbles
@@ -360,7 +380,7 @@ def decode_companion_reply(
                 )
         if errors:
             raise ValidationError.from_exception_data("CompanionDialogue", errors)
-    return json.dumps(values, ensure_ascii=False), draft.kind
+    return json.dumps(values, ensure_ascii=False), draft.kind, draft.used_topic_ids
 
 
 def validate_companion_reply_repair(
@@ -370,6 +390,8 @@ def validate_companion_reply_repair(
     *,
     media_turn: MediaTurnState,
     references: ReplyReferences = ReplyReferences(),
+    topic_cards: Mapping[int, LinkBubble] | None = None,
+    used_topic_ids: list[int] | None = None,
 ) -> None:
     original = _draft_bubbles(draft)
     if original is None:
@@ -404,6 +426,24 @@ def validate_companion_reply_repair(
     preserved = [key for key in preserved if key in required]
     if preserved != required:
         raise ValueError("A reply repair must preserve valid media references and order")
+    valid_topics = set(topic_cards or ())
+    required_topics = list(
+        dict.fromkeys(
+            b["topic_id"]
+            for b in original
+            if b.get("type") == "link" and type(b.get("topic_id")) is int and b["topic_id"] in valid_topics
+        ),
+    )
+    repaired_topics = [b.get("topic_id") for b in values if b.get("type") == "link"]
+    if repaired_topics != required_topics:
+        raise ValueError("A reply repair must preserve authorized source cards and their order")
+    envelope = json.loads(normalize_companion_reply_content(draft))
+    original_ids = envelope.get("used_topic_ids", []) if isinstance(envelope, dict) else []
+    if not isinstance(original_ids, list):
+        original_ids = []
+    required_ids = {topic_id for topic_id in original_ids if type(topic_id) is int and topic_id in valid_topics}
+    if required_ids - set(used_topic_ids or ()):
+        raise ValueError("A reply repair must preserve authorized topic usage")
 
 
 def _deliverable_media(media_turn: MediaTurnState, goals: set[str]) -> list[tuple[str, str]]:
@@ -430,7 +470,13 @@ def parse_companion_reply(
     media_turn: MediaTurnState,
     references: ReplyReferences = ReplyReferences(),
     kind: Literal["dialogue", "written"] = "dialogue",
+    topic_cards: Mapping[int, LinkBubble] | None = None,
+    used_topic_ids: list[int] | None = None,
 ) -> CompanionReply | None:
+    topic_cards = topic_cards or {}
+    selected_topics = set(used_topic_ids or ())
+    if selected_topics - topic_cards.keys():
+        raise ValueError("A topic reference must come from supplied, authorized source material")
     source = CompanionReplyInput.model_validate_json(raw)
     validate_reply_links(
         [bubble.model_dump(include={"type", "text"}) for bubble in source.root],
@@ -443,9 +489,19 @@ def parse_companion_reply(
         if media_turn.required_goals and (missing := _deliverable_media(media_turn, media_turn.required_goals)):
             raise OmittedMediaError(missing)
         raise ValueError("A user reply requires at least one bubble")
-    bubbles: list[TextBubble | VoiceBubble | MediaBubble] = []
+    bubbles: list[TextBubble | VoiceBubble | MediaBubble | LinkBubble] = []
+    linked_topics: set[int] = set()
     selected_goals: set[str] = set()
     for index, bubble in enumerate(source.root):
+        if isinstance(bubble, LinkBubbleInput):
+            if bubble.topic_id not in topic_cards:
+                raise ValueError("A link must reference a supplied, authorized topic")
+            if bubble.topic_id in linked_topics:
+                raise ValueError("A topic can have only one link card in a reply")
+            linked_topics.add(bubble.topic_id)
+            selected_topics.add(bubble.topic_id)
+            bubbles.append(topic_cards[bubble.topic_id].model_copy(deep=True))
+            continue
         if isinstance(bubble, MediaBubbleInput):
             delivered = resolve_reply_media(media_turn, bubble.media_id, bubble.type)
             if delivered.goal_id in selected_goals:
@@ -499,7 +555,7 @@ def parse_companion_reply(
         )
     if missing_goals := media_turn.required_goals - selected_goals:
         raise OmittedMediaError(_deliverable_media(media_turn, missing_goals))
-    return CompanionReply(bubbles=bubbles)
+    return CompanionReply(bubbles=bubbles, used_topic_ids=sorted(selected_topics))
 
 
 def fallback_companion_voice_reply(
@@ -512,6 +568,8 @@ def fallback_companion_voice_reply(
     media_turn: MediaTurnState,
     references: ReplyReferences = ReplyReferences(),
     kind: Literal["dialogue", "written"] = "dialogue",
+    topic_cards: Mapping[int, LinkBubble] | None = None,
+    used_topic_ids: list[int] | None = None,
 ) -> tuple[str, CompanionReply | None]:
     """恢复预算耗尽后的最后降级：演绎无效的气泡转为原台词，遗漏的已生成媒体按生成顺序补在末尾；其余内容仍须通过完整校验。"""
     values = json.loads(raw)
@@ -526,6 +584,8 @@ def fallback_companion_voice_reply(
                 media_turn=media_turn,
                 references=references,
                 kind=kind,
+                topic_cards=topic_cards,
+                used_topic_ids=used_topic_ids,
             )
         except ValidationError as exc:
             values = _fallback_speech_bubbles(values, exc)

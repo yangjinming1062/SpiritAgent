@@ -26,6 +26,7 @@ from infrastructure.constants import NIGHTLY_REASONING_EFFORT
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import format_local_iso, resolve_language, resolve_prompt_text, utc_now
+from infrastructure.web.social_sources import source_configured
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource, validate_memory_scope
 from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy import select
@@ -42,6 +43,7 @@ from workflows.nightly.nightly_planning import (
 from workflows.nightly.output_contracts import parse_reflection, reflection_schema
 from workflows.nightly.prompts import NIGHTLY_JSON_REPAIR_TEXTS, NIGHTLY_REFLECTION_TEXTS
 from workflows.nightly.stage_state import load_narrative_result, save_narrative_result
+from workflows.nightly.topic_discovery import DiscoveryDisabledError, discover_topics
 from workflows.nightly.window import NightlyWindowClosedError, in_nightly_window, require_nightly_window
 
 logger = get_logger(__name__)
@@ -284,6 +286,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
     # 各阶段顺序执行，失败域相互隔离；每个阶段的结果汇入 stages 给末尾日志。
     stages: list[dict[str, Any]] = []
     stage_diagnostics: dict[str, list[LlmAttemptDiagnostic]] = {
+        "topic discovery": [],
         "planning": [],
         "reflection": [],
         "journal nightly": [],
@@ -328,7 +331,10 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         # 维护完成后读取有效事实，规划与日记不使用维护前的过期快照。
         recall_rows = await list_memories(db, scope, kind="recall", limit=None)
         user_profile = await read_user_profile(db, scope)
-        persona = _persona_brief(await planning_persona(db, user_id))
+        persona_snapshot = await planning_persona(db, user_id)
+        persona = _persona_brief(persona_snapshot)
+        previous_reflection = await load_companion_reflection(db, scope)
+        information_discovery_enabled = await get_user_setting(db, user_id, "companion.information_discovery_enabled")
 
     clean_messages = _clean_messages(today_messages, tz_str)
     today_msg_count = sum(1 for message in today_messages if message.role == "user")
@@ -355,6 +361,45 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
         if r.usage == "background"
     }
 
+    topic_reserve: list[dict[str, Any]] = []
+    if user.nightly_activity_enabled and information_discovery_enabled is True and source_configured():
+        try:
+            topic_result = await discover_topics(
+                scope,
+                target_date,
+                ZoneInfo(tz_str),
+                {
+                    "persona": {
+                        "definition": persona_snapshot.definition if persona_snapshot is not None else {},
+                        "current_mood": persona_snapshot.current_mood if persona_snapshot is not None else None,
+                    },
+                    "user_profile": user_profile,
+                    "ordinary_memories": [row.model_dump() for row in recall_rows],
+                    "previous_reflection": previous_reflection.content if previous_reflection is not None else None,
+                    "today_conversations": clean_messages,
+                    "source_date": local_date_str,
+                    "activity_date": tomorrow.isoformat(),
+                    "user_timezone": tz_str,
+                    "language": user_language,
+                },
+                user_language,
+                diagnostics=stage_diagnostics["topic discovery"],
+            )
+            topic_reserve = topic_result.topics
+            stages.append({"stage": "topic discovery", "status": topic_result.status, **topic_result.summary})
+        except NightlyWindowClosedError as exc:
+            stages.append({"stage": "topic discovery", "status": "skipped", "reason": str(exc)})
+        except DiscoveryDisabledError as exc:
+            stages.append({"stage": "topic discovery", "status": "skipped", "reason": str(exc)})
+        except Exception as exc:
+            logger.exception(
+                "nightly_activity: topic discovery failed",
+                extra={"user_id": user_id, "error_type": type(exc).__name__},
+            )
+            stages.append({"stage": "topic discovery", "status": "error", "error": type(exc).__name__})
+    else:
+        stages.append({"stage": "topic discovery", "status": "skipped", "reason": "未启用主动信息检索或未配置采集服务"})
+
     action_results: dict[str, ActionExecutionResult] = {}
     if user.nightly_activity_enabled and in_nightly_window(utc_now(), ZoneInfo(tz_str)):
         try:
@@ -368,6 +413,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                 anomaly_stats,
                 clean_messages,
                 posts.threads,
+                topic_reserve=topic_reserve,
                 log_id=log_id,
                 diagnostics=stage_diagnostics["planning"],
             )

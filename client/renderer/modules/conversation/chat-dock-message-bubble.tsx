@@ -12,6 +12,7 @@ import { useStrings } from '@/shared/strings'
 import { voicePlaybackKey } from '@ipc/contracts'
 
 import { stripAttachmentDirectives } from './chat-display-text'
+import { ChatLinkCard } from './chat-link-card'
 import { ChatMediaCard } from './chat-media-card'
 import { useMessageSessionActions } from './chat-message-session-actions'
 import { type ChatMessageBody, type ChatMessageListItem } from './chat-store'
@@ -255,7 +256,10 @@ function MessageBubbleWithBody({
   const visibleText = isUser ? stripAttachmentDirectives(body.text) : body.text
   // 流式追加时去除前导空行防撑大气泡上方，非流式时去除首尾空白、保留内部段落。
   const displayText = body.streaming ? visibleText.trimStart() : visibleText.trim()
-  const hideTextBubble = Boolean(body.replyMedia) || (isUser && !displayText && Boolean(body.attachments?.length))
+
+  const hideTextBubble =
+    Boolean(body.replyMedia || body.replyLink) || (isUser && !displayText && Boolean(body.attachments?.length))
+
   const tools = body.tools?.length ? body.tools : body.toolName ? [body.toolName] : []
   const toolOnly = tools.length > 0 && !displayText && !body.error && !body.cancelled
   const showToolIndicator = !isUser && tools.length > 0
@@ -306,9 +310,9 @@ function MessageBubbleWithBody({
           ? voicePlaybackKey(message.backendMessageId, body.replyIndex)
           : undefined
       }
-      onContextMenu={isUser ? handleContextMenu : undefined}
-      ref={isUser ? bubbleRef : undefined}
-      tabIndex={isUser ? -1 : undefined}
+      onContextMenu={isUser || body.replyLink ? handleContextMenu : undefined}
+      ref={isUser || body.replyLink ? bubbleRef : undefined}
+      tabIndex={isUser || body.replyLink ? -1 : undefined}
     >
       {!isUser && (avatar === 'show' || (!avatar && variant === 'assistant')) && <CompanionAvatar />}
       {!isUser && avatar === 'reserve' && <span aria-hidden="true" className="w-8 shrink-0" />}
@@ -395,6 +399,7 @@ function MessageBubbleWithBody({
           {!isUser && variant === 'assistant' && (body.reasoning || (body.streaming && !displayText)) ? (
             <ReasoningBlock reasoning={body.reasoning} streaming={body.streaming} />
           ) : null}
+          {body.replyLink ? <ChatLinkCard bubble={body.replyLink} key={body.replyLink.topic_id} /> : null}
           {body.replyMedia && body.replyMedia.status !== 'ready' ? (
             <div
               className="rounded-2xl border border-line-standard bg-surface-card px-4 py-3 text-sm text-muted"

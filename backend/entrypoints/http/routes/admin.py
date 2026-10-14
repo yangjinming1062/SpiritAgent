@@ -4,6 +4,7 @@ from typing import Any
 
 import features.accounts.admin_operations as account_admin
 import features.configuration.admin_operations as configuration_admin
+import features.configuration.social_accounts as social_accounts
 import workflows.maintenance.admin_operations as maintenance_admin
 import workflows.nightly.log_queries as nightly_logs
 from fastapi import Depends, File, HTTPException, Query, Request, UploadFile
@@ -21,11 +22,13 @@ from features.accounts.schemas import (
     UserUpdate,
 )
 from features.automation.schemas import NightlyActivityLogListResponse
+from features.configuration.social_accounts import XiaohongshuAdminLoginStatus
 from infrastructure.ai.config import ModelDiscoveryRequest
 from infrastructure.ai.models import ModelDiscoveryResponse
 from infrastructure.database import DbSession
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
+from infrastructure.web.xiaohongshu import XhsLoginQrCode
 from runtime.responses import MessageResponse
 from starlette.responses import Response
 from workflows.maintenance.backup.serializers import BACKUP_SECTION_IDS, BackupImportMode
@@ -42,12 +45,24 @@ class _AdminRoute(APIRoute):
         handler = super().get_route_handler()
 
         async def handle(request: Request) -> Response:
+            login_management = request.url.path.startswith("/api/admin/social/xiaohongshu/login")
             try:
-                return await handler(request)
+                response = await handler(request)
             except RequestValidationError as exc:
                 # 管理请求包含密钥，校验响应只返回字段位置与原因。
                 detail = [{key: error[key] for key in ("loc", "msg", "type")} for error in exc.errors()]
-                raise HTTPException(status_code=422, detail=detail) from None
+                raise HTTPException(
+                    status_code=422,
+                    detail=detail,
+                    headers={"Cache-Control": "no-store"} if login_management else None,
+                ) from None
+            except HTTPException as exc:
+                if login_management:
+                    exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
+                raise
+            if login_management:
+                response.headers["Cache-Control"] = "no-store"
+            return response
 
         return handle
 
@@ -162,6 +177,30 @@ async def list_nightly_activity_logs(
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
     return result
+
+
+@router.get("/social/xiaohongshu/login/status", response_model=XiaohongshuAdminLoginStatus)
+async def xiaohongshu_login_status() -> XiaohongshuAdminLoginStatus:
+    try:
+        return await social_accounts.login_status()
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
+@router.post("/social/xiaohongshu/login/qrcode", response_model=XhsLoginQrCode)
+async def refresh_xiaohongshu_login_qrcode() -> XhsLoginQrCode:
+    try:
+        return await social_accounts.refresh_login_qrcode()
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
+@router.delete("/social/xiaohongshu/login", response_model=MessageResponse)
+async def clear_xiaohongshu_saved_login() -> MessageResponse:
+    try:
+        return await social_accounts.clear_saved_login()
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
 
 @router.put("/{user_id}/model-config")

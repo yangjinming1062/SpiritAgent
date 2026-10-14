@@ -19,7 +19,12 @@ from features.companion.intents import (
     has_pending_companion_intent,
     queue_companion_intent,
 )
-from features.companion.proactive_runtime import get_personality_tags, get_user_proactive_record, note_outreach_throttle
+from features.companion.proactive_runtime import (
+    can_start_companion_turn,
+    get_personality_tags,
+    get_user_proactive_record,
+    note_outreach_throttle,
+)
 from features.companion.prompts import CHECK_IN_INTENT_TEXTS
 from features.companion.queries import complete_user_ids
 from features.configuration.settings.queries import timezone_settings
@@ -28,6 +33,7 @@ from features.conversation.evidence import companion_conversation_users
 from features.memory.memory_learning import list_memory_review_scopes
 from features.memory.memory_review import memory_review_backed_off, review_memories
 from features.posts.autonomous import scan_autonomous_posts
+from features.topics.store import has_unshared_topics
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.config import SETTINGS
@@ -241,12 +247,14 @@ async def _scan_companion_waits() -> None:
 
 
 async def _maybe_run_ignored_outreach() -> None:
-    """常规档下用户持续不与伙伴互动（≥1h）且无进行中外联节奏时，为粘人性格注入轻量问候 turn。固定 1h 间距限制无新互动时的低频问候候选（否则 LLM 每次都跳过时每 tick 都满足触发条件）；静止档不触发，自主档不需要（完整主动能力由定时任务与等待意图承载）。"""
+    """有可分享发现时低频考虑联系；无发现时保留常规档的性格问候。"""
     cur_time = time.monotonic()
     for uid in MANAGER.local_user_ids():
         if is_user_in_maintenance(uid):
             continue
         rec = get_user_proactive_record(uid)
+        if not can_start_companion_turn(uid):
+            continue
         # 0 = 进程启动以来用户还没互动过——没有「被冷落」的基准，跳过。
         if rec.last_user_contact_ts == 0.0:
             continue
@@ -257,11 +265,11 @@ async def _maybe_run_ignored_outreach() -> None:
             continue
         # 档位、等待意图与性格标签的读库放在所有内存条件之后。
         async with session_scope() as db:
-            if (
-                await get_disturbance_tier(uid, db=db) != "normal"
-                or await has_pending_companion_intent(db, uid)
-                or "粘人" not in await get_personality_tags(db, uid)
-            ):
+            tier = await get_disturbance_tier(uid, db=db)
+            if tier == "still" or await has_pending_companion_intent(db, uid):
+                continue
+            has_topics = await has_unshared_topics(db, MemoryScope(uid, COMPANION_PRESET_ID), utc_now())
+            if not has_topics and (tier != "normal" or "粘人" not in await get_personality_tags(db, uid)):
                 continue
             language = resolve_language(await get_user_setting(db, uid, "language"))
 
@@ -270,7 +278,7 @@ async def _maybe_run_ignored_outreach() -> None:
             {
                 "kind": "low_frequency_check_in",
                 "minutes_since_last_user_interaction": ignored_minutes,
-                "relevant_personality_tag": "粘人",
+                "has_unshared_topics": has_topics,
                 "intent": resolve_prompt_text(CHECK_IN_INTENT_TEXTS, language),
             },
             ensure_ascii=False,

@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import {
+  $informationDiscoveryEnabled,
   $llmAffect,
   $llmAutonomy,
   $postsEnabled,
@@ -10,6 +11,7 @@ import {
   $userPreferredTier,
   type DisturbanceTier,
   endQuiet,
+  informationDiscoveryPref,
   llmAffectPref,
   llmAutonomyPref,
   postsEnabledPref,
@@ -50,6 +52,7 @@ export function InteractionPage(): React.ReactElement {
   const llmAffect = useStore($llmAffect)
   const llmAutonomy = useStore($llmAutonomy)
   const postsEnabled = useStore($postsEnabled)
+  const informationDiscoveryEnabled = useStore($informationDiscoveryEnabled)
 
   const [maxRecordingSeconds, setMaxRecordingSeconds] = useState<number>(DEFAULT_RECORDING_SECONDS)
   const [isSavingRecordTime, setIsSavingRecordTime] = useState(false)
@@ -190,6 +193,13 @@ export function InteractionPage(): React.ReactElement {
           </SettingRow>
           <SettingRow description={t.postsEnabledDesc} label={t.postsEnabled}>
             <Toggle ariaLabel={t.postsEnabled} checked={postsEnabled} onChange={postsEnabledPref.set} />
+          </SettingRow>
+          <SettingRow description={t.informationDiscoveryDesc} label={t.informationDiscovery}>
+            <Toggle
+              ariaLabel={t.informationDiscovery}
+              checked={informationDiscoveryEnabled}
+              onChange={informationDiscoveryPref.set}
+            />
           </SettingRow>
         </SettingCard>
       </section>

@@ -3,7 +3,8 @@ import {
   findConversationRuntime,
   getConversationRuntime,
   invalidateSessionHistory,
-  onSessionListChanged
+  onSessionListChanged,
+  onTopicFeedbackUpdated
 } from '@/modules/conversation'
 import { handleDesktopVideoEvent, notifyDesktopVideoContextChanged } from '@/modules/desktop-videos'
 import { onJournalEvent } from '@/modules/diary'
@@ -72,6 +73,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   }
 
   switch (event.type) {
+    case 'companion.topic_feedback.updated':
+      onTopicFeedbackUpdated(event.payload)
+
+      break
+
     case 'companion.desktop_video.updated':
 
     case 'companion.desktop_video.play_requested':

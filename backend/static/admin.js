@@ -125,6 +125,7 @@ function showTab(name) {
     $('#topTitle').textContent = t.title;
     $('#topDesc').textContent = t.desc;
     closeAllMenus();
+    syncXhsLoginVisibility();
     updateSaveActions();
     void TAB_LOADERS[name]();
 }
@@ -145,8 +146,9 @@ async function apiFetch(path, options = {}) {
     if (!(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
     let resp;
     try { resp = await fetch(API_BASE + path, { ...options, headers: { ...headers, ...(options.headers || {}) } }); }
-    catch (error) { $('#runtimeChip').textContent = '连接失败'; $('#runtimeChip').className = 'status-chip failed'; throw error; }
+    catch (error) { if (error.name !== 'AbortError') { $('#runtimeChip').textContent = '连接失败'; $('#runtimeChip').className = 'status-chip failed'; } throw error; }
     if (resp.status === 401) {
+        stopXhsLogin();
         sessionStorage.removeItem(TOKEN_KEY);
         location.reload();
         throw new Error('会话已过期，请重新登录');
@@ -165,6 +167,7 @@ function enterApp() {
 
 function logout() {
     if ((settingsDirty || aiSystemDirty || aiUserDirty) && !confirm('系统设置或 AI 配置有未保存的修改，确定退出登录？')) return;
+    stopXhsLogin();
     sessionStorage.removeItem(TOKEN_KEY);
     location.reload();
 }
@@ -1699,7 +1702,7 @@ const num = (key, label, step, extra = {}) => ({ key, label, type: 'number', ste
 const text = (key, label, placeholder) => ({ key, label, type: 'text', placeholder });
 const bool = (key, label) => ({ key, label, type: 'bool' });
 const sel = (key, label, options) => ({ key, label, type: 'select', options });
-const secret = (key, label) => ({ key, label, type: 'secret' });
+const secret = (key, label, hint = '') => ({ key, label, type: 'secret', hint });
 
 const SETTINGS_SECTIONS = [
     {
@@ -1779,6 +1782,28 @@ const SETTINGS_SECTIONS = [
         ],
     },
     {
+        title: '社交资讯来源', hint: '配置伙伴夜间检索的新内容来源，登录凭据只保存在服务端',
+        blocks: [
+            ['sub', '来源与登录凭据'],
+            ['grid', [
+                sel('social_search_backend', '社交资讯采集方式', [['free', '免费自托管 (X、小红书)'], ['tikhub', 'TikHub API']]),
+                secret('x_search_cookies', 'X 登录 Cookie', '粘贴运营账号的 Cookie，需包含 auth_token 和 ct0；填写后保存生效，留空保留已保存值。'),
+                text('xhs_mcp_base_url', '小红书自托管服务地址', 'http://xiaohongshu-mcp:18060'),
+                secret('xhs_mcp_auth_token', '小红书服务鉴权令牌 (可选)', '填写采集服务已配置的访问令牌；留空保留已保存值。'),
+                secret('tikhub_api_key', 'TikHub API Key'),
+                text('tikhub_base_url', 'TikHub 服务地址', 'https://api.tikhub.io'),
+            ], true],
+            ['xhs-login'],
+            ['sub', '每日检索预算'],
+            ['grid', [
+                num('topic_search_requests_per_night', '每账户每夜搜索 HTTP 上限 (含登录和接口准备)', 1, { min: 0, max: 60 }),
+                num('topic_candidate_limit', '每账户每夜候选内容上限', 1, { min: 0, max: 300 }),
+                num('topic_detail_requests_per_night', '每账户每夜详情 HTTP 请求上限', 1, { min: 0, max: 60 }),
+                num('topic_reserve_limit', '每天话题储备上限', 1, { min: 0, max: 5 }),
+            ], true],
+        ],
+    },
+    {
         title: '联网搜索与网页抓取', hint: 'Web Search & Extract 后端与凭据',
         blocks: [
             ['grid', [
@@ -1853,7 +1878,7 @@ function settingsFieldHtml(f) {
     if (f.type === 'secret') {
         return `${wrapOpen}<div class="label-row"><label for="${id}">${f.label}</label><span class="keybadge off" id="${id}_badge">未设置</span></div>`
             + `<input type="password" id="${id}" autocomplete="new-password" placeholder="留空保持原值">`
-            + `<label class="checkbox-row secret-clear"><input type="checkbox" id="${id}_clear" data-secret-input="${id}" disabled> 保存时清除已保存的值</label></div>`;
+            + `<label class="checkbox-row secret-clear"><input type="checkbox" id="${id}_clear" data-secret-input="${id}" disabled> 保存时清除已保存的值</label>${f.hint ? `<p class="hint">${esc(f.hint)}</p>` : ''}</div>`;
     }
     const attrs = ` type="${f.type}"${f.step ? ` step="${f.step}"` : ''}${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}${f.placeholder ? ` placeholder="${f.placeholder}"` : ''}`;
     return `${wrapOpen}<label for="${id}">${f.label}</label><input${attrs} id="${id}"></div>`;
@@ -1870,7 +1895,7 @@ let selectedSettingsSection = 0;
 let settingsLoadPromise = null;
 function renderSettingsForm() {
     $('#systemSettingsForm').inert = !settingsLoaded;
-    $('#systemSettingsForm').innerHTML = SETTINGS_SECTIONS.map((section, index) => `<section class="card settings-section" id="settings-sec-${index}" data-search-text="${esc(`${section.title} ${section.hint}`.toLowerCase())}"${index ? ' hidden' : ''}><div class="card-head"><h2>${section.title}</h2><span class="spacer"></span><details class="inline-help"><summary>说明 ⓘ</summary><p>${section.hint}</p></details></div><div class="card-pad">${section.blocks.map(block => block[0] === 'sub' ? `<h3 class="subhead">${block[1]}</h3>` : block[0] === 'grid' ? `<div class="grid${block[2] ? ' grid--wide' : ''}">${block[1].map(settingsFieldHtml).join('')}</div>` : settingsFieldHtml(block[1])).join('')}</div></section>`).join('');
+    $('#systemSettingsForm').innerHTML = SETTINGS_SECTIONS.map((section, index) => `<section class="card settings-section" id="settings-sec-${index}" data-search-text="${esc(`${section.title} ${section.hint}`.toLowerCase())}"${index ? ' hidden' : ''}><div class="card-head"><h2>${section.title}</h2><span class="spacer"></span><details class="inline-help"><summary>说明 ⓘ</summary><p>${section.hint}</p></details></div><div class="card-pad">${section.blocks.map(block => block[0] === 'sub' ? `<h3 class="subhead">${block[1]}</h3>` : block[0] === 'grid' ? `<div class="grid${block[2] ? ' grid--wide' : ''}">${block[1].map(settingsFieldHtml).join('')}</div>` : block[0] === 'xhs-login' ? $('#xhsLoginTemplate').innerHTML : settingsFieldHtml(block[1])).join('')}</div></section>`).join('');
     $('#settingsRail').innerHTML = SETTINGS_SECTIONS.map((section, index) => `<button type="button" class="rail-link${index ? '' : ' active'}" data-settings-section="${index}">${section.title}</button>`).join('');
     $('#settingsRail').onclick = event => {
         const button = event.target.closest('[data-settings-section]');
@@ -1886,7 +1911,7 @@ function renderSettingsForm() {
         markSettingsDirty();
     });
 }
-function markSettingsDirty() { settingsDirty = true; updateSaveActions(); }
+function markSettingsDirty() { settingsDirty = true; updateSaveActions(); syncXhsLoginVisibility(); }
 function clearSettingsDirty() { settingsDirty = false; updateSaveActions(); }
 function filterSettingsFields() {
     const search = $('#settingsSearch').value.trim().toLowerCase();
@@ -1905,6 +1930,7 @@ function filterSettingsFields() {
         button.classList.toggle('active', !search && index === selectedSettingsSection);
     });
     $('#settingsEmpty').hidden = Boolean(matches);
+    syncXhsLoginVisibility();
 }
 async function loadSystemSettings() {
     if (settingsLoaded || settingsDirty) return;
@@ -1918,6 +1944,8 @@ async function loadSystemSettings() {
 }
 function renderSystemSettings(data) {
     if (!data) return;
+    const sourceChanged = lastSettingsRaw && (data.xhs_mcp_base_url !== lastSettingsRaw.xhs_mcp_base_url || xhsConfigHasDraft());
+    if (sourceChanged) stopXhsLogin('服务设置已更新，请重新检查登录状态。');
     lastSettingsRaw = structuredClone(data);
     settingsLoaded = true;
     $('#systemSettingsForm').inert = false;
@@ -1937,6 +1965,7 @@ function renderSystemSettings(data) {
         setKeyBadge(item.badge, isSet);
     }
     clearSettingsDirty();
+    renderXhsLogin();
 }
 async function saveSystemSettingsForm() {
     if (!settingsLoaded || settingsSaving) return false;
@@ -1961,8 +1990,174 @@ async function saveSystemSettingsForm() {
         renderSystemSettings(await response.json());
         toast('系统参数已保存并实时生效'); return true;
     } catch (error) { toast('保存系统参数失败：' + error.message, 'err'); return false; }
-    finally { settingsSaving = false; $('#panel-settings').inert = false; updateSaveActions(); }
+    finally { settingsSaving = false; $('#panel-settings').inert = false; updateSaveActions(); syncXhsLoginVisibility(); }
 }
+
+const xhsLogin = { revision: 0, controller: null, pollTimer: null, expiryTimer: null, image: null, expiresAt: 0, busy: false, status: 'unchecked', message: '尚未检查登录状态', error: '' };
+
+function xhsConfigHasDraft() {
+    return settingsLoaded && (
+        $('#sys_xhs_mcp_base_url')?.value.trim() !== String(lastSettingsRaw?.xhs_mcp_base_url ?? '').trim()
+        || Boolean($('#sys_xhs_mcp_auth_token')?.value.trim())
+        || Boolean($('#sys_xhs_mcp_auth_token_clear')?.checked)
+    );
+}
+
+function xhsLoginViewVisible() {
+    const manager = $('#xhsLoginManager');
+    return document.visibilityState === 'visible' && $('#panel-settings').classList.contains('active')
+        && manager && !manager.hidden && !manager.closest('.settings-section').hidden && Boolean(getToken());
+}
+
+function renderXhsLogin() {
+    if (!$('#xhsLoginManager')) return;
+    const hasAddress = Boolean(lastSettingsRaw?.xhs_mcp_base_url);
+    const draft = xhsConfigHasDraft();
+    const enabled = settingsLoaded && hasAddress && !draft && !settingsSaving && xhsLoginViewVisible();
+    const status = $('#xhsLoginStatus');
+    status.textContent = xhsLogin.status === 'logged-in' ? '已登录' : xhsLogin.image ? '等待扫码' : xhsLogin.status === 'expired' ? '已到期' : hasAddress ? '待检查' : '未配置';
+    status.className = 'pill pill--' + (xhsLogin.status === 'logged-in' ? 'green' : xhsLogin.image ? 'amber' : 'muted');
+    $('#xhsLoginHint').textContent = draft ? '服务地址或令牌有未保存的修改，请先保存后再操作。'
+        : !hasAddress ? '请先填写并保存小红书服务地址，再获取登录二维码。' : xhsLogin.message;
+    $('#xhsQrButton').disabled = !enabled || xhsLogin.busy;
+    $('#xhsQrButton').textContent = xhsLogin.busy ? '正在处理…' : xhsLogin.image || xhsLogin.status === 'expired' ? '刷新二维码' : '获取登录二维码';
+    $('#xhsStatusButton').disabled = !enabled || xhsLogin.busy;
+    $('#xhsClearButton').disabled = !enabled || xhsLogin.busy;
+    $('#xhsStopButton').hidden = !xhsLogin.image && !xhsLogin.busy;
+    $('#xhsQrRegion').hidden = !xhsLogin.image;
+    const image = $('#xhsQrImage');
+    if (xhsLogin.image) {
+        if (image.getAttribute('src') !== xhsLogin.image) image.src = xhsLogin.image;
+        $('#xhsQrExpiry').textContent = `二维码剩余 ${Math.max(0, Math.ceil((xhsLogin.expiresAt - Date.now()) / 1000))} 秒`;
+    } else image.removeAttribute('src');
+    $('#xhsLoginError').hidden = !xhsLogin.error;
+    $('#xhsLoginError').textContent = xhsLogin.error;
+}
+
+function stopXhsLogin(message = '') {
+    xhsLogin.revision++;
+    xhsLogin.controller?.abort();
+    xhsLogin.controller = null;
+    clearTimeout(xhsLogin.pollTimer);
+    clearTimeout(xhsLogin.expiryTimer);
+    xhsLogin.pollTimer = xhsLogin.expiryTimer = null;
+    xhsLogin.image = null;
+    xhsLogin.expiresAt = 0;
+    xhsLogin.busy = false;
+    xhsLogin.error = '';
+    if (message) { xhsLogin.status = 'unchecked'; xhsLogin.message = message; }
+    renderXhsLogin();
+}
+
+function syncXhsLoginVisibility() {
+    if (!$('#xhsLoginManager')) return;
+    if ((!xhsLoginViewVisible() || xhsConfigHasDraft()) && (xhsLogin.image || xhsLogin.controller)) {
+        stopXhsLogin('已停止本页面扫码检查；重新进入后可检查登录状态。');
+    } else renderXhsLogin();
+}
+
+async function xhsLoginRequest(path, method = 'GET') {
+    if (!xhsLoginViewVisible() || !settingsLoaded || settingsSaving || xhsConfigHasDraft() || !lastSettingsRaw?.xhs_mcp_base_url || xhsLogin.busy) return null;
+    const token = getToken();
+    const revision = xhsLogin.revision;
+    const controller = new AbortController();
+    xhsLogin.controller = controller;
+    xhsLogin.busy = true;
+    xhsLogin.error = '';
+    renderXhsLogin();
+    const current = () => xhsLogin.revision === revision && getToken() === token && xhsLoginViewVisible() && !xhsConfigHasDraft();
+    try {
+        const response = await apiFetch(`/api/admin/social/xiaohongshu/login${path}`, { method, signal: controller.signal, cache: 'no-store' });
+        const result = await response.json();
+        return current() ? result : null;
+    } catch (error) {
+        if (current() && error.name !== 'AbortError') xhsLogin.error = error.message || '小红书登录操作失败';
+        return null;
+    } finally {
+        if (xhsLogin.controller === controller) { xhsLogin.controller = null; xhsLogin.busy = false; renderXhsLogin(); }
+    }
+}
+
+function armXhsQrTimers() {
+    clearTimeout(xhsLogin.pollTimer);
+    clearTimeout(xhsLogin.expiryTimer);
+    if (!xhsLogin.image || !xhsLoginViewVisible()) return;
+    const revision = xhsLogin.revision;
+    xhsLogin.pollTimer = setTimeout(async () => {
+        if (revision !== xhsLogin.revision || !xhsLogin.image || !xhsLoginViewVisible()) return;
+        await checkXhsLogin(true);
+        if (revision === xhsLogin.revision && xhsLogin.image && !xhsLogin.error) armXhsQrTimers();
+    }, 3000);
+    const tick = () => {
+        if (revision !== xhsLogin.revision || !xhsLogin.image || !xhsLoginViewVisible()) return;
+        if (Date.now() >= xhsLogin.expiresAt) {
+            stopXhsLogin();
+            xhsLogin.status = 'expired';
+            xhsLogin.message = '二维码已到期，请刷新后扫码。';
+            renderXhsLogin();
+        } else { renderXhsLogin(); xhsLogin.expiryTimer = setTimeout(tick, 1000); }
+    };
+    tick();
+}
+
+async function startXhsQrLogin() {
+    stopXhsLogin();
+    const result = await xhsLoginRequest('/qrcode', 'POST');
+    if (!result) return;
+    if (typeof result.is_logged_in !== 'boolean') {
+        xhsLogin.error = '服务返回的登录状态无法读取。';
+    } else if (result.is_logged_in) {
+        xhsLogin.status = 'logged-in';
+        xhsLogin.message = '采集账号已登录，可检查登录状态确认当前账号。';
+    } else {
+        const expiresAt = Date.parse(result.expires_at);
+        if (typeof result.image !== 'string' || result.image.length > 1_500_000 || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(result.image) || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+            xhsLogin.error = '服务返回的二维码不可用，请重试。';
+        } else {
+            xhsLogin.image = result.image;
+            xhsLogin.expiresAt = expiresAt;
+            xhsLogin.status = 'awaiting-scan';
+            xhsLogin.message = '请使用小红书 App 扫码；检查将在离开此页或二维码到期时停止。';
+            armXhsQrTimers();
+        }
+    }
+    renderXhsLogin();
+}
+
+async function checkXhsLogin(polling = false) {
+    const result = await xhsLoginRequest('/status');
+    if (!result) return;
+    if (typeof result.configured !== 'boolean' || typeof result.is_logged_in !== 'boolean') {
+        xhsLogin.error = '服务返回的登录状态无法读取。';
+    } else if (result.is_logged_in) {
+        stopXhsLogin();
+        xhsLogin.status = 'logged-in';
+        xhsLogin.message = typeof result.username === 'string' && result.username ? `当前采集账号：${result.username}` : '当前采集账号已登录。';
+    } else if (!result.configured) {
+        stopXhsLogin();
+        xhsLogin.message = '服务尚未配置，请保存服务地址后重试。';
+    } else if (xhsLogin.image) {
+        xhsLogin.message = '尚未完成登录，请继续扫码；二维码到期后可刷新。';
+    } else {
+        xhsLogin.status = 'unchecked';
+        xhsLogin.message = '采集账号尚未登录，可获取二维码进行登录。';
+    }
+    renderXhsLogin();
+    if (!polling && xhsLogin.image && !xhsLogin.error) armXhsQrTimers();
+}
+
+async function clearXhsSavedLogin() {
+    if (!confirm('确定清除小红书采集账号已保存的登录信息？现存二维码在到期前仍可能完成登录；此操作不会撤销已发出的二维码。')) return;
+    stopXhsLogin();
+    const result = await xhsLoginRequest('', 'DELETE');
+    if (!result) return;
+    xhsLogin.status = 'unchecked';
+    xhsLogin.message = typeof result.message === 'string' ? result.message : '已清除已保存的登录信息；现存二维码到期前仍可能完成登录。';
+    renderXhsLogin();
+}
+
+document.addEventListener('visibilitychange', syncXhsLoginVisibility);
+window.addEventListener('pagehide', () => stopXhsLogin());
 renderSettingsForm();
 
 

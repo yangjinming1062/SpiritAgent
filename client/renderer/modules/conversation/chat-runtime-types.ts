@@ -1,4 +1,11 @@
-import type { ChatAttachment, ChatMediaItem, CompanionBubble, CompanionMediaBubble, ReplyAudio } from '@protocol'
+import type {
+  ChatAttachment,
+  ChatMediaItem,
+  CompanionBubble,
+  CompanionLinkBubble,
+  CompanionMediaBubble,
+  ReplyAudio
+} from '@protocol'
 
 export interface ChatMessageListItem {
   id: string
@@ -15,6 +22,7 @@ export interface ChatMessageBody {
   streamingText?: string
   replyType?: CompanionBubble['type']
   replyMedia?: CompanionMediaBubble
+  replyLink?: CompanionLinkBubble
   replyIndex?: number
   replyAudio?: ReplyAudio | null
   text: string

@@ -5,6 +5,8 @@ from infrastructure.constants import ATTACHMENT_TYPE_AUDIO, ATTACHMENT_TYPE_VIDE
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from runtime.events.emit import emit_ws_event
+from runtime.memory_scope import MemoryScope
+from runtime.presets import COMPANION_PRESET_ID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.attachments import prune_media_in_range
@@ -15,6 +17,7 @@ from features.conversation.request_contracts import ChatAttachment, ChatMessageR
 from features.conversation.snapshots import MessageSnapshot
 from features.conversation.store_contracts import AssistantTurnData, CompressionInfo
 from features.conversation.turn_access import message_snapshot
+from features.topics.store import record_topic_usage
 
 logger = get_logger(__name__)
 
@@ -165,5 +168,12 @@ async def persist_assistant_message(
         if data.reply is not None:
             await db.flush()
             await bind_reply_videos(db, row, data.reply, user_id)
+            await record_topic_usage(
+                db,
+                MemoryScope(user_id, COMPANION_PRESET_ID),
+                data.reply.used_topic_ids,
+                row.id,
+                authorized_at=data.reply.topic_context_at,
+            )
         await db.commit()
         return row.id

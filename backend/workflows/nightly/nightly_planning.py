@@ -1122,6 +1122,7 @@ async def run_nightly_planning(
     post_interactions: list[dict[str, Any]],
     *,
     log_id: int,
+    topic_reserve: list[dict[str, Any]] | None = None,
     diagnostics: list[LlmAttemptDiagnostic] | None = None,
 ) -> PlanningResult:
     timezone = ZoneInfo(date_context.user_timezone)
@@ -1140,6 +1141,7 @@ async def run_nightly_planning(
             "user_profile": user_profile,
             "recall_highlights": [item.model_dump() for item in recall_highlights],
             "today_conversations": today_conversations,
+            "topic_reserve": topic_reserve or [],
             **({"post_interactions": post_interactions} if post_interactions else {}),
             "autonomous_context": _planning_context_payload(context),
             "current_time": utc_now().astimezone(timezone).isoformat(),

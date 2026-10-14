@@ -14,7 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .file_packing import UrlRewriter
 
 TABLES = BACKUP_TABLE_ORDER
-CONVERSATION_TABLES = frozenset({"conversations", "messages"})
+CONVERSATION_TABLES = frozenset(
+    {
+        "conversations",
+        "messages",
+        "companion_topic_batches",
+        "companion_topics",
+        "companion_topic_feedback",
+        "companion_topic_usages",
+    },
+)
 ACTION_TABLES = frozenset({"companion_action_packs", "companion_actions"})
 DESKTOP_TABLES = frozenset({"desktop_video_sets", "desktop_video_actions", "desktop_video_states"})
 POST_TABLES = frozenset({"companion_posts", "companion_post_comments"})
@@ -22,7 +31,14 @@ IDENTITY_TABLES = frozenset({"personas", "avatar_assets", "companion_character_c
 # 导入勾选粒度：分组 ID → 表；Admin 与 API 共用，不在页面里再维护表名。
 BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
     "identity": ("personas", "avatar_assets", "companion_character_cards"),
-    "conversations": ("conversations", "messages"),
+    "conversations": (
+        "conversations",
+        "companion_topic_batches",
+        "companion_topics",
+        "companion_topic_feedback",
+        "messages",
+        "companion_topic_usages",
+    ),
     "memories": ("memories",),
     "posts": ("companion_posts", "companion_post_comments"),
     "diary": ("companion_diary_entries",),

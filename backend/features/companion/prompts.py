@@ -237,14 +237,16 @@ PROACTIVE_CONTEXT_LABELS: dict[str, str] = {
 # 低频问候候选的事项说明，由调度按用户语言写入意图；它是伙伴自主安排，不是用户请求。
 CHECK_IN_INTENT_TEXTS: dict[str, str] = {
     "zh": (
-        "这是伙伴自己发起的低频问候候选，不是用户的请求。把性格标签只作为表达风格参考；空闲时长不代表忽视、情绪或关系变化。"
-        "默认保持安静；只有此刻有自然且不打扰的理由时，才说一句 10–30 字的轻量关心。"
+        "这是你自己发起的低频交流候选，不是用户的请求；空闲时长不代表忽视、情绪或关系变化。"
+        "结合自己的兴趣、用户的近期关注和本轮可用的外部内容，判断此刻是否有自然且不打扰的交流缘由；"
+        "有值得一起聊的发现时可以简短分享并附原文，关心也可以具体而自然，没有合适缘由就保持安静。"
         "不要提等待时长、责怪用户、索取回应或施加关系压力。"
     ),
     "en": (
-        "This is a low-frequency check-in you may initiate yourself, not a user request. Treat the personality tag only "
-        "as a style reference; idle time does not mean neglect, emotion, or a change in the relationship. Stay quiet by "
-        "default; only when there is a natural, unintrusive reason right now, say one short sentence of light care. "
+        "This is a low-frequency conversation candidate you initiated, not a user request. Idle time does not mean "
+        "neglect, emotion, or a relationship change. Consider your interests, the user's recent concerns and available "
+        "external topics. Briefly share a discovery with its source or express specific care when there is a natural, "
+        "unintrusive reason now; otherwise remain quiet. "
         "Do not mention how long you waited, blame the user, ask for a reply, or apply relationship pressure."
     ),
 }

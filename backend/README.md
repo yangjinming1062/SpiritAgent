@@ -14,6 +14,7 @@
 | 桌面生活组合、制作与播放 | [桌面生活](features/desktop_life/README.md) |
 | 公共媒体制作与复核 | [媒体](features/media/README.md) |
 | Cron、主动陪伴与夜间 | [cron.py](entrypoints/scheduler/cron.py)、[业务调度](#业务调度) |
+| 主动信息检索、来源分享与反馈 | [话题模块](features/topics/README.md)、[夜间检索](workflows/nightly/topic_discovery.py) |
 | 动态与日记 | [动态](features/posts/README.md)、[journal_service.py](features/journal/journal_service.py)；REST 在 `entrypoints/http/routes/companion_posts.py`、`companion_journal.py` |
 | 手机扫码与远程访问 | [远程网页](#远程网页)、[remote.py](entrypoints/http/routes/remote.py) |
 | 激活、登录、WS 票据与凭据 | [user.py](entrypoints/http/routes/user.py)、[账户](features/accounts/)、[远程身份](features/accounts/remote/README.md) |
@@ -135,6 +136,16 @@ Compose 和后端共用 `.env` 的 PostgreSQL 凭据，后端默认连接 `postg
 宿主机代理使用 `http://host.docker.internal:<端口>`，须允许 Docker 网桥访问。修改 `.env` 后执行 `docker compose up -d --force-recreate backend`，`restart` 不更新容器环境。
 
 后端代码与依赖打入镜像，修改后执行 `docker compose up -d --build backend`。构建上下文为仓库根，仅根 `.dockerignore` 生效；镜像构建包含独立手机网页并托管 `/remote/`，另含 FFmpeg 与 ffprobe；Backend 不参与桌面安装包构建。
+
+### 免费社交资讯来源
+
+X 使用固定版本的 `twscrape` 请求定义和解析器，经 Backend 的有界 HTTP 请求读取。在管理后台「系统参数 → 社交资讯来源」填写 X 登录 Cookie，须包含有效的 `auth_token` 和 `ct0`；保存后即时生效，登录失效后在同处更新。敏感值不回显，留空保留原值，勾选清除后保存才删除。`.env` 的 `X_SEARCH_COOKIES` 仍可用于初始配置，后台保存的数据库值优先。代码和库不收费，网络、服务器与账户维护仍由部署方承担；未配置的平台不参与夜间检索。
+
+小红书采集服务随默认 Compose 一起启动，使用官方 `xpzouying/xiaohongshu-mcp:v2.5.5` 镜像和 Linux amd64 浏览器。Backend 默认连接 `http://xiaohongshu-mcp:18060`，`.env` 的非空 `XHS_MCP_BASE_URL` 可覆盖该地址；管理页保存的配置优先。服务的 `18060` 只绑定宿主机回环，健康检查不要求平台登录，Backend 不等待其健康状态启动。
+
+在管理后台「系统参数 → 社交资讯来源」确认服务地址和与采集服务相同的鉴权令牌，保存后获取登录二维码，用小红书 App 扫码并确认；面板检查登录状态，二维码过期后可重新获取。采集服务的启动令牌仍由 `.env` 的 `XHS_MCP_AUTH_TOKEN` 配置；管理页保存的令牌只用于 Backend 访问该服务。平台未登录或服务不可用时检索独立失败，不阻塞记忆、反思和日记。上游契约见 [登录与 HTTP API 说明](https://github.com/xpzouying/xiaohongshu-mcp/tree/v2.5.5)。
+
+登录 Cookies 和浏览器状态保存在专用 `xiaohongshu_data` 卷，重新创建容器会保留；登录失效时重新扫码。该卷属于运营者的采集账户，不进入产品用户备份。管理页「停止检查」只停止当前页面轮询；「清除已保存登录」删除上游 Cookie 文件，不能撤销已经发出的有效二维码。登录管理接口仅允许管理员访问，二维码不缓存，服务令牌和 Cookie 不下发。浏览器出站代理可通过 `XHS_PROXY` 配置，Backend 访问服务的短名称须包含在 `NO_PROXY`。夜间采集只调用登录状态、搜索和详情读取接口，搜索的一天内筛选仍由实际发布时间再次校验；健康接口成功不代表已登录或取得有效内容。
 
 ### HTTPS 与公网访问
 

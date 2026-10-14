@@ -65,6 +65,7 @@ class JsonRpcEmitter:
             elif raw_type == "reasoning.delta":
                 turn.reasoning += payload.get("text", "")
             elif raw_type == "bubble.append" and payload.get("bubble"):
+                turn.assistant_message_id = payload.get("message_id")
                 bubbles = turn.bubbles
                 index = payload.get("bubble_index")
                 if isinstance(index, int) and 0 <= index < len(bubbles):

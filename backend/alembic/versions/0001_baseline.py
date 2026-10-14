@@ -13,6 +13,83 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _topic_identity() -> list[sa.Column]:
+    return [
+        sa.Column("id", sa.Integer(), autoincrement=True, primary_key=True),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("system_preset_id", sa.String(32), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+    ]
+
+
+def _create_topic_tables() -> None:
+    op.create_table(
+        "companion_topic_batches",
+        *_topic_identity(),
+        sa.Column("activity_date", sa.Date(), nullable=False),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("window_start", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("window_end", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("available_from", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("status", sa.String(16), server_default=sa.text("'collecting'"), nullable=False),
+        sa.Column("search_requests", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("detail_requests", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("checkpoint", sa.JSON(), nullable=False),
+        sa.Column("error", sa.String(160), nullable=True),
+        sa.UniqueConstraint("user_id", "system_preset_id", "activity_date", name="uq_topic_batch_scope_date"),
+    )
+    op.create_index("ix_companion_topic_batches_user_id", "companion_topic_batches", ["user_id"])
+    op.create_table(
+        "companion_topics",
+        *_topic_identity(),
+        sa.Column(
+            "batch_id",
+            sa.Integer(),
+            sa.ForeignKey("companion_topic_batches.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("platform", sa.String(16), nullable=False),
+        sa.Column("source_id", sa.String(96), nullable=False),
+        sa.Column("url", sa.String(2048), nullable=False),
+        sa.Column("title", sa.String(300), nullable=False),
+        sa.Column("author", sa.String(160), nullable=False),
+        sa.Column("published_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("collected_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("content_type", sa.String(16), nullable=False),
+        sa.Column("body", sa.Text(), nullable=False),
+        sa.Column("subtitle", sa.Text(), nullable=False),
+        sa.Column("summary", sa.Text(), nullable=False),
+        sa.Column("user_relevance", sa.Text(), nullable=False),
+        sa.Column("companion_interest", sa.Text(), nullable=False),
+        sa.Column("conversation_angle", sa.Text(), nullable=False),
+        sa.Column("event_key", sa.String(200), nullable=False),
+        sa.UniqueConstraint("user_id", "system_preset_id", "platform", "source_id", name="uq_topic_scope_source"),
+    )
+    op.create_index("ix_companion_topics_user_id", "companion_topics", ["user_id"])
+    op.create_index("ix_companion_topics_batch_id", "companion_topics", ["batch_id"])
+    op.create_table(
+        "companion_topic_feedback",
+        *_topic_identity(),
+        sa.Column("topic_id", sa.Integer(), sa.ForeignKey("companion_topics.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("value", sa.String(8), nullable=True),
+        sa.UniqueConstraint("topic_id", name="uq_topic_feedback_topic"),
+    )
+    op.create_index("ix_companion_topic_feedback_user_id", "companion_topic_feedback", ["user_id"])
+    op.create_index("ix_companion_topic_feedback_topic_id", "companion_topic_feedback", ["topic_id"])
+    op.create_table(
+        "companion_topic_usages",
+        *_topic_identity(),
+        sa.Column("topic_id", sa.Integer(), sa.ForeignKey("companion_topics.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("message_id", sa.Integer(), sa.ForeignKey("messages.id", ondelete="SET NULL"), nullable=True),
+        sa.UniqueConstraint("topic_id", "message_id", name="uq_topic_usage_message"),
+    )
+    op.create_index("ix_companion_topic_usages_user_id", "companion_topic_usages", ["user_id"])
+    op.create_index("ix_companion_topic_usages_topic_id", "companion_topic_usages", ["topic_id"])
+    op.create_index("ix_companion_topic_usages_message_id", "companion_topic_usages", ["message_id"])
+
+
 def upgrade() -> None:
     # 先建扩展：memories.embedding 的 vector(1536) 须在 create_table 前存在。
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -1226,6 +1303,8 @@ def upgrade() -> None:
         postgresql_ops={"context": "gin_trgm_ops"},
     )
 
+    _create_topic_tables()
+
     # Outbox 表的 LISTEN/NOTIFY 唤醒触发器（docs/ARCHITECTURE.md「调度与异步交付」）。
     op.execute("""
 CREATE FUNCTION notify_ws_event() RETURNS trigger AS $$
@@ -1247,6 +1326,10 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
     # drop 顺序按外键：子表先于父表；desktop/remote/prompt 各表先于 users/conversations；actions/packs 先于 outfits；fullbody 先于 avatar；actions 后于 logs；system_settings 最末。降级目标为空库，扩展（vector/pg_trgm）保留。
     for table in (
+        "companion_topic_usages",
+        "companion_topic_feedback",
+        "companion_topics",
+        "companion_topic_batches",
         "desktop_video_playbacks",
         "desktop_video_proposals",
         "desktop_video_states",

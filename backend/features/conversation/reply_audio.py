@@ -19,7 +19,7 @@ from sqlalchemy import select
 
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.models import Conversation, Message
-from features.conversation.replies import CompanionReply, MediaBubble, ReplyAudio, VoiceBubble
+from features.conversation.replies import CompanionReply, LinkBubble, MediaBubble, ReplyAudio, VoiceBubble
 
 logger = get_logger(__name__)
 _locks: WeakValueDictionary[tuple[int, int], asyncio.Lock] = WeakValueDictionary()
@@ -29,6 +29,9 @@ _tasks: dict[tuple[int, int], set[asyncio.Task[CompanionReply]]] = {}
 def client_reply_bubbles(reply: CompanionReply) -> list[dict]:
     result: list[dict] = []
     for bubble in reply.bubbles:
+        if isinstance(bubble, LinkBubble):
+            result.append(bubble.model_dump())
+            continue
         if isinstance(bubble, MediaBubble):
             result.append(
                 {

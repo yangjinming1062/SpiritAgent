@@ -20,6 +20,7 @@ import features.media.review_models  # noqa: F401 -- 显式 ORM 登记。
 import features.memory.models  # noqa: F401 -- 显式 ORM 登记。
 import features.posts.models  # noqa: F401 -- 显式 ORM 登记。
 import features.scenes.models  # noqa: F401 -- 显式 ORM 登记。
+import features.topics.models  # noqa: F401 -- 显式 ORM 登记。
 import features.updates.models  # noqa: F401 -- 显式 ORM 登记。
 import runtime.events.models  # noqa: F401 -- 显式 ORM 登记。
 import workflows.nightly.models  # noqa: F401 -- 显式 ORM 登记。

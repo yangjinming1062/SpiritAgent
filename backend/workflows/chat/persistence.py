@@ -7,7 +7,7 @@ from typing import Any
 from features.companion.mood import update_mood_from_companion_turn
 from features.conversation.audio_input import ensure_audio_transcripts
 from features.conversation.history import client_media_entries
-from features.conversation.replies import MediaBubble
+from features.conversation.replies import LinkBubble, MediaBubble
 from features.conversation.reply_audio import client_reply_bubbles, synthesize_reply_audio
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.store_contracts import AssistantTurnData
@@ -194,6 +194,8 @@ async def _persist_assistant_no_tool_turn(
         [
             json.dumps(bubble.model_dump(include={"type", "media_id", "status"}), ensure_ascii=False)
             if isinstance(bubble, MediaBubble)
+            else json.dumps(bubble.model_dump(), ensure_ascii=False)
+            if isinstance(bubble, LinkBubble)
             else bubble.text
             for bubble in reply.bubbles
         ]

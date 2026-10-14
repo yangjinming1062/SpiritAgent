@@ -28,6 +28,10 @@ export function createChatMessageController(state: ConversationState) {
   let inflightReply: { messageId: number; firstId: string } | null = null
 
   function companionBubbleBody(bubble: CompanionBubble, messageId?: number): Partial<ChatMessageBody> {
+    if (bubble.type === 'link') {
+      return { text: `${bubble.title}\n${bubble.url}`, replyType: 'link', replyLink: bubble }
+    }
+
     if (bubble.type === 'image' || bubble.type === 'video') {
       const current = messageId === undefined ? undefined : mediaUpdates.get(mediaUpdateKey(messageId, bubble.media_id))
       const media = current ?? bubble
@@ -413,6 +417,8 @@ export function createChatMessageController(state: ConversationState) {
 
       if (bubble.type === 'image' || bubble.type === 'video') {
         updateMediaBubble(messageId, bubble.media_id, bubble)
+      } else if (bubble.type === 'link') {
+        $chatMessageBodies.setKey(item.id, { ...body, ...companionBubbleBody(bubble, messageId) })
       } else {
         updateVoiceBubble(messageId, index, bubble)
       }

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { GatewayEvent, RemoteApi, RemoteGateway } from './api'
 import { errorText, readImage, record } from './api'
-import { advanceTurn, commandHistory, eventsAfterSnapshot, mergeMessages } from './chat-state'
+import { activeReplyIsPersisted, advanceTurn, commandHistory, eventsAfterSnapshot, mergeMessages } from './chat-state'
+import { TopicLink } from './TopicLink'
 import type {
   ActiveTurn,
   ChatAttachment,
@@ -819,17 +820,18 @@ export function Chat({
             <Message
               api={api}
               device={device}
+              gateway={gateway}
               key={message.id ?? `message-${index}`}
               message={message}
               refresh={refreshMessages}
               userId={userId}
             />
           ))}
-        {turn ? (
+        {turn && !activeReplyIsPersisted(turn, messages) ? (
           <div className="message assistant">
             <div className="bubble">
               {turn.bubbles.map((bubble, index) => (
-                <Bubble api={api} bubble={bubble} key={index} refresh={refreshMessages} />
+                <Bubble api={api} bubble={bubble} gateway={gateway} key={index} refresh={refreshMessages} />
               ))}
               {turn.text ? (
                 <p>{turn.text}</p>
@@ -984,12 +986,14 @@ export function Chat({
 function Message({
   message,
   api,
+  gateway,
   refresh,
   userId,
   device
 }: {
   message: SessionMessage
   api: RemoteApi
+  gateway: RemoteGateway
   refresh: () => void
   userId: number
   device: number
@@ -1021,6 +1025,7 @@ function Message({
               api={api}
               bubble={bubble}
               device={device}
+              gateway={gateway}
               index={index}
               key={index}
               messageId={message.id}
@@ -1064,6 +1069,7 @@ function Message({
 function Bubble({
   bubble,
   api,
+  gateway,
   refresh,
   messageId,
   index = 0,
@@ -1072,6 +1078,7 @@ function Bubble({
 }: {
   bubble: CompanionBubble
   api: RemoteApi
+  gateway: RemoteGateway
   refresh: () => void
   messageId?: number
   index?: number
@@ -1088,6 +1095,10 @@ function Bubble({
 
   if (bubble.type === 'text') {
     return <p>{bubble.text}</p>
+  }
+
+  if (bubble.type === 'link') {
+    return <TopicLink api={api} bubble={bubble} gateway={gateway} key={bubble.topic_id} />
   }
 
   if (bubble.type === 'voice') {

@@ -28,7 +28,9 @@ services:
         condition: service_healthy
     env_file:
       - .env
-    environment: *postgres_credentials
+    environment:
+      <<: *postgres_credentials
+      XHS_MCP_BASE_URL: ${XHS_MCP_BASE_URL:-http://xiaohongshu-mcp:18060}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # 仅绑定本机回环：明文 HTTP 不暴露公网，公网 TLS 由 caddy（--profile public）终止。
@@ -62,7 +64,30 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 
+  # 小红书采集服务随 Backend 一起启动；首次扫码登录由运营者完成。
+  xiaohongshu-mcp:
+    image: xpzouying/xiaohongshu-mcp:v2.5.5
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      COOKIES_PATH: /app/data/cookies.json
+      HOME: /app/data/home
+      XDG_CONFIG_HOME: /app/data/config
+      AUTH_TOKEN: ${XHS_MCP_AUTH_TOKEN:-}
+      XHS_PROXY: ${XHS_PROXY:-}
+    ports:
+      - "127.0.0.1:18060:18060"
+    volumes:
+      - xiaohongshu_data:/app/data
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:18060/health"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+
 volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  xiaohongshu_data:

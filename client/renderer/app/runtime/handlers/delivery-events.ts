@@ -30,7 +30,10 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       }>(event.payload)
 
       const bubbles = Array.isArray(payload.bubbles) ? payload.bubbles : undefined
-      const text = bubbles ? (bubbles.findLast(b => 'text' in b)?.text ?? '') : (payload.text ?? '')
+
+      const text = bubbles
+        ? (bubbles.findLast(b => 'text' in b)?.text ?? bubbles.findLast(b => b.type === 'link')?.title ?? '')
+        : (payload.text ?? '')
 
       const displayText = chatDisplayText(text)
       const hasMedia = bubbles?.some(bubble => bubble.type === 'image' || bubble.type === 'video')

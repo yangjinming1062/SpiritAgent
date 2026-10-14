@@ -12,11 +12,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.asset_releases import collect_message_asset_releases
+from features.topics.schemas import TopicCardSnapshot
+from features.topics.store import validate_restored_topic_cards
 
 from .context_window import CHECKPOINT_SUBTYPE
 from .memory_scope import validate_memory_scope
 from .models import Conversation, Message
-from .replies import CompanionReply, MediaBubble
+from .replies import CompanionReply, CompanionReplyInput, LinkBubble, LinkBubbleInput, MediaBubble
 
 
 def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
@@ -48,12 +50,28 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
         if payload.get("media_json"):
             raise ValueError("Structured replies cannot contain separate media attachments")
         reply = CompanionReply.model_validate_json(payload["reply_json"])
+        reply.topic_context_at = None
+        source = CompanionReplyInput.model_validate_json(payload.get("content") or "")
+        topic_ids = set(reply.used_topic_ids)
+        topic_ids.update(b.topic_id for b in reply.bubbles if isinstance(b, LinkBubble))
+        topic_map = context.id_map.get("companion_topics", {})
+        if any(str(topic_id) not in topic_map for topic_id in topic_ids):
+            raise ValueError("A shared topic source is missing from backup")
+        reply.used_topic_ids = [int(topic_map[str(topic_id)]) for topic_id in reply.used_topic_ids]
+        for bubble in source.root:
+            if isinstance(bubble, LinkBubbleInput):
+                if str(bubble.topic_id) not in topic_map:
+                    raise ValueError("A shared topic source is missing from backup")
+                bubble.topic_id = int(topic_map[str(bubble.topic_id)])
         for bubble in reply.bubbles:
+            if isinstance(bubble, LinkBubble):
+                bubble.topic_id = int(topic_map[str(bubble.topic_id)])
             if isinstance(bubble, MediaBubble):
                 bubble.job_id = None
                 if bubble.status == "pending":
                     bubble.status, bubble.url, bubble.error = "failed", None, "恢复的生成任务不可继续，请重新提出请求"
-        reply.validate_content(payload.get("content") or "")
+        payload["content"] = source.model_dump_json()
+        reply.validate_content(payload["content"])
         payload["reply_json"] = reply.model_dump_json()
 
 
@@ -189,6 +207,22 @@ async def _clear(db: AsyncSession, user_id: int) -> None:
 
 async def _restore_context(db: AsyncSession, rows: BackupRows, context: BackupContext) -> None:
     await restore_conversation_context(db, rows, context.id_map)
+    scope = MemoryScope(context.user_id, "companion")
+    for raw in rows.get("messages", []):
+        message_id = context.id_map.get("messages", {}).get(str(raw["id"]))
+        if message_id is None:
+            continue
+        message = await db.get(Message, int(message_id))
+        if message is None or not message.reply_json:
+            continue
+        reply = CompanionReply.model_validate_json(message.reply_json)
+        cards = [
+            TopicCardSnapshot.model_validate(bubble.model_dump())
+            for bubble in reply.bubbles
+            if isinstance(bubble, LinkBubble)
+        ]
+        if cards:
+            await validate_restored_topic_cards(db, scope, cards)
 
 
 def backup_tables() -> tuple[BackupTable, ...]:

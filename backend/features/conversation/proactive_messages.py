@@ -1,7 +1,10 @@
 """在调用方事务中保存主动回复及媒体绑定；陪伴策略由调用方决定。"""
 
 from runtime.events.emit import emit_ws_event
+from runtime.memory_scope import MemoryScope
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from features.topics.store import record_topic_usage
 
 from .main_conversation import get_or_create_special_conversation
 from .models import Message
@@ -24,6 +27,13 @@ async def append_companion_message(db: AsyncSession, user_id: int, reply: Compan
     db.add(message)
     await db.flush()
     await bind_reply_videos(db, message, reply, user_id)
+    await record_topic_usage(
+        db,
+        MemoryScope(user_id, "companion"),
+        reply.used_topic_ids,
+        message.id,
+        authorized_at=reply.topic_context_at,
+    )
     emit_ws_event(
         db,
         user_id=user_id,

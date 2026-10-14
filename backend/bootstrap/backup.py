@@ -12,6 +12,7 @@ from features.journal.backup import backup_tables as journal_tables
 from features.memory.backup import backup_tables as memory_tables
 from features.posts.backup import backup_tables as post_tables
 from features.scenes.backup import backup_tables as scene_tables
+from features.topics.backup import backup_tables as topic_tables
 from infrastructure.backup import BACKUP_REGISTRY, BACKUP_TABLE_ORDER
 
 
@@ -29,6 +30,7 @@ def register_backup_tables() -> None:
         *memory_tables(),
         *post_tables(),
         *journal_tables(),
+        *topic_tables(),
     )
     tables = {table.name: table for table in contributions}
     if len(tables) != len(contributions) or set(tables) != set(BACKUP_TABLE_ORDER):

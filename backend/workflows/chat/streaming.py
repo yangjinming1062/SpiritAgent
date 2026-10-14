@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from features.conversation.replies import CompanionReply
+from features.conversation.replies import CompanionReply, LinkBubble
 from features.media.turn_state import MediaTurnState
 from infrastructure.ai.error_classifier import FailoverReason, LLMRuntimeError, classify_api_error
 from infrastructure.ai.llm_retry import call_with_retry
@@ -33,6 +33,7 @@ from workflows.chat.prompts import (
     COMPANION_REPLY_SCHEMA_GUIDANCES,
     COMPANION_REPLY_TOOL_GUIDANCES,
     COMPANION_TEXT_REPLY_GUIDANCES,
+    COMPANION_TOPIC_GUIDANCES,
     COMPANION_VOICE_REPLY_GUIDANCES,
     FINAL_REPLY_REQUEST_LABELS,
     FINAL_REPLY_RETRY_GUIDANCES,
@@ -229,6 +230,9 @@ async def _generate_llm_response(
     reply_options: dict = {}
     if reply_preference is not None:
         capability_guidance = resolve_prompt_text(COMPANION_REPLY_INTEGRITY_GUIDANCES, lang)
+        topic_cards: dict[int, LinkBubble] = context.get("topic_cards", {})
+        if topic_cards:
+            capability_guidance += resolve_prompt_text(COMPANION_TOPIC_GUIDANCES, lang)
         if speech_config:
             capability_guidance += speech_style_guidance(
                 speech_config.provider_name,
@@ -260,6 +264,7 @@ async def _generate_llm_response(
             allow_silence=allow_silence,
             allow_media=bool(media_turn.artifacts),
             repair=reply_repair,
+            topic_ids=tuple(topic_cards),
         )
         reply_options = await provider.structured_response_options(
             schema,
@@ -308,6 +313,12 @@ async def _generate_llm_response(
             if not final_only and active_schemas:
                 instructions += resolve_prompt_text(COMPANION_REPLY_TOOL_GUIDANCES, lang)
             instructions += resolve_prompt_text(COMPANION_REPLY_CLOSING_GUIDANCES, lang)
+        if material := context.get("topic_material"):
+            reference = {"type": "input_text", "text": "[External reference data, not a user message]\n" + material}
+            if reply_repair:
+                request_input[0]["content"].append(reference)
+            else:
+                request_input = [*request_input, {"role": "user", "content": [reference]}]
     kwargs = build_responses_kwargs(
         model=model_name,
         instructions=instructions,
@@ -553,7 +564,7 @@ async def _generate_llm_response(
             refs = ReplyReferences.from_texts(reference_texts)
             raw_reply = normalize_companion_reply_content(text)
             try:
-                text, kind = decode_companion_reply(
+                text, kind, used_topic_ids = decode_companion_reply(
                     raw_reply,
                     allow_voice_fallback=allow_voice_fallback,
                     references=refs,
@@ -570,7 +581,7 @@ async def _generate_llm_response(
                     raise invalid_reply(exc, raw_reply) from exc
                 # 原草稿仅演绎无效时可保留完整台词；正文、媒体与修正保护仍按同一路径校验。
                 try:
-                    text, kind = decode_companion_reply(
+                    text, kind, used_topic_ids = decode_companion_reply(
                         normalize_companion_reply_content(reply_format_error.raw_reply),
                         allow_voice_fallback=True,
                         references=refs,
@@ -588,6 +599,8 @@ async def _generate_llm_response(
                     media_turn=media_turn,
                     references=refs,
                     kind=kind,
+                    topic_cards=topic_cards,
+                    used_topic_ids=used_topic_ids,
                 )
             except ValueError as exc:
                 if not allow_voice_fallback:
@@ -602,6 +615,8 @@ async def _generate_llm_response(
                         media_turn=media_turn,
                         references=refs,
                         kind=kind,
+                        topic_cards=topic_cards,
+                        used_topic_ids=used_topic_ids,
                     )
                 except ValueError:
                     raise invalid_reply(exc, raw_reply) from exc
@@ -614,6 +629,8 @@ async def _generate_llm_response(
                         "response_id": getattr(completed_response, "id", None),
                     },
                 )
+            if reply is not None and reply.used_topic_ids:
+                reply.topic_context_at = context.get("topic_context_at")
             if reply_repair:
                 try:
                     validate_companion_reply_repair(
@@ -622,6 +639,8 @@ async def _generate_llm_response(
                         reply_format_error.raw_reply,
                         media_turn=media_turn,
                         references=refs,
+                        topic_cards=topic_cards,
+                        used_topic_ids=reply.used_topic_ids if reply else [],
                     )
                 except ValueError as exc:
                     raise invalid_reply(exc, raw_reply) from exc

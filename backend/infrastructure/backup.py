@@ -37,7 +37,11 @@ BACKUP_TABLE_ORDER = (
     "companion_posts",
     "companion_post_comments",
     "companion_diary_entries",
+    "companion_topic_batches",
+    "companion_topics",
+    "companion_topic_feedback",
     "messages",
+    "companion_topic_usages",
 )
 
 

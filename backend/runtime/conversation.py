@@ -46,6 +46,7 @@ class ActiveTurnSnapshot:
     request_id: str
     origin_kind: str
     message_ids: list[int] = field(default_factory=list)
+    assistant_message_id: int | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     text: str = ""
     reasoning: str = ""

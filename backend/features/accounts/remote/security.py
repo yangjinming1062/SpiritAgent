@@ -81,6 +81,11 @@ def require_remote_origin(request: Request) -> None:
 
 def remote_content_allowed(path: str, method: str) -> bool:
     path = path.rstrip("/")
+    if path == "/api/companion/topics/feedback":
+        return method == "GET"
+    if path.startswith("/api/companion/topics/") and path.endswith("/feedback"):
+        topic_id = path.removeprefix("/api/companion/topics/").removesuffix("/feedback")
+        return method == "PUT" and topic_id.isascii() and topic_id.isdecimal() and bool(topic_id.lstrip("0"))
     if path == "/api/sessions" or path.startswith("/api/sessions/"):
         return True
     if any(

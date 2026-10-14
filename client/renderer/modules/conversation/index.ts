@@ -84,6 +84,7 @@ export {
   switchSession,
   TITLE_MAX_CHARS
 } from './session-list-store'
+export { onTopicFeedbackUpdated } from './topic-feedback-store'
 export { useChatInput } from './use-chat-input'
 export { useConversationUnread } from './use-conversation-unread'
 

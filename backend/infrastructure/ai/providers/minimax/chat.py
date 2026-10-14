@@ -1,6 +1,22 @@
-from typing import ClassVar
+from collections.abc import Awaitable, Callable
+from copy import deepcopy
+from typing import Any, ClassVar
 
+from openai import AsyncOpenAI
+
+from infrastructure.ai.providers._companion_format import ChatSchemaResponsesClient
 from infrastructure.ai.providers.base import ChatProvider
+
+
+def _remove_numeric_enums(value: Any) -> None:
+    if isinstance(value, dict):
+        if value.get("type") in ("integer", "number") and isinstance(value.get("enum"), list):
+            value.pop("enum")
+        for child in value.values():
+            _remove_numeric_enums(child)
+    elif isinstance(value, list):
+        for child in value:
+            _remove_numeric_enums(child)
 
 
 class MiniMaxChatProvider(ChatProvider):
@@ -16,3 +32,32 @@ class MiniMaxChatProvider(ChatProvider):
     # MiniMax /v1/responses 文档支持区间 (0, 1.0]，下限垫 0.01
     TEMPERATURE_MIN: ClassVar[float] = 0.01
     TEMPERATURE_MAX: ClassVar[float] = 1.0
+
+    def structured_response_client(
+        self,
+        *,
+        repair: bool,
+        before_submit: Callable[[], Awaitable[None]] | None = None,
+    ) -> AsyncOpenAI | ChatSchemaResponsesClient:
+        if repair:
+            return ChatSchemaResponsesClient(
+                self.raw_client(),
+                before_submit=before_submit,
+                chat_extra_body={"reasoning_split": True},
+            )
+        return super().structured_response_client(repair=repair, before_submit=before_submit)
+
+    async def structured_response_options(
+        self,
+        schema: dict,
+        *,
+        name: str,
+        allow_tools: bool,
+        repair: bool = False,
+    ) -> dict:
+        options = await super().structured_response_options(schema, name=name, allow_tools=allow_tools, repair=repair)
+        if repair:
+            # 修复端点把 enum 元素解析为字符串，拒绝整数枚举；来源授权仍由应用校验。
+            options = deepcopy(options)
+            _remove_numeric_enums(options["text"]["format"]["schema"])
+        return options

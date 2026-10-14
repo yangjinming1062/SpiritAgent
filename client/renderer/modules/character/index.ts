@@ -98,11 +98,13 @@ export {
 export {
   $autoplayVoice,
   $companionVoiceId,
+  $informationDiscoveryEnabled,
   $llmAffect,
   $llmAutonomy,
   $postsEnabled,
   $responsePreference,
   autoplayVoicePref,
+  informationDiscoveryPref,
   initCompanionPrefsSync,
   llmAffectPref,
   llmAutonomyPref,
