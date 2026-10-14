@@ -239,6 +239,10 @@ summary { cursor: pointer; }
 .social-login-qr { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; margin-top: 18px; }
 .social-login-qr img { width: 200px; height: 200px; flex: none; border: 10px solid white; border-radius: var(--radius-sm); background: white; object-fit: contain; }
 .social-login-qr > div { flex: 1; min-width: 180px; }
+.social-login-verification { margin-top: 18px; max-width: 440px; }
+.social-login-verification-input { display: flex; align-items: center; gap: 10px; }
+.social-login-verification-input input { flex: 1; letter-spacing: .15em; }
+.social-login-verification-input button { flex: none; }
 .social-login-error { margin: 12px 0 0; color: var(--red); font-size: 12px; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }

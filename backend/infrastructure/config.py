@@ -377,9 +377,12 @@ class Settings(BaseSettings):
     @field_validator("x_search_cookies", mode="after")
     @classmethod
     def _validate_x_search_cookies(cls, value: str) -> str:
-        if value and not parse_x_search_cookies(value):
-            raise ValueError("X 登录 Cookie 必须包含有效的 auth_token 和 ct0")
-        return value.strip()
+        if not value:
+            return ""
+        cookies = parse_x_search_cookies(value)
+        if not cookies:
+            raise ValueError("X 登录 Cookie 需为包含有效 auth_token 和 ct0 的 Cookie 请求头或浏览器导出的 JSON")
+        return "; ".join(f"{name}={cookie}" for name, cookie in cookies.items())
 
 
 SETTINGS = Settings()

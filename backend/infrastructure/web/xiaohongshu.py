@@ -8,12 +8,12 @@ import re
 from datetime import datetime, timedelta
 from io import BytesIO
 from struct import error as StructError
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from infrastructure.network import trusted_service_async_client
 from infrastructure.text import utc_now
@@ -23,18 +23,52 @@ from .social_content import RequestGuard, SocialSourceError
 _MAX_RESPONSE_BYTES = 1500000
 _MAX_QR_BYTES = 512000
 _TIMEOUT_SECONDS = 60
+_SESSION_ID_PATTERN = r"^[A-Za-z0-9_-]{16,96}$"
+
+LoginState = Literal["awaiting_scan", "sms_required", "verification_required", "logged_in", "expired"]
 
 
 class XhsLoginStatus(BaseModel):
     is_logged_in: bool
     username: str | None = None
     user_id: str | None = None
+    session_id: str | None = None
+    state: LoginState | None = None
+    expires_at: datetime | None = None
+    verification_error: Literal["invalid_code"] | None = None
 
 
 class XhsLoginQrCode(BaseModel):
     is_logged_in: bool
     image: str | None = None
     expires_at: datetime | None = None
+    session_id: str | None = None
+
+
+class XhsLoginVerification(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(pattern=_SESSION_ID_PATTERN)
+    code: str = Field(pattern=r"^[0-9]{6}$", repr=False)
+
+
+class _LoginSession(BaseModel):
+    session_id: str = Field(pattern=_SESSION_ID_PATTERN)
+    state: LoginState
+    expires_at: datetime
+    verification_error: Literal["invalid_code"] | None = None
+
+
+def _session_status(data: dict[str, Any], session_id: str) -> XhsLoginStatus:
+    try:
+        result = _LoginSession.model_validate(data)
+        if result.session_id != session_id or result.expires_at.tzinfo is None:
+            raise ValueError("Invalid login session binding")
+        if result.expires_at > utc_now() + timedelta(seconds=245):
+            raise ValueError("Invalid login session expiry")
+    except (ValidationError, ValueError):
+        raise SocialSourceError("Xiaohongshu login session is invalid", code=422, reason="response_invalid") from None
+    return XhsLoginStatus(is_logged_in=result.state == "logged_in", **result.model_dump())
 
 
 def _qr_png(value: Any) -> str:
@@ -104,16 +138,21 @@ class XiaohongshuServiceClient:
         path: str,
         *,
         payload: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
         before_request: RequestGuard | None = None,
     ) -> dict[str, Any]:
         if (method, path) not in {
             ("GET", "/api/v1/login/status"),
             ("GET", "/api/v1/login/qrcode"),
+            ("GET", "/api/v1/login/session"),
+            ("POST", "/api/v1/login/verification"),
             ("DELETE", "/api/v1/login/cookies"),
             ("POST", "/api/v1/feeds/search"),
             ("POST", "/api/v1/feeds/detail"),
         }:
             raise ValueError("Unsupported Xiaohongshu service operation")
+        if params is not None and (path != "/api/v1/login/session" or set(params) != {"session_id"}):
+            raise ValueError("Unsupported Xiaohongshu service parameters")
         headers = {"Authorization": f"Bearer {self._auth_token}"} if self._auth_token else {}
         if before_request is not None:
             await before_request()
@@ -127,6 +166,7 @@ class XiaohongshuServiceClient:
                         method,
                         self._base_url + path,
                         headers=headers,
+                        params=params,
                         **({"json": payload} if payload is not None else {}),
                     ) as response:
                         if not 200 <= response.status_code < 300:
@@ -134,7 +174,14 @@ class XiaohongshuServiceClient:
                                 "Xiaohongshu service rejected the operation",
                                 code=response.status_code,
                                 reason=(
-                                    "login_required"
+                                    "verification_unavailable"
+                                    if response.status_code == 404
+                                    and path in {"/api/v1/login/session", "/api/v1/login/verification"}
+                                    else "session_expired"
+                                    if response.status_code == 410
+                                    else "session_conflict"
+                                    if response.status_code == 409
+                                    else "login_required"
                                     if response.status_code in {401, 403}
                                     else "rate_limited"
                                     if response.status_code == 429
@@ -185,14 +232,31 @@ class XiaohongshuServiceClient:
             raise SocialSourceError("Xiaohongshu QR login state is invalid", code=422, reason="response_invalid")
         if data["is_logged_in"]:
             return XhsLoginQrCode(is_logged_in=True)
+        session_id = data.get("session_id")
+        if session_id is not None and (
+            not isinstance(session_id, str) or not re.fullmatch(_SESSION_ID_PATTERN, session_id)
+        ):
+            raise SocialSourceError("Xiaohongshu login session ID is invalid", code=422, reason="response_invalid")
         return XhsLoginQrCode(
             is_logged_in=False,
             image=_qr_png(data.get("img")),
             expires_at=started_at + timedelta(seconds=_qr_seconds(data.get("timeout"))),
+            session_id=session_id,
         )
 
-    async def clear_saved_login(self) -> None:
-        await self._request("DELETE", "/api/v1/login/cookies")
+    async def login_session(self, session_id: str) -> XhsLoginStatus:
+        if not re.fullmatch(_SESSION_ID_PATTERN, session_id):
+            raise ValueError("Invalid login session ID")
+        data = await self._request("GET", "/api/v1/login/session", params={"session_id": session_id})
+        return _session_status(data, session_id)
+
+    async def submit_verification(self, payload: XhsLoginVerification) -> XhsLoginStatus:
+        data = await self._request("POST", "/api/v1/login/verification", payload=payload.model_dump())
+        return _session_status(data, payload.session_id)
+
+    async def clear_saved_login(self) -> bool:
+        data = await self._request("DELETE", "/api/v1/login/cookies")
+        return data.get("login_session_cancelled") is True
 
     async def search_feeds(self, keyword: str, *, before_request: RequestGuard | None = None) -> dict[str, Any]:
         return await self._request(

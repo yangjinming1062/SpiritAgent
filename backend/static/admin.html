@@ -69,7 +69,7 @@
     </div>
 </div>
 <template id="xhsLoginTemplate">
-    <div class="field settings-field social-login-card" id="xhsLoginManager" data-search-text="小红书 扫码 登录 二维码 账号 清除">
+    <div class="field settings-field social-login-card" id="xhsLoginManager" data-search-text="小红书 扫码 登录 二维码 短信 验证码 账号 清除">
         <div class="social-login-head"><h3>小红书扫码登录</h3><span class="pill pill--muted" id="xhsLoginStatus" role="status">尚未检查</span></div>
         <p class="hint">运营者扫码登录采集账号。以下操作使用已保存的服务地址和鉴权令牌。</p>
         <p class="hint" id="xhsLoginHint">保存小红书服务设置后，可检查登录状态或获取二维码。</p>
@@ -81,8 +81,14 @@
         </div>
         <div class="social-login-qr" id="xhsQrRegion" hidden>
             <img id="xhsQrImage" alt="小红书运营账号登录二维码" width="200" height="200">
-            <div><p id="xhsQrExpiry"></p><p class="hint">请使用小红书 App 扫码。扫码完成后，本页面会检查并显示实际登录状态。</p></div>
+            <div><p id="xhsQrExpiry"></p><p class="hint" id="xhsQrHelp">请使用小红书 App 扫码。扫码完成后，本页面会检查并显示实际登录状态。</p></div>
         </div>
+        <form class="social-login-verification" id="xhsVerificationForm" onsubmit="submitXhsVerification(event)" hidden>
+            <label for="xhsVerificationCode">短信验证码</label>
+            <p class="hint" id="xhsVerificationHint">请填写本次扫码收到的 6 位短信验证码。</p>
+            <div class="social-login-verification-input"><input id="xhsVerificationCode" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" aria-describedby="xhsVerificationHint xhsVerificationError" required><button class="btn btn--primary btn--sm" id="xhsVerificationButton" type="submit">提交验证码</button></div>
+            <p class="social-login-error" id="xhsVerificationError" role="alert" hidden></p>
+        </form>
         <p class="social-login-error" id="xhsLoginError" role="alert" hidden></p>
     </div>
 </template>

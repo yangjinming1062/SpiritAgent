@@ -66,7 +66,8 @@ services:
 
   # 小红书采集服务随 Backend 一起启动；首次扫码登录由运营者完成。
   xiaohongshu-mcp:
-    image: xpzouying/xiaohongshu-mcp:v2.5.5
+    build:
+      context: ./infrastructure/web/xiaohongshu_service
     platform: linux/amd64
     restart: unless-stopped
     environment:

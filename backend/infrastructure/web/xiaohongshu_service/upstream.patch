@@ -1,0 +1,145 @@
+--- a/service.go
++++ b/service.go
+@@ -23 +23 @@
+-	logins loginSessions
++	logins adminLoginSessions
+@@ -54,0 +55 @@
++	SessionID  string `json:"session_id,omitempty"`
+@@ -98,0 +100,4 @@
++	s.logins.mutation.Lock()
++	defer s.logins.mutation.Unlock()
++	if ctx.Err() != nil { return errLoginFailed }
++	s.logins.invalidate()
+@@ -138,64 +143 @@
+-	b := newBrowser()
+-	page := b.NewPage()
+-
+-	deferFunc := func() {
+-		_ = page.Close()
+-		b.Close()
+-	}
+-
+-	loginAction := xiaohongshu.NewLogin(page)
+-
+-	img, loggedIn, err := loginAction.FetchQrcodeImage(ctx)
+-	if err != nil || loggedIn {
+-		defer deferFunc()
+-	}
+-	if err != nil {
+-		return nil, err
+-	}
+-
+-	timeout := 4 * time.Minute
+-
+-	if !loggedIn {
+-		s.waitScanInBackground(loginAction, page, deferFunc, timeout)
+-	}
+-
+-	return &LoginQrcodeResponse{
+-		Timeout: func() string {
+-			if loggedIn {
+-				return "0s"
+-			}
+-			return timeout.String()
+-		}(),
+-		Img:        img,
+-		IsLoggedIn: loggedIn,
+-	}, nil
+-}
+-
+-// waitScanInBackground 在后台等用户扫码，扫上了就存 cookie。
+-//
+-// 浏览器必须一直活着才检测得到扫码，所以这里不能提前关；但也不能任由它堆积——
+-// 再取一次二维码就会把上一个还在等的会话关掉，同一时刻只留一个。
+-func (s *XiaohongshuService) waitScanInBackground(
+-	loginAction *xiaohongshu.LoginAction, page *rod.Page, closeBrowser func(), timeout time.Duration,
+-) {
+-	ctxTimeout, cancel := context.WithTimeout(context.Background(), timeout)
+-	seq := s.logins.start(cancel)
+-	logrus.Infof("等待扫码登录，会话 #%d，超时 %s", seq, timeout)
+-
+-	go func() {
+-		defer closeBrowser()
+-		defer cancel()
+-		defer s.logins.finish(seq)
+-
+-		if loginAction.WaitForLogin(ctxTimeout) {
+-			if err := saveCookies(page); err != nil {
+-				logrus.Errorf("扫码成功但保存 cookies 失败，会话 #%d: %v", seq, err)
+-				return
+-			}
+-			logrus.Infof("扫码登录成功，cookies 已保存，会话 #%d", seq)
+-			return
+-		}
+-
+-		// 没等到扫码：要么超时，要么被新取的二维码取代
+-		logrus.Infof("登录会话 #%d 结束，未检测到扫码（超时或已被新的二维码取代）", seq)
+-	}()
++	return s.adminLoginQrcode(ctx)
+--- a/routes.go
++++ b/routes.go
+@@ -15,0 +16 @@
++	router.Use(loginAdminHeaders())
+@@ -49,0 +51,2 @@
++		api.GET("/login/session", appServer.loginSessionHandler)
++		api.POST("/login/verification", appServer.loginVerificationHandler)
+--- a/handlers_api.go
++++ b/handlers_api.go
+@@ -82,0 +83 @@
++		"login_session_cancelled": true,
+--- a/browser/browser.go
++++ b/browser/browser.go
+@@ -3,0 +4 @@
++	"context"
+@@ -13,0 +15 @@
++	context context.Context
+@@ -47,0 +50,5 @@
++}
++
++// WithContext binds only explicitly configured login browsers to their session lifecycle.
++func WithContext(ctx context.Context) Option {
++	return func(c *browserConfig) { c.context = ctx }
+@@ -99,0 +107,3 @@
++	if cfg.context != nil {
++		opts = append(opts, headless_browser.WithContext(cfg.context))
++	}
+--- a/vendor/github.com/xpzouying/headless_browser/headless_browser.go
++++ b/vendor/github.com/xpzouying/headless_browser/headless_browser.go
+@@ -4,0 +5 @@
++	"context"
+@@ -32,0 +34 @@
++	Context context.Context
+@@ -176,0 +179,5 @@
++// WithContext keeps browser events on an explicit login-session lifecycle.
++func WithContext(ctx context.Context) Option {
++	return func(c *Config) { c.Context = ctx }
++}
++
+@@ -188,0 +196,11 @@
++	if cfg.Context != nil {
++		l.Context(cfg.Context)
++		defer func() {
++			if failure := recover(); failure != nil {
++				l.Kill()
++				l.Cleanup()
++				panic(failure)
++			}
++		}()
++	}
++
+@@ -226,4 +244,3 @@
+-	browser := rod.New().
+-		ControlURL(url).
+-		Trace(cfg.Trace).
+-		MustConnect()
++	browser := rod.New().ControlURL(url).Trace(cfg.Trace)
++	if cfg.Context != nil { browser = browser.Context(cfg.Context) }
++	browser = browser.MustConnect()
+@@ -316,0 +334,7 @@
++// CloseWithContext bounds CDP shutdown and always reaps the local browser process.
++func (b *Browser) CloseWithContext(ctx context.Context) {
++	defer b.launcher.Cleanup()
++	defer b.launcher.Kill()
++	_ = b.browser.Context(ctx).Close()
++}
++

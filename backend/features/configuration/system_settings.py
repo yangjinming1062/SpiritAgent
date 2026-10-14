@@ -45,7 +45,13 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
 
 
 def _validation_fields(exc: ValidationError) -> str:
-    return ", ".join(sorted({".".join(str(part) for part in error["loc"]) for error in exc.errors()}))
+    fields = {".".join(str(part) for part in error["loc"]) for error in exc.errors()}
+    return ", ".join(
+        f"{field}（需包含 auth_token 和 ct0 的 Cookie 请求头或浏览器 JSON 导出）"
+        if field.lower() == "x_search_cookies"
+        else field
+        for field in sorted(fields)
+    )
 
 
 async def _validate_system_ai_references(db: AsyncSession, system: AIConfig) -> None:

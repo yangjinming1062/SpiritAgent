@@ -28,7 +28,7 @@ from infrastructure.ai.models import ModelDiscoveryResponse
 from infrastructure.database import DbSession
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
-from infrastructure.web.xiaohongshu import XhsLoginQrCode
+from infrastructure.web.xiaohongshu import XhsLoginQrCode, XhsLoginVerification
 from runtime.responses import MessageResponse
 from starlette.responses import Response
 from workflows.maintenance.backup.serializers import BACKUP_SECTION_IDS, BackupImportMode
@@ -180,9 +180,11 @@ async def list_nightly_activity_logs(
 
 
 @router.get("/social/xiaohongshu/login/status", response_model=XiaohongshuAdminLoginStatus)
-async def xiaohongshu_login_status() -> XiaohongshuAdminLoginStatus:
+async def xiaohongshu_login_status(
+    session_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9_-]{16,96}$"),
+) -> XiaohongshuAdminLoginStatus:
     try:
-        return await social_accounts.login_status()
+        return await social_accounts.login_status(session_id=session_id)
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
@@ -191,6 +193,14 @@ async def xiaohongshu_login_status() -> XiaohongshuAdminLoginStatus:
 async def refresh_xiaohongshu_login_qrcode() -> XhsLoginQrCode:
     try:
         return await social_accounts.refresh_login_qrcode()
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
+@router.post("/social/xiaohongshu/login/verification", response_model=XiaohongshuAdminLoginStatus)
+async def submit_xiaohongshu_login_verification(payload: XhsLoginVerification) -> XiaohongshuAdminLoginStatus:
+    try:
+        return await social_accounts.submit_login_verification(payload)
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
