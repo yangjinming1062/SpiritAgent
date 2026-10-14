@@ -16,7 +16,7 @@
 | Windows 桌面 helper | 在 Windows 执行 `pnpm --dir client build:native`，或在 `client/desktop-host/` 做对应目标的 `cargo check --locked`；交互与恢复另做实机验收 |
 | preload、构建入口或资源 | `pnpm --dir client build` 并核对实际产物 |
 | Installer 前端与编排 | `pnpm --dir installer build`，以及完整载荷下的目标平台 Tauri 构建和安装验收 |
-| wheel 或安装载荷 | 导入面门禁、精确版本与对应平台构建 |
+| wheel 或安装载荷 | 隔离安装门禁、精确版本与对应平台构建 |
 | 音频 | 专项静态检查，必要时合成并试听 |
 
 提交前完整入口（以 [.pre-commit-config.yaml](../.pre-commit-config.yaml) 为准）：
@@ -58,7 +58,15 @@ uv run --no-project --python 3.13 python scripts/check_imports.py --fix
 
 不带 `--strict-imports` 时违规仅输出诊断、退出码为 0；`--fix` 只自动移除 future annotations，修改后重跑严格模式。
 
-默认跳过模块根目录的 `build/`、`dist/` 及各层 `.venv`、`__pycache__`，避免旧构建副本与当前源码导出表混用；显式传入文件仍逐个检查。实际 wheel 另由 `check_runner_facade.py` 校验。
+默认跳过模块根目录的 `build/`、`dist/` 及各层 `.venv`、`__pycache__`，避免旧构建副本与当前源码导出表混用；显式传入文件仍逐个检查。实际 wheel 另由 `check_runner_package.py` 隔离安装校验。
+
+[`check_runner_architecture.py`](check_runner_architecture.py) 检查 Runner 的层间依赖、跨能力私有访问、模块导入环、旧根包引用，以及导入时注册和资源所有权。`contracts` 保持纯契约；基础设施显式接收配置，不读取调用作用域；运行时不导入具体能力，能力间通过注入端口协作，文件能力可依赖执行能力的公开租约 API。常量、类型别名和 `ContextVar` 绑定允许保留在模块级。该门禁已纳入 pre-commit，也可独立运行：
+
+```bash
+uv run --no-project --python 3.13 python scripts/check_runner_architecture.py
+```
+
+使用 `--runner <包目录>` 可检查临时样本；它只静态解析源码，不导入 Runner 或启动资源。资源回收、线程取消与真实工具行为仍须单独验证。
 
 ## Backend 架构检查
 
@@ -106,20 +114,20 @@ macOS `afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，electr
 uv run --no-project --python 3.13 python scripts/build.py --version 1.2.3
 ```
 
-`--target mac|win` 默认按宿主推断，必须在对应系统构建；`--skip-runner` / `--skip-desktop` 仍要求同版本既有产物，`--output` 覆盖默认 `release/`。正式暂存只接受目标版本唯一 wheel，并校验它是否满足 `server.py` 的本地导入。单独诊断：
+`--target mac|win` 默认按宿主推断，必须在对应系统构建；`--skip-runner` / `--skip-desktop` 仍要求同版本既有产物，`--output` 覆盖默认 `release/`。Runner 从临时源码副本构建，避免旧 `build/lib` 混入产物；正式暂存只接受目标版本唯一 wheel，核对包内 Python 文件清单与字节均和源码一致，并在仓库外的临时 venv 安装，校验模块入口、版本、依赖和静态工具定义。单独诊断：
 
 ```bash
-uv run --no-project --python 3.13 python scripts/check_runner_facade.py
+uv run --no-project --python 3.13 python scripts/check_runner_package.py
 ```
 
-单独检查默认取修改时间最新的 wheel，可用 `--wheel` / `--server-py` 指定输入；它会在临时 venv 安装 wheel 和依赖，需要可用的依赖源，不能替代正式构建的精确版本门禁。暂存与 Tauri 资源补丁由 [build_helpers.py](lib/build_helpers.py) 实现，Tauri 构建结束后恢复资源配置。
+单独检查默认取修改时间最新的 wheel，可用 `--wheel` 指定输入；需要可用的依赖源，不能替代正式构建的精确版本门禁。包内 `--version` 与 `--check` 不启动运行时资源，后者也供 Installer 和 Client 安装健康检查使用。暂存与 Tauri 资源补丁由 [build_helpers.py](lib/build_helpers.py) 实现，Tauri 构建结束后恢复资源配置。
 
 | 平台 | `release/` 产物 |
 |---|---|
 | macOS | 安装器 DMG；同时保留 Tauri 原始文件名和 `SpiritAgent-Setup-<version>.dmg` 别名 |
 | Windows | `SpiritAgent-Setup-<version>.exe` 和 `SpiritAgent-<version>-update.zip` |
 
-Windows 安装器内嵌 NSIS 包；update ZIP 由 [UpdateManifest.ps1](lib/UpdateManifest.ps1) 打包桌面产物及 blockmap、`runner/` 下的 wheel 与 `server.py`、签名 `latest-runner.yml` 和 `manifest.json`。技能随桌面包交付，Backend 上传后按库存重建桌面清单。生成 ZIP 需要 PowerShell、openssl 和[更新签名私钥](release-keys/README.md)，缺失或签名失败中止构建。
+Windows 安装器内嵌 NSIS 包；update ZIP 由 [UpdateManifest.ps1](lib/UpdateManifest.ps1) 打包桌面产物及 blockmap、`runner/` 下的单 wheel、签名 `latest-runner.yml` 和 `manifest.json`。技能随桌面包交付，Backend 上传后按库存重建桌面清单。生成 ZIP 需要 PowerShell、openssl 和[更新签名私钥](release-keys/README.md)，缺失或签名失败中止构建。
 
 `--sign-identity`（可配合 `--notary-profile`）和 `--cert-thumbprint` 作用于 `client/release/` 的桌面端产物，再复制进 payload；`build.py` 不签安装器本身。Client 的 `.app` 公证另由上一节的环境配置驱动，不能把桌面产物签名等同于整套安装器已签名。
 

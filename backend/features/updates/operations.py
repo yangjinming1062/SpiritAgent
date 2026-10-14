@@ -42,7 +42,6 @@ ALLOWED_ARCHIVE_SUFFIXES = (
     ".zip",
     ".dmg",
     ".whl",
-    "server.py",
     "manifest.json",
     "latest-runner.yml",
 )
@@ -55,7 +54,6 @@ DOWNLOAD_SUFFIXES = (
     ".dmg",
     ".dmg.blockmap",
     ".whl",
-    "server.py",
     "latest-runner.yml",
 )
 
@@ -118,7 +116,7 @@ async def get_latest_mac_yml(db: AsyncSession) -> ReleaseManifestResponse:
 
 
 async def get_latest_runner_yml(db: AsyncSession) -> FileResult:
-    """提供 Build-UpdateZip 写入的签名 runner manifest：desktop 主进程在重启前读取它、本地暂存 wheel + server.py，校验通过后才允许点 "Restart"；下次启动由新 Electron 跑 installPending 执行 pip install --upgrade 并覆盖 server.py。"""
+    """提供构建时签名的 Runner wheel 清单，供 Client 预取、验签与重启后安装。"""
     latest = await _get_latest(db)
     if not latest.runner_filename:
         raise RequestError(status_code=404, detail="No active release with a runner asset")
@@ -167,12 +165,13 @@ def _inspect_release(versions_dir: Path, version: str) -> tuple[Path, Path | Non
     exe_file = _pick_asset(versions_dir, "*.exe")
     if exe_file is None:
         raise ValueError("更新包缺少 Windows 安装程序（*.exe）。")
-    # Runner 侧：wheel + server.py 解压到 runner/，latest-runner.yml 位于根。
-    wheel_file = _pick_asset(versions_dir, "runner/spirit_agent-*.whl")
-    if wheel_file is None:
-        raise ValueError("更新包缺少 Runner wheel（runner/spirit_agent-*.whl）。")
-    if not (versions_dir / "runner" / "server.py").is_file():
-        raise ValueError("更新包缺少 runner/server.py。")
+    # Runner wheel 包含入口；latest-runner.yml 位于更新包根目录。
+    wheel_files = sorted(versions_dir.glob("runner/*.whl"))
+    if len(wheel_files) != 1 or not wheel_files[0].name.startswith(f"spirit_agent-{version}-"):
+        raise ValueError("更新包须包含唯一的同版本 Runner wheel（runner/spirit_agent-<version>-*.whl）。")
+    wheel_file = wheel_files[0]
+    if manifest.get("runner_wheel") != f"runner/{wheel_file.name}":
+        raise ValueError("manifest.json 的 runner_wheel 与更新包中的 wheel 不一致。")
     runner_manifest_path = versions_dir / "latest-runner.yml"
     if not runner_manifest_path.is_file():
         raise ValueError("更新包缺少 latest-runner.yml。")

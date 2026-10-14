@@ -1,4 +1,4 @@
-# scripts/lib/UpdateManifest.ps1 —— 自更新签名、manifest 与 update zip 助手；build.py 在 Windows 收尾阶段调用 Build-UpdateZip。
+﻿# scripts/lib/UpdateManifest.ps1 —— 自更新签名、manifest 与 update zip 助手；build.py 在 Windows 收尾阶段调用 Build-UpdateZip。
 
 # Git for Windows 的 openssl 不在 PATH，故额外查找常见安装位置。
 function Resolve-OpenSsl {
@@ -51,21 +51,25 @@ function Sign-Manifest {
         [long]$Size = -1
     )
 
+    $ErrorActionPreference = 'Stop'
     if (-not (Test-Path $ManifestPath)) {
-        Write-Warning "Manifest $ManifestPath does not exist; skipping"
-        return
+        throw "Manifest $ManifestPath does not exist"
     }
 
     $manifestDir = Split-Path -Parent $ManifestPath
-    $raw = Get-Content $ManifestPath -Raw
+    $raw = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8
 
-    # 正则提取 path，JSON 与 YAML 共用，避免引入 YAML 解析器。
-    $pathMatch = [regex]::Match($raw, '(?m)^\s*"?\s*path\s*"?\s*[:=]\s*"?\s*(.+?)\s*"?\s*,?\s*$')
-    if (-not $pathMatch.Success) {
-        Write-Warning "Manifest $ManifestPath has no 'path' field; skipping"
-        return
+    $jsonManifest = $null
+    if ($raw.TrimStart().StartsWith('{')) {
+        $jsonManifest = $raw | ConvertFrom-Json
+        $pathValue = [string]$jsonManifest.path
+    } else {
+        $pathMatch = [regex]::Match($raw, '(?m)^\s*path\s*:\s*(.+?)\s*$')
+        $pathValue = $pathMatch.Groups[1].Value.Trim('"', "'", ',')
     }
-    $pathValue = $pathMatch.Groups[1].Value.Trim('"', "'", ',')
+    if (-not $pathValue) {
+        throw "Manifest $ManifestPath has no 'path' field"
+    }
 
     $binaryPath = Join-Path $manifestDir $pathValue
     if (-not (Test-Path $binaryPath)) {
@@ -78,6 +82,9 @@ function Sign-Manifest {
     } else {
         $sha512 = (Get-FileHash $binaryPath -Algorithm SHA512).Hash.ToUpper()
         $size = (Get-Item $binaryPath).Length
+    }
+    if ($sha512 -notmatch '^[A-Fa-f0-9]{128}$' -or $size -lt 0) {
+        throw "Invalid SHA-512 or size for $binaryPath"
     }
 
     # 临时文件落地签名：PowerShell `&` 把二进制 stdout 当数组收，无法直接成字节流。
@@ -92,74 +99,67 @@ function Sign-Manifest {
             throw "openssl sign failed for $ManifestPath (exit $LASTEXITCODE)"
         }
         $signatureBytes = [IO.File]::ReadAllBytes($tmpSig)
+        if ($signatureBytes.Length -eq 0) {
+            throw "openssl produced an empty signature for $ManifestPath"
+        }
     } finally {
         Remove-Item $tmpPayload, $tmpSig -ErrorAction SilentlyContinue
     }
     $signatureB64 = [Convert]::ToBase64String($signatureBytes)
 
-    # 正则就地改字段，兼容 YAML 与 JSON。
-    $updated = $raw
-
-    # sha512:  sha512: <value>  or  "sha512": "<value>"
-    $updated = $updated -replace '(?m)(\s*"?\s*sha512\s*"?\s*[:=]\s*"?\s*)[^\r\n"]*', "`${1}$sha512"
-
-    # files 数组整段替换为单元素数组。
-    $filesBlockYaml = "  - url: $pathValue`n    sha512: $sha512`n    size: $size"
-    $filesBlockJson = "`"files`": [{`"url`": `"$pathValue`", `"sha512`": `"$sha512`", `"size`": $size}]"
-    if ($updated -match '(?m)^\s*"?\s*files\s*"?\s*:\s*\[') {
-        $updated = $updated -replace '(?m)(\s*"?\s*files\s*"?\s*:\s*)\[.*?\]', "`${1}$filesBlockJson"
+    if ($null -ne $jsonManifest) {
+        $jsonManifest | Add-Member -NotePropertyMembers @{
+            sha512 = $sha512
+            size = $size
+            files = @(@{ url = $pathValue; sha512 = $sha512; size = $size })
+            signature = $signatureB64
+        } -Force
+        $updated = $jsonManifest | ConvertTo-Json -Depth 8
     } else {
+        # 保留 electron-builder YAML 中的版本、发布说明与平台字段。
+        $updated = $raw -replace '(?m)(\s*sha512\s*:\s*)[^\r\n]*', "`${1}$sha512"
+        $filesBlockYaml = "  - url: $pathValue`n    sha512: $sha512`n    size: $size"
         $updated = $updated -replace '(?s)(files:\s*\n)(\s+-[\s\S]*?)(?=\n\S|\n\n|\z)', "`${1}$filesBlockYaml"
-    }
-
-    if ($updated -match '(?m)^\s*"?\s*signature\s*"?\s*[:=]') {
-        $updated = $updated -replace '(?m)(\s*"?\s*signature\s*"?\s*[:=]\s*"?\s*)[^\r\n"]*', "`${1}$signatureB64"
-    } else {
-        $updated = $updated.TrimEnd() + "`nsignature: $signatureB64`n"
+        if ($updated -match '(?m)^signature\s*:') {
+            $updated = $updated -replace '(?m)(^signature\s*:\s*)[^\r\n]*', "`${1}$signatureB64"
+        } else {
+            $updated = $updated.TrimEnd() + "`nsignature: $signatureB64`n"
+        }
     }
 
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($ManifestPath, $updated, $utf8NoBom)
 }
 
-# 为 runner wheel + server.py 构造并签出 latest-runner.yml（path 相对 manifest 目录）。
+# 为 Runner wheel 构造并签出 latest-runner.yml（path 相对 manifest 目录）。
 function New-RunnerManifest {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Version,
         [Parameter(Mandatory)][string]$WheelPath,
-        [Parameter(Mandatory)][string]$ServerPyPath,
         [Parameter(Mandatory)][string]$OutDir,
         [Parameter(Mandatory)][string]$KeyPath
     )
 
+    $ErrorActionPreference = 'Stop'
     if (-not (Test-Path $WheelPath)) {
         throw "Wheel not found: $WheelPath"
     }
-    if (-not (Test-Path $ServerPyPath)) {
-        throw "server.py not found: $ServerPyPath"
-    }
-
     $wheelName = Split-Path -Leaf $WheelPath
-    $serverPyName = Split-Path -Leaf $ServerPyPath
+    if (-not $wheelName.StartsWith("spirit_agent-$Version-") -or -not $wheelName.EndsWith('.whl')) {
+        throw "Runner wheel $wheelName does not match version $Version"
+    }
 
     # 清单中的 path 相对 manifest 所在目录；manifest 写在 staging 根，path 为 runner/<wheel>。
     $wheelRel = "runner/$wheelName"
-    $serverPyRel = "runner/$serverPyName"
 
     $stagedWheel = Join-Path $OutDir $wheelRel
-    $stagedServer = Join-Path $OutDir $serverPyRel
     New-Item -ItemType Directory -Path (Split-Path $stagedWheel -Parent) -Force | Out-Null
     if (-not (Test-Path $stagedWheel)) {
         Copy-Item $WheelPath $stagedWheel -Force
     }
-    if (-not (Test-Path $stagedServer)) {
-        Copy-Item $ServerPyPath $stagedServer -Force
-    }
-
     $wheelSha = (Get-FileHash $stagedWheel -Algorithm SHA512).Hash.ToUpper()
     $wheelSize = (Get-Item $stagedWheel).Length
-    $serverPySha256 = (Get-FileHash $stagedServer -Algorithm SHA256).Hash.ToLower()
 
     $manifest = [ordered]@{
         version      = $Version
@@ -168,13 +168,6 @@ function New-RunnerManifest {
         size         = $wheelSize
         signature    = ''
         files        = @(@{ url = $wheelRel; sha512 = $wheelSha; size = $wheelSize })
-        runner       = [ordered]@{
-            version          = $Version
-            wheel_filename   = $wheelRel
-            wheel_sha512     = $wheelSha
-            wheel_size       = $wheelSize
-            server_py_sha256 = $serverPySha256
-        }
     }
 
     $manifestPath = Join-Path $OutDir 'latest-runner.yml'
@@ -186,25 +179,22 @@ function New-RunnerManifest {
     return $manifestPath
 }
 
-# 构造自更新 zip：桌面产物 + runner wheel + server.py 一次覆盖两侧；技能随桌面包交付、由 Client 同步到 Home。
+# 构造自更新 zip：桌面产物与 Runner wheel；技能随桌面包交付、由 Client 同步到 Home。
 function Build-UpdateZip {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Version,
         [Parameter(Mandatory)][string]$DesktopReleaseDir,
         [Parameter(Mandatory)][string]$RunnerWheelPath,
-        [Parameter(Mandatory)][string]$ServerPyPath,
         [Parameter(Mandatory)][string]$OutputDir
     )
 
+    $ErrorActionPreference = 'Stop'
     if (-not (Test-Path $DesktopReleaseDir)) {
         throw "Desktop release dir not found: $DesktopReleaseDir — run `pnpm dist` first."
     }
     if (-not (Test-Path $RunnerWheelPath)) {
         throw "Runner wheel not found: $RunnerWheelPath"
-    }
-    if (-not (Test-Path $ServerPyPath)) {
-        throw "server.py not found: $ServerPyPath"
     }
 
     Write-Output "==> Building update zip for $Version"
@@ -227,7 +217,6 @@ function Build-UpdateZip {
         $runnerStage = Join-Path $stageDir 'runner'
         New-Item -ItemType Directory -Path $runnerStage -Force | Out-Null
         Copy-Item -Force $RunnerWheelPath (Join-Path $runnerStage (Split-Path -Leaf $RunnerWheelPath))
-        Copy-Item -Force $ServerPyPath (Join-Path $runnerStage 'server.py')
 
         $keyPath = Resolve-UpdateSigningKey
 
@@ -241,11 +230,10 @@ function Build-UpdateZip {
             Sign-Manifest -ManifestPath $manifestPath -KeyPath $keyPath
         }
 
-        # latest-runner.yml：桌面端重启前拉取并校验 wheel + server.py。
+        # latest-runner.yml：桌面端重启前拉取并校验 wheel。
         New-RunnerManifest `
             -Version $Version `
             -WheelPath (Join-Path $runnerStage (Split-Path -Leaf $RunnerWheelPath)) `
-            -ServerPyPath (Join-Path $runnerStage 'server.py') `
             -OutDir $stageDir `
             -KeyPath $keyPath | Out-Null
 
@@ -255,7 +243,6 @@ function Build-UpdateZip {
             version        = $Version
             desktop_path   = if ($desktopExe) { $desktopExe.Name } else { $null }
             runner_wheel   = "runner/$(Split-Path -Leaf $RunnerWheelPath)"
-            server_py      = 'runner/server.py'
             manifests      = @('latest.yml', 'latest-mac.yml', 'latest-runner.yml')
         }
         ($manifest | ConvertTo-Json -Depth 5) | Set-Content -Path (Join-Path $stageDir 'manifest.json') -NoNewline

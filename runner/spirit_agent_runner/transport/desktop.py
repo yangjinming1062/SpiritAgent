@@ -1,0 +1,516 @@
+"""Runner↔Desktop 的 OS IPC 传输层；字节流搬运 sans-I/O websockets.ClientProtocol。"""
+
+import asyncio
+import contextlib
+import ctypes
+import json
+import logging
+import threading
+import time
+from dataclasses import dataclass
+from types import TracebackType
+from typing import Protocol
+
+from websockets.client import ClientProtocol
+from websockets.frames import OP_BINARY, OP_CONT, OP_TEXT, Frame
+from websockets.protocol import SEND_EOF, State
+from websockets.uri import parse_uri
+
+from spirit_agent_runner.infrastructure.constants import IS_WINDOWS, get_spiritagent_home
+from spirit_agent_runner.infrastructure.pid import PidState, pid_state
+
+logger = logging.getLogger("spiritagent_runner.transport")
+
+_EXPECTED_TRANSPORT = "pipe" if IS_WINDOWS else "unix"
+
+HANDSHAKE_AUTH_HEADER = "X-SpiritAgent-Auth"
+
+# 入站上限，默认 1 MiB 不够大参数。
+MAX_MESSAGE_BYTES = 16 * 1024 * 1024
+
+# 本机用固定虚拟 URI 即可。
+_DUMMY_URI = "ws://spiritagent/rpc"
+
+_READ_CHUNK = 65536
+
+_WIN_ERROR_FILE_NOT_FOUND = 2
+_WIN_ERROR_PIPE_BUSY = 231
+_WIN_ERROR_IO_PENDING = 997
+_PIPE_CONNECT_TIMEOUT_S = 2.0
+
+if IS_WINDOWS:
+    from ctypes import wintypes
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.CreateFileW.argtypes = [
+        ctypes.c_wchar_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    ]
+    _kernel32.CreateFileW.restype = ctypes.c_void_p
+    _kernel32.WaitNamedPipeW.argtypes = [ctypes.c_wchar_p, wintypes.DWORD]
+    _kernel32.WaitNamedPipeW.restype = wintypes.BOOL
+    _kernel32.ReadFile.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    _kernel32.ReadFile.restype = wintypes.BOOL
+    _kernel32.WriteFile.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    _kernel32.WriteFile.restype = wintypes.BOOL
+    _kernel32.GetOverlappedResult.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.BOOL,
+    ]
+    _kernel32.GetOverlappedResult.restype = wintypes.BOOL
+    _kernel32.CreateEventW.argtypes = [
+        ctypes.c_void_p,
+        wintypes.BOOL,
+        wintypes.BOOL,
+        ctypes.c_wchar_p,
+    ]
+    _kernel32.CreateEventW.restype = ctypes.c_void_p
+    _kernel32.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    _kernel32.CancelIoEx.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+
+    _INVALID_HANDLE = ctypes.c_void_p(-1).value
+
+    class _OVERLAPPED(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    _GENERIC_READ_WRITE = 0xC0000000
+    _OPEN_EXISTING = 3
+    _FILE_FLAG_OVERLAPPED = 0x40000000
+
+
+@dataclass(frozen=True)
+class DesktopEndpoint:
+    """已解析的 Desktop 连接端点（来自启动参数或端点文件）。"""
+
+    path: str
+    token: str
+
+
+def read_endpoint() -> DesktopEndpoint | None:
+    """读取 ``$SPIRITAGENT_HOME/desktop-endpoint.json`` 为 DesktopEndpoint；缺失/格式错误/进程已退出时返回 ``None``。"""
+    try:
+        endpoint_path = get_spiritagent_home() / "desktop-endpoint.json"
+        if not endpoint_path.exists():
+            return None
+        raw = endpoint_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None
+        path = data.get("path")
+        token = data.get("token")
+        pid = data.get("pid")
+        if data.get("transport") != _EXPECTED_TRANSPORT:
+            return None
+        if not isinstance(path, str) or not path:
+            return None
+        if not isinstance(token, str) or not token:
+            return None
+        if isinstance(pid, int) and pid > 0 and pid_state(pid) is PidState.NOT_FOUND:
+            return None
+        return DesktopEndpoint(path=path, token=token)
+    except (ValueError, OSError) as exc:
+        logger.warning("read_endpoint encountered %s: %s", type(exc).__name__, exc)
+        return None
+    except Exception as exc:
+        logger.warning("read_endpoint unexpected failure: %s", exc)
+        return None
+
+
+class _Stream(Protocol):
+    """两种平台传输共用的双工字节流接口。"""
+
+    async def read(self, n: int = _READ_CHUNK) -> bytes: ...
+
+    async def write(self, data: bytes) -> None: ...
+
+    async def close(self) -> None: ...
+
+
+if IS_WINDOWS:
+
+    def _connect_pipe_handle(
+        path: str,
+        *,
+        timeout_s: float = _PIPE_CONNECT_TIMEOUT_S,
+    ) -> int:
+        """打开带重叠 IO 的管道客户端句柄，对连接竞争做有限重试。"""
+        deadline = time.monotonic() + timeout_s
+        last_error: int | None = None
+        while time.monotonic() < deadline:
+            handle = _kernel32.CreateFileW(
+                path,
+                _GENERIC_READ_WRITE,
+                0,
+                None,
+                _OPEN_EXISTING,
+                _FILE_FLAG_OVERLAPPED,
+                None,
+            )
+            if handle and handle != _INVALID_HANDLE:
+                return handle
+            last_error = ctypes.get_last_error()
+            if last_error == _WIN_ERROR_PIPE_BUSY:
+                _kernel32.WaitNamedPipeW(path, 500)
+            elif last_error == _WIN_ERROR_FILE_NOT_FOUND:
+                time.sleep(0.05)
+            else:
+                raise OSError(last_error, f"CreateFileW({path!r}) failed")
+        last_error = last_error if last_error is not None else _WIN_ERROR_FILE_NOT_FOUND
+        raise TimeoutError(
+            f"named pipe {path!r} not connectable within {timeout_s}s (winerror {last_error})",
+        )
+
+    class _PipeStream:
+        """基于重叠 IO 命名管道句柄的双工流。"""
+
+        def __init__(self, handle: int) -> None:
+            self._handle = handle
+            self._loop = asyncio.get_running_loop()
+            self._reader = asyncio.StreamReader(limit=MAX_MESSAGE_BYTES)
+            self._write_lock = asyncio.Lock()
+            self._closed = False
+            self._thread: threading.Thread | None = None
+
+        async def start(self) -> None:
+            self._thread = threading.Thread(
+                target=self._read_pump,
+                name="desktop-pipe-reader",
+                daemon=True,
+            )
+            self._thread.start()
+
+        def _read_once(self) -> bytes | None:
+            """执行一次重叠读；EOF、取消或管道断开时返回 ``None``。"""
+            buf = ctypes.create_string_buffer(_READ_CHUNK)
+            count = wintypes.DWORD(0)
+            overlapped = _OVERLAPPED()
+            overlapped.hEvent = _kernel32.CreateEventW(None, True, False, None)
+            if not overlapped.hEvent:
+                return None
+            try:
+                ok = _kernel32.ReadFile(
+                    self._handle,
+                    buf,
+                    _READ_CHUNK,
+                    ctypes.byref(count),
+                    ctypes.byref(overlapped),
+                )
+                if not ok:
+                    if ctypes.get_last_error() != _WIN_ERROR_IO_PENDING:
+                        return None
+                    ok = _kernel32.GetOverlappedResult(
+                        self._handle,
+                        ctypes.byref(overlapped),
+                        ctypes.byref(count),
+                        True,
+                    )
+                    if not ok:
+                        return None
+                return buf.raw[: count.value]
+            finally:
+                _kernel32.CloseHandle(overlapped.hEvent)
+
+        def _read_pump(self) -> None:
+            loop = self._loop
+            reader = self._reader
+            try:
+                while True:
+                    chunk = self._read_once()
+                    if not chunk:
+                        break
+                    loop.call_soon_threadsafe(reader.feed_data, chunk)
+            finally:
+                # feed_eof 唤醒阻塞 pump。
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(reader.feed_eof)
+
+        async def read(self, n: int = _READ_CHUNK) -> bytes:
+            return await self._reader.read(n)
+
+        async def write(self, data: bytes) -> None:
+            async with self._write_lock:
+                # 取锁期间句柄可能已关，须显式检查。
+                if self._closed:
+                    raise ConnectionError("desktop pipe is closed")
+                await self._loop.run_in_executor(None, self._write_all, data)
+
+        def _write_all(self, data: bytes) -> None:
+            buf = ctypes.create_string_buffer(data, len(data))
+            count = wintypes.DWORD(0)
+            overlapped = _OVERLAPPED()
+            overlapped.hEvent = _kernel32.CreateEventW(None, True, False, None)
+            if not overlapped.hEvent:
+                raise OSError("CreateEventW failed for pipe write")
+            try:
+                ok = _kernel32.WriteFile(
+                    self._handle,
+                    buf,
+                    len(data),
+                    ctypes.byref(count),
+                    ctypes.byref(overlapped),
+                )
+                if not ok:
+                    error = ctypes.get_last_error()
+                    if error != _WIN_ERROR_IO_PENDING:
+                        raise OSError(error, "WriteFile to desktop pipe failed")
+                    if not _kernel32.GetOverlappedResult(
+                        self._handle,
+                        ctypes.byref(overlapped),
+                        ctypes.byref(count),
+                        True,
+                    ):
+                        raise OSError(
+                            ctypes.get_last_error(),
+                            "GetOverlappedResult for pipe write failed",
+                        )
+            finally:
+                _kernel32.CloseHandle(overlapped.hEvent)
+
+        async def close(self) -> None:
+            if self._closed:
+                return
+            self._closed = True  # 先置位：让排队等锁的写协程快速失败
+            # 取消重叠操作，GetOverlappedResult 报 ABORTED。
+            _kernel32.CancelIoEx(self._handle, None)
+            thread = self._thread
+            if thread is not None and thread is not threading.current_thread():
+                # join 放 executor；daemon 兜底。
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        self._loop.run_in_executor(None, thread.join, 2.0),
+                        2.5,
+                    )
+            async with self._write_lock:  # 等待 in-flight executor 写入完成
+                _kernel32.CloseHandle(self._handle)
+
+else:
+
+    class _UnixStream:
+        """把 macOS UDS 流包装为与 ``_PipeStream`` 同形接口的适配器。"""
+
+        def __init__(
+            self,
+            reader: asyncio.StreamReader,
+            writer: asyncio.StreamWriter,
+        ) -> None:
+            self._reader = reader
+            self._writer = writer
+            self._closed = False
+
+        async def read(self, n: int = _READ_CHUNK) -> bytes:
+            return await self._reader.read(n)
+
+        async def write(self, data: bytes) -> None:
+            if self._closed:
+                raise ConnectionError("desktop socket is closed")
+            self._writer.write(data)
+            await self._writer.drain()
+
+        async def close(self) -> None:
+            if self._closed:
+                return
+            self._closed = True
+            writer = self._writer
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+
+async def _open_stream(path: str) -> _Stream:
+    if IS_WINDOWS:
+        # 连接循环放线程，避免阻塞事件循环。
+        handle = await asyncio.to_thread(_connect_pipe_handle, path)
+        stream = _PipeStream(handle)
+        await stream.start()
+        return stream
+    reader, writer = await asyncio.open_unix_connection(path)
+    return _UnixStream(reader, writer)
+
+
+class DesktopConnection:
+    """OS IPC 上的 WebSocket 客户端。每次 receive_data/发送后必须 drain data_to_send()；EOF 必须 receive_eof()。"""
+
+    def __init__(self, stream: _Stream, token: str) -> None:
+        self._stream = stream
+        self._protocol = ClientProtocol(
+            parse_uri(_DUMMY_URI),
+            max_size=MAX_MESSAGE_BYTES,
+        )
+        self._token = token
+        self._messages: asyncio.Queue[str | None] = asyncio.Queue()
+        self._recv_task: asyncio.Task[None] | None = None
+        self._fragments: list[bytes] = []
+        self._message_opcode: int | None = None
+
+    async def _drain(self) -> None:
+        """把协议排队中需要发出的数据（帧、Pong、Close ACK）全部写出。"""
+        for data in self._protocol.data_to_send():
+            if data == SEND_EOF:
+                # 管道/UDS 不能半关闭，外层 close 兜底。
+                continue
+            await self._stream.write(data)
+
+    async def _handshake(self) -> None:
+        request = self._protocol.connect()
+        request.headers[HANDSHAKE_AUTH_HEADER] = self._token
+        self._protocol.send_request(request)
+        await self._drain()
+        while self._protocol.state is State.CONNECTING:
+            if chunk := await self._stream.read():
+                self._protocol.receive_data(chunk)
+            else:
+                # 被拒升级响应要到 EOF 才完整。
+                self._protocol.receive_eof()
+            if (exc := self._protocol.handshake_exc) is not None:
+                # 非 101：丢缓存端点重读文件。
+                raise exc
+            # 101 后管线化帧须全部处理。
+            for event in self._protocol.events_received():
+                if isinstance(event, Frame):
+                    self._handle_frame(event)
+            await self._drain()
+            if not chunk and self._protocol.state is State.CONNECTING:
+                raise ConnectionError("Desktop closed the IPC stream during handshake")
+        self._recv_task = asyncio.create_task(self._pump(), name="desktop-ipc-recv")
+
+    async def _pump(self) -> None:
+        """把字节流喂给协议，再把组装完成的消息推到队列。"""
+        try:
+            while True:
+                chunk = await self._stream.read()
+                if not chunk:
+                    self._protocol.receive_eof()
+                    await self._drain()
+                    break
+                self._protocol.receive_data(chunk)
+                await self._drain()
+                for event in self._protocol.events_received():
+                    if isinstance(event, Frame):
+                        self._handle_frame(event)
+                await self._drain()
+                if self._protocol.state is State.CLOSED:
+                    break
+        except (ConnectionError, OSError):
+            pass
+        except Exception as exc:
+            # 协议错误按传输失败；哨兵唤醒等待者。
+            logger.warning("desktop IPC pump terminated: %s", exc)
+        finally:
+            self._messages.put_nowait(None)
+
+    def _handle_frame(self, event: Frame) -> None:
+        # 分片顺序由协议校验；控制帧已 drain。
+        if event.opcode is OP_TEXT or event.opcode is OP_BINARY:
+            self._message_opcode = event.opcode
+            self._fragments = [event.data]
+        elif event.opcode is OP_CONT and self._message_opcode is not None:
+            self._fragments.append(event.data)
+        else:
+            return
+        if event.fin and self._message_opcode is not None:
+            self._emit(self._message_opcode, b"".join(self._fragments))
+            self._fragments = []
+            self._message_opcode = None
+
+    def _emit(self, opcode: int, data: bytes) -> None:
+        if opcode is OP_TEXT:
+            self._messages.put_nowait(data.decode("utf-8"))
+        else:
+            # 二进制也尝试解码，避免静默丢弃。
+            self._messages.put_nowait(data.decode("utf-8", errors="replace"))
+
+    async def send(self, message: str) -> None:
+        state = self._protocol.state
+        if state is State.OPEN:
+            self._protocol.send_text(message.encode("utf-8"))
+            await self._drain()
+        elif state is State.CLOSED:
+            raise self._protocol.close_exc
+        else:
+            raise ConnectionError("Desktop connection is closing")
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        if self._protocol.state is State.OPEN:
+            self._protocol.send_close(code, reason)
+            with contextlib.suppress(Exception):
+                await self._drain()
+        task = self._recv_task
+        if task is not None and not task.done():
+            # 留 2s 等 Close ACK；stream.close 兜底。
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task), 2.0)
+        await self._stream.close()
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(task, 1.0)
+        elif task is None:
+            # 握手未完成也放哨兵。
+            self._messages.put_nowait(None)
+
+    def __aiter__(self) -> "DesktopConnection":
+        return self
+
+    async def __anext__(self) -> str:
+        # 关闭后仍排空，防丢帧。
+        if self._protocol.state is State.CLOSED and self._messages.empty():
+            raise StopAsyncIteration
+        item = await self._messages.get()
+        if item is None:
+            raise StopAsyncIteration
+        return item
+
+    async def __aenter__(self) -> "DesktopConnection":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self.close()
+
+
+async def connect_desktop(
+    endpoint: DesktopEndpoint,
+    *,
+    open_timeout_s: float = 8.0,
+) -> DesktopConnection:
+    """连接 Desktop 端 IPC 端点并完成握手鉴权。"""
+    stream = await _open_stream(endpoint.path)
+    try:
+        connection = DesktopConnection(stream, token=endpoint.token)
+        await asyncio.wait_for(connection._handshake(), open_timeout_s)
+    except BaseException:
+        with contextlib.suppress(Exception):
+            await stream.close()
+        raise
+    return connection

@@ -139,7 +139,7 @@ mod tests {
     fn payload_zip_parses() {
         let cursor = std::io::Cursor::new(PAYLOAD_ZIP);
         let mut archive = zip::ZipArchive::new(cursor).expect("zip should parse");
-        // 至少要有 install.ps1 + install.sh + runner/server.py + client/*.exe
+        // 安装脚本与包含入口的 Runner wheel 必须同时随载荷交付。
         let names: Vec<String> = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().name().to_string())
             .collect();
@@ -152,8 +152,10 @@ mod tests {
             "expected install.sh in payload zip"
         );
         assert!(
-            names.iter().any(|n| n.ends_with("server.py")),
-            "expected runner/server.py in payload zip"
+            names
+                .iter()
+                .any(|n| n.contains("runner/spirit_agent-") && n.ends_with(".whl")),
+            "expected runner wheel in payload zip"
         );
     }
 }

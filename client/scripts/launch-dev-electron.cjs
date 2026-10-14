@@ -24,7 +24,10 @@ const venvPython =
 if (!process.env.SPIRITAGENT_DESKTOP_PYTHON && fs.existsSync(venvPython)) {
   process.env.SPIRITAGENT_DESKTOP_PYTHON = venvPython
 }
-if (!process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT && fs.existsSync(path.join(repoRoot, 'runner', 'server.py'))) {
+if (
+  !process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT &&
+  fs.existsSync(path.join(repoRoot, 'runner', 'spirit_agent_runner', '__main__.py'))
+) {
   process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT = repoRoot
 }
 

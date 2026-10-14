@@ -104,7 +104,7 @@ def _select_runner_wheel(dist_dir: Path, version: str) -> Path:
 
 
 def stage_payload(repo_root: Path | None = None, target: str | None = None) -> None:
-    """暂存 payload 至 installer/payload/ (runner wheel, server.py, skills, install 脚本)。"""
+    """暂存 payload 至 installer/payload/（Runner wheel、技能与安装脚本）。"""
     root = repo_root or get_repo_root()
     print("==> [build_helpers] Staging payload in installer/payload/")
 
@@ -124,20 +124,13 @@ def stage_payload(repo_root: Path | None = None, target: str | None = None) -> N
     wheel = _select_runner_wheel(dist_dir, version)
     shutil.copy2(wheel, payload_runner / wheel.name)
 
-    server_py = root / "runner" / "server.py"
-    if not server_py.is_file():
-        raise FileNotFoundError(f"runner/server.py not found: {server_py}")
-    shutil.copy2(server_py, payload_runner / "server.py")
-
-    # 发布门禁：入包 wheel 必须满足同包 server.py 的本地导入。
+    # 对实际交付的 wheel 隔离安装，验证包内入口、依赖和静态工具定义。
     subprocess.run(
         [
             sys.executable,
-            str(root / "scripts" / "check_runner_facade.py"),
+            str(root / "scripts" / "check_runner_package.py"),
             "--wheel",
             str(payload_runner / wheel.name),
-            "--server-py",
-            str(server_py),
         ],
         check=True,
         cwd=root,

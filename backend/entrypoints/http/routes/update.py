@@ -39,7 +39,7 @@ async def get_latest_mac_yml(db: DbSession) -> ReleaseManifestResponse:
 
 @router.get("/latest-runner.yml", response_class=FileResponse)
 async def get_latest_runner_yml(db: DbSession) -> FileResponse:
-    """提供 Build-UpdateZip 写入的签名 runner manifest：desktop 主进程在重启前读取它、本地暂存 wheel + server.py，校验通过后才允许点 "Restart"；下次启动由新 Electron 跑 installPending 执行 pip install --upgrade 并覆盖 server.py。"""
+    """原样下发构建时签名的 Runner wheel 清单。"""
     try:
         result = await updates.get_latest_runner_yml(db=db)
     except RequestError as exc:

@@ -51,14 +51,14 @@ function Escape-JsonString([string]$s) {
 
 function Emit-StageOk([string]$stage, [bool]$skipped = $false, [string]$reason = "") {
     if ($skipped -and $reason) {
-        Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"$stage`", `"skipped`": true, `"reason`": `"" + (Escape-JsonString $reason) + "`"}"
+        Write-Output ("__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"$stage`", `"skipped`": true, `"reason`": `"" + (Escape-JsonString $reason) + "`"}")
     } else {
         Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"$stage`"}"
     }
 }
 
 function Emit-StageErr([string]$stage, [string]$reason) {
-    Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": false, `"stage`": `"$stage`", `"reason`": `"" + (Escape-JsonString $reason) + "`"}"
+    Write-Output ("__SPIRITAGENT_STAGE_RESULT__:{`"ok`": false, `"stage`": `"$stage`", `"reason`": `"" + (Escape-JsonString $reason) + "`"}")
 }
 
 function Install-Uv {
@@ -225,18 +225,15 @@ function Stage-UnpackRunner {
         return 1
     }
 
-    $wheel = Get-ChildItem -Path $BundledRunnerDir -Filter $RunnerWheelGlob -File -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $wheel) {
-        Emit-StageErr "unpack-runner" "wheel not found in $BundledRunnerDir"
+    $wheels = @(Get-ChildItem -Path $BundledRunnerDir -Filter $RunnerWheelGlob -File -ErrorAction SilentlyContinue)
+    if ($wheels.Count -ne 1) {
+        Emit-StageErr "unpack-runner" "expected one runner wheel in $BundledRunnerDir, found $($wheels.Count)"
         return 1
     }
+    $wheel = $wheels[0]
 
     $runnerDir = Join-Path $SpiritAgentHome "runner"
     if (-not (Test-Path $runnerDir)) { New-Item -ItemType Directory -Force -Path $runnerDir | Out-Null }
-
-    # server.py 与 wheel 同级（不进入 wheel）
-    $serverSrc = Join-Path $BundledRunnerDir "server.py"
-    if (Test-Path $serverSrc) { Copy-Item -Force $serverSrc (Join-Path $runnerDir "server.py") }
 
     # 创建 venv（依赖 install-python 完成）
     $venvDir = Join-Path $runnerDir ".venv"
@@ -259,7 +256,11 @@ function Stage-UnpackRunner {
         }
     }
 
-    # 构建链已跑 check_runner_facade.py，安装后不做烟测
+    $checkOutput = & $pythonExe -I -m spirit_agent_runner --check 2>&1
+    if ($LASTEXITCODE) {
+        $ErrorActionPreference = $prevEAP; Emit-StageErr "unpack-runner" "runner health check failed: $($checkOutput -join ' | ')"; return 1
+    }
+    $ErrorActionPreference = $prevEAP
 
     # onboarding 音频：语言子目录 1:1 映射至 audio/onboarding/<lang>/
     $audioCount = 0

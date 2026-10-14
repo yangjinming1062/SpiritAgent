@@ -12,7 +12,7 @@ Tauri 安装器负责首次安装、运行时释放与环境修复；macOS 还�
 
 ## 资源与路径
 
-安装器携带脚本、桌面安装包、Runner wheel 与 `server.py`、技能和引导音频。uv、Python、Runner 的第三方依赖及可选 OfficeCLI 仍可能需要联网下载；载荷齐全不等于离线可安装。
+安装器携带脚本、桌面安装包、包含入口的 Runner wheel、技能和引导音频。uv、Python、Runner 的第三方依赖及可选 OfficeCLI 仍可能需要联网下载；载荷齐全不等于离线可安装。
 
 脚本依次从 `SPIRITAGENT_SETUP_DEV_REPO_ROOT` 指定仓库的 `installer/`、Tauri resources、内嵌 ZIP 查找；载荷只取后两处。内嵌 ZIP 解压到 `$SPIRITAGENT_HOME/bootstrap-payload/payload/`，供 Windows 单 EXE 使用。开发时指定仓库根只替换脚本，不会替开发者准备载荷。
 
@@ -29,7 +29,7 @@ Home 默认位于 Windows `%LOCALAPPDATA%\SpiritAgent` 或 macOS `~/Library/Appl
 
 ## 安装与修复
 
-仅 macOS 在未指定 `--repair` / `--reinstall` 时尝试快路径：完成标记、桌面二进制与 Runner 依赖均健康时，直接打开已安装的桌面端并退出；进程启动失败回到安装 UI。健康探针须与 [Client 更新器](../client/main/runner/updater.ts) 同步。Windows 从桌面快捷方式启动应用，不走此快路径。
+仅 macOS 在未指定 `--repair` / `--reinstall` 时尝试快路径：完成标记、桌面二进制与 Runner 包内 `python -I -m spirit_agent_runner --check` 均健康时，直接打开已安装的桌面端并退出；健康检查超过 30 秒或进程启动失败回到安装 UI。健康入口与 [Client 更新器](../client/main/runner/updater.ts) 共用。Windows 从桌面快捷方式启动应用，不走此快路径。
 
 安装顺序为 `welcome → install-python → unpack-runner → unpack-desktop → install-skills → finalize`，由两端脚本的 manifest 定义。每阶段独立进程，不继承脚本变量；Runner 使用 uv 管理的 Python 和独立 venv，优先查找 3.13、再查 3.14，无现成运行时则安装 3.13。只有 finalize 写完成标记。
 
@@ -54,4 +54,4 @@ Home 默认位于 Windows `%LOCALAPPDATA%\SpiritAgent` 或 macOS `~/Library/Appl
 
 ## 契约与验证
 
-载荷版本与导入面由构建门禁校验。安装改动在目标平台分别验证首装、修复、macOS 快路径、取消与失败重试，并检查真实内嵌文件、路径和 BOM；签名、启动及进程树终止需要实机验证。
+构建门禁隔离安装实际载荷 wheel，检查入口、版本与静态工具定义；安装后再次运行包内健康检查，失败不进入后续阶段。安装改动在目标平台分别验证首装、修复、macOS 快路径、取消与失败重试，并检查真实内嵌文件、路径和 BOM；签名、启动及进程树终止需要实机验证。

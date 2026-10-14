@@ -227,19 +227,14 @@ stage_unpack_runner() {
 
   local wheel
   wheel=("$BUNDLED_RUNNER_DIR"/$RUNNER_WHEEL_GLOB)
-  if [[ ${#wheel[@]} -eq 0 || ! -f "${wheel[0]}" ]]; then
-    emit_stage_err unpack-runner "wheel not found in $BUNDLED_RUNNER_DIR"
+  if [[ ${#wheel[@]} -ne 1 || ! -f "${wheel[0]}" ]]; then
+    emit_stage_err unpack-runner "expected one runner wheel in $BUNDLED_RUNNER_DIR"
     return 1
   fi
   wheel="${wheel[0]}"
 
   local runner_dir="$SPIRITAGENT_HOME_RESOLVED/runner"
   mkdir -p "$runner_dir"
-
-  # 拷贝 server.py 与 wheel 同级
-  if [[ -f "$BUNDLED_RUNNER_DIR/server.py" ]]; then
-    cp -f "$BUNDLED_RUNNER_DIR/server.py" "$runner_dir/server.py"
-  fi
 
   # --clear 重建 venv，缺省遇已存在目录会报错并留下损坏环境
   "$UV_CMD" venv "$runner_dir/.venv" --python "$PYTHON_VERSION" --clear 2>/dev/null || {
@@ -258,7 +253,12 @@ stage_unpack_runner() {
     fi
   fi
 
-  # 构建链已跑 check_runner_facade.py，安装后不做烟测；onboarding 音频按语言子目录映射至 audio/onboarding/<lang>/
+  if ! "$runner_dir/.venv/bin/python" -I -m spirit_agent_runner --check; then
+    emit_stage_err unpack-runner "runner health check failed"
+    return 1
+  fi
+
+  # onboarding 音频按语言子目录映射至 audio/onboarding/<lang>/
   local audio_count=0
   if [[ -n "$BUNDLED_ONBOARDING_AUDIO_DIR" && -d "$BUNDLED_ONBOARDING_AUDIO_DIR" ]]; then
     for lang_dir in "$BUNDLED_ONBOARDING_AUDIO_DIR"/*/; do

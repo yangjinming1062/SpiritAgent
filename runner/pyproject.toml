@@ -33,11 +33,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["debugpy==1.8.20", "ruff==0.15.10"]
 
-[tool.setuptools]
-py-modules = ["runner_version"]
-
 [tool.setuptools.packages.find]
-include = ["envs", "envs.*", "tools", "tools.*", "utils", "utils.*"]
+include = ["spirit_agent_runner", "spirit_agent_runner.*"]
 
 [tool.ty.environment]
 python-version = "3.13"

@@ -30,7 +30,7 @@ pub type CancelRx = mpsc::Receiver<()>;
 /// bundle.resources 布局派生的可选上下文，经 `SPIRITAGENT_BUNDLED_*` 下发给子脚本。
 #[derive(Debug, Clone, Default)]
 pub struct BundleContext {
-    /// runner wheel 与 `server.py`。
+    /// Runner wheel。
     pub bundled_runner_dir: Option<std::path::PathBuf>,
     /// 桌面安装器（dmg / nsis）。
     pub bundled_desktop_dir: Option<std::path::PathBuf>,

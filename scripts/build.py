@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -47,7 +48,7 @@ def check_required_tools(tools: list[str]) -> None:
 
 
 def build_runner(repo_root: Path) -> None:
-    print("==> Building runner (uv build wheel → dist/spiritagent-agent-*.whl)")
+    print("==> Building runner (uv build wheel → dist/spirit_agent-*.whl)")
     runner_dir = repo_root / "runner"
     run_cmd(["uv", "sync", "--frozen", "--extra", "dev"], cwd=runner_dir)
     # 项目规范不提交测试代码（RULES.md「代码验证规范」）；tests/ 仅在本地临时存在时才跑。
@@ -60,9 +61,17 @@ def build_runner(repo_root: Path) -> None:
             ) from exc
     else:
         print("==> No runner tests/ directory — skipping pytest (project ships no test code)")
-    run_cmd(["uv", "build", "--wheel", "--out-dir", "dist"], cwd=runner_dir)
-    # 发布质量门：wheel 必须满足 server.py 本地导入；不一致直接失败，不在安装期回滚。
-    run_cmd([sys.executable, str(repo_root / "scripts" / "check_runner_facade.py")], cwd=repo_root)
+    # setuptools 会复用 build/lib；从新鲜源码副本构建，避免旧目录迁移产物混入 wheel。
+    with tempfile.TemporaryDirectory(prefix="spiritagent-runner-build-") as tmp:
+        source = Path(tmp)
+        shutil.copy2(runner_dir / "pyproject.toml", source / "pyproject.toml")
+        shutil.copytree(
+            runner_dir / "spirit_agent_runner",
+            source / "spirit_agent_runner",
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        run_cmd(["uv", "build", "--wheel", "--out-dir", str(runner_dir / "dist")], cwd=source)
+    # 隔离安装门禁由 stage_payload 对实际入包的 wheel 执行。
 
 
 def build_desktop(repo_root: Path, target: str) -> None:
@@ -231,11 +240,10 @@ def main() -> int:
         shutil.copy2(exe_file, output_dir / final_name)
         print(f"\n==> Final installer: {output_dir / final_name}")
 
-        # Windows 自更新 zip：桌面产物 + runner wheel + server.py；签名缺失或失败即中止构建。
+        # Windows 自更新 zip：桌面产物与 Runner wheel；签名缺失或失败即中止构建。
         update_lib = SCRIPT_DIR / "lib" / "UpdateManifest.ps1"
         runner_payload = repo_root / "installer" / "payload" / "runner"
         wheels = sorted(runner_payload.glob("*.whl"))
-        server_py = runner_payload / "server.py"
         ps_bin = shutil.which("pwsh") or shutil.which("powershell")
 
         if not update_lib.is_file():
@@ -246,8 +254,6 @@ def main() -> int:
             raise RuntimeError(f"expected exactly one staged runner wheel in {runner_payload}, found {len(wheels)}")
         if f"-{args.version}-" not in wheels[0].name:
             raise RuntimeError(f"staged runner wheel {wheels[0].name} does not match release version {args.version}")
-        if not server_py.is_file():
-            raise RuntimeError(f"missing {server_py}")
 
         print("==> Building update zip via PowerShell...")
         client_release = repo_root / "client" / "release"
@@ -258,7 +264,7 @@ def main() -> int:
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                f"& {{ . '{update_lib}'; Build-UpdateZip -Version '{args.version}' -DesktopReleaseDir '{client_release}' -RunnerWheelPath '{wheels[0]}' -ServerPyPath '{server_py}' -OutputDir '{output_dir}' }}",
+                f"& {{ . '{update_lib}'; Build-UpdateZip -Version '{args.version}' -DesktopReleaseDir '{client_release}' -RunnerWheelPath '{wheels[0]}' -OutputDir '{output_dir}' }}",
             ],
             cwd=repo_root,
         )

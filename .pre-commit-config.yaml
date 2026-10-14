@@ -37,6 +37,12 @@ repos:
         language: system
         types: [python]
         files: ^(backend|runner)/
+      - id: check-runner-architecture
+        name: check Runner dependencies and resource ownership
+        entry: python scripts/check_runner_architecture.py
+        language: system
+        files: ^(runner/|scripts/check_runner_architecture\.py$)
+        pass_filenames: false
       - id: check-forbidden-comments
         name: check forbidden issue tags in code comments
         entry: '(?i)#\s*.*(P[0-9]+-[0-9]+|M-[0-9]+)'

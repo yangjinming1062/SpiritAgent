@@ -1,0 +1,198 @@
+import hashlib
+import secrets
+import shutil
+import tempfile
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from spirit_agent_runner.contracts.tooling import ToolDefinition
+from spirit_agent_runner.features.browser.camofox import is_camofox_mode
+from spirit_agent_runner.features.browser.check import check_browser_cdp_requirements
+from spirit_agent_runner.features.browser.helpers import (
+    _get_downloads_dir,
+    _safe_save_name,
+    screenshot_multimodal_result,
+)
+from spirit_agent_runner.features.browser.schemas import (
+    BROWSER_DOWNLOAD_SCHEMA,
+    BROWSER_PDF_SCHEMA,
+    BROWSER_SCREENSHOT_ELEMENT_SCHEMA,
+)
+from spirit_agent_runner.features.browser.tools._common import (
+    browser_session,
+    camofox_unsupported,
+    guard_browser_url,
+    no_supervisor,
+)
+from spirit_agent_runner.infrastructure.constants import get_spiritagent_dir
+
+
+def browser_screenshot_element(
+    ref: str,
+    save_as: str | None = None,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    """截取单个元素并把图片直接附到主对话上下文，同时保留本地文件。"""
+    if is_camofox_mode():
+        return camofox_unsupported("browser_screenshot_element")
+
+    with browser_session(task_id) as (supervisor, _):
+        if supervisor is None:
+            return no_supervisor()
+
+        screenshots_dir = get_spiritagent_dir("cache/screenshots")
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        out_path = screenshots_dir / _safe_save_name(save_as, f"element_{secrets.token_hex(4)}.png")
+
+        res = supervisor.capture.screenshot_element(ref, path=out_path)
+        if not res.get("ok"):
+            return {"success": False, "error": res.get("error", "Failed to capture element screenshot")}
+        return screenshot_multimodal_result(str(out_path))
+
+
+def browser_pdf(
+    save_as: str | None = None,
+    landscape: bool = False,
+    print_background: bool = True,
+    paper_width: float = 8.5,
+    paper_height: float = 11.0,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    if is_camofox_mode():
+        return camofox_unsupported("browser_pdf")
+
+    with browser_session(task_id) as (supervisor, _):
+        if supervisor is None:
+            return no_supervisor()
+
+        pdf_dir = get_spiritagent_dir("cache/pdfs")
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        filename = _safe_save_name(save_as, f"page_{secrets.token_hex(4)}.pdf")
+        out_path = pdf_dir / filename
+
+        res = supervisor.capture.print_pdf(
+            path=out_path,
+            landscape=landscape,
+            print_background=print_background,
+            paper_width=paper_width,
+            paper_height=paper_height,
+        )
+        if not res.get("ok"):
+            return {"success": False, "error": res.get("error", "Failed to generate PDF")}
+
+        sha = hashlib.sha256(out_path.read_bytes()).hexdigest()
+        return {"success": True, "path": str(out_path), "sha256": sha}
+
+
+def browser_download(
+    ref_or_url: str,
+    save_as: str | None = None,
+    timeout_s: float = 30.0,
+    task_id: str | None = None,
+    cancel_token: threading.Event | None = None,
+) -> dict[str, Any]:
+    """通过点击 ref 链接或导航至下载 URL 触发并等待文件下载。"""
+    if is_camofox_mode():
+        return camofox_unsupported("browser_download")
+
+    if cancel_token is not None and cancel_token.is_set():
+        return {"success": False, "error": "Caller cancelled before download", "cancelled": True}
+
+    with browser_session(task_id) as (supervisor, _):
+        if supervisor is None:
+            return no_supervisor()
+
+        started_after = time.monotonic()
+        nav_error: str | None = None
+        if ref_or_url.startswith(("http://", "https://")):
+            safe_url, url_err = guard_browser_url(ref_or_url)
+            if url_err is not None:
+                return url_err
+            try:
+                supervisor.navigate(safe_url, timeout=5.0)
+            except Exception as exc:
+                # 附件下载以下载事件判成败。
+                nav_error = str(exc)
+        else:
+            click_res = supervisor.click_ref(ref_or_url)
+            if not click_res.get("ok"):
+                return {
+                    "success": False,
+                    "error": f"Failed to click download target {ref_or_url}: {click_res.get('error')}",
+                }
+
+        dl_res = supervisor.downloads.wait(
+            timeout=timeout_s,
+            cancel_token=cancel_token,
+            started_after=started_after,
+        )
+        if not dl_res.get("ok"):
+            error = dl_res.get("error", "Download timed out")
+            if nav_error is not None:
+                error = f"{error}; navigation error: {nav_error}"
+            return {"success": False, "error": error}
+
+        orig_filename = dl_res.get("filename", "downloaded_file")
+        target_name = _safe_save_name(save_as, orig_filename)
+        dest_dir = _get_downloads_dir()
+        dest_path = dest_dir / target_name
+
+        # 下载到临时目录，完成后搬到交付位。
+        src_path = Path(dl_res["path"]) if dl_res.get("path") else Path(tempfile.gettempdir()) / orig_filename
+        if src_path.is_file():
+            try:
+                shutil.move(str(src_path), str(dest_path))
+            except OSError as exc:
+                return {"success": False, "error": f"Downloaded but failed to move into downloads dir: {exc}"}
+        else:
+            return {"success": False, "error": f"Download reported complete but file is missing: {src_path}"}
+
+        return {"success": True, "filename": target_name, "path": str(dest_path), "guid": dl_res.get("guid")}
+
+
+def get_tool_definitions() -> list[ToolDefinition]:
+    return [
+        ToolDefinition(
+            name="browser_screenshot_element",
+            toolset_id="browser_automation",
+            schema=BROWSER_SCREENSHOT_ELEMENT_SCHEMA,
+            handler=lambda context, args: browser_screenshot_element(
+                ref=args.get("ref", ""),
+                save_as=args.get("save_as"),
+                task_id=context.task_id,
+            ),
+            check_fn=check_browser_cdp_requirements,
+            is_async=False,
+        ),
+        ToolDefinition(
+            name="browser_pdf",
+            toolset_id="browser_automation",
+            schema=BROWSER_PDF_SCHEMA,
+            handler=lambda context, args: browser_pdf(
+                save_as=args.get("save_as"),
+                landscape=args.get("landscape", False),
+                print_background=args.get("print_background", True),
+                paper_width=args.get("paper_width", 8.5),
+                paper_height=args.get("paper_height", 11.0),
+                task_id=context.task_id,
+            ),
+            check_fn=check_browser_cdp_requirements,
+            is_async=False,
+        ),
+        ToolDefinition(
+            name="browser_download",
+            toolset_id="browser_automation",
+            schema=BROWSER_DOWNLOAD_SCHEMA,
+            handler=lambda context, args: browser_download(
+                ref_or_url=args.get("ref_or_url", ""),
+                save_as=args.get("save_as"),
+                timeout_s=args.get("timeout_s", 30.0),
+                task_id=context.task_id,
+                cancel_token=context.cancel_event,
+            ),
+            check_fn=check_browser_cdp_requirements,
+            is_async=False,
+        ),
+    ]

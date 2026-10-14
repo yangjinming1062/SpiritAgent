@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -167,7 +167,7 @@ pub(crate) fn resolve_spiritagent_desktop_exe() -> Option<PathBuf> {
     None
 }
 
-/// venv 健康探针；导入链须与 `client/main/runner/updater.ts::probeVenvIntegrity` 一致。
+/// 与 Client 更新器共用包内健康检查入口。
 fn runner_venv_is_healthy() -> bool {
     use std::process::{Command, Stdio};
 
@@ -175,15 +175,29 @@ fn runner_venv_is_healthy() -> bool {
         return false;
     };
 
-    Command::new(&venv_python)
-        .arg("-c")
-        .arg(
-            "from typing_extensions import Sentinel; from annotated_types import BaseMetadata; from mcp.types import BaseModel",
-        )
+    let Ok(mut child) = Command::new(&venv_python)
+        .args(["-I", "-m", "spirit_agent_runner", "--check"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            result => {
+                tracing::warn!(?result, "Runner health check failed or timed out");
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 /// 须同时具备完成标记、可启动桌面端与健康 venv，防止陈旧标记误判已安装。

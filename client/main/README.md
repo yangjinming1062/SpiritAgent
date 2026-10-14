@@ -122,7 +122,7 @@
 
 [session-runtime.ts](backend/session-runtime.ts)负责懒创建及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 广播器直接广播，仍是当前会话才自动启动 Runner；应用就绪后另有 200 ms 定时入口，须与恢复路径共同保持幂等。
 
-[更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。待装资产由 [auto-updater.ts](lifecycle/auto-updater.ts) 在创建精灵窗前安装。wheel 与 `server.py` 的导入面一致性由构建期 [check_runner_facade.py](../../scripts/check_runner_facade.py) 门禁，验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
+[更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装包含入口的单 wheel；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。源码与安装版均以 `python -m spirit_agent_runner` 启动，开发环境须 editable 安装。待装资产由 [auto-updater.ts](lifecycle/auto-updater.ts) 在创建精灵窗前安装，暂存保留 wheel 原名，安装前复核摘要，安装后运行包内 `--check` 并核对 `--version`。构建期 [check_runner_package.py](../../scripts/check_runner_package.py) 在仓库外隔离安装 wheel，验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
 
 ## 桌面更新
 

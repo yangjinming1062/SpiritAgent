@@ -69,7 +69,7 @@ Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend
 
 模型记忆工具只能使用服务端验证的原始证据，证据消息须来自用户本人的对话：自动化会话与子 Agent 会话（其“用户”消息由父 Agent 撰写）不能作证；用户手写或手改的记录只有在更新的用户消息作证时才可改动；系统写入的伙伴自身记录（basis system，如夜间活动）不进入审阅；人工纠正仍保留伙伴记录归属，不转成用户明确表达。更新携当前 ID 与版本，并发冲突整批拒绝。候选、失效、过期和已遗忘内容不得作为有效事实召回。模型不得指定身份、作用域或来源；具体决策结构见 [memory_policy](../backend/features/memory/memory_policy.py)。
 
-学习技能工具随 `tools.sync` 同步开放。Backend 派发时将 `skill_scope` 放在模型参数之外，Client 转发 `execute_scoped_tool`，Runner 在调用期间固定用户与预设目录。异步和委派继承该域，不读取界面当前选择。Runner 的 [SkillScope](../runner/utils/memory_scope.py) 只接受固定的预设 id 集合，新增或改名预设须同步，否则该预设的带域调用均被拒绝。
+学习技能工具随 `tools.sync` 同步开放。Backend 派发时将 `skill_scope` 放在模型参数之外，Client 转发 `execute_scoped_tool`，Runner 在调用期间固定用户与预设目录。异步和委派继承该域，不读取界面当前选择。Runner 的 [SkillScope](../runner/spirit_agent_runner/contracts/scope.py) 只接受固定的预设 id 集合，新增或改名预设须同步，否则该预设的带域调用均被拒绝。
 
 ### 事件路由
 
@@ -421,7 +421,7 @@ sequenceDiagram
 
 启动和 Runner 重启均执行上述同步。`get_tools` 的工具说明按 Runner 当前配置生成（如终端说明随 `terminal.env_type`）；运行中配置推送成功后 Client 重新读取清单，有变化时按重连同样发布并由宿主重新 `tools.sync`，读取失败保留原清单。未同步或清单为空时，本机工具不可见、不可派发；撤销资格后，已派发调用仍按结果与超时收尾。Runner 握手、配置推送与 `get_tools` 由 Client 主进程的 [bridge](../client/main/runner/bridge.ts) 完成；`tools.sync` 与撤销由精灵宿主的 [host-runtime](../client/renderer/app/runtime/host-runtime.ts) 按 Runner 状态发起；Backend 侧注册见 [registry](../backend/runtime/tools/registry.py)，派发见 [tool_dispatch](../backend/workflows/chat/tool_dispatch.py)。
 
-工具禁用在注册和派发边界生效。新增或删除工具集 id 时同步 [Client 索引](../client/main/shared/lib/toolset-index.ts)、[Runner 源头过滤](../runner/tools/toolsets/catalog.py)、[Backend 过滤](../backend/runtime/tools/toolsets.py)和[显示图标](../client/renderer/shared/lib/toolset-catalog.ts)，不能只改界面清单。
+工具禁用在清单装配和派发边界生效。Runner 各能力通过 [ToolDefinition](../runner/spirit_agent_runner/contracts/tooling.py) 显式提供工具及所属工具集，普通调用与代码子调用共用执行器；新增或删除工具集 id 时同步 [Client 索引](../client/main/shared/lib/toolset-index.ts)、Runner 所属能力的定义与[目录过滤](../runner/spirit_agent_runner/runtime/tools.py)、[Backend 过滤](../backend/runtime/tools/toolsets.py)和[显示图标](../client/renderer/shared/lib/toolset-catalog.ts)，不能只改界面清单。
 
 ### 能力与进程代次
 
@@ -443,7 +443,7 @@ sequenceDiagram
 
 认领刷盘后执行，终态落盘后回复。取消、持有进程死亡或记录损坏且无可信终态时按 unknown 处理，迟到执行者不得覆盖终态。认领未获执行权时拒绝并在 `data.disposition` 标明：`unknown` 回复 `-32011`；`failed`、`claimed_elsewhere`、`conflict`（同标识不同工具、参数或学习域，即使原记录已 completed）与 `invalid_call_id` 回复 `-32000`。工具报错、参数校验失败或工具集已禁用同样回复 `-32000` 并标明 `failed`；本次执行被取消回复 `-32000 cancelled`，不带 `disposition`。Client 把 `failed`、`conflict`、`invalid_call_id` 连同 Runner 给出的原因作为明确失败回传，请求发出前 Runner 未连接回传未执行，其余（取消、超时、断连、`claimed_elsewhere`、`unknown`）回传结果未知，见 [ipc/runner.ts](../client/main/ipc/runner.ts)。`spiritagent.call_result {call_id}` 可查询日志，当前 Client 与 Backend 均未调用，结果核对依赖模型检查外部效果或询问用户。
 
-`spiritagent.cancel` 可用 RPC `req_id` 定位请求，省略时取消全部带 `call_id` 的在途调用（Client 的窗口轮询等直调不受影响）。回合被中断（对话停止、主动回合让位等）而仍在等待设备结果时，Backend 逐个下发 `tool.cancel`；宿主对尚未交给 Runner 的调用不予执行，对已在执行的按该调用的 `req_id` 取消，两种情况都不回传结果。超时与断连不下发取消，其他会话与定时任务的在途调用不受影响。请求取消不证明工作线程或外部副作用已经停止。回合中断时 Backend 仍为同批每个调用保存结果行（见 [persistence](../backend/workflows/chat/persistence.py)）：已产生结果的照实保存，运行中的记为结果未知，未开始的记为未执行；一律记为取消会让后续“继续”重做已生效的副作用。
+`spiritagent.cancel` 在发起连接内按 RPC `req_id` 定位请求，省略时取消该连接全部带 `call_id` 的在途调用（Client 的窗口轮询等直调不受影响）。Runner 在途表按连接身份与 RPC 编号关联，重连复用编号不命中旧调用；断连后已开始的执行继续收尾，业务去重仍使用 `call_id`。回合被中断（对话停止、主动回合让位等）而仍在等待设备结果时，Backend 逐个下发 `tool.cancel`；宿主对尚未交给 Runner 的调用不予执行，对已在执行的按该调用的 `req_id` 取消，两种情况都不回传结果。超时与断连不下发取消，其他会话与定时任务的在途调用不受影响。请求取消不证明工作线程或外部副作用已经停止。回合中断时 Backend 仍为同批每个调用保存结果行（见 [persistence](../backend/workflows/chat/persistence.py)）：已产生结果的照实保存，运行中的记为结果未知，未开始的记为未执行；一律记为取消会让后续“继续”重做已生效的副作用。
 
 当前终态日志保留七天；无 `call_id` 的直调不记日志，日志不可写时仍可能继续执行。因此去重是有限保障，不是任意副作用恰好执行一次的承诺。恢复、取消或更换调用标识都不能被当作已撤销外部操作。
 
@@ -463,7 +463,7 @@ sequenceDiagram
 
 技能使用 `platforms` 声明系统，规范值为 macos / windows，接受 darwin / win32 别名；未声明或空列表不额外限制平台。Client 索引与 Runner 执行入口分别过滤，Installer 与 Client 随包同步都保留完整技能文件。
 
-平台过滤与用户 / 预设隔离分别生效，不扩大产品支持平台。解析入口见 [Client 索引](../client/main/shared/lib/skill-index.ts) 与 [Runner 技能入口](../runner/tools/skills/skills_tool.py)。
+平台过滤与用户 / 预设隔离分别生效，不扩大产品支持平台。解析入口见 [Client 索引](../client/main/shared/lib/skill-index.ts) 与 [Runner 技能入口](../runner/spirit_agent_runner/features/skills/skills_tool.py)。
 
 ## 配置与环境
 
@@ -473,7 +473,7 @@ Backend `user_settings` 是可同步偏好的真源，Client 保存带用户归�
 
 保存先原子写本地镜像，Runner 相关配置变化时推送，再防抖写云端；桌面主题、窗口偏好、快捷键、伙伴偏好、语言与镜像归属变化不单独触发 Runner 推送。登录与恢复时 GET 水合，云端同名键覆盖镜像，云端缺失的允许同步本地键补传。云端按点键 upsert、不删除已有键，采用最后保存覆盖，不提供版本化离线冲突合并；不能承诺冲突时所有离线修改都保留。本地删除的键或清空的节不会上云，下次水合会被云端旧值补回，清除须写入显式值。镜像按本机账户标识隔离：归属不匹配时清理本地同步节，不上传其中的设置。本地写入落盘失败时回滚内存镜像并报告失败，不推 Runner、不上云；账户隔离清理即使落盘失败也在内存生效，磁盘残留的旧归属在下次启动或换号时再次清理；云端水合落盘失败时内存保留已取得的云端值，不恢复本地旧值。
 
-Runner 仅内存持有配置，工具调用与 `get_tools` 时读取当前值；终端执行环境按创建参数与当前配置比对：一致则复用，不一致且空闲时停止旧环境并按新配置重建，执行目标已变而旧环境仍在使用时拒绝该次调用，见 [Runner 终端与子进程](../runner/README.md#终端与子进程)。握手后、首个执行前推送 full config，重启后重新推送。用户打扰偏好可恢复，旧设备计算的生效档位不能直接当作新设备现状。
+Runner 仅内存持有配置，每次调用与 `get_tools` 固定同一代次的独立快照；更新不改写在途上下文，旧探测不得回填新配置的可用性缓存。终端执行环境按创建参数与调用快照比对：一致则复用，不一致且空闲时停止旧环境并按新配置重建，执行目标已变而旧环境仍在使用时拒绝该次调用，见 [Runner 终端与子进程](../runner/README.md#终端与子进程)。握手后、首个执行前推送 full config，重启后重新推送。用户打扰偏好可恢复，旧设备计算的生效档位不能直接当作新设备现状。
 
 普通 standard 会话继承用户 `agent.* / chat.*` 默认，special 使用预设默认，再叠加各会话覆盖。`session.set_settings` 只接受规定的温度、压缩阈值和推理强度；null 删除覆盖，空 patch 只读取生效值。先提交再更新运行时，“恢复默认”删除覆盖而非固化当前默认数值。推理强度按供应商支持集向下取不高于请求的最高档，档位与降档定义见 [providers/base.py](../backend/infrastructure/ai/providers/base.py)。
 
@@ -606,7 +606,9 @@ LLM 在实际提交时读取模型卡片，输出预算取卡片上限、请求�
 
 ### 自更新签名
 
-Electron 使用自身更新与平台校验链，不等同于 Runner 清单验签。Runner wheel 校验 ECDSA P-256 签名和 SHA-512；签名只覆盖 wheel 的 `path|sha512`，`version` 与 `server.py` 的 SHA-256 是清单中未签名的字段，`server.py` 只对照该字段校验。内置技能不单独下载，随桌面安装包交付：Installer 首装时释放；桌面端版本变化后首次启动时，Client 在 Runner 自动启动前按同一规则同步到 `$SPIRITAGENT_HOME/skills`（同名文件覆盖、保留用户自装内容，存在 `.no-bundled-skills` 时跳过），全部复制成功才记录已同步版本，失败下次启动重试。
+Electron 使用自身更新与平台校验链，不等同于 Runner 清单验签。Runner 入口与实现由单 wheel 交付，源码与安装版统一使用 `python -m spirit_agent_runner`。wheel 校验 ECDSA P-256 签名和 SHA-512；签名覆盖 `path|sha512`，包含版本的 wheel 原名必须与目标桌面版本匹配，安装后再核对包内 `--version`。清单 `version` 与 `size` 本身不在签名范围，分别与目标版本及实际文件大小核对。
+
+内置技能不单独下载，随桌面安装包交付：Installer 首装时释放；桌面端版本变化后首次启动时，Client 在 Runner 自动启动前按同一规则同步到 `$SPIRITAGENT_HOME/skills`（同名文件覆盖、保留用户自装内容，存在 `.no-bundled-skills` 时跳过），全部复制成功才记录已同步版本，失败下次启动重试。
 
 桌面更新由用户推进：
 
@@ -615,9 +617,9 @@ Electron 使用自身更新与平台校验链，不等同于 Runner 清单验签
 - 重启安装只接受主窗口或桌面交互界面请求，且须处于已校验状态；更新退出确实开始（`before-quit-for-update`）时置退出标志，使窗口关闭不被拦截，再沿用退出时有界等待 Runner 的收尾。安装器未能启动时不退出，托盘常驻不受影响。
 - macOS 发布只产出 DMG，没有更新清单；检查如实报告失败，不视为已是最新。
 
-Runner 资产先预取并校验，校验失败不进入安装。安装先检查现有 venv：缺失只记安装失败、不触碰 Runner；否则停止 Runner、安装并启动。待装资产只在版本一致的新桌面进程启动时安装，未经更新重启、仍是旧版时保留暂存。venv 路径保持不变，安装失败只做有限重试，不承诺原子切换或自动回滚；环境损坏由安装器修复。Installer 与更新器使用一致健康探针，不能只看完成标记。
+Runner wheel 预取时保留原名并记录已校验摘要，安装前复核暂存文件。待装资产只在版本一致的新桌面进程启动时安装，未经更新重启、仍是旧版时保留暂存。现有 venv 缺失只记安装失败、不触碰 Runner；存在时停止 Runner 并运行包内 `--check`，停止失败不安装，健康后在原 venv 安装 wheel，复验 `--check` 和版本再启动。失败后的恢复启动只针对本次确实停止的实例。`--check` 校验依赖与静态工具定义，不启动浏览器、后台线程或桌面输入。安装失败有限重试，不承诺原子切换或自动回滚；环境损坏由安装器修复。Installer 安装和快路径复用同一健康入口，不能只看完成标记。
 
-实现见 [update IPC](../client/main/ipc/update.ts)、[auto-updater](../client/main/lifecycle/auto-updater.ts) 与 [updater](../client/main/runner/updater.ts)；更新源服务端见 [update.py](../backend/entrypoints/http/routes/update.py)：管理端上传更新 ZIP，须含 Windows 安装包、`runner/` 下的同版本 wheel 与 `server.py`、同版本 `latest-runner.yml`。解压及校验在暂存目录完成，通过后换入正式版本目录并写库；取消或强杀可能留下残留目录；启动时回收 `.upload_*`，未登记的合法版本目录隔离到 `.quarantine` 并记录诊断，管理员重传处理，不自动登记或发布。按库存版本生成 `latest.yml` / `latest-mac.yml`（缺少对应平台资产时 404），原样提供构建时签名的 `latest-runner.yml`。密钥管理见 [release-keys](../scripts/release-keys/README.md)。
+实现见 [update IPC](../client/main/ipc/update.ts)、[auto-updater](../client/main/lifecycle/auto-updater.ts) 与 [updater](../client/main/runner/updater.ts)；更新源服务端见 [update.py](../backend/entrypoints/http/routes/update.py)：管理端上传更新 ZIP，须含 Windows 安装包、`runner/` 下唯一的同版本 wheel、同版本 `latest-runner.yml`，`manifest.json` 的 wheel 路径须与实物一致。解压及校验在暂存目录完成，通过后换入正式版本目录并写库；取消或强杀可能留下残留目录；启动时回收 `.upload_*`，未登记的合法版本目录隔离到 `.quarantine` 并记录诊断，管理员重传处理，不自动登记或发布。按库存版本生成 `latest.yml` / `latest-mac.yml`（缺少对应平台资产时 404），原样提供构建时签名的 `latest-runner.yml`。密钥管理见 [release-keys](../scripts/release-keys/README.md)。
 
 ### 备份校验与覆盖恢复
 
@@ -667,7 +669,7 @@ REST 错误多为 `{"detail": …}`，`detail` 可为文本、校验错误列表
 
 桌面代理 RPC 通过 IPC 成功返回结构化结果信封，保留宿主取得的业务错误 `message/code/data`，代理窗口恢复同一错误类型后按码处理；不依赖 Electron 的异常序列化保留自定义字段。主进程产生的超时、断连、宿主失效及无效响应仍作为普通错误拒绝，不伪造业务错误码。
 
-错误码以 [Backend constants](../backend/infrastructure/constants.py) 与 [Runner 派发](../runner/server.py)为准；未知执行结果的恢复语义见[调用日志](#调用日志与未知结果)，不能合并成普通失败。
+错误码以 [Backend constants](../backend/infrastructure/constants.py)、[Runner 调用管理](../runner/spirit_agent_runner/runtime/calls.py)与 [RPC 边界](../runner/spirit_agent_runner/transport/rpc.py)为准；未知执行结果的恢复语义见[调用日志](#调用日志与未知结果)，不能合并成普通失败。
 
 错误离开边界前必须脱敏，不包含凭据、数据库连接或服务端本地路径。恢复策略由错误类别和操作语义决定：超时、断连和取消均不能单独证明副作用未发生。
 

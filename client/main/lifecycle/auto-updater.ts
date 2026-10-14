@@ -28,7 +28,7 @@ interface RuntimeForUpdater {
   getRunnerBridge?: () => null | {
     getStatus: () => { phase: string }
     start: (options: { readyTimeoutMs?: number }) => Promise<unknown>
-    stop: (options: { reason: string }) => Promise<unknown>
+    stop: (options: { reason: string }) => Promise<{ errors?: string[]; noop?: boolean; ok: boolean }>
   }
   spiritagentHome: string
 }

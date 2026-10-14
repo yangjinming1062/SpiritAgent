@@ -80,7 +80,7 @@
 
 ### 从源码启动
 
-准备 Docker Compose、Node.js 24 与 pnpm 11.5.2；版本约束以 [client/package.json](client/package.json) 为准。使用本机工具前，先通过安装器准备 Runner 环境；单独启动客户端不会安装它。
+准备 Docker Compose、uv、Node.js 24 与 pnpm 11.5.2；版本约束以 [client/package.json](client/package.json) 与 [Runner](runner/README.md#开发与交付) 为准。源码开发先安装 Runner 的 editable 包，客户端开发入口会使用仓库内的环境。
 
 1. 在后端目录准备配置：
 
@@ -101,6 +101,7 @@
 4. 另开终端，在仓库根运行：
 
    ```bash
+   uv sync --project runner --frozen
    pnpm --dir client install
    pnpm --dir client dev
    ```

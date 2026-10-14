@@ -1,7 +1,6 @@
 import type { ChildProcess } from 'node:child_process'
 import childProcess from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import path from 'node:path'
 
 import { errorMessage } from '@runtime'
 
@@ -62,6 +61,14 @@ function resolveRunnerExecutable(options: {
     return { args: [], command: options.executable, kind: 'binary' }
   }
 
+  if (options.devPython && options.repoRoot && options.fileExists(options.devPython)) {
+    return {
+      args: ['-I', '-X', 'utf8', '-m', 'spirit_agent_runner'],
+      command: options.devPython,
+      kind: 'dev-python'
+    }
+  }
+
   const venvResult = resolveVenvPython({
     spiritagentHome: options.spiritagentHome,
     fileExists: options.fileExists,
@@ -70,14 +77,6 @@ function resolveRunnerExecutable(options: {
 
   if (venvResult) {
     return venvResult
-  }
-
-  if (options.devPython && options.repoRoot && options.fileExists(options.devPython)) {
-    return {
-      args: [path.join(options.repoRoot, 'runner', 'server.py')],
-      command: options.devPython,
-      kind: 'dev-python'
-    }
   }
 
   return null

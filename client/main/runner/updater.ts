@@ -11,7 +11,7 @@ import YAML from 'yaml'
 
 import { errorMessage, sleep } from '@runtime'
 
-import { runnerServerPyFor, venvPythonFor } from './venv'
+import { venvPythonFor } from './venv'
 
 const execFileP = promisify(execFile)
 
@@ -23,7 +23,6 @@ const STAGING_DIR = 'runner.staging'
 
 interface RunnerUpdateManifest {
   path: string
-  runner: { server_py_sha256: string }
   sha512: string
   signature: string
   size?: number
@@ -35,15 +34,21 @@ interface PendingRunnerSentinel {
   last_error?: string
   max_attempts: number
   prepared_at: string
-  server_py_path: string
   version: string
   wheel_path: string
+  wheel_sha512: string
+}
+
+interface RunnerStopResult {
+  errors?: string[]
+  noop?: boolean
+  ok: boolean
 }
 
 export interface MinimalRunnerBridge {
   getStatus: () => { phase: string }
   start: (options: { readyTimeoutMs?: number }) => Promise<unknown>
-  stop: (options: { reason: string }) => Promise<unknown>
+  stop: (options: { reason: string }) => Promise<RunnerStopResult>
 }
 
 // 其他入口已在启动、运行或收尾时 start 会拒绝；更新器不再拉起，避免把它记成安装失败。
@@ -95,13 +100,24 @@ export class RunnerUpdater {
       throw new Error('manifest fetch failed after retries')
     }
 
-    if (!manifest.path || !manifest.signature || !manifest.runner || !manifest.version) {
+    if (!manifest.path || !manifest.signature || !manifest.version || !/^[A-Fa-f0-9]{128}$/.test(manifest.sha512)) {
       throw new Error('manifest missing required fields')
     }
 
     // 下载与预取之间可能发布了新版本；Runner 必须与已下载的桌面安装包同版本。
     if (manifest.version !== version) {
       throw new Error(`runner manifest version ${manifest.version} does not match desktop update ${version}`)
+    }
+
+    // 文件名参与签名，并保留原名供 uv/pip 解析发行包与版本。
+    if (!/^runner\/spirit_agent-[A-Za-z0-9_.+-]+\.whl$/.test(manifest.path)) {
+      throw new Error('manifest wheel path is invalid')
+    }
+
+    const wheelName = path.posix.basename(manifest.path)
+
+    if (!wheelName.startsWith(`spirit_agent-${version}-`)) {
+      throw new Error('manifest wheel version does not match desktop update')
     }
 
     const manifestSignatureOk = this.verifySignature({
@@ -115,36 +131,29 @@ export class RunnerUpdater {
     }
 
     const wheelUrl = `${updateBaseUrl}/${manifest.path}`
-    const wheelStagingPath = path.join(stagingDir, 'wheel.whl')
-    const serverPyUrlFinal = `${updateBaseUrl}/runner/server.py`
-    const serverPyStagingPath = path.join(stagingDir, 'server.py')
+    const wheelStagingPath = path.join(stagingDir, wheelName)
 
-    await Promise.all([
-      this.fetchToFile(wheelUrl, wheelStagingPath),
-      this.fetchToFile(serverPyUrlFinal, serverPyStagingPath)
-    ])
+    await this.fetchToFile(wheelUrl, wheelStagingPath)
 
     const wheelHash = (await hashOfFile(wheelStagingPath, 'sha512')).toUpperCase()
 
-    if (wheelHash !== manifest.sha512) {
+    if (wheelHash !== manifest.sha512.toUpperCase()) {
       await fsp.rm(stagingDir, { force: true, recursive: true })
       throw new Error('wheel sha512 mismatch')
     }
 
-    const serverPyHash = await hashOfFile(serverPyStagingPath, 'sha256')
-
-    if (serverPyHash !== manifest.runner.server_py_sha256) {
+    if (manifest.size != null && (await fsp.stat(wheelStagingPath)).size !== manifest.size) {
       await fsp.rm(stagingDir, { force: true, recursive: true })
-      throw new Error('server.py sha256 mismatch')
+      throw new Error('wheel size mismatch')
     }
 
     const sentinel: PendingRunnerSentinel = {
       attempt_count: 0,
       max_attempts: 3,
       prepared_at: new Date().toISOString(),
-      server_py_path: serverPyStagingPath,
       version,
-      wheel_path: wheelStagingPath
+      wheel_path: wheelStagingPath,
+      wheel_sha512: wheelHash
     }
 
     await fsp.writeFile(path.join(home, SENTINEL_FILE), JSON.stringify(sentinel, null, 2), 'utf8')
@@ -186,7 +195,7 @@ export class RunnerUpdater {
 
     const venvPython = venvPythonFor(home)
 
-    let stopResult: unknown
+    let stopResult: RunnerStopResult | undefined
     let startedNew = false
 
     const fail = async (reason: string, error?: unknown) => {
@@ -208,8 +217,16 @@ export class RunnerUpdater {
         return await fail('venv-missing')
       }
 
+      if ((await hashOfFile(sentinel.wheel_path, 'sha512')).toUpperCase() !== sentinel.wheel_sha512) {
+        return await fail('staged-wheel-sha512-mismatch')
+      }
+
       const [stopRes, venvOk] = await Promise.all([stopIfBridged(), this.probeVenvIntegrity(venvPython)])
       stopResult = stopRes
+
+      if (stopRes && !stopRes.ok) {
+        return await fail('runner-stop-failed', stopRes.errors)
+      }
 
       if (!venvOk) {
         return await fail(
@@ -225,9 +242,8 @@ export class RunnerUpdater {
       const uvName = process.platform === 'win32' ? 'uv.exe' : 'uv'
       const managedUv = path.join(home, 'bin', uvName)
       const uvBin = fs.existsSync(managedUv) ? managedUv : uvName
-      const serverPyDest = runnerServerPyFor(home)
 
-      // 更新语义：装新 wheel + 覆盖 server.py，一次性切到新版本；兼容性由构建期 check_runner_facade.py 保证，不做安装期回滚，避免半更新状态。
+      // 包内入口与实现随同一个 wheel 安装；构建期隔离安装门禁验证完整性。
       try {
         await execFileP(uvBin, ['pip', 'install', '--python', venvPython, '--upgrade', sentinel.wheel_path], {
           maxBuffer: 16 * 1024 * 1024,
@@ -237,10 +253,8 @@ export class RunnerUpdater {
         return await fail('pip-failed', err)
       }
 
-      try {
-        await fsp.copyFile(sentinel.server_py_path, serverPyDest)
-      } catch (err) {
-        return await fail('server-py-copy-failed', err)
+      if (!(await this.probeVenvIntegrity(venvPython, sentinel.version))) {
+        return await fail('installed-runner-check-failed')
       }
 
       const bridge = this.runtime?.getRunnerBridge?.()
@@ -271,7 +285,7 @@ export class RunnerUpdater {
     } finally {
       const bridge = this.runtime?.getRunnerBridge?.()
 
-      if (stopResult && !startedNew && bridge && !bridgeBusy(bridge)) {
+      if (stopResult?.ok && !stopResult.noop && !startedNew && bridge && !bridgeBusy(bridge)) {
         try {
           await bridge.start({
             readyTimeoutMs: 8_000
@@ -283,16 +297,19 @@ export class RunnerUpdater {
     }
   }
 
-  private async probeVenvIntegrity(venvPython: string): Promise<boolean> {
+  private async probeVenvIntegrity(venvPython: string, expectedVersion?: string): Promise<boolean> {
     try {
-      await execFileP(
-        venvPython,
-        [
-          '-c',
-          'from typing_extensions import Sentinel; from annotated_types import BaseMetadata; from mcp.types import BaseModel'
-        ],
-        { timeout: 30_000 }
-      )
+      await execFileP(venvPython, ['-I', '-m', 'spirit_agent_runner', '--check'], { timeout: 30_000 })
+
+      if (expectedVersion) {
+        const { stdout } = await execFileP(venvPython, ['-I', '-m', 'spirit_agent_runner', '--version'], {
+          timeout: 30_000
+        })
+
+        if (stdout.trim() !== expectedVersion) {
+          throw new Error(`installed runner version ${stdout.trim()} does not match ${expectedVersion}`)
+        }
+      }
 
       return true
     } catch (err: unknown) {
