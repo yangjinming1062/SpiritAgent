@@ -14,6 +14,7 @@ from infrastructure.ai.llm_retry import call_with_retry
 from infrastructure.ai.providers.base import ChatProvider, ProviderConfig
 from infrastructure.ai.providers.speech_style import speech_style_guidance
 from infrastructure.ai.responses import build_responses_kwargs
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.ai.token_budget import request_output_budget
 from infrastructure.constants import TOOL_CALL_ID_HEX_PREFIX_LEN
 from infrastructure.correlation import new_request_id
@@ -95,6 +96,7 @@ class _LLMTurnResult:
     turn_duration_ms: int
     reasoning: str | None = None
     reply: CompanionReply | None = None
+    generation_origin: GenerationOrigin | None = None
 
 
 def _assign_tool_call_ids(tool_calls_list: list[dict]) -> None:

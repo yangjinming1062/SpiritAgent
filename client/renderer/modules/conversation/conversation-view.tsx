@@ -33,6 +33,11 @@ function createViewController(runtime: ConversationRuntime, draft: ConversationV
     (message, editing) => (editing ? null : message)
   )
 
+  const $replaceableAssistantMessage = computed(
+    [runtime.$replaceableAssistantMessage, $chatEditDraft],
+    (message, editing) => (editing ? null : message)
+  )
+
   const startEditingMessage = (messageId: string): void => {
     const sessionId = runtime.$chatSessionId.get()
 
@@ -74,6 +79,7 @@ function createViewController(runtime: ConversationRuntime, draft: ConversationV
     ...runtime,
     $chatEditDraft,
     $retryableAssistantMessage,
+    $replaceableAssistantMessage,
     $text,
     $pending,
     $externalPaths,

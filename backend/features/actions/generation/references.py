@@ -6,6 +6,7 @@ import json
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain
 from infrastructure.ai.providers.base import VideoGenProvider
+from infrastructure.ai.selection import ProviderSelection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.video_processing.ffmpeg import VideoProcessError
@@ -115,6 +116,7 @@ async def _resolve_action_video_plan(
     *,
     needs_loop_frames: bool,
     duration_seconds: float,
+    selection: ProviderSelection | None = None,
 ) -> tuple[float, list[FrozenMediaProvider]]:
     """按链序选择不短于设计的最小时长，再冻结支持该时长的后续供应商。"""
     if (
@@ -125,7 +127,9 @@ async def _resolve_action_video_plan(
     requested = int(round(duration_seconds))
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.window_action)
-    configured = [(config, build_provider(config, VideoGenProvider)) for config in chain]
+    configured = [
+        (config, build_provider(config, VideoGenProvider)) for config in order_provider_chain(chain, selection)
+    ]
     for index, (_config, provider) in enumerate(configured):
         available = provider.durations if provider.durations is not None else (requested,)
         seconds = min(

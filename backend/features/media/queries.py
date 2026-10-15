@@ -92,6 +92,30 @@ async def bind_video_reply(
     return video_job_snapshot(row)
 
 
+async def transfer_reply_videos(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    session_id: str,
+    from_message_id: int,
+    to_message_id: int,
+) -> tuple[VideoJobSnapshot, ...]:
+    """替换回答时先锁视频再锁消息；交接与消息替换由调用方同事务提交。"""
+    rows = await db.scalars(
+        select(VideoGenJob)
+        .where(VideoGenJob.reply_message_id == from_message_id)
+        .order_by(VideoGenJob.id)
+        .with_for_update(),
+    )
+    transferred = []
+    for row in rows:
+        if row.user_id != user_id or row.session_id != session_id or not row.structured_reply:
+            raise ValueError("Video task does not belong to this reply")
+        row.reply_message_id = to_message_id
+        transferred.append(video_job_snapshot(row))
+    return tuple(transferred)
+
+
 def _asset_references(row: VideoGenJob) -> VideoJobAssetReferences:
     return VideoJobAssetReferences(
         video_url=row.video_url,

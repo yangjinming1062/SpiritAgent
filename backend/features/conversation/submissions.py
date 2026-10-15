@@ -25,6 +25,8 @@ class SubmissionReceipt:
     error: str | None
     message_ids: list[int] = field(default_factory=list)
     messages: list[dict] = field(default_factory=list)
+    replace_reply_message_id: int | None = None
+    result_message_id: int | None = None
 
     def to_result(self) -> dict[str, object]:
         return {
@@ -34,13 +36,22 @@ class SubmissionReceipt:
             "error": self.error,
             "message_ids": self.message_ids,
             "messages": self.messages,
+            "replace_reply_message_id": self.replace_reply_message_id,
+            "result_message_id": self.result_message_id,
         }
 
 
 def _receipt(row: PromptSubmission, conversation_id: int, fingerprint: str) -> SubmissionReceipt:
     if row.conversation_id != conversation_id or row.fingerprint != fingerprint:
         raise SubmissionConflictError("提交标识已用于另一条消息")
-    return SubmissionReceipt(row.request_id, row.status, row.error, json.loads(row.message_ids_json))
+    return SubmissionReceipt(
+        row.request_id,
+        row.status,
+        row.error,
+        json.loads(row.message_ids_json),
+        replace_reply_message_id=row.replace_reply_message_id,
+        result_message_id=row.result_message_id,
+    )
 
 
 async def find_submission(
@@ -59,12 +70,19 @@ async def find_submission(
         if row is None:
             return None
         receipt = _receipt(row, conversation_id, fingerprint)
-        messages = (
-            await build_session_messages(conversation_id, db, only_ids=receipt.message_ids)
-            if receipt.message_ids
-            else []
+        delivered_ids = [*receipt.message_ids]
+        if receipt.result_message_id is not None and receipt.result_message_id not in delivered_ids:
+            delivered_ids.append(receipt.result_message_id)
+        messages = await build_session_messages(conversation_id, db, only_ids=delivered_ids) if delivered_ids else []
+        return SubmissionReceipt(
+            receipt.request_id,
+            receipt.status,
+            receipt.error,
+            receipt.message_ids,
+            messages,
+            receipt.replace_reply_message_id,
+            receipt.result_message_id,
         )
-        return SubmissionReceipt(receipt.request_id, receipt.status, receipt.error, receipt.message_ids, messages)
 
 
 async def reserve_submission(
@@ -74,6 +92,7 @@ async def reserve_submission(
     fingerprint: str,
     origin_kind: str,
     origin_id: str,
+    replace_reply_message_id: int | None = None,
 ) -> tuple[SubmissionReceipt, bool]:
     async with session_scope() as db:
         inserted_id = await db.scalar(
@@ -85,13 +104,19 @@ async def reserve_submission(
                 fingerprint=fingerprint,
                 origin_kind=origin_kind,
                 origin_id=origin_id,
+                replace_reply_message_id=replace_reply_message_id,
             )
             .on_conflict_do_nothing(constraint="uq_prompt_submissions_user_request")
             .returning(PromptSubmission.id),
         )
         await db.commit()
         if inserted_id is not None:
-            return SubmissionReceipt(request_id, "accepted", None), True
+            return SubmissionReceipt(
+                request_id,
+                "accepted",
+                None,
+                replace_reply_message_id=replace_reply_message_id,
+            ), True
     existing = await find_submission(user_id, conversation_id, request_id, fingerprint)
     if existing is None:
         raise RuntimeError("The conflicting submission disappeared")
@@ -133,20 +158,27 @@ async def record_submission_state(
     *,
     message_ids: list[int] | None = None,
     error: str | None = None,
-) -> None:
+) -> tuple[str, str | None]:
     values: dict[str, object] = {"status": status, "error": error}
     if message_ids is not None:
         values["message_ids_json"] = json.dumps(message_ids)
     async with session_scope() as db:
-        await db.execute(
-            update(PromptSubmission)
+        row = await db.scalar(
+            select(PromptSubmission)
             .where(
                 PromptSubmission.user_id == user_id,
                 PromptSubmission.request_id == request_id,
             )
-            .values(**values),
+            .with_for_update(),
         )
+        if row is None:
+            return status, error
+        if row.result_message_id is not None:
+            values.update(status="completed", error=None)
+        for key, value in values.items():
+            setattr(row, key, value)
         await db.commit()
+        return row.status, row.error
 
 
 async def recover_interrupted_submissions() -> None:
@@ -161,6 +193,9 @@ async def recover_interrupted_submissions() -> None:
             ),
         )
         for row in rows:
+            if row.result_message_id is not None:
+                row.status, row.error = "completed", None
+                continue
             row.status = "interrupted"
             row.error = "服务已重启，上一条任务已中断。请核对已执行的操作后再继续。"
             db.add(

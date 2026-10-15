@@ -9,7 +9,8 @@ from uuid import UUID
 from features.companion.proactive_runtime import user_turn_activity
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.edit import EditNotAllowedError
-from features.conversation.gateway_queries import edit_message_input, retry_message_text
+from features.conversation.gateway_queries import edit_message_input, replacement_reply_input, retry_message_text
+from features.conversation.replacement import ReplyReplacementNotAllowedError
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.retry import ReplyRetryNotAllowedError
 from features.conversation.submissions import (
@@ -61,17 +62,30 @@ def register_submission_handler(
     publisher = UserEventPublisher(user_id)
     _require_runtime = require_runtime
 
-    async def _submit_prompt(params: dict, runtime: RuntimeSession, admission: contextlib.ExitStack) -> dict:
+    async def _submit_prompt(
+        params: dict,
+        runtime: RuntimeSession,
+        admission: contextlib.ExitStack,
+        fingerprint: str,
+    ) -> dict:
         response_preference = params.get("response_preference")
         if response_preference is not None and response_preference not in ("text", "voice"):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "response_preference must be text or voice")
 
         edit_message_id = params.get("edit_message_id")
         retry_message_id = params.get("retry_message_id")
+        replace_reply_message_id = params.get("replace_reply_message_id")
+        if replace_reply_message_id is not None:
+            if not _is_nonneg_int(replace_reply_message_id) or replace_reply_message_id == 0:
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "replace_reply_message_id must be a positive int")
+            if any(key in params for key in ("text", "batch", "attachments", "edit_message_id", "retry_message_id")):
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "answer replacement reuses the original turn")
         if retry_message_id is not None:
             if not _is_nonneg_int(retry_message_id) or retry_message_id == 0:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "retry_message_id must be a positive int")
-            if any(key in params for key in ("text", "batch", "attachments", "edit_message_id")):
+            if any(
+                key in params for key in ("text", "batch", "attachments", "edit_message_id", "replace_reply_message_id")
+            ):
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "reply retries reuse the original message and attachments")
         if edit_message_id is not None:
             if not _is_nonneg_int(edit_message_id) or edit_message_id == 0:
@@ -83,8 +97,16 @@ def register_submission_handler(
                 )
 
         precursor_user_message_ids: list[int] = []
+        replacement = None
         batch = params.get("batch")
-        if retry_message_id is not None:
+        if replace_reply_message_id is not None:
+            try:
+                replacement = await replacement_reply_input(user_id, runtime.session_id, replace_reply_message_id)
+            except ReplyReplacementNotAllowedError as exc:
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+            text = replacement.text
+            attachments = []
+        elif retry_message_id is not None:
             try:
                 text = await retry_message_text(user_id, runtime.session_id, retry_message_id)
             except ReplyRetryNotAllowedError as exc:
@@ -128,7 +150,11 @@ def register_submission_handler(
             response_preference=response_preference,
         )
 
-        snapshot = ActiveTurnSnapshot(request_id=params["request_id"], origin_kind=session.origin_kind)
+        snapshot = ActiveTurnSnapshot(
+            request_id=params["request_id"],
+            origin_kind=session.origin_kind,
+            replace_reply_message_id=replace_reply_message_id,
+        )
 
         emitter = JsonRpcEmitter(
             dispatcher=publisher,
@@ -137,7 +163,7 @@ def register_submission_handler(
             snapshot_lock=runtime.snapshot_lock,
         )
 
-        persisted_message_id: int | None = retry_message_id
+        persisted_message_id: int | None = replacement.source_message_id if replacement else retry_message_id
         edited_messages: list[dict] | None = None
         if edit_message_id is not None:
             try:
@@ -164,13 +190,15 @@ def register_submission_handler(
                 {"session_id": runtime.session_id, "messages": edited_messages},
                 session_id=runtime.session_id,
             )
-        await emitter.send_json(
-            {
-                "type": "message.persisted",
-                "role": "user",
-                "message_ids": [*precursor_user_message_ids, persisted_message_id],
-            },
-        )
+        snapshot.message_ids = [*precursor_user_message_ids, persisted_message_id]
+        if replacement is None:
+            await emitter.send_json(
+                {
+                    "type": "message.persisted",
+                    "role": "user",
+                    "message_ids": snapshot.message_ids,
+                },
+            )
         # 输入持久化后刷新列表，不等待回复生成。
         await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
         client_context = session.session_client_context
@@ -183,17 +211,37 @@ def register_submission_handler(
                 snapshot.running = False
                 try:
                     async with asyncio.timeout(30):
-                        await record_submission_state(
+                        status, error = await record_submission_state(
                             user_id,
                             params["request_id"],
                             status,
                             message_ids=snapshot.message_ids,
                             error=error,
                         )
+                        replacement_result: dict[str, object] = {}
+                        if replace_reply_message_id is not None:
+                            replacement_result["replace_reply_message_id"] = replace_reply_message_id
+                            receipt = await find_submission(
+                                user_id,
+                                runtime.conversation_id,
+                                params["request_id"],
+                                fingerprint,
+                            )
+                            if receipt is not None and receipt.result_message_id is not None:
+                                replacement_result.update(
+                                    result_message_id=receipt.result_message_id,
+                                    messages=receipt.messages,
+                                )
                         await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
                         await publisher.push_event(
                             "session.state",
-                            {"running": False, "request_id": params["request_id"], "status": status, "error": error},
+                            {
+                                "running": False,
+                                "request_id": params["request_id"],
+                                "status": status,
+                                "error": error,
+                                **replacement_result,
+                            },
                             session_id=runtime.session_id,
                         )
                 finally:
@@ -219,7 +267,9 @@ def register_submission_handler(
                     track_task=session.account.track,
                     session_settings=runtime.settings,
                     persisted_message_id=persisted_message_id,
-                    final_reply_only=retry_message_id is not None,
+                    final_reply_only=retry_message_id is not None or replacement is not None,
+                    replace_reply_message_id=replace_reply_message_id,
+                    submission_request_id=params["request_id"],
                 )
                 status = "failed" if emitter.failed else "completed"
                 error = emitter.error
@@ -233,7 +283,13 @@ def register_submission_handler(
                 status = "failed"
                 error = "本次回复未能完成，请稍后重试。"
                 logger.exception("prompt.submit chat turn failed", extra={"user_id": user_id})
-                await emitter.send_json({"type": "error", "message": error, "retry_message_id": persisted_message_id})
+                await emitter.send_json(
+                    {
+                        "type": "error",
+                        "message": error,
+                        **({"retry_message_id": persisted_message_id} if replacement is None else {}),
+                    },
+                )
             finally:
                 await settle_turn(status, error)
 
@@ -288,6 +344,11 @@ def register_submission_handler(
                             data={"reason": "turn_busy"},
                         )
                     await _require_owned_conv(user_id, runtime.session_id)
+                    replace_reply_message_id = params.get("replace_reply_message_id")
+                    if replace_reply_message_id is not None and (
+                        not _is_nonneg_int(replace_reply_message_id) or replace_reply_message_id == 0
+                    ):
+                        raise JsonRpcError(JSONRPC_INVALID_PARAMS, "replace_reply_message_id must be a positive int")
                     receipt, created = await reserve_submission(
                         user_id,
                         runtime.conversation_id,
@@ -295,11 +356,12 @@ def register_submission_handler(
                         fingerprint,
                         session.origin_kind,
                         session.origin_id,
+                        replace_reply_message_id=replace_reply_message_id,
                     )
                     if not created:
                         return receipt.to_result()
                     try:
-                        return await _submit_prompt(params, runtime, admission)
+                        return await _submit_prompt(params, runtime, admission, fingerprint)
                     except BaseException:
                         if not runtime.busy:
                             runtime.active_turn = None

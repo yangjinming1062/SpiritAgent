@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from dataclasses import dataclass
 
 from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, classify_api_error
 from infrastructure.ai.llm_client import MissingLlmConfigError, resolve_provider_chain
@@ -14,6 +15,7 @@ from infrastructure.ai.providers.base import (
     ServiceType,
 )
 from infrastructure.ai.providers.registry import providers_supporting, resolve
+from infrastructure.ai.selection import GenerationOrigin, ProviderSelection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import save_companion_asset_async, sniff_media_ext
@@ -64,9 +66,10 @@ async def resolve_image_gen_chain(
     multiple_references: bool = False,
     prompt_chars: int = 0,
     environment_reference: bool = False,
+    selection: ProviderSelection | None = None,
 ) -> tuple[list[ProviderConfig], str | None]:
     """按参考图/图像编辑能力过滤 image_gen 链；给出 ``prompt_chars`` 时跳过提示词放不下的供应商。"""
-    full = await resolve_provider_chain(db, user_id, "image_gen", task=task)
+    full = order_provider_chain(await resolve_provider_chain(db, user_id, "image_gen", task=task), selection)
 
     def _fits(cfg: ProviderConfig) -> bool:
         limit = resolve(ServiceType.image_gen, cfg.provider_name).max_prompt_chars
@@ -121,6 +124,12 @@ async def _persist_user_asset_async(data: bytes, user_id: int, directory: str) -
     return await save_companion_asset_async(data, user_id=user_id, label="chat_image", ext=ext, directory=directory)
 
 
+@dataclass(frozen=True)
+class GeneratedImages:
+    urls: list[str]
+    origin: GenerationOrigin
+
+
 async def generate_images(
     prompt: str,
     *,
@@ -139,7 +148,8 @@ async def generate_images(
     aspect_ratio: str | None = None,
     resolution: str | None = None,
     exact_size: bool = False,
-) -> list[str]:
+    selection: ProviderSelection | None = None,
+) -> GeneratedImages:
     """按供应商能力生成图片；透明优先请求的实际 alpha 由消费方校验和处理。"""
     persist_directory = ""
     if persist_user_assets:
@@ -188,6 +198,7 @@ async def generate_images(
                     image_edit=image_edit,
                     multiple_references=bool(secondary_reference_image),
                     prompt_chars=len(prompt),
+                    selection=selection,
                 )
             if not err and chain and prefer_transparent_background:
                 chain = [
@@ -206,7 +217,7 @@ async def generate_images(
         if request_aspect is None and not exact_size:
             request_aspect = size if ":" in size else SIZE_TO_ASPECT.get(size)
 
-        async def _generate_call(p: ImageGenProvider) -> ImageGenResult:
+        async def _generate_call(p: ImageGenProvider) -> tuple[ImageGenResult, GenerationOrigin]:
             nonlocal active_provider
             active_provider = p.config.provider_name
             request_background = background
@@ -216,7 +227,7 @@ async def generate_images(
                 except VideoProcessError as exc:
                     raise ImageGenerationError(str(exc), internal=exc.internal) from exc
                 request_background = "transparent" if p.supports_transparent_background else None
-            return await p.generate(
+            result = await p.generate(
                 ImageGenRequest(
                     prompt=_provider_prompt(p.config.provider_name),
                     size=size,
@@ -231,8 +242,13 @@ async def generate_images(
                     background="transparent" if request_background == "transparent" else None,
                 ),
             )
+            if not any(asset.url or asset.b64 for asset in result.images):
+                error = ImageGenerationError("图片生成服务返回空结果", can_fallback=True)
+                error.classified = ClassifiedError(FailoverReason.empty_result, None, str(error))
+                raise error
+            return result, GenerationOrigin.from_config(p.config)
 
-        result = await execute_with_fallback(chain, ImageGenProvider, _generate_call, user_id=user_id)
+        result, origin = await execute_with_fallback(chain, ImageGenProvider, _generate_call, user_id=user_id)
     except ImageGenerationError:
         raise
     except MissingLlmConfigError as e:
@@ -246,9 +262,6 @@ async def generate_images(
         error = ImageGenerationError(message, internal=str(e), result_unknown=unknown)
         error.classified = classified
         raise error from e
-
-    if not result.images:
-        raise ImageGenerationError("图片生成服务返回空结果", can_fallback=True)
 
     urls: list[str] = []
     try:
@@ -277,10 +290,8 @@ async def generate_images(
             raise
         logger.warning("generated image storage failed", extra={"user_id": user_id}, exc_info=True)
         raise ImageGenerationError("生成图片无法保存，请稍后重试", internal=str(exc)) from exc
-    if not urls:
-        raise ImageGenerationError("图片生成服务返回空结果", can_fallback=True)
     logger.info(
         "Generated images",
         extra={"image_count": len(urls), "prompt_chars": len(prompt), "provider": active_provider, "user_id": user_id},
     )
-    return urls
+    return GeneratedImages(urls=urls, origin=origin)

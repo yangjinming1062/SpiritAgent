@@ -17,6 +17,7 @@ export interface ChatMessageListItem {
 }
 
 export interface ChatMessageBody {
+  canReplaceReply?: boolean
   /** 完整用户输入；陪伴拆泡与附件展示文案不能用作编辑原文。 */
   editableText?: string
   streamingText?: string

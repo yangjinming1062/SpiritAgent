@@ -67,6 +67,7 @@ export interface DesktopUpdateInfo {
 
 /** 会话历史磁盘快照：主进程缓存，渲染层本地秒开 + 增量合并的载荷。 */
 export interface SessionHistorySnapshot {
+  historyRevision?: number
   currentSeq: number
   info?: Record<string, unknown>
   lastMessageId: null | number

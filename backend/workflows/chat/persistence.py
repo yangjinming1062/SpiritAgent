@@ -6,17 +6,24 @@ from typing import Any
 
 from features.companion.mood import update_mood_from_companion_turn
 from features.conversation.audio_input import ensure_audio_transcripts
-from features.conversation.history import client_media_entries
+from features.conversation.history import build_session_messages, client_media_entries
 from features.conversation.replies import LinkBubble, MediaBubble
-from features.conversation.reply_audio import client_reply_bubbles, synthesize_reply_audio
+from features.conversation.reply_audio import cancel_reply_audio, client_reply_bubbles, synthesize_reply_audio
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.store_contracts import AssistantTurnData
 from features.conversation.title_generation import auto_generate_title
-from features.conversation.turn_store import persist_assistant_message, persist_tool_call, persist_tool_results
+from features.conversation.turn_access import turn_conversation
+from features.conversation.turn_store import (
+    persist_assistant_message,
+    persist_tool_call,
+    persist_tool_results,
+    replace_assistant_message,
+)
 from infrastructure.ai.responses import message_to_response_items
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.usage import CacheUsageSummary
 from infrastructure.constants import DEFAULT_SESSION_TITLE, TITLE_GENERATION_TEMPERATURE
+from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import resolve_language
 from runtime.background import TaskBag
@@ -49,6 +56,7 @@ def _turn_data(result: _LLMTurnResult) -> AssistantTurnData:
         result.final_completion_tokens,
         result.turn_duration_ms,
         result.reply,
+        result.generation_origin,
     )
 
 
@@ -158,10 +166,44 @@ async def _persist_assistant_no_tool_turn(
     cache_usage: CacheUsageSummary,
     persist: bool,
     track_task: TrackTask | None,
+    replace_reply_message_id: int | None = None,
+    submission_request_id: str | None = None,
 ) -> None:
     """保存终端答复与媒体，交付气泡，并调度回合后任务。陪伴用户会话使用结构化回复，与文本回复的媒体附件互斥。"""
     reply = result.reply
     turn_content = result.turn_content
+    if replace_reply_message_id is not None:
+        message_id = await replace_assistant_message(
+            conv.id,
+            user_id,
+            replace_reply_message_id,
+            _turn_data(result),
+            media,
+            request_id=submission_request_id,
+        )
+        await cancel_reply_audio(user_id, {replace_reply_message_id})
+        async with session_scope() as db:
+            messages = await build_session_messages(conv.id, db, only_ids=[message_id])
+            current = await turn_conversation(db, str(conv.id), user_id)
+        if current is None:
+            raise LookupError("Replacement conversation is no longer available")
+        await emitter.send_json(
+            {
+                "type": "message.replaced",
+                "session_id": str(conv.id),
+                "replaced_message_id": replace_reply_message_id,
+                "message": messages[0],
+                "history_revision": current.history_revision,
+            },
+        )
+        if result.reply is not None:
+            try:
+                await synthesize_reply_audio(user_id, message_id)
+            except LookupError:
+                raise
+            except Exception:
+                logger.warning("Replacement reply audio unavailable", extra={"message_id": message_id}, exc_info=True)
+        return
     assistant_message_id: int | None = None
     if persist and (turn_content or media or result.reasoning):
         assistant_message_id = await persist_assistant_message(conv.id, user_id, _turn_data(result), media)
@@ -250,6 +292,10 @@ async def _persist_assistant_no_tool_turn(
             **({"usage": result.final_usage_payload} if result.final_usage_payload else {}),
             "cache_usage": asdict(cache_usage),
             **({"message_id": assistant_message_id} if assistant_message_id is not None else {}),
+            "can_replace_reply": persist
+            and conv.parent_id is None
+            and not conv.is_automation
+            and bool(turn_content or media),
         },
     )
 

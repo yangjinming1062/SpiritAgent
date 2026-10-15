@@ -367,7 +367,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 task=AiTaskKey.posts,
             )
         else:
-            urls = await generate_images(
+            result = await generate_images(
                 build_plain_image_prompt(plan.prompt),
                 size=plan.size,
                 user_id=row.user_id,
@@ -375,6 +375,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 storage_directory=directory,
                 task=AiTaskKey.posts,
             )
+            urls = result.urls
         if not urls:
             raise PostError("图片生成未取得可用产物")
         progress["media_url"] = urls[0]

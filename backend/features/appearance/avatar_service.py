@@ -8,6 +8,7 @@ from pathlib import Path
 from infrastructure.ai.error_classifier import LLMRuntimeError, is_content_policy_error_message
 from infrastructure.ai.prompt_engineer import chat, vision_chat
 from infrastructure.ai.providers._size_aspect import SIZE_TO_ASPECT
+from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
     build_data_uri,
@@ -63,7 +64,7 @@ from features.media.identity_contracts import (
     CharacterOverrides,
     PortraitFeatures,
 )
-from features.media.image_generation import ImageGenerationError, generate_images
+from features.media.image_generation import GeneratedImages, ImageGenerationError, generate_images
 from features.media.prompts import MODERATION_SANITIZATION_PROMPT, PORTRAIT_IDENTITY_TEMPLATE
 
 logger = get_logger(__name__)
@@ -271,6 +272,7 @@ async def _save_fullbody_candidate(
     image_url: str,
     identity: CharacterCardSnapshot,
     base_fullbody_url: str,
+    origin: GenerationOrigin | None = None,
 ) -> FullbodyCandidateResponse:
     replaced_paths: list[str] = []
     try:
@@ -302,6 +304,7 @@ async def _save_fullbody_candidate(
                 base_fullbody_url=base_fullbody_url,
                 base_revision=identity.revision,
                 image_url=image_url,
+                generation_origin_json=origin.model_dump_json() if origin else None,
                 status="pending",
             )
             db.add(row)
@@ -386,6 +389,7 @@ async def accept_fullbody_candidate(user_id: int, avatar_id: int, candidate_id: 
             card.revision += 1
             card.error = None
             avatar.seed_fullbody_url = row.image_url
+            avatar.fullbody_generation_origin_json = row.generation_origin_json
             row.status = "accepted"
             emit_character_card_updated(db, card)
             await db.commit()
@@ -466,10 +470,11 @@ async def _generate_portrait(
     size: str = _AVATAR_SIZE,
     image_edit: bool = False,
     prefer_transparent_background: bool = False,
-) -> str:
+    selection: ProviderSelection | None = None,
+) -> tuple[str, GenerationOrigin]:
     """生成一张立绘并返回裸路径：persist=False 留作 temp-media 草稿，True 落盘用户资产目录。``image_edit`` 以参考图为底图并按编辑能力过滤，不接受 secondary。"""
 
-    async def generate(text: str) -> list[str]:
+    async def generate(text: str) -> GeneratedImages:
         return await generate_images(
             text,
             user_id=user_id,
@@ -479,16 +484,17 @@ async def _generate_portrait(
             secondary_reference_image=secondary_reference_image,
             image_edit=image_edit,
             prefer_transparent_background=prefer_transparent_background,
+            selection=selection,
         )
 
     try:
-        urls = await generate_with_moderation_retry(user_id, prompt, generate, task=task)
+        result = await generate_with_moderation_retry(user_id, prompt, generate, task=task)
     except ImageGenerationError as exc:
         logger.warning("portrait image generation failed", extra={"user_id": user_id, "error": exc.internal})
         # ImageGenerationError 的 str 按契约是公开文案（含编辑能力缺失等可行动指引），透传不替换。
         raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
     try:
-        data, content_type = await image_asset_bytes(urls[0])
+        data, content_type = await image_asset_bytes(result.urls[0])
     except Exception as exc:
         raise AvatarGenerationError("生成结果下载失败，请稍后重试", internal=str(exc)) from exc
     if prefer_transparent_background:
@@ -497,7 +503,8 @@ async def _generate_portrait(
         except VideoProcessError as exc:
             raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
         content_type = "image/png"
-    return await persist_portrait_or_draft(data, user_id, content_type, persist=persist)
+    path = await persist_portrait_or_draft(data, user_id, content_type, persist=persist)
+    return path, result.origin
 
 
 async def _write_avatar_step(
@@ -510,6 +517,7 @@ async def _write_avatar_step(
     feedback: str | None = None,
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
+    origin: GenerationOrigin | None = None,
 ) -> AvatarAsset:
     """以新头像行替换激活头像并撤销头像确认；已确认身份的旧立绘在提交后删除。"""
     prompt_payload: dict[str, str] = {"avatar_prompt": avatar_prompt, "style": style}
@@ -533,6 +541,7 @@ async def _write_avatar_step(
                 user_id=user_id,
                 prompt_json=json.dumps(prompt_payload, ensure_ascii=False),
                 asset_url=asset_url,
+                generation_origin_json=origin.model_dump_json() if origin else None,
                 active=True,
             )
             await reset_portrait_confirmation(db, user_id)
@@ -559,9 +568,10 @@ async def _generate_avatar_step(
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
     image_edit: bool = False,
+    selection: ProviderSelection | None = None,
 ) -> AvatarAsset:
     """先在会话外完成立绘生成，再用一次短写会话提交新的 active AvatarAsset 行。"""
-    asset_url = await _generate_portrait(
+    asset_url, origin = await _generate_portrait(
         avatar_prompt,
         user_id,
         persist=persist,
@@ -569,10 +579,12 @@ async def _generate_avatar_step(
         secondary_reference_image=secondary_reference_image,
         image_edit=image_edit,
         task=AiTaskKey.appearance,
+        selection=selection,
     )
     return await _write_avatar_step(
         user_id,
         asset_url=asset_url,
+        origin=origin,
         avatar_prompt=avatar_prompt,
         style=_DEFAULT_STYLE,
         persist=persist,
@@ -657,10 +669,16 @@ async def generate_avatar(user_id: int, *, feedback: str | None = None) -> Avata
         return await _generate_avatar(user_id, feedback=feedback)
 
 
-async def _generate_avatar(user_id: int, *, feedback: str | None = None) -> AvatarAsset:
+async def _generate_avatar(
+    user_id: int,
+    *,
+    feedback: str | None = None,
+    selection: ProviderSelection | None = None,
+) -> AvatarAsset:
     persona = await _verified_persona(user_id)
     return await _generate_avatar_step(
         user_id,
+        selection=selection,
         avatar_prompt=await _avatar_description(user_id, persona, feedback),
         persist=persona.is_portrait_confirmed,
         feedback=feedback,
@@ -719,15 +737,21 @@ def _is_orphan_temp_media_asset(asset: AvatarAsset) -> bool:
 async def regenerate_avatar(mode: ImageReviseMode, user_id: int, feedback: str | None = None) -> AvatarAsset:
     """根据反馈微调当前头像，或按角色资料重新生成。"""
     async with get_avatar_job_lock(user_id):
+        async with SESSION_LOCAL() as db:
+            current = await get_active_avatar(db, user_id)
+        origin = (
+            GenerationOrigin.model_validate_json(current.generation_origin_json)
+            if current is not None and current.generation_origin_json
+            else None
+        )
+        selection = ProviderSelection(origin=origin, mode="current" if mode == "edit" else "next")
         if mode == "regenerate":
-            return await _generate_avatar(user_id, feedback=feedback)
+            return await _generate_avatar(user_id, feedback=feedback, selection=selection)
         persona = await _verified_persona(user_id)
         effective_feedback = (feedback or "").strip()
         if not effective_feedback:
             raise AvatarGenerationError("请先描述要微调的内容")
         # 编辑底图即当前激活头像，成功后照常写入新 AvatarAsset 行。
-        async with SESSION_LOCAL() as db:
-            current = await get_active_avatar(db, user_id)
         if current is None:
             raise AvatarNotFoundError("找不到当前头像，请重新生成")
         edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, current.asset_url)
@@ -740,6 +764,7 @@ async def regenerate_avatar(mode: ImageReviseMode, user_id: int, feedback: str |
             feedback=effective_feedback,
             reference_image=edit_uri,
             image_edit=True,
+            selection=selection,
         )
 
 
@@ -755,6 +780,13 @@ async def regenerate_avatar_from_image(
     """以用户图锚定身份重绘头像，第二张图仅参考光线、色调与构图。"""
     async with get_avatar_job_lock(user_id):
         persona = await _verified_persona(user_id)
+        async with SESSION_LOCAL() as db:
+            current = await get_active_avatar(db, user_id)
+        origin = (
+            GenerationOrigin.model_validate_json(current.generation_origin_json)
+            if current is not None and current.generation_origin_json
+            else None
+        )
         base_description = await _avatar_description(user_id, persona, description, has_reference=True)
         avatar_prompt = build_avatar_reference_prompt(
             personality="",
@@ -770,6 +802,7 @@ async def regenerate_avatar_from_image(
         return await _generate_avatar_step(
             user_id,
             avatar_prompt=avatar_prompt,
+            selection=ProviderSelection(origin=origin, mode="next"),
             persist=persona.is_portrait_confirmed,
             feedback=description,
             reference_image=await asyncio.to_thread(build_data_uri, data, content_type),
@@ -894,7 +927,14 @@ async def _prepare_fullbody_reference(
     return reference, prompt
 
 
-async def _install_fullbody_seed(user_id: int, *, avatar_id: int, url: str, prompt: str | None) -> AvatarAsset:
+async def _install_fullbody_seed(
+    user_id: int,
+    *,
+    avatar_id: int,
+    url: str,
+    prompt: str | None,
+    origin: GenerationOrigin | None = None,
+) -> AvatarAsset:
     """首次全身草稿安装；调用方持用户锁，提交后清理旧图，失败时回收未采纳产物。"""
     try:
         async with SESSION_LOCAL() as session:
@@ -916,6 +956,7 @@ async def _install_fullbody_seed(user_id: int, *, avatar_id: int, url: str, prom
                 payload["fullbody_reference_prompt"] = prompt
             target.prompt_json = json.dumps(payload, ensure_ascii=False)
             target.seed_fullbody_url = url
+            target.fullbody_generation_origin_json = origin.model_dump_json() if origin else None
             await enqueue_asset_cleanup(session, user_id, [previous_url] if previous_url else [])
             await session.commit()
     except BaseException:
@@ -947,31 +988,37 @@ async def generate_fullbody_reference(
         effective_feedback = (feedback or "").strip()
         secondary_reference = None
         base_fullbody_url = asset.seed_fullbody_url
+        origin_json = asset.fullbody_generation_origin_json
+        edit_path = asset.seed_fullbody_url
+        if candidate_id is not None:
+            if identity is None:
+                raise AvatarGenerationError("首次全身形象尚无候选图可调整")
+            async with SESSION_LOCAL() as candidate_db:
+                candidate = await candidate_db.scalar(
+                    select(FullbodyCandidate).where(
+                        FullbodyCandidate.id == candidate_id,
+                        FullbodyCandidate.user_id == user_id,
+                        FullbodyCandidate.avatar_id == avatar_id,
+                    ),
+                )
+            if (
+                candidate is None
+                or candidate.status not in ("ready", "failed")
+                or candidate.base_revision != identity.revision
+                or candidate.base_fullbody_url != base_fullbody_url
+            ):
+                raise AvatarGenerationError("全身候选图已变化，请刷新后重试")
+            edit_path = candidate.image_url
+            origin_json = candidate.generation_origin_json
+        selection = ProviderSelection(
+            origin=GenerationOrigin.model_validate_json(origin_json) if origin_json else None,
+            mode="current" if mode == "edit" else "next",
+        )
         if mode == "edit":
             if reference_image:
                 raise AvatarGenerationError("参考图只用于重新生成，微调请先移除参考图")
             if not effective_feedback:
                 raise AvatarGenerationError("请先描述要微调的内容")
-            edit_path = asset.seed_fullbody_url
-            if candidate_id is not None:
-                if identity is None:
-                    raise AvatarGenerationError("首次全身形象尚无候选图可微调")
-                async with SESSION_LOCAL() as candidate_db:
-                    candidate = await candidate_db.scalar(
-                        select(FullbodyCandidate).where(
-                            FullbodyCandidate.id == candidate_id,
-                            FullbodyCandidate.user_id == user_id,
-                            FullbodyCandidate.avatar_id == avatar_id,
-                        ),
-                    )
-                if (
-                    candidate is None
-                    or candidate.status not in ("ready", "failed")
-                    or candidate.base_revision != identity.revision
-                    or candidate.base_fullbody_url != base_fullbody_url
-                ):
-                    raise AvatarGenerationError("全身候选图已变化，请刷新后再微调")
-                edit_path = candidate.image_url
             reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, edit_path)
             if not reference_uri:
                 raise AvatarSourceUnreadableError("上一版全身参考缺失或无法读取，请先重新生成")
@@ -995,7 +1042,7 @@ async def generate_fullbody_reference(
                 secondary_reference=secondary_reference,
             )
         try:
-            generated_url = await _generate_portrait(
+            generated_url, origin = await _generate_portrait(
                 prompt,
                 user_id,
                 persist=asset.is_fullbody_confirmed,
@@ -1005,13 +1052,27 @@ async def generate_fullbody_reference(
                 image_edit=mode == "edit",
                 prefer_transparent_background=True,
                 task=AiTaskKey.appearance,
+                selection=selection,
             )
         except AvatarGenerationError as exc:
             raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc
 
         if identity is not None:
-            return await _save_fullbody_candidate(user_id, avatar_id, generated_url, identity, base_fullbody_url)
-        return await _install_fullbody_seed(user_id, avatar_id=avatar_id, url=generated_url, prompt=prompt)
+            return await _save_fullbody_candidate(
+                user_id,
+                avatar_id,
+                generated_url,
+                identity,
+                base_fullbody_url,
+                origin,
+            )
+        return await _install_fullbody_seed(
+            user_id,
+            avatar_id=avatar_id,
+            url=generated_url,
+            prompt=prompt,
+            origin=origin,
+        )
 
 
 async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: str) -> AvatarAsset:
@@ -1067,7 +1128,12 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
                     status="ready",
                     active=True,
                     is_initial=True,
-                    source_json=OutfitSource(identity_reference_path=asset.seed_fullbody_url).dump(),
+                    source_json=OutfitSource(
+                        identity_reference_path=asset.seed_fullbody_url,
+                        generation_origin=GenerationOrigin.model_validate_json(asset.fullbody_generation_origin_json)
+                        if asset.fullbody_generation_origin_json
+                        else None,
+                    ).dump(),
                 )
                 db.add(outfit)
                 await db.flush()

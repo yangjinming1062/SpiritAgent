@@ -53,6 +53,7 @@ class ActiveTurnSnapshot:
     bubbles: list[dict[str, Any]] = field(default_factory=list)
     tools: list[ToolSnapshot] = field(default_factory=list)
     running: bool = True
+    replace_reply_message_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,8 @@ class LastSubmissionSnapshot:
     error: str | None
     message_ids: list[int]
     retry_message_id: int | None
+    replace_reply_message_id: int | None = None
+    result_message_id: int | None = None
 
 
 class SessionResumeResult(BaseModel):
@@ -79,6 +82,7 @@ class SessionResumeResult(BaseModel):
     next_cursor: str | None = None
     # after_id 命中且锚点仍存在时为 True：messages 仅为增量，客户端按 id 合并本地缓存。
     incremental: bool = False
+    history_revision: int = 0
 
 
 class ToolsSyncResult(BaseModel):

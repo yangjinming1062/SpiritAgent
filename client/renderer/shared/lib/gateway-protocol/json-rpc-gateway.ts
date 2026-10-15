@@ -114,6 +114,7 @@ const SNAPSHOT_METHODS = new Set(['session.resume', 'session.get_main', 'session
 
 // 这些事件已由历史和在途快照表达；设备指令与未持久化终态必须继续交付。
 const SNAPSHOT_EVENTS = new Set([
+  'message.replaced',
   'session.state',
   'message.start',
   'message.delta',

@@ -18,6 +18,7 @@ _TRANSLATED: dict[str, str] = {
     "bubble.break": "message.break",
     "bubble.append": "message.bubble",
     "message.complete": "message.complete",
+    "message.replaced": "message.replaced",
     "message.persisted": "message.persisted",
     "tool_start": "tool.start",
     "tool_end": "tool.complete",
@@ -85,8 +86,15 @@ class JsonRpcEmitter:
             elif raw_type == "error":
                 self.failed = True
                 self.error = payload.get("message")
+            if raw_type == "message.replaced":
+                turn.assistant_message_id = payload["message"]["id"]
+                turn.messages = [payload["message"]]
             if raw_type in ("error", "message.complete"):
                 turn.running = False
+            if turn.replace_reply_message_id is not None:
+                payload["replace_reply_message_id"] = turn.replace_reply_message_id
+                if raw_type == "error":
+                    payload.pop("retry_message_id", None)
             payload["request_id"] = turn.request_id
             payload["origin_kind"] = turn.origin_kind
         await self._dispatcher.push_event(event_name, payload, session_id=self._session_id)
@@ -128,6 +136,14 @@ class JsonRpcEmitter:
                 **({"usage": usage} if isinstance(usage, dict) else {}),
                 **({"cache_usage": cache_usage} if isinstance(cache_usage, dict) else {}),
                 **({"message_id": data["message_id"]} if isinstance(data.get("message_id"), int) else {}),
+                "can_replace_reply": data.get("can_replace_reply") is True,
+            }
+        if raw_type == "message.replaced":
+            return {
+                "session_id": data["session_id"],
+                "replaced_message_id": data["replaced_message_id"],
+                "message": data["message"],
+                "history_revision": data["history_revision"],
             }
         if raw_type == "message.persisted":
             raw_ids = data.get("message_ids")

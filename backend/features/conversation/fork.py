@@ -119,6 +119,7 @@ async def _fork_conversation_from_message(
             content_type=row.content_type,
             media_json=row.media_json,
             reasoning_content=row.reasoning_content,
+            generation_origin_json=row.generation_origin_json,
             reply_json=copied_reply,
             created_at=row.created_at,
         )

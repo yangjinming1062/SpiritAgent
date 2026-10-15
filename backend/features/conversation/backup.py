@@ -5,6 +5,7 @@ from datetime import datetime
 from functools import partial
 from typing import Any
 
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.backup import BackupContext, BackupRows, BackupTable, IdMap
 from runtime.memory_scope import MemoryScope
@@ -27,6 +28,10 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
         raise ValueError("Message conversation is missing from backup")
 
     if table == "messages":
+        if payload.get("generation_origin_json"):
+            payload["generation_origin_json"] = GenerationOrigin.model_validate_json(
+                payload["generation_origin_json"],
+            ).model_dump_json()
         through_id = payload.get("summary_through_message_id")
         if payload.get("subtype") == CHECKPOINT_SUBTYPE:
             if type(through_id) is not int or through_id <= 0:

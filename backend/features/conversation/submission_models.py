@@ -1,5 +1,5 @@
 from infrastructure.models import ModelBase, TimestampMixin
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint, text
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -16,3 +16,5 @@ class PromptSubmission(ModelBase, TimestampMixin):
     origin_kind: Mapped[str] = mapped_column(String(16))
     origin_id: Mapped[str | None] = mapped_column(String(64))
     message_ids_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
+    replace_reply_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

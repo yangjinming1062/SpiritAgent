@@ -6,6 +6,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from infrastructure.ai.prompt_engineer import vision_chat
+from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri, validate_image_bytes
@@ -65,6 +66,7 @@ class SceneRegenerationState(BaseModel):
     image_chain: ImageChainState = Field(default_factory=ImageChainState)
     wallpaper_path: str = ""
     source_size: SceneImageDimensions | None = None
+    selection: ProviderSelection | None = None
 
 
 class SceneError(RuntimeError):
@@ -297,6 +299,12 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
             task_id=task_id,
             prompt=build_scene_prompt(notes=row.description),
             target_size=SCENE_IMAGE_SIZE,
+            selection=ProviderSelection(
+                origin=GenerationOrigin.model_validate_json(row.generation_origin_json)
+                if row.generation_origin_json
+                else None,
+                mode="next",
+            ),
         )
         row.regeneration_status = "pending"
         row.regeneration_stage = "prepare"
@@ -501,6 +509,7 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, *, target: Scene
             if row is None or row.status != "pending" or row.stage != "store":
                 return row
             row.media_path = wallpaper.path
+            row.generation_origin_json = None
             row.upload_source_path = source_path
             row.target_size_json = target.model_dump_json()
             row.source_size_json = wallpaper.source_size.model_dump_json()
@@ -601,6 +610,7 @@ async def _generate_wallpaper(
     *,
     reference_image: str | None = None,
     scene_id: int,
+    selection: ProviderSelection | None = None,
 ) -> WallpaperAsset:
     paths = await generate_scene_images(
         prompt,
@@ -614,6 +624,7 @@ async def _generate_wallpaper(
         store_attempts=SETTINGS.scene_store_max_attempts,
         max_image_bytes=SCENE_DOWNLOAD_MAX_BYTES,
         before_submit=lambda: _scene_paid_boundary(user_id),
+        selection=selection,
     )
     best = state.best()
     if best is None:
@@ -679,6 +690,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                 state,
                 save_progress,
                 scene_id=scene_id,
+                selection=frozen.selection,
             )
             frozen.wallpaper_path = wallpaper.path
             frozen.source_size = wallpaper.source_size
@@ -690,6 +702,8 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                 return
             old_path = row.media_path
             row.media_path = frozen.wallpaper_path
+            origin = state.selected_origin()
+            row.generation_origin_json = origin.model_dump_json() if origin else None
             row.description = description.description
             row.prompt = frozen.prompt
             row.source = SceneSource.GENERATED.value
@@ -811,6 +825,8 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
                 await _reclaim_assets(user_id, {wallpaper.path})
                 return
             fresh.media_path = wallpaper.path
+            origin = state.selected_origin()
+            fresh.generation_origin_json = origin.model_dump_json() if origin else None
             fresh.target_size_json = target.model_dump_json()
             fresh.source_size_json = wallpaper.source_size.model_dump_json()
             fresh.image_size_json = wallpaper.image_size.model_dump_json()

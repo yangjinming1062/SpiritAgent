@@ -23,6 +23,7 @@ interface PendingPrompt {
   text: string
   attachments: ChatAttachment[]
   retry?: number
+  replace?: number
 }
 
 function readPendingPrompt(key: string): PendingPrompt | null {
@@ -40,7 +41,9 @@ function readPendingPrompt(key: string): PendingPrompt | null {
     typeof value.text !== 'string' ||
     !Array.isArray(value.attachments) ||
     (value.retry !== undefined &&
-      (typeof value.retry !== 'number' || !Number.isInteger(value.retry) || value.retry <= 0))
+      (typeof value.retry !== 'number' || !Number.isInteger(value.retry) || value.retry <= 0)) ||
+    (value.replace !== undefined &&
+      (typeof value.replace !== 'number' || !Number.isInteger(value.replace) || value.replace <= 0))
   ) {
     throw new Error('待确认的消息记录无法读取，请核对会话后重新登录')
   }
@@ -61,7 +64,8 @@ function readPendingPrompt(key: string): PendingPrompt | null {
     id: value.id,
     text: value.text,
     attachments,
-    retry: typeof value.retry === 'number' ? value.retry : undefined
+    retry: typeof value.retry === 'number' ? value.retry : undefined,
+    replace: typeof value.replace === 'number' ? value.replace : undefined
   }
 }
 
@@ -113,6 +117,7 @@ export function Chat({
   const [selected, setSelected] = useState<string | null>(null)
   const [mainId, setMainId] = useState('')
   const metadataLoaded = useRef(false)
+  const historyRevisions = useRef(new Map<string, number>())
   const listRefreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [turn, setTurn] = useState<ActiveTurn | null>(null)
@@ -233,9 +238,15 @@ export function Chat({
         const incoming = mergeMessages(result.messages, result.active_turn?.messages ?? [])
         const firstId = incoming[0]?.id ?? 0
         // 快照已覆盖的全量替换仍使旧分页失效，不能重放它的旧正文。
-        const historyReplaced = buffered.events.some(
-          event => event.seq !== undefined && event.seq <= (result.current_seq ?? 0) && commandHistory(event) !== null
-        )
+        const historyReplaced =
+          (result.history_revision ?? 0) !== (historyRevisions.current.get(id) ?? 0) ||
+          buffered.events.some(
+            event =>
+              event.seq !== undefined &&
+              event.seq <= (result.current_seq ?? 0) &&
+              (event.type === 'message.replaced' || commandHistory(event) !== null)
+          )
+        historyRevisions.current.set(id, result.history_revision ?? 0)
         setMessages(previous =>
           result.truncated && !historyReplaced
             ? mergeMessages(
@@ -258,17 +269,19 @@ export function Chat({
         if (prior && (receipt?.request_id === prior.id || result.active_turn?.request_id === prior.id)) {
           sessionStorage.removeItem(pendingKey)
           pending.current = null
-          setDraft(value => (value.trim() === prior.text ? '' : value))
-          setAttachments(value =>
-            value.length === prior.attachments.length &&
-            value.every(
-              (attachment, index) =>
-                attachment.type === prior.attachments[index].type && attachment.url === prior.attachments[index].url
+          if (!prior.replace) {
+            setDraft(value => (value.trim() === prior.text ? '' : value))
+            setAttachments(value =>
+              value.length === prior.attachments.length &&
+              value.every(
+                (attachment, index) =>
+                  attachment.type === prior.attachments[index].type && attachment.url === prior.attachments[index].url
+              )
+                ? []
+                : value
             )
-              ? []
-              : value
-          )
-          sessionStorage.removeItem(`remote:${userId}:${device}:draft:${id}`)
+            sessionStorage.removeItem(`remote:${userId}:${device}:draft:${id}`)
+          }
         }
         setReadOnly(result.info?.is_automation === true)
         setHasMore(result.truncated === true || Boolean(result.next_cursor))
@@ -352,6 +365,25 @@ export function Chat({
         setAttachments([])
         setFailure('')
       }
+    } else if (
+      event.type === 'message.replaced' &&
+      typeof payload.replaced_message_id === 'number' &&
+      record(payload.message)
+    ) {
+      const message = payload.message as unknown as SessionMessage
+      setMessages(previous =>
+        mergeMessages(
+          previous.filter(item => item.id !== payload.replaced_message_id),
+          [message]
+        )
+      )
+      pauseMedia()
+      setFailure('')
+      if (payload.request_id === pending.current?.id && selectedRef.current) {
+        pending.current = null
+        sessionStorage.removeItem(promptKey(selectedRef.current))
+      }
+      scheduleListRefresh()
     } else if (event.type === 'message.complete') {
       if (selectedRef.current) {
         if (payload.request_id === pending.current?.id) {
@@ -365,6 +397,31 @@ export function Chat({
 
       scheduleListRefresh()
     } else if (event.type === 'session.state' && payload.running === false) {
+      if (
+        payload.status === 'completed' &&
+        typeof payload.replace_reply_message_id === 'number' &&
+        Array.isArray(payload.messages)
+      ) {
+        const reply = (payload.messages as SessionMessage[]).find(
+          message => message.id === payload.result_message_id && message.role === 'assistant'
+        )
+
+        if (reply) {
+          if (messages.some(message => message.id === payload.replace_reply_message_id)) {
+            pauseMedia()
+          }
+          setMessages(previous =>
+            mergeMessages(
+              previous.filter(item => item.id !== payload.replace_reply_message_id),
+              [reply]
+            )
+          )
+        }
+        if (payload.request_id === pending.current?.id && selectedRef.current) {
+          pending.current = null
+          sessionStorage.removeItem(promptKey(selectedRef.current))
+        }
+      }
       if (typeof payload.error === 'string') {
         setFailure(payload.error)
       }
@@ -439,7 +496,7 @@ export function Chat({
     setMessages([])
     setTurn(null)
     const prior = readPendingPrompt(promptKey(id))
-    setDraft(prior?.text ?? sessionStorage.getItem(draftKey(id)) ?? '')
+    setDraft((prior?.replace ? undefined : prior?.text) ?? sessionStorage.getItem(draftKey(id)) ?? '')
     setAttachments(prior?.attachments ?? [])
     setFailure('')
     setRetryMessage(null)
@@ -452,7 +509,7 @@ export function Chat({
     })
   }
 
-  const submit = async (retry?: number) => {
+  const submit = async (retry?: number, replace?: number) => {
     const id = selectedRef.current
 
     if (!id || !connected || readOnly || turn?.running) {
@@ -461,12 +518,13 @@ export function Chat({
 
     const request = pending.current ?? {
       id: crypto.randomUUID(),
-      text: draft.trim(),
-      attachments,
-      retry
+      text: replace ? '' : draft.trim(),
+      attachments: replace ? [] : attachments,
+      retry,
+      replace
     }
 
-    if (!request.text && request.attachments.length === 0 && !request.retry) {
+    if (!request.text && request.attachments.length === 0 && !request.retry && !request.replace) {
       return
     }
 
@@ -480,37 +538,44 @@ export function Chat({
       throw new Error('无法保存待确认的发送记录，请减少图片大小或检查浏览器存储权限', { cause: failure })
     }
     pending.current = request
+    if (request.replace) {
+      pauseMedia()
+    }
     setFailure('')
 
     try {
       const result = await gateway.request<{ status?: string; error?: string }>('prompt.submit', {
         session_id: id,
         request_id: request.id,
-        ...(request.retry
-          ? { retry_message_id: request.retry }
-          : {
-              text: request.text,
-              attachments: request.attachments.map(attachment => ({
-                type: attachment.type,
-                file_url: attachment.url
-              }))
-            }),
+        ...(request.replace
+          ? { replace_reply_message_id: request.replace }
+          : request.retry
+            ? { retry_message_id: request.retry }
+            : {
+                text: request.text,
+                attachments: request.attachments.map(attachment => ({
+                  type: attachment.type,
+                  file_url: attachment.url
+                }))
+              }),
         response_preference: 'text'
       })
 
       if (readPendingPrompt(promptKey(id))?.id === request.id) {
         sessionStorage.removeItem(promptKey(id))
       }
-      if (sessionStorage.getItem(draftKey(id))?.trim() === request.text) {
+      if (!request.replace && sessionStorage.getItem(draftKey(id))?.trim() === request.text) {
         sessionStorage.removeItem(draftKey(id))
       }
 
       if (alive() && selectedRef.current === id) {
         if (pending.current?.id === request.id) {
           pending.current = null
-          setDraft(value => (value.trim() === request.text ? '' : value))
-          setAttachments(value => (value === request.attachments ? [] : value))
-          sessionStorage.removeItem(draftKey(id))
+          if (!request.replace) {
+            setDraft(value => (value.trim() === request.text ? '' : value))
+            setAttachments(value => (value === request.attachments ? [] : value))
+            sessionStorage.removeItem(draftKey(id))
+          }
         }
 
         if (result.status === 'failed' || result.status === 'interrupted') {
@@ -739,6 +804,7 @@ export function Chat({
   }
 
   const title = selected === mainId ? '我的伙伴' : sessions.find(item => item.id === selected)?.title || '新的对话'
+  const lastReplyMessageId = messages.findLast(item => item.role === 'assistant' || item.role === 'user')?.id
 
   const refreshMessages = () => {
     void run(() => resume(selected))
@@ -824,10 +890,17 @@ export function Chat({
               key={message.id ?? `message-${index}`}
               message={message}
               refresh={refreshMessages}
+              replace={
+                message.can_replace_reply && message.id === lastReplyMessageId
+                  ? () => run(() => submit(undefined, message.id))
+                  : undefined
+              }
+              replaceDisabled={!connected || readOnly || busy || Boolean(turn?.running) || Boolean(pending.current)}
+              replacing={turn?.replace_reply_message_id === message.id}
               userId={userId}
             />
           ))}
-        {turn && !activeReplyIsPersisted(turn, messages) ? (
+        {turn && !turn.replace_reply_message_id && !activeReplyIsPersisted(turn, messages) ? (
           <div className="message assistant">
             <div className="bubble">
               {turn.bubbles.map((bubble, index) => (
@@ -989,7 +1062,10 @@ function Message({
   gateway,
   refresh,
   userId,
-  device
+  device,
+  replace,
+  replacing,
+  replaceDisabled
 }: {
   message: SessionMessage
   api: RemoteApi
@@ -997,6 +1073,9 @@ function Message({
   refresh: () => void
   userId: number
   device: number
+  replace?: () => void
+  replacing?: boolean
+  replaceDisabled?: boolean
 }): ReactElement {
   let content =
     typeof message.content === 'string' ? message.content : typeof message.text === 'string' ? message.text : ''
@@ -1060,6 +1139,11 @@ function Message({
             <summary>思考过程</summary>
             {message.reasoning}
           </details>
+        ) : null}
+        {replace ? (
+          <button className="subtle" disabled={replaceDisabled} onClick={replace} type="button">
+            {replacing ? '正在换一个回答…' : '换一个回答'}
+          </button>
         ) : null}
       </div>
     </div>

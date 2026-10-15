@@ -187,6 +187,8 @@ export type CompanionBubble =
   | CompanionLinkBubble
 
 interface SessionMessageFields {
+  /** 服务端确认该消息可作为最新用户回合的回答更换。 */
+  can_replace_reply?: boolean
   content: unknown
   context?: unknown
   /** 数据库消息 ID，供编辑、派生与撤回定位。 */
@@ -231,6 +233,7 @@ export interface UndoResponse {
 }
 
 export interface ActiveTurnSnapshot {
+  replace_reply_message_id?: number | null
   request_id: string
   origin_kind: string
   message_ids: number[]
@@ -245,6 +248,8 @@ export interface ActiveTurnSnapshot {
 }
 
 export interface PromptSubmissionState {
+  replace_reply_message_id?: number | null
+  result_message_id?: number | null
   request_id: string
   status: string
   error?: string | null
@@ -258,6 +263,7 @@ export interface PromptSubmissionResult extends PromptSubmissionState {
 }
 
 export interface SessionResumeResponse {
+  history_revision?: number
   last_submission?: PromptSubmissionState | null
   incremental?: boolean
   stream_id?: string

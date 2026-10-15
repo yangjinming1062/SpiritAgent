@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from infrastructure.ai.selection import GenerationOrigin
+
 from features.conversation.replies import CompanionReply
 
 
@@ -25,3 +27,4 @@ class AssistantTurnData:
     completion_tokens: int
     duration_ms: int
     reply: CompanionReply | None
+    generation_origin: GenerationOrigin | None = None

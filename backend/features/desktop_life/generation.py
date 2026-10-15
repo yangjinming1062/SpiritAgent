@@ -12,8 +12,9 @@ from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
 from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.prompt_engineer import vision_chat
-from infrastructure.ai.providers.base import VideoGenProvider, VideoGenRequest
+from infrastructure.ai.providers.base import ServiceType, VideoGenProvider, VideoGenRequest
 from infrastructure.ai.providers.http import ProviderResultUnknownError
+from infrastructure.ai.selection import ProviderSelection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
     build_data_uri,
@@ -230,13 +231,16 @@ async def resolve_desktop_video_plan(
     kind: str,
     duration_seconds: int,
     continuity: str = "independent",
+    selection: ProviderSelection | None = None,
 ) -> tuple[int, list[FrozenMediaProvider]]:
     needs_last_frame = kind == "loop" or continuity == "base"
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.desktop_life)
         if not await resolve_vision_chain(db, user_id, task=AiTaskKey.desktop_life):
             raise DesktopVideoStateError("请先配置视觉模型")
-    configured = [(config, build_provider(config, VideoGenProvider)) for config in chain]
+    configured = [
+        (config, build_provider(config, VideoGenProvider)) for config in order_provider_chain(chain, selection)
+    ]
     for index, (_, provider) in enumerate(configured):
         if not provider.supports_first_frame or (needs_last_frame and not provider.supports_loop_frames):
             continue
@@ -530,6 +534,7 @@ async def _prepare_pose(
         save_progress=save_image,
         before_submit=before_submit,
         task=AiTaskKey.desktop_life,
+        selection=progress.image_selection,
     )
     resolved = resolve_asset_reference(paths[0])
     if resolved is None:
@@ -540,6 +545,7 @@ async def _prepare_pose(
         progress.aspect_ratio,
     )
     await prepare_uploaded_desktop_image(user_id, generated_data, progress, directory)
+    progress.image_origin = state.selected_origin()
     await _save_progress(user_id, action.id, progress, stage="image")
 
 
@@ -674,10 +680,18 @@ async def _process_candidate(
             and (external or progress.replace_base or not progress.base_image_path)
         ):
             progress.base_image_path = progress.pose_path
+        chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
+        video_origin = (
+            chain.providers[chain.active_index].generation_origin(ServiceType.video_gen)
+            if not external and chain.active_index is not None
+            else None
+        )
         return DesktopVideoAsset(
             video_path=video or "",
             poster_path=poster,
             image_path=progress.pose_path or "",
+            image_origin=None if external else progress.image_origin,
+            video_origin=video_origin,
             width=result.width,
             height=result.height,
             duration_ms=result.duration_ms,
@@ -911,6 +925,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 kind=action.kind,
                 duration_seconds=progress.duration_seconds,
                 continuity=progress.continuity,
+                selection=progress.video_selection,
             )
             progress.duration_seconds = seconds
             chain = MediaChainState(providers=providers)
@@ -1146,6 +1161,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 restored_image = bool(saved.previous_pose_path and not saved.pose_path and not saved.submission_unknown)
                 if restored_image:
                     saved.pose_path = saved.previous_pose_path
+                    saved.image_origin = saved.previous_image_origin
                     saved.image_confirmed = False
                     saved.image_only = True
                 row.generation_state_json = saved.model_dump_json()

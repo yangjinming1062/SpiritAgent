@@ -3,6 +3,7 @@
 from functools import partial
 from typing import Any
 
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.backup import BackupContext, BackupTable
 
 from .models import CompanionScene
@@ -12,6 +13,10 @@ from .schemas import SceneDescriptionRequest, SceneImageDimensions, SceneImageSi
 def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
 
     if table == "companion_scenes":
+        if payload.get("generation_origin_json"):
+            payload["generation_origin_json"] = GenerationOrigin.model_validate_json(
+                payload["generation_origin_json"],
+            ).model_dump_json()
         if payload.get("status") == "ready":
             SceneDescriptionRequest.model_validate(
                 {"title": payload.get("title"), "description": payload.get("description")},

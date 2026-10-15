@@ -207,7 +207,7 @@ function updateReference(
               body: {
                 feedback: feedback.trim() || undefined,
                 mode,
-                ...(mode === 'edit' && base.candidateId ? { candidate_id: base.candidateId } : {}),
+                ...(base.candidateId ? { candidate_id: base.candidateId } : {}),
                 // 微调编辑上一版，不接受参考图；参考图只随重新生成发送。
                 ...(mode !== 'edit' && reference
                   ? { image: reference.base64, content_type: reference.contentType }

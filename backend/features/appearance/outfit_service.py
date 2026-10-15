@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from infrastructure.ai.prompt_engineer import chat
+from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import build_data_uri, outfit_asset_directory, unlink_companion_asset
 from infrastructure.config import SETTINGS
@@ -54,7 +55,7 @@ from features.companion.policy_contracts import OUTFIT_POLICY_DEFAULT
 from features.companion.visual_state import change_outfit_policy, ensure_persona_snapshot, persona_snapshot
 from features.configuration.settings.values import get_user_setting
 from features.media.chain import spawn_removed_action_task_cancellation
-from features.media.character_images import generate_character_images, image_asset_bytes
+from features.media.character_images import ImageChainState, generate_character_images, image_asset_bytes
 from features.media.identity_contracts import CharacterCardSnapshot
 from features.media.image_generation import ImageGenerationError
 
@@ -256,9 +257,11 @@ async def _generate_outfit_fullbody(
     identity: CharacterCardSnapshot,
     outfit_id: int,
     image_edit: bool = False,
-) -> str:
-    async def generate(text: str) -> list[str]:
-        return await generate_character_images(
+    selection: ProviderSelection | None = None,
+) -> tuple[str, GenerationOrigin | None]:
+    async def generate(text: str) -> tuple[list[str], GenerationOrigin | None]:
+        state = ImageChainState()
+        paths = await generate_character_images(
             text,
             user_id=user_id,
             storage_directory=outfit_asset_directory(outfit_id),
@@ -269,10 +272,13 @@ async def _generate_outfit_fullbody(
             image_edit=image_edit,
             prefer_transparent_background=True,
             task=AiTaskKey.outfit,
+            state=state,
+            selection=selection,
         )
+        return paths, state.selected_origin()
 
     try:
-        paths = await generate_with_moderation_retry(user_id, prompt, generate, task=AiTaskKey.outfit)
+        paths, origin = await generate_with_moderation_retry(user_id, prompt, generate, task=AiTaskKey.outfit)
     except ImageGenerationError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
     except Exception as exc:
@@ -282,7 +288,8 @@ async def _generate_outfit_fullbody(
     try:
         data, _mime = await image_asset_bytes(paths[0])
         await asyncio.to_thread(validate_transparent_portrait, data)
-        return await persist_portrait_or_draft(data, user_id, "image/png", persist=False)
+        path = await persist_portrait_or_draft(data, user_id, "image/png", persist=False)
+        return path, origin
     except VideoProcessError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal or str(exc)) from exc
     except ImageGenerationError as exc:
@@ -371,7 +378,7 @@ async def create_outfit_draft(
         personality=personality,
         requirement=feedback,
     )
-    draft_url = await _generate_outfit_fullbody(
+    draft_url, origin = await _generate_outfit_fullbody(
         user_id,
         prompt=prompt,
         reference_image=identity_uri,
@@ -380,6 +387,7 @@ async def create_outfit_draft(
         outfit_id=outfit_id,
     )
 
+    source.generation_origin = origin
     ref_path: str | None = None
     try:
         if image is not None:
@@ -468,7 +476,7 @@ async def regenerate_outfit_draft(
             personality=personality,
         )
 
-    draft_url = await _generate_outfit_fullbody(
+    draft_url, origin = await _generate_outfit_fullbody(
         user_id,
         prompt=prompt,
         reference_image=reference_uri,
@@ -476,6 +484,7 @@ async def regenerate_outfit_draft(
         identity=identity,
         outfit_id=outfit_id,
         image_edit=mode == "edit",
+        selection=ProviderSelection(origin=source.generation_origin, mode="current" if mode == "edit" else "next"),
     )
 
     async with _draft_swap(db, user_id, new_url=draft_url, original_url=original_url), get_avatar_job_lock(user_id):
@@ -487,6 +496,7 @@ async def regenerate_outfit_draft(
         source.character_card_revision = identity.revision
         source.identity_reference_path = avatar.seed_fullbody_url
         outfit.fullbody_url = draft_url
+        source.generation_origin = origin
         if effective_feedback:
             source.feedback_history = [*source.feedback_history, effective_feedback]
         outfit.source_json = source.dump()
@@ -716,6 +726,7 @@ async def adopt_outfit_regenerate_image(
             raise OutfitStateError("角色形象或角色卡已更新，请重新上传外观")
         outfit.fullbody_url = fullbody_url
         source = OutfitSource.load(outfit.source_json)
+        source.generation_origin = None
         source.character_card_revision = identity.revision
         source.identity_reference_path = identity_path
         outfit.source_json = source.dump()

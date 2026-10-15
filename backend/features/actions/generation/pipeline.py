@@ -9,7 +9,7 @@ from pathlib import Path
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider
 from infrastructure.ai.llm_fallback import execute_with_fallback
-from infrastructure.ai.providers.base import VideoGenProvider, VideoGenRequest, VideoJobStatus
+from infrastructure.ai.providers.base import ServiceType, VideoGenProvider, VideoGenRequest, VideoJobStatus
 from infrastructure.ai.providers.http import ProviderResultUnknownError
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
@@ -244,6 +244,7 @@ async def _prepare_action_pose(
         save_progress=save_pose,
         before_submit=lambda: _require_new_paid_step(pack, context),
         task=AiTaskKey.window_action,
+        selection=context.action_image_selection.get(job.key),
     )
     job.pose_path = action_pose_asset_path(
         pack.user_id,
@@ -346,6 +347,7 @@ async def _run_image_pipeline(
     )
     best = pose_state.best()
     provider = pose_state.providers[best.attempt] if best is not None else None
+    result = result.model_copy(update={"image_origin": pose_state.selected_origin()})
     await _advance_job(
         job.id,
         stage="publish",
@@ -484,6 +486,17 @@ async def _run_action_pipeline(
         raise VideoPackError("视频生成服务未返回可用素材")
     unused_source = job.artifact_path
     result = ActionResult.model_validate_json(best.result_json or "")
+    pose_state = (
+        ImageChainState.model_validate_json(job.pose_generation_state_json)
+        if job.pose_generation_state_json
+        else ImageChainState()
+    )
+    result = result.model_copy(
+        update={
+            "image_origin": pose_state.selected_origin(),
+            "video_origin": state.providers[best.attempt].generation_origin(ServiceType.video_gen),
+        },
+    )
     spec = result.clip
     review_id = None
     frames: tuple[str, ...] = ()

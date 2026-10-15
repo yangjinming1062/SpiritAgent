@@ -12,6 +12,7 @@ from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.providers._size_aspect import ASPECT_RATIOS, SIZE_TO_ASPECT
 from infrastructure.ai.providers.base import ProviderConfig, ServiceType
 from infrastructure.ai.providers.registry import resolve
+from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri
@@ -93,6 +94,12 @@ class ImageChainState(MediaChainState):
     pending_path: str | None = None
     remaining_slots: list[int] = Field(default_factory=list)
     size_rejected: int = 0
+
+    def selected_origin(self, slot: int = 0) -> GenerationOrigin | None:
+        candidate = self.best(slot)
+        if candidate is None or not 0 <= candidate.attempt < len(self.providers):
+            return None
+        return self.providers[candidate.attempt].generation_origin(ServiceType.image_gen)
 
     def best(self, slot: int = 0) -> MediaCandidate | None:
         if isinstance(self.inputs, SceneImageInput):
@@ -321,6 +328,7 @@ async def generate_character_images(
     max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     size_enforced: bool = False,
     prefer_transparent_background: bool = False,
+    selection: ProviderSelection | None = None,
 ) -> list[str]:
     """返回已保存的用户资产；恢复只消费冻结输入、已知结果和未提交的链尾。"""
     state = state if state is not None else ImageChainState()
@@ -357,6 +365,7 @@ async def generate_character_images(
                 image_edit=image_edit,
                 multiple_references=bool(secondary_reference_image),
                 prompt_chars=len(prompt),
+                selection=selection,
             )
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
@@ -401,6 +410,7 @@ async def generate_scene_images(
     store_attempts: int = 3,
     before_submit: Callable[[], Awaitable[None]] | None = None,
     max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
+    selection: ProviderSelection | None = None,
 ) -> list[str]:
     """返回通过伙伴重复出镜检查的原始用户资产；画布和每家尝试随任务冻结。"""
     state = state if state is not None else ImageChainState()
@@ -428,6 +438,7 @@ async def generate_scene_images(
                 has_reference=bool(reference_image),
                 prompt_chars=len(prompt),
                 environment_reference=True,
+                selection=selection,
             )
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
@@ -649,7 +660,7 @@ async def _run_image_chain(
                 provider = state.providers[index]
                 background = provider.background
                 async with media_call_duration(config, state) as call_config:
-                    urls = await generate_images(
+                    result = await generate_images(
                         inputs.prompt,
                         size=provider.image_size or inputs.size,
                         n=len(slots),
@@ -679,7 +690,7 @@ async def _run_image_chain(
                         return await _complete_images(state, save_progress)
                     raise
                 continue
-            state.pending_urls = urls[: len(slots)]
+            state.pending_urls = result.urls[: len(slots)]
             state.pending_slots = slots[: len(state.pending_urls)]
             state.phase = "storing"
             await _save_progress(state, save_progress)

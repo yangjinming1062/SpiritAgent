@@ -89,7 +89,7 @@ async def _generate_batch(
     results: list[tuple[str | None, int | None, str | None]] = [(None, None, None)] * n
 
     async def request(count: int) -> list[str]:
-        return await generate_images(
+        result = await generate_images(
             plan.prompt,
             size=plan.size,
             n=count,
@@ -98,6 +98,7 @@ async def _generate_batch(
             storage_directory=directory,
             task=task,
         )
+        return result.urls
 
     identity = CharacterCardSnapshot.model_validate_json(plan.identity_json) if plan.identity_json else None
     if identity is None:

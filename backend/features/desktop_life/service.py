@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.prompt_engineer import VisualReasoningError, chat, vision_chat
+from infrastructure.ai.selection import ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
     read_valid_image_data_uri,
@@ -68,6 +69,7 @@ from features.desktop_life.repository import (
     desktop_action,
     desktop_action_description,
     desktop_action_response,
+    desktop_image_origin,
     desktop_preferences,
     desktop_progress,
     desktop_removed_video_task,
@@ -625,6 +627,15 @@ async def generate_desktop_image(
             previous = old.pose_path if old and old.pose_path else None
             accepted = desktop_accepted_asset(action)
             previous = previous or (accepted.image_path if accepted else None)
+            image_origin = await desktop_image_origin(db, user_id, row.id, previous)
+            video_origin = (
+                old.candidate.video_origin
+                if old and old.candidate and action.stage != "complete"
+                else accepted.video_origin
+                if accepted
+                else None
+            )
+            selection_mode: Literal["next", "current"] = "next" if regenerate else "current"
             removed_task = desktop_removed_video_task(action)
             old_paths = asset_paths(action.generation_state_json, user_id)
             action.attempt += 1
@@ -639,6 +650,9 @@ async def generate_desktop_image(
                 replace_base=action.key == "idle",
                 image_only=True,
                 previous_pose_path=previous,
+                previous_image_origin=image_origin,
+                image_selection=ProviderSelection(origin=image_origin, mode=selection_mode),
+                video_selection=ProviderSelection(origin=video_origin, mode=selection_mode),
                 regenerate_image=regenerate,
             )
             await enqueue_asset_cleanup(db, user_id, old_paths - ({previous} if previous else set()))
@@ -903,6 +917,18 @@ async def generate_desktop_action(
             and desktop_progress_can_resume(progress)
         )
         frozen_chain = progress.video_chain_json if resumable else None
+        video_selection = (
+            progress.video_selection
+            if progress is not None and not progress.video_chain_json and progress.video_selection is not None
+            else ProviderSelection(
+                origin=progress.candidate.video_origin
+                if progress is not None and progress.candidate is not None and action.stage != "complete"
+                else accepted.video_origin
+                if accepted
+                else None,
+                mode="next",
+            )
+        )
         observed_draft = progress.generation_id if progress is not None and action.stage != "complete" else "none"
         observed_base = row.base_version
     if needs_image:
@@ -922,6 +948,7 @@ async def generate_desktop_action(
             kind=kind,
             duration_seconds=duration,
             continuity=continuity,
+            selection=video_selection,
         )
     )
     async with _lock(user_id), SESSION_LOCAL() as db:
@@ -1007,6 +1034,8 @@ async def generate_desktop_action(
                 frame_width=confirmed_draft.frame_width if confirmed_draft else None,
                 frame_height=confirmed_draft.frame_height if confirmed_draft else None,
                 pose_path=image,
+                image_origin=await desktop_image_origin(db, user_id, row.id, image),
+                video_selection=video_selection,
                 image_confirmed=True,
                 force_review=action.needs_update,
             )

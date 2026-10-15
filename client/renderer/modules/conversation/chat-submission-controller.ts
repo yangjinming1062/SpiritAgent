@@ -17,7 +17,8 @@ import { conversationVoiceSink } from './voice-link'
 export function createChatSubmissionController(
   state: ConversationState,
   messages: ChatMessageController,
-  isCurrent: () => boolean
+  isCurrent: () => boolean,
+  onReplyReplaced: (replacedMessageId: number, message: SessionMessage) => void
 ) {
   const {
     $chatSessionId,
@@ -26,6 +27,8 @@ export function createChatSubmissionController(
     $chatTurnInFlight,
     $lastAssistantStreaming,
     $retryableAssistantMessage,
+    $replaceableAssistantMessage,
+    $replacingReplyMessageId,
     $pendingPromptBatch
   } = state.stores
 
@@ -33,6 +36,48 @@ export function createChatSubmissionController(
   const { markAssistantTerminal } = messages.api
 
   let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+  async function replaceAssistantReply(messageId: string): Promise<void> {
+    const sessionId = $chatSessionId.get()
+    const gateway = $gateway.get()
+    const message = $replaceableAssistantMessage.get()
+
+    if (
+      !sessionId ||
+      !gateway ||
+      gateway.connectionState !== 'open' ||
+      message?.id !== messageId ||
+      !message.backendMessageId
+    ) {
+      return
+    }
+
+    const epoch = currentClearEpoch()
+    $replacingReplyMessageId.set(message.backendMessageId)
+    $chatTurnInFlight.set(true)
+    conversationVoiceSink().cancel(sessionId)
+
+    const params = preparePromptSubmission({
+      session_id: sessionId,
+      replace_reply_message_id: message.backendMessageId,
+      response_preference: presentationPorts().getResponsePreference()
+    })
+
+    try {
+      acceptPromptSubmission(await gateway.request<PromptSubmissionResult>('prompt.submit', params))
+    } catch (error) {
+      if (
+        isCurrent() &&
+        epoch === currentClearEpoch() &&
+        $chatSessionId.get() === sessionId &&
+        state.submission.unconfirmedSubmission?.requestId === params.request_id
+      ) {
+        $chatTurnInFlight.set(false)
+        $replacingReplyMessageId.set(null)
+        notifyError(error, getStrings().chat.sendFailed)
+      }
+    }
+  }
 
   async function retryAssistantReply(messageId: string): Promise<void> {
     const sessionId = $chatSessionId.get()
@@ -212,18 +257,23 @@ export function createChatSubmissionController(
     }
   }
 
-  function applySessionState(event: {
-    request_id?: string
-    running?: boolean
-    status?: string
-    error?: string | null
-  }): void {
+  function applySessionState(event: Partial<PromptSubmissionResult> & { running?: boolean }): void {
     if (
       event.request_id &&
       ((state.submission.activeRequestId && event.request_id !== state.submission.activeRequestId) ||
         (event.running && event.request_id === state.submission.settledRequestId))
     ) {
       return
+    }
+
+    if (event.status === 'completed' && event.replace_reply_message_id && event.result_message_id) {
+      const reply = event.messages?.find(
+        message => message.id === event.result_message_id && message.role === 'assistant'
+      )
+
+      if (reply) {
+        onReplyReplaced(event.replace_reply_message_id, reply)
+      }
     }
 
     if (event.running) {
@@ -234,14 +284,16 @@ export function createChatSubmissionController(
     }
 
     const unfinished = $chatTurnInFlight.get() || $lastAssistantStreaming.get()
+    const replacing = $replacingReplyMessageId.get() !== null || Boolean(event.replace_reply_message_id)
 
-    if (unfinished && (event.status === 'cancelled' || event.status === 'interrupted')) {
+    if (unfinished && !replacing && (event.status === 'cancelled' || event.status === 'interrupted')) {
       markAssistantTerminal({ cancelled: true })
-    } else if (unfinished && event.status === 'failed') {
+    } else if (unfinished && !replacing && event.status === 'failed') {
       markAssistantTerminal({ error: event.error || getStrings().chat.sendFailed })
     }
 
     $chatTurnInFlight.set(false)
+    $replacingReplyMessageId.set(null)
 
     if (event.request_id === state.submission.activeRequestId) {
       state.submission.settledRequestId = event.request_id
@@ -291,6 +343,8 @@ export function createChatSubmissionController(
     }
 
     state.submission.activeRequestId = pending.requestId
+    const replacedId = pending.params.replace_reply_message_id
+    $replacingReplyMessageId.set(typeof replacedId === 'number' ? replacedId : null)
     $chatTurnInFlight.set(true)
 
     const recovery = (async (): Promise<void> => {
@@ -522,6 +576,7 @@ export function createChatSubmissionController(
 
   return {
     retryAssistantReply,
+    replaceAssistantReply,
     bindTrailingUserMessageIds,
     preparePromptSubmission,
     mergePersistedUserMessages,

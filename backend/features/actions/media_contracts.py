@@ -1,5 +1,6 @@
 from typing import Annotated, Literal
 
+from infrastructure.ai.selection import GenerationOrigin
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.actions.schemas import PeekGeometry
@@ -43,6 +44,8 @@ class ActionResult(BaseModel):
     clip: Annotated[ImageClipSpec | VideoClipSpec, Field(discriminator="media_type")]
     cover_path: str
     hitmask_path: str
+    image_origin: GenerationOrigin | None = None
+    video_origin: GenerationOrigin | None = None
 
 
 class _ActionMediaUpload(BaseModel):

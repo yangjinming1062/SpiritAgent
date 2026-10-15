@@ -102,7 +102,10 @@ function MessageBubbleWithBody({
     $chatSessionReadOnly,
     $pendingPromptBatch,
     $retryableAssistantMessage,
+    $replaceableAssistantMessage,
+    $replacingReplyMessageId,
     retryAssistantReply,
+    replaceAssistantReply,
     startEditingMessage
   } = controller
 
@@ -114,6 +117,8 @@ function MessageBubbleWithBody({
   const pendingPromptBatch = useStore($pendingPromptBatch)
   const editing = useStore($chatEditDraft)
   const retryableMessage = useStore($retryableAssistantMessage)
+  const replaceableMessage = useStore($replaceableAssistantMessage)
+  const replacingReplyId = useStore($replacingReplyMessageId)
   const gatewayState = useStore($gatewayState)
 
   // 右键菜单是纯临时态：局部 useState，不持久化、不入 store；多窗口各自独立。
@@ -419,6 +424,21 @@ function MessageBubbleWithBody({
                 <ChatMediaCard item={m} key={m.url} />
               ))}
             </div>
+          ) : null}
+          {replaceableMessage?.id === message.id ? (
+            <button
+              className="inline-flex items-center gap-1 self-start rounded-md px-2 py-1 text-xs text-muted transition hover:bg-fill-hover hover:text-strong disabled:opacity-50"
+              disabled={gatewayState !== 'open'}
+              onClick={() => void replaceAssistantReply(message.id)}
+              type="button"
+            >
+              <RefreshCw className="size-3.5" />
+              {dict.chat.replaceReply}
+            </button>
+          ) : replacingReplyId === message.backendMessageId && body.canReplaceReply ? (
+            <span className="text-xs text-muted" role="status">
+              {dict.chat.replacingReply}
+            </span>
           ) : null}
         </div>
         {menuPosition && eligible && panelActive ? (

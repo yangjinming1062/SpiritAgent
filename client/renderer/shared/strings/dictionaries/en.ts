@@ -671,6 +671,8 @@ export const dict: Dictionary = {
   },
 
   chat: {
+    replaceReply: 'Try another answer',
+    replacingReply: 'Preparing another answer…',
     topic: {
       platforms: { x: 'X', xiaohongshu: 'Xiaohongshu', douyin: 'Douyin' },
       open: 'View original',

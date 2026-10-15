@@ -15,6 +15,7 @@ class ConversationSnapshot:
     settings_json: str | None
     context_after_message_id: int
     title: str
+    history_revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,3 +36,4 @@ class MessageSnapshot:
     reasoning_content: str | None
     summary_through_message_id: int | None
     created_at: datetime
+    generation_origin_json: str | None = None

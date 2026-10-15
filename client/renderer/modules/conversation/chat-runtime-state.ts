@@ -47,6 +47,24 @@ export function createConversationState(sessionId: string | null) {
   const $pendingPromptBatch = atom<PendingPromptItem[]>([])
 
   const $chatTurnInFlight = atom<boolean>(false)
+  const $replacingReplyMessageId = atom<number | null>(null)
+
+  const $replaceableAssistantMessage = computed(
+    [$chatMessageList, $chatMessageBodies, $chatTurnInFlight, $pendingPromptBatch, $chatSessionReadOnly],
+    (list, bodies, inFlight, pending, readOnly): ChatMessageListItem | null => {
+      if (readOnly || inFlight || pending.length > 0) {
+        return null
+      }
+
+      const last = list.findLast(
+        item =>
+          item.subtype === 'status_proactive' ||
+          (!item.subtype && !bodies[item.id]?.error && !bodies[item.id]?.cancelled)
+      )
+
+      return last?.role === 'assistant' && last.backendMessageId && bodies[last.id]?.canReplaceReply ? last : null
+    }
+  )
 
   const $retryableAssistantMessage = computed(
     [$chatMessageList, $chatMessageBodies, $chatTurnInFlight, $pendingPromptBatch, $chatSessionReadOnly],
@@ -180,6 +198,8 @@ export function createConversationState(sessionId: string | null) {
       $chatSessionReadOnly,
       $pendingPromptBatch,
       $chatTurnInFlight,
+      $replacingReplyMessageId,
+      $replaceableAssistantMessage,
       $retryableAssistantMessage,
       $turnHadBubbleBreak,
       $sessionSettings,
@@ -193,7 +213,8 @@ export function createConversationState(sessionId: string | null) {
     },
     submission,
     historyEditRevision: 0,
-    historyReplacementRevision: 0
+    historyReplacementRevision: 0,
+    serverHistoryRevision: undefined as number | undefined
   }
 }
 

@@ -12,7 +12,11 @@ export function createConversationRuntime(sessionId: string | null) {
   const isCurrent = (): boolean => alive && epoch === currentClearEpoch()
   const state = createConversationState(sessionId)
   const messages = createChatMessageController(state)
-  const submission = createChatSubmissionController(state, messages, isCurrent)
+
+  const submission = createChatSubmissionController(state, messages, isCurrent, (messageId, message) => {
+    history.replaceAssistantReplyMessage(messageId, message)
+  })
+
   const history = createChatHistoryController(state, messages, submission, isCurrent)
   const { $runtimeRevision, $chatMessageList, $chatMessageBodies, $chatTurnInFlight } = state.stores
 

@@ -26,8 +26,10 @@ class CompanionDialogue:
     content: str
 
 
-async def load_context_messages(db: AsyncSession, conv: Conversation | ConversationSnapshot) -> list[Message]:
-    """按摘要的原消息覆盖边界读取未总结的历史，按消息 id 排序。"""
+async def _context_checkpoint(
+    db: AsyncSession,
+    conv: Conversation | ConversationSnapshot,
+) -> tuple[Message | None, int]:
     checkpoint = await db.scalar(
         select(Message)
         .where(
@@ -38,14 +40,10 @@ async def load_context_messages(db: AsyncSession, conv: Conversation | Conversat
         .order_by(Message.id.desc())
         .limit(1),
     )
-    stmt = select(Message).where(
-        Message.conversation_id == conv.id,
-        Message.id > conv.context_after_message_id,
-        Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
-    )
+    watermark = conv.context_after_message_id
     if checkpoint is not None:
         boundary = await db.scalar(
-            select(Message).where(
+            select(Message.id).where(
                 Message.conversation_id == conv.id,
                 Message.id == checkpoint.summary_through_message_id,
                 Message.subtype.is_(None) | (Message.subtype != CHECKPOINT_SUBTYPE),
@@ -53,7 +51,22 @@ async def load_context_messages(db: AsyncSession, conv: Conversation | Conversat
         )
         if boundary is None:
             raise ValueError("Conversation summary requires an original message boundary")
-        stmt = stmt.where(Message.id > boundary.id)
+        watermark = max(watermark, boundary)
+    return checkpoint, watermark
+
+
+async def context_message_watermark(db: AsyncSession, conv: Conversation | ConversationSnapshot) -> int:
+    return (await _context_checkpoint(db, conv))[1]
+
+
+async def load_context_messages(db: AsyncSession, conv: Conversation | ConversationSnapshot) -> list[Message]:
+    """按摘要的原消息覆盖边界读取未总结的历史，按消息 id 排序。"""
+    checkpoint, watermark = await _context_checkpoint(db, conv)
+    stmt = select(Message).where(
+        Message.conversation_id == conv.id,
+        Message.id > watermark,
+        Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, CHECKPOINT_SUBTYPE)),
+    )
     rows = list((await db.scalars(stmt.order_by(Message.id))).all())
     return [checkpoint, *rows] if checkpoint is not None else rows
 

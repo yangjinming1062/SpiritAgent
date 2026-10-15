@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import Coroutine
 from uuid import uuid4
 
+from infrastructure.ai.providers.base import ServiceType
+from infrastructure.ai.selection import ProviderSelection
 from infrastructure.database import SESSION_LOCAL
 from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import select
@@ -11,10 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.actions.asset_retirement import action_asset_paths, retire_action_assets
 from features.actions.generation.script import VideoActionSpec
+from features.actions.materials import accepted_action_asset
+from features.actions.media_contracts import ActionResult
 from features.actions.models import SYSTEM_ACTION_MEDIA_TYPES, CompanionAction, CompanionActionPack
 from features.actions.policy import ActionPolicyError, check_can_accept, consume_create_slot
 from features.actions.repository import clear_action_attempt, make_semantic_fingerprint
-from features.media.chain import FrozenMediaProvider
+from features.media.chain import FrozenMediaProvider, MediaChainState
+from features.media.character_images import ImageChainState
 from features.media.review_service import reject_pending_action_reviews
 
 from .errors import VideoPackStateError
@@ -132,6 +137,31 @@ async def _queue_in_place_redo(
     ).scalar_one_or_none()
     if job is not None and (_job_result_unresolved(job) or job.id in _ACTION_INFLIGHT):
         raise VideoPackStateError("动作仍在制作中，请等待完成后再重新生成")
+    accepted = accepted_action_asset(job) if job is not None else None
+    current = (
+        ActionResult.model_validate_json(job.result_json)
+        if job is not None and job.result_json and job.media_path
+        else accepted.parse_result()
+        if accepted is not None
+        else None
+    )
+    if current is None and job is not None and job.generation_state_json:
+        state = MediaChainState.model_validate_json(job.generation_state_json)
+        candidate = state.best()
+        if candidate is not None and candidate.result_json:
+            current = ActionResult.model_validate_json(candidate.result_json)
+            pose = (
+                ImageChainState.model_validate_json(job.pose_generation_state_json)
+                if job.pose_generation_state_json
+                else ImageChainState()
+            )
+            current = current.model_copy(
+                update={
+                    "image_origin": current.image_origin or pose.selected_origin(),
+                    "video_origin": current.video_origin
+                    or state.providers[candidate.attempt].generation_origin(ServiceType.video_gen),
+                },
+            )
     is_system = action in SYSTEM_ACTION_MEDIA_TYPES
     if job is None and not is_system:
         raise VideoPackStateError("找不到对应的动作，请刷新后重试")
@@ -150,6 +180,7 @@ async def _queue_in_place_redo(
             pack.user_id,
             needs_loop_frames=kind == "loop",
             duration_seconds=requested_seconds,
+            selection=ProviderSelection(origin=current.video_origin if current else None, mode="next"),
         )
     if not is_system:
         try:
@@ -204,6 +235,10 @@ async def _queue_in_place_redo(
     context = _load_generation_context(pack)
     if context is not None:
         context.action_feedback[action] = feedback.strip()[:1000]
+        context.action_image_selection[action] = ProviderSelection(
+            origin=current.image_origin if current else None,
+            mode="next",
+        )
         pack.context_json = context.model_dump_json()
     await db.flush()
     return job

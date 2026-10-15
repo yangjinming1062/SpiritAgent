@@ -2,6 +2,7 @@
 
 from typing import Literal
 
+from infrastructure.ai.selection import ProviderSelection
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.character_images import ImageChainState
@@ -23,6 +24,7 @@ class GenerationContext(BaseModel):
     outfit_description_frozen: bool = True
     feedback: str
     action_feedback: dict[str, str] = Field(default_factory=dict)
+    action_image_selection: dict[str, ProviderSelection] = Field(default_factory=dict)
     active_outfit_id: int | None
     # 本版本必须成功的动作。
     must_actions: list[str]

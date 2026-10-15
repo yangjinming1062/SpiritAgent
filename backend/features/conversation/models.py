@@ -43,6 +43,7 @@ class Conversation(ModelBase, TimestampMixin):
     system_preset_id: Mapped[str] = mapped_column(String(32), index=True)
     memory_reviewed_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     context_after_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    history_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     title: Mapped[str] = mapped_column(Text, default=DEFAULT_SESSION_TITLE)
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -117,6 +118,7 @@ class Message(ModelBase):
     media_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 助手推理过程原文；只给工作台展示与历史水合，装配 Responses 输入时不回灌。
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_origin_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # content=模型气泡数组；reply_json=语音绑定、音频及媒体交付态。
     reply_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 摘要实际覆盖到的原消息 id，与摘要插入位置分开。

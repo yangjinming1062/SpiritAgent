@@ -615,6 +615,8 @@ export const dict = {
   },
 
   chat: {
+    replaceReply: '换一个回答',
+    replacingReply: '正在换一个回答…',
     topic: {
       platforms: { x: 'X', xiaohongshu: '小红书', douyin: '抖音' },
       open: '查看原文',

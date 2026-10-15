@@ -26,6 +26,7 @@ export function createChatHistoryController(
     $chatSessionId,
     $lastAssistantStreaming,
     $chatTurnInFlight,
+    $replacingReplyMessageId,
     $turnHadBubbleBreak,
     $pendingPromptBatch,
     $chatSessionPresetId,
@@ -52,6 +53,56 @@ export function createChatHistoryController(
   const { bindTrailingUserMessageIds, mergePersistedUserMessages } = submission
 
   let snapshotPosition: { streamId: string; seq: number } | null = null
+
+  function replaceAssistantReplyMessage(replacedMessageId: number, message: SessionMessage): void {
+    if (!isCurrent() || typeof message.id !== 'number') {
+      return
+    }
+
+    const original = $chatMessageList.get()
+    const bodies = $chatMessageBodies.get()
+    const replacedIndex = original.findIndex(item => item.backendMessageId === replacedMessageId)
+
+    if (replacedIndex < 0 && original.some(item => (item.backendMessageId ?? 0) >= (message.id ?? 0))) {
+      return
+    }
+
+    const keep = original.filter(
+      item => item.backendMessageId !== replacedMessageId && item.backendMessageId !== message.id
+    )
+
+    const projected = projectSessionMessages([message], {
+      splitUserBubbles: splitUserBubblesEnabled(),
+      nextMessageId: nextChatMessageId,
+      projectBubble: companionBubbleBody
+    })
+
+    const pendingIndex = keep.findIndex(item => item.role === 'user' && item.backendMessageId === undefined)
+
+    const index =
+      replacedIndex < 0
+        ? pendingIndex < 0
+          ? keep.length
+          : pendingIndex
+        : original.slice(0, replacedIndex).filter(item => item.backendMessageId !== message.id).length
+
+    const activeVoice = activeVoiceMessageId()
+
+    if (original.some(item => item.backendMessageId === replacedMessageId && item.id === activeVoice)) {
+      conversationVoiceSink().cancel($chatSessionId.get())
+    }
+
+    state.historyReplacementRevision++
+
+    if ($replacingReplyMessageId.get() === replacedMessageId) {
+      clearInflightReply()
+      $replacingReplyMessageId.set(null)
+      $lastAssistantStreaming.set(false)
+    }
+
+    $chatMessageBodies.set({ ...Object.fromEntries(keep.map(item => [item.id, bodies[item.id]])), ...projected.bodies })
+    $chatMessageList.set([...keep.slice(0, index), ...projected.items, ...keep.slice(index)])
+  }
 
   // 用从后端加载的会话替换面板的聊天记录；其他窗口可能正在连发或等待提交确认，历史修订不能删掉未落库的输入。
   function hydrateEditedChatMessages(messages: SessionMessage[]): void {
@@ -149,7 +200,12 @@ export function createChatHistoryController(
       }
     }
 
-    if (snapshot.incremental) {
+    const historyChanged =
+      snapshot.history_revision !== undefined && snapshot.history_revision !== (state.serverHistoryRevision ?? 0)
+
+    if (historyChanged && !snapshot.incremental) {
+      hydrateEditedChatMessages(snapshot.messages)
+    } else if (snapshot.incremental) {
       const original = $chatMessageList.get()
       const originalBodies = $chatMessageBodies.get()
       const incomingIds = new Set(snapshot.messages.map(message => message.id))
@@ -167,13 +223,19 @@ export function createChatHistoryController(
     }
 
     restoreActiveTurn(snapshot.active_turn, snapshot.info?.running)
+    state.serverHistoryRevision = snapshot.history_revision ?? state.serverHistoryRevision
     const last = snapshot.last_submission
 
     if (last && !['accepted', 'running'].includes(last.status)) {
       state.submission.settledRequestId = last.request_id
     }
 
-    if (!$chatTurnInFlight.get() && last && ['failed', 'cancelled', 'interrupted'].includes(last.status)) {
+    if (
+      !$chatTurnInFlight.get() &&
+      last &&
+      !last.replace_reply_message_id &&
+      ['failed', 'cancelled', 'interrupted'].includes(last.status)
+    ) {
       const latestUser = $chatMessageList
         .get()
         .findLast(item => item.role === 'user' && item.backendMessageId !== undefined)
@@ -232,8 +294,13 @@ export function createChatHistoryController(
     clearInflightReply()
     state.submission.activeRequestId = snapshot?.request_id ?? null
     $chatTurnInFlight.set(snapshot?.running ?? running)
+    $replacingReplyMessageId.set(snapshot?.replace_reply_message_id ?? null)
 
     if (!snapshot) {
+      return
+    }
+
+    if (snapshot.replace_reply_message_id) {
       return
     }
 
@@ -288,6 +355,7 @@ export function createChatHistoryController(
     $chatSessionPresetId.set(null)
     $lastAssistantStreaming.set(false)
     $chatTurnInFlight.set(false)
+    $replacingReplyMessageId.set(null)
     $turnHadBubbleBreak.set(false)
   }
 
@@ -340,6 +408,7 @@ export function createChatHistoryController(
 
   return {
     hydrateEditedChatMessages,
+    replaceAssistantReplyMessage,
     hydrateChatMessages,
     applyRemoteSnapshot,
     restoreActiveTurn,

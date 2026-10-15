@@ -8,6 +8,7 @@ import type { SessionMessage, SessionResumeResponse, SessionRuntimeInfo } from '
 const PERSIST_DEBOUNCE_MS = 800
 
 interface HistoryCacheState {
+  historyRevision?: number
   currentSeq: number
   info?: SessionRuntimeInfo
   lastMessageId: null | number
@@ -49,6 +50,7 @@ function lastIdFrom(messages: SessionMessage[]): null | number {
 function toSnapshot(state: HistoryCacheState): SessionHistorySnapshot {
   return {
     currentSeq: state.currentSeq,
+    historyRevision: state.historyRevision,
     info: state.info as Record<string, unknown> | undefined,
     lastMessageId: state.lastMessageId,
     messages: state.messages,
@@ -108,6 +110,7 @@ export async function loadLocalSessionHistory(sessionId: string): Promise<null |
     }
 
     const state: HistoryCacheState = {
+      historyRevision: snap.historyRevision,
       currentSeq: snap.currentSeq,
       info: snap.info as SessionRuntimeInfo | undefined,
       lastMessageId: snap.lastMessageId,
@@ -130,6 +133,7 @@ export function rememberFullHistory(
   sessionId: string,
   messages: SessionMessage[],
   opts?: {
+    historyRevision?: number
     currentSeq?: number
     info?: SessionRuntimeInfo
     nextCursor?: null | string
@@ -139,6 +143,7 @@ export function rememberFullHistory(
   const prev = memoryBySession.get(sessionId)
 
   const next: HistoryCacheState = {
+    historyRevision: opts?.historyRevision ?? prev?.historyRevision,
     currentSeq: typeof opts?.currentSeq === 'number' ? opts.currentSeq : (prev?.currentSeq ?? 0),
     info: opts?.info ?? prev?.info,
     lastMessageId: lastIdFrom(messages),
@@ -152,7 +157,12 @@ export function rememberFullHistory(
   schedulePersist(sessionId)
 }
 
-function updateHistorySeq(sessionId: string, currentSeq: number, info?: SessionRuntimeInfo): void {
+function updateHistorySeq(
+  sessionId: string,
+  currentSeq: number,
+  info?: SessionRuntimeInfo,
+  historyRevision?: number
+): void {
   const state = memoryBySession.get(sessionId)
 
   if (!state) {
@@ -160,6 +170,7 @@ function updateHistorySeq(sessionId: string, currentSeq: number, info?: SessionR
   }
 
   state.currentSeq = currentSeq
+  state.historyRevision = historyRevision ?? state.historyRevision
 
   if (info) {
     state.info = info
@@ -173,6 +184,7 @@ function mergeIncrementalHistory(
   sessionId: string,
   incoming: SessionMessage[],
   opts?: {
+    historyRevision?: number
     currentSeq?: number
     info?: SessionRuntimeInfo
   }
@@ -209,6 +221,8 @@ function mergeIncrementalHistory(
     state.info = opts.info
   }
 
+  state.historyRevision = opts?.historyRevision ?? state.historyRevision
+
   schedulePersist(sessionId)
 
   return [...state.messages]
@@ -219,14 +233,23 @@ export async function syncSessionHistory(params: {
   lastSeq?: number
   streamId?: string
   sessionId: string
-  request: (body: { after_id?: number; last_seq?: number; stream_id?: string }) => Promise<SessionResumeResponse>
+  request: (body: {
+    after_id?: number
+    last_seq?: number
+    stream_id?: string
+    history_revision?: number
+  }) => Promise<SessionResumeResponse>
 }): Promise<SessionResumeResponse & { current_seq: number; kind: 'full' | 'incremental' | 'noop' }> {
   const epoch = currentClearEpoch()
   const authSessionId = currentAuthSessionId()
   const local = memoryBySession.get(params.sessionId)
   let invalidation = invalidations.get(params.sessionId)
   let historyRevision = historyRevisions.get(params.sessionId)
-  const body: { after_id?: number; last_seq?: number; stream_id?: string } = {}
+  const body: { after_id?: number; last_seq?: number; stream_id?: string; history_revision?: number } = {}
+
+  if (local?.historyRevision !== undefined) {
+    body.history_revision = local.historyRevision
+  }
 
   // 离线期间的视频完成事件可能已过重放窗口，增量锚点无法发现原等待卡片的变化。
   const hasPendingMedia = local?.messages.some(message =>
@@ -276,14 +299,20 @@ export async function syncSessionHistory(params: {
   let kind: 'full' | 'incremental' | 'noop' = 'full'
 
   if (res.resumed) {
-    updateHistorySeq(params.sessionId, currentSeq, res.info)
+    updateHistorySeq(params.sessionId, currentSeq, res.info, res.history_revision)
     messages = local ? [...local.messages] : []
     kind = 'noop'
   } else if (res.incremental) {
-    messages = mergeIncrementalHistory(params.sessionId, messages, { currentSeq, info }) ?? messages
+    messages =
+      mergeIncrementalHistory(params.sessionId, messages, {
+        currentSeq,
+        info,
+        historyRevision: res.history_revision
+      }) ?? messages
     kind = 'incremental'
   } else {
     rememberFullHistory(params.sessionId, messages, {
+      historyRevision: res.history_revision,
       currentSeq,
       info,
       nextCursor: res.next_cursor,

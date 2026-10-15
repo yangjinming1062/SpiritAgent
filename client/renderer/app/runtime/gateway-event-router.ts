@@ -105,6 +105,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'message.edited':
 
+    case 'message.replaced':
+
     case 'command.result':
 
     case 'error':

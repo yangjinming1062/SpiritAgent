@@ -9,7 +9,8 @@ from uuid import UUID, uuid4
 
 from infrastructure.ai.error_classifier import FailoverReason, classify_api_error, is_content_policy_error_message
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain
-from infrastructure.ai.providers.base import ProviderConfig, VideoGenProvider
+from infrastructure.ai.providers.base import ProviderConfig, ServiceType, VideoGenProvider
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.ai.tasks import AI_TASK_BY_ID, AiTaskKey
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -73,6 +74,15 @@ class FrozenMediaProvider(BaseModel):
     image_resolution: str | None = None
     image_exact_size: bool = False
     video_resolution: str | None = Field(default=None, min_length=1)
+
+    def generation_origin(self, service_type: ServiceType) -> GenerationOrigin:
+        return GenerationOrigin(
+            task=self.task,
+            service_type=service_type,
+            provider_id=self.provider_id,
+            model_card_id=self.model_card_id,
+            model=self.model,
+        )
 
     @classmethod
     def from_config(cls, config: ProviderConfig) -> "FrozenMediaProvider":

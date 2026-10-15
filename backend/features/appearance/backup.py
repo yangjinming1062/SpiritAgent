@@ -3,6 +3,7 @@
 from functools import partial
 from typing import Any
 
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.backup import BackupContext, BackupTable
 
 from .character_card_models import CharacterFeatures, CharacterOverrides, CompanionCharacterCard
@@ -10,6 +11,11 @@ from .models import AvatarAsset, CompanionOutfit
 
 
 def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
+
+    if table == "avatar_assets":
+        for field in ("generation_origin_json", "fullbody_generation_origin_json"):
+            if payload.get(field):
+                payload[field] = GenerationOrigin.model_validate_json(payload[field]).model_dump_json()
 
     if table == "companion_character_cards":
         if payload.get("avatar_id") is None:
@@ -36,7 +42,7 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
 
 def backup_tables() -> tuple[BackupTable, ...]:
     return (
-        BackupTable("avatar_assets", AvatarAsset),
+        BackupTable("avatar_assets", AvatarAsset, prepare_payload=partial(_prepare, "avatar_assets")),
         BackupTable(
             "companion_character_cards",
             CompanionCharacterCard,

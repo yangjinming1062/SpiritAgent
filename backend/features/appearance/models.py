@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Self
 
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.models import ModelBase, TimestampMixin
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import (
@@ -24,6 +25,7 @@ class OutfitSource(BaseModel):
     """`CompanionOutfit.source_json` 的结构：着装设计来源、已接受反馈，以及生成时的身份修订守卫。读取容错。"""
 
     description: str = ""
+    generation_origin: GenerationOrigin | None = None
     reference_image_path: str | None = None
     reference_description: str | None = None
     feedback_history: list[str] = Field(default_factory=list)
@@ -101,6 +103,8 @@ class AvatarAsset(ModelBase):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     prompt_json: Mapped[str] = mapped_column(Text)
     asset_url: Mapped[str] = mapped_column(String(2048))
+    generation_origin_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fullbody_generation_origin_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 日常出镜的全身参考；锁定身份后仍可重绘。
     seed_fullbody_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     # 身份锁定的持久标志，不能由可重绘的种子路径推断。
@@ -121,6 +125,7 @@ class FullbodyCandidate(ModelBase, TimestampMixin):
     base_fullbody_url: Mapped[str] = mapped_column(String(2048))
     base_revision: Mapped[int] = mapped_column(Integer)
     image_url: Mapped[str] = mapped_column(String(2048))
+    generation_origin_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_features_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

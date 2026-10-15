@@ -4,6 +4,7 @@ import json
 from datetime import timedelta
 from uuid import uuid4
 
+from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
 from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
@@ -67,6 +68,34 @@ def desktop_progress(action: DesktopVideoAction) -> DesktopVideoProgress | None:
     return (
         DesktopVideoProgress.model_validate_json(action.generation_state_json) if action.generation_state_json else None
     )
+
+
+async def desktop_image_origin(
+    db: AsyncSession,
+    user_id: int,
+    set_id: int,
+    image_path: str | None,
+) -> GenerationOrigin | None:
+    """来源跟随实际图片；共享基础图也从所属套装的成品或草稿读取。"""
+    if not image_path:
+        return None
+    actions = await db.scalars(
+        select(DesktopVideoAction).where(DesktopVideoAction.user_id == user_id, DesktopVideoAction.set_id == set_id),
+    )
+    for action in actions:
+        progress = desktop_progress(action)
+        if progress is not None:
+            if progress.pose_path == image_path:
+                return progress.image_origin
+            if progress.previous_pose_path == image_path:
+                return progress.previous_image_origin
+            if progress.candidate is not None and progress.candidate.image_path == image_path:
+                return progress.candidate.image_origin
+        if action.accepted_asset_json:
+            asset = DesktopVideoAsset.model_validate_json(action.accepted_asset_json)
+            if asset.image_path == image_path:
+                return asset.image_origin
+    return None
 
 
 def desktop_removed_video_task(action: DesktopVideoAction) -> RemovedActionVideoTask | None:
@@ -689,6 +718,7 @@ async def publish_desktop_asset(
             paid_slot_consumed=progress.paid_slot_consumed,
             image_confirmed=True,
             pose_path=asset.image_path,
+            image_origin=asset.image_origin,
             continuity=asset.continuity,
             base_image_path=asset.base_image_path,
             base_version=asset.base_version,

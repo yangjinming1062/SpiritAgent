@@ -98,6 +98,7 @@ export function projectSessionMessages(
 
       // 拆分后附件只挂首个气泡（附件伴随连发首条发出，每段都挂会重复渲染媒体卡）。
       bodies[id] = {
+        canReplaceReply: m.can_replace_reply === true && index === segments.length - 1,
         text: segment,
         editableText: m.role === 'user' ? textContent : undefined,
         replyIndex: companionBubbles ? index : undefined,

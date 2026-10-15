@@ -32,6 +32,10 @@ export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): A
 
   const turn = previous ?? emptyTurn()
 
+  if (event.type === 'message.replaced') {
+    return previous
+  }
+
   if (event.type === 'message.start') {
     const fresh =
       typeof payload.request_id === 'string' && turn.request_id && payload.request_id !== turn.request_id
@@ -40,6 +44,8 @@ export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): A
 
     return {
       ...fresh,
+      replace_reply_message_id:
+        typeof payload.replace_reply_message_id === 'number' ? payload.replace_reply_message_id : undefined,
       request_id: typeof payload.request_id === 'string' ? payload.request_id : fresh.request_id,
       running: true
     }

@@ -49,6 +49,7 @@ class CompanionScene(ModelBase, TimestampMixin):
     requirements: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     prompt: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     media_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    generation_origin_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     upload_source_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     generation_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     regeneration_status: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)

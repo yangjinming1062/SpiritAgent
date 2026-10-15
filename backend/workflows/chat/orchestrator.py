@@ -14,6 +14,8 @@ from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.attachments import inline_video_parts
 from features.conversation.audio_input import prepare_audio_input
 from features.conversation.memory_scope import conversation_memory_scope
+from features.conversation.replacement import ReplyReplacement, reply_replacement_target
+from features.conversation.replies import CompanionReply, MediaBubble
 from features.conversation.reply_media import load_media_turn, refresh_video_media
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.snapshots import ConversationSnapshot, MessageSnapshot
@@ -28,6 +30,7 @@ from infrastructure.ai.llm_fallback import execute_media_with_fallback
 from infrastructure.ai.providers.base import ChatProvider
 from infrastructure.ai.providers.registry import resolve_context_tokens
 from infrastructure.ai.responses import request_input_modalities
+from infrastructure.ai.selection import GenerationOrigin, ProviderSelection, order_provider_chain
 from infrastructure.ai.usage import LlmUsageAccumulator, collect_llm_usage
 from infrastructure.ai.user_config import UserLlmConfig, resolve_user_llm_config
 from infrastructure.assets.asset_store import dated_asset_directory
@@ -51,6 +54,7 @@ from workflows.chat.delegation import run_delegated_turn
 from workflows.chat.message_sanitization import truncate_responses_context
 from workflows.chat.persistence import _persist_assistant_no_tool_turn, _persist_assistant_with_tool_calls_and_results
 from workflows.chat.prompt_presets import COMPANION_MEDIA_TOOL_NAMES
+from workflows.chat.prompts import REPLACE_REPLY_GUIDANCES
 from workflows.chat.streaming import (
     _assign_tool_call_ids,
     _generate_llm_response,
@@ -80,6 +84,11 @@ from workflows.chat.types import TrackTask
 from workflows.tool_availability import unavailable_action_tool_names
 
 logger = get_logger(__name__)
+
+
+class _BufferedReplacementEmitter:
+    async def send_json(self, data: dict) -> None:
+        """更换回答在终端提交前不发布正文、推理或气泡。"""
 
 
 def _compression_temperature(settings: dict[str, Any]) -> float:
@@ -183,6 +192,8 @@ async def run_chat_turn(
     session_settings: dict | None = None,
     persisted_message_id: int | None = None,
     final_reply_only: bool = False,
+    replace_reply_message_id: int | None = None,
+    submission_request_id: str | None = None,
     ephemeral: bool = False,
     headless: bool = False,
     has_viewer: bool = True,
@@ -203,6 +214,8 @@ async def run_chat_turn(
                 session_settings=session_settings,
                 persisted_message_id=persisted_message_id,
                 final_reply_only=final_reply_only,
+                replace_reply_message_id=replace_reply_message_id,
+                submission_request_id=submission_request_id,
                 ephemeral=ephemeral,
                 headless=headless,
                 has_viewer=has_viewer,
@@ -223,6 +236,8 @@ async def _run_chat_turn(
     session_settings: dict | None = None,
     persisted_message_id: int | None = None,
     final_reply_only: bool = False,
+    replace_reply_message_id: int | None = None,
+    submission_request_id: str | None = None,
     ephemeral: bool = False,
     headless: bool = False,
     has_viewer: bool = True,
@@ -232,6 +247,7 @@ async def _run_chat_turn(
 ) -> None:
     """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。``has_viewer=False`` 表示帧只被程序捕获（子 Agent 委派）：缓冲交付，不做气泡停顿。"""
     user_message_id: int | None = None
+    replacement: ReplyReplacement | None = None
     with ExitStack() as turn_scope:
         # 轮次起点先提交用户输入并解析召回查询；会话退出后生成向量，再以新短会话装配上下文。
         async with session_scope() as db:
@@ -240,6 +256,11 @@ async def _run_chat_turn(
                 language = await get_user_setting(db, user_id, "language")
                 await emit_conversation_unavailable(emitter, language, "Conversation not found")
                 return
+            if replace_reply_message_id is not None:
+                replacement = await reply_replacement_target(db, user_id, req.session_id, replace_reply_message_id)
+                if persisted_message_id != replacement.source_message_id:
+                    raise ValueError("Replacement source does not belong to this turn")
+                final_reply_only = True
             try:
                 memory_scope = conversation_memory_scope(conv, user_id)
             except ValueError as exc:
@@ -283,6 +304,8 @@ async def _run_chat_turn(
             )
             # 主动回合在此一次加载历史：既取最近用户发言，也传给 build_turn_inputs 免二次读取。
             history: list[MessageSnapshot] | None = None
+            if replacement is not None:
+                history = [m for m in await context_messages(db, conv) if m.id != replacement.previous.id]
             memory_query = ""
             if memory_scope is not None:
                 if ephemeral:
@@ -322,6 +345,11 @@ async def _run_chat_turn(
                 return
             # 本轮尾部资料没有持久化来源，不进入持久摘要。
             runtime_item_start = len(inputs.context["input"])
+            if replacement is not None:
+                inputs.context["instructions"] += resolve_prompt_text(REPLACE_REPLY_GUIDANCES, inputs.language)
+                inputs.context["input"].append(
+                    user_text_item(json.dumps({"previous_reply": replacement.previous.content}, ensure_ascii=False)),
+                )
             waits = (
                 await list_companion_intents(db, user_id)
                 if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None
@@ -421,6 +449,23 @@ async def _run_chat_turn(
                 retry_after_message_id=persisted_message_id if final_reply_only else None,
             )
             media_turn.source_message_id = user_message_id
+            if replacement is not None and replacement.previous.reply_json:
+                old_reply = CompanionReply.model_validate_json(replacement.previous.reply_json)
+                retained_ids = {b.media_id for b in old_reply.bubbles if isinstance(b, MediaBubble)}
+                media_turn.artifacts = {
+                    key: value for key, value in media_turn.artifacts.items() if key in retained_ids
+                }
+                media_turn.required_goals.clear()
+                media_turn.current_versions.clear()
+                for bubble in old_reply.bubbles:
+                    if not isinstance(bubble, MediaBubble):
+                        continue
+                    artifact = media_turn.artifacts[bubble.media_id]
+                    artifact.goal_id = bubble.goal_id
+                    if artifact.bound_message_id == replacement.previous.id:
+                        artifact.bound_message_id = None
+                    media_turn.required_goals.add(bubble.goal_id)
+                    media_turn.current_versions[bubble.goal_id] = bubble.media_id
             source = await turn_message(db, user_message_id) if user_message_id is not None else None
             media_turn.asset_directory = dated_asset_directory(
                 source.created_at if source is not None else utc_now(),
@@ -453,6 +498,7 @@ async def _run_chat_turn(
         delivery = "complete" if companion_reply else "buffered" if buffer_text else "stream"
         if buffer_text:
             await emitter.send_json({"type": "message.start"})
+        generation_emitter = _BufferedReplacementEmitter() if replacement is not None else emitter
         base_instructions = current_context["instructions"]
         audio_transcripts: dict[str, str | Exception] = {}
         turn_usage = LlmUsageAccumulator()
@@ -461,6 +507,10 @@ async def _run_chat_turn(
             action_tools_not_ready: frozenset[str] = frozenset()
             async with session_scope() as db:
                 await refresh_video_media(db, media_turn)
+                if replacement is not None:
+                    for artifact in media_turn.artifacts.values():
+                        if artifact.bound_message_id == replacement.previous.id:
+                            artifact.bound_message_id = None
                 if conv.system_preset_id == COMPANION_PRESET_ID and conv.parent_id is None:
                     environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
                     instruction_parts.append(environment)
@@ -544,7 +594,7 @@ async def _run_chat_turn(
                     try:
                         with collect_llm_usage(turn_usage):
                             result = await _generate_llm_response(
-                                emitter,
+                                generation_emitter,
                                 provider.config.model,
                                 call_context,
                                 active_schemas,
@@ -564,11 +614,12 @@ async def _run_chat_turn(
                                 allow_silence=ephemeral and companion_reply,
                                 reply_format_error=reply_format_error,
                                 media_turn=media_turn,
-                                pace_bubbles=has_viewer and not headless,
+                                pace_bubbles=has_viewer and not headless and replacement is None,
                                 final_reply_only=reply_only,
                                 allow_voice_fallback=not retry_available,
                             )
                         current_context["input"].extend(call_context["input"][input_length:])
+                        result.generation_origin = GenerationOrigin.from_config(provider.config)
                         return result
                     except _IncompleteResponseError as exc:
                         del call_context["input"][input_length:]
@@ -586,11 +637,9 @@ async def _run_chat_turn(
 
             try:
                 async with session_scope() as db:
-                    llm_chain = await resolve_provider_chain(
-                        db,
-                        user_id,
-                        "llm",
-                        task=task,
+                    llm_chain = order_provider_chain(
+                        await resolve_provider_chain(db, user_id, "llm", task=task),
+                        ProviderSelection(origin=replacement.generation_origin, mode="next") if replacement else None,
                     )
                 llm_result = await execute_media_with_fallback(
                     llm_chain,
@@ -646,6 +695,8 @@ async def _run_chat_turn(
                     cache_usage=turn_usage.summary(),
                     persist=not ephemeral,
                     track_task=track_task,
+                    replace_reply_message_id=replace_reply_message_id,
+                    submission_request_id=submission_request_id,
                 )
                 break
 

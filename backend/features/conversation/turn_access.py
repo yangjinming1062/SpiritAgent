@@ -25,6 +25,7 @@ def conversation_snapshot(conv: Conversation) -> ConversationSnapshot:
         conv.settings_json,
         conv.context_after_message_id,
         conv.title,
+        conv.history_revision,
     )
 
 
@@ -46,6 +47,7 @@ def message_snapshot(row: Message) -> MessageSnapshot:
         row.reasoning_content,
         row.summary_through_message_id,
         row.created_at,
+        row.generation_origin_json,
     )
 
 

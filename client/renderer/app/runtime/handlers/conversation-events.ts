@@ -18,6 +18,7 @@ import type {
   CacheUsageSummary,
   ChatMediaItem,
   CompanionBubble,
+  PromptSubmissionResult,
   SessionMessage,
   SessionResumeResponse,
   UndoAnchor
@@ -92,13 +93,21 @@ export function handleConversationEvent(
   }
 
   switch (event.type) {
-    case 'message.start':
+    case 'message.start': {
       $chatTurnInFlight.set(true)
-      beginAssistantMessage()
+      const payload = decodePayload<{ replace_reply_message_id?: number }>(event.payload)
+      runtime.$replacingReplyMessageId.set(payload.replace_reply_message_id ?? null)
+
+      if (!payload.replace_reply_message_id) {
+        beginAssistantMessage()
+      }
+
       setTurnHadBubbleBreak(false)
       syncConversationActivity()
 
       break
+    }
+
     case 'message.delta': {
       const payload = decodePayload<{ text?: string }>(event.payload)
       const text = payload.text ?? ''
@@ -278,9 +287,7 @@ export function handleConversationEvent(
     }
 
     case 'session.state': {
-      const payload = decodePayload<{ running?: boolean; request_id?: string; status?: string; error?: string | null }>(
-        event.payload
-      )
+      const payload = decodePayload<Partial<PromptSubmissionResult> & { running?: boolean }>(event.payload)
 
       applySessionState(payload)
 
@@ -304,6 +311,7 @@ export function handleConversationEvent(
         reasoning?: string
         text?: string
         usage?: { completion_tokens?: number; prompt_tokens?: number; total_tokens?: number; context_window?: number }
+        can_replace_reply?: boolean
       }>(event.payload)
 
       // 形状异常时按缺省处理：本分支抛错会跳过下方回合收尾，让 $chatTurnInFlight 卡住。
@@ -347,6 +355,15 @@ export function handleConversationEvent(
         rememberReply(payload.text, bubbles, media)
       }
 
+      const lastReply = runtime.$chatMessageList.get().findLast(item => item.backendMessageId === payload.message_id)
+
+      if (lastReply) {
+        runtime.$chatMessageBodies.setKey(lastReply.id, {
+          ...runtime.$chatMessageBodies.get()[lastReply.id],
+          canReplaceReply: payload.can_replace_reply === true
+        })
+      }
+
       // 媒体已送达但对话界面收起：可见精灵用系统提示引导到轻语或主对话；不可见或锁屏时不弹出，媒体保留在会话历史。
       if (
         (media?.length ||
@@ -383,8 +400,20 @@ export function handleConversationEvent(
 
     case 'error': {
       $chatTurnInFlight.set(false)
+
+      const payload = decodePayload<{ message?: string; retry_message_id?: number; replace_reply_message_id?: number }>(
+        event.payload
+      )
+
+      if (runtime.$replacingReplyMessageId.get() || payload.replace_reply_message_id) {
+        runtime.$replacingReplyMessageId.set(null)
+        pushStatusPill('status_command_result', payload.message ?? getStrings().chat.sendFailed)
+        syncConversationActivity()
+
+        break
+      }
+
       clearPendingPrompts()
-      const payload = decodePayload<{ message?: string; retry_message_id?: number }>(event.payload)
       markAssistantTerminal({
         error: payload.message ?? getStrings().chat.sendFailed,
         retryMessageId:
@@ -435,6 +464,22 @@ export function handleConversationEvent(
 
       if (p.subtype === 'compress_summary' && typeof p.text === 'string') {
         pushStatusPill('compress_summary', p.text, typeof p.message_id === 'number' ? p.message_id : undefined)
+      }
+
+      break
+    }
+
+    case 'message.replaced': {
+      const payload = decodePayload<{ replaced_message_id?: number; message?: SessionMessage }>(event.payload)
+
+      if (typeof payload.replaced_message_id === 'number' && payload.message) {
+        runtime.replaceAssistantReplyMessage(payload.replaced_message_id, payload.message)
+        const sid = $chatSessionId.get()
+
+        if (sid) {
+          removeVoicePlayback(sid, [payload.replaced_message_id])
+          invalidateSessionHistory(sid)
+        }
       }
 
       break

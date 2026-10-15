@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.formatting import visible_bubble_count
 from features.conversation.models import Conversation, Message
+from features.conversation.replacement import replaceable_reply_id
 from features.conversation.replies import CompanionReply
 from features.conversation.reply_audio import client_reply_bubbles
 
@@ -65,6 +66,7 @@ async def build_session_messages(
         messages.reverse()
 
     tool_name_by_call_id: dict[str, str] = {}
+    replaceable_id = await replaceable_reply_id(db, conv_id)
     result: list[dict] = []
     for msg in messages:
         item: dict = {"role": msg.role, "content": msg.content, "content_type": msg.content_type}
@@ -81,6 +83,8 @@ async def build_session_messages(
         if msg.reasoning_content:
             item["reasoning"] = msg.reasoning_content
         item["id"] = msg.id
+        if msg.role == "assistant" and msg.tool_calls is None:
+            item["can_replace_reply"] = msg.id == replaceable_id
         if msg.created_at is not None:
             item["timestamp"] = int(msg.created_at.timestamp() * 1000)
 

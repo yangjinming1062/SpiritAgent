@@ -21,6 +21,7 @@ from features.conversation.formatting import message_text
 from features.conversation.history import build_session_messages, count_conversation_bubbles
 from features.conversation.main_conversation import CLEARED_STATUS_SUBTYPE, get_or_create_special_conversation
 from features.conversation.models import Conversation, Message
+from features.conversation.replacement import ReplyReplacement, reply_replacement_target
 from features.conversation.reply_audio import cancel_reply_audio
 from features.conversation.retry import ReplyRetryNotAllowedError, get_reply_retry_message
 from features.conversation.snapshots import ConversationSnapshot
@@ -142,13 +143,21 @@ async def last_submission(user_id: int, conversation_id: int) -> LastSubmissionS
             return None
         ids = json.loads(row.message_ids_json)
         retry_id = None
-        if row.status == "failed" and ids:
+        if row.status == "failed" and ids and row.replace_reply_message_id is None:
             try:
                 await get_reply_retry_message(db, user_id, str(conversation_id), ids[-1])
                 retry_id = ids[-1]
             except ReplyRetryNotAllowedError:
                 pass
-        return LastSubmissionSnapshot(row.request_id, row.status, row.error, ids, retry_id)
+        return LastSubmissionSnapshot(
+            row.request_id,
+            row.status,
+            row.error,
+            ids,
+            retry_id,
+            row.replace_reply_message_id,
+            row.result_message_id,
+        )
 
 
 async def update_session_settings(
@@ -179,6 +188,11 @@ async def update_session_settings(
 async def retry_message_text(user_id: int, session_id: str, message_id: int) -> str:
     async with SESSION_LOCAL() as db:
         return message_text(await get_reply_retry_message(db, user_id, session_id, message_id))
+
+
+async def replacement_reply_input(user_id: int, session_id: str, message_id: int) -> ReplyReplacement:
+    async with SESSION_LOCAL() as db:
+        return await reply_replacement_target(db, user_id, session_id, message_id)
 
 
 async def edit_message_input(

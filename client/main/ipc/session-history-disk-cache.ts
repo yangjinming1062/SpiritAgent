@@ -52,6 +52,10 @@ function sanitizeSnapshot(input: Partial<SessionHistorySnapshot> | null | undefi
 
   return {
     currentSeq,
+    historyRevision:
+      Number.isSafeInteger(input.historyRevision) && (input.historyRevision ?? -1) >= 0
+        ? input.historyRevision
+        : undefined,
     info,
     lastMessageId,
     messages: input.messages,

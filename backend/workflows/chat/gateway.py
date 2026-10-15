@@ -112,11 +112,23 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
         conv: ConversationSnapshot,
         *,
         after_id: int | None = None,
+        history_revision: int | None = None,
     ) -> dict[str, Any]:
         """在发布锁内读取历史和快照，再确定当前连接的事件水位。"""
         runtime = _mount_runtime(conv)
         async with runtime.snapshot_lock:
+            conv = await _require_owned_conv(user_id, str(conv.id))
+            if history_revision != conv.history_revision and (
+                history_revision is not None or conv.history_revision > 0
+            ):
+                after_id = None
             messages, truncated, next_cursor, message_count = await history_snapshot(conv.id, after_id)
+            latest_conv = await _require_owned_conv(user_id, str(conv.id))
+            if latest_conv.history_revision != conv.history_revision:
+                # 替换提交可能先于事件发布；持有发布锁时该回合无法收尾或开始下一次替换。
+                conv = latest_conv
+                after_id = None
+                messages, truncated, next_cursor, message_count = await history_snapshot(conv.id)
             last_submission = await _last_submission(runtime)
             info = await _runtime_info(runtime, conv)
             snapshot = deepcopy(runtime.active_turn)
@@ -143,6 +155,7 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
                 truncated=truncated,
                 next_cursor=next_cursor,
                 incremental=after_id is not None,
+                history_revision=conv.history_revision,
             ).model_dump()
 
     async def publish_history_change(event_type: str, payload: object, session_id: str) -> None:
@@ -222,12 +235,23 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
         stored_id = _require_str(params, "session_id")
         last_seq = params.get("last_seq")
         after_id = params.get("after_id")
+        history_revision = params.get("history_revision")
+        if history_revision is not None and not _is_nonneg_int(history_revision):
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "history_revision must be a non-negative int")
         if after_id is not None and not _is_nonneg_int(after_id):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "after_id must be a non-negative int")
         conv = await _require_owned_conv(user_id, stored_id)
 
         # 重放流身份匹配且仍覆盖游标时才重放，否则回源恢复。
-        if isinstance(last_seq, int) and last_seq > 0 and params.get("stream_id") == dispatcher.stream_id:
+        revision_matches = history_revision == conv.history_revision or (
+            history_revision is None and conv.history_revision == 0
+        )
+        if (
+            revision_matches
+            and isinstance(last_seq, int)
+            and last_seq > 0
+            and params.get("stream_id") == dispatcher.stream_id
+        ):
             runtime = _mount_runtime(conv)
             async with runtime.snapshot_lock:
                 replayed_count = await dispatcher.replay(last_seq)
@@ -252,6 +276,7 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
                         stream_id=dispatcher.stream_id,
                         last_submission=await _last_submission(runtime),
                         active_turn=deepcopy(runtime.active_turn),
+                        history_revision=conv.history_revision,
                     ).model_dump()
 
         # 本地已有历史：锚点仍存在时只回增量，避免冷启动全量重拉。
@@ -266,7 +291,7 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
                         "after_id": after_id,
                     },
                 )
-                return await _mounted_history(conv, after_id=after_id)
+                return await _mounted_history(conv, after_id=after_id, history_revision=history_revision)
 
         # 客户端序列号失同步或超时，回退到 DB 历史防御性截断重水化
         logger.info("session.resume full reload", extra={"user_id": user_id, "session_id": stored_id})

@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from typing import Literal
 
+from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from features.media.identity_contracts import CharacterCardSnapshot
@@ -50,6 +51,8 @@ class DesktopVideoAsset(BaseModel):
 
     video_path: str
     image_path: str = Field(min_length=1)
+    image_origin: GenerationOrigin | None = None
+    video_origin: GenerationOrigin | None = None
     source: Literal["generated", "external_upload"] = "generated"
     transition: Literal["base", "fade"] = "fade"
     visual_description: str = Field(default="", max_length=1500)
@@ -83,6 +86,10 @@ class DesktopVideoProgress(BaseModel):
     frame_width: int | None = Field(default=None, gt=0)
     frame_height: int | None = Field(default=None, gt=0)
     previous_pose_path: str | None = None
+    previous_image_origin: GenerationOrigin | None = None
+    image_origin: GenerationOrigin | None = None
+    image_selection: ProviderSelection | None = None
+    video_selection: ProviderSelection | None = None
     regenerate_image: bool = False
     force_review: bool = False
     paid_slot_consumed: bool = False
