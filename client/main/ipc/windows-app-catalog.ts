@@ -12,7 +12,7 @@ import type { DockCatalogSource, DockCatalogSourceKey } from '@ipc/contracts'
 import { createSerialQueue } from '../shared/utils'
 
 import { readWindowsApplicationIcon } from './windows-application-icon'
-import { readRegisteredApplications, readShellApplications } from './windows-installed-apps'
+import { type InstalledApplication, readRegisteredApplications, readShellApplications } from './windows-installed-apps'
 
 const MAX_DEPTH = 4
 const MAX_SHORTCUTS = 1000
@@ -172,8 +172,10 @@ async function scanSource(
 
 export function createWindowsAppCatalog(): {
   get(): Promise<CatalogScan>
+  current(revision: number): CatalogScan | null
   refresh(): Promise<CatalogScan>
   resolve(id: string): CatalogApplication | null
+  findPackagedApplication(target: string): Promise<InstalledApplication | null>
   icons(ids: string[]): Promise<Record<string, string | null>>
 } {
   const serial = createSerialQueue()
@@ -182,12 +184,44 @@ export function createWindowsAppCatalog(): {
   let cached: CatalogScan | null = null
   let scannedAt = 0
   let revision = 0
+  let shellApplications: InstalledApplication[] | null = null
+  let shellApplicationsScannedAt = 0
+  let shellApplicationsQuery: Promise<InstalledApplication[]> | null = null
+
+  function getShellApplications(force = false): Promise<InstalledApplication[]> {
+    if (shellApplicationsQuery) {
+      return shellApplicationsQuery
+    }
+
+    if (!force && shellApplications && Date.now() - shellApplicationsScannedAt < CACHE_TTL_MS) {
+      return Promise.resolve(shellApplications)
+    }
+
+    // 安装状态校验独立刷新，不能废弃仍在面板中使用的目录句柄。
+    shellApplicationsQuery = readShellApplications()
+      .then(items => {
+        shellApplications = items
+        shellApplicationsScannedAt = Date.now()
+
+        return items
+      })
+      .catch(error => {
+        shellApplications = null
+        shellApplicationsScannedAt = 0
+        throw error
+      })
+      .finally(() => {
+        shellApplicationsQuery = null
+      })
+
+    return shellApplicationsQuery
+  }
 
   async function scan(): Promise<CatalogScan> {
     const sources: DockCatalogSource[] = []
     const collected: CatalogApplication[] = []
     const budget = { left: MAX_SHORTCUTS }
-    const installed = Promise.allSettled([readRegisteredApplications(), readShellApplications()])
+    const installed = Promise.allSettled([readRegisteredApplications(), getShellApplications(true)])
 
     for (const root of sourceRoots()) {
       if (budget.left <= 0) {
@@ -251,8 +285,14 @@ export function createWindowsAppCatalog(): {
 
   return {
     get: () => serial(() => (cached && Date.now() - scannedAt < CACHE_TTL_MS ? cached : scan())),
+    current: requestedRevision => (cached?.revision === requestedRevision ? cached : null),
     refresh: () => serial(scan),
     resolve: id => handles.get(id) ?? null,
+    findPackagedApplication: async target => {
+      const identity = target.toLowerCase()
+
+      return (await getShellApplications()).find(application => application.target.toLowerCase() === identity) ?? null
+    },
     icons: async ids => {
       if (ids.length > MAX_ICON_BATCH) {
         throw new Error('一次最多读取 64 个图标。')

@@ -486,12 +486,13 @@ export interface IpcInvokeContract {
   'spiritagent:presentation:set-background': (background: DesktopBackgroundRequest) => Promise<void>
   'spiritagent:presentation:stage-activity': (activity: StageActivity) => void
   'spiritagent:dock:get-state': () => Promise<DockState>
-  'spiritagent:dock:catalog': (force?: boolean) => Promise<DockCatalog>
+  'spiritagent:dock:catalog': (force?: boolean, revision?: number) => Promise<DockCatalog>
   'spiritagent:dock:catalog-icons': (ids: string[]) => Promise<Record<string, string | null>>
   'spiritagent:dock:add-from-catalog': (ids: string[]) => Promise<DockState>
   'spiritagent:dock:add-from-files': () => Promise<DockState>
   'spiritagent:dock:add-dropped': (paths: string[]) => Promise<DockState>
   'spiritagent:dock:activate': (id: string, windowId?: string) => Promise<void>
+  'spiritagent:dock:activate-catalog': (catalogId: string) => Promise<void>
   'spiritagent:dock:close-windows': (id: string, windowIds: string[]) => Promise<void>
   'spiritagent:dock:pin': (runningId: string, beforeEntryId?: string) => Promise<DockState>
   'spiritagent:dock:reorder': (ids: string[]) => Promise<DockState>
@@ -746,6 +747,7 @@ export const IPC = {
     dockAddFromFiles: 'spiritagent:dock:add-from-files',
     dockAddDropped: 'spiritagent:dock:add-dropped',
     dockActivate: 'spiritagent:dock:activate',
+    dockActivateCatalog: 'spiritagent:dock:activate-catalog',
     dockCloseWindows: 'spiritagent:dock:close-windows',
     dockPin: 'spiritagent:dock:pin',
     dockReorder: 'spiritagent:dock:reorder',

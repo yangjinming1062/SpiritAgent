@@ -13,7 +13,7 @@ import { atomicWriteFile, createSerialQueue, safeReadJson, sendToWindow } from '
 
 import { type CatalogApplication, createWindowsAppCatalog } from './windows-app-catalog'
 import { readWindowsApplicationIcon } from './windows-application-icon'
-import { isPackagedAppTarget } from './windows-installed-apps'
+import { type InstalledApplication, isPackagedAppTarget } from './windows-installed-apps'
 
 interface SavedDockEntry {
   id: string
@@ -193,23 +193,65 @@ export function registerDesktopDock(options: {
     })
   }
 
-  async function requirePackagedApplication(target: string): Promise<CatalogApplication> {
-    const scan = await catalog.get()
-    const identity = target.toLowerCase()
-    const item = scan.items.find(application => application.target.toLowerCase() === identity)
+  async function activateRunningApplication(
+    sender: WebContents,
+    application: RunningDockApplication | undefined,
+    allowRemote: boolean,
+    windowId?: string
+  ): Promise<boolean> {
+    const window =
+      windowId === undefined
+        ? (application?.windows.find(item => item.onDesktopDisplay) ??
+          (allowRemote ? application?.windows[0] : undefined))
+        : application?.windows.find(item => item.id === windowId && item.onDesktopDisplay)
 
-    if (!item) {
-      if (scan.sources.some(source => source.key === 'apps-folder' && !source.ok)) {
-        throw new Error('Windows 应用列表读取失败，请重新扫描。')
+    if (!window) {
+      if (windowId !== undefined) {
+        throw new Error('窗口已关闭，请重新选择程序。')
       }
 
+      return false
+    }
+
+    await options.activateExternal(sender, window.id, allowRemote && windowId === undefined && !window.onDesktopDisplay)
+
+    return true
+  }
+
+  async function launchApplication(
+    sender: WebContents,
+    target: string,
+    eligible: () => boolean,
+    assertCurrentTarget?: () => void
+  ): Promise<void> {
+    await validateTarget(target)
+
+    if (!eligible()) {
+      throw new Error('桌面已改变，请重新选择程序。')
+    }
+
+    assertCurrentTarget?.()
+    await options.launchExternal(sender, target, targetIdentity(target))
+  }
+
+  async function requirePackagedApplication(target: string): Promise<InstalledApplication> {
+    let item: InstalledApplication | null
+
+    try {
+      item = await catalog.findPackagedApplication(target)
+    } catch (cause) {
+      log.warn('[Dock] apps-folder application verification failed:', cause)
+      throw new Error('Windows 应用列表读取失败，请重新扫描。', { cause })
+    }
+
+    if (!item) {
       throw Object.assign(new Error('程序已卸载或不可用，请重新选择程序。'), { code: 'ENOENT' })
     }
 
     return item
   }
 
-  async function validateTarget(target: string): Promise<CatalogApplication | null> {
+  async function validateTarget(target: string): Promise<InstalledApplication | null> {
     if (isPackagedAppTarget(target)) {
       return requirePackagedApplication(target)
     }
@@ -222,7 +264,7 @@ export function registerDesktopDock(options: {
   async function project(entry: SavedDockEntry): Promise<DockProjection> {
     let status: DockEntry['status'] = 'ready'
     let error: string | undefined
-    let application: CatalogApplication | null = null
+    let application: InstalledApplication | null = null
 
     try {
       application = await validateTarget(entry.target)
@@ -235,9 +277,7 @@ export function registerDesktopDock(options: {
 
     if (status === 'ready') {
       try {
-        icon = application
-          ? ((await catalog.icons([application.id]))[application.id] ?? null)
-          : await readWindowsApplicationIcon(entry.target)
+        icon = await readWindowsApplicationIcon(entry.target, application?.iconPath)
       } catch {
         /* 图标失败保留程序启动能力。 */
       }
@@ -540,18 +580,25 @@ export function registerDesktopDock(options: {
     return result.canceled ? [] : result.filePaths
   }
 
-  function resolveCatalogSelection(id: unknown): DockSelection {
+  function requireCatalogApplication(id: unknown): CatalogApplication {
     const item = typeof id === 'string' ? catalog.resolve(id) : null
 
     if (!item) {
       throw new Error('应用列表已更新，请重新选择。')
     }
 
+    return item
+  }
+
+  function resolveCatalogSelection(id: unknown): DockSelection {
+    const item = requireCatalogApplication(id)
+
     return { target: item.launchTarget, name: item.name }
   }
 
-  async function catalogState(force: boolean): Promise<DockCatalog> {
-    const scan = force ? await catalog.refresh() : await catalog.get()
+  async function catalogState(force: boolean, expectedRevision?: number): Promise<DockCatalog> {
+    const current = !force && expectedRevision !== undefined ? catalog.current(expectedRevision) : null
+    const scan = current ?? (force ? await catalog.refresh() : await catalog.get())
     runtimeCatalog = Promise.resolve(scan.items)
 
     if (force) {
@@ -572,8 +619,7 @@ export function registerDesktopDock(options: {
     return {
       revision: scan.revision,
       sources: scan.sources,
-      // 仅限制下发列表；保存条目的校验仍使用完整扫描结果。
-      items: scan.items.slice(0, 1000).map(item => {
+      items: scan.items.map(item => {
         const identity = targetIdentity(item.target)
 
         return {
@@ -656,10 +702,17 @@ export function registerDesktopDock(options: {
 
     return serial(snapshot)
   })
-  options.ipcMain.handle(IPC.invoke.dockCatalog, (event, force: unknown) => {
+  options.ipcMain.handle(IPC.invoke.dockCatalog, (event, force: unknown, expectedRevision: unknown) => {
     assertSender(event.sender)
 
-    return serial(() => catalogState(force === true))
+    if (
+      expectedRevision !== undefined &&
+      (typeof expectedRevision !== 'number' || !Number.isInteger(expectedRevision) || expectedRevision <= 0)
+    ) {
+      throw new Error('无效应用列表版本。')
+    }
+
+    return serial(() => catalogState(force === true, expectedRevision))
   })
   // 图标读取不进串行队列：批量读取耗时长，不应阻塞启动与增删排；期间重扫只会让个别条目回落默认图标。
   options.ipcMain.handle(IPC.invoke.dockCatalogIcons, (event, raw: unknown) => {
@@ -738,33 +791,16 @@ export function registerDesktopDock(options: {
       const application = findRunningApplication(id)
       const entry = entries.find(item => item.id === id)
 
-      const window =
-        windowId === undefined
-          ? (application?.windows.find(item => item.onDesktopDisplay) ?? (entry ? application?.windows[0] : undefined))
-          : application?.windows.find(item => item.id === windowId && item.onDesktopDisplay)
-
-      if (window) {
-        await options.activateExternal(
-          event.sender,
-          window.id,
-          Boolean(entry && windowId === undefined && !window.onDesktopDisplay)
-        )
-
+      if (await activateRunningApplication(event.sender, application, Boolean(entry), windowId)) {
         return
       }
 
-      if (windowId !== undefined || !entry) {
+      if (!entry) {
         throw new Error('窗口已关闭，请重新选择程序。')
       }
 
       try {
-        await validateTarget(entry.target)
-
-        if (!eligible()) {
-          throw new Error('桌面已改变，请重新选择程序。')
-        }
-
-        await options.launchExternal(event.sender, entry.target, targetIdentity(entry.target))
+        await launchApplication(event.sender, entry.target, eligible)
       } catch (error) {
         // 移动或卸载后刷新状态，保留修复入口。
         if (isPackagedAppTarget(entry.target)) {
@@ -775,6 +811,29 @@ export function registerDesktopDock(options: {
         publish()
         throw error
       }
+    })
+  })
+  options.ipcMain.handle(IPC.invoke.dockActivateCatalog, (event, id: unknown) => {
+    assertSender(event.sender)
+    const eligible = options.captureEligibility(event.sender)
+
+    return withRunningApplications(event.sender, eligible, async () => {
+      const item = requireCatalogApplication(id)
+      const identity = targetIdentity(item.target)
+
+      const assertCurrentTarget = (): void => {
+        if (catalog.resolve(item.id) !== item || targetIdentity(item.launchTarget) !== identity) {
+          throw new Error('应用列表已更新，请重新扫描后选择。')
+        }
+      }
+
+      assertCurrentTarget()
+
+      if (await activateRunningApplication(event.sender, findRunningTarget(identity), true)) {
+        return
+      }
+
+      await launchApplication(event.sender, item.launchTarget, eligible, assertCurrentTarget)
     })
   })
   options.ipcMain.handle(IPC.invoke.dockTasks, (event, id: unknown) => {

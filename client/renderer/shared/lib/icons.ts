@@ -31,6 +31,7 @@ export {
   IconInfoCircle as Info,
   IconKeyboard as Keyboard,
   IconKey as KeyRound,
+  IconLayoutGrid as LayoutGrid,
   IconList as List,
   IconLoader2 as Loader2,
   IconMessageCircle as MessageCircle,

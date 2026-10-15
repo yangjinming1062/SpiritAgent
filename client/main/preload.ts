@@ -113,13 +113,14 @@ const desktopBridge = {
   },
   dock: {
     getState: () => invoke(IPC.invoke.dockGetState),
-    catalog: (force?: boolean) => invoke(IPC.invoke.dockCatalog, force === true),
+    catalog: (force?: boolean, revision?: number) => invoke(IPC.invoke.dockCatalog, force === true, revision),
     catalogIcons: (ids: string[]) => invoke(IPC.invoke.dockCatalogIcons, ids),
     addFromCatalog: (ids: string[]) => invoke(IPC.invoke.dockAddFromCatalog, ids),
     addFromFiles: () => invoke(IPC.invoke.dockAddFromFiles),
     addDroppedFiles: (files: File[]) =>
       invoke(IPC.invoke.dockAddDropped, files.map(file => webUtils.getPathForFile(file)).filter(Boolean)),
     activate: (id: string, windowId?: string) => invoke(IPC.invoke.dockActivate, id, windowId),
+    activateCatalog: (catalogId: string) => invoke(IPC.invoke.dockActivateCatalog, catalogId),
     closeWindows: (id: string, windowIds: string[]) => invoke(IPC.invoke.dockCloseWindows, id, windowIds),
     pin: (runningId: string, beforeEntryId?: string) => invoke(IPC.invoke.dockPin, runningId, beforeEntryId),
     reorder: (ids: string[]) => invoke(IPC.invoke.dockReorder, ids),

@@ -2,7 +2,16 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { type IconComponent, MessageCircle, Messages, Monitor, Plus, Settings, Users, X } from '@/shared/lib/icons'
+import {
+  type IconComponent,
+  LayoutGrid,
+  MessageCircle,
+  Messages,
+  Monitor,
+  Settings,
+  Users,
+  X
+} from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
@@ -66,19 +75,26 @@ export function DesktopDock({
   useInteractiveRegion('desktop-dock', dockRef)
   useInteractiveRegion('desktop-dock-menu', menuRef)
   const triggerRef = useRef<HTMLElement | null>(null)
+  const pickerEpochRef = useRef(0)
   const taskRequestRef = useRef(0)
   const [draggingOver, setDraggingOver] = useState(false)
   const draggedItem = useRef<{ id: string; pinned: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const beginAsync = useAsyncGuard()
 
-  const closePicker = useCallback((): void => {
+  const closePicker = useCallback((restoreFocus = true): void => {
+    pickerEpochRef.current += 1
     setPicker(null)
-    triggerRef.current?.focus()
+
+    if (restoreFocus) {
+      triggerRef.current?.focus()
+    }
   }, [])
 
   const openPicker = (mode: DockPickerMode, trigger: HTMLElement): void => {
     setMenu(null)
+    pickerEpochRef.current += 1
     triggerRef.current = trigger
     setPicker(mode)
   }
@@ -86,9 +102,9 @@ export function DesktopDock({
   useEffect(() => {
     if (!menuEnabled) {
       setMenu(null)
-      setPicker(null)
+      closePicker(false)
     }
-  }, [menuEnabled])
+  }, [closePicker, menuEnabled])
 
   useEffect(() => {
     onMenuOpenChange(menu !== null || picker !== null)
@@ -167,7 +183,7 @@ export function DesktopDock({
     }
 
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !event.isComposing) {
         event.preventDefault()
         event.stopPropagation()
         closePicker()
@@ -180,11 +196,12 @@ export function DesktopDock({
   }, [closePicker, menuEnabled, picker])
 
   const run = async (action: () => Promise<DockState | void>, fallback = t.dock): Promise<void> => {
-    if (busy) {
+    if (busyRef.current) {
       return
     }
 
     const isLive = beginAsync()
+    busyRef.current = true
     setBusy(true)
 
     try {
@@ -198,10 +215,25 @@ export function DesktopDock({
         notifyError(error, fallback)
       }
     } finally {
+      busyRef.current = false
+
       if (isLive()) {
         setBusy(false)
       }
     }
+  }
+
+  const activateCatalog = (catalogId: string): void => {
+    const epoch = pickerEpochRef.current
+    const isLive = beginAsync()
+
+    void run(async () => {
+      await shellApi().dock.activateCatalog(catalogId)
+
+      if (isLive() && epoch === pickerEpochRef.current) {
+        closePicker(false)
+      }
+    }, t.appLaunchFailed)
   }
 
   const closeWindows = (entry: DockEntry, windowIds: string[]): void => {
@@ -226,6 +258,7 @@ export function DesktopDock({
       return
     }
 
+    closePicker(false)
     const rect = button.getBoundingClientRect()
     const halfWidth = Math.min(120, (window.innerWidth - 32) / 2)
     const center = Math.max(halfWidth + 16, Math.min(rect.left + rect.width / 2, window.innerWidth - halfWidth - 16))
@@ -407,6 +440,26 @@ export function DesktopDock({
         ref={dockRef}
         title={t.dockHint}
       >
+        <button
+          aria-controls={picker?.kind === 'browse' ? 'desktop-apps-panel' : undefined}
+          aria-expanded={picker?.kind === 'browse'}
+          aria-haspopup="dialog"
+          aria-label={t.allApps}
+          className={styles.allAppsButton}
+          disabled={!menuEnabled}
+          onClick={event => {
+            if (picker?.kind === 'browse') {
+              closePicker(false)
+            } else {
+              openPicker({ kind: 'browse' }, event.currentTarget)
+            }
+          }}
+          onDrop={event => dropAt(event)}
+          title={t.allApps}
+          type="button"
+        >
+          <LayoutGrid size={25} />
+        </button>
         <div className={styles.dockViewport} onScroll={() => setMenu(null)}>
           <div className={styles.dockItems}>
             <div
@@ -426,16 +479,6 @@ export function DesktopDock({
               role="group"
             >
               {state.entries.map(entry => renderProgram(entry, true))}
-              <button
-                aria-label={t.addApp}
-                className={styles.addApp}
-                disabled={busy}
-                onClick={event => openPicker({ kind: 'add' }, event.currentTarget)}
-                title={t.addApp}
-                type="button"
-              >
-                <Plus size={24} />
-              </button>
             </div>
             {(windows.length > 0 || state.runningEntries.length > 0) && <span className={styles.dockDivider} />}
             <div aria-label={t.runningApps} className={styles.dockGroup} role="group">
@@ -582,7 +625,9 @@ export function DesktopDock({
                 {menu.pinned && (menuEntry.status === 'missing' || menuEntry.status === 'invalid') && (
                   <button
                     disabled={busy}
-                    onClick={event => openPicker({ entryId: menuEntry.id, kind: 'repair' }, event.currentTarget)}
+                    onClick={event =>
+                      openPicker({ entryId: menuEntry.id, kind: 'repair' }, triggerRef.current ?? event.currentTarget)
+                    }
                     role="menuitem"
                     type="button"
                   >
@@ -656,8 +701,12 @@ export function DesktopDock({
       </nav>
       {picker && (
         <DesktopDockPicker
+          activating={busy}
+          anchorRef={dockRef}
           dockRevision={state.pinnedRevision}
+          key={pickerEpochRef.current}
           mode={picker}
+          onActivate={activateCatalog}
           onClose={closePicker}
           onCommitted={(next, close) => {
             setState(previous => (next.revision >= previous.revision ? next : previous))
@@ -666,6 +715,7 @@ export function DesktopDock({
               closePicker()
             }
           }}
+          triggerRef={triggerRef}
         />
       )}
     </>

@@ -46,6 +46,7 @@ export interface DesktopBridge {
     addFromFiles: AsyncIpc<IpcInvokeContract['spiritagent:dock:add-from-files']>
     addDroppedFiles: (files: File[]) => Promise<Awaited<ReturnType<IpcInvokeContract['spiritagent:dock:add-dropped']>>>
     activate: AsyncIpc<IpcInvokeContract['spiritagent:dock:activate']>
+    activateCatalog: AsyncIpc<IpcInvokeContract['spiritagent:dock:activate-catalog']>
     closeWindows: AsyncIpc<IpcInvokeContract['spiritagent:dock:close-windows']>
     pin: AsyncIpc<IpcInvokeContract['spiritagent:dock:pin']>
     reorder: AsyncIpc<IpcInvokeContract['spiritagent:dock:reorder']>
