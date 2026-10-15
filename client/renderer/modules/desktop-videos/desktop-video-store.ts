@@ -4,7 +4,7 @@ import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-a
 import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
-import { fileApi } from '@/shared/platform/desktop'
+import { backendApi, fileApi } from '@/shared/platform/desktop'
 import { $presentation } from '@/shared/store/presentation'
 
 import type {
@@ -14,6 +14,7 @@ import type {
   DesktopVideoProposal,
   DesktopVideoReceiptStatus,
   DesktopVideoSet,
+  DesktopVideoSource,
   DesktopVideoState
 } from './types'
 
@@ -28,15 +29,15 @@ export const $desktopVideoSets = atom<DesktopVideoSet[]>([])
 export const $desktopVideoPlayback = atom<DesktopVideoPlayCommand | null>(null)
 export const $desktopVideoLoading = atom(false)
 export const $desktopVideoError = atom<string | null>(null)
-export const $desktopVideoContextRevision = atom(0)
 
 let refreshRequest: Promise<void> | null = null
 let refreshAgain = false
 let epoch = 0
 let libraryVersion = -1
+let activationGeneration = 0
+let activationWrite: Promise<void> = Promise.resolve()
 
 let ensureRequest: {
-  trigger: 'entry' | 'context_change'
   scope: () => boolean
   request: Promise<DesktopVideoState>
 } | null = null
@@ -106,7 +107,11 @@ export async function refreshDesktopVideos(): Promise<void> {
   return request
 }
 
-async function mutation<T>(path: string, body: object = {}, method: 'POST' | 'PUT' = 'POST'): Promise<T> {
+async function mutation<T>(
+  path: string,
+  body: object = {},
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'POST'
+): Promise<T> {
   const result = await authedApi<T>({ path: `${API}${path}`, method, body })
 
   if (!result.ok) {
@@ -157,32 +162,30 @@ async function withDesktopModeGateRetry<T>(request: () => Promise<T>): Promise<T
   }
 }
 
-function ensureCurrentWithRetry(trigger: 'entry' | 'context_change'): Promise<DesktopVideoState> {
-  return withDesktopModeGateRetry(() => mutation<DesktopVideoState>('/ensure-current', { trigger }))
+function ensureCurrentWithRetry(): Promise<DesktopVideoState> {
+  return withDesktopModeGateRetry(() => mutation<DesktopVideoState>('/ensure-current', { trigger: 'entry' }))
 }
 
-export async function ensureDesktopVideoCurrent(
-  trigger: 'entry' | 'context_change' = 'entry'
-): Promise<DesktopVideoState> {
+export async function ensureDesktopVideoCurrent(): Promise<DesktopVideoState> {
   const scope = captureAuthScope()
 
   if (!scope) {
-    return ensureCurrentWithRetry(trigger)
+    return ensureCurrentWithRetry()
   }
 
-  if (ensureRequest?.trigger === trigger && ensureRequest.scope()) {
+  if (ensureRequest?.scope()) {
     return ensureRequest.request
   }
 
   const request = (async (): Promise<DesktopVideoState> => {
-    const state = await ensureCurrentWithRetry(trigger)
+    const state = await ensureCurrentWithRetry()
     applyState(state)
     await refreshDesktopVideos()
 
     return state
   })()
 
-  ensureRequest = { request, scope, trigger }
+  ensureRequest = { request, scope }
 
   try {
     return await request
@@ -193,38 +196,198 @@ export async function ensureDesktopVideoCurrent(
   }
 }
 
+export function desktopActionGuard(
+  action: DesktopVideoAction,
+  set: DesktopVideoSet
+): {
+  expected_draft_id: string | null
+  expected_base_version: number
+} {
+  return { expected_draft_id: action.draft?.id ?? null, expected_base_version: set.base_version }
+}
+
+export async function createDesktopVideoSet(input: {
+  request_id: string
+  name: string
+  scene_id: number
+  outfit_id: number
+  source: DesktopVideoSource
+}): Promise<DesktopVideoSet> {
+  const set = await mutation<DesktopVideoSet>('/sets', input)
+  await refreshDesktopVideos()
+
+  return set
+}
+
+export async function renameDesktopVideoSet(setId: number, name: string): Promise<void> {
+  await mutation(`/sets/${setId}`, { name }, 'PATCH')
+  await refreshDesktopVideos()
+}
+
+export async function deleteDesktopVideoSet(setId: number): Promise<void> {
+  applyState(await mutation<DesktopVideoState>(`/sets/${setId}`, {}, 'DELETE'))
+  await refreshDesktopVideos()
+}
+
+export async function activateDesktopVideoSet(set: DesktopVideoSet): Promise<boolean> {
+  const generation = ++activationGeneration
+  const scope = captureAuthScope()
+  const isCurrent = (): boolean => generation === activationGeneration && scope?.() === true
+  const idle = set.actions.find(action => action.key === 'idle' && action.playable)
+
+  if (!idle?.video_url) {
+    throw new Error('安静相伴的视频尚未就绪')
+  }
+
+  const bytes = await backendApi()
+    .apiAssetBuffer({ url: idle.video_url, preferCache: true })
+    .catch(error => {
+      if (!isCurrent()) {
+        return null
+      }
+
+      throw error
+    })
+
+  if (bytes === null || !isCurrent()) {
+    return false
+  }
+
+  const mime = idle.video_url.split(/[?#]/)[0].toLowerCase().endsWith('.mov') ? 'video/quicktime' : 'video/mp4'
+  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mime }))
+  const video = document.createElement('video')
+  video.muted = true
+  video.preload = 'auto'
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => finish(new Error('桌景视频预加载超时')), 30000)
+
+      const finish = (error?: Error): void => {
+        window.clearTimeout(timeout)
+        video.onloadeddata = null
+        video.onerror = null
+
+        if (error) {
+          reject(error)
+        } else {
+          resolve()
+        }
+      }
+
+      video.onloadeddata = () => finish()
+      video.onerror = () => finish(new Error('桌景视频无法播放'))
+      video.src = url
+      video.load()
+    })
+
+    // 按用户最后一次选择提交；已经发出的切换完成后，后一次才能写入，避免网络乱序反转选择。
+    const write = activationWrite.then(async () => {
+      if (!isCurrent()) {
+        return
+      }
+
+      const state = await mutation<DesktopVideoState>(`/sets/${set.id}/activate`)
+
+      if (isCurrent()) {
+        applyState(state)
+        await refreshDesktopVideos()
+      }
+    })
+
+    activationWrite = write.catch(() => undefined)
+    await write
+
+    return isCurrent()
+  } catch (error) {
+    if (!isCurrent()) {
+      return false
+    }
+
+    throw error
+  } finally {
+    video.onloadeddata = null
+    video.onerror = null
+    video.pause()
+    video.removeAttribute('src')
+    video.load()
+    URL.revokeObjectURL(url)
+  }
+}
+
 export async function generateDesktopVideoAction(
-  actionId: number,
-  feedback?: string,
-  replaceBase = false
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
+  feedback = ''
 ): Promise<void> {
-  await mutation<DesktopVideoAction>(`/actions/${actionId}/generate`, {
-    feedback: feedback ?? '',
-    replace_base: replaceBase
+  await mutation(`/actions/${action.id}/generate`, { ...desktopActionGuard(action, set), feedback })
+  await refreshDesktopVideos()
+}
+
+export async function generateDesktopVideoImage(
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
+  feedback = '',
+  regenerate = false
+): Promise<void> {
+  await mutation(`/actions/${action.id}/image`, { ...desktopActionGuard(action, set), feedback, regenerate })
+  await refreshDesktopVideos()
+}
+
+export async function confirmDesktopVideoImage(
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
+  generateVideo = true
+): Promise<void> {
+  if (!action.draft) {
+    throw new Error('图片草稿已失效')
+  }
+
+  await mutation(`/actions/${action.id}/confirm-image`, {
+    draft_id: action.draft.id,
+    expected_base_version: set.base_version,
+    generate_video: generateVideo
   })
   await refreshDesktopVideos()
 }
 
-export async function getDesktopVideoPrompt(
-  actionId: number,
-  expectedSetId: number,
-  additionalRequirements?: string
-): Promise<DesktopVideoPrompt> {
-  const prompt = await mutation<DesktopVideoPrompt>(`/actions/${actionId}/external-prompt`, {
-    expected_set_id: expectedSetId,
-    ...(additionalRequirements?.trim() ? { requirements: additionalRequirements.trim() } : {})
-  })
+export async function cancelDesktopVideoDraft(action: DesktopVideoAction): Promise<void> {
+  if (!action.draft) {
+    return
+  }
 
-  return prompt
+  await mutation(`/actions/${action.id}/cancel`, { draft_id: action.draft.id })
+  await refreshDesktopVideos()
+}
+
+export async function getDesktopVideoPrompt(
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
+  additionalRequirements = ''
+): Promise<DesktopVideoPrompt> {
+  return mutation<DesktopVideoPrompt>(`/actions/${action.id}/external-prompt`, {
+    ...desktopActionGuard(action, set),
+    expected_set_id: set.id,
+    requirements: additionalRequirements.trim()
+  })
 }
 
 export async function uploadDesktopVideoAction(
-  actionId: number,
-  expectedSetId: number,
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
   path: string,
-  authSessionId: string
+  authSessionId: string,
+  mediaKind: 'video' | 'image' = 'video'
 ): Promise<void> {
-  await fileApi().uploadDesktopVideo({ actionId, authSessionId, expectedSetId, path })
+  await fileApi().uploadDesktopVideo({
+    actionId: action.id,
+    authSessionId,
+    expectedSetId: set.id,
+    path,
+    mediaKind,
+    expectedDraftId: action.draft?.id ?? null,
+    expectedBaseVersion: set.base_version
+  })
   await refreshDesktopVideos()
 }
 
@@ -241,8 +404,19 @@ export async function designDesktopVideoAction(input: {
   return proposal
 }
 
-export async function reviewDesktopVideoAction(actionId: number, accept: boolean): Promise<void> {
-  await mutation<DesktopVideoAction>(`/actions/${actionId}/${accept ? 'accept' : 'reject'}`)
+export async function reviewDesktopVideoAction(
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
+  accept: boolean
+): Promise<void> {
+  if (!action.draft) {
+    throw new Error('制作草稿已失效')
+  }
+
+  await mutation<DesktopVideoAction>(`/actions/${action.id}/${accept ? 'accept' : 'reject'}`, {
+    draft_id: action.draft.id,
+    expected_base_version: set.base_version
+  })
   await refreshDesktopVideos()
 }
 
@@ -326,6 +500,7 @@ function isPlayCommand(value: unknown): value is DesktopVideoPlayCommand {
     (item.base_version === null || (Number.isSafeInteger(item.base_version) && Number(item.base_version) > 0)) &&
     (item.continuity !== 'base' || item.base_version !== null) &&
     (item.continuity !== 'independent' || item.base_version === null) &&
+    (item.transition === 'base' || item.transition === 'fade') &&
     typeof item.version === 'number'
   )
 }
@@ -342,13 +517,10 @@ export function handleDesktopVideoEvent(name: string, payload: unknown): void {
   }
 }
 
-/** 仅真实的身份、换装或场景事件调用，初次水合不代表用户改变了组合。 */
-export function notifyDesktopVideoContextChanged(): void {
-  $desktopVideoContextRevision.set($desktopVideoContextRevision.get() + 1)
-}
-
 registerStorageClearHandler(() => {
   epoch += 1
+  activationGeneration += 1
+  activationWrite = Promise.resolve()
   libraryVersion = -1
   refreshAgain = false
   refreshRequest = null
@@ -358,5 +530,4 @@ registerStorageClearHandler(() => {
   $desktopVideoPlayback.set(null)
   $desktopVideoLoading.set(false)
   $desktopVideoError.set(null)
-  $desktopVideoContextRevision.set(0)
 })

@@ -13,6 +13,7 @@ from features.companion.readiness import persona_is_complete
 from features.configuration.lock import configuration_lock
 from features.conversation.bootstrap import ensure_system_conversations_for_user
 from features.conversation.identifiers import conversation_ids
+from features.media.chain import spawn_removed_action_task_cancellation
 from infrastructure.assets.asset_store import delete_user_assets
 from infrastructure.attachments import gc_session as attachments_gc_session
 from infrastructure.file_results import DeferredCleanup, FileResult
@@ -197,6 +198,7 @@ async def import_user_backup(
                 if not isinstance(exc, asyncio.CancelledError):
                     logger.exception("backup restore failed unexpectedly", extra={"user_id": user_id})
                 raise
+            spawn_removed_action_task_cancellation(user_id, restore_result.removed_desktop_tasks)
 
     failed = [
         UserBackupImportFailure(section=item.section, count=item.count, reason=item.reason)

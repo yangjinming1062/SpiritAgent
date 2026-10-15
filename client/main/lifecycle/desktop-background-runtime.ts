@@ -106,6 +106,7 @@ export function createDesktopBackgroundRuntime(options: DesktopBackgroundOptions
       request.actionId === loadedBackground.actionId &&
       request.actionVersion === loadedBackground.actionVersion &&
       request.continuity === loadedBackground.continuity &&
+      request.transition === loadedBackground.transition &&
       request.baseVersion === loadedBackground.baseVersion &&
       sameMedia(request.video, loadedBackground.video) &&
       sameMedia(request.poster, loadedBackground.poster)

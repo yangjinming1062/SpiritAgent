@@ -14,15 +14,18 @@ class DesktopVisualSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     identity: CharacterCardSnapshot
-    identity_path: str
-    identity_hash: str
+    identity_path: str = Field(min_length=1)
+    identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    portrait_path: str = Field(min_length=1)
+    portrait_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     outfit_id: int | None = None
-    outfit_path: str = ""
-    outfit_hash: str = ""
+    outfit_path: str = Field(min_length=1)
+    outfit_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     outfit_description: str = ""
     scene_id: int
     scene_description: str
-    scene_hash: str = ""
+    scene_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scene_path: str = Field(min_length=1)
     persona: dict[str, str] = Field(default_factory=dict)
 
 
@@ -30,14 +33,14 @@ def desktop_visual_hash(snapshot: DesktopVisualSnapshot) -> str:
     visual = {
         "avatar_id": snapshot.identity.avatar_id,
         "identity_hash": snapshot.identity_hash,
+        "portrait_hash": snapshot.portrait_hash,
         "outfit_id": snapshot.outfit_id,
         "outfit_hash": snapshot.outfit_hash,
         "outfit_description": snapshot.outfit_description,
         "scene_id": snapshot.scene_id,
         "scene_description": snapshot.scene_description,
         "scene_hash": snapshot.scene_hash,
-        "aspect_ratio": "16:9",
-        "spec_version": 1,
+        "spec_version": 2,
     }
     return hashlib.sha256(json.dumps(visual, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -46,6 +49,10 @@ class DesktopVideoAsset(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     video_path: str
+    image_path: str = Field(min_length=1)
+    source: Literal["generated", "external_upload"] = "generated"
+    transition: Literal["base", "fade"] = "fade"
+    visual_description: str = Field(default="", max_length=1500)
     poster_path: str
     duration_ms: int = Field(gt=0)
     width: int = Field(gt=0)
@@ -70,13 +77,22 @@ class DesktopVideoProgress(BaseModel):
     generation_id: str
     source: Literal["user_requested", "autonomous", "external_upload"]
     feedback: str = ""
+    image_confirmed: bool = False
+    image_only: bool = False
+    aspect_ratio: str = Field(default="16:9", pattern=r"^[1-9]\d*:[1-9]\d*$")
+    frame_width: int | None = Field(default=None, gt=0)
+    frame_height: int | None = Field(default=None, gt=0)
+    previous_pose_path: str | None = None
+    regenerate_image: bool = False
+    force_review: bool = False
+    paid_slot_consumed: bool = False
+    visual_description: str = Field(default="", max_length=1500)
     action_description: str = ""
     duration_seconds: int
     continuity: Literal["independent", "base"] = "independent"
     base_version: int | None = Field(default=None, gt=0, strict=True)
     base_image_path: str | None = None
     replace_base: bool = False
-    pose_prompt: str = ""
     motion_prompt: str = ""
     pose_path: str = ""
     image_chain_json: str | None = None
@@ -103,9 +119,37 @@ class DesktopVideoProgress(BaseModel):
         return self
 
 
+class DesktopVideoCurrentResponse(BaseModel):
+    video_url: str
+    poster_url: str
+    image_url: str = ""
+    duration_ms: int
+    width: int
+    height: int
+    continuity: Literal["independent", "base"]
+    base_version: int | None = None
+    transition: Literal["base", "fade"] = "fade"
+
+
+class DesktopVideoDraftResponse(BaseModel):
+    id: str
+    stage: str
+    image_url: str = ""
+    image_confirmed: bool = False
+    candidate_video_url: str = ""
+    candidate_poster_url: str = ""
+    base_version: int | None = None
+    error: str | None = None
+
+
 class DesktopVideoActionResponse(BaseModel):
     id: int
     set_id: int
+    current: DesktopVideoCurrentResponse | None = None
+    draft: DesktopVideoDraftResponse | None = None
+    playable: bool = False
+    unavailable_reason: str | None = None
+    needs_update: bool = False
     key: str
     name: str
     description: str
@@ -121,11 +165,10 @@ class DesktopVideoActionResponse(BaseModel):
     avoid_when: list[str] = Field(default_factory=list)
     allowed_triggers: list[Literal["periodic", "user_return", "chat", "manual"]] = Field(default_factory=list)
     continuity: Literal["independent", "base"] = "independent"
+    transition: Literal["base", "fade"] = "fade"
     base_version: int | None = Field(default=None, gt=0, strict=True)
     poster_url: str = ""
     video_url: str = ""
-    candidate_video_url: str = ""
-    candidate_poster_url: str = ""
     version: int
     actual_duration_ms: int | None = None
 
@@ -144,9 +187,10 @@ class DesktopVideoProposalResponse(BaseModel):
 class DesktopVideoSetResponse(BaseModel):
     id: int
     title: str
+    is_default: bool = False
+    source: Literal["ai", "image_upload", "video_upload"] = "ai"
     outfit_id: int | None = None
     scene_id: int | None = None
-    context_hash: str
     status: str
     actions: list[DesktopVideoActionResponse] = Field(default_factory=list)
     proposals: list[DesktopVideoProposalResponse] = Field(default_factory=list)
@@ -158,8 +202,6 @@ class DesktopVideoSetResponse(BaseModel):
 
 class DesktopVideoStateResponse(BaseModel):
     current: DesktopVideoSetResponse | None = None
-    fallback: DesktopVideoSetResponse | None = None
-    desired_context_hash: str | None = None
     selected_action_id: int | None = None
     loop_action_id: int | None = None
     set_epoch: int = 0
@@ -177,7 +219,69 @@ class DesktopVideoListResponse(BaseModel):
 class DesktopVideoGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feedback: str = Field(default="", max_length=600)
-    replace_base: bool = False
+    expected_draft_id: str | None = None
+    expected_base_version: int | None = Field(default=None, ge=0)
+
+    @field_validator("expected_draft_id", mode="before")
+    @classmethod
+    def explicit_no_draft(cls, value: str | None) -> str:
+        return value or "none"
+
+
+class DesktopVideoCreateSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=160)
+    scene_id: int = Field(gt=0)
+    outfit_id: int = Field(gt=0)
+    source: Literal["ai", "image_upload", "video_upload"] = "ai"
+
+    @field_validator("name", "request_id")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("名称和请求标识不能为空")
+        return value.strip()
+
+
+class DesktopVideoRenameSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=160)
+
+    @field_validator("name")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("套装名称不能为空")
+        return value.strip()
+
+
+class DesktopVideoImageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    feedback: str = Field(default="", max_length=1000)
+    regenerate: bool = False
+    expected_draft_id: str | None = None
+    expected_base_version: int | None = Field(default=None, ge=0)
+
+    @field_validator("expected_draft_id", mode="before")
+    @classmethod
+    def explicit_no_draft(cls, value: str | None) -> str:
+        return value or "none"
+
+
+class DesktopVideoDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    draft_id: str
+    expected_base_version: int | None = Field(default=None, ge=0)
+
+
+class DesktopVideoConfirmImageRequest(DesktopVideoDraftRequest):
+    generate_video: bool = True
+
+
+class DesktopVideoCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    draft_id: str | None = None
 
 
 class DesktopVideoExternalPromptRequest(BaseModel):
@@ -185,6 +289,13 @@ class DesktopVideoExternalPromptRequest(BaseModel):
 
     expected_set_id: int | None = Field(default=None, gt=0)
     requirements: str = Field(default="", max_length=1000)
+    expected_draft_id: str | None = None
+    expected_base_version: int | None = Field(default=None, ge=0)
+
+    @field_validator("expected_draft_id", mode="before")
+    @classmethod
+    def explicit_no_draft(cls, value: str | None) -> str:
+        return value or "none"
 
 
 class DesktopVideoReference(BaseModel):
@@ -193,6 +304,8 @@ class DesktopVideoReference(BaseModel):
 
 
 class DesktopVideoExternalPromptResponse(BaseModel):
+    draft_id: str | None = None
+    base_version: int = 0
     action_id: int
     set_id: int
     name: str
@@ -205,7 +318,7 @@ class DesktopVideoExternalPromptResponse(BaseModel):
 
 class DesktopVideoEnsureRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    trigger: Literal["entry", "context_change"] = "entry"
+    trigger: Literal["entry"] = "entry"
 
 
 class DesktopVideoPreferences(BaseModel):
@@ -271,6 +384,7 @@ class DesktopVideoPlayCommand(BaseModel):
     video_url: str
     poster_url: str
     version: int
+    transition: Literal["base", "fade"] = "fade"
     continuity: Literal["independent", "base"]
     base_version: int | None = Field(default=None, gt=0, strict=True)
 

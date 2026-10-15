@@ -38,6 +38,24 @@ def plan_asset_layout(
     def mapped(table: str, value: Any) -> int:
         return int(id_map[table][str(value)] if id_map is not None else value)
 
+    desktop_bases = {
+        str(row["id"]): (
+            row["base_image_path"],
+            str(
+                PurePosixPath(
+                    "companion-assets",
+                    str(target_user_id),
+                    "desktop",
+                    str(mapped("desktop_video_sets", row["id"])),
+                    "references",
+                    PurePosixPath(row["base_image_path"]).name,
+                ),
+            ),
+        )
+        for row in rows.get("desktop_video_sets", ())
+        if row.get("base_image_path")
+    }
+
     def directory(table: str, row: dict[str, Any]) -> tuple[int, str]:
         if table in {"avatar_assets", "companion_character_cards"}:
             return 0, ""
@@ -83,6 +101,9 @@ def plan_asset_layout(
         for old in sorted(references):
             previous = layout.mapping.get(old)
             target = str(PurePosixPath("companion-assets", str(target_user_id), folder, PurePosixPath(old).name))
+            base = desktop_bases.get(str(row.get("set_id"))) if table == "desktop_video_actions" else None
+            if base is not None and old == base[0]:
+                target = base[1]
             if old not in owned and previous is not None:
                 target = previous
             if priority == 5 and previous is None:

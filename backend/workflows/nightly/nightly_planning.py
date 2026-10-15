@@ -21,6 +21,7 @@ from features.automation.cron_jobs import create_job, remove_job
 from features.companion.planning_queries import PersonaPlanningSnapshot, planning_persona
 from features.companion.proactive_runtime import get_presentation_snapshot
 from features.configuration.settings.values import load_user_settings
+from features.desktop_life.queries import activated_desktop_environment
 from features.desktop_life.schemas import DesktopVideoDesignRequest
 from features.desktop_life.service import design_desktop_action, get_desktop_video_state
 from features.media.identity_rendering import render_character_appearance
@@ -263,9 +264,11 @@ class _ActionRun:
 
 
 def _planning_context_payload(context: PlanningContext) -> dict[str, Any]:
-    """Expose a generic outfit field to the model while retaining the internal execution field name."""
+    """模型读取规划资料，执行目标绑定保留在代码上下文。"""
     payload = context.model_dump(exclude_none=True)
     payload["outfits"] = payload.pop("wardrobe", [])
+    if payload["actions"].get("presentation_mode") == "desktop":
+        payload["actions"].pop("expected_set_id", None)
     return payload
 
 
@@ -295,7 +298,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         name="scene.activate",
         phase=20,
         description="启用 scene.library 中适合的已有场景，不消耗生图额度；已是当前场景的无需重复启用。"
-        "场景与换装相互独立，不依赖换装动作。",
+        "环境图与造型参考相互独立，不依赖换装动作；更换环境图不会改写正在播放的视频。",
         arguments={
             "scene_id": "integer：scene.library 中实际存在且可启用的场景 id，不填名称或自造 id。",
             "reason": "string（可选）：该场景适合当前安排的具体理由。",
@@ -306,7 +309,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         name="scene.create",
         phase=20,
         description="已有场景不适合时创建并启用环境场景。notes 描述地点、陈设、光线与氛围，必须非空，场景统一按真实拍摄的环境照片呈现，不写画风；"
-        "不描绘你本人，其他人物、动物、肖像或雕像可以按环境需要出现；不依赖换装动作。",
+        "不描绘你本人，其他人物、动物、肖像或雕像可以按环境需要出现；不依赖换装动作，也不改写正在播放的视频。",
         arguments={
             "notes": "string（非空）：环境场景的地点、陈设、光线与氛围，统一按真实拍摄的环境照片呈现，不写画风；不描绘你本人，其他人物、动物、肖像或雕像可按环境需要安排。",
             "reason": "string（可选）：已有场景不合适、需要新建场景的依据。",
@@ -331,22 +334,22 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="action.design",
         phase=25,
-        description="为当前呈现方式提交一个可反复使用的新动作提案。"
-        "先根据 autonomous_context.actions.presentation_mode 查看已有动作：窗口模式查看 library、in_flight_proposals 与 recent_rejections；"
-        "桌面模式查看 ready_actions。已有提案的 design 是原设计，review_reason 是评审理由，status 与 action_status 分别说明评审和制作进展。"
+        description="为当前画面提出一个可反复使用的新动作。"
+        "按 autonomous_context.actions.presentation_mode 查看已有动作：window 查看 library、in_flight_proposals 与 recent_rejections；"
+        "desktop 查看 ready_actions。已有提案的 design 是原设计，review_reason 是评审理由，status 与 action_status 分别说明评审和制作进展。"
         "确有缺口才使用；无明确价值时选择不使用。"
         "name 是动作显示名称；motion_description 用简洁、正面的描述表达目标需要的可见状态与动作，复杂动作再说明关键步骤。"
         "保持姿态也可以是完整目标；幅度、节奏、接触和受力符合身体结构，动作自然连贯。"
         "use_when / avoid_when 说明何时适用或避免；reason 说明为何需要新动作。"
         "duration_seconds 按动作本身需要选择 1–15 的整秒数；clip_kind 为 loop（可持续的状态或首尾连续的运动周期）或 once（完整动作自然收束）。"
         "once 制作后仍可重复使用。两种模式都保持已确认身份与造型，制作无声画面。"
-        "窗口模式按 action_outfit 设计单主体原地运动，固定镜头、全身入画、透明背景；其动作素材中的着装不随今晚换装变化，因此不依赖换装动作。"
-        "桌面模式按当前穿着和环境设计自然生活构图，片段内镜头稳定；本项绑定规划时的当前生活画面，穿着、场景或呈现方式变化后可能被阻止。"
+        "window 的独立角色画面按 action_outfit 设计单主体原地运动，固定镜头、全身入画、透明背景；片段中的着装不随今晚更新参考造型而变化，因此不依赖换装动作。"
+        "desktop 的完整环境视频按 actions.environment.current.description 和已确认画面设计自然构图，保持稳定镜头，使用图中身体、物品和空间。"
         "受理仅表示申请成功，评审和制作随后进行；"
         "后续动态或联系不能以依赖此项为依据宣称动作已做好或已表演。",
         arguments={
             "name": "string（1–64 字符）：动作的简短显示名称，不是动作标识或运动脚本。",
-            "motion_description": "string（10–600 字符）：目标需要的可见状态与动作，复杂动作才写关键步骤；窗口模式聚焦单主体原地姿态与运动，桌面模式可写当前环境内的必要接触与构图；保持身体结构与造型。",
+            "motion_description": "string（10–600 字符）：目标需要的可见状态与动作，复杂动作才写关键步骤；独立角色画面聚焦单主体原地运动，完整环境视频可写实际空间中的必要接触与构图；保持身体结构与造型。",
             "use_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：适合使用该动作的交流情境，省略或空列表表示没有补充适用条件。",
             "avoid_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：应避免使用该动作的情境，省略或空列表表示没有补充避免条件。",
             "reason": "string（1–400 字符）：现有动作无法满足的表达需要，以及本次新增动作的具体价值。",
@@ -500,13 +503,15 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
         presentation = get_presentation_snapshot(user_id)
         if presentation is not None and presentation.mode == "desktop":
             desktop_state = await get_desktop_video_state(db, user_id)
+            desktop_environment = await activated_desktop_environment(db, user_id)
             action_snapshot: dict[str, Any] = {
                 "presentation_mode": "desktop",
+                "environment": desktop_environment,
                 "expected_set_id": desktop_state.current.id if desktop_state.current else None,
                 "ready_actions": [
                     {"id": action.id, "name": action.name, "description": action.description, "kind": action.kind}
                     for action in (desktop_state.current.actions if desktop_state.current else [])
-                    if action.enabled and action.video_url
+                    if action.playable
                 ],
             }
         else:
@@ -523,7 +528,7 @@ async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
 
     language = resolve_language(settings.get("language"))
     definition = dict(persona.definition) if persona is not None else {}
-    if character is not None:
+    if character is not None and not (presentation is not None and presentation.mode == "desktop"):
         definition["fixed_features"] = render_character_appearance(character, language=language)
     context = PlanningContext(
         policies=_policies(persona),
@@ -608,9 +613,9 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         args = dict(raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {})
         if capability_name == "action.design":
-            args.setdefault("target_presentation_mode", context.actions.get("presentation_mode", "window"))
+            args["target_presentation_mode"] = context.actions.get("presentation_mode", "window")
             if context.actions.get("presentation_mode") == "desktop" and context.actions.get("expected_set_id"):
-                args.setdefault("expected_set_id", context.actions["expected_set_id"])
+                args["expected_set_id"] = context.actions["expected_set_id"]
         if spec.paid:
             paid_count += 1
         if spec.exclusive_group:
@@ -738,6 +743,8 @@ async def _runtime_block_reason(user_id: int, capability: str, resume: dict[str,
 
 
 def _fact(run: _ActionRun, key: str, **values: str) -> str:
+    if run.context.actions.get("presentation_mode") == "desktop" and key in {"outfit_wear", "outfit_create", "scene"}:
+        key = f"desktop_{key}"
     return NIGHTLY_FACT_TEXTS[resolve_language(run.context.language)][key].format(**values)
 
 

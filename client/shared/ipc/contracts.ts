@@ -420,11 +420,14 @@ export interface AttachmentVideoUploadResult {
   url: string
 }
 
-/** 用户为桌景动作提供的原始视频上传请求。文件路径必须先经系统选择器登记。 */
+/** 用户为桌景动作提供的图片或原始视频上传请求。文件路径必须先经系统选择器登记。 */
 export interface DesktopVideoUploadPayload {
   actionId: number
   authSessionId: string
   expectedSetId: number
+  expectedDraftId: string | null
+  expectedBaseVersion: number
+  mediaKind: 'image' | 'video'
   path: string
 }
 

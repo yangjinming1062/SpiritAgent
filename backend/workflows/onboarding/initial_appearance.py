@@ -10,6 +10,8 @@ from features.scenes.service import schedule_initial_scene
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 
+from .desktop_suite import prepare_default_desktop_suite
+
 logger = get_logger(__name__)
 
 
@@ -44,3 +46,4 @@ async def resume_initial_appearance() -> None:
     for user_id in users:
         await start_initial_video(user_id)
         await schedule_initial_scene(user_id)
+        await prepare_default_desktop_suite(user_id, allow_generation=False)

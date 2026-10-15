@@ -267,6 +267,10 @@ class VideoGenProvider(BaseProvider):
     supports_first_frame: bool = False  # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商
     supports_loop_frames: bool = False
     supports_reference_images: bool = False  # 身份参考模式；普通出镜视频据此筛选，动作视频另走首帧模式
+    supports_adaptive_aspect_ratio: bool = False  # 图生视频可直接沿用输入图画幅；请求不指定 aspect_ratio
+    aspect_ratios: tuple[str, ...] = ("16:9",)  # 非 adaptive 模式按此顺序选择裁切保留面积最大的画幅
+    adaptive_aspect_ratio_range: tuple[float, float] | None = None
+    first_frame_size_range: tuple[int, int] | None = None  # 首帧每条边的最小及最大像素；确认前等比适配
 
     def native_resolution(self, resolution: str) -> str | None:
         """把输入档位映射为供应商原生档位，用于提交及模式上限检查。"""

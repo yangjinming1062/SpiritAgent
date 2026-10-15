@@ -2,13 +2,15 @@
 
 import hashlib
 import json
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from infrastructure.assets.asset_store import normalize_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.config import SETTINGS
-from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
+from infrastructure.video_processing.desktop import extract_desktop_first_frame
+from infrastructure.video_processing.ffmpeg import VideoProcessError
 from PIL import Image
 
 from features.assets.references import asset_paths
@@ -23,31 +25,16 @@ from features.desktop_life.schemas import (
 def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[str, dict[str, int | str]]) -> None:
     if table == "desktop_video_sets":
         snapshot = DesktopVisualSnapshot.model_validate_json(payload["context_json"])
-        avatar_id = (
-            id_map.get("avatar_assets", {}).get(str(snapshot.identity.avatar_id))
-            if payload.get("avatar_id") is not None
-            else 0
-        )
-        scene_id = (
-            id_map.get("companion_scenes", {}).get(str(snapshot.scene_id)) if payload.get("scene_id") is not None else 0
-        )
-        outfit_id = (
-            id_map.get("companion_outfits", {}).get(str(snapshot.outfit_id))
-            if payload.get("outfit_id") is not None
-            else None
-        )
-        if avatar_id is None or scene_id is None or (payload.get("outfit_id") is not None and outfit_id is None):
-            raise ValueError("桌面生活的身份、穿着或场景缺少映射，请一并恢复对应类别。")
-        if any(
-            payload.get(field) is not None and payload[field] != mapped
-            for field, mapped in (("avatar_id", avatar_id), ("outfit_id", outfit_id), ("scene_id", scene_id))
-        ):
-            raise ValueError("桌面生活组合与冻结资料的引用不一致。")
+        avatar_id = id_map.get("avatar_assets", {}).get(str(snapshot.identity.avatar_id))
+        scene_id = id_map.get("companion_scenes", {}).get(str(snapshot.scene_id))
+        outfit_id = id_map.get("companion_outfits", {}).get(str(snapshot.outfit_id))
+        # 来源库可独立删除；套装冻结图片与文本承担制作依据，外键只记录可用的追溯关系。
+        payload.update(avatar_id=avatar_id, scene_id=scene_id, outfit_id=outfit_id)
         snapshot = snapshot.model_copy(
             update={
-                "identity": snapshot.identity.model_copy(update={"avatar_id": int(avatar_id)}),
+                "identity": snapshot.identity.model_copy(update={"avatar_id": int(avatar_id or 0)}),
                 "outfit_id": int(outfit_id) if outfit_id is not None else None,
-                "scene_id": int(scene_id),
+                "scene_id": int(scene_id or 0),
             },
         )
         payload["context_json"] = snapshot.model_dump_json()
@@ -61,8 +48,12 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             or bool(base_path) != (base_version > 0)
         ):
             raise ValueError("桌面生活基础画面版本或引用无效。")
-        if payload.get("status") == "preparing":
-            payload["status"] = "failed"
+        if type(payload.get("is_default")) is not bool or payload.get("source") not in {
+            "ai",
+            "image_upload",
+            "video_upload",
+        }:
+            raise ValueError("桌景套装来源无效。")
     elif table == "desktop_video_actions":
         if payload.get("set_id") is None or payload.get("kind") not in {"loop", "once"}:
             raise ValueError("桌面生活动作的组合或播放方式无效。")
@@ -83,7 +74,7 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             or len(set(triggers)) != len(triggers)
         ):
             raise ValueError("桌面生活动作触发条件无效。")
-        for field in ("enabled", "preset"):
+        for field in ("enabled", "preset", "needs_update", "update_pending"):
             if type(payload.get(field)) is not bool:
                 raise ValueError("桌面生活动作开关无效。")
         for field in ("version", "attempt"):
@@ -113,16 +104,19 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             progress.provider_task_id = progress.download_url = None
             progress.submission_unknown = False
             payload["generation_state_json"] = progress.model_dump_json()
+        payload["update_pending"] = False
         if payload["status"] == "ready" and not payload.get("accepted_asset_json"):
             raise ValueError("已就绪桌面生活动作缺少已采纳素材。")
-        if payload["status"] == "review_pending" and (progress is None or progress.candidate is None):
-            raise ValueError("待复核桌面生活动作缺少候选素材。")
+        if payload["status"] == "review_pending" and (
+            progress is None or (progress.candidate is None and not progress.pose_path)
+        ):
+            raise ValueError("待确认桌面生活动作缺少候选图片或视频。")
         if payload["status"] in {"queued", "processing"}:
             payload["status"] = "failed"
-            payload["stage"] = "failed"
+            payload["stage"] = "paused"
             payload["error"] = "恢复的桌面制作需要手动处理；已采纳素材仍可使用"
     elif table == "desktop_video_states":
-        for field in ("pinned", "autonomous_enabled"):
+        for field in ("pinned", "autonomous_enabled", "default_created"):
             if type(payload.get(field)) is not bool:
                 raise ValueError("桌面生活偏好无效。")
         for field in ("set_epoch", "version"):
@@ -139,19 +133,45 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
         references.append(payload["base_image_path"])
     if payload.get("context_json"):
         snapshot = DesktopVisualSnapshot.model_validate_json(payload["context_json"])
-        references.extend((snapshot.identity_path, snapshot.outfit_path))
+        references.extend(
+            path
+            for path in (
+                snapshot.identity_path,
+                snapshot.outfit_path,
+                snapshot.portrait_path,
+                snapshot.scene_path,
+            )
+            if path
+        )
     for field in ("accepted_asset_json", "generation_state_json"):
         if payload.get(field):
             value = json.loads(payload[field])
             references.extend(asset_paths(value, user_id))
             if field == "accepted_asset_json":
                 asset = DesktopVideoAsset.model_validate(value)
-                references.extend((asset.video_path, asset.poster_path))
+                references.extend(
+                    path
+                    for path in (asset.video_path, asset.poster_path, asset.image_path, asset.base_image_path)
+                    if path
+                )
             elif value.get("candidate"):
                 asset = DesktopVideoAsset.model_validate(value["candidate"])
-                references.extend((asset.video_path, asset.poster_path))
+                references.extend(
+                    path
+                    for path in (asset.video_path, asset.poster_path, asset.image_path, asset.base_image_path)
+                    if path
+                )
             if field == "generation_state_json":
-                references.extend(path for path in (value.get("pose_path"), value.get("source_path")) if path)
+                references.extend(
+                    path
+                    for path in (
+                        value.get("pose_path"),
+                        value.get("previous_pose_path"),
+                        value.get("source_path"),
+                        value.get("base_image_path"),
+                    )
+                    if path
+                )
     for reference in references:
         parsed = parse_companion_asset_path(normalize_asset_reference(reference))
         if parsed is None or parsed[0] != user_id:
@@ -187,7 +207,7 @@ def validate_desktop_files(
         try:
             with Image.open(effective_file(reference)) as image:
                 image.load()
-                if abs(image.width / image.height - 16 / 9) > 0.01:
+                if image.width < 1 or image.height < 1:
                     raise ValueError("桌面生活基础画面画幅无效。")
         except OSError as exc:
             raise ValueError("桌面生活基础画面缺失或无法读取。") from exc
@@ -200,7 +220,11 @@ def validate_desktop_files(
         for reference, expected_hash in (
             (snapshot.identity_path, snapshot.identity_hash),
             (snapshot.outfit_path, snapshot.outfit_hash),
+            (snapshot.portrait_path, snapshot.portrait_hash),
+            (snapshot.scene_path, snapshot.scene_hash),
         ):
+            if not reference:
+                continue
             file = effective_file(reference)
             try:
                 with file.open("rb") as input_file:
@@ -218,17 +242,20 @@ def validate_desktop_files(
         if row.get("generation_state_json"):
             progress = DesktopVideoProgress.model_validate_json(row["generation_state_json"])
             validate_base_image(progress.base_image_path)
-            if row.get("status") == "review_pending" and progress.candidate:
+            validate_base_image(progress.pose_path)
+            validate_base_image(progress.previous_pose_path)
+            if progress.candidate:
                 assets.append(progress.candidate)
         for asset in assets:
             validate_base_image(asset.base_image_path)
+            validate_base_image(asset.image_path)
             video, poster = effective_file(asset.video_path), effective_file(asset.poster_path)
             if not video.is_file() or not poster.is_file():
                 raise ValueError("桌面生活视频或封面缺失。")
             try:
-                probe = probe_video(video)
-                if (probe.width, probe.height) != (asset.width, asset.height):
-                    raise ValueError("桌面生活视频尺寸与资产记录不一致。")
+                with Image.open(BytesIO(extract_desktop_first_frame(video))) as frame:
+                    if frame.size != (asset.width, asset.height):
+                        raise ValueError("桌面生活视频尺寸与资产记录不一致。")
                 with Image.open(poster) as image:
                     image.load()
             except VideoProcessError as exc:

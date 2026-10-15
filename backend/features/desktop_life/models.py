@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 class DesktopVideoSet(ModelBase, TimestampMixin):
     __tablename__ = "desktop_video_sets"
-    __table_args__ = (UniqueConstraint("user_id", "context_hash", name="uq_desktop_video_sets_context"),)
+    __table_args__ = (UniqueConstraint("user_id", "request_id", name="uq_desktop_video_sets_request"),)
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     avatar_id: Mapped[int | None] = mapped_column(ForeignKey("avatar_assets.id", ondelete="SET NULL"), nullable=True)
@@ -18,6 +18,9 @@ class DesktopVideoSet(ModelBase, TimestampMixin):
         nullable=True,
     )
     scene_id: Mapped[int | None] = mapped_column(ForeignKey("companion_scenes.id", ondelete="SET NULL"), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
+    source: Mapped[str] = mapped_column(String(24), default="ai", server_default=text("'ai'"))
     context_hash: Mapped[str] = mapped_column(String(64))
     context_json: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(String(160), default="", server_default=text("''"))
@@ -54,6 +57,8 @@ class DesktopVideoAction(ModelBase, TimestampMixin):
     attempt: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     generation_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     accepted_asset_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    needs_update: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
+    update_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -79,6 +84,7 @@ class DesktopVideoState(ModelBase, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     autonomous_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
+    default_created: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     preparation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

@@ -219,7 +219,7 @@ async def cancel_frozen_video_task(user_id: int, state: MediaChainState, task_id
 
 
 async def cancel_removed_action_video_tasks(user_id: int, tasks: Sequence[RemovedActionVideoTask]) -> None:
-    """删除提交后尽力撤销远端视频任务；不能远端撤销时停止本地后续并如实记录，不影响已完成的删除。"""
+    """本地放弃制作提交后尽力撤销远端任务，不能撤销时记录结果。"""
     for task in tasks:
         try:
             state = (
@@ -246,7 +246,7 @@ async def cancel_removed_action_video_tasks(user_id: int, tasks: Sequence[Remove
 
 
 def spawn_removed_action_task_cancellation(user_id: int, tasks: Sequence[RemovedActionVideoTask]) -> None:
-    """删除事务提交后调度撤销；任务登记到用户名下自然落地，失败只记录。"""
+    """事务提交后调度撤销；任务登记到用户名下自然落地，失败只记录。"""
     if not tasks:
         return
     track_user_task(

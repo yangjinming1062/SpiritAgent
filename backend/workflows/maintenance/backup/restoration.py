@@ -12,8 +12,9 @@ from features.assets.references import collect_live_asset_paths
 from features.companion.backup import advance_scene_versions, cron_source_keys, scene_versions
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.backup import validate_special_merges
-from features.desktop_life.backup import advance_playback_versions, playback_versions
+from features.desktop_life.backup import advance_playback_versions, desktop_video_tasks_for_removal, playback_versions
 from features.desktop_life.backup_assets import validate_desktop_files
+from features.media.contracts import RemovedActionVideoTask
 from features.topics.backup import validate_batch_merges
 from infrastructure.backup import BACKUP_REGISTRY, BackupContext
 from infrastructure.config import SETTINGS
@@ -64,16 +65,15 @@ OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = 
     "avatar_assets": (
         ("companion_character_cards", "avatar_id"),
         ("companion_action_packs", "avatar_id"),
-        ("desktop_video_sets", "avatar_id"),
     ),
-    "companion_outfits": (("companion_action_packs", "outfit_id"), ("desktop_video_sets", "outfit_id")),
+    "companion_outfits": (("companion_action_packs", "outfit_id"),),
     "companion_action_packs": (("companion_actions", "pack_id"),),
     "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
         ("memories", None),
     ),
-    "companion_scenes": (("personas", "active_scene_id"), ("desktop_video_sets", "scene_id")),
+    "companion_scenes": (("personas", "active_scene_id"),),
     "desktop_video_sets": (("desktop_video_actions", "set_id"), ("desktop_video_states", "current_set_id")),
     "desktop_video_actions": (
         ("desktop_video_states", "selected_action_id"),
@@ -102,6 +102,7 @@ class BackupRestoreResult:
     restored_files: int
     failures: tuple[BackupImportFailure, ...]
     rewriter: UrlRewriter
+    removed_desktop_tasks: tuple[RemovedActionVideoTask, ...]
 
 
 def _failure_reason(exc: Exception) -> str:
@@ -427,27 +428,12 @@ async def _clear_compatible_rows(
 ) -> tuple[dict[str, list[dict[str, Any]]], tuple[BackupImportFailure, ...]]:
     remaining = dict(compatible_rows)
     failures: list[BackupImportFailure] = []
-    desktop_required_parents = {
-        parent
-        for field, parent in (
-            ("avatar_id", "avatar_assets"),
-            ("outfit_id", "companion_outfits"),
-            ("scene_id", "companion_scenes"),
-        )
-        if any(row.get(field) is not None for row in remaining.get("desktop_video_sets", ()))
-    }
 
     def _drop_desktop(reason: str) -> None:
         for member in sorted(DESKTOP_TABLES & set(remaining)):
             records = remaining.pop(member)
             failures.append(BackupImportFailure(member, len(records), reason))
 
-    # 桌面冻结资料依赖三类输入；先核对父类能否覆盖，避免先清理桌面后才发现输入必须保留。
-    if DESKTOP_TABLES.issubset(remaining) and remaining["desktop_video_sets"]:
-        for parent in sorted(desktop_required_parents):
-            if parent not in remaining or await _has_retained_dependent(db, parent, target_user_id, remaining):
-                _drop_desktop("桌面生活引用的身份、衣柜或场景未能安全恢复，请一并恢复对应类别。")
-                break
     # 动态与评论同组保护：保留的日记仍引用动态时，在任何清理前阻止两表覆盖。
     if "companion_posts" in remaining and await _has_retained_dependent(
         db,
@@ -515,8 +501,6 @@ async def _clear_compatible_rows(
 
     # 身份未能写入时先摘掉依赖头像映射的动作类别，避免在清理阶段误删。
     if IDENTITY_TABLES & set(compatible_rows) and not set(remaining) >= IDENTITY_TABLES:
-        if "avatar_assets" in desktop_required_parents:
-            _drop_desktop(IDENTITY_DEPENDENT_REASON)
         for table in ("companion_action_packs", "companion_actions"):
             if table not in remaining:
                 continue
@@ -584,20 +568,17 @@ async def _clear_compatible_rows(
                 failures.append(BackupImportFailure(member, len(remaining.pop(member)), reason))
     # 覆盖清理后仍须成组：身份缺一即整组不写，避免角色卡引用未写入的头像。
     if DESKTOP_TABLES.issubset(remaining):
-        if not desktop_required_parents.issubset(remaining):
-            _drop_desktop("桌面生活的输入类别无法安全覆盖，原桌面资产已保留。")
-        else:
-            try:
-                async with db.begin_nested():
-                    for member in ("desktop_video_states", "desktop_video_actions", "desktop_video_sets"):
-                        await _delete_user_rows(db, member, target_user_id)
-            except IntegrityError:
-                logger.warning(
-                    "desktop life could not be cleared without affecting retained data",
-                    extra={"target_user_id": target_user_id},
-                    exc_info=True,
-                )
-                _drop_desktop("目标桌面生活仍有无法安全覆盖的关联数据。")
+        try:
+            async with db.begin_nested():
+                for member in ("desktop_video_states", "desktop_video_actions", "desktop_video_sets"):
+                    await _delete_user_rows(db, member, target_user_id)
+        except IntegrityError:
+            logger.warning(
+                "desktop life could not be cleared without affecting retained data",
+                extra={"target_user_id": target_user_id},
+                exc_info=True,
+            )
+            _drop_desktop("目标桌面生活仍有无法安全覆盖的关联数据。")
     for group in (IDENTITY_TABLES, ACTION_TABLES, DESKTOP_TABLES):
         present = group & set(remaining)
         if present and present != group:
@@ -697,10 +678,15 @@ async def restore_backup_rows(
     )
     existing_scene_versions = await scene_versions(db, target_user_id)
     existing_desktop_versions = await playback_versions(db, target_user_id)
+    removed_desktop_tasks: tuple[RemovedActionVideoTask, ...] = ()
     try:
         if mode == "overwrite":
+            if DESKTOP_TABLES.issubset(compatible_rows):
+                removed_desktop_tasks = await desktop_video_tasks_for_removal(db, target_user_id)
             await enqueue_asset_cleanup(db, target_user_id, await collect_live_asset_paths(db, target_user_id))
             compatible_rows, clear_failures = await _clear_compatible_rows(db, target_user_id, compatible_rows)
+            if not DESKTOP_TABLES.issubset(compatible_rows):
+                removed_desktop_tasks = ()
             failures = (*failures, *clear_failures)
         id_map: dict[str, dict[str, int | str]] = {}
         imported: dict[str, int] = {}
@@ -809,6 +795,7 @@ async def restore_backup_rows(
             restored_files=len(rewriter.created),
             failures=failures,
             rewriter=rewriter,
+            removed_desktop_tasks=removed_desktop_tasks,
         )
     except BaseException:
         rewriter.rollback()

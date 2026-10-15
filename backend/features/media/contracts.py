@@ -43,7 +43,7 @@ class ReleasedVideoJobs(BaseModel):
 
 @dataclass(frozen=True)
 class RemovedActionVideoTask:
-    """已删除动作行遗留的远端视频句柄；删除提交后由生成服务尽力撤销。"""
+    """已放弃制作的远端视频句柄；本地事务提交后尽力撤销。"""
 
     action_id: int
     task_id: str

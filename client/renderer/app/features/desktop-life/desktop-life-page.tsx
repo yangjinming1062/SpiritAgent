@@ -2,24 +2,34 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import { $outfits, hydrateWardrobe } from '@/modules/character'
 import {
   $desktopVideoError,
   $desktopVideoLoading,
   $desktopVideoSets,
   $desktopVideoState,
+  activateDesktopVideoSet,
+  cancelDesktopVideoDraft,
+  confirmDesktopVideoImage,
+  createDesktopVideoSet,
+  deleteDesktopVideoSet,
   designDesktopVideoAction,
   type DesktopVideoAction,
   type DesktopVideoPromptReference,
+  type DesktopVideoSource,
   ensureDesktopVideoCurrent,
   generateDesktopVideoAction,
+  generateDesktopVideoImage,
   getDesktopVideoPrompt,
   playDesktopVideoAction,
   refreshDesktopVideos,
+  renameDesktopVideoSet,
   reviewDesktopVideoAction,
   setDesktopVideoPreferences,
   uploadDesktopVideoAction
 } from '@/modules/desktop-videos'
 import { useResolvedMediaSrc } from '@/modules/media'
+import { $sceneLibrary, $scenePage, $sceneTotal, loadSceneLibrary, PAGE_SIZE } from '@/modules/scene'
 import { PortraitLightbox } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
@@ -51,12 +61,19 @@ function DesktopLifeCover({ url }: { url: string | null }): React.JSX.Element {
   )
 }
 
-function DesktopLifePreview({ action }: { action: DesktopVideoAction }): React.JSX.Element {
+function DesktopLifePreview({
+  action,
+  draft = false,
+  onImageReady
+}: {
+  action: DesktopVideoAction
+  draft?: boolean
+  onImageReady?: () => void
+}): React.JSX.Element {
   const active = usePanelActivity()
   const t = useDesktopLifeStrings()
-  const candidate = action.status === 'review_pending'
-  const videoUrl = candidate ? action.candidate_video_url || action.video_url : action.video_url
-  const posterUrl = candidate ? action.candidate_poster_url || action.poster_url : action.poster_url
+  const videoUrl = draft ? action.draft?.candidate_video_url : action.current?.video_url
+  const posterUrl = draft ? action.draft?.candidate_poster_url || action.draft?.image_url : action.current?.poster_url
   const url = videoUrl || posterUrl
   const type = videoUrl ? 'video' : 'image'
   const media = useResolvedMediaSrc({ type, url: url ?? '' })
@@ -84,7 +101,7 @@ function DesktopLifePreview({ action }: { action: DesktopVideoAction }): React.J
             src={src}
           />
         ) : (
-          <img alt="" className="h-full w-full object-contain" src={src} />
+          <img alt="" className="h-full w-full object-contain" onLoad={onImageReady} src={src} />
         )
       ) : (
         <span className="text-sm text-muted">{t.noPreview}</span>
@@ -191,11 +208,30 @@ export function DesktopLifePage(): React.JSX.Element {
   const error = useStore($desktopVideoError)
   const [selectedSetId, setSelectedSetId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  const [imagePreviews, setImagePreviews] = useState<Record<string, boolean>>({})
   const [feedback, setFeedback] = useState<Record<number, string>>({})
-  const [replaceBase, setReplaceBase] = useState<Record<number, boolean>>({})
+  const scenes = useStore($sceneLibrary)
+  const scenePage = useStore($scenePage)
+  const sceneTotal = useStore($sceneTotal)
+  const outfits = useStore($outfits)
+  const [createOpen, setCreateOpen] = useState(false)
+
+  const [create, setCreate] = useState({
+    name: '',
+    sceneId: '',
+    sceneLabel: '',
+    outfitId: '',
+    source: 'ai' as DesktopVideoSource,
+    requestId: crypto.randomUUID()
+  })
+
+  const [sceneQuery, setSceneQuery] = useState('')
+  const [rename, setRename] = useState('')
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [design, setDesign] = useState({ name: '', description: '', kind: 'loop' as 'loop' | 'once', duration: 10 })
   const [designMessage, setDesignMessage] = useState<string | null>(null)
   const [externalAction, setExternalAction] = useState<DesktopVideoAction | null>(null)
+  const [externalBaseVersion, setExternalBaseVersion] = useState(0)
   const [externalPrompt, setExternalPrompt] = useState<Awaited<ReturnType<typeof getDesktopVideoPrompt>> | null>(null)
   const [externalRequirements, setExternalRequirements] = useState('')
   const [externalPromptRequirements, setExternalPromptRequirements] = useState('')
@@ -208,7 +244,19 @@ export function DesktopLifePage(): React.JSX.Element {
   const externalAuthSession = useRef(authSessionId)
   const beginAsync = useAsyncGuard()
   const selected = sets.find(item => item.id === selectedSetId)
-  const currentMatches = selected?.is_current && selected.context_hash === state?.desired_context_hash
+  const currentMatches = selected?.is_current === true
+  const externalSet = sets.find(set => set.id === externalAction?.set_id)
+  const liveExternalAction = externalSet?.actions.find(action => action.id === externalAction?.id)
+
+  const externalStale = Boolean(
+    externalAction &&
+    (!externalSet ||
+      externalSet.base_version !== externalBaseVersion ||
+      liveExternalAction?.draft?.id !== externalAction.draft?.id ||
+      liveExternalAction?.draft?.image_url?.split(/[?#]/)[0] !== externalAction.draft?.image_url?.split(/[?#]/)[0] ||
+      liveExternalAction?.draft?.image_confirmed !== externalAction.draft?.image_confirmed ||
+      liveExternalAction?.current?.image_url?.split(/[?#]/)[0] !== externalAction.current?.image_url?.split(/[?#]/)[0])
+  )
 
   const working = sets.some(
     item =>
@@ -217,10 +265,10 @@ export function DesktopLifePage(): React.JSX.Element {
   )
 
   useEffect(() => {
-    if (auth.kind === 'authenticated') {
+    if (authSessionId) {
       void refreshDesktopVideos()
     }
-  }, [auth.kind])
+  }, [authSessionId])
 
   useEffect(() => {
     if (externalAuthSession.current === authSessionId) {
@@ -238,7 +286,17 @@ export function DesktopLifePage(): React.JSX.Element {
     setExternalReferenceZoom(null)
     setExternalPromptLoading(false)
     setExternalUploading(false)
-    setReplaceBase({})
+    setSelectedSetId(null)
+    setCreateOpen(false)
+    setCreate({ name: '', sceneId: '', sceneLabel: '', outfitId: '', source: 'ai', requestId: crypto.randomUUID() })
+    setFeedback({})
+    setImagePreviews({})
+    setDeleteOpen(false)
+    setBusy(false)
+    setRename('')
+    setDesign({ name: '', description: '', kind: 'loop', duration: 10 })
+    setDesignMessage(null)
+    setSceneQuery('')
   }, [authSessionId])
 
   useEffect(() => {
@@ -293,9 +351,22 @@ export function DesktopLifePage(): React.JSX.Element {
     setExternalPromptLoading(true)
 
     try {
-      const prompt = await getDesktopVideoPrompt(action.id, action.set_id, submittedRequirements)
+      const set = $desktopVideoSets.get().find(item => item.id === action.set_id)
+      const latest = set?.actions.find(item => item.id === action.id)
+
+      if (!set || !latest) {
+        throw new Error(t.stalePrompt)
+      }
+
+      const prompt = await getDesktopVideoPrompt(latest, set, submittedRequirements)
 
       if (isCurrent()) {
+        if (externalStale) {
+          setExternalFilePath(null)
+        }
+
+        setExternalAction(latest)
+        setExternalBaseVersion(set.base_version)
         setExternalPrompt(prompt)
         setExternalPromptRequirements(submittedRequirements)
         setExternalCopied(false)
@@ -313,6 +384,7 @@ export function DesktopLifePage(): React.JSX.Element {
 
   const openExternal = (action: DesktopVideoAction): void => {
     setExternalAction(action)
+    setExternalBaseVersion($desktopVideoSets.get().find(set => set.id === action.set_id)?.base_version ?? 0)
     setExternalPrompt(null)
     setExternalRequirements('')
     setExternalPromptRequirements('')
@@ -373,7 +445,16 @@ export function DesktopLifePage(): React.JSX.Element {
     setExternalUploading(true)
 
     try {
-      await uploadDesktopVideoAction(action.id, action.set_id, externalFilePath, authSessionId)
+      if (!externalSet || externalStale) {
+        throw new Error(t.stalePrompt)
+      }
+
+      await uploadDesktopVideoAction(
+        action,
+        { ...externalSet, base_version: externalBaseVersion },
+        externalFilePath,
+        authSessionId
+      )
 
       if (isCurrent()) {
         closeExternal()
@@ -407,6 +488,65 @@ export function DesktopLifePage(): React.JSX.Element {
     }
   }
 
+  const confirmForExternal = async (action: DesktopVideoAction): Promise<void> => {
+    if (!selected) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    await confirmDesktopVideoImage(action, selected, false)
+
+    if (!scope?.()) {
+      return
+    }
+
+    const latest = $desktopVideoSets
+      .get()
+      .find(set => set.id === selected.id)
+      ?.actions.find(item => item.id === action.id)
+
+    if (latest) {
+      openExternal(latest)
+    }
+  }
+
+  const uploadImage = async (action: DesktopVideoAction): Promise<void> => {
+    const scope = captureAuthScope()
+
+    if (!selected || !authSessionId || !scope) {
+      return
+    }
+
+    const [path] = await fileApi().selectPaths({
+      filters: [{ name: t.imageFilterName, extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+      multiple: false,
+      title: t.uploadImage
+    })
+
+    if (path && scope()) {
+      await uploadDesktopVideoAction(action, selected, path, authSessionId, 'image')
+    }
+  }
+
+  const activate = async (): Promise<void> => {
+    if (!selected) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    const activated = await activateDesktopVideoSet(selected)
+
+    if (activated && scope?.() && $presentation.get().effectiveMode !== 'desktop') {
+      await shellApi().presentation.setMode('desktop')
+    }
+  }
+
+  const openCreate = (): void => {
+    setCreateOpen(true)
+    void loadSceneLibrary('', 0)
+    void hydrateWardrobe()
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -425,6 +565,9 @@ export function DesktopLifePage(): React.JSX.Element {
           </button>
           <button className={BTN_PRIMARY} disabled={busy} onClick={() => void run(prepare)} type="button">
             {t.prepare}
+          </button>
+          <button className={BTN_PRIMARY} disabled={busy} onClick={openCreate} type="button">
+            {t.createSet}
           </button>
         </div>
       </header>
@@ -465,7 +608,45 @@ export function DesktopLifePage(): React.JSX.Element {
             <ArrowLeft size={14} />
             {t.back}
           </button>
-          <h3 className="mb-4 text-sm font-semibold text-strong">{selected.title}</h3>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <h3 className="mr-auto text-sm font-semibold text-strong">
+              {selected.title} {selected.is_default ? `· ${t.defaultSet}` : ''}
+            </h3>
+            <button
+              className={BTN_PRIMARY}
+              disabled={
+                busy || currentMatches || !selected.actions.some(action => action.key === 'idle' && action.playable)
+              }
+              onClick={() => void run(activate)}
+              type="button"
+            >
+              {currentMatches ? t.current : t.play}
+            </button>
+            <input
+              aria-label={t.renameSet}
+              className={`${INPUT_CLASS} w-40`}
+              maxLength={160}
+              onChange={event => setRename(event.target.value)}
+              placeholder={selected.title}
+              value={rename}
+            />
+            <button
+              className={BTN_SUBTLE}
+              disabled={busy || !rename.trim()}
+              onClick={() =>
+                void run(async () => {
+                  await renameDesktopVideoSet(selected.id, rename.trim())
+                  setRename('')
+                })
+              }
+              type="button"
+            >
+              {t.renameSet}
+            </button>
+            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDeleteOpen(true)} type="button">
+              {t.deleteSet}
+            </button>
+          </div>
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             {selected.actions.map(action => (
               <article
@@ -473,7 +654,40 @@ export function DesktopLifePage(): React.JSX.Element {
                 id={`desktop-life-action-${action.id}`}
                 key={action.id}
               >
-                <DesktopLifePreview action={action} />
+                {action.current && (
+                  <>
+                    <p className="text-xs font-medium text-muted">{t.currentContent}</p>
+                    <DesktopLifePreview action={action} />
+                  </>
+                )}
+                {action.draft && (
+                  <>
+                    <p className="text-xs font-medium text-accent">
+                      {action.draft.image_confirmed || action.draft.candidate_video_url
+                        ? t.draftContent
+                        : t.imageReview}
+                    </p>
+                    <DesktopLifePreview
+                      action={action}
+                      draft
+                      onImageReady={() =>
+                        setImagePreviews(current => ({
+                          ...current,
+                          [`${action.draft?.id}:${action.draft?.image_url}`]: true
+                        }))
+                      }
+                    />
+                  </>
+                )}
+                {!action.current && !action.draft && <DesktopLifePreview action={action} />}
+                {action.needs_update && (
+                  <p className="text-xs text-warning" role="status">
+                    {t.needsUpdate}
+                  </p>
+                )}
+                {action.unavailable_reason && !action.playable && (
+                  <p className="text-xs text-muted">{action.unavailable_reason}</p>
+                )}
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h4 className="text-sm font-medium text-strong">
@@ -541,79 +755,142 @@ export function DesktopLifePage(): React.JSX.Element {
                     value={feedback[action.id] ?? ''}
                   />
                 )}
-                {action.key === 'idle' && selected.base_image_url && !isActionPaused(action) && (
-                  <label className="flex items-start gap-2 text-xs text-muted">
-                    <input
-                      checked={replaceBase[action.id] ?? false}
-                      disabled={busy || action.status === 'processing'}
-                      onChange={event => setReplaceBase(current => ({ ...current, [action.id]: event.target.checked }))}
-                      type="checkbox"
-                    />
-                    <span>{t.replaceBase}</span>
-                  </label>
-                )}
                 <div className="flex flex-wrap gap-2">
                   <button
                     className={BTN_SUBTLE}
-                    disabled={busy || action.status === 'processing' || !currentMatches}
+                    disabled={
+                      busy ||
+                      action.status === 'processing' ||
+                      (action.continuity === 'base' && action.key !== 'idle' && !selected.base_image_url)
+                    }
                     onClick={() => openExternal(action)}
-                    title={currentMatches ? undefined : t.currentOnly}
                     type="button"
                   >
                     {t.external}
                   </button>
+                  {action.continuity === 'base' && action.key !== 'idle' ? (
+                    <button
+                      className={BTN_SUBTLE}
+                      onClick={() =>
+                        document
+                          .getElementById(
+                            `desktop-life-action-${selected.actions.find(item => item.key === 'idle')?.id}`
+                          )
+                          ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                      }
+                      type="button"
+                    >
+                      {t.manageBase}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className={BTN_SUBTLE}
+                        disabled={busy || action.status === 'processing'}
+                        onClick={() => void run(() => generateDesktopVideoImage(action, selected, feedback[action.id]))}
+                        type="button"
+                      >
+                        {action.draft?.image_url || action.current ? t.adjustImage : t.generateImage}
+                      </button>
+                      {(action.draft?.image_url || action.current) && (
+                        <button
+                          className={BTN_SUBTLE}
+                          disabled={busy || action.status === 'processing'}
+                          onClick={() =>
+                            void run(() => generateDesktopVideoImage(action, selected, feedback[action.id], true))
+                          }
+                          type="button"
+                        >
+                          {t.regenerateImage}
+                        </button>
+                      )}
+                      <button
+                        className={BTN_SUBTLE}
+                        disabled={busy || action.status === 'processing'}
+                        onClick={() => void run(() => uploadImage(action))}
+                        type="button"
+                      >
+                        {t.uploadImage}
+                      </button>
+                    </>
+                  )}
+                  {action.stage === 'image_review' && action.draft?.image_url && !action.draft.image_confirmed && (
+                    <button
+                      className={BTN_PRIMARY}
+                      disabled={
+                        busy ||
+                        action.status === 'processing' ||
+                        !imagePreviews[`${action.draft.id}:${action.draft.image_url}`]
+                      }
+                      onClick={() => void run(() => confirmDesktopVideoImage(action, selected))}
+                      type="button"
+                    >
+                      {t.confirmImage}
+                    </button>
+                  )}
+                  {action.stage === 'image_review' && action.draft?.image_url && !action.draft.image_confirmed && (
+                    <button
+                      className={BTN_SUBTLE}
+                      disabled={
+                        busy ||
+                        action.status === 'processing' ||
+                        !imagePreviews[`${action.draft.id}:${action.draft.image_url}`]
+                      }
+                      onClick={() => void run(() => confirmForExternal(action))}
+                      type="button"
+                    >
+                      {t.confirmExternal}
+                    </button>
+                  )}
                   <button
-                    className={isActionPaused(action) ? BTN_PRIMARY : BTN_SUBTLE}
-                    disabled={busy || action.status === 'processing'}
-                    onClick={() => {
-                      const scope = captureAuthScope()
-                      void run(async () => {
-                        await generateDesktopVideoAction(
-                          action.id,
-                          isActionPaused(action) ? undefined : feedback[action.id],
-                          !isActionPaused(action) && (replaceBase[action.id] ?? false)
-                        )
-
-                        if (scope?.()) {
-                          setReplaceBase(current => ({ ...current, [action.id]: false }))
-                        }
-                      })
-                    }}
+                    className={BTN_SUBTLE}
+                    disabled={
+                      busy ||
+                      (action.status === 'processing' && !isActionPaused(action)) ||
+                      Boolean(action.draft?.image_url && !action.draft.image_confirmed) ||
+                      (action.continuity === 'base' && action.key !== 'idle' && !selected.base_image_url)
+                    }
+                    onClick={() => void run(() => generateDesktopVideoAction(action, selected, feedback[action.id]))}
                     type="button"
                   >
-                    {isActionPaused(action)
-                      ? t.resume
-                      : action.status === 'ready'
-                        ? t.remake
-                        : action.status === 'failed'
-                          ? t.retry
-                          : t.generate}
+                    {isActionPaused(action) ? t.resume : action.current ? t.remakeVideo : t.generate}
                   </button>
+                  {action.draft && (
+                    <button
+                      className={BTN_SUBTLE}
+                      disabled={busy}
+                      onClick={() => void run(() => cancelDesktopVideoDraft(action))}
+                      type="button"
+                    >
+                      {action.status === 'processing' ? t.cancel : t.discardDraft}
+                    </button>
+                  )}
                   {action.video_url && (
                     <button
                       className={BTN_PRIMARY}
-                      disabled={busy || !action.enabled || !currentMatches}
+                      disabled={busy || !action.playable || !currentMatches}
                       onClick={() => void run(() => play(action))}
-                      title={currentMatches ? undefined : t.currentOnly}
                       type="button"
                     >
                       {t.play}
                     </button>
                   )}
-                  {action.status === 'review_pending' && (
+                  {action.status === 'review_pending' && action.draft?.candidate_video_url && (
                     <>
                       <button
                         className={BTN_PRIMARY}
                         disabled={busy}
-                        onClick={() => void run(() => reviewDesktopVideoAction(action.id, true))}
+                        onClick={() => void run(() => reviewDesktopVideoAction(action, selected, true))}
                         type="button"
                       >
-                        {t.accept}
+                        {action.key === 'idle'
+                          ? `${t.accept} · ${t.updateActions(selected.actions.filter(item => item.id !== action.id && item.continuity === 'base' && item.current && item.enabled).length)}`
+                          : t.accept}
                       </button>
                       <button
                         className={BTN_SUBTLE}
                         disabled={busy}
-                        onClick={() => void run(() => reviewDesktopVideoAction(action.id, false))}
+                        onClick={() => void run(() => reviewDesktopVideoAction(action, selected, false))}
                         type="button"
                       >
                         {t.reject}
@@ -662,7 +939,7 @@ export function DesktopLifePage(): React.JSX.Element {
               </div>
             </section>
           ) : null}
-          {currentMatches && (
+          {selected && (
             <details className="mt-5 rounded-xl border border-line-hairline p-4">
               <summary className="cursor-pointer text-sm font-medium text-strong">{t.design}</summary>
               <form
@@ -760,19 +1037,196 @@ export function DesktopLifePage(): React.JSX.Element {
             <button
               className="flex flex-col gap-2 rounded-xl border border-line-hairline p-4 text-left hover:bg-white/5"
               key={item.id}
-              onClick={() => setSelectedSetId(item.id)}
+              onClick={() => {
+                setSelectedSetId(item.id)
+                setRename('')
+              }}
               type="button"
             >
-              <DesktopLifeCover url={item.actions.find(action => action.poster_url)?.poster_url ?? null} />
+              <DesktopLifeCover
+                url={
+                  item.actions.find(action => action.poster_url)?.poster_url ??
+                  item.base_image_url ??
+                  item.actions.find(action => action.draft?.image_url)?.draft?.image_url ??
+                  null
+                }
+              />
               <strong className="text-sm text-strong">{item.title}</strong>
               <span className="text-xs text-muted">
                 {new Date(item.created_at).toLocaleDateString()} ·{' '}
-                {item.actions.filter(action => action.status === 'ready').length}/{item.actions.length}
+                {item.actions.filter(action => action.playable).length}/{item.actions.length}
               </span>
               {item.is_current && <span className="text-xs text-accent">{t.current}</span>}
             </button>
           ))}
         </div>
+      )}
+      {createOpen && (
+        <WizardModal
+          draggable
+          onClose={() => setCreateOpen(false)}
+          regionId="desktop-life-create"
+          title={t.createSet}
+          widthClass="max-w-2xl"
+        >
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={event => {
+              event.preventDefault()
+              const scope = captureAuthScope()
+              void run(async () => {
+                const created = await createDesktopVideoSet({
+                  request_id: create.requestId,
+                  name: create.name.trim(),
+                  scene_id: Number(create.sceneId),
+                  outfit_id: Number(create.outfitId),
+                  source: create.source
+                })
+
+                if (scope?.()) {
+                  setSelectedSetId(created.id)
+                  setCreateOpen(false)
+                  setCreate({
+                    name: '',
+                    sceneId: '',
+                    sceneLabel: '',
+                    outfitId: '',
+                    source: 'ai',
+                    requestId: crypto.randomUUID()
+                  })
+                }
+              })
+            }}
+          >
+            <p className="text-xs text-muted">{t.suiteHint}</p>
+            <input
+              aria-label={t.setName}
+              className={INPUT_CLASS}
+              maxLength={160}
+              onChange={event =>
+                setCreate(current => ({ ...current, name: event.target.value, requestId: crypto.randomUUID() }))
+              }
+              placeholder={t.setName}
+              required
+              value={create.name}
+            />
+            <label className="flex flex-col gap-2 text-xs text-body">
+              {t.sceneLibrary}
+              <div className="flex gap-2">
+                <input
+                  aria-label={t.searchScenes}
+                  className={INPUT_CLASS}
+                  onChange={event => setSceneQuery(event.target.value)}
+                  placeholder={t.searchScenes}
+                  value={sceneQuery}
+                />
+                <button className={BTN_SUBTLE} onClick={() => void loadSceneLibrary(sceneQuery, 0)} type="button">
+                  {t.search}
+                </button>
+              </div>
+              <PanelSelect
+                ariaLabel={t.sceneLibrary}
+                onChange={value =>
+                  setCreate(current => ({
+                    ...current,
+                    sceneId: value,
+                    sceneLabel: scenes.find(scene => scene.id === value)?.title ?? '',
+                    requestId: crypto.randomUUID()
+                  }))
+                }
+                options={[
+                  { value: '', label: t.chooseScene },
+                  ...(create.sceneId && !scenes.some(scene => scene.id === create.sceneId)
+                    ? [{ value: create.sceneId, label: create.sceneLabel }]
+                    : []),
+                  ...scenes
+                    .filter(scene => scene.status === 'ready')
+                    .map(scene => ({ value: scene.id, label: scene.title }))
+                ]}
+                value={create.sceneId}
+              />
+              <div className="flex gap-2">
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={scenePage === 0}
+                  onClick={() => void loadSceneLibrary(sceneQuery, scenePage - 1)}
+                  type="button"
+                >
+                  {t.previous}
+                </button>
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={(scenePage + 1) * PAGE_SIZE >= sceneTotal}
+                  onClick={() => void loadSceneLibrary(sceneQuery, scenePage + 1)}
+                  type="button"
+                >
+                  {t.next}
+                </button>
+              </div>
+            </label>
+            <label className="flex flex-col gap-2 text-xs text-body">
+              {t.outfitLibrary}
+              <PanelSelect
+                ariaLabel={t.outfitLibrary}
+                onChange={value =>
+                  setCreate(current => ({ ...current, outfitId: value, requestId: crypto.randomUUID() }))
+                }
+                options={[
+                  { value: '', label: t.chooseOutfit },
+                  ...outfits
+                    .filter(outfit => outfit.status === 'ready')
+                    .map(outfit => ({ value: String(outfit.id), label: outfit.name }))
+                ]}
+                value={create.outfitId}
+              />
+            </label>
+            <PanelSelect
+              ariaLabel={t.creationSource}
+              onChange={value => {
+                if (value === 'ai' || value === 'image_upload' || value === 'video_upload') {
+                  setCreate(current => ({ ...current, source: value, requestId: crypto.randomUUID() }))
+                }
+              }}
+              options={[
+                { value: 'ai', label: t.generateImage },
+                { value: 'image_upload', label: t.uploadImage },
+                { value: 'video_upload', label: t.external }
+              ]}
+              value={create.source}
+            />
+            <button
+              className={BTN_PRIMARY}
+              disabled={busy || !create.name.trim() || !create.sceneId || !create.outfitId}
+              type="submit"
+            >
+              {t.createSet}
+            </button>
+          </form>
+        </WizardModal>
+      )}
+      {deleteOpen && selected && (
+        <WizardModal
+          onClose={() => setDeleteOpen(false)}
+          regionId="desktop-life-delete"
+          title={t.deleteSet}
+          widthClass="max-w-md"
+        >
+          <p className="mb-4 text-sm text-body">{t.deleteHint}</p>
+          <button
+            className={BTN_PRIMARY}
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await deleteDesktopVideoSet(selected.id)
+                setSelectedSetId(null)
+                setDeleteOpen(false)
+              })
+            }
+            type="button"
+          >
+            {t.deleteSet}
+          </button>
+        </WizardModal>
       )}
       {externalAction && (
         <WizardModal
@@ -787,6 +1241,11 @@ export function DesktopLifePage(): React.JSX.Element {
         >
           <div className="flex flex-col gap-4">
             <p className="text-xs leading-relaxed text-muted">{t.externalHint}</p>
+            {externalStale && (
+              <p className="text-xs text-warning" role="status">
+                {t.stalePrompt}
+              </p>
+            )}
             <label className="flex flex-col gap-2 text-xs text-body">
               {t.requirements}
               <textarea
@@ -803,7 +1262,7 @@ export function DesktopLifePage(): React.JSX.Element {
                 {t.promptLoading}
               </p>
             ) : (
-              (!externalPrompt || externalRequirements.trim() !== externalPromptRequirements) && (
+              (!externalPrompt || externalStale || externalRequirements.trim() !== externalPromptRequirements) && (
                 <button
                   className={`${BTN_SUBTLE} self-start`}
                   disabled={externalUploading}
@@ -818,7 +1277,12 @@ export function DesktopLifePage(): React.JSX.Element {
               <section className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-2">
                   <h4 className="text-sm font-medium text-strong">{t.prompt}</h4>
-                  <button className={BTN_SUBTLE} onClick={() => void copyExternalPrompt()} type="button">
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={externalStale}
+                    onClick={() => void copyExternalPrompt()}
+                    type="button"
+                  >
                     {externalCopied ? t.copied : t.copyPrompt}
                   </button>
                 </div>
@@ -865,7 +1329,7 @@ export function DesktopLifePage(): React.JSX.Element {
               </div>
               <button
                 className={`${BTN_PRIMARY} self-start`}
-                disabled={!externalFilePath || externalUploading}
+                disabled={!externalFilePath || externalUploading || externalStale}
                 onClick={() => void uploadExternalVideo()}
                 type="button"
               >

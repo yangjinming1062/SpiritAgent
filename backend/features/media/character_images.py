@@ -48,6 +48,7 @@ class CharacterImageInput(BaseModel):
     purpose: Literal["character"] = "character"
     prompt: str
     size: str
+    aspect_ratio: str | None = None
     n: int = Field(ge=1)
     reference_image: str
     secondary_reference_image: str | None = None
@@ -308,6 +309,7 @@ async def generate_character_images(
     reference_image: str,
     identity_reference: str,
     size: str = "1024x1024",
+    aspect_ratio: str | None = None,
     n: int = 1,
     secondary_reference_image: str | None = None,
     image_edit: bool = False,
@@ -335,6 +337,7 @@ async def generate_character_images(
         state.inputs = CharacterImageInput(
             prompt=prompt,
             size=size,
+            aspect_ratio=aspect_ratio,
             n=n,
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
@@ -659,7 +662,8 @@ async def _run_image_chain(
                         background=background,
                         prefer_transparent_background=isinstance(inputs, CharacterImageInput)
                         and inputs.prefer_transparent_background,
-                        aspect_ratio=provider.image_aspect_ratio,
+                        aspect_ratio=provider.image_aspect_ratio
+                        or (inputs.aspect_ratio if isinstance(inputs, CharacterImageInput) else None),
                         resolution=provider.image_resolution,
                         exact_size=provider.image_exact_size,
                     )

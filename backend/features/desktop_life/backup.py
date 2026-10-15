@@ -8,8 +8,11 @@ from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.media.contracts import RemovedActionVideoTask
+
 from .backup_assets import restore_desktop_payload, validate_desktop_owned_paths
 from .models import DesktopVideoAction, DesktopVideoSet, DesktopVideoState
+from .repository import desktop_removed_video_task
 
 DESKTOP_TABLES = frozenset({"desktop_video_sets", "desktop_video_actions", "desktop_video_states"})
 
@@ -29,6 +32,7 @@ async def _check(
 ) -> None:
     validate_desktop_owned_paths(payload, context.asset_owner_id)
     if table == "desktop_video_states":
+        selected = None
         for field in ("selected_action_id", "loop_action_id"):
             if payload.get(field) is None:
                 continue
@@ -41,6 +45,10 @@ async def _check(
                 and action.kind != "loop"
             ):
                 raise ValueError("桌面生活播放选择不属于当前组合。")
+            if field == "selected_action_id":
+                selected = action
+        if selected is not None and selected.kind == "once":
+            payload["selected_action_id"] = payload.get("loop_action_id")
 
 
 def backup_tables() -> tuple[BackupTable, ...]:
@@ -53,8 +61,8 @@ def backup_tables() -> tuple[BackupTable, ...]:
                 "outfit_id": "companion_outfits",
                 "scene_id": "companion_scenes",
             },
-            unique_keys=("context_hash",),
-            strict_references=True,
+            unique_keys=("request_id",),
+            strict_references=False,
             merge_unique_on_overwrite=True,
             prepare_payload=partial(_prepare, "desktop_video_sets"),
             validate_payload=partial(_check, "desktop_video_sets"),
@@ -83,6 +91,11 @@ def backup_tables() -> tuple[BackupTable, ...]:
             validate_payload=partial(_check, "desktop_video_states"),
         ),
     )
+
+
+async def desktop_video_tasks_for_removal(db: AsyncSession, user_id: int) -> tuple[RemovedActionVideoTask, ...]:
+    actions = await db.scalars(select(DesktopVideoAction).where(DesktopVideoAction.user_id == user_id))
+    return tuple(task for action in actions if (task := desktop_removed_video_task(action)) is not None)
 
 
 async def playback_versions(db: AsyncSession, user_id: int) -> tuple[int, int] | None:

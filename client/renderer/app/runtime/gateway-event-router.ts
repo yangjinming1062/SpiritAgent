@@ -6,7 +6,7 @@ import {
   onSessionListChanged,
   onTopicFeedbackUpdated
 } from '@/modules/conversation'
-import { handleDesktopVideoEvent, notifyDesktopVideoContextChanged } from '@/modules/desktop-videos'
+import { handleDesktopVideoEvent } from '@/modules/desktop-videos'
 import { onJournalEvent } from '@/modules/diary'
 import { onPostEvent } from '@/modules/posts'
 import { onSceneEvent } from '@/modules/scene'
@@ -60,17 +60,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   }
 
   const ctx: EventRouteContext = { isProxy: $gateway.get()?.isProxy ?? false }
-
-  if (
-    event.type === 'companion.character_card.updated' ||
-    event.type === 'companion.outfit.updated' ||
-    event.type === 'companion.video.activated' ||
-    event.type === 'avatar.regenerated' ||
-    event.type === 'companion.scene.activated' ||
-    event.type === 'companion.scene.updated'
-  ) {
-    notifyDesktopVideoContextChanged()
-  }
 
   switch (event.type) {
     case 'companion.topic_feedback.updated':

@@ -1,9 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { hydrateWardrobe } from '@/modules/character'
 import {
-  $desktopVideoContextRevision,
   $desktopVideoPlayback,
   $desktopVideoState,
   acknowledgeDesktopVideoPlay,
@@ -14,7 +12,6 @@ import {
   playDesktopVideoAction,
   refreshDesktopVideos
 } from '@/modules/desktop-videos'
-import { $activeScene } from '@/modules/scene'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
@@ -38,12 +35,8 @@ export function useDesktopVideoWallpaper(): void {
   const presentation = useStore($presentation)
   const locked = useStore($surfaceScreenLocked)
   const theme = useStore($theme)
-  const scene = useStore($activeScene)
   const state = useStore($desktopVideoState)
   const requested = useStore($desktopVideoPlayback)
-  const contextRevision = useStore($desktopVideoContextRevision)
-  const observedContextRevision = useRef(contextRevision)
-  const observedContextHash = useRef<string | null | undefined>(undefined)
   const preparedEntry = useRef<string | null>(null)
   const active = presentation.effectiveMode === 'desktop' && presentation.status === 'active'
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
@@ -55,16 +48,16 @@ export function useDesktopVideoWallpaper(): void {
   const receiptQueues = useRef(new Map<string, Promise<void>>())
   const paused = locked || presentation.fullscreen || reduceMotion
 
-  const current = state?.current && state.current.context_hash === state.desired_context_hash ? state.current : null
+  const current = state?.current ?? null
 
   const currentLoop =
     current?.actions.find(
-      item => item.id === state?.selected_action_id && item.kind === 'loop' && item.enabled && item.video_url
+      item => item.id === state?.selected_action_id && item.kind === 'loop' && item.playable && item.video_url
     ) ??
     current?.actions.find(
-      item => item.id === state?.loop_action_id && item.kind === 'loop' && item.enabled && item.video_url
+      item => item.id === state?.loop_action_id && item.kind === 'loop' && item.playable && item.video_url
     ) ??
-    current?.actions.find(item => item.key === 'idle' && item.enabled && item.video_url) ??
+    current?.actions.find(item => item.key === 'idle' && item.playable && item.video_url) ??
     null
 
   const claimedAction = current?.actions.find(action => action.id === claimed?.action_id)
@@ -73,7 +66,8 @@ export function useDesktopVideoWallpaper(): void {
     claimed &&
     claimed.set_id === current?.id &&
     claimed.set_epoch === state?.set_epoch &&
-    claimedAction?.version === claimed.version &&
+    claimedAction?.playable &&
+    claimedAction.version === claimed.version &&
     (claimed.continuity !== 'base' || claimed.base_version === current.base_version)
       ? claimed
       : null
@@ -129,10 +123,12 @@ export function useDesktopVideoWallpaper(): void {
     state?.current?.actions.some(action => action.status === 'processing' && action.stage !== 'paused') ?? false
 
   useEffect(() => {
-    if (state && observedContextHash.current === undefined) {
-      observedContextHash.current = state.desired_context_hash
-    }
-  }, [state])
+    defaultPlay.current = ''
+    preparedEntry.current = null
+    claimedPlays.current.clear()
+    receiptQueues.current.clear()
+    setClaimed(null)
+  }, [authSessionId])
 
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -147,68 +143,40 @@ export function useDesktopVideoWallpaper(): void {
       return
     }
 
-    void hydrateWardrobe()
     void refreshDesktopVideos()
   }, [authSessionId])
 
   useEffect(() => {
-    if (!active || !authSessionId) {
-      observedContextRevision.current = contextRevision
-
-      return
-    }
-
-    if (gatewayState !== 'open') {
+    if (!active || !authSessionId || gatewayState !== 'open' || !presentation.prepareDesktopMedia) {
       return
     }
 
     const entryKey = `${authSessionId}:${presentation.stageEpoch}`
-    const explicitEntry = presentation.prepareDesktopMedia && preparedEntry.current !== entryKey
 
-    if (!explicitEntry && contextRevision === observedContextRevision.current) {
+    if (preparedEntry.current === entryKey) {
       return
     }
 
     let disposed = false
     const scope = captureAuthScope()
-    // 等首轮挂载稳定，StrictMode 的预清理不提交制作请求。
     queueMicrotask(() => {
-      if (!disposed) {
-        const previousHash = observedContextHash.current
-        void refreshDesktopVideos()
-          .then(async () => {
-            if (disposed || !scope?.()) {
-              return
-            }
-
-            const hash = $desktopVideoState.get()?.desired_context_hash
-            const changed = previousHash !== undefined && hash !== undefined && hash !== previousHash
-
-            if (explicitEntry || changed) {
-              await ensureDesktopVideoCurrent(explicitEntry ? 'entry' : 'context_change')
-            }
-
-            if (!disposed && scope?.()) {
-              observedContextRevision.current = contextRevision
-              observedContextHash.current = hash
-
-              if (explicitEntry) {
-                preparedEntry.current = entryKey
-              }
-            }
-          })
-          .catch(error => {
-            if (!disposed && scope?.()) {
-              log.warn('desktop-video', 'Current scene preparation failed', error)
-            }
-          })
+      if (disposed || !scope?.()) {
+        return
       }
+
+      void ensureDesktopVideoCurrent()
+        .then(() => {
+          if (!disposed && scope()) {
+            preparedEntry.current = entryKey
+          }
+        })
+        .catch(error => log.warn('desktop-video', 'Default suite preparation failed', error))
     })
 
     return () => {
       disposed = true
     }
-  }, [active, authSessionId, gatewayState, presentation.prepareDesktopMedia, presentation.stageEpoch, contextRevision])
+  }, [active, authSessionId, gatewayState, presentation.prepareDesktopMedia, presentation.stageEpoch])
 
   useEffect(() => {
     if (!active || !preparationInProgress) {
@@ -347,19 +315,16 @@ export function useDesktopVideoWallpaper(): void {
   }, [authSessionId, recordReceipt])
 
   const firstPoster = firstNonBlank(
-    state?.current?.actions.find(action => action.key === 'idle')?.poster_url,
-    state?.current?.base_image_url
+    state?.current?.actions.find(action => action.key === 'idle')?.current?.poster_url,
+    state?.current?.base_image_url,
+    state?.current?.actions.find(action => action.key === 'idle' && action.draft?.image_confirmed)?.draft?.image_url
   )
 
-  const fallbackAction = state?.fallback?.actions.find(
-    action => action.kind === 'loop' && action.enabled && action.video_url
-  )
-
-  // 保底渲染独立于播放指令与回执。
-  const baseline = currentLoop ?? fallbackAction ?? null
+  // 保底渲染只使用当前启用套装，与播放指令和草稿制作状态分别处理。
+  const baseline = currentLoop
 
   const videoUrl = firstNonBlank(activeCommand?.video_url, baseline?.video_url)
-  const posterUrl = firstNonBlank(activeCommand?.poster_url, baseline?.poster_url, firstPoster, scene?.assetUrl)
+  const posterUrl = firstNonBlank(activeCommand?.poster_url, baseline?.poster_url, firstPoster)
 
   useEffect(() => {
     if (!active || !authSessionId) {
@@ -382,11 +347,12 @@ export function useDesktopVideoWallpaper(): void {
         expiresAt: activeCommand?.expires_at ?? null,
         kind: activeCommand?.kind ?? 'loop',
         continuity: activeCommand?.continuity ?? baseline?.continuity ?? 'independent',
+        transition: activeCommand?.transition ?? baseline?.transition ?? 'fade',
         baseVersion: activeCommand ? activeCommand.base_version : (baseline?.base_version ?? null),
         theme,
         reduceMotion,
         paused,
-        clear: false
+        clear: state !== null && !current && !videoUrl && !posterUrl
       })
       .catch(error => {
         if (disposed || !scope?.()) {
@@ -411,10 +377,12 @@ export function useDesktopVideoWallpaper(): void {
     baseline?.set_id,
     baseline?.version,
     baseline?.continuity,
+    baseline?.transition,
+    current,
+    state,
     baseline?.base_version,
     videoUrl,
     posterUrl,
-    scene?.assetUrl,
     state?.set_epoch,
     theme,
     reduceMotion,

@@ -7,18 +7,25 @@ from features.companion.schemas import CompanionOperationResponse
 from features.desktop_life import use_cases as _desktop
 from features.desktop_life.schemas import (
     DesktopVideoActionResponse,
+    DesktopVideoCancelRequest,
     DesktopVideoClaimRequest,
+    DesktopVideoConfirmImageRequest,
+    DesktopVideoCreateSetRequest,
     DesktopVideoDesignRequest,
+    DesktopVideoDraftRequest,
     DesktopVideoEnsureRequest,
     DesktopVideoExternalPromptRequest,
     DesktopVideoExternalPromptResponse,
     DesktopVideoGenerateRequest,
+    DesktopVideoImageRequest,
     DesktopVideoListResponse,
     DesktopVideoPlayCommand,
     DesktopVideoPlayRequest,
     DesktopVideoPreferences,
     DesktopVideoProposalResponse,
     DesktopVideoReceipt,
+    DesktopVideoRenameSetRequest,
+    DesktopVideoSetResponse,
     DesktopVideoStateResponse,
 )
 from infrastructure.database import DbSession
@@ -96,6 +103,8 @@ async def upload_action(
     user: CurrentUser,
     file: UploadFile = File(...),
     expected_set_id: int | None = Form(None),
+    expected_draft_id: str | None = Form(None),
+    expected_base_version: int | None = Form(None),
 ) -> DesktopVideoActionResponse:
     try:
         return await _desktop.upload_action(
@@ -103,23 +112,33 @@ async def upload_action(
             user_id=user.id,
             file=file,
             expected_set_id=expected_set_id,
+            expected_draft_id=expected_draft_id,
+            expected_base_version=expected_base_version,
         )
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.post("/actions/{action_id}/accept", response_model=DesktopVideoActionResponse)
-async def accept_action(action_id: int, user: CurrentUser) -> DesktopVideoActionResponse:
+async def accept_action(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoDraftRequest | None = None,
+) -> DesktopVideoActionResponse:
     try:
-        return await _desktop.accept_action(action_id=action_id, user_id=user.id)
+        return await _desktop.accept_action(action_id=action_id, user_id=user.id, body=body)
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.post("/actions/{action_id}/reject", response_model=DesktopVideoActionResponse)
-async def reject_action(action_id: int, user: CurrentUser) -> DesktopVideoActionResponse:
+async def reject_action(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoDraftRequest | None = None,
+) -> DesktopVideoActionResponse:
     try:
-        return await _desktop.reject_action(action_id=action_id, user_id=user.id)
+        return await _desktop.reject_action(action_id=action_id, user_id=user.id, body=body)
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
@@ -174,5 +193,100 @@ async def receipt_play(
 ) -> CompanionOperationResponse:
     try:
         return await _desktop.receipt_play(play_id=play_id, user_id=user.id, db=db, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/sets", response_model=DesktopVideoSetResponse, status_code=202)
+async def create_set(user: CurrentUser, body: DesktopVideoCreateSetRequest) -> DesktopVideoSetResponse:
+    try:
+        return await _desktop.create_set(user_id=user.id, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.patch("/sets/{set_id}", response_model=DesktopVideoSetResponse)
+async def rename_set(
+    set_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    body: DesktopVideoRenameSetRequest,
+) -> DesktopVideoSetResponse:
+    try:
+        return await _desktop.rename_set(set_id=set_id, user_id=user.id, db=db, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.delete("/sets/{set_id}", response_model=DesktopVideoStateResponse)
+async def delete_set(set_id: int, user: CurrentUser, db: DbSession) -> DesktopVideoStateResponse:
+    try:
+        return await _desktop.delete_set(set_id=set_id, user_id=user.id, db=db)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/sets/{set_id}/activate", response_model=DesktopVideoStateResponse)
+async def activate_set(set_id: int, user: CurrentUser, db: DbSession) -> DesktopVideoStateResponse:
+    try:
+        return await _desktop.activate_set(set_id=set_id, user_id=user.id, db=db)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/actions/{action_id}/image", response_model=DesktopVideoActionResponse, status_code=202)
+async def generate_image(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoImageRequest | None = None,
+) -> DesktopVideoActionResponse:
+    try:
+        return await _desktop.generate_image(action_id=action_id, user_id=user.id, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/actions/{action_id}/image-upload", response_model=DesktopVideoActionResponse)
+async def upload_image(
+    action_id: int,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    expected_set_id: int | None = Form(None),
+    expected_draft_id: str | None = Form(None),
+    expected_base_version: int | None = Form(None),
+) -> DesktopVideoActionResponse:
+    try:
+        return await _desktop.upload_image(
+            action_id=action_id,
+            user_id=user.id,
+            file=file,
+            expected_set_id=expected_set_id,
+            expected_draft_id=expected_draft_id,
+            expected_base_version=expected_base_version,
+        )
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/actions/{action_id}/confirm-image", response_model=DesktopVideoActionResponse, status_code=202)
+async def confirm_image(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoConfirmImageRequest,
+) -> DesktopVideoActionResponse:
+    try:
+        return await _desktop.confirm_image(action_id=action_id, user_id=user.id, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/actions/{action_id}/cancel", response_model=DesktopVideoActionResponse)
+async def cancel_action(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoCancelRequest | None = None,
+) -> DesktopVideoActionResponse:
+    try:
+        return await _desktop.cancel_action(action_id=action_id, user_id=user.id, body=body)
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

@@ -35,6 +35,7 @@ from features.companion.visual_state import (
 from features.configuration.settings.values import get_user_setting
 from features.media.character_images import ImageChainState, ImageProgressWriter, generate_scene_images
 from features.media.image_generation import ImageGenerationError, ImageReviewUnavailableError
+from features.scenes.completion import notify_scene_ready
 from features.scenes.models import (
     CompanionScene,
     SceneGenerationAttempt,
@@ -432,6 +433,7 @@ async def edit_scene_description(user_id: int, scene_id: int, description: Scene
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
+    await notify_scene_ready(user_id)
     return row
 
 
@@ -577,6 +579,7 @@ async def _analyze(user_id: int, scene_id: int) -> None:
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
+    await notify_scene_ready(user_id)
 
 
 async def _reclaim_assets(user_id: int, paths: set[str]) -> None:

@@ -6,7 +6,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from infrastructure.video_processing.ffmpeg import VideoProcessError, ffmpeg_stdout, probe_video, run_ffmpeg
+from infrastructure.video_processing.ffmpeg import (
+    VideoProcessError,
+    ffmpeg_stdout,
+    probe_video,
+    run_ffmpeg,
+    video_frame_times,
+)
 from infrastructure.video_processing.process import extract_cover
 
 
@@ -16,6 +22,7 @@ class DesktopVideoResult:
     height: int
     duration_ms: int
     cover: bytes
+    first_frame: bytes
 
 
 @dataclass(frozen=True)
@@ -25,15 +32,18 @@ class DesktopVideoFrames:
 
 
 def sample_desktop_video_frames(src: Path) -> DesktopVideoFrames:
-    """从已规范化的 24 fps 成品抽取首尾与三个中间帧，保留准确时刻。"""
-    probe = probe_video(src)
-    if abs(probe.fps - 24) > 0.01:
-        raise VideoProcessError("桌面视频尚未规范化，无法检查循环接点")
-    last_index = max(0, round(probe.duration_seconds * probe.fps) - 1)
-    indices = sorted({round(last_index * fraction / 4) for fraction in range(5)})
-    scale = min(1.0, 1024 / max(probe.width, probe.height))
-    width = max(2, round(probe.width * scale / 2) * 2)
-    height = max(2, round(probe.height * scale / 2) * 2)
+    """按实际帧时间抽取首尾和中间帧，支持原始帧率、VFR、旋转和非方形像素。"""
+    times = video_frame_times(src)
+    first, last = times[0], times[-1]
+    indices = sorted(
+        {
+            min(range(len(times)), key=lambda index: abs(times[index] - target))
+            for target in (first + (last - first) * fraction / 4 for fraction in range(5))
+        },
+    )
+    with Image.open(BytesIO(extract_desktop_first_frame(src))) as frame:
+        scale = min(1.0, 1024 / max(frame.size))
+        width, height = (max(2, round(value * scale / 2) * 2) for value in frame.size)
     selector = "+".join(f"eq(n\\,{index})" for index in indices)
     raw = ffmpeg_stdout(
         [
@@ -43,7 +53,7 @@ def sample_desktop_video_frames(src: Path) -> DesktopVideoFrames:
             "0:v:0",
             "-an",
             "-vf",
-            f"select={selector},scale={width}:{height},format=rgb24",
+            f"select={selector},scale={width}:{height},setsar=1,format=rgb24",
             "-fps_mode",
             "passthrough",
             "-f",
@@ -63,15 +73,54 @@ def sample_desktop_video_frames(src: Path) -> DesktopVideoFrames:
         with Image.frombytes("RGB", (width, height), data) as frame, BytesIO() as output:
             frame.save(output, format="WEBP", lossless=True)
             frames.append(output.getvalue())
-    return DesktopVideoFrames(tuple(frames), tuple(index / probe.fps for index in indices))
+    return DesktopVideoFrames(tuple(frames), tuple(times[index] - first for index in indices))
 
 
-def prepare_desktop_video(src: Path, dst: Path) -> DesktopVideoResult:
+def extract_desktop_first_frame(src: Path) -> bytes:
+    """原分辨率解码实际首帧；FFmpeg 自动应用显示旋转，再按 SAR 还原显示比例。"""
+    data = ffmpeg_stdout(
+        [
+            "-i",
+            str(src),
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-an",
+            "-vf",
+            "scale=round(iw*max(sar\\,1)):round(ih/min(sar\\,1)),setsar=1",
+            "-f",
+            "image2pipe",
+            "-c:v",
+            "png",
+            "-",
+        ],
+        failure_message="桌面视频首帧解码失败",
+    )
+    try:
+        with Image.open(BytesIO(data)) as frame:
+            frame.load()
+            if frame.width < 1 or frame.height < 1:
+                raise VideoProcessError("桌面视频首帧尺寸无效")
+    except OSError as exc:
+        raise VideoProcessError("桌面视频首帧解码失败") from exc
+    return data
+
+
+def prepare_desktop_video(src: Path, dst: Path, *, aspect_ratio: str | None = None) -> DesktopVideoResult:
     probe = probe_video(src)
     if probe.width * probe.height > 3840 * 2160 or probe.fps > 120:
         raise VideoProcessError("桌面视频分辨率或帧率超出处理上限")
-    if abs(probe.width / probe.height - 16 / 9) > 0.06:
-        raise VideoProcessError("桌面视频画幅不是16:9，请重做")
+    first_frame = extract_desktop_first_frame(src)
+    with Image.open(BytesIO(first_frame)) as frame:
+        if aspect_ratio is not None:
+            try:
+                numerator, denominator = (int(value) for value in aspect_ratio.split(":"))
+                expected = numerator / denominator
+            except (ValueError, ZeroDivisionError) as exc:
+                raise VideoProcessError("桌面视频目标画幅无效") from exc
+            if expected <= 0 or abs(frame.width / frame.height / expected - 1) > 0.03:
+                raise VideoProcessError("桌面视频画幅与已确认图片不一致，请重做")
     dst.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(
         [
@@ -83,7 +132,7 @@ def prepare_desktop_video(src: Path, dst: Path) -> DesktopVideoResult:
             "-sn",
             "-dn",
             "-vf",
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,fps=24",
+            "scale=trunc(iw*max(sar\\,1)/2)*2:trunc(ih/min(sar\\,1)/2)*2,setsar=1,fps=24",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -101,7 +150,13 @@ def prepare_desktop_video(src: Path, dst: Path) -> DesktopVideoResult:
     output = probe_video(dst)
     run_ffmpeg(["-i", str(dst), "-map", "0:v:0", "-an", "-f", "null", "-"], label="桌面视频解码检查")
     cover = extract_cover(dst, canvas_w=output.width, canvas_h=output.height)
-    return DesktopVideoResult(output.width, output.height, round(output.duration_seconds * 1000), cover)
+    return DesktopVideoResult(
+        output.width,
+        output.height,
+        round(output.duration_seconds * 1000),
+        cover,
+        extract_desktop_first_frame(dst),
+    )
 
 
 def prepare_external_desktop_video(src: Path) -> DesktopVideoResult:
@@ -129,32 +184,10 @@ def prepare_external_desktop_video(src: Path) -> DesktopVideoResult:
         ["-xerror", "-i", str(src), "-map", "0:v:0", "-f", "null", "-"],
         label="桌面视频解码检查",
     )
-    scale = min(1.0, 1024 / max(probe.width, probe.height))
-    width = max(2, round(probe.width * scale / 2) * 2)
-    height = max(2, round(probe.height * scale / 2) * 2)
-    raw = ffmpeg_stdout(
-        [
-            "-i",
-            str(src),
-            "-map",
-            "0:v:0",
-            "-frames:v",
-            "1",
-            "-an",
-            "-vf",
-            f"scale={width}:{height}",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-",
-        ],
-        failure_message="桌面视频封面解码失败",
-    )
-    frame_size = width * height * 3
-    if len(raw) != frame_size:
-        raise VideoProcessError("桌面视频封面解码失败")
-    with Image.frombytes("RGB", (width, height), raw) as frame, BytesIO() as output:
+    first_frame = extract_desktop_first_frame(src)
+    with Image.open(BytesIO(first_frame)) as frame, BytesIO() as output:
+        width, height = frame.size
+        frame.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
         frame.save(output, format="WEBP", quality=90)
         cover = output.getvalue()
-    return DesktopVideoResult(probe.width, probe.height, round(probe.duration_seconds * 1000), cover)
+    return DesktopVideoResult(width, height, round(probe.duration_seconds * 1000), cover, first_frame)

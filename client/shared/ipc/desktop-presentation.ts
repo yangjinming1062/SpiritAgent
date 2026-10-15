@@ -62,6 +62,7 @@ export interface DesktopBackgroundRequest {
   expiresAt: string | null
   kind: 'loop' | 'once'
   continuity: 'base' | 'independent'
+  transition: 'base' | 'fade'
   baseVersion: number | null
   theme: string
   reduceMotion: boolean

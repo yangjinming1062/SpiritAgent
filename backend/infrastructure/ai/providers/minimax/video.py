@@ -75,6 +75,10 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     supports_first_frame = True
     supports_loop_frames = True
     supports_reference_images = True
+    supports_adaptive_aspect_ratio = True
+    aspect_ratios = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
+    adaptive_aspect_ratio_range = (0.4, 2.5)
+    first_frame_size_range = (256, 5760)
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)

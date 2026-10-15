@@ -624,9 +624,18 @@ export function registerMediaIpc({
         throw new Error('Desktop video set is invalid')
       }
 
+      if (
+        !['image', 'video'].includes(payload.mediaKind) ||
+        !Number.isSafeInteger(payload.expectedBaseVersion) ||
+        payload.expectedBaseVersion < 0 ||
+        (payload.expectedDraftId !== null && typeof payload.expectedDraftId !== 'string')
+      ) {
+        throw new Error('Invalid desktop media context')
+      }
+
       const { data, resolvedPath } = await readUserSelectedFile(payload.path, {
-        maxBytes: ATTACH_VIDEO_MAX_BYTES,
-        purpose: 'Desktop video upload'
+        maxBytes: payload.mediaKind === 'image' ? 20 * 1024 * 1024 : ATTACH_VIDEO_MAX_BYTES,
+        purpose: 'Desktop media upload'
       })
 
       const form = new FormData()
@@ -635,20 +644,24 @@ export function registerMediaIpc({
 
       form.append('file', blob, path.basename(resolvedPath))
       form.append('expected_set_id', String(payload.expectedSetId))
+      form.append('expected_base_version', String(payload.expectedBaseVersion))
+      form.append('expected_draft_id', payload.expectedDraftId ?? 'none')
 
       if (getCurrentAuth()?.sessionId !== authSessionId) {
         throw new Error('Authentication changed during desktop video upload')
       }
 
-      const { body } = await callBackend(event.sender, connection =>
-        postBackend({
+      const { body } = await callBackend(event.sender, connection => {
+        assertUploadAccount(authSessionId)
+
+        return postBackend({
           body: form,
           fetchImpl,
           timeoutMs: DESKTOP_VIDEO_UPLOAD_TIMEOUT_MS,
           token: connection.token,
-          url: `${connection.baseUrl}/api/companion/desktop-videos/actions/${payload.actionId}/upload`
+          url: `${connection.baseUrl}/api/companion/desktop-videos/actions/${payload.actionId}/${payload.mediaKind === 'image' ? 'image-upload' : 'upload'}`
         })
-      )
+      })
 
       if (getCurrentAuth()?.sessionId !== authSessionId) {
         throw new Error('Authentication changed during desktop video upload')

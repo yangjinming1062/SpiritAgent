@@ -308,19 +308,32 @@ def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewr
                 required.append(row["upload_source_path"])
         elif table == "desktop_video_sets":
             context = json.loads(row["context_json"])
-            required.extend((context.get("identity_path"), context.get("outfit_path")))
+            required.extend(
+                (
+                    context.get("identity_path"),
+                    context.get("outfit_path"),
+                    context.get("portrait_path"),
+                    context.get("scene_path"),
+                ),
+            )
             if row["base_image_path"]:
                 required.append(row["base_image_path"])
         elif table == "desktop_video_actions":
             if row.get("accepted_asset_json"):
                 asset = json.loads(row["accepted_asset_json"])
-                required.extend((asset.get("video_path"), asset.get("poster_path")))
+                required.extend((asset.get("video_path"), asset.get("poster_path"), asset.get("image_path")))
                 if asset["base_image_path"]:
                     required.append(asset["base_image_path"])
-            if row.get("status") == "review_pending" and row.get("generation_state_json"):
-                candidate = json.loads(row["generation_state_json"]).get("candidate")
+            if row.get("generation_state_json"):
+                progress = json.loads(row["generation_state_json"])
+                required.extend(
+                    path for path in (progress.get("pose_path"), progress.get("previous_pose_path")) if path
+                )
+                candidate = progress.get("candidate")
                 if candidate:
-                    required.extend((candidate.get("video_path"), candidate.get("poster_path")))
+                    required.extend(
+                        (candidate.get("video_path"), candidate.get("poster_path"), candidate.get("image_path")),
+                    )
                     if candidate["base_image_path"]:
                         required.append(candidate["base_image_path"])
         elif table == "companion_posts":

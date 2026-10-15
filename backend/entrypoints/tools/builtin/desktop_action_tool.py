@@ -5,7 +5,7 @@ from typing import Any
 
 from features.companion.proactive_runtime import get_presentation_snapshot
 from features.desktop_life.repository import DesktopVideoError
-from features.desktop_life.schemas import DesktopVideoDesignRequest, DesktopVideoPlayRequest
+from features.desktop_life.schemas import DesktopVideoActionResponse, DesktopVideoDesignRequest, DesktopVideoPlayRequest
 from features.desktop_life.service import (
     design_desktop_action,
     get_desktop_action_response,
@@ -29,24 +29,49 @@ def _parameter_error(exc: ValidationError) -> str:
     fields = sorted(
         {str(error["loc"][0]) for error in exc.errors(include_input=False, include_url=False) if error["loc"]},
     )
-    return tool_error("桌面动作参数不合法，请检查：" + "、".join(fields))
+    return tool_error("动作参数不合法，请检查：" + "、".join(fields))
+
+
+def _action_context(action: DesktopVideoActionResponse) -> dict[str, Any]:
+    return {
+        "id": action.id,
+        "name": action.name,
+        "description": action.description,
+        "kind": action.kind,
+        "duration_seconds": action.duration_seconds,
+        "use_when": action.use_when,
+        "avoid_when": action.avoid_when,
+        "allowed_triggers": action.allowed_triggers,
+        "continuity": action.continuity,
+        "playable": action.playable,
+        "enabled": action.enabled,
+        "needs_update": action.needs_update,
+        "status": action.status,
+        "stage": action.stage,
+        "has_current": action.current is not None,
+        "draft": {
+            "stage": action.draft.stage,
+            "image_confirmed": action.draft.image_confirmed,
+            "has_image": bool(action.draft.image_url),
+            "has_video": bool(action.draft.candidate_video_url),
+        }
+        if action.draft is not None
+        else None,
+    }
 
 
 async def desktop_action_search_tool(user_id: int, query: str = "", limit: int = 10, **_: Any) -> str:
     if not _is_desktop(user_id):
-        return tool_error("当前不在桌面模式，请使用当前模式的动作工具")
+        return tool_error("当前画面不支持这组动作工具，请使用本轮可用的工具")
     async with SESSION_LOCAL() as db:
         state = await get_desktop_video_state(db, user_id)
     if state.current is None:
-        return tool_error("当前桌面生活画面尚未准备")
+        return tool_error("当前画面尚未准备好")
     needle = query.strip().casefold()
     hits = [
-        action.model_dump(
-            mode="json",
-            exclude={"poster_url", "video_url", "candidate_video_url", "candidate_poster_url"},
-        )
+        _action_context(action)
         for action in state.current.actions
-        if action.enabled and action.video_url and needle in f"{action.name}\n{action.description}".casefold()
+        if action.playable and needle in f"{action.name}\n{action.description}".casefold()
     ]
     return json.dumps(
         {
@@ -74,7 +99,7 @@ async def desktop_action_design_tool(
     **_: Any,
 ) -> str:
     if not _is_desktop(user_id):
-        return tool_error("当前不在桌面模式，请使用当前模式的动作工具")
+        return tool_error("当前画面不支持这组动作工具，请使用本轮可用的工具")
     try:
         request = DesktopVideoDesignRequest(
             name=name,
@@ -107,7 +132,7 @@ async def desktop_action_inspect_tool(
     **_: Any,
 ) -> str:
     if not _is_desktop(user_id):
-        return tool_error("当前不在桌面模式，请使用当前模式的动作工具")
+        return tool_error("当前画面不支持这组动作工具，请使用本轮可用的工具")
     if (proposal_id is None) == (action_id is None):
         return tool_error("请仅指定 proposal_id 或 action_id 其中一个")
     try:
@@ -119,10 +144,14 @@ async def desktop_action_inspect_tool(
                 else await get_desktop_action_response(db, user_id, action_id)
             )
             if state.current is None or result.set_id != state.current.id:
-                return tool_error("动作或提案不属于当前桌面生活画面")
+                return tool_error("动作或提案不属于当前画面")
     except DesktopVideoError as exc:
         return tool_error(str(exc))
-    return result.model_dump_json(exclude={"poster_url", "video_url", "candidate_video_url", "candidate_poster_url"})
+    return (
+        json.dumps(_action_context(result), ensure_ascii=False)
+        if isinstance(result, DesktopVideoActionResponse)
+        else result.model_dump_json()
+    )
 
 
 async def desktop_action_play_tool(
@@ -133,7 +162,7 @@ async def desktop_action_play_tool(
     **_: Any,
 ) -> str:
     if not _is_desktop(user_id):
-        return tool_error("当前不在桌面模式，请使用当前模式的动作工具")
+        return tool_error("当前画面不支持这组动作工具，请使用本轮可用的工具")
     try:
         request = DesktopVideoPlayRequest(action_id=action_id, reason=reason)
         async with SESSION_LOCAL() as db:

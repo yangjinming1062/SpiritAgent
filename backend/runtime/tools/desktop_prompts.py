@@ -7,17 +7,18 @@ DESKTOP_ACTION_TOOL_DESCRIPTIONS = {
         "返回动作 ID、内容、用途与循环方式。先复用合适片段，没有合适片段时保持当前状态。"
     ),
     "desktop_action_design": (
-        "为当前画面提出可反复使用的生活动作。结合身份、当前穿着和环境设计自然的姿态、"
+        "为当前完整画面提出可反复使用的动作。根据已确认图片中的人物、穿着、物品和空间设计自然的姿态、"
         "神态、取景与互动距离，允许近景、中景、坐卧及局部身体出画，单片段保持稳定镜头。"
         "只描述目标需要的状态或动作；保持舒服的姿态也可以是完整目标，有过程时写必要的关键步骤与自然收束。"
         "kind=loop 是首尾连续的生活状态，kind=once 是短暂动作，仍可反复使用；duration_seconds 为 1 至 15 整秒。"
-        "画面有完整环境，活动须有能看懂的目标；幅度和节奏由活动需要决定。先查找已有相近动作。"
+        "活动须有能看懂的目标；幅度和节奏由活动需要决定。先查找已有相近动作。"
         "申请将接受独立评审与额度检查；受理或批准不表示素材已就绪，制作完成也不表示已播放。"
         "用 desktop_action_inspect 查看状态，不反复提交同一创意。"
     ),
     "desktop_action_inspect": (
         "查询生活动作或提案的制作、评审和就绪状态。每次仅指定 action_id 或 proposal_id。"
-        "ready 表示素材可用，enabled 表示启用；approved 仅表示提案批准，可再查询对应 action_id。"
+        "playable=true 表示当前可播放，enabled 表示启用，needs_update 表示需按新图片更新；"
+        "has_current 表示已有采用内容，draft 表示待确认或正在制作的内容。approved 仅表示提案批准，可再查询对应 action_id。"
         "素材可用或提案批准都不是已播放；不要高频轮询。"
     ),
     "desktop_action_play": (
@@ -32,7 +33,7 @@ DESKTOP_ACTION_TOOL_DESCRIPTIONS = {
 
 DESKTOP_ACTION_PARAMETER_DESCRIPTIONS = {
     "name": "简短、便于区分的动作名称，不使用已有名称描述另一项不同设计。",
-    "motion_description": "当前环境内自然的姿态、神态、取景与动作过程；未明确要求大幅动作时默认克制，只写完成目标所需的动作，保持已确认身份和穿着。",
+    "motion_description": "根据已确认图片中的身体、物品和空间，描述目标需要的姿态、神态、取景与动作过程；幅度和节奏按目标需要，保持人物和服装。",
     "kind": "loop 为首尾连续、持续循环的生活状态；once 为完整短暂表达并自然收束，播放结束后续播原持续片段。",
     "continuity": "base 使用安静相伴的同一基础画面作首尾，并完整进入活动、完成后恢复；independent 围绕自己的活动安排构图。",
     "allowed_triggers": "允许的播放情境：periodic 为低频日常活动，user_return 为用户返回，chat 为当前对话回应或邀请，manual 为用户点播。只选择符合用途的情境；需要邀请或回应的动作不能仅因时间经过触发。",

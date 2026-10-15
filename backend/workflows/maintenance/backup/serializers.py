@@ -112,6 +112,7 @@ def _build_payload(table: str, raw: dict[str, Any], context: BackupContext) -> d
         if (
             value is not None
             and mapped is None
+            and table != "desktop_video_sets"
             and (contributor.strict_references or ref_table in context.id_map and key != "avatar_id")
         ):
             raise ValueError(f"Missing {ref_table} reference in {table}.{key}")

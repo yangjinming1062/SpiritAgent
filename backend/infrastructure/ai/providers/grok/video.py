@@ -41,6 +41,8 @@ class GrokVideoGenProvider(VideoGenProvider):
     """通过 xAI submit→POST /videos/generations 取得 request_id；poll→GET /videos/{request_id} 读取状态与成品 URL。"""
 
     provider_name = "grok"
+    supports_adaptive_aspect_ratio = True
+    aspect_ratios = ("16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9", "5:2")
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
 
     # 能力声明与 submit 校验一致，分辨率含工具档位映射。

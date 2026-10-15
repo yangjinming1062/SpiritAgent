@@ -6,7 +6,7 @@ from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from features.accounts.deps import authenticate_remote_session, get_current_admin_token, get_current_session
 from infrastructure.config import SETTINGS
-from infrastructure.constants import STT_MAX_AUDIO_BYTES
+from infrastructure.constants import SCENE_DOWNLOAD_MAX_BYTES, STT_MAX_AUDIO_BYTES
 from infrastructure.database import SESSION_LOCAL
 from starlette.datastructures import Headers
 from starlette.formparsers import MultiPartException
@@ -24,6 +24,7 @@ _IMAGE_UPLOAD_PATH = re.compile(
 )
 _BACKUP_UPLOAD_PATH = re.compile(r"/api/admin/users/\d+/import")
 _DESKTOP_VIDEO_UPLOAD_PATH = re.compile(r"/api/companion/desktop-videos/actions/\d+/upload")
+_DESKTOP_IMAGE_UPLOAD_PATH = re.compile(r"/api/companion/desktop-videos/actions/\d+/image-upload")
 
 
 class _RequestBodyTooLarge(MultiPartException):
@@ -46,6 +47,8 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
         return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
     if _DESKTOP_VIDEO_UPLOAD_PATH.fullmatch(path):
         return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
+    if _DESKTOP_IMAGE_UPLOAD_PATH.fullmatch(path):
+        return SCENE_DOWNLOAD_MAX_BYTES + _UPLOAD_OVERHEAD_BYTES, False
     if path in {"/api/media/stt", "/api/media/audios"}:
         return STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES, False
     if _BACKUP_UPLOAD_PATH.fullmatch(path):

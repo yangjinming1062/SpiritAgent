@@ -2,9 +2,11 @@
 
 from features.scenes.service import schedule_initial_scene
 
+from .desktop_suite import prepare_default_desktop_suite
 from .initial_appearance import start_initial_video
 
 
 async def complete_character_initialization(user_id: int) -> None:
     await start_initial_video(user_id)
     await schedule_initial_scene(user_id)
+    await prepare_default_desktop_suite(user_id)

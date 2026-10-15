@@ -22,6 +22,8 @@ async def desktop_autonomous_block_reason(
     presentation_revision: int,
     excluded_play_id: str | None = None,
 ) -> str | None:
+    if action.needs_update:
+        return "base_mismatch"
     if state.pinned or not state.autonomous_enabled:
         return "disabled"
     now = utc_now()
@@ -76,7 +78,6 @@ async def desktop_autonomous_block_reason(
     loop_asset = DesktopVideoAsset.model_validate_json(loop.accepted_asset_json)
     if (
         asset.continuity != "base"
-        or loop_asset.continuity != "base"
         or asset.base_version != current_set.base_version
         or loop_asset.base_version != current_set.base_version
     ):

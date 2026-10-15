@@ -68,6 +68,7 @@ function DesktopWallpaper() {
   const second = useRef<HTMLVideoElement>(null)
   const backdrop = useRef<HTMLDivElement>(null)
   const poster = useRef<HTMLImageElement>(null)
+  const transitionFrame = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
     const bridge = backgroundMedia()
@@ -75,8 +76,9 @@ function DesktopWallpaper() {
     const secondVideo = second.current
     const fill = backdrop.current
     const still = poster.current
+    const transition = transitionFrame.current
 
-    if (!bridge || !firstVideo || !secondVideo || !fill || !still) {
+    if (!bridge || !firstVideo || !secondVideo || !fill || !still || !transition) {
       throw new Error('Desktop background bridge is unavailable')
     }
 
@@ -106,6 +108,8 @@ function DesktopWallpaper() {
     let fallbackPoster: string | null = null
     let fillPosterUrl: string | null = null
     let disposed = false
+    let fadeTimer: ReturnType<typeof setTimeout> | null = null
+    let fadeFrame: number | null = null
     const settled = new Set<string>()
 
     const setFill = (url: string | null): void => {
@@ -176,7 +180,7 @@ function DesktopWallpaper() {
         pending = null
 
         if (active !== null && slots[active].media?.kind === 'loop') {
-          slots[active].element.loop = true
+          slots[active].element.loop = slots[active].media?.transition !== 'fade'
         }
       }
 
@@ -269,8 +273,70 @@ function DesktopWallpaper() {
       })
     }
 
+    const captureTransition = (slot: VideoSlot): void => {
+      if (paused || !slot.ready || !slot.element.videoWidth) {
+        return
+      }
+
+      const context = transition.getContext('2d')
+
+      if (!context) {
+        return
+      }
+
+      if (fadeTimer) {
+        clearTimeout(fadeTimer)
+      }
+
+      if (fadeFrame !== null) {
+        cancelAnimationFrame(fadeFrame)
+      }
+
+      transition.width = window.innerWidth
+      transition.height = window.innerHeight
+      const fit = slot.element.style.objectFit
+
+      const scale = (fit === 'cover' ? Math.max : Math.min)(
+        transition.width / slot.element.videoWidth,
+        transition.height / slot.element.videoHeight
+      )
+
+      const width = slot.element.videoWidth * scale
+      const height = slot.element.videoHeight * scale
+      context.clearRect(0, 0, transition.width, transition.height)
+      context.drawImage(slot.element, (transition.width - width) / 2, (transition.height - height) / 2, width, height)
+      transition.style.transition = 'none'
+      transition.style.opacity = '1'
+    }
+
+    const fadeTransition = (): void => {
+      fadeFrame = requestAnimationFrame(() => {
+        fadeFrame = requestAnimationFrame(() => {
+          fadeFrame = null
+          transition.style.transition = 'opacity 180ms ease'
+          transition.style.opacity = '0'
+          fadeTimer = setTimeout(() => {
+            fadeTimer = null
+          }, 180)
+        })
+      })
+    }
+
     const show = (index: number): void => {
       const slot = slots[index]
+      const previous = active === null ? null : slots[active]
+
+      if (
+        previous &&
+        previous !== slot &&
+        (previous.media?.transition === 'fade' ||
+          slot.media?.transition === 'fade' ||
+          !(sharesBase(previous.media, slot.media!) || sharesBase(slot.media, previous.media!)))
+      ) {
+        captureTransition(previous)
+        fadeTransition()
+      }
+
       active = index
       slot.element.style.opacity = '1'
       slot.element.style.zIndex = '2'
@@ -345,7 +411,7 @@ function DesktopWallpaper() {
       returningFrom = active
       notifyReturnFrame = notifyFirstFrame
       slot.element.pause()
-      slot.element.loop = true
+      slot.element.loop = slot.media?.transition !== 'fade'
 
       if (slot.element.currentTime === 0 && !slot.element.seeking) {
         finishReturn(index)
@@ -360,6 +426,8 @@ function DesktopWallpaper() {
       loop?.kind === 'loop' &&
       loop.setId === candidate.setId &&
       loop.setEpoch === candidate.setEpoch &&
+      loop.transition === 'base' &&
+      candidate.transition === 'base' &&
       loop.continuity === 'base' &&
       candidate.continuity === 'base' &&
       loop.baseVersion !== null &&
@@ -377,7 +445,8 @@ function DesktopWallpaper() {
         reset(slot)
 
         if (active !== null) {
-          slots[active].element.loop = slots[active].media?.kind === 'loop'
+          slots[active].element.loop =
+            slots[active].media?.kind === 'loop' && slots[active].media?.transition !== 'fade'
           start(slots[active])
         }
 
@@ -479,6 +548,11 @@ function DesktopWallpaper() {
 
         if (slot.media?.kind === 'loop' && pending !== null) {
           activate(pending)
+        } else if (slot.media?.kind === 'loop' && slot.media.transition === 'fade') {
+          captureTransition(slot)
+          waitForFrame(slot, fadeTransition)
+          slot.element.currentTime = 0
+          start(slot)
         } else if (slot.media?.kind === 'once') {
           acknowledge(slot, 'completed')
           restoreLoop()
@@ -514,6 +588,16 @@ function DesktopWallpaper() {
       returningLoop = null
       returningFrom = null
       notifyReturnFrame = false
+
+      if (fadeTimer) {
+        clearTimeout(fadeTimer)
+      }
+
+      if (fadeFrame !== null) {
+        cancelAnimationFrame(fadeFrame)
+      }
+
+      transition.style.opacity = '0'
       interruptDeferred()
       deferredMedia = null
 
@@ -594,6 +678,7 @@ function DesktopWallpaper() {
           slot.media.actionId === media.actionId &&
           slot.media.actionVersion === media.actionVersion &&
           slot.media.continuity === media.continuity &&
+          slot.media.transition === media.transition &&
           slot.media.baseVersion === media.baseVersion
       )
 
@@ -645,6 +730,22 @@ function DesktopWallpaper() {
         return
       }
 
+      // 新套装或持续画面替换不能返回已失效的保留循环。
+      if (retainedLoop !== null && media.kind === 'loop') {
+        const retained = slots[retainedLoop]
+
+        if (
+          retained.media?.setId !== media.setId ||
+          retained.media?.setEpoch !== media.setEpoch ||
+          retained.media?.actionId !== media.actionId ||
+          retained.media?.actionVersion !== media.actionVersion
+        ) {
+          acknowledge(retained, 'interrupted')
+          reset(retained)
+          retainedLoop = null
+        }
+      }
+
       // 新动作到达时先回到保留的持续状态，另一缓冲才可安全解码。
       if (active !== null && slots[active].media?.kind === 'once' && retainedLoop !== null) {
         acknowledge(slots[active], 'interrupted')
@@ -670,7 +771,7 @@ function DesktopWallpaper() {
       slot.posterUrl = media.poster
         ? URL.createObjectURL(new Blob([new Uint8Array(media.poster.bytes)], { type: media.poster.mime }))
         : null
-      slot.element.loop = media.kind === 'loop'
+      slot.element.loop = media.kind === 'loop' && media.transition !== 'fade'
       slot.element.style.objectFit = 'contain'
       slot.element.src = slot.videoUrl
 
@@ -740,6 +841,7 @@ function DesktopWallpaper() {
       <img alt="" ref={poster} style={{ ...videoStyle, objectFit: 'cover', zIndex: 1 }} />
       <video muted playsInline preload="auto" ref={first} style={videoStyle} />
       <video muted playsInline preload="auto" ref={second} style={videoStyle} />
+      <canvas ref={transitionFrame} style={{ ...videoStyle, zIndex: 3, pointerEvents: 'none' }} />
     </div>
   )
 }

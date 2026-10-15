@@ -194,6 +194,36 @@ def ffmpeg_stdout(args: list[str], *, failure_message: str) -> bytes:
     return proc.stdout
 
 
+def video_frame_times(path: Path) -> tuple[float, ...]:
+    """读取实际解码帧时间；循环采样不能用平均帧率推算 VFR 视频的尾帧。"""
+    proc = _run(
+        [
+            _binary("ffprobe"),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_frames",
+            "-show_entries",
+            "frame=best_effort_timestamp_time",
+            "-of",
+            "json",
+            str(path),
+        ],
+    )
+    if proc.returncode != 0:
+        raise VideoProcessError("视频帧时间读取失败", internal=proc.stderr.decode("utf-8", "replace")[:2000])
+    payload = json.loads(proc.stdout)
+    times = tuple(
+        float(frame["best_effort_timestamp_time"])
+        for frame in payload.get("frames", ())
+        if frame.get("best_effort_timestamp_time") is not None
+    )
+    if not times:
+        raise VideoProcessError("视频没有可解码画面")
+    return times
+
+
 def run_ffmpeg(args: list[str], *, label: str) -> None:
     """执行一次 ffmpeg；非零退出码统一转 VideoProcessError（stderr 摘要进 internal）。"""
     full = [_binary("ffmpeg"), "-v", "error", "-y", *args]

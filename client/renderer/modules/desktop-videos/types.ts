@@ -1,10 +1,42 @@
 export type DesktopVideoKind = 'loop' | 'once'
 export type DesktopVideoContinuity = 'base' | 'independent'
+export type DesktopVideoSource = 'ai' | 'image_upload' | 'video_upload'
+export type DesktopVideoTransition = 'base' | 'fade'
+
+export interface DesktopVideoAsset {
+  video_url: string
+  poster_url: string | null
+  image_url: string | null
+  duration_ms: number | null
+  width: number | null
+  height: number | null
+  continuity: DesktopVideoContinuity
+  transition: DesktopVideoTransition
+  base_version: number | null
+}
+
+export interface DesktopVideoDraft {
+  id: string
+  stage: string
+  image_url: string | null
+  image_confirmed: boolean
+  candidate_video_url: string | null
+  candidate_poster_url: string | null
+  base_version: number | null
+  error: string | null
+}
+
 export type DesktopVideoTrigger = 'periodic' | 'user_return' | 'chat' | 'manual'
 
 export interface DesktopVideoAction {
   id: number
   set_id: number
+  current: DesktopVideoAsset | null
+  draft: DesktopVideoDraft | null
+  playable: boolean
+  needs_update: boolean
+  unavailable_reason: string | null
+  transition: DesktopVideoTransition
   key: string
   name: string
   description: string
@@ -23,8 +55,6 @@ export interface DesktopVideoAction {
   base_version: number | null
   poster_url: string | null
   video_url: string | null
-  candidate_video_url?: string | null
-  candidate_poster_url?: string | null
   version: number
   actual_duration_ms: number | null
 }
@@ -41,15 +71,18 @@ export interface DesktopVideoPrompt {
   kind: DesktopVideoKind
   prompt: string
   references: DesktopVideoPromptReference[]
+  draft_id: string | null
+  base_version: number
   set_id: number
 }
 
 export interface DesktopVideoSet {
   id: number
   title: string
+  is_default: boolean
+  source: DesktopVideoSource
   outfit_id: number | null
   scene_id: number | null
-  context_hash: string
   base_image_url: string | null
   base_version: number
   status: string
@@ -61,8 +94,6 @@ export interface DesktopVideoSet {
 
 export interface DesktopVideoState {
   current: DesktopVideoSet | null
-  fallback?: DesktopVideoSet | null
-  desired_context_hash: string | null
   selected_action_id: number | null
   loop_action_id: number | null
   set_epoch: number
@@ -85,6 +116,7 @@ export interface DesktopVideoProposal {
 
 export interface DesktopVideoPlayCommand {
   play_id: string
+  transition: DesktopVideoTransition
   set_id: number
   action_id: number
   set_epoch: number

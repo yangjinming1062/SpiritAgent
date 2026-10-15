@@ -23,10 +23,13 @@ from features.companion.intents import invalidate_cron_companion_intents
 from features.companion.prompt_runtime import set_expression_catalog_reader
 from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
+from features.desktop_life.generation import set_desktop_update_handler
+from features.desktop_life.service import schedule_pending_desktop_updates
 from features.journal.journal_indexes import delete_diary_record
 from features.media.delivery import set_video_result_handler
 from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
 from features.memory.diary_hooks import set_diary_delete_handler
+from features.scenes.completion import set_scene_ready_handler
 from infrastructure.ai.configuration_reader import set_configuration_reader
 from infrastructure.ai.providers.base import ServiceType
 from infrastructure.ai.providers.custom.chat import CustomChatProvider
@@ -64,6 +67,7 @@ from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.onboarding.character_ready import complete_character_initialization
+from workflows.onboarding.desktop_suite import prepare_default_desktop_suite
 
 from bootstrap.assets import register_asset_contributions
 
@@ -137,6 +141,8 @@ def wire_domain_hooks() -> None:
         ),
     )
     set_character_ready_handler(complete_character_initialization)
+    set_scene_ready_handler(prepare_default_desktop_suite)
+    set_desktop_update_handler(schedule_pending_desktop_updates)
     set_appearance_readiness_reader(appearance_readiness)
     set_expression_catalog_reader(available_expression_prompt_entries)
     set_outfit_action_cleanup(delete_outfit_action_packs)
