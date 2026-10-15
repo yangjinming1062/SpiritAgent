@@ -785,7 +785,7 @@ function abilityCardHtml(definition, service, multiTask) {
     const cards = ownChain.map(id => resolved.cards.find(card => card.id === id) ?? models.find(card => card.id === id) ?? { id, model_name: '模型引用失效', provider_name: '模型不存在', issue: '模型引用失效' });
     const sourceLabel = resolved.source.includes('默认') ? `${resolved.source.startsWith('用户') ? '用户' : '系统'}默认 · ${READINESS_KEY_LABELS[service]}` : `${resolved.source.startsWith('用户') ? '用户' : '系统'}任务 · ${task.label} · ${SERVICE_SHORT[service]}`;
     const chain = cards.length ? cards.map((card, index) => chainNodeHtml(card, index, cards.length)).join('') : `<div class="chain-placeholder"><div>${icon(service)} <span>${resolved.source === '未配置' ? '默认链未配置' : `继承${esc(sourceLabel)}`}</span>${resolved.source !== '未配置' && !resolved.cards.some(card => card.available) ? '<p class="hint">所选链没有可用模型</p>' : ''}</div><button class="btn btn--text" data-ai-source="${esc(resolved.sourceKey)}">查看来源 →</button></div>`;
-    return `<article class="ability-card${aiView.group === key ? ' selected' : ''}" data-ai-group="${key}" tabindex="-1"><div class="ability-heading">${icon(service)}<h3>${esc(multiTask ? task.label : READINESS_KEY_LABELS[service])}</h3>${multiTask ? `<span class="hint">${READINESS_KEY_LABELS[service]}</span>` : ''}<span class="chain-state pill ${cards.length && !resolved.cards.some(card => card.available) ? 'pill--red' : 'pill--muted'}">${cards.length ? '独立配置' : '默认继承'}</span></div>${aiUsageHtml(task)}<div class="chain-track">${chain}</div><div class="chain-footer"><button class="btn btn--text" data-ai-choose="${key}">＋ 添加模型</button></div></article>`;
+    return `<article class="ability-card${aiView.group === key ? ' selected' : ''}" data-ai-group="${key}" tabindex="-1"><div class="ability-heading">${icon(service)}<h3>${esc(multiTask ? task.label : READINESS_KEY_LABELS[service])}</h3>${multiTask ? `<span class="hint">${READINESS_KEY_LABELS[service]}</span>` : ''}<span class="chain-state pill ${cards.length && !resolved.cards.some(card => card.available) ? 'pill--red' : 'pill--muted'}">${cards.length ? '独立配置' : '默认继承'}</span></div>${aiUsageHtml(task)}<div class="chain-track">${chain}</div></article>`;
 }
 function renderAiChain() {
     const editor = aiActiveEditor();
@@ -824,10 +824,14 @@ function renderAiPalette() {
     const task = aiTaskChain(aiView.group);
     if (!task) return;
     const search = $('#aiPaletteSearch').value.trim().toLowerCase();
-    const cards = aiModels(aiActiveEditor(), task.service).filter(card => aiModelSupportsTask(card, task) && `${card.model_name} ${card.provider_name}`.toLowerCase().includes(search));
     const existing = aiActiveEditor().config.tasks[task.id]?.chains?.[task.service]?.chain ?? [];
+    const compatible = aiModels(aiActiveEditor(), task.service).filter(card => aiModelSupportsTask(card, task));
+    // 已加入当前调用链的模型不再进入可用列表，避免与链上节点重复呈现。
+    const remaining = compatible.filter(card => !existing.includes(card.id));
+    const cards = remaining.filter(card => `${card.model_name} ${card.provider_name}`.toLowerCase().includes(search));
+    const hint = !compatible.length ? '没有兼容模型。可在能力模型中添加。' : !remaining.length ? '兼容模型都已添加。' : '没有匹配的模型。';
     $('#aiPaletteCount').textContent = `${SERVICE_SHORT[task.service]} · ${cards.length}`;
-    $('#aiPaletteList').innerHTML = cards.length ? cards.map(card => `<article class="palette-model" draggable="true" data-palette-model="${card.id}" data-palette-service="${task.service}" title="${esc(card.model_name)}"><div><strong>${esc(card.model_name)}</strong><span class="hint">${esc(card.scope)} · ${esc(card.provider_name)}</span></div><button class="btn btn--ghost" data-palette-add="${card.id}" aria-label="添加 ${esc(card.model_name)}"${existing.includes(card.id) ? ' disabled' : ''}>${existing.includes(card.id) ? '✓' : '+'}</button></article>`).join('') : `<p class="hint">没有兼容模型。可在能力模型中添加。</p>`;
+    $('#aiPaletteList').innerHTML = cards.length ? cards.map(card => `<article class="palette-model" draggable="true" data-palette-model="${card.id}" data-palette-service="${task.service}" title="${esc(card.model_name)}"><div><strong>${esc(card.model_name)}</strong><span class="hint">${esc(card.scope)} · ${esc(card.provider_name)}</span></div><button class="btn btn--ghost" data-palette-add="${card.id}" aria-label="添加 ${esc(card.model_name)}">+</button></article>`).join('') : `<p class="hint">${hint}</p>`;
 }
 function aiSelectNode(group) {
     if (group === 'providers') aiView.section = 'providers';
@@ -1653,8 +1657,6 @@ function bindAiCardEvents() {
             if (aiSaving) return;
             const source = event.target.closest('[data-ai-source]');
             if (source) { void navigateAiSource(source.dataset.aiSource); return; }
-            const choose = event.target.closest('[data-ai-choose]');
-            if (choose) { selectAiAbility(choose.dataset.aiChoose); aiView.paletteOpen = true; $('#aiPalette').hidden = false; $('.ai-layout').classList.remove('without-palette'); $('#aiPaletteToggle').setAttribute('aria-expanded', 'true'); $('#aiPaletteSearch').focus(); return; }
             const ability = event.target.closest('.ability-card');
             if (ability) selectAiAbility(ability.dataset.aiGroup);
             const button = event.target.closest('[data-ai-action]');

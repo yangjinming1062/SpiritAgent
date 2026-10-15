@@ -182,9 +182,6 @@ summary { cursor: pointer; }
 .node-issue { color: var(--red); font-size: 10px; margin-top: 5px; }
 .chain-placeholder { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; min-height: 64px; padding: 11px; border: 1px dashed var(--border-2); border-radius: 8px; background: var(--bg); color: var(--text-2); font-size: 12px; }
 .chain-placeholder .hint { margin-top: 3px; }
-.chain-footer { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-top: 5px; }
-.chain-footer details { flex: 1; font-size: 11px; color: var(--text-3); }
-.chain-footer > .btn { font-size: 11px; padding: 4px 6px; }
 .drag-compatible { border-color: var(--cyan); }
 .ai-drop-target { outline: 2px solid var(--cyan); outline-offset: -2px; background: #173b49; }
 .chain-node.ai-drop-target { border-left: 4px solid var(--cyan); }
