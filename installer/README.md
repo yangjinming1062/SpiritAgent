@@ -50,7 +50,9 @@ Home 默认位于 Windows `%LOCALAPPDATA%\SpiritAgent` 或 macOS `~/Library/Appl
 
 ## 内置技能文档
 
-`skills/` 面向运行时 Agent。入口说明任务适用条件，长说明放支持文件；维护时保留平台、权限、作者和许可证，核对支持文件及 Client / Runner 解析。安装载荷文档遵循自身格式，静态检查不能证明模型使用效果。
+`skills/` 面向运行时 Agent，默认只提供电脑操作（`computer-use`）、Office 文件处理（`officecli`）与 PDF / OCR（`ocr-and-documents`）。默认技能保留能补充本机工具使用流程的能力，领域检索与表达风格不作为随包技能。
+
+`SKILL.md` 保留任务适用条件、关键流程和必要约束；平台差异、高级操作与提取选项放入 `references/`，按入口指引通过 `skill_view(name, file_path)` 读取，不默认加载全部资料。维护时保留平台、权限、作者和许可证，核对支持文件及 Client / Runner 解析。安装载荷文档遵循自身格式，静态检查不能证明模型使用效果。
 
 ## 契约与验证
 
