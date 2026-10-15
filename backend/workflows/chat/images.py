@@ -272,7 +272,7 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
             return _call_result(state, media_ids)
         for artifact in artifacts:
             state.plans[artifact.goal_id] = plan
-        # 合批后一次失败波及这次调用的全部图片，硬失败不再逐张隔离。
+        # 单次批量请求失败会使该次调用的全部图片失败。
         try:
             results = await _generate_batch(
                 plan,

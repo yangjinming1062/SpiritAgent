@@ -129,7 +129,7 @@ def load_backup_rows(
         for table in manifest_tables
         if table not in TABLES
     ]
-    # 所选类别缺表一律报告，不再按全量/旧包静默跳过。
+    # 所选类别缺表时报告失败。
     for table in sorted(wanted - manifest_set):
         if table not in TABLES:
             continue
@@ -208,17 +208,6 @@ def load_backup_rows(
                         reason=reason,
                     ),
                 )
-    # 成组约束已丢弃半套动作表；包内根本没有动作表但外观曾启动视频时单独提示。
-    if ACTION_TABLES & wanted and not ACTION_TABLES.issubset(rows) and not ACTION_TABLES & manifest_set:
-        started = sum(bool(row.get("initial_video_started")) for row in rows.get("companion_outfits", []))
-        if started:
-            failures.append(
-                BackupImportFailure(
-                    "companion_action_packs",
-                    started,
-                    "备份未包含动作包和动作记录，视频文件无法自动恢复为可播放形象。",
-                ),
-            )
     return BackupReadResult(rows=rows, failures=tuple(failures))
 
 

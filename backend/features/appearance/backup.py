@@ -7,7 +7,7 @@ from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.backup import BackupContext, BackupTable
 
 from .character_card_models import CharacterFeatures, CharacterOverrides, CompanionCharacterCard
-from .models import AvatarAsset, CompanionOutfit
+from .models import AvatarAsset, CompanionOutfit, OutfitSource
 
 
 def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
@@ -31,13 +31,11 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
         payload["status"] = payload["portrait_status"] = payload["body_status"] = "ready" if revision else "failed"
         payload["error"] = None if revision else "恢复的角色资料尚未完成分析，请重试"
 
-    if (
-        table == "companion_outfits"
-        and payload.get("status") == "ready"
-        and payload.get("description_status") in {"pending", "processing"}
-    ):
-        payload["description_status"] = "failed"
-        payload["description_error"] = "恢复的外观描述任务需要手动重试"
+    if table == "companion_outfits":
+        payload["source_json"] = OutfitSource.model_validate_json(payload["source_json"]).dump()
+        if payload.get("status") == "ready" and payload.get("description_status") in {"pending", "processing"}:
+            payload["description_status"] = "failed"
+            payload["description_error"] = "恢复的外观描述任务需要手动重试"
 
 
 def backup_tables() -> tuple[BackupTable, ...]:

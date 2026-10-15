@@ -37,7 +37,7 @@
 | `features` | 各业务的数据、规则、公开操作与查询、提示词、持久任务状态及恢复 |
 | `runtime` | 账户回合与锁、连接和调用关联、任务监督、事件交付与公共运行时类型 |
 | `infrastructure` | 数据库、配置加载、网络、供应商、文件和媒体处理 |
-| `alembic` | 全新数据库基线及存量结构、数据迁移；升级路径以版本链为准 |
+| `alembic` | 当前数据库基线与后续结构、数据迁移 |
 
 ### 模块依赖边界
 
@@ -47,11 +47,11 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 业务实现依赖保持单向；例如动作读取外观和媒体，动态使用媒体并读取陪伴/记忆，陪伴读取记忆和会话证据。媒体不读取动态表或修改消息，分别通过显式任务关联和事务内结果处理器交付。外观就绪、动作目录读取和衣柜动作清理等协作端口由 [registrations.py](bootstrap/registrations.py) 装配。纯 DTO、枚举与静态词表不承担业务操作。
 
-[依赖检查器](../scripts/check_services_architecture.py) 检查目录方向、模块与业务实现环、跨业务 ORM 和私有入口、公开返回 ORM、入口 SQL、旧根目录及缺失导入。新增公开依赖须说明数据所有者和业务理由；检查器的通过不替代事务、权限和行为验证。
+[依赖检查器](../scripts/check_services_architecture.py) 检查目录方向、模块与业务实现环、跨业务 ORM 和私有入口、公开返回 ORM、入口 SQL、禁用目录及缺失导入。新增公开依赖须说明数据所有者和业务理由；检查器的通过不替代事务、权限和行为验证。
 
 ### API 入口
 
-[routes/__init__.py](entrypoints/http/routes/__init__.py) 显式登记资源路由，每个路由保存现有前缀、名称与响应结构。`/api` 同时用于资产、备份、限流及客户端，不能作为部署配置修改。文件与业务错误由协议适配层转换，业务操作不返回 FastAPI 响应对象。
+[routes/__init__.py](entrypoints/http/routes/__init__.py) 显式登记资源路由及其前缀、名称与响应结构。`/api` 同时用于资产、备份、限流及客户端，不能作为部署配置修改。文件与业务错误由协议适配层转换，业务操作不返回 FastAPI 响应对象。
 
 [body_limit.py](entrypoints/http/body_limit.py) 在解析前限制请求体，实际流超限也返回 413，大载荷入口先验证当前登录。WS 入口是 [chat.py](entrypoints/http/routes/chat.py)，RPC 和斜杠命令分别在 [handlers.py](entrypoints/desktop/handlers.py)、[slash_commands.py](features/conversation/slash_commands.py)；`command.dispatch` 是命令执行权威，Client 只镜像补全和确认元数据。管理页面可加载不代表管理 API 免鉴权。
 
@@ -63,11 +63,11 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 冷启动配置依次取环境变量 → `backend/.env` → `config.toml` → [config.toml.example](config.toml.example)，文件按 Backend 目录定位。数据库、JWT、资产签名密钥、管理员凭据与数据目录属于启动配置；密钥或管理员密码为空、仍是示例值时拒绝启动。字段校验和默认值以 [Settings](infrastructure/config.py) 为准，资产签名密钥至少 32 字符。
 
-运营参数由 [system_settings.py](features/configuration/system_settings.py) 管理：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新日志或连接池。数据库动态值在启动时再次覆盖环境变量和 TOML；启动专用键不能从后台修改。校验或提交失败不改运行时，非法持久值中止启动。保存接口执行数值边界校验，管理页输入范围只作提示；升级前须核查存量配置。
+运营参数由 [system_settings.py](features/configuration/system_settings.py) 管理：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新日志或连接池。数据库动态值在启动时再次覆盖环境变量和 TOML；启动专用键不能从后台修改。校验或提交失败不改运行时，非法持久值中止启动。保存接口执行数值边界校验，管理页输入范围只作提示。
 
-`system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方取得解码值，不再自行解析。
+`system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方直接使用解码值。
 
-启动自动执行 Alembic 升级。比对 ORM 类型、默认值及索引；autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
+启动自动执行 Alembic 升级。当前基线 revision 为 `0003`：空库建立完整结构，已处于该 revision 的数据库无需变更。结构变更新增迁移，并比对 ORM 类型、默认值及索引；autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
 
 ### 装配与启停
 
@@ -95,7 +95,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 覆盖恢复和删除用户先经 `user.py` 阻止新操作并通过统一生命周期登记收敛在途任务，完成后重读持久状态恢复可继续任务。用户文件只落正式资产 `companion-assets/{user_id}/`、会话附件 `desktop-attachments/{session_id}/`、带用户元数据的 `temp-media/`；新增路径须同时纳入删除和备份。删除正式资产或会话附件失败保留用户行供重试，临时文件另由逐文件和过期清理兜底。备份类别、密钥范围及覆盖规则统一见 PROTOCOL。
 
-[backup.py](bootstrap/backup.py) 显式登记各模块的表贡献者；所属模块提供导出、校验、恢复和引用重建，备份流程消费描述与快照，不直接操作业务 ORM。动作目录与日记索引分别由动作、日记模块重建。新结构和新版备份共同交付，不增加旧结构分支。
+[backup.py](bootstrap/backup.py) 显式登记各模块的表贡献者；所属模块提供导出、校验、恢复和引用重建，备份流程消费描述与快照，不直接操作业务 ORM。动作目录与日记索引分别由动作、日记模块重建。
 
 ## 业务调度
 
@@ -131,7 +131,7 @@ docker compose up -d
 
 数据库要求 PostgreSQL 16 及以上和 pgvector，Compose 使用 `pgvector/pgvector:pg16`。会话搜索与记忆证据查询依赖 `IS JSON` 和 `pg_input_is_valid`，没有启动期版本检查；低版本会在查询时失败。
 
-Compose 和后端共用 `.env` 的 PostgreSQL 凭据，后端默认连接 `postgres:5432`；显式 `DATABASE_URL` 或旧 `config.toml` 的 `database_url` 优先，删除旧字段后启用自动构造。已有数据卷沿用现有凭据；修改 `.env` 不会修改已初始化的账号、密码或数据库，变更须先在数据库中同步。
+Compose 和后端共用 `.env` 的 PostgreSQL 凭据，后端默认连接 `postgres:5432`；显式 `DATABASE_URL` 或 `config.toml` 的 `database_url` 优先，未配置时自动构造。已有数据卷沿用现有凭据；修改 `.env` 不会修改已初始化的账号、密码或数据库，变更须先在数据库中同步。
 
 宿主机代理使用 `http://host.docker.internal:<端口>`，须允许 Docker 网桥访问。修改 `.env` 后执行 `docker compose up -d --force-recreate backend`，`restart` 不更新容器环境。
 
@@ -168,7 +168,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 
 ### 运营参数
 
-`/admin/` 维护三级 AI 配置、用户覆盖与运营参数，保存即时生效；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。AI 配置仅支持引用格式，部署需全新数据库并重新配置；旧配置与旧备份不兼容。自主动态快照的保留期由 [publication.py](features/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
+`/admin/` 维护三级 AI 配置、用户覆盖与运营参数，保存即时生效；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。自主动态快照的保留期由 [publication.py](features/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
 
 ### LLM 调试日志
 

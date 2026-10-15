@@ -88,7 +88,7 @@ def _score(preference: str, voice: VoiceEntry) -> int:
             if kw.lower() in p_tokens:
                 score += 2
                 break
-            # 中文关键词无法分词，改为对整段偏好文本做子串匹配
+            # 中文关键词对整段偏好文本做子串匹配。
             if any("一" <= c <= "鿿" for c in kw) and kw.lower() in p:
                 score += 2
                 break

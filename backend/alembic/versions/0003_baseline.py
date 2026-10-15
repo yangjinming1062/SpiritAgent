@@ -7,7 +7,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
-revision: str = "0001"
+revision: str = "0003"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -143,6 +143,8 @@ def upgrade() -> None:
     op.create_index(op.f("ix_users_username"), "users", ["username"], unique=True)
     op.create_table(
         "avatar_assets",
+        sa.Column("generation_origin_json", sa.Text(), nullable=True),
+        sa.Column("fullbody_generation_origin_json", sa.Text(), nullable=True),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("prompt_json", sa.Text(), nullable=False),
         sa.Column("asset_url", sa.String(length=2048), nullable=False),
@@ -158,6 +160,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_avatar_assets_user_id"), "avatar_assets", ["user_id"], unique=False)
     op.create_table(
         "companion_fullbody_candidates",
+        sa.Column("generation_origin_json", sa.Text(), nullable=True),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("avatar_id", sa.Integer(), nullable=False),
         sa.Column("base_fullbody_url", sa.String(length=2048), nullable=False),
@@ -442,6 +445,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_action_playbacks_status"), "action_playbacks", ["status"], unique=False)
     op.create_table(
         "conversations",
+        sa.Column("history_revision", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("memory_reviewed_message_id", sa.Integer(), server_default="0", nullable=False),
         sa.Column("context_after_message_id", sa.Integer(), server_default="0", nullable=False),
         sa.CheckConstraint("context_after_message_id >= 0", name="ck_conversations_context_watermark"),
@@ -549,6 +553,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_memories_user_id"), "memories", ["user_id"], unique=False)
     op.create_table(
         "companion_scenes",
+        sa.Column("generation_origin_json", sa.Text(), nullable=True),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=24), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("origin", sa.String(length=16), server_default=sa.text("'user_request'"), nullable=False),
@@ -952,6 +957,7 @@ def upgrade() -> None:
     op.create_index("ix_ws_events_poll", "ws_events", ["user_id", "status", "next_retry_at"], unique=False)
     op.create_table(
         "messages",
+        sa.Column("generation_origin_json", sa.Text(), nullable=True),
         sa.Column("conversation_id", sa.Integer(), nullable=False),
         sa.Column("role", sa.String(length=64), nullable=False),
         sa.Column("subtype", sa.String(length=64), nullable=True),
@@ -1057,6 +1063,8 @@ def upgrade() -> None:
     op.create_index("ix_remote_sessions_expires_at", "remote_sessions", ["expires_at"])
     op.create_table(
         "prompt_submissions",
+        sa.Column("replace_reply_message_id", sa.Integer(), nullable=True),
+        sa.Column("result_message_id", sa.Integer(), nullable=True),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("conversation_id", sa.Integer(), nullable=False),
@@ -1080,6 +1088,9 @@ def upgrade() -> None:
     # 桌面生活视频：组合、动作、播放偏好、提案与播放账本。
     op.create_table(
         "desktop_video_sets",
+        sa.Column("request_id", sa.String(80), nullable=True),
+        sa.Column("is_default", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("source", sa.String(24), server_default=sa.text("'ai'"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("avatar_id", sa.Integer(), nullable=True),
@@ -1098,11 +1109,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["outfit_id"], ["companion_outfits.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["scene_id"], ["companion_scenes.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "context_hash", name="uq_desktop_video_sets_context"),
+        sa.UniqueConstraint("user_id", "request_id", name="uq_desktop_video_sets_request"),
     )
     op.create_index("ix_desktop_video_sets_user_id", "desktop_video_sets", ["user_id"])
     op.create_table(
         "desktop_video_actions",
+        sa.Column("needs_update", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("update_pending", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("set_id", sa.Integer(), nullable=False),
@@ -1136,6 +1149,7 @@ def upgrade() -> None:
     op.create_index("ix_desktop_video_actions_set_id", "desktop_video_actions", ["set_id"])
     op.create_table(
         "desktop_video_states",
+        sa.Column("default_created", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("current_set_id", sa.Integer(), nullable=True),

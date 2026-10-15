@@ -60,7 +60,7 @@ async def get_budget_status(user: CurrentUser, db: DbSession) -> ActionBudgetSta
 
 @router.post("/{action_id}/enabled")
 async def set_action_enabled(action_id: int, enabled: bool, user: CurrentUser, db: DbSession) -> dict[str, bool]:
-    """停用立即从自主选择与播放目录排除；系统槽位不可停用（产品必需能力）。变更后同步发布目录，客户端不再保留已停用动作的播放资格。"""
+    """停用时同步发布目录，从自主选择与客户端播放资格中排除；产品必需的系统槽位不可停用。"""
     try:
         return await _actions.set_action_enabled(action_id=action_id, enabled=enabled, user_id=user.id, db=db)
     except RequestError as exc:

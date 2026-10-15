@@ -26,7 +26,7 @@ class TurnRunner(Protocol):
     ) -> Awaitable[None]: ...
 
 
-# 子 Agent 只向父回合汇报：不直接联系用户、不改动生活空间，也不再委派。
+# 子 Agent 只向父回合汇报，不直接联系用户、改动生活空间或继续委派。
 _DELEGATED_EXCLUDED_TOOLS = LIFE_SPACE_TOOL_NAMES | frozenset({"agent_delegate_tool"})
 
 logger = get_logger(__name__)

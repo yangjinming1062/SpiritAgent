@@ -369,7 +369,7 @@ class LocalImageGenProvider(ImageGenProvider):
         try:
             assets = await self._wait_and_fetch(prompt_id)
         except asyncio.CancelledError:
-            # 只操作本次 prompt；旧服务器缺少定向运行取消时只能移除本任务的排队项。
+            # 只操作本次 prompt；服务未提供定向取消时仅移除本任务的排队项。
             cancellation = asyncio.create_task(self._cancel_job(prompt_id))
             try:
                 await asyncio.shield(cancellation)

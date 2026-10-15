@@ -52,7 +52,7 @@ async def _resolve_llm_config(user_id: int, task: AiTaskKey) -> UserLlmConfig:
 
 
 def _reject_read_only_session(runtime: RuntimeSession) -> None:
-    """渠道和自动化历史只由各自执行入口写入。"""
+    """自动化历史只由任务执行入口写入。"""
     if runtime.is_automation:
         raise JsonRpcError(JSONRPC_INVALID_PARAMS, "任务会话由对应执行入口维护，仅只读")
 
@@ -101,7 +101,7 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[ChatA
     for idx, att in enumerate(raw):
         if not isinstance(att, dict):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}] must be an object")
-        att_type = att.get("type", ATTACHMENT_TYPE_IMAGE)
+        att_type = att.get("type")
         if att_type not in (ATTACHMENT_TYPE_IMAGE, ATTACHMENT_TYPE_VIDEO, ATTACHMENT_TYPE_AUDIO):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}].type must be image, video or audio")
 

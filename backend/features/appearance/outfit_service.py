@@ -172,7 +172,7 @@ async def _sweep_stale(db: AsyncSession, user_id: int) -> None:
     if not expired:
         return
     for outfit in expired:
-        source = OutfitSource.load(outfit.source_json)
+        source = OutfitSource.model_validate_json(outfit.source_json)
         await enqueue_asset_cleanup(db, user_id, [source.reference_image_path or "", outfit.fullbody_url])
         source.reference_image_path = ""
         outfit.source_json = source.dump()
@@ -443,7 +443,7 @@ async def regenerate_outfit_draft(
 
     avatar, species, identity, personality = await _outfit_generation_context(db, user_id)
 
-    source = OutfitSource.load(outfit.source_json)
+    source = OutfitSource.model_validate_json(outfit.source_json)
     await db.commit()
     await _require_outfit_matting(user_id)
 
@@ -526,7 +526,7 @@ async def confirm_outfit(
             raise OutfitStateError("仅草稿可以确认")
         original_url = outfit.fullbody_url
         original_source = outfit.source_json
-        source = OutfitSource.load(original_source)
+        source = OutfitSource.model_validate_json(original_source)
         if source.character_card_revision is None or not source.identity_reference_path:
             raise OutfitStateError("外观缺少身份来源，请重新生成或上传")
         await db.commit()
@@ -629,7 +629,7 @@ async def prepare_outfit_regenerate_prompt(
 
     avatar, species, identity, personality = await _outfit_generation_context(db, user_id)
     identity_uri = await _require_fullbody_seed_readable(avatar)
-    source = OutfitSource.load(outfit.source_json)
+    source = OutfitSource.model_validate_json(outfit.source_json)
     await db.commit()
 
     requirement = await _outfit_requirement(user_id, source)
@@ -725,7 +725,7 @@ async def adopt_outfit_regenerate_image(
         ):
             raise OutfitStateError("角色形象或角色卡已更新，请重新上传外观")
         outfit.fullbody_url = fullbody_url
-        source = OutfitSource.load(outfit.source_json)
+        source = OutfitSource.model_validate_json(outfit.source_json)
         source.generation_origin = None
         source.character_card_revision = identity.revision
         source.identity_reference_path = identity_path
@@ -758,7 +758,10 @@ async def activate_outfit(
             raise OutfitStateError("外观尚未确认，无法穿着")
         if require_current_identity:
             card = await get_character_card(db, user_id, lock=True)
-            if card is None or OutfitSource.load(outfit.source_json).character_card_revision != card.revision:
+            if (
+                card is None
+                or OutfitSource.model_validate_json(outfit.source_json).character_card_revision != card.revision
+            ):
                 raise OutfitStateError("角色卡已更新，本次外观保留在衣柜，请重新生成后穿着")
 
         await db.execute(
@@ -794,7 +797,7 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         await enqueue_asset_cleanup(
             db,
             user_id,
-            [outfit.fullbody_url, OutfitSource.load(outfit.source_json).reference_image_path or ""],
+            [outfit.fullbody_url, OutfitSource.model_validate_json(outfit.source_json).reference_image_path or ""],
         )
 
         emit_ws_event(

@@ -136,7 +136,7 @@ def _tool_history_entry(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _reply_repair_history(input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """保留历史顺序与工具结果事实，恢复请求不再携带原生工具续轮帧或中间推理。"""
+    """恢复请求保留历史顺序与工具结果事实，排除原生工具续轮帧和中间推理。"""
     return [
         {
             "role": "user",

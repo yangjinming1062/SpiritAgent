@@ -718,7 +718,7 @@ async function loadOverview() {
         const [models, versions, logs] = await Promise.all(['/api/admin/model-configs', '/api/update/versions', '/api/admin/nightly-activity-logs'].map(async path => (await apiFetch(path)).json()));
         tabCache.models = models;
         tabCache.versions = versions;
-        renderOverviewGroups(computeReadiness(normalizeAiConfig(models.system_ai_config)));
+        renderOverviewGroups(computeReadiness(cloneAiConfig(models.system_ai_config)));
         const active = getItems(versions).find(version => version.is_active);
         $('#ovVersion').textContent = active ? `v${active.version}` : '—';
         $('#ovVersionMeta').textContent = active ? '已上线' : '暂无上线版本';
@@ -893,7 +893,7 @@ async function loadAiView() {
         aiEditors.system.defaults = models.ai_provider_defaults;
         if (!aiSettingsLoaded || !aiSystemDirty) {
             lastSystemAiRaw = structuredClone(models.system_ai_config);
-            aiEditors.system.config = normalizeAiConfig(lastSystemAiRaw);
+            aiEditors.system.config = cloneAiConfig(lastSystemAiRaw);
             aiSettingsLoaded = true;
         }
         if (aiView.scope !== 'system' && !aiUserDirty) showModelConfigForUserSilent(aiView.userId);
@@ -904,7 +904,7 @@ async function loadAiView() {
 }
 function showModelConfigForUserSilent(userId) {
     lastUserAiRaw = structuredClone(tabCache.models?.items?.find(item => item.user_id === userId)?.ai_config ?? emptyAiConfig());
-    aiEditors.user.config = normalizeAiConfig(lastUserAiRaw);
+    aiEditors.user.config = cloneAiConfig(lastUserAiRaw);
     aiEditors.user.support = tabCache.models?.ai_provider_support ?? {};
     aiEditors.user.defaults = tabCache.models?.ai_provider_defaults ?? {};
 }
@@ -928,8 +928,8 @@ async function saveAiScope() {
     try {
         await apiFetch(scope === 'system' ? '/api/admin/system-settings' : `/api/admin/${aiView.userId}/model-config`, { method: 'PUT', body: JSON.stringify({ ai_config: payload }) });
         const saved = savedAiConfig(payload);
-        if (scope === 'system') { lastSystemAiRaw = saved; aiEditors.system.config = normalizeAiConfig(saved); }
-        else { lastUserAiRaw = saved; aiEditors.user.config = normalizeAiConfig(saved); }
+        if (scope === 'system') { lastSystemAiRaw = saved; aiEditors.system.config = cloneAiConfig(saved); }
+        else { lastUserAiRaw = saved; aiEditors.user.config = cloneAiConfig(saved); }
         clearAiDirty();
         toast('AI 配置已保存并实时生效');
         await refreshAiCache();
@@ -945,7 +945,7 @@ async function refreshAiCache() {
         const models = await (await apiFetch('/api/admin/model-configs')).json();
         tabCache.models = models;
         aiCacheStale = false;
-        if (!aiSystemDirty) { lastSystemAiRaw = structuredClone(models.system_ai_config); aiEditors.system.config = normalizeAiConfig(lastSystemAiRaw); }
+        if (!aiSystemDirty) { lastSystemAiRaw = structuredClone(models.system_ai_config); aiEditors.system.config = cloneAiConfig(lastSystemAiRaw); }
         if (aiView.scope !== 'system' && !aiUserDirty) showModelConfigForUserSilent(aiView.userId);
         $('#aiScopeSelect').innerHTML = aiScopeOptions();
         $('#aiScopeSelect').value = aiView.scope;
@@ -956,7 +956,7 @@ function markAiDirty(editorName) { if (editorName === 'system') aiSystemDirty = 
 function clearAiDirty() { if (aiView.scope === 'system') aiSystemDirty = false; else aiUserDirty = false; updateSaveActions(); }
 function discardAiEdits() {
     resetAiDiscovery();
-    aiActiveEditor().config = normalizeAiConfig(aiView.scope === 'system' ? lastSystemAiRaw : lastUserAiRaw);
+    aiActiveEditor().config = cloneAiConfig(aiView.scope === 'system' ? lastSystemAiRaw : lastUserAiRaw);
     clearAiDirty(); renderAiScope();
 }
 function loadOverviewIfActive() { if ($('#panel-overview').classList.contains('active')) void loadOverview(); }
@@ -1010,13 +1010,8 @@ function discardCurrentPage() { if ($('#panel-ai').classList.contains('active'))
 const AI_NAMES = { deepseek: 'DeepSeek', mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问', local: '本地 Local', custom: '自定义' };
 const AI_SERVICES = { llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成', embedding: '向量嵌入 Embedding' };
 function emptyAiConfig() { return { providers: [], capabilities: { llm: [], stt: [], tts: [], image_gen: [], video_gen: [], embedding: [] }, tasks: {} }; }
-function normalizeAiConfig(raw) {
-    const config = structuredClone(raw ?? emptyAiConfig());
-    config.providers = config.providers || [];
-    config.capabilities = config.capabilities || {};
-    config.tasks = config.tasks || {};
-    for (const key of Object.keys(AI_SERVICES)) config.capabilities[key] = config.capabilities[key] || [];
-    return config;
+function cloneAiConfig(raw) {
+    return structuredClone(raw ?? emptyAiConfig());
 }
 const aiEditors = {
     system: { config: emptyAiConfig(), support: {}, defaults: {} },
@@ -1064,7 +1059,7 @@ function aiGroupLabel(group) {
 }
 
 function aiSystemConfig(editor) {
-    return editor === aiEditors.system ? emptyAiConfig() : normalizeAiConfig(tabCache.models?.system_ai_config);
+    return editor === aiEditors.system ? emptyAiConfig() : cloneAiConfig(tabCache.models?.system_ai_config);
 }
 
 function modelEntries(config, service, scope, system = null) {
@@ -1201,7 +1196,7 @@ function aiModelLabel(card) {
 
 function aiRemovalReferences(editor, group, id) {
     const scopes = [{ config: editor.config, label: editor === aiEditors.system ? '系统' : '当前用户' }];
-    if (editor === aiEditors.system) scopes.push(...(tabCache.models?.items ?? []).map(item => ({ config: normalizeAiConfig(item.ai_config), label: '用户 #' + item.user_id })));
+    if (editor === aiEditors.system) scopes.push(...(tabCache.models?.items ?? []).map(item => ({ config: cloneAiConfig(item.ai_config), label: '用户 #' + item.user_id })));
     const references = [];
     for (const { config, label } of scopes) {
         if (group === 'providers') {

@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, MetaData, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-# 命名模板与 Postgres 既有的默认名对齐（`{table}_pkey` / `{table}_{col}_fkey`），启用约定不会重命名既有约束，只把后续约束固定到稳定名供 autogenerate 比对。
+# 约束使用稳定名称，供 Alembic autogenerate 比对。
 _NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
     "pk": "%(table_name)s_pkey",

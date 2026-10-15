@@ -96,7 +96,9 @@ async def serialize_rows(db: AsyncSession, table: str, user_id: int, *, batch_si
 def _build_payload(table: str, raw: dict[str, Any], context: BackupContext) -> dict[str, Any]:
     contributor = BACKUP_REGISTRY.table(table)
     columns = _columns(table)
-    payload = {key: value for key, value in raw.items() if key in columns and key != "id"}
+    if unknown := raw.keys() - set(columns):
+        raise ValueError(f"Unknown columns in {table}: {', '.join(sorted(unknown))}")
+    payload = {key: value for key, value in raw.items() if key != "id"}
     for column in contributor.columns:
         value = payload.get(column.name)
         if value is None:

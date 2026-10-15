@@ -107,7 +107,7 @@ def plan_asset_layout(
             if old not in owned and previous is not None:
                 target = previous
             if priority == 5 and previous is None:
-                # 无生产时间的引用保留已有相对目录；不能按迁移当天猜测归属日。
+                # 无生产时间的引用保留已有相对目录，不能按恢复日期猜测归属日。
                 target = str(PurePosixPath("companion-assets", str(target_user_id), *PurePosixPath(old).parts[2:]))
             collision = layout.copies.get(target)
             if collision is not None and collision != old:

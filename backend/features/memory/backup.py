@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import MEMORY_EMBEDDING_DIM, MEMORY_SLOT_CONTEXT_PREFIXES, Memory
 
-_MEMORY_SOURCE_KINDS = frozenset(get_args(MemorySource.__annotations__["kind"]))
+_MEMORY_SOURCE_KINDS = frozenset((*get_args(MemorySource.__annotations__["kind"]), "import"))
 
 
 def _original_source(refs: dict[str, Any]) -> Any:
@@ -49,7 +49,7 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
             if len(embedding) != MEMORY_EMBEDDING_DIM:
                 raise ValueError(f"Memory embedding dim {len(embedding)} != {MEMORY_EMBEDDING_DIM}")
         if payload["source_kind"] not in _MEMORY_SOURCE_KINDS:
-            payload["source_kind"] = "import"
+            raise ValueError("Invalid memory source kind")
         payload["source_refs"] = {
             "imported_memory_id": raw["id"],
             "original_source": _original_source(payload["source_refs"]),

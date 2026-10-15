@@ -198,7 +198,7 @@ class ImageGenRequest:
         None  # transparent 请求原生透明 PNG，仅发给 supports_transparent_background 链；None 不加字段
     )
     resolution: str | None = None
-    exact_size: bool = False  # 已按模型能力冻结的像素尺寸，不再用通用画幅表覆盖
+    exact_size: bool = False  # 按模型能力冻结的像素尺寸，跳过通用画幅表映射
 
 
 @dataclass(frozen=True)

@@ -132,7 +132,7 @@ def resolve_video_file(session_id: str, file_id: str) -> Path | None:
 
 
 def _save_attachment(session_id: str, source: BinaryIO, ext: str, max_bytes: int) -> tuple[str, int]:
-    """从上传临时文件分块复制；失败删除未交接文件，不再将整个视频读入内存。"""
+    """从上传临时文件分块复制；失败删除未交接文件。"""
     target_dir = session_dir(session_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     file_id = f"{secrets.token_urlsafe(16)}{ext.lower()}"

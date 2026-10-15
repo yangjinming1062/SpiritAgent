@@ -4,7 +4,6 @@ from collections.abc import Sequence
 
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.text import safe_json_loads
 from sqlalchemy import update
 
 from features.actions.generation.script import (
@@ -17,6 +16,7 @@ from features.actions.generation.script import (
 )
 from features.actions.generation.state import GenerationContext
 from features.actions.models import CompanionAction, CompanionActionPack
+from features.actions.schemas import ActionDesignRequest
 from features.media.chain import MediaChainState
 
 from .errors import VideoPackError, VideoPackStateError, _GenerationRowGoneError
@@ -60,17 +60,17 @@ def _action_spec(job: CompanionAction) -> ActionSpec:
             duration_seconds=_SYSTEM_ACTION_SECONDS,
             clip_kind="loop",
         )
-    design = safe_json_loads(job.source_design_json or "{}", default={})
-    if not isinstance(design, dict) or not design:
+    if job.source_design_json is None:
         raise VideoPackError("动态动作缺少提案规格，请重做")
+    design = ActionDesignRequest.model_validate_json(job.source_design_json)
     return VideoActionSpec(
         action=job.key,
-        name=str(design.get("name", job.name or job.key)),
-        semantics=str(design.get("motion_description", job.motion_description or "")),
-        use_when=list(design.get("use_when") or []),
-        avoid_when=list(design.get("avoid_when") or []),
-        duration_seconds=float(design.get("duration_seconds", job.target_duration_seconds or 2.0) or 2.0),
-        clip_kind=str(design.get("clip_kind", job.kind or "once") or "once"),
+        name=design.name,
+        semantics=design.motion_description,
+        use_when=design.use_when,
+        avoid_when=design.avoid_when,
+        duration_seconds=design.duration_seconds,
+        clip_kind=design.clip_kind,
     )
 
 

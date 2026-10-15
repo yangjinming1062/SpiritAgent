@@ -1,9 +1,9 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.models import ModelBase, TimestampMixin
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 
 
 class OutfitSource(BaseModel):
-    """`CompanionOutfit.source_json` 的结构：着装设计来源、已接受反馈，以及生成时的身份修订守卫。读取容错。"""
+    """着装设计来源、已接受反馈与生成时的身份修订守卫。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
     description: str = ""
     generation_origin: GenerationOrigin | None = None
@@ -33,39 +35,14 @@ class OutfitSource(BaseModel):
     character_card_revision: int | None = None
     identity_reference_path: str | None = None
 
-    @field_validator("description", mode="before")
+    @field_validator("reference_image_path", "reference_description", "identity_reference_path")
     @classmethod
-    def _description(cls, value: object) -> str:
-        return value.strip() if isinstance(value, str) else ""
-
-    @field_validator("reference_image_path", "reference_description", "identity_reference_path", mode="before")
-    @classmethod
-    def _optional_text(cls, value: object) -> str | None:
-        return (value.strip() or None) if isinstance(value, str) else None
-
-    @field_validator("feedback_history", mode="before")
-    @classmethod
-    def _feedback_history(cls, value: object) -> list[str]:
-        if not isinstance(value, list):
-            return []
-        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
-
-    @field_validator("character_card_revision", mode="before")
-    @classmethod
-    def _revision(cls, value: object) -> int | None:
-        return value if type(value) is int else None
-
-    @classmethod
-    def load(cls, raw: str) -> Self:
-        """JSON 损坏或不是对象时按空来源处理。"""
-        try:
-            return cls.model_validate_json(raw)
-        except ValidationError:
-            return cls()
+    def _optional_text(cls, value: str | None) -> str | None:
+        return value or None
 
     def dump(self) -> str:
-        """只写入已设置且非空的键，不为旧行补出新键。"""
-        return self.model_dump_json(exclude_unset=True, exclude_none=True)
+        """写入来源及身份守卫，省略空值。"""
+        return self.model_dump_json(exclude_none=True)
 
 
 class CompanionOutfit(ModelBase, TimestampMixin):

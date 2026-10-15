@@ -7,7 +7,6 @@ SPIRITAGENT_CONTROL_FILE_BASENAMES: tuple[str, ...] = (
     "auth.json",
     "auth.lock",
     "desktop-settings.json",
-    "webhook_subscriptions.json",
     ".env",
 )
 

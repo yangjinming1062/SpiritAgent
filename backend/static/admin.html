@@ -148,7 +148,7 @@
         </div>
         <div class="modal-body">
             <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">
-                导入目标用户 #<span id="backupUserId"></span>。只恢复勾选范围内的数据，不动目标已有但未勾选的内容。各类数据会尽力恢复，不兼容的内容将在完成后列出。旧备份中的片刻表会静默忽略，视为没有动态。导入后请重新启动客户端。
+                导入目标用户 #<span id="backupUserId"></span>。只恢复勾选范围内的数据，不动目标已有但未勾选的内容。各类数据会尽力恢复，不支持或校验失败的内容将在完成后列出。导入后请重新启动客户端。
             </p>
             <div class="field">
                 <label>恢复范围</label>
@@ -181,7 +181,7 @@
             <div class="field">
                 <label for="backupFile">备份文件 (.zip)</label>
                 <input type="file" id="backupFile" accept=".zip">
-                <div class="hint">支持本后台导出的全量 ZIP；旧备份未包含的内容无法补回，损坏或校验失败的 ZIP 不会导入。</div>
+                <div class="hint">支持本后台导出的全量 ZIP；缺失或校验失败的数据类别会列入失败，损坏的 ZIP 不会导入。</div>
             </div>
             <div id="backupStatus" style="margin-top:0.5rem; font-size:0.78rem; color:var(--text-3); white-space:pre-wrap; word-break:break-word;"></div>
         </div>

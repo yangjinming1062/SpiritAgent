@@ -35,7 +35,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     referenced: set[str] = set()
     for model, fields in ((CompanionAction, ACTION_ASSET_FIELDS), (CompanionActionPack, PACK_ASSET_FIELDS)):
         for row in await db.scalars(select(model).where(model.user_id == user_id)):
-            referenced |= asset_paths([getattr(row, field, None) for field in fields], user_id)
+            referenced |= asset_paths([getattr(row, field) for field in fields], user_id)
             if isinstance(row, CompanionActionPack) and row.manifest_path:
                 referenced |= await _catalog_asset_paths(row.manifest_path, user_id)
     for row in await db.scalars(

@@ -21,13 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.actions.design import action_key_from_name
 from features.actions.generation.errors import VideoPackError
 from features.actions.generation.references import require_pack_generation_identity
+from features.actions.generation.state import GenerationContext
 from features.actions.materials import accepted_action_asset
 from features.actions.models import ActionProposal, CompanionAction, CompanionActionPack
 from features.actions.policy import ActionPolicyError, _reserve_create_slot_row, is_expression_action
 from features.actions.prompts import ACTION_REVIEW_INSTRUCTIONS
 from features.actions.repository import ActionNameConflictError, create_action, get_action_by_name, list_pack_actions
-from features.appearance.character_card import render_character_profile
-from features.media.identity_contracts import CharacterCardSnapshot
+from features.actions.schemas import ActionDesignRequest
 
 # 与 ACTION_REVIEW_INSTRUCTIONS 中 existing_actions 的条数上限保持一致。
 _EXISTING_ACTION_LIMIT = 10
@@ -51,28 +51,27 @@ class ReviewOutcome:
     action_id: int | None
 
 
-async def _review_payload(db: AsyncSession, proposal: ActionProposal, pack: CompanionActionPack) -> dict[str, Any]:
+async def _review_payload(
+    db: AsyncSession,
+    proposal: ActionProposal,
+    pack: CompanionActionPack,
+    design: ActionDesignRequest,
+) -> dict[str, Any]:
     """评审资料：提案、冻结外形/着装与生成上下文中的人设，以及同包现有表达动作。"""
-    design = json.loads(proposal.design_json or "{}")
     existing_actions = await _existing_actions(db, pack.id, design)
-    character_data: dict[str, Any] = json.loads(pack.character_snapshot or "{}")
-    context = json.loads(pack.context_json) if pack.context_json else {}
-    # 合并版本的包未写角色快照，资料取自同包冻结的生成上下文。
-    if not character_data.get("profile") and context.get("identity"):
-        character_data["profile"] = render_character_profile(CharacterCardSnapshot.model_validate(context["identity"]))
-    if "persona_definition" in context:
-        character_data["persona_definition"] = context["persona_definition"]
-    if "personality_tags" in context:
-        character_data["personality_tags"] = context["personality_tags"]
-    outfit_data: dict = {}
-    raw_outfit = (pack.outfit_snapshot or "").strip()
-    if raw_outfit and raw_outfit != "{}":
-        try:
-            outfit_data = json.loads(raw_outfit)
-        except json.JSONDecodeError:
-            outfit_data = {}
+    character_data: dict[str, Any] = json.loads(pack.character_snapshot)
+    if not isinstance(character_data, dict) or not isinstance(character_data.get("profile"), str):
+        raise ValueError("动作评审缺少冻结角色资料")
+    if pack.context_json is None:
+        raise ValueError("动作评审缺少冻结生成上下文")
+    context = GenerationContext.model_validate_json(pack.context_json)
+    character_data["persona_definition"] = context.persona_definition
+    character_data["personality_tags"] = context.personality_tags
+    outfit_data = json.loads(pack.outfit_snapshot)
+    if not isinstance(outfit_data, dict) or not isinstance(outfit_data.get("description"), str):
+        raise ValueError("动作评审缺少冻结着装资料")
     return {
-        "design": design,
+        "design": design.model_dump(),
         "reason": proposal.reason,
         "source": proposal.source,
         "character_snapshot": character_data,
@@ -81,13 +80,13 @@ async def _review_payload(db: AsyncSession, proposal: ActionProposal, pack: Comp
     }
 
 
-def _similarity_score(design: dict, action: CompanionAction) -> float:
+def _similarity_score(design: ActionDesignRequest, action: CompanionAction) -> float:
     """粗粒度语义相近度：名称/描述/用途的词面重叠，供候选排序。"""
     query = " ".join(
         [
-            str(design.get("name", "")),
-            str(design.get("motion_description", "")),
-            " ".join(str(x) for x in design.get("use_when", []) or []),
+            design.name,
+            design.motion_description,
+            " ".join(design.use_when),
         ],
     ).lower()
     if not query.strip():
@@ -115,7 +114,7 @@ def _match_terms(text: str) -> set[str]:
 async def _existing_actions(
     db: AsyncSession,
     pack_id: int,
-    design: dict,
+    design: ActionDesignRequest,
 ) -> list[dict]:
     """同包表达动作按与提案的词面相近度排序，超上限只留最相近的。词面相近度对中文近义不敏感，不能据此剔除零分动作，否则漏看可复用近义动作。"""
     scored = [
@@ -154,13 +153,13 @@ async def review_proposal(proposal_id: int, user_id: int) -> ReviewOutcome | Non
         pack = await db.get(CompanionActionPack, proposal.pack_id) if proposal is not None else None
         if proposal is None or pack is None:
             return None
-        design = json.loads(proposal.design_json or "{}")
+        design = ActionDesignRequest.model_validate_json(proposal.design_json)
         if (resolved := await _same_key_verdict(db, proposal, design)) is not None:
             return await _commit_verdict(db, proposal, resolved, design)
         if not pack.reference_path:
             raise ValueError("动作评审缺少该形象的参考图")
         reference_path = Path(SETTINGS.data_dir) / pack.reference_path
-        payload = await _review_payload(db, proposal, pack)
+        payload = await _review_payload(db, proposal, pack, design)
 
     reference_bytes = await asyncio.to_thread(reference_path.read_bytes)
     mime = image_mime_for_extension(sniff_media_ext(reference_bytes) or "")
@@ -177,7 +176,7 @@ async def review_proposal(proposal_id: int, user_id: int) -> ReviewOutcome | Non
         if (proposal := await _reviewable_proposal(db, proposal_id, user_id)) is None:
             return None
         if isinstance(verdict, ReviewVerdict):
-            return await _commit_verdict(db, proposal, verdict, payload["design"])
+            return await _commit_verdict(db, proposal, verdict, design)
         proposal.review_decision = "defer"
         proposal.review_reason = f"评审格式失败：{verdict}"
         proposal.status = "deferred"
@@ -254,7 +253,7 @@ async def _commit_verdict(
     db: AsyncSession,
     proposal: ActionProposal,
     verdict: ReviewVerdict,
-    design: dict[str, Any],
+    design: ActionDesignRequest,
 ) -> ReviewOutcome:
     decision = await _apply_verdict(db, proposal, verdict, design)
     await db.commit()
@@ -264,11 +263,11 @@ async def _commit_verdict(
 async def _same_key_verdict(
     db: AsyncSession,
     proposal: ActionProposal,
-    design: dict[str, Any],
+    design: ActionDesignRequest,
 ) -> ReviewVerdict | None:
     """同包已有同 key 动作时的确定结论：就绪即复用，其余暂缓，不覆盖或重排。同名即同一动作身份；两个同名提案先后获批时后者按先者状态收敛。"""
     try:
-        existing = await get_action_by_name(db, proposal.pack_id, str(design.get("name", "action")))
+        existing = await get_action_by_name(db, proposal.pack_id, design.name)
     except ActionNameConflictError as exc:
         return ReviewVerdict(decision="defer", reason=str(exc))
     if existing is None:
@@ -290,7 +289,7 @@ async def _apply_verdict(
     db: AsyncSession,
     proposal: ActionProposal,
     verdict: ReviewVerdict,
-    design: dict[str, Any],
+    design: ActionDesignRequest,
 ) -> str:
     """落库评审结论并返回最终结论：批准前再核对同 key 动作，额度不足转暂缓。"""
     if verdict.decision == "approve" and (resolved := await _same_key_verdict(db, proposal, design)) is not None:
@@ -319,17 +318,17 @@ async def _apply_verdict(
             db,
             user_id=proposal.user_id,
             pack_id=proposal.pack_id,
-            key=action_key_from_name(str(design.get("name", "action"))),
-            name=str(design.get("name", "未命名动作")),
-            kind=str(design.get("clip_kind", "once")),
-            motion_description=str(design.get("motion_description", "")),
-            use_when=list(design.get("use_when", []) or []),
-            avoid_when=list(design.get("avoid_when", []) or []),
+            key=action_key_from_name(design.name),
+            name=design.name,
+            kind=design.clip_kind,
+            motion_description=design.motion_description,
+            use_when=design.use_when,
+            avoid_when=design.avoid_when,
         )
         action.status = "queued"
         action.stage = "design"
-        action.target_duration_seconds = float(design.get("duration_seconds", 2.0) or 2.0)
-        action.loopable = str(design.get("clip_kind", "once")) == "loop"
+        action.target_duration_seconds = design.duration_seconds
+        action.loopable = design.clip_kind == "loop"
         # 冻结提案规格：生成编排按此演绎，不回读提案表。
         action.source_design_json = proposal.design_json
         proposal.action_id = action.id

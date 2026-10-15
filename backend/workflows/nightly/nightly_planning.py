@@ -613,8 +613,8 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         args = dict(raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {})
         if capability_name == "action.design":
-            args["target_presentation_mode"] = context.actions.get("presentation_mode", "window")
-            if context.actions.get("presentation_mode") == "desktop" and context.actions.get("expected_set_id"):
+            args["target_presentation_mode"] = context.actions["presentation_mode"]
+            if context.actions["presentation_mode"] == "desktop" and context.actions.get("expected_set_id"):
                 args["expected_set_id"] = context.actions["expected_set_id"]
         if spec.paid:
             paid_count += 1
@@ -927,7 +927,7 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
 
 async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     """夜间动作设计：受理提案 → 独立评审 → approve 后入队生成。事实只叙述受理或重试，不将异步制作写成完成。"""
-    target_mode = args.get("target_presentation_mode", "window")
+    target_mode = args["target_presentation_mode"]
     presentation = get_presentation_snapshot(run.user_id)
     current_mode = presentation.mode if presentation is not None else "window"
     if target_mode != current_mode:

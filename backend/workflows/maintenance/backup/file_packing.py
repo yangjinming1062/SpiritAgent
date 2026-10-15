@@ -266,7 +266,7 @@ class UrlRewriter:
                 except ValueError:
                     pass
                 else:
-                    # JSON 串只递归解析结果，不再落 token/整串分支。
+                    # JSON 字符串按解析结果递归改写。
                     rewritten = self._walk(parsed, depth + 1, apply=apply)
                     if not apply:
                         return None
@@ -291,7 +291,7 @@ class UrlRewriter:
 
 
 def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewriter) -> None:
-    """预检工作线程核对必需文件；旧历史可保留失效引用，不把身份或发布资产当作已恢复。"""
+    """预检工作线程核对必需文件；会话历史可保留失效引用，身份与发布资产须可用。"""
     rewriter.scan(rows)
     for row in rows:
         required: list[Any] = []

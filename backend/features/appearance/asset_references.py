@@ -14,7 +14,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         (CompanionOutfit, ("fullbody_url", "source_json")),
     ):
         for row in await db.scalars(select(model).where(model.user_id == user_id)):
-            referenced |= asset_paths([getattr(row, field, None) for field in fields], user_id)
+            referenced |= asset_paths([getattr(row, field) for field in fields], user_id)
     for row in await db.scalars(
         select(FullbodyCandidate).where(
             FullbodyCandidate.user_id == user_id,

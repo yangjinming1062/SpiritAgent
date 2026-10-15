@@ -1,4 +1,4 @@
-"""显式登记模块生命周期；模块内部任务变化不再修改启动和维护流程。"""
+"""集中登记模块的准备、恢复、维护与关闭能力。"""
 
 from entrypoints.desktop.handlers import drain as drain_user_sessions
 from entrypoints.scheduler.cron import drain as drain_cron
