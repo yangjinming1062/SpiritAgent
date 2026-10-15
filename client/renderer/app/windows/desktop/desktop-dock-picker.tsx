@@ -37,6 +37,7 @@ export function DesktopDockPicker({
   triggerRef
 }: {
   activating: boolean
+  /** 观察 Dock 尺寸，固定程序改变底栏宽度时同步入口位置。 */
   anchorRef: React.RefObject<HTMLElement | null>
   /** 固定配置版本：窗口与图标更新不触发目录查询。 */
   dockRevision: number
@@ -66,11 +67,15 @@ export function DesktopDockPicker({
   const busyRef = useRef(false)
   const catalogRequestRef = useRef(0)
   const catalogRevisionRef = useRef<number | undefined>(undefined)
-  useInteractiveRegion('desktop-dock-picker', pickerRef)
+  useInteractiveRegion('desktop-dock-picker', pickerRef, element => {
+    const rect = element.getBoundingClientRect()
+
+    return new DOMRect(rect.left, rect.top, rect.width, rect.height + 12)
+  })
 
   useLayoutEffect(() => {
     const positionPicker = (): void => {
-      const anchor = anchorRef.current?.getBoundingClientRect()
+      const anchor = (triggerRef.current ?? anchorRef.current)?.getBoundingClientRect()
       const width = Math.min(640, window.innerWidth - 32)
       const dockTop = anchor?.top ?? window.innerHeight - 82
       const center = anchor ? anchor.left + anchor.width / 2 : window.innerWidth / 2
@@ -90,13 +95,17 @@ export function DesktopDockPicker({
       observer.observe(anchorRef.current)
     }
 
+    if (triggerRef.current) {
+      observer.observe(triggerRef.current)
+    }
+
     window.addEventListener('resize', positionPicker)
 
     return () => {
       observer.disconnect()
       window.removeEventListener('resize', positionPicker)
     }
-  }, [anchorRef])
+  }, [anchorRef, triggerRef])
 
   useEffect(() => {
     const outside = (event: PointerEvent): void => {

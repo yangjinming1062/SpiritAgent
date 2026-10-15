@@ -3,39 +3,32 @@
   top: 100%;
   left: 0;
   z-index: 60;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  width: max-content;
   padding-top: 12px;
-}
-.accountPopup[data-side='left'] {
-  right: 0;
-  left: auto;
-  flex-direction: row-reverse;
-}
-.accountPopup[data-side='below'] {
-  flex-direction: column;
+  translate: var(--account-offset-x, 0px) var(--account-offset-y, 0px);
 }
 .accountPopup[data-placement='above'] {
   top: auto;
   bottom: 0;
-  left: calc(100% + 8px);
+  left: 100%;
   padding-top: 0;
-  align-items: flex-end;
+  padding-left: 8px;
 }
-.accountPopup[data-placement='above'][data-side='left'] {
-  left: auto;
-  right: calc(100% + 8px);
+.accountPopup[data-placement='top-center'] {
+  top: auto;
+  bottom: 100%;
+  left: 50%;
+  padding-top: 0;
+  padding-bottom: 12px;
+  transform: translateX(-50%);
 }
 .menuContent {
-  position: absolute;
-  top: calc(100% + 12px);
-  left: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
   width: 256px;
-  max-height: calc(100vh - 80px);
+  max-height: calc(100vh - 24px);
   overflow: auto;
   padding: 9px;
   background: var(--ui-app-bg);
@@ -45,14 +38,31 @@
   font-size: 12px;
 }
 .accountPopup .accountMenu {
-  position: relative;
-  top: auto;
-  left: auto;
   max-width: calc(100vw - 24px);
-  overflow: visible;
 }
-.accountPopup[data-side='below'] .accountSubmenu {
-  width: min(256px, calc(100vw - 24px));
+.accountSubmenuAnchor {
+  position: absolute;
+  top: var(--account-submenu-top, 0px);
+  left: calc(var(--account-menu-left, 0px) + var(--account-menu-width, 256px));
+  width: 232px;
+  padding-left: 8px;
+  translate: 0 var(--account-submenu-offset-y, 0px);
+}
+.accountSubmenuAnchor[data-side='left'] {
+  right: calc(100% - var(--account-menu-left, 0px));
+  left: auto;
+  padding-right: 8px;
+  padding-left: 0;
+}
+.accountSubmenuAnchor[data-side='overlay'] {
+  z-index: 1;
+  top: var(--account-menu-top, 0px);
+  left: var(--account-menu-left, 0px);
+  width: var(--account-menu-width, 256px);
+  padding-left: 0;
+}
+.accountSubmenuAnchor[data-side='overlay'] .accountSubmenu {
+  min-height: var(--account-menu-height, 0px);
 }
 .menuContent > button {
   border: 0;
@@ -131,8 +141,8 @@
 }
 .accountSubmenu {
   display: flex;
-  width: 224px;
-  max-height: min(360px, calc(100vh - 80px));
+  width: 100%;
+  max-height: min(360px, var(--account-submenu-height, calc(100vh - 24px)));
   flex-direction: column;
   gap: 3px;
   overflow: auto;
@@ -148,6 +158,23 @@
   color: var(--ui-text-muted);
   font-size: 11px;
   font-weight: 500;
+}
+.accountSubmenuBack {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+}
+.accountSubmenuBack:hover,
+.accountSubmenuBack:focus-visible {
+  background: var(--ui-fill-hover);
 }
 .accountOption {
   display: flex;

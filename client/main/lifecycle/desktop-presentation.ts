@@ -17,6 +17,7 @@ import {
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
+import { DESKTOP_LAYOUT } from '../../shared/desktop-layout'
 import { registerDesktopPresentationIpc } from '../ipc/desktop-presentation'
 import { createUiStateBridge } from '../ipc/ui-state'
 import { isSenderWindow } from '../security/ipc-trust'
@@ -591,8 +592,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         takeover: process.env.SPIRITAGENT_DESKTOP_PROBE !== '1',
         workArea: screen.dipToScreenRect(main, {
           ...selected.bounds,
-          y: selected.bounds.y + 44,
-          height: selected.bounds.height - 44 - 96
+          y: selected.bounds.y,
+          height: selected.bounds.height - DESKTOP_LAYOUT.bottomInset
         }),
         windows: surfaces.map(win => {
           const bounds = windows.getBounds(win)

@@ -9,7 +9,7 @@ import { useDesktopLifeStrings } from '@/app/features/desktop-life/desktop-life-
 import { LifePage } from '@/app/features/posts/life-page'
 import { AppSettings } from '@/app/features/settings/app-settings'
 import { $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
-import { $persona, $portraitUrl, hydratePersona, hydratePortrait, SpriteStatusBadge } from '@/modules/character'
+import { $persona, $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
 import {
   $chatSessionId,
   $companionSessionId,
@@ -24,39 +24,28 @@ import { $diaryHasUnread, hydrateDiaryUnread } from '@/modules/diary'
 import { $postsHasUnread, hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
-import type { ConnectionState } from '@/shared/lib/gateway-protocol'
-import { ArrowLeft, ArrowRight, ChevronDown, MessageCircle, Settings, Wifi, WifiOff, X } from '@/shared/lib/icons'
+import { ArrowLeft, ArrowRight, MessageCircle, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
-import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { $uiStateReady } from '@/shared/store/ui-state'
 import { useStrings } from '@/shared/strings'
+import { DESKTOP_LAYOUT } from '@client-shared/desktop-layout'
 
+import { DesktopBottomBar } from './desktop-bottom-bar'
 import { DesktopWhisper } from './desktop-chat'
-import { DesktopDock } from './desktop-dock'
-import { DESKTOP_APPS, type DesktopApp, useDesktopLayout } from './desktop-layout'
-import { DesktopSettings } from './desktop-settings'
+import { DesktopControls } from './desktop-controls'
+import { type DesktopApp, useDesktopLayout } from './desktop-layout'
+import { DesktopProductNav } from './desktop-product-nav'
 import { useDesktopStrings } from './desktop-strings'
 import { useDesktopVideoWallpaper } from './desktop-video-wallpaper'
 import { DesktopWindow } from './desktop-window'
 import styles from './desktop.module.css'
-
-// 顶栏是两个独立状态：绿点只说伙伴在不在忙，网络用图标说，免得两个同色圆点指代不清。
-type ConnectionTone = 'offline' | 'online' | 'pending'
-
-const CONNECTION_TONE: Record<ConnectionState, ConnectionTone> = {
-  closed: 'offline',
-  connecting: 'pending',
-  error: 'offline',
-  idle: 'pending',
-  open: 'online'
-}
 
 type DesktopShortcut = 'desktopLife'
 
@@ -73,7 +62,6 @@ export function DesktopRoot(): React.JSX.Element {
   const screenLocked = useStore($surfaceScreenLocked)
   const persona = useStore($persona)
   const portrait = useStore($portraitUrl)
-  const locale = useStore($locale)
   const companionSessionId = useStore($companionSessionId)
   const { hasUnread: whisperHasUnread, firstUnheard } = useConversationUnread(companionSessionId)
   const pending = useStore(pendingMessages.$atom)
@@ -81,7 +69,6 @@ export function DesktopRoot(): React.JSX.Element {
   const diaryUnread = useStore($diaryHasUnread)
   const [unreadReveal, setUnreadReveal] = useState<{ key: string; request: number }>()
   const revealRequest = useRef(0)
-  const [clock, setClock] = useState(() => new Date())
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
   const videoState = useStore($desktopVideoState)
@@ -101,22 +88,24 @@ export function DesktopRoot(): React.JSX.Element {
         : null)
 
   const [focusedConversation, setFocusedConversation] = useState<'main' | 'whisper' | null>('whisper')
-  const [accountOpen, setAccountOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [dockOverlayOpen, setDockOverlayOpen] = useState(false)
-  const [area, setArea] = useState({ width: 1000, height: 700, left: 16, top: 44 })
+  const [overlay, setOverlay] = useState<'account' | 'controls' | 'dock' | 'product' | null>(null)
+  const accountOpen = overlay === 'account'
+
+  const [area, setArea] = useState<{ width: number; height: number; left: number; top: number }>({
+    width: 1000,
+    height: 700,
+    left: DESKTOP_LAYOUT.contentInset,
+    top: DESKTOP_LAYOUT.contentInset
+  })
+
   const initialized = useRef(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  const settingsRef = useRef<HTMLDivElement>(null)
-  const topbarRef = useRef<HTMLElement>(null)
+  const avatarRef = useRef<HTMLButtonElement>(null)
   const whisperRef = useRef<HTMLElement>(null)
   const whisperTabRef = useRef<HTMLButtonElement>(null)
-  useInteractiveRegion('desktop-topbar', topbarRef)
   useInteractiveRegion('desktop-avatar', menuRef)
-  useInteractiveRegion('desktop-account-menu', menuRef)
-  useInteractiveRegion('desktop-settings-menu', settingsRef)
   useInteractiveRegion('desktop-whisper', whisperRef, element =>
     element.hidden ? null : element.getBoundingClientRect()
   )
@@ -150,14 +139,23 @@ export function DesktopRoot(): React.JSX.Element {
         ? 'main'
         : null
 
-  const panelsEnabled =
-    foreground && uiStateReady && auth.kind === 'authenticated' && !accountOpen && !settingsOpen && !dockOverlayOpen
+  const panelsEnabled = foreground && uiStateReady && auth.kind === 'authenticated' && overlay === null
 
   const activePanel = panelsEnabled && focused !== 'whisper' ? activeWindow : null
   const mainChatActive = activePanel === 'chat' && focused === 'main'
   const whisperChatActive = panelsEnabled && focused === 'whisper' && layout.whisperOpen
-  const connectionTone = CONNECTION_TONE[gatewayState]
-  const connectionLabel = { offline: t.disconnected, online: t.connected, pending: t.loading }[connectionTone]
+
+  const dockOpenChange = useCallback((open: boolean): void => {
+    setOverlay(current => (open ? 'dock' : current === 'dock' ? null : current))
+  }, [])
+
+  const productOpenChange = useCallback((open: boolean): void => {
+    setOverlay(current => (open ? 'product' : current === 'product' ? null : current))
+  }, [])
+
+  const controlsOpenChange = useCallback((open: boolean): void => {
+    setOverlay(current => (open ? 'controls' : current === 'controls' ? null : current))
+  }, [])
 
   useEffect(() => {
     const onPointerUp = (event: PointerEvent): void => {
@@ -203,6 +201,7 @@ export function DesktopRoot(): React.JSX.Element {
         setAppPage(page)
       }
 
+      setOverlay(null)
       activate(page)
       setFocusedConversation(page === 'chat' ? 'main' : null)
     },
@@ -210,8 +209,7 @@ export function DesktopRoot(): React.JSX.Element {
   )
 
   const openCompanionChat = useCallback((): void => {
-    setSettingsOpen(false)
-    setAccountOpen(false)
+    setOverlay(null)
     activatePanel('chat')
 
     if (companionSessionId) {
@@ -226,8 +224,7 @@ export function DesktopRoot(): React.JSX.Element {
   }, [activatePanel, companionSessionId, firstUnheard, setLayout])
 
   const openAccountMenu = (): void => {
-    setSettingsOpen(false)
-    setAccountOpen(true)
+    setOverlay('account')
   }
 
   const openWhisper = useCallback((): void => {
@@ -268,12 +265,6 @@ export function DesktopRoot(): React.JSX.Element {
   }, [dict.brand.name, t.title])
 
   useEffect(() => {
-    const timer = window.setInterval(() => setClock(new Date()), 30000)
-
-    return () => window.clearInterval(timer)
-  }, [])
-
-  useEffect(() => {
     const element = workspaceRef.current
 
     if (!element) {
@@ -294,14 +285,14 @@ export function DesktopRoot(): React.JSX.Element {
 
   useEffect(() => {
     const closeMenus = (): void => {
-      setAccountOpen(false)
-      setSettingsOpen(false)
+      // 程序目录自行处理原生文件选择期间的失焦。
+      setOverlay(current => (current === 'dock' ? current : null))
     }
 
     window.addEventListener('blur', closeMenus)
 
     if (!desktopVisible) {
-      closeMenus()
+      setOverlay(null)
     }
 
     return () => window.removeEventListener('blur', closeMenus)
@@ -351,8 +342,7 @@ export function DesktopRoot(): React.JSX.Element {
     }
   }, [gateway, gatewayState, uiStateReady, t.chat])
 
-  useDismissOnOutside(menuRef, accountOpen, () => setAccountOpen(false))
-  useDismissOnOutside(settingsRef, settingsOpen, () => setSettingsOpen(false))
+  useDismissOnOutside(menuRef, accountOpen, () => setOverlay(null))
 
   const toggleWhisper = (): void => {
     if (layout.whisperOpen) {
@@ -418,112 +408,19 @@ export function DesktopRoot(): React.JSX.Element {
       data-whisper={layout.whisperOpen ? layout.whisperSide : 'closed'}
       inert={['starting', 'recovering'].includes(presentation.status)}
       ref={rootRef}
+      style={
+        {
+          '--desktop-bar-height': `${DESKTOP_LAYOUT.barHeight}px`,
+          '--desktop-bar-bottom': `${DESKTOP_LAYOUT.barBottom}px`,
+          '--desktop-avatar-size': `${DESKTOP_LAYOUT.avatarSize}px`,
+          '--desktop-bottom-inset': `${DESKTOP_LAYOUT.bottomInset}px`,
+          '--desktop-content-inset': `${DESKTOP_LAYOUT.contentInset}px`,
+          '--desktop-center-width': `${DESKTOP_LAYOUT.centerWidth}px`,
+          '--desktop-control-size': `${DESKTOP_LAYOUT.controlSize}px`,
+          '--desktop-control-edge': `${DESKTOP_LAYOUT.controlEdge}px`
+        } as React.CSSProperties
+      }
     >
-      <div className={`${styles.avatarMenu} ${styles.avatarDock}`} ref={menuRef}>
-        <button
-          aria-expanded={accountOpen}
-          aria-label={whisperHasUnread ? t.openUnread : t.chat}
-          className={styles.avatarButton}
-          data-unread={whisperHasUnread}
-          onClick={openCompanionChat}
-          onContextMenu={event => {
-            event.preventDefault()
-            openAccountMenu()
-          }}
-          onKeyDown={event => {
-            if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-              event.preventDefault()
-              openAccountMenu()
-            }
-          }}
-          title={whisperHasUnread ? t.avatarUnreadHint : t.avatarChatHint}
-          type="button"
-        >
-          {portrait ? <img alt="" src={portrait} /> : <span>{dict.brand.name.slice(0, 1)}</span>}
-          {whisperHasUnread && <span aria-hidden="true" className={styles.avatarUnread} />}
-        </button>
-        {accountOpen && <AccountMenu onClose={() => setAccountOpen(false)} />}
-      </div>
-      <header className={styles.topbar} ref={topbarRef}>
-        <div aria-hidden="true" className={styles.avatarSlot} />
-        <nav aria-label={t.title} className={styles.mainMenu}>
-          {DESKTOP_APPS.map(id => {
-            const unread =
-              id === 'posts'
-                ? postsUnread || diaryUnread
-                : id === 'chat'
-                  ? pending.length > 0 || whisperHasUnread
-                  : false
-
-            return (
-              <button
-                aria-label={unread ? `${t[id]} (${dict.living.rail.unread})` : t[id]}
-                data-current={activeWindow === id}
-                key={id}
-                onClick={() => activatePanel(id)}
-                type="button"
-              >
-                {t[id]}
-                {unread && <span aria-hidden="true"> ·</span>}
-              </button>
-            )
-          })}
-        </nav>
-        <div className={styles.status}>
-          {wallpaperStatus && (
-            <button
-              className={styles.wallpaperStatus}
-              onClick={() => activatePanel('desktopLife')}
-              title={wallpaperStatus}
-              type="button"
-            >
-              <span role="status">{wallpaperStatus}</span>
-            </button>
-          )}
-          <SpriteStatusBadge />
-          <span
-            aria-label={connectionLabel}
-            className={styles.connection}
-            data-tone={connectionTone}
-            role="img"
-            title={connectionLabel}
-          >
-            {connectionTone === 'offline' ? <WifiOff size={14} /> : <Wifi size={14} />}
-          </span>
-        </div>
-        <div className={styles.settingsMenu} ref={settingsRef}>
-          <button
-            aria-expanded={settingsOpen}
-            aria-label={t.desktopSettings}
-            className={styles.topIcon}
-            onClick={() => {
-              setAccountOpen(false)
-              setSettingsOpen(value => !value)
-            }}
-            type="button"
-          >
-            <Settings size={17} />
-            <ChevronDown size={11} />
-          </button>
-          {settingsOpen && (
-            <DesktopSettings
-              onSettings={() => {
-                activatePanel('settings')
-                setSettingsOpen(false)
-              }}
-            />
-          )}
-        </div>
-        <time className={styles.clock} dateTime={clock.toISOString()}>
-          {clock.toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN', {
-            month: 'short',
-            day: 'numeric',
-            weekday: 'short',
-            hour: '2-digit',
-            minute: '2-digit'
-          })}
-        </time>
-      </header>
       <main className={styles.workspace} ref={workspaceRef}>
         {layout.windows.map((item, index) => (
           <DesktopWindow
@@ -590,12 +487,67 @@ export function DesktopRoot(): React.JSX.Element {
           {whisperHasUnread && <span aria-hidden="true" className={styles.whisperUnread} />}
         </button>
       )}
-      <DesktopDock
-        menuEnabled={desktopVisible && !accountOpen && !settingsOpen}
-        onActivate={activatePanel}
-        onClose={close}
-        onMenuOpenChange={setDockOverlayOpen}
-        windows={layout.windows}
+      <DesktopBottomBar
+        avatar={
+          <div className={styles.avatarMenu} ref={menuRef}>
+            <button
+              aria-expanded={accountOpen}
+              aria-label={whisperHasUnread ? t.openUnread : t.chat}
+              className={styles.avatarButton}
+              data-unread={whisperHasUnread}
+              onClick={openCompanionChat}
+              onContextMenu={event => {
+                event.preventDefault()
+                openAccountMenu()
+              }}
+              onKeyDown={event => {
+                if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                  event.preventDefault()
+                  openAccountMenu()
+                }
+              }}
+              ref={avatarRef}
+              title={whisperHasUnread ? t.avatarUnreadHint : t.avatarChatHint}
+              type="button"
+            >
+              {portrait ? <img alt="" src={portrait} /> : <span>{dict.brand.name.slice(0, 1)}</span>}
+              {whisperHasUnread && <span aria-hidden="true" className={styles.avatarUnread} />}
+            </button>
+            {accountOpen && (
+              <AccountMenu
+                onClose={() => {
+                  setOverlay(null)
+                  avatarRef.current?.focus()
+                }}
+                placement="top-center"
+              />
+            )}
+          </div>
+        }
+        dockOverlayActive={overlay === 'dock'}
+        menuEnabled={desktopVisible}
+        navigation={
+          <DesktopProductNav
+            activeWindow={activeWindow}
+            chatUnread={pending.length > 0 || whisperHasUnread}
+            onActivate={activatePanel}
+            onBeforeOpen={() => setOverlay('product')}
+            onClose={close}
+            onMenuOpenChange={productOpenChange}
+            overlayActive={overlay === 'product'}
+            postsUnread={postsUnread || diaryUnread}
+            windows={layout.windows}
+          />
+        }
+        onDockOpen={() => setOverlay('dock')}
+        onDockOpenChange={dockOpenChange}
+      />
+      <DesktopControls
+        onDesktopLife={() => activatePanel('desktopLife')}
+        onOpenChange={controlsOpenChange}
+        open={overlay === 'controls'}
+        wallpaperError={Boolean(videoState?.preparation_error || idleVideo?.error || videoError)}
+        wallpaperStatus={wallpaperStatus}
       />
     </div>
   )

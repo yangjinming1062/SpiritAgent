@@ -1,6 +1,11 @@
 .desktop {
-  --desktop-bar: 44px;
-  --desktop-avatar-size: 84px;
+  --desktop-icon-size: 48px;
+  --desktop-item-gap: 8px;
+  --desktop-bar-padding: 12px;
+  --desktop-rail-center-width: var(--desktop-center-width);
+  --desktop-rail-control-size: var(--desktop-control-size);
+  --desktop-rail-control-edge: var(--desktop-control-edge);
+  --desktop-control-gap: 12px;
   color: var(--ui-text-strong);
   width: 100vw;
   height: 100vh;
@@ -21,47 +26,50 @@
   cursor: default;
   opacity: 0.45;
 }
-.topbar {
-  height: var(--desktop-bar);
+.bottomBar {
   position: absolute;
-  inset: 0 0 auto;
+  right: 0;
+  bottom: var(--desktop-bar-bottom);
+  left: 0;
   z-index: 50;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--desktop-rail-center-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  padding: 0 18px 0 12px;
-  border-bottom: 1px solid var(--ui-line-hairline);
-  background: color-mix(in srgb, var(--ui-app-bg) 78%, transparent);
-  backdrop-filter: blur(28px) saturate(150%);
-  box-shadow: 0 1px 10px rgb(0 0 0 / 0.04);
+  width: calc(2 * var(--desktop-wing-width, 216px) + var(--desktop-rail-center-width) + 2 * var(--desktop-bar-padding));
+  max-width: calc(
+    100% - 2 * (var(--desktop-rail-control-edge) + var(--desktop-rail-control-size) + var(--desktop-control-gap))
+  );
+  height: var(--desktop-bar-height);
+  margin-inline: auto;
+  padding: 8px var(--desktop-bar-padding);
+  pointer-events: none;
 }
-.avatarMenu,
-.settingsMenu {
-  position: relative;
-  flex-shrink: 0;
-}
-.avatarDock {
+.bottomBarBackdrop {
   position: absolute;
-  top: 12px;
-  left: 16px;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--ui-app-bg) 76%, transparent);
+  backdrop-filter: blur(30px) saturate(150%);
+  box-shadow:
+    0 8px 28px rgb(0 0 0 / 0.16),
+    inset 0 1px 0 rgb(255 255 255 / 0.12);
+}
+.avatarSlot {
+  display: flex;
+  align-self: end;
+  justify-content: center;
+  height: var(--desktop-avatar-size);
+  margin-bottom: -8px;
+}
+.avatarMenu {
+  position: relative;
   z-index: 61;
   width: var(--desktop-avatar-size);
   height: var(--desktop-avatar-size);
-}
-.avatarDock::before {
-  position: absolute;
-  inset: 12px;
-  z-index: -1;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--ui-accent-soft) 0%, transparent 72%);
-  content: '';
-  filter: blur(12px);
-  opacity: 0.7;
-  pointer-events: none;
-}
-.avatarSlot {
-  width: calc(var(--desktop-avatar-size) + 16px);
-  flex: 0 0 calc(var(--desktop-avatar-size) + 16px);
+  pointer-events: auto;
 }
 .avatarButton {
   position: relative;
@@ -71,9 +79,10 @@
   height: var(--desktop-avatar-size);
   padding: 0;
   overflow: visible;
-  border: 0;
+  border: 3px solid var(--ui-app-bg);
   border-radius: 50%;
-  background: transparent;
+  background: var(--ui-app-bg);
+  box-shadow: 0 3px 14px rgb(0 0 0 / 0.14);
   font-size: 12px !important;
   font-weight: 700 !important;
   transition:
@@ -85,8 +94,6 @@
   height: 100%;
   object-fit: cover;
   border-radius: 50%;
-  -webkit-mask-image: radial-gradient(circle at center, #000 60%, transparent 100%);
-  mask-image: radial-gradient(circle at center, #000 60%, transparent 100%);
 }
 .avatarButton[data-unread='true'] {
   animation: desktopAvatarPulse 1.8s ease-in-out infinite;
@@ -123,79 +130,12 @@
       0 0 30px var(--ui-accent-soft);
   }
 }
-.mainMenu {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  overflow: auto;
-  scrollbar-width: none;
-}
-.mainMenu button {
-  flex-shrink: 0;
-  font-size: 12px;
-  padding: 6px 11px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  white-space: nowrap;
-}
-.mainMenu button:hover,
-.mainMenu button[data-current='true'],
-.topIcon:hover {
-  background: var(--ui-fill-hover);
-}
-.mainMenu button[data-current='true'] {
-  font-weight: 600;
-}
-.status {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  white-space: nowrap;
-}
-.connection {
-  display: inline-flex;
-  color: var(--ui-text-muted);
-}
-.wallpaperStatus {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  border: 0;
-  padding: 4px 6px;
-  background: transparent;
-  color: var(--ui-text-muted);
-  font-size: 11px !important;
-}
-.connection[data-tone='online'] {
-  color: #66a883;
-}
-.connection[data-tone='offline'] {
-  color: var(--ui-danger-fg);
-}
-.topIcon {
-  border: 0;
-  border-radius: 6px;
-  padding: 6px;
-  background: transparent;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-.clock {
-  font-size: 11px;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
 .workspace {
   position: absolute;
-  top: var(--desktop-bar);
+  top: var(--desktop-content-inset);
   left: 16px;
   right: 16px;
-  bottom: 96px;
+  bottom: var(--desktop-bottom-inset);
   pointer-events: none;
   z-index: 10;
 }
@@ -304,8 +244,8 @@
 }
 .whisper {
   position: absolute;
-  top: var(--desktop-bar);
-  bottom: 96px;
+  top: var(--desktop-content-inset);
+  bottom: var(--desktop-bottom-inset);
   width: 380px;
   z-index: 30;
   display: flex;
@@ -394,58 +334,13 @@
   border-radius: 50%;
   background: var(--ui-accent);
 }
-.companion {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 25;
-}
-.companionMenu {
-  position: fixed;
-  pointer-events: auto;
-  width: 205px;
-  padding: 14px;
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 12px;
-  background: var(--ui-app-bg);
-  box-shadow: 0 12px 36px rgb(0 0 0 / 0.18);
-  z-index: 60;
-  font-size: 12px;
-}
-.companionMenu label {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-.companionMenu button {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-top: 12px;
-  padding: 5px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-}
 .dock {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
   display: flex;
-  align-items: end;
-  gap: 8px;
-  min-height: 65px;
-  max-width: calc(100% - 32px);
-  padding: 9px 12px;
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 22px;
-  background: color-mix(in srgb, var(--ui-app-bg) 66%, transparent);
-  backdrop-filter: blur(30px) saturate(160%);
-  box-shadow:
-    0 10px 36px rgb(0 0 0 / 0.2),
-    inset 0 1px 0 rgb(255 255 255 / 0.16);
+  align-items: center;
+  min-width: 0;
+  height: var(--desktop-icon-size);
+  gap: var(--desktop-item-gap);
+  pointer-events: auto;
 }
 .dock[data-drop='true'] {
   outline: 2px solid var(--ui-accent);
@@ -453,13 +348,13 @@
 }
 .dockItem {
   position: relative;
-  flex: 0 0 48px;
+  flex: 0 0 var(--desktop-icon-size);
 }
 .appIcon,
 .internalDockItem,
 .allAppsButton {
-  width: 48px;
-  height: 48px;
+  width: var(--desktop-icon-size);
+  height: var(--desktop-icon-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -478,7 +373,7 @@
 .appIcon:hover,
 .internalDockItem:hover,
 .allAppsButton:hover {
-  transform: translateY(-6px) scale(1.08);
+  transform: translateY(-3px) scale(1.04);
   background: var(--ui-fill-hover);
 }
 .appIcon img {
@@ -491,13 +386,54 @@
   opacity: 0.55;
 }
 .internalDockItem {
-  color: var(--ui-accent);
-  background: var(--ui-accent-soft);
+  color: var(--ui-text-muted);
+  background: transparent;
   flex-shrink: 0;
 }
-.internalDockItem span {
-  font-size: 18px;
-  font-weight: 600;
+.internalDockItem[data-current='true'] {
+  color: var(--ui-accent);
+  border-color: var(--ui-accent-soft);
+  background: var(--ui-accent-soft);
+}
+.productViewport {
+  min-width: 0;
+  overflow-x: auto;
+  padding: 8px 2px;
+  margin: -8px -2px;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+  pointer-events: auto;
+}
+.productItems {
+  width: max-content;
+}
+.productNav {
+  display: flex;
+  align-items: center;
+  gap: var(--desktop-item-gap);
+}
+.productTooltip {
+  position: fixed;
+  z-index: 80;
+  transform: translateX(-50%);
+  padding: 5px 9px;
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 7px;
+  background: var(--ui-app-bg);
+  color: var(--ui-text-strong);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.productUnread {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-accent);
 }
 .runningDot {
   position: absolute;
@@ -520,6 +456,9 @@
   background: var(--ui-accent-soft);
   border-color: var(--ui-accent);
 }
+.appIcon:focus-visible,
+.internalDockItem:focus-visible,
+.dockMenu button:focus-visible,
 .allAppsButton:focus-visible,
 .dockPicker button:focus-visible {
   outline: 2px solid var(--ui-accent);
@@ -533,8 +472,9 @@
   flex-shrink: 0;
 }
 .dockMenu {
-  position: absolute;
-  bottom: 66px;
+  position: fixed;
+  z-index: 70;
+  bottom: var(--desktop-bottom-inset);
   left: 50%;
   transform: translateX(-50%);
   width: 240px;
@@ -582,52 +522,9 @@
   flex: 0 0 18px;
   object-fit: contain;
 }
-.menuContent {
-  position: absolute;
-  top: calc(100% + 12px);
-  left: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 256px;
-  max-height: calc(100vh - 80px);
-  overflow: auto;
-  padding: 9px;
-  background: var(--ui-app-bg);
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 12px;
-  box-shadow: 0 16px 45px rgb(0 0 0 / 0.2);
-  font-size: 12px;
-}
-.settingsMenu .menuContent {
-  left: auto;
-  right: 0;
-}
-.menuContent strong {
-  padding: 7px 9px;
-  color: var(--ui-text-muted);
-  font-weight: 500;
-}
-.menuContent > button {
-  border: 0;
-  border-radius: 6px;
-  padding: 9px;
-  display: flex;
-  justify-content: space-between;
-  text-align: left;
-  background: transparent;
-}
-.menuContent > button:hover,
-.menuContent > button:focus-visible {
-  background: var(--ui-fill-hover);
-}
-.displaySelect {
-  padding: 9px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-block: 1px solid var(--ui-line-hairline);
-  margin-bottom: 5px;
+.productMenu {
+  width: 200px;
+  transform: none;
 }
 .waiting {
   width: 100vw;
@@ -644,16 +541,28 @@
   border: 1px solid var(--ui-line-standard);
   border-radius: 8px;
 }
-@media (max-width: 1350px) {
-  .mainMenu button {
-    padding: 6px 7px;
+@media (max-width: 760px) {
+  .desktop {
+    --desktop-icon-size: 40px;
+    --desktop-item-gap: 4px;
+    --desktop-bar-padding: 8px;
   }
-  .clock {
-    max-width: 138px;
-    overflow: hidden;
+  .desktop[data-whisper='right'] .workspace,
+  .desktop[data-whisper='left'] .workspace {
+    left: 12px;
+    right: 12px;
   }
-  .status > :first-child {
-    display: none;
+  .whisper {
+    width: min(380px, calc(100% - 24px));
+  }
+}
+@media (max-width: 480px) {
+  .desktop {
+    --desktop-rail-center-width: calc(var(--desktop-avatar-size) + 8px);
+    --desktop-rail-control-size: 40px;
+    --desktop-rail-control-edge: 4px;
+    --desktop-control-gap: 6px;
+    --desktop-bar-padding: 4px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -665,10 +574,9 @@
   }
 }
 
-html.no-blur .topbar,
+html.no-blur .bottomBarBackdrop,
 html.no-blur .window,
 html.no-blur .whisper,
-html.no-blur .dock,
 html.no-blur .dockPicker {
   backdrop-filter: none;
   background: var(--ui-app-bg);
@@ -684,13 +592,13 @@ html.no-blur .dockPicker {
 .dockItems {
   display: flex;
   width: max-content;
-  gap: 8px;
-  align-items: end;
+  gap: var(--desktop-item-gap);
+  align-items: center;
 }
 .dockGroup {
   display: flex;
-  align-items: end;
-  gap: 8px;
+  align-items: center;
+  gap: var(--desktop-item-gap);
   min-width: 0;
 }
 .dockWindowRow {
@@ -723,7 +631,7 @@ html.no-blur .dockPicker {
   color: var(--ui-text-muted);
 }
 
-/* 面板与 Dock 同级，防止 backdrop-filter 改变 fixed 包含块。 */
+/* 底板单独模糊，弹层以视口定位，不受底栏滚动裁切。 */
 .dockPicker {
   position: fixed;
   left: 50%;

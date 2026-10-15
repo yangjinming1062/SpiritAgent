@@ -1,24 +1,14 @@
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import {
-  type IconComponent,
-  LayoutGrid,
-  MessageCircle,
-  Messages,
-  Monitor,
-  Settings,
-  Users,
-  X
-} from '@/shared/lib/icons'
+import { LayoutGrid, Monitor, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
 import type { DesktopBridge } from '@client-shared/ipc/bridge'
 
 import { DesktopDockPicker, type DockPickerMode } from './desktop-dock-picker'
-import { DESKTOP_APPS, type DesktopApp, type DesktopWindowState } from './desktop-layout'
 import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
@@ -26,34 +16,21 @@ type DockState = Awaited<ReturnType<DesktopBridge['dock']['getState']>>
 type DockEntry = DockState['entries'][number]
 type DockTask = Awaited<ReturnType<DesktopBridge['dock']['tasks']>>[number]
 
-type DockMenuTarget = { kind: 'program'; id: string; pinned: boolean } | { kind: 'internal'; id: DesktopApp }
-type DockMenuState = DockMenuTarget & { x: number; focusMenu: boolean }
+type DockMenuTarget = { id: string; pinned: boolean }
+type DockMenuState = DockMenuTarget & { x: number; bottom: number; focusMenu: boolean }
 type DockTaskMenuState = { entryId: string; loading: boolean; tasks: DockTask[] }
 
-const APP_ICONS: Record<DesktopApp, IconComponent> = {
-  chat: MessageCircle,
-  posts: Messages,
-  companion: Users,
-  settings: Settings
-}
-
-function BuiltinAppIcon({ id }: { id: DesktopApp }): React.JSX.Element {
-  const Icon = APP_ICONS[id]
-
-  return <Icon size={23} />
-}
-
 export function DesktopDock({
-  windows,
-  onActivate,
-  onClose,
   menuEnabled,
+  overlayActive,
+  onBeforeOpen,
+  onContentWidthChange,
   onMenuOpenChange
 }: {
-  windows: DesktopWindowState[]
-  onActivate: (id: DesktopApp) => void
-  onClose: (id: DesktopApp) => void
   menuEnabled: boolean
+  overlayActive: boolean
+  onBeforeOpen: () => void
+  onContentWidthChange: (width: number) => void
   onMenuOpenChange: (open: boolean) => void
 }): React.JSX.Element {
   const t = useDesktopStrings()
@@ -72,8 +49,14 @@ export function DesktopDock({
   const [picker, setPicker] = useState<DockPickerMode | null>(null)
   const dockRef = useRef<HTMLElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const allAppsRef = useRef<HTMLButtonElement>(null)
   useInteractiveRegion('desktop-dock', dockRef)
-  useInteractiveRegion('desktop-dock-menu', menuRef)
+  useInteractiveRegion('desktop-dock-menu', menuRef, element => {
+    const rect = element.getBoundingClientRect()
+
+    return new DOMRect(rect.left, rect.top, rect.width, rect.height + 12)
+  })
   const triggerRef = useRef<HTMLElement | null>(null)
   const pickerEpochRef = useRef(0)
   const taskRequestRef = useRef(0)
@@ -93,6 +76,7 @@ export function DesktopDock({
   }, [])
 
   const openPicker = (mode: DockPickerMode, trigger: HTMLElement): void => {
+    onBeforeOpen()
     setMenu(null)
     pickerEpochRef.current += 1
     triggerRef.current = trigger
@@ -100,17 +84,43 @@ export function DesktopDock({
   }
 
   useEffect(() => {
-    if (!menuEnabled) {
+    if (!menuEnabled || !overlayActive) {
       setMenu(null)
       closePicker(false)
     }
-  }, [closePicker, menuEnabled])
+  }, [closePicker, menuEnabled, overlayActive])
 
   useEffect(() => {
     onMenuOpenChange(menu !== null || picker !== null)
-
-    return () => onMenuOpenChange(false)
   }, [menu, onMenuOpenChange, picker])
+
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    const trigger = allAppsRef.current
+    const dock = dockRef.current
+
+    if (!content || !trigger || !dock) {
+      return
+    }
+
+    const update = (): void => {
+      const gap = Number.parseFloat(getComputedStyle(dock).columnGap) || 0
+      const warning = dock.querySelector<HTMLElement>('[role="status"]')
+      onContentWidthChange(
+        trigger.getBoundingClientRect().width +
+          gap +
+          content.getBoundingClientRect().width +
+          (warning ? warning.getBoundingClientRect().width + gap : 0)
+      )
+    }
+
+    const observer = new ResizeObserver(update)
+    observer.observe(content)
+    observer.observe(trigger)
+    update()
+
+    return () => observer.disconnect()
+  }, [onContentWidthChange, state.runningStatus])
 
   useEffect(() => {
     let disposed = false
@@ -258,6 +268,7 @@ export function DesktopDock({
       return
     }
 
+    onBeforeOpen()
     closePicker(false)
     const rect = button.getBoundingClientRect()
     const halfWidth = Math.min(120, (window.innerWidth - 32) / 2)
@@ -265,57 +276,51 @@ export function DesktopDock({
     const requestId = taskRequestRef.current + 1
     taskRequestRef.current = requestId
     triggerRef.current = button
-    setMenuTasks(target.kind === 'program' ? { entryId: target.id, loading: true, tasks: [] } : null)
-    setMenu({ ...target, focusMenu, x: center - dock.left })
+    setMenuTasks({ entryId: target.id, loading: true, tasks: [] })
+    setMenu({ ...target, focusMenu, x: center, bottom: window.innerHeight - dock.top + 12 })
 
-    if (target.kind === 'program') {
-      void shellApi()
-        .dock.tasks(target.id)
-        .then(tasks => {
-          if (taskRequestRef.current !== requestId) {
-            return
-          }
+    void shellApi()
+      .dock.tasks(target.id)
+      .then(tasks => {
+        if (taskRequestRef.current !== requestId) {
+          return
+        }
 
+        setMenuTasks(current =>
+          current?.entryId === target.id ? { entryId: target.id, loading: false, tasks } : current
+        )
+      })
+      .catch(() => {
+        if (taskRequestRef.current === requestId) {
           setMenuTasks(current =>
-            current?.entryId === target.id ? { entryId: target.id, loading: false, tasks } : current
+            current?.entryId === target.id ? { entryId: target.id, loading: false, tasks: [] } : current
           )
-        })
-        .catch(() => {
-          if (taskRequestRef.current === requestId) {
-            setMenuTasks(current =>
-              current?.entryId === target.id ? { entryId: target.id, loading: false, tasks: [] } : current
-            )
-          }
-        })
-    }
+        }
+      })
   }
 
   const menuIndex = state.entries.findIndex(entry => entry.id === menu?.id)
 
-  const menuEntry =
-    menu?.kind === 'program'
-      ? menu.pinned
-        ? state.entries[menuIndex]
-        : state.runningEntries.find(entry => entry.id === menu.id)
-      : undefined
-
-  const menuWindow = menu?.kind === 'internal' ? windows.find(item => item.id === menu.id) : undefined
+  const menuEntry = menu
+    ? menu.pinned
+      ? state.entries[menuIndex]
+      : state.runningEntries.find(entry => entry.id === menu.id)
+    : undefined
 
   useEffect(() => {
-    if (menu && !menuEntry && !menuWindow) {
+    if (menu && !menuEntry) {
       setMenu(null)
     }
-  }, [menu, menuEntry, menuWindow])
+  }, [menu, menuEntry])
 
   useEffect(() => {
-    if (!menu || menu.kind !== 'program') {
+    if (!menu) {
       taskRequestRef.current += 1
       setMenuTasks(null)
     }
   }, [menu])
 
-  const visibleMenuTasks =
-    menu?.kind === 'program' && menuTasks?.entryId === menu.id && !menuTasks.loading ? menuTasks.tasks : []
+  const visibleMenuTasks = menuTasks?.entryId === menu?.id && !menuTasks?.loading ? (menuTasks?.tasks ?? []) : []
 
   const reorder = (from: string, to: string): void => {
     const ids = state.entries.map(entry => entry.id)
@@ -379,7 +384,7 @@ export function DesktopDock({
           onClick={() => void run(() => shellApi().dock.activate(entry.id))}
           onContextMenu={event => {
             event.preventDefault()
-            openMenu({ kind: 'program', id: entry.id, pinned }, event.currentTarget)
+            openMenu({ id: entry.id, pinned }, event.currentTarget)
           }}
           onDragEnd={() => {
             draggedItem.current = null
@@ -394,7 +399,7 @@ export function DesktopDock({
           onKeyDown={event => {
             if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
               event.preventDefault()
-              openMenu({ kind: 'program', id: entry.id, pinned }, event.currentTarget, true)
+              openMenu({ id: entry.id, pinned }, event.currentTarget, true)
             }
           }}
           title={
@@ -455,13 +460,14 @@ export function DesktopDock({
             }
           }}
           onDrop={event => dropAt(event)}
+          ref={allAppsRef}
           title={t.allApps}
           type="button"
         >
           <LayoutGrid size={25} />
         </button>
         <div className={styles.dockViewport} onScroll={() => setMenu(null)}>
-          <div className={styles.dockItems}>
+          <div className={styles.dockItems} ref={contentRef}>
             <div
               aria-label={t.pinnedApps}
               className={styles.dockGroup}
@@ -480,38 +486,8 @@ export function DesktopDock({
             >
               {state.entries.map(entry => renderProgram(entry, true))}
             </div>
-            {(windows.length > 0 || state.runningEntries.length > 0) && <span className={styles.dockDivider} />}
+            {state.entries.length > 0 && state.runningEntries.length > 0 && <span className={styles.dockDivider} />}
             <div aria-label={t.runningApps} className={styles.dockGroup} role="group">
-              {windows
-                .toSorted((a, b) => DESKTOP_APPS.indexOf(a.id) - DESKTOP_APPS.indexOf(b.id))
-                .map(item => {
-                  const label = `${t[item.id]} · ${t.running}${item.minimized ? ` · ${t.minimizedWindow}` : ''}`
-
-                  return (
-                    <button
-                      aria-label={label}
-                      className={styles.internalDockItem}
-                      data-minimized={item.minimized}
-                      key={item.id}
-                      onClick={() => onActivate(item.id)}
-                      onContextMenu={event => {
-                        event.preventDefault()
-                        openMenu({ kind: 'internal', id: item.id }, event.currentTarget)
-                      }}
-                      onKeyDown={event => {
-                        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                          event.preventDefault()
-                          openMenu({ kind: 'internal', id: item.id }, event.currentTarget, true)
-                        }
-                      }}
-                      title={label}
-                      type="button"
-                    >
-                      <BuiltinAppIcon id={item.id} />
-                      <i aria-hidden="true" className={styles.runningDot} />
-                    </button>
-                  )
-                })}
               {state.runningEntries.map(entry => renderProgram(entry, false))}
             </div>
           </div>
@@ -526,20 +502,20 @@ export function DesktopDock({
             !
           </span>
         )}
-        {menuEnabled && menu && (menuEntry || menuWindow) && (
+        {menuEnabled && menu && menuEntry && (
           <div
             className={styles.dockMenu}
             onPointerDown={event => event.stopPropagation()}
             ref={menuRef}
             role="menu"
-            style={{ left: menu.x }}
+            style={{ left: menu.x, bottom: menu.bottom }}
           >
-            {menu.kind === 'program' && menuTasks?.entryId === menu.id && menuTasks.loading && (
+            {menuTasks?.entryId === menu.id && menuTasks.loading && (
               <div className={styles.dockMenuHeading} role="presentation">
                 {t.tasksLoading}
               </div>
             )}
-            {menu.kind === 'program' && visibleMenuTasks.length > 0 && (
+            {visibleMenuTasks.length > 0 && (
               <>
                 <div className={styles.dockMenuHeading} role="presentation">
                   {t.tasks}
@@ -562,19 +538,7 @@ export function DesktopDock({
                 <div className={styles.dockMenuSeparator} role="separator" />
               </>
             )}
-            {menuWindow && (
-              <button
-                onClick={() => {
-                  onClose(menuWindow.id)
-                  setMenu(null)
-                }}
-                role="menuitem"
-                type="button"
-              >
-                {t.closeWindow}
-              </button>
-            )}
-            {menuEntry && menu.kind === 'program' && (
+            {menuEntry && (
               <>
                 {menuEntry.windows.map(runningWindow => (
                   <div className={styles.dockWindowRow} key={runningWindow.id}>

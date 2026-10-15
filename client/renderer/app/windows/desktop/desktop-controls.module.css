@@ -1,0 +1,299 @@
+.root {
+  --control-size: var(--desktop-rail-control-size, var(--desktop-control-size, 44px));
+  --control-edge: var(--desktop-rail-control-edge, var(--desktop-control-edge, 16px));
+  --control-bottom: calc(var(--desktop-bar-bottom, 12px) + (var(--desktop-bar-height, 64px) - var(--control-size)) / 2);
+  --panel-gap: 12px;
+  --panel-width: min(340px, calc(100vw - 2 * var(--control-edge)));
+  position: absolute;
+  right: var(--control-edge);
+  bottom: var(--control-bottom);
+  z-index: 65;
+  width: var(--control-size);
+  height: var(--control-size);
+  pointer-events: none;
+}
+
+.trigger {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  pointer-events: auto;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--ui-app-bg) 78%, transparent);
+  color: var(--ui-text-muted);
+  backdrop-filter: blur(28px) saturate(150%);
+  box-shadow: 0 5px 18px rgb(0 0 0 / 0.12);
+  transition:
+    background 150ms,
+    color 150ms;
+}
+
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  background: var(--ui-app-bg);
+  color: var(--ui-text-strong);
+}
+
+.trigger[aria-expanded='true'] {
+  border-color: var(--ui-line-strong);
+}
+
+.trigger:focus-visible,
+.panel button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.issueDot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--ui-app-bg);
+  border-radius: 50%;
+  background: var(--ui-danger-fg);
+}
+
+.gap {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  width: var(--panel-width);
+  height: var(--panel-gap);
+  pointer-events: auto;
+}
+
+/* 弹层与模糊按钮分离，避免 fixed 下拉层受模糊包含块影响。 */
+.panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--panel-gap));
+  display: flex;
+  flex-direction: column;
+  width: var(--panel-width);
+  max-height: calc(100vh - var(--control-bottom) - var(--control-size) - var(--panel-gap) - var(--control-edge));
+  gap: 16px;
+  padding: 18px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  pointer-events: auto;
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 20px;
+  background: var(--ui-app-bg);
+  color: var(--ui-text-strong);
+  box-shadow:
+    0 18px 48px rgb(0 0 0 / 0.2),
+    0 1px 4px rgb(0 0 0 / 0.06);
+  font-size: 12px;
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.panel > * {
+  flex-shrink: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.header > strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-text-muted);
+}
+
+.close:hover {
+  background: var(--ui-fill-hover);
+}
+
+.clock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 3px;
+}
+
+.time {
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.date {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+
+.statuses {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+
+.connection[data-tone='online'] {
+  color: #66a883;
+}
+
+.connection[data-tone='offline'] {
+  color: var(--ui-danger-fg);
+}
+
+.wallpaper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px;
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 11px;
+  background: var(--ui-fill-faint);
+  color: var(--ui-text-muted);
+  text-align: left;
+}
+
+.wallpaper > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.wallpaper strong {
+  color: var(--ui-text-strong);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.wallpaper span span {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.wallpaper[data-error='true'] span span {
+  color: var(--ui-danger-fg);
+}
+
+.wallpaper:hover {
+  background: var(--ui-fill-hover);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 下拉列表参与面板滚动，避免短屏下被滚动边界裁切。 */
+.field :global([role='listbox']) {
+  position: static;
+  width: 100%;
+  margin: 4px 0 0;
+}
+
+.hint {
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.notice {
+  margin: 0;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-line-hairline);
+}
+
+.actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 9px;
+  background: var(--ui-fill-faint);
+  color: var(--ui-text-strong);
+  font-size: 12px;
+}
+
+.actions button:hover:not(:disabled) {
+  background: var(--ui-fill-hover);
+}
+
+.actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.actions .quit {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ui-text-muted);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+html.no-blur .trigger {
+  background: var(--ui-app-bg);
+  backdrop-filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trigger {
+    transition: none;
+  }
+}
