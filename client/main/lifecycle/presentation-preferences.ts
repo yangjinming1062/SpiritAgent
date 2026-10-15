@@ -5,20 +5,17 @@ import type { PresentationMode } from '@ipc/contracts'
 import { atomicWriteFile, createSerialQueue, safeReadJson } from '../shared/utils'
 
 interface PresentationPreferences {
-  version: 2
   mode: PresentationMode
   displayId: number | null
 }
 
 export function createPresentationPreferences(userData: string) {
   const filename = path.join(userData, 'desktop-presentation.json')
-  const raw = safeReadJson<Partial<Omit<PresentationPreferences, 'version'>> & { version?: number }>(filename)
-  const supported = raw?.version === 1 || raw?.version === 2
+  const raw = safeReadJson<Partial<PresentationPreferences>>(filename)
 
   let state: PresentationPreferences = {
-    version: 2,
-    mode: supported && raw.mode === 'desktop' ? 'desktop' : 'window',
-    displayId: supported && Number.isSafeInteger(raw.displayId) ? (raw.displayId ?? null) : null
+    mode: raw?.mode === 'desktop' ? 'desktop' : 'window',
+    displayId: Number.isSafeInteger(raw?.displayId) ? (raw?.displayId ?? null) : null
   }
 
   const serial = createSerialQueue()

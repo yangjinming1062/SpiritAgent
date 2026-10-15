@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -17,26 +17,6 @@ export function isPackagedAppTarget(target: string): boolean {
     target.startsWith(APP_TARGET_PREFIX) &&
     /^[A-Za-z0-9.-]+_[A-Za-z0-9]+![A-Za-z0-9._-]+$/.test(target.slice(APP_TARGET_PREFIX.length))
   )
-}
-
-export async function launchPackagedApplication(target: string): Promise<void> {
-  if (!isPackagedAppTarget(target)) {
-    throw new Error('无效 Windows 应用。')
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    // Explorer 仅提交激活请求，退出码不表示应用启动结果；默认显示状态允许前台激活。
-    const child = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe'), [target], {
-      detached: true,
-      stdio: 'ignore'
-    })
-
-    child.once('error', reject)
-    child.once('spawn', () => {
-      child.unref()
-      resolve()
-    })
-  })
 }
 
 async function queryApplications(script: string): Promise<InstalledApplication[]> {

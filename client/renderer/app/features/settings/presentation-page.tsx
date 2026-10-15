@@ -4,6 +4,7 @@ import { useState } from 'react'
 
 import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { presentationDisplayOptions } from '@/shared/lib/presentation-displays'
 import { BTN_SUBTLE, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
 import { shellApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
@@ -16,6 +17,10 @@ export function PresentationPage(): React.JSX.Element {
   const beginAsync = useAsyncGuard()
 
   const selectDisplay = async (value: string): Promise<void> => {
+    if (!value) {
+      return
+    }
+
     const isLive = beginAsync()
     setDisplayBusy(true)
 
@@ -71,8 +76,8 @@ export function PresentationPage(): React.JSX.Element {
           <SettingRow
             description={
               english
-                ? 'Desktop controls and background appear on this display.'
-                : '桌面控制界面与背景显示在这块屏幕上。'
+                ? 'Use only this display. Other displays keep the Windows desktop. A secondary display is selected by default.'
+                : '仅使用此屏，其他屏幕保留 Windows。首次启用默认优先副屏。'
             }
             label={english ? 'Display' : '显示屏'}
           >
@@ -80,10 +85,7 @@ export function PresentationPage(): React.JSX.Element {
               ariaLabel={english ? 'Interactive display' : '交互显示器'}
               disabled={displayBusy || busy || !state.displays.length}
               onChange={value => void selectDisplay(value)}
-              options={state.displays.map(display => ({
-                value: String(display.id),
-                label: `${display.label} · ${display.width} × ${display.height}`
-              }))}
+              options={presentationDisplayOptions(state, english)}
               value={String(state.displayId ?? '')}
               widthClass="w-56"
             />

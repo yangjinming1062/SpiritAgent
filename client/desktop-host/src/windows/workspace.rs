@@ -51,6 +51,60 @@ fn device(value: &MONITORINFOEXW) -> String {
     String::from_utf16_lossy(&value.szDevice[..end])
 }
 
+struct DpiProbe(HWND);
+
+impl Drop for DpiProbe {
+    fn drop(&mut self) {
+        unsafe {
+            DestroyWindow(self.0);
+        }
+    }
+}
+
+fn monitor_dpi(monitor: HMONITOR) -> Result<u32> {
+    if unsafe {
+        AreDpiAwarenessContextsEqual(
+            GetThreadDpiAwarenessContext(),
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        )
+    } == 0
+    {
+        return Err("读取屏幕缩放比例需要按显示器感知的桌面宿主。".into());
+    }
+    let area = bounds(info(monitor)?.monitorInfo.rcMonitor);
+    // GetDpiForMonitor 不支持 PMv2 调用方；自有隐藏窗口可读取屏幕 DPI，且不受程序自身感知级别影响。
+    let window = unsafe {
+        CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            wide("STATIC").as_ptr(),
+            wide("").as_ptr(),
+            WS_POPUP,
+            area.x,
+            area.y,
+            1,
+            1,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null(),
+        )
+    };
+    if window.is_null() {
+        return Err(failure("读取显示器缩放比例失败"));
+    }
+    let probe = DpiProbe(window);
+    if unsafe { IsWindowVisible(probe.0) } != 0
+        || unsafe { MonitorFromWindow(probe.0, MONITOR_DEFAULTTONULL) } != monitor
+    {
+        return Err("读取缩放比例时显示器已改变。".into());
+    }
+    let dpi = unsafe { GetDpiForWindow(probe.0) };
+    if dpi == 0 {
+        return Err(failure("读取显示器缩放比例失败"));
+    }
+    Ok(dpi)
+}
+
 unsafe extern "system" fn collect_monitor(
     monitor: HMONITOR,
     _: HDC,
@@ -172,7 +226,205 @@ pub(super) struct Workspace {
     refused: HashSet<usize>,
 }
 
+pub(super) struct WindowRelocation {
+    identity: Identity,
+    target: Bounds,
+    maximized: bool,
+    destination_dpi: u32,
+    observed: Option<(Bounds, u32, Instant)>,
+    corrected: bool,
+}
+
+impl WindowRelocation {
+    pub(super) fn poll(&mut self, workspace: &Workspace) -> Result<bool> {
+        if !self.identity.valid() {
+            return Err("程序窗口已关闭或改变，无法完成移动。".into());
+        }
+        let window = self.identity.window();
+        if !workspace.on_display(window) || unsafe { IsIconic(window) } != 0 {
+            self.observed = None;
+            return Ok(false);
+        }
+        let dpi = unsafe { GetDpiForWindow(window) };
+        let awareness = unsafe {
+            GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(window))
+        };
+        if awareness == DPI_AWARENESS_PER_MONITOR_AWARE && dpi != self.destination_dpi {
+            self.observed = None;
+            return Ok(false);
+        }
+        let mut placement: WINDOWPLACEMENT = unsafe { zeroed() };
+        placement.length = size_of::<WINDOWPLACEMENT>() as u32;
+        if unsafe { GetWindowPlacement(window, &mut placement) } == 0 {
+            return Err(failure("复核程序窗口位置失败"));
+        }
+        if (unsafe { IsZoomed(window) } != 0) != self.maximized {
+            return Err("程序窗口状态已改变，未继续调整位置。".into());
+        }
+        let current = bounds(placement.rcNormalPosition);
+        if self
+            .observed
+            .as_ref()
+            .is_none_or(|(last, last_dpi, _)| *last != current || *last_dpi != dpi)
+        {
+            self.observed = Some((current, dpi, Instant::now()));
+            return Ok(false);
+        }
+        if self
+            .observed
+            .as_ref()
+            .is_some_and(|(_, _, started)| started.elapsed() < Duration::from_millis(100))
+        {
+            return Ok(false);
+        }
+        if current.within_tolerance(self.target, 2) && workspace.placed(window) {
+            return Ok(true);
+        }
+        if self.corrected {
+            return Ok(false);
+        }
+        // 目标程序已处理首次 WM_DPICHANGED；在相同 DPI 上校正最终物理尺寸，避免重复缩放。
+        placement.rcNormalPosition = rect(self.target);
+        placement.flags = WPF_ASYNCWINDOWPLACEMENT;
+        placement.showCmd = SW_SHOWNA as u32;
+        if unsafe { SetWindowPlacement(window, &placement) } == 0 {
+            return Err(failure("程序拒绝调整移动后的窗口尺寸"));
+        }
+        self.corrected = true;
+        self.observed = None;
+        Ok(false)
+    }
+}
+
 impl Workspace {
+    pub(super) fn monitor(&self) -> Result<HMONITOR> {
+        let rectangle = rect(self.original.monitor);
+        let monitor = unsafe { MonitorFromRect(&rectangle, MONITOR_DEFAULTTONULL) };
+        if monitor.is_null() || device(&info(monitor)?) != self.original.device {
+            return Err("桌面屏幕已断开，请重新选择屏幕。".into());
+        }
+        Ok(monitor)
+    }
+
+    pub(super) fn on_display(&self, window: HWND) -> bool {
+        // MonitorFromWindow 对最小化窗口使用最小化前的矩形。
+        info(unsafe { MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) })
+            .is_ok_and(|value| device(&value) == self.original.device)
+    }
+
+    pub(super) fn placed(&self, window: HWND) -> bool {
+        self.on_display(window)
+            && unsafe { IsIconic(window) } == 0
+            && visible_bounds(window).is_ok_and(|area| {
+                contains(
+                    Bounds {
+                        x: self.target.x - 2,
+                        y: self.target.y - 2,
+                        width: self.target.width + 4,
+                        height: self.target.height + 4,
+                    },
+                    area,
+                )
+            })
+    }
+
+    pub(super) fn move_to_display(&self, window: HWND) -> Result<WindowRelocation> {
+        if !self.enabled {
+            return Err("桌面探测模式不能移动程序窗口。".into());
+        }
+        if unsafe { IsWindow(window) } == 0 {
+            return Err("窗口已关闭，请重新选择程序。".into());
+        }
+        let identity = Identity::capture(window)?;
+        let source_monitor = unsafe { MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) };
+        let source = info(source_monitor)?;
+        let destination = self.monitor()?;
+        let mut placement: WINDOWPLACEMENT = unsafe { zeroed() };
+        placement.length = size_of::<WINDOWPLACEMENT>() as u32;
+        if unsafe { GetWindowPlacement(window, &mut placement) } == 0 {
+            return Err(failure("读取程序窗口位置失败"));
+        }
+        let was_maximized = placement.showCmd == SW_SHOWMAXIMIZED as u32
+            || (unsafe { IsIconic(window) } != 0 && placement.flags & WPF_RESTORETOMAXIMIZED != 0);
+        let source_area = bounds(source.monitorInfo.rcMonitor);
+        let source_work = bounds(source.monitorInfo.rcWork);
+        if !was_maximized && unsafe { IsIconic(window) } == 0 {
+            let area = visible_bounds(window)?;
+            if unsafe { GetWindowLongPtrW(window, GWL_STYLE) as u32 & WS_CAPTION == 0 }
+                && area.x <= source_area.x + 2
+                && area.y <= source_area.y + 2
+                && area.x + area.width >= source_area.x + source_area.width - 2
+                && area.y + area.height >= source_area.y + source_area.height - 2
+            {
+                return Err("该程序正在独占全屏，请先退出全屏再移动。".into());
+            }
+        }
+        let source_dpi = monitor_dpi(source_monitor)?;
+        let destination_dpi = monitor_dpi(destination)?;
+        let scale = |value: i32| -> i32 {
+            (i64::from(value) * i64::from(destination_dpi) / i64::from(source_dpi))
+                .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+        };
+        // WINDOWPLACEMENT 普通窗口使用工作区坐标，工具窗口使用屏幕坐标。
+        let tool = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW != 0 };
+        let mut normal = bounds(placement.rcNormalPosition);
+        if !tool {
+            normal.x += source_work.x - source_area.x;
+            normal.y += source_work.y - source_area.y;
+        }
+        let width = scale(normal.width).clamp(1, self.target.width);
+        let height = scale(normal.height).clamp(1, self.target.height);
+        let x = (self.target.x + scale(normal.x - source_work.x))
+            .clamp(self.target.x, self.target.x + self.target.width - width);
+        let y = (self.target.y + scale(normal.y - source_work.y))
+            .clamp(self.target.y, self.target.y + self.target.height - height);
+        let mut target = Bounds {
+            x,
+            y,
+            width,
+            height,
+        };
+        // 首次只进入目标显示器；程序可能按 WM_DPICHANGED 建议矩形自行缩放。
+        let mut transition = Bounds {
+            x,
+            y,
+            width: normal.width.clamp(1, self.target.width),
+            height: normal.height.clamp(1, self.target.height),
+        };
+        transition.x = transition.x.clamp(
+            self.target.x,
+            self.target.x + self.target.width - transition.width,
+        );
+        transition.y = transition.y.clamp(
+            self.target.y,
+            self.target.y + self.target.height - transition.height,
+        );
+        if !tool {
+            target.x -= self.target.x - self.original.monitor.x;
+            target.y -= self.target.y - self.original.monitor.y;
+            transition.x -= self.target.x - self.original.monitor.x;
+            transition.y -= self.target.y - self.original.monitor.y;
+        }
+        placement.rcNormalPosition = rect(transition);
+        placement.flags = WPF_ASYNCWINDOWPLACEMENT;
+        placement.showCmd = if was_maximized {
+            SW_SHOWMAXIMIZED
+        } else {
+            SW_SHOWNOACTIVATE
+        } as u32;
+        if unsafe { SetWindowPlacement(window, &placement) } == 0 {
+            return Err(failure("Windows 拒绝移动程序窗口"));
+        }
+        Ok(WindowRelocation {
+            identity,
+            target,
+            maximized: was_maximized,
+            destination_dpi,
+            observed: None,
+            corrected: false,
+        })
+    }
+
     pub(super) fn prepare(
         requested: Bounds,
         display: Bounds,

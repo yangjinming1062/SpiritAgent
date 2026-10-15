@@ -54,13 +54,11 @@ struct WindowSpec {
 }
 
 #[cfg(windows)]
-#[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum WindowRole {
-    #[default]
     Background,
     Overlay,
-    Companion,
 }
 
 #[cfg(windows)]
@@ -94,6 +92,12 @@ enum Command {
     ActivateExternal {
         id: u32,
         window_id: String,
+        allow_remote: bool,
+    },
+    LaunchExternal {
+        id: u32,
+        target: String,
+        app_id: String,
     },
     CloseExternal {
         id: u32,
@@ -123,6 +127,7 @@ impl Command {
             | Self::Focus { id, .. }
             | Self::RefreshApplications { id }
             | Self::ActivateExternal { id, .. }
+            | Self::LaunchExternal { id, .. }
             | Self::CloseExternal { id, .. }
             | Self::GetJumpListTasks { id, .. }
             | Self::ActivateJumpListTask { id, .. }

@@ -255,11 +255,19 @@ export function createUiStateBridge(options: UiStateOptions) {
 
   function register(ipcMain: IpcMain): () => void {
     ipcMain.handle(IPC.invoke.uiStateGet, (event, authSessionId: string) => {
+      if (disposed) {
+        return null
+      }
+
       assertSession(event.sender, authSessionId)
 
       return getSnapshot()
     })
     ipcMain.handle(IPC.invoke.uiStateUpdate, (event, update: MainUiStateUpdate) => {
+      if (disposed) {
+        return
+      }
+
       assertSession(event.sender, update?.authSessionId)
 
       if (isOwner(event.sender) && options.isActiveSender(event.sender)) {
@@ -267,6 +275,10 @@ export function createUiStateBridge(options: UiStateOptions) {
       }
     })
     ipcMain.handle(IPC.invoke.uiStateReady, (event, authSessionId: string, restoredRevision: number) => {
+      if (disposed) {
+        return false
+      }
+
       const accountId = assertSession(event.sender, authSessionId)
       const savedRevision = states.get(accountId)?.revision ?? 0
       const ownsState = isOwner(event.sender)
@@ -280,6 +292,10 @@ export function createUiStateBridge(options: UiStateOptions) {
       return true
     })
     ipcMain.handle(IPC.invoke.uiStateInputBusy, (event, authSessionId: string, raw: UiInputBusyState) => {
+      if (disposed) {
+        return
+      }
+
       assertSession(event.sender, authSessionId, true)
 
       const state = {
@@ -363,6 +379,22 @@ export function createUiStateBridge(options: UiStateOptions) {
     return unregister
   }
 
+  function beginShutdown(): void {
+    if (disposed) {
+      return
+    }
+
+    disposed = true
+    releaseOwner()
+
+    for (const pending of waiting.values()) {
+      pending.reject(new Error('应用正在退出。'))
+    }
+
+    states.clear()
+    clearInputs()
+  }
+
   return {
     register,
     blockedReason,
@@ -428,17 +460,10 @@ export function createUiStateBridge(options: UiStateOptions) {
     forgetAccount: (accountId: string): void => {
       states.delete(accountId)
     },
+    beginShutdown,
     dispose: (): void => {
-      disposed = true
-      releaseOwner()
+      beginShutdown()
       unregister?.()
-
-      for (const pending of waiting.values()) {
-        pending.reject(new Error('应用正在退出。'))
-      }
-
-      states.clear()
-      clearInputs()
     }
   }
 }

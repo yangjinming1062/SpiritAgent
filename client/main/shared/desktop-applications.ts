@@ -8,6 +8,7 @@ export interface RunningApplicationWindow {
   name: string
   title: string
   minimized: boolean
+  onDesktopDisplay: boolean
   lastActive: number
 }
 

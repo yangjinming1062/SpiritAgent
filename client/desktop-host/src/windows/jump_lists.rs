@@ -33,11 +33,11 @@ pub(super) struct JumpListTask {
     icon_path: String,
     icon_index: i32,
     #[serde(skip)]
-    program: String,
+    pub(super) program: String,
     #[serde(skip)]
-    args: String,
+    pub(super) args: String,
     #[serde(skip)]
-    working_directory: String,
+    pub(super) working_directory: String,
 }
 
 #[derive(Default)]
@@ -181,7 +181,7 @@ fn parse_task(bytes: &[u8], target: &str) -> Result<Option<JumpListTask>> {
     if title.is_empty() {
         return Ok(None);
     }
-    let mut args = wide_text(|buffer| unsafe { link.GetArguments(buffer) }).unwrap_or_default();
+    let args = wide_text(|buffer| unsafe { link.GetArguments(buffer) }).unwrap_or_default();
     let mut working_directory =
         wide_text(|buffer| unsafe { link.GetWorkingDirectory(buffer) }).unwrap_or_default();
     let mut icon_index = 0;
@@ -196,15 +196,10 @@ fn parse_task(bytes: &[u8], target: &str) -> Result<Option<JumpListTask>> {
             app_id.clone()
         };
         let shell_target = format!("shell:AppsFolder\\{launch_target}");
-        args = if args.is_empty() {
-            shell_target
-        } else {
-            format!("{shell_target} {args}")
-        };
         icon_index = 0;
         let explorer = explorer_program();
         icon_path = explorer.clone();
-        explorer
+        shell_target
     } else {
         if !Path::new(&program).is_absolute() || !program.to_lowercase().ends_with(".exe") {
             return Ok(None);
@@ -434,26 +429,4 @@ pub(super) fn read_tasks(target: &str, session: &str) -> JumpListRead {
         result.diagnostics.push(error);
     }
     result
-}
-
-pub(super) fn launch_task(task: &JumpListTask) -> Result<()> {
-    if !Path::new(&task.program).is_file() {
-        return Err("Jump List 目标程序不存在".into());
-    }
-    let mut command = ProcessCommand::new(&task.program);
-    command.raw_arg(&task.args).creation_flags(CREATE_NO_WINDOW);
-    if !task.working_directory.is_empty() {
-        if !Path::new(&task.working_directory).is_absolute() {
-            return Err("Jump List 工作目录无效".into());
-        }
-        command.current_dir(&task.working_directory);
-    }
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    command
-        .spawn()
-        .map_err(|error| format!("启动 Jump List 任务失败: {error}"))?;
-    Ok(())
 }

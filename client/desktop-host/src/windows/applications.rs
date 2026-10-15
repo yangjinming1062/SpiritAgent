@@ -1,4 +1,5 @@
 use super::*;
+use super::workspace::WindowRelocation;
 use std::collections::{HashMap, HashSet};
 use windows::Win32::Foundation::{HWND as ComHwnd, PROPERTYKEY};
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc};
@@ -10,6 +11,10 @@ use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyS
 use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
 use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows_sys::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
+
+#[path = "launches.rs"]
+mod launches;
+use launches::{LaunchRequest, Launches};
 
 const APP_ID: PROPERTYKEY = PROPERTYKEY {
     fmtid: windows::core::GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
@@ -42,6 +47,7 @@ struct RunningWindow {
     name: String,
     title: String,
     minimized: bool,
+    on_desktop_display: bool,
     last_active: u64,
 }
 
@@ -170,6 +176,43 @@ fn activation_target(window: HWND) -> Result<HWND> {
     Ok(window)
 }
 
+fn wait_for_window_change(mut ready: impl FnMut() -> bool) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(500) {
+        if ready() {
+            return true;
+        }
+        let mut message: MSG = unsafe { zeroed() };
+        while unsafe { PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
+            unsafe {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    ready()
+}
+
+fn relocate_window(window: HWND, workspace: &Workspace) -> Result<()> {
+    let mut relocation = workspace.move_to_display(window)?;
+    let mut error = None;
+    let completed = wait_for_window_change(|| match relocation.poll(workspace) {
+        Ok(completed) => completed,
+        Err(reason) => {
+            error = Some(reason);
+            true
+        }
+    });
+    if let Some(error) = error {
+        return Err(error);
+    }
+    if !completed {
+        return Err("程序窗口拒绝移动或调整尺寸，请在 Windows 中手动调整。".into());
+    }
+    Ok(())
+}
+
 pub(super) struct Applications {
     desktop: IVirtualDesktopManager,
     // COM 接口须先释放，再退出 apartment。
@@ -183,6 +226,7 @@ pub(super) struct Applications {
     last_scan: Instant,
     revision: u64,
     published: Option<(Vec<RunningWindow>, Option<String>)>,
+    launches: Launches,
 }
 
 impl Applications {
@@ -202,6 +246,7 @@ impl Applications {
             last_scan: Instant::now() - Duration::from_secs(2),
             revision: 0,
             published: None,
+            launches: Launches::default(),
         })
     }
 
@@ -253,7 +298,7 @@ impl Applications {
         .map_err(|e| e.to_string())
     }
 
-    fn scan(&mut self) -> Result<Vec<RunningWindow>> {
+    fn scan(&mut self, workspace: &Workspace) -> Result<Vec<RunningWindow>> {
         let handles = top_windows()?;
         let _ = unsafe {
             self.desktop
@@ -313,6 +358,7 @@ impl Applications {
                             name,
                             title: String::new(),
                             minimized: false,
+                            on_desktop_display: workspace.on_display(window),
                             last_active: if initial { (count - index) as u64 } else { 0 },
                         },
                     },
@@ -335,6 +381,7 @@ impl Applications {
             }
             tracked.value.title = title(window);
             tracked.value.minimized = unsafe { IsIconic(window) } != 0;
+            tracked.value.on_desktop_display = workspace.on_display(window);
             if owned_by(foreground as HWND, window) {
                 tracked.value.last_active = self.activity;
             }
@@ -347,7 +394,7 @@ impl Applications {
         Ok(output)
     }
 
-    pub(super) fn poll(&mut self, events: &[(u32, usize)], force: bool) {
+    pub(super) fn poll(&mut self, events: &[(u32, usize)], force: bool, workspace: &Workspace) {
         let mut changed = false;
         for &(event, handle) in events {
             match event {
@@ -366,17 +413,25 @@ impl Applications {
                 | EVENT_OBJECT_UNCLOAKED
                 | EVENT_SYSTEM_FOREGROUND
                 | EVENT_SYSTEM_MINIMIZESTART
-                | EVENT_SYSTEM_MINIMIZEEND => changed = true,
+                | EVENT_SYSTEM_MINIMIZEEND
+                | EVENT_OBJECT_LOCATIONCHANGE
+                | EVENT_SYSTEM_MOVESIZEEND => changed = true,
                 _ => {}
             }
         }
-        if !force && !changed && self.last_scan.elapsed() < Duration::from_secs(2) {
+        let interval = if self.launches.pending() {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_secs(2)
+        };
+        if !force && !changed && self.last_scan.elapsed() < interval {
             return;
         }
         self.last_scan = Instant::now();
-        let (mut windows, mut error) = match self.scan() {
+        let (mut windows, mut error) = match self.scan(workspace) {
             Ok(windows) => (windows, None),
             Err(error) => {
+                self.windows.clear();
                 if let Ok(desktop) =
                     unsafe { CoCreateInstance(&VirtualDesktopManager, None, CLSCTX_ALL) }
                 {
@@ -385,6 +440,7 @@ impl Applications {
                 (Vec::new(), Some(error))
             }
         };
+        self.launches.poll(&self.windows, workspace);
         let encoded_sizes: Vec<usize> = windows
             .iter()
             .map(|window| {
@@ -427,7 +483,7 @@ impl Applications {
         }
     }
 
-    pub(super) fn close_windows(&self, ids: &[String]) -> Result<()> {
+    pub(super) fn close_windows(&self, ids: &[String], workspace: &Workspace) -> Result<()> {
         if ids.is_empty() || ids.iter().collect::<HashSet<_>>().len() != ids.len() {
             return Err("无效窗口列表。".into());
         }
@@ -439,7 +495,7 @@ impl Applications {
                 .find(|tracked| tracked.value.id == *id)
                 .ok_or("窗口已关闭或桌面已改变，请重新选择。")?;
             let window = tracked.identity.window();
-            if !tracked.identity.valid() || !self.eligible(window)? {
+            if !tracked.identity.valid() || !self.eligible(window)? || !workspace.on_display(window) {
                 return Err("窗口已关闭或已离开当前桌面。".into());
             }
             if unsafe { IsWindowEnabled(window) } == 0 {
@@ -448,8 +504,11 @@ impl Applications {
             targets.push(&tracked.identity);
         }
         for identity in targets {
-            if !identity.valid() {
-                return Err("窗口已关闭，请重新选择程序。".into());
+            if !identity.valid()
+                || !self.eligible(identity.window())?
+                || !workspace.on_display(identity.window())
+            {
+                return Err("窗口已关闭或已离开所选屏幕，请重新选择程序。".into());
             }
             if unsafe { PostMessageW(identity.window(), WM_CLOSE, 0, 0) } == 0 {
                 return Err(failure("请求关闭窗口失败"));
@@ -458,7 +517,7 @@ impl Applications {
         Ok(())
     }
 
-    pub(super) fn activate(&self, id: &str) -> Result<()> {
+    pub(super) fn activate(&self, id: &str, allow_remote: bool, workspace: &Workspace) -> Result<()> {
         let tracked = self
             .windows
             .values()
@@ -468,12 +527,39 @@ impl Applications {
         if !tracked.identity.valid() || !self.eligible(window)? {
             return Err("窗口已关闭或已离开当前桌面。".into());
         }
-        if unsafe { IsIconic(window) } != 0 {
+        if !allow_remote && !workspace.on_display(window) {
+            return Err("窗口已移到其他屏幕，请重新选择程序。".into());
+        }
+        let minimized = unsafe { IsIconic(window) } != 0;
+        let moving_root = !workspace.on_display(window);
+        if moving_root {
+            relocate_window(window, workspace)?;
+        } else if minimized {
             unsafe {
                 ShowWindowAsync(window, SW_RESTORE);
             }
         }
-        let target = activation_target(window)?;
+        if (moving_root || minimized)
+            && !wait_for_window_change(|| {
+                tracked.identity.valid()
+                    && unsafe { IsIconic(window) } == 0
+                    && (!moving_root || workspace.placed(window))
+            })
+        {
+            return Err("程序窗口拒绝还原或移动到所选屏幕，请在 Windows 中手动调整。".into());
+        }
+        // 最小化 owner 会临时隐藏模态弹窗，须等 owner 还原后再查其可交互分支。
+        let mut target = activation_target(window);
+        if minimized && target.is_err() {
+            wait_for_window_change(|| {
+                target = activation_target(window);
+                target.is_ok()
+            });
+        }
+        let target = target?;
+        if target != window && !workspace.on_display(target) {
+            relocate_window(target, workspace)?;
+        }
         let source = unsafe { GetCurrentThreadId() };
         let foreground = unsafe { GetForegroundWindow() };
         let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, null_mut()) };
@@ -516,5 +602,29 @@ impl Applications {
             "Windows 拒绝切换到该窗口，请重试。"
         }
         .into())
+    }
+
+    pub(super) fn launch_external(
+        &mut self,
+        target: &str,
+        app_id: &str,
+        workspace: &Workspace,
+    ) -> Result<()> {
+        let request = LaunchRequest::external(target, app_id)?;
+        self.launches.start(request, workspace)
+    }
+
+    pub(super) fn cancel_launches(&mut self) {
+        self.launches = Launches::default();
+    }
+
+    pub(super) fn launch_jump_list(
+        &mut self,
+        task: &jump_lists::JumpListTask,
+        target: &str,
+        workspace: &Workspace,
+    ) -> Result<()> {
+        let request = LaunchRequest::jump_list(task, target)?;
+        self.launches.start(request, workspace)
     }
 }

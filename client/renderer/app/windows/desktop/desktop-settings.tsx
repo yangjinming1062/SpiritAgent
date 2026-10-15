@@ -5,6 +5,7 @@ import { useRef } from 'react'
 import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
 import { $userPreferredTier, setDisturbanceTier } from '@/modules/character'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { presentationDisplayOptions } from '@/shared/lib/presentation-displays'
 import { PanelSelect } from '@/shared/panel'
 import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
@@ -14,7 +15,7 @@ import styles from './desktop.module.css'
 
 export function DesktopSettings({ onSettings }: { onSettings: () => void }): React.JSX.Element {
   const t = useDesktopStrings()
-  const { busy, switchMode, state } = usePresentationModeSwitch()
+  const { busy, switchMode, state, en } = usePresentationModeSwitch()
   const preferredTier = useStore($userPreferredTier)
   const menuRef = useRef<HTMLDivElement>(null)
   useInteractiveRegion('desktop-settings-popup', menuRef)
@@ -28,17 +29,16 @@ export function DesktopSettings({ onSettings }: { onSettings: () => void }): Rea
           ariaLabel={t.display}
           disabled={busy || !state.displays.length}
           onChange={value =>
+            value &&
             void shellApi()
               .presentation.setDisplay(Number(value))
               .catch(error => notifyError(error, t.display))
           }
-          options={state.displays.map(display => ({
-            value: String(display.id),
-            label: `${display.label} · ${display.width} × ${display.height}`
-          }))}
+          options={presentationDisplayOptions(state, en)}
           value={String(state.displayId ?? '')}
           widthClass="w-full"
         />
+        <span>{t.displayHint}</span>
       </div>
       <div className={styles.displaySelect}>
         <span>{t.disturbance}</span>

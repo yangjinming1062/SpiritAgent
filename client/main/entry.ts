@@ -337,6 +337,7 @@ registerDesktopDock({
   captureEligibility: desktopPresentation.captureApplicationEligibility,
   refreshApplications: desktopPresentation.refreshApplications,
   activateExternal: desktopPresentation.activateExternal,
+  launchExternal: desktopPresentation.launchExternal,
   closeExternal: desktopPresentation.closeExternal,
   getJumpListTasks: desktopPresentation.getJumpListTasks,
   activateJumpListTask: desktopPresentation.activateJumpListTask

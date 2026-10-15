@@ -86,6 +86,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let initialized = false
   let disposed = false
   let desktopRendererHealthy = false
+  let activeDisplay: Electron.Display | null = null
   let disposal: Promise<void> | null = null
   let disposeIpc: (() => void) | null = null
   let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
@@ -212,26 +213,23 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
   function snapshot(): PresentationState {
     const allDisplays = app.isReady() ? screen.getAllDisplays() : []
+    const primaryId = app.isReady() ? screen.getPrimaryDisplay().id : null
 
     const displays = allDisplays.map(display => ({
       id: display.id,
       label: display.label || `显示器 ${display.id}`,
+      isPrimary: display.id === primaryId,
       width: display.bounds.width,
       height: display.bounds.height
     }))
 
     const preferred = preferences.get()
-    const interactive = windows.getInteractive()
-
-    const actual =
-      effectiveMode === 'desktop' && interactive && !interactive.isDestroyed()
-        ? screen.getDisplayMatching(interactive.getBounds())
-        : null
+    const activeDisplayId = activeDisplay?.id
 
     const targetDisplay =
-      actual ??
-      allDisplays.find(display => display.id === preferred.displayId) ??
-      (app.isReady() ? screen.getPrimaryDisplay() : null)
+      activeDisplayId !== undefined
+        ? allDisplays.find(display => display.id === activeDisplayId)
+        : resolveDisplay(allDisplays, preferred.displayId)
 
     const desktopUnlocked =
       (foreground || stageAvailable) && effectiveMode === 'desktop' && powerMonitor.getSystemIdleState(1) !== 'locked'
@@ -263,6 +261,28 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
+  function resolveDisplay(displays: Electron.Display[], preferredId: number | null): Electron.Display | undefined {
+    if (preferredId !== null) {
+      return displays.find(display => display.id === preferredId)
+    }
+
+    const primaryId = app.isReady() ? screen.getPrimaryDisplay().id : null
+
+    return displays.find(display => display.id !== primaryId) ?? displays[0]
+  }
+
+  function sameDisplayGeometry(left: Electron.Display, right: Electron.Display): boolean {
+    return (
+      left.id === right.id &&
+      left.scaleFactor === right.scaleFactor &&
+      left.rotation === right.rotation &&
+      left.bounds.x === right.bounds.x &&
+      left.bounds.y === right.bounds.y &&
+      left.bounds.width === right.bounds.width &&
+      left.bounds.height === right.bounds.height
+    )
+  }
+
   function publish(): void {
     revision += 1
     broadcastToAllWindows(IPC.event.presentationChanged, snapshot())
@@ -279,12 +299,13 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     desktopRendererHealthy = false
     activityBySource.desktop = { state: 'idle', voicePreparing: false }
     windows.destroy()
+    activeDisplay = null
     stageAvailable = false
     fullscreen = false
     background.reset()
   }
 
-  function scheduleRecovery(reason: string): void {
+  function scheduleRecovery(reason: string, recordInterruption = true): void {
     if (status === 'inactive' || status === 'failed') {
       return
     }
@@ -294,11 +315,21 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     publish()
 
     void serial(async () => {
+      if (!recordInterruption) {
+        suppressAutoRestore = true
+
+        try {
+          await preferences.set({ mode: 'window' })
+        } catch (error) {
+          options.log(`[desktop] saving disconnected display mode: ${errorMessage(error)}`)
+        }
+      }
+
       if (status === 'inactive' || status === 'failed') {
         return
       }
 
-      await leave(reason)
+      await leave(reason, false, recordInterruption)
     }).catch(error => options.log(`[desktop] recovery: ${errorMessage(error)}`))
   }
 
@@ -308,7 +339,11 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     windows.invalidateReady(reason)
   }
 
-  async function leave(reason?: string, preservePreparation = false): Promise<void> {
+  async function leave(
+    reason?: string,
+    preservePreparation = false,
+    recordInterruption = Boolean(reason)
+  ): Promise<void> {
     let finalReason = reason
 
     const source = windows.getInteractive()
@@ -343,19 +378,20 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       uiState.releaseOwner()
     }
 
-    const recording = reason
-      ? Promise.resolve()
-          .then(() => atomicWriteFile(mainInterruptedFile, 'main_failure'))
-          .catch(error => {
-            const message = `[desktop] interruption marker write: ${errorMessage(error)}`
+    const recording =
+      recordInterruption && reason
+        ? Promise.resolve()
+            .then(() => atomicWriteFile(mainInterruptedFile, 'main_failure'))
+            .catch(error => {
+              const message = `[desktop] interruption marker write: ${errorMessage(error)}`
 
-            try {
-              options.log(message)
-            } catch {
-              console.warn(message)
-            }
-          })
-      : Promise.resolve()
+              try {
+                options.log(message)
+              } catch {
+                console.warn(message)
+              }
+            })
+        : Promise.resolve()
 
     try {
       await native.stop()
@@ -449,8 +485,16 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     try {
       const allDisplays = screen.getAllDisplays()
 
-      const selected =
-        allDisplays.find(display => display.id === preferences.get().displayId) ?? screen.getPrimaryDisplay()
+      const selected = resolveDisplay(allDisplays, preferences.get().displayId)
+
+      if (!selected) {
+        await preferences.set({ mode: 'window' })
+        throw new Error('所选显示器未连接，请重新选择显示屏。')
+      }
+
+      await preferences.set({ displayId: selected.id })
+      assertAttempt()
+      activeDisplay = { ...selected, bounds: { ...selected.bounds } }
 
       const main = windows.createInteractive(selected)
       main.webContents.once('render-process-gone', () => {
@@ -522,7 +566,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       options.getSpriteWindow()?.hide()
       publish()
     } catch (error) {
-      await leave(errorMessage(error))
+      await leave(errorMessage(error), false, activeDisplay !== null)
       throw error
     }
   }
@@ -580,6 +624,45 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function onDisplaysChanged(): void {
+    const activeDisplayId = activeDisplay?.id
+    const displays = screen.getAllDisplays()
+    const current = displays.find(display => display.id === activeDisplayId)
+    const preferred = preferences.get()
+
+    if (
+      !activeDisplay &&
+      preferred.mode === 'desktop' &&
+      preferred.displayId !== null &&
+      !displays.some(display => display.id === preferred.displayId)
+    ) {
+      // helper 可能先于 Electron 发现拔屏并完成恢复，仍须保存手动重新启用的选择。
+      suppressAutoRestore = true
+      void serial(async () => {
+        await preferences.set({ mode: 'window' })
+        failureReason ??= '所选显示器已断开，请重新选择显示屏后启用桌面模式。'
+
+        if (status === 'inactive') {
+          status = 'failed'
+        }
+
+        publish()
+      }).catch(error => options.log(`[desktop] saving disconnected display mode: ${errorMessage(error)}`))
+
+      return
+    }
+
+    if (activeDisplay && !current && ['starting', 'active', 'recovering'].includes(status)) {
+      scheduleRecovery('所选显示器已断开，已恢复窗口模式。请重新选择显示屏后启用桌面模式。', false)
+
+      return
+    }
+
+    if (activeDisplay && current && sameDisplayGeometry(activeDisplay, current)) {
+      publish()
+
+      return
+    }
+
     if (status === 'starting') {
       scheduleRecovery('桌面准备期间显示器已变化，请重新选择桌面模式。')
     } else if (status === 'active') {
@@ -603,6 +686,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function assertDesktop(sender: WebContents): void {
+    if (disposed) {
+      throw new Error('桌面呈现已关闭。')
+    }
+
     if (!isDesktopSender(sender)) {
       throw new Error('仅桌面入口允许此操作。')
     }
@@ -614,6 +701,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     const identity = options.authIdentity()
 
     return () =>
+      !disposed &&
       status === 'active' &&
       effectiveMode === 'desktop' &&
       generation === startupGeneration &&
@@ -626,6 +714,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   function assertSettings(sender: WebContents): void {
+    if (disposed) {
+      throw new Error('桌面呈现已关闭。')
+    }
+
     if (!isDesktopSender(sender) && !options.isSettingsSender(sender)) {
       throw new Error('仅本机设置入口允许此操作。')
     }
@@ -784,6 +876,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error(block)
       }
 
+      if (!screen.getAllDisplays().some(display => display.id === id)) {
+        throw new Error('显示器不可用。')
+      }
+
+      if (preferences.get().displayId === id) {
+        return snapshot()
+      }
+
       const interactive = windows.getInteractive()
 
       if (interactive && !interactive.isDestroyed()) {
@@ -846,6 +946,10 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         setMode,
         setDisplay,
         companionActivity: (source, state, voicePreparing) => {
+          if (disposed) {
+            return
+          }
+
           if (activityBySource[source].state !== state || activityBySource[source].voicePreparing !== voicePreparing) {
             activityBySource[source] = { state, voicePreparing }
             publish()
@@ -875,13 +979,17 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         },
         heartbeat: health.heartbeat,
         hostReady: hostBecameReady,
-        setBackground: background.set,
+        setBackground: (sender, raw) => (disposed ? Promise.resolve() : background.set(sender, raw)),
         backgroundReady: win => {
           sendToWindow(win, IPC.event.backgroundMedia, background.getState())
           windows.reportReady(win)
         },
         acknowledgeBackground: background.acknowledge,
         stageActivity: activity => {
+          if (disposed) {
+            return
+          }
+
           lastActivity = activity
           background.publish()
         }
@@ -899,10 +1007,14 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     if (!disposal) {
       disposed = true
       health.dispose()
-      disposeIpc?.()
-      uiState.dispose()
-      disposeIpc = null
+      uiState.beginShutdown()
       applicationListeners.clear()
+      // 精灵宿主会持续上报到窗口关闭；will-quit 才表示所有发送窗口已经退出。
+      app.once('will-quit', () => {
+        disposeIpc?.()
+        disposeIpc = null
+        uiState.dispose()
+      })
       disposal = stop()
     }
 
@@ -928,10 +1040,15 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       return serial(() => native.refreshApplications(eligible))
     },
-    activateExternal: (sender: WebContents, windowId: string): Promise<void> => {
+    activateExternal: (sender: WebContents, windowId: string, allowRemote: boolean): Promise<void> => {
       const eligible = captureDesktopEligibility(sender)
 
-      return serial(() => native.activateExternal(windowId, eligible))
+      return serial(() => native.activateExternal(windowId, allowRemote, eligible))
+    },
+    launchExternal: (sender: WebContents, target: string, appId: string): Promise<void> => {
+      const eligible = captureDesktopEligibility(sender)
+
+      return serial(() => native.launchExternal(target, appId, eligible))
     },
     closeExternal: (sender: WebContents, windowIds: string[]): Promise<void> => {
       const eligible = captureDesktopEligibility(sender)

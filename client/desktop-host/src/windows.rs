@@ -14,12 +14,11 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromRect, ScreenToClient,
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromPoint,
+    MonitorFromRect, MonitorFromWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RedrawWindow,
+    ScreenToClient,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
-use windows_sys::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, KEY_READ, RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW,
-};
 use windows_sys::Win32::System::Threading::*;
 use windows_sys::Win32::UI::HiDpi::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
@@ -313,7 +312,6 @@ struct RestoreWindow {
     style: i64,
     ex_style: i64,
     bounds: Bounds,
-    #[serde(default)]
     role: WindowRole,
 }
 
@@ -325,18 +323,9 @@ enum JournalPhase {
     Active,
 }
 
-impl Default for JournalPhase {
-    fn default() -> Self {
-        // 旧记录可能已经隐藏系统界面，不能按尚未改动处理。
-        Self::Attaching
-    }
-}
-
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Journal {
-    version: u32,
-    #[serde(default)]
     phase: JournalPhase,
     session: String,
     parent_pid: u32,
@@ -345,8 +334,8 @@ struct Journal {
     host_created: u64,
     shell: Vec<Identity>,
     windows: Vec<RestoreWindow>,
-    #[serde(default)]
     work_area: Option<RestoreWorkArea>,
+    desktop_bounds: Bounds,
 }
 
 fn sidecar(path: &Path, suffix: &str) -> PathBuf {
@@ -413,16 +402,22 @@ fn read_journal(path: &Path) -> Result<Option<Journal>> {
 }
 
 fn validate_journal(journal: &Journal) -> Result<()> {
-    if ![1, 2].contains(&journal.version)
-        || journal.windows.is_empty()
+    if journal.windows.is_empty()
         || journal.windows.len() > 32
         || journal.shell.len() > 128
     {
-        return Err("unsupported desktop journal".into());
+        return Err("invalid desktop journal window count".into());
     }
     let mut handles = std::collections::HashSet::new();
     if let Some(area) = &journal.work_area {
         area.validate()?;
+    }
+    if !journal.desktop_bounds.valid()
+        || journal.shell.iter().any(|entry| {
+            !["Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&entry.class.as_str())
+        })
+    {
+        return Err("invalid display-scoped desktop journal".into());
     }
     if journal.session.is_empty()
         || journal.session.len() > 128
@@ -485,122 +480,21 @@ fn child(window: HWND, class: &str) -> HWND {
     unsafe { FindWindowExW(window, null_mut(), wide(class).as_ptr(), null()) }
 }
 
-fn slideshow_wallpaper() -> bool {
-    std::env::var_os("APPDATA")
-        .map(|root| Path::new(&root).join(r"Microsoft\Windows\Themes\slideshow.ini"))
-        .and_then(|config| fs::read_to_string(config).ok())
-        .is_some_and(|content| !content.trim().is_empty())
+fn window_on_display(window: HWND, display: Bounds) -> Result<bool> {
+    let rect = RECT {
+        left: display.x,
+        top: display.y,
+        right: display.x + display.width,
+        bottom: display.y + display.height,
+    };
+    let target = unsafe { MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) };
+    if target.is_null() {
+        return Err("desktop display is unavailable".into());
+    }
+    Ok(unsafe { MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) } == target)
 }
 
-fn per_monitor_wallpaper() -> bool {
-    let mut settings: HKEY = null_mut();
-    if unsafe {
-        RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            wide(r"Control Panel\Desktop\PerMonitorSettings").as_ptr(),
-            0,
-            KEY_READ,
-            &mut settings,
-        )
-    } != 0
-    {
-        return false;
-    }
-    let _close = OwnedKey(settings);
-    let mut index = 0u32;
-    loop {
-        let mut name = [0u16; 256];
-        let mut length = name.len() as u32;
-        let result = unsafe {
-            RegEnumKeyExW(
-                settings,
-                index,
-                name.as_mut_ptr(),
-                &mut length,
-                null(),
-                null_mut(),
-                null_mut(),
-                null_mut(),
-            )
-        };
-        if result == ERROR_NO_MORE_ITEMS {
-            return false;
-        }
-        if result != 0 {
-            return true;
-        }
-        let mut monitor = null_mut();
-        let subkey = String::from_utf16_lossy(&name[..length as usize]);
-        if unsafe { RegOpenKeyExW(settings, wide(&subkey).as_ptr(), 0, KEY_READ, &mut monitor) }
-            == 0
-        {
-            let _close = OwnedKey(monitor);
-            let mut value = [0u16; 256];
-            let mut size = (value.len() * 2) as u32;
-            if unsafe {
-                RegQueryValueExW(
-                    monitor,
-                    wide("WallpaperSRC").as_ptr(),
-                    null(),
-                    null_mut(),
-                    value.as_mut_ptr().cast(),
-                    &mut size,
-                )
-            } == 0
-            {
-                return true;
-            }
-        }
-        index += 1;
-    }
-}
-
-struct OwnedKey(HKEY);
-
-impl Drop for OwnedKey {
-    fn drop(&mut self) {
-        unsafe {
-            RegCloseKey(self.0);
-        }
-    }
-}
-
-fn refresh_wallpaper() {
-    // 全屏子窗长期遮挡会令 DWM 逐出壁纸合成表面，摘除后偶尔不重建而留黑桌面；
-    // 重应用同一壁纸可促 Explorer/DWM 重建该表面。逐显示器或幻灯片壁纸无法用
-    // SPI 无损刷新（会退化为单张静态壁纸），保留系统自身重绘。
-    const MAX_WALLPAPER: usize = 260;
-    let mut source = [0u16; MAX_WALLPAPER];
-    if unsafe {
-        SystemParametersInfoW(
-            SPI_GETDESKWALLPAPER,
-            MAX_WALLPAPER as u32,
-            source.as_mut_ptr().cast(),
-            0,
-        )
-    } == 0
-    {
-        return;
-    }
-    let end = source
-        .iter()
-        .position(|&unit| unit == 0)
-        .unwrap_or(MAX_WALLPAPER);
-    let path = PathBuf::from(String::from_utf16_lossy(&source[..end]));
-    if slideshow_wallpaper() || per_monitor_wallpaper() || !path.is_absolute() || !path.is_file() {
-        return;
-    }
-    unsafe {
-        SystemParametersInfoW(
-            SPI_SETDESKWALLPAPER,
-            0,
-            source.as_mut_ptr().cast(),
-            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
-        );
-    }
-}
-
-fn shell_windows() -> Result<Vec<Identity>> {
+fn shell_windows(display: Bounds) -> Result<Vec<Identity>> {
     let shell = unsafe { GetShellWindow() };
     if shell.is_null() || !is_explorer(window_pid(shell)) {
         return Err("Windows Explorer is not the active desktop shell".into());
@@ -611,22 +505,11 @@ fn shell_windows() -> Result<Vec<Identity>> {
         if window_pid(window) != shell_pid {
             continue;
         }
-        if ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&class_name(window).as_str()) {
+        if ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"].contains(&class_name(window).as_str())
+            && window_on_display(window, display)?
+        {
             captured.push(Identity::capture(window)?);
         }
-        let view = child(window, "SHELLDLL_DefView");
-        if !view.is_null()
-            && window_pid(view) == shell_pid
-            && !child(view, "SysListView32").is_null()
-        {
-            captured.push(Identity::capture(view)?);
-        }
-    }
-    if !captured
-        .iter()
-        .any(|window| window.class == "SHELLDLL_DefView")
-    {
-        return Err("Explorer desktop icons could not be identified".into());
     }
     Ok(captured)
 }
@@ -641,37 +524,26 @@ fn worker() -> Result<Identity> {
     {
         return Err("Explorer desktop is unavailable".into());
     }
-    let mut result = 0;
-    if unsafe { SendMessageTimeoutW(progman, 0x052c, 0, 0, SMTO_ABORTIFHUNG, 2_000, &mut result) }
-        == 0
-    {
-        return Err(failure("Explorer WorkerW request"));
-    }
-    // 新版背景 WorkerW 带 WS_DISABLED，不能承载交互窗口；自有舞台挂在其 Progman 父窗。
-    let candidate = child(progman, "WorkerW");
-    if !candidate.is_null()
-        && window_pid(candidate) == window_pid(shell)
-        && class_name(candidate) == "WorkerW"
-        && unsafe { GetParent(candidate) } == progman
-        && child(candidate, "SHELLDLL_DefView").is_null()
-        && !child(progman, "SHELLDLL_DefView").is_null()
-    {
-        return Identity::capture(progman);
-    }
-    for window in top_windows()? {
-        if child(window, "SHELLDLL_DefView").is_null() {
+    // 图标层跨所有显示器共享；与它同父层的局部背景只遮住所选屏，其他屏保持 Explorer 输入。
+    let mut layers = top_windows()?;
+    unsafe { EnumChildWindows(progman, Some(collect_window), &mut layers as *mut _ as LPARAM) };
+    for window in layers {
+        if window_pid(window) != window_pid(shell)
+            || !["Progman", "WorkerW"].contains(&class_name(window).as_str())
+            || unsafe { IsWindowEnabled(window) } == 0
+        {
             continue;
         }
-        let candidate =
-            unsafe { FindWindowExW(null_mut(), window, wide("WorkerW").as_ptr(), null()) };
-        if !candidate.is_null()
-            && window_pid(candidate) == window_pid(shell)
-            && child(candidate, "SHELLDLL_DefView").is_null()
+        let view = child(window, "SHELLDLL_DefView");
+        if !view.is_null()
+            && window_pid(view) == window_pid(shell)
+            && unsafe { GetParent(view) } == window
+            && !child(view, "SysListView32").is_null()
         {
-            return Identity::capture(candidate);
+            return Identity::capture(window);
         }
     }
-    Err("Explorer did not expose a usable WorkerW desktop layer".into())
+    Err("Explorer did not expose the desktop icon parent layer".into())
 }
 
 fn rectangle(window: HWND) -> Result<Bounds> {
@@ -936,12 +808,12 @@ fn order_desktop_children(
     takeover: bool,
 ) -> Result<bool> {
     let layer = worker.window();
+    let view = child(layer, "SHELLDLL_DefView");
+    if view.is_null() || window_pid(view) != worker.pid || unsafe { GetParent(view) } != layer {
+        return Err("Explorer icon view changed before desktop ordering".into());
+    }
     let mut previous = HWND_TOP;
-    if worker.class == "Progman" && !takeover {
-        let view = child(layer, "SHELLDLL_DefView");
-        if view.is_null() || window_pid(view) != worker.pid || unsafe { GetParent(view) } != layer {
-            return Err("Explorer icon view changed before desktop ordering".into());
-        }
+    if !takeover {
         previous = view;
     }
     let children = windows
@@ -976,6 +848,90 @@ fn order_desktop_children(
         previous = window;
     }
     Ok(changed)
+}
+
+fn verify_desktop_background(
+    windows: &[RestoreWindow],
+    worker: &Identity,
+    target: Bounds,
+    takeover: bool,
+) -> Result<()> {
+    let saved = windows
+        .iter()
+        .find(|saved| saved.role == WindowRole::Background)
+        .ok_or("desktop background is missing")?;
+    let window = saved.identity.window();
+    let layer = worker.window();
+    if !saved.identity.valid()
+        || !worker.valid()
+        || unsafe { GetParent(window) } != layer
+        || !rectangle(window)?.within_tolerance(target, 2)
+    {
+        return Err("desktop background left its selected display or Explorer layer".into());
+    }
+    let mut client: RECT = unsafe { zeroed() };
+    if unsafe { GetClientRect(window, &mut client) } == 0
+        || client.right - client.left != target.width
+        || client.bottom - client.top != target.height
+    {
+        return Err("desktop background client bounds changed".into());
+    }
+    if !takeover {
+        return Ok(());
+    }
+    // 只核对 Explorer 子窗命中，避免顶层界面和其他应用影响挂载验证。
+    for (x, y) in [
+        (target.x + 3, target.y + 3),
+        (target.x + target.width / 2, target.y + target.height / 2),
+        (target.x + target.width - 4, target.y + target.height - 4),
+    ] {
+        let mut point = POINT { x, y };
+        if unsafe { ScreenToClient(layer, &mut point) } == 0 {
+            return Err(failure("desktop input coordinate verification"));
+        }
+        let hit = unsafe { ChildWindowFromPointEx(layer, point, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) };
+        if hit != window {
+            return Err("desktop background does not own input on its selected display".into());
+        }
+    }
+    Ok(())
+}
+
+fn redraw_released_display(target: Bounds) -> Result<()> {
+    let shell = unsafe { GetShellWindow() };
+    if shell.is_null() || !is_explorer(window_pid(shell)) {
+        // Explorer 启动后会重建桌面，无现存合成表面需要刷新。
+        return Ok(());
+    }
+    for window in top_windows()? {
+        if window_pid(window) != window_pid(shell)
+            || !["Progman", "WorkerW"].contains(&class_name(window).as_str())
+        {
+            continue;
+        }
+        let mut origin = POINT { x: target.x, y: target.y };
+        if unsafe { ScreenToClient(window, &mut origin) } == 0 {
+            return Err(failure("released desktop redraw coordinates"));
+        }
+        let region = RECT {
+            left: origin.x,
+            top: origin.y,
+            right: origin.x + target.width,
+            bottom: origin.y + target.height,
+        };
+        if unsafe {
+            RedrawWindow(
+                window,
+                &region,
+                null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+            )
+        } == 0
+        {
+            return Err(failure("redraw released desktop display"));
+        }
+    }
+    Ok(())
 }
 
 fn set_top_level(saved: &RestoreWindow, bounds: Bounds, topmost: bool) -> Result<()> {
@@ -1043,12 +999,7 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
         for item in &journal.shell {
             if !item.valid()
                 || !is_explorer(item.pid)
-                || ![
-                    "SHELLDLL_DefView",
-                    "SysListView32",
-                    "Shell_TrayWnd",
-                    "Shell_SecondaryTrayWnd",
-                ]
+                || !["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
                 .contains(&item.class.as_str())
             {
                 continue;
@@ -1101,11 +1052,13 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
         }
         hosted = true;
     }
+    if hosted {
+        if let Err(error) = redraw_released_display(journal.desktop_bounds) {
+            failures.push(error);
+        }
+    }
     if !failures.is_empty() {
         return Err(failures.join("; "));
-    }
-    if hosted {
-        refresh_wallpaper();
     }
     match fs::remove_file(sidecar(path, ".lease")) {
         Ok(()) => {}
@@ -1349,7 +1302,6 @@ impl Session {
         }
         let worker = worker()?;
         let mut journal = Journal {
-            version: 2,
             phase: JournalPhase::Prepared,
             session: format!(
                 "{host_pid}-{}",
@@ -1363,12 +1315,13 @@ impl Session {
             host_pid,
             host_created: created(host.0)?,
             shell: if takeover {
-                shell_windows()?
+                shell_windows(targets[0])?
             } else {
                 Vec::new()
             },
             windows,
             work_area: takeover.then(|| workspace.original.clone()),
+            desktop_bounds: targets[0],
         };
         let restoring = RestoringSignal::new(&journal)?;
         if let Some(directory) = path.parent() {
@@ -1455,6 +1408,8 @@ impl Session {
         let transaction = MutexGuard::restoration()?;
         let attached = (|| {
             require_session(path, &journal.session, &restoring)?;
+            workspace.monitor()?;
+            monitor_bounds(targets[0])?;
             if !worker.visible {
                 return Err("Explorer WorkerW is not visible".into());
             }
@@ -1469,7 +1424,7 @@ impl Session {
             }
             if takeover {
                 for item in &journal.shell {
-                    if !item.valid() {
+                    if !item.valid() || !window_on_display(item.window(), targets[0])? {
                         return Err("Explorer changed before shell takeover".into());
                     }
                     visibility(item, false)?;
@@ -1532,30 +1487,46 @@ impl Session {
         {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
-            if order_desktop_children(&self.journal.windows, &self.worker, self.takeover)? {
+            self.require_display()?;
+            let changed = order_desktop_children(&self.journal.windows, &self.worker, self.takeover)?;
+            let verification = verify_desktop_background(
+                &self.journal.windows,
+                &self.worker,
+                self.targets[0],
+                self.takeover,
+            );
+            if changed || verification.is_err() {
                 if self
                     .child_order_pending
                     .get_or_insert_with(Instant::now)
                     .elapsed()
                     >= DESKTOP_LAYER_TIMEOUT
                 {
-                    return Err("desktop child window ordering did not settle".into());
+                    return Err(verification.err().unwrap_or_else(|| {
+                        "desktop child window ordering did not settle".into()
+                    }));
                 }
             } else {
                 self.child_order_pending = None;
             }
             self.workspace.poll(&events)?;
+            self.applications.poll(&events, force, &self.workspace);
         }
-        self.applications.poll(&events, force);
         Ok(())
     }
 
-    fn activate_external(&mut self, window_id: &str) -> Result<()> {
+    fn require_display(&self) -> Result<()> {
+        self.workspace.monitor()?;
+        monitor_bounds(self.targets[0])?;
+        Ok(())
+    }
+
+    fn activate_external(&mut self, window_id: &str, allow_remote: bool) -> Result<()> {
         self.refresh_applications(false)?;
         let _transaction = MutexGuard::restoration()?;
         require_session(&self.path, &self.journal.session, &self.restoring)?;
         self.require_external_interaction()?;
-        self.applications.activate(window_id)
+        self.applications.activate(window_id, allow_remote, &self.workspace)
     }
 
     fn close_external(&mut self, window_ids: &[String]) -> Result<()> {
@@ -1563,7 +1534,7 @@ impl Session {
         let _transaction = MutexGuard::restoration()?;
         require_session(&self.path, &self.journal.session, &self.restoring)?;
         self.require_external_interaction()?;
-        self.applications.close_windows(window_ids)
+        self.applications.close_windows(window_ids, &self.workspace)
     }
 
     fn get_jump_list_tasks(&self, target: &str) -> Result<jump_lists::JumpListRead> {
@@ -1574,7 +1545,7 @@ impl Session {
     }
 
     fn activate_jump_list_task(
-        &self,
+        &mut self,
         target: &str,
         task_id: &str,
         expires_at: u64,
@@ -1596,14 +1567,47 @@ impl Session {
         {
             return Err("Jump List 任务请求已超时，请重新打开菜单。".into());
         }
-        jump_lists::launch_task(task)?;
+        self.applications.launch_jump_list(task, target, &self.workspace)?;
         Ok(read.diagnostics)
+    }
+
+    fn launch_external(&mut self, target: &str, app_id: &str) -> Result<()> {
+        self.refresh_applications(false)?;
+        let _transaction = MutexGuard::restoration()?;
+        require_session(&self.path, &self.journal.session, &self.restoring)?;
+        self.require_external_interaction()?;
+        self.applications.launch_external(target, app_id, &self.workspace)
+    }
+
+    fn shared_desktop_foreground(&self, foreground: HWND) -> bool {
+        if foreground.is_null()
+            || window_pid(foreground) != self.worker.pid
+            || !["Progman", "WorkerW", "SHELLDLL_DefView", "SysListView32"]
+                .contains(&class_name(foreground).as_str())
+        {
+            return false;
+        }
+        // Explorer 的前台 HWND 跨显示器共享；鼠标所在屏决定当前操作属于哪个桌面。
+        let mut point: POINT = unsafe { zeroed() };
+        if unsafe { GetCursorPos(&mut point) } == 0 {
+            return false;
+        }
+        let target = self.targets[0];
+        let rect = RECT {
+            left: target.x,
+            top: target.y,
+            right: target.x + target.width,
+            bottom: target.y + target.height,
+        };
+        let display = unsafe { MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) };
+        !display.is_null()
+            && unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONULL) } == display
     }
 
     fn require_external_interaction(&self) -> Result<()> {
         let foreground = unsafe { GetForegroundWindow() };
         if !self.takeover
-            || (foreground != self.worker.window()
+            || (!self.shared_desktop_foreground(foreground)
                 && !self.journal.windows.iter().any(|saved| {
                     saved.identity.valid()
                         && (foreground == saved.identity.window()
@@ -1654,7 +1658,7 @@ impl Session {
                 return Err("desktop focus target is no longer an active stage".into());
             }
             let foreground = unsafe { GetForegroundWindow() };
-            if foreground != self.worker.window()
+            if !self.shared_desktop_foreground(foreground)
                 && !self.journal.windows.iter().any(|registered| {
                     foreground == registered.identity.window()
                         || unsafe { IsChild(registered.identity.window(), foreground) } != 0
@@ -1789,6 +1793,7 @@ impl Session {
         {
             return Err("desktop window was destroyed".into());
         }
+        self.require_display()?;
         if !self.worker.valid() {
             let replacement = worker()?;
             let _transaction = MutexGuard::restoration()?;
@@ -1808,8 +1813,7 @@ impl Session {
             self.refresh_shell()?;
         }
         let foreground = unsafe { GetForegroundWindow() };
-        let desktop_active = (foreground == self.worker.window()
-            && (self.takeover || self.worker.class != "Progman"))
+        let desktop_active = (self.takeover && self.shared_desktop_foreground(foreground))
             || self.journal.windows.iter().any(|saved| {
                 saved.role != WindowRole::Overlay
                     && (foreground == saved.identity.window()
@@ -1891,6 +1895,7 @@ impl Session {
         if self.stopped {
             return Ok(());
         }
+        self.applications.cancel_launches();
         restore(&self.path, Some(&self.journal.session))?;
         retire_guardian(&mut self.guardian)?;
         self.stopped = true;
@@ -1901,10 +1906,22 @@ impl Session {
         if !self.takeover {
             return Ok(());
         }
+        self.require_display()?;
         let original_size = self.journal.shell.len();
         self.journal.shell.retain(Identity::valid);
         let mut changed = self.journal.shell.len() != original_size;
-        for item in shell_windows()? {
+        let mut released = Vec::new();
+        for item in &self.journal.shell {
+            if !window_on_display(item.window(), self.targets[0])? {
+                visibility(item, item.visible)?;
+                released.push(item.handle);
+            }
+        }
+        if !released.is_empty() {
+            self.journal.shell.retain(|item| !released.contains(&item.handle));
+            changed = true;
+        }
+        for item in shell_windows(self.targets[0])? {
             if !self.journal.shell.iter().any(|saved| {
                 saved.handle == item.handle
                     && saved.pid == item.pid
@@ -1918,7 +1935,9 @@ impl Session {
             self.journal.save(&self.path)?;
         }
         for item in &self.journal.shell {
-            visibility(item, false)?;
+            if window_on_display(item.window(), self.targets[0])? {
+                visibility(item, false)?;
+            }
         }
         self.last_shell_scan = Instant::now();
         Ok(())
@@ -1986,10 +2005,15 @@ pub fn host(path: &Path) -> Result<()> {
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(|active| active.refresh_applications(true))
                         .map(|_| json!(null)),
-                    Command::ActivateExternal { window_id, .. } => session
+                    Command::ActivateExternal { window_id, allow_remote, .. } => session
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
-                        .and_then(|active| active.activate_external(&window_id))
+                        .and_then(|active| active.activate_external(&window_id, allow_remote))
+                        .map(|_| json!(null)),
+                    Command::LaunchExternal { target, app_id, .. } => session
+                        .as_mut()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| active.launch_external(&target, &app_id))
                         .map(|_| json!(null)),
                     Command::CloseExternal { window_ids, .. } => session
                         .as_mut()
@@ -2016,7 +2040,7 @@ pub fn host(path: &Path) -> Result<()> {
                         expires_at,
                         ..
                     } => session
-                        .as_ref()
+                        .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(|active| {
                             active.activate_jump_list_task(&target, &task_id, expires_at)

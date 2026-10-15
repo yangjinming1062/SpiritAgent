@@ -23,6 +23,7 @@ function isRunningWindow(raw: unknown): raw is RunningApplicationWindow {
     typeof item.name === 'string' &&
     typeof item.title === 'string' &&
     typeof item.minimized === 'boolean' &&
+    typeof item.onDesktopDisplay === 'boolean' &&
     Number.isSafeInteger(item.lastActive) &&
     typeof item.lastActive === 'number' &&
     item.lastActive >= 0
@@ -55,7 +56,8 @@ export interface ExplorerDesktopHost {
   }) => Promise<void>
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   refreshApplications: (eligible: () => boolean) => Promise<void>
-  activateExternal: (windowId: string, eligible: () => boolean) => Promise<void>
+  activateExternal: (windowId: string, allowRemote: boolean, eligible: () => boolean) => Promise<void>
+  launchExternal: (target: string, appId: string, eligible: () => boolean) => Promise<void>
   closeExternal: (windowIds: string[], eligible: () => boolean) => Promise<void>
   getJumpListTasks: (target: string, eligible: () => boolean) => Promise<DesktopJumpListTask[]>
   activateJumpListTask: (target: string, taskId: string, eligible: () => boolean) => Promise<void>
@@ -642,7 +644,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
         await request({ command: 'refresh_applications' }, 4_000)
       })
     },
-    activateExternal: (windowId, eligible) => {
+    activateExternal: (windowId, allowRemote, eligible) => {
       const currentGeneration = generation
 
       return serialize(async () => {
@@ -650,7 +652,29 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           throw new Error('桌面已改变，请重新选择窗口。')
         }
 
-        await request({ command: 'activate_external', window_id: windowId }, 3_000)
+        await request({ command: 'activate_external', window_id: windowId, allow_remote: allowRemote }, 3_000)
+      })
+    },
+    launchExternal: (target, appId, eligible) => {
+      const currentGeneration = generation
+
+      return serialize(async () => {
+        if (state !== 'running' || generation !== currentGeneration || !eligible()) {
+          throw new Error('桌面已改变，请重新打开程序。')
+        }
+
+        if (
+          typeof target !== 'string' ||
+          target.length < 1 ||
+          target.length > 32_768 ||
+          typeof appId !== 'string' ||
+          appId.length < 1 ||
+          appId.length > 32_768
+        ) {
+          throw new Error('无效程序目标。')
+        }
+
+        await request({ command: 'launch_external', target, app_id: appId }, 4_000)
       })
     },
     closeExternal: (windowIds, eligible) => {

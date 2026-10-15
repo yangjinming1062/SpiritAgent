@@ -3,6 +3,7 @@ export type PresentationMode = 'window' | 'desktop'
 export interface PresentationDisplay {
   id: number
   label: string
+  isPrimary: boolean
   width: number
   height: number
 }
