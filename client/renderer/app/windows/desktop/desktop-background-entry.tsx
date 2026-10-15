@@ -339,17 +339,19 @@ function DesktopWallpaper() {
         return
       }
 
-      const slot = slots[retainedLoop]
-      returningLoop = retainedLoop
+      const index = retainedLoop
+      const slot = slots[index]
+      returningLoop = index
       returningFrom = active
       notifyReturnFrame = notifyFirstFrame
       slot.element.pause()
       slot.element.loop = true
 
       if (slot.element.currentTime === 0 && !slot.element.seeking) {
-        finishReturn(retainedLoop)
+        finishReturn(index)
       } else {
-        // 保留短动作的末帧，直到持续画面的起点完成寻帧与呈现。
+        // 寻帧前登记首帧回调；seeked 触发时该帧可能已呈现，暂停状态不会再产生下一帧。
+        waitForFrame(slot, () => finishReturn(index))
         slot.element.currentTime = 0
       }
     }
@@ -463,12 +465,6 @@ function DesktopWallpaper() {
         }
       }
 
-      const seeked = (): void => {
-        if (returningLoop === index) {
-          waitForFrame(slot, () => finishReturn(index))
-        }
-      }
-
       const playing = (): void => {
         if (active === index && !slot.started && !slot.terminal) {
           slot.started = true
@@ -502,14 +498,12 @@ function DesktopWallpaper() {
       }
 
       slot.element.addEventListener('loadeddata', loaded)
-      slot.element.addEventListener('seeked', seeked)
       slot.element.addEventListener('playing', playing)
       slot.element.addEventListener('ended', ended)
       slot.element.addEventListener('error', failed)
 
       return () => {
         slot.element.removeEventListener('loadeddata', loaded)
-        slot.element.removeEventListener('seeked', seeked)
         slot.element.removeEventListener('playing', playing)
         slot.element.removeEventListener('ended', ended)
         slot.element.removeEventListener('error', failed)
