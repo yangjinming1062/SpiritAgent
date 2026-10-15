@@ -4,8 +4,20 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { RemoteApi, RemoteGateway } from './api'
 import { ApiError, record } from './api'
+import { DiaryView } from './Companion'
 import type { Post, Recovery } from './types'
-import { Empty, Media, Notice, PageHeader, timestamp, useAlive, useTask } from './ui'
+import {
+  Empty,
+  Media,
+  Notice,
+  PageHeader,
+  pauseMedia,
+  timestamp,
+  useAlive,
+  usePageScroll,
+  usePageState,
+  useTask
+} from './ui'
 
 interface PostPage {
   posts: Post[]
@@ -16,10 +28,65 @@ interface PostPage {
 export function Feed({
   api,
   gateway,
+  onRead,
+  refresh,
+  unread
+}: {
+  api: RemoteApi
+  gateway: RemoteGateway
+  onRead: () => void
+  refresh: number
+  unread: { feed: boolean; diary: boolean }
+}): ReactElement {
+  const [section, setSection] = usePageState<'feed' | 'diary'>('feed.section', 'feed')
+
+  useEffect(() => {
+    document.querySelector('.content')?.scrollTo({ top: 0 })
+  }, [section])
+
+  return (
+    <div className="page">
+      <PageHeader subtitle="伙伴的日常，和一起走过的每一天" title="动态" />
+      <div aria-label="动态与日记" className="section-tabs feed-tabs">
+        {(
+          [
+            { id: 'feed', label: '动态' },
+            { id: 'diary', label: '日记' }
+          ] as const
+        ).map(item => (
+          <button
+            aria-pressed={section === item.id}
+            className={section === item.id ? 'selected' : ''}
+            key={item.id}
+            onClick={() => {
+              pauseMedia()
+              setSection(item.id)
+            }}
+            type="button"
+          >
+            {item.label}
+            {unread[item.id] ? <i aria-label="有未读内容" className="tab-unread" /> : null}
+          </button>
+        ))}
+      </div>
+      {section === 'feed' ? (
+        <Posts api={api} gateway={gateway} onRead={onRead} refresh={refresh} />
+      ) : (
+        <DiaryView api={api} onRead={onRead} refresh={refresh} />
+      )}
+    </div>
+  )
+}
+
+function Posts({
+  api,
+  gateway,
+  onRead,
   refresh
 }: {
   api: RemoteApi
   gateway: RemoteGateway
+  onRead: () => void
   refresh: number
 }): ReactElement {
   const alive = useAlive()
@@ -34,6 +101,9 @@ export function Feed({
   const pendingRefresh = useRef({ posts: new Set<string>(), head: false, recovery: false })
   const postsRef = useRef(posts)
   postsRef.current = posts
+  const onReadRef = useRef(onRead)
+  onReadRef.current = onRead
+  usePageScroll('posts', initialized.current)
 
   const load = useCallback(
     async (more = false, nextCursor?: string) => {
@@ -61,10 +131,20 @@ export function Feed({
 
       initialized.current = true
 
-      if (result.unread_post_ids.length > 0 && document.visibilityState === 'visible') {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      if (
+        alive() &&
+        current === revision.current &&
+        result.unread_post_ids.length > 0 &&
+        document.visibilityState === 'visible' &&
+        document.hasFocus()
+      ) {
         await api.request('/api/companion/posts/read', 'POST', {
           post_ids: result.unread_post_ids
         })
+        if (alive() && current === revision.current) {
+          onReadRef.current()
+        }
       }
     },
     [api, alive]
@@ -178,22 +258,18 @@ export function Feed({
   }, [gateway, reconcile, runLatest])
 
   return (
-    <div className="page">
-      <PageHeader
-        action={
-          <button
-            aria-label="刷新动态"
-            className="icon-button"
-            disabled={busy}
-            onClick={() => run(() => load())}
-            type="button"
-          >
-            <IconRefresh size={21} />
-          </button>
-        }
-        subtitle="伙伴的小发现，和你的每一句回应"
-        title="动态"
-      />
+    <>
+      <div className="feed-tools">
+        <button
+          aria-label="刷新动态"
+          className="icon-button"
+          disabled={busy}
+          onClick={() => run(() => load())}
+          type="button"
+        >
+          <IconRefresh size={21} />
+        </button>
+      </div>
       {error ? <Notice>{error}</Notice> : null}
       {recoveries.length > 0 ? (
         <details className="card recovery">
@@ -219,7 +295,7 @@ export function Feed({
                   url={item.media_url}
                 />
               ) : null}
-              {item.error ? <p className="muted">{item.error}</p> : null}
+              {item.error ? <Notice>{item.error}</Notice> : null}
               <div className="button-row">
                 <button
                   disabled={busy}
@@ -240,7 +316,7 @@ export function Feed({
                   }
                   type="button"
                 >
-                  查询结果
+                  查看最新进度
                 </button>
                 {item.can_adopt ? (
                   <button
@@ -253,7 +329,7 @@ export function Feed({
                     }
                     type="button"
                   >
-                    采用
+                    发布这个视频
                   </button>
                 ) : null}
                 {item.can_discard ? (
@@ -299,14 +375,14 @@ export function Feed({
           更多动态
         </button>
       ) : null}
-    </div>
+    </>
   )
 }
 
 function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh: () => Promise<void> }): ReactElement {
   const { run, busy, error } = useTask()
   const alive = useAlive()
-  const [comment, setComment] = useState('')
+  const [comment, setComment] = usePageState(`post.${post.id}.comment`, '')
 
   return (
     <article className="post-card">
@@ -374,7 +450,7 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
                 </button>
               </div>
             ) : null}
-            {item.reply_error ? <p className="muted">{item.reply_error}</p> : null}
+            {item.reply_error ? <Notice>{item.reply_error}</Notice> : null}
           </div>
         ))}
       </div>

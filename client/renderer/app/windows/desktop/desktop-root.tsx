@@ -3,27 +3,25 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AccountMenu } from '@/app/features/accounts/account-menu'
-import { AppearancePage } from '@/app/features/appearance/appearance-page'
+import { CompanionHub } from '@/app/features/companion/companion-page'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
 import { useDesktopLifeStrings } from '@/app/features/desktop-life/desktop-life-strings'
-import { DiaryPage } from '@/app/features/diary/diary-page'
-import { PostsPage } from '@/app/features/posts/posts-page'
-import { ScenePage } from '@/app/features/scene/scene-page'
+import { LifePage } from '@/app/features/posts/life-page'
 import { AppSettings } from '@/app/features/settings/app-settings'
-import { $appPage, applyAppNavigation, setAppPage, setSettingsSection } from '@/app/navigation/app-navigation'
+import { $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait, SpriteStatusBadge } from '@/modules/character'
 import {
   $chatSessionId,
   $companionSessionId,
   ensureCompanionSession,
+  pendingMessages,
   setChatSession,
   switchSession,
   useConversationUnread
 } from '@/modules/conversation'
 import { $desktopVideoError, $desktopVideoState } from '@/modules/desktop-videos'
-import { hydrateDiaryUnread } from '@/modules/diary'
-import { MediaViewerOverlay } from '@/modules/media'
-import { hydratePostsUnread } from '@/modules/posts'
+import { $diaryHasUnread, hydrateDiaryUnread } from '@/modules/diary'
+import { $postsHasUnread, hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
@@ -60,13 +58,7 @@ const CONNECTION_TONE: Record<ConnectionState, ConnectionTone> = {
   open: 'online'
 }
 
-type DesktopShortcut = 'remote' | 'desktopLife'
-
-const DESKTOP_NAV_APPS: (DesktopApp | DesktopShortcut)[] = [
-  ...DESKTOP_APPS.filter(id => id !== 'chat' && id !== 'settings'),
-  'desktopLife',
-  'remote'
-]
+type DesktopShortcut = 'desktopLife'
 
 export function DesktopRoot(): React.JSX.Element {
   useDesktopVideoWallpaper()
@@ -84,6 +76,9 @@ export function DesktopRoot(): React.JSX.Element {
   const locale = useStore($locale)
   const companionSessionId = useStore($companionSessionId)
   const { hasUnread: whisperHasUnread, firstUnheard } = useConversationUnread(companionSessionId)
+  const pending = useStore(pendingMessages.$atom)
+  const postsUnread = useStore($postsHasUnread)
+  const diaryUnread = useStore($diaryHasUnread)
   const [unreadReveal, setUnreadReveal] = useState<{ key: string; request: number }>()
   const revealRequest = useRef(0)
   const [clock, setClock] = useState(() => new Date())
@@ -200,10 +195,10 @@ export function DesktopRoot(): React.JSX.Element {
 
   const activatePanel = useCallback(
     (id: DesktopApp | DesktopShortcut): void => {
-      const page = id === 'remote' || id === 'desktopLife' ? 'settings' : id
+      const page = id === 'desktopLife' ? 'companion' : id
 
-      if (id === 'remote' || id === 'desktopLife') {
-        setSettingsSection(id === 'remote' ? 'remote' : 'presentation')
+      if (id === 'desktopLife') {
+        void applyAppNavigation({ page: 'companion', companionSection: 'desktop-life' })
       } else {
         setAppPage(page)
       }
@@ -389,21 +384,10 @@ export function DesktopRoot(): React.JSX.Element {
         )
 
       case 'posts':
-        return (
-          <>
-            <PostsPage foreground={reading} mediaViewId="desktop-posts" />
-            <MediaViewerOverlay containerRef={rootRef} viewId="desktop-posts" windowId={1} />
-          </>
-        )
+        return <LifePage containerRef={rootRef} foreground={reading} mediaViewId="desktop-posts" />
 
-      case 'diary':
-        return <DiaryPage foreground={reading} />
-
-      case 'scene':
-        return <ScenePage />
-
-      case 'appearance':
-        return <AppearancePage />
+      case 'companion':
+        return <CompanionHub />
 
       case 'settings':
         return <AppSettings />
@@ -463,11 +447,27 @@ export function DesktopRoot(): React.JSX.Element {
       <header className={styles.topbar} ref={topbarRef}>
         <div aria-hidden="true" className={styles.avatarSlot} />
         <nav aria-label={t.title} className={styles.mainMenu}>
-          {DESKTOP_NAV_APPS.map(id => (
-            <button data-current={activeWindow === id} key={id} onClick={() => activatePanel(id)} type="button">
-              {t[id]}
-            </button>
-          ))}
+          {DESKTOP_APPS.map(id => {
+            const unread =
+              id === 'posts'
+                ? postsUnread || diaryUnread
+                : id === 'chat'
+                  ? pending.length > 0 || whisperHasUnread
+                  : false
+
+            return (
+              <button
+                aria-label={unread ? `${t[id]} (${dict.living.rail.unread})` : t[id]}
+                data-current={activeWindow === id}
+                key={id}
+                onClick={() => activatePanel(id)}
+                type="button"
+              >
+                {t[id]}
+                {unread && <span aria-hidden="true"> ·</span>}
+              </button>
+            )
+          })}
         </nav>
         <div className={styles.status}>
           {wallpaperStatus && (

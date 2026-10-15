@@ -2,7 +2,6 @@
 
 export type Phase =
   | 'q-character'
-  | 'portrait-choose'
   | 'portrait-generate'
   | 'hatching'
   | 'portrait-avatar'
@@ -18,7 +17,7 @@ interface BackState {
   qIndex: number
   voiceStage: VoiceStage
   imageSealed: boolean
-  // 头像未经确认步骤直接采用（自备图或「继续当前头像」）时为 true ——全身阶段返回选择步骤而非确认步骤。
+  // 已直接采用头像时返回制作表单，保留当前头像。
   portraitDirectAdopt: boolean
 }
 
@@ -30,7 +29,7 @@ interface BackIntent {
 
 export function computeBackTransition(state: BackState, characterQuestionsCount: number): BackIntent | null {
   if (state.phase === 'q-user') {
-    return state.qIndex > 0 ? { phase: 'q-user', qIndex: state.qIndex - 1 } : { phase: 'voice', voiceStage: 'catalog' }
+    return { phase: 'voice', voiceStage: 'catalog' }
   }
 
   if (state.phase === 'voice') {
@@ -46,14 +45,14 @@ export function computeBackTransition(state: BackState, characterQuestionsCount:
   }
 
   if (state.phase === 'fullbody-reference') {
-    return state.portraitDirectAdopt ? { phase: 'portrait-choose' } : { phase: 'portrait-avatar' }
+    return state.portraitDirectAdopt ? { phase: 'portrait-generate' } : { phase: 'portrait-avatar' }
   }
 
-  if (state.phase === 'portrait-avatar' || state.phase === 'portrait-generate') {
-    return { phase: 'portrait-choose' }
+  if (state.phase === 'portrait-avatar') {
+    return { phase: 'portrait-generate' }
   }
 
-  if (state.phase === 'portrait-choose') {
+  if (state.phase === 'portrait-generate') {
     return { phase: 'q-character', qIndex: characterQuestionsCount - 1 }
   }
 

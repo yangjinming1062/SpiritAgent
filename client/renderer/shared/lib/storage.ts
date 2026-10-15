@@ -10,6 +10,7 @@ interface StorageKeyConfig {
 const REGISTERED_STORAGE_KEYS = new Map<string, StorageKeyConfig>()
 const CLEAR_HANDLERS = new Set<() => void | Promise<void>>()
 const RESTORE_HANDLERS = new Set<() => void>()
+const ACCOUNT_REMOVAL_HANDLERS = new Set<(accountId: string) => void | Promise<void>>()
 const ACCOUNT_CACHE_OWNER_KEY = 'da.auth.accountCacheOwner'
 let storageAccountId = storedString(ACCOUNT_CACHE_OWNER_KEY)
 let switchingAccount = false
@@ -28,14 +29,34 @@ export function registerCompanionStorageKey(key: string, config: StorageKeyConfi
   return key
 }
 
-export function accountStorageKey(key: string): string | null {
+export function accountStorageKey(key: string, accountId?: string | null): string | null {
   const config = REGISTERED_STORAGE_KEYS.get(key)
 
   if (!config || config.preserveOnLogout) {
     return key
   }
 
-  return storageAccountId ? `da.accounts.${storageAccountId}:${key}` : null
+  const owner = accountId === undefined ? storageAccountId : accountId
+
+  return owner ? `da.accounts.${owner}:${key}` : null
+}
+
+export function registerAccountCacheRemovalHandler(handler: (accountId: string) => void | Promise<void>): () => void {
+  ACCOUNT_REMOVAL_HANDLERS.add(handler)
+
+  return () => ACCOUNT_REMOVAL_HANDLERS.delete(handler)
+}
+
+async function removeAccountCaches(accountId: string): Promise<void> {
+  const results = await Promise.allSettled(
+    [...ACCOUNT_REMOVAL_HANDLERS].map(handler => Promise.resolve().then(() => handler(accountId)))
+  )
+
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      log.warn('storage', 'account cache removal failed', result.reason)
+    }
+  }
 }
 
 export function registerStorageClearHandler(handler: () => void | Promise<void>): () => void {
@@ -293,6 +314,10 @@ export async function setStorageAccount(accountId: string | null, removedAccount
   }
 
   if (storageAccountId === accountId && removedAccountId !== accountId) {
+    if (removedAccountId) {
+      await removeAccountCaches(removedAccountId)
+    }
+
     return
   }
 
@@ -318,6 +343,10 @@ export async function setStorageAccount(accountId: string | null, removedAccount
     if (result.status === 'rejected') {
       log.warn('storage', 'async clear handler failed', result.reason)
     }
+  }
+
+  if (removedAccountId) {
+    await removeAccountCaches(removedAccountId)
   }
 
   storageAccountId = accountId

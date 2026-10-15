@@ -132,7 +132,7 @@ export function InferencePage(): React.JSX.Element {
     }
   }
 
-  const { status: saveStatus } = useAutoSave({
+  const { status: saveStatus, retry: retrySave } = useAutoSave({
     dirty: form.isDirty,
     onError: error => notifyError(error, a.saveFailed),
     onSave: persist,
@@ -167,10 +167,17 @@ export function InferencePage(): React.JSX.Element {
 
       <TemperatureSection disabled={false} state={form.state} t={a.temperature} update={form.set} />
 
-      <div className="flex min-h-5 justify-end pt-2">
+      <div className="flex min-h-5 items-center justify-end gap-3 pt-2">
         {saveStatus === 'saving' && <span className={HINT_TEXT}>{t.common.saving}</span>}
         {saveStatus === 'saved' && <span className={HINT_TEXT}>{a.saved}</span>}
-        {saveStatus === 'error' && <span className="text-[10px] leading-relaxed text-danger-fg">{a.saveFailed}</span>}
+        {saveStatus === 'error' && (
+          <>
+            <span className="text-xs leading-relaxed text-danger-fg">{a.saveFailed}</span>
+            <button className={BTN_SUBTLE} onClick={retrySave} type="button">
+              {t.common.retry}
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

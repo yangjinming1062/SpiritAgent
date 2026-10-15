@@ -80,6 +80,7 @@ class DesktopVideoProgress(BaseModel):
     generation_id: str
     source: Literal["user_requested", "autonomous", "external_upload"]
     feedback: str = ""
+    paused_by_user: bool = False
     image_confirmed: bool = False
     image_only: bool = False
     aspect_ratio: str = Field(default="16:9", pattern=r"^[1-9]\d*:[1-9]\d*$")
@@ -141,6 +142,9 @@ class DesktopVideoCurrentResponse(BaseModel):
 class DesktopVideoDraftResponse(BaseModel):
     id: str
     stage: str
+    source: Literal["user_requested", "autonomous", "external_upload"]
+    feedback: str = ""
+    submission_unknown: bool = False
     image_url: str = ""
     image_confirmed: bool = False
     candidate_video_url: str = ""
@@ -242,6 +246,7 @@ class DesktopVideoCreateSetRequest(BaseModel):
     scene_id: int = Field(gt=0)
     outfit_id: int = Field(gt=0)
     source: Literal["ai", "image_upload", "video_upload"] = "ai"
+    feedback: str = Field(default="", max_length=1000)
 
     @field_validator("name", "request_id")
     @classmethod

@@ -67,9 +67,10 @@ function ActionPreview({ type, url }: { type: 'image' | 'video'; url: string }):
 interface VideoSectionProps {
   onBack: () => void
   outfitId: number
+  onMaterialReady?: (outfitId: number) => void
 }
 
-export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX.Element {
+export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSectionProps): React.JSX.Element {
   const authKind = useStore($auth).kind
   const packs = useStore($videoPacks)
   const outfits = useStore($outfits)
@@ -363,6 +364,11 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {onMaterialReady && selectedOutfit?.status === 'ready' ? (
+              <button className={BTN_PRIMARY} onClick={() => onMaterialReady(selectedOutfit.id)} type="button">
+                {dict.common.useForDesktopLife}
+              </button>
+            ) : null}
             {selectedPack?.can_retry ? (
               <button
                 className={BTN_SUBTLE}
@@ -373,7 +379,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                 {t.videoResume}
               </button>
             ) : null}
-            {!selectedPack && packsStatus === 'loaded' && selectedOutfit?.status === 'ready' ? (
+            {!onMaterialReady && !selectedPack && packsStatus === 'loaded' && selectedOutfit?.status === 'ready' ? (
               <button
                 className={BTN_PRIMARY}
                 disabled={scopedBusy || authKind !== 'authenticated'}
@@ -383,20 +389,25 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                 {t.videoGenAction}
               </button>
             ) : null}
-            {selectedPack?.status === 'ready' && !selectedPack.active ? (
+            {!onMaterialReady && selectedPack?.status === 'ready' && !selectedPack.active ? (
               <button className={BTN_PRIMARY} onClick={() => void activateVideoPack(selectedPack.id)} type="button">
                 {selectedPack.identity_review === 'review' ? t.videoIdentityReviewActivate : t.videoActivate}
               </button>
             ) : null}
             {canRegeneratePack ? (
-              <button
-                className={BTN_SUBTLE}
-                disabled={scopedBusy}
-                onClick={() => setRegenConfirmOpen(true)}
-                type="button"
-              >
-                {t.videoRegenAction}
-              </button>
+              <details>
+                <summary className="cursor-pointer rounded-lg px-3 py-2 text-xs text-muted">
+                  {dict.common.moreActions}
+                </summary>
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={scopedBusy}
+                  onClick={() => setRegenConfirmOpen(true)}
+                  type="button"
+                >
+                  {t.videoRegenAction}
+                </button>
+              </details>
             ) : null}
           </div>
         </div>
@@ -509,12 +520,12 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                 </div>
 
                 {selectedAction.motionPrompt ? (
-                  <p
-                    className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-muted"
-                    title={selectedAction.motionPrompt}
-                  >
-                    {selectedAction.motionPrompt}
-                  </p>
+                  <details className="mt-2 text-xs text-muted">
+                    <summary className="cursor-pointer">{dict.common.creationDetails}</summary>
+                    <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted">
+                      {selectedAction.motionPrompt}
+                    </p>
+                  </details>
                 ) : null}
 
                 {editing?.key === selectedAction.key ? (
@@ -565,6 +576,13 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
       ) : (
         <div className="m-4 grid min-h-0 flex-1 place-items-center rounded-xl border border-dashed border-line-strong bg-surface-card px-6 text-center">
           <div className="max-w-md">
+            {selectedOutfit?.fullbodyUrl ? (
+              <img
+                alt={selectedOutfit.name}
+                className="mx-auto mb-4 max-h-64 max-w-full object-contain"
+                src={selectedOutfit.fullbodyUrl}
+              />
+            ) : null}
             <p className="text-sm font-medium text-strong">
               {!selectedOutfit
                 ? t.videoSelectOutfit

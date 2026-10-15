@@ -19,16 +19,31 @@ import {
   useOutfitDesignSession
 } from '@/modules/character'
 import { PortraitLightbox } from '@/shared'
-import { ArrowBackUp, ArrowLeft, FileImage, ImageIcon, ImagePlus, Pencil, Plus, Send, Trash2 } from '@/shared/lib/icons'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useLatestRef } from '@/shared/hooks/use-latest-ref'
+import { saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
+import { ArrowBackUp, ArrowLeft, FileImage, ImageIcon, Pencil, Plus, Send, Trash2 } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Spinner, Toggle } from '@/shared/panel'
+import {
+  BTN_GHOST,
+  BTN_ICON,
+  BTN_PRIMARY,
+  confirmAction,
+  Disclosure,
+  HINT_TEXT,
+  INPUT_CLASS,
+  Spinner,
+  Toggle
+} from '@/shared/panel'
 import { backendApi } from '@/shared/platform/desktop'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
+
+import { $appearanceUi, $appearanceUiImportRevision, updateAppearanceUi } from './appearance-ui-state'
 
 // 列表卡 hover 操作钮：浮在立绘上，深色半透明底保证任何画面下可读。
 const CARD_ACTION_CLASS =
@@ -37,9 +52,10 @@ const CARD_ACTION_CLASS =
 // 着装是衣柜页的首层资产；选择着装只切换预览与动作目录，穿着由明确操作完成。
 interface OutfitSectionProps {
   onSelectOutfit: (id: number) => void
+  onMaterialReady?: (id: number) => void
 }
 
-export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX.Element {
+export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSectionProps): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
   const avatarSeeds = useStore($avatarSeeds)
@@ -50,22 +66,90 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
   const [busyId, setBusyId] = useState<number | null>(null)
   const [policyBusy, setPolicyBusy] = useState(false)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
-  const [designing, setDesigning] = useState(false)
-  const [text, setText] = useState('')
+  const { designing, text, draftId } = useStore($appearanceUi)
+  const importRevision = useStore($appearanceUiImportRevision)
+  const setDesigning = (next: boolean): void => updateAppearanceUi({ designing: next })
+  const setText = (next: string): void => updateAppearanceUi({ text: next })
   const [outfitSelfSourceOpen, setOutfitSelfSourceOpen] = useState(false)
+  const submittedText = useRef<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
+  const begin = useAsyncGuard()
+  const onMaterialReadyRef = useLatestRef(onMaterialReady)
 
   // 确认入柜后重拉列表——新装转为参考图就绪。
-  const session = useOutfitDesignSession(() => {
-    setDesigning(false)
-    setText('')
-    void hydrateWardrobe()
-  })
+  const session = useOutfitDesignSession(
+    id => {
+      updateAppearanceUi({
+        designing: false,
+        text: '',
+        draftId: null,
+        selectedOutfitId: onMaterialReadyRef.current ? null : id
+      })
+      const confirmedUi = $appearanceUi.get()
+      const importAtConfirmation = $appearanceUiImportRevision.get()
+      const isLive = begin()
+      void hydrateWardrobe().then(() => {
+        if (
+          isLive() &&
+          $appearanceUi.get() === confirmedUi &&
+          $appearanceUiImportRevision.get() === importAtConfirmation
+        ) {
+          onMaterialReadyRef.current?.(id)
+        }
+      })
+    },
+    id => updateAppearanceUi({ draftId: id })
+  )
+
+  const observedImportRevision = useRef(importRevision)
+  const currentDraft = session.draft
+  const adoptDraft = session.adoptDraft
+  const resetSession = session.reset
+  const restoreReference = session.restoreReference
+  useEffect(() => {
+    const imported = observedImportRevision.current !== importRevision
+    observedImportRevision.current = importRevision
+
+    if (imported) {
+      submittedText.current = null
+      setOutfitSelfSourceOpen(false)
+      setZoomUrl(null)
+      resetSession()
+    }
+
+    if (draftId === null) {
+      if (!imported && currentDraft) {
+        resetSession()
+      }
+
+      if (imported) {
+        restoreReference()
+      }
+
+      return
+    }
+
+    const saved = outfits.find(outfit => outfit.id === draftId && outfit.status === 'draft')
+
+    if (saved?.fullbodyUrl && (imported || currentDraft?.id !== saved.id)) {
+      adoptDraft(saved.id, saved.fullbodyUrl)
+    }
+  }, [adoptDraft, currentDraft, draftId, importRevision, outfits, resetSession, restoreReference])
 
   useEffect(() => {
     messagesRef.current?.scrollTo?.({ top: messagesRef.current.scrollHeight })
   }, [session.messages])
+
+  useEffect(() => {
+    if (!session.busy && session.draft?.previewUrl && !session.lastRequest && submittedText.current !== null) {
+      if ($appearanceUi.get().text === submittedText.current) {
+        updateAppearanceUi({ text: '' })
+      }
+
+      submittedText.current = null
+    }
+  }, [session.busy, session.draft, session.lastRequest])
 
   const withBusy = (id: number, action: () => Promise<unknown>): void => {
     setBusyId(id)
@@ -106,6 +190,8 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
     }
 
     session.reset()
+    updateAppearanceUi({ draftId: null, text: '' })
+    void saveCreationDraftImage('outfit', null)
     setDesigning(true)
     requestAnimationFrame(() => inputRef.current?.focus())
   }
@@ -133,7 +219,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
     }
 
     session.send(text, 'edit')
-    setText('')
+    submittedText.current = text
   }
 
   // 草稿反馈的两个显式操作（DESIGN「形象获取与确认」）：微调编辑上一版须带反馈，重新生成允许空反馈整体重绘。
@@ -143,7 +229,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
     }
 
     session.send(text, mode)
-    setText('')
+    submittedText.current = text
   }
 
   // 自备图（着装立绘）：有草稿时提示词/采纳都走草稿重绘语境，否则走创建语境。
@@ -164,6 +250,10 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
   }
 
   const adoptOutfitSelfSource = async (image: PickedImage): Promise<void> => {
+    const isLive = begin()
+    const importAtSubmit = $appearanceUiImportRevision.get()
+    const selectedDraftId = $appearanceUi.get().draftId
+
     const res = await backendApi().api<{ id?: number; fullbody_url?: string }>({
       path: session.draft ? `/api/companion/outfits/${session.draft.id}/adopt` : '/api/companion/outfits/adopt',
       method: 'POST',
@@ -175,12 +265,25 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
       }
     })
 
+    if (!isLive()) {
+      return
+    }
+
     void hydrateWardrobe()
 
     const resolved = res?.fullbody_url ? await resolvePortraitUrl(res.fullbody_url) : null
 
+    if (
+      !isLive() ||
+      importAtSubmit !== $appearanceUiImportRevision.get() ||
+      selectedDraftId !== $appearanceUi.get().draftId
+    ) {
+      return
+    }
+
     // 从采纳后的草稿续上设计会话，可继续描述微调或直接确认入柜。
     if (res?.id) {
+      updateAppearanceUi({ draftId: res.id })
       session.adoptDraft(res.id, resolved ?? '')
     }
 
@@ -196,7 +299,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
       {designing ? (
         <section
           aria-labelledby="appearance-outfit-design-heading"
-          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto"
         >
           <header className="flex shrink-0 items-center gap-3 border-b border-line-hairline px-4 py-2.5">
             <button
@@ -217,8 +320,8 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
             </div>
           </header>
 
-          <div className="grid min-h-0 flex-1 auto-rows-fr grid-cols-1 gap-3 overflow-hidden p-4 md:grid-cols-[minmax(0,1fr)_minmax(280px,0.72fr)]">
-            <div className="relative min-h-0 min-w-0 overflow-hidden rounded-xl border border-line-hairline bg-fill-trough">
+          <div className="grid min-h-0 grid-cols-1 gap-3 p-4 md:flex-1 md:grid-cols-[minmax(0,1fr)_minmax(280px,0.72fr)] md:overflow-hidden">
+            <div className="relative min-h-64 min-w-0 overflow-hidden rounded-xl border border-line-hairline bg-fill-trough md:min-h-0">
               {previewUrl ? (
                 <button
                   className="absolute inset-0 block h-full w-full cursor-zoom-in"
@@ -243,7 +346,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
               ) : null}
             </div>
 
-            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-line-hairline bg-surface-card">
+            <div className="flex min-h-80 min-w-0 flex-col overflow-hidden rounded-xl border border-line-hairline bg-surface-card md:min-h-0">
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3 text-xs" ref={messagesRef}>
                 {session.messages.length === 0 && <p className="text-faint">{t.designIntro}</p>}
                 {session.messages.map(m =>
@@ -355,9 +458,9 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
                 </div>
               )}
 
-              <div className="flex items-end gap-2 border-t border-line-hairline p-3">
+              <div className="flex flex-wrap items-end gap-2 border-t border-line-hairline p-3">
                 <textarea
-                  className={cn(INPUT_CLASS, 'min-h-[38px] flex-1 resize-none')}
+                  className={cn(INPUT_CLASS, 'min-h-[72px] w-full resize-none')}
                   disabled={session.busy}
                   onChange={e => setText(e.target.value)}
                   onKeyDown={e => {
@@ -380,18 +483,18 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
                 {!session.draft && (
                   <button
                     aria-label={t.attachImage}
-                    className={cn(BTN_ICON, 'h-9 w-9 shrink-0 self-end')}
+                    className="inline-flex items-center gap-1.5 text-xs text-muted transition hover:text-strong disabled:opacity-40"
                     disabled={session.busy}
                     onClick={() => void session.attachRefImage()}
                     title={t.attachImageTitle}
                     type="button"
                   >
-                    <FileImage />
+                    <FileImage className="size-3.5" /> {t.attachImage}
                   </button>
                 )}
                 <button
                   aria-label={selfSourceDict.open}
-                  className={cn(BTN_ICON, 'h-9 w-9 shrink-0 self-end')}
+                  className="inline-flex items-center gap-1.5 text-xs text-muted transition hover:text-strong disabled:opacity-40"
                   disabled={session.busy}
                   onClick={() => {
                     void hydrateAvatarSeeds().finally(() => setOutfitSelfSourceOpen(true))
@@ -399,17 +502,18 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
                   title={selfSourceDict.openTitle}
                   type="button"
                 >
-                  <ImagePlus />
+                  {selfSourceDict.open}
                 </button>
                 {!session.draft && (
                   <button
                     aria-label={t.send}
-                    className={cn(BTN_PRIMARY, 'h-9 w-9 shrink-0 self-end px-0')}
+                    className={cn(BTN_PRIMARY, 'ml-auto h-9 shrink-0')}
                     disabled={session.busy || !hasInput}
                     onClick={sendCreation}
                     type="button"
                   >
                     <Send className="size-4" />
+                    {t.send}
                   </button>
                 )}
               </div>
@@ -425,21 +529,13 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
               </h2>
               <span className="text-[11px] text-muted">{t.outfitCount(outfits.length)}</span>
             </div>
-            <div className="flex items-center gap-2" title={t.policyDesc}>
-              <span className="text-[11px] text-muted">{t.policyLabel}</span>
-              <span className="text-[10px] text-faint">
-                {outfitPolicy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
-              </span>
-              <Toggle
-                ariaLabel={t.policyToggleAria}
-                checked={outfitPolicy !== 'locked'}
-                disabled={policyBusy}
-                onChange={() => void togglePolicy()}
-              />
-            </div>
+            <button className={BTN_PRIMARY} disabled={session.busy} onClick={startDesign} type="button">
+              <Plus className="size-4" />
+              {t.startAction}
+            </button>
           </div>
 
-          <div className="flex flex-wrap content-start items-start gap-3 px-4 py-4">
+          <div className="grid grid-cols-2 content-start items-start gap-3 px-4 py-4 sm:grid-cols-3 lg:grid-cols-4">
             {outfits.map(outfit => {
               const statusLabel = outfit.active ? t.wearing : (t.statusLabels[outfit.status] ?? '')
               const canEdit = outfit.status === 'draft'
@@ -447,10 +543,22 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
 
               return (
                 <article
-                  className="group relative w-40 shrink-0 overflow-hidden rounded-xl border border-line-hairline bg-surface-card transition hover:border-line-strong"
+                  className="group relative min-w-0 overflow-hidden rounded-xl border border-line-hairline bg-surface-card transition hover:border-line-strong"
                   key={outfit.id}
                 >
-                  <button className="block w-full text-left" onClick={() => onSelectOutfit(outfit.id)} type="button">
+                  <button
+                    className="block w-full text-left"
+                    onClick={() => {
+                      if (canEdit) {
+                        updateAppearanceUi({ draftId: outfit.id })
+                        session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
+                        setDesigning(true)
+                      } else {
+                        onSelectOutfit(outfit.id)
+                      }
+                    }}
+                    type="button"
+                  >
                     <div className="relative aspect-[4/5] overflow-hidden bg-fill-trough">
                       {outfit.fullbodyUrl ? (
                         <img
@@ -476,75 +584,92 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
                     </div>
                   </button>
 
-                  <div className="absolute right-1 top-1 flex gap-1 opacity-100 transition md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-                    {outfit.fullbodyUrl ? (
-                      <button
-                        aria-label={t.zoomOutfit(outfit.name)}
-                        className={CARD_ACTION_CLASS}
-                        onClick={() => setZoomUrl(outfit.fullbodyUrl)}
-                        title={t.imageAlt}
-                        type="button"
-                      >
-                        <ImageIcon className="size-3.5" />
-                      </button>
-                    ) : null}
-                    {canEdit && (
-                      <button
-                        aria-label={t.actions.continueDesign}
-                        className={CARD_ACTION_CLASS}
-                        onClick={() => {
-                          session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
-                          setDesigning(true)
-                        }}
-                        title={t.actions.continueDesignTitle}
-                        type="button"
-                      >
-                        <Pencil className="size-3.5" />
-                      </button>
-                    )}
-                    {outfit.status === 'ready' && outfit.descriptionStatus === 'failed' && (
-                      <button
-                        aria-label={t.retryDescription}
-                        className={CARD_ACTION_CLASS}
-                        disabled={busyId === outfit.id}
-                        onClick={() => withBusy(outfit.id, () => completeDescription(outfit.id))}
-                        title={outfit.descriptionError ?? t.retryDescription}
-                        type="button"
-                      >
-                        {t.retryDescription}
-                      </button>
-                    )}
-                    {canDelete && (
-                      <button
-                        aria-label={t.actions.delete}
-                        className={cn(CARD_ACTION_CLASS, 'hover:text-rose-300')}
-                        disabled={busyId === outfit.id}
-                        onClick={() => withBusy(outfit.id, () => removeOutfit(outfit.id))}
-                        title={t.actions.deleteTitle}
-                        type="button"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  <details className="border-t border-line-hairline px-2 py-2">
+                    <summary className="cursor-pointer text-xs text-muted">{dict.common.moreActions}</summary>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {outfit.fullbodyUrl ? (
+                        <button
+                          aria-label={t.zoomOutfit(outfit.name)}
+                          className={CARD_ACTION_CLASS}
+                          onClick={() => setZoomUrl(outfit.fullbodyUrl)}
+                          title={t.imageAlt}
+                          type="button"
+                        >
+                          <ImageIcon className="size-3.5" />
+                        </button>
+                      ) : null}
+                      {canEdit && (
+                        <button
+                          aria-label={t.actions.continueDesign}
+                          className={CARD_ACTION_CLASS}
+                          onClick={() => {
+                            updateAppearanceUi({ draftId: outfit.id })
+                            session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
+                            setDesigning(true)
+                          }}
+                          title={t.actions.continueDesignTitle}
+                          type="button"
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                      )}
+                      {outfit.status === 'ready' && outfit.descriptionStatus === 'failed' && (
+                        <button
+                          aria-label={t.retryDescription}
+                          className={CARD_ACTION_CLASS}
+                          disabled={busyId === outfit.id}
+                          onClick={() => withBusy(outfit.id, () => completeDescription(outfit.id))}
+                          title={outfit.descriptionError ?? t.retryDescription}
+                          type="button"
+                        >
+                          {t.retryDescription}
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          aria-label={t.actions.delete}
+                          className={cn(CARD_ACTION_CLASS, 'hover:text-rose-300')}
+                          disabled={busyId === outfit.id}
+                          onClick={() => {
+                            void confirmAction({
+                              title: t.actions.deleteTitle,
+                              description: outfit.name,
+                              confirmLabel: t.actions.delete,
+                              variant: 'destructive'
+                            }).then(confirmed => {
+                              if (confirmed) {
+                                withBusy(outfit.id, () => removeOutfit(outfit.id))
+                              }
+                            })
+                          }}
+                          title={t.actions.deleteTitle}
+                          type="button"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </details>
                 </article>
               )
             })}
 
             {outfits.length === 0 ? <p className="self-center text-xs text-muted">{t.empty}</p> : null}
-            <button
-              className="flex w-40 shrink-0 flex-col overflow-hidden rounded-xl border border-dashed border-line-strong bg-surface-card text-body transition hover:border-accent-line hover:text-strong disabled:opacity-50"
-              disabled={session.busy}
-              onClick={startDesign}
-              type="button"
-            >
-              <span className="flex aspect-[4/5] w-full items-center justify-center bg-fill-trough">
-                <span className="grid size-8 place-items-center rounded-full bg-accent-soft text-accent">
-                  <Plus className="size-4" />
+          </div>
+          <div className="px-4 pb-4">
+            <Disclosure hint={t.policyDesc} title={t.policyLabel}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-muted">
+                  {outfitPolicy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
                 </span>
-              </span>
-              <span className="px-2 py-1.5 text-center text-[11px]">{t.startAction}</span>
-            </button>
+                <Toggle
+                  ariaLabel={t.policyToggleAria}
+                  checked={outfitPolicy !== 'locked'}
+                  disabled={policyBusy}
+                  onChange={() => void togglePolicy()}
+                />
+              </div>
+            </Disclosure>
           </div>
         </section>
       )}

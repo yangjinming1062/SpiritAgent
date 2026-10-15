@@ -12,6 +12,7 @@ export interface OnboardingAnswers {
   user_hobbies?: string
   user_freeform?: string
   voice?: string
+  voice_setup_skipped?: string
 }
 
 export interface PersonaPayload {

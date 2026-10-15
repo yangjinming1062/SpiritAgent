@@ -45,7 +45,7 @@ export function CompanionEgg({
       message={presentation.fallbackMessage}
       onStatusAction={() => {
         if (presentation.fallbackStatus === 'failed') {
-          void requestOpenSurface({ page: 'appearance' })
+          void requestOpenSurface({ page: 'companion', companionSection: 'appearance' })
 
           return
         }

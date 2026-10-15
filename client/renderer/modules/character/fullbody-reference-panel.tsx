@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react'
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { authedApi } from '@/shared/lib/authed-api'
-import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { backendApi } from '@/shared/platform/desktop'
@@ -34,9 +33,6 @@ interface FullbodyReferencePanelProps {
   onBack?: () => void
 }
 
-// 引导内尚无全身图时先让用户在「AI 生成 / 直接上传」两条入口里选，选 AI 后再进入可附参考图的生成表单。
-type OnboardingSourceStep = 'choose' | 'ai'
-
 export function FullbodyReferencePanel({
   avatarId,
   onContinue,
@@ -58,7 +54,6 @@ export function FullbodyReferencePanel({
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [zoom, setZoom] = useState(false)
   const [selfSourceOpen, setSelfSourceOpen] = useState(false)
-  const [sourceStep, setSourceStep] = useState<OnboardingSourceStep>('choose')
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null)
   const onboarding = Boolean(onContinue)
   const current = state.avatarId === avatarId
@@ -80,10 +75,6 @@ export function FullbodyReferencePanel({
     })),
     ...(preview ? [{ id: null, label: t.historyCurrent, url: preview }] : [])
   ]
-
-  // 有结果后进入预览确认；此前引导只展示当前选定的获取方式。
-  const showSourceChoice =
-    onboarding && !preview && !currentRawUrl && history.length === 0 && state.error === null && sourceStep === 'choose'
 
   useEffect(() => {
     void hydrateAvatarSeeds()
@@ -241,144 +232,110 @@ export function FullbodyReferencePanel({
     void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
   }
 
-  // 自备图弹层共用一份；引导入口选择与设置页的「改用 AI」语义不同，由 onUseAi 分流。
-  const selfSourceTitle = onboarding ? t.sourceSelf : current && state.rawUrl ? t.regenerate : t.generate
-
   return (
     <section className="space-y-3">
-      {showSourceChoice ? (
-        <>
-          <div>
-            <p className={SECTION_TITLE}>{t.sourceChoiceTitle}</p>
-            <p className={HINT_TEXT}>{t.sourceChoiceHint}</p>
-          </div>
-          <div className="flex flex-col gap-3">
-            <button
-              className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99] disabled:opacity-40"
-              disabled={busy}
-              onClick={() => setSourceStep('ai')}
-              type="button"
-            >
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-[14px] font-medium text-strong">
-                  <Sparkles className="size-4 text-muted" /> {t.sourceAi}
-                </span>
-                <span className="text-xs text-muted">{t.sourceAiArrow}</span>
-              </div>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-body">{t.sourceAiHint}</p>
-            </button>
-            <button
-              className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99] disabled:opacity-40"
-              disabled={busy}
-              onClick={openSelfSource}
-              type="button"
-            >
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-[14px] font-medium text-strong">
-                  <FolderOpen className="size-4 text-muted" /> {t.sourceSelf}
-                </span>
-                <span className="text-xs text-muted">{t.sourceSelfArrow}</span>
-              </div>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-body">{t.sourceSelfHint}</p>
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div>
-            <p className={SECTION_TITLE}>{t.title}</p>
-            <p className={HINT_TEXT}>{t.hint}</p>
-          </div>
-          {displayedPreview ? (
-            <button
-              aria-label={t.enlarge}
-              className="mx-auto block w-full cursor-zoom-in overflow-hidden rounded-xl border border-line-hairline bg-fill-trough"
-              onClick={() => setZoom(true)}
-              type="button"
-            >
-              <img alt={t.title} className="mx-auto max-h-64 max-w-full object-contain" src={displayedPreview} />
-            </button>
-          ) : (
-            <p className="rounded-xl border border-line-hairline bg-fill-trough px-4 py-6 text-center text-xs text-muted">
-              {busy ? t.loading : history.length > 0 ? t.historyCurrentUnavailable : t.empty}
-            </p>
-          )}
-          {current && state.busy && (
-            <p aria-live="polite" className={HINT_TEXT}>
-              {t.loading}
-            </p>
-          )}
-          {onboarding && current && history.length > 0 && (
-            <div className="space-y-2">
-              <p className={FIELD_LABEL}>{t.historyTitle}</p>
-              <div className="flex flex-wrap gap-2">
-                {thumbnails.map(item => {
-                  const selected = item.id === (selectedHistory?.id ?? null)
+      <>
+        <div>
+          <p className={SECTION_TITLE}>{t.title}</p>
+          <p className={HINT_TEXT}>{t.hint}</p>
+        </div>
+        {displayedPreview ? (
+          <button
+            aria-label={t.enlarge}
+            className="mx-auto block w-full cursor-zoom-in overflow-hidden rounded-xl border border-line-hairline bg-fill-trough"
+            onClick={() => setZoom(true)}
+            type="button"
+          >
+            <img alt={t.title} className="mx-auto max-h-64 max-w-full object-contain" src={displayedPreview} />
+          </button>
+        ) : (
+          <p className="rounded-xl border border-line-hairline bg-fill-trough px-4 py-6 text-center text-xs text-muted">
+            {busy ? t.loading : history.length > 0 ? t.historyCurrentUnavailable : t.empty}
+          </p>
+        )}
+        {current && state.busy && (
+          <p aria-live="polite" className={HINT_TEXT}>
+            {t.loading}
+          </p>
+        )}
+        {onboarding && current && history.length > 0 && (
+          <div className="space-y-2">
+            <p className={FIELD_LABEL}>{t.historyTitle}</p>
+            <div className="flex flex-wrap gap-2">
+              {thumbnails.map(item => {
+                const selected = item.id === (selectedHistory?.id ?? null)
 
-                  return (
-                    <button
-                      aria-label={item.label}
-                      aria-pressed={selected}
-                      className={`overflow-hidden rounded-lg border bg-fill-trough text-left transition ${
-                        selected ? 'border-accent ring-1 ring-accent' : 'border-line-hairline hover:border-line-strong'
-                      }`}
-                      disabled={busy}
-                      key={item.id ?? 'current'}
-                      onClick={() => setSelectedHistoryId(item.id)}
-                      type="button"
-                    >
-                      <img alt="" className="h-16 w-16 object-contain" src={item.url} />
-                      <span className="block px-1 pb-1 text-center text-[10px] text-muted">{item.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-              {selectedHistory && (
-                <div className="space-y-2">
-                  <p className={HINT_TEXT}>{t.historySelectedHint}</p>
+                return (
                   <button
-                    className={BTN_SUBTLE}
+                    aria-label={item.label}
+                    aria-pressed={selected}
+                    className={`overflow-hidden rounded-lg border bg-fill-trough text-left transition ${
+                      selected ? 'border-accent ring-1 ring-accent' : 'border-line-hairline hover:border-line-strong'
+                    }`}
                     disabled={busy}
-                    onClick={() => void restoreSelectedHistory()}
+                    key={item.id ?? 'current'}
+                    onClick={() => setSelectedHistoryId(item.id)}
                     type="button"
                   >
-                    {t.restoreVersion}
+                    <img alt="" className="h-16 w-16 object-contain" src={item.url} />
+                    <span className="block px-1 pb-1 text-center text-[10px] text-muted">{item.label}</span>
                   </button>
-                </div>
+                )
+              })}
+            </div>
+            {selectedHistory && (
+              <div className="space-y-2">
+                <p className={HINT_TEXT}>{t.historySelectedHint}</p>
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={busy}
+                  onClick={() => void restoreSelectedHistory()}
+                  type="button"
+                >
+                  {t.restoreVersion}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {!onboarding && current && state.candidateId && (
+          <div className="space-y-2 rounded-xl border border-line-hairline bg-fill-trough p-3">
+            <p className={HINT_TEXT}>{t.candidateHint}</p>
+            {state.candidateError && (
+              <p className="text-xs text-danger-fg" role="alert">
+                {state.candidateError}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {state.candidateStatus === 'ready' ? (
+                <button
+                  className={BTN_PRIMARY}
+                  disabled={busy}
+                  onClick={() => void acceptFullbodyCandidate(avatarId)}
+                  type="button"
+                >
+                  {t.acceptCandidate}
+                </button>
+              ) : (
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={busy}
+                  onClick={() => void retryFullbodyCandidateAnalysis(avatarId)}
+                  type="button"
+                >
+                  {t.retryCandidateAnalysis}
+                </button>
               )}
             </div>
-          )}
-          {!onboarding && current && state.candidateId && (
-            <div className="space-y-2 rounded-xl border border-line-hairline bg-fill-trough p-3">
-              <p className={HINT_TEXT}>{t.candidateHint}</p>
-              {state.candidateError && (
-                <p className="text-xs text-danger-fg" role="alert">
-                  {state.candidateError}
-                </p>
-              )}
-              <div className="flex flex-wrap gap-2">
-                {state.candidateStatus === 'ready' ? (
-                  <button
-                    className={BTN_PRIMARY}
-                    disabled={busy}
-                    onClick={() => void acceptFullbodyCandidate(avatarId)}
-                    type="button"
-                  >
-                    {t.acceptCandidate}
-                  </button>
-                ) : (
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={busy}
-                    onClick={() => void retryFullbodyCandidateAnalysis(avatarId)}
-                    type="button"
-                  >
-                    {t.retryCandidateAnalysis}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+          </div>
+        )}
+        <details
+          className="space-y-3 rounded-xl border border-line-hairline p-3"
+          open={!displayedPreview ? true : undefined}
+        >
+          <summary className="cursor-pointer text-xs text-body">
+            {displayedPreview ? genActions.aiTitle : t.descriptionLabel}
+          </summary>
           <div className="space-y-1">
             <label className={FIELD_LABEL} htmlFor="fullbody-reference-feedback">
               {initialGeneration ? t.descriptionLabel : t.feedbackLabel}
@@ -395,8 +352,8 @@ export function FullbodyReferencePanel({
               value={feedback}
             />
           </div>
-          <div className="space-y-1">
-            <p className={FIELD_LABEL}>{t.refLabel}</p>
+          <details className="space-y-1 rounded-xl border border-line-hairline p-3" open={reference ? true : undefined}>
+            <summary className="cursor-pointer text-xs text-body">{t.refLabel}</summary>
             <p className={HINT_TEXT}>{t.refHint}</p>
             <div className="flex items-center gap-2">
               {reference && (
@@ -428,7 +385,7 @@ export function FullbodyReferencePanel({
                 {t.pickError}
               </p>
             )}
-          </div>
+          </details>
           <GenerationActionsGroup
             editDisabled={
               busy || Boolean(selectedHistory) || currentImageUnavailable || !preview || !feedback.trim() || !!reference
@@ -438,7 +395,7 @@ export function FullbodyReferencePanel({
             }
             onEdit={current && state.rawUrl ? () => void submit('edit') : undefined}
             onRegenerate={() => void submit('regenerate')}
-            onSelfSource={onboarding ? undefined : openSelfSource}
+            onSelfSource={openSelfSource}
             regenerateDisabled={
               busy || Boolean(selectedHistory) || currentImageUnavailable || (history.length > 0 && !currentRawUrl)
             }
@@ -447,39 +404,34 @@ export function FullbodyReferencePanel({
               busy || Boolean(selectedHistory) || currentImageUnavailable || (history.length > 0 && !currentRawUrl)
             }
           />
-          {current && state.error && (
-            <div className="space-y-2">
-              <p className="text-xs text-danger-fg" role="alert">
-                {state.errorMessage || t.errors[state.error]}
-              </p>
-              <button
-                className={BTN_SUBTLE}
-                disabled={busy}
-                onClick={() => void hydrateFullbodyReference(avatarId)}
-                type="button"
-              >
-                {t.reload}
-              </button>
-            </div>
-          )}
-          {confirmError && (
+        </details>
+        {current && state.error && (
+          <div className="space-y-2">
             <p className="text-xs text-danger-fg" role="alert">
-              {confirmError}
+              {state.errorMessage || t.errors[state.error]}
             </p>
-          )}
-          {onboarding && preview && <p className={HINT_TEXT}>{t.confirmHint}</p>}
-        </>
-      )}
+            <button
+              className={BTN_SUBTLE}
+              disabled={busy}
+              onClick={() => void hydrateFullbodyReference(avatarId)}
+              type="button"
+            >
+              {t.reload}
+            </button>
+          </div>
+        )}
+        {confirmError && (
+          <p className="text-xs text-danger-fg" role="alert">
+            {confirmError}
+          </p>
+        )}
+        {onboarding && preview && <p className={HINT_TEXT}>{t.confirmHint}</p>}
+      </>
       {(onBack || onContinue) && (
         <div className="flex flex-wrap items-center gap-2">
           {onBack && (
             <button className={BTN_SUBTLE} disabled={busy} onClick={onBack} type="button">
               {t.back}
-            </button>
-          )}
-          {onboarding && !preview && sourceStep === 'ai' && (
-            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setSourceStep('choose')} type="button">
-              {t.backToSourceChoice}
             </button>
           )}
           {onContinue && (
@@ -501,19 +453,10 @@ export function FullbodyReferencePanel({
         onClose={() => setSelfSourceOpen(false)}
         onUseAi={() => {
           setSelfSourceOpen(false)
-
-          // 引导内改走 AI 入口表单（仍可附参考图），不直接开始生成。
-          if (onboarding) {
-            setSourceStep('ai')
-
-            return
-          }
-
-          void submit('regenerate')
         }}
         open={selfSourceOpen}
         referenceImages={selfSourceReferences}
-        title={selfSourceTitle}
+        title={selfSource.open}
       />
       {zoom && displayedPreview && (
         <PortraitLightbox name={t.title} onClose={() => setZoom(false)} url={displayedPreview} />

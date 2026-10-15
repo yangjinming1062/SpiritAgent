@@ -11,7 +11,6 @@ import {
   speakScripted,
   type VoiceCatalog,
   type VoiceDesignPreview,
-  VoiceProviderBadge,
   voiceSelectionId
 } from '@/modules/speech'
 import { requestGateway } from '@/shared'
@@ -24,9 +23,9 @@ import {
   BTN_PRIMARY,
   BTN_SUBTLE,
   CapsuleTabs,
+  Disclosure,
   HINT_TEXT,
   INPUT_CLASS,
-  SECTION_TITLE,
   SettingCard,
   SETTINGS_ROW_DESC,
   SETTINGS_ROW_TITLE,
@@ -61,6 +60,7 @@ export function VoicePage(): React.ReactElement {
   const [catalogReloadKey, setCatalogReloadKey] = useState(0)
 
   const [genderFilter, setGenderFilter] = useState('')
+  const [showAll, setShowAll] = useState(false)
 
   const [designPrompt, setDesignPrompt] = useState('')
   const [designPreview, setDesignPreview] = useState<VoiceDesignPreview | null>(null)
@@ -71,6 +71,11 @@ export function VoicePage(): React.ReactElement {
     () => catalog.voices.filter(v => !genderFilter || v.gender === genderFilter),
     [catalog.voices, genderFilter]
   )
+
+  const displayedVoices =
+    showAll || genderFilter
+      ? filteredVoices
+      : filteredVoices.filter(v => voiceSelectionId(v) === currentVoice || filteredVoices.indexOf(v) < 3)
 
   useLayoutEffect(() => {
     return () => {
@@ -205,7 +210,7 @@ export function VoicePage(): React.ReactElement {
       </div>
 
       <SettingCard>
-        {filteredVoices.map(v => {
+        {displayedVoices.map(v => {
           const selectionId = voiceSelectionId(v)
           const inUse = currentVoice === selectionId
 
@@ -214,7 +219,6 @@ export function VoicePage(): React.ReactElement {
               <div className="min-w-0">
                 <p className={cn(SETTINGS_ROW_TITLE, 'flex items-center gap-1.5')}>
                   {v.label}
-                  <VoiceProviderBadge provider={v.provider} />
                   {inUse ? <Check className="size-3.5 text-accent" /> : null}
                 </p>
                 <p className={SETTINGS_ROW_DESC}>{v.tags.join(' · ')}</p>
@@ -242,10 +246,20 @@ export function VoicePage(): React.ReactElement {
         })}
         {filteredVoices.length === 0 && <p className="px-4 py-6 text-center text-[13px] text-muted">{t.noMatch}</p>}
       </SettingCard>
+      {filteredVoices.length > 3 && !genderFilter && (
+        <button className={BTN_SUBTLE} onClick={() => setShowAll(value => !value)} type="button">
+          {showAll
+            ? locale === 'en'
+              ? 'Show recommended voices'
+              : '只看推荐声音'
+            : locale === 'en'
+              ? 'Browse all voices'
+              : '查看全部声音'}
+        </button>
+      )}
 
       {catalog.supportsVoiceDesign && (
-        <section>
-          <p className={cn(SECTION_TITLE, 'mb-2')}>{t.designHeading}</p>
+        <Disclosure title={t.designHeading}>
           <SettingCard className="p-4" divided={false}>
             {catalog.voiceDesignGuide && (
               <p className={cn(HINT_TEXT, 'whitespace-pre-line')}>{catalog.voiceDesignGuide}</p>
@@ -276,7 +290,7 @@ export function VoicePage(): React.ReactElement {
             </div>
             {designHint && <p className="mt-2 text-xs text-amber-300/90">{designHint}</p>}
           </SettingCard>
-        </section>
+        </Disclosure>
       )}
     </div>
   )

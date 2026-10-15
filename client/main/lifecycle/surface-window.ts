@@ -1,6 +1,11 @@
 import { type App, BrowserWindow, screen } from 'electron'
 
-import { type DesktopSurfaceOpenPayload, IPC, type SurfaceCompanionPreference } from '@ipc/contracts'
+import {
+  type DesktopSurfaceOpenPayload,
+  IPC,
+  normalizeAppNavigation,
+  type SurfaceCompanionPreference
+} from '@ipc/contracts'
 import { clamp, errorMessage } from '@runtime'
 
 import { sendToWindow } from '../shared/utils'
@@ -44,19 +49,34 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
 } {
   function surfaceLoadUrl(payload?: DesktopSurfaceOpenPayload): string {
     const url = new URL(deps.rendererUrlFor('main', deps.seedTheme()))
+    const target = normalizeAppNavigation(payload)
 
-    if (payload?.section) {
-      url.hash = `#/settings/${payload.section}`
+    if (target.page === 'settings' && target.section) {
+      url.hash = `#/settings/${target.section}`
 
-      if (payload.section === 'skills' && payload.settingsTab) {
-        url.hash += `?subtab=${payload.settingsTab}`
+      if (target.section === 'devices' && target.settingsTab) {
+        url.hash += `?subtab=${target.settingsTab}`
       }
-    } else if (payload?.page) {
-      url.hash = `#/${payload.page}`
+    } else if (target.page === 'companion' && target.companionSection) {
+      const query = new URLSearchParams()
+
+      if (target.companionTask === 'create') {
+        query.set('create', '1')
+      }
+
+      if (target.returnToDesktopLife) {
+        query.set('return', 'desktop-life')
+      }
+
+      url.hash = `#/companion/${target.companionSection}${query.size ? `?${query}` : ''}`
+    } else if (target.page === 'posts' && target.postsTab) {
+      url.hash = `#/posts/${target.postsTab}`
+    } else if (target.page) {
+      url.hash = `#/${target.page}`
     }
 
     for (const key of ['sessionId', 'messageKey'] as const) {
-      const value = payload?.[key]
+      const value = target[key]
 
       if (value) {
         url.searchParams.set(key, value)

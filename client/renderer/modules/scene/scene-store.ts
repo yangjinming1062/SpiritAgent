@@ -550,17 +550,22 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
   }
 }
 
-export async function prepareScenePrompt(input: Pick<SceneGenerationInput, 'notes'>): Promise<string> {
+export async function prepareScenePrompt(
+  input: Pick<SceneGenerationInput, 'notes'>
+): Promise<{ id: string; prompt: string }> {
   const row = await mutate<SceneWire>('/prompt', 'POST', input)
 
-  return row.prompt
+  return { id: String(row.id), prompt: row.prompt }
 }
 
-export async function adoptSceneImage(image: { base64: string; contentType: string }, sceneId?: string): Promise<void> {
-  const pending = $pendingScene.get()
-  const targetId = sceneId ?? (pending?.stage === 'waiting_upload' ? pending.id : undefined)
-  const path = targetId ? `/${encodeURIComponent(targetId)}/adopt` : '/adopt'
-  await mutate(path, 'POST', { image: image.base64, content_type: image.contentType })
+export async function adoptSceneImage(
+  image: { base64: string; contentType: string },
+  sceneId?: string
+): Promise<string | null> {
+  const path = sceneId ? `/${encodeURIComponent(sceneId)}/adopt` : '/adopt'
+  const result = await mutate<SceneWire>(path, 'POST', { image: image.base64, content_type: image.contentType })
+
+  return result ? String(result.id) : null
 }
 
 export async function cancelSceneTask(sceneId: string): Promise<void> {

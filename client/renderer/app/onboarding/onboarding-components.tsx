@@ -119,7 +119,7 @@ export function DraggableDialog({ children }: { children: React.ReactNode }): Re
   const onDialogPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     const target = e.target as HTMLElement
 
-    if (target.closest('button, input, textarea, [contenteditable="true"]')) {
+    if (target.closest('button, input, textarea, select, summary, a, [contenteditable="true"]')) {
       return
     }
 

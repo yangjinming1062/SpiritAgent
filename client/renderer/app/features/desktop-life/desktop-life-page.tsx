@@ -17,19 +17,29 @@ import {
   type DesktopVideoAction,
   type DesktopVideoPromptReference,
   type DesktopVideoSource,
-  ensureDesktopVideoCurrent,
   generateDesktopVideoAction,
   generateDesktopVideoImage,
   getDesktopVideoPrompt,
+  pauseDesktopVideoDraft,
   playDesktopVideoAction,
   refreshDesktopVideos,
   renameDesktopVideoSet,
+  resumeDesktopVideoDraft,
   reviewDesktopVideoAction,
   setDesktopVideoPreferences,
   uploadDesktopVideoAction
 } from '@/modules/desktop-videos'
 import { useResolvedMediaSrc } from '@/modules/media'
-import { $sceneLibrary, $scenePage, $sceneTotal, loadSceneLibrary, PAGE_SIZE } from '@/modules/scene'
+import {
+  $activeScene,
+  $sceneLibrary,
+  $scenePage,
+  $sceneTotal,
+  loadSceneDetail,
+  loadSceneLibrary,
+  PAGE_SIZE,
+  type SceneAsset
+} from '@/modules/scene'
 import { PortraitLightbox } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
@@ -42,6 +52,7 @@ import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 
+import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 
 function isActionPaused(action: DesktopVideoAction): boolean {
@@ -70,15 +81,38 @@ function DesktopLifePreview({
   draft?: boolean
   onImageReady?: () => void
 }): React.JSX.Element {
+  const [attempt, setAttempt] = useState(0)
+
+  return (
+    <ResolvedDesktopLifePreview
+      action={action}
+      draft={draft}
+      key={`${draft ? action.draft?.id : action.id}:${attempt}`}
+      onImageReady={onImageReady}
+      onRetry={() => setAttempt(value => value + 1)}
+    />
+  )
+}
+
+function ResolvedDesktopLifePreview({
+  action,
+  draft,
+  onImageReady,
+  onRetry
+}: {
+  action: DesktopVideoAction
+  draft: boolean
+  onImageReady?: () => void
+  onRetry: () => void
+}): React.JSX.Element {
   const active = usePanelActivity()
   const t = useDesktopLifeStrings()
   const videoUrl = draft ? action.draft?.candidate_video_url : action.current?.video_url
-  const posterUrl = draft ? action.draft?.candidate_poster_url || action.draft?.image_url : action.current?.poster_url
-  const url = videoUrl || posterUrl
-  const type = videoUrl ? 'video' : 'image'
-  const media = useResolvedMediaSrc({ type, url: url ?? '' })
+  const imageUrl = draft ? action.draft?.candidate_poster_url || action.draft?.image_url : action.current?.poster_url
+  const url = videoUrl || imageUrl || ''
+  const media = useResolvedMediaSrc({ type: videoUrl ? 'video' : 'image', url })
+  const [failed, setFailed] = useState(false)
   const video = useRef<HTMLVideoElement>(null)
-  const src = media.status === 'ready' ? media.src : undefined
 
   useEffect(() => {
     if (!active) {
@@ -88,23 +122,37 @@ function DesktopLifePreview({
 
   return (
     <div className="flex aspect-video w-full items-center justify-center overflow-hidden rounded-xl bg-black/20">
-      {src ? (
-        type === 'video' ? (
+      {media.status === 'ready' && !failed ? (
+        videoUrl ? (
           <video
             className="h-full w-full object-contain"
             controls
             loop={action.kind === 'loop'}
             muted
+            onError={() => setFailed(true)}
             playsInline
             preload="metadata"
             ref={video}
-            src={src}
+            src={media.src}
           />
         ) : (
-          <img alt="" className="h-full w-full object-contain" onLoad={onImageReady} src={src} />
+          <img
+            alt={action.name}
+            className="h-full w-full object-contain"
+            onError={() => setFailed(true)}
+            onLoad={onImageReady}
+            src={media.src}
+          />
         )
       ) : (
-        <span className="text-sm text-muted">{t.noPreview}</span>
+        <div className="flex flex-col items-center gap-3 p-5 text-center text-sm text-muted">
+          <p>{failed || media.status === 'failed' ? t.previewFailed : url ? t.loading : t.noPreview}</p>
+          {(failed || media.status === 'failed') && (
+            <button className={BTN_SUBTLE} onClick={onRetry} type="button">
+              {t.retryPreview}
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
@@ -198,7 +246,11 @@ function localFileName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath
 }
 
-export function DesktopLifePage(): React.JSX.Element {
+export function DesktopLifePage({
+  onPrepareMaterial
+}: {
+  onPrepareMaterial?: (kind: 'scene' | 'outfit') => void
+}): React.JSX.Element {
   const t = useDesktopLifeStrings()
   const auth = useStore($auth)
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
@@ -206,36 +258,53 @@ export function DesktopLifePage(): React.JSX.Element {
   const sets = useStore($desktopVideoSets)
   const loading = useStore($desktopVideoLoading)
   const error = useStore($desktopVideoError)
-  const [selectedSetId, setSelectedSetId] = useState<number | null>(null)
+  const ui = useStore($desktopLifeUi)
+  const { selectedSetId, selectedActionId, create, feedback, design, addActionOpen } = ui
+  const createOpen = ui.creating
+
+  const setCreate = (next: React.SetStateAction<typeof create>): void => {
+    updateDesktopLifeUi({ create: typeof next === 'function' ? next($desktopLifeUi.get().create) : next })
+  }
+
+  const setFeedback = (next: React.SetStateAction<typeof feedback>): void => {
+    updateDesktopLifeUi({ feedback: typeof next === 'function' ? next($desktopLifeUi.get().feedback) : next })
+  }
+
+  const setDesign = (next: React.SetStateAction<typeof design>): void => {
+    updateDesktopLifeUi({ design: typeof next === 'function' ? next($desktopLifeUi.get().design) : next })
+  }
+
+  const setSelectedSetId = (id: number | null): void =>
+    updateDesktopLifeUi({ selectedSetId: id, selectedActionId: null })
+
+  const setCreateOpen = (creating: boolean): void => updateDesktopLifeUi({ creating })
   const [busy, setBusy] = useState(false)
   const [imagePreviews, setImagePreviews] = useState<Record<string, boolean>>({})
-  const [feedback, setFeedback] = useState<Record<number, string>>({})
   const scenes = useStore($sceneLibrary)
+  const activeScene = useStore($activeScene)
   const scenePage = useStore($scenePage)
   const sceneTotal = useStore($sceneTotal)
   const outfits = useStore($outfits)
-  const [createOpen, setCreateOpen] = useState(false)
-
-  const [create, setCreate] = useState({
-    name: '',
-    sceneId: '',
-    sceneLabel: '',
-    outfitId: '',
-    source: 'ai' as DesktopVideoSource,
-    requestId: crypto.randomUUID()
-  })
-
   const [sceneQuery, setSceneQuery] = useState('')
+  const [creationScene, setCreationScene] = useState<{ id: string; scene: SceneAsset | null } | null>(null)
   const [rename, setRename] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [design, setDesign] = useState({ name: '', description: '', kind: 'loop' as 'loop' | 'once', duration: 10 })
+  const [discardAction, setDiscardAction] = useState<DesktopVideoAction | null>(null)
   const [designMessage, setDesignMessage] = useState<string | null>(null)
-  const [externalAction, setExternalAction] = useState<DesktopVideoAction | null>(null)
+  const [externalAction, setExternalActionLocal] = useState<DesktopVideoAction | null>(null)
+
+  const setExternalAction = (action: DesktopVideoAction | null): void => {
+    setExternalActionLocal(action)
+    updateDesktopLifeUi({ externalActionId: action?.id ?? null })
+  }
+
   const [externalBaseVersion, setExternalBaseVersion] = useState(0)
   const [externalPrompt, setExternalPrompt] = useState<Awaited<ReturnType<typeof getDesktopVideoPrompt>> | null>(null)
-  const [externalRequirements, setExternalRequirements] = useState('')
+  const externalRequirements = ui.externalRequirements
+  const setExternalRequirements = (value: string): void => updateDesktopLifeUi({ externalRequirements: value })
   const [externalPromptRequirements, setExternalPromptRequirements] = useState('')
-  const [externalFilePath, setExternalFilePath] = useState<string | null>(null)
+  const externalFilePath = ui.externalFilePath
+  const setExternalFilePath = (value: string | null): void => updateDesktopLifeUi({ externalFilePath: value })
   const [externalPromptLoading, setExternalPromptLoading] = useState(false)
   const [externalUploading, setExternalUploading] = useState(false)
   const [externalCopied, setExternalCopied] = useState(false)
@@ -244,9 +313,11 @@ export function DesktopLifePage(): React.JSX.Element {
   const externalAuthSession = useRef(authSessionId)
   const beginAsync = useAsyncGuard()
   const selected = sets.find(item => item.id === selectedSetId)
+  const idle = selected?.actions.find(action => action.key === 'idle')
+  const action = selected?.actions.find(item => item.id === selectedActionId)
   const currentMatches = selected?.is_current === true
   const externalSet = sets.find(set => set.id === externalAction?.set_id)
-  const liveExternalAction = externalSet?.actions.find(action => action.id === externalAction?.id)
+  const liveExternalAction = externalSet?.actions.find(item => item.id === externalAction?.id)
 
   const externalStale = Boolean(
     externalAction &&
@@ -260,13 +331,15 @@ export function DesktopLifePage(): React.JSX.Element {
 
   const working = sets.some(
     item =>
-      item.actions.some(action => action.status === 'processing' && !isActionPaused(action)) ||
+      item.actions.some(item => item.status === 'processing' && !isActionPaused(item)) ||
       item.proposals?.some(proposal => proposal.status === 'pending')
   )
 
   useEffect(() => {
     if (authSessionId) {
       void refreshDesktopVideos()
+      void hydrateWardrobe()
+      void loadSceneLibrary('', 0)
     }
   }, [authSessionId])
 
@@ -277,26 +350,20 @@ export function DesktopLifePage(): React.JSX.Element {
 
     externalAuthSession.current = authSessionId
     externalRequest.current += 1
-    setExternalAction(null)
+    setExternalActionLocal(null)
     setExternalPrompt(null)
-    setExternalRequirements('')
     setExternalPromptRequirements('')
     setExternalCopied(false)
-    setExternalFilePath(null)
     setExternalReferenceZoom(null)
     setExternalPromptLoading(false)
     setExternalUploading(false)
-    setSelectedSetId(null)
-    setCreateOpen(false)
-    setCreate({ name: '', sceneId: '', sceneLabel: '', outfitId: '', source: 'ai', requestId: crypto.randomUUID() })
-    setFeedback({})
     setImagePreviews({})
+    setCreationScene(null)
     setDeleteOpen(false)
+    setDiscardAction(null)
     setBusy(false)
     setRename('')
-    setDesign({ name: '', description: '', kind: 'loop', duration: 10 })
     setDesignMessage(null)
-    setSceneQuery('')
   }, [authSessionId])
 
   useEffect(() => {
@@ -309,15 +376,73 @@ export function DesktopLifePage(): React.JSX.Element {
     return () => window.clearInterval(timer)
   }, [working])
 
-  const run = async (action: () => Promise<unknown>): Promise<void> => {
+  useEffect(() => {
+    if (!externalAction && ui.externalActionId) {
+      const set = sets.find(item => item.actions.some(item => item.id === ui.externalActionId))
+      const savedAction = set?.actions.find(item => item.id === ui.externalActionId)
+
+      if (set && savedAction) {
+        setExternalActionLocal(savedAction)
+        setExternalBaseVersion(set.base_version)
+      }
+    }
+  }, [externalAction, sets, ui.externalActionId])
+
+  useEffect(() => {
+    if (!createOpen) {
+      return
+    }
+
+    const previous = $desktopLifeUi.get().create
+    const scene = activeScene?.status === 'ready' ? activeScene : scenes.find(item => item.status === 'ready')
+
+    const outfit =
+      outfits.find(item => item.active && item.status === 'ready') ?? outfits.find(item => item.status === 'ready')
+
+    if ((!previous.sceneId && scene) || (!previous.outfitId && outfit)) {
+      updateDesktopLifeUi({
+        create: {
+          ...previous,
+          sceneId: previous.sceneId || scene?.id || '',
+          sceneLabel: previous.sceneId ? previous.sceneLabel : scene?.title || '',
+          outfitId: previous.outfitId || (outfit ? String(outfit.id) : '')
+        }
+      })
+    }
+  }, [createOpen, activeScene, outfits, scenes])
+
+  useEffect(() => {
+    if (!createOpen || !create.sceneId) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    let current = true
+    void loadSceneDetail(create.sceneId).then(scene => {
+      if (current && scope?.()) {
+        setCreationScene({ id: create.sceneId, scene })
+      }
+    })
+
+    return () => {
+      current = false
+    }
+  }, [createOpen, create.sceneId, authSessionId])
+
+  const run = async (operation: () => Promise<unknown>): Promise<void> => {
+    if (busy) {
+      return
+    }
+
     const isLive = beginAsync()
     setBusy(true)
 
     try {
-      await action()
+      await operation()
     } catch (failure) {
       if (isLive()) {
         notifyError(failure, t.title)
+        void refreshDesktopVideos()
       }
     } finally {
       if (isLive()) {
@@ -326,20 +451,12 @@ export function DesktopLifePage(): React.JSX.Element {
     }
   }
 
-  const play = async (action: DesktopVideoAction): Promise<void> => {
+  const play = async (item: DesktopVideoAction): Promise<void> => {
     if ($presentation.get().effectiveMode !== 'desktop') {
       await shellApi().presentation.setMode('desktop')
     }
 
-    await playDesktopVideoAction(action.id, action.set_id)
-  }
-
-  const prepare = async (): Promise<void> => {
-    if ($presentation.get().effectiveMode !== 'desktop') {
-      await shellApi().presentation.setMode('desktop')
-    }
-
-    await ensureDesktopVideoCurrent()
+    await playDesktopVideoAction(item.id, item.set_id)
   }
 
   const loadExternalPrompt = async (action: DesktopVideoAction, requirements = ''): Promise<void> => {
@@ -383,15 +500,19 @@ export function DesktopLifePage(): React.JSX.Element {
   }
 
   const openExternal = (action: DesktopVideoAction): void => {
+    const sameAction = $desktopLifeUi.get().externalActionId === action.id
     setExternalAction(action)
     setExternalBaseVersion($desktopVideoSets.get().find(set => set.id === action.set_id)?.base_version ?? 0)
     setExternalPrompt(null)
-    setExternalRequirements('')
+
+    if (!sameAction) {
+      setExternalRequirements('')
+      setExternalFilePath(null)
+    }
+
     setExternalPromptRequirements('')
-    setExternalFilePath(null)
     setExternalReferenceZoom(null)
     setExternalCopied(false)
-    void loadExternalPrompt(action)
   }
 
   const closeExternal = (): void => {
@@ -436,9 +557,12 @@ export function DesktopLifePage(): React.JSX.Element {
     }
 
     const action = externalAction
-    const isCurrent = captureAuthScope()
+    const authScope = captureAuthScope()
+    const isLive = beginAsync()
+    const requestId = externalRequest.current
+    const isCurrent = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
 
-    if (!authSessionId || !isCurrent) {
+    if (!authSessionId || !authScope) {
       return
     }
 
@@ -494,9 +618,10 @@ export function DesktopLifePage(): React.JSX.Element {
     }
 
     const scope = captureAuthScope()
+    const isLive = beginAsync()
     await confirmDesktopVideoImage(action, selected, false)
 
-    if (!scope?.()) {
+    if (!scope?.() || !isLive()) {
       return
     }
 
@@ -512,6 +637,7 @@ export function DesktopLifePage(): React.JSX.Element {
 
   const uploadImage = async (action: DesktopVideoAction): Promise<void> => {
     const scope = captureAuthScope()
+    const isLive = beginAsync()
 
     if (!selected || !authSessionId || !scope) {
       return
@@ -523,7 +649,7 @@ export function DesktopLifePage(): React.JSX.Element {
       title: t.uploadImage
     })
 
-    if (path && scope()) {
+    if (path && scope() && isLive()) {
       await uploadDesktopVideoAction(action, selected, path, authSessionId, 'image')
     }
   }
@@ -547,450 +673,1030 @@ export function DesktopLifePage(): React.JSX.Element {
     void hydrateWardrobe()
   }
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+  const actionName = (item: DesktopVideoAction): string =>
+    item.preset ? t.actionNames[item.key as keyof typeof t.actionNames] || item.name : item.name
+
+  const openAction = (item: DesktopVideoAction): void => {
+    updateDesktopLifeUi({ selectedActionId: item.id, addActionOpen: false })
+  }
+
+  const actionStatus = (item: DesktopVideoAction): string => {
+    if (item.draft?.submission_unknown) {
+      return t.resultPending
+    }
+
+    if (isActionPaused(item)) {
+      return t.paused
+    }
+
+    if (item.stage === 'image_review') {
+      return t.stepImage
+    }
+
+    if (item.status === 'processing') {
+      if (item.stage === 'image' || item.stage === 'image_upload') {
+        return t.generatingImage
+      }
+
+      if (['process', 'download', 'upload'].includes(item.stage)) {
+        return t.processingVideo
+      }
+
+      if (item.stage === 'video') {
+        return t.generatingVideo
+      }
+
+      return t.preparing
+    }
+
+    if (item.draft?.candidate_video_url) {
+      return t.stepUse
+    }
+
+    if (item.playable) {
+      return t.ready
+    }
+
+    return item.status === 'queued' ? t.notCreated : t.statuses[item.status]
+  }
+
+  const adoptCandidate = async (item: DesktopVideoAction): Promise<void> => {
+    if (!selected) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    await reviewDesktopVideoAction(item, selected, true)
+
+    if (!scope?.()) {
+      return
+    }
+
+    const latest = $desktopVideoSets.get().find(set => set.id === selected.id)
+    const updated = latest?.actions.find(action => action.id === item.id)
+
+    if (!latest || !updated?.playable) {
+      return
+    }
+
+    if (!latest.is_current && !(await activateDesktopVideoSet(latest))) {
+      return
+    }
+
+    if (!scope()) {
+      return
+    }
+
+    if ($presentation.get().effectiveMode !== 'desktop') {
+      await shellApi().presentation.setMode('desktop')
+    }
+
+    if (item.key !== 'idle') {
+      await play(updated)
+    }
+  }
+
+  const renderSteps = (step: number): React.JSX.Element => (
+    <ol aria-label={t.createSet} className="grid grid-cols-4 gap-2 border-b border-line-hairline pb-4">
+      {[t.stepIdea, t.stepImage, t.stepVideo, t.stepUse].map((label, index) => (
+        <li
+          aria-current={step === index ? 'step' : undefined}
+          className={`flex flex-col gap-2 text-xs sm:flex-row sm:items-center ${index === step ? 'font-medium text-accent' : 'text-muted'}`}
+          key={label}
+        >
+          <span
+            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${index === step ? 'bg-accent/15' : 'bg-black/5'}`}
+          >
+            {index + 1}
+          </span>
+          {label}
+        </li>
+      ))}
+    </ol>
+  )
+
+  const renderAction = (item: DesktopVideoAction): React.JSX.Element => {
+    if (!selected) {
+      return <></>
+    }
+
+    const processing = item.status === 'processing' && !isActionPaused(item)
+    const imageReview = Boolean(item.stage === 'image_review' && item.draft?.image_url && !item.draft.image_confirmed)
+
+    const candidate = Boolean(
+      item.status === 'review_pending' && item.stage !== 'image_review' && item.draft?.candidate_video_url
+    )
+
+    const step =
+      candidate || (!item.draft && item.current)
+        ? 3
+        : imageReview
+          ? 1
+          : item.draft
+            ? item.draft.image_confirmed || item.draft.source === 'external_upload'
+              ? 2
+              : 1
+            : 0
+
+    const dependent = item.key !== 'idle' && item.continuity === 'base'
+    const requiresBase = dependent && !selected.base_image_url
+    const note = feedback[item.id] ?? item.draft?.feedback ?? ''
+
+    const affected = selected.actions.filter(
+      action => action.id !== item.id && action.continuity === 'base' && action.current && action.enabled
+    ).length
+
+    const canConfirm = item.draft && imagePreviews[`${item.draft.id}:${item.draft.image_url}`]
+
+    return (
+      <section className="flex flex-col gap-5" key={item.id}>
+        {renderSteps(step)}
         <div>
-          <h2 className="text-sm font-semibold text-strong">{t.title}</h2>
-          <p className="mt-1 text-xs text-muted">{t.hint}</p>
+          <h3 className="text-lg font-semibold text-strong">{actionName(item)}</h3>
+          <p className="mt-1 text-sm text-muted" role="status">
+            {actionStatus(item)}
+          </p>
         </div>
-        <div className="flex gap-2">
+        {requiresBase ? (
+          <div className="rounded-xl bg-accent/5 p-5">
+            <h4 className="font-medium text-strong">{t.imageRequired}</h4>
+            <p className="my-3 text-sm leading-relaxed text-body">{t.imageRequiredHint}</p>
+            <button className={BTN_PRIMARY} onClick={() => idle && openAction(idle)} type="button">
+              {t.openImage}
+            </button>
+          </div>
+        ) : (
+          <>
+            <DesktopLifePreview
+              action={item}
+              draft={Boolean(item.draft)}
+              onImageReady={() => {
+                const draft = item.draft
+
+                if (draft) {
+                  setImagePreviews(current => ({ ...current, [`${draft.id}:${draft.image_url}`]: true }))
+                }
+              }}
+            />
+            {item.current && item.draft && <p className="text-sm text-muted">{t.savedCurrent}</p>}
+            {(item.error || item.draft?.error) && (
+              <div className="rounded-xl bg-warning/10 p-4 text-sm text-body" role="status">
+                <p>{t.unavailable}</p>
+                <details className="mt-2 text-xs text-muted">
+                  <summary className="cursor-pointer">{t.details}</summary>
+                  <p className="mt-2 break-words">{item.draft?.error || item.error}</p>
+                </details>
+              </div>
+            )}
+            {item.needs_update && <p className="text-sm text-warning">{t.needsUpdate}</p>}
+            {processing ? (
+              <div className="flex flex-col gap-3 rounded-xl bg-accent/5 p-4" role="status">
+                <p className="text-sm font-medium text-strong">{actionStatus(item)}</p>
+                <p className="text-sm text-muted">{t.leaveHint}</p>
+                <p className="text-xs text-muted">{t.stopHint}</p>
+                {item.draft && !['upload', 'image_upload'].includes(item.stage) && (
+                  <button
+                    className={`${BTN_SUBTLE} self-start`}
+                    disabled={busy}
+                    onClick={() => void run(() => pauseDesktopVideoDraft(item))}
+                    type="button"
+                  >
+                    {t.cancel}
+                  </button>
+                )}
+              </div>
+            ) : item.draft?.submission_unknown ? (
+              <div className="rounded-xl bg-black/5 p-4">
+                <p className="text-sm font-medium text-strong">{t.resultPending}</p>
+                <p className="mt-2 text-sm leading-relaxed text-muted">{t.resultPendingHint}</p>
+                <button
+                  className={`${BTN_SUBTLE} mt-3`}
+                  disabled={loading || busy}
+                  onClick={() => void refreshDesktopVideos()}
+                  type="button"
+                >
+                  {t.refresh}
+                </button>
+              </div>
+            ) : candidate ? (
+              <>
+                <p className="text-sm text-body">{t.readyHint}</p>
+                {item.key === 'idle' && affected > 0 && (
+                  <p className="rounded-lg bg-warning/10 p-3 text-sm text-warning">{t.updateImpact(affected)}</p>
+                )}
+                <div className="sticky bottom-0 flex flex-wrap gap-2 border-t border-line-hairline bg-surface-card py-4">
+                  <button
+                    className={BTN_PRIMARY}
+                    disabled={busy}
+                    onClick={() => void run(() => adoptCandidate(item))}
+                    type="button"
+                  >
+                    {item.key === 'idle' ? t.play : t.useCandidate}
+                  </button>
+                  <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
+                    {t.reject}
+                  </button>
+                </div>
+              </>
+            ) : imageReview ? (
+              <>
+                <p className="text-sm text-body">{t.imageReview}</p>
+                <details className="rounded-xl border border-line-hairline p-4">
+                  <summary className="cursor-pointer text-sm font-medium text-strong">{t.adjustImage}</summary>
+                  <label className="mt-3 flex flex-col gap-2 text-sm text-body">
+                    {t.adjustHint}
+                    <textarea
+                      className={`${INPUT_CLASS} min-h-24 resize-y`}
+                      maxLength={600}
+                      onChange={event => setFeedback(current => ({ ...current, [item.id]: event.target.value }))}
+                      rows={3}
+                      value={note}
+                    />
+                  </label>
+                  <button
+                    className={`${BTN_SUBTLE} mt-3`}
+                    disabled={busy || !note.trim()}
+                    onClick={() => void run(() => generateDesktopVideoImage(item, selected, note))}
+                    type="button"
+                  >
+                    {t.adjustImage}
+                  </button>
+                </details>
+                <div className="sticky bottom-0 flex flex-wrap gap-2 border-t border-line-hairline bg-surface-card py-4">
+                  <button
+                    className={BTN_PRIMARY}
+                    disabled={busy || !canConfirm}
+                    onClick={() => void run(() => confirmDesktopVideoImage(item, selected))}
+                    type="button"
+                  >
+                    {t.confirmImage}
+                  </button>
+                </div>
+              </>
+            ) : item.current && !item.draft && !item.needs_update ? (
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-muted">{t.readyHint}</p>
+                <button
+                  className={`${BTN_PRIMARY} self-start`}
+                  disabled={busy || !item.playable}
+                  onClick={() =>
+                    void run(async () => {
+                      if (!currentMatches) {
+                        const activated = await activateDesktopVideoSet(selected)
+
+                        if (!activated) {
+                          return
+                        }
+                      }
+
+                      if (item.key !== 'idle') {
+                        await play(item)
+                      } else if ($presentation.get().effectiveMode !== 'desktop') {
+                        await shellApi().presentation.setMode('desktop')
+                      }
+                    })
+                  }
+                  type="button"
+                >
+                  {currentMatches && item.key === 'idle' ? t.current : item.key === 'idle' ? t.play : t.playAction}
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {isActionPaused(item) && <p className="text-sm text-muted">{t.resumeHint}</p>}
+                {!isActionPaused(item) && (
+                  <label className="flex flex-col gap-2 text-sm text-body">
+                    {t.feedback}
+                    <textarea
+                      className={`${INPUT_CLASS} min-h-24 resize-y`}
+                      maxLength={600}
+                      onChange={event => setFeedback(current => ({ ...current, [item.id]: event.target.value }))}
+                      rows={3}
+                      value={note}
+                    />
+                  </label>
+                )}
+                <button
+                  className={`${BTN_PRIMARY} self-start`}
+                  disabled={busy}
+                  onClick={() =>
+                    void run(() => {
+                      if (isActionPaused(item) || item.draft?.source === 'external_upload') {
+                        return resumeDesktopVideoDraft(item, selected)
+                      }
+
+                      if (!dependent && !item.draft?.image_confirmed) {
+                        return generateDesktopVideoImage(item, selected, isActionPaused(item) ? '' : note)
+                      }
+
+                      return generateDesktopVideoAction(item, selected, isActionPaused(item) ? '' : note)
+                    })
+                  }
+                  type="button"
+                >
+                  {isActionPaused(item)
+                    ? t.resume
+                    : item.status === 'failed'
+                      ? t.retry
+                      : dependent || item.draft?.image_confirmed
+                        ? t.startAction
+                        : t.generateImage}
+                </button>
+              </div>
+            )}
+            {!processing && !candidate && (
+              <details className="rounded-xl border border-line-hairline p-4">
+                <summary className="cursor-pointer text-sm font-medium text-strong">{t.more}</summary>
+                <div className="mt-4 flex flex-col gap-3">
+                  {item.current && !dependent && (
+                    <>
+                      <p className="text-sm text-muted">{t.recreateHint}</p>
+                      <textarea
+                        aria-label={t.feedback}
+                        className={`${INPUT_CLASS} min-h-20 resize-y`}
+                        maxLength={600}
+                        onChange={event => setFeedback(current => ({ ...current, [item.id]: event.target.value }))}
+                        rows={2}
+                        value={note}
+                      />
+                      <button
+                        className={`${BTN_SUBTLE} self-start`}
+                        disabled={busy || item.draft?.submission_unknown}
+                        onClick={() => void run(() => generateDesktopVideoImage(item, selected, note))}
+                        type="button"
+                      >
+                        {t.adjustImage}
+                      </button>
+                    </>
+                  )}
+                  {(item.current || item.draft?.image_confirmed) && (
+                    <button
+                      className={`${BTN_SUBTLE} self-start`}
+                      disabled={busy || item.draft?.submission_unknown}
+                      onClick={() => void run(() => generateDesktopVideoAction(item, selected, note))}
+                      type="button"
+                    >
+                      {t.remakeVideo}
+                    </button>
+                  )}
+                  {!dependent && (
+                    <button
+                      className={`${BTN_SUBTLE} self-start`}
+                      disabled={busy}
+                      onClick={() => void run(() => uploadImage(item))}
+                      type="button"
+                    >
+                      {t.uploadImage}
+                    </button>
+                  )}
+                  <button
+                    className={`${BTN_SUBTLE} self-start`}
+                    disabled={busy || (imageReview && !canConfirm)}
+                    onClick={() =>
+                      void run(() => (imageReview ? confirmForExternal(item) : Promise.resolve(openExternal(item))))
+                    }
+                    type="button"
+                  >
+                    {imageReview ? t.confirmOnly : t.externalTitle}
+                  </button>
+                  {item.draft && (
+                    <button
+                      className={`${BTN_GHOST} self-start`}
+                      disabled={busy}
+                      onClick={() => setDiscardAction(item)}
+                      type="button"
+                    >
+                      {t.discardDraft}
+                    </button>
+                  )}
+                  <details className="text-xs text-muted">
+                    <summary className="cursor-pointer">{t.details}</summary>
+                    <p className="mt-2">{item.description}</p>
+                    <p className="mt-2">
+                      {item.kind === 'loop' ? t.loop : t.once} · {item.target_duration_seconds}s{' '}
+                      {item.actual_duration_ms !== null && `· ${(item.actual_duration_ms / 1000).toFixed(1)}s`}
+                    </p>
+                    {item.use_when.length > 0 && (
+                      <p className="mt-2">
+                        {t.useWhen}：{item.use_when.join('；')}
+                      </p>
+                    )}
+                    {item.avoid_when.length > 0 && (
+                      <p className="mt-2">
+                        {t.avoidWhen}：{item.avoid_when.join('；')}
+                      </p>
+                    )}
+                  </details>
+                </div>
+              </details>
+            )}
+          </>
+        )}
+      </section>
+    )
+  }
+
+  const selectedScene =
+    creationScene?.id === create.sceneId
+      ? creationScene.scene
+      : (scenes.find(scene => scene.id === create.sceneId) ?? (activeScene?.id === create.sceneId ? activeScene : null))
+
+  const selectedOutfit = outfits.find(outfit => String(outfit.id) === create.outfitId)
+  const materialReady = selectedScene?.status === 'ready' && selectedOutfit?.status === 'ready'
+
+  const displayedActions =
+    selected?.actions.filter(item => item.key !== 'idle' && (item.current || item.draft || item.status === 'failed')) ??
+    []
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-strong">
+              {createOpen ? t.createSet : selected?.title || t.title}
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
+              {createOpen ? t.createHint : !selected ? t.hint : t.savedCurrent}
+            </p>
+          </div>
+          {!selected && !createOpen && (
+            <button className={BTN_PRIMARY} disabled={busy} onClick={openCreate} type="button">
+              {t.createSet}
+            </button>
+          )}
+        </header>
+        {(selected || createOpen) && (
           <button
-            className={BTN_SUBTLE}
-            disabled={loading || busy}
-            onClick={() => void refreshDesktopVideos()}
+            className={`${BTN_GHOST} self-start`}
+            onClick={() => {
+              if (createOpen) {
+                setCreateOpen(false)
+              } else if (selectedActionId !== null) {
+                updateDesktopLifeUi({ selectedActionId: null })
+              } else {
+                setSelectedSetId(null)
+              }
+            }}
             type="button"
           >
-            {t.refresh}
+            <ArrowLeft size={15} />
+            {selectedActionId !== null && !createOpen ? t.returnToScene : t.back}
           </button>
-          <button className={BTN_PRIMARY} disabled={busy} onClick={() => void run(prepare)} type="button">
-            {t.prepare}
-          </button>
-          <button className={BTN_PRIMARY} disabled={busy} onClick={openCreate} type="button">
-            {t.createSet}
-          </button>
-        </div>
-      </header>
-      {state && (
-        <div className="mb-4 flex flex-wrap gap-5 border-b border-line-hairline pb-3 text-xs text-body">
-          <label className="flex items-center gap-2">
-            <input
-              checked={state.pinned}
-              disabled={busy}
-              onChange={event => void run(() => setDesktopVideoPreferences({ pinned: event.target.checked }))}
-              type="checkbox"
-            />
-            {t.pin}
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              checked={state.autonomous_enabled}
-              disabled={busy}
-              onChange={event =>
-                void run(() => setDesktopVideoPreferences({ autonomous_enabled: event.target.checked }))
-              }
-              type="checkbox"
-            />
-            {t.autonomy}
-          </label>
-        </div>
-      )}
-      {(error || state?.preparation_error) && (
-        <p className="mb-4 text-sm text-warning" role="status">
-          {state?.preparation_error || error || t.fail}
-        </p>
-      )}
-      {loading && !sets.length && <p className="text-sm text-muted">{t.loading}</p>}
-      {!loading && !sets.length && <p className="text-sm text-muted">{t.empty}</p>}
-      {selected ? (
-        <>
-          <button className={`${BTN_SUBTLE} mb-4 self-start`} onClick={() => setSelectedSetId(null)} type="button">
-            <ArrowLeft size={14} />
-            {t.back}
-          </button>
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <h3 className="mr-auto text-sm font-semibold text-strong">
-              {selected.title} {selected.is_default ? `· ${t.defaultSet}` : ''}
-            </h3>
+        )}
+        {(error || state?.preparation_error) && (
+          <div className="rounded-xl bg-warning/10 p-4 text-sm text-body" role="status">
+            <p>{t.unavailable}</p>
             <button
-              className={BTN_PRIMARY}
-              disabled={
-                busy || currentMatches || !selected.actions.some(action => action.key === 'idle' && action.playable)
-              }
-              onClick={() => void run(activate)}
+              className={`${BTN_SUBTLE} mt-3`}
+              disabled={loading || busy}
+              onClick={() => void refreshDesktopVideos()}
               type="button"
             >
-              {currentMatches ? t.current : t.play}
+              {t.refresh}
             </button>
-            <input
-              aria-label={t.renameSet}
-              className={`${INPUT_CLASS} w-40`}
-              maxLength={160}
-              onChange={event => setRename(event.target.value)}
-              placeholder={selected.title}
-              value={rename}
-            />
-            <button
-              className={BTN_SUBTLE}
-              disabled={busy || !rename.trim()}
-              onClick={() =>
+            <details className="mt-3 text-xs text-muted">
+              <summary className="cursor-pointer">{t.details}</summary>
+              <p className="mt-2 break-words">{state?.preparation_error || error}</p>
+            </details>
+          </div>
+        )}
+        {createOpen ? (
+          <>
+            {renderSteps(0)}
+            <form
+              className="flex flex-col gap-5"
+              onSubmit={event => {
+                event.preventDefault()
+                const scope = captureAuthScope()
+                const isLive = beginAsync()
                 void run(async () => {
-                  await renameDesktopVideoSet(selected.id, rename.trim())
-                  setRename('')
-                })
-              }
-              type="button"
-            >
-              {t.renameSet}
-            </button>
-            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDeleteOpen(true)} type="button">
-              {t.deleteSet}
-            </button>
-          </div>
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            {selected.actions.map(action => (
-              <article
-                className="flex flex-col gap-3 rounded-xl border border-line-hairline p-3"
-                id={`desktop-life-action-${action.id}`}
-                key={action.id}
-              >
-                {action.current && (
-                  <>
-                    <p className="text-xs font-medium text-muted">{t.currentContent}</p>
-                    <DesktopLifePreview action={action} />
-                  </>
-                )}
-                {action.draft && (
-                  <>
-                    <p className="text-xs font-medium text-accent">
-                      {action.draft.image_confirmed || action.draft.candidate_video_url
-                        ? t.draftContent
-                        : t.imageReview}
-                    </p>
-                    <DesktopLifePreview
-                      action={action}
-                      draft
-                      onImageReady={() =>
-                        setImagePreviews(current => ({
-                          ...current,
-                          [`${action.draft?.id}:${action.draft?.image_url}`]: true
-                        }))
-                      }
-                    />
-                  </>
-                )}
-                {!action.current && !action.draft && <DesktopLifePreview action={action} />}
-                {action.needs_update && (
-                  <p className="text-xs text-warning" role="status">
-                    {t.needsUpdate}
-                  </p>
-                )}
-                {action.unavailable_reason && !action.playable && (
-                  <p className="text-xs text-muted">{action.unavailable_reason}</p>
-                )}
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-medium text-strong">
-                      {action.preset
-                        ? t.actionNames[action.key as keyof typeof t.actionNames] || action.name
-                        : action.name}
-                    </h4>
-                    <p className="mt-1 text-xs text-muted">
-                      {action.kind === 'loop' ? t.loop : t.once} · {t.targetDuration} {action.target_duration_seconds}s
-                      {action.actual_duration_ms !== null && (
-                        <>
-                          {' '}
-                          · {t.actualDuration} {(action.actual_duration_ms / 1000).toFixed(1)}s
-                        </>
-                      )}
-                      {action.actual_duration_ms === null &&
-                        action.duration_seconds !== action.target_duration_seconds && (
-                          <>
-                            {' '}
-                            · {t.creationDuration} {action.duration_seconds}s
-                          </>
-                        )}{' '}
-                      · {isActionPaused(action) ? t.paused : t.statuses[action.status]}
-                    </p>
-                  </div>
-                  {state?.current?.id === selected.id && state.selected_action_id === action.id && (
-                    <span className="text-xs text-accent">{t.playing}</span>
-                  )}
-                </div>
-                <p className="text-xs leading-relaxed text-body">{action.description}</p>
-                {action.use_when.length > 0 && (
-                  <p className="text-xs leading-relaxed text-muted">
-                    {t.useWhen}：{action.use_when.join('；')}
-                  </p>
-                )}
-                {action.avoid_when.length > 0 && (
-                  <p className="text-xs leading-relaxed text-muted">
-                    {t.avoidWhen}：{action.avoid_when.join('；')}
-                  </p>
-                )}
-                <p className="text-xs text-muted">
-                  {action.continuity === 'base' && action.base_version === null
-                    ? t.basePending
-                    : action.continuity === 'base' && action.base_version === selected.base_version
-                      ? t.baseReturn
-                      : t.independentScene}
-                </p>
-                {action.error && (
-                  <p className="text-xs text-warning" role="status">
-                    {action.error}
-                  </p>
-                )}
-                {isActionPaused(action) ? (
-                  <p className="text-xs text-muted" role="status">
-                    {t.resumeHint}
-                  </p>
-                ) : (
-                  <textarea
-                    aria-label={t.feedback}
-                    className={`${INPUT_CLASS} min-h-16 resize-y text-xs`}
-                    maxLength={600}
-                    onChange={event => setFeedback(current => ({ ...current, [action.id]: event.target.value }))}
-                    placeholder={t.feedback}
-                    rows={2}
-                    value={feedback[action.id] ?? ''}
-                  />
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={
-                      busy ||
-                      action.status === 'processing' ||
-                      (action.continuity === 'base' && action.key !== 'idle' && !selected.base_image_url)
-                    }
-                    onClick={() => openExternal(action)}
-                    type="button"
-                  >
-                    {t.external}
-                  </button>
-                  {action.continuity === 'base' && action.key !== 'idle' ? (
-                    <button
-                      className={BTN_SUBTLE}
-                      onClick={() =>
-                        document
-                          .getElementById(
-                            `desktop-life-action-${selected.actions.find(item => item.key === 'idle')?.id}`
-                          )
-                          ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                      }
-                      type="button"
-                    >
-                      {t.manageBase}
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        className={BTN_SUBTLE}
-                        disabled={busy || action.status === 'processing'}
-                        onClick={() => void run(() => generateDesktopVideoImage(action, selected, feedback[action.id]))}
-                        type="button"
-                      >
-                        {action.draft?.image_url || action.current ? t.adjustImage : t.generateImage}
-                      </button>
-                      {(action.draft?.image_url || action.current) && (
-                        <button
-                          className={BTN_SUBTLE}
-                          disabled={busy || action.status === 'processing'}
-                          onClick={() =>
-                            void run(() => generateDesktopVideoImage(action, selected, feedback[action.id], true))
-                          }
-                          type="button"
-                        >
-                          {t.regenerateImage}
-                        </button>
-                      )}
-                      <button
-                        className={BTN_SUBTLE}
-                        disabled={busy || action.status === 'processing'}
-                        onClick={() => void run(() => uploadImage(action))}
-                        type="button"
-                      >
-                        {t.uploadImage}
-                      </button>
-                    </>
-                  )}
-                  {action.stage === 'image_review' && action.draft?.image_url && !action.draft.image_confirmed && (
-                    <button
-                      className={BTN_PRIMARY}
-                      disabled={
-                        busy ||
-                        action.status === 'processing' ||
-                        !imagePreviews[`${action.draft.id}:${action.draft.image_url}`]
-                      }
-                      onClick={() => void run(() => confirmDesktopVideoImage(action, selected))}
-                      type="button"
-                    >
-                      {t.confirmImage}
-                    </button>
-                  )}
-                  {action.stage === 'image_review' && action.draft?.image_url && !action.draft.image_confirmed && (
-                    <button
-                      className={BTN_SUBTLE}
-                      disabled={
-                        busy ||
-                        action.status === 'processing' ||
-                        !imagePreviews[`${action.draft.id}:${action.draft.image_url}`]
-                      }
-                      onClick={() => void run(() => confirmForExternal(action))}
-                      type="button"
-                    >
-                      {t.confirmExternal}
-                    </button>
-                  )}
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={
-                      busy ||
-                      (action.status === 'processing' && !isActionPaused(action)) ||
-                      Boolean(action.draft?.image_url && !action.draft.image_confirmed) ||
-                      (action.continuity === 'base' && action.key !== 'idle' && !selected.base_image_url)
-                    }
-                    onClick={() => void run(() => generateDesktopVideoAction(action, selected, feedback[action.id]))}
-                    type="button"
-                  >
-                    {isActionPaused(action) ? t.resume : action.current ? t.remakeVideo : t.generate}
-                  </button>
-                  {action.draft && (
-                    <button
-                      className={BTN_SUBTLE}
-                      disabled={busy}
-                      onClick={() => void run(() => cancelDesktopVideoDraft(action))}
-                      type="button"
-                    >
-                      {action.status === 'processing' ? t.cancel : t.discardDraft}
-                    </button>
-                  )}
-                  {action.video_url && (
-                    <button
-                      className={BTN_PRIMARY}
-                      disabled={busy || !action.playable || !currentMatches}
-                      onClick={() => void run(() => play(action))}
-                      type="button"
-                    >
-                      {t.play}
-                    </button>
-                  )}
-                  {action.status === 'review_pending' && action.draft?.candidate_video_url && (
-                    <>
-                      <button
-                        className={BTN_PRIMARY}
-                        disabled={busy}
-                        onClick={() => void run(() => reviewDesktopVideoAction(action, selected, true))}
-                        type="button"
-                      >
-                        {action.key === 'idle'
-                          ? `${t.accept} · ${t.updateActions(selected.actions.filter(item => item.id !== action.id && item.continuity === 'base' && item.current && item.enabled).length)}`
-                          : t.accept}
-                      </button>
-                      <button
-                        className={BTN_SUBTLE}
-                        disabled={busy}
-                        onClick={() => void run(() => reviewDesktopVideoAction(action, selected, false))}
-                        type="button"
-                      >
-                        {t.reject}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-          {selected.proposals?.length ? (
-            <section className="mt-5 rounded-xl border border-line-hairline p-4">
-              <h4 className="mb-3 text-sm font-medium text-strong">{t.designs}</h4>
-              <div className="flex flex-col gap-3">
-                {selected.proposals.map(proposal => (
-                  <article
-                    className="flex flex-wrap items-start justify-between gap-3 border-b border-line-hairline pb-3 last:border-0 last:pb-0"
-                    key={proposal.proposal_id}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <strong className="text-xs text-strong">{proposal.name || t.design}</strong>
-                      <span className="ml-3 text-xs text-muted">
-                        {t.proposalStatuses[proposal.status as keyof typeof t.proposalStatuses] || proposal.status}
-                      </span>
-                      {proposal.description && <p className="mt-1 text-xs text-body">{proposal.description}</p>}
-                      {proposal.review_reason && <p className="mt-1 text-xs text-muted">{proposal.review_reason}</p>}
-                    </div>
-                    {proposal.action_id && selected.actions.some(action => action.id === proposal.action_id) && (
-                      <button
-                        className={BTN_SUBTLE}
-                        onClick={() =>
-                          document.getElementById(`desktop-life-action-${proposal.action_id}`)?.scrollIntoView({
-                            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-                              ? 'instant'
-                              : 'smooth',
-                            block: 'center'
-                          })
-                        }
-                        type="button"
-                      >
-                        {t.inspectAction}
-                      </button>
-                    )}
-                  </article>
-                ))}
-              </div>
-            </section>
-          ) : null}
-          {selected && (
-            <details className="mt-5 rounded-xl border border-line-hairline p-4">
-              <summary className="cursor-pointer text-sm font-medium text-strong">{t.design}</summary>
-              <form
-                className="mt-4 flex flex-col gap-3"
-                onSubmit={event => {
-                  event.preventDefault()
-                  const isLive = beginAsync()
-                  void run(async () => {
-                    const proposal = await designDesktopVideoAction({
-                      name: design.name.trim(),
-                      motion_description: design.description.trim(),
-                      kind: design.kind,
-                      duration_seconds: design.duration,
-                      expected_set_id: selected.id
+                  const created = await createDesktopVideoSet({
+                    request_id: create.requestId,
+                    name: create.name.trim() || t.newSceneName,
+                    scene_id: Number(create.sceneId),
+                    outfit_id: Number(create.outfitId),
+                    source: create.source,
+                    feedback: create.feedback.trim()
+                  })
+
+                  if (!scope?.() || !isLive()) {
+                    return
+                  }
+
+                  const first = created.actions.find(item => item.key === 'idle')
+                  updateDesktopLifeUi({
+                    selectedSetId: created.id,
+                    selectedActionId: first?.id ?? null,
+                    creating: false,
+                    create: newDesktopLifeCreation()
+                  })
+
+                  if (first && create.source === 'image_upload') {
+                    const [path] = await fileApi().selectPaths({
+                      title: t.uploadImage,
+                      multiple: false,
+                      filters: [{ name: t.imageFilterName, extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
                     })
 
-                    if (isLive()) {
-                      setDesign(current => ({ ...current, name: '', description: '' }))
-                      setDesignMessage(proposal.review_reason || t.designSubmitted)
+                    if (path && authSessionId && scope()) {
+                      await uploadDesktopVideoAction(first, created, path, authSessionId, 'image')
                     }
-                  })
-                }}
-              >
-                {designMessage && (
-                  <p className="text-xs text-muted" role="status">
-                    {designMessage}
-                  </p>
+                  }
+
+                  if (first && create.source === 'video_upload') {
+                    openExternal(first)
+                  }
+                })
+              }}
+            >
+              {create.source === 'ai' ? (
+                <label className="flex flex-col gap-3 text-sm font-medium text-strong">
+                  {t.idea}
+                  <textarea
+                    autoFocus
+                    className={`${INPUT_CLASS} min-h-28 resize-y font-normal`}
+                    maxLength={1000}
+                    onChange={event =>
+                      setCreate(current => ({
+                        ...current,
+                        feedback: event.target.value,
+                        requestId: crypto.randomUUID()
+                      }))
+                    }
+                    placeholder={t.ideaExample}
+                    rows={4}
+                    value={create.feedback}
+                  />
+                </label>
+              ) : (
+                <div className="rounded-xl bg-accent/5 p-4 text-sm text-body">{t.ownMediaHint}</div>
+              )}
+              <section className="flex flex-col gap-3 rounded-xl bg-black/5 p-4">
+                <p className="text-sm text-body">{t.referencesHint}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex min-w-0 flex-col gap-2">
+                    <DesktopLifeCover url={selectedScene?.assetUrl || null} />
+                    <span className="truncate text-sm text-body">
+                      {selectedScene?.title || create.sceneLabel || t.sceneMissing}
+                    </span>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-2">
+                    <DesktopLifeCover url={selectedOutfit?.fullbodyPath || null} />
+                    <span className="truncate text-sm text-body">{selectedOutfit?.name || t.outfitMissing}</span>
+                  </div>
+                </div>
+                {selectedScene?.status !== 'ready' && onPrepareMaterial && (
+                  <button
+                    className={`${BTN_SUBTLE} self-start`}
+                    onClick={() => onPrepareMaterial('scene')}
+                    type="button"
+                  >
+                    {t.prepareScene}
+                  </button>
                 )}
-                <input
-                  aria-label={t.actionName}
-                  className={INPUT_CLASS}
-                  maxLength={64}
-                  onChange={event => setDesign(current => ({ ...current, name: event.target.value }))}
-                  placeholder={t.actionName}
-                  required
-                  value={design.name}
-                />
+                {selectedOutfit?.status !== 'ready' && onPrepareMaterial && (
+                  <button
+                    className={`${BTN_SUBTLE} self-start`}
+                    onClick={() => onPrepareMaterial('outfit')}
+                    type="button"
+                  >
+                    {t.prepareOutfit}
+                  </button>
+                )}
+                {!materialReady && <p className="text-xs text-muted">{t.continueMaterial}</p>}
+                <details>
+                  <summary className="cursor-pointer text-sm text-accent">{t.changeReferences}</summary>
+                  <div className="mt-4 flex flex-col gap-4">
+                    <label className="flex flex-col gap-2 text-sm text-body">
+                      {t.sceneLibrary}
+                      <div className="flex gap-2">
+                        <input
+                          aria-label={t.searchScenes}
+                          className={INPUT_CLASS}
+                          onChange={event => setSceneQuery(event.target.value)}
+                          placeholder={t.searchScenes}
+                          value={sceneQuery}
+                        />
+                        <button
+                          className={BTN_SUBTLE}
+                          onClick={() => void loadSceneLibrary(sceneQuery, 0)}
+                          type="button"
+                        >
+                          {t.search}
+                        </button>
+                      </div>
+                      <PanelSelect
+                        ariaLabel={t.sceneLibrary}
+                        onChange={value =>
+                          setCreate(current => ({
+                            ...current,
+                            sceneId: value,
+                            sceneLabel: scenes.find(scene => scene.id === value)?.title || '',
+                            requestId: crypto.randomUUID()
+                          }))
+                        }
+                        options={[
+                          { value: '', label: t.chooseScene },
+                          ...(create.sceneId && !scenes.some(scene => scene.id === create.sceneId)
+                            ? [
+                                {
+                                  value: create.sceneId,
+                                  label: selectedScene?.title || create.sceneLabel || t.sceneMissing
+                                }
+                              ]
+                            : []),
+                          ...scenes
+                            .filter(scene => scene.status === 'ready')
+                            .map(scene => ({ value: scene.id, label: scene.title }))
+                        ]}
+                        value={create.sceneId}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          className={BTN_GHOST}
+                          disabled={scenePage === 0}
+                          onClick={() => void loadSceneLibrary(sceneQuery, scenePage - 1)}
+                          type="button"
+                        >
+                          {t.previous}
+                        </button>
+                        <button
+                          className={BTN_GHOST}
+                          disabled={(scenePage + 1) * PAGE_SIZE >= sceneTotal}
+                          onClick={() => void loadSceneLibrary(sceneQuery, scenePage + 1)}
+                          type="button"
+                        >
+                          {t.next}
+                        </button>
+                      </div>
+                    </label>
+                    <label className="flex flex-col gap-2 text-sm text-body">
+                      {t.outfitLibrary}
+                      <PanelSelect
+                        ariaLabel={t.outfitLibrary}
+                        onChange={value =>
+                          setCreate(current => ({ ...current, outfitId: value, requestId: crypto.randomUUID() }))
+                        }
+                        options={[
+                          { value: '', label: t.chooseOutfit },
+                          ...outfits
+                            .filter(outfit => outfit.status === 'ready')
+                            .map(outfit => ({ value: String(outfit.id), label: outfit.name }))
+                        ]}
+                        value={create.outfitId}
+                      />
+                    </label>
+                    {onPrepareMaterial && (
+                      <div className="flex flex-wrap gap-2">
+                        <button className={BTN_GHOST} onClick={() => onPrepareMaterial('scene')} type="button">
+                          {t.prepareScene}
+                        </button>
+                        <button className={BTN_GHOST} onClick={() => onPrepareMaterial('outfit')} type="button">
+                          {t.prepareOutfit}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              </section>
+              <details>
+                <summary className="cursor-pointer text-sm text-muted">{t.advanced}</summary>
+                <label className="mt-3 flex flex-col gap-2 text-sm text-body">
+                  {t.nameOptional}
+                  <input
+                    className={INPUT_CLASS}
+                    maxLength={160}
+                    onChange={event => setCreate(current => ({ ...current, name: event.target.value }))}
+                    placeholder={t.newSceneName}
+                    value={create.name}
+                  />
+                </label>
+              </details>
+              <div className="sticky bottom-0 flex flex-wrap items-center gap-3 border-t border-line-hairline bg-surface-card py-4">
+                <button className={BTN_PRIMARY} disabled={busy || !materialReady} type="submit">
+                  {busy
+                    ? t.preparing
+                    : create.source === 'ai'
+                      ? t.generateImage
+                      : create.source === 'image_upload'
+                        ? t.uploadImage
+                        : t.selectVideo}
+                </button>
+                <details>
+                  <summary className="cursor-pointer text-sm text-muted">
+                    {create.source === 'ai' ? t.ownMedia : t.creationSource}
+                  </summary>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(['ai', 'image_upload', 'video_upload'] as DesktopVideoSource[]).map(source => (
+                      <button
+                        className={BTN_GHOST}
+                        key={source}
+                        onClick={() => setCreate(current => ({ ...current, source, requestId: crypto.randomUUID() }))}
+                        type="button"
+                      >
+                        {source === 'ai' ? t.useAI : source === 'image_upload' ? t.uploadImage : t.externalTitle}
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            </form>
+          </>
+        ) : action ? (
+          renderAction(action)
+        ) : selected ? (
+          <>
+            {idle && (
+              <section className="flex flex-col gap-4">
+                {idle.current ? (
+                  <DesktopLifePreview action={idle} />
+                ) : (
+                  <DesktopLifeCover url={idle.draft?.image_url || selected.base_image_url} />
+                )}
+                <div className="flex flex-wrap items-center gap-3">
+                  {idle.playable && (
+                    <button
+                      className={BTN_PRIMARY}
+                      disabled={busy || currentMatches}
+                      onClick={() => void run(activate)}
+                      type="button"
+                    >
+                      {currentMatches ? t.current : t.play}
+                    </button>
+                  )}
+                  {(idle.draft || !idle.playable || idle.needs_update) && (
+                    <button
+                      className={idle.playable ? BTN_SUBTLE : BTN_PRIMARY}
+                      disabled={busy}
+                      onClick={() => openAction(idle)}
+                      type="button"
+                    >
+                      {t.continue} · {actionStatus(idle)}
+                    </button>
+                  )}
+                  {idle.current && !idle.draft && (
+                    <button className={BTN_SUBTLE} onClick={() => openAction(idle)} type="button">
+                      {t.adjustImage}
+                    </button>
+                  )}
+                </div>
+                {!idle.playable && <p className="text-sm text-muted">{t.noActionsHint}</p>}
+              </section>
+            )}
+            <section className="flex flex-col gap-4 border-t border-line-hairline pt-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-base font-medium text-strong">{t.actions}</h3>
+                <button
+                  className={BTN_SUBTLE}
+                  onClick={() => updateDesktopLifeUi({ addActionOpen: true })}
+                  type="button"
+                >
+                  {t.design}
+                </button>
+              </div>
+              {displayedActions.length > 0 && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {displayedActions.map(item => (
+                    <button
+                      className="flex flex-col gap-2 rounded-xl border border-line-hairline p-3 text-left hover:bg-black/5"
+                      key={item.id}
+                      onClick={() => openAction(item)}
+                      type="button"
+                    >
+                      <DesktopLifeCover
+                        url={
+                          item.current?.poster_url || item.draft?.candidate_poster_url || item.draft?.image_url || null
+                        }
+                      />
+                      <span className="font-medium text-strong">{actionName(item)}</span>
+                      <span className="text-xs text-muted">{actionStatus(item)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selected.proposals
+                ?.filter(proposal => !proposal.action_id)
+                .map(proposal => (
+                  <div className="rounded-xl bg-black/5 p-4" key={proposal.proposal_id}>
+                    <p className="text-sm font-medium text-strong">{proposal.name}</p>
+                    <p className="mt-1 text-sm text-muted" role="status">
+                      {t.proposalStatuses[proposal.status as keyof typeof t.proposalStatuses] || t.preparing}
+                    </p>
+                    {proposal.review_reason && <p className="mt-2 text-sm text-body">{proposal.review_reason}</p>}
+                  </div>
+                ))}
+            </section>
+            <details className="rounded-xl border border-line-hairline p-4">
+              <summary className="cursor-pointer text-sm text-body">{t.more}</summary>
+              <div className="mt-4 flex flex-col gap-4">
+                <form
+                  className="flex flex-wrap gap-2"
+                  onSubmit={event => {
+                    event.preventDefault()
+                    void run(async () => {
+                      await renameDesktopVideoSet(selected.id, rename.trim())
+                      setRename('')
+                    })
+                  }}
+                >
+                  <input
+                    aria-label={t.setName}
+                    className={`${INPUT_CLASS} flex-1`}
+                    maxLength={160}
+                    onChange={event => setRename(event.target.value)}
+                    placeholder={selected.title}
+                    value={rename}
+                  />
+                  <button className={BTN_SUBTLE} disabled={busy || !rename.trim()} type="submit">
+                    {t.renameSet}
+                  </button>
+                </form>
+                <button
+                  className={`${BTN_GHOST} self-start`}
+                  disabled={busy}
+                  onClick={() => setDeleteOpen(true)}
+                  type="button"
+                >
+                  {t.deleteSet}
+                </button>
+              </div>
+            </details>
+          </>
+        ) : (
+          <>
+            {loading && !sets.length && (
+              <p className="py-8 text-center text-sm text-muted" role="status">
+                {t.loading}
+              </p>
+            )}
+            {!loading && !sets.length && (
+              <div className="rounded-2xl bg-accent/5 px-5 py-12 text-center">
+                <h3 className="text-lg font-medium text-strong">{t.noSets}</h3>
+                <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted">{t.emptyHint}</p>
+                <button className={`${BTN_PRIMARY} mt-5`} onClick={openCreate} type="button">
+                  {t.createSet}
+                </button>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {sets.map(item => {
+                const idle = item.actions.find(action => action.key === 'idle')
+
+                const unfinished = item.actions.some(
+                  action => action.draft || (action.key === 'idle' && !action.current)
+                )
+
+                return (
+                  <button
+                    className="flex flex-col gap-3 rounded-2xl border border-line-hairline p-4 text-left hover:bg-black/5"
+                    key={item.id}
+                    onClick={() => setSelectedSetId(item.id)}
+                    type="button"
+                  >
+                    <DesktopLifeCover
+                      url={
+                        idle?.current?.poster_url ||
+                        idle?.draft?.candidate_poster_url ||
+                        idle?.draft?.image_url ||
+                        item.base_image_url
+                      }
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <strong className="text-base text-strong">{item.title}</strong>
+                      {item.is_current && (
+                        <span className="rounded-full bg-accent/10 px-2 py-1 text-xs text-accent">{t.current}</span>
+                      )}
+                    </div>
+                    <span className="text-sm text-muted">
+                      {unfinished ? t.continue : idle?.playable ? t.ready : t.notCreated}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            <details className="border-t border-line-hairline pt-4">
+              <summary className="cursor-pointer text-sm text-muted">{t.preferences}</summary>
+              <div className="mt-4 flex flex-col gap-4 text-sm text-body">
+                {state && (
+                  <>
+                    <label className="flex items-center gap-3">
+                      <input
+                        checked={state.pinned}
+                        disabled={busy}
+                        onChange={event => void run(() => setDesktopVideoPreferences({ pinned: event.target.checked }))}
+                        type="checkbox"
+                      />
+                      {t.pin}
+                    </label>
+                    <label className="flex items-center gap-3">
+                      <input
+                        checked={state.autonomous_enabled}
+                        disabled={busy}
+                        onChange={event =>
+                          void run(() => setDesktopVideoPreferences({ autonomous_enabled: event.target.checked }))
+                        }
+                        type="checkbox"
+                      />
+                      {t.autonomy}
+                    </label>
+                  </>
+                )}
+                <button
+                  className={`${BTN_GHOST} self-start`}
+                  disabled={loading || busy}
+                  onClick={() => void refreshDesktopVideos()}
+                  type="button"
+                >
+                  {t.refresh}
+                </button>
+              </div>
+            </details>
+          </>
+        )}
+      </div>
+      {addActionOpen && selected && (
+        <WizardModal
+          onClose={() => updateDesktopLifeUi({ addActionOpen: false })}
+          regionId="desktop-life-add-action"
+          title={t.design}
+          widthClass="max-w-2xl"
+        >
+          <p className="mb-4 text-sm leading-relaxed text-muted">{t.addHint}</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {selected.actions
+              .filter(item => item.key !== 'idle')
+              .map(item => (
+                <button
+                  className="flex flex-col gap-2 rounded-xl border border-line-hairline p-4 text-left hover:bg-black/5"
+                  key={item.id}
+                  onClick={() => openAction(item)}
+                  type="button"
+                >
+                  <strong className="text-sm text-strong">{actionName(item)}</strong>
+                  <span className="text-xs text-muted">{actionStatus(item)}</span>
+                </button>
+              ))}
+          </div>
+          <details className="mt-5 border-t border-line-hairline pt-4">
+            <summary className="cursor-pointer text-sm font-medium text-strong">{t.addCustom}</summary>
+            <form
+              className="mt-4 flex flex-col gap-3"
+              onSubmit={event => {
+                event.preventDefault()
+                const isLive = beginAsync()
+                void run(async () => {
+                  const proposal = await designDesktopVideoAction({
+                    name: design.name.trim() || design.description.trim().slice(0, 24),
+                    motion_description: design.description.trim(),
+                    kind: design.kind,
+                    duration_seconds: design.duration,
+                    expected_set_id: selected.id
+                  })
+
+                  if (!isLive()) {
+                    return
+                  }
+
+                  setDesign(current => ({ ...current, name: '', description: '' }))
+                  setDesignMessage(proposal.review_reason || t.designSubmitted)
+
+                  if (proposal.action_id) {
+                    updateDesktopLifeUi({ selectedActionId: proposal.action_id, addActionOpen: false })
+                  }
+                })
+              }}
+            >
+              {designMessage && (
+                <p className="text-sm text-muted" role="status">
+                  {designMessage}
+                </p>
+              )}
+              <label className="flex flex-col gap-2 text-sm text-body">
+                {t.actionDescription}
                 <textarea
-                  aria-label={t.actionDescription}
-                  className={`${INPUT_CLASS} min-h-24 resize-y`}
+                  className={`${INPUT_CLASS} min-h-28 resize-y`}
                   maxLength={600}
                   minLength={10}
                   onChange={event => setDesign(current => ({ ...current, description: event.target.value }))}
-                  placeholder={t.actionDescription}
                   required
-                  rows={3}
+                  rows={4}
                   value={design.description}
                 />
-                <div className="flex flex-wrap items-center gap-4">
+              </label>
+              <details>
+                <summary className="cursor-pointer text-sm text-muted">{t.actionSettings}</summary>
+                <div className="mt-3 flex flex-col gap-3">
+                  <input
+                    aria-label={t.actionName}
+                    className={INPUT_CLASS}
+                    maxLength={64}
+                    onChange={event => setDesign(current => ({ ...current, name: event.target.value }))}
+                    placeholder={t.nameOptional}
+                    value={design.name}
+                  />
                   <PanelSelect
-                    ariaLabel={t.design}
+                    ariaLabel={t.actionSettings}
                     onChange={value =>
                       setDesign(current => ({
                         ...current,
@@ -1004,7 +1710,7 @@ export function DesktopLifePage(): React.JSX.Element {
                     ]}
                     value={design.kind}
                   />
-                  <label className="flex items-center gap-2 text-xs text-body">
+                  <label className="flex items-center gap-2 text-sm text-body">
                     {t.duration}
                     <input
                       className={`${INPUT_CLASS} w-20`}
@@ -1020,188 +1726,44 @@ export function DesktopLifePage(): React.JSX.Element {
                     />
                   </label>
                 </div>
-                <button
-                  className={`${BTN_PRIMARY} self-start`}
-                  disabled={busy || !design.name.trim() || design.description.trim().length < 10}
-                  type="submit"
-                >
-                  {t.submitDesign}
-                </button>
-              </form>
-            </details>
-          )}
-        </>
-      ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {sets.map(item => (
-            <button
-              className="flex flex-col gap-2 rounded-xl border border-line-hairline p-4 text-left hover:bg-white/5"
-              key={item.id}
-              onClick={() => {
-                setSelectedSetId(item.id)
-                setRename('')
-              }}
-              type="button"
-            >
-              <DesktopLifeCover
-                url={
-                  item.actions.find(action => action.poster_url)?.poster_url ??
-                  item.base_image_url ??
-                  item.actions.find(action => action.draft?.image_url)?.draft?.image_url ??
-                  null
-                }
-              />
-              <strong className="text-sm text-strong">{item.title}</strong>
-              <span className="text-xs text-muted">
-                {new Date(item.created_at).toLocaleDateString()} ·{' '}
-                {item.actions.filter(action => action.playable).length}/{item.actions.length}
-              </span>
-              {item.is_current && <span className="text-xs text-accent">{t.current}</span>}
-            </button>
-          ))}
-        </div>
+              </details>
+              <button
+                className={`${BTN_PRIMARY} self-start`}
+                disabled={busy || design.description.trim().length < 10}
+                type="submit"
+              >
+                {t.startAction}
+              </button>
+            </form>
+          </details>
+        </WizardModal>
       )}
-      {createOpen && (
+      {discardAction && (
         <WizardModal
-          draggable
-          onClose={() => setCreateOpen(false)}
-          regionId="desktop-life-create"
-          title={t.createSet}
-          widthClass="max-w-2xl"
+          onClose={() => setDiscardAction(null)}
+          regionId="desktop-life-discard"
+          title={t.discardDraft}
+          widthClass="max-w-md"
         >
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={event => {
-              event.preventDefault()
-              const scope = captureAuthScope()
-              void run(async () => {
-                const created = await createDesktopVideoSet({
-                  request_id: create.requestId,
-                  name: create.name.trim(),
-                  scene_id: Number(create.sceneId),
-                  outfit_id: Number(create.outfitId),
-                  source: create.source
-                })
-
-                if (scope?.()) {
-                  setSelectedSetId(created.id)
-                  setCreateOpen(false)
-                  setCreate({
-                    name: '',
-                    sceneId: '',
-                    sceneLabel: '',
-                    outfitId: '',
-                    source: 'ai',
-                    requestId: crypto.randomUUID()
-                  })
-                }
-              })
-            }}
-          >
-            <p className="text-xs text-muted">{t.suiteHint}</p>
-            <input
-              aria-label={t.setName}
-              className={INPUT_CLASS}
-              maxLength={160}
-              onChange={event =>
-                setCreate(current => ({ ...current, name: event.target.value, requestId: crypto.randomUUID() }))
-              }
-              placeholder={t.setName}
-              required
-              value={create.name}
-            />
-            <label className="flex flex-col gap-2 text-xs text-body">
-              {t.sceneLibrary}
-              <div className="flex gap-2">
-                <input
-                  aria-label={t.searchScenes}
-                  className={INPUT_CLASS}
-                  onChange={event => setSceneQuery(event.target.value)}
-                  placeholder={t.searchScenes}
-                  value={sceneQuery}
-                />
-                <button className={BTN_SUBTLE} onClick={() => void loadSceneLibrary(sceneQuery, 0)} type="button">
-                  {t.search}
-                </button>
-              </div>
-              <PanelSelect
-                ariaLabel={t.sceneLibrary}
-                onChange={value =>
-                  setCreate(current => ({
-                    ...current,
-                    sceneId: value,
-                    sceneLabel: scenes.find(scene => scene.id === value)?.title ?? '',
-                    requestId: crypto.randomUUID()
-                  }))
-                }
-                options={[
-                  { value: '', label: t.chooseScene },
-                  ...(create.sceneId && !scenes.some(scene => scene.id === create.sceneId)
-                    ? [{ value: create.sceneId, label: create.sceneLabel }]
-                    : []),
-                  ...scenes
-                    .filter(scene => scene.status === 'ready')
-                    .map(scene => ({ value: scene.id, label: scene.title }))
-                ]}
-                value={create.sceneId}
-              />
-              <div className="flex gap-2">
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={scenePage === 0}
-                  onClick={() => void loadSceneLibrary(sceneQuery, scenePage - 1)}
-                  type="button"
-                >
-                  {t.previous}
-                </button>
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={(scenePage + 1) * PAGE_SIZE >= sceneTotal}
-                  onClick={() => void loadSceneLibrary(sceneQuery, scenePage + 1)}
-                  type="button"
-                >
-                  {t.next}
-                </button>
-              </div>
-            </label>
-            <label className="flex flex-col gap-2 text-xs text-body">
-              {t.outfitLibrary}
-              <PanelSelect
-                ariaLabel={t.outfitLibrary}
-                onChange={value =>
-                  setCreate(current => ({ ...current, outfitId: value, requestId: crypto.randomUUID() }))
-                }
-                options={[
-                  { value: '', label: t.chooseOutfit },
-                  ...outfits
-                    .filter(outfit => outfit.status === 'ready')
-                    .map(outfit => ({ value: String(outfit.id), label: outfit.name }))
-                ]}
-                value={create.outfitId}
-              />
-            </label>
-            <PanelSelect
-              ariaLabel={t.creationSource}
-              onChange={value => {
-                if (value === 'ai' || value === 'image_upload' || value === 'video_upload') {
-                  setCreate(current => ({ ...current, source: value, requestId: crypto.randomUUID() }))
-                }
-              }}
-              options={[
-                { value: 'ai', label: t.generateImage },
-                { value: 'image_upload', label: t.uploadImage },
-                { value: 'video_upload', label: t.external }
-              ]}
-              value={create.source}
-            />
+          <p className="mb-4 text-sm leading-relaxed text-body">{t.discardHint}</p>
+          <div className="flex gap-2">
+            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(null)} type="button">
+              {t.close}
+            </button>
             <button
               className={BTN_PRIMARY}
-              disabled={busy || !create.name.trim() || !create.sceneId || !create.outfitId}
-              type="submit"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await cancelDesktopVideoDraft(discardAction)
+                  setDiscardAction(null)
+                })
+              }
+              type="button"
             >
-              {t.createSet}
+              {t.discardConfirm}
             </button>
-          </form>
+          </div>
         </WizardModal>
       )}
       {deleteOpen && selected && (
@@ -1211,122 +1773,59 @@ export function DesktopLifePage(): React.JSX.Element {
           title={t.deleteSet}
           widthClass="max-w-md"
         >
-          <p className="mb-4 text-sm text-body">{t.deleteHint}</p>
-          <button
-            className={BTN_PRIMARY}
-            disabled={busy}
-            onClick={() =>
-              void run(async () => {
-                await deleteDesktopVideoSet(selected.id)
-                setSelectedSetId(null)
-                setDeleteOpen(false)
-              })
-            }
-            type="button"
-          >
-            {t.deleteSet}
-          </button>
+          <p className="mb-4 text-sm leading-relaxed text-body">{t.deleteHint}</p>
+          <div className="flex gap-2">
+            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDeleteOpen(false)} type="button">
+              {t.close}
+            </button>
+            <button
+              className={BTN_PRIMARY}
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await deleteDesktopVideoSet(selected.id)
+                  setSelectedSetId(null)
+                  setDeleteOpen(false)
+                })
+              }
+              type="button"
+            >
+              {t.deleteSet}
+            </button>
+          </div>
         </WizardModal>
       )}
       {externalAction && (
         <WizardModal
           backdropClose={!externalUploading}
           closeDisabled={externalUploading}
-          draggable
           escClose={!externalUploading && !externalReferenceZoom}
           onClose={externalUploading ? () => undefined : closeExternal}
           regionId="desktop-life-external"
           title={t.externalTitle}
           widthClass="max-w-2xl"
         >
-          <div className="flex flex-col gap-4">
-            <p className="text-xs leading-relaxed text-muted">{t.externalHint}</p>
+          <div className="flex flex-col gap-5">
+            <p className="text-sm leading-relaxed text-body">{t.uploadDirect}</p>
             {externalStale && (
-              <p className="text-xs text-warning" role="status">
+              <p className="text-sm text-warning" role="status">
                 {t.stalePrompt}
               </p>
             )}
-            <label className="flex flex-col gap-2 text-xs text-body">
-              {t.requirements}
-              <textarea
-                className={`${INPUT_CLASS} min-h-16 resize-y`}
-                maxLength={600}
-                onChange={event => setExternalRequirements(event.target.value)}
-                placeholder={t.requirements}
-                rows={2}
-                value={externalRequirements}
-              />
-            </label>
-            {externalPromptLoading ? (
-              <p className="text-xs text-muted" role="status">
-                {t.promptLoading}
-              </p>
-            ) : (
-              (!externalPrompt || externalStale || externalRequirements.trim() !== externalPromptRequirements) && (
-                <button
-                  className={`${BTN_SUBTLE} self-start`}
-                  disabled={externalUploading}
-                  onClick={() => void loadExternalPrompt(externalAction, externalRequirements)}
-                  type="button"
-                >
-                  {externalPrompt ? t.updatePrompt : t.retryPrompt}
-                </button>
-              )
-            )}
-            {externalPrompt ? (
-              <section className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-sm font-medium text-strong">{t.prompt}</h4>
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={externalStale}
-                    onClick={() => void copyExternalPrompt()}
-                    type="button"
-                  >
-                    {externalCopied ? t.copied : t.copyPrompt}
-                  </button>
-                </div>
-                <textarea
-                  aria-label={t.prompt}
-                  className={`${INPUT_CLASS} min-h-40 resize-y text-xs leading-relaxed`}
-                  readOnly
-                  rows={7}
-                  value={externalPrompt.prompt}
-                />
-                <h4 className="mt-2 text-sm font-medium text-strong">{t.references}</h4>
-                {externalPrompt.references?.length ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {externalPrompt.references.map(reference => (
-                      <ExternalReference
-                        key={`${reference.label}:${reference.url}`}
-                        onZoom={url => setExternalReferenceZoom({ label: reference.label, url })}
-                        reference={reference}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted">{t.noReferences}</p>
-                )}
-              </section>
-            ) : (
-              !externalPromptLoading && <p className="text-xs text-muted">{t.promptEmpty}</p>
-            )}
-            <section className="flex flex-col gap-3 border-t border-line-hairline pt-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={externalUploading}
-                  onClick={() => void chooseExternalVideo()}
-                  type="button"
-                >
-                  {t.selectVideo}
-                </button>
-                {externalFilePath && (
-                  <span className="max-w-full truncate text-xs text-body" title={externalFilePath}>
-                    {t.selectedVideo}: {localFileName(externalFilePath)}
-                  </span>
-                )}
-              </div>
+            <section className="flex flex-col gap-3">
+              <button
+                className={`${BTN_SUBTLE} self-start`}
+                disabled={externalUploading}
+                onClick={() => void chooseExternalVideo()}
+                type="button"
+              >
+                {t.selectVideo}
+              </button>
+              {externalFilePath && (
+                <span className="max-w-full truncate text-sm text-body" title={externalFilePath}>
+                  {t.selectedVideo}: {localFileName(externalFilePath)}
+                </span>
+              )}
               <button
                 className={`${BTN_PRIMARY} self-start`}
                 disabled={!externalFilePath || externalUploading || externalStale}
@@ -1336,6 +1835,83 @@ export function DesktopLifePage(): React.JSX.Element {
                 {externalUploading ? t.uploading : t.upload}
               </button>
             </section>
+            <details
+              className="border-t border-line-hairline pt-4"
+              onToggle={event => {
+                if (event.currentTarget.open && !externalPrompt && !externalPromptLoading) {
+                  void loadExternalPrompt(externalAction, externalRequirements)
+                }
+              }}
+            >
+              <summary className="cursor-pointer text-sm font-medium text-strong">{t.externalReferences}</summary>
+              <div className="mt-4 flex flex-col gap-4">
+                <p className="text-sm leading-relaxed text-muted">{t.externalHint}</p>
+                <label className="flex flex-col gap-2 text-sm text-body">
+                  {t.requirements}
+                  <textarea
+                    className={`${INPUT_CLASS} min-h-20 resize-y`}
+                    maxLength={600}
+                    onChange={event => setExternalRequirements(event.target.value)}
+                    rows={2}
+                    value={externalRequirements}
+                  />
+                </label>
+                {externalPromptLoading ? (
+                  <p className="text-sm text-muted" role="status">
+                    {t.promptLoading}
+                  </p>
+                ) : (
+                  (!externalPrompt || externalStale || externalRequirements.trim() !== externalPromptRequirements) && (
+                    <button
+                      className={`${BTN_SUBTLE} self-start`}
+                      disabled={externalUploading}
+                      onClick={() => void loadExternalPrompt(externalAction, externalRequirements)}
+                      type="button"
+                    >
+                      {externalPrompt ? t.updatePrompt : t.retryPrompt}
+                    </button>
+                  )
+                )}
+                {externalPrompt ? (
+                  <section className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-medium text-strong">{t.prompt}</h4>
+                      <button
+                        className={BTN_SUBTLE}
+                        disabled={externalStale}
+                        onClick={() => void copyExternalPrompt()}
+                        type="button"
+                      >
+                        {externalCopied ? t.copied : t.copyPrompt}
+                      </button>
+                    </div>
+                    <textarea
+                      aria-label={t.prompt}
+                      className={`${INPUT_CLASS} min-h-40 resize-y text-sm leading-relaxed`}
+                      readOnly
+                      rows={7}
+                      value={externalPrompt.prompt}
+                    />
+                    <h4 className="mt-2 text-sm font-medium text-strong">{t.references}</h4>
+                    {externalPrompt.references?.length ? (
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {externalPrompt.references.map(reference => (
+                          <ExternalReference
+                            key={`${reference.label}:${reference.url}`}
+                            onZoom={url => setExternalReferenceZoom({ label: reference.label, url })}
+                            reference={reference}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted">{t.noReferences}</p>
+                    )}
+                  </section>
+                ) : (
+                  !externalPromptLoading && <p className="text-sm text-muted">{t.promptEmpty}</p>
+                )}
+              </div>
+            </details>
           </div>
         </WizardModal>
       )}

@@ -14,6 +14,7 @@ interface UseAutoSaveOptions<T> {
 
 interface AutoSaveState {
   status: AutoSaveStatus
+  retry: () => void
 }
 
 const DEFAULT_DELAY_MS = 350
@@ -146,5 +147,10 @@ export function useAutoSave<T>({
     }
   }, [clearTimer])
 
-  return { status }
+  const retry = useCallback((): void => {
+    clearTimer()
+    flushRef.current()
+  }, [clearTimer])
+
+  return { status, retry }
 }

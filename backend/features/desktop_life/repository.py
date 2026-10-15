@@ -182,10 +182,13 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         draft=DesktopVideoDraftResponse(
             id=draft.generation_id,
             stage=action.stage,
+            source=draft.source,
             image_url=client_asset_url(draft.pose_path or draft.previous_pose_path)
             if draft.pose_path or draft.previous_pose_path
             else "",
             image_confirmed=draft.image_confirmed,
+            feedback=draft.feedback,
+            submission_unknown=draft.submission_unknown,
             candidate_video_url=client_asset_url(candidate.video_path) if candidate else "",
             candidate_poster_url=client_asset_url(candidate.poster_path) if candidate else "",
             base_version=draft.base_version,

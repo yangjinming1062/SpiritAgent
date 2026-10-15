@@ -8,6 +8,19 @@ export interface StageInfo {
   needs_user_input: boolean
 }
 
+export function stageLabel(name: string, fallback = '准备安装'): string {
+  const labels: Record<string, string> = {
+    welcome: '准备安装',
+    'install-python': '准备运行环境',
+    'unpack-runner': '安装电脑助手',
+    'unpack-desktop': '安装唤生应用',
+    'install-skills': '准备常用功能',
+    finalize: '完成安装设置'
+  }
+
+  return labels[name] ?? fallback
+}
+
 export type StageState = 'running' | 'succeeded' | 'skipped' | 'failed'
 
 export interface StageRecord {
@@ -44,7 +57,6 @@ export type Route = 'welcome' | 'progress' | 'success' | 'failure'
 export const $route = atom<Route>('welcome')
 export const $bootstrap = atom<BootstrapStateModel>(INITIAL)
 export const $logPath = atom<string | null>(null)
-export const $spiritAgentHome = atom<string | null>(null)
 
 export const $progress = computed($bootstrap, (b) => {
   const total = b.stageOrder.length
@@ -52,7 +64,7 @@ export const $progress = computed($bootstrap, (b) => {
   let done = 0
   for (const name of b.stageOrder) {
     const s = b.stages[name]?.state
-    if (s === 'succeeded' || s === 'skipped' || s === 'failed') done += 1
+    if (s === 'succeeded' || s === 'skipped') done += 1
   }
   return { done, total, fraction: done / total }
 })
@@ -103,6 +115,8 @@ type BootstrapEvent =
   | BootstrapFailedEvent
 
 let routeTimer: ReturnType<typeof setTimeout> | null = null
+let installRevision = 0
+let startRequest: Promise<void> | null = null
 
 function clearRouteTimer(): void {
   if (routeTimer != null) {
@@ -193,46 +207,55 @@ function handleBootstrapEvent(payload: BootstrapEvent): void {
 }
 
 export async function initialize(): Promise<void> {
-  const cleanup = () => {
-    clearRouteTimer()
-  }
-
-  if (typeof window !== 'undefined') {
-    window.addEventListener('beforeunload', cleanup)
-  }
-
   try {
-    const [logPath, spiritAgentHome] = await Promise.all([
-      invoke<string>('get_log_path'),
-      invoke<string>('get_spiritagent_home')
-    ])
-    $logPath.set(logPath)
-    $spiritAgentHome.set(spiritAgentHome)
+    $logPath.set(await invoke<string>('get_log_path'))
   } catch (err) {
     console.warn('failed to fetch installer paths', err)
   }
 }
 
 export async function startInstall(): Promise<void> {
+  if ($bootstrap.get().status === 'running') return
+  const revision = ++installRevision
   clearRouteTimer()
-  $bootstrap.set(INITIAL)
+  $bootstrap.set({ ...INITIAL, status: 'running' })
   $route.set('progress')
 
-  const channel = new Channel<BootstrapEvent>()
-  channel.onmessage = (payload) => {
-    handleBootstrapEvent(payload)
+  try {
+    const channel = new Channel<BootstrapEvent>()
+    channel.onmessage = (payload) => {
+      if (revision === installRevision) handleBootstrapEvent(payload)
+    }
+    startRequest = invoke<void>('start_bootstrap', {
+      args: {
+        spiritagent_home: null
+      },
+      onEvent: channel
+    })
+    await startRequest
+  } catch (error) {
+    if (revision !== installRevision) return
+    clearRouteTimer()
+    $bootstrap.set({
+      ...$bootstrap.get(),
+      status: 'failed',
+      currentStage: null,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    $route.set('failure')
+  } finally {
+    if (revision === installRevision) startRequest = null
   }
-
-  await invoke('start_bootstrap', {
-    args: {
-      spiritagent_home: null
-    },
-    onEvent: channel
-  })
 }
 
 export async function cancelInstall(): Promise<void> {
-  clearRouteTimer()
+  try {
+    await startRequest
+  } catch {
+    // 启动失败已由 startInstall 呈现，不阻止关闭窗口。
+    return
+  }
+  if ($bootstrap.get().status !== 'running') return
   await invoke('cancel_bootstrap')
 }
 

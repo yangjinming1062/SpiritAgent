@@ -3,7 +3,7 @@ import type React from 'react'
 import { type ActiveScene, PAGE_SIZE, type SceneAsset, type ScenePolicy } from '@/modules/scene'
 import { AlertCircle, Loader2, Plus, RefreshCw, Search, Sparkles } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard, SettingRow, Toggle } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, Disclosure, HINT_TEXT, INPUT_CLASS, SettingCard, Toggle } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface SceneLibraryViewProps {
@@ -230,16 +230,14 @@ export function SceneLibraryView({
         </div>
       ) : null}
 
-      <SettingCard>
-        <SettingRow description={t.policyDesc} label={t.policyLabel}>
-          <div className="flex items-center gap-2.5">
-            <span className="text-[11px] text-faint">
-              {policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
-            </span>
-            <Toggle ariaLabel={t.policyToggleAria} checked={policy !== 'locked'} onChange={onPolicyChange} />
-          </div>
-        </SettingRow>
-      </SettingCard>
+      <Disclosure hint={t.policyDesc} title={t.policyLabel}>
+        <div className="flex items-center justify-between gap-2.5">
+          <span className="text-[11px] text-faint">
+            {policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
+          </span>
+          <Toggle ariaLabel={t.policyToggleAria} checked={policy !== 'locked'} onChange={onPolicyChange} />
+        </div>
+      </Disclosure>
     </>
   )
 }

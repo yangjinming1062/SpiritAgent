@@ -143,6 +143,7 @@ export function ChatPanel({
           ref={paramsPanelRef}
           role="dialog"
         >
+          <ChatContextAmbientLine />
           <ChatParamsPanel
             activeTab={paramsPanelTab}
             key={chatSessionId}
@@ -152,7 +153,6 @@ export function ChatPanel({
           />
         </div>
       )}
-      {variant === 'assistant' && <ChatContextAmbientLine />}
       {notice}
       <ConversationSurface
         className={cn('flex-1 min-h-0 overflow-y-auto', surfaceClassName)}

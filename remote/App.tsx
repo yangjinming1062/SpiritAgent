@@ -1,4 +1,4 @@
-import { IconBook2, IconMessageCircle, IconSparkles, IconUser } from '@tabler/icons-react'
+import { IconHeart, IconMessageCircle, IconSettings, IconSparkles } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -7,7 +7,7 @@ import { Chat, clearChatState } from './Chat'
 import { Companion } from './Companion'
 import { Feed } from './Feed'
 import type { RemoteSession } from './types'
-import { Notice, PageHeader, pauseMedia, useTask } from './ui'
+import { Notice, PageHeader, PageStateProvider, pauseMedia, useTask } from './ui'
 
 type Tab = 'messages' | 'feed' | 'companion' | 'me'
 const api = new RemoteApi()
@@ -38,11 +38,15 @@ export function App(): ReactElement {
   const [unread, setUnread] = useState({
     messages: false,
     feed: false,
-    companion: false
+    diary: false
   })
   const tabRef = useRef(tab)
   tabRef.current = tab
   const activeGateway = useRef<RemoteGateway | null>(null)
+
+  useEffect(() => {
+    document.querySelector('.content')?.scrollTo({ top: 0 })
+  }, [tab])
 
   useEffect(() => {
     let live = true
@@ -83,7 +87,7 @@ export function App(): ReactElement {
       if (live) {
         setSession(null)
         setGateway(null)
-        setError('手机授权已失效，请在电脑的“远程”页面重新扫码')
+        setError('手机连接已到期。请在电脑的“设置 → 设备与能力 → 手机连接”重新扫码。')
       }
     }
 
@@ -113,6 +117,13 @@ export function App(): ReactElement {
         api.authenticate(next)
 
         try {
+          const savedTab = sessionStorage.getItem(`remote:${next.user.id}:${next.device.id}:ui:tab`)
+          setTab(savedTab === 'feed' || savedTab === 'companion' || savedTab === 'me' ? savedTab : 'messages')
+        } catch {
+          setTab('messages')
+        }
+
+        try {
           const stored: unknown = JSON.parse(
             localStorage.getItem(`remote:${next.user.id}:${next.device.id}:unread`) ?? '{}'
           )
@@ -121,11 +132,11 @@ export function App(): ReactElement {
             setUnread({
               messages: stored.messages === true,
               feed: stored.feed === true,
-              companion: stored.companion === true
+              diary: stored.diary === true
             })
           }
         } catch {
-          setUnread({ messages: false, feed: false, companion: false })
+          setUnread({ messages: false, feed: false, diary: false })
         }
 
         const client = new RemoteGateway(api, invalidate)
@@ -150,6 +161,7 @@ export function App(): ReactElement {
           if (event.type.startsWith('companion.') || event.type === 'memory.changed') {
             scheduleRefresh(
               (!posts && tabRef.current === 'companion') ||
+                (diary && tabRef.current === 'feed') ||
                 (event.type === 'companion.message' && tabRef.current === 'messages'),
               posts || diary
             )
@@ -182,9 +194,23 @@ export function App(): ReactElement {
 
   useEffect(() => {
     if (session) {
-      localStorage.setItem(`remote:${session.user.id}:${session.device.id}:unread`, JSON.stringify(unread))
+      try {
+        localStorage.setItem(`remote:${session.user.id}:${session.device.id}:unread`, JSON.stringify(unread))
+      } catch {
+        // 浏览器存储不可用时仍保留本次连接的提醒。
+      }
     }
   }, [session, unread])
+
+  useEffect(() => {
+    if (session) {
+      try {
+        sessionStorage.setItem(`remote:${session.user.id}:${session.device.id}:ui:tab`, tab)
+      } catch {
+        // 浏览器关闭存储时仍可正常切换页面。
+      }
+    }
+  }, [session, tab])
 
   useEffect(() => {
     if (!session || document.visibilityState !== 'visible') {
@@ -203,7 +229,7 @@ export function App(): ReactElement {
       setUnread(previous => ({
         ...previous,
         feed: posts.status === 'fulfilled' ? posts.value.has_unread : previous.feed,
-        companion: diary.status === 'fulfilled' ? diary.value.has_unread : previous.companion
+        diary: diary.status === 'fulfilled' ? diary.value.has_unread : previous.diary
       }))
 
       for (const result of [posts, diary]) {
@@ -230,10 +256,12 @@ export function App(): ReactElement {
 
     document.addEventListener('visibilitychange', foreground)
     window.addEventListener('online', foreground)
+    window.addEventListener('focus', foreground)
 
     return () => {
       document.removeEventListener('visibilitychange', foreground)
       window.removeEventListener('online', foreground)
+      window.removeEventListener('focus', foreground)
     }
   }, [])
 
@@ -246,7 +274,9 @@ export function App(): ReactElement {
 
   const selectTab = (next: Tab) => {
     setTab(next)
-    setUnread(previous => ({ ...previous, [next]: false }))
+    if (next === 'messages') {
+      setUnread(previous => ({ ...previous, messages: false }))
+    }
     pauseMedia()
   }
 
@@ -257,7 +287,7 @@ export function App(): ReactElement {
         <p className="eyebrow">SPIRITAGENT · 远程</p>
         <h1>{loading ? '正在连接你的伙伴' : '把陪伴带在身边'}</h1>
         <p className="subtitle">
-          在电脑上打开唤生的“远程”页面，
+          在电脑上打开“设置 → 设备与能力 → 手机连接”，
           <br />
           用手机相机扫描二维码即可连接。
         </p>
@@ -275,69 +305,83 @@ export function App(): ReactElement {
   }
 
   return (
-    <div className="app" key={`${session.user.id}:${session.device.id}`}>
-      <div aria-live="polite" className={`connection ${connected ? '' : 'offline'}`}>
-        {connected ? '已连接' : '正在重新连接，已受理的任务会继续运行'}
+    <PageStateProvider
+      key={`${session.user.id}:${session.device.id}`}
+      scope={`${session.user.id}:${session.device.id}`}
+    >
+      <div className="app">
+        <div aria-live="polite" className={`connection ${connected ? '' : 'offline'}`}>
+          {connected ? '已连接' : '正在重新连接，已受理的任务会继续运行'}
+        </div>
+        <main className="content">
+          {tab === 'messages' ? (
+            <Chat
+              api={api}
+              connected={connected}
+              device={session.device.id}
+              gateway={gateway}
+              refresh={refresh}
+              userId={session.user.id}
+            />
+          ) : tab === 'feed' ? (
+            <Feed
+              api={api}
+              gateway={gateway}
+              onRead={() => setUnreadRefresh(value => value + 1)}
+              refresh={refresh}
+              unread={{ feed: unread.feed, diary: unread.diary }}
+            />
+          ) : tab === 'companion' ? (
+            <Companion api={api} connected={connected} gateway={gateway} refresh={refresh} />
+          ) : (
+            <Settings
+              api={api}
+              onLogout={() => {
+                clearChatState()
+                pauseMedia()
+                activeGateway.current?.close()
+                api.clear()
+                setSession(null)
+                setGateway(null)
+                setError('')
+              }}
+              session={session}
+            />
+          )}
+        </main>
+        <nav aria-label="主导航" className="bottom-nav">
+          {(
+            [
+              { id: 'messages', label: '聊天', icon: IconMessageCircle },
+              { id: 'companion', label: '伙伴', icon: IconHeart },
+              { id: 'feed', label: '动态', icon: IconSparkles },
+              { id: 'me', label: '设置', icon: IconSettings }
+            ] as const
+          ).map(item => (
+            <button
+              aria-current={tab === item.id ? 'page' : undefined}
+              className={tab === item.id ? 'selected' : ''}
+              key={item.id}
+              onClick={() => selectTab(item.id)}
+              type="button"
+            >
+              <span>
+                <item.icon size={23} stroke={1.7} />
+                {(item.id === 'messages' && unread.messages) ||
+                (item.id === 'feed' && (unread.feed || unread.diary)) ? (
+                  <i aria-label="有未读内容" className="unread-dot" />
+                ) : null}
+              </span>
+              {item.label}
+            </button>
+          ))}
+        </nav>
       </div>
-      <main className="content">
-        {tab === 'messages' ? (
-          <Chat
-            api={api}
-            connected={connected}
-            device={session.device.id}
-            gateway={gateway}
-            refresh={refresh}
-            userId={session.user.id}
-          />
-        ) : tab === 'feed' ? (
-          <Feed api={api} gateway={gateway} refresh={refresh} />
-        ) : tab === 'companion' ? (
-          <Companion api={api} connected={connected} gateway={gateway} refresh={refresh} />
-        ) : (
-          <Me
-            api={api}
-            onLogout={() => {
-              clearChatState()
-              pauseMedia()
-              activeGateway.current?.close()
-              api.clear()
-              setSession(null)
-              setGateway(null)
-              setError('')
-            }}
-            session={session}
-          />
-        )}
-      </main>
-      <nav aria-label="主导航" className="bottom-nav">
-        {(
-          [
-            { id: 'messages', label: '消息', icon: IconMessageCircle },
-            { id: 'feed', label: '动态', icon: IconSparkles },
-            { id: 'companion', label: '伙伴', icon: IconBook2 },
-            { id: 'me', label: '我', icon: IconUser }
-          ] as const
-        ).map(item => (
-          <button
-            aria-current={tab === item.id ? 'page' : undefined}
-            className={tab === item.id ? 'selected' : ''}
-            key={item.id}
-            onClick={() => selectTab(item.id)}
-            type="button"
-          >
-            <span>
-              <item.icon size={23} stroke={1.7} />
-              {item.id !== 'me' && unread[item.id] ? <i className="unread-dot" /> : null}
-            </span>
-            {item.label}
-          </button>
-        ))}
-      </nav>
-    </div>
+    </PageStateProvider>
   )
 }
 
-function Me({
+function Settings({
   api,
   session,
   onLogout
@@ -350,14 +394,14 @@ function Me({
 
   return (
     <div className="page">
-      <PageHeader subtitle="你的账户与手机连接" title="我" />
+      <PageHeader subtitle="账户与这台手机的连接" title="设置" />
       <section className="profile-card">
         <div className="avatar">{session.user.username.slice(0, 1)}</div>
         <h2>{session.user.username}</h2>
-        <span className="pill">远程已授权</span>
+        <span className="pill">手机已连接</span>
       </section>
       <section className="card">
-        <h3>当前设备</h3>
+        <h3>手机连接</h3>
         <dl>
           <div>
             <dt>设备</dt>
@@ -368,7 +412,7 @@ function Me({
             <dd>{new Date(session.device.expires_at).toLocaleDateString('zh-CN')}</dd>
           </div>
         </dl>
-        <p className="muted">你可以在电脑上查看和撤销已授权的手机。</p>
+        <p className="muted">陪伴、声音和显示偏好可以在电脑的设置中调整。这里退出只断开这台手机。</p>
       </section>
       {task.error ? <Notice>{task.error}</Notice> : null}
       <button

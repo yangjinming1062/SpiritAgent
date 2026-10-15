@@ -17,9 +17,11 @@ export {
   generateDesktopVideoImage,
   getDesktopVideoPrompt,
   handleDesktopVideoEvent,
+  pauseDesktopVideoDraft,
   playDesktopVideoAction,
   refreshDesktopVideos,
   renameDesktopVideoSet,
+  resumeDesktopVideoDraft,
   reviewDesktopVideoAction,
   setDesktopVideoPreferences,
   uploadDesktopVideoAction

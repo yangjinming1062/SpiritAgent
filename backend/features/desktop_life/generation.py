@@ -864,16 +864,26 @@ async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgre
         await _UPDATE_HANDLER(user_id, published_set)
 
 
-async def _pause_desktop_job(user_id: int, action_id: int, generation_id: str) -> None:
+async def _pause_desktop_job(
+    user_id: int,
+    action_id: int,
+    generation_id: str,
+    *,
+    latest_progress: DesktopVideoProgress | None = None,
+    by_user: bool = False,
+) -> None:
     async with SESSION_LOCAL() as db:
         await desktop_state(db, user_id, create=True)
         action = await desktop_action(db, user_id, action_id)
         progress = desktop_progress(action)
         if progress is None or progress.generation_id != generation_id or action.status != "processing":
             return
+        progress = latest_progress or progress
+        progress.paused_by_user = by_user
+        progress.submission_unknown = desktop_progress_has_unknown_submission(progress)
         action.stage = "paused"
         action.error = None
-        progress.failure_reason = "temporary"
+        progress.failure_reason = "result_unknown" if progress.submission_unknown else "temporary"
         action.generation_state_json = progress.model_dump_json()
         await touch_desktop_state(db, user_id)
         await db.commit()
@@ -886,7 +896,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
         async with SESSION_LOCAL() as db:
             action = await desktop_action(db, user_id, action_id)
             initial = desktop_progress(action)
-            if initial is None or action.status != "processing":
+            if initial is None or initial.paused_by_user or action.status != "processing":
                 return
             generation_id = initial.generation_id
         action, snapshot, progress = await _job_inputs(user_id, action_id, generation_id)
@@ -1121,6 +1131,14 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
             await _pause_desktop_job(user_id, action_id, generation_id)
         logger.info("Desktop generation paused for maintenance", extra={"action_id": action_id})
     except asyncio.CancelledError as exc:
+        if exc.args == ("paused",) and progress is not None:
+            await _pause_desktop_job(
+                user_id,
+                action_id,
+                generation_id,
+                latest_progress=progress,
+                by_user=True,
+            )
         if exc.args == ("discarded",) and progress is not None and progress.provider_task_id:
             try:
                 chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
@@ -1210,6 +1228,14 @@ def cancel_desktop_video_job(action_id: int) -> None:
         task.cancel("discarded")
 
 
+async def pause_desktop_video_job(action_id: int) -> None:
+    _NEXT_JOBS.pop(action_id, None)
+    task = _JOBS.get(action_id)
+    if task is not None and not task.done():
+        task.cancel("paused")
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def resume_desktop_video_jobs(user_id: int | None = None) -> None:
     async with SESSION_LOCAL() as db:
         query = select(DesktopVideoAction).where(DesktopVideoAction.status == "processing")
@@ -1218,6 +1244,8 @@ async def resume_desktop_video_jobs(user_id: int | None = None) -> None:
         rows = list(await db.scalars(query))
     for row in rows:
         progress = desktop_progress(row)
+        if progress is not None and progress.paused_by_user:
+            continue
         safe_resume = (
             progress is not None
             and not desktop_progress_has_unknown_submission(progress)

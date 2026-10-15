@@ -3,14 +3,11 @@ import type React from 'react'
 import { useState } from 'react'
 
 import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
-import { DesktopLifePage } from '@/app/features/desktop-life/desktop-life-page'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { BTN_SUBTLE, PanelSelect, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
 import { shellApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
-
-import styles from './app-settings.module.css'
 
 export function PresentationPage(): React.JSX.Element {
   const english = useStore($locale) === 'en'
@@ -38,12 +35,8 @@ export function PresentationPage(): React.JSX.Element {
   return (
     <div className="space-y-8">
       <SettingsSectionIntro
-        hint={
-          english
-            ? 'Choose how your companion appears and manage desktop life videos.'
-            : '选择伙伴的运行形态，管理桌面中的生活视频。'
-        }
-        title={english ? 'Desktop mode and life videos' : '桌面模式与生活视频'}
+        hint={english ? 'Choose where your companion appears.' : '选择让伙伴出现在窗口旁，还是住进电脑桌面。'}
+        title={english ? 'Where your companion appears' : '伙伴出现在哪里'}
       />
       <SettingCard>
         <SettingRow
@@ -56,7 +49,7 @@ export function PresentationPage(): React.JSX.Element {
                 ? 'Desktop mode is available on Windows.'
                 : '桌面模式仅在 Windows 上可用。'
           }
-          label={english ? 'Running mode' : '运行形态'}
+          label={english ? 'Display mode' : '显示方式'}
         >
           <button
             className={BTN_SUBTLE}
@@ -81,7 +74,7 @@ export function PresentationPage(): React.JSX.Element {
                 ? 'Desktop controls and background appear on this display.'
                 : '桌面控制界面与背景显示在这块屏幕上。'
             }
-            label={english ? 'Interactive display' : '交互显示器'}
+            label={english ? 'Display' : '显示屏'}
           >
             <PanelSelect
               ariaLabel={english ? 'Interactive display' : '交互显示器'}
@@ -102,9 +95,6 @@ export function PresentationPage(): React.JSX.Element {
           {state.switchBlockedReason || state.failureReason || state.compatibilityWarning}
         </p>
       )}
-      <div className={styles.lifeVideos}>
-        <DesktopLifePage />
-      </div>
     </div>
   )
 }

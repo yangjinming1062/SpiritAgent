@@ -2,7 +2,7 @@ import type React from 'react'
 import { useState } from 'react'
 
 import { pickAvatarImage } from '@/modules/character'
-import { adoptSceneImage, SCENE_IMAGE_SIZE, type SceneAsset } from '@/modules/scene'
+import { adoptSceneImage, type SceneAsset } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowLeft, Loader2, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
@@ -21,6 +21,7 @@ interface SceneDetailViewProps {
   detail: SceneAsset | null
   draft?: SceneEditDraft
   loading: boolean
+  selectingMaterial?: boolean
   onActivate: (sceneId: string) => void
   onBack: () => void
   onCancelEdit: () => void
@@ -42,6 +43,7 @@ export function SceneDetailView({
   detail,
   draft,
   loading,
+  selectingMaterial = false,
   onActivate,
   onBack,
   onCancelEdit,
@@ -56,10 +58,13 @@ export function SceneDetailView({
   onSaveAndRegenerate,
   onZoom
 }: SceneDetailViewProps): React.JSX.Element {
-  const t = useStrings().living.scene
-  const tToasts = useStrings().living.toasts
+  const strings = useStrings()
+  const t = strings.living.scene
+  const tToasts = strings.living.toasts
   const [actionKind, setActionKind] = useState<'refresh' | 'other' | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [loadedImage, setLoadedImage] = useState<string | null>(null)
+  const [previewAttempt, setPreviewAttempt] = useState(0)
   const begin = useAsyncGuard()
   const actionBusy = actionKind !== null
   const refreshing = actionKind === 'refresh'
@@ -82,7 +87,10 @@ export function SceneDetailView({
     )
 
   const canActivate =
-    detail?.status === 'ready' && hasImage && Boolean(detail.title.trim() && detail.description.trim())
+    detail?.status === 'ready' &&
+    Boolean(detail.url) &&
+    loadedImage === detail.url &&
+    Boolean(detail.title.trim() && detail.description.trim())
 
   const canRetryAnalysis = Boolean(
     detail &&
@@ -198,6 +206,9 @@ export function SceneDetailView({
               <img
                 alt={detail.title || t.historyAltFallback}
                 className="block h-auto max-h-[65vh] w-full object-contain"
+                key={`${detail.url}:${previewAttempt}`}
+                onError={() => setLoadedImage(null)}
+                onLoad={() => setLoadedImage(detail.url)}
                 src={detail.url}
               />
               <span className="absolute bottom-2 right-2 rounded-full bg-black/50 p-1.5 text-white opacity-80 transition group-hover:opacity-100">
@@ -229,15 +240,20 @@ export function SceneDetailView({
 
         <div className="min-w-0">
           {detail.image_size || detail.source_size || detail.target_size ? (
-            <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 pt-3 text-[10px] text-faint sm:px-5">
-              {detail.image_size ? <span>{t.imageSize(detail.image_size.width, detail.image_size.height)}</span> : null}
-              {detail.source_size ? (
-                <span>{t.sourceSize(detail.source_size.width, detail.source_size.height)}</span>
-              ) : null}
-              {detail.target_size ? (
-                <span>{t.generationTargetSize(detail.target_size.width, detail.target_size.height)}</span>
-              ) : null}
-            </div>
+            <details className="px-4 pt-3 text-xs text-muted sm:px-5">
+              <summary className="cursor-pointer">{strings.common.creationDetails}</summary>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                {detail.image_size ? (
+                  <span>{t.imageSize(detail.image_size.width, detail.image_size.height)}</span>
+                ) : null}
+                {detail.source_size ? (
+                  <span>{t.sourceSize(detail.source_size.width, detail.source_size.height)}</span>
+                ) : null}
+                {detail.target_size ? (
+                  <span>{t.generationTargetSize(detail.target_size.width, detail.target_size.height)}</span>
+                ) : null}
+              </div>
+            </details>
           ) : null}
           {draft ? (
             <div className="space-y-4 p-4 sm:p-5">
@@ -277,19 +293,14 @@ export function SceneDetailView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-line-hairline p-4 sm:px-5">
-          {!isCurrent && canActivate ? (
-            <button className={BTN_SUBTLE} disabled={actionBusy} onClick={() => onActivate(detail.id)} type="button">
-              {t.historyRollbackLabel}
-            </button>
-          ) : null}
-          {!isCurrent ? (
+          {(!isCurrent || selectingMaterial) && hasImage && !draft ? (
             <button
-              className={BTN_SUBTLE}
-              disabled={actionBusy || regenerating || detail.status === 'pending'}
-              onClick={() => onDelete(detail)}
+              className={BTN_PRIMARY}
+              disabled={actionBusy || !canActivate}
+              onClick={() => onActivate(detail.id)}
               type="button"
             >
-              {t.historyDeleteLabel}
+              {t.historyRollbackLabel}
             </button>
           ) : null}
           {canRetryAnalysis ? (
@@ -345,7 +356,7 @@ export function SceneDetailView({
                   {t.cancel}
                 </button>
                 <button
-                  className={BTN_SUBTLE}
+                  className={BTN_PRIMARY}
                   disabled={actionBusy || !canChangeInfo || !draft.title.trim() || !draft.description.trim()}
                   onClick={() => void runAction(() => onSave(detail.id))}
                   type="button"
@@ -364,27 +375,56 @@ export function SceneDetailView({
                 {t.edit}
               </button>
             ) : null}
-            {hasImage && (detail.status === 'ready' || detail.status === 'description_failed') ? (
-              <button
-                className={cn(BTN_PRIMARY, 'whitespace-nowrap')}
-                disabled={!canRegenerate || actionBusy}
-                onClick={() => {
-                  if (hasDraft) {
-                    void runAction(() => onSaveAndRegenerate(detail.id))
-                  } else {
-                    void runAction(() => onRegenerate(detail.id))
-                  }
-                }}
-                type="button"
-              >
-                {actionKind === 'other' ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-3.5" />
-                )}
-                {hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
-              </button>
-            ) : null}
+            <details>
+              <summary className="cursor-pointer rounded-lg px-3 py-2 text-xs text-muted hover:bg-fill-hover">
+                {strings.common.moreActions}
+              </summary>
+              <div className="mt-1 flex min-w-48 flex-col gap-2 rounded-xl border border-line-hairline bg-fill-trough p-3">
+                {hasImage && (detail.status === 'ready' || detail.status === 'description_failed') ? (
+                  <button
+                    className={cn(BTN_SUBTLE, 'whitespace-nowrap')}
+                    disabled={!canRegenerate || actionBusy}
+                    onClick={() => {
+                      if (hasDraft) {
+                        void runAction(() => onSaveAndRegenerate(detail.id))
+                      } else {
+                        void runAction(() => onRegenerate(detail.id))
+                      }
+                    }}
+                    type="button"
+                  >
+                    {actionKind === 'other' ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-3.5" />
+                    )}
+                    {hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
+                  </button>
+                ) : null}
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={actionBusy}
+                  onClick={() => {
+                    setLoadedImage(null)
+                    setPreviewAttempt(attempt => attempt + 1)
+                    void refreshDetail()
+                  }}
+                  type="button"
+                >
+                  {t.refresh}
+                </button>
+                {!isCurrent ? (
+                  <button
+                    className={cn(BTN_SUBTLE, 'text-danger-fg')}
+                    disabled={actionBusy || generating}
+                    onClick={() => onDelete(detail)}
+                    type="button"
+                  >
+                    {t.historyDeleteLabel}
+                  </button>
+                ) : null}
+              </div>
+            </details>
           </div>
         </div>
         {actionError ? (
@@ -394,11 +434,6 @@ export function SceneDetailView({
         ) : null}
         {detail.status === 'description_failed' ? (
           <p className={cn(HINT_TEXT, 'px-4 pb-4 sm:px-5')}>{t.needsDescription}</p>
-        ) : null}
-        {!generating ? (
-          <p className={cn(HINT_TEXT, 'px-4 pb-4 sm:px-5')}>
-            {t.regenerationTargetSize(SCENE_IMAGE_SIZE.width, SCENE_IMAGE_SIZE.height)}
-          </p>
         ) : null}
       </SettingCard>
     </section>

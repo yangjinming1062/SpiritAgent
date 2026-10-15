@@ -8,7 +8,7 @@ import {
   storedJson
 } from '@/shared/lib/storage'
 
-export const DESKTOP_APPS = ['chat', 'posts', 'diary', 'scene', 'appearance', 'settings'] as const
+export const DESKTOP_APPS = ['chat', 'companion', 'posts', 'settings'] as const
 
 export type DesktopApp = (typeof DESKTOP_APPS)[number]
 
@@ -32,7 +32,7 @@ interface DesktopLayout {
   whisperSide: 'left' | 'right'
 }
 
-const LAYOUT_KEY = registerCompanionStorageKey('da.desktop.layout')
+const LAYOUT_KEY = registerCompanionStorageKey('da.desktop.layout.v2')
 
 function validRect(value: unknown): value is DesktopRect {
   if (!value || typeof value !== 'object') {

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 
 import { useAutoSave } from '@/shared/hooks/use-auto-save'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { cn } from '@/shared/lib/utils'
 import {
+  BTN_SUBTLE,
   CapsuleTabs,
   EmptyState,
   HINT_TEXT,
@@ -71,26 +73,36 @@ export function RunnerPage(): React.JSX.Element {
   const mountedRef = useRef(true)
   dirtyPathsRef.current = dirtyPaths
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true
+
+    return () => {
       mountedRef.current = false
-    },
-    []
-  )
+    }
+  }, [])
 
   const persist = async (snapshot: Record<string, unknown>): Promise<void> => {
     const revision = revisionRef.current
+    const isCurrent = captureAuthScope()
+
+    if (!isCurrent) {
+      return
+    }
 
     for (const path of dirtyPathsRef.current.values()) {
+      if (!isCurrent()) {
+        return
+      }
+
       await patch(path, getIn(snapshot, path))
     }
 
-    if (mountedRef.current && revisionRef.current === revision) {
+    if (isCurrent() && mountedRef.current && revisionRef.current === revision) {
       setDirtyPaths(new Map())
     }
   }
 
-  const { status: saveStatus } = useAutoSave({
+  const { status: saveStatus, retry: retrySave } = useAutoSave({
     dirty: dirtyPaths.size > 0,
     onError: error => notifyError(error, r.saveFailed),
     onSave: persist,
@@ -181,10 +193,17 @@ export function RunnerPage(): React.JSX.Element {
         ))}
       </div>
 
-      <div className="flex min-h-5 justify-end pt-2">
+      <div className="flex min-h-5 items-center justify-end gap-3 pt-2">
         {saveStatus === 'saving' && <span className={HINT_TEXT}>{dict.common.saving}</span>}
         {saveStatus === 'saved' && <span className={HINT_TEXT}>{r.saveSuccess}</span>}
-        {saveStatus === 'error' && <span className="text-[10px] leading-relaxed text-danger-fg">{r.saveFailed}</span>}
+        {saveStatus === 'error' && (
+          <>
+            <span className="text-xs leading-relaxed text-danger-fg">{r.saveFailed}</span>
+            <button className={BTN_SUBTLE} onClick={retrySave} type="button">
+              {dict.common.retry}
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

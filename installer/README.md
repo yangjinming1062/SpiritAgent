@@ -35,7 +35,7 @@ Home 默认位于 Windows `%LOCALAPPDATA%\SpiritAgent` 或 macOS `~/Library/Appl
 
 编排通过 `-Manifest` / `-Stage` 调用脚本，载荷目录与格式经 `SPIRITAGENT_BUNDLED_*` / `SPIRITAGENT_INSTALLER_FORMAT` 下发；手动调用的同义参数优先。结果为带哨兵前缀的单行 JSON，普通日志不参与协议解析。UI 使用固定主题、自绘标题栏；[失败页](src/routes/failure.tsx) 提供重试与日志入口。
 
-取消尽力终止当前阶段的进程树（macOS 进程组、Windows Job Object），失败时退回只终止脚本。退出后读取残余输出有超时，残留进程不会无限拖住结果。取消或失败可能留下半成品或挂载的 DMG；重试从头执行各阶段，`uv venv --clear` 重建 Runner 环境，不凭旧完成标记跳过。
+停止安装与关闭窗口会取消并等待当前流程结束，包含读取安装阶段的 manifest；关闭期间拒绝新安装，重复关闭共用一次退出。取消尽力终止进程树（macOS 进程组、Windows Job Object），失败时只终止脚本；读取残余输出有超时。取消或失败可能留下半成品或挂载的 DMG；重试从头执行各阶段，`uv venv --clear` 重建 Runner 环境，不凭旧完成标记跳过。
 
 ## 平台与失败处理
 
@@ -57,3 +57,5 @@ Home 默认位于 Windows `%LOCALAPPDATA%\SpiritAgent` 或 macOS `~/Library/Appl
 ## 契约与验证
 
 构建门禁隔离安装实际载荷 wheel，检查入口、版本与静态工具定义；安装后再次运行包内健康检查，失败不进入后续阶段。安装改动在目标平台分别验证首装、修复、macOS 快路径、取消与失败重试，并检查真实内嵌文件、路径和 BOM；签名、启动及进程树终止需要实机验证。
+
+运行 Cargo 单元测试前，将 `SPIRITAGENT_HOME` 指向专用临时目录；ZIP 回退路径测试会在该目录内创建并删除桌面程序占位文件。

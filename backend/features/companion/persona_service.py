@@ -43,6 +43,7 @@ ONBOARDING_FIELDS: tuple[str, ...] = (
     "user_birthday",
     "user_hobbies",
     "user_freeform",
+    "voice_setup_skipped",
 )
 _ONBOARDING_MAX_LEN: int = USER_PROFILE_MAX_CONTENT_CHARS
 
@@ -139,8 +140,9 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
     persona = await get_or_create_persona(db, user_id)
     await db.refresh(persona, with_for_update=True)
     current_draft = load_persona_definition(persona)
-    if current_draft.get("voice"):
-        cleaned["voice"] = current_draft["voice"]
+    for voice_field in ("voice", "voice_setup_skipped"):
+        if current_draft.get(voice_field):
+            cleaned[voice_field] = current_draft[voice_field]
     # 锁定字段只保留已有值；原本缺失的字段也不能通过 PUT 补入。
     avatar = await read_appearance_readiness(db, user_id)
     sealed = avatar is not None and avatar.is_fullbody_confirmed
@@ -197,7 +199,7 @@ def _state(answers: dict[str, str], next_field: str | None, complete: bool) -> O
 
 
 async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona, draft: dict[str, str]) -> str | None:
-    """返回下一项必需的引导步骤；None 表示角色、头像、全身种子确认与音色均已完成。"""
+    """返回必需的引导步骤；声音已选择或用户明确暂时使用文字后可完成。"""
     if not persona.is_complete:
         return next((f for f in _CHARACTER_ONBOARDING_FIELDS if not draft.get(f)), "portrait")
     if not persona.is_portrait_confirmed:
@@ -207,13 +209,13 @@ async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona
         return "portrait"
     if not avatar.seed_fullbody_url or not avatar.is_fullbody_confirmed:
         return "fullbody-reference"
-    if not draft.get("voice"):
+    if not draft.get("voice") and draft.get("voice_setup_skipped") != "true":
         return "voice"
     return None
 
 
 async def get_onboarding_state(db: AsyncSession, user_id: int) -> OnboardingStateResponse:
-    """从数据库恢复引导进度；complete 以角色、头像、全身种子确认与音色为门槛。"""
+    """从数据库恢复引导进度；可选个人资料不阻断完成。"""
     persona = await get_or_create_persona(db, user_id)
     draft = load_persona_definition(persona)
     next_step = await _next_onboarding_step(db, user_id, persona, draft)
@@ -234,9 +236,11 @@ async def submit_onboarding_field(
     *,
     expected_version: int | None = None,
 ) -> OnboardingStateResponse:
-    """写入一条引导回答；is_complete 之后仅 user_*/voice 可改，角色字段须走 PUT /persona。"""
+    """保存引导回答；人设定型后仅修改个人资料与声音选择。"""
     if field not in ONBOARDING_FIELDS:
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)
+    if field == "voice_setup_skipped" and value not in (None, "true"):
+        raise PersonaValidationError("voice_setup_skipped must be true or null", field)
     if expected_version is not None and (
         type(expected_version) is not int or expected_version < 0 or not field.startswith("user_")
     ):
@@ -244,6 +248,7 @@ async def submit_onboarding_field(
     if field == "user_birthday":
         _validate_birthday(value)
     persona = await get_or_create_persona(db, user_id)
+    await db.refresh(persona, with_for_update=True)
     if persona.is_complete:
         if field.startswith("user_"):
             if value and value.strip():
@@ -259,23 +264,26 @@ async def submit_onboarding_field(
                 await db.commit()
             # 传空值不动 Memory 行：清除 user_* 条目通过记忆管理删除
             return _state(load_persona_definition(persona), None, True)
-        # voice 不是人设字段，故此处只动草稿
-        if field == "voice":
+        # 声音选择和暂用文字都是明确操作，保存独立标记，不以伪造的音色名称占位。
+        if field in ("voice", "voice_setup_skipped"):
             draft = load_persona_definition(persona)
             pending_step = await _next_onboarding_step(db, user_id, persona, draft)
             if value and value.strip():
                 draft[field] = value.strip()[:_ONBOARDING_MAX_LEN]
+                draft.pop("voice_setup_skipped" if field == "voice" else "voice", None)
             else:
                 draft.pop(field, None)
             persona.definition_json = json.dumps(draft, ensure_ascii=False)
-            # 音色是最后一项必需资料：只在本次写入使引导由未完成变为完成时才同事务保存初次问候意图，已完成后的修改不触发。
-            completed = pending_step == "voice" and bool(draft.get("voice"))
+            completed = pending_step == "voice" and bool(
+                draft.get("voice") or draft.get("voice_setup_skipped") == "true",
+            )
             if completed:
                 await enqueue_first_greeting(db, user_id)
             await db.commit()
             if completed:
                 schedule_first_greeting_claim(user_id)
-            return _state(draft, None, True)
+            next_step = await _next_onboarding_step(db, user_id, persona, draft)
+            return _state(draft, next_step, next_step is None)
         raise PersonaValidationError(
             f"onboarding field {field!r} cannot be edited after persona is finalized; use PUT /api/companion/persona",
             field,

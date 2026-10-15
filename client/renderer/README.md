@@ -20,10 +20,10 @@
 | 网关与账户 | [host-runtime.ts](app/runtime/host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
-| 衣柜与逐动作预览、重做、采纳 | [appearance-page.tsx](app/features/appearance/appearance-page.tsx)、[video-section.tsx](app/features/appearance/video-section.tsx)、[video-pack-store.ts](modules/character/rendering/video/video-pack-store.ts)；采纳入口复用 [media-review-queue.tsx](app/features/settings/media-review-queue.tsx) |
+| 衣柜与逐动作预览、重做、采纳 | [appearance-page.tsx](app/features/appearance/appearance-page.tsx)、[video-section.tsx](app/features/appearance/video-section.tsx)、[video-pack-store.ts](modules/character/rendering/video/video-pack-store.ts)；采纳入口复用 [media-review-queue.tsx](app/features/companion/media-review-queue.tsx) |
 | 公共对话、设置与状态交接 | [conversation-page.tsx](app/features/conversation/conversation-page.tsx)、[app-settings.tsx](app/features/settings/app-settings.tsx)、[app-ui-state.ts](app/workflows/app-ui-state.ts) |
 | 对话与音频联动 | [modules/conversation](modules/conversation/)、[modules/speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
-| 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/settings/memory-section.tsx) |
+| 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/companion/memory-section.tsx) |
 | 场景与背景 | [scene-store.ts](modules/scene/scene-store.ts) |
 | 文案与主题 | [strings/dictionaries](shared/strings/dictionaries/)、[shared/panel](shared/panel/)；`en` 按 `zh` 类型校验，引导问答和人格预设仍有硬编码中文 |
 
@@ -58,7 +58,7 @@
 
 ## 主窗口与桌面装配
 
-主窗口只创建一个 renderer，固定导航装配公共业务页，对话页在切页时保留实例但关闭活动资格。公共对话页持会话列表、标题栏与执行详情抽屉，按容器宽度收起列表；设置页持分类目录与当前内容。交互桌面在一个 renderer 中装配相同 [features](app/features/) 与内部面板，背景表面仅接收主进程缓存后的媒体字节和播放控制，不装配独立精灵舞台。主对话与轻语的互斥显示规则归 [DESIGN](../../docs/DESIGN.md#桌面模式)。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 登记和回收按会话隔离的 runtime；共享、状态交接和资格契约归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
+主窗口与桌面共用 [features](app/features/) 和导航，各入口选中位置及桌景草稿随主进程账户快照交接。对话页切页时保留实例并关闭活动资格；动态媒体查看器在离开来源页签后释放。衣柜与背景的文字、选中项保存于账户缓存，参考图片字节由 [creation-draft-image.ts](shared/lib/creation-draft-image.ts) 保存、跨窗口通知并随明确移除账户清理，不作为服务端成品。背景表面仅消费主进程缓存媒体及播放控制。窗口与轻语规则归 [DESIGN](../../docs/DESIGN.md#桌面模式)，交接与资格归 [桌面呈现](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。`ConversationViewProvider` 持视图，[chat-store.ts](modules/conversation/chat-store.ts) 管理会话 runtime。
 
 [panel-activity](shared/context/panel-activity.tsx) 向子组件和 Portal 传播活动资格，子面板不能解除父级禁用；媒体查看器归打开它的视图，失活时隐藏并暂停。视图切换保留各自草稿与附件，录音资格失效后旧麦克风或转写结果不能因重新激活恢复。布局、位置和防抖保存守卫账户清理代次。
 

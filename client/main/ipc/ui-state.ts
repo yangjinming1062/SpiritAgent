@@ -53,7 +53,36 @@ function stateData(raw: MainUiStateData): MainUiStateData {
     throw new Error('对话状态无效。')
   }
 
-  return structuredClone({ navigation: normalizeAppNavigation(raw.navigation), conversation })
+  const desktopLife = raw.desktopLife
+
+  if (
+    !desktopLife ||
+    typeof desktopLife !== 'object' ||
+    ![desktopLife.selectedSetId, desktopLife.selectedActionId, desktopLife.externalActionId].every(
+      value => value === null || (Number.isSafeInteger(value) && Number(value) > 0)
+    ) ||
+    typeof desktopLife.creating !== 'boolean' ||
+    typeof desktopLife.addActionOpen !== 'boolean' ||
+    !desktopLife.create ||
+    !['ai', 'image_upload', 'video_upload'].includes(desktopLife.create.source) ||
+    !['name', 'sceneId', 'sceneLabel', 'outfitId', 'feedback', 'requestId'].every(
+      key => typeof desktopLife.create[key as keyof typeof desktopLife.create] === 'string'
+    ) ||
+    !desktopLife.feedback ||
+    typeof desktopLife.feedback !== 'object' ||
+    !Object.values(desktopLife.feedback).every(value => typeof value === 'string') ||
+    !desktopLife.design ||
+    typeof desktopLife.design.name !== 'string' ||
+    typeof desktopLife.design.description !== 'string' ||
+    !['loop', 'once'].includes(desktopLife.design.kind) ||
+    !Number.isFinite(desktopLife.design.duration) ||
+    typeof desktopLife.externalRequirements !== 'string' ||
+    !(desktopLife.externalFilePath === null || typeof desktopLife.externalFilePath === 'string')
+  ) {
+    throw new Error('制作草稿状态无效。')
+  }
+
+  return structuredClone({ navigation: normalizeAppNavigation(raw.navigation), conversation, desktopLife })
 }
 
 // 仅在本机进程内保留账户视图；字节和文件授权仍由既有资源入口管理。
@@ -364,12 +393,17 @@ export function createUiStateBridge(options: UiStateOptions) {
         if (next.page || next.sessionId) {
           const page = next.page ?? (next.sessionId ? 'chat' : snapshot.navigation.page)
 
-          const section = page === 'settings' ? (next.section ?? snapshot.navigation.section) : undefined
-
           snapshot.navigation = {
+            ...snapshot.navigation,
             page,
-            section,
-            settingsTab: section === 'skills' ? (next.settingsTab ?? snapshot.navigation.settingsTab) : undefined
+            section: next.section ?? snapshot.navigation.section,
+            settingsTab: next.section ? next.settingsTab : snapshot.navigation.settingsTab,
+            companionSection: next.companionSection ?? snapshot.navigation.companionSection,
+            companionTask: next.companionSection ? next.companionTask : snapshot.navigation.companionTask,
+            returnToDesktopLife: next.companionSection
+              ? next.returnToDesktopLife
+              : snapshot.navigation.returnToDesktopLife,
+            postsTab: next.postsTab ?? snapshot.navigation.postsTab
           }
           snapshot.conversation.selectedSessionId = next.sessionId ?? snapshot.conversation.selectedSessionId
         }

@@ -43,6 +43,7 @@ from features.desktop_life.generation import (
     desktop_progress_can_resume,
     desktop_progress_has_unknown_submission,
     load_desktop_visual_snapshot,
+    pause_desktop_video_job,
     prepare_uploaded_desktop_image,
     resolve_desktop_video_plan,
     schedule_desktop_video_job,
@@ -313,6 +314,7 @@ async def _create_suite(
     request_id: str | None,
     source: str,
     is_default: bool = False,
+    initial_feedback: str | None = None,
 ) -> DesktopVideoSet:
     row = DesktopVideoSet(
         user_id=user_id,
@@ -350,6 +352,18 @@ async def _create_suite(
                 enabled=True,
                 version=0,
                 attempt=0,
+                generation_state_json=DesktopVideoProgress(
+                    generation_id=uuid4().hex,
+                    source="user_requested",
+                    feedback=initial_feedback,
+                    image_only=True,
+                    duration_seconds=preset.duration_seconds,
+                    continuity=preset.continuity,
+                    base_version=1 if preset.continuity == "base" else None,
+                    replace_base=preset.continuity == "base",
+                ).model_dump_json()
+                if preset.key == "idle" and source == "ai" and initial_feedback is not None
+                else None,
                 needs_update=False,
                 update_pending=False,
             ),
@@ -383,6 +397,7 @@ async def create_desktop_video_set(user_id: int, request: DesktopVideoCreateSetR
                 name=request.name,
                 request_id=request.request_id,
                 source=request.source,
+                initial_feedback=request.feedback.strip(),
             )
             if request.source == "ai":
                 idle_id = await db.scalar(
@@ -403,7 +418,7 @@ async def create_desktop_video_set(user_id: int, request: DesktopVideoCreateSetR
         set_id = row.id
     if idle_id is not None:
         try:
-            await generate_desktop_image(user_id, idle_id)
+            await generate_desktop_image(user_id, idle_id, feedback=request.feedback.strip())
         except DesktopVideoError as exc:
             await _record_preparation_error(user_id, idle_id, str(exc))
     async with SESSION_LOCAL() as db:
@@ -486,7 +501,8 @@ async def delete_desktop_video_set(db: AsyncSession, user_id: int, set_id: int) 
 async def _record_preparation_error(user_id: int, action_id: int, error: str) -> None:
     async with SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
-        if action.status != "queued" or action.generation_state_json is not None:
+        progress = desktop_progress(action)
+        if action.status != "queued" or (progress is not None and progress.paid_slot_consumed):
             return
         action.status, action.stage, action.error = "failed", "prepare", error
         await touch_desktop_state(db, user_id)
@@ -616,11 +632,12 @@ async def generate_desktop_image(
             and action.stage in {"paused", "image", "prepare"}
             and not feedback
             and not regenerate
-            and desktop_progress_can_resume(old)
+            and (old.paused_by_user or desktop_progress_can_resume(old))
         )
         removed_task = None
         if resume:
             progress = old
+            progress.paused_by_user = False
             progress.source = source
             progress.failure_reason = ""
         else:
@@ -691,7 +708,7 @@ async def upload_desktop_image(
         )
         if action.continuity == "base" and action.key != "idle":
             raise DesktopVideoStateError("这个动作使用安静相伴的基础图，请上传安静相伴的基础图")
-        if action.status == "processing":
+        if action.status == "processing" and action.stage != "paused":
             raise DesktopVideoStateError("请先取消当前制作")
         old_json, old_status, old_stage = action.generation_state_json, action.status, action.stage
         action.attempt += 1
@@ -788,6 +805,76 @@ async def confirm_desktop_image(
         response = desktop_action_response(action)
     if generate_video:
         schedule_desktop_video_job(user_id, action_id)
+    return response
+
+
+async def pause_desktop_action(
+    user_id: int,
+    action_id: int,
+    *,
+    draft_id: str | None = None,
+) -> DesktopVideoActionResponse:
+    async with _lock(user_id):
+        async with SESSION_LOCAL() as db:
+            action = await desktop_action(db, user_id, action_id, lock=True)
+            row = await _suite(db, user_id, action.set_id)
+            progress = desktop_progress(action)
+            _validate_draft(row, progress, draft_id=draft_id)
+            if progress is None or action.status != "processing" or action.stage == "paused":
+                return desktop_action_response(action)
+            if action.stage == "image_upload":
+                raise DesktopVideoStateError("图片正在保存，请等待完成")
+            generation_id = progress.generation_id
+        # Let the cancelled workflow save its last known handle before taking a new row lock.
+        await pause_desktop_video_job(action_id)
+        async with SESSION_LOCAL() as db:
+            action = await desktop_action(db, user_id, action_id, lock=True)
+            progress = desktop_progress(action)
+            if progress is not None and progress.generation_id == generation_id and action.status == "processing":
+                progress.paused_by_user = True
+                progress.submission_unknown = desktop_progress_has_unknown_submission(progress)
+                action.generation_state_json = progress.model_dump_json()
+                action.stage, action.error = "paused", None
+                await touch_desktop_state(db, user_id)
+                await db.commit()
+            return desktop_action_response(action)
+
+
+async def resume_desktop_action(
+    user_id: int,
+    action_id: int,
+    *,
+    draft_id: str,
+    expected_base_version: int | None = None,
+) -> DesktopVideoActionResponse:
+    async with _lock(user_id), SESSION_LOCAL() as db:
+        action = await desktop_action(db, user_id, action_id, lock=True)
+        row = await _suite(db, user_id, action.set_id)
+        progress = desktop_progress(action)
+        _validate_draft(row, progress, draft_id=draft_id, base_version=expected_base_version)
+        if progress is None:
+            raise DesktopVideoStateError("制作草稿已失效")
+        if action.status == "processing" and action.stage != "paused":
+            return desktop_action_response(action)
+        if desktop_progress_has_unknown_submission(progress):
+            raise DesktopVideoStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
+        if action.stage in {"complete", "review", "image_review", "image_confirmed"}:
+            raise DesktopVideoStateError("请先确认当前制作结果")
+        if progress.failure_reason == "material_rejected":
+            raise DesktopVideoStateError("上传的视频无法使用，请更换视频后重新上传")
+        if progress.source == "external_upload":
+            if not progress.source_path and progress.candidate is None:
+                raise DesktopVideoStateError("上传的视频尚未保存完成，请稍后重试或重新上传")
+        else:
+            await _consume_slot(db, user_id, action, progress)
+        progress.paused_by_user = False
+        progress.failure_reason = ""
+        action.generation_state_json = progress.model_dump_json()
+        action.status, action.stage, action.error = "processing", "prepare", None
+        await touch_desktop_state(db, user_id)
+        await db.commit()
+        response = desktop_action_response(action)
+    schedule_desktop_video_job(user_id, action_id)
     return response
 
 
@@ -1005,6 +1092,7 @@ async def generate_desktop_action(
         removed_task = None
         if resume:
             progress = old
+            progress.paused_by_user = False
             progress.source = source
             progress.image_only = False
             progress.failure_reason = ""
@@ -1081,7 +1169,7 @@ async def upload_desktop_action(
         initial = await desktop_action(db, user_id, action_id, lock=True)
         if expected_set_id is not None and expected_set_id != initial.set_id:
             raise DesktopVideoStateError("桌面生活组合已经变化")
-        if initial.status == "processing":
+        if initial.status == "processing" and initial.stage != "paused":
             raise DesktopVideoStateError("这个桌面动作正在制作，请等待当前任务完成")
         row = await _suite(db, user_id, initial.set_id)
         if initial.continuity == "base" and initial.key != "idle" and not row.base_image_path:
@@ -1139,7 +1227,7 @@ async def upload_desktop_action(
                 raise DesktopVideoStateError("上传任务已经失效")
             current.source_path = source_path
             action.generation_state_json = current.model_dump_json()
-            action.stage = "process"
+            action.stage = "paused" if current.paused_by_user else "process"
             await touch_desktop_state(db, user_id)
             await db.commit()
             response = desktop_action_response(action)

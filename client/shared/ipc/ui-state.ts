@@ -1,5 +1,26 @@
 import type { ChatAttachment } from '../../../shared/protocol'
 
+export interface DesktopLifeUiSnapshot {
+  selectedSetId: number | null
+  selectedActionId: number | null
+  creating: boolean
+  create: {
+    name: string
+    sceneId: string
+    sceneLabel: string
+    outfitId: string
+    source: 'ai' | 'image_upload' | 'video_upload'
+    feedback: string
+    requestId: string
+  }
+  feedback: Record<string, string>
+  design: { name: string; description: string; kind: 'loop' | 'once'; duration: number }
+  addActionOpen: boolean
+  externalActionId: number | null
+  externalRequirements: string
+  externalFilePath: string | null
+}
+
 export type MainConversationPendingAttachment =
   | { type: 'image'; value: string; fileName?: string }
   | {

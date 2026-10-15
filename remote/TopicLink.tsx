@@ -115,8 +115,7 @@ export function TopicLink({
         ))}
       </div>
       {error ? (
-        <Notice>
-          {error}
+        <Notice error={error}>
           <button disabled={busy} onClick={() => void runLatest(load)} type="button">
             重试
           </button>

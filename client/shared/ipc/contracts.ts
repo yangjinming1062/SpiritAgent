@@ -13,9 +13,10 @@ import type {
   PresentationState,
   StageActivity
 } from './desktop-presentation'
-import type { MainConversationDraftSnapshot } from './ui-state'
+import type { DesktopLifeUiSnapshot, MainConversationDraftSnapshot } from './ui-state'
 export {
   APP_PAGES,
+  COMPANION_SECTIONS,
   DESKTOP_COMPANION_ACTIVITY_PRIORITY,
   normalizeAppNavigation,
   SETTINGS_SECTIONS
@@ -23,6 +24,7 @@ export {
 export type {
   AppNavigationTarget,
   AppPage,
+  CompanionSection,
   DesktopAccount,
   DesktopBackground,
   DesktopBackgroundPlayback,
@@ -39,12 +41,14 @@ export type {
   DockState,
   DockTask,
   DockWindow,
+  PostsTab,
   PresentationDisplay,
   PresentationMode,
   PresentationState,
   SettingsSection,
   StageActivity
 } from './desktop-presentation'
+export type { DesktopLifeUiSnapshot } from './ui-state'
 
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 
@@ -184,6 +188,7 @@ export type DesktopSurfaceOpenPayload = AppNavigationTarget
 export interface MainUiStateData {
   navigation: AppNavigationTarget
   conversation: MainConversationDraftSnapshot
+  desktopLife: DesktopLifeUiSnapshot
 }
 
 export interface MainUiStateSnapshot extends MainUiStateData {

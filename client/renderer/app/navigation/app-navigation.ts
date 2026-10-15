@@ -1,32 +1,54 @@
-import { atom } from 'nanostores'
+import { atom, computed } from 'nanostores'
 
 import { setChatSession, switchSession } from '@/modules/conversation'
 import { log } from '@/shared/lib/log'
-import { definePersistedEnum, registerStorageClearHandler } from '@/shared/lib/storage'
+import { definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $gatewayState } from '@/shared/store/gateway'
 import {
   APP_PAGES,
   type AppNavigationTarget,
   type AppPage,
+  COMPANION_SECTIONS,
+  type CompanionSection,
   normalizeAppNavigation,
+  type PostsTab,
   SETTINGS_SECTIONS,
   type SettingsSection
 } from '@ipc/contracts'
 
 export { APP_PAGES, SETTINGS_SECTIONS }
 
-const pageStore = definePersistedEnum<AppPage>({ allowed: APP_PAGES, fallback: 'chat', key: 'da.app.page' })
+const navigation = definePersistedAtom<AppNavigationTarget>({
+  key: 'da.app.navigation.v2',
+  fallback: { page: 'chat', section: 'companionship', companionSection: 'home', postsTab: 'posts' },
+  isPersistable: (value): value is AppNavigationTarget => {
+    if (!value || typeof value !== 'object') {
+      return false
+    }
 
-const sectionStore = definePersistedEnum<SettingsSection>({
-  allowed: SETTINGS_SECTIONS,
-  fallback: 'persona',
-  key: 'da.app.settings.section'
+    const candidate = value as Record<string, unknown>
+
+    return (
+      APP_PAGES.some(page => page === candidate.page) &&
+      SETTINGS_SECTIONS.some(section => section === candidate.section) &&
+      COMPANION_SECTIONS.some(section => section === candidate.companionSection) &&
+      (candidate.postsTab === 'posts' || candidate.postsTab === 'diary') &&
+      (candidate.companionTask === undefined || candidate.companionTask === 'create') &&
+      (candidate.returnToDesktopLife === undefined || typeof candidate.returnToDesktopLife === 'boolean') &&
+      (candidate.settingsTab === undefined ||
+        candidate.settingsTab === 'skills' ||
+        candidate.settingsTab === 'toolsets')
+    )
+  }
 })
 
-export const $appPage = pageStore.$atom
-export const $settingsSection = sectionStore.$atom
+export const $appPage = computed(navigation.$atom, value => value.page ?? 'chat')
+export const $settingsSection = computed(navigation.$atom, value => value.section ?? 'companionship')
+export const $companionSection = computed(navigation.$atom, value => value.companionSection ?? 'home')
+export const $postsTab = computed(navigation.$atom, value => value.postsTab ?? 'posts')
 export const $appNavigationTarget = atom<AppNavigationTarget>({})
 export const $appNavigationRevision = atom(0)
+export const $appNavigation = navigation.$atom
 let writingHash = false
 
 function replaceHash(next: string): void {
@@ -41,9 +63,8 @@ function replaceHash(next: string): void {
 }
 
 export function readAppNavigationHash(): AppNavigationTarget | null {
-  const raw = window.location.hash.replace(/^#\/?/, '')
-  const [path, query] = raw.split('?')
-  const [page, section] = path.split('/')
+  const [path, query] = window.location.hash.replace(/^#\/?/, '').split('?')
+  const [page, detail] = path.split('/')
 
   if (!APP_PAGES.some(candidate => candidate === page)) {
     return null
@@ -53,24 +74,30 @@ export function readAppNavigationHash(): AppNavigationTarget | null {
 
   return normalizeAppNavigation({
     page,
-    section: page === 'settings' ? section : undefined,
-    settingsTab: params.get('subtab') ?? undefined,
-    sessionId: params.get('sessionId') ?? undefined,
-    messageKey: params.get('messageKey') ?? undefined
+    section: page === 'settings' ? detail : undefined,
+    companionSection: page === 'companion' ? detail : undefined,
+    postsTab: page === 'posts' ? detail : undefined,
+    companionTask: params.get('create') === '1' ? 'create' : undefined,
+    returnToDesktopLife: params.get('return') === 'desktop-life',
+    settingsTab: params.get('subtab'),
+    sessionId: params.get('sessionId'),
+    messageKey: params.get('messageKey')
   })
 }
 
 function writeHash(target: AppNavigationTarget): void {
-  const page = target.page ?? $appPage.get()
-  const section = target.section ?? $settingsSection.get()
   const query = new URLSearchParams()
 
-  if (page === 'settings' && section === 'skills') {
-    const tab = target.settingsTab ?? getAppNavigation().settingsTab
+  if (target.page === 'settings' && target.section === 'devices' && target.settingsTab) {
+    query.set('subtab', target.settingsTab)
+  }
 
-    if (tab) {
-      query.set('subtab', tab)
-    }
+  if (target.page === 'companion' && target.companionTask === 'create') {
+    query.set('create', '1')
+  }
+
+  if (target.page === 'companion' && target.returnToDesktopLife) {
+    query.set('return', 'desktop-life')
   }
 
   if (target.sessionId) {
@@ -81,8 +108,16 @@ function writeHash(target: AppNavigationTarget): void {
     query.set('messageKey', target.messageKey)
   }
 
-  const suffix = query.size ? `?${query}` : ''
-  const next = `#/${page}${page === 'settings' ? `/${section}` : ''}${suffix}`
+  const detail =
+    target.page === 'settings'
+      ? target.section
+      : target.page === 'companion'
+        ? target.companionSection
+        : target.page === 'posts'
+          ? target.postsTab
+          : undefined
+
+  const next = `#/${target.page}${detail ? `/${detail}` : ''}${query.size ? `?${query}` : ''}`
 
   if (window.location.hash !== next) {
     replaceHash(next)
@@ -90,24 +125,22 @@ function writeHash(target: AppNavigationTarget): void {
 }
 
 export function getAppNavigation(): AppNavigationTarget {
-  return {
-    page: $appPage.get(),
-    section: $appPage.get() === 'settings' ? $settingsSection.get() : undefined,
-    settingsTab:
-      $appPage.get() === 'settings' && $settingsSection.get() === 'skills'
-        ? readAppNavigationHash()?.settingsTab
-        : undefined
-  }
+  return { ...navigation.$atom.get() }
 }
 
 export async function applyAppNavigation(target: AppNavigationTarget, updateHash = true): Promise<void> {
   const next = normalizeAppNavigation(target)
-
-  if (next.section) {
-    sectionStore.set(next.section)
-  }
-
-  pageStore.set(next.page ?? (next.section ? 'settings' : next.sessionId ? 'chat' : $appPage.get()))
+  const previous = navigation.$atom.get()
+  navigation.set({
+    ...previous,
+    page: next.page ?? (next.sessionId ? 'chat' : previous.page),
+    section: next.section ?? previous.section,
+    companionSection: next.companionSection ?? previous.companionSection,
+    postsTab: next.postsTab ?? previous.postsTab,
+    settingsTab: next.section ? next.settingsTab : previous.settingsTab,
+    companionTask: next.companionSection ? next.companionTask : previous.companionTask,
+    returnToDesktopLife: next.companionSection ? next.returnToDesktopLife : previous.returnToDesktopLife
+  })
 
   if (next.sessionId) {
     setChatSession(next.sessionId)
@@ -117,7 +150,7 @@ export async function applyAppNavigation(target: AppNavigationTarget, updateHash
   $appNavigationRevision.set($appNavigationRevision.get() + 1)
 
   if (updateHash) {
-    writeHash({ ...next, page: $appPage.get() })
+    writeHash({ ...getAppNavigation(), sessionId: next.sessionId, messageKey: next.messageKey })
   }
 
   if (next.sessionId && $gatewayState.get() === 'open') {
@@ -131,6 +164,14 @@ export function setAppPage(page: AppPage): void {
 
 export function setSettingsSection(section: SettingsSection): void {
   void applyAppNavigation({ page: 'settings', section })
+}
+
+export function setCompanionSection(companionSection: CompanionSection): void {
+  void applyAppNavigation({ page: 'companion', companionSection })
+}
+
+export function setPostsTab(postsTab: PostsTab): void {
+  void applyAppNavigation({ page: 'posts', postsTab })
 }
 
 registerStorageClearHandler(() => {

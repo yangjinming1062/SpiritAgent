@@ -166,7 +166,6 @@ export const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
   'q-character': CHARACTER_QUESTIONS,
   'q-user': USER_QUESTIONS,
   voice: VOICE_QUESTIONS,
-  'portrait-choose': [],
   'portrait-generate': [],
   hatching: [],
   'portrait-avatar': [],
@@ -181,7 +180,7 @@ export interface ResumeTarget {
   phase: Phase
   qIndex?: number
   imageSealed?: boolean
-  voiceStage?: 'describe'
+  voiceStage?: 'catalog'
 }
 
 export function resolveResumeTarget(nextField: string | null | undefined): ResumeTarget | null {
@@ -190,7 +189,7 @@ export function resolveResumeTarget(nextField: string | null | undefined): Resum
   }
 
   if (nextField === 'portrait') {
-    return { phase: 'portrait-choose' }
+    return { phase: 'portrait-generate' }
   }
 
   if (nextField === 'fullbody-reference') {
@@ -198,7 +197,7 @@ export function resolveResumeTarget(nextField: string | null | undefined): Resum
   }
 
   if (nextField === 'voice') {
-    return { phase: 'voice', voiceStage: 'describe', qIndex: 0, imageSealed: true }
+    return { phase: 'voice', voiceStage: 'catalog', qIndex: 0, imageSealed: true }
   }
 
   const isUserField = POST_CHARACTER_FIELDS.has(nextField)

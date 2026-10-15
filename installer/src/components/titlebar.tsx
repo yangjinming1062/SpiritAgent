@@ -1,9 +1,26 @@
 import type React from 'react'
-import { X } from 'lucide-react'
+import { useState } from 'react'
+import { Loader2, X } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { cancelInstall } from '../store'
 
 // 关闭按钮 pointer-events-auto，避开 drag region
 export function Titlebar(): React.JSX.Element {
+  const [closing, setClosing] = useState(false)
+  const [error, setError] = useState('')
+
+  const close = async (): Promise<void> => {
+    setClosing(true)
+    setError('')
+    try {
+      await cancelInstall()
+      await getCurrentWindow().close()
+    } catch (failure) {
+      setClosing(false)
+      setError(failure instanceof Error ? failure.message : String(failure))
+    }
+  }
+
   return (
     <div
       data-tauri-drag-region
@@ -15,15 +32,17 @@ export function Titlebar(): React.JSX.Element {
         </span>
         <span className="text-xs text-text-faint">|</span>
         <span className="text-xs text-text-body">安装器</span>
+        {error ? <span className="text-xs text-destructive" role="alert" title={error}>无法关闭，请重试</span> : null}
       </div>
 
       <button
         type="button"
-        onClick={() => void getCurrentWindow().close()}
+        disabled={closing}
+        onClick={() => void close()}
         className="pointer-events-auto inline-flex size-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-destructive/20 hover:text-destructive"
-        aria-label="关闭安装器"
+        aria-label={closing ? '正在停止并关闭安装器' : '关闭安装器'}
       >
-        <X size={16} />
+        {closing ? <Loader2 className="animate-spin" size={16} /> : <X size={16} />}
       </button>
     </div>
   )

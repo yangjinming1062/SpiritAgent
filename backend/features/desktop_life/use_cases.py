@@ -49,9 +49,11 @@ from features.desktop_life.service import (
     get_desktop_external_prompt,
     get_desktop_video_state,
     list_desktop_video_sets,
+    pause_desktop_action,
     play_desktop_action,
     record_desktop_playback,
     rename_desktop_video_set,
+    resume_desktop_action,
     review_desktop_action,
     set_desktop_video_preferences,
     upload_desktop_action,
@@ -352,5 +354,32 @@ async def cancel_action(
 ) -> DesktopVideoActionResponse:
     try:
         return await cancel_desktop_action(user_id, action_id, draft_id=body.draft_id if body else None)
+    except DesktopVideoError as exc:
+        raise _http_error(exc) from exc
+
+
+async def pause_action(
+    action_id: int,
+    user_id: int,
+    body: DesktopVideoDraftRequest,
+) -> DesktopVideoActionResponse:
+    try:
+        return await pause_desktop_action(user_id, action_id, draft_id=body.draft_id)
+    except DesktopVideoError as exc:
+        raise _http_error(exc) from exc
+
+
+async def resume_action(
+    action_id: int,
+    user_id: int,
+    body: DesktopVideoDraftRequest,
+) -> DesktopVideoActionResponse:
+    try:
+        return await resume_desktop_action(
+            user_id,
+            action_id,
+            draft_id=body.draft_id,
+            expected_base_version=body.expected_base_version,
+        )
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc

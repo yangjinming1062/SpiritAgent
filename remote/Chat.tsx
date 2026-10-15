@@ -70,10 +70,14 @@ function readPendingPrompt(key: string): PendingPrompt | null {
 }
 
 export function clearChatState(): void {
-  for (const key of Object.keys(sessionStorage)) {
-    if (/^remote:\d+:\d+:submission:/.test(key)) {
-      sessionStorage.removeItem(key)
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      if (/^remote:\d+:\d+:submission:/.test(key)) {
+        sessionStorage.removeItem(key)
+      }
     }
+  } catch {
+    // 存储受限不能阻止撤销连接和释放录音。
   }
 }
 
@@ -288,7 +292,11 @@ export function Chat({
         if (document.visibilityState === 'visible') {
           setSeenAt(previous => {
             const next = { ...previous, [id]: Date.now() / 1000 }
-            localStorage.setItem(`remote:${userId}:${device}:read`, JSON.stringify(next))
+            try {
+              localStorage.setItem(`remote:${userId}:${device}:read`, JSON.stringify(next))
+            } catch {
+              // 会话已读位置仍保留在本次页面内存中。
+            }
 
             return next
           })
@@ -718,19 +726,22 @@ export function Chat({
             </button>
           }
           subtitle="无论在哪里，都能继续聊下去"
-          title="消息"
+          title="聊天"
         />
         {error ? <Notice>{error}</Notice> : null}
         {showCreate ? (
           <section className="card">
             <h3>新建对话</h3>
-            <select aria-label="选择预设" onChange={event => setPreset(event.target.value)} value={preset}>
-              {presets.map(item => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+            <label className="field-label">
+              想聊些什么？
+              <select aria-label="选择对话类型" onChange={event => setPreset(event.target.value)} value={preset}>
+                {presets.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               className="primary full"
               disabled={!connected || busy || !presets.some(item => item.id === preset)}
@@ -798,7 +809,7 @@ export function Chat({
             更多会话
           </button>
         ) : null}
-        {listed.length === 0 ? <Empty title="开始一段新对话">点击右上角，选择预设并开始聊天。</Empty> : null}
+        {listed.length === 0 ? <Empty title="从一句话开始">直接和伙伴聊聊，或点击右上角开始一段新对话。</Empty> : null}
       </div>
     )
   }
@@ -915,17 +926,21 @@ export function Chat({
                   <i />
                 </span>
               ) : null}
-              {turn.tools.map(tool => (
-                <p className="tool-progress" key={tool.call_id}>
-                  {tool.status === 'complete' ? '✓' : '◌'} {tool.name}
-                </p>
-              ))}
+              {turn.tools.length ? (
+                <details className="reasoning">
+                  <summary>正在处理你的请求 · 查看进度</summary>
+                  {turn.tools.map(tool => (
+                    <p className="tool-progress" key={tool.call_id}>
+                      {tool.status === 'complete' ? '✓' : '◌'} {tool.name}
+                    </p>
+                  ))}
+                </details>
+              ) : null}
             </div>
           </div>
         ) : null}
         {error || failure ? (
-          <Notice>
-            {failure || error}
+          <Notice error={failure || error}>
             {retryMessage ? (
               <button onClick={() => run(() => submit(retryMessage))} type="button">
                 重试回复

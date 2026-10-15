@@ -1,11 +1,16 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { clearDraftRefImage, type OnboardingAnswers } from '@/modules/character'
+import {
+  clearDraftRefImage,
+  type OnboardingAnswers,
+  setCompanionVoiceId,
+  setResponsePreference
+} from '@/modules/character'
 import { stopSpeaking, warmAudioContext } from '@/modules/speech'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { log } from '@/shared/lib/log'
-import { SURFACE_OVERLAY } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 
 import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
@@ -44,6 +49,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [answerKind, setAnswerKind] = useState<AnswerKind | null>(null)
   const [hint, setHint] = useState<string | null>(null)
   const [voiceStage, setVoiceStage] = useState<VoiceStage>('describe')
+  const [voiceSaving, setVoiceSaving] = useState(false)
   const [resumeState, setResumeState] = useState<'failed' | 'ok' | 'retrying'>('ok')
   const [resumeAttempt, setResumeAttempt] = useState(0)
   const resumedRef = useRef(false)
@@ -66,19 +72,19 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }, [draft])
 
-  const enterVoiceDescribe = (): void => {
+  const enterVoiceSelection = (): void => {
     setImageSealed(true)
     setPhase('voice')
-    setVoiceStage('describe')
+    setVoiceStage('catalog')
     setQIndex(0)
   }
 
-  const portrait = useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, enterVoiceDescribe })
+  const portrait = useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, enterVoiceSelection })
   const portraitRef = useLatestRef(portrait)
   const voice = useOnboardingVoice({ phase, voiceStage, answers, begin })
 
   useEffect(() => {
-    if (phase !== 'q-character' && phase !== 'q-user' && !(phase === 'voice' && voiceStage === 'describe')) {
+    if (phase !== 'q-character' && !(phase === 'voice' && voiceStage === 'describe')) {
       return
     }
 
@@ -102,10 +108,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }, [phase, voiceStage, qIndex, currentList, answersRef])
 
   useEffect(() => {
-    if ((phase === 'q-character' || phase === 'q-user' || phase === 'voice') && question) {
+    if ((phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')) && question) {
       ;(question.multiline ? textareaRef.current : inputRef.current)?.focus()
     }
-  }, [phase, question])
+  }, [phase, question, voiceStage])
 
   // 草稿读取失败暂停作答；连通后只恢复一次，取消的读取可在重连时继续。
   useEffect(() => {
@@ -242,7 +248,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         return
       }
 
-      setPhase('portrait-choose')
+      setPhase('portrait-generate')
     } finally {
       savingCharacterRef.current = false
     }
@@ -250,16 +256,19 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const finish = async (currentAnswers: OnboardingAnswers): Promise<void> => {
     const isLive = begin()
-    const failure = await draft.saveComplete(currentAnswers, voice.voice ? voice.voice.label || voice.voice.id : null)
+
+    const selectedVoice =
+      currentAnswers.voice_setup_skipped === 'true' ? null : voice.voice ? voice.voice.label || voice.voice.id : null
+
+    const failure = await draft.saveComplete(currentAnswers, selectedVoice)
 
     if (!isLive()) {
       return
     }
 
     if (failure) {
-      carriedHintRef.current = failure
+      setHint(failure)
       setPhase('q-user')
-      setQIndex(USER_QUESTIONS.length - 1)
 
       return
     }
@@ -279,9 +288,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       setQIndex(qIndex + 1)
     } else if (phase === 'q-character') {
       void enterPortraitStage(currentAnswers)
-    } else if (phase === 'q-user') {
-      setPhase('finishing')
-      void finish(currentAnswers)
     }
   }
 
@@ -322,24 +328,72 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }
 
-  const confirmVoice = (): void => {
-    if (voice.voice) {
-      const selected = voice.voice.label || voice.voice.id
-      setAnswers(previous => ({ ...previous, voice: selected }))
-      void draft.submit('voice', selected)
+  const confirmVoice = async (skip = false): Promise<void> => {
+    if (voiceSaving || voice.voicePreparing || voice.voiceLoad === 'loading' || (!skip && !voice.voice)) {
+      return
+    }
+
+    const isLive = begin()
+    setVoiceSaving(true)
+    setHint(null)
+    const selected = skip ? null : voice.voice ? voice.voice.label || voice.voice.id : null
+    const saved = await draft.submit(skip ? 'voice_setup_skipped' : 'voice', skip ? 'true' : selected)
+
+    if (!isLive()) {
+      return
+    }
+
+    setVoiceSaving(false)
+
+    if (!saved) {
+      setHint('选择未能保存，请检查网络后重试。')
+
+      return
+    }
+
+    setAnswers(previous => ({
+      ...previous,
+      voice: selected ?? undefined,
+      voice_setup_skipped: skip ? 'true' : undefined
+    }))
+
+    if (skip) {
+      setCompanionVoiceId('')
+      setResponsePreference('text')
     }
 
     setPhase('q-user')
     setQIndex(0)
   }
 
-  const isQuestionPhase =
-    phase === 'q-character' || phase === 'q-user' || (phase === 'voice' && voiceStage === 'describe')
+  const isQuestionPhase = phase === 'q-character' || (phase === 'voice' && voiceStage === 'describe')
+
+  const progressStep =
+    phase === 'q-character' ? 0 : phase === 'voice' ? 2 : phase === 'q-user' || phase === 'finishing' ? 3 : 1
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none" style={{ pointerEvents: 'none' }}>
       <DraggableDialog>
-        <div className={`w-full rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`} style={{ pointerEvents: 'auto' }}>
+        <div
+          className={`max-h-[85vh] w-full overflow-y-auto rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}
+          style={{ pointerEvents: 'auto' }}
+        >
+          <ol aria-label="认识伙伴的进度" className="mb-5 flex items-center gap-2 border-b border-line-hairline pb-4">
+            {['认识伙伴', '确认形象', '选择声音'].map((label, index) => (
+              <li
+                aria-current={progressStep === index ? 'step' : undefined}
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px]"
+                key={label}
+              >
+                <span
+                  className={`grid size-5 shrink-0 place-items-center rounded-full ${progressStep >= index ? 'bg-accent text-on-accent' : 'bg-fill-trough text-muted'}`}
+                >
+                  {index + 1}
+                </span>
+                <span className={progressStep === index ? 'text-strong' : 'text-muted'}>{label}</span>
+              </li>
+            ))}
+          </ol>
           {voice.voicePreparing && <p className="mb-2 text-center text-[10px] text-muted">正在准备声音…</p>}
           {resumeState !== 'ok' && (
             <div className="py-2 text-center">
@@ -386,7 +440,76 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             setPhase={setPhase}
           />
           {phase === 'voice' && voiceStage === 'catalog' && (
-            <VoicePage confirmVoice={confirmVoice} onDescribe={() => setVoiceStage('describe')} voice={voice} />
+            <VoicePage
+              confirming={voiceSaving}
+              confirmVoice={() => void confirmVoice()}
+              error={hint}
+              onContinueText={() => void confirmVoice(true)}
+              onDescribe={() => setVoiceStage('describe')}
+              voice={voice}
+            />
+          )}
+          {phase === 'q-user' && (
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-base font-semibold text-strong">伙伴准备好了</h2>
+                <p className="mt-1 text-xs leading-relaxed text-body">
+                  可以开始聊天了。也可以先告诉伙伴一些关于您的事，之后随时都能补充。
+                </p>
+              </div>
+              <details className="rounded-xl border border-line-hairline bg-surface-card p-3">
+                <summary className="cursor-pointer text-sm text-body">让伙伴更了解我（可选）</summary>
+                <div className="mt-4 space-y-3">
+                  {USER_QUESTIONS.map(item => (
+                    <label className="block space-y-1.5 text-xs text-body" key={item.key}>
+                      <span>{item.text}</span>
+                      {item.multiline ? (
+                        <textarea
+                          className={INPUT_CLASS}
+                          maxLength={item.max}
+                          onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
+                          onChange={event => setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))}
+                          placeholder={item.placeholder}
+                          rows={2}
+                          value={answers[item.key] ?? ''}
+                        />
+                      ) : (
+                        <input
+                          className={INPUT_CLASS}
+                          maxLength={item.max}
+                          onBlur={() => void draft.submit(item.key, answers[item.key]?.trim() || null)}
+                          onChange={event => setAnswers(previous => ({ ...previous, [item.key]: event.target.value }))}
+                          placeholder={item.placeholder}
+                          type={item.date ? 'date' : 'text'}
+                          value={answers[item.key] ?? ''}
+                        />
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </details>
+              {hint && (
+                <p className="text-xs text-danger-fg" role="alert">
+                  {hint}
+                </p>
+              )}
+              <div className="flex items-center justify-between gap-3">
+                <button className={BTN_SUBTLE} onClick={onBack} type="button">
+                  选择声音
+                </button>
+                <button
+                  className={BTN_PRIMARY}
+                  onClick={() => {
+                    setHint(null)
+                    setPhase('finishing')
+                    void finish(answers)
+                  }}
+                  type="button"
+                >
+                  开始相伴
+                </button>
+              </div>
+            </div>
           )}
           {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">正在保存资料…</p>}
         </div>

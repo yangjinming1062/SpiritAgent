@@ -155,27 +155,21 @@ export interface DesktopAccount {
   active: boolean
 }
 
-export const APP_PAGES = ['chat', 'posts', 'diary', 'appearance', 'scene', 'settings'] as const
+export const APP_PAGES = ['chat', 'companion', 'posts', 'settings'] as const
 export type AppPage = (typeof APP_PAGES)[number]
-export const SETTINGS_SECTIONS = [
-  'persona',
-  'voice',
-  'interaction',
-  'theme',
-  'companion',
-  'presentation',
-  'inference',
-  'runner',
-  'skills',
-  'remote',
-  'shortcuts',
-  'about'
-] as const
+export const SETTINGS_SECTIONS = ['companionship', 'voice', 'display', 'devices', 'application', 'advanced'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
+export const COMPANION_SECTIONS = ['home', 'profile', 'appearance', 'scene', 'desktop-life', 'memory'] as const
+export type CompanionSection = (typeof COMPANION_SECTIONS)[number]
+export type PostsTab = 'posts' | 'diary'
 
 export interface AppNavigationTarget {
   page?: AppPage
   section?: SettingsSection
+  companionSection?: CompanionSection
+  postsTab?: PostsTab
+  companionTask?: 'create'
+  returnToDesktopLife?: boolean
   settingsTab?: 'skills' | 'toolsets'
   sessionId?: string
   messageKey?: string
@@ -191,12 +185,18 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
   const value = raw as Record<string, unknown>
   const page = APP_PAGES.find(item => item === value.page)
   const section = SETTINGS_SECTIONS.find(item => item === value.section)
+  const companionSection = COMPANION_SECTIONS.find(item => item === value.companionSection)
+  const postsTab = value.postsTab === 'posts' || value.postsTab === 'diary' ? value.postsTab : undefined
   const settingsTab = value.settingsTab === 'skills' || value.settingsTab === 'toolsets' ? value.settingsTab : undefined
 
   return {
-    page: section ? 'settings' : page,
+    page: page ?? (section ? 'settings' : companionSection ? 'companion' : postsTab ? 'posts' : undefined),
     section,
-    settingsTab: section === 'skills' ? settingsTab : undefined,
+    companionSection,
+    postsTab,
+    companionTask: value.companionTask === 'create' ? 'create' : undefined,
+    returnToDesktopLife: value.returnToDesktopLife === true ? true : undefined,
+    settingsTab: section === 'devices' ? settingsTab : undefined,
     sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
     messageKey: typeof value.messageKey === 'string' ? value.messageKey : undefined
   }

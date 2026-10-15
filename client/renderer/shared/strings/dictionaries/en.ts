@@ -7,6 +7,10 @@ export const dict: Dictionary = {
   },
 
   common: {
+    done: 'Done',
+    moreActions: 'More actions',
+    creationDetails: 'Creation details',
+    useForDesktopLife: 'Use in this desktop scene',
     companionControl: {
       title: 'Companion',
       show: 'Show companion',
@@ -43,13 +47,13 @@ export const dict: Dictionary = {
   selfSource: {
     guidanceAction: 'Need to create an image? Get the prompt and references',
     open: 'Use your own image',
-    openTitle: 'Upload a finished image, or get a prompt to create one elsewhere',
+    openTitle: 'Use your own image',
     hint: 'Upload a finished image directly, or expand the prompt and references to create it elsewhere. Check the identity, visual style and framing before adopting.',
     referenceTitle: 'Reference images (provide with the prompt)',
     referenceHint:
       'Hand the reference image(s) and prompt to your image tool; use thumbnail actions to copy or save. Click to enlarge.',
     referenceMissing:
-      'No reference image is available right now. The prompt is anchored to the avatar — confirm the avatar in Settings → Persona and memory first, or retry later.',
+      'No reference image is available yet. Complete your companion appearance, then return here to continue.',
     referenceZoom: 'Reference preview',
     refs: {
       avatarSeed: 'Avatar',
@@ -75,7 +79,7 @@ export const dict: Dictionary = {
   },
 
   generationActions: {
-    aiTitle: 'Generate with AI',
+    aiTitle: 'Adjust image',
     edit: 'Refine',
     regenerate: 'Regenerate',
     generate: 'Generate',
@@ -83,9 +87,8 @@ export const dict: Dictionary = {
     editRequiresFeedback: 'Describe the changes first to refine',
     regenerateHint: 'Redraws the whole image from the references and your brief',
     groupHint: 'Refine changes only what you describe; Regenerate redraws the whole image from the references.',
-    selfTitle: 'Use your own image',
-    selfHint:
-      'Upload a prepared image directly, or get a prompt and references to create one in an external tool first.'
+    selfTitle: 'More options',
+    selfHint: 'Upload your own image, or view creation references.'
   },
 
   boot: {
@@ -113,9 +116,7 @@ export const dict: Dictionary = {
       methodNotAllowed: (brandFullName: string) =>
         `The server rejected this request (405 Method Not Allowed). Check whether ${brandFullName} needs an update.`,
       microphonePermission: 'Microphone permission was denied.',
-      openaiRejectedApiKey: 'OpenAI rejected the API key.',
-      openaiRejectedApiKeyWithStatus: (status: number | string) =>
-        `OpenAI rejected the API key (${status} invalid_api_key).`
+      serviceUnavailable: 'AI is temporarily unavailable. Try again later. Your saved content is still available.'
     },
     voice: {
       invalidTitle: 'Voice no longer available',
@@ -331,7 +332,8 @@ export const dict: Dictionary = {
       }
     },
     interaction: {
-      title: 'Interaction',
+      title: 'Companionship',
+      moreOptions: 'More companionship options',
       intro: 'How the companion responds and when it may interrupt you.',
       voiceHeading: 'Chat & voice',
       responsePreference: 'Response preference',
@@ -344,28 +346,27 @@ export const dict: Dictionary = {
       recordingSecondsSuffix: 's',
       recordingSaveFailed: 'Failed to save recording duration',
       recordingLoadFailed: "Couldn't load the recording limit. Try again later.",
-      tierHeading: 'Disturbance tier',
+      tierHeading: 'How would you like to spend time together?',
       tierHint: "Only constrains the companion's proactive behaviour — your actions are never restricted.",
       tierAriaLabel: 'Disturbance tier',
       tiers: {
-        still: { label: 'Still', hint: 'Never initiates anything; only responds to you' },
-        normal: { label: 'Normal', hint: 'Light in-place interactions such as text greetings' },
-        autonomous: { label: 'Autonomous', hint: 'Moves freely and speaks; all abilities enabled' }
+        still: { label: 'Only reply to me', hint: 'Quiet company until you start a conversation' },
+        normal: { label: 'Occasional greetings', hint: 'A gentle text greeting while staying in place' },
+        autonomous: { label: 'Free to explore', hint: 'May speak, move around, and interact naturally' }
       },
-      smartHeading: 'Smart reactions & autonomy',
-      smartHint: 'Enables smarter reasoning and decision-making; disable to reduce LLM calls.',
-      idleAffect: 'Idle situational expression',
+      smartHeading: 'Everyday life',
+      smartHint: 'Let your companion share daily life and discover things you both enjoy.',
+      idleAffect: 'Expressions and activities while idle',
       idleAffectAria: 'Idle situational mood',
       idleAffectDesc:
-        'On autonomy and with the companion visible in window mode, the LLM picks situational expressions after 30+ idle minutes.',
-      autonomy: 'Autonomous space decisions',
+        'When free to explore, the companion beside your window can react naturally after a long idle period.',
+      autonomy: 'Choose where to move',
       autonomyAria: 'Autonomous space decisions',
-      autonomyDesc:
-        'On autonomy and with the companion visible in window mode, the LLM decides where to roam, perch, and approach (off uses local rules).',
+      autonomyDesc: 'When free to explore, the companion beside your window can choose places to stay and move to.',
       postsEnabled: 'Post creation',
       informationDiscovery: 'Discover new content',
       informationDiscoveryDesc:
-        'Let your companion explore recent content related to your interests overnight and share when it fits; requires server support.',
+        'Let your companion explore recent content related to your interests overnight and share when it fits.',
       postsEnabledDesc:
         'Let your companion create text, image, video or audio posts at any time, including while offline. All types share the posting limit.'
     },
@@ -404,9 +405,8 @@ export const dict: Dictionary = {
           body_surface: 'Body surface and markings'
         }
       },
-      title: 'Persona and memory',
-      intro:
-        'Edit the persona and review what the companion remembers — all in one place. Changes are saved automatically.',
+      title: 'About your companion',
+      intro: 'Adjust the name, personality, and your relationship. Changes are saved automatically.',
       sectionTitle: 'Persona',
       sectionMemory: 'Long-term memory',
       mediaReviewTitle: 'Action videos to confirm',
@@ -414,8 +414,8 @@ export const dict: Dictionary = {
       mediaReviewEmpty: 'No actions need confirmation right now.',
       mediaReviewRefresh: 'Refresh',
       fullbodyReference: {
-        title: 'Full-body image',
-        hint: 'Consistent visual style and a stable idle pose suited to this character’s anatomy and personality. Used for the default video, outfits and scenes.',
+        title: 'Your companion’s full appearance',
+        hint: 'AI uses the portrait you just confirmed to create the full appearance. When it looks right, continue to choose a voice.',
         confirmHint:
           'Confirmation starts character analysis, followed by the default video and scene. You can continue onboarding.',
         candidateHint:
@@ -429,18 +429,6 @@ export const dict: Dictionary = {
         adoptPreviewFailed: 'The image was saved, but its preview is not ready. Reload before confirming.',
         empty: 'No full-body image yet. Generate one from the current portrait and persona.',
         loading: 'Preparing the full-body image…',
-        sourceChoiceTitle: 'Choose how to get the full-body image',
-        sourceChoiceHint:
-          'Set the full-body look first — it feeds the default video, outfits and scenes. Draw with AI, or upload an image you already prepared.',
-        sourceAi: 'AI generate',
-        sourceAiArrow: 'AI draw →',
-        sourceAiHint:
-          'Generate from the confirmed portrait. Add body and outfit details or a reference image, then preview, refine or regenerate.',
-        sourceSelf: 'Direct upload',
-        sourceSelfArrow: 'Choose image →',
-        sourceSelfHint:
-          'Upload an image you prepared as the full-body look, or fetch a prompt and draw it externally first.',
-        backToSourceChoice: 'Choose another way',
         referenceLabel: 'User reference image',
         refLabel: 'Reference image (optional)',
         refHint:
@@ -499,8 +487,8 @@ export const dict: Dictionary = {
     voice: {
       title: 'Voice',
       intro: 'Pick a voice for the current system language, or design a custom one.',
-      noTtsConfigured: 'No TTS provider is configured.',
-      noVoicesForLanguage: 'The configured TTS providers have no voices for the current system language.',
+      noTtsConfigured: 'Voice is temporarily unavailable. You can keep chatting with text and choose a voice later.',
+      noVoicesForLanguage: 'No voice is currently available for this language. You can keep chatting with text.',
       loadFailed: "Couldn't load the voice list",
       sampleLine: (name: string) =>
         name ? `Hi, I'm ${name}. This is my voice.` : "Hi, I'm your companion. This is my voice.",
@@ -554,7 +542,7 @@ export const dict: Dictionary = {
     },
     memory: {
       tabAriaLabel: 'Memory type',
-      presetLabel: 'Current preset',
+      presetLabel: 'Whose memories would you like to see?',
       tabActive: (count: string | number) => `Active · ${count}`,
       tabCandidate: (count: string | number) => `Candidates · ${count}`,
       tabInvalidated: (count: string | number) => `Invalidated · ${count}`,
@@ -888,7 +876,7 @@ export const dict: Dictionary = {
     },
 
     params: {
-      openPanel: 'Session settings',
+      openPanel: 'Advanced conversation settings',
       tabs: {
         context: 'Context',
         temperature: 'Temperature',
@@ -1140,7 +1128,7 @@ export const dict: Dictionary = {
         'Describe the outfit you want — e.g. "sailor uniform swapped for an off-white knit cardigan and a brown long skirt, hair tied in a low ponytail". You can also attach a reference image.',
       confirmAction: 'Confirm',
       processing: 'Processing…',
-      discard: 'Discard draft',
+      discard: 'Continue later',
       confirmHint: 'Once confirmed, the outfit is ready. Open its actions to generate and wear it.',
       refImageAttached: 'Reference image attached',
       refImageAlt: 'Reference image',
@@ -1150,7 +1138,7 @@ export const dict: Dictionary = {
       placeholderInitial: 'Describe an outfit… (Enter to send, Shift+Enter for newline)',
       attachImage: 'Attach reference image',
       attachImageTitle: 'Attach reference image (optional, first generation only)',
-      send: 'Send',
+      send: 'Create outfit',
       design: {
         byReference: '(Designed from the reference image)',
         pickReferenceTitle: 'Choose an outfit reference image',
@@ -1213,8 +1201,8 @@ export const dict: Dictionary = {
       videoGenMissingAction: 'Generate this action',
       videoRedoAction: 'Regenerate this action',
       videoFeedback: 'Describe the desired pose or movement (optional)',
-      videoGenAction: 'Generate action pack',
-      videoRegenAction: 'Regenerate action pack',
+      videoGenAction: 'Wear this outfit',
+      videoRegenAction: 'Recreate all actions',
       videoRegenTitle: 'Regenerate action pack',
       videoRegenBody:
         'Action images and videos will be generated from the current outfit reference; the pack activates automatically when ready.',
@@ -1232,11 +1220,11 @@ export const dict: Dictionary = {
       videoGenRequestFailed: 'Action pack request failed. Please retry shortly.',
       videoActivateFailed: 'Could not wear this outfit. Please retry shortly.',
       videoGenHint:
-        'Generates action images and videos from the outfit reference and personality; suspended dragging uses a still image. Preview or regenerate each action; the current look stays until it is ready.'
+        'AI prepares everyday movements for this outfit, then puts it on. Your current appearance stays visible while it is being prepared.'
     },
     scene: {
       intro:
-        'Scenes fill the area behind the main window; extra parts are cropped when the window and image ratios differ. They omit a duplicate of your companion; other people, animals and statues may appear. Scenes are always rendered in a realistic, photographic style.',
+        'Describe a place you would enjoy. AI creates a background for your chat window, and you choose when to use it.',
       referenceHint:
         'A reference guides the environment and composition. Your companion’s own appearance is not repeated in the scene image.',
       referenceLabel: 'Scene reference',
@@ -1260,9 +1248,9 @@ export const dict: Dictionary = {
       waitingUploadOverlay: 'Waiting for a scene image',
       waitingUploadHint: 'The source file is kept and fitted to the scene size. Activate the saved scene when ready.',
       waitingUploadAction: 'Upload image',
-      generateButton: 'Create scene',
+      generateButton: 'Create background',
       generatingButton: 'Creating…',
-      historyTitle: 'Scene library',
+      historyTitle: 'My backgrounds',
       emptyLibrary: 'Your scene library is empty. Create or upload a scene to set up your living space.',
       emptySearch: 'No scenes match this search.',
       loading: 'Loading scene library…',
@@ -1270,7 +1258,7 @@ export const dict: Dictionary = {
       detailLoadFailed: 'Scene details are unavailable. The scene may have been deleted.',
       openDetails: 'View scene details',
       backToLibrary: 'Back to scene library',
-      newSceneTitle: 'New scene',
+      newSceneTitle: 'Create background',
       searchButton: 'Search',
       imageRegenerate: 'Regenerate image',
       saveAndRegenerate: 'Save and regenerate',
@@ -1278,7 +1266,7 @@ export const dict: Dictionary = {
       imageRegenerationFailed: 'Regeneration failed. The previous image is still saved.',
       historyAltFallback: 'Scene image',
       historyCurrentLabel: 'Current',
-      historyRollbackLabel: 'Activate',
+      historyRollbackLabel: 'Use this background',
       viewOriginal: 'View full image',
       historyDeleteLabel: 'Delete',
       historyDeleteConfirmTitle: 'Delete this scene?',

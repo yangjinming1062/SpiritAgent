@@ -18,8 +18,11 @@ export interface DesktopVideoAsset {
 export interface DesktopVideoDraft {
   id: string
   stage: string
+  source: 'user_requested' | 'autonomous' | 'external_upload'
   image_url: string | null
   image_confirmed: boolean
+  feedback: string
+  submission_unknown: boolean
   candidate_video_url: string | null
   candidate_poster_url: string | null
   base_version: number | null

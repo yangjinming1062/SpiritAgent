@@ -7,7 +7,9 @@ mod install_script;
 mod paths;
 mod powershell;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 /// 传入 `--reinstall` 或 `--repair` 时强制进入安装器 UI（绕过 macOS 启动快路径）。
@@ -23,12 +25,14 @@ where
 /// 进程级安装状态；`Arc` 便于命令处理器克隆持有。
 pub struct AppState {
     pub bootstrap: Mutex<Option<bootstrap::BootstrapHandle>>,
+    pub closing: AtomicBool,
 }
 
 impl AppState {
     fn new() -> Self {
         Self {
             bootstrap: Mutex::new(None),
+            closing: AtomicBool::new(false),
         }
     }
 }
@@ -43,9 +47,24 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Arc::new(AppState::new()))
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let state = window.state::<Arc<AppState>>().inner().clone();
+                if state.closing.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                let window = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    bootstrap::cancel_and_wait(&state).await;
+                    if let Err(error) = window.destroy() {
+                        state.closing.store(false, Ordering::Release);
+                        tracing::error!(?error, "failed to close installer window");
+                    }
+                });
+            }
+        })
         .setup(move |app| {
-            use tauri::Manager;
-
             // 仅 macOS 走已安装快路径；`--reinstall`/`--repair` 强制进入安装 UI。
             if cfg!(target_os = "macos") && !force_setup {
                 if bootstrap::spiritagent_is_installed() {

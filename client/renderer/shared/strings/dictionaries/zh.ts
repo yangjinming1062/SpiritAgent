@@ -5,6 +5,10 @@ export const dict = {
   },
 
   common: {
+    done: '完成',
+    moreActions: '更多操作',
+    creationDetails: '制作资料',
+    useForDesktopLife: '用于这个桌景',
     companionControl: {
       title: '伙伴',
       show: '显示伙伴',
@@ -37,13 +41,12 @@ export const dict = {
 
   selfSource: {
     guidanceAction: '需要制作图片？获取提示词与参考图',
-    open: '使用自己的图',
-    openTitle: '直接上传成品，或获取提示词在外部制作',
+    open: '使用自己的图片',
+    openTitle: '使用自己的图片',
     hint: '已有图片可以直接选图采纳，无需生成。需要在外部制作时，展开提示词与参考图；采纳前请核对身份、视觉风格与画面要求。',
     referenceTitle: '参考图（随提示词一起提供）',
     referenceHint: '把参考图和提示词一起交给外部工具；缩略图上可复制或另存，点击查看大图。',
-    referenceMissing:
-      '当前没有可展示的参考图。提示词以头像为形象基准，请先在设置的“人设与记忆”中确认头像，或稍后重试。',
+    referenceMissing: '暂时没有可用的参考图。请先完成伙伴形象，再返回这里继续。',
     referenceZoom: '参考图预览',
     refs: {
       avatarSeed: '头像',
@@ -69,7 +72,7 @@ export const dict = {
   },
 
   generationActions: {
-    aiTitle: '让 AI 生成',
+    aiTitle: '调整画面',
     edit: '微调',
     regenerate: '重新生成',
     generate: '生成',
@@ -77,8 +80,8 @@ export const dict = {
     editRequiresFeedback: '微调需先填写要求',
     regenerateHint: '按参考与要求整体重绘',
     groupHint: '微调只修改要求的部分，其余保持不变；重新生成按参考与要求整体重绘。',
-    selfTitle: '使用自己的图片',
-    selfHint: '直接上传准备好的图片；需要制作时，可获取提示词与参考图，在外部工具完成后上传。'
+    selfTitle: '更多方式',
+    selfHint: '上传自己的图片，或查看制作参考。'
   },
 
   boot: {
@@ -104,11 +107,9 @@ export const dict = {
     copyDetail: '复制详情',
     errors: {
       methodNotAllowed: (brandFullName: string) =>
-        `服务器拒绝了该请求 (405 Method Not Allowed)。请检查 ${brandFullName} 是否需要更新。`,
+        `暂时无法完成操作，请稍后重试。如果持续出现，请检查 ${brandFullName} 是否需要更新。`,
       microphonePermission: '麦克风权限已被拒绝。',
-      openaiRejectedApiKey: 'OpenAI 拒绝了该 API key。',
-      openaiRejectedApiKeyWithStatus: (status: number | string) =>
-        `OpenAI 拒绝了该 API key (${status} invalid_api_key)。`
+      serviceUnavailable: 'AI 服务暂时无法使用，请稍后重试。已保存的内容仍然保留。'
     },
     voice: {
       invalidTitle: '音色已失效',
@@ -255,8 +256,8 @@ export const dict = {
       browserAllowPrivateUrls: '允许内网访问'
     },
     skills: {
-      title: '技能',
-      intro: '每一项对应一组已安装的本地技能。开关即时生效，模型只会看到已启用且可用的技能。',
+      title: '可用技能',
+      intro: '选择伙伴可以使用的能力，修改后立即生效。',
       loading: '正在加载技能…',
       loadError: '无法从磁盘读取技能列表。',
       saveError: '无法保存技能开关。',
@@ -315,8 +316,9 @@ export const dict = {
       }
     },
     interaction: {
-      title: '交互',
-      intro: '伙伴怎么回应你、什么时候可以打扰你。',
+      title: '陪伴方式',
+      intro: '选择伙伴什么时候主动找你，以及平时可以做些什么。',
+      moreOptions: '更多陪伴选项',
       voiceHeading: '对话与语音',
       responsePreference: '回应偏好',
       responsePreferenceText: '偏好文字',
@@ -327,26 +329,26 @@ export const dict = {
       recordingSecondsSuffix: '秒',
       recordingSaveFailed: '保存录音时长失败',
       recordingLoadFailed: '录音时长设置加载失败，请稍后重试',
-      tierHeading: '打扰档位',
+      tierHeading: '你喜欢怎样的陪伴',
       tierHint: '只约束伙伴的主动行为，你发起的交互不受限。',
       tierAriaLabel: '打扰档位',
       tiers: {
-        still: { label: '静止', hint: '不发起任何主动行为，只回应你' },
-        normal: { label: '常规', hint: '文字问候等原地轻互动' },
-        autonomous: { label: '自主', hint: '自由移动与语音，全能力开放' }
+        still: { label: '只回应我', hint: '等你来聊天，平时安静陪着你' },
+        normal: { label: '偶尔主动问候', hint: '用文字轻轻打个招呼，保持在原处' },
+        autonomous: { label: '自由活动', hint: '可以主动说话、走动，与你自然互动' }
       },
-      smartHeading: '智能反应与自主行为',
-      smartHint: '让伙伴具备更智能的思考与决策能力；关闭可降低 LLM 调用消耗。',
-      idleAffect: '空闲情境表达',
+      smartHeading: '伙伴的日常',
+      smartHint: '允许伙伴记录生活，发现你们感兴趣的新内容。',
+      idleAffect: '闲暇时的表情和动作',
       idleAffectAria: '空闲情境情绪',
-      idleAffectDesc: '自主档且窗口模式显示伙伴时，空闲 30 分钟以上由 LLM 决定情境表情与动作',
-      autonomy: '自主空间决策',
+      idleAffectDesc: '选择自由活动时，让窗口旁的伙伴在长时间空闲后自然活动。',
+      autonomy: '自己选择走动的位置',
       autonomyAria: '自主空间决策',
-      autonomyDesc: '自主档且窗口模式显示伙伴时由 LLM 决定漫游、栖身与靠近（关闭按本地规则）',
+      autonomyDesc: '选择自由活动时，让窗口旁的伙伴结合当前情况选择停留和走动的位置。',
       postsEnabled: '动态创作',
       postsEnabledDesc: '允许伙伴全天自主创作并发布文字、图片、视频或语音动态，离线时也可发布；所有类型共用发布限额',
       informationDiscovery: '关注新资讯',
-      informationDiscoveryDesc: '允许伙伴夜间关注与你们兴趣相关的新内容，在合适的时候分享；需要服务端支持'
+      informationDiscoveryDesc: '允许伙伴夜间关注你们感兴趣的新内容，在合适的时候分享。'
     },
     persona: {
       characterCard: {
@@ -381,8 +383,8 @@ export const dict = {
           body_surface: '身体材质与标记'
         }
       },
-      title: '人设与记忆',
-      intro: '人设怎么改、记得什么，都在这里。修改后会自动保存。',
+      title: '伙伴资料',
+      intro: '调整名字、性格和相处方式，修改会自动保存。',
       sectionTitle: '角色',
       sectionMemory: '长期记忆',
       mediaReviewTitle: '待确认的动作视频',
@@ -390,8 +392,8 @@ export const dict = {
       mediaReviewEmpty: '当前没有待确认的动作',
       mediaReviewRefresh: '刷新',
       fullbodyReference: {
-        title: '全身形象',
-        hint: '展示完整身体与性格气质，采用适合自身结构、可以稳定保持的待机姿态，作为默认视频、换装与出镜画面的参考。',
+        title: '伙伴的全身形象',
+        hint: 'AI 会根据刚才确认的头像准备全身形象。满意后继续选择声音。',
         confirmHint: '确认后自动整理角色卡，再准备默认视频与初始房间场景；你可以继续完成引导。',
         candidateHint:
           '这是待采纳的新全身形象。身材可以改变；采纳后才会作为后续生成的身体依据。旧视频会继续播放，直到你制作好新视频形象。',
@@ -403,16 +405,6 @@ export const dict = {
         adoptPreviewFailed: '图片已保存，但尚未取得对应预览。请重新加载后确认。',
         empty: '还没有全身形象，可以根据当前头像与角色设定生成。',
         loading: '正在准备全身形象，请稍候…',
-        sourceChoiceTitle: '选择全身形象获取方式',
-        sourceChoiceHint:
-          '先确定完整身体形象，之后用于默认视频、换装与出镜画面。可以让 AI 绘制，也可以直接上传您准备好的图片。',
-        sourceAi: 'AI 生成',
-        sourceAiArrow: 'AI 绘制 →',
-        sourceAiHint: '基于已确认头像生成全身形象；可以补充身体与造型描述，或附参考图，之后可预览、微调或重新生成。',
-        sourceSelf: '直接上传',
-        sourceSelfArrow: '选择图片 →',
-        sourceSelfHint: '上传一张您准备好的图片作为全身形象；也可以获取提示词，在外部绘制后上传。',
-        backToSourceChoice: '换一种获取方式',
         referenceLabel: '用户参考图',
         refLabel: '参考图（可选）',
         refHint:
@@ -468,8 +460,8 @@ export const dict = {
     voice: {
       title: '声音',
       intro: '选择适合当前系统语言的说话音色，或设计一个专属音色。',
-      noTtsConfigured: '尚未配置 TTS 供应商。',
-      noVoicesForLanguage: '已配置的 TTS 供应商没有适配当前系统语言的音色。',
+      noTtsConfigured: '语音暂时不可用，你仍然可以继续用文字聊天。稍后再来选择声音。',
+      noVoicesForLanguage: '暂时没有适合当前语言的声音，你仍然可以继续用文字聊天。',
       loadFailed: '音色列表加载失败',
       sampleLine: (name: string) => (name ? `你好呀，我是${name}。这是我的声音～` : '你好呀，这是我的声音～'),
       genderFilterAria: '声线筛选',
@@ -513,10 +505,10 @@ export const dict = {
     },
     memory: {
       tabAriaLabel: '记忆类型',
-      presetLabel: '当前预设',
+      presetLabel: '查看谁记住的事情',
       tabActive: (count: string | number) => `有效 · ${count}`,
-      tabCandidate: (count: string | number) => `候选 · ${count}`,
-      tabInvalidated: (count: string | number) => `失效 · ${count}`,
+      tabCandidate: (count: string | number) => `待整理 · ${count}`,
+      tabInvalidated: (count: string | number) => `已停用 · ${count}`,
       tabExpired: (count: string | number) => `过期 · ${count}`,
       userProfileHint: (count: string | number) => `${count} 项明确设定的资料`,
       profile: {
@@ -576,7 +568,7 @@ export const dict = {
   },
 
   toolsets: {
-    browser_automation: { label: '浏览器自动化', description: '导航、点击、快照、Cookie/CDP 等多后端浏览器能力。' },
+    browser_automation: { label: '操作浏览器', description: '打开网页、查找内容，协助完成网页上的操作。' },
     file_operations: { label: '文件操作', description: '读写、补丁、目录与文件搜索。' },
     terminal: { label: '终端', description: '在本机或 SSH 远程主机上执行命令行。' },
     code_execution: { label: '代码执行', description: '沙箱 Python 执行与受限调用。' },
@@ -831,7 +823,7 @@ export const dict = {
     },
 
     params: {
-      openPanel: '会话设置',
+      openPanel: '高级对话设置',
       tabs: {
         context: '上下文',
         temperature: '温度',
@@ -970,7 +962,7 @@ export const dict = {
 
   living: {
     rail: {
-      chat: '对话',
+      chat: '聊天',
       posts: '动态',
       diary: '日记',
       unread: '有未读信息',
@@ -1072,7 +1064,7 @@ export const dict = {
       designIntro: '描述想要的着装，例如「水手服换成米白色针织毛衣和棕色长裙，发型改为低马尾」；也可以附一张参考图。',
       confirmAction: '确认入柜',
       processing: '处理中…',
-      discard: '放弃草稿',
+      discard: '稍后继续',
       confirmHint: '确认后着装即就绪；进入动作页生成动作后即可穿上',
       refImageAttached: '已附参考图',
       refImageAlt: '参考图',
@@ -1082,7 +1074,7 @@ export const dict = {
       placeholderInitial: '描述想要的着装…（Enter 发送，Shift+Enter 换行）',
       attachImage: '附参考图',
       attachImageTitle: '附参考图（可选，仅首次生成）',
-      send: '发送',
+      send: '开始制作',
       design: {
         byReference: '（按参考图设计）',
         pickReferenceTitle: '选择服装参考图',
@@ -1138,8 +1130,8 @@ export const dict = {
       videoGenMissingAction: '生成这个动作',
       videoRedoAction: '重新生成这个动作',
       videoFeedback: '希望怎样调整姿态或动作（可选）',
-      videoGenAction: '生成动作包',
-      videoRegenAction: '重新生成动作包',
+      videoGenAction: '穿上这套衣服',
+      videoRegenAction: '重新制作全部动作',
       videoRegenTitle: '重新生成动作包',
       videoRegenBody: '将按当前着装参考重新生成动作图片与视频，完成后自动启用。',
       videoGenStagePose: '正在准备动作姿态…',
@@ -1154,12 +1146,10 @@ export const dict = {
       videoPackHasReadyActions: '这套着装已有就绪动作，请按需重新生成单个动作。',
       videoGenRequestFailed: '动作包生成请求失败，请稍后重试',
       videoActivateFailed: '穿上这套着装失败，请稍后重试',
-      videoGenHint:
-        '按着装参考与角色性格生成动作图片与视频；悬空拖拽使用静态图片。可逐个预览或重做，成功前保留当前可用形象。'
+      videoGenHint: 'AI 会先为这套衣服准备日常动作，完成后自动穿上。准备期间会继续显示现在的形象。'
     },
     scene: {
-      intro:
-        '场景铺满主窗口后方，窗口画幅与图片不同时裁切多余部分。背景不重复绘制伙伴，可包含其他人物、动物或雕像。场景统一按真实拍摄的写实风格呈现。',
+      intro: '描述一个喜欢的地方，AI 会把它变成聊天窗口的背景。满意后再使用。',
       referenceHint: '参考图提供环境与构图线索，伙伴自身形象不会在场景图中重复出现。',
       referenceLabel: '场景参考图',
       chooseReference: '选择参考图',
@@ -1180,9 +1170,9 @@ export const dict = {
       waitingUploadOverlay: '等待上传场景图片',
       waitingUploadHint: '上传后保留源文件并适配场景尺寸，先保存到场景库，再由你选择启用。',
       waitingUploadAction: '选择图片上传',
-      generateButton: '创建新场景',
+      generateButton: '创建背景',
       generatingButton: '创建中…',
-      historyTitle: '场景库',
+      historyTitle: '我的背景',
       emptyLibrary: '场景库还是空的，创建或上传一个场景开始布置生活空间。',
       emptySearch: '没有找到匹配的场景。',
       loading: '正在读取场景库…',
@@ -1190,7 +1180,7 @@ export const dict = {
       detailLoadFailed: '场景信息暂时无法读取，可能已被删除。',
       openDetails: '查看场景详情',
       backToLibrary: '返回场景库',
-      newSceneTitle: '新建场景',
+      newSceneTitle: '创建背景',
       searchButton: '搜索',
       imageRegenerate: '重新生成图片',
       saveAndRegenerate: '保存并重新生成',
@@ -1198,7 +1188,7 @@ export const dict = {
       imageRegenerationFailed: '重新生成失败，原图片仍然保留。',
       historyAltFallback: '场景图片',
       historyCurrentLabel: '当前',
-      historyRollbackLabel: '启用',
+      historyRollbackLabel: '使用此背景',
       viewOriginal: '放大查看',
       historyDeleteLabel: '删除',
       historyDeleteConfirmTitle: '删除这个场景？',

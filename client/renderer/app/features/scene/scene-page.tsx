@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { PickedImage } from '@/modules/character'
 import {
@@ -34,9 +34,15 @@ import {
 } from '@/modules/scene'
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import {
+  loadCreationDraftImage,
+  saveCreationDraftImage,
+  subscribeCreationDraftImage
+} from '@/shared/lib/creation-draft-image'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { registerStorageClearHandler, registerStorageRestoreHandler } from '@/shared/lib/storage'
 import { ConfirmDialog, SettingsContent } from '@/shared/panel'
+import { $auth } from '@/shared/store/auth'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { errorMessage } from '@runtime'
@@ -44,8 +50,8 @@ import { errorMessage } from '@runtime'
 import { type SceneCreateDraft, SceneCreateView } from './scene-create-view'
 import { SceneDetailView, type SceneEditDraft } from './scene-detail-view'
 import { SceneLibraryView } from './scene-library-view'
+import { $sceneUi, $sceneUiImportRevision, type ScenePageView, updateSceneUi } from './scene-ui-state'
 
-type ScenePageView = { kind: 'create' } | { kind: 'detail'; sceneId: string } | { kind: 'library' }
 interface ImageZoom {
   name: string
   url: string
@@ -53,7 +59,16 @@ interface ImageZoom {
 
 const INITIAL_CREATE_DRAFT: SceneCreateDraft = { notes: '', reference: null }
 
-export function ScenePage(): React.JSX.Element {
+interface ScenePageProps {
+  startCreating?: boolean
+  onMaterialReady?: (sceneId: string) => void
+}
+
+export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageProps = {}): React.JSX.Element {
+  const ui = useStore($sceneUi)
+  const importRevision = useStore($sceneUiImportRevision)
+  const observedImportRevision = useRef(importRevision)
+  const authKind = useStore($auth).kind
   const library = useStore($sceneLibrary)
   const libraryStatus = useStore($sceneLibraryStatus)
   const details = useStore($sceneDetails)
@@ -68,10 +83,18 @@ export function ScenePage(): React.JSX.Element {
   const status = useStore($sceneTaskStatus)
   const dict = useStrings()
   const tToasts = dict.living.toasts
-  const [view, setView] = useState<ScenePageView>({ kind: 'library' })
+  const view = ui.view
+  const setView = (next: ScenePageView): void => updateSceneUi({ view: next })
   const [queryDraft, setQueryDraft] = useState(query)
-  const [createDraft, setCreateDraft] = useState(INITIAL_CREATE_DRAFT)
-  const [editDrafts, setEditDrafts] = useState<Record<string, SceneEditDraft>>({})
+  const [reference, setReference] = useState<PickedImage | null>(null)
+  const [referenceLoading, setReferenceLoading] = useState(true)
+  const [referenceImportRevision, setReferenceImportRevision] = useState(0)
+  const referenceRevision = useRef(0)
+  const creationRevision = useRef(0)
+  const submittingRef = useRef(false)
+  const [submitting, setSubmitting] = useState(false)
+  const createDraft: SceneCreateDraft = { notes: ui.notes, reference }
+  const editDrafts = ui.editDrafts
   const [detailLoading, setDetailLoading] = useState(false)
   const [zoom, setZoom] = useState<ImageZoom | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SceneAsset | null>(null)
@@ -81,17 +104,88 @@ export function ScenePage(): React.JSX.Element {
   const detail = view.kind === 'detail' ? (details[view.sceneId] ?? null) : null
 
   useEffect(() => {
+    if (startCreating) {
+      updateSceneUi({ view: { kind: 'create' } })
+    }
+  }, [startCreating])
+
+  const restoreReference = useCallback((): void => {
+    const revision = ++referenceRevision.current
+    const isLive = begin()
+    setReferenceLoading(true)
+    void loadCreationDraftImage('background').then(image => {
+      if (isLive() && revision === referenceRevision.current) {
+        setReference(image)
+        setReferenceLoading(false)
+      }
+    })
+  }, [begin])
+
+  useEffect(() => {
+    if (authKind === 'authenticated') {
+      restoreReference()
+    }
+
+    const restore = registerStorageRestoreHandler(restoreReference)
+
+    const changed = subscribeCreationDraftImage('background', () => {
+      creationRevision.current += 1
+      setReferenceImportRevision(revision => revision + 1)
+      restoreReference()
+    })
+
+    return () => {
+      restore()
+      changed()
+    }
+  }, [authKind, restoreReference])
+
+  useEffect(() => {
+    if (observedImportRevision.current === importRevision) {
+      return
+    }
+
+    observedImportRevision.current = importRevision
+    creationRevision.current += 1
+    setZoom(null)
+    setDeleteTarget(null)
+    restoreReference()
+  }, [importRevision, restoreReference])
+
+  const changeCreateDraft = (next: Partial<SceneCreateDraft>): void => {
+    creationRevision.current += 1
+
+    if (next.notes !== undefined) {
+      updateSceneUi({ notes: next.notes })
+    }
+
+    if (next.reference !== undefined) {
+      referenceRevision.current += 1
+      setReference(next.reference)
+      void saveCreationDraftImage('background', next.reference)
+    }
+  }
+
+  useEffect(() => {
+    if (authKind !== 'authenticated') {
+      return
+    }
+
     // 首屏并行拉列表并跳过其尾部同刻重复刷新；state 失败时此路是列表唯一来源。
     void hydrateScene({ skipLibraryRefresh: true })
     void loadSceneLibrary()
+  }, [authKind])
 
+  useEffect(() => {
     return registerStorageClearHandler(() => {
       setQueryDraft('')
-      setCreateDraft(INITIAL_CREATE_DRAFT)
-      setEditDrafts({})
+      referenceRevision.current += 1
+      creationRevision.current += 1
+      submittingRef.current = false
+      setSubmitting(false)
+      setReference(null)
       setZoom(null)
       setDeleteTarget(null)
-      setView({ kind: 'library' })
       returnScrollTop.current = 0
     })
   }, [])
@@ -125,6 +219,8 @@ export function ScenePage(): React.JSX.Element {
   }, [view])
 
   const openView = (next: ScenePageView): void => {
+    creationRevision.current += 1
+
     if (view.kind === 'library' && scrollRef.current) {
       returnScrollTop.current = scrollRef.current.scrollTop
     }
@@ -136,31 +232,32 @@ export function ScenePage(): React.JSX.Element {
 
   const openCreate = (): void => openView({ kind: 'create' })
 
-  const returnToLibrary = (): void => setView({ kind: 'library' })
+  const returnToLibrary = (): void => openView({ kind: 'library' })
 
   const dropEditDraft = (sceneId: string): void => {
-    setEditDrafts(current => {
-      const next = { ...current }
-      delete next[sceneId]
-
-      return next
-    })
+    const next = { ...$sceneUi.get().editDrafts }
+    delete next[sceneId]
+    updateSceneUi({ editDrafts: next })
   }
 
-  const saveInfo = async (sceneId: string): Promise<void> => {
-    const draft = editDrafts[sceneId]
+  const saveInfo = async (sceneId: string): Promise<boolean> => {
+    const draft = $sceneUi.get().editDrafts[sceneId]
 
     if (!draft) {
-      return
+      return false
     }
 
     const isLive = begin()
     await editScene(sceneId, draft.title.trim(), draft.description.trim())
     const updated = await loadSceneDetail(sceneId)
 
-    if (updated && isLive()) {
+    if (updated && isLive() && $sceneUi.get().editDrafts[sceneId] === draft) {
       dropEditDraft(sceneId)
+
+      return true
     }
+
+    return false
   }
 
   const regenerate = async (sceneId: string): Promise<void> => {
@@ -170,50 +267,83 @@ export function ScenePage(): React.JSX.Element {
 
   const saveAndRegenerate = async (sceneId: string): Promise<void> => {
     const isLive = begin()
-    const draft = editDrafts[sceneId]
+    const draft = $sceneUi.get().editDrafts[sceneId]
+    const revision = creationRevision.current
 
     if (!draft) {
       return
     }
 
-    await saveInfo(sceneId)
+    const saved = await saveInfo(sceneId)
 
-    if (!isLive()) {
+    if (!saved || !isLive() || revision !== creationRevision.current) {
       return
     }
 
     await regenerate(sceneId)
   }
 
-  const startCreation = async (): Promise<void> => {
+  const startCreation = async (input = createDraft, revision = creationRevision.current): Promise<void> => {
+    if (revision !== creationRevision.current) {
+      return
+    }
+
+    if (submittingRef.current || referenceLoading) {
+      return
+    }
+
+    submittingRef.current = true
+    setSubmitting(true)
     const isLive = begin()
     triggerHaptic('open')
 
-    const created = await createScene({
-      notes: createDraft.notes.trim() || undefined,
-      ...(createDraft.reference
-        ? { image: createDraft.reference.base64, content_type: createDraft.reference.contentType }
-        : {})
-    })
+    try {
+      const created = await createScene({
+        notes: input.notes.trim() || undefined,
+        ...(input.reference ? { image: input.reference.base64, content_type: input.reference.contentType } : {})
+      })
 
-    if (created && isLive()) {
-      setCreateDraft(INITIAL_CREATE_DRAFT)
-      openDetail(created.id)
+      if (created && isLive() && revision === creationRevision.current) {
+        changeCreateDraft(INITIAL_CREATE_DRAFT)
+        openDetail(created.id)
+      }
+    } finally {
+      if (isLive()) {
+        submittingRef.current = false
+        setSubmitting(false)
+      }
     }
   }
 
-  const adoptCreatedImage = async (image: PickedImage): Promise<void> => {
-    const isLive = begin()
-    await adoptSceneImage(image)
-    const created = $pendingScene.get()
+  const adoptCreatedImage = async (image: PickedImage, sceneId?: string): Promise<void> => {
+    if (submittingRef.current) {
+      return
+    }
 
-    if (created && isLive()) {
-      openDetail(created.id)
+    submittingRef.current = true
+    setSubmitting(true)
+    const isLive = begin()
+    const revision = creationRevision.current
+
+    try {
+      const createdId = await adoptSceneImage(image, sceneId)
+
+      if (createdId && isLive() && revision === creationRevision.current) {
+        changeCreateDraft(INITIAL_CREATE_DRAFT)
+        openDetail(createdId)
+      }
+    } finally {
+      if (isLive()) {
+        submittingRef.current = false
+        setSubmitting(false)
+      }
     }
   }
 
   const startAiForNewScene = async (): Promise<void> => {
     const isLive = begin()
+    const input = createDraft
+    const revision = creationRevision.current
     const waitingUpload = $pendingScene.get()
 
     try {
@@ -221,11 +351,11 @@ export function ScenePage(): React.JSX.Element {
         await cancelSceneTask(waitingUpload.id)
       }
 
-      if (!isLive()) {
+      if (!isLive() || revision !== creationRevision.current) {
         return
       }
 
-      await startCreation()
+      await startCreation(input, revision)
     } catch (error) {
       if (isLive()) {
         notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneRegenerateFailed) })
@@ -235,6 +365,13 @@ export function ScenePage(): React.JSX.Element {
 
   const handleActivate = async (sceneId: string): Promise<void> => {
     triggerHaptic('tap')
+
+    if (onMaterialReady) {
+      onMaterialReady(sceneId)
+
+      return
+    }
+
     await activateScene(sceneId)
   }
 
@@ -282,10 +419,12 @@ export function ScenePage(): React.JSX.Element {
     }
   }
 
-  const handleCreatePrompt = (): Promise<string> => prepareScenePrompt({ notes: createDraft.notes.trim() || undefined })
+  const handleCreatePrompt = (): Promise<{ id: string; prompt: string }> =>
+    prepareScenePrompt({ notes: createDraft.notes.trim() || undefined })
 
   const changeEditDraft = (sceneId: string, next: Partial<SceneEditDraft>): void => {
-    setEditDrafts(current => ({ ...current, [sceneId]: { ...current[sceneId], ...next } }))
+    const current = $sceneUi.get().editDrafts
+    updateSceneUi({ editDrafts: { ...current, [sceneId]: { ...current[sceneId], ...next } } })
   }
 
   const busy = status !== 'none' || regenerating !== null
@@ -344,18 +483,22 @@ export function ScenePage(): React.JSX.Element {
                 await analyzeScene(sceneId)
                 await loadSceneDetail(sceneId)
               }}
-              onSave={saveInfo}
+              onSave={async sceneId => {
+                await saveInfo(sceneId)
+              }}
               onSaveAndRegenerate={saveAndRegenerate}
               onZoom={(url, name) => setZoom({ url, name })}
+              selectingMaterial={Boolean(onMaterialReady)}
             />
           ) : (
             <SceneCreateView
-              busy={busy}
+              busy={busy || referenceLoading || submitting}
               draft={createDraft}
+              key={`${importRevision}:${referenceImportRevision}`}
               onAdopt={adoptCreatedImage}
               onBack={returnToLibrary}
               onCancelTask={cancelSceneTask}
-              onChange={next => setCreateDraft(current => ({ ...current, ...next }))}
+              onChange={changeCreateDraft}
               onCreate={() => void startCreation()}
               onFetchPrompt={handleCreatePrompt}
               onUseAi={() => void startAiForNewScene()}

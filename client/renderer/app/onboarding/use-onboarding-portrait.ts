@@ -44,13 +44,13 @@ interface PortraitOptions {
   imageSealed: boolean
   setHint: (hint: string | null) => void
   setPhase: (phase: Phase) => void
-  enterVoiceDescribe: () => void
+  enterVoiceSelection: () => void
 }
 
 export type OnboardingPortrait = ReturnType<typeof useOnboardingPortrait>
 
 // 头像预览、身份参考草稿与确认操作归此视图持有，形象资产的正式状态仍归 character。
-export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, enterVoiceDescribe }: PortraitOptions) {
+export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, enterVoiceSelection }: PortraitOptions) {
   const activeAvatarId = useStore($activeAvatarId)
   const portraitHistory = useStore($portraitHistory)
   const portraitSelectedIdx = useStore($portraitSelectedIdx)
@@ -315,7 +315,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
       return
     }
 
-    enterVoiceDescribe()
+    enterVoiceSelection()
   }
 
   const restoreReference = async (isLive: () => boolean): Promise<void> => {
@@ -336,19 +336,19 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
       }
 
       if (!isLive()) {
-        return 'portrait-choose'
+        return 'portrait-generate'
       }
 
       const response = await backendApi().api<AvatarResponse>({ path: '/api/companion/avatar', method: 'GET' })
 
       if (!isLive()) {
-        return 'portrait-choose'
+        return 'portrait-generate'
       }
 
       const avatar = await applyLocalPortrait(response, isLive)
 
       if (!isLive()) {
-        return 'portrait-choose'
+        return 'portrait-generate'
       }
 
       if (nextField === 'fullbody-reference') {
@@ -363,10 +363,10 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
         }
       }
 
-      return avatar ? 'portrait-avatar' : 'portrait-choose'
+      return avatar ? 'portrait-avatar' : 'portrait-generate'
     } catch (error) {
       if (!isLive()) {
-        return 'portrait-choose'
+        return 'portrait-generate'
       }
 
       log.warn('onboarding', 'resume portrait failed', error)
@@ -377,7 +377,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
         return 'portrait-avatar'
       }
 
-      return 'portrait-choose'
+      return 'portrait-generate'
     }
   }
 

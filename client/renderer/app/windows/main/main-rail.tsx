@@ -11,16 +11,7 @@ import { $postsHasUnread } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import {
-  CalendarPlus,
-  Home,
-  type IconComponent,
-  MessageSquareText,
-  Settings,
-  Shirt,
-  Sparkles,
-  Users
-} from '@/shared/lib/icons'
+import { type IconComponent, MessageSquareText, Settings, Sparkles, Users } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
@@ -31,10 +22,8 @@ import styles from './main.module.css'
 
 const NAV_ENTRIES: ReadonlyArray<{ icon: IconComponent; id: Exclude<AppPage, 'settings'> }> = [
   { icon: MessageSquareText, id: 'chat' },
-  { icon: Sparkles, id: 'posts' },
-  { icon: CalendarPlus, id: 'diary' },
-  { icon: Shirt, id: 'appearance' },
-  { icon: Home, id: 'scene' }
+  { icon: Users, id: 'companion' },
+  { icon: Sparkles, id: 'posts' }
 ]
 
 export function MainRail({
@@ -101,8 +90,7 @@ export function MainRail({
       </button>
       <nav aria-label={english ? 'Main navigation' : '功能导航'} className={styles.nav}>
         {NAV_ENTRIES.map(({ id, icon: Icon }) => {
-          const unread =
-            id === 'chat' ? chatUnread : id === 'posts' ? postsUnread : id === 'diary' ? diaryUnread : false
+          const unread = id === 'chat' ? chatUnread : id === 'posts' ? postsUnread || diaryUnread : false
 
           return (
             <button

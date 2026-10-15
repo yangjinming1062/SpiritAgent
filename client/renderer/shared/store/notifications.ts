@@ -50,12 +50,7 @@ function cleanErrorText(value: string): string {
 const ERROR_SUMMARIES: { test: (msg: string) => boolean; summarize: (msg: string) => string }[] = [
   {
     test: msg => /incorrect api key provided/i.test(msg) || /['"]code['"]\s*:\s*['"]invalid_api_key['"]/i.test(msg),
-    summarize: msg => {
-      const status = msg.match(/(?:error code|status(?:Code)?)[^\d]*(\d{3})/i)?.[1]
-      const errors = getStrings().notifications.errors
-
-      return status ? errors.openaiRejectedApiKeyWithStatus(status) : errors.openaiRejectedApiKey
-    }
+    summarize: () => getStrings().notifications.errors.serviceUnavailable
   },
   {
     test: msg => /method not allowed/i.test(msg),
@@ -68,6 +63,10 @@ const ERROR_SUMMARIES: { test: (msg: string) => boolean; summarize: (msg: string
   {
     test: msg => /microphone permission/i.test(msg),
     summarize: () => getStrings().notifications.errors.microphonePermission
+  },
+  {
+    test: msg => /(?:未配置|供应商|provider|LLM|TTS|invalid_api_key|模型卡片|Traceback|\/api\/|database)/i.test(msg),
+    summarize: () => getStrings().notifications.errors.serviceUnavailable
   }
 ]
 

@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { Check, X, ChevronRight, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { BootstrapStateModel, StageState } from '../store'
+import { stageLabel } from '../store'
 
 interface StageListProps {
   bootstrap: BootstrapStateModel
@@ -37,7 +38,7 @@ export function StageList({ bootstrap }: StageListProps): React.JSX.Element {
                 )}
               >
                 <StateIcon state={rec.state ?? null} />
-                <span className="flex-1 truncate">{rec.info.title}</span>
+                <span className="flex-1 truncate">{stageLabel(rec.info.name)}</span>
                 {rec.durationMs != null && (
                   <span className="text-[11px] font-mono text-text-muted">
                     {formatDuration(rec.durationMs)}
@@ -51,7 +52,7 @@ export function StageList({ bootstrap }: StageListProps): React.JSX.Element {
 
       <div className="flex w-1/2 flex-col border-l border-line-standard bg-surface-card/80 backdrop-blur-xs">
         <div className="flex shrink-0 items-center justify-between border-b border-line-standard px-3 py-1.5">
-          <div className="text-[11px] font-medium text-text-body">实时输出</div>
+          <div className="text-[11px] font-medium text-text-body">诊断日志</div>
           <div className="text-[11px] text-text-muted">{bootstrap.logs.length} 行</div>
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[10px] leading-relaxed">

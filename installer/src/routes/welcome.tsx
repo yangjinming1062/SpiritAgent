@@ -1,33 +1,21 @@
 import type React from 'react'
-import { type CSSProperties } from 'react'
 import { Button } from '../components/button'
 import { startInstall } from '../store'
 import { ArrowRight } from 'lucide-react'
 
 export default function Welcome(): React.JSX.Element {
   return (
-    <div className="spiritagent-fade-in relative isolate flex h-full flex-col items-center justify-center gap-10 px-12 py-10">
+    <div className="spiritagent-fade-in installer-screen relative isolate flex h-full flex-col items-center gap-10 px-12 py-10">
       <span aria-hidden="true" className="spiritagent-glow" />
 
       <div className="w-full max-w-2xl min-w-0 text-center">
-        <p
-          className="fit-text mx-auto mb-4 w-full font-['Collapse'] font-bold uppercase leading-[0.9] tracking-[0.08em] text-accent"
-          style={
-            {
-              '--fit-text-line-height': '0.9',
-              '--fit-text-max': '6rem',
-              '--fit-text-min': '2.5rem'
-            } as CSSProperties
-          }
-        >
-          <span>
-            <span>欢迎使用 唤生</span>
-          </span>
-          <span aria-hidden="true">欢迎使用 唤生</span>
-        </p>
+        <h1 className="mx-auto mb-5 text-[clamp(2rem,5vw,3.5rem)] font-bold leading-tight tracking-tight text-accent">欢迎使用唤生</h1>
 
         <p className="m-0 text-center text-base leading-normal tracking-tight text-text-body">
-          您的智能助手。我们将在后台完成设置，请稍候几分钟。
+          安装完成后，就可以认识你的 AI 伙伴。应用和常用功能会自动准备好。
+        </p>
+        <p className="mt-4 text-sm leading-relaxed text-text-muted">
+          请保持网络连接，无需选择或配置技术选项。安装过程中可能需要你允许系统操作。
         </p>
       </div>
 

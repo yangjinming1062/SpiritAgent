@@ -147,7 +147,7 @@ export function PersonaSection(): React.JSX.Element {
     }
   }
 
-  const { status: saveStatus } = useAutoSave({
+  const { status: saveStatus, retry: retrySave } = useAutoSave({
     dirty: editing && hasValidDraft && hasChanges,
     onError: error => {
       if (mountedRef.current) {
@@ -232,17 +232,25 @@ export function PersonaSection(): React.JSX.Element {
         <div className="flex gap-2">
           <button
             className={cn(BTN_SUBTLE, 'flex-1')}
+            disabled={!hasValidDraft || saveStatus === 'saving' || saveStatus === 'error'}
             onClick={() => {
               setHint(null)
               setEditing(false)
             }}
             type="button"
           >
-            {dict.common.cancel}
+            {dict.common.done}
           </button>
           {saveStatus === 'saving' && <span className={cn(HINT_TEXT, 'self-center')}>{dict.common.saving}</span>}
           {saveStatus === 'saved' && <span className={cn(HINT_TEXT, 'self-center')}>{t.hintSaved}</span>}
-          {saveStatus === 'error' && <span className="self-center text-[10px] text-danger-fg">{t.hintSaveFailed}</span>}
+          {saveStatus === 'error' && (
+            <>
+              <span className="self-center text-xs text-danger-fg">{t.hintSaveFailed}</span>
+              <button className={BTN_SUBTLE} onClick={retrySave} type="button">
+                {dict.common.retry}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </section>

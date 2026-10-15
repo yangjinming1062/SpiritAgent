@@ -138,49 +138,12 @@
   }
 }
 
-@layer utilities {
-  /* 按容器宽度缩放字体，与桌面端 .fit-text 一致 */
-  .fit-text {
-    --fit-captured-length: initial;
-    --fit-support-sentinel: var(--fit-captured-length, 9999px);
-
-    display: flex;
-    flex-direction: column;
-    container-type: inline-size;
-  }
-
-  .fit-text > [aria-hidden] {
-    visibility: hidden;
-  }
-
-  .fit-text > :not([aria-hidden]) {
-    flex-grow: 1;
-    container-type: inline-size;
-    --fit-available-space: var(--fit-captured-length);
-  }
-
-  .fit-text > :not([aria-hidden]) > * {
-    --fit-support-sentinel: inherit;
-    --fit-captured-length: 100cqi;
-    --fit-ratio: tan(
-      atan2(
-        var(--fit-available-space),
-        var(--fit-available-space) - var(--fit-captured-length)
-      )
-    );
-    --fit-support: var(--fit-support-sentinel) * var(--fit-ratio);
-    font-size: clamp(
-      100% * var(--fit-min, 1) / var(--fit-captured-length),
-      var(--fit-support),
-      100% * var(--fit-max, 1) / var(--fit-captured-length)
-    );
-  }
-
-  @container (inline-size > 0) {
-    .fit-text > :not([aria-hidden]) > * {
-      white-space: nowrap;
-    }
-  }
+.installer-screen {
+  overflow-y: auto;
+  justify-content: safe center;
+}
+.installer-screen > * {
+  flex-shrink: 0;
 }
 
 /* 关键帧：发光晕、蛋脉动、破壳闪光 */

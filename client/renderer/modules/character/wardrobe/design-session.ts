@@ -1,10 +1,18 @@
+import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { useLatestRef } from '@/shared/hooks/use-latest-ref'
+import {
+  loadCreationDraftImage,
+  saveCreationDraftImage,
+  subscribeCreationDraftImage
+} from '@/shared/lib/creation-draft-image'
 import { backendDetailMessage, ipcErrorStatus, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
+import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
@@ -26,7 +34,10 @@ interface DesignDraft {
 }
 
 // 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜（参考图就绪，不触发生成）。服装/发型可换、五官锁定；失败请求保留在 lastRequest 供一键重试。
-export function useOutfitDesignSession(onConfirmed: () => void): {
+export function useOutfitDesignSession(
+  onConfirmed: (outfitId: number) => void,
+  onDrafted?: (outfitId: number) => void
+): {
   messages: DesignMessage[]
   draft: DesignDraft | null
   refImage: PickedImage | null
@@ -38,12 +49,15 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   attachRefImage: () => Promise<void>
   clearRefImage: () => void
   adoptDraft: (id: number, previewUrl: string) => void
+  restoreReference: () => void
   reset: () => void
 } {
   const [messages, setMessages] = useState<DesignMessage[]>([])
+  const authKind = useStore($auth).kind
   const [draft, setDraft] = useState<DesignDraft | null>(null)
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
   const [busy, setBusy] = useState(false)
+  const [restoringReference, setRestoringReference] = useState(true)
 
   const [lastRequest, setLastRequest] = useState<{
     image: PickedImage | null
@@ -52,17 +66,21 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   } | null>(null)
 
   const begin = useAsyncGuard()
+  const onDraftedRef = useLatestRef(onDrafted)
   const generatingRef = useRef(false)
   const msgIdRef = useRef(0)
   const revisionRef = useRef(0)
+  const referenceRevisionRef = useRef(0)
 
   const reset = useCallback((): void => {
     revisionRef.current += 1
+    referenceRevisionRef.current += 1
     generatingRef.current = false
     setBusy(false)
     setMessages([])
     setDraft(null)
     setRefImage(null)
+    setRestoringReference(false)
     setLastRequest(null)
   }, [])
 
@@ -74,6 +92,33 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
       revisionRef.current += 1
     }
   }, [reset])
+
+  const restoreReference = useCallback((): void => {
+    const isLive = begin()
+    const revision = revisionRef.current
+    const referenceRevision = ++referenceRevisionRef.current
+    setRestoringReference(true)
+    void loadCreationDraftImage('outfit').then(image => {
+      if (isLive() && revision === revisionRef.current && referenceRevision === referenceRevisionRef.current) {
+        setRefImage(image)
+        setRestoringReference(false)
+      }
+    })
+  }, [begin])
+
+  useEffect(() => {
+    if (authKind === 'authenticated') {
+      restoreReference()
+    }
+
+    return subscribeCreationDraftImage('outfit', () => {
+      if (generatingRef.current) {
+        reset()
+      }
+
+      restoreReference()
+    })
+  }, [authKind, reset, restoreReference])
 
   // isLive 来自发起操作时的 begin()；revision 被 reset、卸载或更新的独占操作递增后，旧操作即失效。
   const isCurrent = useCallback((revision: number, isLive: () => boolean): boolean => {
@@ -105,6 +150,11 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           // 有草稿后按用户意图走微调或重新生成（后端 regenerate 均不收图）；参考图仅用于首次生成。
           const res = withDraft ? await runRegenerate(withDraft.id, text, mode) : await runCreate(text, image)
 
+          // 切换草稿后旧任务只刷新库，不再覆盖当前选择。
+          if (isLive()) {
+            void hydrateWardrobe()
+          }
+
           if (!isCurrent(revision, isLive)) {
             return
           }
@@ -121,7 +171,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
             return
           }
 
-          void hydrateWardrobe()
+          onDraftedRef.current?.(res.id)
 
           if (!resolved) {
             setDraft({ id: res.id, previewUrl: '' })
@@ -131,6 +181,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           }
 
           setDraft({ id: res.id, previewUrl: resolved })
+          void saveCreationDraftImage('outfit', null)
 
           push({
             role: 'system',
@@ -176,7 +227,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
         }
       })()
     },
-    [begin, isCurrent, push]
+    [begin, isCurrent, onDraftedRef, push]
   )
 
   const send = useCallback(
@@ -222,10 +273,15 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
         body: {}
       })
 
+      if (isLive()) {
+        void hydrateWardrobe()
+      }
+
       if (isCurrent(revision, isLive)) {
         setDraft(null)
         setMessages([])
-        onConfirmed()
+        void saveCreationDraftImage('outfit', null)
+        onConfirmed(draft.id)
       }
     } catch (err) {
       if (!isCurrent(revision, isLive)) {
@@ -245,9 +301,11 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   const attachRefImage = useCallback(async (): Promise<void> => {
     const isLive = begin()
     const revision = revisionRef.current
+    const referenceRevision = ++referenceRevisionRef.current
+    setRestoringReference(false)
     const picked = await pickAvatarImage(getStrings().living.outfit.design.pickReferenceTitle)
 
-    if (!picked || !isCurrent(revision, isLive)) {
+    if (!picked || !isCurrent(revision, isLive) || referenceRevision !== referenceRevisionRef.current) {
       return
     }
 
@@ -258,10 +316,14 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     }
 
     setRefImage(picked.image)
+    void saveCreationDraftImage('outfit', picked.image)
   }, [begin, isCurrent, push])
 
   const clearRefImage = useCallback((): void => {
+    referenceRevisionRef.current += 1
+    setRestoringReference(false)
     setRefImage(null)
+    void saveCreationDraftImage('outfit', null)
   }, [])
 
   // 从列表里的既有草稿续上设计会话（微调 / 直接确认入柜）。
@@ -288,7 +350,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     messages,
     draft,
     refImage,
-    busy,
+    busy: busy || restoringReference,
     lastRequest,
     send,
     retry,
@@ -296,6 +358,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     attachRefImage,
     clearRefImage,
     adoptDraft,
+    restoreReference,
     reset
   }
 }

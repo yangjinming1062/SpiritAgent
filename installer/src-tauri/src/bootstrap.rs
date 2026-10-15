@@ -1,6 +1,7 @@
 //! Bootstrap 编排：按阶段驱动 install 脚本，经 Tauri `bootstrap` 通道推送进度；日志见 bootstrap-installer.log。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,7 +9,7 @@ use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 
 use crate::events::{BootstrapEvent, LogStream, Manifest, StageState};
 use crate::install_script::{self, ScriptKind, ScriptSource};
@@ -25,6 +26,7 @@ pub struct StartBootstrapArgs {
 pub struct BootstrapHandle {
     pub cancel_tx: mpsc::Sender<()>,
     pub running: bool,
+    finished: watch::Receiver<bool>,
 }
 
 #[tauri::command]
@@ -35,6 +37,9 @@ pub async fn start_bootstrap(
     on_event: Channel<BootstrapEvent>,
 ) -> Result<(), String> {
     let mut guard = state.bootstrap.lock().await;
+    if state.closing.load(Ordering::Acquire) {
+        return Err("Installer is closing".into());
+    }
     if let Some(h) = guard.as_ref() {
         if h.running {
             return Err("Bootstrap is already running".into());
@@ -42,9 +47,11 @@ pub async fn start_bootstrap(
     }
 
     let (cancel_tx, cancel_rx) = mpsc::channel::<()>(1);
+    let (finished_tx, finished_rx) = watch::channel(false);
     *guard = Some(BootstrapHandle {
         cancel_tx,
         running: true,
+        finished: finished_rx,
     });
     drop(guard);
 
@@ -59,6 +66,7 @@ pub async fn start_bootstrap(
         if let Some(h) = guard.as_mut() {
             h.running = false;
         }
+        let _ = finished_tx.send(true);
     });
 
     Ok(())
@@ -66,11 +74,23 @@ pub async fn start_bootstrap(
 
 #[tauri::command]
 pub async fn cancel_bootstrap(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    let guard = state.bootstrap.lock().await;
-    if let Some(h) = guard.as_ref() {
-        let _ = h.cancel_tx.try_send(());
-    }
+    cancel_and_wait(state.inner()).await;
     Ok(())
+}
+
+pub(crate) async fn cancel_and_wait(state: &AppState) {
+    let guard = state.bootstrap.lock().await;
+    let Some(handle) = guard.as_ref().filter(|handle| handle.running) else {
+        return;
+    };
+    let _ = handle.cancel_tx.try_send(());
+    let mut finished = handle.finished.clone();
+    drop(guard);
+    while !*finished.borrow() {
+        if finished.changed().await.is_err() {
+            break;
+        }
+    }
 }
 
 /// 启动已安装桌面端后退出安装器；二进制缺失时返回可读错误供前端提示。
@@ -321,17 +341,26 @@ async fn run_bootstrap(
 
     let bundle_ctx = build_bundle_context(&app);
 
-    let (manifest_result, _) = run_install_script(
+    if cancellation_signalled(&cancel_rx_holder).await {
+        return Err(fail_bootstrap(&on_event, None, "cancelled by user".to_string()));
+    }
+    let manifest_cancel_rx = cancel_rx_holder.lock().await.take();
+    let (manifest_result, unused_cancel_rx) = run_install_script(
         &on_event,
         &script.path,
         &manifest_args,
         args.spiritagent_home.as_deref(),
         &bundle_ctx,
-        None,
+        manifest_cancel_rx,
         Some("__manifest__".to_string()),
     )
     .await
     .map_err(|e| fail_bootstrap(&on_event, None, e.to_string()))?;
+    *cancel_rx_holder.lock().await = unused_cancel_rx;
+
+    if manifest_result.killed {
+        return Err(fail_bootstrap(&on_event, None, "cancelled by user".to_string()));
+    }
 
     if manifest_result.exit_code != Some(0) {
         let err = format!(
@@ -706,10 +735,9 @@ const STAGE_PREVIEW_CHARS: usize = 2000;
 const MANIFEST_PREVIEW_CHARS: usize = 4000;
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max])
+    match s.char_indices().nth(max) {
+        Some((end, _)) => format!("{}...", &s[..end]),
+        None => s.to_string(),
     }
 }
 

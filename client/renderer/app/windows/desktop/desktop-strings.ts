@@ -4,7 +4,8 @@ import { $locale } from '@/shared/store/locale'
 
 const zh = {
   title: '桌面',
-  chat: '对话',
+  chat: '聊天',
+  companion: '伙伴',
   showConversations: '展开对话列表',
   hideConversations: '收起对话列表',
   openUnread: '查看未读对话',
@@ -26,7 +27,7 @@ const zh = {
   leftWhisper: '移到左侧',
   rightWhisper: '移到右侧',
   windowMode: '返回窗口模式',
-  display: '交互显示器',
+  display: '显示屏',
   accounts: '账户',
   currentAccount: '当前账户',
   switchAccount: '切换账户',
@@ -88,15 +89,16 @@ const zh = {
   retry: '重试',
   desktopSettings: '桌面设置',
   disturbance: '陪伴方式',
-  still: '静止',
-  normal: '常规',
-  autonomous: '自主',
+  still: '只回应我',
+  normal: '偶尔主动问候',
+  autonomous: '自由活动',
   waiting: '正在准备桌面…'
 }
 
 const en: typeof zh = {
   title: 'Desktop',
   chat: 'Chat',
+  companion: 'Companion',
   showConversations: 'Show conversations',
   hideConversations: 'Hide conversations',
   openUnread: 'Open unread conversation',

@@ -212,6 +212,7 @@ export async function createDesktopVideoSet(input: {
   scene_id: number
   outfit_id: number
   source: DesktopVideoSource
+  feedback?: string
 }): Promise<DesktopVideoSet> {
   const set = await mutation<DesktopVideoSet>('/sets', input)
   await refreshDesktopVideos()
@@ -357,6 +358,27 @@ export async function cancelDesktopVideoDraft(action: DesktopVideoAction): Promi
   }
 
   await mutation(`/actions/${action.id}/cancel`, { draft_id: action.draft.id })
+  await refreshDesktopVideos()
+}
+
+export async function pauseDesktopVideoDraft(action: DesktopVideoAction): Promise<void> {
+  if (!action.draft) {
+    return
+  }
+
+  await mutation(`/actions/${action.id}/pause`, { draft_id: action.draft.id })
+  await refreshDesktopVideos()
+}
+
+export async function resumeDesktopVideoDraft(action: DesktopVideoAction, set: DesktopVideoSet): Promise<void> {
+  if (!action.draft) {
+    throw new Error('制作草稿已失效')
+  }
+
+  await mutation(`/actions/${action.id}/resume`, {
+    draft_id: action.draft.id,
+    expected_base_version: set.base_version
+  })
   await refreshDesktopVideos()
 }
 

@@ -290,3 +290,27 @@ async def cancel_action(
         return await _desktop.cancel_action(action_id=action_id, user_id=user.id, body=body)
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/actions/{action_id}/pause", response_model=DesktopVideoActionResponse)
+async def pause_action(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoDraftRequest,
+) -> DesktopVideoActionResponse:
+    try:
+        return await _desktop.pause_action(action_id=action_id, user_id=user.id, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/actions/{action_id}/resume", response_model=DesktopVideoActionResponse)
+async def resume_action(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoDraftRequest,
+) -> DesktopVideoActionResponse:
+    try:
+        return await _desktop.resume_action(action_id=action_id, user_id=user.id, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

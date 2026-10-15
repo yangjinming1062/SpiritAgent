@@ -137,6 +137,8 @@ Windows 安装器内嵌 NSIS 包；update ZIP 由 [UpdateManifest.ps1](lib/Updat
 
 GitHub release 与客户端更新是两个入口：自动更新需在 Backend 管理端“版本管理”上传 update ZIP，再由当前后端分发，通信与验签见 [PROTOCOL](../docs/PROTOCOL.md#自更新签名)。当前构建入口只生成 Windows update ZIP，macOS DMG 不等于可直接上传的同类更新包。
 
+跨端契约变更需同步发布 Backend、Client 和 Remote。先按[备份与覆盖恢复](../docs/PROTOCOL.md#备份校验与覆盖恢复)建立数据与素材恢复点，停止新任务并收敛在途工作；数据库变化通过新增 Alembic 迁移承接。核对存量副本中的记录、关联、素材和草稿后切换，验收通过再开放写入；失败恢复同一备份点的数据、素材和代码。
+
 CI 的 `SPIRITAGENT_UPDATE_SIGNING_KEY` Secret 存 PEM 内容；工作流落地临时文件后传路径。notes 用的 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL_NAME` 均为 repo secrets，缺失会使 notes 任务失败。工作流未配置平台证书签名或 macOS 公证，不能把 CI 构建成功视为已完成二者。
 
 ## Release notes

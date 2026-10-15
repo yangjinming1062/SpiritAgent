@@ -48,7 +48,9 @@ export function useOnboardingVoice({ phase, voiceStage, answers, begin }: VoiceO
 
     void (async () => {
       const [matched, result] = await Promise.all([
-        matchVoicePreference(requestGateway, answers.voice ?? ''),
+        answers.voice?.trim()
+          ? matchVoicePreference(requestGateway, answers.voice)
+          : Promise.resolve({ ok: true as const, voice: null, alternatives: [] }),
         fetchVoiceCatalogRaw(requestGateway)
       ])
 

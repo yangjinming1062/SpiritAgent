@@ -5,12 +5,10 @@ import { useEffect, useRef, useState } from 'react'
 import { PresentationModeButton } from '@/app/components/presentation-mode-switch'
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
-import { AppearancePage } from '@/app/features/appearance/appearance-page'
+import { CompanionHub } from '@/app/features/companion/companion-page'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
-import { DiaryPage } from '@/app/features/diary/diary-page'
-import { PostsPage } from '@/app/features/posts/posts-page'
+import { LifePage } from '@/app/features/posts/life-page'
 import { SceneBackdrop } from '@/app/features/scene/scene-backdrop'
-import { ScenePage } from '@/app/features/scene/scene-page'
 import { AppSettings } from '@/app/features/settings/app-settings'
 import {
   $appNavigationRevision,
@@ -29,7 +27,6 @@ import {
   useConversationUnread
 } from '@/modules/conversation'
 import { hydrateDiaryUnread } from '@/modules/diary'
-import { MediaViewerOverlay } from '@/modules/media'
 import { hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared'
@@ -78,9 +75,7 @@ export function MainRoot(): React.JSX.Element {
   const labels: Record<AppPage, string> = {
     chat: t.chat,
     posts: t.posts,
-    diary: t.diary,
-    appearance: t.wardrobe,
-    scene: t.scene,
+    companion: t.companionFallback,
     settings: t.settings
   }
 
@@ -263,12 +258,9 @@ export function MainRoot(): React.JSX.Element {
                 />
               </div>
               <PanelActivityProvider active={active && page !== 'chat'}>
-                {page === 'posts' && <PostsPage foreground={active} mediaViewId="main-page" />}
-                {page === 'diary' && <DiaryPage foreground={active} />}
-                {page === 'appearance' && <AppearancePage />}
-                {page === 'scene' && <ScenePage />}
+                {page === 'posts' && <LifePage containerRef={shellRef} foreground={active} mediaViewId="main-page" />}
+                {page === 'companion' && <CompanionHub />}
                 {page === 'settings' && <AppSettings />}
-                {page !== 'chat' && <MediaViewerOverlay containerRef={shellRef} viewId="main-page" windowId={1} />}
               </PanelActivityProvider>
             </main>
           </div>

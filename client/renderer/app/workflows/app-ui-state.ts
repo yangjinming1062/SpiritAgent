@@ -1,4 +1,9 @@
 import {
+  $desktopLifeUi,
+  exportDesktopLifeUiSnapshot,
+  importDesktopLifeUiSnapshot
+} from '@/app/features/desktop-life/desktop-life-state'
+import {
   $appNavigationRevision,
   $appPage,
   $settingsSection,
@@ -54,7 +59,8 @@ export function installAppUiStateSync(): () => void {
   function data(): MainUiStateData {
     return {
       navigation: getAppNavigation(),
-      conversation: exportMainConversationDraftSnapshot()
+      conversation: exportMainConversationDraftSnapshot(),
+      desktopLife: exportDesktopLifeUiSnapshot()
     }
   }
 
@@ -97,6 +103,7 @@ export function installAppUiStateSync(): () => void {
     }
 
     importMainConversationDraftSnapshot(snapshot.conversation)
+    importDesktopLifeUiSnapshot(snapshot.desktopLife)
 
     if (selectedSessionId) {
       await restoreConversationSelection(selectedSessionId)
@@ -105,8 +112,7 @@ export function installAppUiStateSync(): () => void {
     }
 
     assertLive(identity, token)
-    const { page, section, settingsTab } = snapshot.navigation
-    await applyAppNavigation({ page, section, settingsTab })
+    await applyAppNavigation(snapshot.navigation)
     assertLive(identity, token)
     appliedRevision = snapshot.revision
   }
@@ -284,6 +290,7 @@ export function installAppUiStateSync(): () => void {
     $appNavigationRevision.listen(schedulePublish),
     $chatSessionId.listen(schedulePublish),
     $mainConversationDraftRevision.listen(schedulePublish),
+    $desktopLifeUi.listen(schedulePublish),
     $presentation.listen(schedulePublish),
     bridge.onRequest(enqueue)
   ]

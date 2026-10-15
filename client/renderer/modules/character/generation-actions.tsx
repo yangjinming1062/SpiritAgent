@@ -1,7 +1,7 @@
 import type React from 'react'
 
 import { cn } from '@/shared/lib/utils'
-import { BTN_SUBTLE, FIELD_LABEL, HINT_TEXT } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface GenerationActionsGroupProps {
@@ -51,7 +51,7 @@ export function GenerationActionsGroup({
 
   const regenerateButton = (
     <button
-      className={cn(BTN_SUBTLE, 'shrink-0 whitespace-nowrap')}
+      className={cn(!onEdit && regenerateLabel ? BTN_PRIMARY : BTN_SUBTLE, 'shrink-0 whitespace-nowrap')}
       disabled={regenerateDisabled}
       onClick={onRegenerate}
       title={t.regenerateHint}
@@ -66,7 +66,6 @@ export function GenerationActionsGroup({
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         {editButton}
         {regenerateButton}
-        <span className={cn(HINT_TEXT, 'min-w-0 flex-1 truncate')}>{t.groupHint}</span>
       </div>
     )
   }
@@ -74,18 +73,15 @@ export function GenerationActionsGroup({
   return (
     <div className="space-y-3">
       <div className="space-y-1">
-        <p className={FIELD_LABEL}>{t.aiTitle}</p>
         <div className="flex flex-wrap items-center gap-2">
           {editButton}
           {regenerateButton}
         </div>
-        <p className={HINT_TEXT}>{t.groupHint}</p>
       </div>
       {onSelfSource && (
-        <div className="space-y-1">
-          <p className={FIELD_LABEL}>{t.selfTitle}</p>
+        <div>
           <button
-            className={BTN_SUBTLE}
+            className="text-xs text-muted transition hover:text-strong disabled:opacity-40"
             disabled={selfSourceDisabled}
             onClick={onSelfSource}
             title={selfSource.openTitle}
@@ -93,7 +89,6 @@ export function GenerationActionsGroup({
           >
             {selfSource.open}
           </button>
-          <p className={HINT_TEXT}>{t.selfHint}</p>
         </div>
       )}
     </div>

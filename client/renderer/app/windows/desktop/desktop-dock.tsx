@@ -2,18 +2,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import {
-  BookOpen,
-  type IconComponent,
-  ImageIcon,
-  MessageCircle,
-  Messages,
-  Monitor,
-  Plus,
-  Settings,
-  Shirt,
-  X
-} from '@/shared/lib/icons'
+import { type IconComponent, MessageCircle, Messages, Monitor, Plus, Settings, Users, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { notifyError } from '@/shared/store/notifications'
@@ -35,9 +24,7 @@ type DockTaskMenuState = { entryId: string; loading: boolean; tasks: DockTask[] 
 const APP_ICONS: Record<DesktopApp, IconComponent> = {
   chat: MessageCircle,
   posts: Messages,
-  diary: BookOpen,
-  scene: ImageIcon,
-  appearance: Shirt,
+  companion: Users,
   settings: Settings
 }
 
