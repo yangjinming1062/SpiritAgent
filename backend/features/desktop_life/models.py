@@ -24,6 +24,9 @@ class DesktopVideoSet(ModelBase, TimestampMixin):
     context_hash: Mapped[str] = mapped_column(String(64))
     context_json: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(String(160), default="", server_default=text("''"))
+    target_width: Mapped[int] = mapped_column(Integer)
+    target_height: Mapped[int] = mapped_column(Integer)
+    resolution_revision: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     status: Mapped[str] = mapped_column(String(24), default="preparing", server_default=text("'preparing'"))
     base_image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     base_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
@@ -85,6 +88,8 @@ class DesktopVideoState(ModelBase, TimestampMixin):
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     autonomous_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
     default_created: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
+    target_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preparation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

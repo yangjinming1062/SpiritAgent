@@ -6,6 +6,8 @@ export interface PresentationDisplay {
   isPrimary: boolean
   width: number
   height: number
+  pixelWidth: number | null
+  pixelHeight: number | null
 }
 
 export interface PresentationState {

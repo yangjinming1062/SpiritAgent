@@ -24,6 +24,7 @@ import type { RunningApplicationsState } from '../shared/desktop-applications'
 import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, sendToWindow } from '../shared/utils'
 
 import { createDesktopBackgroundRuntime } from './desktop-background-runtime'
+import { readNativeDisplayBounds } from './desktop-display-resolutions'
 import { createDesktopHealth } from './desktop-health'
 import { createDesktopWindows } from './desktop-windows'
 import { createExplorerDesktopHost } from './explorer-desktop-host'
@@ -92,6 +93,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
   let runningApplications: RunningApplicationsState = { status: 'inactive', error: null, windows: [] }
   const applicationListeners = new Set<(state: RunningApplicationsState) => void>()
+  let displayResolutionGeneration = 0
+  const displayResolutions = new Map<number, { geometry: string; width: number; height: number }>()
 
   const windows = createDesktopWindows({
     preloadPath: options.preloadPath,
@@ -215,13 +218,26 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     const allDisplays = app.isReady() ? screen.getAllDisplays() : []
     const primaryId = app.isReady() ? screen.getPrimaryDisplay().id : null
 
-    const displays = allDisplays.map(display => ({
-      id: display.id,
-      label: display.label || `显示器 ${display.id}`,
-      isPrimary: display.id === primaryId,
-      width: display.bounds.width,
-      height: display.bounds.height
-    }))
+    const displays = allDisplays.map(display => {
+      const native = displayResolutions.get(display.id)
+      const resolution = native?.geometry === displayGeometry(display) ? native : null
+
+      return {
+        id: display.id,
+        label: display.label || `显示器 ${display.id}`,
+        isPrimary: display.id === primaryId,
+        width: display.bounds.width,
+        height: display.bounds.height,
+        pixelWidth:
+          process.platform === 'win32'
+            ? (resolution?.width ?? null)
+            : Math.round(display.bounds.width * display.scaleFactor),
+        pixelHeight:
+          process.platform === 'win32'
+            ? (resolution?.height ?? null)
+            : Math.round(display.bounds.height * display.scaleFactor)
+      }
+    })
 
     const preferred = preferences.get()
     const activeDisplayId = activeDisplay?.id
@@ -258,6 +274,51 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       stageEpoch,
       revision,
       switchBlockedReason: uiState.blockedReason()
+    }
+  }
+
+  function displayGeometry(display: Electron.Display): string {
+    return JSON.stringify([display.bounds, display.scaleFactor, display.rotation])
+  }
+
+  async function refreshDisplayResolutions(): Promise<void> {
+    const generation = ++displayResolutionGeneration
+    displayResolutions.clear()
+
+    if (process.platform !== 'win32' || disposed || !app.isReady()) {
+      return
+    }
+
+    const displays = screen.getAllDisplays()
+    const geometries = displays.map(displayGeometry)
+
+    try {
+      const bounds = await readNativeDisplayBounds(
+        options.helperPath,
+        displays.map(display => screen.dipToScreenRect(null, display.bounds))
+      )
+
+      if (disposed || generation !== displayResolutionGeneration) {
+        return
+      }
+
+      for (const [index, physical] of bounds.entries()) {
+        if (physical) {
+          displayResolutions.set(displays[index].id, {
+            geometry: geometries[index],
+            width: physical.width,
+            height: physical.height
+          })
+        }
+      }
+    } catch (error) {
+      if (!disposed && generation === displayResolutionGeneration) {
+        options.log(`[desktop] physical display resolution: ${errorMessage(error)}`)
+      }
+    }
+
+    if (!disposed && generation === displayResolutionGeneration) {
+      publish()
     }
   }
 
@@ -619,11 +680,13 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
     if (!disposed) {
       health.start()
+      await refreshDisplayResolutions()
       publish()
     }
   }
 
   function onDisplaysChanged(): void {
+    void refreshDisplayResolutions()
     const activeDisplayId = activeDisplay?.id
     const displays = screen.getAllDisplays()
     const current = displays.find(display => display.id === activeDisplayId)

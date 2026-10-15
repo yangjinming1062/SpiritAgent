@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from features.media.identity_contracts import CharacterCardSnapshot
 
+DESKTOP_MAX_EDGE = 65536
+
 
 class DesktopVisualSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -51,6 +53,9 @@ class DesktopVideoAsset(BaseModel):
 
     video_path: str
     image_path: str = Field(min_length=1)
+    source_image_path: str | None = None
+    geometry_mode: Literal["target", "keep"]
+    resolution_revision: int = Field(gt=0, strict=True)
     image_origin: GenerationOrigin | None = None
     video_origin: GenerationOrigin | None = None
     source: Literal["generated", "external_upload"] = "generated"
@@ -78,6 +83,15 @@ class DesktopVideoProgress(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     generation_id: str
+    target_width: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
+    target_height: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
+    resolution_revision: int = Field(gt=0, strict=True)
+    geometry_mode: Literal["target", "keep"] = "target"
+    source_image_path: str | None = None
+    expand_image: bool = False
+    expansion_canvas_path: str | None = None
+    expansion_generated_path: str | None = None
+    expansion_box: tuple[int, int, int, int] | None = None
     source: Literal["user_requested", "autonomous", "external_upload"]
     feedback: str = ""
     paused_by_user: bool = False
@@ -93,7 +107,6 @@ class DesktopVideoProgress(BaseModel):
     video_selection: ProviderSelection | None = None
     regenerate_image: bool = False
     force_review: bool = False
-    paid_slot_consumed: bool = False
     visual_description: str = Field(default="", max_length=1500)
     action_description: str = ""
     duration_seconds: int
@@ -143,6 +156,12 @@ class DesktopVideoDraftResponse(BaseModel):
     id: str
     stage: str
     source: Literal["user_requested", "autonomous", "external_upload"]
+    target_width: int
+    target_height: int
+    resolution_revision: int
+    geometry_mode: Literal["target", "keep"] = "target"
+    frame_width: int | None = None
+    frame_height: int | None = None
     feedback: str = ""
     submission_unknown: bool = False
     image_url: str = ""
@@ -198,6 +217,9 @@ class DesktopVideoProposalResponse(BaseModel):
 class DesktopVideoSetResponse(BaseModel):
     id: int
     title: str
+    target_width: int
+    target_height: int
+    resolution_revision: int
     is_default: bool = False
     source: Literal["ai", "image_upload", "video_upload"] = "ai"
     outfit_id: int | None = None
@@ -232,6 +254,8 @@ class DesktopVideoGenerateRequest(BaseModel):
     feedback: str = Field(default="", max_length=600)
     expected_draft_id: str | None = None
     expected_base_version: int | None = Field(default=None, ge=0)
+    expected_resolution_revision: int | None = Field(default=None, gt=0)
+    aspect_policy: Literal["ask", "keep", "expand"] = "ask"
 
     @field_validator("expected_draft_id", mode="before")
     @classmethod
@@ -247,6 +271,8 @@ class DesktopVideoCreateSetRequest(BaseModel):
     outfit_id: int = Field(gt=0)
     source: Literal["ai", "image_upload", "video_upload"] = "ai"
     feedback: str = Field(default="", max_length=1000)
+    target_width: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
+    target_height: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
 
     @field_validator("name", "request_id")
     @classmethod
@@ -258,11 +284,24 @@ class DesktopVideoCreateSetRequest(BaseModel):
 
 class DesktopVideoRenameSetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=160)
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    target_width: int | None = Field(default=None, gt=0, le=DESKTOP_MAX_EDGE, strict=True)
+    target_height: int | None = Field(default=None, gt=0, le=DESKTOP_MAX_EDGE, strict=True)
+    expected_resolution_revision: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def complete_dimensions(self) -> "DesktopVideoRenameSetRequest":
+        if (self.target_width is None) != (self.target_height is None):
+            raise ValueError("请同时填写宽度和高度")
+        if self.name is None and self.target_width is None:
+            raise ValueError("请提供名称或分辨率")
+        return self
 
     @field_validator("name")
     @classmethod
-    def nonblank(cls, value: str) -> str:
+    def nonblank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         if not value.strip():
             raise ValueError("套装名称不能为空")
         return value.strip()
@@ -274,6 +313,8 @@ class DesktopVideoImageRequest(BaseModel):
     regenerate: bool = False
     expected_draft_id: str | None = None
     expected_base_version: int | None = Field(default=None, ge=0)
+    expected_resolution_revision: int | None = Field(default=None, gt=0)
+    aspect_policy: Literal["ask", "keep", "expand"] = "ask"
 
     @field_validator("expected_draft_id", mode="before")
     @classmethod
@@ -285,6 +326,7 @@ class DesktopVideoDraftRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     draft_id: str
     expected_base_version: int | None = Field(default=None, ge=0)
+    expected_resolution_revision: int | None = Field(default=None, gt=0)
 
 
 class DesktopVideoConfirmImageRequest(DesktopVideoDraftRequest):
@@ -303,6 +345,8 @@ class DesktopVideoExternalPromptRequest(BaseModel):
     requirements: str = Field(default="", max_length=1000)
     expected_draft_id: str | None = None
     expected_base_version: int | None = Field(default=None, ge=0)
+    expected_resolution_revision: int | None = Field(default=None, gt=0)
+    aspect_policy: Literal["ask", "keep"] = "ask"
 
     @field_validator("expected_draft_id", mode="before")
     @classmethod
@@ -331,6 +375,8 @@ class DesktopVideoExternalPromptResponse(BaseModel):
 class DesktopVideoEnsureRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     trigger: Literal["entry"] = "entry"
+    target_width: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
+    target_height: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
 
 
 class DesktopVideoPreferences(BaseModel):

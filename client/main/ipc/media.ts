@@ -628,6 +628,10 @@ export function registerMediaIpc({
         !['image', 'video'].includes(payload.mediaKind) ||
         !Number.isSafeInteger(payload.expectedBaseVersion) ||
         payload.expectedBaseVersion < 0 ||
+        !Number.isSafeInteger(payload.expectedResolutionRevision) ||
+        payload.expectedResolutionRevision < 1 ||
+        !['ask', 'keep', 'expand'].includes(payload.aspectPolicy) ||
+        (payload.mediaKind === 'video' && payload.aspectPolicy === 'expand') ||
         (payload.expectedDraftId !== null && typeof payload.expectedDraftId !== 'string')
       ) {
         throw new Error('Invalid desktop media context')
@@ -645,6 +649,8 @@ export function registerMediaIpc({
       form.append('file', blob, path.basename(resolvedPath))
       form.append('expected_set_id', String(payload.expectedSetId))
       form.append('expected_base_version', String(payload.expectedBaseVersion))
+      form.append('expected_resolution_revision', String(payload.expectedResolutionRevision))
+      form.append('aspect_policy', payload.aspectPolicy)
       form.append('expected_draft_id', payload.expectedDraftId ?? 'none')
 
       if (getCurrentAuth()?.sessionId !== authSessionId) {

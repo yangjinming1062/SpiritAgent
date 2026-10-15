@@ -433,6 +433,8 @@ export interface DesktopVideoUploadPayload {
   expectedSetId: number
   expectedDraftId: string | null
   expectedBaseVersion: number
+  expectedResolutionRevision: number
+  aspectPolicy: 'ask' | 'keep' | 'expand'
   mediaKind: 'image' | 'video'
   path: string
 }

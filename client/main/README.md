@@ -67,6 +67,8 @@
 
 [desktop-presentation.ts](lifecycle/desktop-presentation.ts) 管呈现模式、交互屏、舞台资格与串行恢复；`desktop-windows.ts` 拥有窗口与就绪等待，`desktop-health.ts` 拥有显示器／电源监听和模式计时器，`desktop-background-runtime.ts` 拥有媒体字节、请求代次及回执。[IPC 适配](ipc/desktop-presentation.ts) 先校验 sender、账户与载荷，再调用窄操作接口。`stop()` 只停止当前桌面模式，允许更新取消后再次启用；应用退出使用幂等 `dispose()`，立即关闭操作准入、取消视图交接并恢复系统，持续消费退出期上报，所有窗口关闭后的 `will-quit` 再注销呈现和视图状态 IPC。
 
+显示器逻辑坐标继续用于窗口布局。Windows 桌景尺寸经 `desktop-display-resolutions.ts` 调用原生宿主的只读 `display-bounds` 查询，按显示器 ID、几何和查询代次缓存；启动及显示器变更后发布真实像素，查询不可用时返回空值，禁止从已取整的 DIP 反推尺寸。
+
 交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口，保留原生 Windows 界面。网关票及 Runner 派发仍只授予隐藏精灵宿主。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
 
 呈现切换 IPC 允许精灵宿主、主窗口和交互桌面；托盘复用同一串行入口。录音、转写和附件上传状态由 [ui-state.ts](ipc/ui-state.ts) 合并，切换入口共同消费阻止原因。该桥按账户在进程内持有页面、会话、主对话草稿与阅读位置，核对鉴权会话和合法 sender；主动切换等待来源捕获与目标恢复，失败保留来源界面。快照不持久化文件访问许可，主窗口与桌面通过受控导航交接。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。

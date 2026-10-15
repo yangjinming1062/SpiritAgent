@@ -3,6 +3,25 @@ import { useStore } from '@nanostores/react'
 import { $locale } from '@/shared/store/locale'
 
 const zh = {
+  targetResolution: '桌景分辨率',
+  actualResolution: '素材实际尺寸',
+  width: '宽（像素）',
+  height: '高（像素）',
+  readScreen: '读取当前屏幕',
+  screenUnavailable: '无法读取桌面显示器，请手动填写宽高。',
+  resolutionRangeHint: (max: number) => `宽高须为 1 至 ${max} 的整数。`,
+  saveResolution: '保存分辨率',
+  resolutionDraftHint: '先完成或放弃制作草稿，再修改桌景分辨率。',
+  resolutionHint: '后续制作使用此画幅，已有成品继续保留。切换显示器不会自动修改。',
+  aspectMismatch: '素材画幅与桌景不一致',
+  aspectMismatchHint: '强制继续会保留素材原比例，桌面显示时可能留边。',
+  expandHint: 'AI 会完整保留图片中的内容，只扩展周边环境。调整后需要再次确认画面。',
+  sharedImageExpandHint: (name: string) => `AI 调整将先修改「${name}」的画面。确认新画面后，相关动作需要重新制作。`,
+  sharedImageDraftHint: '请先完成或放弃安静相伴的制作草稿，再调整这套桌景的画幅。',
+  keepAspect: '强制继续',
+  expandAspect: 'AI 调整',
+  cancelUpload: '取消',
+  regenerateImage: '重新生成画面',
   resultPending: '制作结果还未确认',
   resultPendingHint: '本次制作记录已保留。请先等待或核对结果，再决定是否放弃并重新制作。',
   more: '更多',
@@ -165,6 +184,27 @@ const zh = {
 }
 
 const en: typeof zh = {
+  targetResolution: 'Scene resolution',
+  actualResolution: 'Actual media size',
+  width: 'Width (pixels)',
+  height: 'Height (pixels)',
+  readScreen: 'Read current display',
+  screenUnavailable: 'The desktop display is unavailable. Enter its width and height.',
+  resolutionRangeHint: (max: number) => `Width and height must be whole numbers between 1 and ${max}.`,
+  saveResolution: 'Save resolution',
+  resolutionDraftHint: 'Finish or discard creation drafts before changing the scene resolution.',
+  resolutionHint: 'Future creations use this frame. Existing media is kept. Changing displays does not update it.',
+  aspectMismatch: 'The media and scene have different aspect ratios',
+  aspectMismatchHint: 'Continuing keeps the original aspect ratio and may leave borders on the desktop.',
+  expandHint:
+    'AI preserves the complete image and extends only its surroundings. Review the adjusted image before continuing.',
+  sharedImageExpandHint: (name: string) =>
+    `AI first adjusts the image for “${name}”. After you accept the new image, related actions need to be recreated.`,
+  sharedImageDraftHint: 'Finish or discard the Quiet Company draft before adjusting the scene frame.',
+  keepAspect: 'Continue anyway',
+  expandAspect: 'Adjust with AI',
+  cancelUpload: 'Cancel',
+  regenerateImage: 'Generate a new image',
   resultPending: 'Creation result is still unconfirmed',
   resultPendingHint:
     'Your creation record is saved. Wait or check the result before deciding whether to discard it and start again.',

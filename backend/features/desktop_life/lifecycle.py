@@ -1,4 +1,4 @@
-"""桌面生活恢复保留启动与维护后的不同付费门禁。"""
+"""桌面生活恢复保留启动与维护后的不同模型调用边界。"""
 
 from runtime.lifecycle import RuntimeParticipant
 

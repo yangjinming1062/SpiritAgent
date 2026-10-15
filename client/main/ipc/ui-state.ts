@@ -65,7 +65,7 @@ function stateData(raw: MainUiStateData): MainUiStateData {
     typeof desktopLife.addActionOpen !== 'boolean' ||
     !desktopLife.create ||
     !['ai', 'image_upload', 'video_upload'].includes(desktopLife.create.source) ||
-    !['name', 'sceneId', 'sceneLabel', 'outfitId', 'feedback', 'requestId'].every(
+    !['name', 'sceneId', 'sceneLabel', 'outfitId', 'feedback', 'requestId', 'targetWidth', 'targetHeight'].every(
       key => typeof desktopLife.create[key as keyof typeof desktopLife.create] === 'string'
     ) ||
     !desktopLife.feedback ||

@@ -7,7 +7,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
-revision: str = "0003"
+revision: str = "0001"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -1088,6 +1088,9 @@ def upgrade() -> None:
     # 桌面生活视频：组合、动作、播放偏好、提案与播放账本。
     op.create_table(
         "desktop_video_sets",
+        sa.Column("target_width", sa.Integer(), nullable=False),
+        sa.Column("target_height", sa.Integer(), nullable=False),
+        sa.Column("resolution_revision", sa.Integer(), server_default=sa.text("1"), nullable=False),
         sa.Column("request_id", sa.String(80), nullable=True),
         sa.Column("is_default", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("source", sa.String(24), server_default=sa.text("'ai'"), nullable=False),
@@ -1149,6 +1152,8 @@ def upgrade() -> None:
     op.create_index("ix_desktop_video_actions_set_id", "desktop_video_actions", ["set_id"])
     op.create_table(
         "desktop_video_states",
+        sa.Column("target_width", sa.Integer(), nullable=True),
+        sa.Column("target_height", sa.Integer(), nullable=True),
         sa.Column("default_created", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),

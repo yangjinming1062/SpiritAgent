@@ -1,7 +1,7 @@
 import { atom } from 'nanostores'
 
 import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
+import { backendDetailMessage, backendErrorDetail, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi, fileApi } from '@/shared/platform/desktop'
@@ -9,6 +9,8 @@ import { $presentation } from '@/shared/store/presentation'
 
 import type {
   DesktopVideoAction,
+  DesktopVideoAspectMismatch,
+  DesktopVideoAspectPolicy,
   DesktopVideoPlayCommand,
   DesktopVideoPrompt,
   DesktopVideoProposal,
@@ -163,7 +165,44 @@ async function withDesktopModeGateRetry<T>(request: () => Promise<T>): Promise<T
 }
 
 function ensureCurrentWithRetry(): Promise<DesktopVideoState> {
-  return withDesktopModeGateRetry(() => mutation<DesktopVideoState>('/ensure-current', { trigger: 'entry' }))
+  const target = desktopScreenResolution()
+
+  if (!target) {
+    return Promise.reject(new Error('无法读取桌面显示器分辨率，请在创建桌景时填写宽高。'))
+  }
+
+  return withDesktopModeGateRetry(() => mutation<DesktopVideoState>('/ensure-current', { trigger: 'entry', ...target }))
+}
+
+export function desktopScreenResolution(): { target_width: number; target_height: number } | null {
+  const presentation = $presentation.get()
+  const display = presentation.displays.find(item => item.id === presentation.displayId)
+
+  return display &&
+    typeof display.pixelWidth === 'number' &&
+    display.pixelWidth > 0 &&
+    typeof display.pixelHeight === 'number' &&
+    display.pixelHeight > 0
+    ? { target_width: display.pixelWidth, target_height: display.pixelHeight }
+    : null
+}
+
+export function desktopVideoAspectMismatch(error: unknown): DesktopVideoAspectMismatch | null {
+  const detail = backendErrorDetail(error)
+
+  if (!detail || typeof detail !== 'object' || !('reason' in detail) || detail.reason !== 'aspect_ratio_mismatch') {
+    return null
+  }
+
+  const item = detail as Partial<DesktopVideoAspectMismatch>
+
+  return [item.source_width, item.source_height, item.target_width, item.target_height].every(
+    value => typeof value === 'number' && Number.isFinite(value) && value > 0
+  ) &&
+    (item.media_kind === 'image' || item.media_kind === 'video') &&
+    Array.isArray(item.choices)
+    ? (item as DesktopVideoAspectMismatch)
+    : null
 }
 
 export async function ensureDesktopVideoCurrent(): Promise<DesktopVideoState> {
@@ -202,8 +241,13 @@ export function desktopActionGuard(
 ): {
   expected_draft_id: string | null
   expected_base_version: number
+  expected_resolution_revision: number
 } {
-  return { expected_draft_id: action.draft?.id ?? null, expected_base_version: set.base_version }
+  return {
+    expected_draft_id: action.draft?.id ?? null,
+    expected_base_version: set.base_version,
+    expected_resolution_revision: set.resolution_revision
+  }
 }
 
 export async function createDesktopVideoSet(input: {
@@ -213,6 +257,8 @@ export async function createDesktopVideoSet(input: {
   outfit_id: number
   source: DesktopVideoSource
   feedback?: string
+  target_width: number
+  target_height: number
 }): Promise<DesktopVideoSet> {
   const set = await mutation<DesktopVideoSet>('/sets', input)
   await refreshDesktopVideos()
@@ -222,6 +268,19 @@ export async function createDesktopVideoSet(input: {
 
 export async function renameDesktopVideoSet(setId: number, name: string): Promise<void> {
   await mutation(`/sets/${setId}`, { name }, 'PATCH')
+  await refreshDesktopVideos()
+}
+
+export async function resizeDesktopVideoSet(set: DesktopVideoSet, width: number, height: number): Promise<void> {
+  await mutation(
+    `/sets/${set.id}`,
+    {
+      target_width: width,
+      target_height: height,
+      expected_resolution_revision: set.resolution_revision
+    },
+    'PATCH'
+  )
   await refreshDesktopVideos()
 }
 
@@ -319,19 +378,33 @@ export async function activateDesktopVideoSet(set: DesktopVideoSet): Promise<boo
 export async function generateDesktopVideoAction(
   action: DesktopVideoAction,
   set: DesktopVideoSet,
-  feedback = ''
-): Promise<void> {
-  await mutation(`/actions/${action.id}/generate`, { ...desktopActionGuard(action, set), feedback })
+  feedback = '',
+  aspectPolicy: DesktopVideoAspectPolicy = 'ask'
+): Promise<DesktopVideoAction> {
+  const generated = await mutation<DesktopVideoAction>(`/actions/${action.id}/generate`, {
+    ...desktopActionGuard(action, set),
+    feedback,
+    aspect_policy: aspectPolicy
+  })
+
   await refreshDesktopVideos()
+
+  return generated
 }
 
 export async function generateDesktopVideoImage(
   action: DesktopVideoAction,
   set: DesktopVideoSet,
   feedback = '',
-  regenerate = false
+  regenerate = false,
+  aspectPolicy: DesktopVideoAspectPolicy = 'ask'
 ): Promise<void> {
-  await mutation(`/actions/${action.id}/image`, { ...desktopActionGuard(action, set), feedback, regenerate })
+  await mutation(`/actions/${action.id}/image`, {
+    ...desktopActionGuard(action, set),
+    feedback,
+    regenerate,
+    aspect_policy: aspectPolicy
+  })
   await refreshDesktopVideos()
 }
 
@@ -347,6 +420,7 @@ export async function confirmDesktopVideoImage(
   await mutation(`/actions/${action.id}/confirm-image`, {
     draft_id: action.draft.id,
     expected_base_version: set.base_version,
+    expected_resolution_revision: set.resolution_revision,
     generate_video: generateVideo
   })
   await refreshDesktopVideos()
@@ -377,7 +451,8 @@ export async function resumeDesktopVideoDraft(action: DesktopVideoAction, set: D
 
   await mutation(`/actions/${action.id}/resume`, {
     draft_id: action.draft.id,
-    expected_base_version: set.base_version
+    expected_base_version: set.base_version,
+    expected_resolution_revision: set.resolution_revision
   })
   await refreshDesktopVideos()
 }
@@ -385,11 +460,13 @@ export async function resumeDesktopVideoDraft(action: DesktopVideoAction, set: D
 export async function getDesktopVideoPrompt(
   action: DesktopVideoAction,
   set: DesktopVideoSet,
-  additionalRequirements = ''
+  additionalRequirements = '',
+  aspectPolicy: Exclude<DesktopVideoAspectPolicy, 'expand'> = 'ask'
 ): Promise<DesktopVideoPrompt> {
   return mutation<DesktopVideoPrompt>(`/actions/${action.id}/external-prompt`, {
     ...desktopActionGuard(action, set),
     expected_set_id: set.id,
+    aspect_policy: aspectPolicy,
     requirements: additionalRequirements.trim()
   })
 }
@@ -399,7 +476,8 @@ export async function uploadDesktopVideoAction(
   set: DesktopVideoSet,
   path: string,
   authSessionId: string,
-  mediaKind: 'video' | 'image' = 'video'
+  mediaKind: 'video' | 'image' = 'video',
+  aspectPolicy: DesktopVideoAspectPolicy = 'ask'
 ): Promise<void> {
   await fileApi().uploadDesktopVideo({
     actionId: action.id,
@@ -408,7 +486,9 @@ export async function uploadDesktopVideoAction(
     path,
     mediaKind,
     expectedDraftId: action.draft?.id ?? null,
-    expectedBaseVersion: set.base_version
+    expectedBaseVersion: set.base_version,
+    expectedResolutionRevision: set.resolution_revision,
+    aspectPolicy
   })
   await refreshDesktopVideos()
 }
@@ -437,7 +517,8 @@ export async function reviewDesktopVideoAction(
 
   await mutation<DesktopVideoAction>(`/actions/${action.id}/${accept ? 'accept' : 'reject'}`, {
     draft_id: action.draft.id,
-    expected_base_version: set.base_version
+    expected_base_version: set.base_version,
+    expected_resolution_revision: set.resolution_revision
   })
   await refreshDesktopVideos()
 }

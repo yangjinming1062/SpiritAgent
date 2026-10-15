@@ -52,6 +52,21 @@ class DesktopVideoStateError(DesktopVideoError):
     pass
 
 
+class DesktopVideoAspectRatioError(DesktopVideoStateError):
+    def __init__(self, width: int, height: int, target_width: int, target_height: int, media_kind: str) -> None:
+        super().__init__("上传内容与桌景画幅不同，请选择处理方式")
+        self.detail = {
+            "error": str(self),
+            "reason": "aspect_ratio_mismatch",
+            "source_width": width,
+            "source_height": height,
+            "target_width": target_width,
+            "target_height": target_height,
+            "media_kind": media_kind,
+            "choices": ["keep", "expand"] if media_kind == "image" else ["keep"],
+        }
+
+
 def desktop_accepted_asset(action: DesktopVideoAction) -> DesktopVideoAsset | None:
     if not action.accepted_asset_json:
         return None
@@ -183,6 +198,12 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
             id=draft.generation_id,
             stage=action.stage,
             source=draft.source,
+            target_width=draft.target_width,
+            target_height=draft.target_height,
+            resolution_revision=draft.resolution_revision,
+            geometry_mode=draft.geometry_mode,
+            frame_width=draft.frame_width,
+            frame_height=draft.frame_height,
             image_url=client_asset_url(draft.pose_path or draft.previous_pose_path)
             if draft.pose_path or draft.previous_pose_path
             else "",
@@ -269,6 +290,9 @@ async def desktop_set_response(
     return DesktopVideoSetResponse(
         id=row.id,
         title=row.title,
+        target_width=row.target_width,
+        target_height=row.target_height,
+        resolution_revision=row.resolution_revision,
         is_default=row.is_default,
         source=row.source,
         outfit_id=row.outfit_id,
@@ -717,8 +741,15 @@ async def publish_desktop_asset(
         completed = DesktopVideoProgress(
             generation_id=progress.generation_id,
             source=progress.source,
+            target_width=progress.target_width,
+            target_height=progress.target_height,
+            resolution_revision=progress.resolution_revision,
+            geometry_mode=progress.geometry_mode,
+            source_image_path=progress.source_image_path,
+            expansion_canvas_path=progress.expansion_canvas_path,
+            expansion_generated_path=progress.expansion_generated_path,
+            expansion_box=progress.expansion_box,
             duration_seconds=progress.duration_seconds,
-            paid_slot_consumed=progress.paid_slot_consumed,
             image_confirmed=True,
             pose_path=asset.image_path,
             image_origin=asset.image_origin,
@@ -735,8 +766,11 @@ async def publish_desktop_asset(
         asset.video_path,
         asset.poster_path,
         asset.image_path,
+        *([asset.source_image_path] if asset.source_image_path else []),
         *([asset.base_image_path] if asset.base_image_path else []),
     }
+    if progress is not None:
+        current_paths |= asset_paths(action.generation_state_json, action.user_id)
     await enqueue_asset_cleanup(
         db,
         action.user_id,

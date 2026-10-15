@@ -11,6 +11,7 @@ from features.desktop_life.schemas import DesktopVideoAsset
 
 LOOP_HOLD_SECONDS = 10 * 60
 ONCE_REPEAT_SECONDS = 30 * 60
+DEFERRED_PLAY_INTENT_TTL_SECONDS = 15 * 60
 
 
 async def desktop_autonomous_block_reason(

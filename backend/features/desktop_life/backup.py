@@ -13,6 +13,7 @@ from features.media.contracts import RemovedActionVideoTask
 from .backup_assets import restore_desktop_payload, validate_desktop_owned_paths
 from .models import DesktopVideoAction, DesktopVideoSet, DesktopVideoState
 from .repository import desktop_removed_video_task
+from .schemas import DesktopVideoProgress
 
 DESKTOP_TABLES = frozenset({"desktop_video_sets", "desktop_video_actions", "desktop_video_states"})
 
@@ -31,6 +32,27 @@ async def _check(
     context: BackupContext,
 ) -> None:
     validate_desktop_owned_paths(payload, context.asset_owner_id)
+    if table == "desktop_video_actions" and payload.get("generation_state_json") and payload.get("stage") != "complete":
+        if (
+            context.mode == "merge"
+            and await db.scalar(
+                select(DesktopVideoAction.id).where(
+                    DesktopVideoAction.user_id == context.user_id,
+                    DesktopVideoAction.set_id == payload["set_id"],
+                    DesktopVideoAction.key == payload["key"],
+                ),
+            )
+            is not None
+        ):
+            return
+        suite = await db.get(DesktopVideoSet, payload["set_id"])
+        progress = DesktopVideoProgress.model_validate_json(payload["generation_state_json"])
+        if suite is None or (progress.target_width, progress.target_height, progress.resolution_revision) != (
+            suite.target_width,
+            suite.target_height,
+            suite.resolution_revision,
+        ):
+            raise ValueError("桌景制作草稿的目标分辨率与套装不一致。")
     if table == "desktop_video_states":
         selected = None
         for field in ("selected_action_id", "loop_action_id"):

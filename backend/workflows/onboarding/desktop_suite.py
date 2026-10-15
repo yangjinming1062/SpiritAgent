@@ -1,4 +1,4 @@
-"""初始场景与着装就绪后建立一次默认桌景；桌景模块负责幂等及付费门禁。"""
+"""屏幕尺寸、初始场景与着装就绪后建立一次默认桌景。"""
 
 from features.desktop_life.service import ensure_current_desktop_videos
 from infrastructure.logger import get_logger

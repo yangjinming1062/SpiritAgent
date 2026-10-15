@@ -1,5 +1,6 @@
 """桌面生活视频：资源、制作、复核、播放与客户端回执。"""
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import File, Form, HTTPException, UploadFile
@@ -105,6 +106,8 @@ async def upload_action(
     expected_set_id: int | None = Form(None),
     expected_draft_id: str | None = Form(None),
     expected_base_version: int | None = Form(None),
+    expected_resolution_revision: int | None = Form(None),
+    aspect_policy: Literal["ask", "keep", "expand"] = Form("ask"),
 ) -> DesktopVideoActionResponse:
     try:
         return await _desktop.upload_action(
@@ -114,6 +117,8 @@ async def upload_action(
             expected_set_id=expected_set_id,
             expected_draft_id=expected_draft_id,
             expected_base_version=expected_base_version,
+            expected_resolution_revision=expected_resolution_revision,
+            aspect_policy=aspect_policy,
         )
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -254,6 +259,8 @@ async def upload_image(
     expected_set_id: int | None = Form(None),
     expected_draft_id: str | None = Form(None),
     expected_base_version: int | None = Form(None),
+    expected_resolution_revision: int | None = Form(None),
+    aspect_policy: Literal["ask", "keep", "expand"] = Form("ask"),
 ) -> DesktopVideoActionResponse:
     try:
         return await _desktop.upload_image(
@@ -263,6 +270,8 @@ async def upload_image(
             expected_set_id=expected_set_id,
             expected_draft_id=expected_draft_id,
             expected_base_version=expected_base_version,
+            expected_resolution_revision=expected_resolution_revision,
+            aspect_policy=aspect_policy,
         )
     except RequestError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

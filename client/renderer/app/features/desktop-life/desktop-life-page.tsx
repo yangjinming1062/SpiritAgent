@@ -14,16 +14,23 @@ import {
   createDesktopVideoSet,
   deleteDesktopVideoSet,
   designDesktopVideoAction,
+  desktopScreenResolution,
   type DesktopVideoAction,
+  desktopVideoAspectMismatch,
+  type DesktopVideoAspectMismatch,
+  type DesktopVideoAspectPolicy,
   type DesktopVideoPromptReference,
+  type DesktopVideoSet,
   type DesktopVideoSource,
   generateDesktopVideoAction,
   generateDesktopVideoImage,
   getDesktopVideoPrompt,
+  MAX_DESKTOP_VIDEO_DIMENSION,
   pauseDesktopVideoDraft,
   playDesktopVideoAction,
   refreshDesktopVideos,
   renameDesktopVideoSet,
+  resizeDesktopVideoSet,
   resumeDesktopVideoDraft,
   reviewDesktopVideoAction,
   setDesktopVideoPreferences,
@@ -52,6 +59,7 @@ import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 
+import { DesktopLifeResolutionSettings, ResolutionFields, resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 
@@ -59,14 +67,22 @@ function isActionPaused(action: DesktopVideoAction): boolean {
   return action.status === 'processing' && action.stage === 'paused'
 }
 
-function DesktopLifeCover({ url }: { url: string | null }): React.JSX.Element {
+function DesktopLifeCover({ url, target }: { url: string | null; target?: DesktopVideoSet }): React.JSX.Element {
   const t = useDesktopLifeStrings()
   const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
 
   return media.status === 'ready' ? (
-    <img alt="" className="aspect-video w-full rounded-lg object-cover" src={media.src} />
+    <img
+      alt=""
+      className="w-full rounded-lg bg-black/20 object-contain"
+      src={media.src}
+      style={{ aspectRatio: target ? target.target_width / target.target_height : 16 / 9 }}
+    />
   ) : (
-    <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-black/10 text-xs text-muted">
+    <div
+      className="flex w-full items-center justify-center rounded-lg bg-black/10 text-xs text-muted"
+      style={{ aspectRatio: target ? target.target_width / target.target_height : 16 / 9 }}
+    >
       {t.noPreview}
     </div>
   )
@@ -74,10 +90,12 @@ function DesktopLifeCover({ url }: { url: string | null }): React.JSX.Element {
 
 function DesktopLifePreview({
   action,
+  set,
   draft = false,
   onImageReady
 }: {
   action: DesktopVideoAction
+  set: DesktopVideoSet
   draft?: boolean
   onImageReady?: () => void
 }): React.JSX.Element {
@@ -90,17 +108,20 @@ function DesktopLifePreview({
       key={`${draft ? action.draft?.id : action.id}:${attempt}`}
       onImageReady={onImageReady}
       onRetry={() => setAttempt(value => value + 1)}
+      set={set}
     />
   )
 }
 
 function ResolvedDesktopLifePreview({
   action,
+  set,
   draft,
   onImageReady,
   onRetry
 }: {
   action: DesktopVideoAction
+  set: DesktopVideoSet
   draft: boolean
   onImageReady?: () => void
   onRetry: () => void
@@ -113,6 +134,10 @@ function ResolvedDesktopLifePreview({
   const media = useResolvedMediaSrc({ type: videoUrl ? 'video' : 'image', url })
   const [failed, setFailed] = useState(false)
   const video = useRef<HTMLVideoElement>(null)
+  const frameWidth = draft ? (action.draft?.target_width ?? set.target_width) : set.target_width
+  const frameHeight = draft ? (action.draft?.target_height ?? set.target_height) : set.target_height
+  const actualWidth = draft ? action.draft?.frame_width : action.current?.width
+  const actualHeight = draft ? action.draft?.frame_height : action.current?.height
 
   useEffect(() => {
     if (!active) {
@@ -121,39 +146,49 @@ function ResolvedDesktopLifePreview({
   }, [active])
 
   return (
-    <div className="flex aspect-video w-full items-center justify-center overflow-hidden rounded-xl bg-black/20">
-      {media.status === 'ready' && !failed ? (
-        videoUrl ? (
-          <video
-            className="h-full w-full object-contain"
-            controls
-            loop={action.kind === 'loop'}
-            muted
-            onError={() => setFailed(true)}
-            playsInline
-            preload="metadata"
-            ref={video}
-            src={media.src}
-          />
+    <div className="flex flex-col gap-2">
+      <div
+        className="flex w-full items-center justify-center overflow-hidden rounded-xl bg-black/20"
+        style={{ aspectRatio: frameWidth / frameHeight }}
+      >
+        {media.status === 'ready' && !failed ? (
+          videoUrl ? (
+            <video
+              className="h-full w-full object-contain"
+              controls
+              loop={action.kind === 'loop'}
+              muted
+              onError={() => setFailed(true)}
+              playsInline
+              preload="metadata"
+              ref={video}
+              src={media.src}
+            />
+          ) : (
+            <img
+              alt={action.name}
+              className="h-full w-full object-contain"
+              onError={() => setFailed(true)}
+              onLoad={onImageReady}
+              src={media.src}
+            />
+          )
         ) : (
-          <img
-            alt={action.name}
-            className="h-full w-full object-contain"
-            onError={() => setFailed(true)}
-            onLoad={onImageReady}
-            src={media.src}
-          />
-        )
-      ) : (
-        <div className="flex flex-col items-center gap-3 p-5 text-center text-sm text-muted">
-          <p>{failed || media.status === 'failed' ? t.previewFailed : url ? t.loading : t.noPreview}</p>
-          {(failed || media.status === 'failed') && (
-            <button className={BTN_SUBTLE} onClick={onRetry} type="button">
-              {t.retryPreview}
-            </button>
-          )}
-        </div>
-      )}
+          <div className="flex flex-col items-center gap-3 p-5 text-center text-sm text-muted">
+            <p>{failed || media.status === 'failed' ? t.previewFailed : url ? t.loading : t.noPreview}</p>
+            {(failed || media.status === 'failed') && (
+              <button className={BTN_SUBTLE} onClick={onRetry} type="button">
+                {t.retryPreview}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {actualWidth && actualHeight ? (
+        <p className="text-xs text-muted">
+          {t.actualResolution}: {resolutionLabel(actualWidth, actualHeight)}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -253,6 +288,8 @@ export function DesktopLifePage({
 }): React.JSX.Element {
   const t = useDesktopLifeStrings()
   const auth = useStore($auth)
+  const panelActive = usePanelActivity()
+  const presentation = useStore($presentation)
   const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const state = useStore($desktopVideoState)
   const sets = useStore($desktopVideoSets)
@@ -279,6 +316,9 @@ export function DesktopLifePage({
 
   const setCreateOpen = (creating: boolean): void => updateDesktopLifeUi({ creating })
   const [busy, setBusy] = useState(false)
+  const [aspectChoice, setAspectChoice] = useState<DesktopVideoAspectMismatch | null>(null)
+  const resolveAspectChoice = useRef<((policy: DesktopVideoAspectPolicy | null) => void) | null>(null)
+  const aspectGeneration = useRef(0)
   const [imagePreviews, setImagePreviews] = useState<Record<string, boolean>>({})
   const scenes = useStore($sceneLibrary)
   const activeScene = useStore($activeScene)
@@ -299,6 +339,7 @@ export function DesktopLifePage({
   }
 
   const [externalBaseVersion, setExternalBaseVersion] = useState(0)
+  const [externalResolutionRevision, setExternalResolutionRevision] = useState(0)
   const [externalPrompt, setExternalPrompt] = useState<Awaited<ReturnType<typeof getDesktopVideoPrompt>> | null>(null)
   const externalRequirements = ui.externalRequirements
   const setExternalRequirements = (value: string): void => updateDesktopLifeUi({ externalRequirements: value })
@@ -323,6 +364,7 @@ export function DesktopLifePage({
     externalAction &&
     (!externalSet ||
       externalSet.base_version !== externalBaseVersion ||
+      externalSet.resolution_revision !== externalResolutionRevision ||
       liveExternalAction?.draft?.id !== externalAction.draft?.id ||
       liveExternalAction?.draft?.image_url?.split(/[?#]/)[0] !== externalAction.draft?.image_url?.split(/[?#]/)[0] ||
       liveExternalAction?.draft?.image_confirmed !== externalAction.draft?.image_confirmed ||
@@ -334,6 +376,15 @@ export function DesktopLifePage({
       item.actions.some(item => item.status === 'processing' && !isActionPaused(item)) ||
       item.proposals?.some(proposal => proposal.status === 'pending')
   )
+
+  useEffect(() => {
+    return () => {
+      aspectGeneration.current += 1
+      resolveAspectChoice.current?.(null)
+      resolveAspectChoice.current = null
+      setAspectChoice(null)
+    }
+  }, [authSessionId, panelActive])
 
   useEffect(() => {
     if (authSessionId) {
@@ -384,6 +435,7 @@ export function DesktopLifePage({
       if (set && savedAction) {
         setExternalActionLocal(savedAction)
         setExternalBaseVersion(set.base_version)
+        setExternalResolutionRevision(set.resolution_revision)
       }
     }
   }, [externalAction, sets, ui.externalActionId])
@@ -410,6 +462,25 @@ export function DesktopLifePage({
       })
     }
   }, [createOpen, activeScene, outfits, scenes])
+
+  useEffect(() => {
+    if (!createOpen) {
+      return
+    }
+
+    const previous = $desktopLifeUi.get().create
+    const screen = desktopScreenResolution()
+
+    if (!previous.targetWidth && !previous.targetHeight && screen) {
+      updateDesktopLifeUi({
+        create: {
+          ...previous,
+          targetWidth: String(screen.target_width),
+          targetHeight: String(screen.target_height)
+        }
+      })
+    }
+  }, [createOpen, presentation])
 
   useEffect(() => {
     if (!createOpen || !create.sceneId) {
@@ -451,6 +522,82 @@ export function DesktopLifePage({
     }
   }
 
+  const withAspectChoice = async (
+    operation: (policy: DesktopVideoAspectPolicy, mismatch?: DesktopVideoAspectMismatch) => Promise<void>,
+    isCurrent: () => boolean = () => true
+  ): Promise<boolean> => {
+    const scope = captureAuthScope()
+    const isLive = beginAsync()
+    const generation = aspectGeneration.current
+
+    try {
+      await operation('ask')
+
+      return true
+    } catch (failure) {
+      const mismatch = desktopVideoAspectMismatch(failure)
+
+      if (!mismatch) {
+        throw failure
+      }
+
+      if (!scope?.() || !isLive() || !isCurrent() || generation !== aspectGeneration.current) {
+        return false
+      }
+
+      const policy = await new Promise<DesktopVideoAspectPolicy | null>(resolve => {
+        resolveAspectChoice.current?.(null)
+        resolveAspectChoice.current = resolve
+        setAspectChoice(mismatch)
+      })
+
+      if (policy && scope() && isLive() && isCurrent() && generation === aspectGeneration.current) {
+        await operation(policy, mismatch)
+
+        return true
+      }
+
+      return false
+    }
+  }
+
+  const makeImage = async (
+    item: DesktopVideoAction,
+    set: DesktopVideoSet,
+    note = '',
+    regenerate = false
+  ): Promise<void> => {
+    await withAspectChoice(policy => generateDesktopVideoImage(item, set, note, regenerate, policy))
+  }
+
+  const makeVideo = async (item: DesktopVideoAction, set: DesktopVideoSet, note = ''): Promise<void> => {
+    const scope = captureAuthScope()
+    const isLive = beginAsync()
+    const generation = aspectGeneration.current
+    await withAspectChoice(async policy => {
+      const generated = await generateDesktopVideoAction(item, set, note, policy)
+      const currentUi = $desktopLifeUi.get()
+
+      if (
+        generated.id !== item.id &&
+        scope?.() &&
+        isLive() &&
+        generation === aspectGeneration.current &&
+        currentUi.selectedSetId === set.id &&
+        currentUi.selectedActionId === item.id
+      ) {
+        updateDesktopLifeUi({ selectedActionId: generated.id })
+      }
+    })
+  }
+
+  const chooseAspect = (policy: DesktopVideoAspectPolicy | null): void => {
+    const resolve = resolveAspectChoice.current
+    resolveAspectChoice.current = null
+    setAspectChoice(null)
+    resolve?.(policy)
+  }
+
   const play = async (item: DesktopVideoAction): Promise<void> => {
     if ($presentation.get().effectiveMode !== 'desktop') {
       await shellApi().presentation.setMode('desktop')
@@ -463,7 +610,15 @@ export function DesktopLifePage({
     const requestId = ++externalRequest.current
     const authScope = captureAuthScope()
     const isLive = beginAsync()
-    const isCurrent = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
+    const generation = aspectGeneration.current
+
+    const ownsRequest = (): boolean => Boolean(authScope?.() && isLive() && requestId === externalRequest.current)
+
+    const isCurrent = (): boolean =>
+      Boolean(
+        ownsRequest() && generation === aspectGeneration.current && $desktopLifeUi.get().externalActionId === action.id
+      )
+
     const submittedRequirements = requirements.trim()
     setExternalPromptLoading(true)
 
@@ -475,25 +630,65 @@ export function DesktopLifePage({
         throw new Error(t.stalePrompt)
       }
 
-      const prompt = await getDesktopVideoPrompt(latest, set, submittedRequirements)
+      await withAspectChoice(async (policy, mismatch) => {
+        if (policy === 'expand') {
+          const liveSet = $desktopVideoSets.get().find(item => item.id === set.id)
+          const targetAction = liveSet?.actions.find(item => item.id === (mismatch?.adjust_action_id ?? latest.id))
 
-      if (isCurrent()) {
-        if (externalStale) {
-          setExternalFilePath(null)
+          if (
+            !isCurrent() ||
+            !liveSet ||
+            !targetAction ||
+            liveSet.base_version !== set.base_version ||
+            liveSet.resolution_revision !== set.resolution_revision
+          ) {
+            throw new Error(t.stalePrompt)
+          }
+
+          if (targetAction.id !== latest.id && targetAction.draft) {
+            throw new Error(t.sharedImageDraftHint)
+          }
+
+          if (
+            targetAction.id === latest.id &&
+            (targetAction.draft?.id !== latest.draft?.id ||
+              targetAction.draft?.image_url?.split(/[?#]/)[0] !== latest.draft?.image_url?.split(/[?#]/)[0] ||
+              targetAction.current?.image_url?.split(/[?#]/)[0] !== latest.current?.image_url?.split(/[?#]/)[0])
+          ) {
+            throw new Error(t.stalePrompt)
+          }
+
+          await generateDesktopVideoImage(targetAction, liveSet, '', false, 'expand')
+
+          if (isCurrent()) {
+            closeExternal()
+            updateDesktopLifeUi({ selectedSetId: liveSet.id, selectedActionId: targetAction.id, creating: false })
+          }
+
+          return
         }
 
-        setExternalAction(latest)
-        setExternalBaseVersion(set.base_version)
-        setExternalPrompt(prompt)
-        setExternalPromptRequirements(submittedRequirements)
-        setExternalCopied(false)
-      }
+        const prompt = await getDesktopVideoPrompt(latest, set, submittedRequirements, policy)
+
+        if (isCurrent()) {
+          if (externalStale) {
+            setExternalFilePath(null)
+          }
+
+          setExternalAction(latest)
+          setExternalBaseVersion(set.base_version)
+          setExternalResolutionRevision(set.resolution_revision)
+          setExternalPrompt(prompt)
+          setExternalPromptRequirements(submittedRequirements)
+          setExternalCopied(false)
+        }
+      }, isCurrent)
     } catch (failure) {
       if (isCurrent()) {
         notifyError(failure, t.externalTitle)
       }
     } finally {
-      if (isCurrent()) {
+      if (ownsRequest()) {
         setExternalPromptLoading(false)
       }
     }
@@ -503,6 +698,9 @@ export function DesktopLifePage({
     const sameAction = $desktopLifeUi.get().externalActionId === action.id
     setExternalAction(action)
     setExternalBaseVersion($desktopVideoSets.get().find(set => set.id === action.set_id)?.base_version ?? 0)
+    setExternalResolutionRevision(
+      $desktopVideoSets.get().find(set => set.id === action.set_id)?.resolution_revision ?? 0
+    )
     setExternalPrompt(null)
 
     if (!sameAction) {
@@ -516,6 +714,7 @@ export function DesktopLifePage({
   }
 
   const closeExternal = (): void => {
+    chooseAspect(null)
     externalRequest.current += 1
     setExternalAction(null)
     setExternalPrompt(null)
@@ -573,15 +772,23 @@ export function DesktopLifePage({
         throw new Error(t.stalePrompt)
       }
 
-      await uploadDesktopVideoAction(
-        action,
-        { ...externalSet, base_version: externalBaseVersion },
-        externalFilePath,
-        authSessionId
+      const uploaded = await withAspectChoice(
+        policy =>
+          uploadDesktopVideoAction(
+            action,
+            { ...externalSet, base_version: externalBaseVersion, resolution_revision: externalResolutionRevision },
+            externalFilePath,
+            authSessionId,
+            'video',
+            policy
+          ),
+        isCurrent
       )
 
-      if (isCurrent()) {
+      if (isCurrent() && uploaded) {
         closeExternal()
+      } else if (isCurrent()) {
+        setExternalUploading(false)
       }
     } catch (failure) {
       if (isCurrent()) {
@@ -650,7 +857,7 @@ export function DesktopLifePage({
     })
 
     if (path && scope() && isLive()) {
-      await uploadDesktopVideoAction(action, selected, path, authSessionId, 'image')
+      await withAspectChoice(policy => uploadDesktopVideoAction(action, selected, path, authSessionId, 'image', policy))
     }
   }
 
@@ -837,6 +1044,7 @@ export function DesktopLifePage({
                   setImagePreviews(current => ({ ...current, [`${draft.id}:${draft.image_url}`]: true }))
                 }
               }}
+              set={selected}
             />
             {item.current && item.draft && <p className="text-sm text-muted">{t.savedCurrent}</p>}
             {(item.error || item.draft?.error) && (
@@ -916,7 +1124,7 @@ export function DesktopLifePage({
                   <button
                     className={`${BTN_SUBTLE} mt-3`}
                     disabled={busy || !note.trim()}
-                    onClick={() => void run(() => generateDesktopVideoImage(item, selected, note))}
+                    onClick={() => void run(() => makeImage(item, selected, note))}
                     type="button"
                   >
                     {t.adjustImage}
@@ -986,10 +1194,10 @@ export function DesktopLifePage({
                       }
 
                       if (!dependent && !item.draft?.image_confirmed) {
-                        return generateDesktopVideoImage(item, selected, isActionPaused(item) ? '' : note)
+                        return makeImage(item, selected, isActionPaused(item) ? '' : note)
                       }
 
-                      return generateDesktopVideoAction(item, selected, isActionPaused(item) ? '' : note)
+                      return makeVideo(item, selected, isActionPaused(item) ? '' : note)
                     })
                   }
                   type="button"
@@ -1022,7 +1230,7 @@ export function DesktopLifePage({
                       <button
                         className={`${BTN_SUBTLE} self-start`}
                         disabled={busy || item.draft?.submission_unknown}
-                        onClick={() => void run(() => generateDesktopVideoImage(item, selected, note))}
+                        onClick={() => void run(() => makeImage(item, selected, note))}
                         type="button"
                       >
                         {t.adjustImage}
@@ -1033,10 +1241,20 @@ export function DesktopLifePage({
                     <button
                       className={`${BTN_SUBTLE} self-start`}
                       disabled={busy || item.draft?.submission_unknown}
-                      onClick={() => void run(() => generateDesktopVideoAction(item, selected, note))}
+                      onClick={() => void run(() => makeVideo(item, selected, note))}
                       type="button"
                     >
                       {t.remakeVideo}
+                    </button>
+                  )}
+                  {!dependent && (
+                    <button
+                      className={`${BTN_SUBTLE} self-start`}
+                      disabled={busy || item.draft?.submission_unknown}
+                      onClick={() => void run(() => makeImage(item, selected, note, true))}
+                      type="button"
+                    >
+                      {t.regenerateImage}
                     </button>
                   )}
                   {!dependent && (
@@ -1103,6 +1321,16 @@ export function DesktopLifePage({
 
   const selectedOutfit = outfits.find(outfit => String(outfit.id) === create.outfitId)
   const materialReady = selectedScene?.status === 'ready' && selectedOutfit?.status === 'ready'
+  const createWidth = Number(create.targetWidth)
+  const createHeight = Number(create.targetHeight)
+
+  const resolutionReady =
+    Number.isSafeInteger(createWidth) &&
+    createWidth > 0 &&
+    createWidth <= MAX_DESKTOP_VIDEO_DIMENSION &&
+    Number.isSafeInteger(createHeight) &&
+    createHeight > 0 &&
+    createHeight <= MAX_DESKTOP_VIDEO_DIMENSION
 
   const displayedActions =
     selected?.actions.filter(item => item.key !== 'idle' && (item.current || item.draft || item.status === 'failed')) ??
@@ -1126,6 +1354,11 @@ export function DesktopLifePage({
             </button>
           )}
         </header>
+        {selected && !createOpen && (
+          <p className="text-sm text-muted">
+            {t.targetResolution}: {resolutionLabel(selected.target_width, selected.target_height)}
+          </p>
+        )}
         {(selected || createOpen) && (
           <button
             className={`${BTN_GHOST} self-start`}
@@ -1177,6 +1410,8 @@ export function DesktopLifePage({
                     scene_id: Number(create.sceneId),
                     outfit_id: Number(create.outfitId),
                     source: create.source,
+                    target_width: createWidth,
+                    target_height: createHeight,
                     feedback: create.feedback.trim()
                   })
 
@@ -1200,7 +1435,9 @@ export function DesktopLifePage({
                     })
 
                     if (path && authSessionId && scope()) {
-                      await uploadDesktopVideoAction(first, created, path, authSessionId, 'image')
+                      await withAspectChoice(policy =>
+                        uploadDesktopVideoAction(first, created, path, authSessionId, 'image', policy)
+                      )
                     }
                   }
 
@@ -1231,6 +1468,26 @@ export function DesktopLifePage({
                 </label>
               ) : (
                 <div className="rounded-xl bg-accent/5 p-4 text-sm text-body">{t.ownMediaHint}</div>
+              )}
+              <ResolutionFields
+                disabled={busy}
+                height={create.targetHeight}
+                onChange={(targetWidth, targetHeight) =>
+                  setCreate(current => ({
+                    ...current,
+                    targetWidth,
+                    targetHeight,
+                    requestId: crypto.randomUUID()
+                  }))
+                }
+                width={create.targetWidth}
+              />
+              {!resolutionReady && (
+                <p className="text-xs text-muted">
+                  {!create.targetWidth && !create.targetHeight
+                    ? t.screenUnavailable
+                    : t.resolutionRangeHint(MAX_DESKTOP_VIDEO_DIMENSION)}
+                </p>
               )}
               <section className="flex flex-col gap-3 rounded-xl bg-black/5 p-4">
                 <p className="text-sm text-body">{t.referencesHint}</p>
@@ -1374,7 +1631,7 @@ export function DesktopLifePage({
                 </label>
               </details>
               <div className="sticky bottom-0 flex flex-wrap items-center gap-3 border-t border-line-hairline bg-surface-card py-4">
-                <button className={BTN_PRIMARY} disabled={busy || !materialReady} type="submit">
+                <button className={BTN_PRIMARY} disabled={busy || !materialReady || !resolutionReady} type="submit">
                   {busy
                     ? t.preparing
                     : create.source === 'ai'
@@ -1410,9 +1667,9 @@ export function DesktopLifePage({
             {idle && (
               <section className="flex flex-col gap-4">
                 {idle.current ? (
-                  <DesktopLifePreview action={idle} />
+                  <DesktopLifePreview action={idle} set={selected} />
                 ) : (
-                  <DesktopLifeCover url={idle.draft?.image_url || selected.base_image_url} />
+                  <DesktopLifeCover target={selected} url={idle.draft?.image_url || selected.base_image_url} />
                 )}
                 <div className="flex flex-wrap items-center gap-3">
                   {idle.playable && (
@@ -1465,6 +1722,7 @@ export function DesktopLifePage({
                       type="button"
                     >
                       <DesktopLifeCover
+                        target={selected}
                         url={
                           item.current?.poster_url || item.draft?.candidate_poster_url || item.draft?.image_url || null
                         }
@@ -1490,6 +1748,12 @@ export function DesktopLifePage({
             <details className="rounded-xl border border-line-hairline p-4">
               <summary className="cursor-pointer text-sm text-body">{t.more}</summary>
               <div className="mt-4 flex flex-col gap-4">
+                <DesktopLifeResolutionSettings
+                  busy={busy}
+                  key={`${selected.id}:${selected.resolution_revision}`}
+                  onSave={(width, height) => void run(() => resizeDesktopVideoSet(selected, width, height))}
+                  set={selected}
+                />
                 <form
                   className="flex flex-wrap gap-2"
                   onSubmit={event => {
@@ -1555,6 +1819,7 @@ export function DesktopLifePage({
                     type="button"
                   >
                     <DesktopLifeCover
+                      target={item}
                       url={
                         idle?.current?.poster_url ||
                         idle?.draft?.candidate_poster_url ||
@@ -1571,6 +1836,7 @@ export function DesktopLifePage({
                     <span className="text-sm text-muted">
                       {unfinished ? t.continue : idle?.playable ? t.ready : t.notCreated}
                     </span>
+                    <span className="text-xs text-muted">{resolutionLabel(item.target_width, item.target_height)}</span>
                   </button>
                 )
               })}
@@ -1799,7 +2065,7 @@ export function DesktopLifePage({
         <WizardModal
           backdropClose={!externalUploading}
           closeDisabled={externalUploading}
-          escClose={!externalUploading && !externalReferenceZoom}
+          escClose={!externalUploading && !externalReferenceZoom && !aspectChoice}
           onClose={externalUploading ? () => undefined : closeExternal}
           regionId="desktop-life-external"
           title={t.externalTitle}
@@ -1912,6 +2178,34 @@ export function DesktopLifePage({
                 )}
               </div>
             </details>
+          </div>
+        </WizardModal>
+      )}
+      {aspectChoice && (
+        <WizardModal onClose={() => chooseAspect(null)} regionId="desktop-life-aspect-choice" title={t.aspectMismatch}>
+          <div className="flex flex-col gap-4 text-sm text-body">
+            <p>
+              {t.actualResolution}: {resolutionLabel(aspectChoice.source_width, aspectChoice.source_height)}
+            </p>
+            <p>
+              {t.targetResolution}: {resolutionLabel(aspectChoice.target_width, aspectChoice.target_height)}
+            </p>
+            <p>{t.aspectMismatchHint}</p>
+            {aspectChoice.media_kind === 'image' && aspectChoice.choices.includes('expand') && <p>{t.expandHint}</p>}
+            {aspectChoice.adjust_action_name && <p>{t.sharedImageExpandHint(aspectChoice.adjust_action_name)}</p>}
+            <div className="flex flex-wrap gap-2">
+              {aspectChoice.media_kind === 'image' && aspectChoice.choices.includes('expand') && (
+                <button className={BTN_PRIMARY} onClick={() => chooseAspect('expand')} type="button">
+                  {t.expandAspect}
+                </button>
+              )}
+              <button className={BTN_SUBTLE} onClick={() => chooseAspect('keep')} type="button">
+                {t.keepAspect}
+              </button>
+              <button className={BTN_GHOST} onClick={() => chooseAspect(null)} type="button">
+                {t.cancelUpload}
+              </button>
+            </div>
           </div>
         </WizardModal>
       )}

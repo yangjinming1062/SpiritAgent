@@ -119,7 +119,7 @@ def prepare_desktop_video(src: Path, dst: Path, *, aspect_ratio: str | None = No
                 expected = numerator / denominator
             except (ValueError, ZeroDivisionError) as exc:
                 raise VideoProcessError("桌面视频目标画幅无效") from exc
-            if expected <= 0 or abs(frame.width / frame.height / expected - 1) > 0.03:
+            if expected <= 0 or abs(frame.width / frame.height / expected - 1) > 0.01:
                 raise VideoProcessError("桌面视频画幅与已确认图片不一致，请重做")
     dst.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(

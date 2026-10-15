@@ -2,6 +2,20 @@ export type DesktopVideoKind = 'loop' | 'once'
 export type DesktopVideoContinuity = 'base' | 'independent'
 export type DesktopVideoSource = 'ai' | 'image_upload' | 'video_upload'
 export type DesktopVideoTransition = 'base' | 'fade'
+export type DesktopVideoAspectPolicy = 'ask' | 'keep' | 'expand'
+export const MAX_DESKTOP_VIDEO_DIMENSION = 65536
+
+export interface DesktopVideoAspectMismatch {
+  reason: 'aspect_ratio_mismatch'
+  source_width: number
+  source_height: number
+  target_width: number
+  target_height: number
+  media_kind: 'image' | 'video'
+  choices: DesktopVideoAspectPolicy[]
+  adjust_action_id?: number
+  adjust_action_name?: string
+}
 
 export interface DesktopVideoAsset {
   video_url: string
@@ -26,6 +40,12 @@ export interface DesktopVideoDraft {
   candidate_video_url: string | null
   candidate_poster_url: string | null
   base_version: number | null
+  target_width: number
+  target_height: number
+  resolution_revision: number
+  geometry_mode: 'target' | 'keep'
+  frame_width: number | null
+  frame_height: number | null
   error: string | null
 }
 
@@ -88,6 +108,9 @@ export interface DesktopVideoSet {
   scene_id: number | null
   base_image_url: string | null
   base_version: number
+  target_width: number
+  target_height: number
+  resolution_revision: number
   status: string
   actions: DesktopVideoAction[]
   proposals?: DesktopVideoProposal[]

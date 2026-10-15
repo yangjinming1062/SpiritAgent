@@ -47,6 +47,9 @@ export function useDesktopVideoWallpaper(): void {
   const claimedPlays = useRef(new Map<string, Set<DesktopVideoReceiptStatus>>())
   const receiptQueues = useRef(new Map<string, Promise<void>>())
   const paused = locked || presentation.fullscreen || reduceMotion
+  const display = presentation.displays.find(item => item.id === presentation.displayId)
+  const displayWidth = display?.pixelWidth
+  const displayHeight = display?.pixelHeight
 
   const current = state?.current ?? null
 
@@ -147,7 +150,14 @@ export function useDesktopVideoWallpaper(): void {
   }, [authSessionId])
 
   useEffect(() => {
-    if (!active || !authSessionId || gatewayState !== 'open' || !presentation.prepareDesktopMedia) {
+    if (
+      !active ||
+      !authSessionId ||
+      gatewayState !== 'open' ||
+      !presentation.prepareDesktopMedia ||
+      !displayWidth ||
+      !displayHeight
+    ) {
       return
     }
 
@@ -176,7 +186,15 @@ export function useDesktopVideoWallpaper(): void {
     return () => {
       disposed = true
     }
-  }, [active, authSessionId, gatewayState, presentation.prepareDesktopMedia, presentation.stageEpoch])
+  }, [
+    active,
+    authSessionId,
+    gatewayState,
+    presentation.prepareDesktopMedia,
+    presentation.stageEpoch,
+    displayWidth,
+    displayHeight
+  ])
 
   useEffect(() => {
     if (!active || !preparationInProgress) {

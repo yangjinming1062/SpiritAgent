@@ -58,6 +58,7 @@ class CharacterImageInput(BaseModel):
     identity_text: str = ""
     max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
     size_enforced: bool = False
+    require_target_aspect: bool = False
     prefer_transparent_background: bool = False
 
 
@@ -170,12 +171,19 @@ def _expected_aspect_ratio(size: str, *, exact_size: bool = False) -> float | No
     return None
 
 
-def _size_matches_request(size: str, width: int, height: int, *, exact_size: bool = False) -> bool:
+def _size_matches_request(
+    size: str,
+    width: int,
+    height: int,
+    *,
+    exact_size: bool = False,
+    tolerance: float = _SIZE_ASPECT_TOLERANCE,
+) -> bool:
     expected = _expected_aspect_ratio(size, exact_size=exact_size)
     if expected is None or width <= 0 or height <= 0:
         return True
     actual = width / height
-    return abs(actual - expected) <= expected * _SIZE_ASPECT_TOLERANCE
+    return abs(actual - expected) <= expected * tolerance
 
 
 def _validate_image(
@@ -184,6 +192,7 @@ def _validate_image(
     size: str | None = None,
     size_enforced: bool = False,
     exact_size: bool = False,
+    target_aspect: str | None = None,
 ) -> str:
     ext = asset_store.sniff_media_ext(data)
     if ext not in ("png", "jpg", "webp", "gif"):
@@ -194,7 +203,15 @@ def _validate_image(
             width, height = image.width, image.height
     except Exception as exc:
         raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
-    if size_enforced and size and not _size_matches_request(size, width, height, exact_size=exact_size):
+    native_mismatch = size_enforced and size and not _size_matches_request(size, width, height, exact_size=exact_size)
+    target_mismatch = target_aspect and not _size_matches_request(
+        target_aspect,
+        width,
+        height,
+        exact_size=True,
+        tolerance=0.01,
+    )
+    if native_mismatch or target_mismatch:
         logger.info(
             "image size gate rejected candidate",
             extra={"width": width, "height": height, "requested_size": size},
@@ -317,6 +334,9 @@ async def generate_character_images(
     identity_reference: str,
     size: str = "1024x1024",
     aspect_ratio: str | None = None,
+    target_width: int | None = None,
+    target_height: int | None = None,
+    require_target_aspect: bool = False,
     n: int = 1,
     secondary_reference_image: str | None = None,
     image_edit: bool = False,
@@ -340,6 +360,10 @@ async def generate_character_images(
         raise ImageGenerationError("图片任务存储归属已变化")
     configs: dict[int, ProviderConfig] = {}
     if state.inputs is None:
+        if (target_width is None) != (target_height is None):
+            raise ValueError("图片画布须同时提供目标宽高")
+        if require_target_aspect and target_width is None:
+            raise ValueError("严格画幅检查须提供目标宽高")
         if image_edit and secondary_reference_image:
             raise ImageGenerationError("图像编辑不支持附加参考图，请改用重新生成")
         state.inputs = CharacterImageInput(
@@ -354,6 +378,7 @@ async def generate_character_images(
             identity_text=identity_text,
             max_image_bytes=max_image_bytes,
             size_enforced=size_enforced,
+            require_target_aspect=require_target_aspect,
             prefer_transparent_background=prefer_transparent_background,
         )
         async with SESSION_LOCAL() as db:
@@ -369,12 +394,29 @@ async def generate_character_images(
             )
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
-        state.providers = [FrozenMediaProvider.from_config(config) for config in chain]
-        for provider in state.providers:
+        planned: list[tuple[ProviderConfig, FrozenMediaProvider]] = []
+        for config in chain:
+            provider = FrozenMediaProvider.from_config(config)
             provider_cls = resolve(ServiceType.image_gen, provider.provider)
             provider.max_images_per_request = provider_cls.max_images_per_request
             if prefer_transparent_background and provider_cls.supports_transparent_background:
                 provider.background = "transparent"
+            if target_width is not None and target_height is not None:
+                canvas = select_image_canvas(config, target_width, target_height)
+                native_aspect = _expected_aspect_ratio(canvas.aspect_ratio or canvas.size, exact_size=canvas.exact_size)
+                if require_target_aspect and (
+                    native_aspect is None or abs(native_aspect / (target_width / target_height) - 1) > 0.01
+                ):
+                    continue
+                provider.image_size = canvas.size
+                provider.image_aspect_ratio = canvas.aspect_ratio
+                provider.image_resolution = canvas.resolution
+                provider.image_exact_size = canvas.exact_size
+            planned.append((config, provider))
+        if not planned:
+            raise ImageGenerationError("当前图片生成供应商均不支持目标原生画幅，无法保留完整原图进行扩展")
+        chain = [config for config, _provider in planned]
+        state.providers = [provider for _config, provider in planned]
         configs = dict(enumerate(chain))
         if save_progress is not None:
             await _freeze_input_references(
@@ -528,9 +570,12 @@ async def _run_image_chain(
                             ext = await asyncio.to_thread(
                                 _validate_image,
                                 data,
-                                size=(provider.image_size or provider.image_aspect_ratio) if scene else inputs.size,
+                                size=provider.image_size or provider.image_aspect_ratio or inputs.size,
                                 size_enforced=inputs.size_enforced,
-                                exact_size=scene,
+                                exact_size=scene or provider.image_exact_size,
+                                target_aspect=(inputs.aspect_ratio or inputs.size)
+                                if isinstance(inputs, CharacterImageInput) and inputs.require_target_aspect
+                                else None,
                             )
                             if isinstance(inputs, CharacterImageInput) and inputs.prefer_transparent_background:
                                 data = await asyncio.to_thread(prepare_transparent_image, data)

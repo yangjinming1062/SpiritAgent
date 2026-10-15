@@ -179,7 +179,7 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args
         .first()
-        .ok_or("missing check-runtime, host, guardian, or recover mode")?;
+        .ok_or("missing check-runtime, display-bounds, host, guardian, or recover mode")?;
     if mode == "check-runtime" && args.len() == 1 {
         #[cfg(windows)]
         {
@@ -192,6 +192,24 @@ fn run() -> Result<()> {
         }
         #[cfg(not(windows))]
         return Err("Explorer desktop hosting is available on Windows only".into());
+    }
+    if mode == "display-bounds" && args.len() == 2 {
+        #[cfg(windows)]
+        {
+            if args[1].len() > 16_384 {
+                return Err("display bounds request is too large".into());
+            }
+            let requested: Vec<Bounds> = serde_json::from_str(&args[1])
+                .map_err(|error| format!("invalid display bounds: {error}"))?;
+            if requested.len() > 32 || requested.iter().any(|bounds| !bounds.valid()) {
+                return Err("invalid display bounds count or geometry".into());
+            }
+            let displays = windows::display_bounds(&requested)?;
+            emit(json!({ "event": "display_bounds", "displays": displays }));
+            return Ok(());
+        }
+        #[cfg(not(windows))]
+        return Err("Native display geometry is available on Windows only".into());
     }
     if args.get(1).map(String::as_str) != Some("--journal") {
         return Err("expected --journal followed by an absolute path".into());

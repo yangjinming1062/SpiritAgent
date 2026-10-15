@@ -15,6 +15,7 @@ from PIL import Image
 
 from features.assets.references import asset_paths
 from features.desktop_life.schemas import (
+    DESKTOP_MAX_EDGE,
     DesktopVideoAsset,
     DesktopVideoProgress,
     DesktopVisualSnapshot,
@@ -24,6 +25,14 @@ from features.desktop_life.schemas import (
 
 def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[str, dict[str, int | str]]) -> None:
     if table == "desktop_video_sets":
+        for field in ("target_width", "target_height", "resolution_revision"):
+            if (
+                type(payload.get(field)) is not int
+                or payload[field] <= 0
+                or field != "resolution_revision"
+                and payload[field] > DESKTOP_MAX_EDGE
+            ):
+                raise ValueError("桌景目标分辨率或版本无效。")
         snapshot = DesktopVisualSnapshot.model_validate_json(payload["context_json"])
         avatar_id = id_map.get("avatar_assets", {}).get(str(snapshot.identity.avatar_id))
         scene_id = id_map.get("companion_scenes", {}).get(str(snapshot.scene_id))
@@ -116,6 +125,18 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             payload["stage"] = "paused"
             payload["error"] = "恢复的桌面制作需要手动处理；已采纳素材仍可使用"
     elif table == "desktop_video_states":
+        width, height = payload.get("target_width"), payload.get("target_height")
+        if (
+            (width is None) != (height is None)
+            or width is not None
+            and (
+                type(width) is not int
+                or not 0 < width <= DESKTOP_MAX_EDGE
+                or type(height) is not int
+                or not 0 < height <= DESKTOP_MAX_EDGE
+            )
+        ):
+            raise ValueError("默认桌景待创建分辨率无效。")
         for field in ("pinned", "autonomous_enabled", "default_created"):
             if type(payload.get(field)) is not bool:
                 raise ValueError("桌面生活偏好无效。")
@@ -151,14 +172,26 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
                 asset = DesktopVideoAsset.model_validate(value)
                 references.extend(
                     path
-                    for path in (asset.video_path, asset.poster_path, asset.image_path, asset.base_image_path)
+                    for path in (
+                        asset.video_path,
+                        asset.poster_path,
+                        asset.image_path,
+                        asset.base_image_path,
+                        asset.source_image_path,
+                    )
                     if path
                 )
             elif value.get("candidate"):
                 asset = DesktopVideoAsset.model_validate(value["candidate"])
                 references.extend(
                     path
-                    for path in (asset.video_path, asset.poster_path, asset.image_path, asset.base_image_path)
+                    for path in (
+                        asset.video_path,
+                        asset.poster_path,
+                        asset.image_path,
+                        asset.base_image_path,
+                        asset.source_image_path,
+                    )
                     if path
                 )
             if field == "generation_state_json":
@@ -169,6 +202,9 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
                         value.get("previous_pose_path"),
                         value.get("source_path"),
                         value.get("base_image_path"),
+                        value.get("source_image_path"),
+                        value.get("expansion_canvas_path"),
+                        value.get("expansion_generated_path"),
                     )
                     if path
                 )
@@ -244,11 +280,15 @@ def validate_desktop_files(
             validate_base_image(progress.base_image_path)
             validate_base_image(progress.pose_path)
             validate_base_image(progress.previous_pose_path)
+            validate_base_image(progress.source_image_path)
+            validate_base_image(progress.expansion_canvas_path)
+            validate_base_image(progress.expansion_generated_path)
             if progress.candidate:
                 assets.append(progress.candidate)
         for asset in assets:
             validate_base_image(asset.base_image_path)
             validate_base_image(asset.image_path)
+            validate_base_image(asset.source_image_path)
             video, poster = effective_file(asset.video_path), effective_file(asset.poster_path)
             if not video.is_file() or not poster.is_file():
                 raise ValueError("桌面生活视频或封面缺失。")

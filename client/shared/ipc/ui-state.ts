@@ -12,6 +12,8 @@ export interface DesktopLifeUiSnapshot {
     source: 'ai' | 'image_upload' | 'video_upload'
     feedback: string
     requestId: string
+    targetWidth: string
+    targetHeight: string
   }
   feedback: Record<string, string>
   design: { name: string; description: string; kind: 'loop' | 'once'; duration: number }

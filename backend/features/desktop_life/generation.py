@@ -5,7 +5,6 @@ import json
 from collections.abc import Awaitable, Callable
 from fractions import Fraction
 from io import BytesIO
-from math import gcd, log
 from uuid import uuid4
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
@@ -23,6 +22,7 @@ from infrastructure.assets.asset_store import (
     resolve_asset_reference,
     save_companion_asset_async,
     save_video_job_asset_async,
+    sniff_media_ext,
     validate_image_bytes,
 )
 from infrastructure.assets.media_download import download_media_result
@@ -50,10 +50,19 @@ from features.companion.persona_service import load_persona_definition
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.companion.visual_state import persona_snapshot
 from features.configuration.settings.values import get_user_setting
+from features.desktop_life.geometry import (
+    desktop_aspect_matches,
+    desktop_aspect_ratio,
+    expansion_canvas,
+    native_expansion_size,
+    probe_desktop_image,
+    restore_expansion_source,
+)
 from features.desktop_life.models import DesktopVideoAction, DesktopVideoSet
 from features.desktop_life.prompts import (
     DESKTOP_ACTION_DESIGN,
     DESKTOP_POSE_EDIT_TEMPLATE,
+    DESKTOP_POSE_EXPAND_TEMPLATE,
     DESKTOP_POSE_IMAGE_TEMPLATE,
     DESKTOP_VIDEO_BASE,
     DESKTOP_VIDEO_LOOP,
@@ -150,10 +159,26 @@ def _unknown_submission_message(progress: DesktopVideoProgress) -> str:
     return video_failure_message("result_unknown")
 
 
+def desktop_image_chain_exhausted(progress: DesktopVideoProgress) -> bool:
+    if not progress.image_chain_json or desktop_progress_has_unknown_submission(progress):
+        return False
+    image = ImageChainState.model_validate_json(progress.image_chain_json)
+    return bool(
+        image.providers
+        and image.phase in {"ready", "storing", "evaluating", "complete"}
+        and (image.stop_reason or image.next_index >= len(image.providers))
+        and not (image.candidates or image.pending_urls or image.pending_path),
+    )
+
+
 def desktop_progress_can_resume(progress: DesktopVideoProgress) -> bool:
     if desktop_progress_has_unknown_submission(progress) or progress.failure_reason == "material_rejected":
         return False
     if progress.provider_task_id or progress.download_url or progress.source_path or progress.candidate:
+        return True
+    if progress.expand_image and desktop_image_chain_exhausted(progress):
+        return False
+    if progress.expand_image and progress.source_image_path:
         return True
     if progress.video_chain_json:
         video = MediaChainState.model_validate_json(progress.video_chain_json)
@@ -231,6 +256,7 @@ async def resolve_desktop_video_plan(
     kind: str,
     duration_seconds: int,
     continuity: str = "independent",
+    aspect_ratio: str,
     selection: ProviderSelection | None = None,
 ) -> tuple[int, list[FrozenMediaProvider]]:
     needs_last_frame = kind == "loop" or continuity == "base"
@@ -243,6 +269,8 @@ async def resolve_desktop_video_plan(
     ]
     for index, (_, provider) in enumerate(configured):
         if not provider.supports_first_frame or (needs_last_frame and not provider.supports_loop_frames):
+            continue
+        if _provider_ratio(provider, aspect_ratio) is None:
             continue
         seconds = next(
             (
@@ -259,6 +287,8 @@ async def resolve_desktop_video_plan(
         for config, current in configured[index:]:
             if not current.supports_first_frame or (needs_last_frame and not current.supports_loop_frames):
                 continue
+            if _provider_ratio(current, aspect_ratio) is None:
+                continue
             if current.durations is not None and seconds not in current.durations:
                 continue
             resolution = current.max_resolution(duration=seconds, first_frame=True, last_frame=needs_last_frame)
@@ -268,7 +298,10 @@ async def resolve_desktop_video_plan(
                 providers.append(frozen)
         if providers:
             return seconds, providers
-    raise DesktopVideoStateError("请配置支持所需时长与首帧的视频模型；循环或衔接动作还需支持首尾帧")
+    raise DesktopVideoStateError(
+        f"当前视频模型均不支持已确认的 {aspect_ratio} 画幅及所需时长、首帧条件；"
+        "请选择支持该画幅的模型，循环或衔接动作还需支持首尾帧",
+    )
 
 
 async def _job_inputs(
@@ -282,12 +315,14 @@ async def _job_inputs(
         row = await db.get(DesktopVideoSet, action.set_id)
         if row is None or progress is None or progress.generation_id != generation_id or action.status != "processing":
             raise LlmCallBlockedError("桌面制作任务已经失效")
+        if progress.resolution_revision != row.resolution_revision:
+            raise LlmCallBlockedError("桌景分辨率已变化，请重新制作")
         snapshot = DesktopVisualSnapshot.model_validate_json(row.context_json)
         db.expunge(action)
         return action, snapshot, progress
 
 
-async def _require_paid_job(user_id: int, action_id: int, generation_id: str) -> None:
+async def _require_active_job(user_id: int, action_id: int, generation_id: str) -> None:
     require_new_generation_call(user_id)
     action, _snapshot, progress = await _job_inputs(user_id, action_id, generation_id)
     async with SESSION_LOCAL() as db:
@@ -311,6 +346,9 @@ async def _save_progress(user_id: int, action_id: int, progress: DesktopVideoPro
         saved = desktop_progress(action)
         if saved is None or saved.generation_id != progress.generation_id or action.status != "processing":
             raise LlmCallBlockedError("桌面制作任务已经失效")
+        row = await db.get(DesktopVideoSet, action.set_id)
+        if row is None or progress.resolution_revision != row.resolution_revision:
+            raise LlmCallBlockedError("桌景分辨率已变化，请重新制作")
         action.generation_state_json = progress.model_dump_json()
         action.stage = stage
         await touch_desktop_state(db, user_id)
@@ -355,54 +393,27 @@ def _frame_bytes(
             return output.getvalue(), width, height
 
 
-def _ratio(width: int, height: int) -> str:
-    divisor = gcd(width, height)
-    return f"{width // divisor}:{height // divisor}"
-
-
-def _provider_ratio(provider: VideoGenProvider, source_ratio: str) -> str:
+def _provider_ratio(provider: VideoGenProvider, source_ratio: str) -> str | None:
+    value = Fraction(source_ratio.replace(":", "/"))
     if provider.supports_adaptive_aspect_ratio:
         bounds = provider.adaptive_aspect_ratio_range
         if bounds is None:
             return source_ratio
-        value = Fraction(source_ratio.replace(":", "/"))
         lower, upper = (Fraction(str(bound)).limit_denominator(1000) for bound in bounds)
-        bounded = min(upper, max(lower, value))
-        return f"{bounded.numerator}:{bounded.denominator}"
-    ratios = provider.aspect_ratios
-    if not ratios:
-        raise DesktopVideoStateError("视频模型没有声明支持的画幅")
-    left, right = (int(value) for value in source_ratio.split(":"))
-    target = left / right
-    return min(ratios, key=lambda value: abs(log((int(value.split(":")[0]) / int(value.split(":")[1])) / target)))
+        return source_ratio if lower <= value <= upper else None
+    return next(
+        (
+            ratio
+            for ratio in provider.aspect_ratios
+            if abs(float(Fraction(ratio.replace(":", "/")) / value) - 1) <= 0.01
+        ),
+        None,
+    )
 
 
-async def _prepare_geometry(user_id: int, progress: DesktopVideoProgress, data: bytes) -> tuple[bytes, int, int]:
+async def _prepare_geometry(progress: DesktopVideoProgress, data: bytes) -> tuple[bytes, int, int]:
     normalized, width, height = await asyncio.to_thread(_frame_bytes, data)
-    ratio = _ratio(width, height)
-    chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
-    selected: VideoGenProvider | None = None
-    if chain.providers:
-        index = (
-            chain.active_index if chain.active_index is not None else min(chain.next_index, len(chain.providers) - 1)
-        )
-        config = await resolve_frozen_media_provider(user_id, "video_gen", chain.providers[index])
-        if config is None:
-            raise DesktopVideoStateError(video_failure_message("provider_unavailable"))
-        selected = build_provider(config, VideoGenProvider)
-        ratio = _provider_ratio(selected, ratio)
-    else:
-        async with SESSION_LOCAL() as db:
-            configs = await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.desktop_life)
-        for config in configs:
-            provider = build_provider(config, VideoGenProvider)
-            if provider.supports_first_frame:
-                selected = provider
-                ratio = _provider_ratio(provider, ratio)
-                break
-    pixel_bounds = selected.first_frame_size_range if selected is not None else None
-    normalized, width, height = await asyncio.to_thread(_frame_bytes, normalized, ratio, pixel_bounds)
-    progress.aspect_ratio = ratio
+    progress.aspect_ratio = desktop_aspect_ratio(width, height)
     progress.frame_width, progress.frame_height = width, height
     return normalized, width, height
 
@@ -414,10 +425,18 @@ async def prepare_uploaded_desktop_image(
     directory: str,
 ) -> str:
     try:
-        normalized, _width, _height = await _prepare_geometry(user_id, progress, data)
+        normalized, _width, _height = await _prepare_geometry(progress, data)
         await asyncio.to_thread(validate_image_bytes, normalized)
     except (ValueError, OSError) as exc:
         raise DesktopVideoStateError("图片无法读取、格式不支持或尺寸过大，请更换图片") from exc
+    if not progress.source_image_path:
+        progress.source_image_path = await save_companion_asset_async(
+            data,
+            user_id=user_id,
+            label="desktop_original",
+            ext=sniff_media_ext(data) or "png",
+            directory=directory,
+        )
     path = await save_companion_asset_async(
         normalized,
         user_id=user_id,
@@ -425,7 +444,12 @@ async def prepare_uploaded_desktop_image(
         ext="png",
         directory=directory,
     )
-    progress.pose_path = path
+    if progress.expand_image:
+        progress.previous_pose_path = path
+        progress.pose_path = ""
+        progress.aspect_ratio = desktop_aspect_ratio(progress.target_width, progress.target_height)
+    else:
+        progress.pose_path = path
     progress.image_confirmed = False
     progress.motion_prompt = ""
     return path
@@ -445,6 +469,135 @@ async def _await_image(user_id: int, action_id: int, progress: DesktopVideoProgr
         await db.commit()
 
 
+async def _prepare_expansion(
+    user_id: int,
+    action_id: int,
+    progress: DesktopVideoProgress,
+    directory: str,
+) -> None:
+    if not progress.expansion_canvas_path:
+        source = resolve_asset_reference(progress.previous_pose_path or progress.source_image_path)
+        if source is None:
+            raise DesktopVideoStateError("要调整画幅的原图无法读取，请重新上传")
+        data = await asyncio.to_thread(source[0].read_bytes)
+        canvas, progress.expansion_box = await asyncio.to_thread(
+            expansion_canvas,
+            data,
+            progress.target_width,
+            progress.target_height,
+        )
+        progress.expansion_canvas_path = await save_companion_asset_async(
+            canvas,
+            user_id=user_id,
+            label="desktop_expansion_canvas",
+            ext="png",
+            directory=directory,
+        )
+        await _save_progress(user_id, action_id, progress, stage="image")
+    frozen = resolve_asset_reference(progress.expansion_canvas_path)
+    if frozen is None or progress.expansion_box is None:
+        raise DesktopVideoStateError("调整画幅的参考画布无法读取，请重新上传")
+    canvas_data = await asyncio.to_thread(frozen[0].read_bytes)
+    canvas_width, canvas_height = await asyncio.to_thread(probe_desktop_image, canvas_data)
+    state = (
+        ImageChainState.model_validate_json(progress.image_chain_json)
+        if progress.image_chain_json
+        else ImageChainState()
+    )
+
+    async def before_submit() -> None:
+        await _require_active_job(user_id, action_id, progress.generation_id)
+
+    async def save_image(value: ImageChainState) -> None:
+        progress.image_chain_json = value.model_dump_json()
+        await _save_progress(user_id, action_id, progress, stage="image")
+
+    if not progress.expansion_generated_path:
+        reference = await asyncio.to_thread(read_valid_image_data_uri, progress.expansion_canvas_path)
+        identity = await asyncio.to_thread(
+            read_valid_image_data_uri,
+            progress.previous_pose_path or progress.source_image_path,
+        )
+        if not reference or not identity:
+            raise DesktopVideoStateError("调整画幅的原图无法读取")
+        paths = await generate_character_images(
+            DESKTOP_POSE_EXPAND_TEMPLATE.format(
+                aspect_ratio=desktop_aspect_ratio(progress.target_width, progress.target_height),
+                width=canvas_width,
+                height=canvas_height,
+                box=progress.expansion_box,
+                feedback=progress.feedback.strip() or "无",
+            ),
+            user_id=user_id,
+            task=AiTaskKey.desktop_life,
+            storage_directory=directory,
+            reference_image=reference,
+            identity_reference=identity,
+            image_edit=True,
+            size=f"{canvas_width}x{canvas_height}",
+            aspect_ratio=desktop_aspect_ratio(progress.target_width, progress.target_height),
+            target_width=progress.target_width,
+            target_height=progress.target_height,
+            require_target_aspect=True,
+            size_enforced=True,
+            state=state,
+            save_progress=save_image,
+            before_submit=before_submit,
+            selection=progress.image_selection,
+        )
+        progress.expansion_generated_path = paths[0]
+        await _save_progress(user_id, action_id, progress, stage="image")
+    generated = resolve_asset_reference(progress.expansion_generated_path)
+    if generated is None:
+        raise DesktopVideoStateError("调整画幅的生成结果无法读取")
+    generated_data = await asyncio.to_thread(generated[0].read_bytes)
+    native_width, native_height = await asyncio.to_thread(
+        native_expansion_size,
+        generated_data,
+        progress.target_width,
+        progress.target_height,
+    )
+    if (native_width, native_height) != (canvas_width, canvas_height):
+        original = resolve_asset_reference(progress.previous_pose_path or progress.source_image_path)
+        if original is None:
+            raise DesktopVideoStateError("调整画幅的原图无法读取")
+        original_data = await asyncio.to_thread(original[0].read_bytes)
+        canvas_data, progress.expansion_box = await asyncio.to_thread(
+            expansion_canvas,
+            original_data,
+            native_width,
+            native_height,
+            max_pixels=native_width * native_height,
+            max_edge=max(native_width, native_height),
+        )
+        progress.expansion_canvas_path = await save_companion_asset_async(
+            canvas_data,
+            user_id=user_id,
+            label="desktop_expansion_canvas",
+            ext="png",
+            directory=directory,
+        )
+        canvas_width, canvas_height = native_width, native_height
+        await _save_progress(user_id, action_id, progress, stage="image")
+    data = await asyncio.to_thread(restore_expansion_source, generated_data, canvas_data, progress.expansion_box)
+    await asyncio.to_thread(validate_image_bytes, data)
+    progress.pose_path = await save_companion_asset_async(
+        data,
+        user_id=user_id,
+        label="desktop_pose",
+        ext="png",
+        directory=directory,
+    )
+    progress.image_origin = state.selected_origin()
+    progress.geometry_mode = "target"
+    progress.aspect_ratio = desktop_aspect_ratio(canvas_width, canvas_height)
+    progress.frame_width, progress.frame_height = canvas_width, canvas_height
+    progress.expand_image = False
+    progress.image_confirmed = False
+    progress.motion_prompt = ""
+    await _save_progress(user_id, action_id, progress, stage="image")
+
+
 async def _prepare_pose(
     user_id: int,
     action: DesktopVideoAction,
@@ -452,6 +605,9 @@ async def _prepare_pose(
     progress: DesktopVideoProgress,
     directory: str,
 ) -> None:
+    if progress.expand_image:
+        await _prepare_expansion(user_id, action.id, progress, directory)
+        return
     if progress.pose_path:
         return
     if progress.continuity == "base" and progress.base_image_path and not progress.replace_base:
@@ -459,7 +615,7 @@ async def _prepare_pose(
         if resolved is None:
             raise DesktopVideoStateError("基础画面无法读取")
         original = await asyncio.to_thread(resolved[0].read_bytes)
-        normalized, _width, _height = await _prepare_geometry(user_id, progress, original)
+        normalized, _width, _height = await _prepare_geometry(progress, original)
         with Image.open(BytesIO(original)) as source:
             unchanged = source.size == (progress.frame_width, progress.frame_height)
         if unchanged:
@@ -479,17 +635,20 @@ async def _prepare_pose(
         return
 
     async def before_submit() -> None:
-        await _require_paid_job(user_id, action.id, progress.generation_id)
+        await _require_active_job(user_id, action.id, progress.generation_id)
 
     previous = progress.previous_pose_path
-    if previous and not progress.regenerate_image:
+    if previous and not progress.regenerate_image and progress.geometry_mode == "keep":
         resolved_previous = resolve_asset_reference(previous)
         if resolved_previous is None:
             raise DesktopVideoStateError("要调整的画面无法读取")
         with Image.open(resolved_previous[0]) as previous_image:
             ImageOps.exif_transpose(previous_image, in_place=True)
             progress.frame_width, progress.frame_height = previous_image.size
-            progress.aspect_ratio = _ratio(*previous_image.size)
+            progress.aspect_ratio = desktop_aspect_ratio(*previous_image.size)
+    elif progress.geometry_mode == "target":
+        progress.frame_width, progress.frame_height = progress.target_width, progress.target_height
+        progress.aspect_ratio = desktop_aspect_ratio(progress.target_width, progress.target_height)
     editing = bool(previous and not progress.regenerate_image)
     if editing:
         reference = await asyncio.to_thread(read_valid_image_data_uri, previous)
@@ -528,8 +687,11 @@ async def _prepare_pose(
         identity_reference=portrait,
         identity_text="" if editing else render_character_identity(snapshot.identity),
         image_edit=editing,
-        size=f"{progress.frame_width or 1920}x{progress.frame_height or 1080}",
+        size=f"{progress.frame_width or progress.target_width}x{progress.frame_height or progress.target_height}",
         aspect_ratio=progress.aspect_ratio,
+        target_width=progress.frame_width or progress.target_width,
+        target_height=progress.frame_height or progress.target_height,
+        size_enforced=True,
         state=state,
         save_progress=save_image,
         before_submit=before_submit,
@@ -544,38 +706,36 @@ async def _prepare_pose(
         await asyncio.to_thread(resolved[0].read_bytes),
         progress.aspect_ratio,
     )
-    await prepare_uploaded_desktop_image(user_id, generated_data, progress, directory)
+    normalized, _width, _height = await _prepare_geometry(progress, generated_data)
+    progress.pose_path = await save_companion_asset_async(
+        normalized,
+        user_id=user_id,
+        label="desktop_pose",
+        ext="png",
+        directory=directory,
+    )
+    progress.image_confirmed = False
+    progress.motion_prompt = ""
     progress.image_origin = state.selected_origin()
     await _save_progress(user_id, action.id, progress, stage="image")
 
 
 async def _check_confirmed_geometry(
-    user_id: int,
-    action_id: int,
     progress: DesktopVideoProgress,
-    directory: str,
-) -> bool:
+) -> None:
     resolved = resolve_asset_reference(progress.pose_path)
     if resolved is None:
         raise DesktopVideoStateError("已确认的起始画面无法读取")
     data = await asyncio.to_thread(resolved[0].read_bytes)
-    with Image.open(BytesIO(data)) as image:
-        ImageOps.exif_transpose(image, in_place=True)
-        original_size = image.size
-    normalized, width, height = await _prepare_geometry(user_id, progress, data)
-    if original_size != (width, height):
-        progress.pose_path = await save_companion_asset_async(
-            normalized,
-            user_id=user_id,
-            label="desktop_pose",
-            ext="png",
-            directory=directory,
-        )
-        progress.image_confirmed = False
-        progress.motion_prompt = ""
-        await _await_image(user_id, action_id, progress)
-        return False
-    return True
+    original_size = await asyncio.to_thread(probe_desktop_image, data)
+    if progress.geometry_mode == "target" and not desktop_aspect_matches(
+        *original_size,
+        progress.target_width,
+        progress.target_height,
+    ):
+        raise DesktopVideoStateError("起始画面与桌景目标画幅不一致，请先选择保留原比例或 AI 调整")
+    progress.frame_width, progress.frame_height = original_size
+    progress.aspect_ratio = desktop_aspect_ratio(*original_size)
 
 
 async def _prepare_motion(
@@ -591,7 +751,7 @@ async def _prepare_motion(
         raise DesktopVideoStateError("已确认的起始画面无法读取")
 
     async def before_submit() -> None:
-        await _require_paid_job(user_id, action.id, progress.generation_id)
+        await _require_active_job(user_id, action.id, progress.generation_id)
 
     raw = await vision_chat(
         user_id,
@@ -672,8 +832,8 @@ async def _process_candidate(
                 ext="png",
                 directory=directory,
             )
-            progress.frame_width, progress.frame_height = result.width, result.height
-            progress.aspect_ratio = _ratio(result.width, result.height)
+            progress.aspect_ratio = desktop_aspect_ratio(result.width, result.height)
+        progress.frame_width, progress.frame_height = result.width, result.height
         if (
             action.key == "idle"
             and progress.continuity == "base"
@@ -691,6 +851,9 @@ async def _process_candidate(
             poster_path=poster,
             image_path=progress.pose_path or "",
             image_origin=None if external else progress.image_origin,
+            source_image_path=progress.source_image_path,
+            geometry_mode=progress.geometry_mode,
+            resolution_revision=progress.resolution_revision,
             video_origin=video_origin,
             width=result.width,
             height=result.height,
@@ -717,7 +880,7 @@ async def _evaluate_candidate(
     candidate = progress.candidate
     if candidate is None:
         raise DesktopVideoStateError("待确认的视频缺失")
-    await _require_paid_job(user_id, action.id, progress.generation_id)
+    await _require_active_job(user_id, action.id, progress.generation_id)
     resolved = resolve_asset_reference(candidate.video_path)
     reference = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
     if resolved is None or not reference:
@@ -728,7 +891,7 @@ async def _evaluate_candidate(
         language = resolve_language(await get_user_setting(db, user_id, "language"))
 
     async def before_submit() -> None:
-        await _require_paid_job(user_id, action.id, progress.generation_id)
+        await _require_active_job(user_id, action.id, progress.generation_id)
 
     if progress.identity_score is None:
         progress.identity_score = await score_character_frames_with_references(
@@ -786,7 +949,7 @@ async def _describe_uploaded_frame(user_id: int, action_id: int, progress: Deskt
         return
 
     async def before_submit() -> None:
-        await _require_paid_job(user_id, action_id, progress.generation_id)
+        await _require_active_job(user_id, action_id, progress.generation_id)
 
     try:
         raw = await vision_chat(
@@ -889,7 +1052,7 @@ async def _pause_desktop_job(
         await db.commit()
 
 
-async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bool = True) -> None:
+async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: bool = True) -> None:
     generation_id = ""
     progress: DesktopVideoProgress | None = None
     try:
@@ -914,14 +1077,14 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 progress.review_verdict = "pass"
                 progress.review_reason = ""
                 await _save_progress(user_id, action_id, progress, stage="complete")
-            if allow_paid_steps:
+            if allow_model_steps:
                 await _describe_uploaded_frame(user_id, action_id, progress)
             await _finish_job(user_id, action_id, progress)
             return
-        if not allow_paid_steps and progress.candidate is not None and progress.review_verdict is not None:
+        if not allow_model_steps and progress.candidate is not None and progress.review_verdict is not None:
             await _finish_job(user_id, action_id, progress)
             return
-        if not allow_paid_steps and not (progress.provider_task_id or progress.download_url or progress.source_path):
+        if not allow_model_steps and not (progress.provider_task_id or progress.download_url or progress.source_path):
             raise GenerationWorkPaused
         if not (progress.provider_task_id or progress.download_url or progress.source_path or progress.candidate):
             await _prepare_pose(user_id, action, snapshot, progress, directory)
@@ -935,23 +1098,22 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 kind=action.kind,
                 duration_seconds=progress.duration_seconds,
                 continuity=progress.continuity,
+                aspect_ratio=progress.aspect_ratio,
                 selection=progress.video_selection,
             )
             progress.duration_seconds = seconds
             chain = MediaChainState(providers=providers)
             progress.video_chain_json = chain.model_dump_json()
             await _save_progress(user_id, action_id, progress, stage="video")
-        if not (
-            progress.provider_task_id or progress.source_path or progress.download_url or progress.candidate
-        ) and not await _check_confirmed_geometry(user_id, action_id, progress, directory):
-            return
+        if not (progress.provider_task_id or progress.source_path or progress.download_url or progress.candidate):
+            await _check_confirmed_geometry(progress)
         if not progress.motion_prompt and not progress.candidate:
             await _prepare_motion(user_id, action, snapshot, progress)
         if progress.submission_unknown:
             raise DesktopVideoStateError(video_failure_message("result_unknown"))
         while True:
             if progress.candidate is not None:
-                if not allow_paid_steps:
+                if not allow_model_steps:
                     raise GenerationWorkPaused
                 await _evaluate_candidate(user_id, action, progress)
                 result = DesktopCandidateResult(
@@ -1017,43 +1179,34 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 raise DesktopVideoStateError(video_failure_message("provider_unavailable"))
             provider = build_provider(config, VideoGenProvider)
             if not progress.provider_task_id:
-                if not allow_paid_steps:
+                if not allow_model_steps:
                     raise GenerationWorkPaused
-                await _require_paid_job(user_id, action_id, generation_id)
+                await _require_active_job(user_id, action_id, generation_id)
                 if not progress.image_confirmed:
                     await _await_image(user_id, action_id, progress)
                     return
                 desired_ratio = _provider_ratio(provider, progress.aspect_ratio)
+                if desired_ratio is None:
+                    # 配置恢复后能力声明可能改变；仍不为回退改写确认过的画面。
+                    chain.next_index = index + 1
+                    chain.active_index = None
+                    chain.phase = "ready"
+                    progress.video_chain_json = chain.model_dump_json()
+                    await _save_progress(user_id, action_id, progress, stage="video")
+                    if chain.next_index >= len(chain.providers):
+                        raise DesktopVideoStateError(f"当前视频模型均不支持已确认的 {progress.aspect_ratio} 画幅")
+                    continue
                 resolved = resolve_asset_reference(progress.pose_path)
                 if resolved is None:
                     raise DesktopVideoStateError("已确认的起始画面无法读取")
                 raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
-                normalized, width, height = await asyncio.to_thread(
+                normalized, _width, _height = await asyncio.to_thread(
                     _frame_bytes,
                     raw_frame,
-                    desired_ratio,
+                    None,
                     provider.first_frame_size_range,
                 )
-                if desired_ratio != progress.aspect_ratio or (width, height) != (
-                    progress.frame_width,
-                    progress.frame_height,
-                ):
-                    progress.pose_path = await save_companion_asset_async(
-                        normalized,
-                        user_id=user_id,
-                        label="desktop_pose",
-                        ext="png",
-                        directory=directory,
-                    )
-                    progress.frame_width, progress.frame_height = width, height
-                    progress.aspect_ratio = desired_ratio
-                    progress.image_confirmed = False
-                    progress.motion_prompt = ""
-                    await _await_image(user_id, action_id, progress)
-                    return
-                pose = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
-                if not pose:
-                    raise DesktopVideoStateError("起始画面无法读取")
+                pose = build_data_uri(normalized, "image/png")
                 chain.begin(index)
                 progress.video_chain_json = chain.model_dump_json()
                 await _save_progress(user_id, action_id, progress, stage="video")
@@ -1073,7 +1226,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                         resolution=chain.providers[index].video_resolution,
                         first_frame_image=pose,
                         last_frame_image=pose if action.kind == "loop" or progress.continuity == "base" else None,
-                        aspect_ratio=None if provider.supports_adaptive_aspect_ratio else progress.aspect_ratio,
+                        aspect_ratio=None if provider.supports_adaptive_aspect_ratio else desired_ratio,
                     )
                     async with media_call_duration(config, chain) as call_config:
                         submitted = await execute_with_fallback(
@@ -1176,7 +1329,12 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                     if saved.provider_task_id or saved.source_path or saved.candidate
                     else "failed"
                 )
-                restored_image = bool(saved.previous_pose_path and not saved.pose_path and not saved.submission_unknown)
+                restored_image = bool(
+                    saved.previous_pose_path
+                    and not saved.pose_path
+                    and not saved.submission_unknown
+                    and not saved.expand_image,
+                )
                 if restored_image:
                     saved.pose_path = saved.previous_pose_path
                     saved.image_origin = saved.previous_image_origin
@@ -1197,13 +1355,13 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_paid_steps: bo
                 await db.commit()
 
 
-def schedule_desktop_video_job(user_id: int, action_id: int, *, allow_paid_steps: bool = True) -> None:
+def schedule_desktop_video_job(user_id: int, action_id: int, *, allow_model_steps: bool = True) -> None:
     previous = _JOBS.get(action_id)
     if previous is not None and not previous.done() and not previous.cancelling():
-        _NEXT_JOBS[action_id] = (user_id, allow_paid_steps)
+        _NEXT_JOBS[action_id] = (user_id, allow_model_steps)
         return
     task = asyncio.create_task(
-        _run_desktop_job(user_id, action_id, allow_paid_steps=allow_paid_steps),
+        _run_desktop_job(user_id, action_id, allow_model_steps=allow_model_steps),
         name=f"desktop-video-{action_id}",
     )
     _JOBS[action_id] = task
@@ -1214,7 +1372,7 @@ def schedule_desktop_video_job(user_id: int, action_id: int, *, allow_paid_steps
             _JOBS.pop(action_id, None)
             queued = _NEXT_JOBS.pop(action_id, None)
             if queued is not None:
-                schedule_desktop_video_job(queued[0], action_id, allow_paid_steps=queued[1])
+                schedule_desktop_video_job(queued[0], action_id, allow_model_steps=queued[1])
         if not done.cancelled() and done.exception() is not None:
             logger.error("Desktop task finalization failed", exc_info=done.exception())
 
@@ -1252,10 +1410,10 @@ async def resume_desktop_video_jobs(user_id: int | None = None) -> None:
             and bool(progress.provider_task_id or progress.download_url or progress.source_path)
         )
         if safe_resume:
-            schedule_desktop_video_job(row.user_id, row.id, allow_paid_steps=False)
+            schedule_desktop_video_job(row.user_id, row.id, allow_model_steps=False)
         elif progress is not None and desktop_progress_can_resume(progress):
             if progress.candidate is not None and progress.review_verdict is not None:
-                schedule_desktop_video_job(row.user_id, row.id, allow_paid_steps=False)
+                schedule_desktop_video_job(row.user_id, row.id, allow_model_steps=False)
             else:
                 await _pause_desktop_job(row.user_id, row.id, progress.generation_id)
         else:

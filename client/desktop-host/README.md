@@ -8,12 +8,15 @@
 | `guardian` | 独立监测主进程、host 与十秒续租，异常或 Ctrl+Alt+Shift+D 时恢复 |
 | `recover` | 恢复遗留 journal |
 | `check-runtime` | 验证可执行文件可加载，无桌面接管副作用 |
+| `display-bounds` | 按 Electron 转换后的显示器矩形只读查询原生像素尺寸，不访问 Explorer、journal 或桌面接管 |
 
 ## 挂载与输入
 
 宿主发现实际承载 `SHELLDLL_DefView` 的 Progman／WorkerW，将所选屏背景挂成同层兄弟窗口并排在图标层前；不请求 Explorer 创建全局背景层，不隐藏共享图标层或修改图标偏好。仅捕获并隐藏交互屏任务栏，重探测发现任务栏移出该屏时先恢复原状态。界面保持普通顶层，probe 保留图标层在前。接管只接受同一显示器的一份背景与一份界面。
 
 附着前核对父进程、窗口身份和完整 DPI context。请求须对应完整显示器，四项物理几何误差均不超过两像素；附着后复验外框和客户区。Electron 关闭 `frame`、`thickFrame`，helper 去掉非客户区；背景 `SetParent` 后移除 `WS_CLIPSIBLINGS`，保持 Explorer 背景合成。样式、父层、几何和置顶信息都进 journal。
+
+`display-bounds` 接受一组近似物理矩形，设置自身 PMv2 context 后复用上述匹配规则，通过 `GetMonitorInfoW` 返回真实矩形；无法匹配的项返回空值。Electron 的 DIP 宽高已取整，乘缩放因子或再次转换都可能偏差一至两像素，不能据此记录桌景分辨率。该查询独立于桌面模式，在启动及显示器变更时刷新；缓存绑定显示器 ID 和当前几何，读取失败时由用户手动填写。
 
 `focus` 仅接受身份、父层和可见性匹配的登记窗口，且系统须处于桌面前台。界面即使已有焦点仍先置前；修饰键与鼠标释放后临时附着输入线程，完成复验焦点和实际前台。线程解除失败退出 host，交 guardian 恢复。桌面前台只认可挂载层及自有窗口家族。
 

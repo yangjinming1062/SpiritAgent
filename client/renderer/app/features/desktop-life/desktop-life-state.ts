@@ -10,6 +10,8 @@ export function newDesktopLifeCreation(): DesktopLifeUiSnapshot['create'] {
     outfitId: '',
     source: 'ai',
     feedback: '',
+    targetWidth: '',
+    targetHeight: '',
     requestId: crypto.randomUUID()
   }
 }
@@ -43,7 +45,7 @@ function validSnapshot(value: unknown): value is DesktopLifeUiSnapshot {
     typeof value.addActionOpen === 'boolean' &&
     typeof value.externalRequirements === 'string' &&
     (value.externalFilePath === null || typeof value.externalFilePath === 'string') &&
-    ['name', 'sceneId', 'sceneLabel', 'outfitId', 'feedback', 'requestId'].every(
+    ['name', 'sceneId', 'sceneLabel', 'outfitId', 'feedback', 'requestId', 'targetWidth', 'targetHeight'].every(
       key => typeof create[key] === 'string'
     ) &&
     ['ai', 'image_upload', 'video_upload'].includes(String(create.source)) &&

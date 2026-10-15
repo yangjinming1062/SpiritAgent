@@ -607,6 +607,16 @@ fn monitor_bounds(requested: Bounds) -> Result<Bounds> {
     Ok(bounds)
 }
 
+pub fn display_bounds(requested: &[Bounds]) -> Result<Vec<Option<Bounds>>> {
+    if unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) } == 0 {
+        return Err(failure("SetProcessDpiAwarenessContext"));
+    }
+    Ok(requested
+        .iter()
+        .map(|bounds| monitor_bounds(*bounds).ok())
+        .collect())
+}
+
 fn visibility(window: &Identity, visible: bool) -> Result<()> {
     if !window.valid() {
         return Err("window identity changed before visibility update".into());
