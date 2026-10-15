@@ -45,6 +45,7 @@ interface HostOptions {
   onForegroundChanged?: (state: { active: boolean; stageAvailable: boolean; fullscreen: boolean }) => void
   onWarning?: (reason: string) => void
   onApplicationsChanged?: (state: RunningApplicationsState) => void
+  onWorkAreaChanged?: (bounds: ExplorerDesktopWindow['bounds']) => void
 }
 
 export interface ExplorerDesktopHost {
@@ -150,19 +151,29 @@ function encodeWindow(window: ExplorerDesktopWindow): {
   const handle = encodeHandle(window.handle)
   const bounds = window.bounds
 
-  if (
-    !Object.values(bounds).every(Number.isSafeInteger) ||
-    bounds.width <= 0 ||
-    bounds.height <= 0 ||
-    bounds.width > 65_536 ||
-    bounds.height > 65_536 ||
-    Math.abs(bounds.x) > 1_000_000 ||
-    Math.abs(bounds.y) > 1_000_000
-  ) {
+  if (!isPhysicalRect(bounds)) {
     throw new Error('Desktop native window handle or physical bounds are invalid')
   }
 
   return { bounds: { ...bounds }, handle, role: window.role }
+}
+
+function isPhysicalRect(value: unknown): value is ExplorerDesktopWindow['bounds'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+
+  const bounds = value as Record<string, unknown>
+
+  return (
+    ['x', 'y', 'width', 'height'].every(key => typeof bounds[key] === 'number' && Number.isSafeInteger(bounds[key])) &&
+    Number(bounds.width) > 0 &&
+    Number(bounds.height) > 0 &&
+    Number(bounds.width) <= 65_536 &&
+    Number(bounds.height) <= 65_536 &&
+    Math.abs(Number(bounds.x)) <= 1_000_000 &&
+    Math.abs(Number(bounds.y)) <= 1_000_000
+  )
 }
 
 export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktopHost {
@@ -442,6 +453,12 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
             }
           } else if (message.event === 'applications') {
             applicationsMessage(message)
+          } else if (message.event === 'work_area') {
+            if (!isPhysicalRect(message.work_area)) {
+              throw new Error('Desktop helper returned an invalid work area')
+            }
+
+            options.onWorkAreaChanged?.({ ...message.work_area })
           } else if (
             Number.isInteger(message.id) &&
             typeof message.id === 'number' &&

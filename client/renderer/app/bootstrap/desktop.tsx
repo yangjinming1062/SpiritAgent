@@ -33,6 +33,7 @@ function DesktopLifecycle(): null {
 
   useEffect(() => initGlassBudgetGuard(), [])
   useWindowMouseCapture(1, {
+    releaseDelayMs: 0,
     setIgnoreMouseEvents: payload => shellApi().presentation.setIgnoreMouseEvents(payload)
   })
 

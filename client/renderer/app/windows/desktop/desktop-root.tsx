@@ -25,7 +25,7 @@ import { $postsHasUnread, hydratePostsUnread } from '@/modules/posts'
 import { hydrateScene } from '@/modules/scene'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { ArrowLeft, ArrowRight, MessageCircle, X } from '@/shared/lib/icons'
-import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { isPointInteractive, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $desktopChatActive } from '@/shared/store/chat-visibility'
@@ -71,6 +71,7 @@ export function DesktopRoot(): React.JSX.Element {
   const revealRequest = useRef(0)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const presentation = useStore($presentation)
+  const workArea = presentation.workArea
   const videoState = useStore($desktopVideoState)
   const videoError = useStore($desktopVideoError)
   const idleVideo = videoState?.current?.actions.find(action => action.key === 'idle')
@@ -168,6 +169,7 @@ export function DesktopRoot(): React.JSX.Element {
         event.ctrlKey ||
         event.shiftKey ||
         event.metaKey ||
+        !isPointInteractive(event.clientX, event.clientY, 1) ||
         !navigator.userActivation.isActive
       ) {
         return
@@ -281,7 +283,7 @@ export function DesktopRoot(): React.JSX.Element {
     update()
 
     return () => observer.disconnect()
-  }, [auth.kind, layout.whisperOpen, layout.whisperSide])
+  }, [auth.kind, layout.whisperOpen, layout.whisperSide, workArea?.x, workArea?.y, workArea?.width, workArea?.height])
 
   useEffect(() => {
     const closeMenus = (): void => {
@@ -415,6 +417,16 @@ export function DesktopRoot(): React.JSX.Element {
           '--desktop-avatar-size': `${DESKTOP_LAYOUT.avatarSize}px`,
           '--desktop-bottom-inset': `${DESKTOP_LAYOUT.bottomInset}px`,
           '--desktop-content-inset': `${DESKTOP_LAYOUT.contentInset}px`,
+          '--desktop-work-area-top': `${workArea?.y ?? 0}px`,
+          '--desktop-work-area-left': `${workArea?.x ?? 0}px`,
+          '--desktop-work-area-right': workArea ? `calc(100vw - ${workArea.x + workArea.width}px)` : '0px',
+          '--desktop-work-area-bottom': workArea
+            ? `calc(100vh - ${workArea.y + workArea.height}px)`
+            : `${DESKTOP_LAYOUT.bottomInset}px`,
+          '--desktop-work-area-width': workArea ? `${workArea.width}px` : '100vw',
+          '--desktop-work-area-height': workArea
+            ? `${workArea.height}px`
+            : `calc(100vh - ${DESKTOP_LAYOUT.bottomInset}px)`,
           '--desktop-center-width': `${DESKTOP_LAYOUT.centerWidth}px`,
           '--desktop-control-size': `${DESKTOP_LAYOUT.controlSize}px`,
           '--desktop-control-edge': `${DESKTOP_LAYOUT.controlEdge}px`

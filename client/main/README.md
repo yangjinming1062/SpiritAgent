@@ -75,7 +75,7 @@
 
 [explorer-desktop-host.ts](lifecycle/explorer-desktop-host.ts)通过有界 JSON 协议调用 [Rust helper](../desktop-host/README.md)。界面与交互屏背景先在限时内报告界面就绪，再复核账户与窗口存活并交给 helper 接管；任一阶段失败均回到恢复流程。原生事务、窗口身份校验与 journal 归 helper。
 
-桌面窗口固定页面缩放，使悬浮底栏的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。工作区顶部无系统预留，底部保留 96 DIP，布局尺寸与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts)；内部窗口与轻语顶部仅保留内容边距。挂载后用 `showInactive()` 同步 Electron 可见状态；原生层级、几何复验与工作区恢复由 [helper](../desktop-host/README.md#工作区与层级)负责。
+桌面窗口固定页面缩放，使悬浮底栏的 DIP 高度与工作区一致；退出时恢复窗口模式保存的缩放。底部 AppBar 的请求尺寸与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts)，`contentInset` 仅用于内部界面留白。helper 上报实际物理工作区，主进程换算为交互屏本地 DIP 后发布，内部窗口与轻语按该区域布局；快照语义见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。挂载后用 `showInactive()` 同步 Electron 可见状态；原生图标层级、几何复验与工作区恢复由 [helper](../desktop-host/README.md#工作区与层级)负责。
 
 真实主指针释放请求输入焦点；显式页面与会话导航还调用 `focus()`、`moveTop()` 置前，全屏时跳过激活。主进程与 helper 在各自串行队列执行时核对窗口、账户、舞台代次和锁屏。前台广播不抢焦点，渲染层手势不能代替权限校验。焦点请求超时终止 host 并恢复，防止迟到请求继续改动焦点；视图资格与状态同步见[呈现契约](../../docs/PROTOCOL.md#桌面呈现与本机启动器)。
 

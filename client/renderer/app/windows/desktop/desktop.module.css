@@ -132,18 +132,18 @@
 }
 .workspace {
   position: absolute;
-  top: var(--desktop-content-inset);
-  left: 16px;
-  right: 16px;
-  bottom: var(--desktop-bottom-inset);
+  top: calc(var(--desktop-work-area-top) + var(--desktop-content-inset));
+  left: calc(var(--desktop-work-area-left) + 16px);
+  right: calc(var(--desktop-work-area-right) + 16px);
+  bottom: var(--desktop-work-area-bottom);
   pointer-events: none;
   z-index: 10;
 }
 .desktop[data-whisper='right'] .workspace {
-  right: 412px;
+  right: calc(var(--desktop-work-area-right) + 412px);
 }
 .desktop[data-whisper='left'] .workspace {
-  left: 412px;
+  left: calc(var(--desktop-work-area-left) + 412px);
 }
 .window {
   position: absolute;
@@ -244,9 +244,9 @@
 }
 .whisper {
   position: absolute;
-  top: var(--desktop-content-inset);
-  bottom: var(--desktop-bottom-inset);
-  width: 380px;
+  top: calc(var(--desktop-work-area-top) + var(--desktop-content-inset));
+  bottom: var(--desktop-work-area-bottom);
+  width: min(380px, calc(var(--desktop-work-area-width) - 32px));
   z-index: 30;
   display: flex;
   flex-direction: column;
@@ -261,10 +261,10 @@
   display: none;
 }
 .whisper[data-side='right'] {
-  right: 16px;
+  right: calc(var(--desktop-work-area-right) + 16px);
 }
 .whisper[data-side='left'] {
-  left: 16px;
+  left: calc(var(--desktop-work-area-left) + 16px);
 }
 .whisperHeader {
   display: flex;
@@ -305,7 +305,7 @@
 }
 .whisperTab {
   position: absolute;
-  top: 50%;
+  top: calc(var(--desktop-work-area-top) + var(--desktop-work-area-height) / 2);
   z-index: 31;
   display: flex;
   flex-direction: column;
@@ -318,11 +318,11 @@
   font-size: 11px !important;
 }
 .whisperTab[data-side='right'] {
-  right: 0;
+  right: var(--desktop-work-area-right);
   border-radius: 10px 0 0 10px;
 }
 .whisperTab[data-side='left'] {
-  left: 0;
+  left: var(--desktop-work-area-left);
   border-radius: 0 10px 10px 0;
 }
 .whisperUnread {
@@ -549,11 +549,11 @@
   }
   .desktop[data-whisper='right'] .workspace,
   .desktop[data-whisper='left'] .workspace {
-    left: 12px;
-    right: 12px;
+    left: calc(var(--desktop-work-area-left) + 12px);
+    right: calc(var(--desktop-work-area-right) + 12px);
   }
   .whisper {
-    width: min(380px, calc(100% - 24px));
+    width: min(380px, calc(var(--desktop-work-area-width) - 24px));
   }
 }
 @media (max-width: 480px) {

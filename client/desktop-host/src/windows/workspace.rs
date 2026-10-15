@@ -7,6 +7,10 @@ use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFOEXW, MonitorFromWindow,
 };
 
+mod appbar;
+pub(super) use appbar::RestoreAppBar;
+use appbar::AppBar;
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RestoreWorkArea {
@@ -141,7 +145,7 @@ fn find_monitor(name: &str) -> Result<Option<MONITORINFOEXW>> {
 
 fn set_work_area(area: Bounds) -> Result<()> {
     let rectangle = rect(area);
-    // 仅当前会话生效；不持久化或广播，避免 Explorer 重算覆盖预留区域。
+    // 只用于恢复旧版本 journal，正常会话由 Shell AppBar 协商工作区。
     if unsafe { SystemParametersInfoW(SPI_SETWORKAREA, 0, &rectangle as *const RECT as *mut _, 0) }
         == 0
     {
@@ -217,8 +221,9 @@ fn contains(area: Bounds, window: Bounds) -> bool {
 }
 
 pub(super) struct Workspace {
-    pub(super) original: RestoreWorkArea,
+    original: RestoreWorkArea,
     target: Bounds,
+    appbar: Option<AppBar>,
     parent_pid: u32,
     enabled: bool,
     moving: HashSet<usize>,
@@ -434,9 +439,13 @@ impl Workspace {
         if !requested.valid() || !display.valid() {
             return Err("invalid desktop work area".into());
         }
-        if !contains(display, requested) {
+        if !contains(display, requested)
+            || requested.x != display.x
+            || requested.y != display.y
+            || requested.width != display.width
+        {
             return Err(format!(
-                "desktop work area crosses its display: {requested:?}, display {display:?}"
+                "desktop work area must reserve only the bottom edge: {requested:?}, display {display:?}"
             ));
         }
         let normalized = monitor_bounds(display)?;
@@ -467,9 +476,16 @@ impl Workspace {
         if !contains(original.monitor, target) {
             return Err("desktop monitor changed during work area validation".into());
         }
+        let appbar = if enabled {
+            Some(AppBar::prepare(&original, target.y + target.height)?)
+        } else {
+            None
+        };
+        let target = if enabled { target } else { original.original };
         Ok(Self {
             original,
             target,
+            appbar,
             parent_pid,
             enabled,
             moving: HashSet::new(),
@@ -486,26 +502,28 @@ impl Workspace {
         Ok(())
     }
 
-    fn ensure_work_area(&self) -> Result<()> {
-        if !self.enabled {
-            return Ok(());
-        }
+    pub(super) fn appbar_restore(&self) -> Option<RestoreAppBar> {
+        self.appbar.as_ref().map(AppBar::restore_record)
+    }
+
+    pub(super) fn current(&self) -> Bounds {
+        self.target
+    }
+
+    fn ensure_work_area(&mut self) -> Result<()> {
         let current = find_monitor(&self.original.device)?.ok_or("desktop monitor was removed")?;
         if bounds(current.monitorInfo.rcMonitor) != self.original.monitor {
             return Err("desktop monitor geometry changed".into());
         }
-        if bounds(current.monitorInfo.rcWork) == self.target {
+        if !self.enabled {
+            self.target = bounds(current.monitorInfo.rcWork);
             return Ok(());
         }
-        set_work_area(self.target)?;
-        let current = find_monitor(&self.original.device)?.ok_or("desktop monitor was removed")?;
-        if bounds(current.monitorInfo.rcWork) != self.target {
-            return Err(format!(
-                "desktop work area was rejected: {:?}, expected {:?}",
-                bounds(current.monitorInfo.rcWork),
-                self.target
-            ));
-        }
+        self.target = self
+            .appbar
+            .as_mut()
+            .ok_or("desktop AppBar is missing")?
+            .ensure(&current)?;
         Ok(())
     }
 
@@ -624,8 +642,14 @@ impl Workspace {
     }
 
     pub(super) fn poll(&mut self, events: &[(u32, usize)]) -> Result<()> {
+        let previous = self.target;
         self.ensure_work_area()?;
         let mut changed = HashSet::new();
+        if self.target != previous {
+            self.pending.clear();
+            self.refused.clear();
+            changed.extend(top_windows()?.into_iter().map(|window| window as usize));
+        }
         for &(event, handle) in events {
             match event {
                 0 => {

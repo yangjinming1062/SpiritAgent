@@ -106,7 +106,7 @@ function hitRegion(region: InteractiveRegion | undefined, x: number, y: number):
   )
 }
 
-function isPointInteractive(x: number, y: number, windowId: number = 0): boolean {
+export function isPointInteractive(x: number, y: number, windowId: number = 0): boolean {
   for (const region of bucket(windowId).values()) {
     if (hitRegion(region, x, y)) {
       return true
@@ -158,6 +158,7 @@ export function useInteractiveRegion(
 }
 
 export interface WindowMouseCaptureOptions {
+  releaseDelayMs?: number
   setIgnoreMouseEvents?: (payload: { forward?: boolean; ignore: boolean }) => Promise<void>
 }
 
@@ -165,6 +166,8 @@ export interface WindowMouseCaptureOptions {
 export function useWindowMouseCapture(windowId: number = 0, options?: WindowMouseCaptureOptions): void {
   const setIgnoreFnRef = useRef(options?.setIgnoreMouseEvents)
   setIgnoreFnRef.current = options?.setIgnoreMouseEvents
+  const releaseDelayRef = useRef(options?.releaseDelayMs ?? 100)
+  releaseDelayRef.current = options?.releaseDelayMs ?? 100
 
   useEffect(() => {
     let requestedIgnore: boolean | undefined
@@ -209,10 +212,16 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
       setIgnoreMouseEvents(false)
     }
 
-    const releaseDebounced = () => {
+    const releaseCapture = () => {
       cancelPendingRelease()
 
       if (requestedIgnore === true) {
+        return
+      }
+
+      if (releaseDelayRef.current <= 0) {
+        setIgnoreMouseEvents(true)
+
         return
       }
 
@@ -222,7 +231,7 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
         if (!state.captureHoldsByWindow.get(windowId)?.size) {
           setIgnoreMouseEvents(true)
         }
-      }, 100)
+      }, releaseDelayRef.current)
 
       state.releaseTimers.set(windowId, timer)
     }
@@ -243,7 +252,7 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
       if (isPointInteractive(p.x, p.y, windowId)) {
         captureImmediate()
       } else {
-        releaseDebounced()
+        releaseCapture()
       }
     }
 

@@ -24,6 +24,8 @@ export interface PresentationState {
   companionActivity: DesktopCompanionActivityState
   voicePreparing: boolean
   displayId: number | null
+  /** 交互屏本地 DIP 坐标；原生工作区尚未就绪或已退出桌面时为空。 */
+  workArea: { x: number; y: number; width: number; height: number } | null
   displays: PresentationDisplay[]
   stageOwner: 'sprite' | 'desktop'
   stageVisible: boolean

@@ -59,9 +59,7 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
     win.setBounds(display.bounds)
     displayBoundsByWindow.set(win, { ...display.bounds })
 
-    if (primary) {
-      win.setIgnoreMouseEvents(true, { forward: true })
-    }
+    win.setIgnoreMouseEvents(true, primary ? { forward: true } : undefined)
 
     win.webContents.on('render-process-gone', (_event, details) =>
       options.onFailure(`桌面渲染进程已退出：${details.reason}`)

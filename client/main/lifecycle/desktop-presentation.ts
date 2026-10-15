@@ -89,6 +89,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   let disposed = false
   let desktopRendererHealthy = false
   let activeDisplay: Electron.Display | null = null
+  let nativeWorkArea: PresentationState['workArea'] = null
+  let nativeWorkAreaEpoch: number | null = null
   let disposal: Promise<void> | null = null
   let disposeIpc: (() => void) | null = null
   let lastActivity: StageActivity = { locked: false, idleSeconds: -1, effectiveTier: 'normal', focus: null }
@@ -198,6 +200,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         )
       }
     },
+    onWorkAreaChanged: updateNativeWorkArea,
     onFailure: reason => {
       if (status === 'inactive' || status === 'failed') {
         return
@@ -269,6 +272,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
           : activityBySource.desktop.state,
       voicePreparing: activityBySource.host.voicePreparing || activityBySource.desktop.voicePreparing,
       displayId: targetDisplay?.id ?? null,
+      workArea: effectiveMode === 'desktop' && status === 'active' ? nativeWorkArea : null,
       displays,
       stageOwner: effectiveMode === 'desktop' ? 'desktop' : 'sprite',
       stageVisible: effectiveMode !== 'desktop',
@@ -276,6 +280,46 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       revision,
       switchBlockedReason: uiState.blockedReason()
     }
+  }
+
+  function updateNativeWorkArea(physical: Electron.Rectangle): void {
+    const win = windows.getInteractive()
+
+    if (
+      disposed ||
+      nativeWorkAreaEpoch !== stageEpoch ||
+      (status !== 'starting' && status !== 'active') ||
+      !activeDisplay ||
+      !win ||
+      win.isDestroyed()
+    ) {
+      return
+    }
+
+    const dip = screen.screenToDipRect(win, physical)
+    const display = activeDisplay.bounds
+    const x = Math.max(0, dip.x - display.x)
+    const y = Math.max(0, dip.y - display.y)
+    const right = Math.min(display.width, dip.x + dip.width - display.x)
+    const bottom = Math.min(display.height, dip.y + dip.height - display.y)
+
+    if (right <= x || bottom <= y) {
+      throw new Error('Desktop helper work area does not intersect the interactive display')
+    }
+
+    const area = { x, y, width: right - x, height: bottom - y }
+
+    if (
+      nativeWorkArea?.x === area.x &&
+      nativeWorkArea.y === area.y &&
+      nativeWorkArea.width === area.width &&
+      nativeWorkArea.height === area.height
+    ) {
+      return
+    }
+
+    nativeWorkArea = area
+    publish()
   }
 
   function displayGeometry(display: Electron.Display): string {
@@ -362,6 +406,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     activityBySource.desktop = { state: 'idle', voicePreparing: false }
     windows.destroy()
     activeDisplay = null
+    nativeWorkArea = null
+    nativeWorkAreaEpoch = null
     stageAvailable = false
     fullscreen = false
     background.reset()
@@ -373,6 +419,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     invalidateStartup(reason)
+    nativeWorkArea = null
+    nativeWorkAreaEpoch = null
     foreground = false
     publish()
 
@@ -422,6 +470,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     prepareDesktopMedia &&= preservePreparation
     health.stopMode()
     status = 'recovering'
+    nativeWorkArea = null
+    nativeWorkAreaEpoch = null
     setRunningApplications({ status: 'inactive', error: null, windows: [] })
     stageEpoch += 1
     background.invalidate()
@@ -538,6 +588,8 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
 
     status = 'starting'
+    nativeWorkArea = null
+    nativeWorkAreaEpoch = null
     setRunningApplications({ status: 'loading', error: null, windows: [] })
     failureReason = null
     compatibilityWarning = null
@@ -587,6 +639,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       options.getSpriteWindow()?.hide()
       assertReady()
 
+      nativeWorkAreaEpoch = stageEpoch
       await native.start({
         parentPid: process.pid,
         takeover: process.env.SPIRITAGENT_DESKTOP_PROBE !== '1',

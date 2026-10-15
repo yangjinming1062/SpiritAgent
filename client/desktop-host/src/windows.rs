@@ -31,7 +31,9 @@ const DESKTOP_LAYER_TIMEOUT: Duration = Duration::from_secs(2);
 const HOTKEY_ID: i32 = 0x5341;
 
 mod workspace;
-use workspace::{RestoreWorkArea, Workspace};
+use workspace::{RestoreAppBar, RestoreWorkArea, Workspace};
+mod layers;
+use layers::DesktopLayers;
 mod events;
 use events::WinEvents;
 mod applications;
@@ -335,6 +337,8 @@ struct Journal {
     shell: Vec<Identity>,
     windows: Vec<RestoreWindow>,
     work_area: Option<RestoreWorkArea>,
+    #[serde(default)]
+    appbar: Option<RestoreAppBar>,
     desktop_bounds: Bounds,
 }
 
@@ -411,6 +415,9 @@ fn validate_journal(journal: &Journal) -> Result<()> {
     let mut handles = std::collections::HashSet::new();
     if let Some(area) = &journal.work_area {
         area.validate()?;
+    }
+    if let Some(appbar) = &journal.appbar {
+        appbar.validate(journal.host_pid, journal.host_created, journal.desktop_bounds)?;
     }
     if !journal.desktop_bounds.valid()
         || journal.shell.iter().any(|entry| {
@@ -524,7 +531,7 @@ fn worker() -> Result<Identity> {
     {
         return Err("Explorer desktop is unavailable".into());
     }
-    // 图标层跨所有显示器共享；与它同父层的局部背景只遮住所选屏，其他屏保持 Explorer 输入。
+    // 图标层跨所有显示器共享，必须保留原窗口及其输入和显示偏好。
     let mut layers = top_windows()?;
     unsafe { EnumChildWindows(progman, Some(collect_window), &mut layers as *mut _ as LPARAM) };
     for window in layers {
@@ -714,14 +721,12 @@ fn move_window(window: HWND, parent: HWND, bounds: Bounds) -> Result<()> {
     Ok(())
 }
 
-fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()> {
-    if !saved.identity.valid() || !worker.valid() {
+fn attach(saved: &RestoreWindow, layers: &DesktopLayers, bounds: Bounds) -> Result<()> {
+    if !saved.identity.valid() || !layers.valid() {
         return Err("desktop attachment window identity changed".into());
     }
     let window = saved.identity.window();
-    let layer = worker.window();
-    let mouse_passthrough =
-        unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as u32 & WS_EX_TRANSPARENT;
+    let layer = layers.background_parent.window();
     let original_dpi = unsafe { GetWindowDpiAwarenessContext(window) };
     if original_dpi.is_null()
         || unsafe {
@@ -739,12 +744,17 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
     set_long(
         window,
         GWL_EXSTYLE,
-        ((saved.ex_style as u32 & !(WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT))
-            | mouse_passthrough) as isize,
+        ((saved.ex_style as u32 & !(WS_EX_APPWINDOW | WS_EX_TOPMOST))
+            | WS_EX_TRANSPARENT
+            | WS_EX_NOACTIVATE
+            | if layers.layered { WS_EX_LAYERED } else { 0 }) as isize,
     )?;
+    if layers.layered && unsafe { SetLayeredWindowAttributes(window, 0, 255, LWA_ALPHA) } == 0 {
+        return Err(failure("enable wallpaper composition below desktop icons"));
+    }
     set_parent(window, layer)?;
     if saved.role == WindowRole::Background {
-        // SetParent 会添加兄弟裁剪；整屏透明伙伴会将背景表面裁空，须在挂载后清除。
+        // 图标视图覆盖整屏，壁纸表面不能按这个透明兄弟窗口裁空。
         let attached_style = unsafe { GetWindowLongPtrW(window, GWL_STYLE) } as u32;
         set_long(
             window,
@@ -809,101 +819,6 @@ fn attach(saved: &RestoreWindow, worker: &Identity, bounds: Bounds) -> Result<()
         }
     }
     visibility(&saved.identity, true)?;
-    Ok(())
-}
-
-fn order_desktop_children(
-    windows: &[RestoreWindow],
-    worker: &Identity,
-    takeover: bool,
-) -> Result<bool> {
-    let layer = worker.window();
-    let view = child(layer, "SHELLDLL_DefView");
-    if view.is_null() || window_pid(view) != worker.pid || unsafe { GetParent(view) } != layer {
-        return Err("Explorer icon view changed before desktop ordering".into());
-    }
-    let mut previous = HWND_TOP;
-    if !takeover {
-        previous = view;
-    }
-    let children = windows
-        .iter()
-        .filter(|saved| saved.role == WindowRole::Background);
-    let mut changed = false;
-    for saved in children {
-        let window = saved.identity.window();
-        if unsafe { GetParent(window) } != layer {
-            return Err("desktop child window left its Explorer layer".into());
-        }
-        if changed || unsafe { GetWindow(window, GW_HWNDPREV) } != previous {
-            if !saved.identity.valid() || !worker.valid() {
-                return Err("desktop child ordering window identity changed".into());
-            }
-            if unsafe {
-                SetWindowPos(
-                    window,
-                    previous,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_ASYNCWINDOWPOS,
-                )
-            } == 0
-            {
-                return Err(failure("desktop child window ordering"));
-            }
-            changed = true;
-        }
-        previous = window;
-    }
-    Ok(changed)
-}
-
-fn verify_desktop_background(
-    windows: &[RestoreWindow],
-    worker: &Identity,
-    target: Bounds,
-    takeover: bool,
-) -> Result<()> {
-    let saved = windows
-        .iter()
-        .find(|saved| saved.role == WindowRole::Background)
-        .ok_or("desktop background is missing")?;
-    let window = saved.identity.window();
-    let layer = worker.window();
-    if !saved.identity.valid()
-        || !worker.valid()
-        || unsafe { GetParent(window) } != layer
-        || !rectangle(window)?.within_tolerance(target, 2)
-    {
-        return Err("desktop background left its selected display or Explorer layer".into());
-    }
-    let mut client: RECT = unsafe { zeroed() };
-    if unsafe { GetClientRect(window, &mut client) } == 0
-        || client.right - client.left != target.width
-        || client.bottom - client.top != target.height
-    {
-        return Err("desktop background client bounds changed".into());
-    }
-    if !takeover {
-        return Ok(());
-    }
-    // 只核对 Explorer 子窗命中，避免顶层界面和其他应用影响挂载验证。
-    for (x, y) in [
-        (target.x + 3, target.y + 3),
-        (target.x + target.width / 2, target.y + target.height / 2),
-        (target.x + target.width - 4, target.y + target.height - 4),
-    ] {
-        let mut point = POINT { x, y };
-        if unsafe { ScreenToClient(layer, &mut point) } == 0 {
-            return Err(failure("desktop input coordinate verification"));
-        }
-        let hit = unsafe { ChildWindowFromPointEx(layer, point, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED) };
-        if hit != window {
-            return Err("desktop background does not own input on its selected display".into());
-        }
-    }
     Ok(())
 }
 
@@ -1000,6 +915,11 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
     let mut failures = Vec::new();
     let mut hosted = false;
     if !matches!(journal.phase, JournalPhase::Prepared) {
+        if let Some(appbar) = &journal.appbar {
+            if let Err(error) = appbar.restore() {
+                failures.push(error);
+            }
+        }
         if let Some(area) = &journal.work_area {
             if let Err(error) = area.restore() {
                 failures.push(error);
@@ -1194,7 +1114,7 @@ pub fn recover(path: &Path) -> Result<()> {
 
 struct Session {
     journal: Journal,
-    worker: Identity,
+    layers: DesktopLayers,
     targets: Vec<Bounds>,
     guardian: Child,
     path: PathBuf,
@@ -1203,6 +1123,7 @@ struct Session {
     foreground: Option<(bool, bool, bool)>,
     overlay_geometry_pending: Vec<Option<Instant>>,
     child_order_pending: Option<Instant>,
+    last_work_area: Option<Bounds>,
     workspace: Workspace,
     events: WinEvents,
     applications: Applications,
@@ -1310,7 +1231,7 @@ impl Session {
                 role: spec.role,
             });
         }
-        let worker = worker()?;
+        worker()?;
         let mut journal = Journal {
             phase: JournalPhase::Prepared,
             session: format!(
@@ -1330,7 +1251,8 @@ impl Session {
                 Vec::new()
             },
             windows,
-            work_area: takeover.then(|| workspace.original.clone()),
+            work_area: None,
+            appbar: workspace.appbar_restore(),
             desktop_bounds: targets[0],
         };
         let restoring = RestoringSignal::new(&journal)?;
@@ -1420,16 +1342,17 @@ impl Session {
             require_session(path, &journal.session, &restoring)?;
             workspace.monitor()?;
             monitor_bounds(targets[0])?;
-            if !worker.visible {
-                return Err("Explorer WorkerW is not visible".into());
-            }
             journal.phase = JournalPhase::Attaching;
             journal.save(path)?;
+            let layers = DesktopLayers::discover(takeover)?;
+            if !layers.icons.visible || !layers.background_parent.visible {
+                return Err("Explorer desktop layer is not visible".into());
+            }
             for (saved, target) in journal.windows.iter().zip(&targets) {
                 if saved.role.is_top_level() {
                     set_top_level(saved, *target, false)?;
                 } else {
-                    attach(saved, &worker, *target)?;
+                    attach(saved, &layers, *target)?;
                 }
             }
             if takeover {
@@ -1441,16 +1364,19 @@ impl Session {
                 }
                 workspace.activate()?;
             }
-            order_desktop_children(&journal.windows, &worker, takeover)?;
+            layers.order(&journal.windows)?;
             journal.phase = JournalPhase::Active;
             journal.save(path)?;
-            Ok(())
+            Ok(layers)
         })();
         drop(transaction);
-        if let Err(error) = attached {
-            let restored = restore(path, Some(&journal.session));
-            return Err(finish_failed_start(error, restored, &mut guardian, false));
-        }
+        let layers = match attached {
+            Ok(layers) => layers,
+            Err(error) => {
+                let restored = restore(path, Some(&journal.session));
+                return Err(finish_failed_start(error, restored, &mut guardian, false));
+            }
+        };
         let overlay_geometry_pending = vec![None; targets.len()];
         let applications = match Applications::new(&journal.session, parent_pid) {
             Ok(applications) => applications,
@@ -1461,7 +1387,7 @@ impl Session {
         };
         Ok(Self {
             journal,
-            worker,
+            layers,
             targets,
             guardian,
             path: path.into(),
@@ -1470,6 +1396,7 @@ impl Session {
             foreground: None,
             overlay_geometry_pending,
             child_order_pending: None,
+            last_work_area: None,
             workspace,
             events,
             applications,
@@ -1498,13 +1425,8 @@ impl Session {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             self.require_display()?;
-            let changed = order_desktop_children(&self.journal.windows, &self.worker, self.takeover)?;
-            let verification = verify_desktop_background(
-                &self.journal.windows,
-                &self.worker,
-                self.targets[0],
-                self.takeover,
-            );
+            let changed = self.layers.order(&self.journal.windows)?;
+            let verification = self.layers.verify(&self.journal.windows, self.targets[0]);
             if changed || verification.is_err() {
                 if self
                     .child_order_pending
@@ -1520,6 +1442,11 @@ impl Session {
                 self.child_order_pending = None;
             }
             self.workspace.poll(&events)?;
+            let area = self.workspace.current();
+            if self.last_work_area != Some(area) {
+                emit(json!({ "event": "work_area", "work_area": area }));
+                self.last_work_area = Some(area);
+            }
             self.applications.poll(&events, force, &self.workspace);
         }
         Ok(())
@@ -1591,7 +1518,7 @@ impl Session {
 
     fn shared_desktop_foreground(&self, foreground: HWND) -> bool {
         if foreground.is_null()
-            || window_pid(foreground) != self.worker.pid
+            || window_pid(foreground) != self.layers.icons.pid
             || !["Progman", "WorkerW", "SHELLDLL_DefView", "SysListView32"]
                 .contains(&class_name(foreground).as_str())
         {
@@ -1649,20 +1576,15 @@ impl Session {
             .journal
             .windows
             .iter()
-            .find(|saved| saved.identity.handle == value)
+            .find(|saved| saved.role == WindowRole::Overlay && saved.identity.handle == value)
             .ok_or("desktop focus target is not registered in this session")?;
         let window = saved.identity.window();
         let validate = || -> Result<()> {
             require_session(&self.path, &self.journal.session, &self.restoring)?;
             if !self.takeover
                 || !saved.identity.valid()
-                || !self.worker.valid()
-                || unsafe { GetParent(window) }
-                    != if saved.role.is_top_level() {
-                        null_mut()
-                    } else {
-                        self.worker.window()
-                    }
+                || !self.layers.valid()
+                || !unsafe { GetParent(window) }.is_null()
                 || unsafe { IsWindowVisible(window) } == 0
             {
                 return Err("desktop focus target is no longer an active stage".into());
@@ -1804,17 +1726,17 @@ impl Session {
             return Err("desktop window was destroyed".into());
         }
         self.require_display()?;
-        if !self.worker.valid() {
-            let replacement = worker()?;
+        if !self.layers.valid() {
             let _transaction = MutexGuard::restoration()?;
             require_session(&self.path, &self.journal.session, &self.restoring)?;
+            let replacement = DesktopLayers::discover(self.takeover)?;
             for (saved, target) in self.journal.windows.iter().zip(&self.targets) {
                 if !saved.role.is_top_level() {
                     attach(saved, &replacement, *target)?;
                 }
             }
             self.refresh_shell()?;
-            self.worker = replacement;
+            self.layers = replacement;
         }
         self.refresh_applications(false)?;
         if self.takeover && self.last_shell_scan.elapsed() >= Duration::from_secs(1) {
