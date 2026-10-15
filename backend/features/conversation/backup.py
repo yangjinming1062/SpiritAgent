@@ -75,7 +75,8 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
                 bubble.job_id = None
                 if bubble.status == "pending":
                     bubble.status, bubble.url, bubble.error = "failed", None, "恢复的生成任务不可继续，请重新提出请求"
-        payload["content"] = source.model_dump_json()
+        # 保留原文缺省字段，避免把供应商默认列表和速度补成 null。
+        payload["content"] = source.model_dump_json(exclude_unset=True)
         reply.validate_content(payload["content"])
         payload["reply_json"] = reply.model_dump_json()
 
