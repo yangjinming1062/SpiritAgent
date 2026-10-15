@@ -484,13 +484,13 @@ def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str
     return resolved, content_type
 
 
-def signed_companion_asset_url(storage_path: str) -> str | None:
+def signed_companion_asset_url(storage_path: str, *, ttl_seconds: int = _ASSET_URL_TTL_SECONDS) -> str | None:
     """将裸存储路径签名为 /asset 路由 URL；路径非法时返回 None。调用方不要缓存——签名短时过期，每次列表刷新都应重新签名。"""
     parsed = parse_companion_asset_path(storage_path)
     if parsed is None:
         return None
     user_id, filename = parsed
-    expires_at = int(time.time()) + _ASSET_URL_TTL_SECONDS
+    expires_at = int(time.time()) + ttl_seconds
     qs = urlencode({"expires": expires_at, "sig": _sign(user_id, filename, expires_at)})
     return f"/api/companion/asset/{user_id}/{filename}?{qs}"
 

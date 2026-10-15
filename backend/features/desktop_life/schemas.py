@@ -54,6 +54,7 @@ class DesktopVideoAsset(BaseModel):
     video_path: str
     image_path: str = Field(min_length=1)
     source_image_path: str | None = None
+    source_video_path: str | None = None
     geometry_mode: Literal["target", "keep"]
     resolution_revision: int = Field(gt=0, strict=True)
     image_origin: GenerationOrigin | None = None
@@ -77,6 +78,18 @@ class DesktopVideoAsset(BaseModel):
         elif self.base_version is not None or self.base_image_path is not None:
             raise ValueError("独立视频不能声明基础画面")
         return self
+
+
+class DesktopVideoRefinementInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_path: str = Field(min_length=1)
+    original_video_path: str = Field(min_length=1)
+    image_path: str = Field(min_length=1)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    duration_ms: int = Field(gt=0)
+    video_origin: GenerationOrigin | None = None
 
 
 class DesktopVideoProgress(BaseModel):
@@ -121,6 +134,7 @@ class DesktopVideoProgress(BaseModel):
     provider_task_id: str | None = None
     download_url: str | None = None
     source_path: str | None = None
+    video_refinement: DesktopVideoRefinementInput | None = None
     candidate: DesktopVideoAsset | None = None
     identity_score: int | None = None
     review_verdict: Literal["pass", "review"] | None = None
@@ -160,6 +174,8 @@ class DesktopVideoDraftResponse(BaseModel):
     target_height: int
     resolution_revision: int
     geometry_mode: Literal["target", "keep"] = "target"
+    duration_seconds: int
+    video_refinement: bool = False
     frame_width: int | None = None
     frame_height: int | None = None
     feedback: str = ""
@@ -261,6 +277,29 @@ class DesktopVideoGenerateRequest(BaseModel):
     @classmethod
     def explicit_no_draft(cls, value: str | None) -> str:
         return value or "none"
+
+
+class DesktopVideoRefineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["current", "candidate"]
+    feedback: str = Field(default="", max_length=600)
+    aspect_policy: Literal["keep", "expand"] = "keep"
+    expected_action_version: int = Field(ge=0)
+    expected_draft_id: str | None = None
+    expected_base_version: int = Field(ge=0)
+    expected_resolution_revision: int = Field(gt=0)
+
+    @field_validator("expected_draft_id", mode="before")
+    @classmethod
+    def explicit_no_draft(cls, value: str | None) -> str:
+        return value or "none"
+
+
+class DesktopVideoRefinePreviewResponse(BaseModel):
+    duration_seconds: int
+    width: int
+    height: int
 
 
 class DesktopVideoCreateSetRequest(BaseModel):

@@ -105,6 +105,8 @@ class BaseProvider(ABC):
             ):
                 if hasattr(self, field):
                     setattr(self, field, False)
+        if config.service_type == ServiceType.video_gen and ModelModality.video not in config.input_modalities:
+            self.supports_reference_videos = False
 
 
 class ProviderError(Exception):
@@ -244,7 +246,22 @@ class VideoGenRequest:
     first_frame_image: str | None = None
     last_frame_image: str | None = None
     reference_images: tuple[str, ...] = ()
+    reference_videos: tuple[str, ...] = ()
     aspect_ratio: str | None = None
+
+
+@dataclass(frozen=True)
+class VideoReferenceMetadata:
+    size_bytes: int
+    extension: str
+    video_codec: str
+    audio_codecs: tuple[str, ...]
+    duration_seconds: float
+    width: int
+    height: int
+    display_width: int
+    display_height: int
+    fps: float
 
 
 VideoJobState = Literal["queued", "processing", "succeeded", "failed"]
@@ -267,6 +284,7 @@ class VideoGenProvider(BaseProvider):
     supports_first_frame: bool = False  # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商
     supports_loop_frames: bool = False
     supports_reference_images: bool = False  # 身份参考模式；普通出镜视频据此筛选，动作视频另走首帧模式
+    supports_reference_videos: bool = False
     supports_adaptive_aspect_ratio: bool = False  # 图生视频可直接沿用输入图画幅；请求不指定 aspect_ratio
     aspect_ratios: tuple[str, ...] = ("16:9",)  # 非 adaptive 模式按此顺序选择裁切保留面积最大的画幅
     adaptive_aspect_ratio_range: tuple[float, float] | None = None
@@ -283,9 +301,17 @@ class VideoGenProvider(BaseProvider):
         first_frame: bool = False,
         last_frame: bool = False,
         reference_images: bool = False,
+        reference_videos: bool = False,
     ) -> str | None:
         """配置模型在本次输入组合下的最高原生档；未声明或组合不可用时返回 None。"""
         return None
+
+    def validate_reference_video(self, metadata: VideoReferenceMetadata) -> None:
+        raise ProviderError(f"{self.provider_name} does not support reference videos", status_code=400)
+
+    def validate_request(self, req: VideoGenRequest) -> None:
+        if req.reference_videos and not self.supports_reference_videos:
+            raise ProviderError(f"{self.provider_name} does not support reference videos", status_code=400)
 
     @abstractmethod
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus: ...

@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import json
 from datetime import timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 from uuid import uuid4
 
@@ -15,15 +17,16 @@ from infrastructure.assets.asset_store import (
     read_valid_image_data_uri,
     resolve_asset_reference,
     save_action_source_asset_async,
+    save_companion_asset_async,
     signed_companion_asset_url,
     sniff_media_ext,
-    unlink_companion_asset,
 )
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, resolve_language, resolve_prompt_text, utc_now
-from infrastructure.video_processing.ffmpeg import VideoProcessError
+from infrastructure.video_processing.desktop import extract_desktop_first_frame
+from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
 from runtime.user_maintenance import track_user_task
@@ -95,6 +98,7 @@ from features.desktop_life.repository import (
 )
 from features.desktop_life.schemas import (
     DesktopVideoActionResponse,
+    DesktopVideoAsset,
     DesktopVideoCreateSetRequest,
     DesktopVideoDesignRequest,
     DesktopVideoExternalPromptResponse,
@@ -106,12 +110,16 @@ from features.desktop_life.schemas import (
     DesktopVideoProposalResponse,
     DesktopVideoReceipt,
     DesktopVideoReference,
+    DesktopVideoRefinementInput,
+    DesktopVideoRefinePreviewResponse,
+    DesktopVideoRefineRequest,
     DesktopVideoRenameSetRequest,
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
     DesktopVisualSnapshot,
 )
-from features.media.chain import spawn_removed_action_task_cancellation
+from features.desktop_life.video_refinement import plan_desktop_video_refinement
+from features.media.chain import FrozenMediaProvider, MediaChainState, spawn_removed_action_task_cancellation
 from features.media.contracts import RemovedActionVideoTask
 
 logger = get_logger(__name__)
@@ -653,7 +661,7 @@ def _geometry_mode(
     aspect_policy: str,
     media_kind: str = "image",
 ) -> Literal["target", "keep"]:
-    if aspect_policy not in {"ask", "keep", "expand"} or media_kind == "video" and aspect_policy == "expand":
+    if aspect_policy not in {"ask", "keep", "expand"}:
         raise DesktopVideoStateError("不支持的画幅处理方式")
     if desktop_aspect_matches(width, height, row.target_width, row.target_height):
         return "target"
@@ -850,6 +858,7 @@ async def upload_desktop_image(
     action_id: int,
     data: bytes,
     *,
+    expected_action_version: int,
     expected_set_id: int | None = None,
     expected_draft_id: str | None = None,
     expected_base_version: int | None = None,
@@ -862,6 +871,8 @@ async def upload_desktop_image(
         raise DesktopVideoStateError("图片无法读取，请上传完整的图片") from exc
     async with _lock(user_id), SESSION_LOCAL() as db:
         action = await desktop_action(db, user_id, action_id, lock=True)
+        if action.version != expected_action_version:
+            raise DesktopVideoStateError("当前成品已变化，请刷新后重试")
         row = await _suite(db, user_id, action.set_id)
         if expected_set_id is not None and expected_set_id != row.id:
             raise DesktopVideoStateError("桌景套装已变化")
@@ -876,6 +887,9 @@ async def upload_desktop_image(
             raise DesktopVideoStateError("这个动作使用安静相伴的基础图，请上传安静相伴的基础图")
         if action.status == "processing" and action.stage != "paused":
             raise DesktopVideoStateError("请先取消当前制作")
+        old = desktop_progress(action)
+        if old is not None and desktop_progress_has_unknown_submission(old):
+            raise DesktopVideoStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
         geometry_mode = _geometry_mode(row, width, height, aspect_policy)
         old_json, old_status, old_stage = action.generation_state_json, action.status, action.stage
         action.attempt += 1
@@ -899,7 +913,6 @@ async def upload_desktop_image(
             image_only=True,
             action_description=desktop_action_description(action),
         )
-        old = desktop_progress(action)
         removed_task = desktop_removed_video_task(action)
         progress.previous_pose_path = old.pose_path if old else None
         action.generation_state_json = progress.model_dump_json()
@@ -925,34 +938,52 @@ async def upload_desktop_image(
             await enqueue_asset_cleanup(db, user_id, asset_paths(old_json, user_id))
             await touch_desktop_state(db, user_id)
             await db.commit()
-            cancel_desktop_video_job(action_id)
-            spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
-            if progress.expand_image:
-                schedule_desktop_video_job(user_id, action_id)
-            return desktop_action_response(action)
     except Exception:
-        for path in {
-            saved_path,
-            progress.source_image_path,
-            progress.expansion_canvas_path,
-            progress.expansion_generated_path,
-        } - {None}:
-            await asyncio.to_thread(unlink_companion_asset, path)
+        recovered = False
         async with SESSION_LOCAL() as db:
             await desktop_state(db, user_id, lock=True)
-            action = await db.scalar(
+            await enqueue_asset_cleanup(
+                db,
+                user_id,
+                {
+                    saved_path,
+                    progress.source_image_path,
+                    progress.expansion_canvas_path,
+                    progress.expansion_generated_path,
+                }
+                - {None},
+            )
+            saved_action = await db.scalar(
                 select(DesktopVideoAction).where(
                     DesktopVideoAction.user_id == user_id,
                     DesktopVideoAction.id == action_id,
                 ),
             )
-            current = desktop_progress(action) if action else None
-            if action is not None and current is not None and current.generation_id == progress.generation_id:
-                action.generation_state_json, action.status, action.stage = old_json, old_status, old_stage
-                action.error = "图片上传未完成，请重试"
-                await touch_desktop_state(db, user_id)
-                await db.commit()
-        raise
+            current = desktop_progress(saved_action) if saved_action else None
+            if saved_action is not None and current is not None and current.generation_id == progress.generation_id:
+                if (
+                    saved_path
+                    and progress.source_image_path
+                    and current.source_image_path == progress.source_image_path
+                    and (current.pose_path == saved_path or current.previous_pose_path == saved_path)
+                ):
+                    action, progress, recovered = saved_action, current, True
+                else:
+                    saved_action.generation_state_json, saved_action.status, saved_action.stage = (
+                        old_json,
+                        old_status,
+                        old_stage,
+                    )
+                    saved_action.error = "图片上传未完成，请重试"
+                    await touch_desktop_state(db, user_id)
+            await db.commit()
+        if not recovered:
+            raise
+    cancel_desktop_video_job(action_id)
+    spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
+    if progress.expand_image and action.status == "processing" and not progress.paused_by_user:
+        schedule_desktop_video_job(user_id, action_id)
+    return desktop_action_response(action)
 
 
 async def confirm_desktop_image(
@@ -1411,19 +1442,198 @@ async def generate_desktop_action(
     return response
 
 
+async def _refinement_source(
+    db: AsyncSession,
+    user_id: int,
+    action_id: int,
+    request: DesktopVideoRefineRequest,
+    *,
+    lock: bool = False,
+) -> tuple[DesktopVideoAction, DesktopVideoSet, DesktopVideoAsset]:
+    action = await desktop_action(db, user_id, action_id, lock=lock)
+    row = await db.scalar(
+        select(DesktopVideoSet).where(DesktopVideoSet.id == action.set_id, DesktopVideoSet.user_id == user_id),
+    )
+    if row is None:
+        raise DesktopVideoNotFoundError("找不到对应的画面")
+    progress = desktop_progress(action)
+    _validate_draft(
+        row,
+        progress if action.stage != "complete" else None,
+        draft_id=request.expected_draft_id or "none",
+        base_version=request.expected_base_version,
+        resolution_revision=request.expected_resolution_revision,
+    )
+    if action.version != request.expected_action_version:
+        raise DesktopVideoStateError("当前视频已变化，请刷新后重试")
+    if action.status == "processing" and action.stage != "paused":
+        raise DesktopVideoStateError("这个桌面动作正在制作，请等待当前任务完成")
+    if progress is not None and desktop_progress_has_unknown_submission(progress):
+        raise DesktopVideoStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
+    asset = (
+        progress.candidate
+        if request.source == "candidate" and progress is not None and action.stage == "review"
+        else desktop_accepted_asset(action)
+        if request.source == "current"
+        else None
+    )
+    if asset is None:
+        raise DesktopVideoStateError("要调整的视频已失效，请刷新后重试")
+    if (
+        action.continuity == "base"
+        and action.key != "idle"
+        and (asset.base_version != row.base_version or asset.base_image_path != row.base_image_path)
+    ):
+        raise DesktopVideoStateError("基础画面已变化，请重新制作这个动作")
+    return action, row, asset
+
+
+async def _plan_refinement(
+    user_id: int,
+    row: DesktopVideoSet,
+    asset: DesktopVideoAsset,
+    request: DesktopVideoRefineRequest,
+) -> tuple[int, int, int, list[FrozenMediaProvider]]:
+    resolved = resolve_asset_reference(asset.video_path)
+    if resolved is None:
+        raise DesktopVideoStateError("参考视频缺失，请重新上传")
+    try:
+        data = await asyncio.to_thread(resolved[0].read_bytes)
+    except OSError as exc:
+        raise DesktopVideoStateError("参考视频无法读取，请重新上传") from exc
+    width, height = (
+        (row.target_width, row.target_height) if request.aspect_policy == "expand" else (asset.width, asset.height)
+    )
+    seconds, providers = await plan_desktop_video_refinement(
+        user_id,
+        data,
+        resolved[0].suffix,
+        aspect_ratio=desktop_aspect_ratio(width, height),
+        selection=ProviderSelection(origin=asset.video_origin, mode="current"),
+        feedback=request.feedback.strip(),
+    )
+    return seconds, width, height, providers
+
+
+def _refinement_progress(
+    action: DesktopVideoAction,
+    row: DesktopVideoSet,
+    refinement: DesktopVideoRefinementInput,
+    *,
+    seconds: int,
+    providers: list[FrozenMediaProvider],
+    feedback: str = "",
+    aspect_policy: str = "expand",
+) -> DesktopVideoProgress:
+    width, height = (
+        (row.target_width, row.target_height) if aspect_policy == "expand" else (refinement.width, refinement.height)
+    )
+    return DesktopVideoProgress(
+        generation_id=uuid4().hex,
+        target_width=row.target_width,
+        target_height=row.target_height,
+        resolution_revision=row.resolution_revision,
+        source="user_requested",
+        feedback=feedback.strip(),
+        action_description=desktop_action_description(action),
+        duration_seconds=seconds,
+        video_refinement=refinement,
+        video_selection=ProviderSelection(origin=refinement.video_origin, mode="current"),
+        video_chain_json=MediaChainState(providers=providers).model_dump_json(),
+        geometry_mode="target" if aspect_policy == "expand" else "keep",
+        aspect_ratio=desktop_aspect_ratio(width, height),
+        frame_width=width,
+        frame_height=height,
+        image_confirmed=True,
+        force_review=True,
+        pose_path=refinement.image_path,
+        continuity=action.continuity,
+        base_version=(row.base_version + 1 if action.key == "idle" else row.base_version)
+        if action.continuity == "base"
+        else None,
+        base_image_path=row.base_image_path if action.continuity == "base" and action.key != "idle" else None,
+        replace_base=action.key == "idle",
+    )
+
+
+async def preview_desktop_video_refinement(
+    user_id: int,
+    action_id: int,
+    request: DesktopVideoRefineRequest,
+) -> DesktopVideoRefinePreviewResponse:
+    async with SESSION_LOCAL() as db:
+        _action, row, asset = await _refinement_source(db, user_id, action_id, request)
+    seconds, width, height, _providers = await _plan_refinement(user_id, row, asset, request)
+    return DesktopVideoRefinePreviewResponse(duration_seconds=seconds, width=width, height=height)
+
+
+async def refine_desktop_video(
+    user_id: int,
+    action_id: int,
+    request: DesktopVideoRefineRequest,
+) -> DesktopVideoActionResponse:
+    if not request.feedback.strip() and request.aspect_policy != "expand":
+        raise DesktopVideoStateError("请填写视频调整要求或选择适配桌景画幅")
+    async with SESSION_LOCAL() as db:
+        _action, row, asset = await _refinement_source(db, user_id, action_id, request)
+    seconds, _width, _height, providers = await _plan_refinement(user_id, row, asset, request)
+    async with _lock(user_id), SESSION_LOCAL() as db:
+        action, row, asset = await _refinement_source(db, user_id, action_id, request, lock=True)
+        require_new_generation_call(user_id)
+        removed_task = desktop_removed_video_task(action)
+        old_paths = asset_paths(action.generation_state_json, user_id)
+        progress = _refinement_progress(
+            action,
+            row,
+            DesktopVideoRefinementInput(
+                video_path=asset.video_path,
+                original_video_path=asset.source_video_path or asset.video_path,
+                image_path=asset.image_path,
+                width=asset.width,
+                height=asset.height,
+                duration_ms=asset.duration_ms,
+                video_origin=asset.video_origin,
+            ),
+            seconds=seconds,
+            providers=providers,
+            feedback=request.feedback,
+            aspect_policy=request.aspect_policy,
+        )
+        action.attempt += 1
+        action.duration_seconds = seconds
+        action.generation_state_json = progress.model_dump_json()
+        action.status, action.stage, action.error, action.update_pending = "processing", "video", None, False
+        await enqueue_asset_cleanup(db, user_id, old_paths - asset_paths(action.generation_state_json, user_id))
+        await touch_desktop_state(db, user_id)
+        await db.commit()
+        response = desktop_action_response(action)
+    cancel_desktop_video_job(action_id)
+    spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
+    schedule_desktop_video_job(user_id, action_id)
+    return response
+
+
+def _uploaded_refinement_frame(data: bytes, extension: str) -> tuple[bytes, int]:
+    with TemporaryDirectory(prefix="desktop-reference-") as directory:
+        source = Path(directory) / f"source.{extension}"
+        source.write_bytes(data)
+        return extract_desktop_first_frame(source), round(probe_video(source).duration_seconds * 1000)
+
+
 async def upload_desktop_action(
     user_id: int,
     action_id: int,
     data: bytes,
     extension: str,
     *,
+    expected_action_version: int,
     expected_set_id: int | None = None,
     expected_draft_id: str | None = None,
     expected_base_version: int | None = None,
     expected_resolution_revision: int | None = None,
     aspect_policy: str = "ask",
 ) -> DesktopVideoActionResponse:
-    """保存用户原视频，无转码检查后按当前成品和候选的采用规则处理。"""
+    """保留上传字节；原样交付与参考原片制作共用草稿替换和资产管理。"""
     if not data:
         raise DesktopVideoStateError("上传的视频文件为空")
     extension = extension.lower().lstrip(".")
@@ -1434,13 +1644,19 @@ async def upload_desktop_action(
         width, height = await asyncio.to_thread(probe_desktop_video, data, extension)
     except (ValueError, OSError, VideoProcessError) as exc:
         raise DesktopVideoStateError("视频无法读取，请上传完整的视频") from exc
-    async with _lock(user_id), SESSION_LOCAL() as db:
-        initial = await desktop_action(db, user_id, action_id, lock=True)
+    async with SESSION_LOCAL() as db:
+        initial = await desktop_action(db, user_id, action_id)
+        if initial.version != expected_action_version:
+            raise DesktopVideoStateError("当前成品已变化，请刷新后重试")
         if expected_set_id is not None and expected_set_id != initial.set_id:
             raise DesktopVideoStateError("桌面生活组合已经变化")
         if initial.status == "processing" and initial.stage != "paused":
             raise DesktopVideoStateError("这个桌面动作正在制作，请等待当前任务完成")
-        row = await _suite(db, user_id, initial.set_id)
+        row = await db.scalar(
+            select(DesktopVideoSet).where(DesktopVideoSet.id == initial.set_id, DesktopVideoSet.user_id == user_id),
+        )
+        if row is None:
+            raise DesktopVideoNotFoundError("找不到对应的画面")
         if initial.continuity == "base" and initial.key != "idle" and not row.base_image_path:
             raise DesktopVideoStateError("请先制作安静相伴")
         _validate_draft(
@@ -1450,7 +1666,65 @@ async def upload_desktop_action(
             base_version=expected_base_version,
             resolution_revision=expected_resolution_revision,
         )
+        old = desktop_progress(initial)
+        if old is not None and desktop_progress_has_unknown_submission(old):
+            raise DesktopVideoStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
+        observed_draft = old.generation_id if old is not None and initial.stage != "complete" else "none"
+        observed_version = initial.version
+        observed_base, observed_resolution = row.base_version, row.resolution_revision
+    target_ratio = desktop_aspect_ratio(row.target_width, row.target_height)
+    try:
         geometry_mode = _geometry_mode(row, width, height, aspect_policy, "video")
+    except DesktopVideoAspectRatioError as exc:
+        try:
+            seconds, _providers = await plan_desktop_video_refinement(
+                user_id,
+                data,
+                extension,
+                aspect_ratio=target_ratio,
+            )
+            exc.detail["duration_seconds"] = seconds
+        except DesktopVideoError as planning_error:
+            exc.detail["adjustment_error"] = str(planning_error)
+        except Exception:
+            logger.warning(
+                "Desktop video adjustment preview unavailable",
+                extra={"action_id": action_id},
+                exc_info=True,
+            )
+            exc.detail["adjustment_error"] = "视频调整暂时不可用，请稍后重试"
+        raise
+    seconds = initial.duration_seconds
+    providers: list[FrozenMediaProvider] = []
+    source_frame: bytes | None = None
+    source_duration_ms = 0
+    if aspect_policy == "expand":
+        seconds, providers = await plan_desktop_video_refinement(
+            user_id,
+            data,
+            extension,
+            aspect_ratio=target_ratio,
+        )
+        source_frame, source_duration_ms = await asyncio.to_thread(_uploaded_refinement_frame, data, extension)
+    async with _lock(user_id), SESSION_LOCAL() as db:
+        initial = await desktop_action(db, user_id, action_id, lock=True)
+        row = await _suite(db, user_id, initial.set_id)
+        old = desktop_progress(initial)
+        _validate_draft(
+            row,
+            old if initial.stage != "complete" else None,
+            draft_id=observed_draft,
+            base_version=observed_base,
+            resolution_revision=observed_resolution,
+        )
+        if initial.version != observed_version:
+            raise DesktopVideoStateError("当前视频已变化，请刷新后重试")
+        if initial.status == "processing" and initial.stage != "paused":
+            raise DesktopVideoStateError("这个桌面动作正在制作，请等待当前任务完成")
+        if old is not None and desktop_progress_has_unknown_submission(old):
+            raise DesktopVideoStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
+        if aspect_policy == "expand":
+            require_new_generation_call(user_id)
         initial.attempt += 1
         generation_id = uuid4().hex
         directory = f"desktop/{initial.set_id}/{initial.id}/{generation_id}"
@@ -1469,14 +1743,14 @@ async def upload_desktop_action(
             geometry_mode=geometry_mode,
             frame_width=width,
             frame_height=height,
-            duration_seconds=initial.duration_seconds,
+            duration_seconds=seconds,
             continuity=initial.continuity,
             base_version=(row.base_version + 1 if initial.key == "idle" else row.base_version)
             if initial.continuity == "base"
             else None,
             base_image_path=row.base_image_path if initial.continuity == "base" and initial.key != "idle" else None,
             replace_base=initial.key == "idle",
-            video_chain_json="{}",
+            video_chain_json=MediaChainState(providers=providers).model_dump_json(),
         )
         progress.aspect_ratio = desktop_aspect_ratio(width, height)
         await enqueue_asset_cleanup(db, user_id, old_paths)
@@ -1490,6 +1764,7 @@ async def upload_desktop_action(
     cancel_desktop_video_job(action_id)
     spawn_removed_action_task_cancellation(user_id, [removed_task] if removed_task else [])
     source_path: str | None = None
+    source_image_path: str | None = None
     try:
         source_path = await save_action_source_asset_async(
             data,
@@ -1499,40 +1774,84 @@ async def upload_desktop_action(
             ext=detected,
             directory=directory,
         )
+        if source_frame is not None:
+            source_image_path = await save_companion_asset_async(
+                source_frame,
+                user_id=user_id,
+                label="desktop_reference",
+                ext="png",
+                directory=directory,
+            )
         async with SESSION_LOCAL() as db:
             action = await desktop_action(db, user_id, action_id, lock=True)
             current = desktop_progress(action)
             if current is None or current.generation_id != generation_id or action.status != "processing":
                 raise DesktopVideoStateError("上传任务已经失效")
-            current.source_path = source_path
+            if source_image_path is not None:
+                row = await _suite(db, user_id, action.set_id)
+                updated = _refinement_progress(
+                    action,
+                    row,
+                    DesktopVideoRefinementInput(
+                        video_path=source_path,
+                        original_video_path=source_path,
+                        image_path=source_image_path,
+                        width=width,
+                        height=height,
+                        duration_ms=source_duration_ms,
+                    ),
+                    seconds=seconds,
+                    providers=providers,
+                )
+                updated.generation_id = current.generation_id
+                updated.paused_by_user = current.paused_by_user
+                current = updated
+                action.duration_seconds = seconds
+            else:
+                current.source_path = source_path
             action.generation_state_json = current.model_dump_json()
-            action.stage = "paused" if current.paused_by_user else "process"
+            action.stage = "paused" if current.paused_by_user else "video" if current.video_refinement else "process"
             await touch_desktop_state(db, user_id)
             await db.commit()
-            response = desktop_action_response(action)
     except Exception as exc:
-        if source_path:
-            await asyncio.to_thread(unlink_companion_asset, source_path)
+        recovered = False
         async with SESSION_LOCAL() as db:
             await desktop_state(db, user_id, lock=True)
-            action = await db.scalar(
+            # 提交结果可能不确定；回收任务核对持久引用后再删除原片和参考帧。
+            await enqueue_asset_cleanup(db, user_id, {path for path in (source_path, source_image_path) if path})
+            saved_action = await db.scalar(
                 select(DesktopVideoAction).where(
                     DesktopVideoAction.id == action_id,
                     DesktopVideoAction.user_id == user_id,
                 ),
             )
-            current = desktop_progress(action) if action else None
-            if action is not None and current is not None and current.generation_id == generation_id:
-                current.failure_reason = "failed"
-                action.generation_state_json = current.model_dump_json()
-                action.status, action.stage, action.error = "failed", "upload", "上传视频保存失败，请重试"
-                await touch_desktop_state(db, user_id)
-                await db.commit()
-        if isinstance(exc, DesktopVideoError):
-            raise
-        raise DesktopVideoStateError("上传视频保存失败，请重试") from exc
-    schedule_desktop_video_job(user_id, action_id)
-    return response
+            current = desktop_progress(saved_action) if saved_action else None
+            if saved_action is not None and current is not None and current.generation_id == generation_id:
+                refinement = current.video_refinement
+                if source_path and (
+                    current.source_path == source_path
+                    or refinement is not None
+                    and refinement.video_path == source_path
+                    and refinement.image_path == source_image_path
+                ):
+                    action, recovered = saved_action, True
+                else:
+                    current.failure_reason = "failed"
+                    saved_action.generation_state_json = current.model_dump_json()
+                    saved_action.status, saved_action.stage, saved_action.error = (
+                        "failed",
+                        "upload",
+                        "上传视频保存失败，请重试",
+                    )
+                    await touch_desktop_state(db, user_id)
+            await db.commit()
+        if not recovered:
+            if isinstance(exc, DesktopVideoError):
+                raise
+            raise DesktopVideoStateError("上传视频保存失败，请重试") from exc
+    if action.status == "processing" and current is not None and not current.paused_by_user:
+        schedule_desktop_video_job(user_id, action_id)
+    return desktop_action_response(action)
 
 
 async def review_desktop_action(

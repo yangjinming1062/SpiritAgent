@@ -68,6 +68,8 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_LOOP,
     DESKTOP_VIDEO_MOTION_TEMPLATE,
     DESKTOP_VIDEO_ONCE,
+    DESKTOP_VIDEO_REFINE_REVIEW,
+    DESKTOP_VIDEO_REFINE_SCORE,
     DESKTOP_VIDEO_REVIEW,
     DESKTOP_VIDEO_SCORE,
 )
@@ -86,6 +88,11 @@ from features.desktop_life.schemas import (
     DesktopVideoProgress,
     DesktopVisualSnapshot,
     desktop_visual_hash,
+)
+from features.desktop_life.video_refinement import (
+    desktop_video_refinement_request,
+    plan_desktop_video_refinement,
+    reference_video_ratio,
 )
 from features.media.chain import (
     MEDIA_IDENTITY_ACCEPT_SCORE,
@@ -185,6 +192,8 @@ def desktop_progress_can_resume(progress: DesktopVideoProgress) -> bool:
         if video.providers and video.phase == "ready" and video.next_index >= len(video.providers):
             return False
     if progress.pose_path:
+        return True
+    if progress.video_refinement is not None:
         return True
     if progress.image_chain_json:
         image = ImageChainState.model_validate_json(progress.image_chain_json)
@@ -824,7 +833,7 @@ async def _process_candidate(
             ext="webp",
             directory=directory,
         )
-        if external:
+        if external or progress.video_refinement is not None:
             progress.pose_path = await save_companion_asset_async(
                 result.first_frame,
                 user_id=user_id,
@@ -832,7 +841,8 @@ async def _process_candidate(
                 ext="png",
                 directory=directory,
             )
-            progress.aspect_ratio = desktop_aspect_ratio(result.width, result.height)
+            if external:
+                progress.aspect_ratio = desktop_aspect_ratio(result.width, result.height)
         progress.frame_width, progress.frame_height = result.width, result.height
         if (
             action.key == "idle"
@@ -850,8 +860,9 @@ async def _process_candidate(
             video_path=video or "",
             poster_path=poster,
             image_path=progress.pose_path or "",
-            image_origin=None if external else progress.image_origin,
+            image_origin=None if external or progress.video_refinement is not None else progress.image_origin,
             source_image_path=progress.source_image_path,
+            source_video_path=progress.video_refinement.original_video_path if progress.video_refinement else None,
             geometry_mode=progress.geometry_mode,
             resolution_revision=progress.resolution_revision,
             video_origin=video_origin,
@@ -863,7 +874,10 @@ async def _process_candidate(
             base_image_path=progress.base_image_path,
             source="external_upload" if external else "generated",
             transition="base"
-            if not external and progress.continuity == "base" and progress.pose_path == progress.base_image_path
+            if not external
+            and progress.video_refinement is None
+            and progress.continuity == "base"
+            and progress.pose_path == progress.base_image_path
             else "fade",
             visual_description=progress.visual_description,
         )
@@ -882,11 +896,21 @@ async def _evaluate_candidate(
         raise DesktopVideoStateError("待确认的视频缺失")
     await _require_active_job(user_id, action.id, progress.generation_id)
     resolved = resolve_asset_reference(candidate.video_path)
-    reference = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
+    reference_path = progress.video_refinement.image_path if progress.video_refinement else progress.pose_path
+    reference = await asyncio.to_thread(read_valid_image_data_uri, reference_path)
     if resolved is None or not reference:
         raise DesktopVideoStateError("视频或已确认的参考画面无法读取")
     samples = await asyncio.to_thread(sample_desktop_video_frames, resolved[0])
     uris = tuple(build_data_uri(frame, "image/webp") for frame in samples.frames)
+    references = (reference,)
+    reference_times: tuple[float, ...] = ()
+    if progress.video_refinement is not None:
+        original = resolve_asset_reference(progress.video_refinement.video_path)
+        if original is None:
+            raise DesktopVideoStateError("参考视频无法读取")
+        reference_samples = await asyncio.to_thread(sample_desktop_video_frames, original[0])
+        references = tuple(build_data_uri(frame, "image/webp") for frame in reference_samples.frames)
+        reference_times = reference_samples.times_seconds
     async with SESSION_LOCAL() as db:
         language = resolve_language(await get_user_setting(db, user_id, "language"))
 
@@ -896,9 +920,15 @@ async def _evaluate_candidate(
     if progress.identity_score is None:
         progress.identity_score = await score_character_frames_with_references(
             user_id,
-            (reference,),
+            references,
             uris,
-            DESKTOP_VIDEO_SCORE,
+            DESKTOP_VIDEO_REFINE_SCORE if progress.video_refinement else DESKTOP_VIDEO_SCORE,
+            identity_text=json.dumps(
+                {"feedback": progress.feedback, "reference_frame_count": len(references)},
+                ensure_ascii=False,
+            )
+            if progress.video_refinement
+            else "",
             task=AiTaskKey.desktop_life,
             before_submit=before_submit,
         )
@@ -910,7 +940,7 @@ async def _evaluate_candidate(
         try:
             raw = await vision_chat(
                 user_id,
-                DESKTOP_VIDEO_REVIEW,
+                DESKTOP_VIDEO_REFINE_REVIEW if progress.video_refinement else DESKTOP_VIDEO_REVIEW,
                 json.dumps(
                     {
                         "action": progress.action_description,
@@ -919,12 +949,14 @@ async def _evaluate_candidate(
                         "kind": action.kind,
                         "duration_seconds": progress.duration_seconds,
                         "frame_times_seconds": samples.times_seconds,
+                        "reference_frame_count": len(references),
+                        "reference_times_seconds": reference_times,
                         "output_language": language,
                         "continuity": progress.continuity,
                     },
                     ensure_ascii=False,
                 ),
-                reference_images=(reference, *uris),
+                reference_images=(*references, *uris),
                 before_submit=before_submit,
                 task=AiTaskKey.desktop_life,
             )
@@ -938,7 +970,7 @@ async def _evaluate_candidate(
     await _save_progress(user_id, action.id, progress, stage="review")
 
 
-async def _describe_uploaded_frame(user_id: int, action_id: int, progress: DesktopVideoProgress) -> None:
+async def _describe_video_frame(user_id: int, action_id: int, progress: DesktopVideoProgress) -> None:
     if progress.visual_description:
         return
     async with SESSION_LOCAL() as db:
@@ -969,7 +1001,7 @@ async def _describe_uploaded_frame(user_id: int, action_id: int, progress: Deskt
     except LlmCallBlockedError:
         return
     except Exception:
-        logger.warning("Desktop upload description unavailable", extra={"action_id": action_id}, exc_info=True)
+        logger.warning("Desktop video description unavailable", extra={"action_id": action_id}, exc_info=True)
 
 
 async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgress) -> None:
@@ -1078,7 +1110,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 progress.review_reason = ""
                 await _save_progress(user_id, action_id, progress, stage="complete")
             if allow_model_steps:
-                await _describe_uploaded_frame(user_id, action_id, progress)
+                await _describe_video_frame(user_id, action_id, progress)
             await _finish_job(user_id, action_id, progress)
             return
         if not allow_model_steps and progress.candidate is not None and progress.review_verdict is not None:
@@ -1086,28 +1118,45 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             return
         if not allow_model_steps and not (progress.provider_task_id or progress.download_url or progress.source_path):
             raise GenerationWorkPaused
-        if not (progress.provider_task_id or progress.download_url or progress.source_path or progress.candidate):
+        if progress.video_refinement is None and not (
+            progress.provider_task_id or progress.download_url or progress.source_path or progress.candidate
+        ):
             await _prepare_pose(user_id, action, snapshot, progress, directory)
             if progress.image_only or not progress.image_confirmed:
                 await _await_image(user_id, action_id, progress)
                 return
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
         if not chain.providers:
-            seconds, providers = await resolve_desktop_video_plan(
-                user_id,
-                kind=action.kind,
-                duration_seconds=progress.duration_seconds,
-                continuity=progress.continuity,
-                aspect_ratio=progress.aspect_ratio,
-                selection=progress.video_selection,
-            )
+            if progress.video_refinement is not None:
+                reference_video = resolve_asset_reference(progress.video_refinement.video_path)
+                if reference_video is None:
+                    raise DesktopVideoStateError("参考视频无法读取")
+                seconds, providers = await plan_desktop_video_refinement(
+                    user_id,
+                    await asyncio.to_thread(reference_video[0].read_bytes),
+                    reference_video[0].suffix.lstrip("."),
+                    aspect_ratio=progress.aspect_ratio,
+                    selection=progress.video_selection,
+                    feedback=progress.feedback,
+                )
+            else:
+                seconds, providers = await resolve_desktop_video_plan(
+                    user_id,
+                    kind=action.kind,
+                    duration_seconds=progress.duration_seconds,
+                    continuity=progress.continuity,
+                    aspect_ratio=progress.aspect_ratio,
+                    selection=progress.video_selection,
+                )
             progress.duration_seconds = seconds
             chain = MediaChainState(providers=providers)
             progress.video_chain_json = chain.model_dump_json()
             await _save_progress(user_id, action_id, progress, stage="video")
-        if not (progress.provider_task_id or progress.source_path or progress.download_url or progress.candidate):
+        if progress.video_refinement is None and not (
+            progress.provider_task_id or progress.source_path or progress.download_url or progress.candidate
+        ):
             await _check_confirmed_geometry(progress)
-        if not progress.motion_prompt and not progress.candidate:
+        if progress.video_refinement is None and not progress.motion_prompt and not progress.candidate:
             await _prepare_motion(user_id, action, snapshot, progress)
         if progress.submission_unknown:
             raise DesktopVideoStateError(video_failure_message("result_unknown"))
@@ -1115,6 +1164,8 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
             if progress.candidate is not None:
                 if not allow_model_steps:
                     raise GenerationWorkPaused
+                if progress.video_refinement is not None:
+                    await _describe_video_frame(user_id, action_id, progress)
                 await _evaluate_candidate(user_id, action, progress)
                 result = DesktopCandidateResult(
                     asset=progress.candidate,
@@ -1139,6 +1190,8 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     progress.provider_task_id = None
                     progress.download_url = None
                     progress.source_path = None
+                    if progress.video_refinement is not None:
+                        progress.visual_description = ""
                     chain.active_index = None
                     chain.phase = "ready"
                     progress.video_chain_json = chain.model_dump_json()
@@ -1149,6 +1202,11 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     chosen = DesktopCandidateResult.model_validate_json(best.result_json)
                     progress.candidate, progress.identity_score = chosen.asset, best.score
                     progress.review_verdict, progress.review_reason = chosen.verdict, chosen.reason
+                    if progress.video_refinement is not None:
+                        progress.pose_path = chosen.asset.image_path
+                        progress.base_image_path = chosen.asset.base_image_path
+                        progress.frame_width, progress.frame_height = chosen.asset.width, chosen.asset.height
+                        progress.visual_description = chosen.asset.visual_description
                 break
             if progress.source_path:
                 await _save_progress(user_id, action_id, progress, stage="process")
@@ -1161,7 +1219,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     data,
                     user_id=user_id,
                     job_id=action.id,
-                    attempt=chain.active_index or chain.next_index,
+                    attempt=chain.active_index if chain.active_index is not None else chain.next_index,
                     generation_id=generation_id,
                     directory=directory,
                 )
@@ -1185,7 +1243,15 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 if not progress.image_confirmed:
                     await _await_image(user_id, action_id, progress)
                     return
-                desired_ratio = _provider_ratio(provider, progress.aspect_ratio)
+                desired_ratio = (
+                    (
+                        reference_video_ratio(provider, progress.aspect_ratio)
+                        if provider.supports_reference_videos
+                        else None
+                    )
+                    if progress.video_refinement
+                    else _provider_ratio(provider, progress.aspect_ratio)
+                )
                 if desired_ratio is None:
                     # 配置恢复后能力声明可能改变；仍不为回退改写确认过的画面。
                     chain.next_index = index + 1
@@ -1196,21 +1262,25 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     if chain.next_index >= len(chain.providers):
                         raise DesktopVideoStateError(f"当前视频模型均不支持已确认的 {progress.aspect_ratio} 画幅")
                     continue
-                resolved = resolve_asset_reference(progress.pose_path)
-                if resolved is None:
-                    raise DesktopVideoStateError("已确认的起始画面无法读取")
-                raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
-                normalized, _width, _height = await asyncio.to_thread(
-                    _frame_bytes,
-                    raw_frame,
-                    None,
-                    provider.first_frame_size_range,
-                )
-                pose = build_data_uri(normalized, "image/png")
-                chain.begin(index)
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, action_id, progress, stage="video")
-                try:
+                if progress.video_refinement is None:
+                    resolved = resolve_asset_reference(progress.pose_path)
+                    if resolved is None:
+                        raise DesktopVideoStateError("已确认的起始画面无法读取")
+                    raw_frame = await asyncio.to_thread(resolved[0].read_bytes)
+                    normalized, _width, _height = await asyncio.to_thread(
+                        _frame_bytes,
+                        raw_frame,
+                        None,
+                        provider.first_frame_size_range,
+                    )
+                    pose = build_data_uri(normalized, "image/png")
+                if progress.video_refinement is not None:
+                    request = await desktop_video_refinement_request(
+                        progress,
+                        provider,
+                        chain.providers[index].video_resolution,
+                    )
+                else:
                     request = VideoGenRequest(
                         prompt=DESKTOP_VIDEO_MOTION_TEMPLATE.format(
                             duration_seconds=progress.duration_seconds,
@@ -1228,6 +1298,11 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                         last_frame_image=pose if action.kind == "loop" or progress.continuity == "base" else None,
                         aspect_ratio=None if provider.supports_adaptive_aspect_ratio else desired_ratio,
                     )
+                await _require_active_job(user_id, action_id, generation_id)
+                chain.begin(index)
+                progress.video_chain_json = chain.model_dump_json()
+                await _save_progress(user_id, action_id, progress, stage="video")
+                try:
                     async with media_call_duration(config, chain) as call_config:
                         submitted = await execute_with_fallback(
                             [call_config],

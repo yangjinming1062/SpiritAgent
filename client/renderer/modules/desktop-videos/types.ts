@@ -3,6 +3,7 @@ export type DesktopVideoContinuity = 'base' | 'independent'
 export type DesktopVideoSource = 'ai' | 'image_upload' | 'video_upload'
 export type DesktopVideoTransition = 'base' | 'fade'
 export type DesktopVideoAspectPolicy = 'ask' | 'keep' | 'expand'
+export type DesktopVideoRefinementSource = 'current' | 'candidate'
 export const MAX_DESKTOP_VIDEO_DIMENSION = 65536
 
 export interface DesktopVideoAspectMismatch {
@@ -15,6 +16,14 @@ export interface DesktopVideoAspectMismatch {
   choices: DesktopVideoAspectPolicy[]
   adjust_action_id?: number
   adjust_action_name?: string
+  duration_seconds?: number
+  adjustment_error?: string
+}
+
+export interface DesktopVideoRefinementPreview {
+  duration_seconds: number
+  width: number
+  height: number
 }
 
 export interface DesktopVideoAsset {
@@ -44,6 +53,8 @@ export interface DesktopVideoDraft {
   target_height: number
   resolution_revision: number
   geometry_mode: 'target' | 'keep'
+  duration_seconds: number
+  video_refinement: boolean
   frame_width: number | null
   frame_height: number | null
   error: string | null

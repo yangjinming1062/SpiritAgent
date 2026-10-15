@@ -25,6 +25,8 @@ from features.desktop_life.schemas import (
     DesktopVideoPreferences,
     DesktopVideoProposalResponse,
     DesktopVideoReceipt,
+    DesktopVideoRefinePreviewResponse,
+    DesktopVideoRefineRequest,
     DesktopVideoRenameSetRequest,
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
@@ -85,6 +87,30 @@ async def generate_action(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
+@router.post("/actions/{action_id}/refine-video/preview", response_model=DesktopVideoRefinePreviewResponse)
+async def preview_video_refinement(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoRefineRequest,
+) -> DesktopVideoRefinePreviewResponse:
+    try:
+        return await _desktop.preview_video_refinement(action_id=action_id, user_id=user.id, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/actions/{action_id}/refine-video", response_model=DesktopVideoActionResponse, status_code=202)
+async def refine_video(
+    action_id: int,
+    user: CurrentUser,
+    body: DesktopVideoRefineRequest,
+) -> DesktopVideoActionResponse:
+    try:
+        return await _desktop.refine_video(action_id=action_id, user_id=user.id, body=body)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
 @router.post("/actions/{action_id}/external-prompt", response_model=DesktopVideoExternalPromptResponse)
 async def external_prompt(
     action_id: int,
@@ -103,6 +129,7 @@ async def upload_action(
     action_id: int,
     user: CurrentUser,
     file: UploadFile = File(...),
+    expected_action_version: int = Form(..., ge=0),
     expected_set_id: int | None = Form(None),
     expected_draft_id: str | None = Form(None),
     expected_base_version: int | None = Form(None),
@@ -114,6 +141,7 @@ async def upload_action(
             action_id=action_id,
             user_id=user.id,
             file=file,
+            expected_action_version=expected_action_version,
             expected_set_id=expected_set_id,
             expected_draft_id=expected_draft_id,
             expected_base_version=expected_base_version,
@@ -256,6 +284,7 @@ async def upload_image(
     action_id: int,
     user: CurrentUser,
     file: UploadFile = File(...),
+    expected_action_version: int = Form(..., ge=0),
     expected_set_id: int | None = Form(None),
     expected_draft_id: str | None = Form(None),
     expected_base_version: int | None = Form(None),
@@ -267,6 +296,7 @@ async def upload_image(
             action_id=action_id,
             user_id=user.id,
             file=file,
+            expected_action_version=expected_action_version,
             expected_set_id=expected_set_id,
             expected_draft_id=expected_draft_id,
             expected_base_version=expected_base_version,

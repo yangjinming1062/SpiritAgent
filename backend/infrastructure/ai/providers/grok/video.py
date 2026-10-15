@@ -68,8 +68,13 @@ class GrokVideoGenProvider(VideoGenProvider):
         first_frame: bool = False,
         last_frame: bool = False,
         reference_images: bool = False,
+        reference_videos: bool = False,
     ) -> str | None:
-        if duration not in _SUPPORTED_DURATIONS or (reference_images and (first_frame or last_frame)):
+        if (
+            reference_videos
+            or duration not in _SUPPORTED_DURATIONS
+            or (reference_images and (first_frame or last_frame))
+        ):
             return None
         if last_frame or reference_images:
             return "720p" if self.supports_loop_frames else None
@@ -78,6 +83,8 @@ class GrokVideoGenProvider(VideoGenProvider):
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = self.config.model
 
+        if req.reference_videos:
+            raise ProviderError("Grok video generation does not support reference videos", status_code=400)
         if req.reference_images and (req.first_frame_image or req.last_frame_image):
             raise ProviderError("Reference images cannot be combined with first/last frames", status_code=400)
         if len(req.prompt) > _MAX_PROMPT_CHARS:

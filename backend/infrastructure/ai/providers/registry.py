@@ -98,6 +98,8 @@ def provider_input_modalities(service: ServiceType | str, name: str) -> frozense
         and (cls.supports_reference_images or cls.supports_first_frame or cls.supports_loop_frames)
     ):
         supported.add(ModelModality.image)
+    if issubclass(cls, VideoGenProvider) and cls.supports_reference_videos:
+        supported.add(ModelModality.video)
     return frozenset(supported)
 
 

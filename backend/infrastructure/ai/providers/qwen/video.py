@@ -62,12 +62,15 @@ class QwenVideoGenProvider(VideoGenProvider):
         first_frame: bool = False,
         last_frame: bool = False,
         reference_images: bool = False,
+        reference_videos: bool = False,
     ) -> str | None:
-        if duration not in _DURATIONS or (reference_images and (first_frame or last_frame)):
+        if reference_videos or duration not in _DURATIONS or (reference_images and (first_frame or last_frame)):
             return None
         return "1080P"
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
+        if req.reference_videos:
+            raise ProviderError("Qwen video generation does not support reference videos", status_code=400)
         if req.reference_images:
             if req.first_frame_image or req.last_frame_image:
                 raise ProviderError("qwen reference images cannot be mixed with first/last frames", status_code=400)

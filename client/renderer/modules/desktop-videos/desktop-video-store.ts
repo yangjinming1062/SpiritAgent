@@ -15,6 +15,8 @@ import type {
   DesktopVideoPrompt,
   DesktopVideoProposal,
   DesktopVideoReceiptStatus,
+  DesktopVideoRefinementPreview,
+  DesktopVideoRefinementSource,
   DesktopVideoSet,
   DesktopVideoSource,
   DesktopVideoState
@@ -408,6 +410,49 @@ export async function generateDesktopVideoImage(
   await refreshDesktopVideos()
 }
 
+function videoRefinementInput(
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
+  source: DesktopVideoRefinementSource,
+  feedback: string,
+  aspectPolicy: 'keep' | 'expand'
+): object {
+  return {
+    ...desktopActionGuard(action, set),
+    expected_action_version: action.version,
+    source,
+    feedback: feedback.trim(),
+    aspect_policy: aspectPolicy
+  }
+}
+
+export function previewDesktopVideoRefinement(
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
+  source: DesktopVideoRefinementSource,
+  feedback: string,
+  aspectPolicy: 'keep' | 'expand'
+): Promise<DesktopVideoRefinementPreview> {
+  return mutation<DesktopVideoRefinementPreview>(
+    `/actions/${action.id}/refine-video/preview`,
+    videoRefinementInput(action, set, source, feedback, aspectPolicy)
+  )
+}
+
+export async function refineDesktopVideo(
+  action: DesktopVideoAction,
+  set: DesktopVideoSet,
+  source: DesktopVideoRefinementSource,
+  feedback: string,
+  aspectPolicy: 'keep' | 'expand'
+): Promise<void> {
+  await mutation<DesktopVideoAction>(
+    `/actions/${action.id}/refine-video`,
+    videoRefinementInput(action, set, source, feedback, aspectPolicy)
+  )
+  await refreshDesktopVideos()
+}
+
 export async function confirmDesktopVideoImage(
   action: DesktopVideoAction,
   set: DesktopVideoSet,
@@ -483,6 +528,7 @@ export async function uploadDesktopVideoAction(
     actionId: action.id,
     authSessionId,
     expectedSetId: set.id,
+    expectedActionVersion: action.version,
     path,
     mediaKind,
     expectedDraftId: action.draft?.id ?? null,

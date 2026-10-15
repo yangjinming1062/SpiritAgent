@@ -63,7 +63,7 @@ class DesktopVideoAspectRatioError(DesktopVideoStateError):
             "target_width": target_width,
             "target_height": target_height,
             "media_kind": media_kind,
-            "choices": ["keep", "expand"] if media_kind == "image" else ["keep"],
+            "choices": ["keep", "expand"],
         }
 
 
@@ -202,6 +202,8 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
             target_height=draft.target_height,
             resolution_revision=draft.resolution_revision,
             geometry_mode=draft.geometry_mode,
+            duration_seconds=draft.duration_seconds,
+            video_refinement=draft.video_refinement is not None,
             frame_width=draft.frame_width,
             frame_height=draft.frame_height,
             image_url=client_asset_url(draft.pose_path or draft.previous_pose_path)
@@ -746,6 +748,7 @@ async def publish_desktop_asset(
             resolution_revision=progress.resolution_revision,
             geometry_mode=progress.geometry_mode,
             source_image_path=progress.source_image_path,
+            video_refinement=progress.video_refinement,
             expansion_canvas_path=progress.expansion_canvas_path,
             expansion_generated_path=progress.expansion_generated_path,
             expansion_box=progress.expansion_box,
@@ -767,6 +770,7 @@ async def publish_desktop_asset(
         asset.poster_path,
         asset.image_path,
         *([asset.source_image_path] if asset.source_image_path else []),
+        *([asset.source_video_path] if asset.source_video_path else []),
         *([asset.base_image_path] if asset.base_image_path else []),
     }
     if progress is not None:

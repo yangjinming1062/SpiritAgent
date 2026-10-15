@@ -35,6 +35,8 @@ from features.desktop_life.schemas import (
     DesktopVideoPreferences,
     DesktopVideoProposalResponse,
     DesktopVideoReceipt,
+    DesktopVideoRefinePreviewResponse,
+    DesktopVideoRefineRequest,
     DesktopVideoRenameSetRequest,
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
@@ -56,7 +58,9 @@ from features.desktop_life.service import (
     list_desktop_video_sets,
     pause_desktop_action,
     play_desktop_action,
+    preview_desktop_video_refinement,
     record_desktop_playback,
+    refine_desktop_video,
     rename_desktop_video_set,
     resume_desktop_action,
     review_desktop_action,
@@ -123,6 +127,28 @@ async def generate_action(
         raise _http_error(exc) from exc
 
 
+async def preview_video_refinement(
+    action_id: int,
+    user_id: int,
+    body: DesktopVideoRefineRequest,
+) -> DesktopVideoRefinePreviewResponse:
+    try:
+        return await preview_desktop_video_refinement(user_id, action_id, body)
+    except DesktopVideoError as exc:
+        raise _http_error(exc) from exc
+
+
+async def refine_video(
+    action_id: int,
+    user_id: int,
+    body: DesktopVideoRefineRequest,
+) -> DesktopVideoActionResponse:
+    try:
+        return await refine_desktop_video(user_id, action_id, body)
+    except DesktopVideoError as exc:
+        raise _http_error(exc) from exc
+
+
 async def external_prompt(
     action_id: int,
     user_id: int,
@@ -149,6 +175,7 @@ async def upload_action(
     action_id: int,
     user_id: int,
     file: UploadSource,
+    expected_action_version: int,
     expected_set_id: int | None = None,
     expected_draft_id: str | None = None,
     expected_base_version: int | None = None,
@@ -173,6 +200,7 @@ async def upload_action(
             action_id,
             data,
             extension,
+            expected_action_version=expected_action_version,
             expected_set_id=expected_set_id,
             expected_draft_id=expected_draft_id or "none",
             expected_base_version=expected_base_version,
@@ -328,6 +356,7 @@ async def upload_image(
     action_id: int,
     user_id: int,
     file: UploadSource,
+    expected_action_version: int,
     expected_set_id: int | None = None,
     expected_draft_id: str | None = None,
     expected_base_version: int | None = None,
@@ -346,6 +375,7 @@ async def upload_image(
             user_id,
             action_id,
             data,
+            expected_action_version=expected_action_version,
             expected_set_id=expected_set_id,
             expected_draft_id=expected_draft_id or "none",
             expected_base_version=expected_base_version,

@@ -10,7 +10,7 @@ from infrastructure.assets.asset_store import normalize_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.config import SETTINGS
 from infrastructure.video_processing.desktop import extract_desktop_first_frame
-from infrastructure.video_processing.ffmpeg import VideoProcessError
+from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
 from PIL import Image
 
 from features.assets.references import asset_paths
@@ -178,6 +178,7 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
                         asset.image_path,
                         asset.base_image_path,
                         asset.source_image_path,
+                        asset.source_video_path,
                     )
                     if path
                 )
@@ -191,10 +192,16 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
                         asset.image_path,
                         asset.base_image_path,
                         asset.source_image_path,
+                        asset.source_video_path,
                     )
                     if path
                 )
             if field == "generation_state_json":
+                refinement = DesktopVideoProgress.model_validate(value).video_refinement
+                if refinement is not None:
+                    references.extend(
+                        (refinement.video_path, refinement.original_video_path, refinement.image_path),
+                    )
                 references.extend(
                     path
                     for path in (
@@ -248,6 +255,17 @@ def validate_desktop_files(
         except OSError as exc:
             raise ValueError("桌面生活基础画面缺失或无法读取。") from exc
 
+    def validate_source_video(reference: str | None) -> tuple[int, int, int] | None:
+        if not reference:
+            return None
+        try:
+            source = effective_file(reference)
+            probe = probe_video(source)
+            with Image.open(BytesIO(extract_desktop_first_frame(source))) as frame:
+                return frame.width, frame.height, round(probe.duration_seconds * 1000)
+        except (OSError, VideoProcessError) as exc:
+            raise ValueError("桌面生活原始视频缺失或无法读取。") from exc
+
     for row in rows.get("desktop_video_sets", []):
         validate_base_image(row["base_image_path"])
         snapshot = DesktopVisualSnapshot.model_validate_json(row["context_json"])
@@ -283,12 +301,20 @@ def validate_desktop_files(
             validate_base_image(progress.source_image_path)
             validate_base_image(progress.expansion_canvas_path)
             validate_base_image(progress.expansion_generated_path)
+            if progress.video_refinement is not None:
+                refinement = progress.video_refinement
+                validate_base_image(refinement.image_path)
+                metadata = validate_source_video(refinement.video_path)
+                if metadata != (refinement.width, refinement.height, refinement.duration_ms):
+                    raise ValueError("桌面生活参考视频与冻结资料不一致。")
+                validate_source_video(refinement.original_video_path)
             if progress.candidate:
                 assets.append(progress.candidate)
         for asset in assets:
             validate_base_image(asset.base_image_path)
             validate_base_image(asset.image_path)
             validate_base_image(asset.source_image_path)
+            validate_source_video(asset.source_video_path)
             video, poster = effective_file(asset.video_path), effective_file(asset.poster_path)
             if not video.is_file() or not poster.is_file():
                 raise ValueError("桌面生活视频或封面缺失。")

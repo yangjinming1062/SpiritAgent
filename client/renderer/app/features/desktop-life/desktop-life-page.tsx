@@ -20,6 +20,8 @@ import {
   type DesktopVideoAspectMismatch,
   type DesktopVideoAspectPolicy,
   type DesktopVideoPromptReference,
+  type DesktopVideoRefinementPreview,
+  type DesktopVideoRefinementSource,
   type DesktopVideoSet,
   type DesktopVideoSource,
   generateDesktopVideoAction,
@@ -28,6 +30,8 @@ import {
   MAX_DESKTOP_VIDEO_DIMENSION,
   pauseDesktopVideoDraft,
   playDesktopVideoAction,
+  previewDesktopVideoRefinement,
+  refineDesktopVideo,
   refreshDesktopVideos,
   renameDesktopVideoSet,
   resizeDesktopVideoSet,
@@ -53,6 +57,7 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft } from '@/shared/lib/icons'
+import { backendDetailMessage, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, WizardModal } from '@/shared/panel'
 import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -101,11 +106,15 @@ function DesktopLifePreview({
 }): React.JSX.Element {
   const [attempt, setAttempt] = useState(0)
 
+  const mediaUrl = draft
+    ? action.draft?.candidate_video_url || action.draft?.image_url
+    : action.current?.video_url || action.current?.poster_url
+
   return (
     <ResolvedDesktopLifePreview
       action={action}
       draft={draft}
-      key={`${draft ? action.draft?.id : action.id}:${attempt}`}
+      key={`${draft ? action.draft?.id : action.id}:${mediaUrl?.split(/[?#]/)[0] ?? ''}:${attempt}`}
       onImageReady={onImageReady}
       onRetry={() => setAttempt(value => value + 1)}
       set={set}
@@ -281,6 +290,200 @@ function localFileName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath
 }
 
+function VideoRefinementModal({
+  action,
+  set,
+  source,
+  onClose
+}: {
+  action: DesktopVideoAction
+  set: DesktopVideoSet
+  source: DesktopVideoRefinementSource
+  onClose: () => void
+}): React.JSX.Element {
+  const t = useDesktopLifeStrings()
+  const active = usePanelActivity()
+  const sets = useStore($desktopVideoSets)
+  const [feedback, setFeedback] = useState('')
+  const [fitAspect, setFitAspect] = useState(false)
+  const [previewAttempt, setPreviewAttempt] = useState(0)
+  const [submitting, setSubmitting] = useState(false)
+  const submittingRequest = useRef(false)
+
+  const [checked, setChecked] = useState<{
+    key: string
+    result?: DesktopVideoRefinementPreview
+    error?: string
+  } | null>(null)
+
+  const beginAsync = useAsyncGuard()
+  const liveSet = sets.find(item => item.id === set.id)
+  const liveAction = liveSet?.actions.find(item => item.id === action.id)
+  const sourceUrl = source === 'candidate' ? action.draft?.candidate_video_url : action.current?.video_url
+
+  const liveSourceUrl = source === 'candidate' ? liveAction?.draft?.candidate_video_url : liveAction?.current?.video_url
+
+  const stale =
+    !liveSet ||
+    !liveAction ||
+    liveSet.base_version !== set.base_version ||
+    liveSet.resolution_revision !== set.resolution_revision ||
+    liveAction.version !== action.version ||
+    liveAction.draft?.id !== action.draft?.id ||
+    liveAction.status === 'processing' ||
+    liveSourceUrl?.split(/[?#]/)[0] !== sourceUrl?.split(/[?#]/)[0]
+
+  const inputKey = JSON.stringify([
+    set.id,
+    set.base_version,
+    set.resolution_revision,
+    action.id,
+    action.version,
+    action.draft?.id,
+    source,
+    sourceUrl?.split(/[?#]/)[0],
+    feedback,
+    fitAspect,
+    previewAttempt
+  ])
+
+  const preview = checked?.key === inputKey ? checked.result : undefined
+  const previewError = checked?.key === inputKey ? checked.error : undefined
+
+  useEffect(() => {
+    if (!active || stale) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    const isLive = beginAsync()
+    let current = true
+
+    const timer = window.setTimeout(() => {
+      void previewDesktopVideoRefinement(action, set, source, feedback, fitAspect ? 'expand' : 'keep')
+        .then(result => {
+          if (current && scope?.() && isLive()) {
+            setChecked({ key: inputKey, result })
+          }
+        })
+        .catch((error: unknown) => {
+          if (current && scope?.() && isLive()) {
+            setChecked({ key: inputKey, error: backendDetailMessage(error, unwrapIpcErrorMessage(error)) })
+          }
+        })
+    }, 300)
+
+    return () => {
+      current = false
+      window.clearTimeout(timer)
+    }
+  }, [action, active, beginAsync, feedback, fitAspect, inputKey, set, source, stale])
+
+  const submit = async (): Promise<void> => {
+    if (submittingRequest.current || !active || stale || !preview || (!feedback.trim() && !fitAspect)) {
+      return
+    }
+
+    const scope = captureAuthScope()
+    const isLive = beginAsync()
+    submittingRequest.current = true
+    setSubmitting(true)
+
+    try {
+      await refineDesktopVideo(action, set, source, feedback, fitAspect ? 'expand' : 'keep')
+
+      if (scope?.() && isLive()) {
+        onClose()
+      }
+    } catch (failure) {
+      if (scope?.() && isLive()) {
+        notifyError(failure, t.refineVideo)
+        void refreshDesktopVideos()
+      }
+    } finally {
+      submittingRequest.current = false
+
+      if (scope?.() && isLive()) {
+        setSubmitting(false)
+      }
+    }
+  }
+
+  return (
+    <WizardModal
+      backdropClose={!submitting}
+      closeDisabled={submitting}
+      escClose={!submitting}
+      onClose={submitting ? () => undefined : onClose}
+      regionId="desktop-life-refine-video"
+      title={t.refineVideo}
+      widthClass="max-w-2xl"
+    >
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-muted">{source === 'candidate' ? t.refinementCandidate : t.refinementCurrent}</p>
+        <DesktopLifePreview action={action} draft={source === 'candidate'} set={set} />
+        <p className="text-sm leading-relaxed text-body">{t.refineVideoHint}</p>
+        <label className="flex flex-col gap-2 text-sm text-body">
+          {t.refineVideoFeedback}
+          <textarea
+            className={`${INPUT_CLASS} min-h-24 resize-y`}
+            disabled={submitting}
+            maxLength={600}
+            onChange={event => setFeedback(event.target.value)}
+            placeholder={t.refineVideoExample}
+            rows={3}
+            value={feedback}
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-body">
+          <input
+            checked={fitAspect}
+            disabled={submitting}
+            onChange={event => setFitAspect(event.target.checked)}
+            type="checkbox"
+          />
+          {t.fitVideoAspect}
+        </label>
+        {stale ? (
+          <p className="text-sm text-warning" role="alert">
+            {t.refinementStale}
+          </p>
+        ) : previewError ? (
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-warning" role="alert">
+              {previewError}
+            </p>
+            <button className={BTN_SUBTLE} onClick={() => setPreviewAttempt(attempt => attempt + 1)} type="button">
+              {t.retryPrompt}
+            </button>
+          </div>
+        ) : preview ? (
+          <p className="text-sm text-body" role="status">
+            {t.refinementDuration(preview.duration_seconds)}
+          </p>
+        ) : (
+          <p className="text-sm text-muted" role="status">
+            {t.refinementPreviewLoading}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={BTN_PRIMARY}
+            disabled={submitting || !active || stale || !preview || (!feedback.trim() && !fitAspect)}
+            onClick={() => void submit()}
+            type="button"
+          >
+            {submitting ? t.generatingVideo : t.startRefinement}
+          </button>
+          <button className={BTN_GHOST} disabled={submitting} onClick={onClose} type="button">
+            {t.cancelUpload}
+          </button>
+        </div>
+      </div>
+    </WizardModal>
+  )
+}
+
 export function DesktopLifePage({
   onPrepareMaterial
 }: {
@@ -330,6 +533,13 @@ export function DesktopLifePage({
   const [rename, setRename] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [discardAction, setDiscardAction] = useState<DesktopVideoAction | null>(null)
+
+  const [refinement, setRefinement] = useState<{
+    action: DesktopVideoAction
+    set: DesktopVideoSet
+    source: DesktopVideoRefinementSource
+  } | null>(null)
+
   const [designMessage, setDesignMessage] = useState<string | null>(null)
   const [externalAction, setExternalActionLocal] = useState<DesktopVideoAction | null>(null)
 
@@ -348,6 +558,7 @@ export function DesktopLifePage({
   const setExternalFilePath = (value: string | null): void => updateDesktopLifeUi({ externalFilePath: value })
   const [externalPromptLoading, setExternalPromptLoading] = useState(false)
   const [externalUploading, setExternalUploading] = useState(false)
+  const externalUploadRequest = useRef(false)
   const [externalCopied, setExternalCopied] = useState(false)
   const [externalReferenceZoom, setExternalReferenceZoom] = useState<{ label: string; url: string } | null>(null)
   const externalRequest = useRef(0)
@@ -365,6 +576,7 @@ export function DesktopLifePage({
     (!externalSet ||
       externalSet.base_version !== externalBaseVersion ||
       externalSet.resolution_revision !== externalResolutionRevision ||
+      liveExternalAction?.version !== externalAction.version ||
       liveExternalAction?.draft?.id !== externalAction.draft?.id ||
       liveExternalAction?.draft?.image_url?.split(/[?#]/)[0] !== externalAction.draft?.image_url?.split(/[?#]/)[0] ||
       liveExternalAction?.draft?.image_confirmed !== externalAction.draft?.image_confirmed ||
@@ -408,10 +620,12 @@ export function DesktopLifePage({
     setExternalReferenceZoom(null)
     setExternalPromptLoading(false)
     setExternalUploading(false)
+    externalUploadRequest.current = false
     setImagePreviews({})
     setCreationScene(null)
     setDeleteOpen(false)
     setDiscardAction(null)
+    setRefinement(null)
     setBusy(false)
     setRename('')
     setDesignMessage(null)
@@ -607,6 +821,10 @@ export function DesktopLifePage({
   }
 
   const loadExternalPrompt = async (action: DesktopVideoAction, requirements = ''): Promise<void> => {
+    if (externalUploadRequest.current) {
+      return
+    }
+
     const requestId = ++externalRequest.current
     const authScope = captureAuthScope()
     const isLive = beginAsync()
@@ -725,6 +943,7 @@ export function DesktopLifePage({
     setExternalCopied(false)
     setExternalPromptLoading(false)
     setExternalUploading(false)
+    externalUploadRequest.current = false
   }
 
   const chooseExternalVideo = async (): Promise<void> => {
@@ -751,7 +970,7 @@ export function DesktopLifePage({
   }
 
   const uploadExternalVideo = async (): Promise<void> => {
-    if (!externalAction || !externalFilePath) {
+    if (!externalAction || !externalFilePath || externalUploadRequest.current || externalPromptLoading) {
       return
     }
 
@@ -765,6 +984,7 @@ export function DesktopLifePage({
       return
     }
 
+    externalUploadRequest.current = true
     setExternalUploading(true)
 
     try {
@@ -793,7 +1013,12 @@ export function DesktopLifePage({
     } catch (failure) {
       if (isCurrent()) {
         notifyError(failure, t.externalTitle)
+        void refreshDesktopVideos()
         setExternalUploading(false)
+      }
+    } finally {
+      if (isCurrent()) {
+        externalUploadRequest.current = false
       }
     }
   }
@@ -994,13 +1219,19 @@ export function DesktopLifePage({
       item.status === 'review_pending' && item.stage !== 'image_review' && item.draft?.candidate_video_url
     )
 
+    const previewDraft = Boolean(
+      item.draft && (item.draft.candidate_video_url || !item.draft.video_refinement || !item.current)
+    )
+
+    const showingCurrentVideo = Boolean(item.current?.video_url && !previewDraft)
+
     const step =
       candidate || (!item.draft && item.current)
         ? 3
         : imageReview
           ? 1
           : item.draft
-            ? item.draft.image_confirmed || item.draft.source === 'external_upload'
+            ? item.draft.image_confirmed || item.draft.video_refinement || item.draft.source === 'external_upload'
               ? 2
               : 1
             : 0
@@ -1010,7 +1241,7 @@ export function DesktopLifePage({
     const note = feedback[item.id] ?? item.draft?.feedback ?? ''
 
     const affected = selected.actions.filter(
-      action => action.id !== item.id && action.continuity === 'base' && action.current && action.enabled
+      action => action.id !== item.id && action.continuity === 'base' && (action.current || action.draft)
     ).length
 
     const canConfirm = item.draft && imagePreviews[`${item.draft.id}:${item.draft.image_url}`]
@@ -1036,7 +1267,7 @@ export function DesktopLifePage({
           <>
             <DesktopLifePreview
               action={item}
-              draft={Boolean(item.draft)}
+              draft={previewDraft}
               onImageReady={() => {
                 const draft = item.draft
 
@@ -1103,6 +1334,14 @@ export function DesktopLifePage({
                   </button>
                   <button className={BTN_SUBTLE} disabled={busy} onClick={() => setDiscardAction(item)} type="button">
                     {t.reject}
+                  </button>
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={busy}
+                    onClick={() => setRefinement({ action: item, set: selected, source: 'candidate' })}
+                    type="button"
+                  >
+                    {t.refineVideo}
                   </button>
                 </div>
               </>
@@ -1172,7 +1411,7 @@ export function DesktopLifePage({
             ) : (
               <div className="flex flex-col gap-3">
                 {isActionPaused(item) && <p className="text-sm text-muted">{t.resumeHint}</p>}
-                {!isActionPaused(item) && (
+                {!isActionPaused(item) && !item.draft?.video_refinement && (
                   <label className="flex flex-col gap-2 text-sm text-body">
                     {t.feedback}
                     <textarea
@@ -1189,7 +1428,11 @@ export function DesktopLifePage({
                   disabled={busy}
                   onClick={() =>
                     void run(() => {
-                      if (isActionPaused(item) || item.draft?.source === 'external_upload') {
+                      if (
+                        isActionPaused(item) ||
+                        item.draft?.video_refinement ||
+                        item.draft?.source === 'external_upload'
+                      ) {
                         return resumeDesktopVideoDraft(item, selected)
                       }
 
@@ -1216,6 +1459,16 @@ export function DesktopLifePage({
               <details className="rounded-xl border border-line-hairline p-4">
                 <summary className="cursor-pointer text-sm font-medium text-strong">{t.more}</summary>
                 <div className="mt-4 flex flex-col gap-3">
+                  {showingCurrentVideo && (
+                    <button
+                      className={`${BTN_SUBTLE} self-start`}
+                      disabled={busy || item.status === 'processing' || item.draft?.submission_unknown}
+                      onClick={() => setRefinement({ action: item, set: selected, source: 'current' })}
+                      type="button"
+                    >
+                      {t.refineVideo}
+                    </button>
+                  )}
                   {item.current && !dependent && (
                     <>
                       <p className="text-sm text-muted">{t.recreateHint}</p>
@@ -1237,7 +1490,7 @@ export function DesktopLifePage({
                       </button>
                     </>
                   )}
-                  {(item.current || item.draft?.image_confirmed) && (
+                  {(item.current || item.draft?.image_confirmed) && !item.draft?.video_refinement && (
                     <button
                       className={`${BTN_SUBTLE} self-start`}
                       disabled={busy || item.draft?.submission_unknown}
@@ -2094,7 +2347,7 @@ export function DesktopLifePage({
               )}
               <button
                 className={`${BTN_PRIMARY} self-start`}
-                disabled={!externalFilePath || externalUploading || externalStale}
+                disabled={!externalFilePath || externalUploading || externalPromptLoading || externalStale}
                 onClick={() => void uploadExternalVideo()}
                 type="button"
               >
@@ -2181,6 +2434,15 @@ export function DesktopLifePage({
           </div>
         </WizardModal>
       )}
+      {refinement && (
+        <VideoRefinementModal
+          action={refinement.action}
+          key={`${authSessionId}:${refinement.action.id}:${refinement.source}:${refinement.action.version}:${refinement.action.draft?.id ?? ''}:${refinement.set.base_version}:${refinement.set.resolution_revision}`}
+          onClose={() => setRefinement(null)}
+          set={refinement.set}
+          source={refinement.source}
+        />
+      )}
       {aspectChoice && (
         <WizardModal onClose={() => chooseAspect(null)} regionId="desktop-life-aspect-choice" title={t.aspectMismatch}>
           <div className="flex flex-col gap-4 text-sm text-body">
@@ -2191,11 +2453,28 @@ export function DesktopLifePage({
               {t.targetResolution}: {resolutionLabel(aspectChoice.target_width, aspectChoice.target_height)}
             </p>
             <p>{t.aspectMismatchHint}</p>
-            {aspectChoice.media_kind === 'image' && aspectChoice.choices.includes('expand') && <p>{t.expandHint}</p>}
-            {aspectChoice.adjust_action_name && <p>{t.sharedImageExpandHint(aspectChoice.adjust_action_name)}</p>}
+            {aspectChoice.choices.includes('expand') && (
+              <p>{aspectChoice.media_kind === 'video' ? t.videoExpandHint : t.expandHint}</p>
+            )}
+            {aspectChoice.duration_seconds !== undefined && (
+              <p>{t.refinementDuration(aspectChoice.duration_seconds)}</p>
+            )}
+            {aspectChoice.adjustment_error && (
+              <p className="text-warning" role="alert">
+                {aspectChoice.adjustment_error}
+              </p>
+            )}
+            {aspectChoice.media_kind === 'image' && aspectChoice.adjust_action_name && (
+              <p>{t.sharedImageExpandHint(aspectChoice.adjust_action_name)}</p>
+            )}
             <div className="flex flex-wrap gap-2">
-              {aspectChoice.media_kind === 'image' && aspectChoice.choices.includes('expand') && (
-                <button className={BTN_PRIMARY} onClick={() => chooseAspect('expand')} type="button">
+              {aspectChoice.choices.includes('expand') && (
+                <button
+                  className={BTN_PRIMARY}
+                  disabled={Boolean(aspectChoice.adjustment_error)}
+                  onClick={() => chooseAspect('expand')}
+                  type="button"
+                >
                   {t.expandAspect}
                 </button>
               )}
