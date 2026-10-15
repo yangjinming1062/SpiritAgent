@@ -20,6 +20,7 @@
 | 网关与账户 | [host-runtime.ts](app/runtime/host-runtime.ts)、[gateway-event-router.ts](app/runtime/gateway-event-router.ts)、[account-lifecycle.ts](app/workflows/account-lifecycle.ts) |
 | 引导、激活与启动失败 | [onboarding](app/onboarding/) |
 | 角色、动作、拖拽与空间 | [modules/character](modules/character/)、[sprite-stage.tsx](app/components/sprite-stage.tsx) |
+| 衣柜与逐动作预览、重做、采纳 | [appearance-page.tsx](app/features/appearance/appearance-page.tsx)、[video-section.tsx](app/features/appearance/video-section.tsx)、[video-pack-store.ts](modules/character/rendering/video/video-pack-store.ts)；采纳入口复用 [media-review-queue.tsx](app/features/settings/media-review-queue.tsx) |
 | 公共对话、设置与状态交接 | [conversation-page.tsx](app/features/conversation/conversation-page.tsx)、[app-settings.tsx](app/features/settings/app-settings.tsx)、[app-ui-state.ts](app/workflows/app-ui-state.ts) |
 | 对话与音频联动 | [modules/conversation](modules/conversation/)、[modules/speech](modules/speech/)、[conversation-speech.ts](app/workflows/conversation-speech.ts) |
 | 动态、日记与记忆页 | [modules/posts](modules/posts/)、[modules/diary](modules/diary/)、[memory-section.tsx](app/features/settings/memory-section.tsx) |
@@ -140,6 +141,7 @@ speech 持唯一播放队列与台词合成，点播和自动连播共用队列�
 
 ## 动作素材呈现
 
+- 每套着装对应唯一动作组，衣柜先选着装再进入动作列表。请求、进度与错误按着装／包／动作归属，单动作忙碌不禁用其他动作；结果未知仍视为未结束，不能再次提交。重做候选与当前素材分别展示，采纳后刷新目录，待确认或失败继续使用已采纳素材；不在客户端合并旧包或提供历史版本选择。
 - 网络和持久 manifest 同样校验类型、默认动作、遮罩及包／目录版本，非法目录保留可用画面；片段经 `apiAsset(preferCache)`，目录和遮罩经 `apiAssetBuffer`。同版本共享在途与成功结果，失败释放缓存，账户清理阻断旧回写。
 - 双缓冲等待图片解码或视频首帧再换图；[MediaStage.tsx](modules/character/rendering/video/MediaStage.tsx) 按内容轮廓适配侧栏，绘制与命中扣除同一等比留白。图片静态 alpha、视频逐帧遮罩，缺遮罩时侧栏命中限已知内容边界。
 - 气泡与轻语用整段素材合并的上部轮廓锚定头部，避免逐帧抖动，轮廓更新后重算屏幕避让。

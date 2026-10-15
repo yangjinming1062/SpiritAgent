@@ -25,7 +25,7 @@
 | 正式资产写入、签名与回收 | [asset_store.py](infrastructure/assets/asset_store.py)、[资产领域](features/assets/README.md) |
 | 桌面与 Runner 更新分发 | [update.py](entrypoints/http/routes/update.py)、[update_releases.py](features/updates/releases.py) |
 | 备份与覆盖恢复 | [admin.py](entrypoints/http/routes/admin.py)、[backup](workflows/maintenance/backup/)、[maintenance.py](workflows/maintenance/user.py) |
-| 提示词、装配与任务恢复 | [提示词索引](README.md#提示词定位)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py) |
+| 提示词、装配与任务恢复 | [提示词索引](#提示词定位)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py) |
 
 ## 代码与依赖
 
@@ -73,7 +73,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 [registrations.py](bootstrap/registrations.py) 是供应商、工具、内部事件和域钩子的装配入口；导入业务包不注册能力，未登记能力明确失败。
 
-[lifecycle.py](bootstrap/lifecycle.py) 的启动顺序为：安全配置检查与迁移 → 配置水合、目录和更新存储恢复 → 描述中断标记与清理 → 调度器、事件回路 → 视频、动作、提案、角色卡、场景、初始资产、动态及评论恢复 → 正式资产核查。
+[lifecycle.py](bootstrap/lifecycle.py) 依次执行安全配置检查与迁移、配置水合、模块准备、调度与事件启动、模块恢复、正式资产核查。各业务参与者及其顺序由 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 维护，新增恢复能力在该处登记。
 
 模块的准备、恢复、维护和关闭能力在 [runtime_lifecycle.py](bootstrap/runtime_lifecycle.py) 显式登记。停机关闭清理、调度与事件生产入口，收敛已受理回合和各模块任务，再释放数据库、Web 供应商和 LLM 连接池。[task_supervisor.py](runtime/task_supervisor.py) 统一登记所有者、账户、单飞任务和错误回报；任务状态机及付费恢复语义仍归业务模块。
 
@@ -83,7 +83,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 事务内异步通知经 `emit_ws_event` 写 outbox，聊天流另走会话 emitter。持久化与端到端恢复语义归 PROTOCOL；实现入口为 [event_store/loop.py](runtime/events/loop.py)。
 
-回路只认领本进程持有桌面 dispatcher 的用户（含断线宽限）。内部处理器派生任务即标记送达，投递失败按预算退避并转死信。LISTEN 专线探活、重连与周期扫描共同唤醒；[outbox_gc.py](runtime/events/outbox_gc.py) 不过期清理普通离线待投递行，过期主动回合请求另行处理。
+回路按本进程持有的桌面或远程 dispatcher 认领事件；只有远程连接时，仅认领 [REMOTE_EVENT_PREFIXES](runtime/desktop/connection.py) 允许的共享通知，桌面执行与主动回合指令仍要求桌面连接（含断线宽限）。内部处理器派生任务即标记送达，投递失败按预算退避并转死信。LISTEN 专线探活、重连与周期扫描共同唤醒；[outbox_gc.py](runtime/events/outbox_gc.py) 不过期清理普通离线待投递行，过期主动回合请求另行处理。
 
 ## 数据与运行可靠性
 
@@ -198,5 +198,3 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 ## 契约与验证
 
 检查命令归 [Scripts](../scripts/README.md)。API、事件、资产和恢复变更核对生产者、消费方及持久化；配置变更核对 Settings、启动专用键和提交失败语义；依赖变更核对本页允许边并执行分层检查；提示词沿文本索引检查实际请求与解析。文档变更核对代码事实、路径、锚点和 `git diff --check`，无需触发付费制作。
-
-本次模块化基线的版本、验证范围、判定依据与未完成的真实供应商/呈现验收记录在 [backend-refactor.json](../docs/validation/backend-refactor.json)，不包含临时测试代码或用户原始内容。

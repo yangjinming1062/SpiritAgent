@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="304" viewBox="0 0 1200 304" role="img" aria-labelledby="title desc">
+  <title id="title">创造、相处、一起做事</title>
+  <desc id="desc">唤生的三种相处方式：设定性格、形象与声音；通过对话、记忆和生活内容持续相处；用文案、语言学习和本机工具完成任务。</desc>
+  <defs>
+    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#f7f4ef"/><stop offset="1" stop-color="#eef2f5"/></linearGradient>
+    <linearGradient id="egg" x2="0.2" y2="1"><stop stop-color="#fff9e9"/><stop offset="1" stop-color="#e6c49d"/></linearGradient>
+  </defs>
+  <rect width="1200" height="304" rx="24" fill="url(#paper)"/>
+  <g font-family="'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif">
+    <text x="36" y="38" font-size="12" font-weight="600" letter-spacing="3" fill="#75808d">SPIRITAGENT · 唤生</text>
+    <g transform="translate(24 59)">
+      <rect width="370" height="219" rx="18" fill="#fffdf9" stroke="#e3d9c9"/>
+      <rect x="20" y="20" width="52" height="52" rx="15" fill="#f5ebdb"/>
+      <path d="M46 28C39 28 31 43 31 51C31 60 37 64 46 64C55 64 61 60 61 51C61 43 53 28 46 28Z" fill="url(#egg)" stroke="#b99d78" stroke-width="1.5"/>
+      <path d="m34 44 7 5 6-6 5 6 6-5" fill="none" stroke="#b99d78" stroke-width="1.5"/>
+      <text x="89" y="40" font-size="12" font-weight="600" fill="#a78b64">01 / 创造</text>
+      <text x="89" y="65" font-size="23" font-weight="600" fill="#3c3e42">你的伙伴，你来决定</text>
+      <text x="24" y="111" font-size="16" fill="#616871">从一颗蛋开始，认识自己的伙伴。</text>
+      <text x="24" y="138" font-size="16" fill="#616871">描述或上传形象，选择喜欢的声音。</text>
+      <rect x="24" y="163" width="322" height="34" rx="9" fill="#f7f0e5"/>
+      <text x="185" y="185" text-anchor="middle" font-size="14" fill="#8b7556">性格 · 形象 · 声音</text>
+    </g>
+    <g transform="translate(415 59)">
+      <rect width="370" height="219" rx="18" fill="#fcfdfb" stroke="#d4dfd1"/>
+      <rect x="20" y="20" width="52" height="52" rx="15" fill="#e7efe3"/>
+      <path d="M33 34h25a4 4 0 0 1 4 4v15a4 4 0 0 1-4 4H42l-9 7v-7a4 4 0 0 1-4-4V38a4 4 0 0 1 4-4Z" fill="none" stroke="#71866b" stroke-width="2"/>
+      <path d="M37 42h17M37 49h12" stroke="#71866b" stroke-width="2" stroke-linecap="round"/>
+      <text x="89" y="40" font-size="12" font-weight="600" fill="#7a8d70">02 / 相处</text>
+      <text x="89" y="65" font-size="23" font-weight="600" fill="#3c3e42">让它住进你的日常</text>
+      <text x="24" y="111" font-size="16" fill="#616871">聊几句，看看动态，回顾相处。</text>
+      <text x="24" y="138" font-size="16" fill="#616871">可以主动交流，也懂得安静陪着。</text>
+      <rect x="24" y="163" width="322" height="34" rx="9" fill="#edf3e9"/>
+      <text x="185" y="185" text-anchor="middle" font-size="14" fill="#708365">对话 · 记忆 · 生活</text>
+    </g>
+    <g transform="translate(806 59)">
+      <rect width="370" height="219" rx="18" fill="#fafcfe" stroke="#d2dce8"/>
+      <rect x="20" y="20" width="52" height="52" rx="15" fill="#e4ecf6"/>
+      <rect x="29" y="34" width="34" height="26" rx="4" fill="none" stroke="#6b84a6" stroke-width="2"/>
+      <path d="m36 42 6 5-6 5M47 53h8" fill="none" stroke="#6b84a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="89" y="40" font-size="12" font-weight="600" fill="#728bad">03 / 做事</text>
+      <text x="89" y="65" font-size="23" font-weight="600" fill="#3c3e42">需要帮忙时，一起做</text>
+      <text x="24" y="111" font-size="16" fill="#616871">起草文字、学习语言、整理资料。</text>
+      <text x="24" y="138" font-size="16" fill="#616871">用开启的工具，协助完成本机任务。</text>
+      <rect x="24" y="163" width="322" height="34" rx="9" fill="#eaf0f7"/>
+      <text x="185" y="185" text-anchor="middle" font-size="14" fill="#647fa1">文案 · 学习 · 本机工具</text>
+    </g>
+  </g>
+</svg>
