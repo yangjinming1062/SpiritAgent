@@ -69,8 +69,6 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       }
 
       url.hash = `#/companion/${target.companionSection}${query.size ? `?${query}` : ''}`
-    } else if (target.page === 'posts' && target.postsTab) {
-      url.hash = `#/posts/${target.postsTab}`
     } else if (target.page) {
       url.hash = `#/${target.page}`
     }

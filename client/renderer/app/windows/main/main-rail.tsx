@@ -11,7 +11,7 @@ import { $postsHasUnread } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { type IconComponent, MessageSquareText, Settings, Sparkles, Users } from '@/shared/lib/icons'
+import { BookOpen, type IconComponent, MessageSquareText, Settings, Sparkles, Users } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
@@ -23,7 +23,8 @@ import styles from './main.module.css'
 const NAV_ENTRIES: ReadonlyArray<{ icon: IconComponent; id: Exclude<AppPage, 'settings'> }> = [
   { icon: MessageSquareText, id: 'chat' },
   { icon: Users, id: 'companion' },
-  { icon: Sparkles, id: 'posts' }
+  { icon: Sparkles, id: 'posts' },
+  { icon: BookOpen, id: 'diary' }
 ]
 
 export function MainRail({
@@ -49,6 +50,7 @@ export function MainRail({
   const accountRef = useRef<HTMLDivElement>(null)
   const accountButtonRef = useRef<HTMLButtonElement>(null)
   const beginAsync = useAsyncGuard()
+  const unreadByPage: Partial<Record<AppPage, boolean>> = { chat: chatUnread, posts: postsUnread, diary: diaryUnread }
 
   const closeAccounts = (): void => {
     setAccountOpen(false)
@@ -90,7 +92,7 @@ export function MainRail({
       </button>
       <nav aria-label={english ? 'Main navigation' : '功能导航'} className={styles.nav}>
         {NAV_ENTRIES.map(({ id, icon: Icon }) => {
-          const unread = id === 'chat' ? chatUnread : id === 'posts' ? postsUnread || diaryUnread : false
+          const unread = unreadByPage[id] ?? false
 
           return (
             <button

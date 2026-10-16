@@ -17,7 +17,6 @@ import {
   COMPANION_SECTIONS,
   type CompanionSection,
   normalizeAppNavigation,
-  type PostsTab,
   SETTINGS_SECTIONS,
   type SettingsSection
 } from '@ipc/contracts'
@@ -29,14 +28,19 @@ const NAVIGATION_KEY = registerCompanionStorageKey('da.app.navigation.v2')
 function normalizeStoredNavigation(): void {
   const saved = storedJson<Record<string, unknown> | null>(NAVIGATION_KEY, null)
 
-  if (saved && typeof saved === 'object' && saved.companionSection === 'home') {
-    navigation.set(normalizeAppNavigation(saved))
+  if (saved && typeof saved === 'object' && (saved.companionSection === 'home' || 'postsTab' in saved)) {
+    navigation.set(
+      normalizeAppNavigation({
+        ...saved,
+        page: saved.page === 'posts' && saved.postsTab === 'diary' ? 'diary' : saved.page
+      })
+    )
   }
 }
 
 const navigation = definePersistedAtom<AppNavigationTarget>({
   key: NAVIGATION_KEY,
-  fallback: { page: 'chat', section: 'companionship', companionSection: 'profile', postsTab: 'posts' },
+  fallback: { page: 'chat', section: 'companionship', companionSection: 'profile' },
   isPersistable: (value): value is AppNavigationTarget => {
     if (!value || typeof value !== 'object') {
       return false
@@ -48,7 +52,7 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
       APP_PAGES.some(page => page === candidate.page) &&
       SETTINGS_SECTIONS.some(section => section === candidate.section) &&
       COMPANION_SECTIONS.some(section => section === candidate.companionSection) &&
-      (candidate.postsTab === 'posts' || candidate.postsTab === 'diary') &&
+      !('postsTab' in candidate) &&
       (candidate.companionTask === undefined || candidate.companionTask === 'create') &&
       (candidate.returnToDesktopLife === undefined || typeof candidate.returnToDesktopLife === 'boolean') &&
       (candidate.settingsTab === undefined ||
@@ -64,7 +68,6 @@ registerStorageRestoreHandler(normalizeStoredNavigation)
 export const $appPage = computed(navigation.$atom, value => value.page ?? 'chat')
 export const $settingsSection = computed(navigation.$atom, value => value.section ?? 'companionship')
 export const $companionSection = computed(navigation.$atom, value => value.companionSection ?? 'profile')
-export const $postsTab = computed(navigation.$atom, value => value.postsTab ?? 'posts')
 export const $appNavigationTarget = atom<AppNavigationTarget>({})
 export const $appNavigationRevision = atom(0)
 export const $appNavigation = navigation.$atom
@@ -95,7 +98,6 @@ export function readAppNavigationHash(): AppNavigationTarget | null {
     page,
     section: page === 'settings' ? detail : undefined,
     companionSection: page === 'companion' ? detail : undefined,
-    postsTab: page === 'posts' ? detail : undefined,
     companionTask: params.get('create') === '1' ? 'create' : undefined,
     returnToDesktopLife: params.get('return') === 'desktop-life',
     settingsTab: params.get('subtab'),
@@ -128,13 +130,7 @@ function writeHash(target: AppNavigationTarget): void {
   }
 
   const detail =
-    target.page === 'settings'
-      ? target.section
-      : target.page === 'companion'
-        ? target.companionSection
-        : target.page === 'posts'
-          ? target.postsTab
-          : undefined
+    target.page === 'settings' ? target.section : target.page === 'companion' ? target.companionSection : undefined
 
   const next = `#/${target.page}${detail ? `/${detail}` : ''}${query.size ? `?${query}` : ''}`
 
@@ -155,7 +151,6 @@ export async function applyAppNavigation(target: AppNavigationTarget, updateHash
     page: next.page ?? (next.sessionId ? 'chat' : previous.page),
     section: next.section ?? previous.section,
     companionSection: next.companionSection ?? previous.companionSection,
-    postsTab: next.postsTab ?? previous.postsTab,
     settingsTab: next.section ? next.settingsTab : previous.settingsTab,
     companionTask: next.companionSection ? next.companionTask : previous.companionTask,
     returnToDesktopLife: next.companionSection ? next.returnToDesktopLife : previous.returnToDesktopLife
@@ -187,10 +182,6 @@ export function setSettingsSection(section: SettingsSection): void {
 
 export function setCompanionSection(companionSection: CompanionSection): void {
   void applyAppNavigation({ page: 'companion', companionSection })
-}
-
-export function setPostsTab(postsTab: PostsTab): void {
-  void applyAppNavigation({ page: 'posts', postsTab })
 }
 
 registerStorageClearHandler(() => {

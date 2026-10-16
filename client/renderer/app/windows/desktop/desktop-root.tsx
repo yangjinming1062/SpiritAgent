@@ -6,7 +6,8 @@ import { AccountMenu } from '@/app/features/accounts/account-menu'
 import { CompanionHub } from '@/app/features/companion/companion-page'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
 import { useDesktopLifeStrings } from '@/app/features/desktop-life/desktop-life-strings'
-import { LifePage } from '@/app/features/posts/life-page'
+import { DiaryPage } from '@/app/features/diary/diary-page'
+import { PostsPage } from '@/app/features/posts/posts-page'
 import { AppSettings } from '@/app/features/settings/app-settings'
 import { $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
@@ -384,7 +385,10 @@ export function DesktopRoot(): React.JSX.Element {
         )
 
       case 'posts':
-        return <LifePage containerRef={rootRef} foreground={reading} mediaViewId="desktop-posts" />
+        return <PostsPage containerRef={rootRef} foreground={reading} mediaViewId="desktop-posts" />
+
+      case 'diary':
+        return <DiaryPage foreground={reading} />
 
       case 'companion':
         return <CompanionHub />
@@ -557,12 +561,13 @@ export function DesktopRoot(): React.JSX.Element {
         navigation={
           <DesktopProductNav
             activeWindow={activeWindow}
+            diaryUnread={diaryUnread}
             onActivate={activatePanel}
             onBeforeOpen={() => setOverlay('product')}
             onClose={close}
             onMenuOpenChange={productOpenChange}
             overlayActive={overlay === 'product'}
-            postsUnread={postsUnread || diaryUnread}
+            postsUnread={postsUnread}
             windows={layout.windows}
           />
         }

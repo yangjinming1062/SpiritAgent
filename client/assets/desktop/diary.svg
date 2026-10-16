@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="diary-cover" x1="26" y1="14" x2="105" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD48B"/>
+      <stop offset="0.5" stop-color="#EFA654"/>
+      <stop offset="1" stop-color="#CB7537"/>
+    </linearGradient>
+    <linearGradient id="diary-spine" x1="20" y1="18" x2="37" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EFB367"/>
+      <stop offset="1" stop-color="#A85931"/>
+    </linearGradient>
+    <filter id="diary-shadow" x="0" y="0" width="128" height="128" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#57351E" flood-opacity="0.27"/>
+    </filter>
+  </defs>
+  <g filter="url(#diary-shadow)" transform="rotate(6 64 64)">
+    <rect x="20" y="17" width="88" height="98" rx="11" fill="#9B512F"/>
+    <path d="M29 100H106V110H31C25 110 22 106 22 101V27C22 21 26 17 32 17H37V100H29Z" fill="#FFF0D3"/>
+    <path d="M37 105H103" stroke="#DCC3A1" stroke-width="2" stroke-linecap="round"/>
+    <rect x="20" y="12" width="88" height="91" rx="11" fill="url(#diary-cover)"/>
+    <path d="M31 12H37V103H31C25 103 20 98 20 92V23C20 17 25 12 31 12Z" fill="url(#diary-spine)"/>
+    <path d="M43 18H95C99 18 102 21 102 25" stroke="#FFE9B7" stroke-width="3" stroke-linecap="round"/>
+    <path d="M85 12H96V39L90.5 35L85 39V12Z" fill="#82BBA8"/>
+    <rect x="48" y="40" width="41" height="25" rx="5" fill="#FFF1D5"/>
+    <path d="M57 49H80M57 56H74" stroke="#C78A51" stroke-width="3" stroke-linecap="round"/>
+    <path d="M51 79H86M51 87H76" stroke="#FFE2A7" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

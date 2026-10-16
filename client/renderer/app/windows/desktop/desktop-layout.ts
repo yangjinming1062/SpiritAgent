@@ -7,8 +7,9 @@ import {
   registerCompanionStorageKey,
   storedJson
 } from '@/shared/lib/storage'
+import { APP_PAGES } from '@ipc/contracts'
 
-export const DESKTOP_APPS = ['chat', 'companion', 'posts', 'settings'] as const
+export const DESKTOP_APPS = APP_PAGES
 
 export type DesktopApp = (typeof DESKTOP_APPS)[number]
 

@@ -424,8 +424,7 @@ export function createUiStateBridge(options: UiStateOptions) {
             companionTask: next.companionSection ? next.companionTask : snapshot.navigation.companionTask,
             returnToDesktopLife: next.companionSection
               ? next.returnToDesktopLife
-              : snapshot.navigation.returnToDesktopLife,
-            postsTab: next.postsTab ?? snapshot.navigation.postsTab
+              : snapshot.navigation.returnToDesktopLife
           }
           snapshot.conversation.selectedSessionId = next.sessionId ?? snapshot.conversation.selectedSessionId
         }

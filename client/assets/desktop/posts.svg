@@ -1,45 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
   <defs>
-    <linearGradient id="posts-photo-frame" x1="24" y1="12" x2="85" y2="96" gradientUnits="userSpaceOnUse">
+    <linearGradient id="posts-frame" x1="22" y1="18" x2="100" y2="113" gradientUnits="userSpaceOnUse">
       <stop stop-color="#EDFFF9"/>
       <stop offset="1" stop-color="#9AE5D4"/>
     </linearGradient>
-    <linearGradient id="posts-photo" x1="23" y1="26" x2="77" y2="73" gradientUnits="userSpaceOnUse">
+    <linearGradient id="posts-photo" x1="27" y1="32" x2="95" y2="87" gradientUnits="userSpaceOnUse">
       <stop stop-color="#48D9C1"/>
       <stop offset="1" stop-color="#14A99A"/>
-    </linearGradient>
-    <linearGradient id="posts-cover" x1="54" y1="43" x2="112" y2="112" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#32D6B0"/>
-      <stop offset="0.5" stop-color="#12B793"/>
-      <stop offset="1" stop-color="#078D7B"/>
-    </linearGradient>
-    <linearGradient id="posts-spine" x1="48" y1="44" x2="59" y2="114" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFE79B"/>
-      <stop offset="1" stop-color="#ECA642"/>
     </linearGradient>
     <filter id="posts-shadow" x="0" y="0" width="128" height="128" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
       <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#123D3D" flood-opacity="0.27"/>
     </filter>
   </defs>
   <g filter="url(#posts-shadow)">
-    <g transform="rotate(-9 50 55)">
-      <rect x="13" y="15" width="77" height="85" rx="10" fill="#68BFAE"/>
-      <rect x="13" y="11" width="77" height="85" rx="10" fill="url(#posts-photo-frame)"/>
-      <rect x="20" y="19" width="63" height="59" rx="5" fill="url(#posts-photo)"/>
-      <circle cx="65" cy="35" r="8" fill="#FFE49B"/>
-      <path d="M20 64L38 43C39.6 41.1 42.5 41.1 44.1 43L58 59L66.9 49C68.5 47.2 71.3 47.2 72.9 49L83 61V73C83 75.8 80.8 78 78 78H25C22.2 78 20 75.8 20 73V64Z" fill="#CBFFF0"/>
-      <path d="M20 71L38 51C39.6 49.2 42.4 49.2 44 51L67 78H25C22.2 78 20 75.8 20 73V71Z" fill="#7DE5C8"/>
-      <path d="M26 86H54" stroke="#69BBAA" stroke-width="3" stroke-linecap="round"/>
+    <rect x="27" y="15" width="82" height="96" rx="10" transform="rotate(8 68 63)" fill="#53BDA9"/>
+    <g transform="rotate(-8 59 66)">
+      <rect x="16" y="18" width="86" height="96" rx="10" fill="#389C89"/>
+      <rect x="16" y="14" width="86" height="96" rx="10" fill="url(#posts-frame)"/>
+      <rect x="24" y="23" width="70" height="65" rx="5" fill="url(#posts-photo)"/>
+      <circle cx="75" cy="40" r="9" fill="#FFE49B"/>
+      <path d="M24 72L43 49C44.6 47.1 47.5 47.1 49.1 49L64 67L75 55C76.6 53.2 79.4 53.2 81 55L94 69V83C94 85.8 91.8 88 89 88H29C26.2 88 24 85.8 24 83V72Z" fill="#CBFFF0"/>
+      <path d="M24 80L43 58C44.6 56.2 47.4 56.2 49 58L74 88H29C26.2 88 24 85.8 24 83V80Z" fill="#7DE5C8"/>
+      <path d="M32 98H66" stroke="#69BBAA" stroke-width="3" stroke-linecap="round"/>
     </g>
-    <g transform="rotate(8 81 80)">
-      <rect x="45" y="42" width="73" height="77" rx="9" fill="#087766"/>
-      <path d="M52 108H116V113H54C50.1 113 47 109.9 47 106V52C47 47 51 43 56 43H60V105C60 106.7 58.7 108 57 108H52Z" fill="#FFE9BB"/>
-      <rect x="45" y="38" width="73" height="72" rx="9" fill="url(#posts-cover)"/>
-      <path d="M54 38H59V110H54C49 110 45 106 45 101V47C45 42 49 38 54 38Z" fill="url(#posts-spine)"/>
-      <path d="M63 43H107C110.3 43 113 45.7 113 49" stroke="#8EF2D6" stroke-width="2.5" stroke-linecap="round"/>
-      <rect x="69" y="57" width="35" height="6" rx="3" fill="#D9FFF2"/>
-      <path d="M72 77H101M72 87H95" stroke="#A4EBD8" stroke-width="4" stroke-linecap="round"/>
-      <path d="M100 38H109V55L104.5 51.7L100 55V38Z" fill="#FFD878"/>
-    </g>
+    <path d="M107 20L110 28L118 31L110 34L107 42L104 34L96 31L104 28L107 20Z" fill="#FFE49B"/>
   </g>
 </svg>

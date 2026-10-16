@@ -59,7 +59,7 @@ export function MediaReviewQueue(): React.JSX.Element {
     requestAnimationFrame(() => {
       const target =
         trigger.current ??
-        document.querySelector<HTMLButtonElement>('[data-companion-navigation] button[aria-current="page"]')
+        document.querySelector<HTMLButtonElement>('[data-directory-navigation] button[aria-current="page"]')
 
       target?.focus()
     })

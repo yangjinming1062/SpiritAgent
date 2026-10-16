@@ -161,19 +161,17 @@ export interface DesktopAccount {
   active: boolean
 }
 
-export const APP_PAGES = ['chat', 'companion', 'posts', 'settings'] as const
+export const APP_PAGES = ['chat', 'companion', 'posts', 'diary', 'settings'] as const
 export type AppPage = (typeof APP_PAGES)[number]
 export const SETTINGS_SECTIONS = ['companionship', 'voice', 'display', 'devices', 'application', 'advanced'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 export const COMPANION_SECTIONS = ['profile', 'voice', 'appearance', 'scene', 'desktop-life', 'memory'] as const
 export type CompanionSection = (typeof COMPANION_SECTIONS)[number]
-export type PostsTab = 'posts' | 'diary'
 
 export interface AppNavigationTarget {
   page?: AppPage
   section?: SettingsSection
   companionSection?: CompanionSection
-  postsTab?: PostsTab
   companionTask?: 'create'
   returnToDesktopLife?: boolean
   settingsTab?: 'skills' | 'toolsets'
@@ -195,14 +193,12 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
   const companionSection =
     value.companionSection === 'home' ? 'profile' : COMPANION_SECTIONS.find(item => item === value.companionSection)
 
-  const postsTab = value.postsTab === 'posts' || value.postsTab === 'diary' ? value.postsTab : undefined
   const settingsTab = value.settingsTab === 'skills' || value.settingsTab === 'toolsets' ? value.settingsTab : undefined
 
   return {
-    page: page ?? (section ? 'settings' : companionSection ? 'companion' : postsTab ? 'posts' : undefined),
+    page: page ?? (section ? 'settings' : companionSection ? 'companion' : undefined),
     section,
     companionSection,
-    postsTab,
     companionTask: value.companionTask === 'create' ? 'create' : undefined,
     returnToDesktopLife: value.returnToDesktopLife === true ? true : undefined,
     settingsTab: section === 'devices' ? settingsTab : undefined,

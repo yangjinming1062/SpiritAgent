@@ -1063,6 +1063,9 @@ export const dict: Dictionary = {
       avatarMood: (name: string) => `${name}'s mood`
     },
     posts: {
+      intro: 'Explore the moments your companion shares and leave a comment.',
+      expand: 'Read more',
+      collapse: 'Show less',
       videoRecoveryHeading: 'Video posts awaiting review',
       videoRecoveryHint:
         'These posts exceeded the wait limit and were not recreated or published. Check the original task, review any existing video, then publish or discard it. Adoption does not create narration.',
@@ -1106,6 +1109,9 @@ export const dict: Dictionary = {
       contentTypeFallback: 'Post'
     },
     diary: {
+      intro: 'Browse your companion’s reflections by date.',
+      previousMonth: 'Previous month',
+      nextMonth: 'Next month',
       loading: 'Opening the journal…',
       todayBadge: 'Today',
       signature: (name: string) => `— ${name}'s diary`,

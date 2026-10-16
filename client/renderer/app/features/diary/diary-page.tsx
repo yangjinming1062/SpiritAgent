@@ -1,15 +1,17 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 
+import { ReadingPage } from '@/app/components/reading-page'
 import { $persona } from '@/modules/character'
 import { $diaryByDate, $diaryLoading, hydrateDiary, markDiaryRead } from '@/modules/diary'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { BookOpen } from '@/shared/lib/icons'
+import { ArrowLeft, ArrowRight, BookOpen } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { BTN_SUBTLE } from '@/shared/panel'
+import { BTN_ICON, BTN_SUBTLE } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
+import { $locale } from '@/shared/store/locale'
 import { $surfaceOpen, $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { type Dictionary, useStrings } from '@/shared/strings'
 
@@ -25,10 +27,6 @@ function localDateKey(d: Date): string {
 
 function todayKey(): string {
   return localDateKey(new Date())
-}
-
-function monthKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 }
 
 function daysInMonth(date: Date): Date[] {
@@ -68,6 +66,8 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
   const surfaceVisible = useStore($surfaceOpenVisible)
   const screenLocked = useStore($surfaceScreenLocked)
   const dict = useStrings()
+  const locale = useStore($locale)
+  const calendarHeadingId = useId()
   const t = dict.living.diary
   const tRail = dict.living.rail
   const [selectedDate, setSelectedDate] = useState<string>(todayKey())
@@ -219,85 +219,94 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
   }, [authKind, foreground, loading, loadFailed, readSnapshot, readBlocked, entry, confirmedReadIds, beginAsync])
 
   return (
-    <div className={styles.shell}>
-      <aside className={styles.calendar}>
-        <div className={styles.calendarHeader}>
-          <button
-            className={styles.monthButton}
-            onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
-            type="button"
-          >
-            ←
-          </button>
-          <span className={styles.monthLabel}>{monthKey(cursor)}</span>
-          <button
-            className={styles.monthButton}
-            onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
-            type="button"
-          >
-            →
-          </button>
-        </div>
-
-        <div className={styles.weekHeader}>
-          {t.weekHeader.map(d => (
-            <span className={styles.weekDay} key={d}>
-              {d}
-            </span>
-          ))}
-        </div>
-
-        <div className={styles.grid}>
-          {days.map((d, index) => {
-            const key = localDateKey(d)
-            const hasEntry = Boolean(diaryByDate[key])
-            const selected = key === selectedDate
-
-            return (
-              <button
-                className={cn(styles.dayCell, selected && styles.dayCellSelected, hasEntry && styles.dayCellHasEntry)}
-                key={key}
-                onClick={() => setSelectedDate(key)}
-                style={index === 0 && firstDayOffset > 0 ? { gridColumnStart: firstDayOffset + 1 } : undefined}
-                type="button"
-              >
-                {d.getDate()}
-                {hasEntry && <span className={styles.dot} />}
-              </button>
-            )
-          })}
-        </div>
-      </aside>
-
-      <main className={styles.entry}>
-        <header className={styles.entryHeader}>
-          <h2 className={styles.entryDate}>{formatSelectedDate(selectedDate, t)}</h2>
-          {isToday && <span className={styles.todayBadge}>{t.todayBadge}</span>}
-        </header>
-
-        {loading ? (
-          <p className={styles.loading}>{t.loading}</p>
-        ) : entry ? (
-          <div className={styles.contentArea}>
-            {entry.title ? <h3 className={styles.entryTitle}>{entry.title}</h3> : null}
-            <p className={styles.bodyText}>{entry.body}</p>
-            <div className={styles.signature}>{t.signature(displayName)}</div>
-          </div>
-        ) : loadFailed ? (
-          <div className={styles.emptyContainer}>
-            <p className={styles.emptyTitle}>{t.loadFailed}</p>
-            <button className={cn(BTN_SUBTLE, 'mt-2')} onClick={() => setReloadKey(key => key + 1)} type="button">
-              {dict.common.retry}
+    <ReadingPage hint={t.intro} title={tRail.diary}>
+      <div className={styles.shell}>
+        <aside aria-labelledby={calendarHeadingId} className={cn('liquid-glass-card', styles.calendar)}>
+          <div className={styles.calendarHeader}>
+            <button
+              aria-label={t.previousMonth}
+              className={BTN_ICON}
+              onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
+              type="button"
+            >
+              <ArrowLeft aria-hidden="true" size={16} />
+            </button>
+            <h3 className={styles.monthLabel} id={calendarHeadingId}>
+              {new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long' }).format(cursor)}
+            </h3>
+            <button
+              aria-label={t.nextMonth}
+              className={BTN_ICON}
+              onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
+              type="button"
+            >
+              <ArrowRight aria-hidden="true" size={16} />
             </button>
           </div>
-        ) : (
-          <div className={styles.emptyContainer}>
-            <BookOpen className={styles.emptyIcon} size={36} />
-            <p className={styles.emptyTitle}>{t.emptyTitle}</p>
-            <p className={styles.emptyHint}>{isToday ? t.emptyHintToday : t.emptyHintOther}</p>
+
+          <div className={styles.weekHeader}>
+            {t.weekHeader.map((d, index) => (
+              <span className={styles.weekDay} key={t.weekDayNames[(index + 1) % 7]}>
+                {d}
+              </span>
+            ))}
           </div>
-        )}
-      </main>
-    </div>
+
+          <div className={styles.grid}>
+            {days.map((d, index) => {
+              const key = localDateKey(d)
+              const hasEntry = Boolean(diaryByDate[key])
+              const selected = key === selectedDate
+
+              return (
+                <button
+                  aria-current={key === todayKey() ? 'date' : undefined}
+                  aria-label={formatSelectedDate(key, t)}
+                  aria-pressed={selected}
+                  className={cn(styles.dayCell, selected && styles.dayCellSelected, hasEntry && styles.dayCellHasEntry)}
+                  key={key}
+                  onClick={() => setSelectedDate(key)}
+                  style={index === 0 && firstDayOffset > 0 ? { gridColumnStart: firstDayOffset + 1 } : undefined}
+                  type="button"
+                >
+                  {d.getDate()}
+                  {hasEntry && <span className={styles.dot} />}
+                </button>
+              )
+            })}
+          </div>
+        </aside>
+
+        <article className={cn('liquid-glass-card', styles.entry)}>
+          <header className={styles.entryHeader}>
+            <h3 className={styles.entryDate}>{formatSelectedDate(selectedDate, t)}</h3>
+            {isToday && <span className={styles.todayBadge}>{t.todayBadge}</span>}
+          </header>
+
+          {loading ? (
+            <p className={styles.loading}>{t.loading}</p>
+          ) : entry ? (
+            <div className={styles.contentArea}>
+              {entry.title ? <h4 className={styles.entryTitle}>{entry.title}</h4> : null}
+              <p className={styles.bodyText}>{entry.body}</p>
+              <div className={styles.signature}>{t.signature(displayName)}</div>
+            </div>
+          ) : loadFailed ? (
+            <div className={styles.emptyContainer}>
+              <p className={styles.emptyTitle}>{t.loadFailed}</p>
+              <button className={cn(BTN_SUBTLE, 'mt-2')} onClick={() => setReloadKey(key => key + 1)} type="button">
+                {dict.common.retry}
+              </button>
+            </div>
+          ) : (
+            <div className={styles.emptyContainer}>
+              <BookOpen className={styles.emptyIcon} size={36} />
+              <p className={styles.emptyTitle}>{t.emptyTitle}</p>
+              <p className={styles.emptyHint}>{isToday ? t.emptyHintToday : t.emptyHintOther}</p>
+            </div>
+          )}
+        </article>
+      </div>
+    </ReadingPage>
   )
 }

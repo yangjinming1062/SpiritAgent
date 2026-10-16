@@ -1006,6 +1006,9 @@ export const dict = {
       avatarMood: (name: string) => `${name} 的表情反馈`
     },
     posts: {
+      intro: '查看伙伴分享的文字、图片、视频和语音，也可以留下评论。',
+      expand: '展开全文',
+      collapse: '收起全文',
       videoRecoveryHeading: '待核对的视频动态',
       videoRecoveryHint:
         '这些动态超过了等待时限，系统没有重新制作或发布。查询原任务后，可查看现有视频并决定发布或放弃；采纳不会补做旁白。',
@@ -1049,6 +1052,9 @@ export const dict = {
       contentTypeFallback: '动态'
     },
     diary: {
+      intro: '按日期翻阅伙伴留下的记录与感受。',
+      previousMonth: '上个月',
+      nextMonth: '下个月',
       loading: '翻开日记本中…',
       todayBadge: '今日',
       signature: (name: string) => `—— ${name} 的日记`,

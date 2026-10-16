@@ -1,7 +1,8 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect } from 'react'
 
+import { DirectoryShell } from '@/app/components/directory-shell/directory-shell'
 import { AppearancePage } from '@/app/features/appearance/appearance-page'
 import { DesktopLifePage } from '@/app/features/desktop-life/desktop-life-page'
 import { $desktopLifeUi, updateDesktopLifeUi } from '@/app/features/desktop-life/desktop-life-state'
@@ -17,7 +18,6 @@ import { BTN_SUBTLE, SettingsSectionIntro } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $locale } from '@/shared/store/locale'
 
-import styles from './companion-page.module.css'
 import { MediaReviewQueue } from './media-review-queue'
 import { MemorySection } from './memory-section'
 import { PersonaPage } from './persona-page'
@@ -43,8 +43,6 @@ function CompanionSession(): React.JSX.Element {
   const section = useStore($companionSection)
   const english = useStore($locale) === 'en'
   const route = useStore($appNavigation)
-  const scroller = useRef<HTMLDivElement>(null)
-  const positions = useRef<Partial<Record<typeof section, number>>>({})
   const boundedFeature = section === 'desktop-life' || section === 'appearance' || section === 'scene'
 
   useEffect(() => {
@@ -56,21 +54,6 @@ function CompanionSession(): React.JSX.Element {
       })
     }
   }, [route.page, route.companionTask, route.returnToDesktopLife, section])
-
-  useLayoutEffect(() => {
-    const element = scroller.current
-    const savedPositions = positions.current
-
-    if (element) {
-      element.scrollTop = savedPositions[section] ?? 0
-    }
-
-    return () => {
-      if (element) {
-        savedPositions[section] = element.scrollTop
-      }
-    }
-  }, [section])
 
   const prepareMaterial = (kind: 'scene' | 'outfit'): void => {
     void applyAppNavigation({
@@ -141,40 +124,24 @@ function CompanionSession(): React.JSX.Element {
   }
 
   return (
-    <div className={styles.layout}>
-      <div className={styles.shell}>
-        <nav
-          aria-label={english ? 'Companion categories' : '伙伴分类'}
-          className={styles.directory}
-          data-companion-navigation
-        >
-          {ENTRIES.map(({ id, icon: Icon, zh, en }) => (
-            <button
-              aria-current={section === id ? 'page' : undefined}
-              className={styles.category}
-              key={id}
-              onClick={() => setCompanionSection(id)}
-              type="button"
-            >
-              <Icon aria-hidden="true" size={18} />
-              <span>{english ? en : zh}</span>
+    <DirectoryShell
+      activeId={section}
+      ariaLabel={english ? 'Companion categories' : '伙伴分类'}
+      bounded={boundedFeature}
+      entries={ENTRIES.map(({ id, icon, zh, en }) => ({ id, icon, label: english ? en : zh }))}
+      onSelect={setCompanionSection}
+      toolbar={
+        <>
+          {route.returnToDesktopLife && (
+            <button className={BTN_SUBTLE} onClick={() => returnToDesktop()} type="button">
+              {english ? 'Return to desktop background' : '返回桌面背景制作'}
             </button>
-          ))}
-        </nav>
-        <div className={styles.contentColumn}>
-          <div className={styles.toolbar}>
-            {route.returnToDesktopLife && (
-              <button className={BTN_SUBTLE} onClick={() => returnToDesktop()} type="button">
-                {english ? 'Return to desktop background' : '返回桌面背景制作'}
-              </button>
-            )}
-            <MediaReviewQueue />
-          </div>
-          <div className={boundedFeature ? styles.bounded : styles.scroller} ref={scroller}>
-            <div className={boundedFeature ? styles.boundedContent : styles.content}>{page()}</div>
-          </div>
-        </div>
-      </div>
-    </div>
+          )}
+          <MediaReviewQueue />
+        </>
+      }
+    >
+      {page()}
+    </DirectoryShell>
   )
 }

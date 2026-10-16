@@ -1,9 +1,11 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
+import { ReadingPage } from '@/app/components/reading-page'
 import { $persona } from '@/modules/character'
-import { InlineMedia, openMediaViewer } from '@/modules/media'
+import { InlineMedia, MediaViewerOverlay, openMediaViewer } from '@/modules/media'
 import {
   $posts,
   $postsHasMore,
@@ -18,9 +20,10 @@ import {
   retryPostReply
 } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { ChevronDown, Sparkles, Trash2 } from '@/shared/lib/icons'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
-import { BTN_SUBTLE } from '@/shared/panel'
+import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, LoadingBlock } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
@@ -40,6 +43,25 @@ function formatDate(formatter: Intl.DateTimeFormat, iso: string): string {
 }
 
 export function PostsPage({
+  containerRef,
+  foreground,
+  mediaViewId
+}: {
+  containerRef?: RefObject<HTMLElement | null>
+  foreground?: boolean
+  mediaViewId?: string
+} = {}): React.JSX.Element {
+  const strings = useStrings()
+
+  return (
+    <ReadingPage hint={strings.living.posts.intro} title={strings.living.rail.posts}>
+      <PostsContent foreground={foreground} mediaViewId={mediaViewId} />
+      <MediaViewerOverlay containerRef={containerRef} viewId={mediaViewId} windowId={1} />
+    </ReadingPage>
+  )
+}
+
+function PostsContent({
   foreground: suppliedForeground,
   mediaViewId
 }: {
@@ -187,22 +209,34 @@ export function PostsPage({
     ) : null
 
   if (loading && posts.length === 0) {
-    return <p className={styles.empty}>{t.loading}</p>
+    return (
+      <div className={styles.list}>
+        {recovery}
+        <div className={cn('liquid-glass-card', styles.empty)} role="status">
+          <LoadingBlock label={t.loading} />
+        </div>
+      </div>
+    )
   }
 
   if (posts.length === 0) {
     return loadFailed ? (
-      <div className={styles.empty}>
+      <div className={styles.list}>
         {recovery}
-        <p>{t.loadFailed}</p>
-        <button className={cn(BTN_SUBTLE, 'mt-3')} onClick={() => setReloadKey(key => key + 1)} type="button">
-          {strings.common.retry}
-        </button>
+        <div className={cn('liquid-glass-card', styles.empty)} role="status">
+          <p>{t.loadFailed}</p>
+          <button className={cn(BTN_SUBTLE, 'mt-3')} onClick={() => setReloadKey(key => key + 1)} type="button">
+            {strings.common.retry}
+          </button>
+        </div>
       </div>
     ) : (
       <div className={styles.list}>
         {recovery}
-        <p className={styles.empty}>{t.empty}</p>
+        <div className={cn('liquid-glass-card', styles.empty)}>
+          <Sparkles aria-hidden="true" className={styles.emptyIcon} size={28} />
+          <p>{t.empty}</p>
+        </div>
       </div>
     )
   }
@@ -216,17 +250,17 @@ export function PostsPage({
         const expanded = expandedId === m.id
 
         return (
-          <article className={styles.card} key={m.id}>
-            <button className={styles.cardToggle} onClick={() => setExpandedId(expanded ? null : m.id)} type="button">
-              <div className={styles.cardHeader}>
-                <span className={styles.contentTypeBadge}>{getContentTypeLabel(m.contentType)}</span>
-                <time className={styles.date} dateTime={m.publishedAt}>
-                  {m.displayDate}
-                </time>
-              </div>
-              <h3 className={styles.title}>{m.title ?? t.noTitle}</h3>
-              {m.body && <p className={cn(styles.body, expanded ? styles.bodyExpanded : styles.bodyClamp)}>{m.body}</p>}
-            </button>
+          <article className={cn('liquid-glass-card', styles.card)} key={m.id}>
+            <div className={styles.cardHeader}>
+              <span className={styles.contentTypeBadge}>{getContentTypeLabel(m.contentType)}</span>
+              <time className={styles.date} dateTime={m.publishedAt}>
+                {m.displayDate}
+              </time>
+            </div>
+            <h3 className={styles.title}>{m.title ?? t.noTitle}</h3>
+            {m.body && (
+              <PostBody body={m.body} expanded={expanded} onToggle={() => setExpandedId(expanded ? null : m.id)} />
+            )}
             {m.mediaUrl ? (
               <InlineMedia
                 alt={m.title ?? ''}
@@ -246,7 +280,7 @@ export function PostsPage({
       })}
       {hasMore && (
         <button
-          className={styles.commentSend}
+          className={cn(BTN_SUBTLE, styles.loadMore)}
           disabled={loadingMore}
           onClick={() => {
             void loadMorePosts().then(ok => {
@@ -261,6 +295,56 @@ export function PostsPage({
         </button>
       )}
     </div>
+  )
+}
+
+function PostBody({
+  body,
+  expanded,
+  onToggle
+}: {
+  body: string
+  expanded: boolean
+  onToggle: () => void
+}): React.JSX.Element {
+  const textRef = useRef<HTMLParagraphElement>(null)
+  const textId = useId()
+  const [clipped, setClipped] = useState(false)
+  const t = useStrings().living.posts
+
+  useLayoutEffect(() => {
+    const element = textRef.current
+
+    if (!element || expanded) {
+      return
+    }
+
+    const update = (): void => setClipped(element.scrollHeight > element.clientHeight + 1)
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    update()
+
+    return () => observer.disconnect()
+  }, [body, expanded])
+
+  return (
+    <>
+      <p className={cn(styles.body, !expanded && styles.bodyClamp)} id={textId} ref={textRef}>
+        {body}
+      </p>
+      {(expanded || clipped) && (
+        <button
+          aria-controls={textId}
+          aria-expanded={expanded}
+          className={styles.cardToggle}
+          onClick={onToggle}
+          type="button"
+        >
+          {expanded ? t.collapse : t.expand}
+          <ChevronDown aria-hidden="true" className={expanded ? styles.chevronExpanded : undefined} size={14} />
+        </button>
+      )}
+    </>
   )
 }
 
@@ -321,7 +405,7 @@ function PostComments(props: {
       <div className={styles.commentInputRow}>
         <input
           aria-label={t.commentPlaceholder}
-          className={styles.commentInput}
+          className={cn(INPUT_CLASS, styles.commentInput)}
           disabled={sending}
           maxLength={500}
           onChange={e => setDraft(e.target.value)}
@@ -335,7 +419,7 @@ function PostComments(props: {
           value={draft}
         />
         <button
-          className={styles.commentSend}
+          className={BTN_PRIMARY}
           disabled={sending || draft.trim().length === 0}
           onClick={() => {
             void submit()
@@ -369,7 +453,7 @@ function CommentRow(props: {
       )}
       {!isCompanion && comment.replyStatus === 'failed' && (
         <button
-          className={styles.commentSend}
+          className={BTN_SUBTLE}
           disabled={retrying}
           onClick={() => {
             setRetrying(true)
@@ -383,14 +467,14 @@ function CommentRow(props: {
       {!isCompanion && (
         <button
           aria-label={t.commentDelete}
-          className={styles.commentDelete}
+          className={cn(BTN_ICON, styles.commentDelete)}
           onClick={() => {
             void onRemove(comment.id)
           }}
           title={t.commentDelete}
           type="button"
         >
-          ×
+          <Trash2 aria-hidden="true" size={14} />
         </button>
       )}
     </div>

@@ -7,7 +7,8 @@ import { CompanionMenu } from '@/app/components/surface-companion/companion-menu
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { CompanionHub } from '@/app/features/companion/companion-page'
 import { ConversationPage } from '@/app/features/conversation/conversation-page'
-import { LifePage } from '@/app/features/posts/life-page'
+import { DiaryPage } from '@/app/features/diary/diary-page'
+import { PostsPage } from '@/app/features/posts/posts-page'
 import { SceneBackdrop } from '@/app/features/scene/scene-backdrop'
 import { AppSettings } from '@/app/features/settings/app-settings'
 import {
@@ -75,6 +76,7 @@ export function MainRoot(): React.JSX.Element {
   const labels: Record<AppPage, string> = {
     chat: t.chat,
     posts: t.posts,
+    diary: t.diary,
     companion: t.companionFallback,
     settings: t.settings
   }
@@ -258,7 +260,8 @@ export function MainRoot(): React.JSX.Element {
                 />
               </div>
               <PanelActivityProvider active={active && page !== 'chat'}>
-                {page === 'posts' && <LifePage containerRef={shellRef} foreground={active} mediaViewId="main-page" />}
+                {page === 'posts' && <PostsPage containerRef={shellRef} foreground={active} mediaViewId="main-posts" />}
+                {page === 'diary' && <DiaryPage foreground={active} />}
                 {page === 'companion' && <CompanionHub />}
                 {page === 'settings' && <AppSettings />}
               </PanelActivityProvider>

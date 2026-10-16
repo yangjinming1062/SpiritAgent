@@ -1,54 +1,25 @@
 .list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px 20px;
+  gap: 16px;
+  min-width: 0;
 }
 
 .card {
-  flex-shrink: 0;
-  align-items: stretch;
-  background: var(--ui-surface-card);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid var(--ui-line-standard);
-  border-radius: 12px;
-  box-shadow:
-    inset 0 1px 0.5px rgba(255, 255, 255, 0.18),
-    0 8px 24px -4px rgba(0, 0, 0, 0.12);
+  border-radius: 16px;
   color: var(--ui-text-strong);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px;
-  text-align: left;
-  transition: background 0.12s ease;
-}
-
-.cardToggle {
-  background: transparent;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0;
-  text-align: left;
-  width: 100%;
-}
-
-.card:hover {
-  background: color-mix(in srgb, var(--ui-surface-card) 80%, var(--ui-fill-hover));
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
 }
 
 .cardHeader {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: space-between;
 }
 
@@ -57,7 +28,7 @@
   border: 1px solid var(--ui-line-hairline);
   border-radius: 999px;
   color: var(--ui-text-muted);
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
 }
 
@@ -68,60 +39,102 @@
 
 .title {
   color: var(--ui-text-strong);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
+  line-height: 1.5;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .body {
   color: var(--ui-text-body);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.7;
   margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .bodyClamp {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.bodyExpanded {
-  white-space: pre-wrap;
+.cardToggle {
+  align-items: center;
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ui-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  gap: 4px;
+  min-height: 28px;
+  padding: 2px 6px;
+}
+
+.cardToggle:hover {
+  background: var(--ui-fill-hover);
+  color: var(--ui-text-strong);
+}
+
+.cardToggle:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.chevronExpanded {
+  transform: rotate(180deg);
 }
 
 .empty {
+  align-items: center;
+  border-radius: 16px;
   color: var(--ui-text-muted);
+  display: flex;
+  flex-direction: column;
   font-size: 13px;
-  margin: 0;
+  justify-content: center;
+  min-height: 220px;
   padding: 32px 20px;
   text-align: center;
+}
+
+.empty p {
+  margin: 0;
+}
+
+.emptyIcon {
+  color: var(--ui-text-faint);
+  margin-bottom: 12px;
 }
 
 .comments {
   border-top: 1px solid var(--ui-line-hairline);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
-  padding-top: 8px;
+  gap: 10px;
+  padding-top: 12px;
 }
 
 .commentRow {
-  flex-wrap: wrap;
   align-items: baseline;
   color: var(--ui-text-body);
   display: flex;
-  font-size: 11px;
+  flex-wrap: wrap;
+  font-size: 12px;
   gap: 6px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .commentCompanion {
   background: var(--ui-fill-faint);
-  border-radius: 8px;
-  padding: 4px 8px;
+  border-radius: 10px;
+  padding: 8px 10px;
 }
 
 .commentAuthor {
@@ -136,59 +149,21 @@
 }
 
 .commentDelete {
-  background: transparent;
-  border: 0;
-  color: var(--ui-text-faint);
-  cursor: pointer;
-  flex-shrink: 0;
-  font-size: 13px;
-  line-height: 1;
+  align-self: center;
   margin-left: auto;
-  padding: 0 2px;
-}
-
-.commentDelete:hover {
-  color: var(--ui-text-strong);
 }
 
 .commentInputRow {
+  align-items: center;
   display: flex;
-  gap: 6px;
-  margin-top: 2px;
+  gap: 8px;
 }
 
 .commentInput {
-  background: var(--ui-fill-faint);
-  border: 1px solid var(--ui-line-hairline);
-  border-radius: 8px;
-  color: var(--ui-text-strong);
   flex: 1;
-  font-size: 11px;
   min-width: 0;
-  padding: 5px 8px;
 }
 
-.commentInput:focus {
-  outline: 1px solid var(--ui-line-strong);
-}
-
-.commentSend {
-  background: var(--ui-fill-faint);
-  border: 1px solid var(--ui-line-hairline);
-  border-radius: 8px;
-  color: var(--ui-text-strong);
-  cursor: pointer;
-  flex-shrink: 0;
-  font-size: 11px;
-  padding: 5px 10px;
-}
-
-.commentSend:disabled {
-  color: var(--ui-text-faint);
-  cursor: default;
-}
-
-html[class~='no-blur'] .card {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+.loadMore {
+  align-self: center;
 }

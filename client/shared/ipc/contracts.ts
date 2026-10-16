@@ -41,7 +41,6 @@ export type {
   DockState,
   DockTask,
   DockWindow,
-  PostsTab,
   PresentationDisplay,
   PresentationMode,
   PresentationState,

@@ -1,0 +1,139 @@
+.layout {
+  container: directory-shell / inline-size;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.directory {
+  border-right: 1px solid var(--ui-line-hairline);
+  flex: 0 0 176px;
+  overflow-y: auto;
+  padding: 20px 10px;
+}
+.category {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: var(--ui-text-body);
+  cursor: pointer;
+  display: flex;
+  font-size: 13px;
+  gap: 9px;
+  line-height: 1.45;
+  min-height: 44px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+.category:hover {
+  background: var(--ui-fill-hover);
+}
+.category[aria-current='page'] {
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  font-weight: 600;
+}
+.category:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
+}
+.category svg {
+  flex-shrink: 0;
+}
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unreadDot {
+  background: var(--ui-accent);
+  border-radius: 999px;
+  flex-shrink: 0;
+  height: 6px;
+  margin-left: auto;
+  width: 6px;
+}
+.contentColumn {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.toolbar {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 0 24px;
+}
+/* 工具栏没有可见内容时不占顶部留白，与无工具栏的页面保持同一上边距。 */
+.toolbar:has(> *) {
+  padding-top: 16px;
+}
+.scroller,
+.bounded {
+  flex: 1;
+  min-height: 0;
+  padding: 24px;
+}
+.scroller {
+  overflow-y: auto;
+}
+.bounded {
+  display: flex;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+.content,
+.boundedContent {
+  margin: 0 auto;
+  max-width: 1120px;
+  min-width: 0;
+  width: 100%;
+}
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.boundedContent {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+@container directory-shell (width < 900px) {
+  .shell {
+    flex-direction: column;
+  }
+  .directory {
+    border-bottom: 1px solid var(--ui-line-hairline);
+    border-right: 0;
+    display: grid;
+    flex: 0 0 auto;
+    gap: 4px;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    padding: 10px 16px;
+  }
+  .category {
+    justify-content: center;
+    text-align: center;
+  }
+  .scroller,
+  .bounded {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}

@@ -10,6 +10,7 @@ import {
   type VideoPublicationRecovery
 } from '@/modules/posts'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { cn } from '@/shared/lib/utils'
 import { BTN_SUBTLE, ConfirmDialog } from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
@@ -122,7 +123,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
 
   if (loadFailed) {
     return (
-      <div className={styles.card}>
+      <div className={cn('liquid-glass-card', styles.card)}>
         <p className={styles.body}>{t.videoRecoveryLoadFailed}</p>
         <button className={BTN_SUBTLE} onClick={() => setRefreshKey(current => current + 1)} type="button">
           {t.videoRefresh}
@@ -136,7 +137,7 @@ export function PostVideoRecovery(): React.JSX.Element | null {
   }
 
   return (
-    <section className={styles.card}>
+    <section className={cn('liquid-glass-card', styles.card)}>
       <div className="flex items-center justify-between gap-2">
         <h3 className={styles.title}>{t.videoRecoveryHeading}</h3>
         <button
