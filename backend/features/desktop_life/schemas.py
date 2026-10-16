@@ -183,6 +183,7 @@ class DesktopVideoDraftResponse(BaseModel):
     image_confirmed: bool = False
     candidate_video_url: str = ""
     candidate_poster_url: str = ""
+    review_reason: str = ""
     base_version: int | None = None
     error: str | None = None
 

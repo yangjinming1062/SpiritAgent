@@ -77,6 +77,10 @@ const zh = {
   emptyHint: '从一个想法开始，AI 会把它变成伙伴生活的地方。',
   noActionsHint: '先完成日常陪伴视频，之后可以随时添加其他动作。',
   readyHint: '播放看看，满意后就可以让伙伴住进这个桌景。',
+  videoReviewPending: '视频已生成，待确认',
+  videoReviewHint: '视频已生成，请预览确认；满意后可以直接使用。',
+  reviewDetails: '检查详情',
+  creationFailed: '本次制作失败，请查看详情后重试。',
   recreateHint: '描述希望调整的地方，AI 会生成新画面供你确认。',
   playAction: '播放这个动作',
   nameOptional: '名称（可选）',
@@ -193,7 +197,7 @@ const zh = {
     processing: '正在制作',
     ready: '已就绪',
     failed: '制作失败',
-    review_pending: '等待复核'
+    review_pending: '等待确认'
   }
 }
 
@@ -275,6 +279,10 @@ const en: typeof zh = {
   emptyHint: 'Start with an idea. AI will make a place for your companion to spend the day.',
   noActionsHint: 'Finish the everyday video first. You can add more activities whenever you like.',
   readyHint: 'Play the video, then use this scene when you are happy with it.',
+  videoReviewPending: 'Video created, awaiting confirmation',
+  videoReviewHint: 'Your video is ready to preview. You can use it directly when you are happy with it.',
+  reviewDetails: 'Check details',
+  creationFailed: 'This creation failed. View the details and try again.',
   recreateHint: 'Describe the changes and AI will create a new image for you to review.',
   playAction: 'Play this activity',
   nameOptional: 'Name (optional)',
@@ -393,7 +401,7 @@ const en: typeof zh = {
     processing: 'Creating',
     ready: 'Ready',
     failed: 'Creation failed',
-    review_pending: 'Awaiting review'
+    review_pending: 'Awaiting confirmation'
   }
 }
 

@@ -179,6 +179,10 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
     poster = accepted.poster_path if accepted else progress.pose_path if progress else ""
     playable = accepted is not None and action.enabled and not action.needs_update
     draft = progress if progress is not None and action.stage != "complete" else None
+    video_review_pending = (
+        action.status == "review_pending" and action.stage != "image_review" and candidate is not None
+    )
+    error = None if video_review_pending else action.error
     return DesktopVideoActionResponse(
         id=action.id,
         current=DesktopVideoCurrentResponse(
@@ -215,8 +219,9 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
             submission_unknown=draft.submission_unknown,
             candidate_video_url=client_asset_url(candidate.video_path) if candidate else "",
             candidate_poster_url=client_asset_url(candidate.poster_path) if candidate else "",
+            review_reason=(draft.review_reason or action.error or "") if video_review_pending else "",
             base_version=draft.base_version,
-            error=action.error,
+            error=error,
         )
         if draft
         else None,
@@ -238,7 +243,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         target_duration_seconds=action.target_duration_seconds,
         status="queued" if action.status == "ready" and accepted is None else action.status,
         stage=action.stage,
-        error=action.error,
+        error=error,
         enabled=action.enabled,
         preset=action.preset,
         use_when=json.loads(action.use_when_json),

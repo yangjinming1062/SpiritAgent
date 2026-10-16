@@ -49,6 +49,7 @@ export interface DesktopVideoDraft {
   submission_unknown: boolean
   candidate_video_url: string | null
   candidate_poster_url: string | null
+  review_reason: string
   base_version: number | null
   target_width: number
   target_height: number

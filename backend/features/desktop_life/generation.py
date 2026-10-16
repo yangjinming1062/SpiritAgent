@@ -1076,7 +1076,7 @@ async def _finish_job(user_id: int, action_id: int, progress: DesktopVideoProgre
                     )
         else:
             action.status, action.stage = "review_pending", "review"
-            action.error = None if passed else progress.review_reason or "请预览确认新视频"
+            action.error = None
             await touch_desktop_state(db, user_id)
         await db.commit()
     spawn_removed_action_task_cancellation(user_id, removed)

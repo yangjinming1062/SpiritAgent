@@ -1205,8 +1205,12 @@ export function DesktopLifePage({
       return t.preparing
     }
 
-    if (item.draft?.candidate_video_url) {
-      return t.stepUse
+    if (item.status === 'failed') {
+      return t.statuses.failed
+    }
+
+    if (item.status === 'review_pending' && item.draft?.candidate_video_url) {
+      return t.videoReviewPending
     }
 
     if (item.playable) {
@@ -1342,9 +1346,9 @@ export function DesktopLifePage({
               set={selected}
             />
             {item.current && item.draft && <p className="text-sm text-muted">{t.savedCurrent}</p>}
-            {(item.error || item.draft?.error) && (
+            {!candidate && (item.error || item.draft?.error) && (
               <div className="rounded-xl bg-warning/10 p-4 text-sm text-body" role="status">
-                <p>{t.unavailable}</p>
+                <p>{item.status === 'failed' ? t.creationFailed : t.unavailable}</p>
                 <details className="mt-2 text-xs text-muted">
                   <summary className="cursor-pointer">{t.details}</summary>
                   <p className="mt-2 break-words">{item.draft?.error || item.error}</p>
@@ -1383,7 +1387,15 @@ export function DesktopLifePage({
               </div>
             ) : candidate ? (
               <>
-                <p className="text-sm text-body">{t.readyHint}</p>
+                <div className="rounded-xl bg-accent/5 p-4 text-sm text-body" role="status">
+                  <p>{t.videoReviewHint}</p>
+                  {item.draft?.review_reason && (
+                    <details className="mt-2 text-xs text-muted">
+                      <summary className="cursor-pointer">{t.reviewDetails}</summary>
+                      <p className="mt-2 break-words">{item.draft.review_reason}</p>
+                    </details>
+                  )}
+                </div>
                 {item.key === 'idle' && affected > 0 && (
                   <p className="rounded-lg bg-warning/10 p-3 text-sm text-warning">{t.updateImpact(affected)}</p>
                 )}
