@@ -65,7 +65,7 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     # 生成来源与身份修订守卫，结构见 OutfitSource
     source_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     is_initial: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    # 与首次视频包同事务置位；删除视频包不撤销已启动事实。
+    # 每套着装首次动作包同事务置位；删除或备份恢复后不自动补建。
     initial_video_started: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     initial_video_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)

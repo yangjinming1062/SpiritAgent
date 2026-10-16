@@ -290,7 +290,11 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
 
     if (
       isActionInProgress(action.status) ||
-      videoActionIsBusy(packs, genRequests, outfitId, selectedPack?.id ?? null, action.key)
+      Object.values(genRequests).some(
+        scope =>
+          (scope.outfitId != null ? scope.outfitId === outfitId : scope.packId === selectedPack?.id) &&
+          scope.action === action.key
+      )
     ) {
       return { label: t.videoActionGenerating, className: 'bg-amber-400' }
     }
@@ -321,7 +325,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
       return { label: t.videoActionFailed, className: 'bg-danger-fg' }
     }
 
-    return { label: t.videoActionOnDemandShort, className: 'bg-line-strong' }
+    return { label: t.videoActionOnDemandShort, hint: t.videoActionOnDemand, className: 'bg-line-strong' }
   }
 
   const selectedStatus = selectedAction ? actionStatus(selectedAction) : null
@@ -493,9 +497,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
                   ) : !selectedAction.pendingReview ? (
                     <div className="flex items-center justify-center rounded-lg bg-fill-trough px-5 text-center">
                       <div className="max-w-md">
-                        <p className="text-xs text-body">
-                          {selectedAction.status === 'missing' ? t.videoActionOnDemand : selectedStatus.label}
-                        </p>
+                        <p className="text-xs text-body">{selectedStatus.hint ?? selectedStatus.label}</p>
                         {selectedAction.error ? (
                           <p className="mt-1 text-[11px] text-danger-fg">{selectedAction.error}</p>
                         ) : null}

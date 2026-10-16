@@ -44,6 +44,7 @@ from features.appearance.character_card import (
     render_character_identity,
     require_character_snapshot,
 )
+from features.appearance.completion import notify_outfit_ready
 from features.appearance.models import AvatarAsset, CompanionOutfit, OutfitSource
 from features.appearance.prompt_assembly import build_image_edit_prompt, build_outfit_prompt, describe_garment_image
 from features.appearance.prompts import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
@@ -522,7 +523,7 @@ async def confirm_outfit(
     user_id: int,
     outfit_id: int,
 ) -> CompanionOutfit:
-    """验收透明草稿并转正为 ready；描述后台生成，穿着由动作包启用完成。"""
+    """验收透明草稿并入柜，受理基础动作制作；穿着由动作包启用完成。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
@@ -575,6 +576,8 @@ async def confirm_outfit(
             raise
         await db.refresh(outfit)
     schedule_outfit_description(user_id, outfit.id)
+    await notify_outfit_ready(user_id, outfit.id)
+    await db.refresh(outfit)
     return outfit
 
 

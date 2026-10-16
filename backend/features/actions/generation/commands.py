@@ -27,7 +27,7 @@ from features.appearance.character_card import (
     render_character_profile,
     require_character_snapshot,
 )
-from features.appearance.queries import outfit_snapshot, ready_outfit_snapshot
+from features.appearance.queries import mark_initial_video_started, outfit_snapshot, ready_outfit_snapshot
 from features.companion.persona_service import load_persona_definition
 from features.companion.visual_state import ensure_persona_snapshot
 from features.media.chain import FrozenMediaProvider, spawn_removed_action_task_cancellation
@@ -140,7 +140,7 @@ async def create_pack_from_reference(
     *,
     outfit_id: int | None = None,
     force: bool = False,
-    initial_only: bool = False,
+    create_only: bool = False,
     source_pack_id: int | None = None,
     action: str | None = None,
     feedback: str = "",
@@ -179,7 +179,7 @@ async def create_pack_from_reference(
         outfit = await ready_outfit_snapshot(db, user_id, outfit_id)
         if outfit is None:
             raise VideoPackStateError("请先确认外观参考图")
-        if initial_only:
+        if create_only:
             existing = await db.scalar(
                 select(CompanionActionPack).where(
                     CompanionActionPack.user_id == user_id,
@@ -187,9 +187,11 @@ async def create_pack_from_reference(
                 ),
             )
             if existing is not None:
+                await mark_initial_video_started(db, user_id, outfit.id)
+                await db.commit()
                 return ActionPackSnapshot.model_validate(existing)
             if outfit.initial_video_started:
-                raise VideoPackStateError("默认动作包任务已移除，请在外观页重新生成")
+                raise VideoPackStateError("基础动作包任务已移除，请在衣柜重新准备")
         await _reject_concurrent_build(db, user_id, outfit.id)
         avatar = await _active_avatar(db, user_id)
         reference_hash = await _reference_hash(outfit, avatar)
@@ -213,7 +215,6 @@ async def create_pack_from_reference(
                 and reusable_context.identity == identity
                 and await character_snapshot_is_current(db, user_id, identity)
             ):
-                await _activate_locked(db, reusable)
                 await db.commit()
                 await db.refresh(reusable)
 
@@ -274,7 +275,7 @@ async def create_pack_from_reference(
             outfit_description=outfit.description or "",
             outfit_description_frozen=bool(outfit.description),
             feedback=feedback,
-            active_outfit_id=outfit.id if initial_only else active_outfit_id,
+            active_outfit_id=outfit.id if create_only and outfit.is_initial else active_outfit_id,
             must_actions=list(REQUIRED_SYSTEM_SLOTS),
         )
         context.storage_directory = directory

@@ -33,7 +33,7 @@ interface DesignDraft {
   previewUrl: string
 }
 
-// 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜（参考图就绪，不触发生成）。服装/发型可换、五官锁定；失败请求保留在 lastRequest 供一键重试。
+// 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜并准备基础动作。服装/发型可换、五官锁定；失败请求保留在 lastRequest 供一键重试。
 export function useOutfitDesignSession(
   onConfirmed: (outfitId: number) => void,
   onDrafted?: (outfitId: number) => void
@@ -266,7 +266,7 @@ export function useOutfitDesignSession(
     setBusy(true)
 
     try {
-      // 确认只把草稿立绘转正为参考图，不触发生成、不自动穿着（PIPELINE「用户自备图」）。
+      // 确认转正参考图，并由服务端安排基础动作；就绪后由用户选择穿上。
       await backendApi().api({
         path: `/api/companion/outfits/${draft.id}/confirm`,
         method: 'POST',

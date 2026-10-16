@@ -1065,7 +1065,7 @@ export const dict = {
       confirmAction: '确认入柜',
       processing: '处理中…',
       discard: '稍后继续',
-      confirmHint: '确认后着装即就绪；进入动作页生成动作后即可穿上',
+      confirmHint: '确认入柜后自动准备待机和拖拽动作，就绪后可在动作页选择穿上。',
       refImageAttached: '已附参考图',
       refImageAlt: '参考图',
       zoomRefImage: '查看参考大图',
@@ -1108,7 +1108,7 @@ export const dict = {
       videoActionNoMatch: '没有匹配的动作',
       videoActionEmpty: '选择一个动作查看预览与操作。',
       videoActionCancel: '取消',
-      videoOutfitNotReady: '这套着装还没有动作包，生成后即可预览和穿上。',
+      videoOutfitNotReady: '这套着装的基础动作尚未就绪。',
       videoPacksLoadFailed: '动作包加载失败',
       videoSelectOutfit: '返回衣柜并选择一套着装，查看它专属的动作。',
       videoBackToOutfits: '返回衣柜',
@@ -1130,10 +1130,10 @@ export const dict = {
       videoGenMissingAction: '生成这个动作',
       videoRedoAction: '重新生成这个动作',
       videoFeedback: '希望怎样调整姿态或动作（可选）',
-      videoGenAction: '穿上这套衣服',
-      videoRegenAction: '重新制作全部动作',
+      videoGenAction: '准备基础动作',
+      videoRegenAction: '重新制作基础动作',
       videoRegenTitle: '重新生成动作包',
-      videoRegenBody: '将按当前着装参考重新生成动作图片与视频，完成后自动启用。',
+      videoRegenBody: '将按当前着装参考重新生成待机视频和拖拽图片；当前穿着保持不变，就绪后可选择穿上。',
       videoGenStagePose: '正在准备动作姿态…',
       videoGenStageScript: '正在按角色性格设计动作姿态与演绎…',
       videoGenStageSubmit: '正在提交生成任务…',
@@ -1146,7 +1146,8 @@ export const dict = {
       videoPackHasReadyActions: '这套着装已有就绪动作，请按需重新生成单个动作。',
       videoGenRequestFailed: '动作包生成请求失败，请稍后重试',
       videoActivateFailed: '穿上这套着装失败，请稍后重试',
-      videoGenHint: 'AI 会先为这套衣服准备日常动作，完成后自动穿上。准备期间会继续显示现在的形象。'
+      videoGenHint:
+        '确认入柜后会自动准备待机视频和拖拽图片，其他动作按需制作。当前穿着保持不变，基础动作就绪后可选择穿上。'
     },
     scene: {
       intro: '描述一个喜欢的地方，AI 会把它变成聊天窗口的背景。满意后再使用。',

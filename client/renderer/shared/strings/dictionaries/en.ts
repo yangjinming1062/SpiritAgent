@@ -1129,7 +1129,8 @@ export const dict: Dictionary = {
       confirmAction: 'Confirm',
       processing: 'Processing…',
       discard: 'Continue later',
-      confirmHint: 'Once confirmed, the outfit is ready. Open its actions to generate and wear it.',
+      confirmHint:
+        'Confirming prepares idle and drag actions automatically. Choose Wear on its actions page when ready.',
       refImageAttached: 'Reference image attached',
       refImageAlt: 'Reference image',
       zoomRefImage: 'View reference image',
@@ -1178,7 +1179,7 @@ export const dict: Dictionary = {
       videoActionNoMatch: 'No matching actions',
       videoActionEmpty: 'Select an action to see its preview and controls.',
       videoActionCancel: 'Cancel',
-      videoOutfitNotReady: 'This outfit has no action pack yet. Generate one to preview and wear it.',
+      videoOutfitNotReady: 'This outfit’s basic actions are not ready yet.',
       videoPacksLoadFailed: "Couldn't load action packs",
       videoSelectOutfit: 'Return to the wardrobe and choose an outfit to see its actions.',
       videoBackToOutfits: 'Back to wardrobe',
@@ -1201,11 +1202,11 @@ export const dict: Dictionary = {
       videoGenMissingAction: 'Generate this action',
       videoRedoAction: 'Regenerate this action',
       videoFeedback: 'Describe the desired pose or movement (optional)',
-      videoGenAction: 'Wear this outfit',
-      videoRegenAction: 'Recreate all actions',
+      videoGenAction: 'Prepare basic actions',
+      videoRegenAction: 'Recreate basic actions',
       videoRegenTitle: 'Regenerate action pack',
       videoRegenBody:
-        'Action images and videos will be generated from the current outfit reference; the pack activates automatically when ready.',
+        'An idle video and a drag image will be regenerated from this outfit reference. Your current outfit stays on; choose Wear when the actions are ready.',
       videoGenStagePose: 'Preparing the action pose…',
       videoGenStageScript: 'Designing the pose and movement from the character’s personality…',
       videoGenStageSubmit: 'Submitting the generation task…',
@@ -1220,7 +1221,7 @@ export const dict: Dictionary = {
       videoGenRequestFailed: 'Action pack request failed. Please retry shortly.',
       videoActivateFailed: 'Could not wear this outfit. Please retry shortly.',
       videoGenHint:
-        'AI prepares everyday movements for this outfit, then puts it on. Your current appearance stays visible while it is being prepared.'
+        'Confirming an outfit in the wardrobe automatically prepares its idle video and drag image; other actions are made on demand. Your current outfit stays on. Choose Wear once the basic actions are ready.'
     },
     scene: {
       intro:

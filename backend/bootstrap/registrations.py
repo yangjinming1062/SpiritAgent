@@ -15,7 +15,7 @@ from features.actions.asset_retirement import delete_outfit_action_packs
 from features.actions.expression_catalog import available_expression_prompt_entries
 from features.appearance.action_cleanup import set_outfit_action_cleanup
 from features.appearance.character_card import character_snapshot_is_current, render_character_identity
-from features.appearance.completion import set_character_ready_handler
+from features.appearance.completion import set_character_ready_handler, set_outfit_ready_handler
 from features.appearance.queries import active_identity_reference, appearance_readiness, confirmed_media_reference_paths
 from features.automation.cron_jobs import set_job_intent_invalidator
 from features.companion.appearance_ports import set_appearance_readiness_reader
@@ -68,6 +68,7 @@ from runtime.tools.registry import REGISTRY
 from workflows.automation.companion_turns import execute_companion_turn
 from workflows.onboarding.character_ready import complete_character_initialization
 from workflows.onboarding.desktop_suite import prepare_default_desktop_suite
+from workflows.outfit_actions import start_outfit_actions
 
 from bootstrap.assets import register_asset_contributions
 
@@ -141,6 +142,7 @@ def wire_domain_hooks() -> None:
         ),
     )
     set_character_ready_handler(complete_character_initialization)
+    set_outfit_ready_handler(start_outfit_actions)
     set_scene_ready_handler(prepare_default_desktop_suite)
     set_desktop_update_handler(schedule_pending_desktop_updates)
     set_appearance_readiness_reader(appearance_readiness)

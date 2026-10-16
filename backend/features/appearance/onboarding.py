@@ -1,6 +1,5 @@
-"""初始衣柜资料与制作失败记录；事务由初始化流程管理。"""
+"""引导所建立的初始衣柜资料。"""
 
-from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,17 +27,3 @@ async def initial_outfit_user_ids(db: AsyncSession) -> tuple[int, ...]:
             ),
         ),
     )
-
-
-async def record_initial_video_error(db: AsyncSession, user_id: int, outfit_id: int, message: str) -> bool:
-    row = await db.get(CompanionOutfit, outfit_id, populate_existing=True)
-    if row is None or row.user_id != user_id or row.initial_video_started:
-        return False
-    row.initial_video_error = message
-    emit_ws_event(
-        db,
-        user_id=user_id,
-        event_type="companion.outfit.updated",
-        payload={"outfit_id": outfit_id, "worn": False},
-    )
-    return True

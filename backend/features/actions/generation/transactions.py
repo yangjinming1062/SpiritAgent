@@ -79,14 +79,13 @@ async def _create_or_reset_pack(
         await retire_action_assets(db, user_id, retired)
         await db.flush()
         return pack
-    if outfit.is_initial:
-        await mark_initial_video_started(db, user_id, outfit.id)
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.outfit.updated",
-            payload={"outfit_id": outfit.id, "worn": False},
-        )
+    await mark_initial_video_started(db, user_id, outfit.id)
+    emit_ws_event(
+        db,
+        user_id=user_id,
+        event_type="companion.outfit.updated",
+        payload={"outfit_id": outfit.id, "worn": False},
+    )
     pack = CompanionActionPack(
         user_id=user_id,
         avatar_id=avatar.id if avatar is not None else None,

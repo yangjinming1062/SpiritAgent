@@ -16,6 +16,7 @@ from features.updates.lifecycle import runtime_participants as update_participan
 from runtime.events.loop import drain_event_tasks, stop_event_loop
 from runtime.lifecycle import RUNTIME_LIFECYCLE, RuntimeParticipant
 from workflows.onboarding.initial_appearance import resume_initial_appearance
+from workflows.outfit_actions import resume_outfit_actions
 
 
 def configure_runtime_lifecycle() -> None:
@@ -27,6 +28,11 @@ def configure_runtime_lifecycle() -> None:
             *desktop_life_participants(),
             *appearance_participants(),
             *scene_participants(),
+            RuntimeParticipant(
+                "appearance.base_actions",
+                recover=resume_outfit_actions,
+                resume_user=resume_outfit_actions,
+            ),
             RuntimeParticipant("onboarding.initial_assets", recover=resume_initial_appearance),
             *post_participants(),
             *companion_participants(),

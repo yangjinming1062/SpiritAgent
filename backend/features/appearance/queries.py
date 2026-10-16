@@ -1,5 +1,6 @@
-"""外观模块公开的只读身份引用。"""
+"""外观模块公开的身份引用与首次动作准备状态。"""
 
+from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,3 +83,28 @@ async def mark_initial_video_started(db: AsyncSession, user_id: int, outfit_id: 
         raise ValueError("Outfit is no longer available")
     row.initial_video_started = True
     row.initial_video_error = None
+
+
+async def pending_outfit_actions(db: AsyncSession, user_id: int | None = None) -> tuple[tuple[int, int], ...]:
+    query = select(CompanionOutfit.user_id, CompanionOutfit.id).where(
+        CompanionOutfit.status == "ready",
+        CompanionOutfit.initial_video_started.is_(False),
+        CompanionOutfit.initial_video_error.is_(None),
+    )
+    if user_id is not None:
+        query = query.where(CompanionOutfit.user_id == user_id)
+    return tuple((row.user_id, row.id) for row in await db.execute(query))
+
+
+async def record_initial_video_error(db: AsyncSession, user_id: int, outfit_id: int, message: str) -> bool:
+    row = await db.get(CompanionOutfit, outfit_id, populate_existing=True)
+    if row is None or row.user_id != user_id or row.initial_video_started:
+        return False
+    row.initial_video_error = message
+    emit_ws_event(
+        db,
+        user_id=user_id,
+        event_type="companion.outfit.updated",
+        payload={"outfit_id": outfit_id, "worn": False},
+    )
+    return True

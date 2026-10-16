@@ -39,6 +39,7 @@ export function createBackendCaller({
 
 interface ConnectionIpcDeps {
   assetDiskCache: AssetDiskCache
+  assetFetchTimeoutMs: number
   defaultFetchTimeoutMs: number
   ensureBackend: () => Promise<BackendConnection>
   fetchImpl?: typeof globalThis.fetch
@@ -75,14 +76,14 @@ function isCompanionIdentityAsset(rawUrl: string, baseUrl: string): boolean {
 
 export function createBackendAssetReader({
   assetDiskCache,
-  defaultFetchTimeoutMs,
+  assetFetchTimeoutMs,
   ensureBackend,
   fetchImpl = globalThis.fetch,
   getCurrentAuth,
   getSelectedAccountId
 }: Pick<
   ConnectionIpcDeps,
-  'assetDiskCache' | 'defaultFetchTimeoutMs' | 'ensureBackend' | 'fetchImpl' | 'getCurrentAuth' | 'getSelectedAccountId'
+  'assetDiskCache' | 'assetFetchTimeoutMs' | 'ensureBackend' | 'fetchImpl' | 'getCurrentAuth' | 'getSelectedAccountId'
 >): (sender: WebContents, request?: AssetRequest) => Promise<CachedAsset> {
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
 
@@ -122,7 +123,7 @@ export function createBackendAssetReader({
           contentHash: request?.contentHash,
           fetchFn: fetchImpl,
           rawUrl: raw,
-          timeoutMs: defaultFetchTimeoutMs,
+          timeoutMs: assetFetchTimeoutMs,
           token: connection.token || undefined
         })
 
@@ -133,7 +134,7 @@ export function createBackendAssetReader({
 
       const res = await fetchImpl(resolveBackendAssetUrl(raw, connection.baseUrl), {
         headers: connection.token ? { Authorization: `Bearer ${connection.token}` } : {},
-        signal: AbortSignal.timeout(defaultFetchTimeoutMs)
+        signal: AbortSignal.timeout(assetFetchTimeoutMs)
       })
 
       if (!res.ok) {
@@ -155,6 +156,7 @@ export function createBackendAssetReader({
 
 export function registerConnectionIpc({
   assetDiskCache,
+  assetFetchTimeoutMs,
   defaultFetchTimeoutMs,
   ensureBackend,
   fetchImpl = globalThis.fetch,
@@ -170,7 +172,7 @@ export function registerConnectionIpc({
 
   const readAsset = createBackendAssetReader({
     assetDiskCache,
-    defaultFetchTimeoutMs,
+    assetFetchTimeoutMs,
     ensureBackend,
     fetchImpl,
     getCurrentAuth,

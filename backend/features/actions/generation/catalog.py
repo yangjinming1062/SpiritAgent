@@ -33,7 +33,6 @@ from .pipeline import _review_pack_identity
 from .queries import (
     _action_order,
     _active_avatar,
-    _active_outfit_id,
     _can_publish_jobs,
     _can_resume_job,
     _has_pending_work,
@@ -110,9 +109,12 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
         if (
             published
             and context is not None
+            and outfit is not None
+            and outfit.is_initial
+            and outfit.active
+            and context.active_outfit_id == outfit.id
             and review_status in ("pass", "accepted")
             and reference_is_current
-            and await _active_outfit_id(db, pack.user_id) in (context.active_outfit_id, pack.outfit_id)
             and await character_snapshot_is_current(db, pack.user_id, context.identity)
         ):
             await _activate_locked(db, pack)

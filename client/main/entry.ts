@@ -78,6 +78,7 @@ import { createRunnerProcess } from './runner/process'
 import { createRunnerWsServer } from './runner/rpc-ws'
 import { RunnerUpdater } from './runner/updater'
 import {
+  ASSET_FETCH_TIMEOUT_MS,
   DEFAULT_CSP_POLICY,
   DEFAULT_FETCH_TIMEOUT_MS,
   DEV_CSP_POLICY,
@@ -389,7 +390,7 @@ const assetDiskCache = createAssetDiskCache({
 
 const readDesktopAsset = createBackendAssetReader({
   assetDiskCache,
-  defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+  assetFetchTimeoutMs: ASSET_FETCH_TIMEOUT_MS,
   ensureBackend,
   fetchImpl: electronFetch,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
@@ -404,6 +405,7 @@ const voicePlaybackStore = createVoicePlaybackStore({ spiritagentHome: SPIRITAGE
 
 registerConnectionIpc({
   assetDiskCache,
+  assetFetchTimeoutMs: ASSET_FETCH_TIMEOUT_MS,
   defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
   ensureBackend,
   fetchImpl: electronFetch,

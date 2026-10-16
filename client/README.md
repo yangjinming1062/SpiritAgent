@@ -55,6 +55,7 @@ Runner 握手、配置与清单读取归 [主进程桥](main/README.md#runner-�
 - [asset-disk-cache.ts](main/ipc/asset-disk-cache.ts) 按 `accountId` 分目录；`preferCache` 请求和 `/api/companion/asset/` 下的资源可落盘，其余直连。键取有效 SHA-256 `contentHash`（调用方提供时），否则取剥除签名参数、排序剩余 query 的 URL 摘要；当前调用方未提供 `contentHash`。
 - `preferCache` 命中无需等待后端；普通缓存请求用 ETag 复验，网络、正文或写盘失败可保留旧副本，鉴权失败仍上报。`cacheOnly` 只读本地，未命中返回 `null`。
 - 同账户、同资源的并发下载合并。有效字节不按数量或容量自动淘汰；损坏文件可重新获取，空间不足报告写入失败。
+- 资产下载独立使用 60 秒总期限；缓存下载的请求或正文传输中断最多重试一次，共享原期限；取消、超时和 HTTP 失败不重试，完整正文读取成功后才落盘。
 - 动作目录保留最近成功 manifest，先恢复再网络校准；外观页缓存列表并预取。renderer 的片段、遮罩和图片解析缓存另守卫账户清理代次，失败结果不保留。
 - 历史语音只在播放时下载，后续及重启后优先本地读取；`speak` 合成只合并内存与在途请求，`speakScripted` 按内容落盘。
 

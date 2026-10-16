@@ -8,6 +8,7 @@ import { errorMessage } from '@runtime'
 import { assertUserSelectedPath } from './user-selected-paths'
 
 export const DEFAULT_FETCH_TIMEOUT_MS = 15_000
+export const ASSET_FETCH_TIMEOUT_MS = 60_000
 export const DATA_URL_READ_MAX_BYTES = 16 * 1024 * 1024
 
 function buildCspPolicy(scriptSrc: string): string {

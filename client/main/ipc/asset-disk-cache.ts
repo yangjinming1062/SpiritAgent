@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { sleep } from '@runtime'
 
-import { DEFAULT_FETCH_TIMEOUT_MS } from '../security/hardening'
+import { ASSET_FETCH_TIMEOUT_MS } from '../security/hardening'
 import { mimeTypeForPath } from '../shared/mime'
 import { atomicWriteFile, httpErrorFromResponse, isAccountId } from '../shared/utils'
 
@@ -212,11 +212,11 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     const targetUrl = resolveBackendAssetUrl(rawUrl, baseUrl)
     // 错误与日志只带路径：签名参数（expires / sig）不得进入日志。
     const assetPath = new URL(rawUrl, 'http://127.0.0.1').pathname
-    const effectiveTimeout = timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
+    const effectiveTimeout = timeoutMs ?? ASSET_FETCH_TIMEOUT_MS
     const signal = AbortSignal.any([cancellation, AbortSignal.timeout(effectiveTimeout)])
 
-    // 网络失败重试一次；请求头在重试间不变，只构造一次。
-    async function executeFetch(): Promise<Response> {
+    // 请求头和正文共享总期限；传输中断最多重试一次，取消和超时不重试。
+    async function executeDownload(): Promise<{ body: Buffer | null; response: Response }> {
       const headers: Record<string, string> = {}
 
       if (token) {
@@ -233,15 +233,26 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
         headers['If-None-Match'] = cachedEtag
       }
 
-      const request = (): Promise<Response> => fetchFn(targetUrl, { headers, signal })
+      const request = async (): Promise<{ body: Buffer | null; response: Response }> => {
+        const response = await fetchFn(targetUrl, { headers, signal })
+
+        if (!response.ok) {
+          return { body: null, response }
+        }
+
+        const body = Buffer.from(await response.arrayBuffer())
+
+        if (body.byteLength <= 0) {
+          throw new Error(`empty asset body: ${assetPath}`)
+        }
+
+        return { body, response }
+      }
 
       try {
         return await request()
-      } catch (error) {
-        if (signal.aborted) {
-          throw error
-        }
-
+      } catch {
+        signal.throwIfAborted()
         await sleep(150)
         signal.throwIfAborted()
 
@@ -263,11 +274,22 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     }
 
     let res: Response
+    let body: Buffer | null
 
     try {
-      res = await executeFetch()
+      const downloaded = await executeDownload()
+      res = downloaded.response
+      body = downloaded.body
     } catch (networkErr) {
-      return serveStaleOrThrow(networkErr, 'Network fetch failed')
+      return serveStaleOrThrow(
+        new Error(
+          signal.aborted
+            ? `Asset download timed out after ${effectiveTimeout}ms: ${assetPath}`
+            : `Asset download interrupted: ${assetPath}`,
+          { cause: networkErr }
+        ),
+        'Download failed'
+      )
     }
 
     cancellation.throwIfAborted()
@@ -293,19 +315,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     const rawSha = res.headers.get('x-content-sha256')
     const etag = rawSha || (rawEtag ? rawEtag.replace(/"/g, '') : undefined)
 
-    let body: Buffer
-
-    try {
-      body = Buffer.from(await res.arrayBuffer())
-    } catch (bodyErr) {
-      return serveStaleOrThrow(bodyErr, 'Body error')
-    }
-
-    if (body.byteLength <= 0) {
-      if (localCached) {
-        return localCached
-      }
-
+    if (!body) {
       throw new Error(`empty asset body: ${assetPath}`)
     }
 
