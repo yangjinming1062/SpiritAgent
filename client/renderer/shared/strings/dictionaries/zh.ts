@@ -8,7 +8,7 @@ export const dict = {
     done: '完成',
     moreActions: '更多操作',
     creationDetails: '制作资料',
-    useForDesktopLife: '用于这个桌景',
+    useForDesktopLife: '用于这个桌面背景',
     companionControl: {
       title: '伙伴',
       show: '显示伙伴',

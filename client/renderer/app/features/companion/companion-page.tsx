@@ -27,9 +27,9 @@ const ENTRIES = [
   { id: 'profile', icon: Users, zh: '资料', en: 'Profile' },
   { id: 'voice', icon: Volume2, zh: '声音', en: 'Voice' },
   { id: 'appearance', icon: Shirt, zh: '衣柜', en: 'Wardrobe' },
+  { id: 'memory', icon: Brain, zh: '记忆', en: 'Memories' },
   { id: 'scene', icon: Home, zh: '窗口背景', en: 'Window backgrounds' },
-  { id: 'desktop-life', icon: Monitor, zh: '桌景', en: 'Desktop scenes' },
-  { id: 'memory', icon: Brain, zh: '记忆', en: 'Memories' }
+  { id: 'desktop-life', icon: Monitor, zh: '桌面背景', en: 'Desktop backgrounds' }
 ] as const
 
 export function CompanionHub(): React.JSX.Element {
@@ -165,7 +165,7 @@ function CompanionSession(): React.JSX.Element {
           <div className={styles.toolbar}>
             {route.returnToDesktopLife && (
               <button className={BTN_SUBTLE} onClick={() => returnToDesktop()} type="button">
-                {english ? 'Return to desktop scene' : '返回桌景制作'}
+                {english ? 'Return to desktop background' : '返回桌面背景制作'}
               </button>
             )}
             <MediaReviewQueue />

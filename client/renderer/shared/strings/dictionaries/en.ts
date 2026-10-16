@@ -10,7 +10,7 @@ export const dict: Dictionary = {
     done: 'Done',
     moreActions: 'More actions',
     creationDetails: 'Creation details',
-    useForDesktopLife: 'Use in this desktop scene',
+    useForDesktopLife: 'Use in this desktop background',
     companionControl: {
       title: 'Companion',
       show: 'Show companion',
