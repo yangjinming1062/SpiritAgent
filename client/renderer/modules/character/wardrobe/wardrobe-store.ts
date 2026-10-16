@@ -24,14 +24,14 @@ interface WardrobeOutfit {
 }
 
 interface OutfitResponse {
-  initial_video_error?: string | null
+  initial_video_error: string | null
   id: number
   name: string
   description: string | null
-  description_status?: WardrobeOutfit['descriptionStatus']
-  description_error?: string | null
+  description_status: WardrobeOutfit['descriptionStatus']
+  description_error: string | null
   fullbody_url: string
-  status: string
+  status: OutfitStatus
   active: boolean
 }
 
@@ -48,9 +48,26 @@ const snapshot = definePersistedAtom<WardrobeSnapshot>({
   isPersistable: (value: unknown): value is WardrobeSnapshot =>
     isRecord(value) &&
     Array.isArray(value.outfits) &&
-    value.outfits.every(o => isRecord(o) && typeof o.id === 'number' && typeof o.fullbody_url === 'string') &&
+    value.outfits.every(isOutfitResponse) &&
     (value.policy === 'locked' || value.policy === 'llm_may_replace')
 })
+
+function isOutfitResponse(value: unknown): value is OutfitResponse {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'number' &&
+    typeof value.name === 'string' &&
+    (value.description === null || typeof value.description === 'string') &&
+    typeof value.description_status === 'string' &&
+    ['pending', 'processing', 'ready', 'failed'].includes(value.description_status) &&
+    (value.description_error === null || typeof value.description_error === 'string') &&
+    (value.initial_video_error === null || typeof value.initial_video_error === 'string') &&
+    typeof value.fullbody_url === 'string' &&
+    typeof value.status === 'string' &&
+    ['draft', 'ready', 'expired'].includes(value.status) &&
+    typeof value.active === 'boolean'
+  )
+}
 
 export const $outfits = atom<WardrobeOutfit[]>([])
 export const $outfitPolicy = atom<OutfitPolicy>(snapshot.get().policy)
@@ -84,14 +101,14 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
       return {
         id: o.id,
         name: o.name,
-        description: o.description ?? null,
-        descriptionStatus: o.description_status ?? (o.description ? 'ready' : 'pending'),
-        descriptionError: o.description_error ?? null,
-        initialVideoError: o.initial_video_error || null,
+        description: o.description,
+        descriptionStatus: o.description_status,
+        descriptionError: o.description_error,
+        initialVideoError: o.initial_video_error,
         fullbodyPath,
         fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
-        status: (o.status || 'draft') as OutfitStatus,
-        active: o.active === true
+        status: o.status,
+        active: o.active
       }
     })
   )
@@ -145,13 +162,8 @@ export async function hydrateWardrobe(): Promise<void> {
   }
 
   const state = {
-    outfits: result.value.outfits ?? [],
-    policy:
-      policyVersion !== policyRevision
-        ? $outfitPolicy.get()
-        : result.value.policy === 'locked'
-          ? ('locked' as const)
-          : ('llm_may_replace' as const)
+    outfits: result.value.outfits,
+    policy: policyVersion !== policyRevision ? $outfitPolicy.get() : result.value.policy
   }
 
   snapshot.set(state)

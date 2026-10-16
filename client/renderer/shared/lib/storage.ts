@@ -232,7 +232,7 @@ export function definePersistedAtom<T extends object>(options: PersistedAtomOpti
   const { fallback, isPersistable, key, preserveOnLogout = false } = options
 
   const base = createPersisted<T>({
-    // T extends object 兼容 array/类数组：!Array.isArray 守卫保证 next 是数组时走 replace 分支（数组被解构成对象是隐式 bug）。
+    // 数组整体替换，对象按字段合并。
     apply: (current, next) => (!Array.isArray(next) ? { ...current, ...next } : next),
     fallback,
     key,

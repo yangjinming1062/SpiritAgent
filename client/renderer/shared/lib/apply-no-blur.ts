@@ -51,7 +51,7 @@ export function applyNoBlurIfNeeded(): void {
 
 export function setManualReduceTransparency(value: boolean): void {
   hydrateManualReduceTransparency(value)
-  preferencesApi()?.prefs?.set({ key: 'companion.reduce_transparency', value })
+  preferencesApi().prefs.set({ key: 'companion.reduce_transparency', value })
 }
 
 /** 水合与跨窗口回声只更新缓存，不重复上传或在登出清理时写入旧用户偏好。 */

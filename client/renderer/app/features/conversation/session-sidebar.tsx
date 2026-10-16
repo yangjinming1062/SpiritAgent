@@ -82,7 +82,7 @@ function formatSessionTime(
     return tStrings.now
   }
 
-  const date = new Date(timestamp > 1e11 ? timestamp : timestamp * 1000)
+  const date = new Date(timestamp)
   const now = new Date()
   const isToday = date.toDateString() === now.toDateString()
   const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })

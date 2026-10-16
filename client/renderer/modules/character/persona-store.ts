@@ -66,7 +66,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
   const parsed = safeJsonParse<Record<string, string>>(p.definition_json, {})
 
-  // user_* 即使残留在 definition_json 里也不属于伙伴人设，不映射进 $persona。
+  // 伙伴人设只映射伙伴字段。
   $persona.set({
     biological_type: parsed.biological_type,
     gender: parsed.gender,

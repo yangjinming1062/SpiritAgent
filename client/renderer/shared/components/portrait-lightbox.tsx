@@ -233,7 +233,7 @@ export function PortraitLightbox({
 
   const zoomed = view.scale > MIN_SCALE + 0.001
 
-  // 取景框尽量吃满整窗暗底，工具条与提示叠在下方，不再把预览收成小卡片。
+  // 取景框填满暗底，工具条与提示叠在下方。
   const imageLimits = containerRef
     ? children
       ? 'max-h-[calc(100cqh-9rem)] max-w-[96cqw]'

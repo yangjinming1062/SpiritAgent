@@ -67,7 +67,7 @@
 
 [desktop-presentation.ts](lifecycle/desktop-presentation.ts) 管呈现模式、交互屏、舞台资格与串行恢复；`desktop-windows.ts` 拥有窗口与就绪等待，`desktop-health.ts` 拥有显示器／电源监听和模式计时器，`desktop-background-runtime.ts` 拥有媒体字节、请求代次及回执。[IPC 适配](ipc/desktop-presentation.ts) 先校验 sender、账户与载荷，再调用窄操作接口。`stop()` 只停止当前桌面模式，允许更新取消后再次启用；应用退出使用幂等 `dispose()`，立即关闭操作准入、取消视图交接并恢复系统，持续消费退出期上报，所有窗口关闭后的 `will-quit` 再注销呈现和视图状态 IPC。
 
-显示器逻辑坐标继续用于窗口布局。Windows 桌景尺寸经 `desktop-display-resolutions.ts` 调用原生宿主的只读 `display-bounds` 查询，按显示器 ID、几何和查询代次缓存；启动及显示器变更后发布真实像素，查询不可用时返回空值，禁止从已取整的 DIP 反推尺寸。
+显示器逻辑坐标用于窗口布局。Windows 桌景尺寸经 `desktop-display-resolutions.ts` 调用原生宿主的只读 `display-bounds` 查询，按显示器 ID、几何和查询代次缓存；启动及显示器变更后发布真实像素，查询不可用时返回空值，禁止从已取整的 DIP 反推尺寸。
 
 交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口，保留原生 Windows 界面。网关票及 Runner 派发仍只授予隐藏精灵宿主。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
 
@@ -81,7 +81,7 @@
 
 账户失效、呈现切换、目标显示器变化、渲染器失败与退出都先恢复系统，再销毁桌面窗口。首次选屏优先副屏，已保存选择缺失时不回落主屏；活动显示器身份独立于窗口当前位置，拔屏立即退出并保存窗口模式，其他屏幕增减仅更新列表。目标屏几何或 DPI 改变才在同一屏重新挂载。准备期间的换号、退出、拔屏或 renderer 失败立即使当前接管失效；界面就绪与页面加载共享限时预算。休眠或唤醒时恢复窗口模式并保留桌面偏好，须由用户重新选择桌面模式，避免接管 guardian 已恢复的系统窗口。
 
-启动时先处理遗留恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号、兼容与限制见 [helper](../desktop-host/README.md#恢复)。
+启动时先处理待恢复记录；异常标记使已由 guardian 恢复的会话也停留窗口模式。主进程检测到的失败另存独立标记，成功手动重试只清该标记，不覆盖 guardian 原因。恢复失败保留记录和错误，不阻断窗口模式启动。原生恢复信号与限制见 [helper](../desktop-host/README.md#恢复)。
 
 恢复已保存的桌面偏好仅加载已有媒体；`prepareDesktopMedia` 是本次会话的制作许可，默认关闭，用户显式选择桌面后开启，退出或换号清除，切屏重挂载保留。渲染层据此区分启动水合与用户启用，启动不提交付费素材制作。
 
@@ -156,7 +156,7 @@
 
 ## 构建产物
 
-tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆盖 main 与 shared。Vite 的主窗口入口为 `main.html`，由 `renderer-paths.ts` 与产物检查共同消费；旧双窗口入口不再构建。修改导出或路径须核对实际文件名与 `package.json` 的 main。
+tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆盖 main 与 shared。Vite 的主窗口入口为 `main.html`，由 `renderer-paths.ts` 与产物检查共同消费。修改导出或路径须核对实际文件名与 `package.json` 的 main。
 
 开发 CSP 允许 Vite 所需能力，生产保持严格策略，不能为修复开发白屏放宽生产 CSP。mac entitlements 开 JIT、关库校验，见 [security](security/)。
 

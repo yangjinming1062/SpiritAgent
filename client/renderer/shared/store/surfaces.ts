@@ -90,14 +90,10 @@ export async function requestOpenSurface(target: DesktopSurfaceOpenPayload = {})
 }
 
 export async function requestCloseSurface(): Promise<void> {
-  await shellApi()?.surface?.close?.()
+  await shellApi().surface.close()
 }
 
 export function hydrateSurfaces(): () => void {
-  if (!shellApi()?.surface) {
-    return () => {}
-  }
-
   let disposed = false
   const stop = shellApi().surface.onChanged(applySurfaceState)
 

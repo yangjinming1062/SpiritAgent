@@ -52,7 +52,7 @@ export function resetActionPlayback(): void {
 export function acceptPlayCommand(
   command: ActionPlayCommand,
   clip: ActionClipEntry | null,
-  rendered: { readonly packId: number; readonly appearanceEpoch: number | null }
+  rendered: { readonly packId: number; readonly appearanceEpoch: number }
 ): void {
   // 外观代次随每次激活递增：他包或旧代次（含换装后再穿回同一包）的请求不在当前外观执行。
   if (command.pack_id !== rendered.packId || command.appearance_epoch !== rendered.appearanceEpoch) {

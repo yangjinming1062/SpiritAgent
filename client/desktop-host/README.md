@@ -6,7 +6,7 @@
 |---|---|
 | `host` | 从 stdin 接收受限 JSON，使用主进程登记的 HWND 接管桌面 |
 | `guardian` | 独立监测主进程、host 与十秒续租，异常或 Ctrl+Alt+Shift+D 时恢复 |
-| `recover` | 恢复遗留 journal |
+| `recover` | 处理待恢复 journal |
 | `check-runtime` | 验证可执行文件可加载，无桌面接管副作用 |
 | `display-bounds` | 按 Electron 转换后的显示器矩形只读查询原生像素尺寸，不访问 Explorer、journal 或桌面接管 |
 
@@ -24,7 +24,7 @@
 
 枚举当前虚拟桌面各屏普通与最小化窗口，附带交互屏归属，排除系统壳、工具浮窗、隐藏和产品窗口。会话共用 WinEvent，命令及轮询前处理消息，合并相邻重复事件但保留移动、销毁顺序；位置与跨屏移动后更新归属，每两秒补扫，队列溢出清登记后全量校准，COM 与监听随会话释放。
 
-helper 通过 `get_jump_list_tasks` 只读解析用户 Jump List 的 `Task` 分类，通过 `activate_jump_list_task` 重新读取并校验任务 ID、目标程序和桌面会话后启动。解析仅接受有界的 Shell Link 数据，支持 exe 与 `shell:AppsFolder` AUMID 任务；无法识别的旧格式链接静默跳过，并将仅因 `--user-data-dir` 不同而留下的同一任务历史副本合并。损坏文件跳过并记录诊断，不把程序参数交给渲染层，任务解析诊断不打断现有菜单。
+helper 通过 `get_jump_list_tasks` 只读解析用户 Jump List 的 `Task` 分类，通过 `activate_jump_list_task` 重新读取并校验任务 ID、目标程序和桌面会话后启动。解析仅接受有界的 Shell Link 数据，支持 exe 与 `shell:AppsFolder` AUMID 任务；无法识别的链接跳过，仅因 `--user-data-dir` 不同的同一任务合并。损坏文件跳过并记录诊断，不把程序参数交给渲染层，任务解析诊断不打断现有菜单。
 
 未变化不广播；快照按 revision 分批，每行最多 64 KiB，主进程收齐才应用，换代丢弃未完成批次。总量和等待预算归 [explorer-desktop-host.ts](../main/lifecycle/explorer-desktop-host.ts)。
 
@@ -46,7 +46,7 @@ WinEvent 合并显隐、前台、位置、还原和移动缩放后校正普通�
 
 guardian 持恢复原值并成功注册紧急键后才接管。恢复信号绑定会话及 host 创建身份，在恢复锁内置位后拒绝新的接管写入；信号写入失败只停止核验通过的自有 host，诊断失败仍优先恢复。
 
-journal 必须包含明确的接管阶段，仅未开始挂载的记录可直接清理。AppBar 窗口身份、新增背景样式和原工作区随接管记录保存；正常停止和 guardian 恢复均先注销预留，再恢复原生窗口与系统界面，旧版直接设置工作区的 journal 仍须可恢复。不保存或回写桌面图标坐标，保留用户使用期间的整理结果。异常写 `.interrupted`、正常停止不写；新会话不以旧标记判断恢复信号，host 不覆盖 guardian 原因。诊断有界写 `.guardian.log` 和 stderr，失败保留 journal、guardian 重试；所有恢复进程均被强杀时只能由下次启动处理遗留记录。
+journal 必须包含明确的接管阶段，仅未开始挂载的记录可直接清理。AppBar 窗口身份和背景样式随接管记录保存；正常停止和 guardian 恢复均先注销 AppBar 释放工作区预留，再恢复原生窗口与系统界面。不保存或回写桌面图标坐标，保留用户使用期间的整理结果。异常写 `.interrupted`、正常停止不写；恢复信号按会话隔离，host 不覆盖 guardian 原因。诊断有界写 `.guardian.log` 和 stderr，失败保留 journal、guardian 重试；所有恢复进程均被强杀时由下次启动处理待恢复记录。
 
 挂载摘除后仅重绘释放屏幕的 Explorer 区域，不重设系统壁纸；恢复失败保留 journal 继续重试。
 
@@ -60,7 +60,7 @@ pnpm --dir client build:native
 
 [build-desktop-host.cjs](../scripts/build-desktop-host.cjs) 按 Electron 架构生成 `client/build/<arch>/desktop-host.exe`，随包为 `resources/desktop-host.exe`；复用前检查架构、源码时效及普通／延迟导入，不接受额外 VC／UCRT 依赖。`cargo check --locked` 不验证链接和打包。
 
-开发 launcher 使用独立 Electron 副本，开发和 Windows 打包均写 `PerMonitorV2, PerMonitor` manifest，保留其他元数据；helper／DPI 准备失败阻止桌面模式，旧 helper 仍可恢复遗留记录。补齐工具链后须重启客户端。主进程及两种 preload 重编译先正常恢复桌面再重启；取消开发亦先等 Electron 退出，60 秒超时仅停自有主进程，由 guardian 恢复。
+开发 launcher 使用独立 Electron 副本，开发和 Windows 打包均写 `PerMonitorV2, PerMonitor` manifest，保留其他元数据；helper／DPI 准备失败阻止桌面模式，恢复入口仍可调用已有 helper 处理待恢复记录。补齐工具链后须重启客户端。主进程及两种 preload 重编译先正常恢复桌面再重启；取消开发亦先等 Electron 退出，60 秒超时仅停自有主进程，由 guardian 恢复。
 
 ### 安全运行检查
 

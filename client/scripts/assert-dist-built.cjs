@@ -10,11 +10,6 @@ function checkDistBuilt(distDir) {
   }
 
   const requiredHtmlFiles = ['sprite.html', 'main.html', 'desktop.html', 'desktop-background.html']
-  for (const removed of ['living.html', 'workbench.html']) {
-    if (fs.existsSync(path.join(distDir, removed))) {
-      return { ok: false, error: `dist/${removed} is an obsolete renderer entry; rebuild dist` }
-    }
-  }
   for (const file of requiredHtmlFiles) {
     const htmlPath = path.join(distDir, file)
     const htmlStat = fs.statSync(htmlPath, { throwIfNoEntry: false })
@@ -27,7 +22,7 @@ function checkDistBuilt(distDir) {
 
     const html = fs.readFileSync(htmlPath, 'utf8').replace(/<!--[\s\S]*?-->/g, '')
     let hasLocalScript = false
-    // Vite 输出使用引号属性；核对各页实际引用，不能由遗留的其他 JS 包替代。
+    // Vite 输出使用引号属性；逐页核对实际引用的资源。
     for (const tag of html.matchAll(/<(script|link)\b([^>]*)>/gi)) {
       const attributes = Object.fromEntries(
         [...tag[2].matchAll(/\s(src|href|rel)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)].map(match => [

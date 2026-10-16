@@ -8,7 +8,7 @@ const $desktopVersion = atom<DesktopVersionInfo | null>(null)
 
 async function refreshDesktopVersion(): Promise<void> {
   try {
-    const next = await systemApi()?.getVersion()
+    const next = await systemApi().getVersion()
 
     if (next) {
       $desktopVersion.set(next)

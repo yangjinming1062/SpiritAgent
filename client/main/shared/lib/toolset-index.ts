@@ -7,7 +7,7 @@ interface ToolsetDef {
   staticTools?: string[]
 }
 
-// 工具集 id 的权威枚举（覆盖 Runner 侧与 Backend 桶的全部 id）：Runner 侧按 schema/前缀动态匹配，Backend 侧登记静态工具名；id → 工具名映射见 runner/tools/toolsets/catalog.py 与 backend/services/infrastructure/tool_runtime/toolsets.py。
+// 工具集 id 的权威枚举；Runner 工具归属由各能力的 ToolDefinition 声明，过滤见 runner/spirit_agent_runner/runtime/tools.py，Backend 工具映射见 backend/runtime/tools/toolsets.py。
 const TOOLSET_DEFS: ToolsetDef[] = [
   { id: 'browser_automation', prefixes: ['browser_'] },
   { extraTools: ['read_file', 'write_file', 'patch', 'list_directory', 'search_files'], id: 'file_operations' },

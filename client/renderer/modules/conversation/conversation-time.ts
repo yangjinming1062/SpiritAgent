@@ -7,7 +7,7 @@ function parseTimestamp(raw?: number): number | null {
     return null
   }
 
-  return raw > 1e11 ? Math.floor(raw) : Math.floor(raw * 1000)
+  return Math.floor(raw)
 }
 
 function shouldShowTimeDivider(currentTimestamp: number, lastAnchorTimestamp: number | null): boolean {

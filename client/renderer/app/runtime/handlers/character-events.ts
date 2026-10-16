@@ -52,7 +52,7 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
   const appearance = (): 'behind' | 'current' | 'replaced' => {
     const catalog = $actionCatalog.get()
 
-    if (!catalog || catalog.appearanceEpoch === null || command.appearance_epoch > catalog.appearanceEpoch) {
+    if (!catalog || command.appearance_epoch > catalog.appearanceEpoch) {
       return 'behind'
     }
 
@@ -89,10 +89,7 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
     const local = $actionCatalog.get()
 
     // 同包旧代次说明该包已重新激活且在所有舞台失效，直接认领并回执；其他不能直接播放的情况先强制刷新（覆盖恢复保留备份中的代次，新包代次可能低于本地旧包）。
-    const reactivated =
-      local?.packId === command.pack_id &&
-      local.appearanceEpoch !== null &&
-      command.appearance_epoch < local.appearanceEpoch
+    const reactivated = local?.packId === command.pack_id && command.appearance_epoch < local.appearanceEpoch
 
     if (!reactivated && (appearance() !== 'current' || !matchedClip() || $actionCatalogStatus.get() !== 'ready')) {
       await hydrateActionCatalog(true)

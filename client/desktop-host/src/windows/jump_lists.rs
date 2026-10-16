@@ -307,7 +307,7 @@ fn task_key(task: &JumpListTask) -> (Vec<String>, u8) {
         task.title.clone(),
         task.description.clone(),
     ];
-    let mut preference = 2; // 无专用数据目录的常规任务优先，其次为目录仍存在的历史副本。
+    let mut preference = 2; // 优先无专用数据目录的任务，其次为数据目录仍存在的任务。
     let mut tokens = tokens.into_iter();
     while let Some(token) = tokens.next() {
         let lower = token.to_ascii_lowercase();

@@ -31,7 +31,7 @@ const DESKTOP_LAYER_TIMEOUT: Duration = Duration::from_secs(2);
 const HOTKEY_ID: i32 = 0x5341;
 
 mod workspace;
-use workspace::{RestoreAppBar, RestoreWorkArea, Workspace};
+use workspace::{RestoreAppBar, Workspace};
 mod layers;
 use layers::DesktopLayers;
 mod events;
@@ -336,8 +336,6 @@ struct Journal {
     host_created: u64,
     shell: Vec<Identity>,
     windows: Vec<RestoreWindow>,
-    work_area: Option<RestoreWorkArea>,
-    #[serde(default)]
     appbar: Option<RestoreAppBar>,
     desktop_bounds: Bounds,
 }
@@ -413,9 +411,6 @@ fn validate_journal(journal: &Journal) -> Result<()> {
         return Err("invalid desktop journal window count".into());
     }
     let mut handles = std::collections::HashSet::new();
-    if let Some(area) = &journal.work_area {
-        area.validate()?;
-    }
     if let Some(appbar) = &journal.appbar {
         appbar.validate(journal.host_pid, journal.host_created, journal.desktop_bounds)?;
     }
@@ -920,11 +915,6 @@ fn restore_locked(path: &Path, expected_session: Option<&str>) -> Result<bool> {
                 failures.push(error);
             }
         }
-        if let Some(area) = &journal.work_area {
-            if let Err(error) = area.restore() {
-                failures.push(error);
-            }
-        }
         // 先恢复系统界面，避免应用窗口复位阻断桌面可用性。
         for item in &journal.shell {
             if !item.valid()
@@ -1251,7 +1241,6 @@ impl Session {
                 Vec::new()
             },
             windows,
-            work_area: None,
             appbar: workspace.appbar_restore(),
             desktop_bounds: targets[0],
         };

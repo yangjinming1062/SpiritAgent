@@ -156,7 +156,7 @@ pub(super) struct AppBar {
 }
 
 impl AppBar {
-    pub(super) fn prepare(original: &RestoreWorkArea, bottom: i32) -> Result<Self> {
+    pub(super) fn prepare(display: &MonitorSnapshot, bottom: i32) -> Result<Self> {
         let token = ((SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -190,7 +190,7 @@ impl AppBar {
             }
             return Err(failure("register Explorer restart notification"));
         }
-        let monitor = original.monitor;
+        let monitor = display.monitor;
         let window = unsafe {
             CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -222,9 +222,9 @@ impl AppBar {
             Ok(identity) if initialized => RestoreAppBar {
                 identity,
                 token,
-                device: original.device.clone(),
+                device: display.device.clone(),
                 monitor,
-                original: original.original,
+                original: display.work_area,
             },
             result => {
                 let reason = result.err().unwrap_or_else(|| failure("initialize desktop AppBar"));

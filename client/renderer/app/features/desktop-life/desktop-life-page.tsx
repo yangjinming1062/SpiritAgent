@@ -586,7 +586,7 @@ export function DesktopLifePage({
   const working = sets.some(
     item =>
       item.actions.some(item => item.status === 'processing' && !isActionPaused(item)) ||
-      item.proposals?.some(proposal => proposal.status === 'pending')
+      item.proposals.some(proposal => proposal.status === 'pending')
   )
 
   useEffect(() => {

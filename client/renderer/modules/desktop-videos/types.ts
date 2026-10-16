@@ -124,7 +124,7 @@ export interface DesktopVideoSet {
   resolution_revision: number
   status: string
   actions: DesktopVideoAction[]
-  proposals?: DesktopVideoProposal[]
+  proposals: DesktopVideoProposal[]
   created_at: string
   is_current: boolean
 }

@@ -9,7 +9,7 @@ import { useStrings } from '@/shared/strings'
 
 async function invokeSurface(action: 'close' | 'maximize' | 'minimize'): Promise<boolean> {
   try {
-    await shellApi()?.surface?.[action]?.()
+    await shellApi().surface[action]()
 
     return true
   } catch (err) {
@@ -52,8 +52,7 @@ export function WindowControls(): React.JSX.Element {
 
   const checkMaximized = async (): Promise<void> => {
     try {
-      const isMax = await shellApi()?.surface?.isMaximized?.()
-      const flag = Boolean(isMax)
+      const flag = await shellApi().surface.isMaximized()
       setMaximized(flag)
       document.documentElement.dataset.maximized = flag ? 'true' : 'false'
     } catch (err) {

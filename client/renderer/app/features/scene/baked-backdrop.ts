@@ -21,7 +21,7 @@ let lastResolvedSource: { source: string; url: string } | null = null
 
 async function resolveBakeSource(url: string): Promise<string | null> {
   // 主进程资源桥返回可读的 data URL，远端签名图不依赖 CDN 的 canvas CORS 配置。
-  if (!/^https?:/.test(url) || !backendApi()?.apiAsset) {
+  if (!/^https?:/.test(url)) {
     return url
   }
 

@@ -1,7 +1,5 @@
 import {
-  $chatSessionId,
   findConversationRuntime,
-  getConversationRuntime,
   invalidateSessionHistory,
   onSessionListChanged,
   onTopicFeedbackUpdated
@@ -45,11 +43,13 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     pushDevLog(event.type, JSON.stringify(event.payload ?? {}))
   }
 
-  // 一份会话runtime接收一次事件；主对话与固定轻语只订阅共享投影。
-  const runtime =
-    event.session_id !== undefined
-      ? findConversationRuntime(event.session_id)
-      : getConversationRuntime($chatSessionId.get())
+  // 语音与媒体 outbox 事件在载荷中标识会话，其余会话事件使用信封路由。
+  const sessionId =
+    event.type === 'message.voice' || event.type === 'message.media'
+      ? decodePayload<{ session_id: string }>(event.payload).session_id
+      : event.session_id
+
+  const runtime = typeof sessionId === 'string' ? findConversationRuntime(sessionId) : undefined
 
   if (
     runtime &&
@@ -97,10 +97,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'message.complete':
 
-    case 'message.voice':
-
-    case 'message.media':
-
     case 'message.deleted':
 
     case 'message.edited':
@@ -115,10 +111,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       }
 
       break
-    case 'message.audio': {
-      const payload = decodePayload<{ session_id?: string }>(event.payload)
-      const sessionId = event.session_id ?? payload.session_id
 
+    case 'message.audio':
+
+    case 'message.voice':
+    case 'message.media': {
       if (typeof sessionId === 'string') {
         invalidateSessionHistory(sessionId)
       }
@@ -132,7 +129,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'compress.completed': {
       const payload = decodePayload<{ subtype?: string; text?: string }>(event.payload)
-      const sessionId = event.session_id ?? $chatSessionId.get()
 
       if (sessionId && payload.subtype === 'compress_summary' && typeof payload.text === 'string') {
         invalidateSessionHistory(sessionId)

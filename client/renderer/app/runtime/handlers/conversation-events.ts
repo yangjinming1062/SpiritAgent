@@ -170,10 +170,6 @@ export function handleConversationEvent(
         bubble: CompanionBubble
       }>(event.payload)
 
-      if (typeof payload.session_id === 'string') {
-        invalidateSessionHistory(payload.session_id)
-      }
-
       if (
         payload.session_id === $chatSessionId.get() &&
         typeof payload.message_id === 'number' &&
@@ -238,10 +234,6 @@ export function handleConversationEvent(
         bubble_index: number
         bubble: CompanionBubble
       }>(event.payload)
-
-      if (typeof payload.session_id === 'string') {
-        invalidateSessionHistory(payload.session_id)
-      }
 
       if (
         payload.session_id === $chatSessionId.get() &&

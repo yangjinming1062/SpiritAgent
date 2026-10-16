@@ -3,7 +3,8 @@ import { systemApi } from '@/shared/platform/desktop'
 type LogLevel = 'error' | 'info' | 'warn'
 
 function emit(level: LogLevel, scope: string, args: unknown[]): void {
-  void systemApi()?.log?.({ level, scope, args })
+  // 错误边界也会调用日志；preload 加载失败时不能再次抛错。
+  void systemApi()?.log({ level, scope, args })
 }
 
 export const log = {

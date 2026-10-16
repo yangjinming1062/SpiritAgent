@@ -68,7 +68,7 @@ impl DesktopLayers {
             return Err("Explorer changed before wallpaper layer creation".into());
         }
         let mut response = 0;
-        // 旧版 Explorer 需要先准备壁纸承载层；调用只发生在 guardian 就绪的事务内。
+        // 壁纸承载层缺失时请求 Explorer 创建；调用只发生在 guardian 就绪的事务内。
         if unsafe {
             SendMessageTimeoutW(
                 progman,

@@ -18,12 +18,9 @@ export function useMainProcessListener<K extends ListenerName>(
   deps: DependencyList
 ): void {
   useEffect(() => {
-    const subscriptions: ListenerSubscriptions | undefined = desktopEvents()
-    const off = subscriptions?.[name]?.(fn)
+    const subscriptions: ListenerSubscriptions = desktopEvents()
 
-    return () => {
-      off?.()
-    }
+    return subscriptions[name](fn)
   }, deps)
 }
 /* eslint-enable react-hooks/exhaustive-deps, react-compiler/react-compiler */

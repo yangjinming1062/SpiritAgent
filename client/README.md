@@ -62,7 +62,7 @@ Runner 握手、配置与清单读取归 [主进程桥](main/README.md#runner-�
 
 ### 历史同步
 
-[session-history-cache.ts](renderer/modules/conversation/session-history-cache.ts) 先显示账户与会话快照，再以末条消息 ID 请求增量；锚点失效改为全量。快照不保存实时回合，不能用旧 seq 请求帧重放；重连 `last_seq` 只用于仍保有实时数据的列表。
+[session-history-cache.ts](renderer/modules/conversation/session-history-cache.ts) 先显示通过字段校验的账户与会话快照，再以末条消息 ID 请求增量；缓存未命中或锚点失效时读取全量。快照不保存实时回合，不能用快照 seq 请求帧重放；重连 `last_seq` 只用于仍保有实时数据的列表。
 
 | 变化 | 本地处理 |
 |---|---|

@@ -19,49 +19,36 @@ export interface SessionHistoryDiskCacheOptions {
   spiritagentHome: string
 }
 
-function lastIdFromMessages(messages: unknown[]): null | number {
-  let last: null | number = null
-
-  for (const raw of messages) {
-    if (!raw || typeof raw !== 'object') {
-      continue
-    }
-
-    const id = (raw as { id?: unknown }).id
-
-    if (isFiniteNumber(id)) {
-      last = last === null || id > last ? id : last
-    }
-  }
-
-  return last
-}
-
-function sanitizeSnapshot(input: Partial<SessionHistorySnapshot> | null | undefined): null | SessionHistorySnapshot {
-  if (!input || typeof input !== 'object' || !Array.isArray(input.messages)) {
+function parseSnapshot(value: unknown): null | SessionHistorySnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }
 
-  const currentSeq = isFiniteNumber(input.currentSeq) ? input.currentSeq : 0
-  const truncated = input.truncated === true
-  const nextCursor = typeof input.nextCursor === 'string' && input.nextCursor ? input.nextCursor : null
-  const info = input.info && typeof input.info === 'object' ? (input.info as Record<string, unknown>) : undefined
+  const input = value as Partial<SessionHistorySnapshot>
 
-  const writtenAt = isFiniteNumber(input.writtenAt) ? input.writtenAt : Date.now()
-  const lastMessageId = isFiniteNumber(input.lastMessageId) ? input.lastMessageId : lastIdFromMessages(input.messages)
+  if (
+    !Array.isArray(input.messages) ||
+    !isFiniteNumber(input.currentSeq) ||
+    !isFiniteNumber(input.writtenAt) ||
+    (input.lastMessageId !== null && !isFiniteNumber(input.lastMessageId)) ||
+    (input.nextCursor !== null && typeof input.nextCursor !== 'string') ||
+    typeof input.truncated !== 'boolean' ||
+    (input.historyRevision !== undefined &&
+      (!Number.isSafeInteger(input.historyRevision) || input.historyRevision < 0)) ||
+    (input.info !== undefined && (!input.info || typeof input.info !== 'object' || Array.isArray(input.info)))
+  ) {
+    return null
+  }
 
   return {
-    currentSeq,
-    historyRevision:
-      Number.isSafeInteger(input.historyRevision) && (input.historyRevision ?? -1) >= 0
-        ? input.historyRevision
-        : undefined,
-    info,
-    lastMessageId,
+    currentSeq: input.currentSeq,
+    historyRevision: input.historyRevision,
+    info: input.info,
+    lastMessageId: input.lastMessageId,
     messages: input.messages,
-    nextCursor,
-    truncated,
-    writtenAt
+    nextCursor: input.nextCursor,
+    truncated: input.truncated,
+    writtenAt: input.writtenAt
   }
 }
 
@@ -94,20 +81,20 @@ export function createSessionHistoryDiskCache({
       await queue.clearing(accountId)
       const raw = await fsp.readFile(sessionPath(accountId, sessionId), 'utf8')
 
-      return isCurrent() ? sanitizeSnapshot(JSON.parse(raw) as Partial<SessionHistorySnapshot>) : null
+      return isCurrent() ? parseSnapshot(JSON.parse(raw)) : null
     } catch {
       return null
     }
   }
 
-  async function save(accountId: string, sessionId: string, snapshot: Partial<SessionHistorySnapshot>): Promise<void> {
+  async function save(accountId: string, sessionId: string, snapshot: SessionHistorySnapshot): Promise<void> {
     if (!isSafe(accountId, sessionId)) {
       return
     }
 
-    const sanitized = sanitizeSnapshot(snapshot)
+    const parsed = parseSnapshot(snapshot)
 
-    if (!sanitized) {
+    if (!parsed) {
       return
     }
 
@@ -115,7 +102,7 @@ export function createSessionHistoryDiskCache({
 
     await queue.enqueue(accountId, sessionId, async isCurrent => {
       if (isCurrent()) {
-        await atomicWriteFile(file, JSON.stringify(sanitized), isCurrent)
+        await atomicWriteFile(file, JSON.stringify(parsed), isCurrent)
       }
     })
   }

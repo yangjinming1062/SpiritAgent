@@ -74,21 +74,6 @@ export function createChatMessageController(state: ConversationState) {
     return id
   }
 
-  function pushProactiveMessage(text: string, media?: ChatMediaItem[], messageId?: number): void {
-    if (messageId && $chatMessageList.get().some(item => item.backendMessageId === messageId)) {
-      return
-    }
-
-    appendMessage(
-      {
-        role: 'assistant',
-        subtype: media?.length ? 'status_media' : 'status_proactive',
-        backendMessageId: messageId
-      },
-      { text: chatDisplayText(text), media, streaming: false, toolName: null }
-    )
-  }
-
   // 后台视频完成的实时送达行，只带媒体；历史水合的同类 system 行同样不显示正文。
   function pushMediaMessage(media: ChatMediaItem[]): string {
     return appendMessage(
@@ -694,7 +679,6 @@ export function createChatMessageController(state: ConversationState) {
 
   return {
     api: {
-      pushProactiveMessage,
       pushMediaMessage,
       pushUserMessage,
       bindTrailingAssistantMessageId,

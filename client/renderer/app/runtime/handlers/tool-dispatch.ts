@@ -63,7 +63,7 @@ export function handleToolStart(event: GatewayEvent, runtime: ConversationRuntim
 }
 
 export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): void {
-  // 仅 Runner 分发；tool.call 是用户级设备指令（不带 session_id、按 call_id 关联），不经会话闸门；缺少 bridge 或 call_id 时后端等待到超时。
+  // tool.call 是用户级设备指令（不带 session_id、按 call_id 关联），只由宿主派发；缺少 call_id 时后端等待到超时。
   const p = decodePayload<{
     name?: string
     args?: Record<string, unknown>
@@ -73,9 +73,9 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
     skill_scope?: MemoryToolScope
   }>(event.payload)
 
-  const runnerDispatchCall = runnerApi()?.runnerDispatchCall
+  const runnerDispatchCall = runnerApi().runnerDispatchCall
 
-  if (ctx.isProxy || !p.call_id || !runnerDispatchCall) {
+  if (ctx.isProxy || !p.call_id) {
     return
   }
 

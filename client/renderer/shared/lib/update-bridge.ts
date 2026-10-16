@@ -29,11 +29,7 @@ const UPDATE_HANDLERS: UpdateHandlerMap = {
 }
 
 export function installUpdateBridge(): () => void {
-  const update = systemApi()?.update
-
-  if (!update) {
-    return () => {}
-  }
+  const update = systemApi().update
 
   let active = true
 

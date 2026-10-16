@@ -21,8 +21,8 @@ import type {
 export interface ActiveActionCatalog {
   packId: number
   catalogVersion: number
-  /** 服务端外观激活代次；快照未记录时为 null，网络校准前不受理播放指令。 */
-  appearanceEpoch: number | null
+  /** 服务端外观激活代次。 */
+  appearanceEpoch: number
   manifest: ActionCatalogManifest
   /** clip 标识与素材版本 → 在途读取或已就绪的展示 URL；失败后移除。 */
   clipUrls: Map<string, Promise<string | null>>
@@ -33,21 +33,21 @@ export interface ActiveActionCatalog {
 export type ActionCatalogStatus = 'idle' | 'loading' | 'ready' | 'unavailable'
 
 interface CatalogWireResponse {
-  pack_id?: number
-  catalog_version?: number
-  appearance_epoch?: number
-  manifest_url?: string | null
+  pack_id: number
+  catalog_version: number
+  appearance_epoch: number
+  manifest_url: string | null
 }
 
 interface PersistedActionCatalog {
   packId: number
   catalogVersion: number
-  /** 可缺省；未记录的快照按未知（null）恢复。 */
-  appearanceEpoch?: number
+  appearanceEpoch: number
   manifest: ActionCatalogManifest | null
 }
 
 const EMPTY_PERSISTED_CATALOG: PersistedActionCatalog = {
+  appearanceEpoch: 0,
   packId: 0,
   catalogVersion: 0,
   manifest: null
@@ -114,7 +114,7 @@ function isPersistableCatalog(val: unknown): val is PersistedActionCatalog {
     isRecord(val) &&
     typeof val.packId === 'number' &&
     typeof val.catalogVersion === 'number' &&
-    (val.appearanceEpoch === undefined || typeof val.appearanceEpoch === 'number') &&
+    typeof val.appearanceEpoch === 'number' &&
     isActionCatalogManifest(val.manifest) &&
     val.packId === val.manifest.pack_id &&
     val.catalogVersion === val.manifest.catalog_version
@@ -208,7 +208,7 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
         return !terminal
       }
 
-      const listed = await authedApi<{ packs?: ActionPackWire[] }>({ path: '/api/companion/video-packs' })
+      const listed = await authedApi<{ packs: ActionPackWire[] }>({ path: '/api/companion/video-packs' })
 
       if (!isCurrent()) {
         return false
@@ -220,8 +220,8 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
       }
 
       const actionState = listed.value.packs
-        ?.find(pack => pack.id === initial.packId)
-        ?.actions?.find(entry => entry.action === action)
+        .find(pack => pack.id === initial.packId)
+        ?.actions.find(entry => entry.action === action)
 
       if (
         actionState?.status === 'failed' ||
@@ -378,7 +378,7 @@ function restoreCachedActionCatalog(): void {
 
   $actionCatalog.set(
     createCatalog(snap.manifest, {
-      appearanceEpoch: snap.appearanceEpoch ?? null,
+      appearanceEpoch: snap.appearanceEpoch,
       catalogVersion: snap.catalogVersion,
       packId: snap.packId
     })
@@ -472,11 +472,10 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
       }
 
       const samePack = $actionCatalog.get()
-      // 不返回代次的服务端，其播放指令代次恒为 0，缺省按 0 对齐。
-      const appearanceEpoch = res.value.appearance_epoch ?? 0
+      const appearanceEpoch = res.value.appearance_epoch
 
       if (samePack && samePack.packId === res.value.pack_id && samePack.catalogVersion === res.value.catalog_version) {
-        // 同一目录仅代次变化（重新激活或旧快照校准）：只更新代次，并作废旧代次的播放实例。
+        // 同一目录重新激活时，只更新代次并作废旧代次的播放实例。
         if (samePack.appearanceEpoch !== appearanceEpoch) {
           resetActionPlayback()
           $actionCatalog.set({ ...samePack, appearanceEpoch })
@@ -497,7 +496,7 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
       if (
         !isActionCatalogManifest(manifest) ||
         manifest.pack_id !== res.value.pack_id ||
-        (res.value.catalog_version !== undefined && manifest.catalog_version !== res.value.catalog_version)
+        manifest.catalog_version !== res.value.catalog_version
       ) {
         log.warn('action-store', 'invalid catalog manifest')
         markUnavailableIfEmpty()
@@ -505,7 +504,7 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
         return
       }
 
-      const catalogVersion = res.value.catalog_version ?? manifest.catalog_version
+      const catalogVersion = res.value.catalog_version
       const catalog = createCatalog(manifest, { appearanceEpoch, catalogVersion, packId: res.value.pack_id })
 
       // 预取默认动作（idle）片段；其余按需解析。

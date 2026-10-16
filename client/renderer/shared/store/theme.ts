@@ -38,7 +38,7 @@ const initialTheme = resolveInitialTheme()
 
 export const $theme = atom<SpiritAgentUiTheme>(initialTheme)
 
-// 模块加载即应用：两个 entry 都先 import styles.css 再 import 本模块，首帧前 data-theme 已就位，无错误主题闪烁。
+// 各业务入口先加载样式再应用主题，首帧前 data-theme 已就位。
 apply($theme.get())
 
 function apply(theme: SpiritAgentUiTheme): void {
@@ -52,13 +52,11 @@ function apply(theme: SpiritAgentUiTheme): void {
 
 export function setUiTheme(theme: SpiritAgentUiTheme): void {
   apply(theme)
-  // 主进程广播到两个窗口（含本窗，回声幂等）；各窗口经 apply 各自写入本地缓存。
-  preferencesApi()?.setUiTheme?.(theme)
+  // 主进程广播到各业务窗口（含本窗，回声幂等），各窗口写入本地缓存。
+  preferencesApi().setUiTheme(theme)
 }
 
-// 订阅主进程主题广播（另一窗口切换时同步本窗口）；两个 entry 的模块作用域各调用一次。
+// 各业务入口订阅主进程广播，同步窗口间的主题选择。
 export function initUiThemeSync(): () => void {
-  const unsubscribe = preferencesApi()?.onUiThemeChanged?.(payload => apply(normalizeUiTheme(payload?.theme)))
-
-  return unsubscribe ?? (() => {})
+  return preferencesApi().onUiThemeChanged(payload => apply(normalizeUiTheme(payload.theme)))
 }

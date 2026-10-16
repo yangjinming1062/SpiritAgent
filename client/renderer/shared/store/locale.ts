@@ -13,14 +13,12 @@ const initialLocale: Locale = normalizeLocale(storedString(LOCALE_STORAGE_KEY))
 export const $locale = atom<Locale>(initialLocale)
 
 export function initLocaleSync(): () => void {
-  const unsubscribe = preferencesApi()?.onPrefsHydrated?.(payload => {
-    const next = normalizeLocale(payload?.language)
+  return preferencesApi().onPrefsHydrated(payload => {
+    const next = normalizeLocale(payload.language)
 
     if (next !== $locale.get()) {
       $locale.set(next)
       persistString(LOCALE_STORAGE_KEY, next)
     }
   })
-
-  return unsubscribe ?? (() => {})
 }

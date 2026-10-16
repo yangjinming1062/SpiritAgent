@@ -372,7 +372,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
 
   const read = (async (): Promise<boolean> => {
     try {
-      const res = await authedApi<{ packs?: ActionPackWire[] }>({ path: '/api/companion/video-packs' })
+      const res = await authedApi<{ packs: ActionPackWire[] }>({ path: '/api/companion/video-packs' })
 
       if (epoch !== currentClearEpoch() || revision !== generationRevision) {
         return false
@@ -386,7 +386,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
         return false
       }
 
-      const packs = res.value.packs ?? []
+      const packs = res.value.packs
       $videoPacks.set(packs)
 
       // 请求拒绝不因列表仍为 ready 而消失；生成失败在回源确认恢复后清除。

@@ -17,17 +17,16 @@ export function hydrateRunnerStatus(): Promise<void> {
   const epoch = currentClearEpoch()
 
   if (!offRunnerStatus) {
-    offRunnerStatus =
-      desktop.onRunnerStatus?.(ev => {
-        statusRevision++
-        $runnerPhase.set(
-          ev.type === 'running' || ev.type === 'runner_ready'
-            ? 'running'
-            : ev.type === 'stopping'
-              ? 'stopping'
-              : 'stopped'
-        )
-      }) ?? null
+    offRunnerStatus = desktop.onRunnerStatus(ev => {
+      statusRevision++
+      $runnerPhase.set(
+        ev.type === 'running' || ev.type === 'runner_ready'
+          ? 'running'
+          : ev.type === 'stopping'
+            ? 'stopping'
+            : 'stopped'
+      )
+    })
   }
 
   if (hydration?.epoch === epoch) {
@@ -37,7 +36,7 @@ export function hydrateRunnerStatus(): Promise<void> {
   const revision = statusRevision
 
   const request = Promise.resolve()
-    .then(() => desktop.runnerGetState?.())
+    .then(() => desktop.runnerGetState())
     .then(state => {
       if (state?.phase && revision === statusRevision && epoch === currentClearEpoch()) {
         $runnerPhase.set(state.phase)

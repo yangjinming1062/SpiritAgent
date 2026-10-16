@@ -8,8 +8,6 @@ import { DEFAULT_FETCH_TIMEOUT_MS } from '../security/hardening'
 import { mimeTypeForPath } from '../shared/mime'
 import { atomicWriteFile, httpErrorFromResponse, isAccountId } from '../shared/utils'
 
-const SIGNED_QUERY_KEYS = new Set(['expires', 'sig', 'token', 't', 'timestamp'])
-
 interface AssetMeta {
   contentHash?: string
   etag?: string
@@ -59,12 +57,8 @@ function normalizeAssetKey(rawUrl: string, contentHash?: string): string {
     const parsed = new URL(rawUrl, 'http://127.0.0.1:8000')
     const { searchParams } = parsed
 
-    for (const key of [...searchParams.keys()]) {
-      if (SIGNED_QUERY_KEYS.has(key.toLowerCase())) {
-        searchParams.delete(key)
-      }
-    }
-
+    searchParams.delete('expires')
+    searchParams.delete('sig')
     searchParams.sort()
     const query = searchParams.toString()
 

@@ -39,11 +39,7 @@ export function useClipboard(): { status: ClipboardStatus; copy: (text: string) 
     const requestVersion = ++version.current
 
     try {
-      if (fileApi()?.writeClipboard) {
-        await fileApi().writeClipboard(text)
-      } else {
-        await navigator.clipboard.writeText(text)
-      }
+      await fileApi().writeClipboard(text)
     } catch (error) {
       showResult('failed', requestVersion)
       throw error

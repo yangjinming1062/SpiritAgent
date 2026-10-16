@@ -180,11 +180,7 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
 
       const payload = { forward: ignore, ignore }
       const customFn = setIgnoreFnRef.current
-      const request = customFn ? customFn(payload) : shellApi()?.sprite?.setIgnoreMouseEvents?.(payload)
-
-      if (request === undefined) {
-        return
-      }
+      const request = customFn ? customFn(payload) : shellApi().sprite.setIgnoreMouseEvents(payload)
 
       requestedIgnore = ignore
       latestRequest = request

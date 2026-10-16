@@ -223,7 +223,7 @@ function startGatewayHost(): (() => void) | undefined {
     }
 
     reportPrimaryGatewayState(st)
-    desktop.gatewayBroadcastState?.(st)
+    desktop.gatewayBroadcastState(st)
 
     if (st === 'open') {
       reconnectAttempt = 0
@@ -276,18 +276,18 @@ function startGatewayHost(): (() => void) | undefined {
     handleGatewayEvent(event)
 
     if (!isDeviceCommandEvent(event.type)) {
-      desktop.gatewayBroadcastEvent?.(event)
+      desktop.gatewayBroadcastEvent(event)
     }
   })
 
-  const offRpcDispatch = desktop.onGatewayRpcDispatch?.(req => {
+  const offRpcDispatch = desktop.onGatewayRpcDispatch(req => {
     void (async () => {
       try {
         const result = await gateway.request(req.method, req.params)
-        desktop.gatewayRpcReply?.({ id: req.id, ok: true, result })
+        desktop.gatewayRpcReply({ id: req.id, ok: true, result })
       } catch (error) {
         const message = errorMessage(error)
-        desktop.gatewayRpcReply?.({
+        desktop.gatewayRpcReply({
           id: req.id,
           ok: false,
           error: error instanceof SpiritAgentRpcError ? { code: error.code, data: error.data, message } : { message }
@@ -296,7 +296,7 @@ function startGatewayHost(): (() => void) | undefined {
     })()
   })
 
-  const offPowerResume = desktop.onPowerResume?.(() => reconnectNow())
+  const offPowerResume = desktop.onPowerResume(() => reconnectNow())
 
   const onOnline = () => reconnectNow()
 
@@ -309,7 +309,7 @@ function startGatewayHost(): (() => void) | undefined {
   window.addEventListener('online', onOnline)
   document.addEventListener('visibilitychange', onVisible)
 
-  const offRunnerStatus = desktop.onRunnerStatus?.(ev => {
+  const offRunnerStatus = desktop.onRunnerStatus(ev => {
     if (gateway.connectionState === 'open') {
       void syncTools(ev.type === 'running' || ev.type === 'runner_ready' ? ev.tools : [])
     }
@@ -342,12 +342,12 @@ function startGatewayHost(): (() => void) | undefined {
     graceTimer = clearTimer(graceTimer)
     window.removeEventListener('online', onOnline)
     document.removeEventListener('visibilitychange', onVisible)
-    offPowerResume?.()
-    offRpcDispatch?.()
+    offPowerResume()
+    offRpcDispatch()
     offState()
     offEvent()
-    desktop.gatewayBroadcastState?.('closed')
-    offRunnerStatus?.()
+    desktop.gatewayBroadcastState('closed')
+    offRunnerStatus()
     offStageOwner()
     stopAutonomyProvision()
     tearDownPrimaryGateway()

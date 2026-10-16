@@ -22,48 +22,45 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
   switch (event.type) {
     case 'companion.message': {
       const payload = decodePayload<{
-        text?: string
         bubbles?: CompanionBubble[]
         session_id?: string
         message_id?: number
-        media?: ChatMediaItem[]
       }>(event.payload)
 
       const bubbles = Array.isArray(payload.bubbles) ? payload.bubbles : undefined
 
-      const text = bubbles
-        ? (bubbles.findLast(b => 'text' in b)?.text ?? bubbles.findLast(b => b.type === 'link')?.title ?? '')
-        : (payload.text ?? '')
+      if (
+        !bubbles ||
+        typeof payload.session_id !== 'string' ||
+        !payload.session_id ||
+        typeof payload.message_id !== 'number' ||
+        !Number.isSafeInteger(payload.message_id) ||
+        payload.message_id <= 0
+      ) {
+        break
+      }
+
+      const text = bubbles.findLast(b => 'text' in b)?.text ?? bubbles.findLast(b => b.type === 'link')?.title ?? ''
 
       const displayText = chatDisplayText(text)
-      const hasMedia = bubbles?.some(bubble => bubble.type === 'image' || bubble.type === 'video')
+      const hasMedia = bubbles.some(bubble => bubble.type === 'image' || bubble.type === 'video')
 
       const pendingText =
         displayText ||
         (hasMedia
-          ? bubbles?.some(bubble => bubble.type === 'video')
+          ? bubbles.some(bubble => bubble.type === 'video')
             ? getStrings().notifications.system.videoReady
             : getStrings().notifications.system.imageReady
           : '')
 
       // 此事件由服务端写入唯一陪伴主会话；会话列表尚未加载时也能确定提醒归属。
-      if (payload.session_id) {
-        setCompanionSessionId(payload.session_id)
-      }
+      setCompanionSessionId(payload.session_id)
 
-      if (payload.session_id && pendingText) {
+      if (pendingText) {
         rememberPendingMessage(payload.session_id, pendingText)
       }
 
-      const runtime = payload.session_id ? findConversationRuntime(payload.session_id) : undefined
-
-      if (runtime) {
-        if (bubbles && payload.message_id) {
-          runtime.finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
-        } else {
-          runtime.pushProactiveMessage(text, payload.media, payload.message_id)
-        }
-      }
+      findConversationRuntime(payload.session_id)?.finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
 
       if (displayText && $effectiveTier.get() !== 'still' && isSpriteOverlayVisible()) {
         showMediaHint(displayText, payload.session_id)
@@ -101,15 +98,13 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
     case 'video_gen.completed': {
       // 后台视频任务完成（WSEvent outbox 路径，信封不带 session_id，载荷自带）。
       const p = decodePayload<{
-        task_id?: string
-        url?: string
         session_id?: string
         media?: ChatMediaItem[]
       }>(event.payload)
 
       const sessionId = p.session_id
 
-      const media: ChatMediaItem[] = p.media?.length ? p.media : p.url ? [{ type: 'video', url: p.url }] : []
+      const media = Array.isArray(p.media) ? p.media : []
 
       if (!media.length) {
         break

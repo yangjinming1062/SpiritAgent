@@ -274,7 +274,6 @@ async function ttsViaBackend({
   return {
     buffer: body,
     mimeType: headers.get('content-type') || 'audio/mpeg',
-    // 后端实际返回的头名是 X-Voice-Used（api/v1/media.py TTS 端点）。
     voiceOut: headers.get('x-voice-used') || undefined
   }
 }

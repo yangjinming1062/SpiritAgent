@@ -103,14 +103,14 @@ export function createProxyGatewayRuntime(authSessionId: string) {
 
     const initialEvents = stateEvents
 
-    const offState = desktop.onGatewayStateChanged?.(payload => {
+    const offState = desktop.onGatewayStateChanged(payload => {
       if (payload?.state) {
         stateEvents++
         applyState(payload.state)
       }
     })
 
-    const offEvent = desktop.onGatewayEvent?.(payload => {
+    const offEvent = desktop.onGatewayEvent(payload => {
       if (isCurrent() && payload?.event && !isDeviceCommandEvent(payload.event.type)) {
         handleGatewayEvent(payload.event)
       }
@@ -119,8 +119,8 @@ export function createProxyGatewayRuntime(authSessionId: string) {
     cleanup = () => {
       disposed = true
       syncGeneration++
-      offState?.()
-      offEvent?.()
+      offState()
+      offEvent()
 
       if ($gateway.get() === gateway) {
         setPrimaryGateway(null)
@@ -129,7 +129,7 @@ export function createProxyGatewayRuntime(authSessionId: string) {
 
     // 先订阅再读快照；读取期间的新状态优先，旧实例释放时不清除后来装配的网关。
     void desktop
-      .gatewayGetState?.()
+      .gatewayGetState()
       .then(state => {
         if (state && stateEvents === initialEvents) {
           applyState(state)

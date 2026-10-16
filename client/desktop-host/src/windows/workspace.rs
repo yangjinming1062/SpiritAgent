@@ -11,12 +11,10 @@ mod appbar;
 pub(super) use appbar::RestoreAppBar;
 use appbar::AppBar;
 
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct RestoreWorkArea {
+struct MonitorSnapshot {
     device: String,
     monitor: Bounds,
-    original: Bounds,
+    work_area: Bounds,
 }
 
 fn bounds(rect: RECT) -> Bounds {
@@ -132,7 +130,7 @@ fn find_monitor(name: &str) -> Result<Option<MONITORINFOEXW>> {
         )
     } == 0
     {
-        return Err(failure("enumerate recovery monitors"));
+        return Err(failure("enumerate desktop monitors"));
     }
     for monitor in monitors {
         let value = info(monitor)?;
@@ -143,42 +141,17 @@ fn find_monitor(name: &str) -> Result<Option<MONITORINFOEXW>> {
     Ok(None)
 }
 
-fn set_work_area(area: Bounds) -> Result<()> {
-    let rectangle = rect(area);
-    // 只用于恢复旧版本 journal，正常会话由 Shell AppBar 协商工作区。
-    if unsafe { SystemParametersInfoW(SPI_SETWORKAREA, 0, &rectangle as *const RECT as *mut _, 0) }
-        == 0
-    {
-        return Err(failure("set desktop work area"));
-    }
-    Ok(())
-}
-
-impl RestoreWorkArea {
-    pub(super) fn validate(&self) -> Result<()> {
+impl MonitorSnapshot {
+    fn validate(&self) -> Result<()> {
         if self.device.is_empty()
             || self.device.len() > 128
             || !self.monitor.valid()
-            || !self.original.valid()
-            || !contains(self.monitor, self.original)
+            || !self.work_area.valid()
+            || !contains(self.monitor, self.work_area)
         {
-            return Err("invalid work area recovery record".into());
+            return Err("invalid desktop monitor snapshot".into());
         }
         Ok(())
-    }
-
-    pub(super) fn restore(&self) -> Result<()> {
-        let Some(current) = find_monitor(&self.device)? else {
-            return Ok(());
-        };
-        let monitor = bounds(current.monitorInfo.rcMonitor);
-        let original = Bounds {
-            x: monitor.x + (self.original.x - self.monitor.x).min(monitor.width - 1),
-            y: monitor.y + (self.original.y - self.monitor.y).min(monitor.height - 1),
-            width: (monitor.width - (self.monitor.width - self.original.width)).max(1),
-            height: (monitor.height - (self.monitor.height - self.original.height)).max(1),
-        };
-        set_work_area(original)
     }
 }
 
@@ -221,7 +194,7 @@ fn contains(area: Bounds, window: Bounds) -> bool {
 }
 
 pub(super) struct Workspace {
-    original: RestoreWorkArea,
+    display: MonitorSnapshot,
     target: Bounds,
     appbar: Option<AppBar>,
     parent_pid: u32,
@@ -303,9 +276,9 @@ impl WindowRelocation {
 
 impl Workspace {
     pub(super) fn monitor(&self) -> Result<HMONITOR> {
-        let rectangle = rect(self.original.monitor);
+        let rectangle = rect(self.display.monitor);
         let monitor = unsafe { MonitorFromRect(&rectangle, MONITOR_DEFAULTTONULL) };
-        if monitor.is_null() || device(&info(monitor)?) != self.original.device {
+        if monitor.is_null() || device(&info(monitor)?) != self.display.device {
             return Err("桌面屏幕已断开，请重新选择屏幕。".into());
         }
         Ok(monitor)
@@ -314,7 +287,7 @@ impl Workspace {
     pub(super) fn on_display(&self, window: HWND) -> bool {
         // MonitorFromWindow 对最小化窗口使用最小化前的矩形。
         info(unsafe { MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) })
-            .is_ok_and(|value| device(&value) == self.original.device)
+            .is_ok_and(|value| device(&value) == self.display.device)
     }
 
     pub(super) fn placed(&self, window: HWND) -> bool {
@@ -405,10 +378,10 @@ impl Workspace {
             self.target.y + self.target.height - transition.height,
         );
         if !tool {
-            target.x -= self.target.x - self.original.monitor.x;
-            target.y -= self.target.y - self.original.monitor.y;
-            transition.x -= self.target.x - self.original.monitor.x;
-            transition.y -= self.target.y - self.original.monitor.y;
+            target.x -= self.target.x - self.display.monitor.x;
+            target.y -= self.target.y - self.display.monitor.y;
+            transition.x -= self.target.x - self.display.monitor.x;
+            transition.y -= self.target.y - self.display.monitor.y;
         }
         placement.rcNormalPosition = rect(transition);
         placement.flags = WPF_ASYNCWINDOWPLACEMENT;
@@ -467,23 +440,23 @@ impl Workspace {
             return Err("desktop work area has no monitor".into());
         }
         let value = info(monitor)?;
-        let original = RestoreWorkArea {
+        let display = MonitorSnapshot {
             device: device(&value),
             monitor: bounds(value.monitorInfo.rcMonitor),
-            original: bounds(value.monitorInfo.rcWork),
+            work_area: bounds(value.monitorInfo.rcWork),
         };
-        original.validate()?;
-        if !contains(original.monitor, target) {
+        display.validate()?;
+        if !contains(display.monitor, target) {
             return Err("desktop monitor changed during work area validation".into());
         }
         let appbar = if enabled {
-            Some(AppBar::prepare(&original, target.y + target.height)?)
+            Some(AppBar::prepare(&display, target.y + target.height)?)
         } else {
             None
         };
-        let target = if enabled { target } else { original.original };
+        let target = if enabled { target } else { display.work_area };
         Ok(Self {
-            original,
+            display,
             target,
             appbar,
             parent_pid,
@@ -511,8 +484,8 @@ impl Workspace {
     }
 
     fn ensure_work_area(&mut self) -> Result<()> {
-        let current = find_monitor(&self.original.device)?.ok_or("desktop monitor was removed")?;
-        if bounds(current.monitorInfo.rcMonitor) != self.original.monitor {
+        let current = find_monitor(&self.display.device)?.ok_or("desktop monitor was removed")?;
+        if bounds(current.monitorInfo.rcMonitor) != self.display.monitor {
             return Err("desktop monitor geometry changed".into());
         }
         if !self.enabled {
@@ -542,13 +515,13 @@ impl Workspace {
         let Ok(value) = info(unsafe { MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) }) else {
             return false;
         };
-        if device(&value) != self.original.device {
+        if device(&value) != self.display.device {
             return false;
         }
         let Ok(area) = visible_bounds(window) else {
             return false;
         };
-        let monitor = self.original.monitor;
+        let monitor = self.display.monitor;
         (unsafe { GetWindowLongPtrW(window, GWL_STYLE) as u32 & WS_CAPTION == 0 })
             && area.x <= monitor.x + 2
             && area.y <= monitor.y + 2
@@ -587,7 +560,7 @@ impl Workspace {
             return false;
         }
         info(unsafe { MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) })
-            .is_ok_and(|value| device(&value) == self.original.device)
+            .is_ok_and(|value| device(&value) == self.display.device)
     }
 
     fn warn(&mut self, handle: usize) {
