@@ -49,7 +49,7 @@ def _body_policy(scope: Scope) -> tuple[int, bool | None]:
         return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
     if _DESKTOP_IMAGE_UPLOAD_PATH.fullmatch(path):
         return SCENE_DOWNLOAD_MAX_BYTES + _UPLOAD_OVERHEAD_BYTES, False
-    if path in {"/api/media/stt", "/api/media/audios"}:
+    if path in {"/api/media/stt", "/api/media/audios", "/api/media/voice-samples"}:
         return STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES, False
     if _BACKUP_UPLOAD_PATH.fullmatch(path):
         return 4 * 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES, True

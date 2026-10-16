@@ -1,6 +1,8 @@
 from infrastructure.ai.voice_types import VoiceEntry
 from pydantic import BaseModel, ConfigDict, Field
 
+from features.media.voice_contracts import CustomVoiceSummary
+
 _PERSONA_JSON_MAX_LEN: int = 32 * 1024
 
 
@@ -28,6 +30,9 @@ class VoicesListResponse(BaseModel):
     voices: list[VoiceEntry]
     supports_voice_design: bool
     voice_design_guide: str
+    supports_voice_prompt_generation: bool = False
+    supports_voice_clone: bool = False
+    custom_voices: list[CustomVoiceSummary] = Field(default_factory=list)
 
 
 class VoiceMatchResponse(BaseModel):

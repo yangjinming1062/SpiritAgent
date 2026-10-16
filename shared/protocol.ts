@@ -7,7 +7,9 @@ export function isAiWaitingRpc(method: string): boolean {
     'companion.should_act',
     'memory.update',
     'tts.match_voice',
-    'tts.design_voice'
+    'tts.design_voice',
+    'tts.generate_voice_prompt',
+    'tts.clone_voice'
   ].includes(method)
 }
 

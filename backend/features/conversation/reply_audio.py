@@ -1,25 +1,23 @@
 import asyncio
-import io
-import math
 from collections.abc import Awaitable, Callable
 from typing import Any
 from weakref import WeakValueDictionary
 
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.tts_service import synthesize_speech
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import client_asset_url, dated_asset_directory, save_companion_asset_async
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.database import session_scope
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
-from mutagen import File as AudioFile
+from infrastructure.video_processing.audio import audio_bytes_info
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.models import Conversation, Message
 from features.conversation.replies import CompanionReply, LinkBubble, MediaBubble, ReplyAudio, VoiceBubble
+from features.media.speech import synthesize_speech
 
 logger = get_logger(__name__)
 _locks: WeakValueDictionary[tuple[int, int], asyncio.Lock] = WeakValueDictionary()
@@ -52,23 +50,6 @@ def client_reply_bubbles(reply: CompanionReply) -> list[dict]:
     return result
 
 
-def _audio_info(data: bytes) -> tuple[float, str]:
-    audio = AudioFile(io.BytesIO(data))
-    if audio is None or not math.isfinite(audio.info.length) or audio.info.length <= 0:
-        raise ValueError("TTS returned invalid audio")
-    mime = audio.mime[0]
-    extension = {
-        "audio/mp3": "mp3",
-        "audio/mpeg": "mp3",
-        "audio/wav": "wav",
-        "audio/ogg": "ogg",
-        "audio/flac": "flac",
-    }.get(mime)
-    if extension is None:
-        raise ValueError("TTS returned unsupported audio")
-    return float(audio.info.length), extension
-
-
 async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, directory: str) -> ReplyAudio:
     audio = await synthesize_speech(
         user_id,
@@ -79,7 +60,7 @@ async def _synthesize_bubble(user_id: int, bubble: VoiceBubble, directory: str) 
         preserve_performance=True,
         task=AiTaskKey.companion_voice,
     )
-    duration, ext = await asyncio.to_thread(_audio_info, audio.audio)
+    duration, ext = await asyncio.to_thread(audio_bytes_info, audio.audio)
     path = await save_companion_asset_async(
         audio.audio,
         user_id=user_id,

@@ -1,14 +1,13 @@
 from infrastructure.ai.llm_client import resolve_provider_chain
-from infrastructure.ai.llm_fallback import execute_with_fallback
-from infrastructure.ai.providers.base import ProviderConfig, ServiceType, TTSProvider, VoiceDesignResult
+from infrastructure.ai.providers.base import ProviderConfig, ServiceType
 from infrastructure.ai.providers.registry import try_resolve
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.ai.voice_catalog import voices_for_provider
 from infrastructure.ai.voice_types import VoiceEntry
-from infrastructure.database import session_scope
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.schemas import VoiceMatchResponse, VoicesListResponse
+from features.media.voice_queries import confirmed_custom_voices
 
 _LANG_KEYWORDS: dict[str, list[str]] = {
     "zh": ["中文", "普通话", "国语", "chinese", "mandarin"],
@@ -39,8 +38,14 @@ def _sort_voices_by_language(voices: list[VoiceEntry]) -> list[VoiceEntry]:
 
 def _chain_voices(chain: list[ProviderConfig], language: str | None) -> list[VoiceEntry]:
     """按能力链顺序汇总音色；指定语言时保留该语言与多语言音色。"""
-    providers = dict.fromkeys(config.provider_name for config in chain)
-    voices = [voice for provider in providers for voice in voices_for_provider(provider)]
+    voices_by_id: dict[tuple[str, str], VoiceEntry] = {}
+    for config in chain:
+        adapter = try_resolve(ServiceType.tts, config.provider_name)
+        if adapter is None or (adapter.BUILTIN_VOICE_MODEL is not None and config.model != adapter.BUILTIN_VOICE_MODEL):
+            continue
+        for voice in voices_for_provider(config.provider_name):
+            voices_by_id.setdefault((voice.provider, voice.id), voice)
+    voices = list(voices_by_id.values())
     return [voice for voice in voices if voice.language in {language, "multi"}] if language else voices
 
 
@@ -59,11 +64,23 @@ async def list_tts_voices(db: AsyncSession, user_id: int, language: str | None =
         None,
     )
     guide = design_cls.VOICE_DESIGN_GUIDE if design_cls else None
+    prompt_chain = await resolve_provider_chain(db, user_id, "llm", task=AiTaskKey.voice_design)
+    clone_chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.voice_clone)
+    preview_chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.speech_preview)
+    clone_cards = {str(config.model_card_id) for config in clone_chain}
+    available_models = {
+        (config.provider_name, config.model, str(config.model_card_id))
+        for config in chain
+        if config.model != "mimo-v2.5-tts-voiceclone" or str(config.model_card_id) in clone_cards
+    } & {(config.provider_name, config.model, str(config.model_card_id)) for config in preview_chain}
     return VoicesListResponse(
         providers=list(dict.fromkeys(config.provider_name for config in chain)),
         voices=voices,
         supports_voice_design=guide is not None,
         voice_design_guide=guide or "",
+        supports_voice_prompt_generation=guide is not None and bool(prompt_chain),
+        supports_voice_clone=bool(clone_chain),
+        custom_voices=await confirmed_custom_voices(db, user_id, available_models),
     )
 
 
@@ -120,17 +137,3 @@ async def match_user_voice(
     )
     best, alternatives = match_voice(preference or "", voices)
     return VoiceMatchResponse(voice=best, alternatives=alternatives)
-
-
-async def design_voice(user_id: int, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
-    """调用当前 TTS 供应商的音色设计能力生成自定义音色；短会话解析供应商链，付费设计调用期间不占数据库连接。"""
-    async with session_scope() as db:
-        chain = await resolve_provider_chain(db, user_id, "tts", task=AiTaskKey.voice_design)
-    if not chain:
-        raise ValueError("Configured providers do not support voice design")
-    return await execute_with_fallback(
-        chain,
-        TTSProvider,
-        lambda provider: provider.design_voice(prompt, preview_text=preview_text),
-        user_id=user_id,
-    )

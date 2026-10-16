@@ -23,6 +23,7 @@ class AiTaskKey(StrEnum):
     companion_voice = "companion_voice"
     speech_preview = "speech_preview"
     voice_design = "voice_design"
+    voice_clone = "voice_clone"
 
 
 class AiTaskDefinition(BaseModel):
@@ -179,7 +180,13 @@ AI_TASKS: tuple[AiTaskDefinition, ...] = (
         "伙伴回复合成",
         {"tts": ("陪伴聊天与主动陪伴的语音回复", "伙伴可选音色目录")},
     ),
-    _task(AiTaskKey.speech_preview, "语音", "朗读与试听", {"tts": ("文字消息朗读", "设置中的音色试听")}),
-    _task(AiTaskKey.voice_design, "语音", "音色设计", {"tts": ("根据描述创建自定义音色",)}),
+    _task(AiTaskKey.speech_preview, "语音", "朗读与试听", {"tts": ("文字消息朗读", "伙伴声音试听")}),
+    _task(
+        AiTaskKey.voice_design,
+        "语音",
+        "音色设计",
+        {"llm": ("根据角色资料生成声音描述", "根据反馈调整声音描述"), "tts": ("根据描述创建自定义音色",)},
+    ),
+    _task(AiTaskKey.voice_clone, "语音", "声音克隆", {"tts": ("根据参考音频克隆声音",)}),
 )
 AI_TASK_BY_ID: dict[AiTaskKey, AiTaskDefinition] = {definition.id: definition for definition in AI_TASKS}

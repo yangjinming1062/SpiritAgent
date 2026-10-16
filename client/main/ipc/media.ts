@@ -11,7 +11,9 @@ import {
   type DesktopVideoUploadResult,
   IPC,
   type MediaSttPayload,
-  type MediaTtsPayload
+  type MediaTtsPayload,
+  type VoiceSampleUploadPayload,
+  type VoiceSampleUploadResult
 } from '@ipc/contracts'
 import { errorMessage, sleep } from '@runtime'
 
@@ -314,6 +316,7 @@ interface MediaIpcDeps {
   ensureBackend: () => Promise<BackendConnection>
   fetchImpl?: typeof globalThis.fetch
   getCurrentAuth: GetCurrentAuth
+  getSelectedAccountId: () => string | null
   ipcMain: IpcMain
   log?: (msg: string) => void
 }
@@ -323,13 +326,15 @@ export function registerMediaIpc({
   ensureBackend,
   fetchImpl,
   getCurrentAuth,
+  getSelectedAccountId,
   ipcMain,
   log = () => {}
-}: MediaIpcDeps): void {
+}: MediaIpcDeps): { clearAccountCache: (accountId: string) => Promise<void> } {
   const diskCache = createTtsDiskCache({ spiritagentHome })
   const sttLimiter = new SttLimiter()
   const ttsQueue = new BoundedTtsQueue()
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
+  const cacheEpochs = new Map<string, number>()
 
   const assertUploadAccount = (authSessionId: string): void => {
     if (!authSessionId || getCurrentAuth()?.sessionId !== authSessionId) {
@@ -396,6 +401,73 @@ export function registerMediaIpc({
     }
   )
 
+  ipcMain.handle(
+    IPC.invoke.mediaVoiceSampleUpload,
+    async (event, payload: VoiceSampleUploadPayload): Promise<VoiceSampleUploadResult> => {
+      const authSessionId = payload?.authSessionId
+      assertUploadAccount(authSessionId)
+
+      if (
+        typeof payload?.dataUrl !== 'string' ||
+        payload.dataUrl.length > Math.ceil((STT_MAX_AUDIO_BYTES * 4) / 3) + 256 ||
+        typeof payload.filename !== 'string' ||
+        !payload.filename.trim()
+      ) {
+        throw new Error('Invalid voice sample upload')
+      }
+
+      const { data, mime } = parseDataUrl(payload.dataUrl)
+
+      if (data.length === 0 || data.length > STT_MAX_AUDIO_BYTES || !mime.startsWith('audio/')) {
+        throw new Error('Invalid voice sample upload')
+      }
+
+      const form = new FormData()
+      form.append('file', new Blob([data], { type: mime }), path.basename(payload.filename))
+
+      const { body } = await callBackend(event.sender, connection => {
+        assertUploadAccount(authSessionId)
+
+        return postBackend({
+          body: form,
+          fetchImpl,
+          timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
+          token: connection.token,
+          url: `${connection.baseUrl}/api/media/voice-samples`
+        })
+      })
+
+      assertUploadAccount(authSessionId)
+
+      const parsed: unknown = JSON.parse(body.toString('utf8'))
+
+      if (
+        !parsed ||
+        typeof parsed !== 'object' ||
+        !('sample_id' in parsed) ||
+        typeof parsed.sample_id !== 'string' ||
+        !parsed.sample_id ||
+        !('url' in parsed) ||
+        typeof parsed.url !== 'string' ||
+        !('mime_type' in parsed) ||
+        typeof parsed.mime_type !== 'string' ||
+        !('duration' in parsed) ||
+        typeof parsed.duration !== 'number' ||
+        !Number.isFinite(parsed.duration) ||
+        parsed.duration <= 0
+      ) {
+        throw new Error('Backend voice sample upload returned invalid metadata')
+      }
+
+      return {
+        sample_id: parsed.sample_id,
+        url: parsed.url,
+        mime_type: parsed.mime_type,
+        duration: parsed.duration
+      }
+    }
+  )
+
   ipcMain.handle(IPC.invoke.mediaStt, async (event, payload?: MediaSttPayload) => {
     const sttId = ++sttSeq
     const { data, mime } = parseDataUrl(payload?.dataUrl || '')
@@ -456,6 +528,25 @@ export function registerMediaIpc({
     }
 
     const voice = payload?.voice || ''
+    const accountId = getSelectedAccountId()
+    const authSessionId = getCurrentAuth()?.sessionId
+
+    if (!accountId || !authSessionId) {
+      throw new Error('An authenticated account is required for TTS')
+    }
+
+    const cacheEpoch = cacheEpochs.get(accountId) ?? 0
+
+    const assertTtsAccount = (): void => {
+      if (
+        getSelectedAccountId() !== accountId ||
+        getCurrentAuth()?.sessionId !== authSessionId ||
+        (cacheEpochs.get(accountId) ?? 0) !== cacheEpoch
+      ) {
+        throw new Error('TTS account changed')
+      }
+    }
+
     // TTS 语言统一由主进程配置解析，渲染层不传。
     const language = resolveMediaLanguage(undefined, DEFAULT_TTS_LANGUAGE)
     const persist = payload?.persist === true
@@ -472,7 +563,9 @@ export function registerMediaIpc({
 
     ttsLog('start')
 
-    const cacheKey = JSON.stringify([voice, language, text])
+    const cacheKey = JSON.stringify([accountId, voice, language, text])
+    const pendingKey = JSON.stringify([accountId, authSessionId, voice, language, text])
+    assertTtsAccount()
     const cached = getCachedTts(cacheKey)
 
     if (cached) {
@@ -481,17 +574,22 @@ export function registerMediaIpc({
       return { dataUrl: cached.dataUrl, mimeType: cached.mimeType }
     }
 
-    const pending = inflightTts.get(cacheKey)
+    const pending = inflightTts.get(pendingKey)
 
     if (pending) {
       ttsLog('join', { route: 'inflight' })
 
-      return await pending
+      const value = await pending
+      assertTtsAccount()
+
+      return value
     }
 
     const task = (async () => {
       if (persist) {
-        const hit = await diskCache.read({ language, text, voice })
+        assertTtsAccount()
+        const hit = await diskCache.read({ accountId, language, text, voice })
+        assertTtsAccount()
 
         if (hit) {
           const value = { dataUrl: dataUrlFromBuffer(hit, 'audio/mpeg'), mimeType: 'audio/mpeg' }
@@ -504,11 +602,17 @@ export function registerMediaIpc({
 
       // 云端间隔只约束真实出网请求；磁盘命中不占云端额度。
       return ttsQueue.enqueue(async () => {
+        assertTtsAccount()
         await ttsQueue.throttleCloud()
+        assertTtsAccount()
 
-        const result = await callBackend(event.sender, connection =>
-          ttsViaBackend({ connection, fetchImpl, language, text, voice })
-        )
+        const result = await callBackend(event.sender, connection => {
+          assertTtsAccount()
+
+          return ttsViaBackend({ connection, fetchImpl, language, text, voice })
+        })
+
+        assertTtsAccount()
 
         const value = { dataUrl: dataUrlFromBuffer(result.buffer, result.mimeType), mimeType: result.mimeType }
         setCachedTts(cacheKey, value)
@@ -517,6 +621,7 @@ export function registerMediaIpc({
         if (persist) {
           try {
             persisted = await diskCache.write({
+              accountId,
               buffer: result.buffer,
               language,
               mimeType: result.mimeType,
@@ -540,16 +645,23 @@ export function registerMediaIpc({
           voice_out: result.voiceOut || null
         })
 
+        assertTtsAccount()
+
         return value
       })
     })()
 
-    inflightTts.set(cacheKey, task)
+    inflightTts.set(pendingKey, task)
 
     try {
-      return await task
+      const value = await task
+      assertTtsAccount()
+
+      return value
     } finally {
-      inflightTts.delete(cacheKey)
+      if (inflightTts.get(pendingKey) === task) {
+        inflightTts.delete(pendingKey)
+      }
     }
   })
 
@@ -685,4 +797,25 @@ export function registerMediaIpc({
       return { response }
     }
   )
+
+  return {
+    clearAccountCache: async accountId => {
+      cacheEpochs.set(accountId, (cacheEpochs.get(accountId) ?? 0) + 1)
+      const prefix = `[${JSON.stringify(accountId)},`
+
+      for (const key of ttsAudioCache.keys()) {
+        if (key.startsWith(prefix)) {
+          ttsAudioCache.delete(key)
+        }
+      }
+
+      for (const key of inflightTts.keys()) {
+        if (key.startsWith(prefix)) {
+          inflightTts.delete(key)
+        }
+      }
+
+      await diskCache.clear(accountId)
+    }
+  }
 }

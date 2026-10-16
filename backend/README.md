@@ -67,7 +67,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 `system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方直接使用解码值。
 
-启动自动执行 Alembic 升级。当前基线 revision 为 `0003`：空库建立完整结构，已处于该 revision 的数据库无需变更。结构变更新增迁移，并比对 ORM 类型、默认值及索引；autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
+启动自动执行 Alembic 升级；空库从 `0001` 基线创建，当前 head 为 `0002`，包含账户音色方案。结构变更新增迁移，并比对 ORM 类型、默认值及索引；autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
 
 ### 装配与启停
 
@@ -193,7 +193,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 
 检查文本同时检查动态装配：聊天 `prompt_blocks`/`system_prompt` 的工具开关、时间和模式，`streaming`/`reply_delivery` 的实际语音与媒体能力，`tool_availability` 的可执行集合，夜间能力目录与预算，动态 `prompt_contract` 的 schema 约束，以及场景检查、出镜参考、动作脚本和桌面视频的各自分支。基础预设预览不代表最终请求。
 
-各 TTS 供应商的 `VOICE_DESIGN_GUIDE` 只用于设计音色，不装入语音正文。Runner 的工具 schema 独立维护，发布脚本 [gen_release_notes.py](../scripts/gen_release_notes.py) 自行维护摘要指令。验证沿实际请求、原始返回、解析、存储和呈现核对，静态等价与真实模型质量分别报告；命令归 [提示词调试](../scripts/README.md#提示词调试)。
+[声音设计装配](workflows/voice_design.py) 直接使用实际 TTS 适配器的 `VOICE_DESIGN_GUIDE`，根据角色资料、当前描述和修改意见生成声线描述，指南不进入朗读正文。Runner 的工具 schema 独立维护，发布脚本 [gen_release_notes.py](../scripts/gen_release_notes.py) 自行维护摘要指令。验证沿实际请求、原始返回、解析、存储和呈现核对，静态等价与真实模型质量分别报告；命令归 [提示词调试](../scripts/README.md#提示词调试)。
 
 ## 契约与验证
 

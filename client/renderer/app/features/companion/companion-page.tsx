@@ -13,13 +13,14 @@ import {
   setCompanionSection
 } from '@/app/navigation/app-navigation'
 import { $persona } from '@/modules/character'
-import { ArrowLeft, ArrowRight, Brain, Home, Monitor, Shirt, Users } from '@/shared/lib/icons'
+import { ArrowLeft, ArrowRight, Brain, Home, Monitor, Shirt, Users, Volume2 } from '@/shared/lib/icons'
 import { BTN_SUBTLE, Disclosure, SettingsSectionIntro } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
 
 import { MediaReviewQueue } from './media-review-queue'
 import { MemorySection } from './memory-section'
 import { PersonaPage } from './persona-page'
+import { VoicePage } from './voice-page'
 
 const ENTRIES = [
   {
@@ -29,6 +30,14 @@ const ENTRIES = [
     en: 'About your companion',
     hint: '名字、性格和相处方式',
     enHint: 'Name, personality, and your relationship'
+  },
+  {
+    id: 'voice',
+    icon: Volume2,
+    zh: '声音',
+    en: 'Voice',
+    hint: '选择音色、自主设计或克隆声音',
+    enHint: 'Choose, design, or clone a voice'
   },
   {
     id: 'appearance',
@@ -110,6 +119,9 @@ export function CompanionHub(): React.JSX.Element {
     switch (section) {
       case 'profile':
         return <PersonaPage />
+
+      case 'voice':
+        return <VoicePage />
 
       case 'appearance':
         return (

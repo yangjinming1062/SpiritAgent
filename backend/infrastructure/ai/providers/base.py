@@ -332,6 +332,12 @@ class TTSResult:
 
 
 @dataclass(frozen=True)
+class VoiceReferenceAudio:
+    audio: bytes
+    mime: str
+
+
+@dataclass(frozen=True)
 class VoiceDesignResult:
     voice_id: str
     trial_audio: bytes
@@ -343,20 +349,39 @@ class TTSProvider(BaseProvider):
     service_type: ServiceType = ServiceType.tts
 
     VOICE_CATALOG: ClassVar[list[dict]] = []
+    BUILTIN_VOICE_MODEL: ClassVar[str | None] = None
 
-    VOICE_DESIGN_GUIDE: ClassVar[str | None] = None  # None 不支持声纹设计；非空字符串表示支持并作为面向用户的撰写指引
+    VOICE_DESIGN_GUIDE: ClassVar[str | None] = None  # None 不支持音色设计；非空字符串表示支持并作为面向用户的撰写指引
     VOICE_DESIGN_MODEL: ClassVar[str | None] = None  # 需要特定模型的音色设计；None 表示没有额外模型限制
-
-    def model_for_voice(self, voice: str) -> str:
-        """返回该音色实际使用的模型，供演绎配置与合成共同核对。"""
-        return self.config.model
+    VOICE_CLONE_MODEL: ClassVar[str | None] = None  # 非空表示支持参考音频克隆，并限定所需模型
 
     @abstractmethod
     async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
         """合成 MP3 音频。"""
 
-    async def design_voice(self, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
+    async def design_voice(self, prompt: str, *, preview_text: str) -> VoiceDesignResult:
         raise NotImplementedError(f"{self.provider_name} does not support voice design")
+
+    async def synthesize_designed(
+        self,
+        text: str,
+        *,
+        prompt: str,
+        voice: str,
+        speech_style: SpeechStyle | None,
+    ) -> TTSResult:
+        if not voice:
+            raise ValueError("Designed voice requires its registered voice ID")
+        return await self.synthesize(text, voice=voice, speech_style=speech_style)
+
+    async def synthesize_with_reference(
+        self,
+        text: str,
+        *,
+        reference_audio: VoiceReferenceAudio,
+        speech_style: SpeechStyle | None,
+    ) -> TTSResult:
+        raise NotImplementedError(f"{self.provider_name} does not support voice cloning")
 
 
 @dataclass(frozen=True)

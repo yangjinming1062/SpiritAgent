@@ -1,10 +1,13 @@
 export { playDataUrl, warmAudioContext } from './audio-track'
 export { playPrepared, speak, speakScripted, stopSpeaking } from './tts'
 export {
+  $voiceCatalogRevision,
+  cloneVoice,
+  type CustomVoiceSummary,
   designVoice,
   fetchVoiceCatalogRaw,
+  invalidateVoiceCatalog,
   matchVoicePreference,
-  nextVoice,
   sampleLine,
   type VoiceCatalog,
   type VoiceDesignPreview,

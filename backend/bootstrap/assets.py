@@ -25,7 +25,12 @@ def register_asset_contributions() -> None:
             AssetContribution("scenes", scenes.live_asset_paths),
             AssetContribution("desktop_life", desktop_life.live_asset_paths),
             AssetContribution("posts", posts.live_asset_paths),
-            AssetContribution("media", media.live_asset_paths, cleanup=media.cleanup_obsolete_assets),
+            AssetContribution(
+                "media",
+                media.live_asset_paths,
+                cleanup=media.cleanup_obsolete_assets,
+                forget=media.forget_deleted_assets,
+            ),
             AssetContribution("events", events.live_asset_paths, cleanup=events.cleanup_obsolete_assets),
         ),
     )

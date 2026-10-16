@@ -273,6 +273,10 @@ function startGatewayHost(): (() => void) | undefined {
   })
 
   const offEvent = gateway.onEvent(event => {
+    if (cancelled || !isAuthCurrent?.()) {
+      return
+    }
+
     handleGatewayEvent(event)
 
     if (!isDeviceCommandEvent(event.type)) {

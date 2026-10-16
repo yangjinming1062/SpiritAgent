@@ -6,7 +6,7 @@ from infrastructure.ai.config import (
     ProviderCard,
     ProviderCardUpdate,
 )
-from infrastructure.ai.models import SERVICE_REQUIRED_INPUT_MODALITIES
+from infrastructure.ai.models import SERVICE_REQUIRED_INPUT_MODALITIES, ModelModality
 from infrastructure.ai.providers.registry import (
     model_supports_service,
     provider_configuration_defaults,
@@ -40,17 +40,25 @@ def validate_ai_config(config: AIConfig, system: AIConfig | None = None) -> None
                 if provider is None or not model_supports_service(
                     provider.provider_type,
                     service,
-                    required_modalities=SERVICE_REQUIRED_INPUT_MODALITIES[service],
+                    required_modalities=(
+                        SERVICE_REQUIRED_INPUT_MODALITIES[service] | {ModelModality.audio}
+                        if task == AiTaskKey.voice_clone
+                        else SERVICE_REQUIRED_INPUT_MODALITIES[service]
+                    ),
                     input_modalities=card.input_modalities,
                     output_modalities=card.output_modalities,
                 ):
                     raise ValueError(f"模型 {card.model_name} 不支持任务 {definition.label} 的 {service} 能力")
-                if task == AiTaskKey.voice_design:
+                if task == AiTaskKey.voice_design and service == "tts":
                     settings = defaults[service][provider.provider_type]
                     if not settings.supports_voice_design or (
                         settings.voice_design_model is not None and card.model_name != settings.voice_design_model
                     ):
                         raise ValueError(f"模型 {card.model_name} 不支持音色设计")
+                if task == AiTaskKey.voice_clone:
+                    settings = defaults[service][provider.provider_type]
+                    if not settings.supports_voice_clone or card.model_name != settings.voice_clone_model:
+                        raise ValueError(f"模型 {card.model_name} 不支持声音克隆")
 
 
 def prepare_ai_config(

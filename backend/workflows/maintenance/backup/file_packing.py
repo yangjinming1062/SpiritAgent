@@ -295,7 +295,11 @@ def validate_row_files(table: str, rows: list[dict[str, Any]], rewriter: UrlRewr
     rewriter.scan(rows)
     for row in rows:
         required: list[Any] = []
-        if table == "avatar_assets":
+        if table == "custom_voices" and row.get("is_current"):
+            required.append(row.get("preview_path"))
+            if row.get("kind") == "clone":
+                required.append(row.get("reference_path"))
+        elif table == "avatar_assets":
             required.append(row.get("asset_url"))
             if row.get("seed_fullbody_url") or row.get("is_fullbody_confirmed"):
                 required.append(row.get("seed_fullbody_url"))

@@ -12,6 +12,7 @@ import {
   type DesktopLogoutPayload,
   type DesktopPrefsHydrated,
   type DesktopRunnerStatusEvent,
+  type DesktopServerVoiceSelection,
   type DesktopShortcutsSetPayload,
   type DesktopShortcutsState,
   type DesktopSpritePosition,
@@ -35,7 +36,8 @@ import {
   type SpiritAgentSelectPathsOptions,
   type SpiritAgentUiTheme,
   type SurfaceCompanionPreference,
-  type SurfacePlaybackClaim
+  type SurfacePlaybackClaim,
+  type VoiceSampleUploadPayload
 } from '@ipc/contracts'
 
 import type { DesktopBridge, DesktopFileBridge } from '../shared/ipc/bridge'
@@ -183,6 +185,7 @@ const desktopBridge = {
     },
     stt: (payload: MediaSttPayload) => invoke(IPC.invoke.mediaStt, payload),
     uploadAudio: (payload: AudioUploadPayload) => invoke(IPC.invoke.mediaAudioUpload, payload),
+    uploadVoiceSample: (payload: VoiceSampleUploadPayload) => invoke(IPC.invoke.mediaVoiceSampleUpload, payload),
     tts: (payload: MediaTtsPayload) => invoke(IPC.invoke.mediaTts, payload)
   },
   onAuthChanged: (cb: (payload: DesktopAuthBroadcast) => void) => subscribe(IPC.event.authChanged, cb),
@@ -210,6 +213,7 @@ const desktopBridge = {
   runnerInvoke: (name: string, args: Record<string, unknown>) => invoke(IPC.invoke.runnerInvoke, name, args),
   selectPaths: (options?: SpiritAgentSelectPathsOptions) => invoke(IPC.invoke.selectPaths, options),
   prefs: {
+    applyServerVoice: (payload: DesktopServerVoiceSelection) => invoke(IPC.invoke.prefsApplyServerVoice, payload),
     set: (payload: SpiritAgentPrefsSet) => ipcRenderer.send(IPC.send.prefsSet, payload)
   },
   setUiTheme: (payload: SpiritAgentUiTheme) => ipcRenderer.send(IPC.send.uiTheme, payload),

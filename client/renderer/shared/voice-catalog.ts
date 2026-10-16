@@ -26,16 +26,4 @@ export function voiceSelectionId(voice: Pick<VoiceOption, 'id' | 'provider'>): s
   return `${voice.provider}:${voice.id}`
 }
 
-export function customVoiceSelectionId(provider: string, voiceId: string): string {
-  return `${provider}:custom:${voiceId}`
-}
-
-export function isCustomVoiceSelectionId(value: string): boolean {
-  return value.split(':', 3)[1] === 'custom'
-}
-
-export function voiceSelectionProvider(value: string): string {
-  return value.split(':', 1)[0] ?? ''
-}
-
 export type RequestGateway = <T>(method: string, params?: Record<string, unknown>) => Promise<T>

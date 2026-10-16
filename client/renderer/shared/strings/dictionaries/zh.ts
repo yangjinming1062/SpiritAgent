@@ -114,8 +114,8 @@ export const dict = {
     voice: {
       invalidTitle: '音色已失效',
       invalidMessage: (name: string) =>
-        `你之前选的音色「${name}」已不在当前目录，已临时改用默认音色，请在设置的「声音」中重新选择。`,
-      invalidAction: '去设置'
+        `你之前选的音色「${name}」已不可用，已临时改用默认音色，请在「伙伴 → 声音」中重新选择。`,
+      invalidAction: '选择声音'
     },
     system: {
       view: '查看',
@@ -138,6 +138,67 @@ export const dict = {
     failed: '激活失败，请检查激活码后重试'
   },
 
+  voice: {
+    title: '声音',
+    intro: '选择固定音色，或为伙伴设计、克隆一个专属声音。',
+    noTtsConfigured: '语音暂时不可用，你仍然可以继续用文字聊天。稍后再来选择声音。',
+    noVoicesForLanguage: '暂时没有适合当前语言的声音，你仍然可以继续用文字聊天。',
+    loadFailed: '音色列表加载失败',
+    sampleLine: (name: string) => (name ? `你好呀，我是${name}。这是我的声音～` : '你好呀，这是我的声音～'),
+    genderFilterAria: '声线筛选',
+    genderFilters: {
+      '': '全部',
+      female: '女声',
+      male: '男声',
+      neutral: '中性'
+    },
+    preview: '试听',
+    use: '使用',
+    inUse: '使用中',
+    noMatch: '当前筛选无匹配音色。',
+    designHeading: '设计专属音色',
+    designTab: '设计音色',
+    designPlaceholder: '描述你想要的音色…',
+    designGenerate: '重新试听',
+    designGenerating: '生成中…',
+    designFailed: '声音生成失败，请稍后重试。',
+    methodAria: '声音来源',
+    fixedHeading: '固定音色',
+    cloneHeading: '克隆声音',
+    useThisVoice: '使用这个声音',
+    saving: '正在保存…',
+    showRecommended: '只看推荐声音',
+    showAll: '查看全部声音',
+    designIntro: '让伙伴根据角色资料自主设计声音，也可以自己编写或修改音色描述。',
+    autoDesign: '自主设计',
+    autoDesignUnavailable: '自主设计暂未配置，可以手动填写音色描述并试听。',
+    designUnavailable: '音色设计暂未配置，请选择固定音色或克隆声音。',
+    designGuide: '查看描述建议',
+    feedbackLabel: '调整意见',
+    feedbackPlaceholder: '哪里不满意？例如：声音再柔和一点，保留原来的成熟感…',
+    adjustDesign: '按意见调整',
+    savedVoice: '已保存的声音',
+    savedUnavailable: '这个声音暂时不可用，请检查语音配置或选择其他声音。',
+    cloneIntro: '录制或上传清晰、自然的单人说话音频。建议 5–30 秒，最多 60 秒，文件不超过 24 MiB。',
+    cloneUnavailable: '声音克隆暂未配置，请选择固定音色或设计音色。',
+    startRecording: '开始录音',
+    stopRecording: '停止录音',
+    rerecord: '重新录制',
+    uploadAudio: '上传音频',
+    recordingHint: '正在录音，60 秒后会自动停止…',
+    uploadingAudio: '正在处理音频…',
+    sampleDuration: (seconds: number) => `参考音频 · ${seconds} 秒`,
+    previewOriginal: '播放原音',
+    clonePreview: '克隆并试听',
+    emptyAudio: '音频为空，请重新录制或上传。',
+    audioTooLarge: '音频文件不能超过 24 MiB。',
+    uploadFailed: '音频上传失败，请重试。',
+    micUnavailable: '无法使用麦克风，请检查系统权限或上传音频。',
+    previewFailed: '试听播放失败，请重试。',
+    onboardingHint: '选择喜欢的声音并确认。之后可以随时在「伙伴 → 声音」中调整。',
+    describePreference: '描述想要的声音',
+    continueText: '先用文字聊天'
+  },
   settings: {
     nav: {
       about: '关于',
@@ -319,7 +380,7 @@ export const dict = {
       title: '陪伴方式',
       intro: '选择伙伴什么时候主动找你，以及平时可以做些什么。',
       moreOptions: '更多陪伴选项',
-      voiceHeading: '对话与语音',
+      voiceHeading: '回应与录音',
       responsePreference: '回应偏好',
       responsePreferenceText: '偏好文字',
       responsePreferenceVoice: '偏好语音',
@@ -456,30 +517,6 @@ export const dict = {
       hintSaved: '已自动保存',
       hintSaveFailed: '保存失败，稍后再试',
       hintHydrateFailed: '已保存，但本地刷新失败，稍后再试'
-    },
-    voice: {
-      title: '声音',
-      intro: '选择适合当前系统语言的说话音色，或设计一个专属音色。',
-      noTtsConfigured: '语音暂时不可用，你仍然可以继续用文字聊天。稍后再来选择声音。',
-      noVoicesForLanguage: '暂时没有适合当前语言的声音，你仍然可以继续用文字聊天。',
-      loadFailed: '音色列表加载失败',
-      sampleLine: (name: string) => (name ? `你好呀，我是${name}。这是我的声音～` : '你好呀，这是我的声音～'),
-      genderFilterAria: '声线筛选',
-      genderFilters: {
-        '': '全部',
-        female: '女声',
-        male: '男声',
-        neutral: '中性'
-      },
-      preview: '试听',
-      use: '使用',
-      inUse: '使用中',
-      noMatch: '当前筛选无匹配音色。',
-      designHeading: '设计专属音色',
-      designPlaceholder: '描述你想要的音色…',
-      designGenerate: '生成预览',
-      designGenerating: '生成中…',
-      designFailed: '生成失败，换个描述试试？'
     },
     theme: {
       heading: '主题',

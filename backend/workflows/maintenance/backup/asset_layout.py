@@ -57,6 +57,8 @@ def plan_asset_layout(
     }
 
     def directory(table: str, row: dict[str, Any]) -> tuple[int, str]:
+        if table == "custom_voices":
+            return 3, "voices"
         if table in {"avatar_assets", "companion_character_cards"}:
             return 0, ""
         if table == "companion_outfits":

@@ -1,10 +1,10 @@
 import type { RequestGateway } from '@/shared/voice-catalog'
 
-import { fetchVoiceCatalogRaw, isCustomVoiceSelectionId, voiceSelectionId, voiceSelectionProvider } from './voice'
+import { fetchVoiceCatalogRaw, voiceSelectionId } from './voice'
 
 type VoiceValidityResult = { valid: true } | { valid: false; name: string; reason: 'catalog_miss' }
 
-/** 校验音色 id 是否仍在云端目录中（供应商裁剪 / 改名 / 换源）。纯检查：过期 id 的清除由调用方写回偏好，语音模块不持有音色偏好状态。 */
+/** 检查固定目录或已确认方案；失效音色由调用方清除。目录请求失败时保留当前选择。 */
 export async function checkVoiceValidity(
   voiceId: string,
   requestGateway: RequestGateway
@@ -19,12 +19,10 @@ export async function checkVoiceValidity(
     return { valid: true }
   }
 
-  const exact = result.catalog.voices.find(v => voiceSelectionId(v) === voiceId)
+  const exact = result.catalog.voices.some(voice => voiceSelectionId(voice) === voiceId)
+  const savedCustom = result.catalog.customVoices.some(voice => voice.voice_id === voiceId && voice.available === true)
 
-  const customProvider = isCustomVoiceSelectionId(voiceId) ? voiceSelectionProvider(voiceId) : ''
-  const configuredCustom = customProvider && result.catalog.providers.includes(customProvider)
-
-  if (exact || configuredCustom) {
+  if (exact || savedCustom) {
     return { valid: true }
   }
 

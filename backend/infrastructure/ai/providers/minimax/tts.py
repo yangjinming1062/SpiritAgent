@@ -13,12 +13,8 @@ class MiniMaxTTSProvider(TTSProvider):
     provider_name = "minimax"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
     VOICE_DESIGN_GUIDE = """\
-用一段文字描述你想要的音色，描述越具体效果越好。建议涵盖：
-• 性别与年龄：如"沉稳可靠的中年男性"、"专业播音腔的中年女性"
-• 音色质感：如"低沉富有磁性"、"清亮柔和"
-• 情绪语气：如"温柔自信"、"慵懒俏皮"
-• 语速节奏：如"语速时快时慢"、"缓慢沉稳"
-设计完成后会生成一段示例音频供你试听。\
+用一段简洁的文字描述声音，突出性别和年龄感、声线与音色质感、习惯语气、语速与节奏。
+特征应具体且协调，例如清亮柔和的声线、温柔自信的语气、缓慢沉稳的节奏。\
 """
     # id/label 与官方系统音色一致（303 条中本目录 81 条经 t2a_v2 实测通过）；多语种 222 条未收录（项目侧仅 zh/en，扩展需同样实测探活）。
     VOICE_CATALOG: ClassVar[list[dict]] = [
@@ -703,8 +699,8 @@ class MiniMaxTTSProvider(TTSProvider):
         audio = extract_minimax_audio(raise_for_minimax_response(resp))
         return TTSResult(audio=audio, mime="audio/mpeg", voice=payload["voice_setting"]["voice_id"])
 
-    async def design_voice(self, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
-        payload: dict = {"prompt": prompt, "preview_text": preview_text or "你好，我是你的桌面伙伴。"}
+    async def design_voice(self, prompt: str, *, preview_text: str) -> VoiceDesignResult:
+        payload: dict = {"prompt": prompt, "preview_text": preview_text}
         resp = await self._client.post("/v1/voice_design", json=payload)
         body = raise_for_minimax_response(resp)
         voice_id = body.get("voice_id", "")

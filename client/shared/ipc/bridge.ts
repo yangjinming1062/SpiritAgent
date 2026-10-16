@@ -113,6 +113,7 @@ export interface DesktopBridge {
   runnerGetTools: AsyncIpc<IpcInvokeContract['spiritagent:runner:get-tools']>
   setUiTheme: (payload: IpcSendContract['spiritagent:ui-theme'][0]) => void
   prefs: {
+    applyServerVoice: AsyncIpc<IpcInvokeContract['spiritagent:prefs:apply-server-voice']>
     set: (payload: IpcSendContract['spiritagent:prefs:set'][0]) => void
   }
   shortcuts: {
@@ -153,6 +154,7 @@ export interface DesktopBridge {
   media: {
     stt: AsyncIpc<IpcInvokeContract['spiritagent:media:stt']>
     uploadAudio: AsyncIpc<IpcInvokeContract['spiritagent:media:audio-upload']>
+    uploadVoiceSample: AsyncIpc<IpcInvokeContract['spiritagent:media:voice-sample-upload']>
     tts: AsyncIpc<IpcInvokeContract['spiritagent:media:tts']>
     onboardingAudio: {
       read: AsyncIpc<IpcInvokeContract['spiritagent:onboardingAudio:read']>

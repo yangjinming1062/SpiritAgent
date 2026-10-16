@@ -27,7 +27,7 @@ const AUTOPLAY_VOICE_STORAGE_KEY = registerCompanionStorageKey('da.companion.aut
 const POSTS_ENABLED_STORAGE_KEY = registerCompanionStorageKey('da.companion.postsEnabled')
 const INFORMATION_DISCOVERY_STORAGE_KEY = registerCompanionStorageKey('da.companion.informationDiscoveryEnabled')
 
-// localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经 prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
+// localStorage 是各窗口的即时缓存；本地编辑经 prefs:set 合入主进程镜像并上云。服务端确认的音色先同步镜像，再由水合广播回写缓存与 atom。
 function reportCloud(key: string, value: unknown): void {
   preferencesApi()?.prefs?.set({ key, value })
 }
@@ -43,9 +43,27 @@ const responsePreferencePersisted = definePersistedEnum<ResponsePreference>({
 export const $responsePreference = responsePreferencePersisted.$atom
 
 export function setCompanionVoiceId(voice: string): void {
+  cacheCompanionVoiceId(voice)
+  reportCloud('companion.voice_id', voice)
+}
+
+function cacheCompanionVoiceId(voice: string): void {
   $companionVoiceId.set(voice)
   persistString(COMPANION_VOICE_ID_STORAGE_KEY, voice || null)
-  reportCloud('companion.voice_id', voice)
+}
+
+export async function applyServerCompanionVoiceId(voice: string): Promise<void> {
+  const auth = $auth.get()
+
+  if (auth.kind !== 'authenticated') {
+    return
+  }
+
+  await preferencesApi().prefs.applyServerVoice({
+    accountId: auth.snapshot.accountId,
+    authSessionId: auth.snapshot.sessionId,
+    voiceId: voice
+  })
 }
 
 export function setResponsePreference(mode: ResponsePreference): void {
@@ -115,7 +133,7 @@ const HYDRATED_BOOLEAN_PREFS = [
   ['llm_autonomy', llmAutonomyPref]
 ] as const
 
-// 云端水合应用：只接受类型匹配的键，坏值静默跳过（fail-open）。借道既有 setter 落 localStorage + atom；回写的 prefs:set 上报在主进程侧与最近一次成功上云内容比对后消解，不会形成回环。
+// 云端水合应用：只接受类型匹配的键；音色仅回写缓存，其他偏好沿用 setter，主进程消解与已上云内容相同的回写。
 export function initCompanionPrefsSync(): () => void {
   const onStorage = (event: StorageEvent): void => {
     if (event.key === accountStorageKey(COMPANION_VOICE_ID_STORAGE_KEY) || event.key === null) {
@@ -162,7 +180,7 @@ export function initCompanionPrefsSync(): () => void {
     }
 
     if (typeof companion.voice_id === 'string') {
-      setCompanionVoiceId(companion.voice_id)
+      cacheCompanionVoiceId(companion.voice_id)
     }
 
     if (companion.response_preference === 'text' || companion.response_preference === 'voice') {

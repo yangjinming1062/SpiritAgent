@@ -33,6 +33,7 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
     "identity": ("personas", "avatar_assets", "companion_character_cards"),
     "conversations": (
         "conversations",
+        "custom_voices",
         "companion_topic_batches",
         "companion_topics",
         "companion_topic_feedback",
@@ -46,7 +47,7 @@ BACKUP_SECTIONS: dict[str, tuple[str, ...]] = {
     "scenes": ("companion_scenes",),
     "desktop_life": ("desktop_video_sets", "desktop_video_actions", "desktop_video_states"),
     "automation": ("cron_jobs", "companion_intents"),
-    "settings": ("user_model_configs", "user_settings", "user_preferences"),
+    "settings": ("user_model_configs", "custom_voices", "user_settings", "user_preferences"),
 }
 BACKUP_SECTION_IDS = tuple(BACKUP_SECTIONS)
 # 选中即整组恢复，不允许落成半个身份/会话/视频包。

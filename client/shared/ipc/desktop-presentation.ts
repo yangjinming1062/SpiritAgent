@@ -165,7 +165,7 @@ export const APP_PAGES = ['chat', 'companion', 'posts', 'settings'] as const
 export type AppPage = (typeof APP_PAGES)[number]
 export const SETTINGS_SECTIONS = ['companionship', 'voice', 'display', 'devices', 'application', 'advanced'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
-export const COMPANION_SECTIONS = ['home', 'profile', 'appearance', 'scene', 'desktop-life', 'memory'] as const
+export const COMPANION_SECTIONS = ['home', 'profile', 'voice', 'appearance', 'scene', 'desktop-life', 'memory'] as const
 export type CompanionSection = (typeof COMPANION_SECTIONS)[number]
 export type PostsTab = 'posts' | 'diary'
 

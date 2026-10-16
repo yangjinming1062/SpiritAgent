@@ -30,12 +30,11 @@ import { InferencePage } from './station/inference-page'
 import { RunnerPage } from './station/runner-page'
 import { SkillsToolsTabs } from './station/skills-tools-tabs'
 import { ThemePage } from './theme-page'
-import { VoicePage } from './voice-page'
 
 const LABELS = {
   zh: {
     companionship: '陪伴方式',
-    voice: '声音与回应',
+    voice: '回应与录音',
     display: '显示与外观',
     devices: '设备与能力',
     application: '应用与账户',
@@ -43,7 +42,7 @@ const LABELS = {
   },
   en: {
     companionship: 'Companionship',
-    voice: 'Voice and replies',
+    voice: 'Replies and recording',
     display: 'Display and appearance',
     devices: 'Devices and abilities',
     application: 'App and accounts',
@@ -167,14 +166,7 @@ export function AppSettings(): React.JSX.Element {
         return <InteractionPage part="companionship" />
 
       case 'voice':
-        return (
-          <div className="space-y-5">
-            <VoicePage />
-            <Disclosure title={english ? 'Replies and recording' : '回应方式与录音'}>
-              <InteractionPage part="voice" />
-            </Disclosure>
-          </div>
-        )
+        return <InteractionPage part="voice" />
 
       case 'display':
         return (

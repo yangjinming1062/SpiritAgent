@@ -1,5 +1,3 @@
-import base64
-
 from features.companion.interaction_stats import record_interaction
 from features.companion.persona_service import PersonaValidationError
 from features.companion.use_cases import (
@@ -9,17 +7,17 @@ from features.companion.use_cases import (
     submit_onboarding,
     voice_catalog,
 )
-from features.companion.voice_catalog import design_voice, normalize_voice_language
+from features.companion.voice_catalog import normalize_voice_language
+from features.media.voice_operations import cancel_voice_operation, run_voice_operation
+from features.media.voices import clone_voice, confirm_voice, design_voice
 from infrastructure.ai.llm_client import MissingLlmConfigError
-from infrastructure.constants import JSONRPC_INVALID_PARAMS, MAX_VOICE_DESIGN_PROMPT_CHARS
+from infrastructure.constants import JSONRPC_INVALID_PARAMS
 from infrastructure.logger import get_logger
 from runtime.desktop.jsonrpc import JsonRpcError
 from runtime.gateway_contracts import GatewaySession, RegisterMethod
 from runtime.gateway_contracts import optional_str as _optional_str
 from runtime.gateway_contracts import require_str as _require_str
-
-_VOICE_PREVIEW_TEXT_MAX_CHARS = MAX_VOICE_DESIGN_PROMPT_CHARS
-
+from workflows.voice_design import generate_voice_prompt
 
 logger = get_logger(__name__)
 
@@ -87,33 +85,74 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
         return (await match_voice(user_id, preference, language)).model_dump()
 
     async def tts_design_voice(params: dict) -> dict:
-        prompt = params.get("prompt")
-        if not isinstance(prompt, str):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "prompt must be a non-empty string")
-        prompt = prompt.strip()
-        if not prompt or len(prompt) > MAX_VOICE_DESIGN_PROMPT_CHARS:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"prompt must be 1..{MAX_VOICE_DESIGN_PROMPT_CHARS} chars")
-        preview_text = params.get("preview_text")
-        if not isinstance(preview_text, str):
-            preview_text = ""
-        if len(preview_text) > _VOICE_PREVIEW_TEXT_MAX_CHARS:
-            raise JsonRpcError(
-                JSONRPC_INVALID_PARAMS,
-                f"preview_text must be at most {_VOICE_PREVIEW_TEXT_MAX_CHARS} chars",
-            )
         try:
-            result = await design_voice(user_id, prompt, preview_text=preview_text)
+            result = await run_voice_operation(
+                user_id,
+                _require_str(params, "operation_id"),
+                lambda: design_voice(
+                    user_id,
+                    _require_str(params, "prompt"),
+                    preview_text=_require_str(params, "preview_text"),
+                    provider_name=_optional_str(params, "provider") or "",
+                ),
+            )
         except (ValueError, MissingLlmConfigError) as exc:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
-        return {
-            "provider": result.provider,
-            "voice_id": result.voice_id,
-            "trial_audio_base64": base64.b64encode(result.trial_audio).decode("ascii"),
-            "trial_audio_mime": result.trial_audio_mime,
-        }
+        return result.model_dump()
+
+    async def tts_generate_voice_prompt(params: dict) -> dict:
+        try:
+            result = await run_voice_operation(
+                user_id,
+                _require_str(params, "operation_id"),
+                lambda: generate_voice_prompt(
+                    user_id,
+                    _optional_str(params, "current_prompt") or "",
+                    _optional_str(params, "feedback") or "",
+                    _optional_str(params, "preference") or "",
+                ),
+            )
+        except (ValueError, MissingLlmConfigError) as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+        return result.model_dump()
+
+    async def tts_clone_voice(params: dict) -> dict:
+        try:
+            result = await run_voice_operation(
+                user_id,
+                _require_str(params, "operation_id"),
+                lambda: clone_voice(
+                    user_id,
+                    _require_str(params, "sample_id"),
+                    preview_text=_require_str(params, "preview_text"),
+                ),
+            )
+        except (ValueError, MissingLlmConfigError) as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+        return result.model_dump()
+
+    async def tts_confirm_voice(params: dict) -> dict:
+        version = params.get("expected_version")
+        if type(version) is not int or version < 0:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "expected_version must be a nonnegative integer")
+        try:
+            return (await confirm_voice(user_id, _require_str(params, "candidate_id"), version)).model_dump()
+        except (ValueError, MissingLlmConfigError) as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+
+    async def tts_cancel_voice_operation(params: dict) -> dict:
+        try:
+            return {"cancelled": cancel_voice_operation(user_id, _require_str(params, "operation_id"))}
+        except ValueError as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
 
     register("tts.list_voices", tts_list_voices)
 
     register("tts.match_voice", tts_match_voice)
 
-    register("tts.design_voice", tts_design_voice)
+    # 制作通过账户内 operation_id 隔离，不排在普通 RPC 后面，确保取消能立即定位任务。
+    register("tts.design_voice", tts_design_voice, concurrent=True)
+    register("tts.generate_voice_prompt", tts_generate_voice_prompt, concurrent=True)
+    register("tts.clone_voice", tts_clone_voice, concurrent=True)
+    register("tts.confirm_voice", tts_confirm_voice)
+    register("tts.cancel_voice_operation", tts_cancel_voice_operation, concurrent=True)

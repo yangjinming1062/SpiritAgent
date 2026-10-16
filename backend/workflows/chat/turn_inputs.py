@@ -16,6 +16,7 @@ from features.conversation.main_conversation import SPECIAL_KIND
 from features.conversation.request_contracts import ChatRequest
 from features.conversation.snapshots import ConversationSnapshot, MessageSnapshot
 from features.conversation.turn_access import context_messages, conversation_topic_ids
+from features.media.speech import resolve_reply_voice
 from features.memory.memory_bootstrap import build_user_profile_extras
 from features.memory.memory_format import (
     format_background_memory_block,
@@ -33,7 +34,6 @@ from infrastructure.ai.providers.base import ChatProvider, ProviderConfig, Reaso
 from infrastructure.ai.providers.registry import resolve_context_tokens
 from infrastructure.ai.responses import approx_responses_tokens, message_to_response_items, request_input_modalities
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.tts_service import resolve_reply_voice
 from infrastructure.config import SETTINGS
 from infrastructure.constants import DEFAULT_LANGUAGE, SESSION_TO_GLOBAL_KEY_ALIASES, TEMPERATURE_MAX, TEMPERATURE_MIN
 from infrastructure.text import (

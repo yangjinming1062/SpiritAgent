@@ -9,7 +9,6 @@ from infrastructure.ai.llm_client import resolve_provider_chain
 from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_json
 from infrastructure.ai.providers.http import ProviderResultUnknownError
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.tts_service import synthesize_speech
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.assets.asset_store import (
     dated_asset_directory,
@@ -50,6 +49,7 @@ from features.media.contracts import VideoJobSnapshot
 from features.media.identity_contracts import CharacterCardSnapshot
 from features.media.image_generation import ImageGenerationError, generate_images
 from features.media.queries import get_job, get_video_jobs
+from features.media.speech import synthesize_speech
 from features.media.video_jobs import (
     cleanup_user_media,
     discard_video_job,

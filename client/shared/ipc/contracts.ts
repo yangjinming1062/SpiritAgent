@@ -298,6 +298,12 @@ export interface SpiritAgentPrefsSet {
   value: unknown
 }
 
+export interface DesktopServerVoiceSelection {
+  accountId: string
+  authSessionId: string
+  voiceId: string
+}
+
 export interface DesktopShortcutsConfig {
   openMain: string
   toggleVisibility: string
@@ -408,6 +414,16 @@ export interface AudioUploadResult {
   url: string
   mime_type: string
   duration: number
+}
+
+export interface VoiceSampleUploadPayload {
+  authSessionId: string
+  dataUrl: string
+  filename: string
+}
+
+export interface VoiceSampleUploadResult extends AudioUploadResult {
+  sample_id: string
 }
 
 export interface MediaTtsPayload {
@@ -640,6 +656,9 @@ export interface IpcInvokeContract {
   // 媒体
   'spiritagent:media:stt': (payload: MediaSttPayload) => { text: string } | Promise<{ text: string }>
   'spiritagent:media:audio-upload': (payload: AudioUploadPayload) => AudioUploadResult | Promise<AudioUploadResult>
+  'spiritagent:media:voice-sample-upload': (
+    payload: VoiceSampleUploadPayload
+  ) => VoiceSampleUploadResult | Promise<VoiceSampleUploadResult>
   'spiritagent:media:tts': (
     payload: MediaTtsPayload
   ) => { dataUrl: string; mimeType: string } | Promise<{ dataUrl: string; mimeType: string }>
@@ -655,7 +674,8 @@ export interface IpcInvokeContract {
     | { bytes: number; dataUrl: string; mimeType: string; tag: string }
     | Promise<{ bytes: number; dataUrl: string; mimeType: string; tag: string }>
 
-  // 快捷键
+  // 偏好与快捷键
+  'spiritagent:prefs:apply-server-voice': (payload: DesktopServerVoiceSelection) => Promise<boolean>
   'spiritagent:shortcuts:get': () => DesktopShortcutsState | Promise<DesktopShortcutsState>
   'spiritagent:shortcuts:set': (
     payload: DesktopShortcutsSetPayload
@@ -802,6 +822,7 @@ export const IPC = {
     runnerGetTools: 'spiritagent:runner:get-tools',
     runnerConfigRead: 'spiritagent:runner-config:read',
     runnerConfigPatch: 'spiritagent:runner-config:patch',
+    prefsApplyServerVoice: 'spiritagent:prefs:apply-server-voice',
     shortcutsGet: 'spiritagent:shortcuts:get',
     shortcutsSet: 'spiritagent:shortcuts:set',
     surfaceOpen: 'spiritagent:surface:open',
@@ -824,6 +845,7 @@ export const IPC = {
     toolsetSetEnabled: 'spiritagent:toolset:set-enabled',
     mediaStt: 'spiritagent:media:stt',
     mediaAudioUpload: 'spiritagent:media:audio-upload',
+    mediaVoiceSampleUpload: 'spiritagent:media:voice-sample-upload',
     mediaTts: 'spiritagent:media:tts',
     mediaVideoUpload: 'spiritagent:media:video-upload',
     mediaDesktopVideoUpload: 'spiritagent:media:desktop-video-upload',

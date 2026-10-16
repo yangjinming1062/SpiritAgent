@@ -1,6 +1,6 @@
 import type { IpcMain } from 'electron'
 
-import { IPC } from '@ipc/contracts'
+import { type DesktopServerVoiceSelection, IPC } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
@@ -8,6 +8,7 @@ import * as store from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows } from '../shared/utils'
 
 interface PrefsIpcDeps {
+  applyServerVoice: (payload: DesktopServerVoiceSelection) => Promise<boolean>
   ipcMain: IpcMain
   log: (chunk: string) => void
 }
@@ -15,7 +16,21 @@ interface PrefsIpcDeps {
 // 伙伴偏好写穿透终点：点键合入配置镜像，乘既有管道（镜像原子写 + runner 推送 + 云端防抖上云，见 shared/lib/config-sync.ts）。只放行 companion.*；主题、快捷键与语言走各自带校验的通道，terminal 等本机节不允许经此写入。
 const ALLOWED_KEY_PREFIX = 'companion.'
 
-export function registerPrefsIpc({ ipcMain, log }: PrefsIpcDeps): void {
+export function registerPrefsIpc({ applyServerVoice, ipcMain, log }: PrefsIpcDeps): void {
+  ipcMain.handle(IPC.invoke.prefsApplyServerVoice, (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      return false
+    }
+
+    const { accountId, authSessionId, voiceId } = payload as Partial<DesktopServerVoiceSelection>
+
+    if (typeof accountId !== 'string' || typeof authSessionId !== 'string' || typeof voiceId !== 'string') {
+      return false
+    }
+
+    return applyServerVoice({ accountId, authSessionId, voiceId })
+  })
+
   ipcMain.on(IPC.send.prefsSet, (_event, payload: unknown) => {
     if (!payload || typeof payload !== 'object') {
       return

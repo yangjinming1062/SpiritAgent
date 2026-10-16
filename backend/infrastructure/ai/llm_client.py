@@ -116,6 +116,8 @@ async def resolve_provider_chain(
     required = (
         required_modalities if required_modalities is not None else SERVICE_REQUIRED_INPUT_MODALITIES[service.value]
     )
+    if task == AiTaskKey.voice_clone:
+        required = required | {ModelModality.audio}
     user_ai = await read_user_ai_config(db, user_id)
     system_ai = SETTINGS.ai_config
     user_task = user_ai.tasks.get(task)
@@ -143,13 +145,21 @@ async def resolve_provider_chain(
             card_ids=card_ids,
         )
     ]
-    if task == AiTaskKey.voice_design:
+    if task == AiTaskKey.voice_design and service == ServiceType.tts:
         defaults = provider_configuration_defaults().get(service.value, {})
         chain = [
             config
             for config in chain
             if (settings := defaults[config.provider_name]).supports_voice_design
             and (settings.voice_design_model is None or config.model == settings.voice_design_model)
+        ]
+    if task == AiTaskKey.voice_clone:
+        defaults = provider_configuration_defaults().get(service.value, {})
+        chain = [
+            config
+            for config in chain
+            if (settings := defaults[config.provider_name]).supports_voice_clone
+            and config.model == settings.voice_clone_model
         ]
     return [
         config

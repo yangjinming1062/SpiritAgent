@@ -103,6 +103,7 @@ export {
   $llmAutonomy,
   $postsEnabled,
   $responsePreference,
+  applyServerCompanionVoiceId,
   autoplayVoicePref,
   informationDiscoveryPref,
   initCompanionPrefsSync,

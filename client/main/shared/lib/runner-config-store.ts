@@ -46,7 +46,7 @@ function load(): Record<string, unknown> {
   return config
 }
 
-/** 跨调用共享同一引用；变更必须经由 `patch` / `mutate` / `applyCloudMirror` / `clearSyncedMirror` 进行。*/
+/** 跨调用共享同一引用；变更必须经由本模块的串行写入口进行。*/
 export function read(): Record<string, unknown> {
   return load()
 }
@@ -119,6 +119,34 @@ export async function applyCloudMirror(
 
     load()
     Object.assign(config, sections)
+    await persistAndPush({ notifyCloud: false })
+  })
+}
+
+/** 已在云端保存的单键更新：在串行队列内合并，避免覆盖并发偏好编辑；落盘失败仍保留云端值。 */
+export async function applyCloudValue(
+  keyPath: readonly string[],
+  value: unknown,
+  isCurrent: () => boolean
+): Promise<void> {
+  await enqueue(async () => {
+    if (!isCurrent()) {
+      return
+    }
+
+    load()
+    let previous: unknown = config
+
+    for (const key of keyPath) {
+      previous =
+        previous && typeof previous === 'object' ? ownChild(previous as Record<string, unknown>, key) : undefined
+    }
+
+    if (previous === value) {
+      return
+    }
+
+    setIn(config, keyPath, value)
     await persistAndPush({ notifyCloud: false })
   })
 }

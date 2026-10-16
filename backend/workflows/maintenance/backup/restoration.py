@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 import uuid
 from dataclasses import dataclass
@@ -14,7 +15,9 @@ from features.configuration.settings.timezone import resolve_user_timezone
 from features.conversation.backup import validate_special_merges
 from features.desktop_life.backup import advance_playback_versions, desktop_video_tasks_for_removal, playback_versions
 from features.desktop_life.backup_assets import validate_desktop_files
+from features.media.backup import restore_current_voices
 from features.media.contracts import RemovedActionVideoTask
+from features.media.voice_queries import custom_voice_tokens
 from features.topics.backup import validate_batch_merges
 from infrastructure.backup import BACKUP_REGISTRY, BackupContext
 from infrastructure.config import SETTINGS
@@ -52,13 +55,15 @@ logger = get_logger(__name__)
 # 这些表的 SQL 参数含供应商密钥，数据库错误的堆栈不写入日志。
 _SECRET_TABLES = frozenset({"user_model_configs"})
 BACKUP_RESTORE_ORDER: tuple[str, ...] = (
+    "user_model_configs",
+    "custom_voices",
     "conversations",
     "companion_topic_batches",
     "companion_topics",
     "companion_topic_feedback",
     "messages",
     "companion_topic_usages",
-    *(table for table in TABLES if table not in CONVERSATION_TABLES),
+    *(table for table in TABLES if table not in CONVERSATION_TABLES | {"user_model_configs", "custom_voices"}),
 )
 # 父类覆盖会改变仍被保留的子类引用，子类未随本次恢复清理时须保留父类；None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
@@ -245,6 +250,30 @@ async def _restore_table(
     return new_map, inserted
 
 
+def _validate_voice_dependencies(
+    table: str,
+    rows: dict[str, list[dict[str, Any]]],
+    successful: set[str],
+    rewriter: UrlRewriter,
+) -> None:
+    tokens: set[str] = set()
+    if table == "conversations":
+        tokens = custom_voice_tokens([row.get("reply_json") for row in rows.get("messages", [])])
+    elif table == "user_settings":
+        for row in rows[table]:
+            if row.get("setting_key") == "companion.voice_id":
+                tokens |= custom_voice_tokens(json.loads(row["setting_value"]))
+    if not tokens:
+        return
+    profiles = {row["token"]: row for row in rows.get("custom_voices", []) if row.get("version", 0) > 0}
+    if "custom_voices" not in successful or not tokens <= profiles.keys():
+        raise ValueError("引用的声音方案无法恢复，此类别已保留原有数据。")
+    for token in tokens:
+        profile = profiles[token]
+        if profile["kind"] == "clone":
+            rewriter.require_file(profile.get("reference_path") or "")
+
+
 async def _preflight_tables(
     db: AsyncSession,
     rows: dict[str, list[dict[str, Any]]],
@@ -304,6 +333,7 @@ async def _preflight_tables(
             available_rows = {name: rows[name] for name in successful | set(group) if name in rows}
             staged_map = dict(id_map)
             try:
+                await asyncio.to_thread(_validate_voice_dependencies, table, rows, successful, rewriter)
                 if table == "conversations" and conversation_merge_conflict is not None:
                     raise ValueError(conversation_merge_conflict)
                 async with db.begin_nested():
@@ -706,6 +736,14 @@ async def restore_backup_rows(
                 mode=mode,
                 import_batch_id=import_batch_id,
                 asset_owner_id=target_user_id,
+            )
+        if {"custom_voices", "user_settings"} <= imported.keys():
+            await restore_current_voices(
+                db,
+                target_user_id,
+                compatible_rows["custom_voices"],
+                id_map["custom_voices"],
+                mode=mode,
             )
         layout = plan_asset_layout(
             compatible_rows,

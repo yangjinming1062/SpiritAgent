@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.assets.lifecycle import enqueue_asset_cleanup
 from features.assets.references import asset_paths, message_asset_paths
 from features.media.queries import invalidate_conversation_video_jobs
+from features.media.voice_queries import custom_voice_tokens, voice_asset_references
 
 from .models import Conversation, Message
 
@@ -36,6 +37,11 @@ async def collect_message_asset_releases(
     if not message_ids and from_message_id is not None:
         return set()
     released = set().union(*(message_asset_paths(message, user_id) for message in messages))
+    released |= await voice_asset_references(
+        db,
+        user_id,
+        set().union(*(custom_voice_tokens(message.reply_json) for message in messages)),
+    )
     jobs = await invalidate_conversation_video_jobs(
         db,
         user_id,

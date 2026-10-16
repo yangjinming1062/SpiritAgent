@@ -36,6 +36,21 @@ async def get_user_setting(db: AsyncSession, user_id: int, key: str) -> Any:
     return None if raw is None else decode_setting_value(raw)
 
 
+async def lock_user_setting(db: AsyncSession, user_id: int, key: str, default: Any) -> Any:
+    """建立并锁定设置行，供需要比较后提交的跨业务操作使用。"""
+    await db.execute(
+        insert(UserSetting)
+        .values(user_id=user_id, setting_key=key, setting_value=json.dumps(default))
+        .on_conflict_do_nothing(index_elements=["user_id", "setting_key"]),
+    )
+    raw = await db.scalar(
+        select(UserSetting.setting_value)
+        .where(UserSetting.user_id == user_id, UserSetting.setting_key == key)
+        .with_for_update(),
+    )
+    return decode_setting_value(raw)
+
+
 async def put_user_settings(db: AsyncSession, user_id: int, values: Mapping[str, Any]) -> None:
     if not values:
         return

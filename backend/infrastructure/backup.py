@@ -30,6 +30,7 @@ BACKUP_TABLE_ORDER = (
     "desktop_video_actions",
     "desktop_video_states",
     "personas",
+    "custom_voices",
     "user_settings",
     "cron_jobs",
     "companion_intents",

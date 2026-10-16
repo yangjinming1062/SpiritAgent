@@ -1083,10 +1083,12 @@ function aiModelSupportsTask(card, task) {
     const supported = tabCache.models?.ai_provider_support?.[task.service] ?? [];
     if (!supported.includes(card.provider)) return false;
     const settings = (tabCache.models?.ai_provider_defaults ?? aiEditors.system.defaults)?.[task.service]?.[card.provider];
-    const required = task.service === 'stt' ? ['audio'] : ['text'];
+    const required = task.service === 'stt' ? ['audio'] : task.id === 'voice_clone' ? ['text', 'audio'] : ['text'];
     if (!required.every(type => (card.input_modalities ?? []).includes(type) && (settings?.input_modalities ?? []).includes(type))) return false;
     if (!(card.output_modalities ?? []).includes(AI_OUTPUTS[task.service])) return false;
-    return task.id !== 'voice_design' || (settings?.supports_voice_design && (!settings.voice_design_model || card.model_name === settings.voice_design_model));
+    if (task.id === 'voice_design' && task.service === 'tts') return settings?.supports_voice_design && (!settings.voice_design_model || card.model_name === settings.voice_design_model);
+    if (task.id === 'voice_clone') return settings?.supports_voice_clone && card.model_name === settings.voice_clone_model;
+    return true;
 }
 
 function effectiveTaskChain(system, user, task) {
@@ -1325,6 +1327,7 @@ function aiModelFields(card, service, settings, localImage) {
         ${selected ? `<p class="hint">${aiModelMetadataHtml(selected)}</p><button class="btn btn--ghost" data-ai-action="apply-model-info">填入建议值</button>` : ''}
         ${localImage ? '<p class="hint">固定 Qwen 工作流，模型文件由服务匹配。</p>' : ''}
         ${settings.voice_design_model ? `<p class="hint">自定义音色设计须配置 ${esc(settings.voice_design_model)} 模型。</p>` : ''}</div>
+        ${settings.voice_clone_model ? `<p class="hint">声音克隆须配置 ${esc(settings.voice_clone_model)} 模型，输入类型勾选文字和音频。</p>` : ''}
         ${service === 'llm' ? aiTokenField(card, 'context_window', '上下文窗口（tokens）', [32768, 131072, 256000, 1048576], true) + aiTokenField(card, 'max_output_tokens', '输出 Token 上限（含推理）', [8192, 16384, 32768, 65536, 131072], true) + '<p class="hint">上下文窗口容纳输入与输出，输出上限包含推理。按实际供应商或部署填写；k = 1000，M = 1000000。建议值可修改，保存后即时生效。</p>' : ''}
         ${types('input_modalities', '支持的输入类型')}${types('output_modalities', '支持的输出类型')}
         <p class="hint">当前适配器可传递的输入：${(settings.input_modalities ?? []).map(type => esc(AI_MODALITIES[type] || type)).join('、')}。功能按模型配置与协议支持共同筛选。</p>`;

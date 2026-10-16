@@ -100,6 +100,8 @@ def provider_input_modalities(service: ServiceType | str, name: str) -> frozense
         supported.add(ModelModality.image)
     if issubclass(cls, VideoGenProvider) and cls.supports_reference_videos:
         supported.add(ModelModality.video)
+    if issubclass(cls, TTSProvider) and cls.VOICE_CLONE_MODEL is not None:
+        supported.add(ModelModality.audio)
     return frozenset(supported)
 
 
@@ -116,6 +118,8 @@ def provider_configuration_defaults() -> dict[str, dict[str, ProviderDefaults]]:
             requires_api_key=cls.requires_api_key,
             supports_voice_design=issubclass(cls, TTSProvider) and cls.VOICE_DESIGN_GUIDE is not None,
             voice_design_model=cls.VOICE_DESIGN_MODEL if issubclass(cls, TTSProvider) else None,
+            supports_voice_clone=issubclass(cls, TTSProvider) and cls.VOICE_CLONE_MODEL is not None,
+            voice_clone_model=cls.VOICE_CLONE_MODEL if issubclass(cls, TTSProvider) else None,
             input_modalities=provider_input_modalities(service, name),
         )
     return result

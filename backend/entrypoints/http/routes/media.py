@@ -7,6 +7,8 @@ from features.conversation.speech_contracts import ChatAudioUploadResponse, Chat
 from features.media import use_cases as _media
 from features.media.http_contracts import ProviderOperationError, TtsRequest
 from features.media.speech_contracts import SpeechToTextResponse
+from features.media.voice_contracts import VoiceSampleResponse
+from features.media.voices import upload_voice_sample
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.config import SETTINGS
 from infrastructure.database import DbSession
@@ -18,6 +20,19 @@ from entrypoints.http.routes._http_errors import llm_http_error, missing_config_
 from entrypoints.http.routing import get_router
 
 router = get_router()
+
+
+@router.post("/voice-samples", response_model=VoiceSampleResponse)
+@limiter.limit(lambda: f"{SETTINGS.media_stt_rate_limit_per_minute}/minute")
+async def upload_voice_reference(
+    request: Request,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+) -> VoiceSampleResponse:
+    try:
+        return await upload_voice_sample(user.id, file)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.get("/files/{file_id}")

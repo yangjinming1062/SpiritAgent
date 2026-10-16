@@ -1,18 +1,14 @@
+import { atom } from 'nanostores'
+
 import { log } from '@/shared/lib/log'
 import { $locale } from '@/shared/store/locale'
 import { getStrings } from '@/shared/strings'
 import type { RequestGateway, VoiceOption } from '@/shared/voice-catalog'
-import { customVoiceSelectionId, voiceSelectionId } from '@/shared/voice-catalog'
 
 // 音色目录、匹配与设计由后端 `tts.*` JSON-RPC 方法支撑。目录项携带供应商，持久化与合成使用 voiceSelectionId 生成的唯一引用，避免供应商私有 id 冲突。
 
 export type { VoiceOption } from '@/shared/voice-catalog'
-export {
-  isCustomVoiceSelectionId,
-  voiceProviderLabel,
-  voiceSelectionId,
-  voiceSelectionProvider
-} from '@/shared/voice-catalog'
+export { voiceProviderLabel, voiceSelectionId } from '@/shared/voice-catalog'
 
 // 请求失败与「没有匹配」分开报告，调用方不能把失败当作无匹配而改选默认音色。
 type VoiceMatch = { ok: true; voice: VoiceOption | null; alternatives: VoiceOption[] } | { ok: false; error: unknown }
@@ -22,11 +18,32 @@ export interface VoiceCatalog {
   voices: VoiceOption[]
   supportsVoiceDesign: boolean
   voiceDesignGuide: string
+  supportsVoicePromptGeneration: boolean
+  supportsVoiceClone: boolean
+  customVoices: CustomVoiceSummary[]
+}
+
+export interface CustomVoiceSummary {
+  candidate_id: string
+  kind: 'design' | 'clone'
+  voice_id: string
+  prompt: string
+  preview_audio_url: string
+  reference_audio_url: string | null
+  provider: string
+  model: string
+  version: number
+  available: boolean
 }
 
 export interface VoiceDesignPreview {
+  candidateId: string
   voiceId: string
   trialAudioDataUrl: string
+  expectedVersion: number
+  kind: 'design' | 'clone'
+  prompt: string
+  provider: string
 }
 
 interface CatalogResponse {
@@ -34,6 +51,9 @@ interface CatalogResponse {
   voices: VoiceOption[]
   supports_voice_design: boolean
   voice_design_guide: string
+  supports_voice_prompt_generation: boolean
+  supports_voice_clone: boolean
+  custom_voices: CustomVoiceSummary[]
 }
 
 interface MatchResponse {
@@ -42,13 +62,23 @@ interface MatchResponse {
 }
 
 interface DesignResponse {
+  candidate_id: string
   provider: string
   voice_id: string
   trial_audio_base64: string
   trial_audio_mime: string
+  expected_version: number
+  kind: 'design' | 'clone'
+  prompt: string
 }
 
 type FetchResult = { ok: true; catalog: VoiceCatalog } | { ok: false; reason: 'fetch_failed' }
+
+export const $voiceCatalogRevision = atom(0)
+
+export function invalidateVoiceCatalog(): void {
+  $voiceCatalogRevision.set($voiceCatalogRevision.get() + 1)
+}
 
 export async function fetchVoiceCatalogRaw(
   requestGateway: RequestGateway,
@@ -63,7 +93,10 @@ export async function fetchVoiceCatalogRaw(
         providers: res.providers,
         voices: res.voices,
         supportsVoiceDesign: res.supports_voice_design,
-        voiceDesignGuide: res.voice_design_guide
+        voiceDesignGuide: res.voice_design_guide,
+        supportsVoicePromptGeneration: res.supports_voice_prompt_generation,
+        supportsVoiceClone: res.supports_voice_clone,
+        customVoices: res.custom_voices
       }
     }
   } catch {
@@ -90,26 +123,47 @@ export async function matchVoicePreference(
 export async function designVoice(
   requestGateway: RequestGateway,
   prompt: string,
-  previewText = ''
+  previewText: string,
+  operationId: string,
+  provider?: string
 ): Promise<VoiceDesignPreview> {
-  const res = await requestGateway<DesignResponse>('tts.design_voice', { prompt, preview_text: previewText })
+  const res = await requestGateway<DesignResponse>('tts.design_voice', {
+    operation_id: operationId,
+    prompt,
+    preview_text: previewText,
+    provider
+  })
 
-  return {
-    voiceId: customVoiceSelectionId(res.provider, res.voice_id),
-    trialAudioDataUrl: `data:${res.trial_audio_mime};base64,${res.trial_audio_base64}`
-  }
+  return voicePreview(res)
 }
 
-export function nextVoice(currentId: string, catalog: readonly VoiceOption[]): VoiceOption | null {
-  if (catalog.length <= 1) {
-    return catalog[0] ?? null
+export async function cloneVoice(
+  requestGateway: RequestGateway,
+  sampleId: string,
+  previewText: string,
+  operationId: string
+): Promise<VoiceDesignPreview> {
+  const res = await requestGateway<DesignResponse>('tts.clone_voice', {
+    operation_id: operationId,
+    sample_id: sampleId,
+    preview_text: previewText
+  })
+
+  return voicePreview(res)
+}
+
+function voicePreview(res: DesignResponse): VoiceDesignPreview {
+  return {
+    candidateId: res.candidate_id,
+    voiceId: res.voice_id,
+    trialAudioDataUrl: `data:${res.trial_audio_mime};base64,${res.trial_audio_base64}`,
+    expectedVersion: res.expected_version,
+    kind: res.kind,
+    prompt: res.prompt,
+    provider: res.provider
   }
-
-  const idx = catalog.findIndex(v => voiceSelectionId(v) === currentId)
-
-  return catalog[(idx + 1) % catalog.length]
 }
 
 export function sampleLine(name: string): string {
-  return getStrings().settings.voice.sampleLine(name.trim())
+  return getStrings().voice.sampleLine(name.trim())
 }

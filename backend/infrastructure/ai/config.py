@@ -170,6 +170,8 @@ class ProviderDefaults(BaseModel):
     requires_api_key: bool
     supports_voice_design: bool = False
     voice_design_model: str | None = None
+    supports_voice_clone: bool = False
+    voice_clone_model: str | None = None
     input_modalities: frozenset[ModelModality] = frozenset()
 
 

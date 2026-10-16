@@ -268,7 +268,16 @@ registerSystemIpc({
   ipcMain
 })
 registerUiThemeIpc({ ipcMain, log: rememberLog })
-registerPrefsIpc({ ipcMain, log: rememberLog })
+registerPrefsIpc({
+  applyServerVoice: payload =>
+    configSync.applyServerVoice(payload.accountId, payload.voiceId, () => {
+      const session = ensureBackendSession().getSession()
+
+      return session?.accountId === payload.accountId && session.sessionId === payload.authSessionId
+    }),
+  ipcMain,
+  log: rememberLog
+})
 
 surfaces = createSurfacesManager({
   createWindow: createSurfaceWindow,
@@ -422,11 +431,13 @@ registerGatewayIpc({
   ipcMain,
   rememberLog
 })
-registerMediaIpc({
+
+const mediaIpc = registerMediaIpc({
   spiritagentHome: SPIRITAGENT_HOME,
   ensureBackend,
   fetchImpl: electronFetch,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
+  getSelectedAccountId: () => sessionRuntime.ensureBackendSession().getSelectedAccountId(),
   ipcMain,
   log: rememberLog
 })
@@ -458,6 +469,7 @@ const authActions = registerAuthIpc({
     presentation?.clearUiState(accountId)
     await Promise.all([
       assetDiskCache.clear(accountId),
+      mediaIpc.clearAccountCache(accountId),
       sessionHistoryDiskCache.clear(accountId),
       voicePlaybackStore.clear(accountId)
     ])

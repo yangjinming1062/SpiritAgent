@@ -7,6 +7,7 @@ import {
   actionCatalogChanged,
   type ActionClipEntry,
   type ActionPlayCommand,
+  applyServerCompanionVoiceId,
   hydrateActionCatalog,
   hydrateCharacterCard,
   hydrateFullbodyReference,
@@ -22,6 +23,7 @@ import {
   videoGenReady,
   videoPackEventReceived
 } from '@/modules/character'
+import { invalidateVoiceCatalog } from '@/modules/speech'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
@@ -128,6 +130,19 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
 
 export function handleCharacterEvent(event: GatewayEvent): void {
   switch (event.type) {
+    case 'companion.voice.updated': {
+      const payload = decodePayload<{ voice_id?: unknown }>(event.payload)
+
+      if (typeof payload.voice_id === 'string') {
+        void applyServerCompanionVoiceId(payload.voice_id).catch(error =>
+          log.warn('voice-selection', 'Could not apply server voice:', error)
+        )
+        invalidateVoiceCatalog()
+      }
+
+      break
+    }
+
     case 'companion.mood': {
       const mood = decodePayload<{ mood?: unknown }>(event.payload).mood
 

@@ -121,8 +121,8 @@ export const dict: Dictionary = {
     voice: {
       invalidTitle: 'Voice no longer available',
       invalidMessage: (name: string) =>
-        `The voice "${name}" you previously selected is no longer in the catalogue, so the default voice is being used for now. Choose another in Settings › Voice.`,
-      invalidAction: 'Open settings'
+        `The voice "${name}" you previously selected is unavailable, so the default voice is being used for now. Choose another in Companion › Voice.`,
+      invalidAction: 'Choose a voice'
     },
     system: {
       view: 'View',
@@ -145,6 +145,70 @@ export const dict: Dictionary = {
     failed: 'Activation failed. Check the code and try again.'
   },
 
+  voice: {
+    title: 'Voice',
+    intro: 'Choose a preset voice, or design or clone a voice for your companion.',
+    noTtsConfigured: 'Voice is temporarily unavailable. You can keep chatting with text and choose a voice later.',
+    noVoicesForLanguage: 'No voice is currently available for this language. You can keep chatting with text.',
+    loadFailed: "Couldn't load the voice list",
+    sampleLine: (name: string) =>
+      name ? `Hi, I'm ${name}. This is my voice.` : "Hi, I'm your companion. This is my voice.",
+    genderFilterAria: 'Tone filter',
+    genderFilters: {
+      '': 'All',
+      female: 'Female',
+      male: 'Male',
+      neutral: 'Neutral'
+    },
+    preview: 'Preview',
+    use: 'Use',
+    inUse: 'In use',
+    noMatch: 'No voices match the current filter.',
+    designHeading: 'Design a custom voice',
+    designTab: 'Design a voice',
+    designPlaceholder: 'Describe the voice you want…',
+    designGenerate: 'Generate preview',
+    designGenerating: 'Generating…',
+    designFailed: 'Voice generation failed. Please try again.',
+    methodAria: 'Voice source',
+    fixedHeading: 'Preset voices',
+    cloneHeading: 'Clone a voice',
+    useThisVoice: 'Use this voice',
+    saving: 'Saving…',
+    showRecommended: 'Show recommended voices',
+    showAll: 'Browse all voices',
+    designIntro:
+      'Let your companion design a voice from their character profile, or write and edit the description yourself.',
+    autoDesign: 'Design automatically',
+    autoDesignUnavailable: 'Automatic design is not configured. You can still write a description and preview it.',
+    designUnavailable: 'Voice design is not configured. Choose a preset or clone a voice.',
+    designGuide: 'Voice description tips',
+    feedbackLabel: 'Feedback',
+    feedbackPlaceholder: 'What would you change? For example: softer, while keeping the mature tone…',
+    adjustDesign: 'Adjust from feedback',
+    savedVoice: 'Saved voice',
+    savedUnavailable: 'This voice is currently unavailable. Check your voice configuration or choose another voice.',
+    cloneIntro:
+      'Record or upload clear, natural speech from one speaker. Aim for 5–30 seconds; maximum 60 seconds and 24 MiB.',
+    cloneUnavailable: 'Voice cloning is not configured. Choose a preset or design a voice.',
+    startRecording: 'Start recording',
+    stopRecording: 'Stop recording',
+    rerecord: 'Record again',
+    uploadAudio: 'Upload audio',
+    recordingHint: 'Recording… Stops automatically after 60 seconds.',
+    uploadingAudio: 'Processing audio…',
+    sampleDuration: (seconds: number) => `Reference audio · ${seconds}s`,
+    previewOriginal: 'Play original',
+    clonePreview: 'Clone and preview',
+    emptyAudio: 'The audio is empty. Record or upload another sample.',
+    audioTooLarge: 'Audio files must be no larger than 24 MiB.',
+    uploadFailed: 'Audio upload failed. Please try again.',
+    micUnavailable: 'Could not use the microphone. Check your system permissions or upload audio.',
+    previewFailed: 'Could not play the preview. Please try again.',
+    onboardingHint: 'Choose a voice and confirm. You can adjust it later in Companion › Voice.',
+    describePreference: 'Describe the voice you want',
+    continueText: 'Use text for now'
+  },
   settings: {
     nav: {
       about: 'About',
@@ -335,7 +399,7 @@ export const dict: Dictionary = {
       title: 'Companionship',
       moreOptions: 'More companionship options',
       intro: 'How the companion responds and when it may interrupt you.',
-      voiceHeading: 'Chat & voice',
+      voiceHeading: 'Responses & recording',
       responsePreference: 'Response preference',
       responsePreferenceText: 'Prefer text',
       responsePreferenceVoice: 'Prefer voice',
@@ -483,31 +547,6 @@ export const dict: Dictionary = {
       hintSaved: 'Saved automatically',
       hintSaveFailed: 'Save failed, please try again',
       hintHydrateFailed: 'Saved, but the local refresh failed — please try again'
-    },
-    voice: {
-      title: 'Voice',
-      intro: 'Pick a voice for the current system language, or design a custom one.',
-      noTtsConfigured: 'Voice is temporarily unavailable. You can keep chatting with text and choose a voice later.',
-      noVoicesForLanguage: 'No voice is currently available for this language. You can keep chatting with text.',
-      loadFailed: "Couldn't load the voice list",
-      sampleLine: (name: string) =>
-        name ? `Hi, I'm ${name}. This is my voice.` : "Hi, I'm your companion. This is my voice.",
-      genderFilterAria: 'Tone filter',
-      genderFilters: {
-        '': 'All',
-        female: 'Female',
-        male: 'Male',
-        neutral: 'Neutral'
-      },
-      preview: 'Preview',
-      use: 'Use',
-      inUse: 'In use',
-      noMatch: 'No voices match the current filter.',
-      designHeading: 'Design a custom voice',
-      designPlaceholder: 'Describe the voice you want…',
-      designGenerate: 'Generate preview',
-      designGenerating: 'Generating…',
-      designFailed: 'Generation failed — try a different description?'
     },
     theme: {
       heading: 'Theme',

@@ -3,13 +3,13 @@
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.stt_service import transcribe_audio
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.ai.tts_service import synthesize_speech
 from infrastructure.constants import STT_MAX_AUDIO_BYTES, TTS_MAX_TEXT_CHARS
 from infrastructure.request_errors import RequestError
 from infrastructure.temp_files import get_file_path
 from infrastructure.uploads import UploadSource
 
 from features.media.http_contracts import MediaFile, ProviderOperationError, SpeechAudio, TtsRequest
+from features.media.speech import synthesize_speech
 from features.media.speech_contracts import SpeechToTextResponse
 
 

@@ -41,6 +41,7 @@ export interface ConfigSyncDeps {
 }
 
 export interface ConfigSync {
+  applyServerVoice: (accountId: string, voiceId: string, isCurrentAuth: () => boolean) => Promise<boolean>
   /** runner-config-store 的本地变更委托；在 store 串行写任务内同步调用，必须非阻塞。 */
   onLocalChange: (config: Record<string, unknown>) => void
   /** 用户身份变化（登录/登出/换号）；跨后端同号也须视为不同身份。 */
@@ -93,6 +94,59 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
   let lastFlushedJson = '{}'
   // 换号/登出时递增：在途 flush/hydrate 完成前若 epoch 已变则丢弃结果。
   let authEpoch = 0
+  let serverRevision = 0
+  let serverMirrorTask = Promise.resolve()
+  let hydrateQueued = false
+  const acceptedServerVoices = new Set<string>()
+
+  async function waitForServerMirror(): Promise<void> {
+    let pending: Promise<void>
+
+    do {
+      pending = serverMirrorTask
+      await pending
+    } while (pending !== serverMirrorTask)
+  }
+
+  async function applyServerVoice(accountId: string, voiceId: string, isCurrentAuth: () => boolean): Promise<boolean> {
+    const epoch = authEpoch
+
+    const isCurrent = (): boolean => epoch === authEpoch && accountId === hydratedAccountId && isCurrentAuth()
+
+    if (!isCurrent()) {
+      return false
+    }
+
+    // 候选引用不可变；响应与多窗口事件只接纳一次，用户之后改选的固定音色不能被重放覆盖。
+    if (acceptedServerVoices.has(voiceId)) {
+      await waitForServerMirror()
+
+      return isCurrent()
+    }
+
+    acceptedServerVoices.add(voiceId)
+
+    serverRevision++
+
+    const task = store.applyCloudValue(['companion', 'voice_id'], voiceId, isCurrent).catch(error => {
+      deps.log(`[config-sync] server voice persistence failed: ${errorMessage(error)}`)
+    })
+
+    serverMirrorTask = task
+    await task
+
+    if (!isCurrent() || objectSection(store.read(), 'companion').voice_id !== voiceId) {
+      if (!isCurrent() && epoch === authEpoch) {
+        acceptedServerVoices.delete(voiceId)
+      }
+
+      return false
+    }
+
+    deps.onHydrated({ accountId, companion: { voice_id: voiceId } })
+
+    return true
+  }
 
   function backendClient(baseUrl: string): BackendClientPort {
     if (!client || clientBaseUrl !== baseUrl) {
@@ -167,12 +221,12 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
   }
 
   // 归属不匹配时清空同步键并改写归属戳；落盘失败时内存仍保持清理结果，只记录原因。
-  async function isolateMirror(accountId: string, epoch: number): Promise<void> {
+  async function isolateMirror(accountId: string, epoch: number, isCurrent = (): boolean => true): Promise<void> {
     try {
       await store.clearSyncedMirror(
         [...SYNCED_SECTIONS, ...SYNCED_PRIMITIVES],
         { account_id: accountId },
-        () => epoch === authEpoch
+        () => epoch === authEpoch && isCurrent()
       )
     } catch (error) {
       deps.log(`[config-sync] account isolation persistence failed: ${errorMessage(error)}`)
@@ -213,6 +267,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
 
     try {
       const conn = await deps.ensureBackend()
+      await waitForServerMirror()
 
       // 未登录或身份已切换：挂起，避免旧账号配置写入新账号。
       if (epoch !== authEpoch || !conn.token) {
@@ -230,6 +285,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
 
       const uploadedJson = JSON.stringify(payload)
       await backendClient(conn.baseUrl).put('/api/config', { body: { config: payload }, token: conn.token })
+      await waitForServerMirror()
 
       if (epoch !== authEpoch) {
         return
@@ -274,6 +330,9 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     hydrating = true
     const epoch = authEpoch
     const accountId = hydratedAccountId
+    const revision = serverRevision
+
+    const serverUnchanged = (): boolean => revision === serverRevision
 
     try {
       // 未上云的本地编辑先落云，避免被云端旧值覆盖；失败（离线）则保留本地下次再试。
@@ -299,11 +358,17 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
         return
       }
 
+      if (!serverUnchanged()) {
+        hydrateQueued = true
+
+        return
+      }
+
       const cloud = pickSyncedSections(res.config ?? {})
       const trusted = mirrorAccountId(store.read()) === accountId
 
       if (!trusted) {
-        await isolateMirror(accountId, epoch)
+        await isolateMirror(accountId, epoch, serverUnchanged)
       }
 
       if (epoch !== authEpoch) {
@@ -350,11 +415,23 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       // 节有变化或归属戳缺失/过期时落盘（含戳），否则零写入。
       if (Object.keys(changed).length > 0 || !trusted) {
         changed.sync = { account_id: accountId }
-        await store.applyCloudMirror(changed, () => epoch === authEpoch)
+        await store.applyCloudMirror(changed, () => epoch === authEpoch && serverUnchanged())
       }
 
       if (epoch !== authEpoch) {
         return
+      }
+
+      if (!serverUnchanged()) {
+        hydrateQueued = true
+
+        return
+      }
+
+      const voiceId = objectSection(cloud, 'companion').voice_id
+
+      if (typeof voiceId === 'string' && voiceId) {
+        acceptedServerVoices.add(voiceId)
       }
 
       deps.onHydrated(buildPrefsHydratedFromConfig(store.read()))
@@ -375,7 +452,8 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       hydrating = false
 
       // 在途 hydrate 期间换号：补跑当前用户水合，避免被吞掉。
-      if (epoch !== authEpoch && hydratedAccountId !== null) {
+      if ((epoch !== authEpoch || hydrateQueued) && hydratedAccountId !== null) {
+        hydrateQueued = false
         void hydrate()
       }
     }
@@ -391,6 +469,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     lastFlushedJson = '{}'
     hydratedAccountId = accountId
     authEpoch++
+    acceptedServerVoices.clear()
 
     if (accountId !== null) {
       const epoch = authEpoch
@@ -405,5 +484,5 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     }
   }
 
-  return { flush, handleAuthUserChanged, onLocalChange }
+  return { applyServerVoice, flush, handleAuthUserChanged, onLocalChange }
 }

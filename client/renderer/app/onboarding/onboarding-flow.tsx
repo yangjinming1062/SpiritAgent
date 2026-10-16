@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
+  applyServerCompanionVoiceId,
   clearDraftRefImage,
   type OnboardingAnswers,
   setCompanionVoiceId,
@@ -29,7 +30,6 @@ import {
 import { PortraitPages } from './portrait-pages'
 import { QuestionPage } from './question-page'
 import { useOnboardingPortrait } from './use-onboarding-portrait'
-import { useOnboardingVoice } from './use-onboarding-voice'
 import { VoicePage } from './voice-page'
 
 interface OnboardingFlowProps {
@@ -81,7 +81,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const portrait = useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, enterVoiceSelection })
   const portraitRef = useLatestRef(portrait)
-  const voice = useOnboardingVoice({ phase, voiceStage, answers, begin })
 
   useEffect(() => {
     if (phase !== 'q-character' && !(phase === 'voice' && voiceStage === 'describe')) {
@@ -257,8 +256,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const finish = async (currentAnswers: OnboardingAnswers): Promise<void> => {
     const isLive = begin()
 
-    const selectedVoice =
-      currentAnswers.voice_setup_skipped === 'true' ? null : voice.voice ? voice.voice.label || voice.voice.id : null
+    const selectedVoice = currentAnswers.voice_setup_skipped === 'true' ? null : (currentAnswers.voice ?? null)
 
     const failure = await draft.saveComplete(currentAnswers, selectedVoice)
 
@@ -328,15 +326,15 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }
 
-  const confirmVoice = async (skip = false): Promise<void> => {
-    if (voiceSaving || voice.voicePreparing || voice.voiceLoad === 'loading' || (!skip && !voice.voice)) {
+  const confirmVoice = async (skip = false, voiceId = '', label = '', serverConfirmed = false): Promise<void> => {
+    if (voiceSaving || (!skip && !voiceId)) {
       return
     }
 
     const isLive = begin()
     setVoiceSaving(true)
     setHint(null)
-    const selected = skip ? null : voice.voice ? voice.voice.label || voice.voice.id : null
+    const selected = skip ? null : label || voiceId
     const saved = await draft.submit(skip ? 'voice_setup_skipped' : 'voice', skip ? 'true' : selected)
 
     if (!isLive()) {
@@ -360,6 +358,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     if (skip) {
       setCompanionVoiceId('')
       setResponsePreference('text')
+    } else if (serverConfirmed) {
+      await applyServerCompanionVoiceId(voiceId)
+    } else {
+      setCompanionVoiceId(voiceId)
+    }
+
+    if (!isLive()) {
+      return
     }
 
     setPhase('q-user')
@@ -394,7 +400,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               </li>
             ))}
           </ol>
-          {voice.voicePreparing && <p className="mb-2 text-center text-[10px] text-muted">正在准备声音…</p>}
           {resumeState !== 'ok' && (
             <div className="py-2 text-center">
               <p className="text-sm text-body">没能读取之前保存的进度，请检查网络后重试。</p>
@@ -442,11 +447,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           {phase === 'voice' && voiceStage === 'catalog' && (
             <VoicePage
               confirming={voiceSaving}
-              confirmVoice={() => void confirmVoice()}
               error={hint}
+              name={answers.name ?? ''}
               onContinueText={() => void confirmVoice(true)}
               onDescribe={() => setVoiceStage('describe')}
-              voice={voice}
+              onVoiceSelected={(voiceId, label, serverConfirmed) =>
+                confirmVoice(false, voiceId, label, serverConfirmed)
+              }
+              preference={answers.voice}
             />
           )}
           {phase === 'q-user' && (
