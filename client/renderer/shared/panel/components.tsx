@@ -520,7 +520,7 @@ export function PanelSelect<T extends string>({
               tabIndex={-1}
               type="button"
             >
-              {o.label}
+              <span className="truncate">{o.label}</span>
             </button>
           ))}
         </div>

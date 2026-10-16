@@ -1,7 +1,7 @@
 import { existsSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 
-import { app, type BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
+import { app, BrowserWindow, type IpcMain, powerMonitor, screen, type WebContents } from 'electron'
 
 import {
   type AppNavigationTarget,
@@ -247,9 +247,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     const activeDisplayId = activeDisplay?.id
 
     const targetDisplay =
-      activeDisplayId !== undefined
-        ? allDisplays.find(display => display.id === activeDisplayId)
-        : resolveDisplay(allDisplays, preferred.displayId)
+      allDisplays.find(display => display.id === activeDisplayId) ?? resolveDisplay(allDisplays, preferred.displayId)
 
     const desktopUnlocked =
       (foreground || stageAvailable) && effectiveMode === 'desktop' && powerMonitor.getSystemIdleState(1) !== 'locked'
@@ -367,14 +365,25 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
-  function resolveDisplay(displays: Electron.Display[], preferredId: number | null): Electron.Display | undefined {
-    if (preferredId !== null) {
-      return displays.find(display => display.id === preferredId)
+  function resolveDisplay(
+    displays: Electron.Display[],
+    preferredId: number | null,
+    sender?: WebContents
+  ): Electron.Display | undefined {
+    const preferred = displays.find(display => display.id === preferredId)
+
+    if (preferred || !displays.length) {
+      return preferred
     }
 
-    const primaryId = app.isReady() ? screen.getPrimaryDisplay().id : null
+    const source = sender ? BrowserWindow.fromWebContents(sender) : options.getMainWindow()
 
-    return displays.find(display => display.id !== primaryId) ?? displays[0]
+    const currentId =
+      source && !source.isDestroyed() && (sender || source.isVisible() || source.isMinimized())
+        ? screen.getDisplayMatching(source.getBounds()).id
+        : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
+
+    return displays.find(display => display.id === currentId) ?? displays[0]
   }
 
   function sameDisplayGeometry(left: Electron.Display, right: Electron.Display): boolean {
@@ -548,7 +557,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     }
   }
 
-  async function enter(): Promise<void> {
+  async function enter(sender?: WebContents, targetDisplayId?: number): Promise<void> {
     if (effectiveMode === 'desktop') {
       return
     }
@@ -599,14 +608,18 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     try {
       const allDisplays = screen.getAllDisplays()
 
-      const selected = resolveDisplay(allDisplays, preferences.get().displayId)
+      const preferred = preferences.get()
+      const selected = resolveDisplay(allDisplays, targetDisplayId ?? preferred.displayId, sender)
 
       if (!selected) {
-        await preferences.set({ mode: 'window' })
-        throw new Error('所选显示器未连接，请重新选择显示屏。')
+        throw new Error('当前没有可用显示器，请连接显示屏后重试。')
       }
 
-      await preferences.set({ displayId: selected.id })
+      // 临时回退不覆盖首选屏，重新接入后仍可按原选择进入。
+      if (preferred.displayId === null) {
+        await preferences.set({ displayId: selected.id })
+      }
+
       assertAttempt()
       activeDisplay = { ...selected, bounds: { ...selected.bounds } }
 
@@ -744,32 +757,9 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     const activeDisplayId = activeDisplay?.id
     const displays = screen.getAllDisplays()
     const current = displays.find(display => display.id === activeDisplayId)
-    const preferred = preferences.get()
-
-    if (
-      !activeDisplay &&
-      preferred.mode === 'desktop' &&
-      preferred.displayId !== null &&
-      !displays.some(display => display.id === preferred.displayId)
-    ) {
-      // helper 可能先于 Electron 发现拔屏并完成恢复，仍须保存手动重新启用的选择。
-      suppressAutoRestore = true
-      void serial(async () => {
-        await preferences.set({ mode: 'window' })
-        failureReason ??= '所选显示器已断开，请重新选择显示屏后启用桌面模式。'
-
-        if (status === 'inactive') {
-          status = 'failed'
-        }
-
-        publish()
-      }).catch(error => options.log(`[desktop] saving disconnected display mode: ${errorMessage(error)}`))
-
-      return
-    }
 
     if (activeDisplay && !current && ['starting', 'active', 'recovering'].includes(status)) {
-      scheduleRecovery('所选显示器已断开，已恢复窗口模式。请重新选择显示屏后启用桌面模式。', false)
+      scheduleRecovery('桌面显示器已断开，已恢复窗口模式。再次启用将使用当前显示器。', false)
 
       return
     }
@@ -793,7 +783,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
           await leave(undefined, true)
 
           if (currentGeneration === startupGeneration) {
-            await enter()
+            await enter(undefined, current?.id)
           }
         }).catch(error => options.log(errorMessage(error)))
       })
@@ -936,7 +926,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       if (mode === 'desktop') {
         try {
-          await enter()
+          await enter(sender)
 
           if (effectiveMode === 'desktop' && snapshot().status === 'active' && existsSync(mainInterruptedFile)) {
             try {
@@ -997,7 +987,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
         throw new Error('显示器不可用。')
       }
 
-      if (preferences.get().displayId === id) {
+      if (preferences.get().displayId === id && (effectiveMode !== 'desktop' || activeDisplay?.id === id)) {
         return snapshot()
       }
 
@@ -1009,7 +999,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       await preferences.set({ displayId: id })
 
-      if (effectiveMode === 'desktop' && currentGeneration === startupGeneration) {
+      if (effectiveMode === 'desktop' && activeDisplay?.id !== id && currentGeneration === startupGeneration) {
         await leave(undefined, true)
 
         if (currentGeneration === startupGeneration) {

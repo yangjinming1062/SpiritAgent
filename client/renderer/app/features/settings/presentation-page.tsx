@@ -43,7 +43,7 @@ export function PresentationPage(): React.JSX.Element {
         hint={english ? 'Choose where your companion appears.' : '选择让伙伴出现在窗口旁，还是住进电脑桌面。'}
         title={english ? 'Where your companion appears' : '伙伴出现在哪里'}
       />
-      <SettingCard>
+      <SettingCard className="overflow-visible">
         <SettingRow
           description={
             state.supported
@@ -76,8 +76,8 @@ export function PresentationPage(): React.JSX.Element {
           <SettingRow
             description={
               english
-                ? 'Use only this display. Other displays keep the Windows desktop. A secondary display is selected by default.'
-                : '仅使用此屏，其他屏幕保留 Windows。首次启用默认优先副屏。'
+                ? 'Use this display while it is connected; otherwise use the current display. Other displays keep the Windows desktop.'
+                : '优先使用所选屏幕，未连接时自动使用当前屏幕。其他屏幕保留 Windows。'
             }
             label={english ? 'Display' : '显示屏'}
           >
@@ -87,7 +87,7 @@ export function PresentationPage(): React.JSX.Element {
               onChange={value => void selectDisplay(value)}
               options={presentationDisplayOptions(state, english)}
               value={String(state.displayId ?? '')}
-              widthClass="w-56"
+              widthClass="w-full sm:w-72"
             />
           </SettingRow>
         )}

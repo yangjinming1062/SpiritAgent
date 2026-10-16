@@ -534,7 +534,7 @@ Runner 仅内存持有配置，每次调用与 `get_tools` 固定同一代次的
 
 后台宿主通过 `companion.signal` 的必填 `presentation_mode` 上报实际呈现，连接建立、模式变化时立即同步，随活动信号续期。Backend 保留带有效期的账户运行态，断连与换号使旧状态失效。桌面主对话、主动陪伴、空闲表达和空间决策使用简短自然的环境说明；模式及可用性变化使在途自主决策失效。
 
-交互屏首次默认优先副屏，选定后按该显示器身份恢复；已保存屏幕缺失时不替换为其他屏幕，拔屏恢复窗口模式并等待手动启用。呈现模式、交互屏幕、窗口模式精灵置顶和 Dock 保存在 Client 独立的本机文件，不放入云同步的 ui／companion 节；桌面模式不消费精灵置顶选项。内部布局、窗口模式角色位置及输入草稿按产品账户隔离。桌面状态由主进程广播带 revision 的快照；requestedMode 表示用户偏好，effectiveMode 表示实际成功呈现，失败不能以偏好值伪装成功。`workArea` 表示 helper 确认的系统实际工作区，使用交互屏本地 DIP 矩形；尚未取得或非桌面模式为 `null`，内部布局在该区域内保留内容边距，不重复扣除底栏。字段定义见 [desktop-presentation.ts](../client/shared/ipc/desktop-presentation.ts)。窗口精灵的舞台所有权和 stageEpoch 隔离迟到动作与移动，桌面视频播放使用组合代次与 presentation revision 隔离迟到命令。
+交互屏优先按已保存的显示器身份恢复；未选择或原屏缺失时使用操作入口所在屏幕，无可见窗口入口时使用鼠标所在屏幕。临时回退不覆盖已保存的首选屏身份，状态快照的 `displayId` 始终反映当前可用目标或实际交互屏；手动选择显示器才更新已有首选。拔屏先恢复窗口模式，再次手动启用按同一规则选屏，重接不自动接管。呈现模式、交互屏幕、窗口模式精灵置顶和 Dock 保存在 Client 独立的本机文件，不放入云同步的 ui／companion 节；桌面模式不消费精灵置顶选项。内部布局、窗口模式角色位置及输入草稿按产品账户隔离。桌面状态由主进程广播带 revision 的快照；requestedMode 表示用户偏好，effectiveMode 表示实际成功呈现，失败不能以偏好值伪装成功。`workArea` 表示 helper 确认的系统实际工作区，使用交互屏本地 DIP 矩形；尚未取得或非桌面模式为 `null`，内部布局在该区域内保留内容边距，不重复扣除底栏。字段定义见 [desktop-presentation.ts](../client/shared/ipc/desktop-presentation.ts)。窗口精灵的舞台所有权和 stageEpoch 隔离迟到动作与移动，桌面视频播放使用组合代次与 presentation revision 隔离迟到命令。
 
 窗口模式只有一个主窗口，打开时隐藏精灵宿主与轻语，隐藏或关闭主窗口时恢复精灵，最小化不恢复。页面、设置分类、会话及消息定位共用 [AppNavigationTarget](../client/shared/ipc/desktop-presentation.ts)，通知、投喂、托盘和两种模式均消费此目标；现存主窗口通过事件导航，不重载页面。首次进入陪伴，已有状态按当前账户恢复，显式目标优先于恢复状态。
 
