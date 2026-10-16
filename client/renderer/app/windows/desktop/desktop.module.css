@@ -6,6 +6,8 @@
   --desktop-rail-control-size: var(--desktop-control-size);
   --desktop-rail-control-edge: var(--desktop-control-edge);
   --desktop-control-gap: 12px;
+  --desktop-unread-color: #168ee8;
+  --desktop-unread-halo: rgb(24 156 239 / 0.5);
   color: var(--ui-text-strong);
   width: 100vw;
   height: 100vh;
@@ -13,6 +15,11 @@
   position: relative;
   background: transparent;
   isolation: isolate;
+}
+
+:global(html[data-palette='night']) .desktop {
+  --desktop-unread-color: #69e1ff;
+  --desktop-unread-halo: rgb(50 181 255 / 0.55);
 }
 
 .desktop button,
@@ -89,45 +96,113 @@
     box-shadow 240ms ease,
     border-color 240ms ease;
 }
-.avatarButton img {
+.avatarPortrait {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
   width: 100%;
   height: 100%;
   object-fit: cover;
   border-radius: 50%;
 }
-.avatarButton[data-unread='true'] {
-  animation: desktopAvatarPulse 1.8s ease-in-out infinite;
+.avatarButton[data-current='true'] {
   box-shadow:
-    0 0 0 3px var(--ui-accent-soft),
-    0 0 22px var(--ui-accent-soft);
+    0 0 0 2px var(--ui-accent-line),
+    0 3px 14px rgb(0 0 0 / 0.14);
 }
 .avatarButton:focus-visible {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 2px var(--ui-accent-soft);
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 4px;
 }
-.avatarUnread {
+.avatarGlow {
   position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--ui-app-bg);
-  border-radius: 50%;
-  background: var(--ui-accent);
-  box-shadow: 0 0 0 1px var(--ui-accent-soft);
+  z-index: 0;
+  inset: -3px;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 1px var(--desktop-unread-color),
+    0 0 12px var(--desktop-unread-halo);
+  opacity: 0.45;
 }
-@keyframes desktopAvatarPulse {
+.avatarButton[data-unread='false'] .avatarGlow {
+  animation: desktopAvatarBreathe 3.6s ease-in-out infinite;
+}
+.avatarButton[data-unread='true'] .avatarGlow {
+  opacity: 0.85;
+}
+.avatarSignal {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: 3px;
+  left: 3px;
+  height: 34px;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  background: radial-gradient(ellipse, rgb(3 30 57 / 0.68), rgb(3 30 57 / 0) 72%);
+  pointer-events: none;
+}
+.avatarSignal::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #b7f6ff 15%, #eaffff 50%, #b7f6ff 85%, transparent);
+  box-shadow: 0 0 5px #27ceff;
+  opacity: 0.85;
+  pointer-events: none;
+}
+.avatarSignalBars {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 1px;
+  padding-inline: 3px;
+  pointer-events: none;
+}
+.avatarSignalBar {
+  flex: 1 1 0;
+  max-width: 1.5px;
+  border-radius: 1px;
+  background: linear-gradient(#65e4ff, #f0ffff 45%, #f0ffff 55%, #65e4ff);
+  box-shadow:
+    0 0 3px #60e6ff,
+    0 0 6px rgb(16 172 255 / 0.85);
+  transform-origin: center;
+  opacity: 0.95;
+  pointer-events: none;
+  animation: desktopAvatarSignal 1.5s ease-in-out infinite;
+}
+@keyframes desktopAvatarBreathe {
   0%,
   100% {
-    box-shadow:
-      0 0 0 3px var(--ui-accent-soft),
-      0 0 22px var(--ui-accent-soft);
+    transform: scale(1);
+    opacity: 0.25;
   }
-
   50% {
-    box-shadow:
-      0 0 0 7px color-mix(in srgb, var(--ui-accent-soft) 72%, transparent),
-      0 0 30px var(--ui-accent-soft);
+    transform: scale(1.025);
+    opacity: 0.8;
+  }
+}
+@keyframes desktopAvatarSignal {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+    opacity: 0.65;
+  }
+  35% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  70% {
+    transform: scaleY(0.6);
+    opacity: 0.85;
   }
 }
 .workspace {
@@ -154,8 +229,7 @@
   border: 1px solid var(--ui-line-standard);
   border-radius: 14px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--ui-app-bg) 88%, transparent);
-  backdrop-filter: blur(32px) saturate(130%);
+  background: var(--ui-app-bg);
   box-shadow:
     0 18px 60px rgb(0 0 0 / 0.16),
     0 1px 4px rgb(0 0 0 / 0.08);
@@ -244,6 +318,7 @@
 }
 .whisper {
   position: absolute;
+  contain: layout;
   top: calc(var(--desktop-work-area-top) + var(--desktop-content-inset));
   bottom: var(--desktop-work-area-bottom);
   width: min(380px, calc(var(--desktop-work-area-width) - 32px));
@@ -253,8 +328,7 @@
   overflow: hidden;
   border: 1px solid var(--ui-line-standard);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--ui-app-bg) 78%, transparent);
-  backdrop-filter: blur(30px) saturate(130%);
+  background: var(--ui-app-bg);
   box-shadow: 0 10px 36px rgb(0 0 0 / 0.13);
 }
 .whisper[hidden] {
@@ -376,7 +450,8 @@
   transform: translateY(-3px) scale(1.04);
   background: var(--ui-fill-hover);
 }
-.appIcon img {
+.appIcon img,
+.internalDockItem img {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -437,6 +512,7 @@
 }
 .runningDot {
   position: absolute;
+  z-index: 3;
   bottom: -6px;
   width: 4px;
   height: 4px;
@@ -445,8 +521,15 @@
   left: 50%;
   transform: translateX(-50%);
 }
-.internalDockItem[data-minimized='true'] {
-  opacity: 0.6;
+.internalDockItem[data-current='true'] .runningDot,
+.avatarButton[data-current='true'] .runningDot {
+  width: 12px;
+  background: var(--ui-accent);
+}
+.internalDockItem[data-minimized='true'] .runningDot,
+.avatarButton[data-minimized='true'] .runningDot {
+  background: var(--ui-app-bg);
+  box-shadow: inset 0 0 0 1px var(--ui-text-muted);
 }
 .allAppsButton {
   color: var(--ui-accent);
@@ -574,10 +657,7 @@
   }
 }
 
-html.no-blur .bottomBarBackdrop,
-html.no-blur .window,
-html.no-blur .whisper,
-html.no-blur .dockPicker {
+:global(html.no-blur) .bottomBarBackdrop {
   backdrop-filter: none;
   background: var(--ui-app-bg);
 }
@@ -647,8 +727,7 @@ html.no-blur .dockPicker {
   gap: 10px;
   border: 1px solid var(--ui-line-standard);
   border-radius: 22px;
-  background: color-mix(in srgb, var(--ui-app-bg) 92%, transparent);
-  backdrop-filter: blur(30px) saturate(160%);
+  background: var(--ui-app-bg);
   box-shadow:
     0 18px 48px rgb(0 0 0 / 0.28),
     inset 0 1px 0 rgb(255 255 255 / 0.16);

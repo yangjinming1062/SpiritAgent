@@ -14,7 +14,6 @@ import {
   $chatSessionId,
   $companionSessionId,
   ensureCompanionSession,
-  pendingMessages,
   setChatSession,
   switchSession,
   useConversationUnread
@@ -37,6 +36,7 @@ import { $uiStateReady } from '@/shared/store/ui-state'
 import { useStrings } from '@/shared/strings'
 import { DESKTOP_LAYOUT } from '@client-shared/desktop-layout'
 
+import { DesktopAvatarSignal } from './desktop-avatar-signal'
 import { DesktopBottomBar } from './desktop-bottom-bar'
 import { DesktopWhisper } from './desktop-chat'
 import { DesktopControls } from './desktop-controls'
@@ -64,7 +64,6 @@ export function DesktopRoot(): React.JSX.Element {
   const portrait = useStore($portraitUrl)
   const companionSessionId = useStore($companionSessionId)
   const { hasUnread: whisperHasUnread, firstUnheard } = useConversationUnread(companionSessionId)
-  const pending = useStore(pendingMessages.$atom)
   const postsUnread = useStore($postsHasUnread)
   const diaryUnread = useStore($diaryHasUnread)
   const [unreadReveal, setUnreadReveal] = useState<{ key: string; request: number }>()
@@ -131,6 +130,15 @@ export function DesktopRoot(): React.JSX.Element {
     }
   }, [])
   const activeWindow = layout.windows.findLast(item => !item.minimized)?.id
+  const chatWindow = layout.windows.find(item => item.id === 'chat')
+
+  const avatarLabel = [
+    whisperHasUnread ? t.openUnread : t.chat,
+    chatWindow && t.running,
+    chatWindow?.minimized && t.minimizedWindow
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   // 轻语收起时遗留的 whisper 焦点按当前布局归一，覆盖持久化收起启动与互斥收起路径。
   const focused =
@@ -503,9 +511,12 @@ export function DesktopRoot(): React.JSX.Element {
         avatar={
           <div className={styles.avatarMenu} ref={menuRef}>
             <button
+              aria-current={activeWindow === 'chat' ? 'page' : undefined}
               aria-expanded={accountOpen}
-              aria-label={whisperHasUnread ? t.openUnread : t.chat}
+              aria-label={avatarLabel}
               className={styles.avatarButton}
+              data-current={activeWindow === 'chat'}
+              data-minimized={chatWindow?.minimized ?? false}
               data-unread={whisperHasUnread}
               onClick={openCompanionChat}
               onContextMenu={event => {
@@ -522,8 +533,13 @@ export function DesktopRoot(): React.JSX.Element {
               title={whisperHasUnread ? t.avatarUnreadHint : t.avatarChatHint}
               type="button"
             >
-              {portrait ? <img alt="" src={portrait} /> : <span>{dict.brand.name.slice(0, 1)}</span>}
-              {whisperHasUnread && <span aria-hidden="true" className={styles.avatarUnread} />}
+              <DesktopAvatarSignal unread={whisperHasUnread} />
+              {portrait ? (
+                <img alt="" className={styles.avatarPortrait} src={portrait} />
+              ) : (
+                <span className={styles.avatarPortrait}>{dict.brand.name.slice(0, 1)}</span>
+              )}
+              {chatWindow && <i aria-hidden="true" className={styles.runningDot} />}
             </button>
             {accountOpen && (
               <AccountMenu
@@ -541,7 +557,6 @@ export function DesktopRoot(): React.JSX.Element {
         navigation={
           <DesktopProductNav
             activeWindow={activeWindow}
-            chatUnread={pending.length > 0 || whisperHasUnread}
             onActivate={activatePanel}
             onBeforeOpen={() => setOverlay('product')}
             onClose={close}

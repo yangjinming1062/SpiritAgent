@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="companion-back" x1="72" y1="57" x2="114" y2="106" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFC66B"/>
+      <stop offset="1" stop-color="#F18A52"/>
+    </linearGradient>
+    <linearGradient id="companion-back-head" x1="75" y1="24" x2="100" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE3A0"/>
+      <stop offset="1" stop-color="#FFAA5D"/>
+    </linearGradient>
+    <linearGradient id="companion-body" x1="25" y1="62" x2="75" y2="115" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9D8CFF"/>
+      <stop offset="0.45" stop-color="#7960EE"/>
+      <stop offset="1" stop-color="#474DCF"/>
+    </linearGradient>
+    <linearGradient id="companion-head" x1="30" y1="13" x2="62" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C5B8FF"/>
+      <stop offset="0.52" stop-color="#9C88FF"/>
+      <stop offset="1" stop-color="#7966E8"/>
+    </linearGradient>
+    <filter id="companion-shadow" x="0" y="0" width="128" height="128" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#17234F" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <g filter="url(#companion-shadow)">
+    <path d="M65 98C65 78.1 72.9 65 88 65C105.6 65 117 79.1 117 98V101C117 106.5 112.5 111 107 111H78C70.8 111 65 105.2 65 98Z" fill="#C96B43"/>
+    <path d="M65 94C65 75.9 73.5 62 88 62C104.9 62 117 75.9 117 94V97C117 102.5 112.5 107 107 107H78C70.8 107 65 101.2 65 94Z" fill="url(#companion-back)"/>
+    <path d="M76 70C79.6 67.1 83.8 65.5 88 65.5C98.7 65.5 107.2 72.1 111.2 82" stroke="#FFE8B1" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="88" cy="43" r="18" fill="#D47A4D"/>
+    <circle cx="88" cy="40" r="18" fill="url(#companion-back-head)"/>
+    <path d="M77 32C79.6 28.7 83.6 26.5 88 26.5" stroke="#FFF0C9" stroke-width="3" stroke-linecap="round"/>
+    <path d="M11 100C11 77.9 25.3 63 46 63C66.7 63 81 77.9 81 100V103C81 110.2 75.2 116 68 116H24C16.8 116 11 110.2 11 103V100Z" fill="#4144B0"/>
+    <path d="M11 96C11 73.9 25.3 59 46 59C66.7 59 81 73.9 81 96V99C81 106.2 75.2 112 68 112H24C16.8 112 11 106.2 11 99V96Z" fill="url(#companion-body)"/>
+    <path d="M18 87C21.7 73.8 31.7 65.5 45 65.5" stroke="#CDC1FF" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M72 91V98C72 101.3 69.3 104 66 104H29" stroke="#6466E4" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="46" cy="36" r="22" fill="#6653C9"/>
+    <circle cx="46" cy="32" r="22" fill="url(#companion-head)"/>
+    <path d="M31 25C33.7 19.5 39.4 16 46 16" stroke="#E2D9FF" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+</svg>

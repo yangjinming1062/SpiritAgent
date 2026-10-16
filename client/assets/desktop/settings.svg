@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="settings-metal" x1="31" y1="15" x2="94" y2="106" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.35" stop-color="#E9F2FF"/>
+      <stop offset="0.7" stop-color="#B6CEEE"/>
+      <stop offset="1" stop-color="#7DA5D8"/>
+    </linearGradient>
+    <linearGradient id="settings-depth" x1="32" y1="25" x2="94" y2="115" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4F8BE0"/>
+      <stop offset="1" stop-color="#255BB1"/>
+    </linearGradient>
+    <linearGradient id="settings-center" x1="48" y1="40" x2="82" y2="88" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#61BDFF"/>
+      <stop offset="0.55" stop-color="#338DEC"/>
+      <stop offset="1" stop-color="#1D61CA"/>
+    </linearGradient>
+    <filter id="settings-shadow" x="0" y="0" width="128" height="128" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#17335B" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <g filter="url(#settings-shadow)">
+    <path d="M55 15H73L76 28L86 32L97 25L110 38L103 49L107 59L120 62V80L107 83L103 93L110 104L97 117L86 110L76 114L73 127H55L52 114L42 110L31 117L18 104L25 93L21 83L8 80V62L21 59L25 49L18 38L31 25L42 32L52 28L55 15Z" transform="translate(8 2) scale(.875)" fill="url(#settings-depth)" stroke="#235CA8" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M55 15H73L76 28L86 32L97 25L110 38L103 49L107 59L120 62V80L107 83L103 93L110 104L97 117L86 110L76 114L73 127H55L52 114L42 110L31 117L18 104L25 93L21 83L8 80V62L21 59L25 49L18 38L31 25L42 32L52 28L55 15Z" transform="translate(8 -4) scale(.875)" fill="url(#settings-metal)" stroke="#DDEBFC" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M58 12H70L73 24M31 22L39 30M18 53L29 50M22 85L30 78" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="64" cy="60" r="28" fill="#6A94CA"/>
+    <circle cx="64" cy="62" r="24" fill="url(#settings-center)"/>
+    <path d="M46 57C48.2 48.9 55.5 43 64 43C67.6 43 70.9 44 73.8 45.7" stroke="#A8DEFF" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="64" cy="62" r="11" fill="#1E58AA"/>
+    <circle cx="64" cy="60" r="10" fill="#D9EDFF"/>
+    <path d="M59 57C59.9 55.5 61.7 54.5 64 54.5" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -2,25 +2,20 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
-import { type IconComponent, MessageCircle, Messages, Settings, Users } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { useStrings } from '@/shared/strings'
 
-import { DESKTOP_APPS, type DesktopApp, type DesktopWindowState } from './desktop-layout'
+import { type DesktopApp, type DesktopWindowState } from './desktop-layout'
 import { useDesktopStrings } from './desktop-strings'
 import styles from './desktop.module.css'
 
-const APP_ICONS: Record<DesktopApp, IconComponent> = {
-  chat: MessageCircle,
-  companion: Users,
-  posts: Messages,
-  settings: Settings
-}
+const DESKTOP_NAV_APPS = ['companion', 'posts', 'settings'] as const satisfies readonly DesktopApp[]
+
+type DesktopNavApp = (typeof DESKTOP_NAV_APPS)[number]
 
 export function DesktopProductNav({
   windows,
   activeWindow,
-  chatUnread,
   postsUnread,
   overlayActive,
   onActivate,
@@ -30,7 +25,6 @@ export function DesktopProductNav({
 }: {
   windows: DesktopWindowState[]
   activeWindow?: DesktopApp
-  chatUnread: boolean
   postsUnread: boolean
   overlayActive: boolean
   onActivate: (id: DesktopApp) => void
@@ -40,8 +34,8 @@ export function DesktopProductNav({
 }): React.JSX.Element {
   const t = useDesktopStrings()
   const dict = useStrings()
-  const [menu, setMenu] = useState<{ id: DesktopApp; x: number; bottom: number } | null>(null)
-  const [hint, setHint] = useState<{ id: DesktopApp; x: number; bottom: number } | null>(null)
+  const [menu, setMenu] = useState<{ id: DesktopNavApp; x: number; bottom: number } | null>(null)
+  const [hint, setHint] = useState<{ id: DesktopNavApp; x: number; bottom: number } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   useInteractiveRegion('desktop-product-menu', menuRef, element => {
@@ -91,7 +85,7 @@ export function DesktopProductNav({
     }
   }, [menu])
 
-  const openMenu = (id: DesktopApp, trigger: HTMLButtonElement): void => {
+  const openMenu = (id: DesktopNavApp, trigger: HTMLButtonElement): void => {
     if (!windows.some(item => item.id === id)) {
       return
     }
@@ -107,7 +101,7 @@ export function DesktopProductNav({
     })
   }
 
-  const showHint = (id: DesktopApp, trigger: HTMLButtonElement): void => {
+  const showHint = (id: DesktopNavApp, trigger: HTMLButtonElement): void => {
     const rect = trigger.getBoundingClientRect()
     setHint({
       id,
@@ -119,10 +113,9 @@ export function DesktopProductNav({
   return (
     <>
       <nav aria-label={t.title} className={styles.productNav}>
-        {DESKTOP_APPS.map(id => {
-          const Icon = APP_ICONS[id]
+        {DESKTOP_NAV_APPS.map(id => {
           const item = windows.find(candidate => candidate.id === id)
-          const unread = id === 'chat' ? chatUnread : id === 'posts' && postsUnread
+          const unread = id === 'posts' && postsUnread
 
           const label = [
             t[id],
@@ -163,7 +156,7 @@ export function DesktopProductNav({
               onPointerLeave={() => setHint(null)}
               type="button"
             >
-              <Icon aria-hidden="true" size={23} />
+              <img alt="" draggable={false} src={`${import.meta.env.BASE_URL}desktop/${id}.svg`} />
               {item && <i aria-hidden="true" className={styles.runningDot} />}
               {unread && <span aria-hidden="true" className={styles.productUnread} />}
             </button>

@@ -670,6 +670,15 @@ html[data-role='main'][data-effect='clear'][data-palette='night'] .theme-tile.is
     0 20px 48px -12px rgba(0, 0, 0, 0.45);
 }
 
+html[data-role='desktop'] {
+  --ui-overlay: var(--ui-app-bg);
+}
+
+html[data-role='desktop'] .liquid-glass-overlay {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 html[data-palette='day'] .liquid-glass-overlay {
   box-shadow:
     inset 0 1px 1px 0 rgba(255, 255, 255, 0.7),
