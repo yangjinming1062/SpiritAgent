@@ -75,8 +75,6 @@ _RESULT_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 _BG = TaskBag("media.video_jobs")
 _TERMINAL_STATUSES = ("succeeded", "failed", "result_unknown", "review_pending", "discarded")
-# 供应商任务可能仍在进行或已计费，终态记为 result_unknown 而非可重试的失败。
-_RESULT_UNKNOWN_REASONS = frozenset({"result_unknown", "submit_result_unknown"})
 _RESOLUTION_RANK = {"480P": 0, "720P": 1, "768P": 1, "1080P": 2, "2K": 3}
 
 
@@ -468,7 +466,7 @@ async def _record_failure(job_id: int, *, reason: str) -> None:
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
         if row is None or _settled(row):
             return
-        row.status = "result_unknown" if reason in _RESULT_UNKNOWN_REASONS else "failed"
+        row.status = "result_unknown" if reason == "result_unknown" else "failed"
         row.error_reason = reason
         row.error_message = user_msg
         state = MediaChainState.model_validate_json(row.generation_state_json)
@@ -594,15 +592,6 @@ async def _evaluate_stored_video(job_id: int) -> str:
     return decision
 
 
-def _no_submission_reason(stop_reason: str) -> str:
-    """没有可提交的供应商时的失败原因：此前提交失败的如实报告，结果未知不当作普通失败；只有供应商配置失效才报服务配置变更。"""
-    if stop_reason == "result_unknown":
-        return "submit_result_unknown"
-    if stop_reason:
-        return stop_reason
-    return "provider_unavailable"
-
-
 def _queue_owner(job: VideoGenJob, state: MediaChainState) -> VideoQueueOwner:
     return VideoQueueOwner(kind="media", user_id=job.user_id, entity_id=job.id, generation_id=state.generation_id)
 
@@ -654,7 +643,7 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
             owner = _queue_owner(row, state)
             prompt = row.prompt
         if state.stop_reason or state.next_index >= len(state.providers):
-            await _fail_or_keep_best(job_id, _no_submission_reason(state.stop_reason))
+            await _fail_or_keep_best(job_id, state.stop_reason or "provider_unavailable")
             return False
         index = state.next_index
         frozen = state.providers[index]
@@ -774,7 +763,7 @@ async def _fail_or_keep_best(job_id: int, reason: str) -> None:
     if keep_best:
         warning = (
             f"{video_failure_message(reason)}；已保留此前最佳视频"
-            if reason in {"result_unknown", "submit_result_unknown", "content_policy_blocked"}
+            if reason in {"result_unknown", "content_policy_blocked"}
             else "自动重生成未能完成，已保留此前最佳视频"
         )
         await _finalize_best_video(job_id, warning=warning)
@@ -809,12 +798,6 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
         params = _VideoJobParams.model_validate_json(job.params_json)
 
     try:
-        if job.status == "submitting":
-            state = MediaChainState.model_validate_json(job.generation_state_json)
-            state.stop_reason = "result_unknown"
-            await _update_job(job_id, generation_state_json=state.model_dump_json())
-            await _fail_or_keep_best(job_id, "submit_result_unknown")
-            return
         if job.status == "retry_pending":
             if await _submit_next_video(job_id, user_id):
                 await _poll_and_finalize_locked(job_id)
@@ -888,7 +871,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
 
         if not state.queue_request_id:
             # 制作状态必须对应持久队列；缺失引用时保留未知结果，防止重发。
-            await _fail_or_keep_best(job_id, "submit_result_unknown")
+            await _fail_or_keep_best(job_id, "result_unknown")
             return
         try:
             status = await _wait_queued_video(job_id, state)
@@ -1029,7 +1012,7 @@ async def resume_pending_video_jobs() -> None:
                 select(VideoGenJob.id, VideoGenJob.user_id).where(
                     VideoGenJob.cleanup_requested_at.is_(None),
                     VideoGenJob.status.in_(
-                        ("processing", "downloading", "evaluating", "retry_pending", "submitting"),
+                        ("processing", "downloading", "evaluating", "retry_pending"),
                     ),
                 ),
             )

@@ -136,10 +136,6 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
 
     try {
       snapshot = await bridge.dispatch('tools.execute', { args: {}, name: 'system.get_windows' }, { timeoutMs: 1500 })
-
-      if (typeof snapshot === 'string') {
-        snapshot = JSON.parse(snapshot) as unknown
-      }
     } catch {
       return null
     }

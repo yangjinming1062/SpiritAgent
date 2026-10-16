@@ -72,7 +72,7 @@ export const $progress = computed($bootstrap, (b) => {
 interface BootstrapManifestEvent {
   type: 'manifest'
   stages: StageInfo[]
-  protocolVersion: number | null
+  protocolVersion: number
 }
 
 interface BootstrapStageEvent {

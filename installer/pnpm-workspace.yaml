@@ -1,12 +1,7 @@
 packages:
   - .
 
-# 允许 postinstall：pnpm>=10 缺省跳过会导致 esbuild 等二进制未拉取、构建失败。名单与 client 一致。
-onlyBuiltDependencies:
-  - esbuild
-  - unicode-animations
-
-# pnpm 9 兼容键；pnpm 10+ 用 onlyBuiltDependencies
+# 允许构建依赖释放 esbuild 等运行所需的二进制。
 allowBuilds:
   esbuild: true
   unicode-animations: true

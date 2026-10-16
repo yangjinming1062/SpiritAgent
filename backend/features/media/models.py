@@ -30,7 +30,7 @@ class VideoGenJob(ModelBase):
     model: Mapped[str] = mapped_column(String(128))
     prompt: Mapped[str] = mapped_column(Text)
     params_json: Mapped[str] = mapped_column(Text, default="{}")
-    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    status: Mapped[str] = mapped_column(String(16), default="retry_pending", index=True)
     # 每次提交前清空；受理本次提交的供应商返回 task_id 后写入，未受理或提交结果未知时为空。
     provider_task_id: Mapped[str | None] = mapped_column(String(128), index=True)
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)

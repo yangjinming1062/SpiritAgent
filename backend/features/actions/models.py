@@ -162,16 +162,14 @@ class CompanionAction(ModelBase, TimestampMixin):
 
 
 def removed_video_tasks(jobs: Iterable[CompanionAction]) -> list[RemovedActionVideoTask]:
-    """删除任务行前摘出仍可能在远端运行的句柄；供应商定位沿生成状态冻结值。"""
+    """删除任务行前保留视频队列状态，提交后取消对应请求。"""
     return [
         RemovedActionVideoTask(
             action_id=job.id,
-            task_id=job.provider_task_id,
             generation_state_json=job.generation_state_json,
-            provider=job.provider,
         )
         for job in jobs
-        if job.provider_task_id
+        if job.media_type == "video" and job.generation_state_json
     ]
 
 

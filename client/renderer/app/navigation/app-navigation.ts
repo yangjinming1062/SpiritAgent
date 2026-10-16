@@ -2,12 +2,7 @@ import { atom, computed } from 'nanostores'
 
 import { setChatSession, switchSession } from '@/modules/conversation'
 import { log } from '@/shared/lib/log'
-import {
-  definePersistedAtom,
-  registerCompanionStorageKey,
-  registerStorageClearHandler,
-  registerStorageRestoreHandler
-} from '@/shared/lib/storage'
+import { definePersistedAtom, registerCompanionStorageKey, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $gatewayState } from '@/shared/store/gateway'
 import {
   APP_PAGES,
@@ -19,8 +14,6 @@ import {
   SETTINGS_SECTIONS,
   type SettingsSection
 } from '@ipc/contracts'
-
-import { migrateStoredNavigation } from './navigation-upgrade'
 
 export { APP_PAGES, SETTINGS_SECTIONS }
 
@@ -48,17 +41,6 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
     )
   }
 })
-
-function upgradeNavigation(): void {
-  const migrated = migrateStoredNavigation(NAVIGATION_KEY)
-
-  if (migrated) {
-    navigation.set(migrated)
-  }
-}
-
-upgradeNavigation()
-registerStorageRestoreHandler(upgradeNavigation)
 
 export const $appPage = computed(navigation.$atom, value => value.page ?? 'chat')
 export const $settingsSection = computed(navigation.$atom, value => value.section ?? 'companionship')

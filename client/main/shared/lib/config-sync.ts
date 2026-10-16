@@ -5,7 +5,7 @@ import type { BackendClientPort, BackendConnection } from '../backend-port'
 
 import * as store from './runner-config-store'
 
-// 云端 ⇄ 本地镜像的同步节白名单（desktop-settings.json 顶层节）；名单外的节（terminal、spiritagent 等机密/设备相关节与未知节）永不离开本机（PROTOCOL「配置所有权与云同步」「凭据落盘」）。"language" 是顶层原始值键（对齐后端 user_settings.setting_key），由 hydrate/pick 单独按原始值处理。
+// 只同步 desktop-settings.json 白名单内的配置节；language 作为顶层原始值单独处理。
 const SYNCED_SECTIONS = [
   'skills',
   'toolsets',

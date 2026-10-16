@@ -122,19 +122,11 @@ async def desktop_image_origin(
 
 def desktop_removed_video_task(action: DesktopVideoAction) -> RemovedActionVideoTask | None:
     progress = desktop_progress(action)
-    if (
-        progress is None
-        or not progress.provider_task_id
-        or progress.download_url
-        or progress.source_path
-        or progress.candidate
-    ):
+    if progress is None or not progress.video_chain_json:
         return None
     return RemovedActionVideoTask(
         action_id=action.id,
-        task_id=progress.provider_task_id,
         generation_state_json=progress.video_chain_json,
-        provider="",
     )
 
 

@@ -9,15 +9,13 @@ pub struct StageInfo {
     pub title: String,
     pub category: String,
     // -NonInteractive 下 needs_user_input 阶段以 skipped 跳过，交后续引导处理。
-    #[serde(rename = "needs_user_input", alias = "needsUserInput")]
     pub needs_user_input: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub stages: Vec<StageInfo>,
-    #[serde(rename = "protocol_version", alias = "protocolVersion", default)]
-    pub protocol_version: Option<u32>,
+    pub protocol_version: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +55,7 @@ pub enum BootstrapEvent {
     Manifest {
         stages: Vec<StageInfo>,
         #[serde(rename = "protocolVersion")]
-        protocol_version: Option<u32>,
+        protocol_version: u32,
     },
     /// 阶段状态切换；`result` 仅终态填充。
     Stage {

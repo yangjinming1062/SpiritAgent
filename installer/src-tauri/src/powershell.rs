@@ -353,6 +353,7 @@ fn interpreter_label() -> String {
 
 pub const STAGE_RESULT_SENTINEL: &str = "__SPIRITAGENT_STAGE_RESULT__:";
 pub const MANIFEST_SENTINEL: &str = "__SPIRITAGENT_MANIFEST__:";
+const INSTALL_PROTOCOL_VERSION: u32 = 2;
 
 /// 解析 sentinel 前缀标记的阶段结果 JSON 行。
 pub fn parse_stage_result(stdout: &str) -> Option<crate::events::StageResultPayload> {
@@ -373,7 +374,9 @@ pub fn parse_manifest(stdout: &str) -> Option<crate::events::Manifest> {
         let trimmed = line.trim();
         if let Some(payload_str) = trimmed.strip_prefix(MANIFEST_SENTINEL) {
             if let Ok(parsed) = serde_json::from_str::<crate::events::Manifest>(payload_str.trim()) {
-                return Some(parsed);
+                if parsed.protocol_version == INSTALL_PROTOCOL_VERSION {
+                    return Some(parsed);
+                }
             }
         }
     }
@@ -413,20 +416,20 @@ final non-json banner
     fn parse_manifest_with_sentinel_finds_stages_array() {
         let stdout = r#"
 info line
-__SPIRITAGENT_MANIFEST__:{"stages": [{"name": "uv", "title": "uv", "category": "prereqs", "needs_user_input": false}], "protocol_version": 1}
+__SPIRITAGENT_MANIFEST__:{"stages": [{"name": "install-python", "title": "Python", "category": "prereqs", "needs_user_input": false}], "protocol_version": 2}
 trailing info
 "#;
         let m = parse_manifest(stdout).unwrap();
         assert_eq!(m.stages.len(), 1);
-        assert_eq!(m.stages[0].name, "uv");
-        assert_eq!(m.protocol_version, Some(1));
+        assert_eq!(m.stages[0].name, "install-python");
+        assert_eq!(m.protocol_version, INSTALL_PROTOCOL_VERSION);
     }
 
     #[test]
     fn parse_manifest_rejects_bare_json_without_sentinel() {
         let stdout = r#"
 info line
-{"stages": [{"name": "uv", "title": "uv", "category": "prereqs", "needs_user_input": false}], "protocol_version": 1}
+{"stages": [{"name": "install-python", "title": "Python", "category": "prereqs", "needs_user_input": false}], "protocol_version": 2}
 "#;
         let m = parse_manifest(stdout);
         assert!(m.is_none(), "bare JSON without sentinel must not match");

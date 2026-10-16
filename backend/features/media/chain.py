@@ -57,8 +57,6 @@ def video_provider_failure_reason(error: str | None) -> str:
 
 def video_failure_message(reason: str) -> str:
     """聊天与动作视频共用的失败文案；未知提交与审核拒绝保留各自恢复要求。"""
-    if reason == "submit_result_unknown":
-        reason = "result_unknown"
     return _VIDEO_FAILURE_COPY.get(reason, _VIDEO_FAILURE_COPY["provider_failed"])
 
 
@@ -225,7 +223,7 @@ async def cancel_video_chain_attempt(state: MediaChainState) -> str:
 
 
 async def cancel_removed_action_video_tasks(user_id: int, tasks: Sequence[RemovedActionVideoTask]) -> None:
-    """本地放弃制作提交后尽力撤销远端任务，不能撤销时记录结果。"""
+    """本地放弃制作提交后请求队列撤销，不能撤销时记录结果。"""
     for task in tasks:
         try:
             state = (

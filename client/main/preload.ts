@@ -53,7 +53,7 @@ function invoke<C extends InvokeChannel>(
   return ipcRenderer.invoke(channel, ...args)
 }
 
-// Electron 32+ 移除了 File.path，真实路径只能经 webUtils.getPathForFile 拿到；解析成功即写入主进程可读白名单，不向渲染层暴露 registerUserSelectedPaths，防止 XSS 自授后外传。
+// 真实文件路径由 webUtils.getPathForFile 解析并登记到主进程可读白名单；渲染层不能自行登记路径。
 const desktopFiles = {
   getPathForFile: (file: File): string => {
     const filePath = webUtils.getPathForFile(file)

@@ -3,8 +3,6 @@ packages:
 
 overrides:
   app-builder-lib>@electron/get: 3.1.0
-onlyBuiltDependencies:
-  - electron-winstaller
 allowBuilds:
   electron-winstaller: true
   esbuild: true
