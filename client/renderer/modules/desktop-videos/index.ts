@@ -12,7 +12,6 @@ export {
   createDesktopVideoSet,
   deleteDesktopVideoSet,
   designDesktopVideoAction,
-  desktopScreenResolution,
   desktopVideoAspectMismatch,
   ensureDesktopVideoCurrent,
   generateDesktopVideoAction,
@@ -25,13 +24,12 @@ export {
   refineDesktopVideo,
   refreshDesktopVideos,
   renameDesktopVideoSet,
-  resizeDesktopVideoSet,
   resumeDesktopVideoDraft,
   reviewDesktopVideoAction,
   setDesktopVideoPreferences,
   uploadDesktopVideoAction
 } from './desktop-video-store'
-export { MAX_DESKTOP_VIDEO_DIMENSION } from './types'
+export { desktopDisplayResolution, desktopVideoMatchesDisplay } from './display'
 export type {
   DesktopVideoAction,
   DesktopVideoAspectMismatch,

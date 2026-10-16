@@ -49,6 +49,7 @@ export type {
   StageActivity
 } from './desktop-presentation'
 export type { DesktopLifeUiSnapshot } from './ui-state'
+export { isDesktopLifeUiSnapshot } from './ui-state'
 
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 

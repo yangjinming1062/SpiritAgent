@@ -497,18 +497,7 @@ async def rename_desktop_video_set(
     request: DesktopVideoRenameSetRequest,
 ) -> DesktopVideoSetResponse:
     row = await _suite(db, user_id, set_id)
-    _validate_draft(row, None, resolution_revision=request.expected_resolution_revision)
-    if request.target_width is not None and (request.target_width, request.target_height) != (
-        row.target_width,
-        row.target_height,
-    ):
-        actions = await db.scalars(select(DesktopVideoAction).where(DesktopVideoAction.set_id == set_id))
-        if any(action.generation_state_json and action.stage != "complete" for action in actions):
-            raise DesktopVideoStateError("请先完成或放弃制作草稿，再修改桌景分辨率")
-        row.target_width, row.target_height = request.target_width, request.target_height
-        row.resolution_revision += 1
-    if request.name is not None:
-        row.title = request.name
+    row.title = request.name
     state = await touch_desktop_state(db, user_id)
     await db.commit()
     return await desktop_set_response(db, row, current_id=state.current_set_id)
@@ -705,7 +694,7 @@ async def _image_geometry(
     width, height = await asyncio.to_thread(probe_desktop_image, data)
     if aspect_policy != "ask":
         return _geometry_mode(row, width, height, aspect_policy), width, height, data
-    # 已明确保留原画幅的基准及派生动作继续使用同一例外，改分辨率后重新确认。
+    # 已明确保留原画幅的基准及派生动作继续使用同一例外。
     actions = await db.scalars(select(DesktopVideoAction).where(DesktopVideoAction.set_id == row.id))
     for other in actions:
         accepted = desktop_accepted_asset(other)

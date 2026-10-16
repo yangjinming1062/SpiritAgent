@@ -14,7 +14,7 @@ import {
   createDesktopVideoSet,
   deleteDesktopVideoSet,
   designDesktopVideoAction,
-  desktopScreenResolution,
+  desktopDisplayResolution,
   type DesktopVideoAction,
   desktopVideoAspectMismatch,
   type DesktopVideoAspectMismatch,
@@ -27,14 +27,12 @@ import {
   generateDesktopVideoAction,
   generateDesktopVideoImage,
   getDesktopVideoPrompt,
-  MAX_DESKTOP_VIDEO_DIMENSION,
   pauseDesktopVideoDraft,
   playDesktopVideoAction,
   previewDesktopVideoRefinement,
   refineDesktopVideo,
   refreshDesktopVideos,
   renameDesktopVideoSet,
-  resizeDesktopVideoSet,
   resumeDesktopVideoDraft,
   reviewDesktopVideoAction,
   setDesktopVideoPreferences,
@@ -65,7 +63,8 @@ import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { desktopMediaObjectFit } from '@client-shared/desktop-media-geometry'
 
-import { DesktopLifeResolutionSettings, ResolutionFields, resolutionLabel } from './desktop-life-resolution'
+import { readyDesktopLifeResolution, reconcileDesktopLifeDisplay } from './desktop-life-display'
+import { DesktopLifeDisplayPicker, DesktopLifeRecommendation, resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 
@@ -747,18 +746,12 @@ export function DesktopLifePage({
     }
 
     const previous = $desktopLifeUi.get().create
-    const screen = desktopScreenResolution()
+    const create = reconcileDesktopLifeDisplay(previous, presentation)
 
-    if (!previous.targetWidth && !previous.targetHeight && screen) {
-      updateDesktopLifeUi({
-        create: {
-          ...previous,
-          targetWidth: String(screen.target_width),
-          targetHeight: String(screen.target_height)
-        }
-      })
+    if (create !== previous) {
+      updateDesktopLifeUi({ create })
     }
-  }, [createOpen, presentation])
+  }, [createOpen, presentation, create.targetDisplayId, create.targetResolution])
 
   useEffect(() => {
     if (!createOpen || !create.sceneId) {
@@ -1650,16 +1643,10 @@ export function DesktopLifePage({
 
   const selectedOutfit = outfits.find(outfit => String(outfit.id) === create.outfitId)
   const materialReady = selectedScene?.status === 'ready' && selectedOutfit?.status === 'ready'
-  const createWidth = Number(create.targetWidth)
-  const createHeight = Number(create.targetHeight)
+  const recommendationDisplay = presentation.displays.find(display => display.id === presentation.displayId)
+  const recommendationResolution = desktopDisplayResolution(recommendationDisplay)
 
-  const resolutionReady =
-    Number.isSafeInteger(createWidth) &&
-    createWidth > 0 &&
-    createWidth <= MAX_DESKTOP_VIDEO_DIMENSION &&
-    Number.isSafeInteger(createHeight) &&
-    createHeight > 0 &&
-    createHeight <= MAX_DESKTOP_VIDEO_DIMENSION
+  const resolutionReady = readyDesktopLifeResolution(create, presentation) !== null
 
   const displayedActions =
     selected?.actions.filter(item => item.key !== 'idle' && (item.current || item.draft || item.status === 'failed')) ??
@@ -1683,10 +1670,20 @@ export function DesktopLifePage({
             </button>
           )}
         </header>
-        {selected && !createOpen && (
+        {!createOpen && (
           <p className="text-sm text-muted">
-            {t.targetResolution}: {resolutionLabel(selected.target_width, selected.target_height)}
+            {recommendationResolution && recommendationDisplay
+              ? `${t.recommendationDisplay}: ${recommendationDisplay.label} · ${resolutionLabel(recommendationResolution.width, recommendationResolution.height)}`
+              : t.recommendationUnavailable}
           </p>
+        )}
+        {selected && !createOpen && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted">
+              {t.targetResolution}: {resolutionLabel(selected.target_width, selected.target_height)}
+            </span>
+            <DesktopLifeRecommendation display={recommendationDisplay} set={selected} />
+          </div>
         )}
         {(selected || createOpen) && (
           <button
@@ -1730,18 +1727,25 @@ export function DesktopLifePage({
               className="flex flex-col gap-5"
               onSubmit={event => {
                 event.preventDefault()
+                const currentCreate = $desktopLifeUi.get().create
+                const target = readyDesktopLifeResolution(currentCreate, $presentation.get())
+
+                if (busy || !target) {
+                  return
+                }
+
                 const scope = captureAuthScope()
                 const isLive = beginAsync()
                 void run(async () => {
                   const created = await createDesktopVideoSet({
-                    request_id: create.requestId,
-                    name: create.name.trim() || t.newSceneName,
-                    scene_id: Number(create.sceneId),
-                    outfit_id: Number(create.outfitId),
-                    source: create.source,
-                    target_width: createWidth,
-                    target_height: createHeight,
-                    feedback: create.feedback.trim()
+                    request_id: currentCreate.requestId,
+                    name: currentCreate.name.trim() || t.newSceneName,
+                    scene_id: Number(currentCreate.sceneId),
+                    outfit_id: Number(currentCreate.outfitId),
+                    source: currentCreate.source,
+                    target_width: target.width,
+                    target_height: target.height,
+                    feedback: currentCreate.feedback.trim()
                   })
 
                   if (!scope?.() || !isLive()) {
@@ -1756,7 +1760,7 @@ export function DesktopLifePage({
                     create: newDesktopLifeCreation()
                   })
 
-                  if (first && create.source === 'image_upload') {
+                  if (first && currentCreate.source === 'image_upload') {
                     const [path] = await fileApi().selectPaths({
                       title: t.uploadImage,
                       multiple: false,
@@ -1770,7 +1774,7 @@ export function DesktopLifePage({
                     }
                   }
 
-                  if (first && create.source === 'video_upload') {
+                  if (first && currentCreate.source === 'video_upload') {
                     openExternal(first)
                   }
                 })
@@ -1798,26 +1802,14 @@ export function DesktopLifePage({
               ) : (
                 <div className="rounded-xl bg-accent/5 p-4 text-sm text-body">{t.ownMediaHint}</div>
               )}
-              <ResolutionFields
+              <DesktopLifeDisplayPicker
                 disabled={busy}
-                height={create.targetHeight}
-                onChange={(targetWidth, targetHeight) =>
-                  setCreate(current => ({
-                    ...current,
-                    targetWidth,
-                    targetHeight,
-                    requestId: crypto.randomUUID()
-                  }))
-                }
-                width={create.targetWidth}
+                displayId={create.targetDisplayId}
+                displays={presentation.displays}
+                onChange={targetDisplayId => {
+                  setCreate(current => reconcileDesktopLifeDisplay(current, $presentation.get(), targetDisplayId))
+                }}
               />
-              {!resolutionReady && (
-                <p className="text-xs text-muted">
-                  {!create.targetWidth && !create.targetHeight
-                    ? t.screenUnavailable
-                    : t.resolutionRangeHint(MAX_DESKTOP_VIDEO_DIMENSION)}
-                </p>
-              )}
               <section className="flex flex-col gap-3 rounded-xl bg-black/5 p-4">
                 <p className="text-sm text-body">{t.referencesHint}</p>
                 <div className="grid grid-cols-2 gap-3">
@@ -2077,12 +2069,6 @@ export function DesktopLifePage({
             <details className="rounded-xl border border-line-hairline p-4">
               <summary className="cursor-pointer text-sm text-body">{t.more}</summary>
               <div className="mt-4 flex flex-col gap-4">
-                <DesktopLifeResolutionSettings
-                  busy={busy}
-                  key={`${selected.id}:${selected.resolution_revision}`}
-                  onSave={(width, height) => void run(() => resizeDesktopVideoSet(selected, width, height))}
-                  set={selected}
-                />
                 <form
                   className="flex flex-wrap gap-2"
                   onSubmit={event => {
@@ -2162,7 +2148,12 @@ export function DesktopLifePage({
                     <span className="text-sm text-muted">
                       {unfinished ? t.continue : idle?.playable ? t.ready : t.notCreated}
                     </span>
-                    <span className="text-xs text-muted">{resolutionLabel(item.target_width, item.target_height)}</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted">
+                        {resolutionLabel(item.target_width, item.target_height)}
+                      </span>
+                      <DesktopLifeRecommendation display={recommendationDisplay} set={item} />
+                    </div>
                   </button>
                 )
               })}

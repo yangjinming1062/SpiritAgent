@@ -16,7 +16,7 @@ def desktop_aspect_ratio(width: int, height: int) -> str:
 
 
 def desktop_aspect_matches(width: int, height: int, target_width: int, target_height: int) -> bool:
-    return abs(width * target_height / (height * target_width) - 1) <= 0.01
+    return abs(width * target_height - height * target_width) * 100 <= height * target_width
 
 
 def probe_desktop_image(data: bytes) -> tuple[int, int]:

@@ -120,7 +120,7 @@ async def plan_desktop_video_refinement(
             provider.validate_reference_video(metadata)
             ratio = reference_video_ratio(provider, aspect_ratio)
             if ratio is None:
-                raise DesktopVideoStateError(f"当前视频模型不支持 {aspect_ratio} 输出画幅，请修改桌景目标或保留原片")
+                raise DesktopVideoStateError(f"当前视频模型不支持 {aspect_ratio} 输出画幅，请更换视频模型或保留原片")
             duration = seconds or next(
                 (
                     value

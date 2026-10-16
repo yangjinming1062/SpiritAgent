@@ -5,6 +5,7 @@ import type { BrowserWindow, IpcMain, WebContents } from 'electron'
 import {
   type AppNavigationTarget,
   IPC,
+  isDesktopLifeUiSnapshot,
   type MainUiStateData,
   type MainUiStateSnapshot,
   type MainUiStateUpdate,
@@ -55,30 +56,7 @@ function stateData(raw: MainUiStateData): MainUiStateData {
 
   const desktopLife = raw.desktopLife
 
-  if (
-    !desktopLife ||
-    typeof desktopLife !== 'object' ||
-    ![desktopLife.selectedSetId, desktopLife.selectedActionId, desktopLife.externalActionId].every(
-      value => value === null || (Number.isSafeInteger(value) && Number(value) > 0)
-    ) ||
-    typeof desktopLife.creating !== 'boolean' ||
-    typeof desktopLife.addActionOpen !== 'boolean' ||
-    !desktopLife.create ||
-    !['ai', 'image_upload', 'video_upload'].includes(desktopLife.create.source) ||
-    !['name', 'sceneId', 'sceneLabel', 'outfitId', 'feedback', 'requestId', 'targetWidth', 'targetHeight'].every(
-      key => typeof desktopLife.create[key as keyof typeof desktopLife.create] === 'string'
-    ) ||
-    !desktopLife.feedback ||
-    typeof desktopLife.feedback !== 'object' ||
-    !Object.values(desktopLife.feedback).every(value => typeof value === 'string') ||
-    !desktopLife.design ||
-    typeof desktopLife.design.name !== 'string' ||
-    typeof desktopLife.design.description !== 'string' ||
-    !['loop', 'once'].includes(desktopLife.design.kind) ||
-    !Number.isFinite(desktopLife.design.duration) ||
-    typeof desktopLife.externalRequirements !== 'string' ||
-    !(desktopLife.externalFilePath === null || typeof desktopLife.externalFilePath === 'string')
-  ) {
+  if (!isDesktopLifeUiSnapshot(desktopLife)) {
     throw new Error('制作草稿状态无效。')
   }
 

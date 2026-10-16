@@ -4,7 +4,6 @@ export type DesktopVideoSource = 'ai' | 'image_upload' | 'video_upload'
 export type DesktopVideoTransition = 'base' | 'fade'
 export type DesktopVideoAspectPolicy = 'ask' | 'keep' | 'expand'
 export type DesktopVideoRefinementSource = 'current' | 'candidate'
-export const MAX_DESKTOP_VIDEO_DIMENSION = 65536
 
 export interface DesktopVideoAspectMismatch {
   reason: 'aspect_ratio_mismatch'

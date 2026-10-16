@@ -1,7 +1,6 @@
-import { useState } from 'react'
-
-import { desktopScreenResolution, type DesktopVideoSet, MAX_DESKTOP_VIDEO_DIMENSION } from '@/modules/desktop-videos'
-import { BTN_SUBTLE, INPUT_CLASS } from '@/shared/panel'
+import { desktopDisplayResolution, desktopVideoMatchesDisplay, type DesktopVideoSet } from '@/modules/desktop-videos'
+import { PanelSelect } from '@/shared/panel'
+import type { PresentationDisplay } from '@ipc/contracts'
 
 import { useDesktopLifeStrings } from './desktop-life-strings'
 
@@ -18,127 +17,82 @@ export function resolutionLabel(width: number, height: number): string {
   return `${width} × ${height} · ${width / a}:${height / a}`
 }
 
-export function ResolutionFields({
-  width,
-  height,
-  disabled = false,
+export function DesktopLifeDisplayPicker({
+  displays,
+  displayId,
+  disabled,
   onChange
 }: {
-  width: string
-  height: string
-  disabled?: boolean
-  onChange: (width: string, height: string) => void
+  displays: PresentationDisplay[]
+  displayId: number | null
+  disabled: boolean
+  onChange: (displayId: number) => void
 }): React.JSX.Element {
   const t = useDesktopLifeStrings()
-  const [unavailable, setUnavailable] = useState(false)
+  const selected = displays.find(display => display.id === displayId)
+  const resolution = desktopDisplayResolution(selected)
+
+  const options = displays.map(display => {
+    const size = desktopDisplayResolution(display)
+
+    return {
+      value: String(display.id),
+      label: `${display.label}${display.isPrimary ? ` · ${t.primaryDisplay}` : ''} · ${size ? `${size.width} × ${size.height}` : t.readingScreen}`
+    }
+  })
+
+  if (!selected) {
+    options.unshift({
+      value: displayId === null ? '' : String(displayId),
+      label: displayId === null ? t.chooseDisplay : t.displayDisconnected
+    })
+  }
 
   return (
-    <fieldset className="flex flex-col gap-3" disabled={disabled}>
-      <legend className="mb-3 text-sm font-medium text-strong">{t.targetResolution}</legend>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="flex flex-col gap-2 text-sm text-body">
-          {t.width}
-          <input
-            className={INPUT_CLASS}
-            max={MAX_DESKTOP_VIDEO_DIMENSION}
-            min={1}
-            onChange={event => onChange(event.target.value, height)}
-            required
-            step={1}
-            type="number"
-            value={width}
-          />
-        </label>
-        <label className="flex flex-col gap-2 text-sm text-body">
-          {t.height}
-          <input
-            className={INPUT_CLASS}
-            max={MAX_DESKTOP_VIDEO_DIMENSION}
-            min={1}
-            onChange={event => onChange(width, event.target.value)}
-            required
-            step={1}
-            type="number"
-            value={height}
-          />
-        </label>
-      </div>
-      <button
-        className={`${BTN_SUBTLE} self-start`}
-        onClick={() => {
-          const screen = desktopScreenResolution()
-          setUnavailable(!screen)
-
-          if (screen) {
-            onChange(String(screen.target_width), String(screen.target_height))
+    <section className="flex flex-col gap-3">
+      <span className="text-sm font-medium text-strong">{t.creationDisplay}</span>
+      <PanelSelect
+        ariaLabel={t.creationDisplay}
+        disabled={disabled || !displays.length}
+        onChange={value => {
+          if (value && displays.some(display => String(display.id) === value)) {
+            onChange(Number(value))
           }
         }}
-        type="button"
-      >
-        {t.readScreen}
-      </button>
-      {unavailable && (
+        options={options}
+        value={displayId === null ? '' : String(displayId)}
+        widthClass="w-full"
+      />
+      {resolution ? (
+        <p className="text-sm text-muted">
+          {t.targetResolution}: {resolutionLabel(resolution.width, resolution.height)}
+        </p>
+      ) : (
         <p className="text-sm text-warning" role="status">
-          {t.screenUnavailable}
+          {selected ? t.screenUnavailable : t.chooseDisplayHint}
         </p>
       )}
-    </fieldset>
+      <p className="text-xs text-muted">{t.fixedResolutionHint}</p>
+    </section>
   )
 }
 
-export function DesktopLifeResolutionSettings({
+export function DesktopLifeRecommendation({
   set,
-  busy,
-  onSave
+  display
 }: {
-  set: DesktopVideoSet
-  busy: boolean
-  onSave: (width: number, height: number) => void
+  set: Pick<DesktopVideoSet, 'target_width' | 'target_height'>
+  display: PresentationDisplay | undefined
 }): React.JSX.Element {
   const t = useDesktopLifeStrings()
-  const [size, setSize] = useState({ width: String(set.target_width), height: String(set.target_height) })
-  const blocked = set.actions.some(action => Boolean(action.draft))
-  const width = Number(size.width)
-  const height = Number(size.height)
-
-  const valid =
-    Number.isSafeInteger(width) &&
-    width > 0 &&
-    width <= MAX_DESKTOP_VIDEO_DIMENSION &&
-    Number.isSafeInteger(height) &&
-    height > 0 &&
-    height <= MAX_DESKTOP_VIDEO_DIMENSION
+  const matches = desktopVideoMatchesDisplay(set, display)
 
   return (
-    <form
-      className="flex flex-col gap-3"
-      onSubmit={event => {
-        event.preventDefault()
-
-        if (valid && !blocked && !busy) {
-          onSave(width, height)
-        }
-      }}
+    <span
+      className={`rounded-full px-2 py-1 text-xs ${matches === null ? 'bg-black/5 text-muted' : matches ? 'bg-accent/10 text-accent' : 'bg-warning/10 text-warning'}`}
+      title={matches === null ? t.recommendationUnavailable : matches ? t.recommendedHint : t.notRecommendedHint}
     >
-      <ResolutionFields
-        disabled={busy || blocked}
-        height={size.height}
-        onChange={(width, height) => setSize({ width, height })}
-        width={size.width}
-      />
-      <p className="text-xs text-muted">{blocked ? t.resolutionDraftHint : t.resolutionHint}</p>
-      {!valid && (
-        <p className="text-xs text-warning" role="status">
-          {t.resolutionRangeHint(MAX_DESKTOP_VIDEO_DIMENSION)}
-        </p>
-      )}
-      <button
-        className={`${BTN_SUBTLE} self-start`}
-        disabled={busy || blocked || !valid || (width === set.target_width && height === set.target_height)}
-        type="submit"
-      >
-        {t.saveResolution}
-      </button>
-    </form>
+      {matches === null ? t.recommendationUnknown : matches ? t.recommended : t.notRecommended}
+    </span>
   )
 }

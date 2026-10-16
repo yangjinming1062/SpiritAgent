@@ -323,24 +323,11 @@ class DesktopVideoCreateSetRequest(BaseModel):
 
 class DesktopVideoRenameSetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str | None = Field(default=None, min_length=1, max_length=160)
-    target_width: int | None = Field(default=None, gt=0, le=DESKTOP_MAX_EDGE, strict=True)
-    target_height: int | None = Field(default=None, gt=0, le=DESKTOP_MAX_EDGE, strict=True)
-    expected_resolution_revision: int | None = Field(default=None, gt=0)
-
-    @model_validator(mode="after")
-    def complete_dimensions(self) -> "DesktopVideoRenameSetRequest":
-        if (self.target_width is None) != (self.target_height is None):
-            raise ValueError("请同时填写宽度和高度")
-        if self.name is None and self.target_width is None:
-            raise ValueError("请提供名称或分辨率")
-        return self
+    name: str = Field(min_length=1, max_length=160)
 
     @field_validator("name")
     @classmethod
-    def nonblank(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def nonblank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("套装名称不能为空")
         return value.strip()

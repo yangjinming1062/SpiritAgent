@@ -7,6 +7,7 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi, fileApi } from '@/shared/platform/desktop'
 import { $presentation } from '@/shared/store/presentation'
 
+import { desktopDisplayResolution } from './display'
 import type {
   DesktopVideoAction,
   DesktopVideoAspectMismatch,
@@ -167,26 +168,23 @@ async function withDesktopModeGateRetry<T>(request: () => Promise<T>): Promise<T
 }
 
 function ensureCurrentWithRetry(): Promise<DesktopVideoState> {
-  const target = desktopScreenResolution()
+  return withDesktopModeGateRetry(() => {
+    const presentation = $presentation.get()
 
-  if (!target) {
-    return Promise.reject(new Error('无法读取桌面显示器分辨率，请在创建桌景时填写宽高。'))
-  }
+    const target = desktopDisplayResolution(
+      presentation.displays.find(display => display.id === presentation.displayId)
+    )
 
-  return withDesktopModeGateRetry(() => mutation<DesktopVideoState>('/ensure-current', { trigger: 'entry', ...target }))
-}
+    if (!target) {
+      throw new Error('无法读取桌面显示器分辨率，请选择可用的桌面显示器或等待读取完成。')
+    }
 
-export function desktopScreenResolution(): { target_width: number; target_height: number } | null {
-  const presentation = $presentation.get()
-  const display = presentation.displays.find(item => item.id === presentation.displayId)
-
-  return display &&
-    typeof display.pixelWidth === 'number' &&
-    display.pixelWidth > 0 &&
-    typeof display.pixelHeight === 'number' &&
-    display.pixelHeight > 0
-    ? { target_width: display.pixelWidth, target_height: display.pixelHeight }
-    : null
+    return mutation<DesktopVideoState>('/ensure-current', {
+      trigger: 'entry',
+      target_width: target.width,
+      target_height: target.height
+    })
+  })
 }
 
 export function desktopVideoAspectMismatch(error: unknown): DesktopVideoAspectMismatch | null {
@@ -270,19 +268,6 @@ export async function createDesktopVideoSet(input: {
 
 export async function renameDesktopVideoSet(setId: number, name: string): Promise<void> {
   await mutation(`/sets/${setId}`, { name }, 'PATCH')
-  await refreshDesktopVideos()
-}
-
-export async function resizeDesktopVideoSet(set: DesktopVideoSet, width: number, height: number): Promise<void> {
-  await mutation(
-    `/sets/${set.id}`,
-    {
-      target_width: width,
-      target_height: height,
-      expected_resolution_revision: set.resolution_revision
-    },
-    'PATCH'
-  )
   await refreshDesktopVideos()
 }
 
