@@ -411,7 +411,9 @@ function MessageBubbleWithBody({
               role="status"
             >
               {body.replyMedia.status === 'pending'
-                ? dict.chat.media.generating
+                ? body.replyMedia.video_queue
+                  ? dict.common.videoQueue[body.replyMedia.video_queue.state]
+                  : dict.chat.media.generating
                 : body.replyMedia.error ||
                   (body.replyMedia.status === 'result_unknown'
                     ? dict.chat.media.resultUnknown

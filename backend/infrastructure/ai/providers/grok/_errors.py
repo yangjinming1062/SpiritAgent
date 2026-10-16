@@ -1,6 +1,6 @@
 import httpx
 
-from infrastructure.ai.providers._provider_errors import response_json
+from infrastructure.ai.providers._provider_errors import response_json, response_retry_after
 from infrastructure.ai.providers.base import ProviderError
 
 
@@ -10,5 +10,10 @@ def raise_for_grok_response(resp: httpx.Response) -> dict:
     if resp.status_code >= 400:
         err = body.get("error")
         msg = f"grok video HTTP {resp.status_code}: {err if err else body}"
-        raise ProviderError(msg, status_code=resp.status_code, body=body)
+        raise ProviderError(
+            msg,
+            status_code=resp.status_code,
+            body=body,
+            retry_after_seconds=response_retry_after(resp),
+        )
     return body

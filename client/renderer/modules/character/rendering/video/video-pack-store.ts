@@ -10,6 +10,7 @@ import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
+import type { VideoQueueState } from '@protocol'
 
 export const $videoPacks = atom<ActionPackWire[]>([])
 
@@ -304,12 +305,29 @@ export function videoGenReady(scope: Partial<VideoGenScope>, clearGroupActionErr
 }
 
 /** 生成阶段事件：未知阶段按无阶段处理；事件缺少着装时依次取包列表、同一动作包上次的归属。 */
-export function videoGenProgress(stage: string | undefined, scope: Partial<VideoGenScope>): void {
+export function videoGenProgress(
+  stage: string | undefined,
+  scope: Partial<VideoGenScope>,
+  videoQueue: VideoQueueState | null = null
+): void {
   const resolved = resolveGenScope({ outfitId: scope.outfitId, action: scope.action }, scope.packId)
   const previous = $videoGenScope.get()
 
   videoPackEventReceived(scope)
   clearScopedErrors(resolved)
+
+  $videoPacks.set(
+    $videoPacks.get().map(pack =>
+      pack.id === resolved.packId
+        ? {
+            ...pack,
+            actions: pack.actions.map(action =>
+              action.action === resolved.action ? { ...action, video_queue: videoQueue } : action
+            )
+          }
+        : pack
+    )
+  )
 
   if (resolved.packId != null) {
     setScopedStage(resolved.packId, VIDEO_GEN_STAGES.find(known => known === stage) ?? null, resolved.action)

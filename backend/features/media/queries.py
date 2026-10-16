@@ -13,6 +13,7 @@ from .models import VideoGenJob
 
 
 def video_job_snapshot(row: VideoGenJob) -> VideoJobSnapshot:
+    state = MediaChainState.model_validate_json(row.generation_state_json)
     path = row.video_url or row.candidate_video_url
     parsed = asset_store.parse_companion_asset_path(path)
     available = (
@@ -22,10 +23,7 @@ def video_job_snapshot(row: VideoGenJob) -> VideoJobSnapshot:
     )
     candidate_ready = False
     if available and row.status not in ("failed", "discarded"):
-        candidate_ready = (
-            row.status == "succeeded"
-            or MediaChainState.model_validate_json(row.generation_state_json).source_path == path
-        )
+        candidate_ready = row.status == "succeeded" or state.source_path == path
     return VideoJobSnapshot(
         id=row.id,
         user_id=row.user_id,
@@ -41,6 +39,7 @@ def video_job_snapshot(row: VideoGenJob) -> VideoJobSnapshot:
         error_message=row.error_message,
         cleanup_requested_at=row.cleanup_requested_at,
         candidate_ready=candidate_ready,
+        video_queue=state.video_queue if row.status not in ("succeeded", "failed", "discarded") else None,
     )
 
 

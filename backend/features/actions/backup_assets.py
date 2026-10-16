@@ -29,6 +29,7 @@ from features.actions.materials import (
 )
 from features.actions.models import CompanionAction, CompanionActionPack, make_action_reference_hash
 from features.actions.publishing import build_catalog_manifest
+from features.media.chain import MediaChainState
 from features.media.identity_contracts import CharacterCardSnapshot
 
 
@@ -74,10 +75,17 @@ def restore_action_payload(
             payload["accepted_asset_json"] = accepted.model_dump_json()
         if payload.get("pack_id") is None:
             raise ValueError("Action pack is missing from backup")
-        if payload.get("status") in {"queued", "processing", "review"}:
+        if payload.get("status") in {"queued", "processing", "review", "result_unknown"}:
             payload["status"] = "failed"
             payload["error"] = "恢复的动作任务需要手动处理；请先核对已有生成结果"
-        # 保留句柄、提交未知标记与已付费产物，手动重试仍遵循原任务的幂等守卫。
+        if payload.get("generation_state_json"):
+            state = MediaChainState.model_validate_json(payload["generation_state_json"])
+            state.generation_id = uuid4().hex
+            state.queue_request_id, state.video_queue = None, None
+            state.phase, state.active_index, state.stop_reason = "complete", None, "restored"
+            payload["generation_state_json"] = state.model_dump_json()
+        payload["provider_task_id"] = None
+        # 原队列独立收尾；恢复只保留已付费产物，不继承其他实例的远端占用。
         return
     context = _json_object(payload, "context_json")
     _json_object(payload, "canvas_spec")

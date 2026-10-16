@@ -18,6 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from runtime.user_maintenance import track_user_task
 
 from features.media.contracts import RemovedActionVideoTask
+from features.media.video_queue.contracts import VideoQueueInfo
+from features.media.video_queue.ports import cancel_queue_request
 
 logger = get_logger(__name__)
 MEDIA_IDENTITY_ACCEPT_SCORE = 75
@@ -41,6 +43,8 @@ _VIDEO_FAILURE_COPY: dict[str, str] = {
     "worker_failed": "视频生成服务异常，请稍后重试",
     "identity_changed": "角色外形已更新，旧参考生成的视频未交付",
     "quality_failed": "视频文件无法完成质量核查，请稍后重试",
+    "rate_limit": "视频服务繁忙，正在等待重试",
+    "queue_stopped": "本次视频制作已结束，请按需重新发起",
 }
 
 
@@ -125,6 +129,8 @@ class MediaChainState(BaseModel):
     result_url: str | None = None
     source_path: str | None = None
     call_seconds: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    queue_request_id: str | None = None
+    video_queue: VideoQueueInfo | None = None
 
     def begin(self, index: int) -> None:
         self.active_index = index
@@ -132,6 +138,8 @@ class MediaChainState(BaseModel):
         self.phase = "submitting"
         self.result_url = None
         self.source_path = None
+        self.queue_request_id = None
+        self.video_queue = None
 
     def best(self, slot: int = 0) -> MediaCandidate | None:
         candidates = [candidate for candidate in self.candidates if candidate.slot == slot]
@@ -210,6 +218,9 @@ async def resolve_frozen_media_provider(
 
 async def cancel_frozen_video_task(user_id: int, state: MediaChainState, task_id: str, provider_name: str = "") -> str:
     """按提交时冻结的端点撤销远端任务；端点变更后不向新地址发送旧句柄，无法撤销时如实返回原因。"""
+    if state.queue_request_id:
+        await cancel_queue_request(state.queue_request_id)
+        return "not_cancellable"
     pinned = (
         state.providers[state.active_index]
         if state.active_index is not None and 0 <= state.active_index < len(state.providers)
@@ -272,6 +283,8 @@ def media_failure_reason(exc: Exception) -> tuple[str, bool]:
     classified = classify_api_error(exc)
     if getattr(exc, "result_unknown", False) or classified.reason == FailoverReason.result_unknown:
         return "result_unknown", False
+    if getattr(exc, "can_fallback", None) is False:
+        return getattr(exc, "reason", classified.reason.value), False
     if isinstance(exc, MediaProviderFailedError):
         return exc.reason, exc.reason != "result_unknown"
     return classified.reason.value, getattr(exc, "can_fallback", False) or classified.should_fallback

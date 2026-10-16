@@ -9,6 +9,7 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.video_queue.contracts import VideoQueueInfo
 
 DESKTOP_MAX_EDGE = 65536
 
@@ -186,6 +187,7 @@ class DesktopVideoDraftResponse(BaseModel):
     review_reason: str = ""
     base_version: int | None = None
     error: str | None = None
+    video_queue: VideoQueueInfo | None = None
 
 
 class DesktopVideoActionResponse(BaseModel):
@@ -205,6 +207,7 @@ class DesktopVideoActionResponse(BaseModel):
     status: Literal["queued", "processing", "ready", "failed", "review_pending"]
     stage: str
     error: str | None = None
+    video_queue: VideoQueueInfo | None = None
     enabled: bool
     preset: bool
     use_when: list[str] = Field(default_factory=list)

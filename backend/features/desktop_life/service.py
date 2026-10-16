@@ -1126,6 +1126,8 @@ async def resume_desktop_action(
                 if progress.source == "external_upload"
                 else "生成的视频无法使用，请重新制作视频",
             )
+        if progress.failure_reason == "queue_stopped":
+            raise DesktopVideoStateError("本次视频制作已结束，请重新制作视频")
         if progress.expand_image and desktop_image_chain_exhausted(progress):
             raise DesktopVideoStateError("本次图片制作没有可用结果，请重新制作图片")
         if progress.source == "external_upload":

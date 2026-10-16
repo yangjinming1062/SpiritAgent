@@ -17,6 +17,7 @@ import features.desktop_life.models  # noqa: F401 -- 显式 ORM 登记。
 import features.journal.models  # noqa: F401 -- 显式 ORM 登记。
 import features.media.models  # noqa: F401 -- 显式 ORM 登记。
 import features.media.review_models  # noqa: F401 -- 显式 ORM 登记。
+import features.media.video_queue.models  # noqa: F401 -- 显式 ORM 登记。
 import features.media.voice_models  # noqa: F401 -- 显式 ORM 登记。
 import features.memory.models  # noqa: F401 -- 显式 ORM 登记。
 import features.posts.models  # noqa: F401 -- 显式 ORM 登记。

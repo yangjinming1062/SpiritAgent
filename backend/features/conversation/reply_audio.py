@@ -38,6 +38,7 @@ def client_reply_bubbles(reply: CompanionReply) -> list[dict]:
                     "status": bubble.status,
                     "url": client_asset_url(bubble.url) if bubble.url else None,
                     "error": bubble.error,
+                    "video_queue": None,
                 },
             )
             continue

@@ -1,5 +1,7 @@
 /** 动作模块类型：播放指令、回执、目录条目与动作包响应。IPC 契约类型仍归 shared/ipc；此处仅模块内类型。 */
 
+import type { VideoQueueState } from '@protocol'
+
 export type NormalizedRect = readonly [left: number, top: number, right: number, bottom: number]
 
 interface ActionClipBase {
@@ -85,6 +87,7 @@ interface ActionWireBase {
   can_regenerate: boolean
   feedback?: string
   peek_geometry?: PeekGeometry | null
+  video_queue?: VideoQueueState | null
 }
 
 export type ActionWire = ActionWireBase & ({ media_type: 'image' } | { media_type: 'video'; motion_prompt: string })

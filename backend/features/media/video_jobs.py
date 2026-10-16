@@ -1,15 +1,14 @@
 """聊天与动态共用的视频任务：提交、轮询、下载与身份评分；凭句柄或已落盘候选恢复。"""
 
 import asyncio
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
+from typing import Literal
 from weakref import WeakValueDictionary
 
-from infrastructure.ai.error_classifier import FailoverReason, classify_api_error
+from infrastructure.ai.error_classifier import LLMRuntimeError, classify_api_error
 from infrastructure.ai.llm_client import MissingLlmConfigError, build_provider, resolve_provider_chain
-from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.providers.base import ProviderConfig, VideoGenProvider, VideoGenRequest, VideoJobStatus
-from infrastructure.ai.providers.http import ProviderResultUnknownError
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import (
@@ -21,16 +20,15 @@ from infrastructure.assets.asset_store import (
 )
 from infrastructure.assets.media_download import download_media_result
 from infrastructure.assets.write_protection import asset_write_context
-from infrastructure.backoff import backoff_for_poll
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.redact import redact_sensitive_text
 from infrastructure.text import utc_now
 from infrastructure.video_processing.ffmpeg import VideoToolUnavailableError, probe_video
 from infrastructure.video_processing.process import sample_key_frames
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.background import TaskBag
+from runtime.events.emit import emit_ws_event
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import is_user_in_maintenance, track_user_task
 from sqlalchemy import select, update
@@ -44,7 +42,6 @@ from features.media.chain import (
     MediaCandidate,
     MediaChainState,
     cancel_frozen_video_task,
-    media_call_duration,
     media_failure_reason,
     resolve_frozen_media_provider,
     video_failure_message,
@@ -62,12 +59,19 @@ from features.media.reference_reader import (
     character_snapshot_is_current,
     render_character_identity,
 )
+from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
+from features.media.video_queue.service import (
+    acknowledge_video_attempt,
+    cancel_owner_video_attempts,
+    enqueue_video_attempt,
+    get_video_attempt_status,
+    wait_video_attempt,
+)
 
 logger = get_logger(__name__)
 
 _INFLIGHT: set[int] = set()
 _POLL_TASKS: dict[int, asyncio.Task[None]] = {}
-_SUBMIT_TASKS: dict[int, asyncio.Task[VideoJobStatus]] = {}
 _RESULT_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 _BG = TaskBag("media.video_jobs")
@@ -119,55 +123,6 @@ async def _require_not_abandoned(job_id: int) -> None:
         row = await db.get(VideoGenJob, job_id)
         if row is None or _abandoned(row):
             raise _JobSettledError
-
-
-async def poll_video_task(
-    provider: VideoGenProvider,
-    task_id: str,
-    *,
-    before_poll: Callable[[], Awaitable[None]] | None = None,
-) -> VideoJobStatus:
-    """退避轮询到 succeeded / failed；状态变化时重置退避。暂时查询异常沿原句柄续查，明确配置错误上抛；before_poll 抛 _JobSettledError 中止轮询。"""
-    attempt = 0
-    last_status: str | None = None
-    log_extra = {"provider": provider.config.provider_name, "model": provider.config.model, "task_id": task_id}
-    while True:
-        try:
-            if before_poll is not None:
-                await before_poll()
-            status = await provider.poll(task_id)
-        except _JobSettledError:
-            raise
-        except Exception as exc:
-            if classify_api_error(exc).reason not in (
-                FailoverReason.timeout,
-                FailoverReason.rate_limit,
-                FailoverReason.overloaded,
-                FailoverReason.server_error,
-            ):
-                raise
-            logger.warning("video task poll failed; retrying", extra=log_extra, exc_info=True)
-            current = "poll_error"
-        else:
-            if status.status == "failed":
-                logger.warning(
-                    "video task failed at provider",
-                    extra={**log_extra, "error": redact_sensitive_text(status.error)},
-                )
-            if status.status in ("succeeded", "failed"):
-                return status
-            current = status.status
-        if last_status is not None and current != last_status:
-            attempt = 0
-        elif last_status is not None:
-            attempt += 1
-        last_status = current
-        sleep_for = backoff_for_poll(
-            attempt,
-            base_interval=SETTINGS.video_gen_poll_interval_seconds,
-            max_interval=SETTINGS.video_gen_poll_backoff_max_seconds,
-        )
-        await asyncio.sleep(sleep_for)
 
 
 def _stored_asset_file(user_id: int, storage_path: str | None) -> Path | None:
@@ -640,17 +595,67 @@ async def _evaluate_stored_video(job_id: int) -> str:
     return decision
 
 
-def _no_submission_reason(stop_reason: str, submit_failed: bool) -> str:
+def _no_submission_reason(stop_reason: str) -> str:
     """没有可提交的供应商时的失败原因：此前提交失败的如实报告，结果未知不当作普通失败；只有供应商配置失效才报服务配置变更。"""
     if stop_reason == "result_unknown":
         return "submit_result_unknown"
-    if stop_reason == "content_policy_blocked":
+    if stop_reason:
         return stop_reason
-    return "submit_failed" if stop_reason or submit_failed else "provider_unavailable"
+    return "provider_unavailable"
+
+
+def _queue_owner(job: VideoGenJob, state: MediaChainState) -> VideoQueueOwner:
+    return VideoQueueOwner(kind="media", user_id=job.user_id, entity_id=job.id, generation_id=state.generation_id)
+
+
+async def inspect_video_queue_owner(
+    owner: VideoQueueOwner,
+    before_submit: bool = True,
+    request_id: str | None = None,
+) -> Literal["ready", "pending", "paused", "gone"]:
+    """提交准入通过媒体所有者核对，队列不访问业务 ORM。"""
+    async with SESSION_LOCAL() as db:
+        job = await db.get(VideoGenJob, owner.entity_id)
+        if job is None or job.user_id != owner.user_id or _settled(job):
+            return "gone"
+        state = MediaChainState.model_validate_json(job.generation_state_json)
+        if state.generation_id != owner.generation_id:
+            return "gone"
+        if request_id and state.queue_request_id and state.queue_request_id != request_id:
+            return "gone"
+        params = _VideoJobParams.model_validate_json(job.params_json)
+        if (
+            before_submit
+            and params.identity_snapshot is not None
+            and not await character_snapshot_is_current(
+                db,
+                job.user_id,
+                params.identity_snapshot,
+            )
+        ):
+            return "gone"
+        if is_user_in_maintenance(job.user_id):
+            return "paused"
+        if not state.queue_request_id:
+            return "pending"
+    return "ready"
+
+
+async def has_untracked_video_attempts() -> bool:
+    """首次启用队列前，禁止推测旧请求实际使用的密钥。"""
+    async with SESSION_LOCAL() as db:
+        jobs = await db.scalars(
+            select(VideoGenJob).where(VideoGenJob.status.in_(("submitting", "processing", "result_unknown"))),
+        )
+        for job in jobs:
+            state = MediaChainState.model_validate_json(job.generation_state_json)
+            if not state.queue_request_id and not state.result_url:
+                return True
+    return False
 
 
 async def _submit_next_video(job_id: int, user_id: int) -> bool:
-    submit_failed = False
+    """只登记共享队列；付费提交和轮询由队列后台任务拥有。"""
     while True:
         if is_user_in_maintenance(user_id):
             return False
@@ -660,108 +665,106 @@ async def _submit_next_video(job_id: int, user_id: int) -> bool:
                 return False
             state = MediaChainState.model_validate_json(row.generation_state_json)
             params = _VideoJobParams.model_validate_json(row.params_json)
+            owner = _queue_owner(row, state)
             prompt = row.prompt
         if state.stop_reason or state.next_index >= len(state.providers):
-            await _fail_or_keep_best(job_id, _no_submission_reason(state.stop_reason, submit_failed))
+            await _fail_or_keep_best(job_id, _no_submission_reason(state.stop_reason))
             return False
         index = state.next_index
-        config = await resolve_frozen_media_provider(user_id, "video_gen", state.providers[index])
+        frozen = state.providers[index]
+        config = await resolve_frozen_media_provider(user_id, "video_gen", frozen)
         if config is None:
             async with SESSION_LOCAL() as db:
                 current = await db.get(VideoGenJob, job_id, with_for_update=True)
                 if current is None or _abandoned(current) or current.status != "retry_pending":
                     return False
-                if MediaChainState.model_validate_json(current.generation_state_json).next_index != index:
+                latest = MediaChainState.model_validate_json(current.generation_state_json)
+                if latest.next_index != index or latest.generation_id != state.generation_id:
                     return False
-                state.next_index += 1
-                current.generation_state_json = state.model_dump_json()
+                latest.next_index += 1
+                current.generation_state_json = latest.model_dump_json()
                 await db.commit()
             continue
-        state.begin(index)
+        request_id = await enqueue_video_attempt(
+            owner,
+            frozen,
+            index,
+            VideoGenRequest(
+                prompt=prompt,
+                duration=params.duration,
+                resolution=params.resolution,
+                reference_images=params.reference_images,
+                aspect_ratio=params.aspect_ratio,
+            ),
+        )
         async with SESSION_LOCAL() as db:
             current = await db.get(VideoGenJob, job_id, with_for_update=True)
             if current is None or _abandoned(current) or current.status != "retry_pending":
                 return False
-            if MediaChainState.model_validate_json(current.generation_state_json).next_index != index:
+            latest = MediaChainState.model_validate_json(current.generation_state_json)
+            if latest.next_index != index or latest.generation_id != state.generation_id:
                 return False
-            if is_user_in_maintenance(user_id):
-                return False
-            current.status = "submitting"
-            current.generation_state_json = state.model_dump_json()
+            latest.begin(index)
+            # processing 在业务层包含排队；只有队列实际发送才进入其 submitting 状态。
+            latest.phase = "processing"
+            latest.queue_request_id = request_id
+            latest.video_queue = VideoQueueInfo(state="waiting", next_retry_at=None)
+            current.status = "processing"
+            current.generation_state_json = latest.model_dump_json()
             current.generation_attempt_index = index
             current.provider = config.provider_name
             current.model = config.model
             current.provider_task_id = None
             await db.commit()
-        request = VideoGenRequest(
-            prompt=prompt,
-            duration=params.duration,
-            resolution=params.resolution,
-            reference_images=params.reference_images,
-            aspect_ratio=params.aspect_ratio,
-        )
-
-        async def submit(provider: VideoGenProvider) -> VideoJobStatus:
-            await _require_live_job(job_id)
-            require_new_generation_call(user_id)
-            result = await provider.submit(request)
-            if not result.task_id:
-                raise ProviderResultUnknownError("POST", config.base_url)
-            return result
-
-        async def submit_and_record() -> VideoJobStatus:
-            async with media_call_duration(config, state) as call_config:
-                submitted = await execute_with_fallback([call_config], VideoGenProvider, submit, user_id=user_id)
-            state.phase = "processing"
-            async with SESSION_LOCAL() as submit_db:
-                current = await submit_db.get(VideoGenJob, job_id, with_for_update=True)
-                if current is not None:
-                    # 撤销可能与提交响应交错；句柄仍须保存，供清理任务撤销原请求。
-                    current.provider_task_id = submitted.task_id
-                    current.generation_state_json = state.model_dump_json()
-                    if not _settled(current):
-                        current.status = "processing"
-                    await submit_db.commit()
-            return submitted
-
-        submission = asyncio.create_task(submit_and_record(), name=f"video-submit-{job_id}")
-        _SUBMIT_TASKS[job_id] = submission
-        _BG.add(submission, on_error=_on_video_task_error)
-        track_user_task(user_id, submission, cancel_on_maintenance=False)
-        submission.add_done_callback(lambda _task: _SUBMIT_TASKS.pop(job_id, None))
-        try:
-            await asyncio.shield(submission)
-        except _JobSettledError:
-            return False
-        except GenerationWorkPaused:
-            state.phase = "ready"
-            state.next_index = index
-            state.active_index = None
-            await _update_job(job_id, status="retry_pending", generation_state_json=state.model_dump_json())
-            return False
-        except Exception as exc:
-            reason, can_continue = media_failure_reason(exc)
-            classified = classify_api_error(exc)
-            logger.warning(
-                "video submit failed",
-                extra={
-                    "job_id": job_id,
-                    "provider": config.provider_name,
-                    "model": config.model,
-                    "chain_index": index,
-                    "reason": reason,
-                    "can_continue": can_continue,
-                    "status_code": classified.status_code,
-                    "error": classified.message,
-                },
-            )
-            state.phase = "ready"
-            if not can_continue or state.next_index >= len(state.providers):
-                state.stop_reason = reason
-            await _update_job(job_id, status="retry_pending", generation_state_json=state.model_dump_json())
-            submit_failed = True
-            continue
         return True
+
+
+async def _queue_progress(job_id: int, request_id: str, info: VideoQueueInfo | None) -> None:
+    async with SESSION_LOCAL() as db:
+        current = await db.get(VideoGenJob, job_id, with_for_update=True)
+        if current is None or _settled(current):
+            return
+        state = MediaChainState.model_validate_json(current.generation_state_json)
+        if state.queue_request_id != request_id or state.video_queue == info:
+            return
+        state.video_queue = info
+        current.generation_state_json = state.model_dump_json()
+        emit_ws_event(
+            db,
+            user_id=current.user_id,
+            event_type="video_gen.queue",
+            payload={
+                "task_id": str(job_id),
+                "session_id": current.session_id,
+                "media_id": current.media_id,
+                "video_queue": info.model_dump(mode="json") if info else None,
+            },
+        )
+        await db.commit()
+
+
+async def _wait_queued_video(job_id: int, state: MediaChainState) -> VideoJobStatus:
+    request_id = state.queue_request_id
+    if request_id is None:
+        raise RuntimeError("Video task has no shared queue attempt")
+
+    async def on_submitted(task_id: str) -> None:
+        async with SESSION_LOCAL() as db:
+            current = await db.get(VideoGenJob, job_id, with_for_update=True)
+            if current is None:
+                return
+            latest = MediaChainState.model_validate_json(current.generation_state_json)
+            if latest.queue_request_id != request_id:
+                return
+            # 业务放弃后仍保存句柄，清理不能误把远端工作当作未提交。
+            current.provider_task_id = task_id
+            await db.commit()
+
+    async def on_queue(info: VideoQueueInfo | None) -> None:
+        await _queue_progress(job_id, request_id, info)
+        state.video_queue = info
+
+    return await wait_video_attempt(request_id, on_submitted=on_submitted, on_queue=on_queue)
 
 
 async def _pinned_video_provider(user_id: int, state: MediaChainState) -> VideoGenProvider | None:
@@ -816,15 +819,6 @@ async def _poll_and_finalize(job_id: int) -> None:
 
 
 async def _poll_and_finalize_locked(job_id: int) -> None:
-    submission = _SUBMIT_TASKS.get(job_id)
-    if submission is not None:
-        try:
-            await asyncio.shield(submission)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            # 活提交失败后沿持久状态收尾；只有没有活句柄响应可等时才判定提交未知。
-            logger.warning("Video submission ended before polling", extra={"job_id": job_id}, exc_info=True)
     async with SESSION_LOCAL() as db:
         job = await db.get(VideoGenJob, job_id)
         if job is None:
@@ -834,7 +828,6 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
             logger.info("skipping already-finalized job", extra={"job_id": job_id, "status": job.status})
             return
         user_id = job.user_id
-        provider_task_id = job.provider_task_id or ""
         params = _VideoJobParams.model_validate_json(job.params_json)
 
     try:
@@ -915,28 +908,50 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
             await _finalize_best_video(job_id)
             return
 
-        provider = await _pinned_video_provider(user_id, state)
-        if provider is None:
-            await _fail_or_keep_best(job_id, "provider_unavailable")
+        if not state.queue_request_id:
+            # 旧句柄没有可核对的密钥指纹，由首次启用前的人工收尾处理。
+            await _fail_or_keep_best(job_id, "submit_result_unknown")
             return
-
-        async def ensure_pending() -> None:
-            # 感知并发终态（如行被删除、其他 worker 已终结）后停止轮询。
-            async with SESSION_LOCAL() as db:
-                row = await db.get(VideoGenJob, job_id)
-            if row is None or _settled(row):
-                raise _JobSettledError
-
         try:
-            status = await poll_video_task(provider, provider_task_id, before_poll=ensure_pending)
-        except _JobSettledError:
+            status = await _wait_queued_video(job_id, state)
+        except asyncio.CancelledError:
+            raise
+        except GenerationWorkPaused:
+            return
+        except (LLMRuntimeError, VideoQueueStoppedError) as exc:
+            reason, can_continue = media_failure_reason(exc)
+            classified = classify_api_error(exc)
+            logger.warning(
+                "queued video attempt failed",
+                extra={
+                    "job_id": job_id,
+                    "reason": reason,
+                    "can_continue": can_continue,
+                    "status_code": classified.status_code,
+                    "error": classified.message,
+                },
+            )
+            request_id = state.queue_request_id
+            state.video_queue = None
+            state.queue_request_id = None
+            state.phase = "ready"
+            if not can_continue or state.next_index >= len(state.providers):
+                state.stop_reason = reason
+            await _update_job(job_id, status="retry_pending", generation_state_json=state.model_dump_json())
+            await acknowledge_video_attempt(request_id)
+            if await _submit_next_video(job_id, user_id):
+                await _poll_and_finalize_locked(job_id)
             return
 
         if status.status == "succeeded":
+            request_id = state.queue_request_id
             state.phase = "storing"
             state.result_url = status.download_url
+            state.queue_request_id = None
+            state.video_queue = None
             if not state.result_url:
                 await _fail_or_keep_best(job_id, "download_failed")
+                await acknowledge_video_attempt(request_id)
                 return
             if job.status != "downloading":
                 async with SESSION_LOCAL() as db:
@@ -956,15 +971,21 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     return
             else:
                 await _update_job(job_id, generation_state_json=state.model_dump_json())
+            await acknowledge_video_attempt(request_id)
             await _poll_and_finalize_locked(job_id)
             return
         if state.needs_next():
+            request_id = state.queue_request_id
+            state.queue_request_id = None
+            state.video_queue = None
             state.phase = "ready"
             await _update_job(job_id, status="retry_pending", generation_state_json=state.model_dump_json())
+            await acknowledge_video_attempt(request_id)
             if await _submit_next_video(job_id, user_id):
                 await _poll_and_finalize_locked(job_id)
             return
         await _fail_or_keep_best(job_id, video_provider_failure_reason(status.error))
+        await acknowledge_video_attempt(state.queue_request_id)
     except _JobSettledError:
         return
     except Exception:
@@ -972,6 +993,11 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
         try:
             async with SESSION_LOCAL() as db:
                 latest = await db.get(VideoGenJob, job_id)
+            if latest is not None and latest.status == "processing":
+                latest_state = MediaChainState.model_validate_json(latest.generation_state_json)
+                if latest_state.queue_request_id:
+                    logger.warning("queued video awaits recovery", extra={"job_id": job_id})
+                    return
             if latest is not None and latest.status in ("downloading", "evaluating"):
                 latest_params = _VideoJobParams.model_validate_json(latest.params_json)
                 candidate = latest.candidate_video_url or video_job_asset_path(
@@ -1075,17 +1101,19 @@ async def cleanup_user_video_jobs(user_id: int) -> None:
             if task is not None and not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-            submission = _SUBMIT_TASKS.get(job_id)
-            if submission is not None and not submission.done():
-                # 提交响应中的句柄仍需落库；停止轮询不等于撤销供应商已接收的请求。
-                continue
             async with SESSION_LOCAL() as db:
                 row = await db.get(VideoGenJob, job_id)
                 if row is None or row.user_id != user_id or row.cleanup_requested_at is None:
                     continue
                 params = _VideoJobParams.model_validate_json(row.params_json)
                 state = MediaChainState.model_validate_json(row.generation_state_json)
-            if row.provider_task_id and row.status not in {"succeeded", "review_pending"}:
+            await cancel_owner_video_attempts("media", job_id, state.generation_id)
+            if (
+                not state.queue_request_id
+                and not state.result_url
+                and row.provider_task_id
+                and row.status not in {"succeeded", "review_pending"}
+            ):
                 try:
                     async with asyncio.timeout(15):
                         outcome = await cancel_frozen_video_task(
@@ -1168,11 +1196,17 @@ async def query_post_video_job(user_id: int, job_id: int) -> VideoJobSnapshot:
                 await db.commit()
                 return video_job_snapshot(current)
         result_url = state.result_url
-        if not result_url and row.provider_task_id:
-            provider = await _pinned_video_provider(user_id, state)
-            if provider is None:
-                raise ValueError("原视频服务配置已变更，暂不能查询")
-            result = await provider.poll(row.provider_task_id)
+        if not result_url and (state.queue_request_id or row.provider_task_id):
+            if state.queue_request_id:
+                result = await get_video_attempt_status(state.queue_request_id)
+                if result is None:
+                    return video_job_snapshot(row)
+            else:
+                # 旧任务只读查询用于启用共享队列前收尾，不猜测原密钥归属。
+                provider = await _pinned_video_provider(user_id, state)
+                if provider is None:
+                    raise ValueError("原视频服务配置已变更，暂不能查询")
+                result = await provider.poll(row.provider_task_id or "")
             if result.status == "failed":
                 async with SESSION_LOCAL() as db:
                     current = await db.get(VideoGenJob, job_id, with_for_update=True)
@@ -1181,6 +1215,8 @@ async def query_post_video_job(user_id: int, job_id: int) -> VideoJobSnapshot:
                         current.error_reason = video_provider_failure_reason(result.error)
                         current.error_message = video_failure_message(current.error_reason)
                         await db.commit()
+                        if state.queue_request_id:
+                            await acknowledge_video_attempt(state.queue_request_id)
                         return video_job_snapshot(current)
             if result.status != "succeeded":
                 return video_job_snapshot(row)
@@ -1209,6 +1245,8 @@ async def query_post_video_job(user_id: int, job_id: int) -> VideoJobSnapshot:
             state.source_path = stored
             current.generation_state_json = state.model_dump_json()
             await db.commit()
+            if state.queue_request_id:
+                await acknowledge_video_attempt(state.queue_request_id)
             return video_job_snapshot(current)
 
 

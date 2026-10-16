@@ -112,10 +112,18 @@ class BaseProvider(ABC):
 class ProviderError(Exception):
     """供应商级错误；status_code 与 body 供错误分类读取。"""
 
-    def __init__(self, message: str, *, status_code: int | None = None, body: dict | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        body: dict | None = None,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.body = body or {}
+        self.retry_after_seconds = retry_after_seconds
 
 
 class ChatProvider(BaseProvider):

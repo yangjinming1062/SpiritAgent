@@ -137,6 +137,7 @@ async def _submit_video(
         "success": True,
         "pending": True,
         "task_id": task_id,
+        "video_queue": job.video_queue.model_dump(mode="json") if job.video_queue else None,
         **({} if structured_reply else {"hint": "视频仍在生成中，请稍后用 video_generate_status 查询结果"}),
     }, job
 
@@ -254,6 +255,7 @@ async def video_generate_status_tool(
     if row is None or row.session_id != media_turn.session_id:
         return tool_error("video job not found")
     payload: dict[str, object] = {"task_id": str(row.id), "status": row.status}
+    payload["video_queue"] = row.video_queue.model_dump(mode="json") if row.video_queue else None
     if row.status == "succeeded":
         payload["url"] = row.video_url
         if row.error_message:

@@ -14,7 +14,8 @@ import {
   useAlive,
   usePageScroll,
   usePageState,
-  useTask
+  useTask,
+  videoQueueText
 } from './ui'
 
 interface SceneState {
@@ -1212,6 +1213,13 @@ function OutfitDetail({
           衣服已经保存，正在准备穿上后的动作。可以离开这里，稍后回来继续。
         </p>
       ) : null}
+      {pack?.actions
+        .filter(action => action.video_queue)
+        .map(action => (
+          <p aria-live="polite" className="creation-status" key={action.action}>
+            {action.name || action.action} · {action.video_queue ? videoQueueText(action.video_queue) : ''}
+          </p>
+        ))}
       {outfit.status === 'expired' ? <Notice>这套衣服的草稿已过期，请返回衣柜重新设计。</Notice> : null}
       {outfit.status === 'draft' ? (
         <details className="optional-details">

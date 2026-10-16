@@ -37,6 +37,7 @@ from features.desktop_life.schemas import (
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
 )
+from features.media.chain import MediaChainState
 from features.media.contracts import RemovedActionVideoTask
 
 
@@ -183,6 +184,11 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         action.status == "review_pending" and action.stage != "image_review" and candidate is not None
     )
     error = None if video_review_pending else action.error
+    video_queue = (
+        MediaChainState.model_validate_json(progress.video_chain_json).video_queue
+        if progress is not None and progress.video_chain_json
+        else None
+    )
     return DesktopVideoActionResponse(
         id=action.id,
         current=DesktopVideoCurrentResponse(
@@ -222,6 +228,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
             review_reason=(draft.review_reason or action.error or "") if video_review_pending else "",
             base_version=draft.base_version,
             error=error,
+            video_queue=video_queue,
         )
         if draft
         else None,
@@ -244,6 +251,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         status="queued" if action.status == "ready" and accepted is None else action.status,
         stage=action.stage,
         error=error,
+        video_queue=video_queue,
         enabled=action.enabled,
         preset=action.preset,
         use_when=json.loads(action.use_when_json),

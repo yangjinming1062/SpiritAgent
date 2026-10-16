@@ -178,6 +178,9 @@ def _pack_response(
                 status=job.status,
                 stage=job.stage,
                 error=job.error,
+                video_queue=MediaChainState.model_validate_json(job.generation_state_json).video_queue
+                if job.generation_state_json
+                else None,
                 media_url=signed_companion_asset_url(preview_path) if preview_path else None,
                 has_ready_asset=material is not None,
                 can_regenerate=not _job_result_unresolved(job),

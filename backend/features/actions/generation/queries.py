@@ -33,7 +33,7 @@ def _job_result_unresolved(job: CompanionAction) -> bool:
     """当前尝试仍在制或付费提交未结算；旧候选与已采纳素材不能替代本次结果。"""
     if job.status in ("queued", "processing", "result_unknown"):
         return True
-    terminal_failures = {"submit_failed", "provider_failed", "content_policy_blocked"}
+    terminal_failures = {"submit_failed", "provider_failed", "content_policy_blocked", "queue_stopped"}
     video_state = MediaChainState.model_validate_json(job.generation_state_json) if job.generation_state_json else None
     pose_state = (
         ImageChainState.model_validate_json(job.pose_generation_state_json) if job.pose_generation_state_json else None
@@ -69,9 +69,9 @@ def _can_resume_job(job: CompanionAction) -> bool:
         return False
     if job.generation_state_json:
         state = MediaChainState.model_validate_json(job.generation_state_json)
-        if state.phase == "submitting" or state.stop_reason == "result_unknown":
+        if (state.phase == "submitting" and not state.queue_request_id) or state.stop_reason == "result_unknown":
             return False
-        if state.phase == "ready" and not state.needs_next() and state.best() is None:
+        if state.phase == "ready" and state.active_index is None and not state.needs_next() and state.best() is None:
             return False
     if job.pose_generation_state_json:
         pose = ImageChainState.model_validate_json(job.pose_generation_state_json)

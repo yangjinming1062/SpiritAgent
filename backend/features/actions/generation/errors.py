@@ -8,6 +8,7 @@ from infrastructure.video_processing.ffmpeg import VideoProcessError
 from features.actions.generation.script import VideoScriptError
 from features.media.chain import MediaProviderFailedError, media_failure_reason, video_failure_message
 from features.media.image_generation import ImageGenerationError
+from features.media.video_queue.contracts import VideoQueueStoppedError
 
 
 class VideoPackError(RuntimeError):
@@ -47,6 +48,7 @@ def _generation_error(exc: Exception, *, media_type: str = "video") -> str:
             ImageGenerationError,
             VisualReasoningError,
             LlmCallBlockedError,
+            VideoQueueStoppedError,
         ),
     ):
         return str(exc)[:500]

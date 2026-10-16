@@ -1,6 +1,6 @@
 import httpx
 
-from infrastructure.ai.providers._provider_errors import response_json
+from infrastructure.ai.providers._provider_errors import response_json, response_retry_after
 from infrastructure.ai.providers.base import ProviderError
 
 
@@ -17,5 +17,10 @@ def raise_for_qwen_response(resp: httpx.Response) -> dict:
         except (TypeError, ValueError):
             status_code = 502
     if code or status_code >= 400:
-        raise ProviderError(f"qwen error {code or status_code}: {message or body}", status_code=status_code, body=body)
+        raise ProviderError(
+            f"qwen error {code or status_code}: {message or body}",
+            status_code=status_code,
+            body=body,
+            retry_after_seconds=response_retry_after(resp),
+        )
     return body

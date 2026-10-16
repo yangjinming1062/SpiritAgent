@@ -14,6 +14,7 @@ from features.configuration.lock import configuration_lock
 from features.conversation.bootstrap import ensure_system_conversations_for_user
 from features.conversation.identifiers import conversation_ids
 from features.media.chain import spawn_removed_action_task_cancellation
+from features.media.video_queue.service import anonymize_user_video_queue
 from infrastructure.assets.asset_store import delete_user_assets
 from infrastructure.attachments import gc_session as attachments_gc_session
 from infrastructure.file_results import DeferredCleanup, FileResult
@@ -67,6 +68,7 @@ async def delete_user(user_id: int, db: AsyncSession) -> MessageResponse:
         await require_account(db, user_id)
         session_ids = [str(conv_id) for conv_id in await conversation_ids(db, user_id)]
         await db.rollback()
+        await anonymize_user_video_queue(user_id)
         await asyncio.to_thread(_purge_user_files, user_id, session_ids)
         await delete_account_record(db, user_id)
         await db.commit()

@@ -198,6 +198,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'video_gen.completed':
 
+    case 'video_gen.queue':
+
     case 'video_gen.failed':
       handleDeliveryEvent(event)
 

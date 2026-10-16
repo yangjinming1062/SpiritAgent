@@ -42,6 +42,7 @@ interface ActionEntry {
   motionPrompt: string
   feedback: string
   peekGeometry: ActionWire['peek_geometry']
+  videoQueue: ActionWire['video_queue']
 }
 
 function isActionInProgress(status: string): boolean {
@@ -125,7 +126,8 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
       mediaType: entry.media_type,
       motionPrompt: entry.media_type === 'video' ? entry.motion_prompt : '',
       feedback: entry.feedback ?? '',
-      peekGeometry: entry.peek_geometry
+      peekGeometry: entry.peek_geometry,
+      videoQueue: entry.video_queue
     })
   }
 
@@ -135,6 +137,7 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
         key: slot,
         label: actionNames[slot],
         status: 'missing',
+        videoQueue: null,
         feedback: '',
         error: null,
         mediaUrl: null,
@@ -173,6 +176,10 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
       : null
 
   const statusLine = ((): string => {
+    if (selectedAction?.videoQueue) {
+      return dict.common.videoQueue[selectedAction.videoQueue.state]
+    }
+
     // 包自身 processing 时优先展示进度；阶段文案仅在归属命中时展开。
     if (selectedPack?.status === 'processing') {
       return stageText ?? t.videoGenStageDefault
@@ -276,6 +283,10 @@ export function VideoSection({ onBack, outfitId, onMaterialReady }: VideoSection
   }
 
   const actionStatus = (action: ActionEntry): { label: string; hint?: string; className: string } => {
+    if (action.videoQueue) {
+      return { label: dict.common.videoQueue[action.videoQueue.state], className: 'bg-amber-400' }
+    }
+
     if (
       action.status === 'result_unknown' ||
       selectedPack?.actions.some(

@@ -5,6 +5,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from .video_queue.contracts import VideoQueueInfo
+
 
 class VideoJobSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -23,6 +25,7 @@ class VideoJobSnapshot(BaseModel):
     error_message: str | None
     cleanup_requested_at: datetime | None
     candidate_ready: bool
+    video_queue: VideoQueueInfo | None = None
 
 
 class VideoJobAssetReferences(BaseModel):

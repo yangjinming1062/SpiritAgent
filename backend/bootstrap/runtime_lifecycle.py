@@ -9,6 +9,7 @@ from features.companion.lifecycle import runtime_participants as companion_parti
 from features.conversation.submissions import recover_interrupted_submissions
 from features.desktop_life.lifecycle import runtime_participants as desktop_life_participants
 from features.media.lifecycle import runtime_participants as media_participants
+from features.media.video_queue.lifecycle import runtime_participants as video_queue_participants
 from features.memory.lifecycle import runtime_participants as memory_participants
 from features.posts.lifecycle import runtime_participants as post_participants
 from features.scenes.lifecycle import runtime_participants as scene_participants
@@ -23,6 +24,7 @@ def configure_runtime_lifecycle() -> None:
     RUNTIME_LIFECYCLE.configure(
         (
             *update_participants(),
+            *video_queue_participants(),
             *media_participants(),
             *action_participants(),
             *desktop_life_participants(),

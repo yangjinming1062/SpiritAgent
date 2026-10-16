@@ -61,6 +61,7 @@ import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
+import { useStrings } from '@/shared/strings'
 import { desktopMediaObjectFit } from '@client-shared/desktop-media-geometry'
 
 import {
@@ -557,6 +558,7 @@ export function DesktopLifePage({
   onPrepareMaterial?: (kind: 'scene' | 'outfit') => void
 }): React.JSX.Element {
   const t = useDesktopLifeStrings()
+  const queueStrings = useStrings().common.videoQueue
   const auth = useStore($auth)
   const panelActive = usePanelActivity()
   const presentation = useStore($presentation)
@@ -1204,6 +1206,12 @@ export function DesktopLifePage({
   }
 
   const actionStatus = (item: DesktopVideoAction): string => {
+    const queue = item.draft?.video_queue ?? item.video_queue
+
+    if (queue) {
+      return queueStrings[queue.state]
+    }
+
     if (item.draft?.submission_unknown) {
       return t.resultPending
     }

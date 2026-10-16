@@ -5,6 +5,11 @@ export const dict = {
   },
 
   common: {
+    videoQueue: {
+      waiting: '视频排队中',
+      rate_limited: '服务繁忙，等待重试',
+      blocked: '等待核对生成结果'
+    },
     done: '完成',
     moreActions: '更多操作',
     creationDetails: '制作资料',

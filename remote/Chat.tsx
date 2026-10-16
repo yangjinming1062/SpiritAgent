@@ -16,7 +16,7 @@ import type {
   SessionMessage,
   SystemPresetSummary
 } from './types'
-import { Empty, Media, Notice, PageHeader, pauseMedia, timestamp, useAlive, useTask } from './ui'
+import { Empty, Media, Notice, PageHeader, pauseMedia, timestamp, useAlive, useTask, videoQueueText } from './ui'
 
 interface PendingPrompt {
   id: string
@@ -438,6 +438,7 @@ export function Chat({
       setRetryMessage(typeof payload.retry_message_id === 'number' ? payload.retry_message_id : null)
     } else if (
       event.type === 'message.media' ||
+      event.type === 'video_gen.queue' ||
       event.type === 'message.voice' ||
       event.type === 'message.audio' ||
       event.type === 'message.edited' ||
@@ -1269,7 +1270,13 @@ function Bubble({
     <div className="media-pending">
       <span>
         {bubble.type === 'video' ? '视频' : '图片'} ·{' '}
-        {bubble.status === 'pending' ? '正在制作' : bubble.status === 'result_unknown' ? '结果待确认' : '制作失败'}
+        {bubble.video_queue
+          ? videoQueueText(bubble.video_queue)
+          : bubble.status === 'pending'
+            ? '正在制作'
+            : bubble.status === 'result_unknown'
+              ? '结果待确认'
+              : '制作失败'}
       </span>
       {bubble.error ? <p>{bubble.error}</p> : null}
       <button onClick={refresh} type="button">

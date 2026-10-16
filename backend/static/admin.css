@@ -302,6 +302,8 @@ tbody tr:hover { background: #18284088; }
 .ai-model-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
 .ai-model-option { display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; }
 .ai-model-option .hint { display: block; }
+.video-queue-meta { padding: 0 20px 14px; overflow-wrap: anywhere; }
+.video-queue-card td .hint { max-width: 340px; overflow-wrap: anywhere; }
 .raw-log { margin-top: 20px; color: var(--text-3); font-size: 12px; }
 .log-stage { display: flex; align-items: center; gap: 10px; padding: 12px; border-left: 2px solid var(--border-2); margin-bottom: 8px; background: var(--surface-2); border-radius: 0 7px 7px 0; }
 .log-stage .hint { overflow-wrap: anywhere; }

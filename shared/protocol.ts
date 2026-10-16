@@ -219,12 +219,18 @@ export interface CacheUsageSummary {
   cache_hit_rate: number | null
 }
 
+export interface VideoQueueState {
+  state: 'waiting' | 'rate_limited' | 'blocked'
+  next_retry_at: string | null
+}
+
 export interface CompanionMediaBubble {
   type: 'image' | 'video'
   media_id: string
   status: 'pending' | 'ready' | 'failed' | 'result_unknown'
   url: string | null
   error: string | null
+  video_queue?: VideoQueueState | null
 }
 export interface CompanionLinkBubble {
   type: 'link'

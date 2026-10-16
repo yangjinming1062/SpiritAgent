@@ -7,9 +7,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
-from infrastructure.ai.llm_client import build_provider
-from infrastructure.ai.llm_fallback import execute_with_fallback
-from infrastructure.ai.providers.base import ServiceType, VideoGenProvider, VideoGenRequest, VideoJobStatus
+from infrastructure.ai.providers.base import ServiceType, VideoGenRequest
 from infrastructure.ai.providers.http import ProviderResultUnknownError
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
@@ -53,7 +51,6 @@ from features.media.chain import (
     MediaCandidate,
     MediaChainState,
     MediaProviderFailedError,
-    media_call_duration,
     media_failure_reason,
     resolve_frozen_media_provider,
     video_failure_message,
@@ -63,7 +60,13 @@ from features.media.character_images import ImageChainState, generate_character_
 from features.media.identity_review import review_character_frames, score_character_frames
 from features.media.review_contracts import MediaReviewPublication
 from features.media.review_service import create_media_review
-from features.media.video_jobs import poll_video_task
+from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner
+from features.media.video_queue.service import (
+    acknowledge_video_attempt,
+    adopt_video_attempt,
+    enqueue_video_attempt,
+    wait_video_attempt,
+)
 
 from .errors import VideoPackError, VideoPackStateError
 from .execution_state import _SOURCE_MEDIA_EXTS, logger
@@ -389,11 +392,11 @@ async def _run_action_pipeline(
     ):
         await _prepare_action_pose(pack, job, entry, context)
 
-    if state.phase == "submitting":
+    if state.phase == "submitting" and not state.queue_request_id:
         state.stop_reason = "result_unknown"
         await _save_action_state(job, state)
     while state.phase != "complete" and not state.stop_reason:
-        if state.phase == "ready":
+        if state.phase == "ready" and state.active_index is None:
             if not state.needs_next():
                 break
             await _require_new_paid_step(pack, context)
@@ -413,6 +416,8 @@ async def _run_action_pipeline(
                 await _save_action_state(job, state)
                 continue
             state.begin(index)
+            # 排队记录落盘前尚未发送；恢复时可幂等重入本次尝试。
+            state.phase = "ready"
             job.provider, job.model = config.provider_name, config.model
             job.provider_task_id = job.artifact_path = None
             await _save_action_state(
@@ -456,6 +461,7 @@ async def _run_action_pipeline(
                     score = None
                 state.accept_score(candidate, score)
             state.phase = "ready"
+            state.active_index = None
             await _save_action_state(job, state)
         except GenerationWorkPaused:
             raise
@@ -463,12 +469,27 @@ async def _run_action_pipeline(
             reason, can_continue = media_failure_reason(exc)
             # 只有明确未提交成功的 API 错误允许技术回退；轮询、下载、后处理继续原任务。
             if can_continue and (state.phase == "submitting" or isinstance(exc, MediaProviderFailedError)):
+                failed_request = state.queue_request_id
                 state.phase = "ready"
+                state.active_index = None
+                state.queue_request_id = None
+                state.video_queue = None
                 job.provider_task_id = None
                 if state.next_index >= len(state.providers):
                     state.stop_reason = reason
                 await _save_action_state(job, state, provider_task_id=None)
+                if failed_request:
+                    await acknowledge_video_attempt(failed_request)
                 continue
+            if reason == "queue_stopped":
+                stopped_request = state.queue_request_id
+                state.phase, state.active_index, state.video_queue = "ready", None, None
+                state.queue_request_id = None
+                job.provider_task_id = None
+                state.stop_reason = reason
+                await _save_action_state(job, state, provider_task_id=None)
+                if stopped_request:
+                    await acknowledge_video_attempt(stopped_request)
             if state.best() is None and state.phase != "submitting":
                 await _save_action_state(job, state)
                 raise
@@ -600,12 +621,21 @@ async def _run_action_attempt(
     source_path = job.artifact_path
     if not source_path:
         if not state.result_url:
-            config = await resolve_frozen_media_provider(pack.user_id, "video_gen", state.providers[attempt])
-            if config is None:
-                raise VideoPackError("视频供应商配置已变更，原任务无法继续")
-            provider = build_provider(config, VideoGenProvider)
-            task_id = job.provider_task_id
-            if not task_id:
+            owner = VideoQueueOwner(
+                kind="action",
+                user_id=pack.user_id,
+                entity_id=job.id,
+                generation_id=state.generation_id,
+            )
+            if not state.queue_request_id and job.provider_task_id:
+                state.queue_request_id = await adopt_video_attempt(
+                    owner,
+                    state.providers[attempt],
+                    attempt,
+                    job.provider_task_id,
+                )
+                await _save_action_state(job, state)
+            if not state.queue_request_id:
                 resolution = state.providers[attempt].video_resolution
                 if not resolution:
                     raise VideoPackStateError("动作制作资料缺少分辨率，请重新生成该动作")
@@ -613,52 +643,64 @@ async def _run_action_attempt(
                     raise VideoPackError("动作起始姿态图不可读，请恢复原素材")
                 pose_uri = await _process_thread(_action_video_frame_uri, _artifact_abs_path(job.pose_path))
 
-                async def submit(current: VideoGenProvider) -> VideoJobStatus:
-                    await _require_new_paid_step(pack, context)
-                    status = await current.submit(
-                        VideoGenRequest(
-                            prompt=build_video_prompt(
-                                entry,
-                                context.identity,
-                                system_slot=job.system_slot or "",
-                                feedback=context.feedback,
-                                action_feedback=context.action_feedback.get(job.key, ""),
-                            ),
-                            duration=int(round(entry.duration_seconds)),
-                            resolution=resolution,
-                            first_frame_image=pose_uri,
-                            last_frame_image=pose_uri if entry.clip_kind == "loop" else None,
+                await _require_new_paid_step(pack, context)
+                state.queue_request_id = await enqueue_video_attempt(
+                    owner,
+                    state.providers[attempt],
+                    attempt,
+                    VideoGenRequest(
+                        prompt=build_video_prompt(
+                            entry,
+                            context.identity,
+                            system_slot=job.system_slot or "",
+                            feedback=context.feedback,
+                            action_feedback=context.action_feedback.get(job.key, ""),
                         ),
-                    )
-                    if not status.task_id:
-                        raise ProviderResultUnknownError("POST", config.base_url)
-                    return status
+                        duration=int(round(entry.duration_seconds)),
+                        resolution=resolution,
+                        first_frame_image=pose_uri,
+                        last_frame_image=pose_uri if entry.clip_kind == "loop" else None,
+                    ),
+                )
+                state.phase = "submitting"
+                await _save_action_state(job, state)
 
-                try:
-                    async with media_call_duration(config, state) as call_config:
-                        submitted = await execute_with_fallback(
-                            [call_config],
-                            VideoGenProvider,
-                            submit,
-                            user_id=pack.user_id,
-                        )
-                except GenerationWorkPaused:
-                    # 尚未提交的游标回到可安全提交的位置，维护恢复不能把它判为结果未知。
-                    state.phase, state.active_index, state.next_index = "ready", None, attempt
-                    await _save_action_state(job, state)
-                    raise
-                task_id = job.provider_task_id = submitted.task_id
+            async def on_submitted(task_id: str) -> None:
+                job.provider_task_id = task_id
                 state.phase = "processing"
+                state.video_queue = None
                 await _save_action_state(job, state, stage="generate", provider_task_id=task_id)
+
+            async def on_queue(info: VideoQueueInfo | None) -> None:
+                state.video_queue = info
+                await _save_action_state(job, state)
+                await _emit_pack_event(
+                    pack.user_id,
+                    "companion.video.progress",
+                    {
+                        "packId": pack.id,
+                        "outfitId": pack.outfit_id,
+                        "stage": job.stage,
+                        "action": job.key,
+                        "video_queue": info.model_dump(mode="json") if info else None,
+                    },
+                )
+
             if state.phase != "storing":
                 await progress("generate")
-                status = await poll_video_task(provider, task_id)
+                status = await wait_video_attempt(
+                    state.queue_request_id,
+                    on_submitted=on_submitted,
+                    on_queue=on_queue,
+                )
                 if status.status != "succeeded":
                     reason = video_provider_failure_reason(status.error)
                     raise MediaProviderFailedError(video_failure_message(reason), reason=reason)
                 state.result_url = status.download_url
                 state.phase = "storing"
+                state.video_queue = None
                 await _save_action_state(job, state, stage="download")
+                await acknowledge_video_attempt(state.queue_request_id)
         await progress("download")
         if not state.result_url:
             raise VideoPackError("供应商未返回视频下载地址")

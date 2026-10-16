@@ -7,6 +7,11 @@ export const dict: Dictionary = {
   },
 
   common: {
+    videoQueue: {
+      waiting: 'Video queued',
+      rate_limited: 'Service busy, waiting to retry',
+      blocked: 'Waiting for generation results to be verified'
+    },
     done: 'Done',
     moreActions: 'More actions',
     creationDetails: 'Creation details',

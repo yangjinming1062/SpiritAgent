@@ -2,7 +2,7 @@ import base64
 
 import httpx
 
-from infrastructure.ai.providers._provider_errors import response_json
+from infrastructure.ai.providers._provider_errors import response_json, response_retry_after
 from infrastructure.ai.providers.base import ProviderError
 
 # MiniMax 用 base_resp.status_code 承载自有错误分类（叠加在 HTTP 状态码之上）；映射为 HTTP 状态，使错误分类与同条件 OpenAI 错误一致。
@@ -21,7 +21,7 @@ _BASE_RESP_TO_HTTP: dict[int, int] = {
 _ENTITLEMENT_SIGNALS = ("tokenplan", "credit")
 
 
-def _raise_for_base_resp(base: dict) -> None:
+def _raise_for_base_resp(base: dict, *, retry_after_seconds: float | None = None) -> None:
     raw_inner_code = base.get("status_code", 0)
     inner_msg = base.get("status_msg", "") or ""
     if not raw_inner_code:
@@ -39,6 +39,7 @@ def _raise_for_base_resp(base: dict) -> None:
         f"minimax error {raw_inner_code}: {inner_msg}",
         status_code=http,
         body={"error": {"code": str(raw_inner_code), "message": inner_msg}, "base_resp": base},
+        retry_after_seconds=retry_after_seconds,
     )
 
 
@@ -46,10 +47,14 @@ def raise_for_minimax_response(resp: httpx.Response) -> dict:
     """把 MiniMax HTTP 响应翻译为 dict 体或抛 ProviderError。错误裹在 base_resp（HTTP 常为 200）；HTTP 4xx/5xx 另有 JSON 形态，两种都处理。非零 base_resp 码一律抛错。"""
     body = response_json(resp)
     if "base_resp" in body:
-        _raise_for_base_resp(body.get("base_resp") or {})
-        return body
+        _raise_for_base_resp(body.get("base_resp") or {}, retry_after_seconds=response_retry_after(resp))
     if resp.status_code >= 400:
-        raise ProviderError(f"minimax HTTP {resp.status_code}: {body}", status_code=resp.status_code, body=body)
+        raise ProviderError(
+            f"minimax HTTP {resp.status_code}: {body}",
+            status_code=resp.status_code,
+            body=body,
+            retry_after_seconds=response_retry_after(resp),
+        )
     return body
 
 

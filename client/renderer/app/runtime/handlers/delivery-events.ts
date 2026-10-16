@@ -4,6 +4,7 @@ import { $effectiveTier, $screenLocked } from '@/modules/character'
 import {
   chatDisplayText,
   findConversationRuntime,
+  invalidateSessionHistory,
   rememberPendingMessage,
   setCompanionSessionId,
   showMediaHint
@@ -12,7 +13,7 @@ import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
-import type { ChatMediaItem, CompanionBubble } from '@protocol'
+import type { ChatMediaItem, CompanionBubble, VideoQueueState } from '@protocol'
 
 import { decodePayload } from '../gateway-event-util'
 
@@ -90,6 +91,21 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
               }
             : undefined
         })
+      }
+
+      break
+    }
+
+    case 'video_gen.queue': {
+      const p = decodePayload<{
+        session_id?: string
+        media_id?: string
+        video_queue?: VideoQueueState | null
+      }>(event.payload)
+
+      if (p.session_id && p.media_id && p.video_queue !== undefined) {
+        invalidateSessionHistory(p.session_id)
+        findConversationRuntime(p.session_id)?.updateVideoQueue(p.media_id, p.video_queue)
       }
 
       break

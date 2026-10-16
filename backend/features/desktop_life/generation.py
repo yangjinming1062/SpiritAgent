@@ -9,10 +9,8 @@ from uuid import uuid4
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
-from infrastructure.ai.llm_fallback import execute_with_fallback
 from infrastructure.ai.prompt_engineer import vision_chat
 from infrastructure.ai.providers.base import ServiceType, VideoGenProvider, VideoGenRequest
-from infrastructure.ai.providers.http import ProviderResultUnknownError
 from infrastructure.ai.selection import ProviderSelection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
@@ -105,8 +103,6 @@ from features.media.chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
-    cancel_frozen_video_task,
-    media_call_duration,
     media_failure_reason,
     resolve_frozen_media_provider,
     spawn_removed_action_task_cancellation,
@@ -117,7 +113,15 @@ from features.media.character_images import ImageChainState, ImageExpansionInput
 from features.media.contracts import RemovedActionVideoTask
 from features.media.identity_review import score_character_frames_with_references
 from features.media.image_generation import ImageGenerationError
-from features.media.video_jobs import poll_video_task
+from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
+from features.media.video_queue.service import (
+    acknowledge_video_attempt,
+    adopt_video_attempt,
+    cancel_video_attempt,
+    enqueue_video_attempt,
+    pause_video_attempt,
+    wait_video_attempt,
+)
 from features.scenes.queries import initial_scene_snapshot, scene_snapshot
 
 logger = get_logger(__name__)
@@ -162,9 +166,15 @@ def desktop_progress_has_unknown_submission(progress: DesktopVideoProgress) -> b
             return True
     if progress.video_chain_json and not progress.provider_task_id:
         video = MediaChainState.model_validate_json(progress.video_chain_json)
-        if video.phase == "submitting":
+        if video.phase == "submitting" and not video.queue_request_id:
             return True
     return False
+
+
+def _queued_video_request(progress: DesktopVideoProgress) -> str | None:
+    if not progress.video_chain_json:
+        return None
+    return MediaChainState.model_validate_json(progress.video_chain_json).queue_request_id
 
 
 def _unknown_submission_message(progress: DesktopVideoProgress) -> str:
@@ -186,9 +196,18 @@ def desktop_image_chain_exhausted(progress: DesktopVideoProgress) -> bool:
 
 
 def desktop_progress_can_resume(progress: DesktopVideoProgress) -> bool:
-    if desktop_progress_has_unknown_submission(progress) or progress.failure_reason == "material_rejected":
+    if desktop_progress_has_unknown_submission(progress) or progress.failure_reason in {
+        "material_rejected",
+        "queue_stopped",
+    }:
         return False
-    if progress.provider_task_id or progress.download_url or progress.source_path or progress.candidate:
+    if (
+        progress.provider_task_id
+        or progress.download_url
+        or progress.source_path
+        or progress.candidate
+        or _queued_video_request(progress)
+    ):
         return True
     if progress.expand_image and desktop_image_chain_exhausted(progress):
         return False
@@ -1155,10 +1174,19 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
         if not allow_model_steps and progress.candidate is not None and progress.review_verdict is not None:
             await _finish_job(user_id, action_id, progress)
             return
-        if not allow_model_steps and not (progress.provider_task_id or progress.download_url or progress.source_path):
+        if not allow_model_steps and not (
+            progress.provider_task_id
+            or progress.download_url
+            or progress.source_path
+            or _queued_video_request(progress)
+        ):
             raise GenerationWorkPaused
         if progress.video_refinement is None and not (
-            progress.provider_task_id or progress.download_url or progress.source_path or progress.candidate
+            progress.provider_task_id
+            or progress.download_url
+            or progress.source_path
+            or progress.candidate
+            or _queued_video_request(progress)
         ):
             await _prepare_pose(user_id, action, snapshot, progress, directory)
             if progress.image_only or not progress.image_confirmed:
@@ -1233,6 +1261,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                         progress.visual_description = ""
                     chain.active_index = None
                     chain.phase = "ready"
+                    chain.queue_request_id, chain.video_queue = None, None
                     progress.video_chain_json = chain.model_dump_json()
                     await _save_progress(user_id, action_id, progress, stage="video")
                     continue
@@ -1264,24 +1293,39 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 )
                 await _save_progress(user_id, action_id, progress, stage="process")
                 continue
-            if chain.phase == "submitting" and not progress.provider_task_id:
+            if chain.phase == "submitting" and not progress.provider_task_id and not chain.queue_request_id:
                 progress.submission_unknown = True
                 await _save_progress(user_id, action_id, progress, stage="video")
                 raise DesktopVideoStateError(video_failure_message("result_unknown"))
-            index = chain.active_index if progress.provider_task_id else chain.next_index
+            index = chain.active_index if chain.active_index is not None else chain.next_index
             if index is None or index >= len(chain.providers):
                 raise DesktopVideoStateError(video_failure_message("provider_failed"))
-            config = await resolve_frozen_media_provider(user_id, "video_gen", chain.providers[index])
-            if config is None:
-                raise DesktopVideoStateError(video_failure_message("provider_unavailable"))
-            provider = build_provider(config, VideoGenProvider)
-            if not progress.provider_task_id:
+            owner = VideoQueueOwner(
+                kind="desktop",
+                user_id=user_id,
+                entity_id=action_id,
+                generation_id=chain.generation_id,
+            )
+            if not chain.queue_request_id and progress.provider_task_id:
+                chain.queue_request_id = await adopt_video_attempt(
+                    owner,
+                    chain.providers[index],
+                    index,
+                    progress.provider_task_id,
+                )
+                progress.video_chain_json = chain.model_dump_json()
+                await _save_progress(user_id, action_id, progress, stage="video")
+            if not chain.queue_request_id:
                 if not allow_model_steps:
                     raise GenerationWorkPaused
                 await _require_active_job(user_id, action_id, generation_id)
                 if not progress.image_confirmed:
                     await _await_image(user_id, action_id, progress)
                     return
+                config = await resolve_frozen_media_provider(user_id, "video_gen", chain.providers[index])
+                if config is None:
+                    raise DesktopVideoStateError(video_failure_message("provider_unavailable"))
+                provider = build_provider(config, VideoGenProvider)
                 desired_ratio = (
                     (
                         reference_video_ratio(provider, progress.aspect_ratio)
@@ -1349,57 +1393,78 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     )
                 await _require_active_job(user_id, action_id, generation_id)
                 chain.begin(index)
+                chain.phase = "ready"
                 progress.video_chain_json = chain.model_dump_json()
                 await _save_progress(user_id, action_id, progress, stage="video")
-                try:
-                    async with media_call_duration(config, chain) as call_config:
-                        submitted = await execute_with_fallback(
-                            [call_config],
-                            VideoGenProvider,
-                            lambda current: current.submit(request),
-                            user_id=user_id,
-                        )
-                except ProviderResultUnknownError:
-                    progress.submission_unknown = True
-                    await _save_progress(user_id, action_id, progress, stage="video")
-                    raise DesktopVideoStateError(video_failure_message("result_unknown")) from None
-                except LlmCallBlockedError:
-                    raise
-                except Exception as exc:
-                    reason, can_fallback = media_failure_reason(exc)
-                    if reason in {"result_unknown", "submit_result_unknown"}:
-                        progress.submission_unknown = True
-                        await _save_progress(user_id, action_id, progress, stage="video")
-                        raise DesktopVideoStateError(video_failure_message("result_unknown")) from exc
-                    chain.phase = "ready"
-                    chain.active_index = None
+                chain.queue_request_id = await enqueue_video_attempt(owner, chain.providers[index], index, request)
+                chain.phase = "submitting"
+                progress.video_chain_json = chain.model_dump_json()
+                await _save_progress(user_id, action_id, progress, stage="video")
+
+            async def on_submitted(task_id: str) -> None:
+                progress.provider_task_id = task_id
+                chain.phase = "processing"
+                chain.video_queue = None
+                progress.video_chain_json = chain.model_dump_json()
+                await _save_progress(user_id, action_id, progress, stage="video")
+
+            async def on_queue(info: VideoQueueInfo | None) -> None:
+                chain.video_queue = info
+                progress.video_chain_json = chain.model_dump_json()
+                await _save_progress(user_id, action_id, progress, stage="video")
+
+            try:
+                status = await wait_video_attempt(
+                    chain.queue_request_id,
+                    on_submitted=on_submitted,
+                    on_queue=on_queue,
+                )
+            except GenerationWorkPaused:
+                raise
+            except Exception as exc:
+                reason, can_fallback = media_failure_reason(exc)
+                if reason == "queue_stopped":
+                    stopped_request = chain.queue_request_id
+                    chain.phase, chain.active_index, chain.stop_reason = "complete", None, reason
+                    chain.queue_request_id, chain.video_queue = None, None
+                    progress.provider_task_id, progress.submission_unknown = None, False
+                    progress.failure_reason = reason
                     progress.video_chain_json = chain.model_dump_json()
                     await _save_progress(user_id, action_id, progress, stage="video")
-                    if not can_fallback or chain.next_index >= len(chain.providers):
-                        raise DesktopVideoStateError(video_failure_message("submit_failed")) from None
-                    continue
-                progress.provider_task_id = submitted.task_id
-                chain.phase = "processing"
+                    if stopped_request:
+                        await acknowledge_video_attempt(stopped_request)
+                if not can_fallback:
+                    raise
+                failed_request = chain.queue_request_id
+                progress.provider_task_id = None
+                chain.phase, chain.active_index = "ready", None
+                chain.queue_request_id, chain.video_queue = None, None
                 progress.video_chain_json = chain.model_dump_json()
                 await _save_progress(user_id, action_id, progress, stage="video")
-
-            async def before_poll() -> None:
-                await _job_inputs(user_id, action_id, generation_id)
-
-            status = await poll_video_task(provider, progress.provider_task_id, before_poll=before_poll)
+                await acknowledge_video_attempt(failed_request)
+                if chain.next_index >= len(chain.providers):
+                    raise DesktopVideoStateError(video_failure_message(reason)) from exc
+                continue
             if status.status == "failed":
+                failed_request = chain.queue_request_id
                 progress.provider_task_id = None
                 chain.phase = "ready"
                 chain.active_index = None
+                chain.queue_request_id, chain.video_queue = None, None
                 progress.video_chain_json = chain.model_dump_json()
                 await _save_progress(user_id, action_id, progress, stage="video")
+                await acknowledge_video_attempt(failed_request)
                 if chain.next_index >= len(chain.providers):
                     raise DesktopVideoStateError(video_failure_message(video_provider_failure_reason(status.error)))
                 continue
             if not status.download_url:
                 raise DesktopVideoStateError(video_failure_message("download_failed"))
             progress.download_url = status.download_url
+            chain.phase = "storing"
+            chain.video_queue = None
+            progress.video_chain_json = chain.model_dump_json()
             await _save_progress(user_id, action_id, progress, stage="download")
+            await acknowledge_video_attempt(chain.queue_request_id)
         chain.finish()
         progress.video_chain_json = chain.model_dump_json()
         await _finish_job(user_id, action_id, progress)
@@ -1416,11 +1481,14 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 latest_progress=progress,
                 by_user=True,
             )
-        if exc.args == ("discarded",) and progress is not None and progress.provider_task_id:
+            request_id = _queued_video_request(progress)
+            if request_id:
+                await pause_video_attempt(request_id)
+        if exc.args == ("discarded",) and progress is not None:
             try:
-                chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
-                async with asyncio.timeout(15):
-                    await cancel_frozen_video_task(user_id, chain, progress.provider_task_id)
+                request_id = _queued_video_request(progress)
+                if request_id:
+                    await cancel_video_attempt(request_id)
             except Exception:
                 logger.warning("Desktop video cancellation unavailable", extra={"action_id": action_id}, exc_info=True)
         raise
@@ -1445,7 +1513,9 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     isinstance(exc, ImageGenerationError) and exc.result_unknown
                 )
                 saved.failure_reason = (
-                    "result_unknown"
+                    "queue_stopped"
+                    if isinstance(exc, VideoQueueStoppedError)
+                    else "result_unknown"
                     if saved.submission_unknown
                     else "material_rejected"
                     if isinstance(exc, VideoProcessError) and not isinstance(exc, VideoToolUnavailableError)
@@ -1472,7 +1542,10 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     _unknown_submission_message(saved)
                     if saved.submission_unknown
                     else str(exc)
-                    if isinstance(exc, (DesktopVideoStateError, VideoProcessError, ImageGenerationError))
+                    if isinstance(
+                        exc,
+                        (DesktopVideoStateError, VideoProcessError, ImageGenerationError, VideoQueueStoppedError),
+                    )
                     else "视频制作失败，请查看状态后重试"
                 )
                 await touch_desktop_state(db, user_id)
@@ -1562,7 +1635,12 @@ async def resume_desktop_video_jobs(user_id: int | None = None) -> None:
         safe_resume = (
             progress is not None
             and not desktop_progress_has_unknown_submission(progress)
-            and bool(progress.provider_task_id or progress.download_url or progress.source_path)
+            and bool(
+                progress.provider_task_id
+                or progress.download_url
+                or progress.source_path
+                or _queued_video_request(progress),
+            )
         )
         if safe_resume:
             schedule_desktop_video_job(row.user_id, row.id, allow_model_steps=False)

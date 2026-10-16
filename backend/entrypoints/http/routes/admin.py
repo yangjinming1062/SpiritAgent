@@ -23,6 +23,8 @@ from features.accounts.schemas import (
 )
 from features.automation.schemas import NightlyActivityLogListResponse
 from features.configuration.social_accounts import XiaohongshuAdminLoginStatus
+from features.media.video_queue.admin import list_video_queue, resolve_video_queue
+from features.media.video_queue.contracts import VideoQueueList, VideoQueueRequestView, VideoQueueResolution
 from infrastructure.ai.config import ModelDiscoveryRequest
 from infrastructure.ai.models import ModelDiscoveryResponse
 from infrastructure.database import DbSession
@@ -69,6 +71,24 @@ class _AdminRoute(APIRoute):
 
 router = get_router(dependencies=[Depends(get_current_admin_token)])
 router.route_class = _AdminRoute
+
+
+@router.get("/video-queue", response_model=VideoQueueList)
+async def video_queue(db: DbSession) -> VideoQueueList:
+    return await list_video_queue(db)
+
+
+@router.post("/video-queue/{request_id}/resolve", response_model=VideoQueueRequestView)
+async def reconcile_video_queue(
+    request_id: str,
+    payload: VideoQueueResolution,
+    admin: CurrentAdmin,
+    db: DbSession,
+) -> VideoQueueRequestView:
+    try:
+        return await resolve_video_queue(db, request_id, payload, admin)
+    except RequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
 
 @router.post("/ai/models/discover", response_model=ModelDiscoveryResponse)

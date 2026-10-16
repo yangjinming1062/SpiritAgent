@@ -15,6 +15,7 @@ from features.actions.asset_retirement import cleanup_retired_action_assets
 from features.assets.lifecycle import cleanup_assets
 from features.configuration.system_settings import load_and_apply_system_settings
 from features.media.video_jobs import cleanup_user_video_jobs
+from features.media.video_queue.service import cleanup_video_queue
 from features.posts.publication import gc_autonomous_publications
 from infrastructure.ai.providers.http import aclose_all
 from infrastructure.attachments import attachment_root
@@ -96,6 +97,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
                 minute += 1
                 try:
                     await _cleanup_formal_assets(discover=minute % 60 == 0)
+                    if minute % 60 == 0:
+                        await cleanup_video_queue()
                 except Exception:
                     logger.warning("Formal asset cleanup failed", exc_info=True)
                 if minute % 60:

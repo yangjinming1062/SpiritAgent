@@ -1,3 +1,5 @@
+import type { VideoQueueState } from '@protocol'
+
 export type DesktopVideoKind = 'loop' | 'once'
 export type DesktopVideoContinuity = 'base' | 'independent'
 export type DesktopVideoSource = 'ai' | 'image_upload' | 'video_upload'
@@ -59,6 +61,7 @@ export interface DesktopVideoDraft {
   frame_width: number | null
   frame_height: number | null
   error: string | null
+  video_queue?: VideoQueueState | null
 }
 
 export type DesktopVideoTrigger = 'periodic' | 'user_return' | 'chat' | 'manual'
@@ -81,6 +84,7 @@ export interface DesktopVideoAction {
   status: 'queued' | 'processing' | 'ready' | 'failed' | 'review_pending'
   stage: string
   error: string | null
+  video_queue?: VideoQueueState | null
   enabled: boolean
   preset: boolean
   use_when: string[]

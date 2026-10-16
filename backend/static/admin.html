@@ -36,6 +36,7 @@
                 <button class="nav-item" data-tab="settings" onclick="showTab('settings')"><span data-icon="settings"></span><span>系统参数</span><span class="draft-dot" id="settingsDraftDot" hidden title="有未保存的系统参数"></span></button>
                 <button class="nav-item" data-tab="versions" onclick="showTab('versions')"><span data-icon="versions"></span><span>版本发布</span></button>
                 <button class="nav-item" data-tab="logs" onclick="showTab('logs')"><span data-icon="logs"></span><span>夜间日志</span></button>
+                <button class="nav-item" data-tab="videoQueue" onclick="showTab('videoQueue')"><span data-icon="logs"></span><span>视频队列</span></button>
             </nav>
             <div class="side-foot"><span class="console-label">管理后台</span><button class="btn btn--ghost" onclick="logout()"><span data-icon="logout"></span>退出登录</button></div>
         </aside>
@@ -64,9 +65,28 @@
                 <section id="panel-settings" class="panel"><div class="settings-layout"><aside class="settings-rail"><input type="search" id="settingsSearch" placeholder="搜索参数…" aria-label="搜索系统参数" oninput="filterSettingsFields()"><nav id="settingsRail" class="rail-nav" aria-label="参数分类"></nav></aside><div class="settings-main"><div id="systemSettingsForm"></div><div class="settings-empty" id="settingsEmpty" hidden>没有匹配的设置项</div></div></div></section>
                 <section id="panel-versions" class="panel"><div class="card"><div class="card-head"><h2>发布新版本</h2><span class="hint">桌面端更新包 · ZIP</span></div><form id="uploadForm" class="upload-grid"><label class="file-drop" id="releaseDrop"><span data-icon="upload"></span><strong>拖入更新包，或点击选择文件</strong><input type="file" id="fileInput" accept=".zip" required><span class="hint" id="fileName"></span></label><div class="upload-row"><input id="releaseNotes" placeholder="更新说明（可选）" aria-label="更新说明"><button type="submit" class="btn btn--primary">上传并发布</button></div><p id="uploadStatus" role="status"></p></form></div><div class="card"><div class="card-head"><h2>版本历史</h2><span class="count" id="versionCount"></span></div><div class="table-scroll"><table><thead><tr><th>版本</th><th>更新说明</th><th>平台</th><th>状态</th><th>发布时间</th><th class="td-actions">操作</th></tr></thead><tbody id="versionList"></tbody></table></div></div></section>
                 <section id="panel-logs" class="panel"><div class="card"><div class="card-head"><h2>夜间活动</h2><span class="count" id="logCount"></span><span class="spacer"></span><input type="number" id="logUserId" placeholder="用户 ID" aria-label="按用户筛选日志" min="1"><input type="date" id="logDate" aria-label="按日期筛选日志"><button class="btn btn--ghost" onclick="loadLogs()">筛选</button></div><div class="table-scroll"><table><thead><tr><th>记录</th><th>用户与摘要</th><th>目标日期</th><th>状态</th><th>更新时间</th><th class="td-actions">操作</th></tr></thead><tbody id="logList"></tbody></table></div></div></section>
+                <section id="panel-videoQueue" class="panel">
+                    <div class="section-heading"><div><h2>视频生成队列</h2><span class="hint">同一供应商和密钥共用一个生成名额，不同密钥可同时生成。</span></div><button class="btn btn--ghost" id="videoQueueRefresh" onclick="loadVideoQueue()">刷新</button></div>
+                    <p class="hint" id="videoQueueStatus" role="status"></p>
+                    <div id="videoQueueList"></div>
+                </section>
             </div>
         </main>
     </div>
+</div>
+<div id="videoQueueResolveModal" class="modal">
+    <form class="modal-card" id="videoQueueResolveForm" onsubmit="resolveVideoQueue(event)">
+        <div class="modal-head"><h2 id="videoQueueResolveTitle">核对视频生成结果</h2><button type="button" class="modal-close" data-close aria-label="关闭">✕</button></div>
+        <div class="modal-body">
+            <p class="hint" id="videoQueueResolveContext"></p>
+            <div class="field"><label for="videoQueueResolveAction">核对操作</label><select id="videoQueueResolveAction" onchange="syncVideoQueueResolveAction()"><option value="attach_task">补录远端任务 ID，继续查询</option><option value="confirm_finished">已核实远端结束或未接单，解除占用</option></select></div>
+            <div class="field" id="videoQueueTaskField"><label for="videoQueueTaskId">远端任务 ID</label><input id="videoQueueTaskId" maxlength="128" autocomplete="off" required></div>
+            <div class="field"><label for="videoQueueResolveNote">核对说明</label><textarea id="videoQueueResolveNote" rows="3" maxlength="1000" placeholder="记录远端查询结果和核对依据" required></textarea></div>
+            <p class="callout">解除占用后会放行后续队列，原请求不会自动重新生成。请先在供应商侧确认任务已结束或未接单。</p>
+            <p class="social-login-error" id="videoQueueResolveError" role="alert" hidden></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn--ghost" data-close>取消</button><button type="submit" class="btn btn--primary" id="videoQueueResolveSubmit">保存核对结果</button></div>
+    </form>
 </div>
 <template id="xhsLoginTemplate">
     <div class="field settings-field social-login-card" id="xhsLoginManager" data-search-text="小红书 扫码 登录 二维码 短信 验证码 账号 清除">

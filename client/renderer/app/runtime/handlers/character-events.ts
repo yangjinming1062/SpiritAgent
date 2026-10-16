@@ -28,6 +28,7 @@ import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
+import type { VideoQueueState } from '@protocol'
 
 import { decodePayload } from '../gateway-event-util'
 
@@ -244,11 +245,15 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     case 'companion.video.progress': {
       // 按参考生成的阶段推进：只更新生成态文案，不触碰已激活包的显示。
       if (authed()) {
-        const p = decodePayload<{ stage?: string; packId?: number; outfitId?: number | null; action?: string }>(
-          event.payload
-        )
+        const p = decodePayload<{
+          stage?: string
+          packId?: number
+          outfitId?: number | null
+          action?: string
+          video_queue?: VideoQueueState | null
+        }>(event.payload)
 
-        videoGenProgress(p.stage, p)
+        videoGenProgress(p.stage, p, p.video_queue)
       }
 
       break

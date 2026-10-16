@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.conversation.formatting import visible_bubble_count
 from features.conversation.models import Conversation, Message
 from features.conversation.replacement import replaceable_reply_id
-from features.conversation.replies import CompanionReply
+from features.conversation.replies import CompanionReply, MediaBubble
 from features.conversation.reply_audio import client_reply_bubbles
+from features.media.contracts import VideoJobSnapshot
+from features.media.queries import get_video_jobs
 
 
 async def count_conversation_bubbles(db: AsyncSession, conversation_id: int) -> int:
@@ -65,6 +67,22 @@ async def build_session_messages(
     if latest is not None:
         messages.reverse()
 
+    replies = {msg.id: CompanionReply.model_validate_json(msg.reply_json) for msg in messages if msg.reply_json}
+    pending_video_ids = {
+        bubble.job_id
+        for reply in replies.values()
+        for bubble in reply.bubbles
+        if isinstance(bubble, MediaBubble)
+        and bubble.type == "video"
+        and bubble.status == "pending"
+        and bubble.job_id is not None
+    }
+    video_jobs: dict[int, VideoJobSnapshot] = {}
+    if pending_video_ids:
+        user_id = await db.scalar(select(Conversation.user_id).where(Conversation.id == conv_id))
+        if user_id is not None:
+            video_jobs = await get_video_jobs(db, user_id, pending_video_ids)
+
     tool_name_by_call_id: dict[str, str] = {}
     replaceable_id = await replaceable_reply_id(db, conv_id)
     result: list[dict] = []
@@ -77,9 +95,23 @@ async def build_session_messages(
             if isinstance(media, list) and media:
                 item["media"] = client_media_entries([e for e in media if isinstance(e, dict)])
         if msg.reply_json:
-            reply = CompanionReply.model_validate_json(msg.reply_json)
+            reply = replies[msg.id]
             reply.validate_content(msg.content or "")
-            item["bubbles"] = client_reply_bubbles(reply)
+            bubbles = client_reply_bubbles(reply)
+            for bubble, client_bubble in zip(reply.bubbles, bubbles, strict=True):
+                if not isinstance(bubble, MediaBubble) or bubble.status != "pending" or bubble.job_id is None:
+                    continue
+                job = video_jobs.get(bubble.job_id)
+                if (
+                    job is not None
+                    and job.session_id == str(conv_id)
+                    and job.reply_message_id == msg.id
+                    and job.media_id == bubble.media_id
+                    and job.cleanup_requested_at is None
+                    and job.video_queue is not None
+                ):
+                    client_bubble["video_queue"] = job.video_queue.model_dump(mode="json")
+            item["bubbles"] = bubbles
         if msg.reasoning_content:
             item["reasoning"] = msg.reasoning_content
         item["id"] = msg.id

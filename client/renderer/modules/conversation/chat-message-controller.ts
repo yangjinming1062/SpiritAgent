@@ -1,4 +1,11 @@
-import type { ChatAttachment, ChatMediaItem, CompanionBubble, CompanionMediaBubble, SessionMessage } from '@protocol'
+import type {
+  ChatAttachment,
+  ChatMediaItem,
+  CompanionBubble,
+  CompanionMediaBubble,
+  SessionMessage,
+  VideoQueueState
+} from '@protocol'
 
 import { chatDisplayText } from './chat-display-text'
 import { isPositiveInt } from './chat-message-rules'
@@ -21,6 +28,7 @@ export function createChatMessageController(state: ConversationState) {
 
   // 媒体终态可能早于完成帧；保留更新，避免迟到的等待快照把已就绪卡片覆盖回去。
   const mediaUpdates = new Map<string, CompanionMediaBubble>()
+  const videoQueueUpdates = new Map<string, VideoQueueState | null>()
 
   const mediaUpdateKey = (messageId: number, mediaId: string): string => `${messageId}:${mediaId}`
 
@@ -34,7 +42,12 @@ export function createChatMessageController(state: ConversationState) {
 
     if (bubble.type === 'image' || bubble.type === 'video') {
       const current = messageId === undefined ? undefined : mediaUpdates.get(mediaUpdateKey(messageId, bubble.media_id))
-      const media = current ?? bubble
+
+      const media =
+        current ??
+        (bubble.status === 'pending' && videoQueueUpdates.has(bubble.media_id)
+          ? { ...bubble, video_queue: videoQueueUpdates.get(bubble.media_id) }
+          : bubble)
 
       if (messageId !== undefined && media.status !== 'pending') {
         mediaUpdates.set(mediaUpdateKey(messageId, media.media_id), media)
@@ -536,6 +549,18 @@ export function createChatMessageController(state: ConversationState) {
     }
   }
 
+  function updateVideoQueue(mediaId: string, videoQueue: VideoQueueState | null): void {
+    videoQueueUpdates.set(mediaId, videoQueue)
+
+    for (const item of $chatMessageList.get()) {
+      const body = $chatMessageBodies.get()[item.id]
+
+      if (body?.replyMedia?.media_id === mediaId && body.replyMedia.status === 'pending') {
+        $chatMessageBodies.setKey(item.id, { ...body, replyMedia: { ...body.replyMedia, video_queue: videoQueue } })
+      }
+    }
+  }
+
   function updateMediaBubble(messageId: number, mediaId: string, bubble: CompanionMediaBubble): void {
     if (bubble.media_id !== mediaId) {
       return
@@ -670,6 +695,7 @@ export function createChatMessageController(state: ConversationState) {
 
   const clearReplyState = (): void => {
     mediaUpdates.clear()
+    videoQueueUpdates.clear()
     inflightReply = null
   }
 
@@ -692,6 +718,7 @@ export function createChatMessageController(state: ConversationState) {
       appendCompanionBubble,
       finalizeCompanionReply,
       updateMediaBubble,
+      updateVideoQueue,
       updateVoiceBubble,
       forgetDeletedVoiceMessages,
       markAssistantTerminal

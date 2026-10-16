@@ -1,9 +1,30 @@
+import math
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 
 import httpx
 
 from infrastructure.ai.providers.base import ProviderError
 from infrastructure.redact import redact_sensitive_text
+
+
+def response_retry_after(resp: httpx.Response) -> float | None:
+    """保留服务端冷却要求，兼容秒数与 HTTP 日期；非法值交由调用方退避。"""
+    value = resp.headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
 
 class _ErrorPageText(HTMLParser):
@@ -74,4 +95,9 @@ def raise_for_provider_response(resp: httpx.Response, *, family: str) -> dict:
         msg = f"{family} HTTP {resp.status_code}: {body}"
     else:
         return body
-    raise ProviderError(msg, status_code=resp.status_code, body=body)
+    raise ProviderError(
+        msg,
+        status_code=resp.status_code,
+        body=body,
+        retry_after_seconds=response_retry_after(resp),
+    )

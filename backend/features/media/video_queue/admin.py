@@ -1,0 +1,124 @@
+"""管理端只返回不含凭据的队列视图，核对操作使用版本锁。"""
+
+from infrastructure.ai.configuration_reader import read_user_ai_config
+from infrastructure.config import SETTINGS
+from infrastructure.logger import get_logger
+from infrastructure.redact import redact_sensitive_text
+from infrastructure.request_errors import RequestError
+from infrastructure.text import utc_now
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from features.media.chain import FrozenMediaProvider
+
+from .contracts import VideoQueueLaneView, VideoQueueList, VideoQueueRequestView, VideoQueueResolution
+from .models import VideoQueueLane, VideoQueueRequest
+
+logger = get_logger(__name__)
+
+
+async def list_video_queue(db: AsyncSession) -> VideoQueueList:
+    rows = list(
+        await db.scalars(
+            select(VideoQueueRequest)
+            .where(
+                VideoQueueRequest.state.not_in(("succeeded", "failed", "cancelled", "stopped")),
+            )
+            .order_by(VideoQueueRequest.enqueued_at, VideoQueueRequest.id),
+        ),
+    )
+    lanes = {
+        row.id: row
+        for row in await db.scalars(
+            select(VideoQueueLane).where(
+                VideoQueueLane.id.in_({row.lane_id for row in rows}),
+            ),
+        )
+    }
+    names = {provider.id: provider.name for provider in SETTINGS.ai_config.providers}
+    for user_id in {row.user_id for row in rows if row.user_id is not None}:
+        config = await read_user_ai_config(db, user_id)
+        names.update({provider.id: provider.name for provider in config.providers})
+    views: dict[int, VideoQueueLaneView] = {}
+    for row in rows:
+        lane = lanes[row.lane_id]
+        view = views.setdefault(
+            lane.id,
+            VideoQueueLaneView(
+                id=lane.token,
+                provider=lane.provider,
+                provider_names=[],
+                next_retry_at=lane.not_before,
+                requests=[],
+            ),
+        )
+        frozen = FrozenMediaProvider.model_validate_json(row.frozen_json)
+        name = names.get(frozen.provider_id)
+        if name and name not in view.provider_names:
+            view.provider_names.append(name)
+        view.requests.append(
+            VideoQueueRequestView(
+                id=row.token,
+                revision=row.revision,
+                kind=row.kind,
+                entity_id=row.entity_id,
+                user_id=row.user_id,
+                model=row.model,
+                state=row.state,
+                provider_task_id=row.provider_task_id,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                error_message=row.error_message,
+            ),
+        )
+    return VideoQueueList(queues=list(views.values()))
+
+
+async def resolve_video_queue(
+    db: AsyncSession,
+    request_id: str,
+    payload: VideoQueueResolution,
+    admin: str,
+) -> VideoQueueRequestView:
+    row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
+    if row is None:
+        raise RequestError(status_code=404, detail="视频队列任务不存在")
+    if row.state != "blocked" or row.revision != payload.expected_revision:
+        raise RequestError(status_code=409, detail="任务状态已变化，请刷新队列后重试")
+    if payload.action == "attach_task" and row.provider_task_id:
+        raise RequestError(status_code=409, detail="该任务已有远端句柄，请恢复原凭据续查，或核对结束后解除占用")
+    row.resolution_note = redact_sensitive_text(payload.note)
+    row.resolved_by = admin
+    row.revision += 1
+    row.updated_at = utc_now()
+    if payload.action == "attach_task":
+        row.provider_task_id, row.state, row.error_message = payload.task_id, "processing", None
+    else:
+        row.state, row.request_json, row.error_reason = "stopped", None, "queue_stopped"
+        row.error_message = "已核对结束本次视频制作"
+        if row.user_id is None or row.entity_id is None:
+            row.consumed_at = utc_now()
+    await db.commit()
+    logger.warning(
+        "video queue manually reconciled",
+        extra={
+            "queue_request_id": row.token,
+            "action": payload.action,
+            "admin": admin,
+            "revision": row.revision,
+            "note": row.resolution_note,
+        },
+    )
+    return VideoQueueRequestView(
+        id=row.token,
+        revision=row.revision,
+        kind=row.kind,
+        entity_id=row.entity_id,
+        user_id=row.user_id,
+        model=row.model,
+        state=row.state,
+        provider_task_id=row.provider_task_id,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        error_message=row.error_message,
+    )

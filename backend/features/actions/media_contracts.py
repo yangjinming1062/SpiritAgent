@@ -4,6 +4,7 @@ from infrastructure.ai.selection import GenerationOrigin
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.actions.schemas import PeekGeometry
+from features.media.video_queue.contracts import VideoQueueInfo
 
 # 动作媒体经 base64 JSON 通道上传，最大 32 MiB。
 _VIDEO_CLIP_MAX_BYTES: int = 32 * 1024 * 1024
@@ -124,6 +125,7 @@ class ActionMediaResponse(BaseModel):
     status: str
     stage: str
     error: str | None = None
+    video_queue: VideoQueueInfo | None = None
     media_url: str | None = None
     current_media_url: str | None = None
     pending_review: PendingActionReview | None = None

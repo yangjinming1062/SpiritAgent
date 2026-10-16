@@ -1,4 +1,4 @@
-import type { ActiveTurnSnapshot, SessionMessage, SessionResumeResponse } from '@protocol'
+import type { ActiveTurnSnapshot, SessionMessage, SessionResumeResponse, VideoQueueState } from '@protocol'
 
 export type { ChatAttachment, CompanionBubble, SessionInfo, SessionMessage, SystemPresetSummary } from '@protocol'
 
@@ -91,4 +91,5 @@ export interface VideoPack {
   active: boolean
   can_retry: boolean
   error: string | null
+  actions: { action: string; name: string; video_queue?: VideoQueueState | null }[]
 }

@@ -1,7 +1,17 @@
 import type { Dispatch, ReactElement, ReactNode, SetStateAction } from 'react'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 
+import type { VideoQueueState } from '@protocol'
+
 import { errorText } from './api'
+
+export function videoQueueText(queue: VideoQueueState): string {
+  return {
+    waiting: '视频排队中',
+    rate_limited: '服务繁忙，等待重试',
+    blocked: '等待核对生成结果'
+  }[queue.state]
+}
 
 const PageState = createContext<{ prefix: string; values: Map<string, unknown> } | null>(null)
 
