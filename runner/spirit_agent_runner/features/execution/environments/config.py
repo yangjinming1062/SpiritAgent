@@ -12,11 +12,8 @@ def _safe_getcwd() -> str:
         return os.path.expanduser("~")
 
 
-def resolve_container_task_id(task_id: str | None) -> str:
-    """将 None/空任务 id 归一为 'default'；其他值原样转字符串。"""
-    if not task_id:
-        return "default"
-    return str(task_id)
+def resolve_task_id(task_id: str | None) -> str:
+    return task_id or "default"
 
 
 def normalize_environment_config(config: dict[str, Any]) -> dict[str, Any]:

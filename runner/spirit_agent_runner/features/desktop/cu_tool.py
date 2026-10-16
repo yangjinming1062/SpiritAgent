@@ -231,7 +231,7 @@ def create_backend() -> ComputerUseBackend:
     raise RuntimeError(f"unsupported platform {sys.platform!r}")
 
 
-def handle_computer_use(args: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+def handle_computer_use(args: dict[str, Any]) -> dict[str, Any]:
     # 已取消则不再开新动作。
     if is_interrupted():
         return {"error": "Interrupted"}
@@ -465,11 +465,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="computer_use",
             toolset_id="computer_use",
             schema=COMPUTER_USE_SCHEMA,
-            handler=lambda context, args: handle_computer_use(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: handle_computer_use(args),
             check_fn=_computer_use_available,
             is_async=False,
         ),

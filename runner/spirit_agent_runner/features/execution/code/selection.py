@@ -104,7 +104,7 @@ def _scrub_child_env(source_env: Mapping[str, str]) -> dict[str, str]:
             _dropped_spiritagent.append(k)
     if _dropped_spiritagent:
         logger.debug(
-            "execute_code: dropped %d non-allowlisted SPIRITAGENT_* var(s) from the sandbox child env (%s); "
+            "execute_code: dropped %d non-allowlisted SPIRITAGENT_* var(s) from the script child env (%s); "
             "declare them in env_passthrough to pass them through.",
             len(_dropped_spiritagent),
             ", ".join(sorted(_dropped_spiritagent)),
@@ -162,7 +162,7 @@ def _is_usable_python(python_path: str) -> bool:
 
 
 def resolve_child_python(mode: str) -> str:
-    """解析沙箱子进程用的 Python 解释器(优先 installer 装的 uv-managed venv, 再看 VIRTUAL_ENV/CONDA_PREFIX)。"""
+    """strict 使用 Runner Python；project 依次查用户指定或托管 Python、激活的虚拟环境、Runner Python。"""
     if mode != "project":
         return sys.executable
     if (managed := find_python()) and _is_usable_python(managed):

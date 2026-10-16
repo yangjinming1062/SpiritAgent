@@ -72,7 +72,6 @@ class RunnerRuntime:
                     "uptime_seconds": round(time.time() - self.started_at, 2),
                     "reconnect_count": self.reconnect_count,
                     "tool_count": len(self.executor.catalog.names),
-                    "failed_tools": {},
                     "network_reachable": await asyncio.to_thread(network_reachable),
                     "disk_free_bytes": disk_free_bytes(get_spiritagent_home()),
                     "system": {

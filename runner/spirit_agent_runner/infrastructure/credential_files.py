@@ -33,18 +33,18 @@ def _load_config_files(*, config: dict[str, Any] | None = None) -> list[tuple[st
     return config_files
 
 
-def get_credential_file_mounts(container_base: str, *, config: dict[str, Any] | None = None) -> list[dict[str, str]]:
-    base = container_base.rstrip("/")
+def iter_credential_files(remote_base: str, *, config: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    base = remote_base.rstrip("/")
     return [
-        {"host_path": host_path, "container_path": f"{base}/{rel}"}
+        {"host_path": host_path, "remote_path": f"{base}/{rel}"}
         for host_path, rel in _load_config_files(config=config)
         if Path(host_path).is_file()
     ]
 
 
-def iter_skills_files(container_base: str, *, config: dict[str, Any] | None = None) -> list[dict[str, str]]:
+def iter_skills_files(remote_base: str, *, config: dict[str, Any] | None = None) -> list[dict[str, str]]:
     spiritagent_home = get_spiritagent_home()
-    base = container_base.rstrip("/")
+    base = remote_base.rstrip("/")
     dirs = [(spiritagent_home / "skills", f"{base}/skills")] if (spiritagent_home / "skills").is_dir() else []
     dirs.extend(
         (ext_dir, f"{base}/external_skills/{idx}")
@@ -52,12 +52,12 @@ def iter_skills_files(container_base: str, *, config: dict[str, Any] | None = No
         if ext_dir.is_dir()
     )
     out: list[dict[str, str]] = []
-    for s_dir, c_root in dirs:
+    for s_dir, remote_root in dirs:
         # rglob 默认不进入链接目录，并跳过链接文件，避免把技能目录之外的文件同步出去。
         for item in s_dir.rglob("*"):
             if item.is_symlink() or not item.is_file():
                 continue
-            out.append({"host_path": str(item), "container_path": f"{c_root}/{item.relative_to(s_dir).as_posix()}"})
+            out.append({"host_path": str(item), "remote_path": f"{remote_root}/{item.relative_to(s_dir).as_posix()}"})
     return out
 
 
@@ -69,10 +69,10 @@ _CACHE_DIRS: list[str] = [
 ]
 
 
-def iter_cache_files(container_base: str) -> list[dict[str, str]]:
-    base = container_base.rstrip("/")
+def iter_cache_files(remote_base: str) -> list[dict[str, str]]:
+    base = remote_base.rstrip("/")
     return [
-        {"host_path": str(item), "container_path": f"{base}/{subpath}/{item.relative_to(host_dir).as_posix()}"}
+        {"host_path": str(item), "remote_path": f"{base}/{subpath}/{item.relative_to(host_dir).as_posix()}"}
         for subpath in _CACHE_DIRS
         if (host_dir := get_spiritagent_dir(subpath)).is_dir()
         for item in host_dir.rglob("*")

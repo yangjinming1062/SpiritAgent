@@ -1,7 +1,6 @@
 """工具目录、可用性缓存和统一执行边界。"""
 
 import asyncio
-import inspect
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -112,8 +111,6 @@ class ToolExecutor:
                     raw = await definition.handler(context, args)
                 else:
                     raw = await run_in_thread(definition.handler, context, args, on_cancel=context.cancel_event.set)
-                    if inspect.isawaitable(raw):
-                        raw = await raw
             return raw
         except asyncio.CancelledError:
             context.cancel_event.set()
@@ -132,10 +129,9 @@ class ToolExecutor:
             raise ToolError("cancelled")
         try:
             with invocation_scope(context), self._scope():
-                raw = definition.handler(context, args)
-                if inspect.isawaitable(raw):
-                    raw = asyncio.run(raw)
-                return raw
+                if definition.is_async:
+                    return asyncio.run(definition.handler(context, args))
+                return definition.handler(context, args)
         except ToolError as error:
             raise ToolError(redact_sensitive_text(str(error), config=context.config)) from error
         except Exception as error:

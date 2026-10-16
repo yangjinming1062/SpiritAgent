@@ -12,7 +12,7 @@ from spirit_agent_runner.features.execution.api import (
     EnvironmentBusyError,
     get_env_config,
     get_process_registry,
-    resolve_container_task_id,
+    resolve_task_id,
     use_environment,
 )
 from spirit_agent_runner.infrastructure.clean import clean_output
@@ -354,7 +354,7 @@ def terminal_tool(
                 )
             if guidance := _foreground_background_guidance(command):
                 return _error_result(guidance)
-        effective_task_id = resolve_container_task_id(task_id)
+        effective_task_id = resolve_task_id(task_id)
         with use_environment(effective_task_id) as env:
             cwd = workdir or env.cwd
             if background:
@@ -433,7 +433,7 @@ def build_terminal_schema(platform_name: str | None = None, env_type: str = "loc
     return schema
 
 
-def _handle_terminal(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _handle_terminal(args: dict[str, Any], task_id: str) -> dict[str, Any]:
     command = args.get("command")
     if not isinstance(command, str):
         return _error_result(f"Invalid command: expected string, got {type(command).__name__}")
@@ -447,7 +447,7 @@ def _handle_terminal(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
         command=command,
         background=bool(args.get("background", False)),
         timeout=timeout,
-        task_id=kw.get("task_id"),
+        task_id=task_id,
         workdir=args.get("workdir"),
         pty=bool(args.get("pty", False)),
     )
@@ -467,7 +467,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: _handle_terminal(
                 args,
                 task_id=context.task_id,
-                cancel_token=context.cancel_event,
             ),
             check_fn=None,
             is_async=False,

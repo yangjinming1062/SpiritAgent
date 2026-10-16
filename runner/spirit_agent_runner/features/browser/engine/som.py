@@ -169,9 +169,7 @@ SOM_INJECT_SCRIPT = r"""
       cx: Math.round(rect.left + rect.width / 2),
       cy: Math.round(rect.top + rect.height / 2),
       page_cx: Math.round(rect.left + scrollX + rect.width / 2),
-      page_cy: Math.round(rect.top + scrollY + rect.height / 2),
-      scroll_x: Math.round(scrollX),
-      scroll_y: Math.round(scrollY)
+      page_cy: Math.round(rect.top + scrollY + rect.height / 2)
     });
 
     index++;

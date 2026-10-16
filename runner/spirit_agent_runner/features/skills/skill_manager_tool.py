@@ -509,7 +509,7 @@ SKILL_MANAGE_SCHEMA = {
 }
 
 
-def _skill_manage_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _skill_manage_handler(args: dict[str, Any]) -> dict[str, Any]:
     # interrupt 提前返回：create 会写盘，避免过期调用覆盖刚编辑的文件。
     if is_interrupted():
         return {"error": "Interrupted", "interrupted": True}
@@ -536,11 +536,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="skill_manage",
             toolset_id="skills_system",
             schema=SKILL_MANAGE_SCHEMA,
-            handler=lambda context, args: _skill_manage_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _skill_manage_handler(args),
             check_fn=None,
             is_async=False,
         ),

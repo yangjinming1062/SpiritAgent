@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, Any]:
-    """在 SSH 沙箱后端里执行 ``code``; 通过文件 RPC 转发工具调用。"""
+    """经 SSH 执行远端 Python 脚本，通过文件 RPC 转发工具调用。"""
     task_id = current_task_id()
     tool_call_counter = [0]
     exec_start = time.monotonic()
@@ -54,7 +54,7 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, A
     rpc_thread: RpcWorker | None = None
     env: BaseEnvironment | None = None
     sandbox_dir: str | None = None
-    # 持有环境直到远端沙箱清理完。
+    # 持有环境直到远端暂存目录清理完。
     held_env = contextlib.ExitStack()
     try:
         env = held_env.enter_context(use_environment(task_id))
@@ -78,13 +78,13 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, A
             timeout=10,
         )
         if mkdir_result.get("returncode") != 0:
-            raise RuntimeError(f"Failed to create remote sandbox directory: {mkdir_result.get('output', '').strip()}")
+            raise RuntimeError(f"Failed to create remote staging directory: {mkdir_result.get('output', '').strip()}")
         sandbox_dir = candidate_dir
         ship_file_to_remote(env, f"{sandbox_dir}/spiritagent_tools.py", generate_spiritagent_tools_module("file"))
         ship_file_to_remote(env, f"{sandbox_dir}/script.py", code)
         rpc_thread = RpcWorker(
             run_file_rpc,
-            (env, rpc_dir, task_id, tool_call_counter, max_tool_calls, stop_event, rpc_token),
+            (env, rpc_dir, tool_call_counter, max_tool_calls, stop_event, rpc_token),
         )
         rpc_thread.start()
         env_prefix = (
@@ -117,7 +117,7 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> dict[str, A
             try:
                 env.execute(f"rm -rf {shlex.quote(sandbox_dir)}", timeout=15)
             except Exception:
-                logger.warning("Failed to clean up remote sandbox %s", sandbox_dir, exc_info=True)
+                logger.warning("Failed to clean up remote staging directory %s", sandbox_dir, exc_info=True)
         held_env.close()
     duration = round(time.monotonic() - exec_start, 2)
     stdout_text = script_result.get("output", "")
@@ -160,7 +160,7 @@ def _execute_local(code: str, timeout: int, max_tool_calls: int, mode: str) -> d
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
         if IS_WINDOWS:
-            # Windows 的 AF_UNIX 不可靠，改用 loopback TCP。
+            # Windows 通过 loopback TCP 承载 RPC。
             server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server_sock.bind(("127.0.0.1", 0))
             host, port = server_sock.getsockname()[:2]
@@ -175,7 +175,7 @@ def _execute_local(code: str, timeout: int, max_tool_calls: int, mode: str) -> d
         server_sock.listen(1)
         rpc_thread = RpcWorker(
             run_socket_rpc,
-            (server_sock, current_task_id(), tool_call_counter, max_tool_calls, rpc_token, stop_event),
+            (server_sock, tool_call_counter, max_tool_calls, rpc_token, stop_event),
         )
         rpc_thread.start()
         proc = subprocess.Popen(
@@ -277,7 +277,7 @@ def _execute_local(code: str, timeout: int, max_tool_calls: int, mode: str) -> d
 
 
 def execute_code(code: str) -> dict[str, Any]:
-    """执行 sandbox 子进程: 本机用 UDS/TCP RPC, SSH 后端委派 ``_execute_remote``。"""
+    """执行独立 Python 脚本；本机使用 UDS/TCP RPC，SSH 使用文件 RPC。"""
     if not code or not code.strip():
         return {"error": "No code provided."}
     cfg = code_execution_config()
@@ -289,7 +289,7 @@ def execute_code(code: str) -> dict[str, Any]:
 
 
 def _kill_process_group(proc: subprocess.Popen[bytes]) -> None:
-    """终止沙箱子进程及其进程树；取消与超时都升级到强杀，返回时脚本不再运行。"""
+    """终止脚本子进程及其进程树；取消与超时都升级到强杀。"""
     try:
         terminate_tree(proc, graceful_timeout=1.0, force_timeout=5.0, escalate=True)
     except Exception as e:

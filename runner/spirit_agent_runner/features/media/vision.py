@@ -103,7 +103,7 @@ async def vision_analyze_tool(image_url: str) -> dict[str, Any]:
                 await run_in_thread(temp_path.unlink)
 
 
-async def _handle_vision_analyze(args: dict[str, Any], **kw: Any) -> dict[str, Any] | str:
+async def _handle_vision_analyze(args: dict[str, Any]) -> dict[str, Any]:
     return await vision_analyze_tool(args.get("image_url", ""))
 
 
@@ -113,11 +113,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="vision_analyze",
             toolset_id="media_analysis",
             schema=VISION_ANALYZE_SCHEMA,
-            handler=lambda context, args: _handle_vision_analyze(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _handle_vision_analyze(args),
             check_fn=None,
             is_async=True,
         ),

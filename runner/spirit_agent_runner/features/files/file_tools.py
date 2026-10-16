@@ -10,7 +10,7 @@ from typing import Any
 from spirit_agent_runner.contracts.config import load_config
 from spirit_agent_runner.contracts.output import DEFAULT_MAX_LINES
 from spirit_agent_runner.contracts.tooling import DEFAULT_MAX_RESULT_SIZE_CHARS, ToolDefinition
-from spirit_agent_runner.features.execution.api import resolve_container_task_id, use_environment
+from spirit_agent_runner.features.execution.api import resolve_task_id, use_environment
 from spirit_agent_runner.features.files.backends.ssh import ShellFileOperations
 from spirit_agent_runner.features.files.binary_extensions import has_binary_extension
 from spirit_agent_runner.features.files.formatting import normalize_read_pagination, normalize_search_pagination
@@ -149,7 +149,7 @@ def _is_expected_write_exception(exc: Exception) -> bool:
 @contextmanager
 def _file_ops(task_id: str) -> Iterator[FileOperations]:
     """在 with 块内返回任务终端环境对应的文件操作实例并持有该环境：local 环境用原生 I/O，其他环境经 shell 执行。"""
-    task_id = resolve_container_task_id(task_id)
+    task_id = resolve_task_id(task_id)
     with use_environment(task_id) as env:
         with current_manager().lock:
             # 缓存仅绑定同一环境对象时复用。
@@ -620,30 +620,30 @@ SEARCH_FILES_SCHEMA = {
 }
 
 
-def _handle_list_directory(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
-    return list_directory_tool(args.get("path", ""), kw.get("task_id", "default"))
+def _handle_list_directory(args: dict[str, Any], task_id: str) -> dict[str, Any]:
+    return list_directory_tool(args.get("path", ""), task_id)
 
 
-def _handle_read_file(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _handle_read_file(args: dict[str, Any], task_id: str) -> dict[str, Any]:
     return read_file_tool(
         args.get("path", ""),
         args.get("offset", 1),
         args.get("limit", DEFAULT_READ_LIMIT),
-        kw.get("task_id", "default"),
+        task_id,
     )
 
 
-def _handle_write_file(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _handle_write_file(args: dict[str, Any], task_id: str) -> dict[str, Any]:
     if not isinstance(path := args.get("path"), str) or not path:
         return {"error": "write_file: missing 'path'."}
     if "content" not in args:
         return {"error": "write_file: missing 'content'."}
     if not isinstance(content := args["content"], str):
         return {"error": f"write_file: 'content' must be string, got {type(content).__name__}."}
-    return write_file_tool(path, content, kw.get("task_id", "default"))
+    return write_file_tool(path, content, task_id)
 
 
-def _handle_patch(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _handle_patch(args: dict[str, Any], task_id: str) -> dict[str, Any]:
     mode = args.get("mode", "replace")
     if mode == "replace":
         missing = [field for field in ("path", "old_string", "new_string") if field not in args]
@@ -671,11 +671,11 @@ def _handle_patch(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
         args.get("new_string"),
         bool(args.get("replace_all", False)),
         args.get("patch"),
-        kw.get("task_id", "default"),
+        task_id,
     )
 
 
-def _handle_search_files(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _handle_search_files(args: dict[str, Any], task_id: str) -> dict[str, Any]:
     return search_tool(
         args.get("pattern", ""),
         args.get("target", "content"),
@@ -685,7 +685,7 @@ def _handle_search_files(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
         args.get("offset", 0),
         args.get("output_mode", "content"),
         args.get("context", 0),
-        kw.get("task_id", "default"),
+        task_id,
     )
 
 
@@ -698,7 +698,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: _handle_list_directory(
                 args,
                 task_id=context.task_id,
-                cancel_token=context.cancel_event,
             ),
             check_fn=None,
             is_async=False,
@@ -710,7 +709,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: _handle_read_file(
                 args,
                 task_id=context.task_id,
-                cancel_token=context.cancel_event,
             ),
             check_fn=None,
             is_async=False,
@@ -722,7 +720,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: _handle_write_file(
                 args,
                 task_id=context.task_id,
-                cancel_token=context.cancel_event,
             ),
             check_fn=None,
             is_async=False,
@@ -734,7 +731,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: _handle_patch(
                 args,
                 task_id=context.task_id,
-                cancel_token=context.cancel_event,
             ),
             check_fn=None,
             is_async=False,
@@ -746,7 +742,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: _handle_search_files(
                 args,
                 task_id=context.task_id,
-                cancel_token=context.cancel_event,
             ),
             check_fn=None,
             is_async=False,

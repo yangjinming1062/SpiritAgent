@@ -78,19 +78,17 @@ def _coerce_int(value: Any, field_name: str) -> int | None:
         raise ValueError(f"{field_name} must be an integer, got {type(value).__name__}: {value!r}") from None
 
 
-def _handle_process(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _handle_process(args: dict[str, Any], task_id: str) -> dict[str, Any]:
     process_registry = get_process_registry()
     action = args.get("action", "")
     valid_actions = {"list", "poll", "log", "wait", "kill", "write", "submit", "close"}
     if not isinstance(action, str) or action not in valid_actions:
         return {"error": f"Unknown process action: {action}. Use: list, poll, log, wait, kill, write, submit, close"}
-    # 兼容模型把 session_id 发成整数，但拒绝把任意对象转成看似有效的 ID。
-    raw_session_id = args.get("session_id")
-    if raw_session_id is not None and (isinstance(raw_session_id, bool) or not isinstance(raw_session_id, str | int)):
+    session_id = args.get("session_id", "")
+    if not isinstance(session_id, str):
         return {"error": "session_id must be a string"}
     if action == "list" and "session_id" in args:
         return {"error": "session_id must be omitted for list"}
-    session_id = str(raw_session_id) if raw_session_id is not None else ""
     if action != "list" and not session_id:
         return {"error": f"session_id is required for {action}"}
     if action in {"write", "submit"}:
@@ -111,7 +109,7 @@ def _handle_process(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
         return {"error": str(e)}
     match action:
         case "list":
-            return {"processes": process_registry.list_sessions(task_id=kw.get("task_id"))}
+            return {"processes": process_registry.list_sessions(task_id=task_id)}
         case "poll":
             return process_registry.poll(session_id)
         case "log":
@@ -125,9 +123,9 @@ def _handle_process(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
         case "kill":
             return process_registry.kill_process(session_id)
         case "write":
-            return process_registry.write_stdin(session_id, str(args.get("data", "")))
+            return process_registry.write_stdin(session_id, args["data"])
         case "submit":
-            return process_registry.submit_stdin(session_id, str(args.get("data", "")))
+            return process_registry.submit_stdin(session_id, args["data"])
         case "close":
             return process_registry.close_stdin(session_id)
         case _:
@@ -144,7 +142,6 @@ def get_tool_definitions() -> list[ToolDefinition]:
             handler=lambda context, args: _handle_process(
                 args,
                 task_id=context.task_id,
-                cancel_token=context.cancel_event,
             ),
             check_fn=None,
             is_async=False,

@@ -68,7 +68,6 @@ def _token_matches(candidate: object, expected_token: str) -> bool:
 
 def _dispatch_sandbox_call(
     request: object,
-    task_id: str,
     tool_call_counter: list[int],
     max_tool_calls: int,
 ) -> Any:
@@ -130,13 +129,12 @@ def _is_auth_frame(line: bytes, expected_token: str) -> bool:
 
 def run_socket_rpc(
     server_sock: socket.socket,
-    task_id: str,
     tool_call_counter: list[int],
     max_tool_calls: int,
     expected_token: str,
     stop_event: threading.Event,
 ) -> None:
-    """本机沙箱的父进程侧 RPC：只接受首帧携带本次 token 的一条连接，串行派发其工具调用，直到脚本结束。"""
+    """本机子进程的父端 RPC：只接受首帧携带本次 token 的一条连接，串行派发工具调用，直到脚本结束。"""
     conn: socket.socket | None = None
     buf = b""
     try:
@@ -168,7 +166,7 @@ def run_socket_rpc(
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                     result = tool_error(f"Invalid RPC request: {exc}")
                 else:
-                    result = _dispatch_sandbox_call(request, task_id, tool_call_counter, max_tool_calls)
+                    result = _dispatch_sandbox_call(request, tool_call_counter, max_tool_calls)
                 conn.sendall((json.dumps(result, ensure_ascii=False) + "\n").encode())
             if not select.select([conn], [], [], _RPC_POLL_SECONDS)[0]:
                 if stop_event.is_set():
@@ -186,7 +184,7 @@ def run_socket_rpc(
 
 
 def ship_file_to_remote(env: BaseEnvironment, remote_path: str, content: str) -> None:
-    """把文本内容写到远程沙箱的 remote_path；经 base64 + stdin 传输，避开转义与命令行长度限制。"""
+    """把文本写到远端 remote_path；经 base64 + stdin 传输，避开转义与命令行长度限制。"""
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
     result = env.execute(f"base64 -d > {shlex.quote(remote_path)}", stdin_data=encoded, timeout=30)
     if result.get("returncode") != 0:
@@ -197,7 +195,6 @@ def _serve_remote_request(
     env: BaseEnvironment,
     rpc_dir: str,
     req_file: str,
-    task_id: str,
     tool_call_counter: list[int],
     max_tool_calls: int,
     expected_token: str,
@@ -217,7 +214,7 @@ def _serve_remote_request(
     if type(seq := request.get("seq")) is not int or seq < 0:
         logger.debug("execute_code RPC: dropped request %s without a valid seq", req_file)
         return
-    tool_result = _dispatch_sandbox_call(request, task_id, tool_call_counter, max_tool_calls)
+    tool_result = _dispatch_sandbox_call(request, tool_call_counter, max_tool_calls)
     quoted_res_file = shlex.quote(f"{rpc_dir}/res_{seq:06d}")
     env.execute(
         f"base64 -d > {quoted_res_file}.tmp && mv {quoted_res_file}.tmp {quoted_res_file}",
@@ -229,13 +226,12 @@ def _serve_remote_request(
 def run_file_rpc(
     env: BaseEnvironment,
     rpc_dir: str,
-    task_id: str,
     tool_call_counter: list[int],
     max_tool_calls: int,
     stop_event: threading.Event,
     expected_token: str,
 ) -> None:
-    """远程沙箱的 RPC 轮询循环(基于文件 req/res), 触发父进程派发工具调用并写回响应文件。"""
+    """轮询远端脚本的 RPC 请求文件，派发工具调用并写回响应文件。"""
     poll_interval = 0.1
     quoted_rpc_dir = shlex.quote(rpc_dir)
     req_prefix = f"{rpc_dir}/req_"
@@ -254,7 +250,6 @@ def run_file_rpc(
                     env,
                     rpc_dir,
                     req_file,
-                    task_id,
                     tool_call_counter,
                     max_tool_calls,
                     expected_token,

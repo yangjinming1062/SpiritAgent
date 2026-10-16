@@ -17,12 +17,12 @@ from pathlib import Path
 from spirit_agent_runner.contracts.config import load_config
 from spirit_agent_runner.infrastructure.constants import get_spiritagent_home
 from spirit_agent_runner.infrastructure.credential_files import (
-    get_credential_file_mounts,
     iter_cache_files,
+    iter_credential_files,
     iter_skills_files,
 )
 
-# 文件锁用 stdlib（POSIX flock / Windows msvcrt），不进 pyproject。
+# 同步锁在 POSIX 使用 flock，在 Windows 使用 msvcrt。
 if sys.platform == "win32":
     import msvcrt
 else:
@@ -45,14 +45,14 @@ def _file_mtime_key(host_path: str) -> tuple[float, int] | None:
         return None
 
 
-def iter_sync_files(container_base: str) -> list[tuple[str, str]]:
-    """枚举需要同步到远端 `container_base` 下的 (host_path, remote_path) 列表：凭据、技能、缓存目录。"""
-    mounts = (
-        get_credential_file_mounts(container_base, config=load_config())
-        + iter_skills_files(container_base, config=load_config())
-        + iter_cache_files(container_base)
+def iter_sync_files(remote_base: str) -> list[tuple[str, str]]:
+    """枚举需要同步到远端的凭据、技能和缓存文件。"""
+    files = (
+        iter_credential_files(remote_base, config=load_config())
+        + iter_skills_files(remote_base, config=load_config())
+        + iter_cache_files(remote_base)
     )
-    return [(m["host_path"], m["container_path"]) for m in mounts]
+    return [(item["host_path"], item["remote_path"]) for item in files]
 
 
 def quoted_rm_command(remote_paths: list[str]) -> str:

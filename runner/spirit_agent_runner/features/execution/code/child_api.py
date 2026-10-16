@@ -50,7 +50,7 @@ SANDBOX_ALLOWED_TOOLS = frozenset(_TOOL_STUBS)
 
 
 def generate_spiritagent_tools_module(transport: Literal["uds", "file"]) -> str:
-    """为 sandbox 子进程生成 ``spiritagent_tools`` 桩模块(选 UDS / file 传输头)。"""
+    """为独立脚本生成 ``spiritagent_tools`` 模块，使用本机套接字或远端文件传输。"""
     stub_functions = [
         f"def {name}({sig}):\n    {doc}\n    return _call({name!r}, {args_expr})\n"
         for name, (sig, doc, args_expr) in sorted(_TOOL_STUBS.items())
@@ -66,7 +66,7 @@ import shlex
 import threading
 import time
 
-# Auth token for the parent's RPC endpoint, injected via the sandbox env.
+# Auth token for the parent's RPC endpoint, injected via the child environment.
 _RPC_TOKEN = os.environ.get("SPIRITAGENT_RPC_TOKEN", "")
 
 # Convenience helpers (avoid common scripting pitfalls)
@@ -122,7 +122,7 @@ def _connect():
             _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             _sock.connect(endpoint)
         _sock.settimeout(300)
-        # The first line authenticates this sandbox; the parent drops connections without it.
+        # The first line authenticates this child; the parent drops connections without it.
         _sock.sendall((json.dumps({"auth": _RPC_TOKEN}) + "\\n").encode())
     return _sock
 
@@ -141,13 +141,7 @@ def _call(tool_name, args):
             if buf.endswith(b"\\n"):
                 break
     raw = buf.decode().strip()
-    result = json.loads(raw)
-    if isinstance(result, str):
-        try:
-            return json.loads(result)
-        except (json.JSONDecodeError, TypeError):
-            return result
-    return result
+    return json.loads(raw)
 
 '''
 )
@@ -193,13 +187,7 @@ def _call(tool_name, args):
     except OSError:
         pass
 
-    result = json.loads(raw)
-    if isinstance(result, str):
-        try:
-            return json.loads(result)
-        except (json.JSONDecodeError, TypeError):
-            return result
-    return result
+    return json.loads(raw)
 
 '''
 )

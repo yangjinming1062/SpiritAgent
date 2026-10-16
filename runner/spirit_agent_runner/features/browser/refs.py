@@ -190,21 +190,14 @@ class Refs:
                 content = box.get("result", {}).get("model", {}).get("content", [])
                 if len(content) < 8:
                     return
-                # cx 与 page_cx 取整须一致。
-                cx = round((content[0] + content[2]) / 2.0)
-                cy = round((content[1] + content[5]) / 2.0)
                 with self._lock:
                     if generation != self._generation:
                         return
                     for key in (ref_key, f"@{ref_key}"):
                         if (entry := self._last_refs.get(key)) is not None:
                             entry.update(
-                                cx=cx,
-                                cy=cy,
-                                page_cx=cx + scroll_x,
-                                page_cy=cy + scroll_y,
-                                scroll_x=scroll_x,
-                                scroll_y=scroll_y,
+                                page_cx=round((content[0] + content[2]) / 2.0) + scroll_x,
+                                page_cy=round((content[1] + content[5]) / 2.0) + scroll_y,
                             )
 
         seen_backends: set[int] = set()
@@ -259,8 +252,6 @@ class Refs:
             info = (
                 self._last_refs.get(ref_str) or self._last_refs.get(normalized) or self._last_refs.get(f"@{normalized}")
             )
-        cached_cx = info.get("cx") if info else None
-        cached_cy = info.get("cy") if info else None
         backend_id = info.get("backendNodeId") if info else None
         sids = self._session_ids_provider()
         sid = sids.active or sids.page
@@ -315,23 +306,6 @@ class Refs:
                 info["page_cy"],
                 cur_sx,
                 cur_sy,
-                adj_cx,
-                adj_cy,
-                ref_str,
-            )
-            return adj_cx, adj_cy, None
-
-        if cached_cx is not None and cached_cy is not None:
-            if not scroll_eval_ok:
-                raise ValueError(f"Element '{ref}' coordinate fallback failed: unable to evaluate page scroll offset")
-            init_sx = float(info.get("scroll_x", 0)) if info else 0.0
-            init_sy = float(info.get("scroll_y", 0)) if info else 0.0
-            adj_cx = float(cached_cx) + (init_sx - cur_sx)
-            adj_cy = float(cached_cy) + (init_sy - cur_sy)
-            logger.debug(
-                "Self-healing fallback: using cached viewport coordinates (%s, %s) adjusted to (%s, %s) for %s",
-                cached_cx,
-                cached_cy,
                 adj_cx,
                 adj_cy,
                 ref_str,

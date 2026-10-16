@@ -137,23 +137,23 @@ SYSTEM_CLICK_AT_SCHEMA = {
 }
 
 
-def _idle_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _idle_handler(args: dict[str, Any]) -> dict[str, Any]:
     return {"idle_seconds": get_idle_seconds()}
 
 
-def _locked_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _locked_handler(args: dict[str, Any]) -> dict[str, Any]:
     return {"locked": is_screen_locked()}
 
 
-def _focus_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _focus_handler(args: dict[str, Any]) -> dict[str, Any]:
     return {"focused_app": get_focused_app()}
 
 
-def _fullscreen_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _fullscreen_handler(args: dict[str, Any]) -> dict[str, Any]:
     return {"fullscreen": is_fullscreen()}
 
 
-def _snapshot_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _snapshot_handler(args: dict[str, Any]) -> dict[str, Any]:
     # 单项失败回落默认值。
     return {
         "idle_seconds": get_idle_seconds(),
@@ -163,27 +163,27 @@ def _snapshot_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
     }
 
 
-def _power_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _power_handler(args: dict[str, Any]) -> dict[str, Any]:
     return get_power_state()
 
 
-def _windows_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _windows_handler(args: dict[str, Any]) -> dict[str, Any]:
     return get_windows().model_dump(mode="json", exclude_none=True)
 
 
-def _open_app_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _open_app_handler(args: dict[str, Any]) -> dict[str, Any]:
     return open_application(str(args.get("name", "")))
 
 
-def _work_area_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _work_area_handler(args: dict[str, Any]) -> dict[str, Any]:
     return get_work_area()
 
 
-def _cursor_pos_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _cursor_pos_handler(args: dict[str, Any]) -> dict[str, Any]:
     return get_cursor_pos()
 
 
-def _click_at_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _click_at_handler(args: dict[str, Any]) -> dict[str, Any]:
     try:
         x, y, clicks = int(args["x"]), int(args["y"]), int(args.get("clicks", 1))
     except (KeyError, TypeError, ValueError) as e:
@@ -201,11 +201,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.get_idle_seconds",
             toolset_id="system_awareness",
             schema=SYSTEM_GET_IDLE_SCHEMA,
-            handler=lambda context, args: _idle_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _idle_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -213,11 +209,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.is_screen_locked",
             toolset_id="system_awareness",
             schema=SYSTEM_IS_LOCKED_SCHEMA,
-            handler=lambda context, args: _locked_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _locked_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -225,11 +217,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.get_focused_app",
             toolset_id="system_awareness",
             schema=SYSTEM_FOCUS_SCHEMA,
-            handler=lambda context, args: _focus_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _focus_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -237,11 +225,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.is_fullscreen",
             toolset_id="system_awareness",
             schema=SYSTEM_IS_FULLSCREEN_SCHEMA,
-            handler=lambda context, args: _fullscreen_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _fullscreen_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -249,11 +233,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.snapshot",
             toolset_id="system_awareness",
             schema=SYSTEM_SNAPSHOT_SCHEMA,
-            handler=lambda context, args: _snapshot_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _snapshot_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -261,11 +241,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.get_power_state",
             toolset_id="system_awareness",
             schema=SYSTEM_POWER_SCHEMA,
-            handler=lambda context, args: _power_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _power_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -273,11 +249,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.get_windows",
             toolset_id="system_awareness",
             schema=SYSTEM_GET_WINDOWS_SCHEMA,
-            handler=lambda context, args: _windows_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _windows_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -285,11 +257,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.open_application",
             toolset_id="system_awareness",
             schema=SYSTEM_OPEN_APP_SCHEMA,
-            handler=lambda context, args: _open_app_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _open_app_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -297,11 +265,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.get_work_area",
             toolset_id="system_awareness",
             schema=SYSTEM_GET_WORK_AREA_SCHEMA,
-            handler=lambda context, args: _work_area_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _work_area_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -309,11 +273,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.get_cursor_pos",
             toolset_id="system_awareness",
             schema=SYSTEM_GET_CURSOR_POS_SCHEMA,
-            handler=lambda context, args: _cursor_pos_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _cursor_pos_handler(args),
             check_fn=None,
             is_async=False,
         ),
@@ -321,11 +281,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="system.click_at",
             toolset_id="system_awareness",
             schema=SYSTEM_CLICK_AT_SCHEMA,
-            handler=lambda context, args: _click_at_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _click_at_handler(args),
             check_fn=None,
             is_async=False,
         ),

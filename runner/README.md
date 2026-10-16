@@ -19,10 +19,10 @@
 
 `bootstrap` 是唯一组合根。`transport` 只对接运行时公开接口；`runtime` 持有配置、工具目录、可用性缓存和在途调用，通过 `ToolDefinition` 调用能力，不导入具体工具。`features` 负责各能力规则与资源，`contracts` 提供调用上下文、工具定义和共享结果，`infrastructure` 负责跨能力的网络、路径、图像与文本处理。层间方向由 [架构门禁](../scripts/check_runner_architecture.py) 检查。
 
-各能力显式返回工具定义，说明、schema、可用性探测和处理函数就近维护；新增普通工具只修改所属能力的定义集合。运行时不扫描目录或在导入时注册工具。依赖配置的说明使用工厂，在 `get_tools` 时按该次配置快照生成。
+各能力显式提供 `ToolDefinition`，就近维护说明、schema、可用性探测和处理函数；依赖配置的说明在 `get_tools` 时按该次快照生成。执行器按定义中的 `is_async` 选择异步调用或工作线程。
 
 - `ConfigStore` 每次更新替换配置并推进代次；调用取得独立快照，`ToolContext` 固定 task、call、学习域与取消信号。`ContextVar` 只传递当前作用域，工作线程保留对应上下文，不持有资源注册表。
-- 普通 RPC 与代码子调用共用 `ToolExecutor`，统一工具禁用和配置作用域；代码子调用另有白名单、参数限制和预算。内部返回 Python 结果对象，传输层与代码子调用的 RPC 边界负责 JSON 编解码。
+- 普通 RPC 与代码子调用共用 `ToolExecutor`，统一工具禁用和配置作用域；代码子调用另有白名单、参数限制和预算。结果只在 RPC 边界进行 JSON 编解码，字符串结果保持字符串。
 - 工具清单与配置更新串行装配，阻塞探测在线程执行。可用性按探测函数与配置代次缓存，失败 30 秒、成功 60 秒；更新使缓存失效，旧探测不得回填新代次。
 - 执行管理器拥有环境租约、后台进程和空闲回收；浏览器管理器拥有会话、启动句柄和 CDP 主管；桌面管理器拥有懒启动后端；文件管理器拥有操作缓存与读写版本，技能管理器串行写入。文件通过执行能力的公开租约 API 取得环境，代码执行通过注入接口调用工具。
 - 服务显式启动线程与任务。退出时先停止传输和在途调用、收尾日志，再关闭浏览器、桌面、执行环境和文件状态；同步工作线程取消后仍等待实际执行结束才释放租约。`atexit` 只在组合根登记退出兜底。
@@ -31,16 +31,16 @@
 
 ## 开发与交付
 
-包目录为 `runner/spirit_agent_runner/`，发行包名为 `spirit-agent`。在仓库根运行 `uv sync --project runner --frozen` 安装源码 editable 包，再启动 Client 开发入口；显式开发 Python 与仓库配置优先于 Home 下的已安装环境。也可在 `runner/` 中运行：
+发行包 `spirit-agent` 从 `runner/spirit_agent_runner/` 构建为单个 wheel。在仓库根运行 `uv sync --project runner --frozen` 安装源码 editable 包，再启动 Client 开发入口；显式开发 Python 与仓库配置优先于 Home 下的安装环境。在 `runner/` 中检查：
 
 ```bash
 uv run --frozen python -I -m spirit_agent_runner --version
 uv run --frozen python -I -m spirit_agent_runner --check
 ```
 
-源码版和安装版都通过 `python -I -X utf8 -m spirit_agent_runner --desktop-endpoint <path>` 启动，token 仅经 `SPIRITAGENT_DESKTOP_TOKEN` 传递。模块启动与安装健康检查使用 Python isolated mode，避免当前目录或 `PYTHONPATH` 中的同名包遮蔽已安装代码；开发安装仍通过 editable 包定位源码。`--version` 输出发行包版本，`--check` 校验依赖与静态工具定义并返回版本和工具数量，不连接桌面或启动运行时资源。正常启动仅支持 Windows、macOS，并在 Windows 显式初始化 Job Object 管理进程树；依赖和平台 marker 归 [pyproject.toml](pyproject.toml)，运行时不补装。
+统一启动入口为 `python -I -X utf8 -m spirit_agent_runner --desktop-endpoint <path>`，token 仅经 `SPIRITAGENT_DESKTOP_TOKEN` 传递。启动与健康检查使用 Python isolated mode，防止当前目录或 `PYTHONPATH` 中的同名包遮蔽安装包；editable 安装直接定位源码。`--version` 输出发行版本；`--check` 校验依赖与静态工具定义，返回版本和工具数量，不启动运行时资源。正常启动仅支持 Windows、macOS；Windows 使用 Job Object 管理进程树。依赖和平台 marker 见 [pyproject.toml](pyproject.toml)。
 
-入口与实现全部进入一个 wheel，Installer 和 Client 通过包内健康入口检查；隔离安装门禁、签名及更新步骤归 [Scripts](../scripts/README.md#构建安装器) 与 [更新契约](../docs/PROTOCOL.md#自更新签名)。
+Installer 和 Client 使用包内健康入口；隔离安装门禁、签名及更新步骤归 [Scripts](../scripts/README.md#构建安装器) 与 [更新契约](../docs/PROTOCOL.md#自更新签名)。
 
 ## 执行环境
 
@@ -58,10 +58,10 @@ HTTP 统一使用 `httpx[socks]`。[url_safety.py](spirit_agent_runner/infrastru
 
 [执行管理器](spirit_agent_runner/features/execution/manager.py) 按 task 持有执行环境，终端和文件工具通过 `use_environment` 取得租约；创建参数包含类型、cwd、超时与 SSH 目标。配置变化处理如下：
 
-| 旧环境状态 | 新调用 |
+| 当前环境状态 | 调用处理 |
 |---|---|
 | 参数一致 | 复用 |
-| 无租约、前台命令和活跃后台进程 | 停止旧环境，按新配置重建 |
+| 无租约、前台命令和活跃后台进程 | 停止环境，按新配置重建 |
 | 仍在使用，仅 cwd／超时变化 | 沿用到空闲 |
 | 仍在使用，执行类型或 SSH 目标／凭据变化 | 拒绝调用，等待结束；停止后台进程须由实际任务授权 |
 
@@ -73,7 +73,7 @@ SSH 密码通过临时 askpass 和 `SSH_ASKPASS_REQUIRE=force` 传递，密钥�
 
 [execute_code](spirit_agent_runner/features/execution/code/code_execution_tool.py) 每次启动独立 Python 子进程，经一次性 token 调用父进程工具；本机使用 UDS（Windows 回环 TCP）首帧鉴权，SSH 使用逐请求鉴权的文件 RPC。导入帮助函数不解锁禁用工具，`retry` 只重试异常，不判断副作用是否安全。
 
-本机默认 `code_execution.mode=project`，采用终端当前 cwd，并优先可用的项目 Python；`strict` 使用暂存目录和 Runner Python。模式控制解释器、目录与环境传递，不构成强沙箱；SSH 仍在远端执行。脚本输出有头尾裁切和工具调用预算，参数定义以源码为准。
+本机默认 `code_execution.mode=project`，采用终端当前 cwd；解释器依次选择可用的用户指定或托管 Python、激活的虚拟环境、Runner Python。`strict` 使用暂存目录和 Runner Python。模式控制解释器、目录与环境传递，不构成强沙箱；SSH 在远端执行。脚本输出有头尾裁切和工具调用预算，参数定义以源码为准。
 
 ### 浏览器与桌面生命周期
 

@@ -153,7 +153,7 @@ class CDPSupervisor:
             if fut is None:
                 return {"ok": False, "error": "supervisor loop unavailable"}
             res = fut.result(timeout=timeout + 2)
-            return {"ok": True, "result": res.get("result", res)}
+            return {"ok": True, "result": res["result"]}
         except DialogBlockedError as exc:
             return {
                 "ok": False,

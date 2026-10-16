@@ -9,7 +9,7 @@ from spirit_agent_runner.contracts.context import current_context
 from spirit_agent_runner.features.execution.environments._env_base import BaseEnvironment
 from spirit_agent_runner.features.execution.environments.config import (
     normalize_environment_config,
-    resolve_container_task_id,
+    resolve_task_id,
 )
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ def get_env_config() -> dict[str, Any]:
 
 
 def current_task_id() -> str:
-    return resolve_container_task_id(current_context().task_id)
+    return resolve_task_id(current_context().task_id)
 
 
 @contextmanager

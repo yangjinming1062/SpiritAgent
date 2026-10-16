@@ -90,7 +90,7 @@ def _find_relaunched_browser(executable: Path, profile_dir: Path, launched_at: f
     expected_profile = os.path.normcase(str(profile_dir.resolve()))
     for pid in psutil.pids():
         try:
-            # 不复用 process_iter 的缓存对象，兼容启动器退出期间的 PID/命令行变化。
+            # 启动器退出期间 PID 与命令行会变化，逐次读取进程信息。
             process = psutil.Process(pid)
             if process.create_time() < launched_at - 0.1 or os.path.normcase(process.exe()) != expected_exe:
                 continue

@@ -353,7 +353,7 @@ SKILL_VIEW_SCHEMA = {
 }
 
 
-def _skill_view_handler(args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+def _skill_view_handler(args: dict[str, Any]) -> dict[str, Any]:
     # interrupt 提前返回：避免过期列表调用在用户已转移注意力后继续读盘。
     if is_interrupted():
         return {"error": "Interrupted", "interrupted": True}
@@ -374,11 +374,7 @@ def get_tool_definitions() -> list[ToolDefinition]:
             name="skill_view",
             toolset_id="skills_system",
             schema=SKILL_VIEW_SCHEMA,
-            handler=lambda context, args: _skill_view_handler(
-                args,
-                task_id=context.task_id,
-                cancel_token=context.cancel_event,
-            ),
+            handler=lambda _context, args: _skill_view_handler(args),
             check_fn=None,
             is_async=False,
         ),
