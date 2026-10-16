@@ -49,7 +49,12 @@ from features.appearance.prompt_assembly import build_image_edit_prompt, build_o
 from features.appearance.prompts import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
 from features.appearance.response_builders import outfit_response
 from features.appearance.schemas import ImageReviseMode, OutfitResponse
-from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
+from features.assets.lifecycle import (
+    cleanup_asset_directories,
+    cleanup_user_assets,
+    enqueue_asset_cleanup,
+)
+from features.assets.references import asset_paths
 from features.companion.persona_service import load_persona_definition
 from features.companion.policy_contracts import OUTFIT_POLICY_DEFAULT
 from features.companion.visual_state import change_outfit_policy, ensure_persona_snapshot, persona_snapshot
@@ -783,7 +788,7 @@ async def activate_outfit(
 
 
 async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
-    """删除非穿着外观与已停稳的关联动作包；正式资产在宽限期后按引用回收。"""
+    """删除非穿着外观及已停稳动作包；提交后立即回收无引用的专属文件。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
@@ -794,11 +799,9 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
             removed_tasks = await delete_outfit_actions(db, user_id, outfit.id)
         except ValueError as exc:
             raise OutfitStateError(str(exc)) from exc
-        await enqueue_asset_cleanup(
-            db,
-            user_id,
-            [outfit.fullbody_url, OutfitSource.model_validate_json(outfit.source_json).reference_image_path or ""],
-        )
+        directory = outfit_asset_directory(outfit.id)
+        paths = asset_paths([outfit.fullbody_url, outfit.source_json], user_id)
+        await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
 
         emit_ws_event(
             db,
@@ -808,11 +811,15 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         )
         await db.delete(outfit)
         await db.commit()
-        # 删除提交后再清理文件与撤销远端任务；提交失败时外观仍完整可用。
-        spawn_removed_action_task_cancellation(user_id, removed_tasks)
-        await cleanup_user_assets(user_id)
-        if outfit.fullbody_url.startswith("temp-media/"):
-            delete_portrait_file(outfit.fullbody_url)
+    # 删除提交后再停止任务和清理文件；提交失败时外观仍完整可用。
+    description = _DESCRIBE_TASKS.get((user_id, outfit_id))
+    if description is not None and not description.done():
+        description.cancel()
+        await asyncio.gather(description, return_exceptions=True)
+    spawn_removed_action_task_cancellation(user_id, removed_tasks)
+    await cleanup_asset_directories(user_id, [directory])
+    if outfit.fullbody_url.startswith("temp-media/"):
+        delete_portrait_file(outfit.fullbody_url)
 
 
 def schedule_outfit_description(user_id: int, outfit_id: int) -> None:

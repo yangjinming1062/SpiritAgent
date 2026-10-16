@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from infrastructure.assets.asset_store import unlink_companion_asset
-from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.assets.paths import parse_companion_asset_path, valid_asset_relative_path
 from infrastructure.assets.write_protection import (
     asset_write_in_progress,
     prune_completed_asset_writes,
@@ -17,8 +17,8 @@ from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
-from runtime.user_maintenance import begin_user_request, end_user_request
-from sqlalchemy import delete, select, update
+from runtime.user_maintenance import begin_user_request, end_user_request, track_user_task
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +56,8 @@ async def enqueue_asset_cleanup_entries(
     db: AsyncSession,
     user_id: int,
     entries: Iterable[tuple[str, datetime | None]],
+    *,
+    expedite: bool = False,
 ) -> None:
     owned = {
         path: not_before
@@ -65,15 +67,20 @@ async def enqueue_asset_cleanup_entries(
     if not owned:
         return
     now = utc_now()
+    statement = insert(AssetCleanupPending).values(
+        [
+            {"user_id": user_id, "path": path, "requested_at": now, "not_before": not_before or now}
+            for path, not_before in sorted(owned.items())
+        ],
+    )
+    keys = [AssetCleanupPending.user_id, AssetCleanupPending.path]
     await db.execute(
-        insert(AssetCleanupPending)
-        .values(
-            [
-                {"user_id": user_id, "path": path, "requested_at": now, "not_before": not_before or now}
-                for path, not_before in sorted(owned.items())
-            ],
+        statement.on_conflict_do_update(
+            index_elements=keys,
+            set_={"not_before": func.least(AssetCleanupPending.not_before, statement.excluded.not_before)},
         )
-        .on_conflict_do_nothing(index_elements=[AssetCleanupPending.user_id, AssetCleanupPending.path]),
+        if expedite
+        else statement.on_conflict_do_nothing(index_elements=keys),
     )
 
 
@@ -83,26 +90,72 @@ async def enqueue_asset_cleanup(
     paths: Iterable[str],
     *,
     not_before: datetime | None = None,
+    expedite: bool = False,
 ) -> None:
-    await enqueue_asset_cleanup_entries(db, user_id, ((path, not_before) for path in paths))
+    await enqueue_asset_cleanup_entries(db, user_id, ((path, not_before) for path in paths), expedite=expedite)
 
 
-def _disk_assets(user_id: int) -> set[str]:
+def _disk_assets(user_id: int, directory: str = "") -> set[str]:
+    if user_id <= 0 or (directory and not valid_asset_relative_path(directory)):
+        raise ValueError("invalid asset directory")
     root = Path(SETTINGS.data_dir) / "companion-assets" / str(user_id)
     if root.is_symlink() or not root.exists():
         return set()
+    scan_root = root
+    for part in directory.split("/") if directory else ():
+        scan_root /= part
+        if scan_root.is_symlink() or not scan_root.exists():
+            return set()
     result: set[str] = set()
-    for directory, dirs, files in root.walk(follow_symlinks=False):
-        dirs[:] = [name for name in dirs if not (directory / name).is_symlink()]
+    for folder, dirs, files in scan_root.walk(follow_symlinks=False):
+        dirs[:] = [name for name in dirs if not (folder / name).is_symlink()]
         for filename in files:
             if Path(filename).suffix.lower() not in _ASSET_SUFFIXES:
                 continue
-            path = directory / filename
+            path = folder / filename
             if not path.is_symlink() and path.is_file():
                 relative = path.relative_to(Path(SETTINGS.data_dir)).as_posix()
                 if parse_companion_asset_path(relative):
                     result.add(relative)
     return result
+
+
+async def collect_asset_directory_paths(user_id: int, directory: str) -> set[str]:
+    """只枚举指定账户内的专属目录；是否可删除仍由统一引用复查决定。"""
+    if not directory:
+        raise ValueError("asset directory is required")
+    return await asyncio.to_thread(_disk_assets, user_id, directory)
+
+
+async def cleanup_asset_directories(user_id: int, directories: Iterable[str]) -> None:
+    """删除提交和任务收尾后补扫专属目录，磁盘或数据库故障由定时发现补偿。"""
+    try:
+        paths: set[str] = set()
+        for directory in directories:
+            paths |= await collect_asset_directory_paths(user_id, directory)
+        async with SESSION_LOCAL() as db:
+            await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
+            await db.commit()
+    except Exception:
+        logger.warning("Asset directory cleanup deferred", extra={"user_id": user_id}, exc_info=True)
+    await cleanup_user_assets(user_id)
+
+
+def cleanup_asset_directories_after_task(user_id: int, directories: Iterable[str]) -> None:
+    """等待当前写入所有者退出后清理，避免本次请求自身的写入保护阻止回收。"""
+    owned = tuple(directories)
+    task = asyncio.current_task()
+    if task is None:
+        raise RuntimeError("asset cleanup requires a task owner")
+
+    def finished(_task: asyncio.Task) -> None:
+        track_user_task(
+            user_id,
+            asyncio.create_task(cleanup_asset_directories(user_id, owned), name=f"asset-cleanup-{user_id}"),
+            cancel_on_maintenance=False,
+        )
+
+    task.add_done_callback(finished)
 
 
 def _remove_empty_directories(user_id: int) -> None:

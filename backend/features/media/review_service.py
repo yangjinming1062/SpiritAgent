@@ -4,6 +4,7 @@ from collections.abc import Collection
 from datetime import datetime
 from typing import Literal
 
+from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -110,15 +111,26 @@ async def set_media_review_status(
     row.status = status
 
 
-async def reject_reviews_for_packs(db: AsyncSession, user_id: int, pack_ids: Collection[int]) -> None:
+async def release_action_reviews_for_packs(db: AsyncSession, user_id: int, pack_ids: Collection[int]) -> set[str]:
+    """删除动作组时释放复核素材，保留结论。"""
+    if not pack_ids:
+        return set()
     rows = await db.scalars(
         select(CompanionMediaReview)
-        .where(CompanionMediaReview.user_id == user_id, CompanionMediaReview.status == "pending")
+        .where(
+            CompanionMediaReview.user_id == user_id,
+            CompanionMediaReview.publication["pack_id"].as_integer().in_(pack_ids),
+        )
         .with_for_update(),
     )
+    released: set[str] = set()
     for row in rows:
-        if row.publication and row.publication.get("pack_id") in pack_ids:
+        released |= asset_paths([row.media_url, row.publication], user_id)
+        row.media_url = ""
+        row.publication = None
+        if row.status == "pending":
             row.status = "rejected"
+    return released
 
 
 async def has_pending_action_review(db: AsyncSession, *, user_id: int, media_type: str, media_url: str | None) -> bool:

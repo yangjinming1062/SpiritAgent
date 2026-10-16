@@ -16,7 +16,7 @@ from features.assets.references import ACTION_ASSET_FIELDS, PACK_ASSET_FIELDS, A
 from .models import ActionAssetRetirement, CompanionAction, CompanionActionPack
 
 
-async def _catalog_asset_paths(storage_path: str, user_id: int) -> set[str]:
+async def catalog_asset_paths(storage_path: str, user_id: int) -> set[str]:
     parsed = parse_companion_asset_path(storage_path)
     try:
         if parsed is None or parsed[0] != user_id:
@@ -37,7 +37,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
         for row in await db.scalars(select(model).where(model.user_id == user_id)):
             referenced |= asset_paths([getattr(row, field) for field in fields], user_id)
             if isinstance(row, CompanionActionPack) and row.manifest_path:
-                referenced |= await _catalog_asset_paths(row.manifest_path, user_id)
+                referenced |= await catalog_asset_paths(row.manifest_path, user_id)
     for row in await db.scalars(
         select(ActionAssetRetirement).where(
             ActionAssetRetirement.user_id == user_id,
@@ -46,7 +46,7 @@ async def live_asset_paths(db: AsyncSession, user_id: int) -> set[str]:
     ):
         referenced |= asset_paths(row.path, user_id)
         if Path(row.path).name.startswith("action-catalog-") and row.path.endswith(".json"):
-            referenced |= await _catalog_asset_paths(row.path, user_id)
+            referenced |= await catalog_asset_paths(row.path, user_id)
     return referenced
 
 

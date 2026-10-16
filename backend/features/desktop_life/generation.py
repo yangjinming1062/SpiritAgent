@@ -52,6 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.appearance.character_card import render_character_identity, require_character_snapshot
 from features.appearance.onboarding import initial_outfit
 from features.appearance.queries import avatar_snapshot, ready_outfit_snapshot
+from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import load_persona_definition
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
@@ -121,6 +122,7 @@ from features.scenes.queries import initial_scene_snapshot, scene_snapshot
 
 logger = get_logger(__name__)
 _JOBS: dict[int, asyncio.Task[None]] = {}
+_FINISHING_JOBS: dict[int, set[asyncio.Task[None]]] = {}
 _NEXT_JOBS: dict[int, tuple[int, bool]] = {}
 _UPDATE_HANDLER: Callable[[int, int], Awaitable[None]] | None = None
 
@@ -1111,6 +1113,7 @@ async def _pause_desktop_job(
 
 async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: bool = True) -> None:
     generation_id = ""
+    directory = ""
     progress: DesktopVideoProgress | None = None
     try:
         async with SESSION_LOCAL() as db:
@@ -1474,6 +1477,20 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 )
                 await touch_desktop_state(db, user_id)
                 await db.commit()
+    finally:
+        if directory:
+            try:
+                async with SESSION_LOCAL() as db:
+                    exists = await db.scalar(
+                        select(DesktopVideoAction.id).where(
+                            DesktopVideoAction.id == action_id,
+                            DesktopVideoAction.user_id == user_id,
+                        ),
+                    )
+                if exists is None:
+                    cleanup_asset_directories_after_task(user_id, [directory])
+            except Exception:
+                logger.warning("Removed desktop asset cleanup deferred", extra={"action_id": action_id}, exc_info=True)
 
 
 def schedule_desktop_video_job(user_id: int, action_id: int, *, allow_model_steps: bool = True) -> None:
@@ -1481,6 +1498,8 @@ def schedule_desktop_video_job(user_id: int, action_id: int, *, allow_model_step
     if previous is not None and not previous.done() and not previous.cancelling():
         _NEXT_JOBS[action_id] = (user_id, allow_model_steps)
         return
+    if previous is not None and not previous.done():
+        _FINISHING_JOBS.setdefault(action_id, set()).add(previous)
     task = asyncio.create_task(
         _run_desktop_job(user_id, action_id, allow_model_steps=allow_model_steps),
         name=f"desktop-video-{action_id}",
@@ -1489,6 +1508,11 @@ def schedule_desktop_video_job(user_id: int, action_id: int, *, allow_model_step
     track_user_task(user_id, task, cancel_on_maintenance=False)
 
     def finished(done: asyncio.Task[None]) -> None:
+        finishing = _FINISHING_JOBS.get(action_id)
+        if finishing is not None:
+            finishing.discard(done)
+            if not finishing:
+                _FINISHING_JOBS.pop(action_id, None)
         if _JOBS.get(action_id) is done:
             _JOBS.pop(action_id, None)
             queued = _NEXT_JOBS.pop(action_id, None)
@@ -1503,8 +1527,18 @@ def schedule_desktop_video_job(user_id: int, action_id: int, *, allow_model_step
 def cancel_desktop_video_job(action_id: int) -> None:
     _NEXT_JOBS.pop(action_id, None)
     task = _JOBS.get(action_id)
-    if task is not None and not task.done():
+    if task is not None and not task.done() and not task.cancelling():
         task.cancel("discarded")
+
+
+async def cancel_and_wait_desktop_video_jobs(action_ids: list[int]) -> None:
+    tasks = {_JOBS[action_id] for action_id in action_ids if action_id in _JOBS}
+    for action_id in action_ids:
+        tasks.update(_FINISHING_JOBS.get(action_id, ()))
+    for action_id in action_ids:
+        cancel_desktop_video_job(action_id)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def pause_desktop_video_job(action_id: int) -> None:
@@ -1569,8 +1603,9 @@ async def resume_desktop_video_jobs(user_id: int | None = None) -> None:
 
 async def drain_desktop_video_jobs() -> None:
     _NEXT_JOBS.clear()
-    tasks = list(_JOBS.values())
+    tasks = set(_JOBS.values()).union(*_FINISHING_JOBS.values())
     for task in tasks:
-        task.cancel()
+        if not task.done() and not task.cancelling():
+            task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)

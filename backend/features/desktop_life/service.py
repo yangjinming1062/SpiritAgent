@@ -35,7 +35,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.actions.repository import normalize_action_name
-from features.assets.lifecycle import enqueue_asset_cleanup
+from features.assets.lifecycle import (
+    cleanup_asset_directories,
+    cleanup_asset_directories_after_task,
+    collect_asset_directory_paths,
+    enqueue_asset_cleanup,
+)
 from features.assets.references import asset_paths
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
@@ -43,6 +48,7 @@ from features.companion.prompt_runtime import load_companion_prompt_context
 from features.configuration.settings.values import get_user_setting
 from features.conversation.context_window import load_recent_context_window
 from features.desktop_life.generation import (
+    cancel_and_wait_desktop_video_jobs,
     cancel_desktop_video_job,
     desktop_context_hash,
     desktop_image_chain_exhausted,
@@ -527,6 +533,10 @@ async def delete_desktop_video_set(db: AsyncSession, user_id: int, set_id: int) 
     state = await desktop_state(db, user_id, create=True)
     actions = list(await db.scalars(select(DesktopVideoAction).where(DesktopVideoAction.set_id == set_id)))
     paths = asset_paths(row.context_json, user_id) | ({row.base_image_path} if row.base_image_path else set())
+    directory = f"desktop/{set_id}"
+    paths |= await collect_asset_directory_paths(user_id, directory)
+    proposals = await db.scalars(select(DesktopVideoProposal).where(DesktopVideoProposal.set_id == set_id))
+    paths |= asset_paths([proposal.design_json for proposal in proposals], user_id)
     removed_tasks = []
     for action in actions:
         removed = desktop_removed_video_task(action)
@@ -557,12 +567,12 @@ async def delete_desktop_video_set(db: AsyncSession, user_id: int, set_id: int) 
         state.loop_changed_at = utc_now() if state.current_set_id else None
         state.set_epoch += 1
     await db.delete(row)
-    await enqueue_asset_cleanup(db, user_id, paths, not_before=utc_now() + timedelta(hours=24))
+    await enqueue_asset_cleanup(db, user_id, paths, expedite=True)
     await touch_desktop_state(db, user_id)
     await db.commit()
-    for action in actions:
-        cancel_desktop_video_job(action.id)
+    await cancel_and_wait_desktop_video_jobs([action.id for action in actions])
     spawn_removed_action_task_cancellation(user_id, removed_tasks)
+    await cleanup_asset_directories(user_id, [directory])
     return await get_desktop_video_state(db, user_id)
 
 
@@ -958,7 +968,7 @@ async def upload_desktop_image(
             await enqueue_asset_cleanup(db, user_id, asset_paths(old_json, user_id))
             await touch_desktop_state(db, user_id)
             await db.commit()
-    except Exception:
+    except (Exception, asyncio.CancelledError) as exc:
         recovered = False
         async with SESSION_LOCAL() as db:
             await desktop_state(db, user_id, lock=True)
@@ -991,6 +1001,10 @@ async def upload_desktop_image(
                     saved_action.error = "图片上传未完成，请重试"
                     await touch_desktop_state(db, user_id)
             await db.commit()
+        if saved_action is None:
+            cleanup_asset_directories_after_task(user_id, [directory])
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         if not recovered:
             raise
     cancel_desktop_video_job(action_id)
@@ -1856,7 +1870,7 @@ async def upload_desktop_action(
             action.stage = "paused" if current.paused_by_user else "video" if current.video_refinement else "process"
             await touch_desktop_state(db, user_id)
             await db.commit()
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         recovered = False
         async with SESSION_LOCAL() as db:
             await desktop_state(db, user_id, lock=True)
@@ -1888,6 +1902,10 @@ async def upload_desktop_action(
                     )
                     await touch_desktop_state(db, user_id)
             await db.commit()
+        if saved_action is None:
+            cleanup_asset_directories_after_task(user_id, [directory])
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         if not recovered:
             if isinstance(exc, DesktopVideoError):
                 raise
