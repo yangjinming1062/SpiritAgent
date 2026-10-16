@@ -133,13 +133,12 @@ function showTab(name) {
 
 function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
 
-// detail 可为文本、校验错误列表或 {error, reason, status}；限流与未处理异常在顶层返回 {error, reason, status}。
 async function errorText(resp) {
     const body = await resp.json().catch(() => null);
-    const detail = body?.detail;
-    if (Array.isArray(detail)) return detail.map(item => `${item?.loc?.at(-1) ?? ''}: ${item?.msg ?? ''}`).join('；');
-    if (detail && typeof detail === 'object') return detail.error || `HTTP ${resp.status}`;
-    return detail || body?.error || `HTTP ${resp.status}`;
+    const error = body?.error;
+    const fields = error?.details?.fields;
+    if (Array.isArray(fields)) return fields.map(item => `${item?.loc?.at(-1) ?? ''}: ${item?.msg ?? ''}`).join('；');
+    return typeof error?.message === 'string' ? error.message : `HTTP ${resp.status}`;
 }
 
 async function apiFetch(path, options = {}) {
@@ -370,11 +369,11 @@ async function saveUser() {
     } catch (e) { toast(e.message, 'err'); }
 }
 
-async function patchActivationUser(id, payload, { btn, busy, done, onCode } = {}) {
+async function patchActivationUser(id, body, { regenerate = false, btn, busy, done, onCode } = {}) {
     const original = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = busy; }
     try {
-        const data = await (await apiFetch(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) })).json();
+        const data = await (await apiFetch(`/api/admin/users/${id}${regenerate ? '/activation' : ''}`, { method: regenerate ? 'POST' : 'PATCH', body: JSON.stringify(body) })).json();
         if (data.activation_code && onCode) onCode(data.activation_code);
         toast(done);
         loadUsers();
@@ -387,7 +386,8 @@ function regenerateToken() {
     if (!id) return;
     const baseUrl = requireBaseUrl($('#baseUrl'));
     if (!baseUrl) return;
-    patchActivationUser(id, { regenerate_token: true, base_url: baseUrl }, {
+    patchActivationUser(id, { base_url: baseUrl }, {
+        regenerate: true,
         done: '激活码已重新生成',
         onCode: showActivationCode,
     });
@@ -449,7 +449,8 @@ function regenerateFromManage() {
     if (!id) return;
     const baseUrl = requireBaseUrl($('#activationManageBaseUrl'));
     if (!baseUrl) return;
-    patchActivationUser(id, { regenerate_token: true, base_url: baseUrl }, {
+    patchActivationUser(id, { base_url: baseUrl }, {
+        regenerate: true,
         btn: $('#activationManageGenBtn'), busy: '生成中…', done: '激活码已重新生成',
         onCode: code => setManageCode(id, code),
     });
@@ -461,7 +462,9 @@ async function copyActivationManageCode() {
 
 async function toggleUser(id) {
     try {
-        await apiFetch(`/api/admin/users/${id}/toggle-active`, { method: 'PATCH' });
+        const user = findCachedUser(id);
+        if (!user) throw new Error('用户数据尚未加载');
+        await apiFetch(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: !user.is_active }) });
         toast('状态已切换');
         loadUsers();
     } catch (e) { toast(e.message, 'err'); }
@@ -716,7 +719,7 @@ function renderOverviewGroups(readiness) {
 }
 async function loadOverview() {
     try {
-        const [models, versions, logs] = await Promise.all(['/api/admin/model-configs', '/api/update/versions', '/api/admin/nightly-activity-logs'].map(async path => (await apiFetch(path)).json()));
+        const [models, versions, logs] = await Promise.all(['/api/admin/model-configs', '/api/admin/updates/versions', '/api/admin/nightly-activity-logs'].map(async path => (await apiFetch(path)).json()));
         tabCache.models = models;
         tabCache.versions = versions;
         renderOverviewGroups(computeReadiness(cloneAiConfig(models.system_ai_config)));
@@ -929,7 +932,7 @@ async function saveAiScope() {
     $('#modelDetailBody').inert = true;
     updateSaveActions();
     try {
-        await apiFetch(scope === 'system' ? '/api/admin/system-settings' : `/api/admin/${aiView.userId}/model-config`, { method: 'PUT', body: JSON.stringify({ ai_config: payload }) });
+        await apiFetch(scope === 'system' ? '/api/admin/system-settings' : `/api/admin/users/${aiView.userId}/model-config`, { method: 'PUT', body: JSON.stringify({ ai_config: payload }) });
         const saved = savedAiConfig(payload);
         if (scope === 'system') { lastSystemAiRaw = saved; aiEditors.system.config = cloneAiConfig(saved); }
         else { lastUserAiRaw = saved; aiEditors.user.config = cloneAiConfig(saved); }
@@ -965,7 +968,7 @@ function discardAiEdits() {
 function loadOverviewIfActive() { if ($('#panel-overview').classList.contains('active')) void loadOverview(); }
 async function deleteModelConfig(userId) {
     if (!confirm('确定删除此用户的全部覆盖配置？删除后该用户继承系统配置。')) return;
-    try { await apiFetch(`/api/admin/${userId}/model-config`, { method: 'DELETE' }); tabCache.models.items = tabCache.models.items.filter(item => item.user_id !== userId); clearAiDirty(); await refreshAiCache(); showModelConfigForUserSilent(userId); renderAiScope(); toast('用户覆盖配置已清除'); }
+    try { await apiFetch(`/api/admin/users/${userId}/model-config`, { method: 'DELETE' }); tabCache.models.items = tabCache.models.items.filter(item => item.user_id !== userId); clearAiDirty(); await refreshAiCache(); showModelConfigForUserSilent(userId); renderAiScope(); toast('用户覆盖配置已清除'); }
     catch (error) { toast(error.message, 'err'); }
 }
 async function openAiUserScope(userId) { showTab('ai'); await loadAiView(); await changeAiScope(String(userId)); }
@@ -2498,7 +2501,7 @@ async function openLogDetail(id) {
 
 async function loadVersions() {
     try {
-        const data = await (await apiFetch('/api/update/versions')).json();
+        const data = await (await apiFetch('/api/admin/updates/versions')).json();
         renderVersions(data);
     } catch (e) { $('#versionList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
 }
@@ -2533,7 +2536,7 @@ function renderVersions(data) {
 
 async function setActive(id, active) {
     try {
-        await apiFetch(`/api/update/versions/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: active }) });
+        await apiFetch(`/api/admin/updates/versions/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: active }) });
         toast(active ? '版本已上线' : '版本已下线');
         loadVersions();
     } catch (e) { toast(e.message, 'err'); }
@@ -2542,7 +2545,7 @@ async function setActive(id, active) {
 async function deleteVersion(id) {
     if (!confirm('确定永久删除此版本及其文件？此操作不可撤销。')) return;
     try {
-        await apiFetch(`/api/update/versions/${id}`, { method: 'DELETE' });
+        await apiFetch(`/api/admin/updates/versions/${id}`, { method: 'DELETE' });
         toast('版本已删除');
         loadVersions();
     } catch (e) { toast(e.message, 'err'); }
@@ -2563,7 +2566,7 @@ $('#uploadForm').addEventListener('submit', async (e) => {
     $('#uploadForm').inert = true;
     status.textContent = '正在上传并处理版本，请稍候…'; status.style.color = 'var(--primary)';
     try {
-        const resp = await apiFetch('/api/update/versions', { method: 'POST', body: formData, headers: {} });
+        const resp = await apiFetch('/api/admin/updates/versions', { method: 'POST', body: formData, headers: {} });
         const data = await resp.json();
         status.textContent = `发布成功 · v${data.version}`; status.style.color = 'var(--green)';
         $('#uploadForm').reset(); $('#fileName').textContent = '';

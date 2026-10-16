@@ -36,17 +36,18 @@ async def serve_session_video(session_id: str, file_id: str) -> MediaFile:
     if path is None:
         raise RequestError(
             status_code=404,
-            detail={"error": "Video not found", "reason": "not_found", "status_code": 404},
+            message="Video not found",
+            code="not_found",
         )
     return MediaFile(path=path, media_type=video_mime_for_ext(path.suffix))
 
 
 async def serve_session_audio(session_id: str, file_id: str, db: AsyncSession, user_id: int) -> MediaFile:
     if await Conversation.by_session_id(db, session_id, user_id=user_id) is None:
-        raise RequestError(status_code=404, detail="Audio not found")
+        raise RequestError(status_code=404, message="Audio not found")
     path = resolve_audio_file(session_id, file_id)
     if path is None:
-        raise RequestError(status_code=404, detail="Audio not found")
+        raise RequestError(status_code=404, message="Audio not found")
     await db.commit()
     return MediaFile(path=path, media_type=audio_mime_for_ext(path.suffix))
 
@@ -59,17 +60,17 @@ async def upload_chat_audio(
 ) -> ChatAudioUploadResponse:
     raw_id = session_id.strip()
     if not raw_id.isdigit() or len(raw_id) > 20:
-        raise RequestError(status_code=422, detail="Invalid session_id")
+        raise RequestError(status_code=422, message="Invalid session_id")
     session_id = str(int(raw_id))
     if await Conversation.by_session_id(db, session_id, user_id=user_id) is None:
-        raise RequestError(status_code=404, detail="Session not found")
+        raise RequestError(status_code=404, message="Session not found")
     if file.size is None or file.size <= 0:
-        raise RequestError(status_code=422, detail="Empty audio")
+        raise RequestError(status_code=422, message="Empty audio")
     if file.size > min(STT_MAX_AUDIO_BYTES, SETTINGS.attachment_session_quota_bytes):
-        raise RequestError(status_code=413, detail="Audio exceeds upload or session byte limit")
+        raise RequestError(status_code=413, message="Audio exceeds upload or session byte limit")
     ext = Path(file.filename or "").suffix.lower()
     if ext not in {".wav", ".mp3", ".ogg", ".m4a", ".flac", ".webm"}:
-        raise RequestError(status_code=415, detail="Unsupported audio format")
+        raise RequestError(status_code=415, message="Unsupported audio format")
     await db.commit()
 
     def save() -> tuple[str, float]:
@@ -102,7 +103,7 @@ async def upload_chat_audio(
                 path.unlink(missing_ok=True)
         raise
     except (ValueError, VideoProcessError) as exc:
-        raise RequestError(status_code=422, detail="无法读取音频，请重新录制或上传有效音频") from exc
+        raise RequestError(status_code=422, message="无法读取音频，请重新录制或上传有效音频") from exc
     try:
         await enforce_session_quota(db, session_id, 0)
         await db.commit()
@@ -128,29 +129,29 @@ async def upload_chat_video(
     if file is None:
         raise RequestError(
             status_code=422,
-            detail={"error": "Missing video file", "reason": "missing_video_file", "status_code": 422},
+            message="Missing video file",
+            code="missing_video_file",
         )
     raw_session_id = session_id.strip()
     if not raw_session_id.isdigit() or len(raw_session_id) > 20:
         raise RequestError(
             status_code=422,
-            detail={"error": "Invalid session_id", "reason": "invalid_session_id", "status_code": 422},
+            message="Invalid session_id",
+            code="invalid_session_id",
         )
     session_id = str(int(raw_session_id))
     if await Conversation.by_session_id(db, session_id, user_id=user_id) is None:
         raise RequestError(
             status_code=404,
-            detail={"error": "Session not found", "reason": "not_found", "status_code": 404},
+            message="Session not found",
+            code="not_found",
         )
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ATTACHMENT_VIDEO_EXTENSIONS:
         raise RequestError(
             status_code=415,
-            detail={
-                "error": f"Unsupported video format (allowed: {', '.join(sorted(ATTACHMENT_VIDEO_EXTENSIONS))})",
-                "reason": "unsupported_video_format",
-                "status_code": 415,
-            },
+            message=f"Unsupported video format (allowed: {', '.join(sorted(ATTACHMENT_VIDEO_EXTENSIONS))})",
+            code="unsupported_video_format",
         )
     max_bytes = SETTINGS.video_attachment_max_bytes
     hint = (
@@ -160,15 +161,12 @@ async def upload_chat_video(
     )
     too_large = RequestError(
         status_code=413,
-        detail={
-            "error": f"Video too large (max {max_bytes // (1024 * 1024)} MB){hint}",
-            "reason": "payload_too_large",
-            "status_code": 413,
-        },
+        message=f"Video too large (max {max_bytes // (1024 * 1024)} MB){hint}",
+        code="payload_too_large",
     )
     size = file.size
     if size is None:
-        raise RequestError(status_code=422, detail="Video size unavailable")
+        raise RequestError(status_code=422, message="Video size unavailable")
     if size > max_bytes:
         raise too_large
     await db.commit()

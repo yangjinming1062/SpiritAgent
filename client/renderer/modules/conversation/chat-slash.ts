@@ -1,8 +1,4 @@
-import {
-  type SlashCommandResultPayload,
-  SpiritAgentRpcError,
-  SpiritAgentRpcErrorCode
-} from '@/shared/lib/gateway-protocol'
+import { type RpcRequester, SpiritAgentRpcError, SpiritAgentRpcErrorCode } from '@/shared/lib/gateway-protocol'
 import type { SlashCommandMeta } from '@/shared/lib/slash-commands'
 import { confirmAction } from '@/shared/panel'
 import { getStrings } from '@/shared/strings'
@@ -32,7 +28,7 @@ function slashErrorToMessage(err: unknown): string {
     }
 
     if (err.code === SpiritAgentRpcErrorCode.InvalidParams) {
-      const suggestions = (err.data as { suggestions?: string[] } | undefined)?.suggestions
+      const suggestions = (err.data as { details?: { suggestions?: string[] } } | undefined)?.details?.suggestions
 
       if (suggestions?.length) {
         return dict.unknownWithSuggestions(suggestions)
@@ -68,7 +64,7 @@ async function executeSlashCommand(
     runtime: ConversationRuntime
     onFinish?: () => void
     onStart?: () => void
-    requestGateway: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>
+    requestGateway: RpcRequester
   }
 ): Promise<void> {
   const { requestGateway, onStart, onFinish, runtime } = opts
@@ -97,7 +93,7 @@ async function executeSlashCommand(
 
     sid = await ensureChatSession(runtime)
 
-    const result = await requestGateway<SlashCommandResultPayload>('command.dispatch', {
+    const result = await requestGateway('command.dispatch', {
       args,
       command: cmd.name,
       confirmed: true,

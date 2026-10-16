@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SucceededStatus = Literal["succeeded"]
 
@@ -68,6 +68,9 @@ class ImageAdoptRequest(BaseModel):
 class AvatarGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    source: Literal["generate"]
+    mode: ImageReviseMode | None = None
+
     feedback: str | None = Field(default=None, max_length=500)
 
 
@@ -80,6 +83,8 @@ class AvatarPromptRequest(BaseModel):
 
 class AvatarFromImageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    source: Literal["reference"]
 
     # 与上传同为 8 MiB：图同时是供应商 seed（经签名 URL）和重新渲染的真相源。
     image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
@@ -97,6 +102,8 @@ class AvatarHistoryResponse(BaseModel):
 class OutfitCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    source: Literal["generate"]
+
     description: str | None = Field(default=None, max_length=500)
     # 服装参考图（可选）：整合为着装描述后进入提示词，不直传生图
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
@@ -106,6 +113,8 @@ class OutfitCreateRequest(BaseModel):
 class OutfitRegenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    source: Literal["generate"]
+
     feedback: str | None = Field(default=None, max_length=500)
     mode: ImageReviseMode
 
@@ -113,14 +122,28 @@ class OutfitRegenerateRequest(BaseModel):
 class OutfitPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    outfit_id: int | None = Field(default=None, gt=0)
+    feedback: str | None = Field(default=None, max_length=500)
+
     description: str | None = Field(default=None, max_length=500)
     # 服装参考图（可选）：整合为着装设计稿后进入提示词，不直传生图
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
 
+    @model_validator(mode="after")
+    def valid_prompt_context(self) -> "OutfitPromptRequest":
+        if self.outfit_id is not None:
+            if any(value is not None for value in (self.description, self.image, self.content_type)):
+                raise ValueError("重做提示词只接受外观 ID 与修改要求")
+        elif self.feedback is not None:
+            raise ValueError("修改要求须指定外观 ID")
+        return self
+
 
 class OutfitAdoptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    source: Literal["import"]
 
     description: str | None = Field(default=None, max_length=500)
     image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
@@ -129,12 +152,6 @@ class OutfitAdoptRequest(BaseModel):
 
 class OutfitConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class OutfitRegeneratePromptRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    feedback: str | None = Field(default=None, max_length=500)
 
 
 class OutfitResponse(BaseModel):
@@ -163,3 +180,7 @@ class OutfitPolicyRequest(BaseModel):
 
 class OutfitPolicyResponse(BaseModel):
     policy: Literal["locked", "llm_may_replace"]
+
+
+class OutfitImageImportRequest(ImageAdoptRequest):
+    source: Literal["import"]

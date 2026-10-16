@@ -2,6 +2,8 @@ import { IconMessageCircle, IconRefresh } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { requestApi } from '../shared/api'
+
 import type { RemoteApi, RemoteGateway } from './api'
 import { ApiError, record } from './api'
 import { DiaryView } from './Companion'
@@ -18,12 +20,6 @@ import {
   usePageState,
   useTask
 } from './ui'
-
-interface PostPage {
-  posts: Post[]
-  next_cursor: string | null
-  unread_post_ids: string[]
-}
 
 export function Feed({
   api,
@@ -109,9 +105,9 @@ function Posts({
     async (more = false, nextCursor?: string) => {
       const current = ++revision.current
 
-      const result = await api.request<PostPage>(
-        `/api/companion/posts${more && nextCursor ? `?cursor=${encodeURIComponent(nextCursor)}` : ''}`
-      )
+      const result = await requestApi(api, 'GET /api/companion/posts', {
+        query: { cursor: more ? nextCursor : undefined }
+      })
 
       if (!alive() || current !== revision.current) {
         return
@@ -139,9 +135,7 @@ function Posts({
         document.visibilityState === 'visible' &&
         document.hasFocus()
       ) {
-        await api.request('/api/companion/posts/read', 'POST', {
-          post_ids: result.unread_post_ids
-        })
+        await requestApi(api, 'PATCH /api/companion/posts/read-state', { body: { post_ids: result.unread_post_ids } })
         if (alive() && current === revision.current) {
           onReadRef.current()
         }
@@ -152,10 +146,9 @@ function Posts({
 
   const loadRecovery = useCallback(
     async (offset = 0) => {
-      const result = await api.request<{
-        items: Recovery[]
-        next_offset: number | null
-      }>(`/api/companion/posts/publications/recovery?offset=${offset}`)
+      const result = await requestApi(api, 'GET /api/companion/posts/publications', {
+        query: { state: 'recoverable', offset }
+      })
 
       if (alive()) {
         setRecoveries(previous =>
@@ -179,7 +172,7 @@ function Posts({
       postReads.current.set(id, current)
 
       try {
-        const post = await api.request<Post>(`/api/companion/posts/${id}`)
+        const post = await requestApi(api, 'GET /api/companion/posts/{post_id}', { path: { post_id: id } })
 
         if (alive() && postReads.current.get(id) === current) {
           setPosts(previous => previous.map(item => (item.id === id ? post : item)))
@@ -301,10 +294,10 @@ function Posts({
                   disabled={busy}
                   onClick={() =>
                     run(async () => {
-                      const next = await api.request<Recovery>(
-                        `/api/companion/posts/publications/${item.publication_id}/query`,
-                        'POST',
-                        {}
+                      const next = await requestApi(
+                        api,
+                        'POST /api/companion/posts/publications/{publication_id}/query',
+                        { path: { publication_id: item.publication_id } }
                       )
 
                       if (alive()) {
@@ -323,7 +316,10 @@ function Posts({
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        await api.request(`/api/companion/posts/publications/${item.publication_id}/adopt`, 'POST', {})
+                        await requestApi(api, 'POST /api/companion/posts/publications/{publication_id}/decision', {
+                          path: { publication_id: item.publication_id },
+                          body: { decision: 'accept' }
+                        })
                         await Promise.all([load(), loadRecovery()])
                       })
                     }
@@ -338,11 +334,10 @@ function Posts({
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        await api.request(
-                          `/api/companion/posts/publications/${item.publication_id}/discard`,
-                          'POST',
-                          {}
-                        )
+                        await requestApi(api, 'POST /api/companion/posts/publications/{publication_id}/decision', {
+                          path: { publication_id: item.publication_id },
+                          body: { decision: 'reject' }
+                        })
                         await loadRecovery()
                       })
                     }
@@ -427,7 +422,9 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        await api.request(`/api/companion/posts/${post.id}/comments/${item.id}/reply/retry`, 'POST', {})
+                        await requestApi(api, 'POST /api/companion/posts/{post_id}/comments/{comment_id}/reply/retry', {
+                          path: { post_id: post.id, comment_id: item.id }
+                        })
                         await refresh()
                       })
                     }
@@ -440,7 +437,9 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
                   disabled={busy}
                   onClick={() =>
                     run(async () => {
-                      await api.request(`/api/companion/posts/${post.id}/comments/${item.id}`, 'DELETE')
+                      await requestApi(api, 'DELETE /api/companion/posts/{post_id}/comments/{comment_id}', {
+                        path: { post_id: post.id, comment_id: item.id }
+                      })
                       await refresh()
                     })
                   }
@@ -460,7 +459,10 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
         onSubmit={event => {
           event.preventDefault()
           void run(async () => {
-            await api.request(`/api/companion/posts/${post.id}/comments`, 'POST', { content: comment.trim() })
+            await requestApi(api, 'POST /api/companion/posts/{post_id}/comments', {
+              path: { post_id: post.id },
+              body: { content: comment.trim() }
+            })
 
             if (alive()) {
               setComment('')

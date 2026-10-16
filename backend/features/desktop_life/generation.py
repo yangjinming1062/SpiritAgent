@@ -116,7 +116,6 @@ from features.media.image_generation import ImageGenerationError
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner, VideoQueueStoppedError
 from features.media.video_queue.service import (
     acknowledge_video_attempt,
-    adopt_video_attempt,
     cancel_video_attempt,
     enqueue_video_attempt,
     pause_video_attempt,
@@ -1306,15 +1305,6 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 entity_id=action_id,
                 generation_id=chain.generation_id,
             )
-            if not chain.queue_request_id and progress.provider_task_id:
-                chain.queue_request_id = await adopt_video_attempt(
-                    owner,
-                    chain.providers[index],
-                    index,
-                    progress.provider_task_id,
-                )
-                progress.video_chain_json = chain.model_dump_json()
-                await _save_progress(user_id, action_id, progress, stage="video")
             if not chain.queue_request_id:
                 if not allow_model_steps:
                     raise GenerationWorkPaused

@@ -6,9 +6,10 @@ import uuid
 from typing import Any
 
 import websockets
+from pydantic import ValidationError
 
 from spirit_agent_runner.contracts.config import load_config
-from spirit_agent_runner.contracts.rpc import RpcError
+from spirit_agent_runner.contracts.rpc import RUNNER_CONTRACTS, RUNNER_EVENTS, RpcError
 from spirit_agent_runner.infrastructure.redact import redact_sensitive_text
 from spirit_agent_runner.runtime.application import RunnerRuntime
 
@@ -25,6 +26,7 @@ class RunnerTransport:
         self._baseline: tuple[dict[str, Any], bool] | None = None
 
     async def notification(self, ws: Any, method: str, params: dict[str, Any]) -> None:
+        RUNNER_EVENTS[method].model_validate(params)
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": method, "params": params}))
 
     async def process_request(self, ws: Any, connection_id: str, req: dict[str, Any]) -> None:
@@ -34,9 +36,17 @@ class RunnerTransport:
         response: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id}
         try:
             params = req.get("params", {})
-            if not isinstance(params, dict):
-                raise ValueError("RPC params must be an object")
-            response["result"] = await self.runtime.handle(connection_id, req_id, req.get("method", ""), params)
+            method = req.get("method", "")
+            result = await self.runtime.handle(connection_id, req_id, method, params)
+            try:
+                RUNNER_CONTRACTS[method].response.model_validate(result)
+            except ValidationError as error:
+                raise RpcError(
+                    -32603,
+                    "Invalid Runner result; outcome is unknown",
+                    {"disposition": "unknown"},
+                ) from error
+            response["result"] = result
         except RpcError as error:
             response["error"] = error.payload()
         except asyncio.CancelledError:
@@ -68,7 +78,7 @@ class RunnerTransport:
             try:
                 await self.notification(
                     ws,
-                    "runner_capabilities_changed",
+                    "runner.capabilities_changed",
                     {
                         "run_generation": self.runtime.run_generation,
                         "capabilities": baseline[0],
@@ -94,7 +104,7 @@ class RunnerTransport:
                             connection_id = uuid.uuid4().hex
                             try:
                                 ready = await self.runtime.ready()
-                                await self.notification(ws, "runner_ready", ready)
+                                await self.notification(ws, "runner.ready", ready)
                                 self._baseline = ready["capabilities"], ready["probe_failed"]
                                 attempt = 0
                                 self.runtime.reconnect_streak = 0

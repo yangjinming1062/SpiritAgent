@@ -2,7 +2,8 @@
 
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded } from '@/shared/lib/authed-api'
+import { authedResource } from '@/shared/lib/resource-request'
 import { trimOldest } from '@/shared/lib/trim-oldest'
 import { clamp } from '@runtime'
 
@@ -132,15 +133,9 @@ export async function reportReceipt(
   reason: string = '',
   visibleDurationMs: number = 0
 ): Promise<void> {
-  const result = await authedApi({
-    body: {
-      play_id: command.play_id,
-      status,
-      visible_duration_ms: visibleDurationMs,
-      error: reason || null
-    },
-    method: 'POST',
-    path: `/api/companion/actions/playback/${command.play_id}/receipt`
+  const result = await authedResource('POST /api/companion/actions/playback/{play_id}/receipt', {
+    path: { play_id: command.play_id },
+    body: { play_id: command.play_id, status, visible_duration_ms: visibleDurationMs, error: reason || null }
   })
 
   // 回执不重试，失败只记日志。

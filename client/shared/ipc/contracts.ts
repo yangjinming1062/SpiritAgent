@@ -1,3 +1,6 @@
+import type { RpcMethod, RpcRequest, RpcResponse } from '../../../shared/gateway'
+import type { RunnerRequest, RunnerTools } from '../../../shared/runner'
+
 import type {
   AppNavigationTarget,
   DesktopAccount,
@@ -52,10 +55,7 @@ export { isCompanionEditorUiSnapshot, isDesktopLifeUiSnapshot } from './ui-state
 
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 
-export interface MemoryToolScope {
-  user_id: number
-  system_preset_id: string
-}
+export type MemoryToolScope = NonNullable<RunnerRequest<'tools.execute'>['skill_scope']>
 
 export interface DesktopVersionInfo {
   appVersion: string
@@ -132,7 +132,7 @@ export type DesktopUpdateEvent =
   | { type: 'checking' }
 
 export type DesktopRunnerStatusEvent =
-  | { tools: Record<string, unknown>[]; type: 'runner_ready' | 'running' }
+  | { tools: RunnerTools; type: 'runner_ready' | 'running' }
   | { type: 'error' | 'stopped' | 'stopping' }
 
 export type DesktopRunnerPhase = 'error' | 'idle' | 'running' | 'starting' | 'stopped' | 'stopping'
@@ -464,6 +464,13 @@ export interface DesktopVideoUploadResult {
 
 export type DesktopGatewayState = 'closed' | 'connecting' | 'error' | 'idle' | 'open'
 
+export interface DesktopGatewaySnapshot {
+  state: DesktopGatewayState
+  error: string | null
+  hasConnected: boolean
+  activeToolCount: number
+}
+
 export interface DesktopGatewayEvent<P = unknown> {
   stream_id?: string
   payload?: P
@@ -472,11 +479,23 @@ export interface DesktopGatewayEvent<P = unknown> {
   type: string
 }
 
-export interface DesktopGatewayRpcRequest {
-  id: number
-  method: string
-  params?: Record<string, unknown>
+export type DesktopApiResult<T = unknown> =
+  | { ok: true; value: T }
+  | {
+      ok: false
+      status: number | null
+      error: { code: string; message: string; details: unknown; request_id: string }
+    }
+
+export interface DesktopGatewayRequest<K extends RpcMethod> {
+  authSessionId: string
+  method: K
+  params: RpcRequest<K>
 }
+
+export type DesktopGatewayInvoke = <K extends RpcMethod>(
+  request: DesktopGatewayRequest<K>
+) => Promise<DesktopGatewayRpcResult<RpcResponse<K>>>
 
 export interface DesktopGatewayRpcError {
   code?: number
@@ -484,9 +503,9 @@ export interface DesktopGatewayRpcError {
   message: string
 }
 
-export type DesktopGatewayRpcResult = { ok: true; result: unknown } | { error: DesktopGatewayRpcError; ok: false }
-
-export type DesktopGatewayRpcResponse = DesktopGatewayRpcResult & { id: number }
+export type DesktopGatewayRpcResult<T = unknown> =
+  | { ok: true; result: T }
+  | { error: DesktopGatewayRpcError; ok: false }
 
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {
@@ -530,12 +549,8 @@ export interface IpcInvokeContract {
   'spiritagent:background:acknowledge': (playback: DesktopBackgroundPlayback) => void
 
   // 连接与启动
-  'spiritagent:gateway:ws-url': () => Promise<string> | string
-  'spiritagent:gateway:request': (payload: {
-    method: string
-    params?: Record<string, unknown>
-  }) => Promise<DesktopGatewayRpcResult> | DesktopGatewayRpcResult
-  'spiritagent:gateway:get-state': () => DesktopGatewayState | Promise<DesktopGatewayState>
+  'spiritagent:gateway:request': DesktopGatewayInvoke
+  'spiritagent:gateway:get-state': (authSessionId: string) => DesktopGatewaySnapshot | Promise<DesktopGatewaySnapshot>
 
   // 鉴权
   'spiritagent:auth:activate': (payload: DesktopActivatePayload) => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
@@ -570,7 +585,7 @@ export interface IpcInvokeContract {
   'spiritagent:ui-state:reply': (reply: UiStateReply) => void
 
   // 后端 API 代理
-  'spiritagent:api': (request: SpiritAgentApiRequest) => Promise<unknown> | unknown
+  'spiritagent:api': (request: SpiritAgentApiRequest) => Promise<DesktopApiResult> | DesktopApiResult
   'spiritagent:api:asset': (request: {
     preferCache?: boolean
     cacheOnly?: boolean
@@ -621,8 +636,6 @@ export interface IpcInvokeContract {
 
   // Runner
   'spiritagent:runner:invoke': (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown
-  'spiritagent:runner:dispatch-call': (request: RunnerCallRequest) => Promise<RunnerCallOutcome> | RunnerCallOutcome
-  'spiritagent:runner:cancel': (callId: string) => unknown | Promise<unknown>
   'spiritagent:runner:get-state': () => DesktopRunnerState | Promise<DesktopRunnerState>
   'spiritagent:runner:get-tools': () => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>
   'spiritagent:runner-config:read': () =>
@@ -654,20 +667,20 @@ export interface IpcInvokeContract {
     | Promise<{ error?: string; ok: boolean; toolsets?: ToolsetItem[] }>
 
   // 媒体
-  'spiritagent:media:stt': (payload: MediaSttPayload) => { text: string } | Promise<{ text: string }>
-  'spiritagent:media:audio-upload': (payload: AudioUploadPayload) => AudioUploadResult | Promise<AudioUploadResult>
+  'spiritagent:media:stt': (payload: MediaSttPayload) => Promise<DesktopApiResult<{ text: string }>>
+  'spiritagent:media:audio-upload': (payload: AudioUploadPayload) => Promise<DesktopApiResult<AudioUploadResult>>
   'spiritagent:media:voice-sample-upload': (
     payload: VoiceSampleUploadPayload
-  ) => VoiceSampleUploadResult | Promise<VoiceSampleUploadResult>
+  ) => Promise<DesktopApiResult<VoiceSampleUploadResult>>
   'spiritagent:media:tts': (
     payload: MediaTtsPayload
-  ) => { dataUrl: string; mimeType: string } | Promise<{ dataUrl: string; mimeType: string }>
+  ) => Promise<DesktopApiResult<{ dataUrl: string; mimeType: string }>>
   'spiritagent:media:video-upload': (
     payload: AttachmentVideoUploadPayload
-  ) => AttachmentVideoUploadResult | Promise<AttachmentVideoUploadResult>
+  ) => Promise<DesktopApiResult<AttachmentVideoUploadResult>>
   'spiritagent:media:desktop-video-upload': (
     payload: DesktopVideoUploadPayload
-  ) => DesktopVideoUploadResult | Promise<DesktopVideoUploadResult>
+  ) => Promise<DesktopApiResult<DesktopVideoUploadResult>>
   'spiritagent:onboardingAudio:read': (
     tag: string
   ) =>
@@ -731,9 +744,8 @@ export interface IpcEventContract {
   'spiritagent:tray:reset-position': []
   'spiritagent:ui-theme-changed': [payload: DesktopUiThemeBroadcast]
   'spiritagent:update-event': [payload: DesktopUpdateEvent]
-  'spiritagent:gateway:state-changed': [payload: { state: DesktopGatewayState }]
-  'spiritagent:gateway:event': [payload: { event: DesktopGatewayEvent }]
-  'spiritagent:gateway:rpc-dispatch': [payload: DesktopGatewayRpcRequest]
+  'spiritagent:gateway:state-changed': [payload: DesktopGatewaySnapshot & { authSessionId: string }]
+  'spiritagent:gateway:event': [payload: { event: DesktopGatewayEvent; authSessionId: string }]
 }
 
 // 3. 渲染进程向主进程单向发送消息（通过 ipcRenderer.send / ipcMain.on）
@@ -741,9 +753,6 @@ export interface IpcSendContract {
   'spiritagent:prefs:set': [payload: SpiritAgentPrefsSet]
   'spiritagent:ui-theme': [payload: SpiritAgentUiTheme]
   'spiritagent:sprite:set-default-scale': [payload: DesktopSpriteScalePayload]
-  'spiritagent:gateway:broadcast-state': [payload: { state: DesktopGatewayState }]
-  'spiritagent:gateway:broadcast-event': [payload: { event: DesktopGatewayEvent }]
-  'spiritagent:gateway:rpc-reply': [payload: DesktopGatewayRpcResponse]
 }
 
 type IpcChannel = keyof IpcInvokeContract
@@ -792,7 +801,6 @@ export const IPC = {
     authRefresh: 'spiritagent:auth:refresh',
     authLogout: 'spiritagent:auth:logout',
     authGetSession: 'spiritagent:auth:get-session',
-    gatewayWsUrl: 'spiritagent:gateway:ws-url',
     gatewayRequest: 'spiritagent:gateway:request',
     gatewayGetState: 'spiritagent:gateway:get-state',
     api: 'spiritagent:api',
@@ -816,8 +824,6 @@ export const IPC = {
     logEmit: 'spiritagent:log:emit',
     version: 'spiritagent:version',
     runnerInvoke: 'spiritagent:runner:invoke',
-    runnerDispatchCall: 'spiritagent:runner:dispatch-call',
-    runnerCancel: 'spiritagent:runner:cancel',
     runnerGetState: 'spiritagent:runner:get-state',
     runnerGetTools: 'spiritagent:runner:get-tools',
     runnerConfigRead: 'spiritagent:runner-config:read',
@@ -886,15 +892,11 @@ export const IPC = {
     uiThemeChanged: 'spiritagent:ui-theme-changed',
     updateEvent: 'spiritagent:update-event',
     gatewayStateChanged: 'spiritagent:gateway:state-changed',
-    gatewayEvent: 'spiritagent:gateway:event',
-    gatewayRpcDispatch: 'spiritagent:gateway:rpc-dispatch'
+    gatewayEvent: 'spiritagent:gateway:event'
   } as const satisfies Record<string, IpcEventChannel>,
   send: {
     prefsSet: 'spiritagent:prefs:set',
     uiTheme: 'spiritagent:ui-theme',
-    spriteSetDefaultScale: 'spiritagent:sprite:set-default-scale',
-    gatewayBroadcastState: 'spiritagent:gateway:broadcast-state',
-    gatewayBroadcastEvent: 'spiritagent:gateway:broadcast-event',
-    gatewayRpcReply: 'spiritagent:gateway:rpc-reply'
+    spriteSetDefaultScale: 'spiritagent:sprite:set-default-scale'
   } as const satisfies Record<string, IpcSendChannel>
 } as const

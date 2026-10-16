@@ -12,7 +12,7 @@ import {
   removeVoicePlayback,
   showMediaHint
 } from '@/modules/conversation'
-import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
+import { type GatewayEvent, type RpcResponse } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 import type {
   CacheUsageSummary,
@@ -373,7 +373,7 @@ export function handleConversationEvent(
       triggerFootGlowPulse('completed', 1200)
 
       // 每日互动统计—— chat_turn 仅在确有文本可统计时计数
-      if (!ctx.isProxy && (bubbles?.some(bubble => 'text' in bubble && bubble.text.trim()) || text.trim())) {
+      if (ctx.isPresentationHost && (bubbles?.some(bubble => 'text' in bubble && bubble.text.trim()) || text.trim())) {
         reportInteractionStat('chat_turn')
       }
 
@@ -421,7 +421,7 @@ export function handleConversationEvent(
 
     case 'command.result': {
       // 服务端在 command.dispatch RPC response 之外另行广播此事件（PROTOCOL「事件路由」）；触发窗口已通过 RPC 渲染过 pill，本路径只服务其他窗口，RPC 路径的 pushStatusPill 已幂等执行。
-      const payload = decodePayload<SlashCommandResultPayload>(event.payload)
+      const payload = decodePayload<RpcResponse<'command.dispatch'>>(event.payload)
 
       const r = payload.result
 

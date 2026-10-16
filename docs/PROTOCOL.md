@@ -8,8 +8,8 @@
 
 | 链路 | 传输与鉴权 |
 |---|---|
-| Backend ↔ Client | `/api/chat/ws`，连接前以 Bearer JWT 请求 `POST /api/user/ws-ticket`，使用短时、`purpose=ws` 的 ticket 握手；签发与有效期见 [user.py](../backend/entrypoints/http/routes/user.py) |
-| 手机浏览器 ↔ Backend | `/remote/` 同源页面，独立设备 Cookie；`POST /api/remote/ws-ticket` 签发票据后连接 `/api/remote/ws`，身份约束见 [远程访问](#远程访问) |
+| Backend ↔ Client | `/api/gateway/ws`，主进程以 Bearer JWT 请求 `POST /api/gateway/ticket`，使用一次性不透明票据握手；签发与有效期见 [gateway](../backend/features/accounts/gateway.py) |
+| 手机浏览器 ↔ Backend | `/remote/` 同源页面，独立设备 Cookie；`POST /api/gateway/ticket` 签发票据后连接 `/api/gateway/ws`，身份约束见 [远程访问](#远程访问) |
 | Client ↔ Runner | Windows 命名管道 / macOS UDS 承载 WebSocket 帧，以本次启动 token 鉴权 |
 
 WS 和本地 IPC 使用 JSON-RPC 2.0；REST、上传及下载不套 RPC 信封。请求带 `id`，响应以相同 `id` 返回 `result` 或 `error`；通知不带 `id`，不应被响应。Backend WS 的心跳与 `session.ack` 均使用普通 RPC 请求；Client 与 Runner 的本地连接以 WebSocket 协议层 ping/pong 探活。
@@ -18,15 +18,17 @@ WS 和本地 IPC 使用 JSON-RPC 2.0；REST、上传及下载不套 RPC 信封�
 
 ticket 关联登录记录，每张票据在 60 秒内独立消费一次，并发签发不使其他未消费票据失效；首次握手尝试即消费，后续初始化失败或后端重启后须重新取得。HTTP 与 WS 常规日志隐藏票据及资产签名参数。握手及入站处理核对用户与登录有效性。正常刷新不撤销登录，注销、另一端激活或管理员停用则清理连接与本机工具等待，已受理回合按[序号与恢复](#序号与恢复)继续执行。长效凭据不进 WS URL，握手只接受 `?ticket=`。
 
-关闭码 `1008` 停止自动重连，表示策略拒绝，维护状态也可能使用，不能据此断言令牌失效。心跳用 `session.ping`，无入站帧超时以 `4000/heartbeat` 重连；探测间隔和超时见 [JsonRpcGatewayClient](../client/renderer/shared/lib/gateway-protocol/json-rpc-gateway.ts)。
+关闭码 `1008` 停止自动重连，表示策略拒绝，不能据此断言令牌失效；账户维护使用 `1012`，客户端退避重连，维护期间票据请求返回 503。心跳用 `session.ping`，无入站帧超时以 `4000/heartbeat` 重连；探测间隔和超时见 [JsonRpcGatewayClient](../shared/gateway.ts)。
 
-WS 持续收包，普通业务请求按接收顺序执行；心跳、ACK、工具同步与回执、即时自主决策及声音制作与取消独立执行，自主推理和声音制作不阻塞心跳及会话恢复。每条连接的在途请求有上限，超限以 `1013` 关闭；断连取消该连接未完成的 RPC，已受理回合按[序号与恢复](#序号与恢复)继续运行。自主空间与窗口空闲表达持续等待模型结果，同类咨询在途合并，迟到结果重核上下文；处理入口见 [handlers.py](../backend/entrypoints/desktop/handlers.py)。
+WS 持续收包，普通业务请求按接收顺序执行；心跳、ACK、工具同步与回执、即时自主决策独立执行。并发策略见 [RPC 契约](../backend/entrypoints/desktop/contracts.py)。每条连接的在途请求有上限，超限以 `1013` 关闭；断连取消该连接未完成的 RPC，已受理回合按[序号与恢复](#序号与恢复)继续运行。自主空间与窗口空闲表达持续等待模型结果，同类咨询在途合并，迟到结果重核上下文；处理入口见 [handlers.py](../backend/entrypoints/desktop/handlers.py)。
 
 ### 通道分工
 
+路由的 `operation_policy` 是身份、载荷和等待策略的唯一声明。[生成器](../scripts/generate_protocol.py) 从 OpenAPI、RPC、事件及 Runner 契约生成[跨端类型与操作映射](../shared/api.generated.ts)，分别反映输入省略规则与响应序列化；检查入口见 [Scripts](../scripts/README.md#按改动选择验证)。
+
 依赖持续会话、进程内运行上下文和流式交付的操作走 WS；独立资源操作与较大载荷走 REST。REST 不要求聊天在线，但仍独立校验身份、权限与资源归属，不能因此视为可任意重试。
 
-不持有 WS 的界面需要已有 RPC 能力时，REST 镜像须复用同一服务逻辑。聊天流走会话 emitter；需和业务状态共同提交的异步通知走 outbox，两者不能混称。
+聊天流走会话 emitter；需和业务状态共同提交的异步通知走 outbox，两者不能混称。
 
 Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend 提供资源和语义，不下发窗口像素指令；桌面模式的背景由 Client 交互屏视频承载，桌面呈现不创建独立悬浮精灵。普通聊天生图只交付媒体，更换场景必须走场景资源或专属工具。
 
@@ -36,7 +38,7 @@ Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend
 
 `kind` 与 `system_preset_id` 是不同维度，不能互相推断；自动化标记与 `system_preset_id='automation'` 由数据库约束等价。每条会话持久化 `kind` 与非空 `system_preset_id`，预设创建后不可更改，换记忆域须切换或新建会话：固定系统对话为 special，普通及任务会话为 standard。
 
-每用户每预设最多一条固定 special，不可删除或改名。`session.create` 必须显式提供目录内有效的 `system_preset_id` 字符串，缺失、空值、非字符串或未知预设返回参数错误；桌面和手机的新建入口展示完整预设目录，选择陪伴时创建 `kind=standard` 的普通会话，固定陪伴主会话继续承接主动消息。`system.list_presets` 只向客户端返回展示元数据，不下发提示词正文。目录见 [presets](../backend/runtime/presets.py)。
+每用户每预设最多一条固定 special，不可删除或改名。`POST /api/sessions` 必须显式提供目录内有效的 `system_preset_id` 字符串，缺失、空值、非字符串或未知预设返回参数错误；桌面和手机的新建入口展示完整预设目录，选择陪伴时创建 `kind=standard` 的普通会话，固定陪伴主会话继续承接主动消息。`GET /api/presets` 只向客户端返回展示元数据，不下发提示词正文。目录见 [presets](../backend/runtime/presets.py)。
 
 会话挂载结果的 `info.system_preset_id` 给出服务端确认的预设归属，公共对话页据此选择陪伴或专业呈现；窗口模式与桌面模式使用相同判断，列表分页或归档不改变已选会话的归属。
 
@@ -45,7 +47,7 @@ Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend
 | 编辑任意正常用户消息（`prompt.submit` 带 `edit_message_id`） | 允许 | 允许 | 拒绝 |
 | 重试最后一条未回复消息（`prompt.submit` 带 `retry_message_id`） | 允许 | 允许 | 拒绝 |
 | 更换最新用户回合的完整回答（`prompt.submit` 带 `replace_reply_message_id`） | 允许 | 允许 | 拒绝 |
-| 撤回（`session.undo_to_message`）、派生（`session.fork`） | 允许 | 拒绝 | 拒绝 |
+| 撤回（`session.undo_to_message`）、派生（`POST /api/sessions/{id}/forks`） | 允许 | 拒绝 | 拒绝 |
 | 桌面与手机提交消息（`prompt.submit`） | 允许 | 允许 | 拒绝 |
 | 清空（`/clear`）、手动压缩（`/compress`、`session.compress_context`） | 允许 | 允许 | 拒绝 |
 | 改名（`PATCH /api/sessions/{id}` 的 `title`） | 允许 | 拒绝 | 允许 |
@@ -68,13 +70,13 @@ Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend
 
 长期记忆及模型可读派生事实归属 `(user_id, system_preset_id)`，用户来自认证，会话决定固定预设；未知、缺失或越权作用域拒绝访问。即时聊天只读取当前会话历史，同预设会话共享长期记忆及所属资料；跨预设不共享检索、摘要、反思或学习技能，automation 不装配这些能力。
 
-人工 `memory.list/update/delete` 必须且只能提供 `session_id`、`system_preset_id` 之一；跨域 ID 与不存在统一视为未找到。列表、数量、状态和证据属于同域，切换预设后丢弃旧请求结果。用户资料固定属于陪伴域，删除后可补填，不重启引导。
+人工记忆接口位于 `/api/memories`，必须显式提供 `system_preset_id`；跨域 ID 与不存在统一视为未找到。列表、数量、状态和证据属于同域，切换预设后丢弃旧请求结果。用户资料固定属于陪伴域，删除后可补填，不重启引导。
 
-`memory.list` 使用服务端搜索与 `offset` 分页，返回筛选后 `total`，状态 `counts` 始终覆盖当前预设。`memory.profile.update` 只在陪伴域原子保存已登记资料字段，逐项携带编辑起点版本；空值表示明确遗忘，任一版本冲突全批拒绝。类型真源见 [共享协议](../shared/protocol.ts)，写入与遗忘语义归 [记忆模块](../backend/features/memory/README.md#修订与遗忘)。
+`GET /api/memories` 使用服务端搜索与 `offset` 分页，返回筛选后 `total`，状态 `counts` 始终覆盖当前预设。`PATCH /api/memories/profile` 只在陪伴域原子保存已登记资料字段，逐项携带编辑起点版本；空值表示明确遗忘，任一版本冲突全批拒绝。类型真源见 [共享协议](../shared/protocol.ts)，写入与遗忘语义归 [记忆模块](../backend/features/memory/README.md#修订与遗忘)。
 
 模型记忆工具只能使用服务端验证的原始证据，证据消息须来自用户本人的对话：自动化会话与子 Agent 会话（其“用户”消息由父 Agent 撰写）不能作证；用户手写或手改的记录只有在更新的用户消息作证时才可改动；系统写入的伙伴自身记录（basis system，如夜间活动）不进入审阅；人工纠正仍保留伙伴记录归属，不转成用户明确表达。更新携当前 ID 与版本，并发冲突整批拒绝。候选、失效、过期和已遗忘内容不得作为有效事实召回。模型不得指定身份、作用域或来源；具体决策结构见 [memory_policy](../backend/features/memory/memory_policy.py)。
 
-学习技能工具随 `tools.sync` 同步开放。Backend 派发时将 `skill_scope` 放在模型参数之外，Client 转发 `execute_scoped_tool`，Runner 在调用期间固定用户与预设目录。异步和委派继承该域，不读取界面当前选择。Runner 的 [SkillScope](../runner/spirit_agent_runner/contracts/scope.py) 只接受固定的预设 id 集合，新增或改名预设须同步，否则该预设的带域调用均被拒绝。
+学习技能工具随 `tools.sync` 同步开放。Backend 派发时将 `skill_scope` 放在模型参数之外，Client 以 `tools.execute` 转发显式 `skill_scope`，Runner 在调用期间固定用户与预设目录。异步和委派继承该域，不读取界面当前选择。Runner 的 [SkillScope](../runner/spirit_agent_runner/contracts/scope.py) 只接受固定的预设 id 集合，新增或改名预设须同步，否则该预设的带域调用均被拒绝。
 
 ### 后台陪伴对话
 
@@ -120,7 +122,7 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 
 - 共享业务通知面向该用户的在线端交付，不能因目标会话未打开而丢弃。
 - 载荷中的 `session_id` 可用于落卡或跳转，不必然代表会话路由闸门。
-- 回合帧（`message.start/delta/break/complete/persisted`、`message.bubble`、`message.reasoning.delta`、`tool.start/complete`、`error`、`compress.completed`）的转换见 [emitter](../backend/workflows/chat/emitter.py)；`message.edited/deleted`、`command.result`、`avatar.regenerated` 由 [handlers](../backend/entrypoints/desktop/handlers.py) 直接推送，`tool.call/cancel` 由 [ipc](../backend/runtime/desktop/ipc.py) 发出；`message.voice/media` 等业务事件经 `emit_ws_event` 写 outbox，载荷由各发射点定义，并与 REST 响应一样按 JSON 模式序列化，时间字段同为 ISO 8601 文本（UTC 以 `Z` 结尾）。客户端分派与消费入口见[渲染层事件路由](../client/renderer/README.md#事件与异步生命周期)。
+- 回合帧（`message.start/delta/break/complete/persisted`、`message.bubble`、`message.reasoning.delta`、`tool.start/complete`、`error`、`compress.completed`）的转换见 [emitter](../backend/workflows/chat/emitter.py)；`message.edited/deleted`、`command.result` 由 [handlers](../backend/entrypoints/desktop/handlers.py) 直接推送，`tool.call/cancel` 由 [ipc](../backend/runtime/desktop/ipc.py) 发出；`message.voice/media` 等业务事件经 `emit_ws_event` 写 outbox，载荷由各发射点定义，并与 REST 响应一样按 JSON 模式序列化，时间字段同为 ISO 8601 文本（UTC 以 `Z` 结尾）。客户端分派与消费入口见[渲染层事件路由](../client/renderer/README.md#事件与异步生命周期)。
 
 `tool.call` 不带 `params.session_id`，但其 `payload` 含 `name`、`args`、`call_id`、信息性 `session_id`、`headless` 与 `skill_scope`（仅学习技能工具非空，见[预设记忆与学习作用域](#预设记忆与学习作用域)）。`headless=true` 照常执行，不显示桌面工作态；后台自动化和其他无头回合须由调用方显式传入，子 Agent 回合沿用父回合的标志，Client 不得靠会话类型猜测这一行为。`tool.cancel` 的 `payload` 只含 `call_id`，语义见[调用日志与未知结果](#调用日志与未知结果)。
 
@@ -141,9 +143,9 @@ flowchart TD
 - `stream_id` 标识连接重放流，变更时重置旧序号；请求重放须同时带流身份与 `last_seq`。Client 按 `seq` 去重并用 `session.ack` 确认消费。ACK 只裁剪重放缓冲，不证明业务提交或工具执行；RPC 响应不属于该事件流。
 - 重放、增量合并与全量替换分别处理，不能混用旧流游标。
 - 已受理用户回合归账户运行态持有，桌面或远程端断连、退出、重新激活与登录授权失效只释放连接，不取消回合；重连通过 `session.resume` 恢复。只有用户显式调用 `session.interrupt` 才取消回合，终态为 `cancelled`；账户维护及 Backend 正常停机等待回合收尾。真实调用失败仍按失败处理，进程崩溃或强制终止后由重启恢复标记中断，不自动重做已执行操作。
-- 历史同步复用已有会话运行时，不取消在途回合；停止回复须显式调用 `session.interrupt`。快照与流游标在同一运行态锁内取得，桌面挂载期间暂存事件，快照内已表达的回合帧不重复追加；宿主通过内部 `session.snapshot` 将同一快照同步所有 IPC 代理窗口。
-- 历史携持久化消息 ID 与毫秒级创建时间。全量恢复达到防御上限时返回 `truncated` 与 `next_cursor`（本页首条 ID，未截断为 null）；可用 `session.history` 携 `before_id` 向前分页读取更早历史。
-- 握手后所有事件帧（含回合帧与 `tool.call`）先暂存，直到挂载类 RPC（`session.resume`、`session.get_main`、`session.create`、`session.fork`）或约 10 秒超时后才冲刷；重放缓冲容量与时限见 [buffer](../backend/runtime/desktop/buffer.py)，恢复结果字段见 [runtime](../backend/runtime/conversation.py) 的 `SessionResumeResult`。
+- 历史同步复用已有会话运行时，不取消在途回合；停止回复须显式调用 `session.interrupt`。快照与流游标在同一运行态锁内取得，挂载期间暂存事件，快照内已表达的回合帧不重复追加；桌面主进程通过内部 `session.snapshot` 将同一快照同步各个渲染窗口。
+- 历史携持久化消息 ID 与毫秒级创建时间。全量恢复达到防御上限时返回 `truncated` 与 `next_cursor`（本页首条 ID，未截断为 null）；可用 `GET /api/sessions/{id}/history` 携 `before_id` 向前分页读取更早历史。
+- 握手后所有事件帧（含回合帧与 `tool.call`）先暂存，直到会话恢复 RPC（`session.resume`）或约 10 秒超时后才冲刷；重放缓冲容量与时限见 [buffer](../backend/runtime/desktop/buffer.py)，恢复结果字段见 [runtime](../backend/runtime/conversation.py) 的 `SessionResumeResult`。
 
 ### 表达通道
 
@@ -245,7 +247,7 @@ flowchart TD
 
 ### Slash 命令
 
-Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名称、别名、说明和确认标记；clear、compress、remember 的注册与实现见 [handlers](../backend/entrypoints/desktop/handlers.py) 和 [slash_commands](../backend/features/conversation/slash_commands.py)。
+Slash 元动作走 `command.dispatch`，不交给 LLM。`GET /api/commands` 返回名称、别名、说明和确认标记；clear、compress、remember 的注册与实现见 [handlers](../backend/entrypoints/desktop/handlers.py) 和 [slash_commands](../backend/features/conversation/slash_commands.py)。
 
 `//` 或不符合命令起始规则的输入视为普通文本；符合命令形式但未识别时提示错误，不退回 `prompt.submit`。编辑消息时的斜杠按正文处理。需要确认的命令由服务端再次校验 `confirmed=true`；影响历史的命令另检查在途状态。clear 需确认，compress 无需确认；清空保留会话并写清理状态行，不等于删除长期记忆或撤销工具。remember 只写当前认证记忆域，自动化无记忆域。
 
@@ -257,7 +259,8 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 | 修改范围 | 定义入口 |
 |---|---|
-| 对话、引导、工具同步、记忆管理、命令 | [桌面 handlers](../backend/entrypoints/desktop/handlers.py) |
+| 实时对话、工具同步、命令 | [网关 handlers](../backend/entrypoints/desktop/handlers.py)、[RPC 契约](../backend/entrypoints/desktop/contracts.py) |
+| 目录、记忆、引导与声音 | [资源目录](../backend/entrypoints/http/routes/resource_catalog.py)、[引导](../backend/entrypoints/http/routes/onboarding.py)、[声音](../backend/entrypoints/http/routes/voices.py) |
 | 会话 REST 与传输结构 | [会话端点](../backend/entrypoints/http/routes/sessions.py)、[schema](../backend/features/conversation/schemas.py) |
 | 伙伴资料、头像与全身、角色卡、衣柜、动作包、媒体复核与资产读取 | [伙伴端点](../backend/entrypoints/http/routes/companion.py)、[伙伴 schema](../backend/features/appearance/schemas.py)、[动作包 schema](../backend/features/actions/media_contracts.py) |
 | 场景 | [场景端点](../backend/entrypoints/http/routes/companion_scenes.py)、[场景 schema](../backend/features/scenes/schemas.py) |
@@ -270,7 +273,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 ### 头像、全身与确认
 
-字段与限长见[伙伴 schema](../backend/features/appearance/schemas.py)。头像 POST 接受可选 feedback，空请求仍可生成；POST 与 `avatar.regenerate` 都不能因断连或空结果自动重发，应读当前头像恢复预览。头像、全身、外观及服装参考的上传图按实际字节校验：须是体积在限内、可完整解码的 PNG / JPEG / WebP / GIF，类型以图片内容为准，不采信客户端声明；GIF、MPO 与其他多帧图片取第一帧归一为 PNG。无法读取或超限返回 400，格式不支持返回 415。
+字段与限长见[伙伴 schema](../backend/features/appearance/schemas.py)。头像 POST 以 `source` 区分生成与参考图，生成请求可带 `feedback` 和迭代 `mode`；制作不能因断连或空结果自动重发，应读当前头像恢复预览。头像、全身、外观及服装参考的上传图按实际字节校验：须是体积在限内、可完整解码的 PNG / JPEG / WebP / GIF，类型以图片内容为准，不采信客户端声明；GIF、MPO 与其他多帧图片取第一帧归一为 PNG。无法读取或超限返回 400，格式不支持返回 415。
 
 全身和外观的生成、自备图与微调成品均为真实透明 PNG，实际 MIME 和扩展名与内容一致；上传无需预先透明，服务端校验后必要时抠图。确认及全身候选采纳只安装通过透明验收的图片，失败保留原草稿与正式状态。透明处理、背景请求及失败边界见 [PIPELINE](PIPELINE.md#全身与着装透明成品)。
 
@@ -383,9 +386,9 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 动态与日记的未读状态由后端逐条保存，新发布默认未读。列表加载前捕获当前账户全部未读 ID，Client 在页面成功展示且所属主窗口或桌面面板可见、聚焦、未锁屏时确认该快照；确认只更新本账户指定记录，重复提交幂等，不能按确认时刻批量清空。进入后新发布的内容在正文实际展示时单独确认，读取或确认失败保留提醒。发布、已读和遗忘事件驱动重新查询，登录、开窗、重连、聚焦与解锁补查；账户与请求生命周期守卫隔离迟到结果。
 
-动态未读与评论无关。`GET /api/companion/posts/unread` 查询 `has_unread`，首屏列表返回 `unread_post_ids`，翻页返回空快照；`POST /api/companion/posts/read` 提交 `post_ids`。已读更新与 `companion.posts.read` 事件同事务提交；字段见[动态 schema](../backend/features/posts/schemas.py)。
+动态未读与评论无关。`GET /api/companion/posts/read-state` 查询 `has_unread`，首屏列表返回 `unread_post_ids`，翻页返回空快照；`PATCH /api/companion/posts/read-state` 提交 `post_ids`。已读更新与 `companion.posts.read` 事件同事务提交；字段见[动态 schema](../backend/features/posts/schemas.py)。
 
-日记使用 `GET /api/companion/diary/unread` 查询、`POST /api/companion/diary/read` 提交 `diary_ids`，列表返回 `unread_diary_ids`。快照涵盖全部日期，Client 只在进入页面或重载后确认；月份翻阅不重新确认全账户快照。`companion.diary.created/read/deleted` 分别通知发布、已读与遗忘，事件与业务更新同事务提交；字段见[日记 schema](../backend/features/journal/schemas.py)。
+日记使用 `GET /api/companion/diary/read-state` 查询、`PATCH /api/companion/diary/read-state` 提交 `diary_ids`，列表返回 `unread_diary_ids`。快照涵盖全部日期，Client 只在进入页面或重载后确认；月份翻阅不重新确认全账户快照。`companion.diary.created/read/deleted` 分别通知发布、已读与遗忘，事件与业务更新同事务提交；字段见[日记 schema](../backend/features/journal/schemas.py)。
 
 日记原文是权威内容，`diary:<日期>` 是标题及完整正文的派生记忆索引，固定属于陪伴域；按日期读取使用 `memory_recall.diary_date`，普通话题沿用向量和关键词召回。索引不能通过普通记忆编辑改写，人工遗忘索引时同事务清除日记原文及索引内容。反思保存为 `reflection:current` 的最新相处理解快照，在后续陪伴对话中自动装配；更新由全天原始交互、有效记忆及先前理解生成，纠正或撤回旧误解也须替换快照，`content:null` 仅表示无需改写。日记和反思均标为伙伴自身记录并保留所属日期，不独立证明用户事实；用户当前明确表达优先于先前理解，不改变固定人设和行为授权。正文及召回入口见[记忆模块](../backend/features/memory/README.md)。
 
@@ -436,7 +439,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 - 播放回执按 `play_id` 幂等，同一请求只由一台可见设备执行；queued 不算完成，认领后不能播放报 rejected，抢占报 interrupted，表演事实只来自播放器回执。
 - Client 主进程按 `play_id` 在本机可见舞台之间唯一认领，认领记录保留到请求过期；完整入口侧边伙伴可接收播放。收起、最小化、最大化、切窗或锁屏时中断播放并作废在途加载，恢复后回到待机，不补播旧请求。持续可见时换侧不中断；同包目录刷新不替换已受理实例的素材版本，迟到媒体事件不得生成第二种终态回执。
 - 动作 REST 管目录、设计、启停、删除、额度与回执。每套着装只有一个稳定动作组，每个动作只保留当前生效素材和待采纳候选，不提供历史版本选择；换装随动作组切换，不跨组引用素材。当前穿着或仍在准备、制作及等待结果的动作组拒绝删除。采纳与自动穿着见 [媒体复核与激活](#媒体复核与激活)。
-- 不同着装及同着装不同动作可并行制作。冻结参考就绪后，制作中、就绪或失败组均可按需处理已取得明确结果的动作；系统槽位及包内已有动态动作的原位制作走 `POST /api/companion/video-packs/generate`（`source_pack_id` + `action`）。同一动作排队、制作或付费结果未确定时拒绝再次发起，旧采纳素材或较早候选不代表当前尝试已取得结果；已知任务或落盘素材只续原进度，未知提交不重发，也不能通过清空句柄或删除动作组绕过。
+- 不同着装及同着装不同动作可并行制作。冻结参考就绪后，制作中、就绪或失败组均可按需处理已取得明确结果的动作；系统槽位及包内已有动态动作的原位制作走 `POST /api/companion/video-packs`（`source=generate`、`source_pack_id` + `action`）。同一动作排队、制作或付费结果未确定时拒绝再次发起，旧采纳素材或较早候选不代表当前尝试已取得结果；已知任务或落盘素材只续原进度，未知提交不重发，也不能通过清空句柄或删除动作组绕过。
 - 整组重新制作（含上传）只在该着装没有任何已采纳动作且无任务等待结果时允许，并复用组与动作记录；重做期间保留的旧可播素材仍算就绪。动态动作明确重做按用户请求计制作额度，同名设计的日常提案可复用已有可播动作；成品待确认时同名设计只返回等待状态。
 - 动作响应 `has_ready_asset`、`current_media_url` 表示当前已采纳内容，`pending_review` 表示待确认候选，预览 URL 不代表已采纳。包级 `can_regenerate` 表示冻结参考可供单项制作，动作项同名字段还反映本次结果是否明确；`can_regenerate_pack` 单独约束整组重新制作。单动作反馈按本次提交替换并回显，空串或省略均清除。
 - manifest 的 `catalog_version` 标识已发布目录快照，每次发布推进，并用于目录响应、变更事件与资源缓存校验；`canvas` 只定义包统一的逻辑宽高比。clip 通过 `media_type` 区分图片与视频，共享 `media_ref`、实际像素 `width` / `height` 及命中信息。同包素材像素尺寸可不同，宽高比一致，布局以媒体解码尺寸为准；`duration_ms`、`frames`、`loopable`、`hitmask_fps` 只属于视频条目。
@@ -455,7 +458,7 @@ Windows 命名管道可被本机进程枚举，token 是实际准入边界；不
 
 ### 握手与工具同步
 
-Runner 的连接与可执行就绪分开：完整配置成功应用、工具清单成功读取后，Client 才发布就绪并允许新工具执行。握手（含清单读取）或运行期配置推送重试耗尽后撤销新派发资格，保留已发调用的结果与取消通道；后续配置保存、重新握手或重新启动可恢复。已就绪后配置推送成功、仅清单刷新失败时保留原清单，下次保存重试。宿主串行发送工具同步，只按当前 WS 连接已成功交付的清单去重；空清单撤销排在已发出的旧清单之后，失败不缓存，重连重新同步。
+Runner 的连接与可执行就绪分开：完整配置成功应用、工具清单成功读取后，Client 才发布就绪并允许新工具执行。握手（含清单读取）或运行期配置推送重试耗尽后撤销新派发资格，保留已发调用的结果与取消通道；后续配置保存、重新握手或重新启动可恢复。已就绪后配置推送成功、仅清单刷新失败时保留原清单，下次保存重试。主进程串行发送工具同步，只按当前 WS 连接已成功交付的清单去重；空清单撤销排在已发出的旧清单之后，失败不缓存，重连重新同步。
 
 ```mermaid
 sequenceDiagram
@@ -463,9 +466,9 @@ sequenceDiagram
     participant R as Runner
     participant B as Backend
     C->>C: 创建 OS IPC 端点与启动 token
-    R->>C: 连接并鉴权，报告 runner_ready
+    R->>C: 连接并鉴权，报告 runner.ready
     C->>R: 推送 full config
-    C->>R: get_tools
+    C->>R: tools.list
     R-->>C: 实际工具清单
     C->>B: tools.sync
     Note over C,R: 断开、崩溃或开始停止时立即作废能力缓存
@@ -474,15 +477,7 @@ sequenceDiagram
     end
 ```
 
-| 方法组 | 用途 |
-|---|---|
-| `runner_ready`、`spiritagent.info` | 握手与运行快照 |
-| `get_tools` | Runner 实际工具清单 |
-| `execute_tool`、`execute_scoped_tool` | 普通及带学习域的执行 |
-| `spiritagent.call_result`、`spiritagent.cancel` | 查询已派发结果与取消请求 |
-| `spiritagent.config.update` | 完整配置推送 |
-
-启动和 Runner 重启均执行上述同步。`get_tools` 的工具说明按 Runner 当前配置生成（如终端说明随 `terminal.env_type`）；运行中配置推送成功后 Client 重新读取清单，有变化时按重连同样发布并由宿主重新 `tools.sync`，读取失败保留原清单。未同步或清单为空时，本机工具不可见、不可派发；撤销资格后，已派发调用仍按结果与超时收尾。Runner 握手、配置推送与 `get_tools` 由 Client 主进程的 [bridge](../client/main/runner/bridge.ts) 完成；`tools.sync` 与撤销由精灵宿主的 [host-runtime](../client/renderer/app/runtime/host-runtime.ts) 按 Runner 状态发起；Backend 侧注册见 [registry](../backend/runtime/tools/registry.py)，派发见 [tool_dispatch](../backend/workflows/chat/tool_dispatch.py)。
+工具说明随 Runner 当前配置生成，运行期保存配置后重新读取；未同步或清单为空时不得新派发，已派发调用继续按结果与超时收尾。配置与清单同步由 Client 的 [bridge](../client/main/runner/bridge.ts) 完成，云端能力同步与撤销归[主进程网关](../client/main/backend/gateway.ts)；Backend 侧注册见 [registry](../backend/runtime/tools/registry.py)，派发见 [tool_dispatch](../backend/workflows/chat/tool_dispatch.py)。方法与载荷定义见 [Runner 契约](../runner/spirit_agent_runner/contracts/rpc.py)。
 
 工具禁用在清单装配和派发边界生效。Runner 各能力通过 [ToolDefinition](../runner/spirit_agent_runner/contracts/tooling.py) 显式提供工具及所属工具集，普通调用与代码子调用共用执行器；新增或删除工具集 id 时同步 [Client 索引](../client/main/shared/lib/toolset-index.ts)、Runner 所属能力的定义与[目录过滤](../runner/spirit_agent_runner/runtime/tools.py)、[Backend 过滤](../backend/runtime/tools/toolsets.py)和[显示图标](../client/renderer/shared/lib/toolset-catalog.ts)，不能只改界面清单。
 
@@ -490,7 +485,7 @@ sequenceDiagram
 
 `capabilities` 表达能力，`capabilities_health` 表达可用性和原因；`run_generation` 每次 Runner 进程启动更新，进程内重连不更新。连续重连计数与生命周期累计计数含义不同，不混用。
 
-当前 Client 只保存握手时的能力快照而无消费方，不读取 `run_generation`，也不处理 `runner_capabilities_changed`；本机工具门控只看桥状态、WS 连接与 `get_tools` / `tools.sync` 结果。不能将通知存在写成“运行期能力已自动更新”；接入时须同时校验连接、握手、代次和工具同步。
+本机工具准入以桥状态、WS 连接和清单同步为准；当前 Client 不消费运行期能力通知，握手能力快照与 `run_generation` 不参与门控。
 
 ### 调用日志与未知结果
 
@@ -504,9 +499,9 @@ sequenceDiagram
 | unknown | 结果不确定，保留核对信息；不能当作失败自动重试 |
 | not_found | 没有记录；也可能已清理或未成功记日志，不能单独证明从未执行 |
 
-认领刷盘后执行，终态落盘后回复。取消、持有进程死亡或记录损坏且无可信终态时按 unknown 处理，迟到执行者不得覆盖终态。认领未获执行权时拒绝并在 `data.disposition` 标明：`unknown` 回复 `-32011`；`failed`、`claimed_elsewhere`、`conflict`（同标识不同工具、参数或学习域，即使原记录已 completed）与 `invalid_call_id` 回复 `-32000`。工具报错、参数校验失败或工具集已禁用同样回复 `-32000` 并标明 `failed`；本次执行被取消回复 `-32000 cancelled`，不带 `disposition`。Client 把 `failed`、`conflict`、`invalid_call_id` 连同 Runner 给出的原因作为明确失败回传，请求发出前 Runner 未连接回传未执行，其余（取消、超时、断连、`claimed_elsewhere`、`unknown`）回传结果未知，见 [ipc/runner.ts](../client/main/ipc/runner.ts)。`spiritagent.call_result {call_id}` 可查询日志，当前 Client 与 Backend 均未调用，结果核对依赖模型检查外部效果或询问用户。
+认领刷盘后执行，终态落盘后回复。取消、持有进程死亡或记录损坏且无可信终态时按 unknown 处理，迟到执行者不得覆盖终态。认领未获执行权时拒绝并在 `data.disposition` 标明：`unknown` 回复 `-32011`；`failed`、`claimed_elsewhere`、`conflict`（同标识不同工具、参数或学习域，即使原记录已 completed）与 `invalid_call_id` 回复 `-32000`。工具报错、参数校验失败或工具集已禁用同样回复 `-32000` 并标明 `failed`；本次执行被取消回复 `-32000 cancelled`，不带 `disposition`。Client 把 `failed`、`conflict`、`invalid_call_id` 连同 Runner 给出的原因作为明确失败回传，请求发出前 Runner 未连接回传未执行，其余（取消、超时、断连、`claimed_elsewhere`、`unknown`）回传结果未知，见 [ipc/runner.ts](../client/main/ipc/runner.ts)。`calls.get {call_id}` 可查询日志，当前 Client 与 Backend 均未调用，结果核对依赖模型检查外部效果或询问用户。
 
-`spiritagent.cancel` 在发起连接内按 RPC `req_id` 定位请求，省略时取消该连接全部带 `call_id` 的在途调用（Client 的窗口轮询等直调不受影响）。Runner 在途表按连接身份与 RPC 编号关联，重连复用编号不命中旧调用；断连后已开始的执行继续收尾，业务去重仍使用 `call_id`。回合被中断（对话停止、主动回合让位等）而仍在等待设备结果时，Backend 逐个下发 `tool.cancel`；宿主对尚未交给 Runner 的调用不予执行，对已在执行的按该调用的 `req_id` 取消，两种情况都不回传结果。超时与断连不下发取消，其他会话与定时任务的在途调用不受影响。请求取消不证明工作线程或外部副作用已经停止。回合中断时 Backend 仍为同批每个调用保存结果行（见 [persistence](../backend/workflows/chat/persistence.py)）：已产生结果的照实保存，运行中的记为结果未知，未开始的记为未执行；一律记为取消会让后续“继续”重做已生效的副作用。
+`calls.cancel` 在发起连接内按 RPC `req_id` 定位请求，省略时取消该连接全部带 `call_id` 的在途调用（Client 的窗口轮询等直调不受影响）。Runner 在途表按连接身份与 RPC 编号关联，重连复用编号不命中旧调用；断连后已开始的执行继续收尾，业务去重仍使用 `call_id`。回合被中断（对话停止、主动回合让位等）而仍在等待设备结果时，Backend 逐个下发 `tool.cancel`；主进程对尚未交给 Runner 的调用不予执行，对已在执行的按该调用的 `req_id` 取消，两种情况都不回传结果。超时与断连不下发取消，其他会话与定时任务的在途调用不受影响。请求取消不证明工作线程或外部副作用已经停止。回合中断时 Backend 仍为同批每个调用保存结果行（见 [persistence](../backend/workflows/chat/persistence.py)）：已产生结果的照实保存，运行中的记为结果未知，未开始的记为未执行；一律记为取消会让后续“继续”重做已生效的副作用。
 
 当前终态日志保留七天；无 `call_id` 的直调不记日志，日志不可写时仍可能继续执行。因此去重是有限保障，不是任意副作用恰好执行一次的承诺。恢复、取消或更换调用标识都不能被当作已撤销外部操作。
 
@@ -536,9 +531,9 @@ Backend `user_settings` 是可同步偏好的真源，Client 保存带用户归�
 
 保存先原子写本地镜像，Runner 相关配置变化时推送，再防抖写云端；桌面主题、窗口偏好、快捷键、伙伴偏好、语言与镜像归属变化不单独触发 Runner 推送。登录与恢复时 GET 水合，云端同名键覆盖镜像，云端缺失的允许同步本地键补传。云端按点键 upsert、不删除已有键，采用最后保存覆盖，不提供版本化离线冲突合并；不能承诺冲突时所有离线修改都保留。本地删除的键或清空的节不会上云，下次水合会被云端旧值补回，清除须写入显式值。镜像按本机账户标识隔离：归属不匹配时清理本地同步节，不上传其中的设置。本地写入落盘失败时回滚内存镜像并报告失败，不推 Runner、不上云；账户隔离清理即使落盘失败也在内存生效，磁盘残留的旧归属在下次启动或换号时再次清理；云端水合落盘失败时内存保留已取得的云端值，不恢复本地旧值。
 
-Runner 仅内存持有配置，每次调用与 `get_tools` 固定同一代次的独立快照；更新不改写在途上下文，旧探测不得回填新配置的可用性缓存。终端执行环境按创建参数与调用快照比对：一致则复用，不一致且空闲时停止旧环境并按新配置重建，执行目标已变而旧环境仍在使用时拒绝该次调用，见 [Runner 终端与子进程](../runner/README.md#终端与子进程)。握手后、首个执行前推送 full config，重启后重新推送。用户打扰偏好可恢复，旧设备计算的生效档位不能直接当作新设备现状。
+Runner 仅内存持有配置，每次调用与 `tools.list` 固定同一代次的独立快照；更新不改写在途上下文，旧探测不得回填新配置的可用性缓存。终端执行环境按创建参数与调用快照比对：一致则复用，不一致且空闲时停止旧环境并按新配置重建，执行目标已变而旧环境仍在使用时拒绝该次调用，见 [Runner 终端与子进程](../runner/README.md#终端与子进程)。握手后、首个执行前推送 full config，重启后重新推送。用户打扰偏好可恢复，旧设备计算的生效档位不能直接当作新设备现状。
 
-非子 Agent 的陪伴预设普通会话与固定 special 会话使用同一套预设默认；专业预设的普通 standard 会话继承用户 `agent.* / chat.*` 默认，special 使用预设默认，再叠加各会话覆盖。`session.set_settings` 只接受规定的温度、压缩阈值和推理强度；null 删除覆盖，空 patch 只读取生效值。先提交再更新运行时，“恢复默认”删除覆盖而非固化当前默认数值。推理强度按供应商支持集向下取不高于请求的最高档，档位与降档定义见 [providers/base.py](../backend/infrastructure/ai/providers/base.py)。
+非子 Agent 的陪伴预设普通会话与固定 special 会话使用同一套预设默认；专业预设的普通 standard 会话继承用户 `agent.* / chat.*` 默认，special 使用预设默认，再叠加各会话覆盖。`PATCH /api/sessions/{id}` 的 `settings` 只接受规定的温度、压缩阈值和推理强度；字段为 null 时删除该项覆盖，空 settings 只读取生效值。先提交再更新运行时，“恢复默认”删除覆盖而非固化当前默认数值。推理强度按供应商支持集向下取不高于请求的最高档，档位与降档定义见 [providers/base.py](../backend/infrastructure/ai/providers/base.py)。
 
 ### 桌面呈现与本机启动器
 
@@ -552,7 +547,7 @@ Runner 仅内存持有配置，每次调用与 `get_tools` 固定同一代次的
 
 界面前台与窗口精灵舞台可用性分别裁决，精灵可见或置顶不能代替会话视图的活动资格。窗口精灵的轻语、文件投喂与菜单交互由主进程转交交互界面；桌面视频背景窗口不获得这些能力，也不接收桌面鼠标输入。透明界面仅命中实际交互区域，原生图标和空白处的桌面操作由 Explorer 处理，不经 Backend 或新增文件访问接口。会话活动与语音准备状态以账户会话为作用域，经主进程镜像到窗口舞台，持续活动按 [IPC 优先级](../client/shared/ipc/desktop-presentation.ts)合并；本地手势与情绪瞬态由角色模块裁决。桌面背景通过受限媒体桥接收已缓存的静音视频和播放命令，仅交互屏创建背景，双缓冲在首帧就绪后淡入，失败保留旧画面；锁屏、全屏和减少动态效果时暂停。原生预留与窗口原值进入恢复记录，退出时的系统行为见[桌面模式](DESIGN.md#桌面模式)。
 
-主对话与轻语持独立视图控制器，同一 renderer 内同一账户同一会话共享唯一 runtime；会话事件按 session_id 更新一次，跨 renderer 仍经唯一宿主代理。视图可见、当前活动、系统前台和锁屏状态共同决定已读、录音与新语音自动入队资格，窗口存在不证明用户正在查看。隐藏页面不确认未读、不录音、不自动播放新语音，外部附件只由当前有资格的接收视图取用。换号清理旧 runtime、视图及声音资格；断连只收尾本地状态，重连恢复历史，不自动重放消息提交或本机工具。
+主对话与轻语持独立视图控制器，同一 renderer 内同一账户同一会话共享唯一 runtime；会话事件按 session_id 更新一次，各 renderer 订阅主进程事件。视图可见、当前活动、系统前台和锁屏状态共同决定已读、录音与新语音自动入队资格，窗口存在不证明用户正在查看。隐藏页面不确认未读、不录音、不自动播放新语音，外部附件只由当前有资格的接收视图取用。换号清理旧 runtime、视图及声音资格；断连只收尾本地状态，重连恢复历史，不自动重放消息提交或本机工具。
 
 原生运行快照带 `onDesktopDisplay`，按窗口实际显示器归属计算，最小化窗口使用最小化前位置；主进程保留全屏索引用于固定应用激活，Dock 的运行标记、动态项和窗口菜单仅投影交互屏窗口。Dock 由主进程合并固定配置与运行快照，渲染层只持有条目和窗口的不透明 ID，不接收启动目标或任意命令；拖入 File 由 preload 获取真实路径。添加、修复、固定与启动均校验目标；写盘失败保留原配置，运行快照不写盘。
 
@@ -617,7 +612,7 @@ standard 使用独立 automation 任务会话，可离线运行云端部分；�
 
 账户及会话统一持有运行态、互斥和工具轮数预算，各连接独立持有流序号、重放与 ACK，手机 ACK 不裁剪桌面数据。同会话忙碌时拒绝新提交；`prompt.submit` 携带持久化 `request_id`，相同标识与内容返回原受理结果，标识相同但内容不同拒绝，重连不再次执行工具。
 
-已保存用户输入和共享业务事件同步至同账户在线端，各端按消息 ID 合并。`session.resume` 返回持久历史、运行状态和在途回合快照，生成中加入也能得到已产生的内容；历史向前分页复用 `session.history`。手机断网或切后台不取消已受理回合，返回时恢复历史和进度；服务重启后的中断回合显示实际状态，不自动重做工具。
+已保存用户输入和共享业务事件同步至同账户在线端，各端按消息 ID 合并。`session.resume` 返回持久历史、运行状态和在途回合快照，生成中加入也能得到已产生的内容；历史向前分页使用 `GET /api/sessions/{id}/history`。手机断网或切后台不取消已受理回合，返回时恢复历史和进度；服务重启后的中断回合显示实际状态，不自动重做工具。
 
 动态、日记沿用账户已读状态；会话未读与语音收听进度按设备保存。页面聚焦重新校准数据，异步回写校验账户与页面生命周期。独立资产任务重连后查询原任务；记忆编辑绑定草稿初始版本，回源不提升该版本，冲突保留草稿。
 
@@ -730,9 +725,9 @@ flowchart TD
 
 ### 错误信封
 
-REST 错误多为 `{"detail": …}`，`detail` 可为文本、校验错误列表或包含 `error` 的对象，`reason`、`status` 或 `status_code` 是否存在由各接口定义；`reason` 既可能为分类也可能为自由文本（供应商分类与缺少配置见 [_http_errors](../backend/entrypoints/http/routes/_http_errors.py)）；限流 429 与未处理 500 在顶层使用 `{error, reason, status}`，其中 `error` 为消息、`reason` 为分类。RPC 错误使用 `error:{code,message,data?}`。JSON-RPC 标准错误与业务错误并存：前者处理报文与方法调用错误，后者表达确认、忙碌和执行状态等语义。`prompt.submit` 回合在途返回 `-32004`，`data.reason=turn_busy`；客户端按错误码重试，不能匹配文案。
+HTTP 错误统一返回 `{error:{code,message,details,request_id}}`，状态码保留 HTTP 语义，校验细节只包含字段位置、原因和类型，不返回原始输入。RPC 保留 JSON-RPC 数字错误码，`error.data` 使用同一业务错误结构；`prompt.submit` 回合在途返回 `-32004`，业务码为 `turn_busy`。客户端按码处理，不匹配文案。公开模型与脱敏逻辑见 [api_errors](../backend/infrastructure/api_errors.py)。
 
-桌面代理 RPC 通过 IPC 成功返回结构化结果信封，保留宿主取得的业务错误 `message/code/data`，代理窗口恢复同一错误类型后按码处理；不依赖 Electron 的异常序列化保留自定义字段。主进程产生的超时、断连、宿主失效及无效响应仍作为普通错误拒绝，不伪造业务错误码。
+主进程通过结构化 IPC 传递 HTTP 与 RPC 结果，渲染层还原同一业务错误类型。网络失败、取消和断连独立表达，不伪造业务受理结果。
 
 错误码以 [Backend constants](../backend/infrastructure/constants.py)、[Runner 调用管理](../runner/spirit_agent_runner/runtime/calls.py)与 [RPC 边界](../runner/spirit_agent_runner/transport/rpc.py)为准；未知执行结果的恢复语义见[调用日志](#调用日志与未知结果)，不能合并成普通失败。
 

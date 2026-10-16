@@ -4,7 +4,6 @@ import type React from 'react'
 
 import { BrandMark } from '@/shared/components/brand-mark'
 import { RefreshCw } from '@/shared/lib/icons'
-import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { BTN_PRIMARY, BTN_SUBTLE, SettingCard, SettingsSectionIntro, Spinner } from '@/shared/panel'
 import { systemApi } from '@/shared/platform/desktop'
@@ -12,6 +11,7 @@ import { $updateStatus, setUpdateStatus, type UpdateStatus } from '@/shared/stor
 import { $desktopVersion, refreshDesktopVersion } from '@/shared/store/version'
 import { type Dictionary, useStrings } from '@/shared/strings'
 import type { DesktopUpdatePhase } from '@ipc/contracts'
+import { errorMessage } from '@runtime'
 
 type AboutStrings = Dictionary['settings']['about']
 
@@ -19,7 +19,7 @@ type AboutStrings = Dictionary['settings']['about']
 function requestUpdate(phase: DesktopUpdatePhase, request: () => Promise<void>): void {
   request().catch((error: unknown) => {
     log.warn('about', `update ${phase} request failed`, error)
-    setUpdateStatus({ message: unwrapIpcErrorMessage(error), phase, status: 'error' })
+    setUpdateStatus({ message: errorMessage(error), phase, status: 'error' })
   })
 }
 

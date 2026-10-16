@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
-import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { captureAuthScope } from '@/shared/lib/authed-api'
+import { authedResource } from '@/shared/lib/resource-request'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import type { PersonaResponse } from '@protocol'
@@ -51,9 +52,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
   const generation = ++requestGeneration
 
-  const result = await authedApi<PersonaResponse>({
-    path: '/api/companion/persona'
-  })
+  const result = await authedResource('GET /api/companion/persona')
 
   if (!isCurrent() || generation !== requestGeneration) {
     return { ok: false }

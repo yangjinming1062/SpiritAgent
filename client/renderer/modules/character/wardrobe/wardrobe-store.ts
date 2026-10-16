@@ -1,14 +1,16 @@
 import { atom } from 'nanostores'
 
-import { authedApi } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
+import { authedResource, requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 
-type OutfitStatus = 'draft' | 'ready' | 'expired'
+import type { ApiSchemas } from '../../../../../shared/api.generated'
+
+type OutfitStatus = ApiSchemas['OutfitResponse']['status']
 
 interface WardrobeOutfit {
   initialVideoError: string | null
@@ -23,24 +25,11 @@ interface WardrobeOutfit {
   active: boolean
 }
 
-interface OutfitResponse {
-  initial_video_error: string | null
-  id: number
-  name: string
-  description: string | null
-  description_status: WardrobeOutfit['descriptionStatus']
-  description_error: string | null
-  fullbody_url: string
-  status: OutfitStatus
-  active: boolean
-}
+type OutfitResponse = ApiSchemas['OutfitResponse']
 
-export type OutfitPolicy = 'llm_may_replace' | 'locked'
+export type OutfitPolicy = ApiSchemas['OutfitPolicyResponse']['policy']
 
-interface WardrobeSnapshot {
-  outfits: OutfitResponse[]
-  policy: OutfitPolicy
-}
+type WardrobeSnapshot = ApiSchemas['OutfitListResponse']
 
 const snapshot = definePersistedAtom<WardrobeSnapshot>({
   key: 'da.companion.wardrobe',
@@ -147,7 +136,7 @@ export async function hydrateWardrobe(): Promise<void> {
     await showOutfits(snapshot.get(), version, true)
   }
 
-  const result = await authedApi<WardrobeSnapshot>({ path: '/api/companion/outfits' })
+  const result = await authedResource('GET /api/companion/outfits')
 
   if (version !== revision || epoch !== currentClearEpoch()) {
     return
@@ -174,11 +163,7 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {
-    const result = await backendApi().api<{ policy: OutfitPolicy }>({
-      body: { policy },
-      method: 'PATCH',
-      path: '/api/companion/outfits/policy'
-    })
+    const result = await requestResource('PATCH /api/companion/outfits/policy', { body: { policy } })
 
     if (epoch !== currentClearEpoch() || $auth.get().kind !== 'authenticated') {
       return false
@@ -197,15 +182,11 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
 }
 
 export async function deleteOutfit(outfitId: number): Promise<void> {
-  await backendApi().api({ path: `/api/companion/outfits/${outfitId}`, method: 'DELETE' })
+  await requestResource('DELETE /api/companion/outfits/{outfit_id}', { path: { outfit_id: outfitId } })
   await hydrateWardrobe()
 }
 
 export async function retryOutfitDescription(outfitId: number): Promise<void> {
-  await backendApi().api({
-    path: `/api/companion/outfits/${outfitId}/description/retry`,
-    method: 'POST',
-    body: {}
-  })
+  await requestResource('POST /api/companion/outfits/{outfit_id}/description/retry', { path: { outfit_id: outfitId } })
   await hydrateWardrobe()
 }

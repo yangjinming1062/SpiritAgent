@@ -6,7 +6,16 @@ import time
 import uuid
 from typing import Any
 
-from spirit_agent_runner.contracts.rpc import RpcError
+from pydantic import ValidationError
+
+from spirit_agent_runner.contracts.rpc import (
+    RUNNER_CONTRACTS,
+    CallCancelRequest,
+    CallGetRequest,
+    ConfigReplaceRequest,
+    RpcError,
+    ToolExecuteRequest,
+)
 from spirit_agent_runner.infrastructure.constants import get_spiritagent_home
 from spirit_agent_runner.version import __version__
 
@@ -41,30 +50,33 @@ class RunnerRuntime:
             "reconnect_streak": self.reconnect_streak,
         }
 
-    async def handle(self, connection_id: str, req_id: object, method: str, params: dict[str, Any]) -> Any:
-        if method in {"execute_tool", "execute_scoped_tool"}:
-            return await self.calls.execute(connection_id, req_id, method, params)
-        if method == "spiritagent.cancel":
-            return self.calls.cancel(connection_id, params.get("req_id"))
-        if method == "get_tools":
+    async def handle(self, connection_id: str, req_id: object, method: str, params: object) -> Any:
+        contract = RUNNER_CONTRACTS.get(method)
+        if contract is None:
+            raise RpcError(-32601, "Method not found")
+        try:
+            request = contract.request.model_validate(params)
+        except ValidationError as error:
+            raise RpcError(-32602, "Invalid RPC params", {"disposition": "failed"}) from error
+        if isinstance(request, ToolExecuteRequest):
+            return await self.calls.execute(connection_id, req_id, request)
+        if isinstance(request, CallCancelRequest):
+            return self.calls.cancel(connection_id, request.req_id)
+        if method == "tools.list":
             async with self.config_lock:
                 context = self.config.context()
                 return {"tools": await asyncio.to_thread(self.executor.schemas, context)}
-        if method == "spiritagent.config.update":
-            config = params.get("config")
-            if not isinstance(config, dict):
-                raise ValueError("spiritagent.config.update requires a 'config' object")
+        if isinstance(request, ConfigReplaceRequest):
+            config = request.config
             async with self.config_lock:
                 self.config.update(config)
                 self.executor.catalog.availability.invalidate()
             return {"ok": True}
-        if method == "spiritagent.call_result":
-            call_id = params.get("call_id")
-            if not isinstance(call_id, str) or not call_id:
-                raise ValueError("spiritagent.call_result requires a 'call_id' string")
+        if isinstance(request, CallGetRequest):
+            call_id = request.call_id
             record = await asyncio.to_thread(journal.lookup, call_id)
             return record.model_dump() if record is not None else {"call_id": call_id, "status": "not_found"}
-        if method == "spiritagent.info":
+        if method == "runner.info":
             payload = await self.ready()
             payload.update(
                 {

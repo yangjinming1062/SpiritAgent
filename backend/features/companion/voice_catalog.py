@@ -28,7 +28,7 @@ SUPPORTED_VOICE_LANGUAGES: frozenset[str] = frozenset(_LANGUAGE_BUCKET)
 
 
 def normalize_voice_language(value: object) -> str | None:
-    """REST 与 JSON-RPC 列表接口共用的语言取值归一化规则，非法值统一返回 None。"""
+    """目录查询与偏好匹配共用的语言筛选；未知语言不限制目录。"""
     return value if isinstance(value, str) and value in SUPPORTED_VOICE_LANGUAGES else None
 
 

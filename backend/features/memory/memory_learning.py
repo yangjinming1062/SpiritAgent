@@ -2,12 +2,12 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from infrastructure.constants import DEFAULT_LANGUAGE
 from infrastructure.database import session_scope
 from infrastructure.text import resolve_language, utc_now
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource
 from sqlalchemy import ColumnElement, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from features.conversation.evidence import (
     review_messages,
     review_scopes,
 )
+from features.memory.contracts import MemoryConflictError, MemoryEvidence, MemoryRecord
 from features.memory.memory_policy import MemoryDecision
 from features.memory.memory_retrieval import extract_search_terms, keyword_match_score
 from features.memory.memory_store import (
@@ -47,42 +48,6 @@ class ReviewMessage(BaseModel):
     content: str
     created_at: str
     suppressed: bool
-
-
-class MemoryEvidence(BaseModel):
-    fingerprint: str
-    message_id: int | None = None
-    session_id: int | None = None
-    quote: str | None = None
-    stance: Literal["supports", "opposes"] | None = None
-    created_at: str | None = None
-    source_unavailable: bool | None = None
-
-
-class MemoryRecord(BaseModel):
-    id: int
-    content_version: int
-    content: str
-    context: str | None
-    tags: str | None
-    basis: str
-    status: str
-    usage: str
-    reason: str
-    source_kind: str
-    updated_at: str
-    evidence: list[MemoryEvidence]
-    expires_at: str | None
-    reviewed_at: str | None
-
-    @field_serializer("evidence")
-    def serialize_evidence(self, items: list[MemoryEvidence]) -> list[dict[str, Any]]:
-        # 证据列稀疏存键（缺失字段即无此键），dump 保持同形，避免 null 键撑大审阅 payload 与体积预算。
-        return [e.model_dump(exclude_none=True) for e in items]
-
-
-class MemoryConflictError(ValueError):
-    pass
 
 
 @dataclass(frozen=True)

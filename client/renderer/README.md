@@ -41,19 +41,19 @@
 | 窗口开关、附件信箱与播放认领 | 主进程，来源窗口不能只写本地 store |
 | 跨模式页面、会话、草稿与阅读位置 | 主进程账户快照；`app-ui-state.ts` 捕获与恢复，渲染层确认交接完成后才释放来源资格 |
 
-[conversation-activity.ts](app/workflows/conversation-activity.ts) 汇总所有执行会话与宿主工具，一个会话结束只释放自己持有的工作态；headless 不显示工作态，声音和瞬态优先级仍由 character 裁决。
+[conversation-activity.ts](app/workflows/conversation-activity.ts) 汇总各会话与主进程工具活动，声音和瞬态优先级仍由 character 裁决。
 
 ## 事件与异步生命周期
 
-账户、宿主网关和代理网关由 `app/runtime` 中的普通 TypeScript 对象管理，提供成对的 `start/dispose`；React Hook 只绑定这些对象。宿主持连接、工具清单同步及重连恢复，代理只消费 IPC 并恢复自己的会话。代理先订阅再读状态快照，释放时只清除自己仍持有的网关；账户与请求代次使旧实例和迟到结果失效。
+`app/runtime` 管理账户与窗口的 IPC 订阅，React Hook 绑定启停。各窗口先订阅再读状态快照，恢复自己的会话，释放时只清除自己持有的网关；账户与请求代次使旧实例和迟到结果失效。网络连接与设备派发归[主进程网关](../main/README.md#账户网关与窗口订阅)。
 
-网关路由先核对认证状态，再按 `session_id` 交给该账户保留的 runtime；角色、工具和投递由 [handlers](app/runtime/handlers/) 处理，场景、动态、日记进入所属 module。`tool.call/cancel` 只由宿主执行，按 `call_id` 去重和撤回，不受当前可见会话过滤。
+网关路由先核对认证状态，再按 `session_id` 交给该账户保留的 runtime；角色、工具展示和投递由 [handlers](app/runtime/handlers/) 处理，场景、动态、日记进入所属 module。
 
 - store／工作流用 [captureAuthScope](shared/lib/authed-api.ts) 核对鉴权会话与清理代次，组件用 [use-async-guard](shared/hooks/use-async-guard.ts) 核对挂载与代次；失败记录经 `apiSucceeded`，错误文案经 `ipc-error.ts`。
 - [storage.ts](shared/lib/storage.ts) 登记账户持久键、清理及恢复回调。换号释放内存并按 `accountId` 重挂载，重置期间不回写索引；所属账户命名空间切换完成后才应用云偏好广播。全局缓存保留和移除语义归 PROTOCOL。
 - [runner-status.ts](shared/store/runner-status.ts) 先订阅后读快照，同清理代次共用在途读取，迟到快照不能覆盖新事件或新账户。网关握手超时落到 `error`，不能停留 `connecting`。
-- 引导 flow 只装配导航与未提交表单，问题和恢复路由为纯定义；`onboarding-draft.ts` 持串行保存与读取守卫，头像和音色流程各自管理异步结果。引导逐字段增量保存，未连网关时不提交；连通后按服务端 `next_field` 续答，本地非空编辑优先。草稿读取失败暂停待重试，不能当作新引导覆盖。
-- 用户提交携稳定 `request_id`，其他设备的保存通知按消息 ID 插入，不绑定本地待确认草稿。挂载期间网关暂存回合帧，并将同一快照通过内部 `session.snapshot` 同步宿主与代理；新流身份重置旧 seq。已提交消息按 ID 合并，入列与提醒分开；未读只在所属视图可见时清除。动态、日记菜单消费服务端未读镜像，主窗口与桌面补查，页面确认快照，迟到请求仍受账户和挂载守卫。
+- 引导 flow 只装配导航与未提交表单，问题和恢复路由为纯定义；`onboarding-draft.ts` 持串行保存与读取守卫，头像和音色流程各自管理异步结果。引导通过 REST 逐字段增量保存，按服务端 `next_field` 续答，本地非空编辑优先。草稿读取失败暂停待重试，不能当作新引导覆盖。
+- 用户提交携稳定 `request_id`，其他设备的保存通知按消息 ID 插入，不绑定本地待确认草稿。挂载期间网关暂存回合帧，并将同一快照通过内部 `session.snapshot` 同步各个渲染窗口；新流身份重置旧 seq。已提交消息按 ID 合并，入列与提醒分开；未读只在所属视图可见时清除。动态、日记菜单消费服务端未读镜像，主窗口与桌面补查，页面确认快照，迟到请求仍受账户和挂载守卫。
 - [proactive-delivery.ts](app/workflows/proactive-delivery.ts) 的气泡与声音复用舞台可见性；不可见时消息仍进入未读，恢复后由待读气泡承接。工作会话跳转不进入轻语。
 
 ## 主窗口与桌面装配
@@ -62,13 +62,13 @@
 
 [panel-activity](shared/context/panel-activity.tsx) 向子组件和 Portal 传播活动资格，子面板不能解除父级禁用；媒体查看器归打开它的视图，失活时隐藏并暂停。视图切换保留各自草稿与附件，录音资格失效后旧麦克风或转写结果不能因重新激活恢复。布局、位置和防抖保存守卫账户清理代次。
 
-[desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或承载代次变化重发，失败允许同值重试。工具派发仍在后台精灵宿主，桌面停用精灵空间行为。
+[desktop-companion-activity.ts](app/workflows/desktop-companion-activity.ts) 合并同一轮变化后转发完整活动载荷；账户或承载代次变化重发，失败允许同值重试。工具派发归主进程，桌面表面停用精灵空间行为。
 
 [desktop-video-wallpaper.ts](app/windows/desktop/desktop-video-wallpaper.ts) 消费显式启用的独立套装，负责播放认领、回执与默认套装准备；衣柜、场景库变化不触发套装切换或制作。套装和当前成品、制作草稿的语义见[桌面生活契约](../../docs/PROTOCOL.md#桌面生活视频与模式隔离)。管理页选择库内参考创建套装，图片预览确认后继续制作视频，现有成品在草稿期间继续播放；外部制作窗口绑定草稿及基准，变化后须刷新。静态首帧只使用所属套装的确认图片，不能回退到当前场景库图片。
 
 [背景播放器](app/windows/desktop/desktop-background-entry.tsx) 双缓冲等待实际呈现的首帧；共同基准且允许自然衔接的短动作在循环接点切入，其余画面及上传视频的循环接点使用淡化。短动作返回仍有效的保留循环，套装或素材替换后不能返回旧画面。管理预览、封面、视频和过渡帧共用 [画幅选择](../shared/desktop-media-geometry.ts)，按成品传递的 `geometry_mode` 和实际视口选择居中裁切或完整显示，完整显示以同一画面模糊铺底；规则归 [PIPELINE](../../docs/PIPELINE.md#桌面生活视频)。媒体加载失败保留当前画面，按主进程暂停状态控制播放并回收媒体 URL。套装启用前先预加载安静相伴，成功后才请求切换；主进程媒体桥同时守卫账户和选中路径。
 
-桌面根组件持有窗口与会话状态，悬浮底栏组合外部应用 Dock、屏幕居中的伙伴头像和固定产品导航；底栏三个导航入口与包含聊天的内部窗口类型分开定义，聊天仍参与布局恢复，由头像打开。桌面彩色 SVG 集中于 [assets/desktop](../assets/desktop/)，通过 Vite `BASE_URL` 加载；窗口模式导航继续使用原有图标。右下角控制入口独立展开状态与桌面操作。主进程与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts) 的尺寸，左右区域等宽并按内容限宽，溢出区域各自滚动。底板装饰与向上展开的弹层分离，避免 backdrop-filter、变换或滚动容器裁切菜单；头像光环与未读声波使用独立装饰层，仅动画缩放和透明度，不参与命中或改变布局，声波不消费录音或音频分析状态。交互区域只覆盖实际底栏、头像、按钮、弹层及连接间隙，透明空白继续穿透。
+桌面根组件持有窗口与会话状态，悬浮底栏组合外部应用 Dock、屏幕居中的伙伴头像和固定产品导航；底栏四个导航入口与包含聊天的内部窗口类型分开定义，聊天仍参与布局恢复，由头像打开。桌面彩色 SVG 集中于 [assets/desktop](../assets/desktop/)，通过 Vite `BASE_URL` 加载；窗口模式导航继续使用原有图标。右下角控制入口独立展开状态与桌面操作。主进程与 renderer 共用 [desktop-layout.ts](../shared/desktop-layout.ts) 的尺寸，左右区域等宽并按内容限宽，溢出区域各自滚动。底板装饰与向上展开的弹层分离，避免 backdrop-filter、变换或滚动容器裁切菜单；头像光环与未读声波使用独立装饰层，仅动画缩放和透明度，不参与命中或改变布局，声波不消费录音或音频分析状态。交互区域只覆盖实际底栏、头像、按钮、弹层及连接间隙，透明空白继续穿透。
 
 桌面主题在自身作用域提供实底表面，包括共享弹层的主题覆盖；内部窗口保留 `contain: layout`，使固定定位的表单弹层受所属窗口约束。具体视觉与未读行为见 [桌面模式](../../docs/DESIGN.md#桌面模式)。
 
@@ -123,7 +123,7 @@
 
 - 附件绑定加入时的会话，视频上传完成才允许发送，失效回包不回填。编辑与普通草稿分开，编辑文本不解析 Slash，成功消费修订事件；撤回附件为单槽，多图只回填第一张，其余提示只在发起窗口显示。
 - [preset-labels.ts](modules/conversation/preset-labels.ts) 以字典翻译系统预设；后端目录为中文，中文字典须同步，未知项回落目录值。目录查询在同网关、同清理代次共享在途和成功缓存。
-- 只读及历史操作权限消费 `info.kind` 与 `info.is_automation`；主陪伴会话由 `session.get_main` 确定，[conversation-state.ts](modules/conversation/conversation-state.ts) 持有并持久化固定入口与主动消息的目标 ID，列表和投递事件校准同一值。持久 ID 不代表当前窗口已水合。
+- 只读及历史操作权限消费 `info.kind` 与 `info.is_automation`；主陪伴会话由 `GET /api/sessions/main` 确定，[conversation-state.ts](modules/conversation/conversation-state.ts) 持有并持久化固定入口与主动消息的目标 ID，列表和投递事件校准同一值。持久 ID 不代表当前窗口已水合。
 - 会话参数呈现后端生效值，只接受当前会话最新保存结果；斜杠目录仅服务自动补全与确认，实际派发由后端判定。
 - 公共对话页按所属 runtime 水合的 `info.system_preset_id` 选择陪伴或专业呈现，用户拆泡使用同一归属，不依赖主会话 ID 或列表是否加载；任务会话只读，轻语固定使用主陪伴会话且不装参数面板。主对话草稿按会话隔离，与轻语使用独立作用域；导航、草稿和阅读位置接入模式交接快照。
 

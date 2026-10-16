@@ -1,7 +1,6 @@
 import type {
-  DesktopGatewayEvent,
-  DesktopGatewayRpcResponse,
-  DesktopGatewayState,
+  DesktopApiResult,
+  DesktopGatewayInvoke,
   IpcEventContract,
   IpcInvokeContract,
   IpcSendContract,
@@ -65,20 +64,15 @@ export interface DesktopBridge {
     quit: AsyncIpc<IpcInvokeContract['spiritagent:desktop:quit']>
     onNavigate: EventSubscription<'spiritagent:desktop:navigate'>
   }
-  getGatewayWsUrl: AsyncIpc<IpcInvokeContract['spiritagent:gateway:ws-url']>
-  gatewayRequest: AsyncIpc<IpcInvokeContract['spiritagent:gateway:request']>
+  gatewayRequest: DesktopGatewayInvoke
   gatewayGetState: AsyncIpc<IpcInvokeContract['spiritagent:gateway:get-state']>
-  gatewayBroadcastState: (state: DesktopGatewayState) => void
-  gatewayBroadcastEvent: (event: DesktopGatewayEvent) => void
-  gatewayRpcReply: (payload: DesktopGatewayRpcResponse) => void
   onGatewayStateChanged: EventSubscription<'spiritagent:gateway:state-changed'>
   onGatewayEvent: EventSubscription<'spiritagent:gateway:event'>
-  onGatewayRpcDispatch: EventSubscription<'spiritagent:gateway:rpc-dispatch'>
   activate: AsyncIpc<IpcInvokeContract['spiritagent:auth:activate']>
   refreshSession: AsyncIpc<IpcInvokeContract['spiritagent:auth:refresh']>
   logout: AsyncIpc<IpcInvokeContract['spiritagent:auth:logout']>
   getSession: AsyncIpc<IpcInvokeContract['spiritagent:auth:get-session']>
-  api: <T = unknown>(request: SpiritAgentApiRequest) => Promise<T>
+  api: <T = unknown>(request: SpiritAgentApiRequest) => Promise<DesktopApiResult<T>>
   /** 把后端服务的二进制资产以 data URL 的形式取回；仅查本地缓存时未命中返回 null。 */
   apiAsset: AsyncIpc<IpcInvokeContract['spiritagent:api:asset']>
   /** 把后端服务的二进制资产以原始字节取回——用于视频片段等大体积负载,不能接受 base64 膨胀。支持通过 contentHash 做磁盘缓存。 */
@@ -107,8 +101,6 @@ export interface DesktopBridge {
   saveImage: AsyncIpc<IpcInvokeContract['spiritagent:saveImage']>
   log: AsyncIpc<IpcInvokeContract['spiritagent:log:emit']>
   runnerInvoke: AsyncIpc<IpcInvokeContract['spiritagent:runner:invoke']>
-  runnerDispatchCall: AsyncIpc<IpcInvokeContract['spiritagent:runner:dispatch-call']>
-  runnerCancel: AsyncIpc<IpcInvokeContract['spiritagent:runner:cancel']>
   runnerGetState: AsyncIpc<IpcInvokeContract['spiritagent:runner:get-state']>
   runnerGetTools: AsyncIpc<IpcInvokeContract['spiritagent:runner:get-tools']>
   setUiTheme: (payload: IpcSendContract['spiritagent:ui-theme'][0]) => void

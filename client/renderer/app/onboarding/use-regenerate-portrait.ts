@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import {
-  $regenFeedback,
-  applyPortrait,
-  awaitAvatarRegeneration,
-  type PickedImage,
-  pushPortraitEntry
-} from '@/modules/character'
-import { requestGateway } from '@/shared'
+import { $regenFeedback, applyPortrait, type PickedImage, pushPortraitEntry } from '@/modules/character'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { backendApi } from '@/shared/platform/desktop'
+import { requestResource } from '@/shared/lib/resource-request'
+
+import type { ApiSchemas } from '../../../../shared/api.generated'
 
 interface UseRegeneratePortraitOptions {
   refImage?: PickedImage | null
@@ -20,13 +15,7 @@ interface UseRegeneratePortraitOptions {
   onError?: (message: string) => void
 }
 
-interface PortraitResponse {
-  asset_url?: string | null
-  id?: number
-  job_id?: string
-  queued?: boolean
-  error?: string
-}
+type PortraitResponse = ApiSchemas['AvatarAssetResponse']
 
 interface UseRegeneratePortraitResult {
   /** null 表示请求已失效或已有请求在途；false 表示失败且保留输入。 */
@@ -84,13 +73,12 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         let result: PortraitResponse | null
 
         if (mode === 'reload') {
-          result = await backendApi().api<PortraitResponse>({ path: '/api/companion/avatar', method: 'GET' })
+          result = await requestResource('GET /api/companion/avatar')
         } else if (mode !== 'edit' && (primaryRef || mode === 'generate')) {
-          result = await backendApi().api<PortraitResponse>({
-            method: 'POST',
-            path: primaryRef ? '/api/companion/avatar/from-image' : '/api/companion/avatar',
+          result = await requestResource('POST /api/companion/avatar', {
             body: primaryRef
               ? {
+                  source: 'reference',
                   content_type: primaryRef.contentType,
                   image: primaryRef.base64,
                   description: feedback,
@@ -99,26 +87,14 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
                     presentation_image: secondaryRef.base64
                   })
                 }
-              : { feedback }
+              : { source: 'generate', feedback }
           })
         } else {
-          const queued = await requestGateway<PortraitResponse>('avatar.regenerate', { feedback, mode })
-
-          if (!isCurrent()) {
-            return null
-          }
-
-          result = queued?.queued && queued.job_id ? await awaitAvatarRegeneration(queued.job_id) : queued
+          result = await requestResource('POST /api/companion/avatar', { body: { source: 'generate', feedback, mode } })
         }
 
         if (!isCurrent()) {
           return null
-        }
-
-        if (result?.error) {
-          onError?.(result.error)
-
-          return false
         }
 
         if (!result?.asset_url) {

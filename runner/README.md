@@ -7,7 +7,7 @@
 | 改动 | 起点与联动 |
 |---|---|
 | 新增、禁用或探测工具 | 所属 `features/` 能力的 `get_tool_definitions`、[工具目录与执行器](spirit_agent_runner/runtime/tools.py)、[工具定义契约](spirit_agent_runner/contracts/tooling.py)；工具集 id 跨端同步 |
-| RPC、配置、调用恢复与取消 | [传输边界](spirit_agent_runner/transport/rpc.py)、[运行时](spirit_agent_runner/runtime/application.py)、[调用管理](spirit_agent_runner/runtime/calls.py)、[调用日志](spirit_agent_runner/runtime/journal.py) → [Client bridge](../client/main/runner/bridge.ts) |
+| RPC、配置、调用恢复与取消 | [纯契约](spirit_agent_runner/contracts/rpc.py)、[传输边界](spirit_agent_runner/transport/rpc.py)、[运行时](spirit_agent_runner/runtime/application.py)、[调用管理](spirit_agent_runner/runtime/calls.py)、[调用日志](spirit_agent_runner/runtime/journal.py) → [Client bridge](../client/main/runner/bridge.ts) |
 | 本地／SSH、后台进程与代码 | [执行管理器](spirit_agent_runner/features/execution/manager.py)、[环境适配器](spirit_agent_runner/features/execution/environments/)、[代码执行](spirit_agent_runner/features/execution/code/)、[进程工具](spirit_agent_runner/features/execution/process/) |
 | 文件与补丁 | [文件工具](spirit_agent_runner/features/files/file_tools.py)、[文件管理器](spirit_agent_runner/features/files/manager.py)、[访问与补丁组件](spirit_agent_runner/features/files/)、[路径准入](spirit_agent_runner/infrastructure/file_safety.py) |
 | 浏览器 | [能力装配](spirit_agent_runner/features/browser/__init__.py)、[会话管理器](spirit_agent_runner/features/browser/session.py)、[CDP 主管](spirit_agent_runner/features/browser/supervisor.py)、[Camofox](spirit_agent_runner/features/browser/camofox.py) |
@@ -19,7 +19,7 @@
 
 `bootstrap` 是唯一组合根。`transport` 只对接运行时公开接口；`runtime` 持有配置、工具目录、可用性缓存和在途调用，通过 `ToolDefinition` 调用能力，不导入具体工具。`features` 负责各能力规则与资源，`contracts` 提供调用上下文、工具定义和共享结果，`infrastructure` 负责跨能力的网络、路径、图像与文本处理。层间方向由 [架构门禁](../scripts/check_runner_architecture.py) 检查。
 
-各能力显式提供 `ToolDefinition`，就近维护说明、schema、可用性探测和处理函数；依赖配置的说明在 `get_tools` 时按该次快照生成。执行器按定义中的 `is_async` 选择异步调用或工作线程。
+各能力显式提供 `ToolDefinition`，就近维护说明、schema、可用性探测和处理函数；依赖配置的说明在 `tools.list` 时按该次快照生成。执行器按定义中的 `is_async` 选择异步调用或工作线程。
 
 - `ConfigStore` 每次更新替换配置并推进代次；调用取得独立快照，`ToolContext` 固定 task、call、学习域与取消信号。`ContextVar` 只传递当前作用域，工作线程保留对应上下文，不持有资源注册表。
 - 普通 RPC 与代码子调用共用 `ToolExecutor`，统一工具禁用和配置作用域；代码子调用另有白名单、参数限制和预算。结果只在 RPC 边界进行 JSON 编解码，字符串结果保持字符串。

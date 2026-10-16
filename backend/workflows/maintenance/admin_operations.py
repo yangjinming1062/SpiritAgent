@@ -107,7 +107,7 @@ async def export_user_backup(user_id: int, admin: str, db: AsyncSession) -> File
     except BackupExportFileChangedError as exc:
         Path(tmp).unlink(missing_ok=True)
         logger.info("backup export media changed; retry required", extra={"user_id": user_id})
-        raise RequestError(status_code=409, detail=str(exc)) from exc
+        raise RequestError(status_code=409, message=str(exc)) from exc
     except Exception:
         Path(tmp).unlink(missing_ok=True)
         raise
@@ -122,11 +122,11 @@ async def import_user_backup(
 ) -> UserBackupImportResponse:
     """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。只写入所选分组，不动未勾选内容。"""
     if not file.filename or not file.filename.endswith(".zip"):
-        raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, detail="上传文件必须是 .zip。")
+        raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message="上传文件必须是 .zip。")
     try:
         selected_tables = tables_for_sections(sections)
     except ValueError as exc:
-        raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message=str(exc)) from exc
     resolved_sections = (
         list(BACKUP_SECTION_IDS)
         if sections is None or "all" in {item.strip() for item in sections if item and item.strip()}
@@ -149,14 +149,14 @@ async def import_user_backup(
         try:
             await asyncio.to_thread(extract_backup_archive, zip_path, extract_root)
         except BackupArchiveTooLargeError as exc:
-            raise RequestError(status_code=413, detail=str(exc)) from exc
+            raise RequestError(status_code=413, message=str(exc)) from exc
         except BackupArchiveError as exc:
-            raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message=str(exc)) from exc
 
         try:
             manifest = await asyncio.to_thread(load_manifest, extract_root)
         except ValueError as exc:
-            raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, detail=f"备份无效：{exc}") from exc
+            raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message=f"备份无效：{exc}") from exc
         source_uid = int(manifest["source_user_id"])
         read_result = await asyncio.to_thread(
             load_backup_rows,
@@ -191,8 +191,8 @@ async def import_user_backup(
                     exc_info=True,
                 )
                 if isinstance(exc, OSError):
-                    raise RequestError(status_code=503, detail="目标存储暂时不可用，请稍后重试。") from exc
-                raise RequestError(status_code=400, detail="备份数据无法写入目标账户，请核对恢复范围。") from exc
+                    raise RequestError(status_code=503, message="目标存储暂时不可用，请稍后重试。") from exc
+                raise RequestError(status_code=400, message="备份数据无法写入目标账户，请核对恢复范围。") from exc
             except BaseException as exc:
                 await db.rollback()
                 if restore_result is not None:

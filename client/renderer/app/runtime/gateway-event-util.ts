@@ -5,11 +5,6 @@ export function decodePayload<T extends object>(payload: unknown): Partial<T> {
 
 /** 路由守卫计算出的窗口角色上下文，随事件传给各能力处理器。 */
 export interface EventRouteContext {
-  /** 主窗口或桌面使用代理，不执行宿主专属副作用。 */
-  isProxy: boolean
-}
-
-/** 宿主专属的设备指令：只在精灵窗宿主执行，不广播给代理窗口。 */
-export function isDeviceCommandEvent(type: string): boolean {
-  return type === 'tool.call' || type === 'tool.cancel'
+  /** 精灵视图负责账户级呈现统计与协调。 */
+  isPresentationHost: boolean
 }

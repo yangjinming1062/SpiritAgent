@@ -4,7 +4,7 @@ import { presentationPorts } from '@/shared/presentation-ports'
 import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
-import type { PromptSubmissionResult, SessionMessage } from '@protocol'
+import type { PromptSubmissionRequest, PromptSubmissionResult, SessionMessage } from '@protocol'
 import { errorMessage, sleep } from '@runtime'
 
 import type { ChatMessageController } from './chat-message-controller'
@@ -64,7 +64,7 @@ export function createChatSubmissionController(
     })
 
     try {
-      acceptPromptSubmission(await gateway.request<PromptSubmissionResult>('prompt.submit', params))
+      acceptPromptSubmission(await gateway.request('prompt.submit', params))
     } catch (error) {
       if (
         isCurrent() &&
@@ -100,7 +100,7 @@ export function createChatSubmissionController(
 
     try {
       acceptPromptSubmission(
-        await gateway.request<PromptSubmissionResult>(
+        await gateway.request(
           'prompt.submit',
           preparePromptSubmission({
             session_id: sessionId,
@@ -189,7 +189,10 @@ export function createChatSubmissionController(
     reconcilePersistedMessages(next, boundIds)
   }
 
-  function preparePromptSubmission(params: Record<string, unknown>, bubbleIds: string[] = []): Record<string, unknown> {
+  function preparePromptSubmission(
+    params: Omit<PromptSubmissionRequest, 'request_id'>,
+    bubbleIds: string[] = []
+  ): PromptSubmissionRequest {
     const fingerprint = JSON.stringify(params)
 
     const requestId =
@@ -349,7 +352,7 @@ export function createChatSubmissionController(
 
     const recovery = (async (): Promise<void> => {
       try {
-        const result = await gateway.request<PromptSubmissionResult>('prompt.submit', pending.params)
+        const result = await gateway.request('prompt.submit', pending.params)
 
         if (isCurrent() && state.submission.unconfirmedSubmission === pending) {
           acceptPromptSubmission(result)
@@ -542,7 +545,7 @@ export function createChatSubmissionController(
 
       try {
         presentationPorts().setSpriteState('thinking')
-        acceptPromptSubmission(await g.request<PromptSubmissionResult>('prompt.submit', batchPayload))
+        acceptPromptSubmission(await g.request('prompt.submit', batchPayload))
       } catch (err: unknown) {
         const turnBusy = err instanceof SpiritAgentRpcError && err.code === SpiritAgentRpcErrorCode.TurnBusy
 

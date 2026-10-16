@@ -4,7 +4,6 @@ from typing import Literal
 
 from infrastructure.database import SESSION_LOCAL
 from runtime.paid_work import GenerationWorkPaused
-from sqlalchemy import select
 
 from features.desktop_life.generation import _require_active_job
 from features.desktop_life.models import DesktopVideoAction
@@ -43,22 +42,3 @@ async def inspect_video_queue_owner(
     except GenerationWorkPaused:
         return "paused"
     return "ready"
-
-
-async def has_untracked_video_attempts() -> bool:
-    async with SESSION_LOCAL() as db:
-        actions = await db.scalars(
-            select(DesktopVideoAction).where(DesktopVideoAction.generation_state_json.is_not(None)),
-        )
-        for action in actions:
-            progress = desktop_progress(action)
-            if progress is None or not progress.video_chain_json or progress.download_url or progress.source_path:
-                continue
-            chain = MediaChainState.model_validate_json(progress.video_chain_json)
-            if (
-                not chain.queue_request_id
-                and chain.stop_reason not in {"submit_failed", "provider_failed", "content_policy_blocked"}
-                and (chain.phase == "submitting" or progress.provider_task_id or progress.submission_unknown)
-            ):
-                return True
-    return False

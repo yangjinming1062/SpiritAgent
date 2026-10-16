@@ -4,15 +4,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   MemoryCounts,
   MemoryItem,
-  MemoryListResponse,
   MemoryProfileChange,
   MemoryProfileUpdateRequest,
-  MemoryProfileUpdateResponse,
   SystemPresetSummary,
   UserProfileField
 } from '@protocol'
 
-import type { RemoteGateway } from './api'
+import { requestApi } from '../shared/api'
+
+import type { RemoteApi } from './api'
 import { Empty, focusAfterRender, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
 
 type Status = 'active' | 'candidate' | 'invalidated' | 'expired'
@@ -43,16 +43,18 @@ function updatedLabel(value: string): string {
     : value
 }
 
-async function readProfile(gateway: RemoteGateway): Promise<MemoryItem[]> {
+async function readProfile(api: RemoteApi): Promise<MemoryItem[]> {
   const memories: MemoryItem[] = []
   let total = 0
   do {
-    const result = await gateway.request<MemoryListResponse>('memory.list', {
-      system_preset_id: 'companion',
-      status: 'active',
-      kind: 'user_profile',
-      limit: 500,
-      offset: memories.length
+    const result = await requestApi(api, 'GET /api/memories', {
+      query: {
+        system_preset_id: 'companion',
+        status: 'active',
+        kind: 'user_profile',
+        limit: 500,
+        offset: memories.length
+      }
     })
     memories.push(...result.memories)
     total = result.total
@@ -65,7 +67,7 @@ async function readProfile(gateway: RemoteGateway): Promise<MemoryItem[]> {
 }
 
 async function findSavedMemory(
-  gateway: RemoteGateway,
+  api: RemoteApi,
   preset: string,
   row: MemoryItem,
   content: string
@@ -73,13 +75,15 @@ async function findSavedMemory(
   let offset = 0
   let total = 0
   do {
-    const result = await gateway.request<MemoryListResponse>('memory.list', {
-      system_preset_id: preset,
-      status: 'active',
-      kind: row.context?.startsWith('user_profile:') ? 'user_profile' : 'recall',
-      q: content.trim(),
-      limit: 500,
-      offset
+    const result = await requestApi(api, 'GET /api/memories', {
+      query: {
+        system_preset_id: preset,
+        status: 'active',
+        kind: row.context?.startsWith('user_profile:') ? 'user_profile' : 'recall',
+        q: content.trim(),
+        limit: 500,
+        offset
+      }
     })
     const saved = result.memories.find(value => value.id === row.id)
     if (saved) {
@@ -96,11 +100,11 @@ async function findSavedMemory(
 }
 
 export function MemoryView({
-  gateway,
+  api,
   connected,
   refresh
 }: {
-  gateway: RemoteGateway
+  api: RemoteApi
   connected: boolean
   refresh: number
 }): ReactElement {
@@ -114,13 +118,13 @@ export function MemoryView({
   useEffect(() => {
     if (connected) {
       void runLatest(async () => {
-        const result = await gateway.request<{ presets: SystemPresetSummary[] }>('system.list_presets')
+        const result = await requestApi(api, 'GET /api/presets')
         if (alive()) {
           setPresets(result.presets)
         }
       })
     }
-  }, [alive, connected, gateway, runLatest])
+  }, [alive, connected, api, runLatest])
 
   return (
     <>
@@ -160,21 +164,21 @@ export function MemoryView({
       {!connected ? <Notice>尚未连接。已经输入的修改会保留，连接恢复后可以继续保存。</Notice> : null}
       {error ? <Notice>{error}</Notice> : null}
       {profile ? (
-        <UserProfile connected={connected} gateway={gateway} refresh={refresh} />
+        <UserProfile api={api} connected={connected} refresh={refresh} />
       ) : (
-        <MemoryList connected={connected} gateway={gateway} key={preset} preset={preset} refresh={refresh} />
+        <MemoryList api={api} connected={connected} key={preset} preset={preset} refresh={refresh} />
       )}
     </>
   )
 }
 
 function MemoryList({
-  gateway,
+  api,
   connected,
   preset,
   refresh
 }: {
-  gateway: RemoteGateway
+  api: RemoteApi
   connected: boolean
   preset: string
   refresh: number
@@ -203,13 +207,15 @@ function MemoryList({
 
   const load = useCallback(async () => {
     const revision = ++request.current
-    const result = await gateway.request<MemoryListResponse>('memory.list', {
-      system_preset_id: preset,
-      status,
-      kind: 'recall',
-      q: query,
-      limit: 20,
-      offset
+    const result = await requestApi(api, 'GET /api/memories', {
+      query: {
+        system_preset_id: preset,
+        status,
+        kind: 'recall',
+        q: query,
+        limit: 20,
+        offset
+      }
     })
     if (alive() && revision === request.current) {
       setRows(result.memories)
@@ -223,7 +229,7 @@ function MemoryList({
         setSelected(result.memories[0]?.id ?? null)
       }
     }
-  }, [alive, gateway, offset, preset, query, setOffset, setSelected, status])
+  }, [alive, api, offset, preset, query, setOffset, setSelected, status])
 
   useEffect(() => {
     if (connected) {
@@ -342,8 +348,8 @@ function MemoryList({
                   ← 返回
                 </button>
                 <MemoryEditor
+                  api={api}
                   connected={connected}
-                  gateway={gateway}
                   key={selectedRow.id}
                   onChanged={() => runLatest(load)}
                   preset={preset}
@@ -362,13 +368,13 @@ function MemoryList({
 }
 
 function MemoryEditor({
-  gateway,
+  api,
   connected,
   row,
   preset,
   onChanged
 }: {
-  gateway: RemoteGateway
+  api: RemoteApi
   connected: boolean
   row: MemoryItem
   preset: string
@@ -448,11 +454,13 @@ function MemoryEditor({
             run(async () => {
               let updated: MemoryItem
               try {
-                updated = await gateway.request<MemoryItem>('memory.update', {
-                  memory_id: row.id,
-                  system_preset_id: preset,
-                  expected_version: draft.version,
-                  content: draft.content
+                updated = await requestApi(api, 'PATCH /api/memories/{memory_id}', {
+                  path: { memory_id: row.id },
+                  body: {
+                    system_preset_id: preset,
+                    expected_version: draft.version,
+                    content: draft.content
+                  }
                 })
               } catch (failure) {
                 if (!alive()) {
@@ -460,7 +468,7 @@ function MemoryEditor({
                 }
                 let latest: MemoryItem | null = null
                 try {
-                  latest = await findSavedMemory(gateway, preset, row, draft.content)
+                  latest = await findSavedMemory(api, preset, row, draft.content)
                 } catch {
                   // 核对失败时保留原草稿与版本。
                 }
@@ -508,7 +516,10 @@ function MemoryEditor({
             if (!window.confirm('让伙伴忘记这条记忆？此操作无法撤销。')) {
               return
             }
-            await gateway.request('memory.delete', { memory_id: row.id, system_preset_id: preset })
+            await requestApi(api, 'DELETE /api/memories/{memory_id}', {
+              path: { memory_id: row.id },
+              query: { system_preset_id: preset }
+            })
             if (alive()) {
               setDraft({ content: '', baseContent: '', version: row.content_version })
               await onChanged()
@@ -530,11 +541,11 @@ interface ProfileDraft {
 }
 
 function UserProfile({
-  gateway,
+  api,
   connected,
   refresh
 }: {
-  gateway: RemoteGateway
+  api: RemoteApi
   connected: boolean
   refresh: number
 }): ReactElement {
@@ -556,12 +567,12 @@ function UserProfile({
   const extra = extras.find(row => row.id === selected)
 
   const load = useCallback(async () => {
-    const memories = await readProfile(gateway)
+    const memories = await readProfile(api)
     if (alive()) {
       setRows(memories)
       setLoaded(true)
     }
-  }, [alive, gateway])
+  }, [alive, api])
 
   useEffect(() => {
     if (connected) {
@@ -604,8 +615,8 @@ function UserProfile({
             ← 返回
           </button>
           <MemoryEditor
+            api={api}
             connected={connected}
-            gateway={gateway}
             key={extra.id}
             onChanged={() => runLatest(load)}
             preset="companion"
@@ -713,10 +724,12 @@ function UserProfile({
                       expected_version: draft.versions[key] ?? 0
                     }))
                     try {
-                      const result = await gateway.request<MemoryProfileUpdateResponse>('memory.profile.update', {
-                        system_preset_id: 'companion',
-                        changes
-                      } satisfies MemoryProfileUpdateRequest)
+                      const result = await requestApi(api, 'PATCH /api/memories/profile', {
+                        body: {
+                          system_preset_id: 'companion',
+                          changes
+                        } satisfies MemoryProfileUpdateRequest
+                      })
                       if (alive()) {
                         setRows(result.memories)
                         setDraft(null)
@@ -724,7 +737,7 @@ function UserProfile({
                       }
                     } catch (failure) {
                       try {
-                        const latest = await readProfile(gateway)
+                        const latest = await readProfile(api)
                         if (alive()) {
                           setRows(latest)
                           if (

@@ -44,6 +44,8 @@ from features.media.contracts import RemovedActionVideoTask
 class DesktopVideoError(RuntimeError):
     """可展示的桌面生活错误。"""
 
+    code: str | None = None
+
 
 class DesktopVideoNotFoundError(DesktopVideoError):
     pass
@@ -53,12 +55,16 @@ class DesktopVideoStateError(DesktopVideoError):
     pass
 
 
+class DesktopVideoModeError(DesktopVideoStateError):
+    code = "desktop_mode_inactive"
+
+
 class DesktopVideoAspectRatioError(DesktopVideoStateError):
+    code = "aspect_ratio_mismatch"
+
     def __init__(self, width: int, height: int, target_width: int, target_height: int, media_kind: str) -> None:
         super().__init__("上传内容与桌景画幅不同，请选择处理方式")
-        self.detail = {
-            "error": str(self),
-            "reason": "aspect_ratio_mismatch",
+        self.details = {
             "source_width": width,
             "source_height": height,
             "target_width": target_width,

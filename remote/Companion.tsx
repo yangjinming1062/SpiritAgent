@@ -1,7 +1,9 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { RemoteApi, RemoteGateway } from './api'
+import { requestApi } from '../shared/api'
+
+import type { RemoteApi } from './api'
 import { Assets } from './Assets'
 import { MemoryView } from './Memory'
 import { Profile } from './Profile'
@@ -12,12 +14,10 @@ type Section = 'profile' | 'memory' | 'scene' | 'outfit'
 
 export function Companion({
   api,
-  gateway,
   connected,
   refresh
 }: {
   api: RemoteApi
-  gateway: RemoteGateway
   connected: boolean
   refresh: number
 }): ReactElement {
@@ -52,7 +52,7 @@ export function Companion({
       ) : section === 'memory' ? (
         <>
           <PageHeader subtitle="查看、修改或忘记聊天中记住的事" title="记忆" />
-          <MemoryView connected={connected} gateway={gateway} refresh={refresh} />
+          <MemoryView api={api} connected={connected} refresh={refresh} />
         </>
       ) : (
         <Assets api={api} key={section} kind={section} refresh={refresh} />
@@ -82,20 +82,9 @@ export function DiaryView({
 
   const load = useCallback(async () => {
     const revision = ++request.current
-    const query = new URLSearchParams({ limit: '100' })
-
-    if (from) {
-      query.set('from', from)
-    }
-
-    if (to) {
-      query.set('to', to)
-    }
-
-    const result = await api.request<{
-      entries: Diary[]
-      unread_diary_ids: string[]
-    }>(`/api/companion/diary?${query}`)
+    const result = await requestApi(api, 'GET /api/companion/diary', {
+      query: { from: from || undefined, to: to || undefined, limit: 100 }
+    })
 
     if (alive() && revision === request.current) {
       setEntries(result.entries)
@@ -109,9 +98,7 @@ export function DiaryView({
         document.visibilityState === 'visible' &&
         document.hasFocus()
       ) {
-        await api.request('/api/companion/diary/read', 'POST', {
-          diary_ids: result.unread_diary_ids
-        })
+        await requestApi(api, 'PATCH /api/companion/diary/read-state', { body: { diary_ids: result.unread_diary_ids } })
         if (alive() && revision === request.current) {
           onReadRef.current()
         }

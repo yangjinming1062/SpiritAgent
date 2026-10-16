@@ -1,14 +1,12 @@
 """业务回合使用的连接端口；WebSocket、身份校验和连接释放由入口维护。"""
 
 import asyncio
-from typing import Any, Protocol, TypeGuard
-
-from infrastructure.constants import JSONRPC_INVALID_PARAMS
+from typing import Protocol
 
 from runtime.chat_accounts import AccountChatRuntime
 from runtime.client_context import ChatRequestClientContext
 from runtime.conversation import RuntimeSession
-from runtime.desktop.jsonrpc import Handler, JsonRpcDispatcher, JsonRpcError
+from runtime.desktop.jsonrpc import Handler, JsonRpcDispatcher
 
 
 class GatewaySession(Protocol):
@@ -33,29 +31,4 @@ class GatewaySession(Protocol):
 
 
 class RegisterMethod(Protocol):
-    def __call__(self, method: str, handler: Handler, *, concurrent: bool = False) -> None: ...
-
-
-def require_str(params: dict[str, Any], key: str) -> str:
-    value = params.get(key)
-    if not isinstance(value, str):
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a string")
-    return value
-
-
-def optional_str(params: dict[str, Any], key: str) -> str | None:
-    value = params.get(key)
-    if value is not None and not isinstance(value, str):
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a string")
-    return value
-
-
-def is_nonneg_int(value: object) -> TypeGuard[int]:
-    return type(value) is int and value >= 0
-
-
-def require_nonneg_int(params: dict[str, Any], key: str) -> int:
-    value = params.get(key)
-    if not is_nonneg_int(value):
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a non-negative int")
-    return value
+    def __call__(self, method: str, handler: Handler) -> None: ...

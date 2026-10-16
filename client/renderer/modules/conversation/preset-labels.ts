@@ -19,7 +19,7 @@ export function presetDisplayDescription(
 ): string {
   const descriptions: Record<string, string> = dict.presets.descriptions
 
-  return Object.hasOwn(descriptions, preset.id) ? descriptions[preset.id] : preset.description
+  return Object.hasOwn(descriptions, preset.id) ? descriptions[preset.id] : (preset.description ?? '')
 }
 
 /** 会话的显示标题：固定预设会话（kind=special）显示预设名——库内标题是创建时的中文目录名，不随界面语言变化；其余会话用自身标题。都取不到时返回 null，由调用方选择占位文案。 */

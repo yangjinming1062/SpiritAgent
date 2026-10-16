@@ -10,6 +10,7 @@ from infrastructure.constants import (
 
 _SENSITIVE_QUERY_PARAMS = frozenset(
     {
+        "ticket",
         "access_token",
         "refresh_token",
         "id_token",

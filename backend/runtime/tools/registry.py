@@ -114,7 +114,7 @@ class ToolsRegistry:
         return MANAGER.is_connected(user_id) and bool(self._runner_tools.get(user_id))
 
     def get_all_schemas(self, user_id: int, user_settings: dict[str, Any]) -> list[dict[str, Any]]:
-        # 谓词抛错则隐藏该工具（fail-closed），避免一个 bug 把整次调用拖到 500。toolsets.disabled 对 backend/memory 桶生效；runner 桶在客户端 get_tools 源头已按同一键过滤
+        # 谓词抛错则隐藏该工具（fail-closed），避免一个 bug 把整次调用拖到 500。toolsets.disabled 对 backend/memory 桶生效；runner 桶在客户端 tools.list 源头已按同一键过滤
         excluded = disabled_backend_tool_names(user_settings)
         schemas: list[dict[str, Any]] = []
         for name, tool in self._backend_tools.items():

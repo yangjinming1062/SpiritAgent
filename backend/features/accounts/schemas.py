@@ -71,8 +71,16 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     nightly_activity_enabled: bool | None = None
-    regenerate_token: bool = False
+    is_active: bool | None = None
+    base_url: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class RegenerateActivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     base_url: str | None = Field(default=None, min_length=1, max_length=255)
 
 

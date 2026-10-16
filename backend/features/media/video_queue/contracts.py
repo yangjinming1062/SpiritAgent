@@ -1,9 +1,9 @@
 """视频队列的公开归属、进度和管理契约。"""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 type VideoQueueKind = Literal["media", "action", "desktop"]
 type VideoQueueReadiness = Literal["ready", "pending", "paused", "gone"]
@@ -58,18 +58,24 @@ class VideoQueueList(BaseModel):
     queues: list[VideoQueueLaneView]
 
 
-class VideoQueueResolution(BaseModel):
+class VideoQueueResolutionBase(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     expected_revision: int = Field(ge=0)
-    action: Literal["attach_task", "confirm_finished"]
-    task_id: str | None = Field(default=None, max_length=128)
     note: str = Field(min_length=1, max_length=1000)
 
-    @model_validator(mode="after")
-    def require_task_id(self) -> "VideoQueueResolution":
-        if self.action == "attach_task" and not self.task_id:
-            raise ValueError("补录任务时必须填写任务 ID")
-        if self.action == "confirm_finished" and self.task_id:
-            raise ValueError("确认结束不接受任务 ID")
-        return self
+
+class VideoQueueAttachTask(VideoQueueResolutionBase):
+    action: Literal["attach_task"]
+    task_id: str = Field(min_length=1, max_length=128)
+
+
+class VideoQueueConfirmFinished(VideoQueueResolutionBase):
+    action: Literal["confirm_finished"]
+    task_id: None = None
+
+
+type VideoQueueResolution = Annotated[
+    VideoQueueAttachTask | VideoQueueConfirmFinished,
+    Field(discriminator="action"),
+]

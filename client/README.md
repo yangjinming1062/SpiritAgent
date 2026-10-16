@@ -7,7 +7,7 @@
 | 要修改的功能 | 实现起点与联动 |
 |---|---|
 | 登录、换号与会话过期 | [session.ts](main/backend/session.ts)、[session-runtime.ts](main/backend/session-runtime.ts)、[auth.ts](main/ipc/auth.ts) → [account-lifecycle.ts](renderer/app/workflows/account-lifecycle.ts)、[auth store](renderer/shared/store/auth.ts) |
-| 网关、Runner 派发与断连 | [gateway.ts](main/ipc/gateway.ts)、[runner.ts](main/ipc/runner.ts) → [host-runtime.ts](renderer/app/runtime/host-runtime.ts)、[tool-dispatch.ts](renderer/app/runtime/handlers/tool-dispatch.ts) |
+| 网关、Runner 派发与断连 | [账户网关](main/backend/gateway.ts)、[网关 IPC](main/ipc/gateway.ts)、[Runner 派发](main/ipc/runner.ts)；渲染层见 [gateway-runtime.ts](renderer/app/runtime/gateway-runtime.ts) |
 | 历史、语音与资产缓存 | [session-history.ts](main/ipc/session-history.ts)、[asset-disk-cache.ts](main/ipc/asset-disk-cache.ts)、[voice-playback.ts](main/ipc/voice-playback.ts) → [conversation](renderer/modules/conversation/)、[conversation-speech.ts](renderer/app/workflows/conversation-speech.ts) |
 | 衣柜、着装与逐动作制作 | [appearance-page.tsx](renderer/app/features/appearance/appearance-page.tsx)、[outfit-section.tsx](renderer/app/features/appearance/outfit-section.tsx)、[video-section.tsx](renderer/app/features/appearance/video-section.tsx) → [video-pack-store.ts](renderer/modules/character/rendering/video/video-pack-store.ts)；后端沿 [窗口动作](../backend/features/actions/README.md) 核对 |
 | 人设、记忆与素材复核 | [persona-page.tsx](renderer/app/features/companion/persona-page.tsx)、[memory-section.tsx](renderer/app/features/companion/memory-section.tsx)、[media-review-queue.tsx](renderer/app/features/companion/media-review-queue.tsx) |
@@ -35,9 +35,7 @@
 
 ## 连接与设备就绪
 
-精灵宿主持唯一聊天 WS；每次连接向主进程请求新票据，失败保留原错误。其余窗口用 `IpcGatewayProxy`，各自水合视图和读取斜杠目录。主进程持有代理等待表，宿主失效时收尾全部等待；重连不自动重放业务请求。
-
-Runner 握手、配置与清单读取归 [主进程桥](main/README.md#runner-生命周期)。宿主直接消费就绪事件携带的清单并串行 `tools.sync`，停止或失败时同步空清单；WS 建立后另读当前清单，补齐订阅前的就绪状态。准入、调用恢复及当前能力消费限制统一归 [本机工具契约](../docs/PROTOCOL.md#本机工具)。
+主进程持有唯一聊天 WS 并派发本机调用，窗口通过类型化 IPC 请求与订阅；生命周期与账户隔离见 [账户网关](main/README.md#账户网关与窗口订阅)。Runner 的启动和配置见[主进程桥](main/README.md#runner-生命周期)，准入及调用恢复见[本机工具契约](../docs/PROTOCOL.md#本机工具)。
 
 ## 窗口与主题
 

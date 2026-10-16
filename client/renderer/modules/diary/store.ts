@@ -1,9 +1,12 @@
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { apiSucceeded, captureAuthScope } from '@/shared/lib/authed-api'
 import { isRecord } from '@/shared/lib/is-record'
+import { authedResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { createUnreadMirror } from '@/shared/lib/unread-mirror'
+
+import type { ApiSchemas } from '../../../../shared/api.generated'
 
 export interface DiaryEntry {
   body: string
@@ -15,20 +18,7 @@ export interface DiaryEntry {
   updatedAt: string | null
 }
 
-interface DiaryWire {
-  body: string
-  created_at: string | null
-  entry_date: string
-  id: string
-  post_ids: string[]
-  title: string
-  updated_at: string | null
-}
-
-interface DiaryListWire {
-  entries: DiaryWire[]
-  unread_diary_ids: string[]
-}
+type DiaryWire = ApiSchemas['DiaryEntryResponse']
 
 export const $diaryByDate = atom<Record<string, DiaryEntry>>({})
 export const $diaryLoading = atom(false)
@@ -41,20 +31,18 @@ const deletedIds = new Set<string>()
 function toDiary(w: DiaryWire): DiaryEntry {
   return {
     body: w.body,
-    createdAt: w.created_at,
+    createdAt: w.created_at ?? null,
     date: w.entry_date,
     id: w.id,
-    postIds: w.post_ids,
+    postIds: w.post_ids ?? [],
     title: w.title,
-    updatedAt: w.updated_at
+    updatedAt: w.updated_at ?? null
   }
 }
 
 const diaryUnread = createUnreadMirror({
   scope: 'journal',
-  unreadPath: '/api/companion/diary/unread',
-  readPath: '/api/companion/diary/read',
-  idField: 'diary_ids',
+  resource: 'diary',
   $hasUnread: $diaryHasUnread
 })
 
@@ -73,18 +61,7 @@ export async function hydrateDiary(opts: { from?: string; to?: string } = {}): P
   $diaryLoading.set(true)
 
   try {
-    const params = new URLSearchParams()
-
-    if (opts.from) {
-      params.set('from', opts.from)
-    }
-
-    if (opts.to) {
-      params.set('to', opts.to)
-    }
-
-    const query = params.toString()
-    const result = await authedApi<DiaryListWire>({ path: `/api/companion/diary${query ? `?${query}` : ''}` })
+    const result = await authedResource('GET /api/companion/diary', { query: opts })
 
     if (
       !isCurrent() ||

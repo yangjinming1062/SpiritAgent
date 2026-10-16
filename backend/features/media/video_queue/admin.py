@@ -82,11 +82,11 @@ async def resolve_video_queue(
 ) -> VideoQueueRequestView:
     row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
     if row is None:
-        raise RequestError(status_code=404, detail="视频队列任务不存在")
+        raise RequestError(status_code=404, message="视频队列任务不存在")
     if row.state != "blocked" or row.revision != payload.expected_revision:
-        raise RequestError(status_code=409, detail="任务状态已变化，请刷新队列后重试")
+        raise RequestError(status_code=409, message="任务状态已变化，请刷新队列后重试")
     if payload.action == "attach_task" and row.provider_task_id:
-        raise RequestError(status_code=409, detail="该任务已有远端句柄，请恢复原凭据续查，或核对结束后解除占用")
+        raise RequestError(status_code=409, message="该任务已有远端句柄，请恢复原凭据续查，或核对结束后解除占用")
     row.resolution_note = redact_sensitive_text(payload.note)
     row.resolved_by = admin
     row.revision += 1

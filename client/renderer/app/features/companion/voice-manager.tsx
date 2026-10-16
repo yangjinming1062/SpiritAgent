@@ -15,12 +15,12 @@ import {
   type VoiceDesignPreview,
   voiceSelectionId
 } from '@/modules/speech'
-import { requestGateway } from '@/shared'
 import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { Check } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
 import {
   BTN_PRIMARY,
@@ -119,7 +119,9 @@ function VoiceManagerSession({
     previewAbort.current = null
 
     if (id) {
-      void requestGateway('tts.cancel_voice_operation', { operation_id: id }).catch(failure => {
+      void requestResource('DELETE /api/voices/operations/{operation_id}', {
+        path: { operation_id: encodeURIComponent(id) }
+      }).catch(failure => {
         log.warn('voice-manager', 'Could not cancel voice operation', failure)
       })
     }
@@ -145,8 +147,8 @@ function VoiceManagerSession({
 
     void (async () => {
       const [result, matched] = await Promise.all([
-        fetchVoiceCatalogRaw(requestGateway, locale),
-        preference?.trim() ? matchVoicePreference(requestGateway, preference, locale) : Promise.resolve(null)
+        fetchVoiceCatalogRaw(locale),
+        preference?.trim() ? matchVoicePreference(preference, locale) : Promise.resolve(null)
       ])
 
       if (cancelled || !mounted()) {
@@ -279,11 +281,13 @@ function VoiceManagerSession({
       let designProvider = provider
 
       if (mode !== 'preview') {
-        const generated = await requestGateway<{ prompt: string; provider: string }>('tts.generate_voice_prompt', {
-          operation_id: id,
-          preference: preference?.trim() || undefined,
-          current_prompt: mode === 'feedback' ? description : undefined,
-          feedback: mode === 'feedback' ? feedback.trim() : undefined
+        const generated = await requestResource('POST /api/voices/prompt', {
+          body: {
+            operation_id: id,
+            preference: preference?.trim() || undefined,
+            current_prompt: mode === 'feedback' ? description : undefined,
+            feedback: mode === 'feedback' ? feedback.trim() : undefined
+          }
         })
 
         if (!live()) {
@@ -297,7 +301,7 @@ function VoiceManagerSession({
         setDesignPreview(null)
       }
 
-      const result = await designVoice(requestGateway, description, sampleLine(name), id, designProvider)
+      const result = await designVoice(description, sampleLine(name), id, designProvider)
 
       if (live()) {
         setDesignPreview(result)
@@ -321,9 +325,11 @@ function VoiceManagerSession({
       let voiceId = id
 
       if (preview) {
-        const result = await requestGateway<{ voice_id: string; version: number }>('tts.confirm_voice', {
-          candidate_id: preview.candidateId,
-          expected_version: preview.expectedVersion
+        const result = await requestResource('POST /api/voices/candidates/{candidate_id}/confirmation', {
+          path: { candidate_id: preview.candidateId },
+          body: {
+            expected_version: preview.expectedVersion
+          }
         })
 
         if (!live()) {
@@ -681,7 +687,7 @@ function VoiceManagerSession({
                     disabled={blocked}
                     onClick={() =>
                       void runOperation(async (id, live) => {
-                        const result = await cloneVoice(requestGateway, selectedSample.sample_id, sampleLine(name), id)
+                        const result = await cloneVoice(selectedSample.sample_id, sampleLine(name), id)
 
                         if (live()) {
                           setClonePreview(result)

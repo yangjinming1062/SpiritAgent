@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from infrastructure.database import SESSION_LOCAL, get_db
+from infrastructure.http_contracts import find_http_operation
 from infrastructure.logger import set_request_user_id
 from infrastructure.text import ensure_utc, utc_now
 from runtime.user_maintenance import begin_user_request, end_user_request, is_user_in_maintenance
@@ -15,7 +16,6 @@ from features.accounts.remote.models import RemoteSession
 from features.accounts.remote.security import (
     REMOTE_COOKIE,
     hash_remote_token,
-    remote_content_allowed,
     remote_csrf_token,
     require_remote_origin,
 )
@@ -129,7 +129,9 @@ async def authenticate_remote_session(
     *,
     content_only: bool = False,
 ) -> tuple[AccountIdentity, RemoteDeviceIdentity]:
-    if content_only and not remote_content_allowed(request.url.path, request.method):
+    if content_only and (
+        (operation := find_http_operation(request.url.path, request.method)) is None or not operation.permits("remote")
+    ):
         raise HTTPException(status_code=403, detail="手机授权不能访问此功能。")
     token = request.cookies.get(REMOTE_COOKIE)
     if not token or len(token) > 128:

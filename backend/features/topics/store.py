@@ -394,7 +394,7 @@ async def _feedback_topic(db: AsyncSession, scope: MemoryScope, topic_id: int) -
         select(CompanionTopic).where(CompanionTopic.id == topic_id, *_scope(CompanionTopic, scope), _used(scope)),
     )
     if topic is None:
-        raise RequestError(status_code=404, detail="话题不存在或尚未分享")
+        raise RequestError(status_code=404, message="话题不存在或尚未分享")
     return topic
 
 
@@ -416,7 +416,7 @@ async def get_topic_feedback(
         for topic_id, value, updated_at in rows
     }
     if any(topic_id not in snapshots for topic_id in ids):
-        raise RequestError(status_code=404, detail="话题不存在或尚未分享")
+        raise RequestError(status_code=404, message="话题不存在或尚未分享")
     return [snapshots[topic_id] for topic_id in ids]
 
 

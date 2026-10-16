@@ -1,5 +1,6 @@
 import { atom, computed, map } from 'nanostores'
 
+import type { PromptSubmissionRequest } from '@protocol'
 import type { CacheUsageSummary, SessionRuntimeInfo } from '@protocol'
 
 import { normalizeChatSessionKind, toSessionSettings } from './chat-message-rules'
@@ -19,7 +20,7 @@ interface PromptSubmissionState {
   activeRequestId: string | null
   settledRequestId: string | null
   submissionRecovery: Promise<void> | null
-  unconfirmedSubmission: { params: Record<string, unknown>; fingerprint: string; requestId: string } | null
+  unconfirmedSubmission: { params: PromptSubmissionRequest; fingerprint: string; requestId: string } | null
 }
 
 // 每个会话只有这一份状态；控制器持有同一对象，不复制消息或在途提交。

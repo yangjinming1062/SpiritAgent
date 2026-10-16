@@ -7,7 +7,8 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 
-from features.memory.memory_learning import MemoryRecord, memory_record
+from features.memory.contracts import MemoryConflictError, MemoryListItem
+from features.memory.memory_learning import memory_record
 from features.memory.memory_namespaces import KIND_TO_PREFIX, RECALL_TAGS, participates_in_recall
 from features.memory.memory_store import (
     active_memory_filter,
@@ -25,12 +26,6 @@ from features.memory.prompts import CONTEXT_LABELS
 
 _LIST_DEFAULT_LIMIT = 100
 _LIST_MAX_LIMIT = 500
-
-
-class MemoryListItem(MemoryRecord):
-    system_preset_id: str
-    importance: float
-    created_at: str
 
 
 def _list_item(row: Memory) -> MemoryListItem:
@@ -144,7 +139,7 @@ async def update_user_profile(scope: MemoryScope, changes: list[MemoryProfileCha
         for change in changes:
             row = current.get(CONTEXT_LABELS[change.field])
             if (row.content_version if row is not None else 0) != change.expected_version:
-                raise ValueError("这条资料已在其他设备更新，请刷新后核对再保存。")
+                raise MemoryConflictError("这条资料已在其他设备更新，请刷新后核对再保存。")
         for change in changes:
             context = CONTEXT_LABELS[change.field]
             value = values[change.field]
@@ -191,7 +186,7 @@ async def update_memory(
         if row is None:
             return None
         if row.content_version != expected_version:
-            raise ValueError("这条记忆已在其他设备更新，请刷新后再保存。")
+            raise MemoryConflictError("这条记忆已在其他设备更新，请刷新后再保存。")
         if (row.context or "").startswith("diary:"):
             raise ValueError("Published diary memories are read-only")
         cap = (

@@ -11,6 +11,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.responses import Response
 
+from entrypoints.http.errors import error_response
+
 logger = get_logger(__name__)
 
 
@@ -66,11 +68,8 @@ async def stash_user_id_middleware(request: Request, call_next: Callable[[Reques
 
 
 async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
-    """429 响应：标准 {error, reason, status} 信封 + Retry-After（从限流项实际窗口推导，与上游 429 路径统一 reason 枚举）。"""
+    """统一错误信封，Retry-After 使用当前限流窗口。"""
     retry_after = int(exc.limit.limit.get_expiry())
-    response = JSONResponse(
-        status_code=429,
-        content={"error": "Rate limit exceeded", "reason": "rate_limit", "status": 429},
-    )
+    response = error_response(429, "Rate limit exceeded")
     response.headers["Retry-After"] = str(retry_after)
     return response

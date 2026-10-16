@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { InlineMedia, useResolvedMediaSrc } from '@/modules/media'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
-import { backendApi } from '@/shared/platform/desktop'
+import { requestResource } from '@/shared/lib/resource-request'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 import type { ChatMediaItem } from '@protocol'
@@ -54,11 +54,9 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
   useEffect(() => {
     let mounted = true
     const isLive = beginAsync()
-    void backendApi()
-      .api<{ status: string; reason: string }>({
-        path: `/api/companion/media-reviews/${item.review_id}`,
-        method: 'GET'
-      })
+    void requestResource('GET /api/companion/media-reviews/{review_id}', {
+      path: { review_id: Number(item.review_id) }
+    })
       .then(result => {
         if (mounted && isLive()) {
           setStatus(result.status === 'accepted' ? 'accepted' : result.status === 'rejected' ? 'rejected' : 'pending')
@@ -90,10 +88,9 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
     setError('')
 
     try {
-      const result = await backendApi().api<{ status: string }>({
-        path: `/api/companion/media-reviews/${item.review_id}/${decision}`,
-        method: 'POST',
-        body: {}
+      const result = await requestResource('POST /api/companion/media-reviews/{review_id}/decision', {
+        path: { review_id: Number(item.review_id) },
+        body: { decision }
       })
 
       if (!isLive()) {
@@ -108,9 +105,8 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
       }
 
       try {
-        const current = await backendApi().api<{ status: string }>({
-          path: `/api/companion/media-reviews/${item.review_id}`,
-          method: 'GET'
+        const current = await requestResource('GET /api/companion/media-reviews/{review_id}', {
+          path: { review_id: Number(item.review_id) }
         })
 
         if (!isLive()) {

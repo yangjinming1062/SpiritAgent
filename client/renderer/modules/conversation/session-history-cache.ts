@@ -228,41 +228,31 @@ function mergeIncrementalHistory(
   return [...state.messages]
 }
 
-/** 本地秒开后用服务端增量/全量追上：锚点走 after_id；last_seq 只能由调用方以活动聊天列表的水位（gateway.lastReceivedSeq）传入——缓存不追踪实时回合，拿缓存 currentSeq 当 last_seq 会让服务端对陈旧水位重放帧，活列表上重复追加。 */
+/** 本地缓存按消息锚点增量恢复；替换历史和待完成媒体要求回源。 */
 export async function syncSessionHistory(params: {
-  lastSeq?: number
-  streamId?: string
   sessionId: string
-  request: (body: {
-    after_id?: number
-    last_seq?: number
-    stream_id?: string
-    history_revision?: number
-  }) => Promise<SessionResumeResponse>
+  request: (body: { after_id?: number; history_revision?: number }) => Promise<SessionResumeResponse>
 }): Promise<SessionResumeResponse & { current_seq: number; kind: 'full' | 'incremental' | 'noop' }> {
   const epoch = currentClearEpoch()
   const authSessionId = currentAuthSessionId()
   const local = memoryBySession.get(params.sessionId)
   let invalidation = invalidations.get(params.sessionId)
   let historyRevision = historyRevisions.get(params.sessionId)
-  const body: { after_id?: number; last_seq?: number; stream_id?: string; history_revision?: number } = {}
+  const body: { after_id?: number; history_revision?: number } = {}
 
   if (local?.historyRevision !== undefined) {
     body.history_revision = local.historyRevision
   }
 
   // 离线期间的视频完成事件可能已过重放窗口，增量锚点无法发现原等待卡片的变化。
-  const hasPendingMedia = local?.messages.some(message =>
-    message.bubbles?.some(bubble => bubble.type === 'video' && bubble.status === 'pending')
+  const hasPendingMedia = local?.messages.some(
+    message =>
+      message.content_type === 'companion_reply' &&
+      message.bubbles.some(bubble => bubble.type === 'video' && bubble.status === 'pending')
   )
 
   if (!invalidation && !hasPendingMedia && local?.lastMessageId && local.lastMessageId > 0) {
     body.after_id = local.lastMessageId
-  }
-
-  if (!invalidation && params.lastSeq && params.lastSeq > 0) {
-    body.last_seq = params.lastSeq
-    body.stream_id = params.streamId
   }
 
   let res = await params.request(body)

@@ -8,14 +8,15 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 from features.accounts.deps import is_remote_session_active
-from features.accounts.remote.security import consume_remote_ws_ticket
+from features.accounts.gateway import GatewayIdentity
+from features.accounts.session_operations import is_login_active
 from features.companion.proactive_runtime import observe_companion_presence
 from features.conversation.gateway_queries import ensure_main_conversation
-from features.conversation.request_contracts import ImageAttachResponse
 from infrastructure.config import SETTINGS
 from infrastructure.constants import JSONRPC_INVALID_PARAMS
 from infrastructure.correlation import REQUEST_ID_HEADER, adopt_inbound
 from infrastructure.logger import get_logger
+from pydantic import ValidationError
 from runtime.chat_accounts import (
     AccountChatRuntime,
     acquire_account_runtime,
@@ -30,8 +31,6 @@ from runtime.desktop.ipc import discard_user, resolve_future
 from runtime.desktop.jsonrpc import JsonRpcDispatcher, JsonRpcError
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import interrupt_user_event_tasks
-from runtime.gateway_contracts import require_nonneg_int as _require_nonneg_int
-from runtime.gateway_contracts import require_str as _require_str
 from runtime.task_supervisor import TASK_SUPERVISOR
 from runtime.tools.registry import REGISTRY
 from runtime.user_maintenance import is_user_in_maintenance
@@ -39,10 +38,8 @@ from workflows.chat.gateway import register_chat_handlers
 from workflows.companion.gateway import forget_gateway_state
 from workflows.companion.gateway import register_handlers as register_presence_handlers
 
-from entrypoints.desktop.appearance import register_handlers as register_appearance_handlers
-from entrypoints.desktop.auth import decode_ws_ticket, is_ws_login_active
 from entrypoints.desktop.companion import register_handlers as register_companion_handlers
-from entrypoints.desktop.memory import register_handlers as register_memory_handlers
+from entrypoints.desktop.contracts import RPC_CONTRACTS
 
 logger = get_logger(__name__)
 
@@ -82,7 +79,7 @@ class UserGatewaySession:
             return False
         if self.device_id is not None:
             return await is_remote_session_active(self.user_id, self.device_id)
-        return await is_ws_login_active(self.user_id, self.login_record_id)
+        return await is_login_active(self.user_id, self.login_record_id)
 
     def track(self, task: asyncio.Task) -> None:
         self.background_tasks.add(task)
@@ -151,7 +148,7 @@ async def _terminate_user_gateway_locked(
     _USER_SESSIONS.pop(user_id, None)
     if (websocket := MANAGER.active_connections.get(user_id)) is not None:
         with contextlib.suppress(Exception):
-            await websocket.close(code=1008)
+            await websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
         MANAGER.disconnect(websocket, user_id)
     observe_companion_presence(user_id, False, presentation_mode=None)
     await _cancel_tasks([session.grace_timer_task, *session.background_tasks])
@@ -176,7 +173,7 @@ async def terminate_remote_sessions(user_id: int, device_id: int | None = None) 
             _REMOTE_SESSIONS[user_id].pop(connection_id, None)
             if session.websocket is not None:
                 with contextlib.suppress(Exception):
-                    await session.websocket.close(code=1008)
+                    await session.websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
             await _cancel_tasks(list(session.background_tasks))
             await MANAGER.unregister_remote(user_id, connection_id)
             release_account_runtime(user_id, connection_id)
@@ -248,16 +245,15 @@ async def _read_socket(websocket: WebSocket, session: UserGatewaySession) -> Non
         await _cancel_tasks(list(requests))
 
 
-async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
+async def handle_chat_websocket(websocket: WebSocket, ticket: GatewayIdentity) -> None:
     adopt_inbound(websocket.headers.get(REQUEST_ID_HEADER))
-    ticket = decode_ws_ticket(token)
-    if ticket is None:
+    if ticket.login_record_id is None:
         await websocket.close(code=1008)
         return
     user_id = ticket.user_id
     async with _user_lock(user_id):
-        if is_user_in_maintenance(user_id) or not await is_ws_login_active(user_id, ticket.login_record_id):
-            await websocket.close(code=1008)
+        if is_user_in_maintenance(user_id) or not await is_login_active(user_id, ticket.login_record_id):
+            await websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
             return
         session = _USER_SESSIONS.get(user_id)
         if session is not None and (session.login_record_id != ticket.login_record_id or MANAGER.is_connected(user_id)):
@@ -310,10 +306,9 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
             session.grace_timer_task = task
 
 
-async def handle_remote_websocket(websocket: WebSocket, token: str) -> None:
+async def handle_remote_websocket(websocket: WebSocket, identity: GatewayIdentity) -> None:
     adopt_inbound(websocket.headers.get(REQUEST_ID_HEADER))
-    identity = consume_remote_ws_ticket(token)
-    if identity is None:
+    if identity.device_id is None:
         await websocket.close(code=1008)
         return
     user_id = identity.user_id
@@ -321,7 +316,7 @@ async def handle_remote_websocket(websocket: WebSocket, token: str) -> None:
     connection_id: str | None = None
     async with _user_lock(user_id):
         if is_user_in_maintenance(user_id) or not await is_remote_session_active(user_id, identity.device_id):
-            await websocket.close(code=1008)
+            await websocket.close(code=1012 if is_user_in_maintenance(user_id) else 1008)
             return
         await websocket.accept()
         try:
@@ -334,7 +329,7 @@ async def handle_remote_websocket(websocket: WebSocket, token: str) -> None:
                 device_id=identity.device_id,
                 dispatcher=JsonRpcDispatcher(_ws_sender(websocket)),
                 account=account,
-                session_client_context=ChatRequestClientContext(platform_hints="SpiritAgentRemote mobile browser"),
+                session_client_context=identity.client_context,
                 connection_id=connection_id,
                 websocket=websocket,
             )
@@ -369,62 +364,51 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher = session.dispatcher
     replay_buffer = dispatcher.replay_buffer
     user_id = session.user_id
-    remote_methods = {
-        "session.ack",
-        "session.ping",
-        "session.get_main",
-        "session.create",
-        "session.resume",
-        "session.history",
-        "session.interrupt",
-        "session.set_settings",
-        "session.compress_context",
-        "session.undo_to_message",
-        "session.fork",
-        "system.list_presets",
-        "prompt.submit",
-        "command.list",
-        "command.dispatch",
-        "memory.list",
-        "memory.update",
-        "memory.delete",
-        "memory.profile.update",
-    }
 
-    def register(method: str, handler: Callable[[dict], Awaitable[Any]], *, concurrent: bool = False) -> None:
-        if session.device_id is None or method in remote_methods:
-            dispatcher.register(method, handler, concurrent=concurrent)
+    def register(method: str, handler: Callable[[dict], Awaitable[Any]]) -> None:
+        contract = RPC_CONTRACTS[method]
+        if session.device_id is not None and not contract.remote:
+            return
+
+        async def validated(params: dict[str, Any]) -> Any:
+            try:
+                request = contract.request.model_validate(params)
+            except ValidationError as exc:
+                raise JsonRpcError(
+                    JSONRPC_INVALID_PARAMS,
+                    "Invalid request parameters",
+                    details={
+                        "validation": exc.errors(include_input=False, include_url=False, include_context=False),
+                    },
+                ) from exc
+            return await handler(request.model_dump(exclude_unset=True))
+
+        dispatcher.register(method, validated, concurrent=contract.concurrent)
 
     async def session_ack(params: dict) -> dict:
-        seq = _require_nonneg_int(params, "seq")
+        seq = params["seq"]
         return {"acked": seq, "pruned": replay_buffer.ack(seq)}
 
-    register("session.ack", session_ack, concurrent=True)
+    register("session.ack", session_ack)
 
     async def session_ping(_params: dict) -> dict:
         return {}
 
-    register("session.ping", session_ping, concurrent=True)
+    register("session.ping", session_ping)
 
     async def tool_result_handler(params: dict) -> dict:
-        call_id = params.get("call_id")
-        result = params.get("result")
-        if not isinstance(call_id, str):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "call_id must be a string")
+        call_id = params["call_id"]
+        result = params["result"]
         if not isinstance(result, str):
             result = json.dumps(result, ensure_ascii=False)
         if not resolve_future(user_id, call_id, result):
             logger.warning("Future not found or already done", extra={"user_id": user_id, "call_id": call_id})
         return {}
 
-    register("tool.result", tool_result_handler, concurrent=True)
+    register("tool.result", tool_result_handler)
 
     async def tools_sync(params: dict) -> dict:
-        tools = params.get("tools", [])
-        if not isinstance(tools, list):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "tools must be a list")
-        if not all(isinstance(tool, dict) and isinstance(tool.get("name"), str) and tool["name"] for tool in tools):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "each tool must be an object with a non-empty name")
+        tools = params["tools"]
         accepted: list[dict[str, Any]] = []
         for tool in tools:
             # 与服务端工具同名的本机工具永远派发不到（服务端优先），一并下发还会让模型看到重名工具。
@@ -438,17 +422,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         REGISTRY.update_runner_tools(user_id, accepted)
         return ToolsSyncResult(count=len(accepted)).model_dump()
 
-    register("tools.sync", tools_sync, concurrent=True)
-
-    async def image_attach(params: dict) -> dict:
-        # 路径属于用户本机，后端视为不透明引用，LLM 通过 Runner 文件工具读取。
-        path = _require_str(params, "path").replace("\\", "/")
-        return ImageAttachResponse(ref_text=f"@file:{path}").model_dump()
-
-    register("image.attach", image_attach)
+    register("tools.sync", tools_sync)
 
     register_chat_handlers(session, register)
-    register_memory_handlers(session, register)
-    register_appearance_handlers(session, register)
     register_companion_handlers(session, register)
     register_presence_handlers(session, register)

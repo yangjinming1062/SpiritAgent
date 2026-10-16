@@ -1,7 +1,7 @@
 import { setCompanionLifecycle } from '@/modules/character'
-import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
-import { requestGateway } from '@/shared/lib/gateway-request'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import { desktopEvents } from '@/shared/platform/desktop'
 import { applyAuthBroadcast, expireSession, hydrateAuth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
@@ -34,35 +34,21 @@ export function createAccountLifecycleRuntime() {
     }
 
     let complete: boolean | undefined
-    const rest = await authedApi<OnboardingState>({ path: '/api/companion/onboarding/state' })
+    let state: OnboardingState | undefined
+
+    try {
+      state = await requestResource('GET /api/companion/onboarding')
+    } catch (error) {
+      if (isCurrent()) {
+        log.warn('account-lifecycle', 'onboarding state failed', error)
+      }
+    }
 
     if (!isCurrent()) {
       return
     }
 
-    if (rest.ok) {
-      complete = rest.value?.complete
-    } else if (rest.reason === 'unauth') {
-      return
-    } else {
-      log.warn('account-lifecycle', 'onboarding state REST failed', rest.error)
-
-      try {
-        const state = await requestGateway<OnboardingState>('onboarding.get_state', {})
-
-        if (!isCurrent()) {
-          return
-        }
-
-        complete = state?.complete
-      } catch (error) {
-        if (!isCurrent()) {
-          return
-        }
-
-        log.warn('account-lifecycle', 'onboarding state gateway failed', error)
-      }
-    }
+    complete = state?.complete
 
     // 查询失败保留已展示状态，网关连通后重查。
     unresolved = typeof complete !== 'boolean'

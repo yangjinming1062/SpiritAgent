@@ -12,6 +12,7 @@ import {
 } from '@ipc/contracts'
 import { clamp, errorMessage } from '@runtime'
 
+import type { RunnerRequester } from '../../../shared/runner'
 import { isSenderWindow } from '../security/ipc-trust'
 import {
   atomicWriteFile,
@@ -87,7 +88,7 @@ interface SpriteIpcDeps {
   screen: Screen
   /** 窗口场景取自 Runner 的 system.get_windows；Runner 未连接时为 null。 */
   getRunnerBridge: () => null | {
-    dispatch: (method: string, params: Record<string, unknown>, opts: { timeoutMs: number }) => Promise<unknown>
+    dispatch: RunnerRequester
   }
 }
 
@@ -134,7 +135,7 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
     let snapshot: unknown
 
     try {
-      snapshot = await bridge.dispatch('execute_tool', { args: {}, name: 'system.get_windows' }, { timeoutMs: 1500 })
+      snapshot = await bridge.dispatch('tools.execute', { args: {}, name: 'system.get_windows' }, { timeoutMs: 1500 })
 
       if (typeof snapshot === 'string') {
         snapshot = JSON.parse(snapshot) as unknown

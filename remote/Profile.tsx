@@ -264,7 +264,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
         <h2>{name}</h2>
         {persona?.current_mood ? <p>{persona.current_mood}</p> : null}
         <div className="tag-list">
-          {persona?.personality_tags.map(tag => (
+          {persona?.personality_tags?.map(tag => (
             <span className="pill" key={tag}>
               {tag}
             </span>

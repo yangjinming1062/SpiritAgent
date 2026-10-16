@@ -31,7 +31,6 @@ export {
   resolvePortraitUrl,
   saveDraftRefImage
 } from './avatar-image'
-export { awaitAvatarRegeneration, resolveAvatarRegeneration } from './avatar-regen-store'
 export { $avatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
 export {
   $characterCard,

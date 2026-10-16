@@ -16,6 +16,7 @@ import { broadcastToAllWindows, createSerialQueue } from '../shared/utils'
 
 interface AuthBroadcasterDeps {
   autoStartBridge: () => void
+  onGatewayAuthChanged?: () => void
   configSync: { handleAuthUserChanged: (accountId: null | string) => Promise<void> }
   ensureBackendSession: () => BackendSessionPort
   log: (message: string) => void
@@ -40,6 +41,7 @@ export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaste
   }
 
   async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, removedAccountId?: string): Promise<void> {
+    deps.onGatewayAuthChanged?.()
     deps.rebuildTrayMenu()
 
     const live = snapshot?.hasToken ? snapshot : null

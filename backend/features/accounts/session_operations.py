@@ -21,11 +21,11 @@ async def activate_account(
     try:
         _base_url, raw_token = decode_activation_code(payload.code)
     except Exception:
-        raise RequestError(status_code=401, detail="激活码格式无效。") from None
+        raise RequestError(status_code=401, message="激活码格式无效。") from None
     token_hash = hash_activation_token(raw_token)
     user = await db.scalar(select(User).where(User.activation_token_hash == token_hash, User.is_active.is_(True)))
     if user is None:
-        raise RequestError(status_code=401, detail="激活码无效。")
+        raise RequestError(status_code=401, message="激活码无效。")
     now = utc_now()
     await db.execute(
         update(LoginRecord)
@@ -63,7 +63,7 @@ async def refresh_login(
     )
     user = await db.get(User, user_id)
     if login is None or user is None:
-        raise RequestError(status_code=401, detail="当前会话已失效，请重新登录")
+        raise RequestError(status_code=401, message="当前会话已失效，请重新登录")
     context = payload.client_context.model_dump(exclude_none=True) if payload.client_context else None
     token, expires_in, token_jti = create_access_token(user_id=user.id, username=user.username, client_context=context)
     login.token_jti = token_jti
@@ -80,7 +80,7 @@ async def logout_login(user_id: int, login_record_id: int, db: AsyncSession) -> 
         select(LoginRecord).where(LoginRecord.id == login_record_id, LoginRecord.user_id == user_id),
     )
     if login is None:
-        raise RequestError(status_code=401, detail="当前会话已失效，请重新登录")
+        raise RequestError(status_code=401, message="当前会话已失效，请重新登录")
     login.is_active = False
     login.logout_at = utc_now()
     db.add(login)

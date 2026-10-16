@@ -1,6 +1,6 @@
 /** 动作模块类型：播放指令、回执、目录条目与动作包响应。IPC 契约类型仍归 shared/ipc；此处仅模块内类型。 */
 
-import type { VideoQueueState } from '@protocol'
+import type { ApiSchemas } from '../../../../../shared/api.generated'
 
 export type NormalizedRect = readonly [left: number, top: number, right: number, bottom: number]
 
@@ -74,35 +74,6 @@ export interface ActionPlayInstance {
   readonly generation: number
 }
 
-interface ActionWireBase {
-  action: string
-  name: string
-  status: string
-  stage: string
-  error: string | null
-  media_url: string | null
-  current_media_url: string | null
-  pending_review: { id: number; media_type: 'image' | 'video'; media_url: string } | null
-  has_ready_asset: boolean
-  can_regenerate: boolean
-  feedback?: string
-  peek_geometry?: PeekGeometry | null
-  video_queue?: VideoQueueState | null
-}
+export type ActionWire = ApiSchemas['VideoActionImageResponse'] | ApiSchemas['VideoActionVideoResponse']
 
-export type ActionWire = ActionWireBase & ({ media_type: 'image' } | { media_type: 'video'; motion_prompt: string })
-
-/** 动作包响应（`/api/companion/video-packs`：列表取 `packs`，generate / retry 返回单个包）。 */
-export interface ActionPackWire {
-  id: number
-  outfit_id: number | null
-  error: string | null
-  actions: ActionWire[]
-  status: string
-  active: boolean
-  identity_review: 'none' | 'pass' | 'review' | 'accepted'
-  manifest_url: string | null
-  can_retry: boolean
-  can_regenerate: boolean
-  can_regenerate_pack: boolean
-}
+export type ActionPackWire = ApiSchemas['VideoPackResponse']

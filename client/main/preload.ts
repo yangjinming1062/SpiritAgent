@@ -4,11 +4,10 @@ import {
   type AttachmentVideoUploadPayload,
   type AudioUploadPayload,
   type DesktopActivatePayload,
+  type DesktopApiResult,
   type DesktopAuthBroadcast,
-  type DesktopGatewayEvent,
-  type DesktopGatewayRpcRequest,
-  type DesktopGatewayRpcResponse,
-  type DesktopGatewayState,
+  type DesktopGatewayRequest,
+  type DesktopGatewayRpcResult,
   type DesktopLogoutPayload,
   type DesktopPrefsHydrated,
   type DesktopRunnerStatusEvent,
@@ -28,7 +27,6 @@ import {
   type IpcInvokeContract,
   type MediaSttPayload,
   type MediaTtsPayload,
-  type RunnerCallRequest,
   type RunnerConfigPatch,
   type SessionHistorySnapshot,
   type SpiritAgentApiRequest,
@@ -40,6 +38,7 @@ import {
   type VoiceSampleUploadPayload
 } from '@ipc/contracts'
 
+import type { RpcMethod, RpcResponse } from '../../shared/gateway'
 import type { DesktopBridge, DesktopFileBridge } from '../shared/ipc/bridge'
 
 type InvokeChannel = keyof IpcInvokeContract
@@ -143,7 +142,7 @@ const desktopBridge = {
     onNavigate: (cb: EventCallback<typeof IPC.event.desktopNavigate>) => subscribe(IPC.event.desktopNavigate, cb)
   },
   activate: (payload: DesktopActivatePayload) => invoke(IPC.invoke.authActivate, payload),
-  api: <T = unknown>(request: SpiritAgentApiRequest) => invoke(IPC.invoke.api, request) as Promise<T>,
+  api: <T = unknown>(request: SpiritAgentApiRequest) => invoke(IPC.invoke.api, request) as Promise<DesktopApiResult<T>>,
   apiAsset: (request: InvokePayload<typeof IPC.invoke.apiAsset>) => invoke(IPC.invoke.apiAsset, request),
   apiAssetBuffer: (request: InvokePayload<typeof IPC.invoke.apiAssetBuffer>) =>
     invoke(IPC.invoke.apiAssetBuffer, request),
@@ -163,18 +162,13 @@ const desktopBridge = {
     onChanged: (callback: EventCallback<typeof IPC.event.voicePlaybackChanged>) =>
       subscribe(IPC.event.voicePlaybackChanged, callback)
   },
-  getGatewayWsUrl: () => invoke(IPC.invoke.gatewayWsUrl),
-  gatewayRequest: (payload: InvokePayload<typeof IPC.invoke.gatewayRequest>) =>
-    invoke(IPC.invoke.gatewayRequest, payload),
-  gatewayGetState: () => invoke(IPC.invoke.gatewayGetState),
-  gatewayBroadcastState: (state: DesktopGatewayState) => ipcRenderer.send(IPC.send.gatewayBroadcastState, { state }),
-  gatewayBroadcastEvent: (event: DesktopGatewayEvent) => ipcRenderer.send(IPC.send.gatewayBroadcastEvent, { event }),
-  gatewayRpcReply: (payload: DesktopGatewayRpcResponse) => ipcRenderer.send(IPC.send.gatewayRpcReply, payload),
+  gatewayRequest: <K extends RpcMethod>(payload: DesktopGatewayRequest<K>) =>
+    invoke(IPC.invoke.gatewayRequest, payload) as Promise<DesktopGatewayRpcResult<RpcResponse<K>>>,
+  gatewayGetState: (authSessionId: string) => invoke(IPC.invoke.gatewayGetState, authSessionId),
   onGatewayStateChanged: (cb: EventCallback<typeof IPC.event.gatewayStateChanged>) =>
     subscribe(IPC.event.gatewayStateChanged, cb),
   onGatewayEvent: (cb: EventCallback<typeof IPC.event.gatewayEvent>) => subscribe(IPC.event.gatewayEvent, cb),
-  onGatewayRpcDispatch: (cb: (payload: DesktopGatewayRpcRequest) => void) =>
-    subscribe(IPC.event.gatewayRpcDispatch, cb),
+
   getSession: () => invoke(IPC.invoke.authGetSession),
   getVersion: () => invoke(IPC.invoke.version),
   log: (payload: InvokePayload<typeof IPC.invoke.logEmit>) => invoke(IPC.invoke.logEmit, payload),
@@ -202,14 +196,12 @@ const desktopBridge = {
   uploadVideoForAttach: (payload: AttachmentVideoUploadPayload) => invoke(IPC.invoke.mediaVideoUpload, payload),
   uploadDesktopVideo: (payload: DesktopVideoUploadPayload) => invoke(IPC.invoke.mediaDesktopVideoUpload, payload),
   refreshSession: () => invoke(IPC.invoke.authRefresh),
-  runnerCancel: (callId: string) => invoke(IPC.invoke.runnerCancel, callId),
   runnerConfig: {
     patch: (patch: RunnerConfigPatch) => invoke(IPC.invoke.runnerConfigPatch, patch),
     read: () => invoke(IPC.invoke.runnerConfigRead)
   },
   runnerGetState: () => invoke(IPC.invoke.runnerGetState),
   runnerGetTools: () => invoke(IPC.invoke.runnerGetTools),
-  runnerDispatchCall: (request: RunnerCallRequest) => invoke(IPC.invoke.runnerDispatchCall, request),
   runnerInvoke: (name: string, args: Record<string, unknown>) => invoke(IPC.invoke.runnerInvoke, name, args),
   selectPaths: (options?: SpiritAgentSelectPathsOptions) => invoke(IPC.invoke.selectPaths, options),
   prefs: {

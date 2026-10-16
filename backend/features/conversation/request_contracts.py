@@ -9,10 +9,6 @@ class ChatAttachment(BaseModel):
     file_url: str = Field(min_length=1)
 
 
-class ImageAttachResponse(BaseModel):
-    ref_text: str
-
-
 class ChatMessageRequest(BaseModel):
     content: str
     attachments: list[ChatAttachment] | None = None
@@ -26,7 +22,7 @@ class ChatRequest(BaseModel):
 
 
 class PromptPresetSummary(BaseModel):
-    """``system.list_presets`` 返回的精简元数据；不含 body（预设体永不下发到客户端）。"""
+    """预设目录的精简元数据；不含 body（预设体永不下发到客户端）。"""
 
     id: str
     name: str

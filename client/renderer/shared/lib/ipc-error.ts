@@ -1,20 +1,7 @@
-import { errorMessage } from '@runtime'
+import { ApiError } from '../../../../shared/errors'
 
-import { safeJsonParse } from './safe-json'
-
-const IPC_ENVELOPE_RE = /Error invoking remote method '[^']+': (?:Error|HttpError): ([\s\S]+)$/
-
-export function unwrapIpcErrorMessage(error: unknown): string {
-  const raw = errorMessage(error)
-
-  return raw.match(IPC_ENVELOPE_RE)?.[1] ?? raw
-}
-
-/** 主进程错误文案以 `NNN ` 状态码开头；没有状态码时返回 null。 */
 export function ipcErrorStatus(error: unknown): number | null {
-  const status = /^(\d{3}) /.exec(unwrapIpcErrorMessage(error))?.[1]
-
-  return status ? Number(status) : null
+  return error instanceof ApiError ? error.status : null
 }
 
 export function isClientErrorIpc(error: unknown): boolean {
@@ -23,23 +10,6 @@ export function isClientErrorIpc(error: unknown): boolean {
   return status !== null && status >= 400 && status < 500
 }
 
-// 解析主进程错误 detail 的公开文案（形如 `NNN /api/path: {"detail":{"error":...}}` 或 `{"detail":...}`，对象取 error）；解析不了用调用方兜底。
 export function backendDetailMessage(error: unknown, fallback: string): string {
-  const detail = backendErrorDetail(error)
-
-  const message =
-    typeof detail === 'string'
-      ? detail
-      : detail && typeof detail === 'object' && 'error' in detail
-        ? detail.error
-        : null
-
-  return typeof message === 'string' && message ? message : fallback
-}
-
-/** Electron serializes errors as messages; preserve the backend detail object when restoring it. */
-export function backendErrorDetail(error: unknown): unknown {
-  const raw = unwrapIpcErrorMessage(error).replace(/^\d{3}\s+(?:\/[^\s]*:\s*)?/, '')
-
-  return safeJsonParse<{ detail?: unknown }>(raw, {}).detail
+  return error instanceof ApiError ? error.business.message : fallback
 }

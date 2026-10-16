@@ -22,11 +22,11 @@ class XiaohongshuAdminLoginStatus(XhsLoginStatus):
 
 def _client() -> XiaohongshuServiceClient:
     if not SETTINGS.xhs_mcp_base_url:
-        raise RequestError(status_code=409, detail="请先保存小红书自托管服务地址。")
+        raise RequestError(status_code=409, message="请先保存小红书自托管服务地址。")
     try:
         return XiaohongshuServiceClient(base_url=SETTINGS.xhs_mcp_base_url, auth_token=SETTINGS.xhs_mcp_auth_token)
     except ValueError:
-        raise RequestError(status_code=409, detail="小红书自托管服务配置无效，请检查已保存配置。") from None
+        raise RequestError(status_code=409, message="小红书自托管服务配置无效，请检查已保存配置。") from None
 
 
 def _request_failure(error: SocialSourceError) -> RequestError:
@@ -42,7 +42,7 @@ def _request_failure(error: SocialSourceError) -> RequestError:
     }
     if error.reason in known_errors:
         status_code, detail = known_errors[error.reason]
-        return RequestError(status_code=status_code, detail=detail)
+        return RequestError(status_code=status_code, message=detail)
     detail = (
         "无法连接小红书自托管服务，请检查服务地址与运行状态。"
         if error.reason == "network_error"
@@ -52,7 +52,7 @@ def _request_failure(error: SocialSourceError) -> RequestError:
             else "小红书自托管服务未返回有效的登录结果，请检查服务状态。"
         )
     )
-    return RequestError(status_code=502, detail=detail)
+    return RequestError(status_code=502, message=detail)
 
 
 async def login_status(*, session_id: str | None = None) -> XiaohongshuAdminLoginStatus:

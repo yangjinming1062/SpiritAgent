@@ -17,7 +17,6 @@ import {
   observeActionStageVisibility,
   refreshAvatarSeeds,
   reportReceipt,
-  resolveAvatarRegeneration,
   videoGenFailed,
   videoGenProgress,
   videoGenReady,
@@ -269,22 +268,6 @@ export function handleCharacterEvent(event: GatewayEvent): void {
       if (authed()) {
         videoGenFailed(p.reason, p)
         void hydrateVideoPack(true)
-      }
-
-      break
-    }
-
-    case 'avatar.regenerated': {
-      // 后台重新生成的结果：通过 job_id 解析等待者，让肖像能直接替换而不阻塞处理器。
-      const p = decodePayload<{
-        job_id?: string
-        asset_url?: string | null
-        id?: number
-        error?: string
-      }>(event.payload)
-
-      if (p.job_id) {
-        resolveAvatarRegeneration(p)
       }
 
       break

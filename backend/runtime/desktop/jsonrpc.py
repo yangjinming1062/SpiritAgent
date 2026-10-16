@@ -1,19 +1,21 @@
 import asyncio
 import json
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
+from infrastructure.api_errors import api_error, redact_message
 from infrastructure.constants import (
     JSON_RPC_VERSION,
     JSONRPC_INTERNAL_ERROR,
+    JSONRPC_INVALID_PARAMS,
     JSONRPC_INVALID_REQUEST,
     JSONRPC_METHOD_NOT_FOUND,
     JSONRPC_PARSE_ERROR,
+    JSONRPC_TURN_BUSY,
 )
 from infrastructure.logger import get_logger
-from infrastructure.redact import redact_sensitive_text
+from pydantic import JsonValue
 
 from runtime.desktop.buffer import BufferedFrame, ReplayBuffer
 
@@ -22,74 +24,30 @@ logger = get_logger(__name__)
 OUTBOX_QUEUE_MAX = 1024
 
 
+_EVENT_VALIDATOR: Callable[[str, Any], None] | None = None
+
+
+def configure_event_validator(validator: Callable[[str, Any], None]) -> None:
+    global _EVENT_VALIDATOR
+    _EVENT_VALIDATOR = validator
+
+
 class JsonRpcError(Exception):
-    def __init__(self, code: int, message: str, data: Any = None) -> None:
+    def __init__(
+        self,
+        code: int,
+        message: str,
+        *,
+        details: JsonValue = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
-        self.data = data
+        self.details = details
 
 
 # Handler 返回 JSON-RPC result。raise JsonRpcError 会以结构化错误回复；其他异常统一变 -32603。
 Handler = Callable[[dict[str, Any]], Awaitable[Any]]
-
-# 必须从给 renderer 的错误里抹掉的服务端内部痕迹（PROTOCOL「错误信封」）。精选而非宽泛：文件系统路径、DSN/URL 凭据、OpenAI/httpx 异常格式、Python traceback 行。
-_REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\s*Traceback \(most recent call last\):.*", re.DOTALL),
-    re.compile(r"(/[A-Za-z0-9_.+-]+){2,}/[A-Za-z0-9_.-]+\.py:\d+"),
-    re.compile(r"[A-Za-z]:\\[A-Za-z0-9_.\\ -]+\.py:\d+"),
-    re.compile(
-        r"/(?:var|tmp|etc|home|root|opt|srv|mnt)/[A-Za-z0-9_./-]+",
-    ),  # 通用文件系统路径（.py 模式抓不到目录/非 Python 文件）
-    re.compile(
-        r"postgresql(?:ql)?(?:\+[A-Za-z0-9_]+)?://[^@\s/]+:[^@\s/]+@\S+",
-    ),  # postgres DSN；延伸到 @ 后第一个空白，连内部主机名一并清掉
-    re.compile(r"(?:redis|mongodb|amqp|kafka)(?:\+[A-Za-z]+)?://[^@\s/]+:[^@\s/]+@\S+"),  # 非 postgres DSN
-    re.compile(
-        r"(?:Bearer\s+|(?:X-)?Api-Key:\s*|(?:sk|xai|gAAAA|hsk)-)[A-Za-z0-9._\-]{12,}",
-    ),  # Bearer / API-key header 值
-    re.compile(
-        r"(sk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abp]-|xapp-[A-Za-z0-9-]{20,})[A-Za-z0-9_-]+",
-    ),  # OpenAI/GitHub/Slack 风格 token
-    re.compile(
-        r"\b(?:[A-Za-z0-9_]+\.)*(?:OperationalError|IntegrityError|FileNotFoundError|ConnectionError|TimeoutError)\b|\bsqlalchemy\.exc\.[A-Za-z]+\b",
-    ),
-    re.compile(
-        r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b",
-    ),  # IPv4（含 RFC1918/loopback）——OperationalError 清理对裸 host:port 片段无效
-    re.compile(r"\[?[0-9a-fA-F:]+\]?:\d{2,5}"),  # IPv6 括号包裹（[::1]:5432）与裸形式
-    re.compile(r"\b(?:fe80|fc|fd)[0-9a-fA-F:]{8,}\b"),
-    re.compile(
-        r"\b(?:host|server)\s+(?:at\s+)?[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-        re.IGNORECASE,
-    ),  # psycopg/asyncpg 裸主机名
-    re.compile(r"for user\s+\"[A-Za-z0-9_.-]+\"", re.IGNORECASE),  # PostgreSQL DSN user/role 片段
-    re.compile(
-        r"\b(?:password authentication failed|FATAL:\s+[A-Z][A-Za-z ]+?)\b",
-        re.IGNORECASE,
-    ),  # SQLAlchemy/psycopg 认证失败标签
-    re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT 三段式
-)
-
-
-def redact_message(message: str) -> str:
-    """在 -32603 消息离开网关前清掉密钥与服务端内部痕迹；完整原文通过 logger.exception 留在服务端日志。"""
-    out = redact_sensitive_text(message) or ""
-    for pat in _REDACT_PATTERNS:
-        out = pat.sub("[redacted]", out)
-    return out[:512]
-
-
-def _redact_data(data: Any) -> Any:
-    """递归清洗结构化 error data 中的字符串叶子。"""
-    if isinstance(data, str):
-        return redact_message(data)
-    if isinstance(data, dict):
-        return {k: _redact_data(v) for k, v in data.items()}
-    if isinstance(data, list | tuple):
-        return [_redact_data(v) for v in data]
-    return data
-
 
 # 发送单个 JSON 帧，返回是否确认写出；连接已断开时返回 False 而不抛出。
 Sender = Callable[[dict[str, Any]], Awaitable[bool]]
@@ -185,7 +143,7 @@ class JsonRpcDispatcher:
             task.cancel()
 
     def enable_hold(self) -> None:
-        """激活事件 hold：push_event 只追加到缓冲，等到挂载（session.resume / session.get_main / session.create 等）时再 flush。"""
+        """激活事件 hold：push_event 只追加到缓冲，等到挂载（session.resume）时再 flush。"""
         self._hold_events = True
         self._cancel_hold_timeout()
 
@@ -231,16 +189,24 @@ class JsonRpcDispatcher:
     async def _handle(self, msg: dict) -> None:
         msg_id = msg.get("id")
         method = msg.get("method")
-        params = msg.get("params")
+        params = msg.get("params", {})
+        if msg.get("jsonrpc") != JSON_RPC_VERSION:
+            await self._reply_error(None, JSONRPC_INVALID_REQUEST, "jsonrpc must be 2.0")
+            return
+        if "id" in msg and msg_id is not None and (type(msg_id) not in (str, int)):
+            await self._reply_error(None, JSONRPC_INVALID_REQUEST, "id must be a string, integer or null")
+            return
+        if not isinstance(method, str) or not method:
+            await self._reply_error(msg_id, JSONRPC_INVALID_REQUEST, "method must be a non-empty string")
+            return
+        is_notification = "id" not in msg
         if not isinstance(params, dict):
-            params = {}
-
-        if not isinstance(method, str):
-            await self._reply_error(msg_id, JSONRPC_INVALID_REQUEST, "method must be a string")
+            if is_notification:
+                logger.warning("jsonrpc notification params must be an object", extra={"method": method})
+            else:
+                await self._reply_error(msg_id, JSONRPC_INVALID_PARAMS, "params must be an object")
             return
 
-        # 通知（无 id）的成功与失败都不回复，失败只记日志。
-        is_notification = msg_id is None
         handler = self._handlers.get(method)
         if handler is None:
             if is_notification:
@@ -255,7 +221,7 @@ class JsonRpcDispatcher:
             if is_notification:
                 logger.warning("jsonrpc notification rejected", extra={"method": method, "code": e.code})
                 return
-            await self._reply_error(msg_id, e.code, e.message, e.data)
+            await self._reply_error(msg_id, e.code, e.message, details=e.details)
             return
         except Exception as e:
             # 不外泄内部细节：完整异常记在服务端日志，向 renderer 发清洗后的标签（PROTOCOL「错误信封」）
@@ -263,7 +229,7 @@ class JsonRpcDispatcher:
             if is_notification:
                 return
             label = f"{type(e).__name__}: {e}"
-            await self._reply_error(msg_id, JSONRPC_INTERNAL_ERROR, redact_message(label))
+            await self._reply_error(msg_id, JSONRPC_INTERNAL_ERROR, label)
             return
 
         if is_notification:
@@ -287,6 +253,10 @@ class JsonRpcDispatcher:
                 return True
             # 未送达且已离开缓冲和发送队列的事件必须重新入队。
             self._pending_outbox_events.pop(previous_seq, None)
+        if _EVENT_VALIDATOR is not None:
+            _EVENT_VALIDATOR(event_type, payload)
+        if session_id is None and isinstance(payload, dict) and isinstance(payload.get("session_id"), str):
+            session_id = payload["session_id"]
         writer_running = self._writer_task is not None and not self._writer_task.done()
         # 判定到入队之间没有 await，拒绝的 tool.call 不分配序号、不进入重放缓冲。
         if not self._hold_events and writer_running and self._outbox.full():
@@ -376,12 +346,20 @@ class JsonRpcDispatcher:
         async with self._send_lock:
             await self._send({"jsonrpc": JSON_RPC_VERSION, "id": msg_id, "result": result})
 
-    async def _reply_error(self, msg_id: Any, code: int, message: str, data: Any = None) -> None:
-        # 按规范 §5.1：错误回复 id 为请求 id 或 null；raise 点负责用户友好消息，此处仍跑 redact 作为兜底
-        error = {
-            "code": code,
-            "message": redact_message(message),
-            **({"data": _redact_data(data)} if data is not None else {}),
-        }
+    async def _reply_error(
+        self,
+        msg_id: Any,
+        code: int,
+        message: str,
+        *,
+        details: JsonValue = None,
+    ) -> None:
+        public = api_error(
+            400 if code != JSONRPC_INTERNAL_ERROR else 500,
+            message,
+            code="turn_busy" if code == JSONRPC_TURN_BUSY else f"rpc_{abs(code)}",
+            details=details,
+        )
+        error = {"code": code, "message": public.message, "data": public.model_dump(mode="json")}
         async with self._send_lock:
             await self._send({"jsonrpc": JSON_RPC_VERSION, "id": msg_id, "error": error})

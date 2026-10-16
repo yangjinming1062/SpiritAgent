@@ -10,13 +10,13 @@ export function isSenderWindow(
   )
 }
 
-/** 本机工具与网关票据只交给持有网关的精灵宿主窗口（Client「连接与设备就绪」）；其他 sender 一律拒绝。 */
-export function assertGatewayHost(
+/** 活动探测等 UI 直调仅交给精灵宿主；模型调用由主进程网关派发。 */
+export function assertSpriteHost(
   sender: Pick<WebContents, 'id'> | null | undefined,
   hostWindow: BrowserWindow | null | undefined,
   channel: string
 ): void {
   if (!isSenderWindow(sender, hostWindow)) {
-    throw new Error(`${channel} is restricted to the gateway host window`)
+    throw new Error(`${channel} is restricted to the sprite host window`)
   }
 }

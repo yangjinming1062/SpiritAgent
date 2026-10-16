@@ -6,8 +6,7 @@ import {
   definePersistedAtom,
   registerCompanionStorageKey,
   registerStorageClearHandler,
-  registerStorageRestoreHandler,
-  storedJson
+  registerStorageRestoreHandler
 } from '@/shared/lib/storage'
 import { $gatewayState } from '@/shared/store/gateway'
 import {
@@ -21,22 +20,11 @@ import {
   type SettingsSection
 } from '@ipc/contracts'
 
+import { migrateStoredNavigation } from './navigation-upgrade'
+
 export { APP_PAGES, SETTINGS_SECTIONS }
 
 const NAVIGATION_KEY = registerCompanionStorageKey('da.app.navigation.v2')
-
-function normalizeStoredNavigation(): void {
-  const saved = storedJson<Record<string, unknown> | null>(NAVIGATION_KEY, null)
-
-  if (saved && typeof saved === 'object' && (saved.companionSection === 'home' || 'postsTab' in saved)) {
-    navigation.set(
-      normalizeAppNavigation({
-        ...saved,
-        page: saved.page === 'posts' && saved.postsTab === 'diary' ? 'diary' : saved.page
-      })
-    )
-  }
-}
 
 const navigation = definePersistedAtom<AppNavigationTarget>({
   key: NAVIGATION_KEY,
@@ -52,7 +40,6 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
       APP_PAGES.some(page => page === candidate.page) &&
       SETTINGS_SECTIONS.some(section => section === candidate.section) &&
       COMPANION_SECTIONS.some(section => section === candidate.companionSection) &&
-      !('postsTab' in candidate) &&
       (candidate.companionTask === undefined || candidate.companionTask === 'create') &&
       (candidate.returnToDesktopLife === undefined || typeof candidate.returnToDesktopLife === 'boolean') &&
       (candidate.settingsTab === undefined ||
@@ -62,8 +49,16 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
   }
 })
 
-normalizeStoredNavigation()
-registerStorageRestoreHandler(normalizeStoredNavigation)
+function upgradeNavigation(): void {
+  const migrated = migrateStoredNavigation(NAVIGATION_KEY)
+
+  if (migrated) {
+    navigation.set(migrated)
+  }
+}
+
+upgradeNavigation()
+registerStorageRestoreHandler(upgradeNavigation)
 
 export const $appPage = computed(navigation.$atom, value => value.page ?? 'chat')
 export const $settingsSection = computed(navigation.$atom, value => value.section ?? 'companionship')

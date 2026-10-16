@@ -85,7 +85,7 @@ export function createRunRailStores(runtime: ConversationRuntime) {
         artifacts.push({
           id: `${item.id}:${m.url}`,
           kind: m.type,
-          audioUrl: m.audio_url,
+          audioUrl: m.audio_url ?? undefined,
           url: m.url
         })
       }

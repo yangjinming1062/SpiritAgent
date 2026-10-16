@@ -1,26 +1,48 @@
-import { isRecord } from '@/shared/lib/is-record'
-import { log } from '@/shared/lib/log'
-import { safeJsonParse } from '@/shared/lib/safe-json'
-import type { DesktopGatewayEvent, DesktopGatewayState } from '@ipc/contracts'
-import { isAiWaitingRpc } from '@protocol'
+import { type ApiSchemas, RPC_POLICIES, type RpcOperations } from './api.generated'
 
-/** Slash 命令结果 payload：与 docs/PROTOCOL.md「事件路由」 `command.result` 事件载荷一致。 */
-export interface SlashCommandResultPayload {
-  /** 实际执行的主名（不带 /）。 */
-  command: string
-  /** 命令执行结果。 */
-  result: {
-    status: 'ok' | 'error'
-    message: string
-    payload?: Record<string, unknown> | null
-    /** 为 true 时客户端用 payload.messages 替换本地消息列表。 */
-    hydrate?: boolean
-  }
+export type RpcMethod = keyof RpcOperations
+export type RpcRequest<K extends RpcMethod> = RpcOperations[K]['request']
+export type RpcResponse<K extends RpcMethod> = RpcOperations[K]['response']
+export type RpcRequester = <K extends RpcMethod>(method: K, params: RpcRequest<K>) => Promise<RpcResponse<K>>
+
+export function isJsonValue(value: unknown): value is ApiSchemas['JsonValue'] {
+  return (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value)) ||
+    (Array.isArray(value) ? value.every(isJsonValue) : isRecord(value) && Object.values(value).every(isJsonValue))
+  )
 }
 
-export type GatewayEvent<P = unknown> = DesktopGatewayEvent<P>
+export interface GatewaySocketEvent {
+  readonly type: string
+  readonly data?: unknown
+  readonly code?: number
+}
 
-export type ConnectionState = DesktopGatewayState
+/** 浏览器与 Electron net.WebSocket 共用的最小传输边界。 */
+export interface GatewaySocket {
+  readonly readyState: number
+  send(data: string): void
+  close(code?: number, reason?: string): void
+  addEventListener(type: string, listener: (event: GatewaySocketEvent) => void): void
+  removeEventListener(type: string, listener: (event: GatewaySocketEvent) => void): void
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export interface GatewayEvent {
+  type: string
+  payload?: unknown
+  seq?: number
+  stream_id?: string
+  session_id?: string
+}
+
+export type ConnectionState = 'closed' | 'connecting' | 'error' | 'idle' | 'open'
 
 type PendingCall = {
   reject: (error: Error) => void
@@ -49,7 +71,12 @@ function optionalType(obj: Record<string, unknown>, key: string, type: 'number' 
 }
 
 function parseJsonRpcFrame(raw: string): JsonRpcFrame | null {
-  const v = safeJsonParse<unknown>(raw, null)
+  let v: unknown
+  try {
+    v = JSON.parse(raw)
+  } catch {
+    return null
+  }
 
   if (!isRecord(v) || !optionalType(v, 'method', 'string')) {
     return null
@@ -84,14 +111,13 @@ function parseJsonRpcFrame(raw: string): JsonRpcFrame | null {
   return v as unknown as JsonRpcFrame
 }
 
-// JSON-RPC 2.0 标准错误码 + SpiritAgent 扩展码——与后端 components/constants.py 的 JSONRPC_* 保持同步，消费方可按 err.code 分支而无需解析 err.message。
+// 错误码与 backend/infrastructure/constants.py 的 JSONRPC_* 同步。
 export enum SpiritAgentRpcErrorCode {
   ParseError = -32700,
   InvalidRequest = -32600,
   MethodNotFound = -32601,
   InvalidParams = -32602,
   InternalError = -32603,
-  // Slash 命令扩展错误码：与 backend/components/constants.py JSONRPC_SLASH_* 对齐。
   SlashConfirmRequired = -32001,
   SlashBusy = -32002,
   SlashGeneric = -32003,
@@ -109,8 +135,6 @@ export class SpiritAgentRpcError extends Error {
     this.data = data
   }
 }
-
-const SNAPSHOT_METHODS = new Set(['session.resume', 'session.get_main', 'session.create', 'session.fork'])
 
 // 这些事件已由历史和在途快照表达；设备指令与未持久化终态必须继续交付。
 const SNAPSHOT_EVENTS = new Set([
@@ -130,7 +154,7 @@ const SNAPSHOT_EVENTS = new Set([
 ])
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
-// 休眠唤醒后重连不得永久卡在 'connecting'（会禁用输入框并卡住 "Starting SpiritAgent..."）；握手超时应落到 'error' 让调用方重试。
+// 握手限时覆盖半开连接，休眠恢复后允许重试。
 const CONNECT_TIMEOUT_MS = 15_000
 
 const CLOSED_ERROR_MESSAGE = 'SpiritAgent gateway connection closed'
@@ -144,7 +168,7 @@ const HEARTBEAT_DEADLINE_MS = 30_000
 export class JsonRpcGatewayClient {
   private nextId = 0
   private pending = new Map<number, PendingCall>()
-  private socket: WebSocket | null = null
+  private socket: GatewaySocket | null = null
   private state: ConnectionState = 'idle'
   private _lastCloseCode: number | null = null
   private _lastReceivedSeq = 0
@@ -159,25 +183,20 @@ export class JsonRpcGatewayClient {
   private readonly eventHandlers = new Set<(event: GatewayEvent) => void>()
   private readonly stateHandlers = new Set<(state: ConnectionState) => void>()
 
+  constructor(
+    private readonly createSocket: (url: string) => GatewaySocket,
+    private readonly onConsumerError: (error: unknown) => void
+  ) {}
+
   get connectionState(): ConnectionState {
     return this.state
   }
 
-  /** Close code from the last WebSocket close event, or null if never closed. */
   get lastCloseCode(): number | null {
     return this._lastCloseCode
   }
 
-  /** Monotonic sequence ID of the last received event frame from backend. */
-  get lastReceivedSeq(): number {
-    return this._lastReceivedSeq
-  }
-
-  get streamId(): string {
-    return this._streamId
-  }
-
-  resetSeq(seq = 0, streamId = this._streamId): void {
+  private resetSeq(seq: number, streamId: string): void {
     if (streamId !== this._streamId) {
       this._streamId = streamId
       this._lastReceivedSeq = 0
@@ -242,7 +261,7 @@ export class JsonRpcGatewayClient {
         streamId: value.stream_id,
         seq: Math.max(previous?.seq ?? 0, value.current_seq)
       })
-      // 宿主与所有 IPC 代理都应用同一快照，才能安全丢弃快照内已有的旧回合帧。
+      // 各视图应用同一快照后，才能丢弃已被快照覆盖的帧。
       this.dispatchEvent({
         type: 'session.snapshot',
         session_id: value.session_id,
@@ -252,8 +271,9 @@ export class JsonRpcGatewayClient {
     }
   }
 
-  ackSeq(seq = this._lastReceivedSeq): void {
-    if (seq > 0 && this.socket?.readyState === WebSocket.OPEN) {
+  private ackSeq(): void {
+    const seq = this._lastReceivedSeq
+    if (seq > 0 && this.socket?.readyState === 1) {
       void this.request('session.ack', { seq }).catch(() => {})
     }
   }
@@ -273,13 +293,20 @@ export class JsonRpcGatewayClient {
   }
 
   async connect(wsUrl: string): Promise<void> {
-    if (this.socket?.readyState === WebSocket.OPEN || this.state === 'connecting') {
+    if (this.socket?.readyState === 1 || this.state === 'connecting') {
       return
     }
 
+    this._lastCloseCode = null
     this.setState('connecting')
 
-    const socket = new WebSocket(wsUrl)
+    let socket: GatewaySocket
+    try {
+      socket = this.createSocket(wsUrl)
+    } catch (error) {
+      this.setState('error')
+      throw error
+    }
     this.socket = socket
 
     socket.addEventListener('message', message => {
@@ -290,14 +317,14 @@ export class JsonRpcGatewayClient {
       this.handleMessage(message.data)
     })
 
-    socket.addEventListener('close', (event: CloseEvent) => {
+    socket.addEventListener('close', event => {
       if (this.socket !== socket) {
         return
       }
 
       this.stopHeartbeat()
       this.heldEvents = []
-      this._lastCloseCode = event.code
+      this._lastCloseCode = event.code ?? null
       this.socket = null
       this.setState('closed')
       this.rejectAllPending(new Error(CLOSED_ERROR_MESSAGE))
@@ -314,6 +341,7 @@ export class JsonRpcGatewayClient {
 
         socket.removeEventListener('open', onOpen)
         socket.removeEventListener('error', onError)
+        socket.removeEventListener('close', onHandshakeClose)
       }
 
       const onOpen = () => {
@@ -336,12 +364,28 @@ export class JsonRpcGatewayClient {
 
         settled = true
         cleanup()
+        if (this.socket === socket) {
+          this.socket = null
+          try {
+            socket.close()
+          } catch {}
+        }
         this.setState('error')
         reject(new Error(CONNECT_ERROR_MESSAGE))
       }
 
-      socket.addEventListener('open', onOpen, { once: true })
-      socket.addEventListener('error', onError, { once: true })
+      const onHandshakeClose = () => {
+        if (settled) {
+          return
+        }
+        settled = true
+        cleanup()
+        reject(new Error(CONNECT_ERROR_MESSAGE))
+      }
+
+      socket.addEventListener('close', onHandshakeClose)
+      socket.addEventListener('open', onOpen)
+      socket.addEventListener('error', onError)
 
       timer = setTimeout(() => {
         if (settled) {
@@ -403,29 +447,22 @@ export class JsonRpcGatewayClient {
     return () => this.stateHandlers.delete(handler)
   }
 
-  request<T>(
-    method: string,
-    params: Record<string, unknown> = {},
-    timeoutMs = isAiWaitingRpc(method) ? 0 : DEFAULT_REQUEST_TIMEOUT_MS
-  ): Promise<T> {
+  request<K extends RpcMethod>(method: K, params: RpcRequest<K>): Promise<RpcResponse<K>> {
+    const timeoutMs = RPC_POLICIES[method].wait_for_model ? 0 : DEFAULT_REQUEST_TIMEOUT_MS
     const socket = this.socket
 
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+    if (!socket || socket.readyState !== 1) {
       return Promise.reject(new Error(NOT_CONNECTED_ERROR_MESSAGE))
     }
 
     const id = ++this.nextId
-    const snapshot = SNAPSHOT_METHODS.has(method)
+    const snapshot = method === 'session.resume'
 
     if (snapshot) {
       this.eventHolds += 1
     }
 
-    if (method === 'session.resume' && params.last_seq && !params.stream_id && this._streamId) {
-      params = { ...params, stream_id: this._streamId }
-    }
-
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<RpcResponse<K>>((resolve, reject) => {
       const pending: PendingCall = {
         reject: error => {
           reject(error)
@@ -440,7 +477,7 @@ export class JsonRpcGatewayClient {
               this.acceptSnapshot(value)
             }
 
-            resolve(value as T)
+            resolve(value as RpcResponse<K>)
           } catch (error) {
             reject(error instanceof Error ? error : new Error(String(error)))
           } finally {
@@ -485,7 +522,7 @@ export class JsonRpcGatewayClient {
     this._heartbeatTimer = setInterval(() => {
       const socket = this.socket
 
-      if (!socket || socket.readyState !== WebSocket.OPEN) {
+      if (!socket || socket.readyState !== 1) {
         this.stopHeartbeat()
 
         return
@@ -504,7 +541,7 @@ export class JsonRpcGatewayClient {
 
       // 空闲足够久 → 发轻量 ping 保活 NAT 映射；错误由 close 事件兜底
       if (elapsed > HEARTBEAT_INTERVAL_MS) {
-        this.request('session.ping').catch(() => {})
+        this.request('session.ping', {}).catch(() => {})
       }
     }, HEARTBEAT_INTERVAL_MS)
   }
@@ -600,7 +637,7 @@ export class JsonRpcGatewayClient {
       try {
         handler(event)
       } catch (error) {
-        log.error('gateway', 'Event consumer failed', error)
+        this.onConsumerError(error)
       }
     }
   }
@@ -624,7 +661,11 @@ export class JsonRpcGatewayClient {
     this.state = state
 
     for (const handler of this.stateHandlers) {
-      handler(state)
+      try {
+        handler(state)
+      } catch (error) {
+        this.onConsumerError(error)
+      }
     }
   }
 }

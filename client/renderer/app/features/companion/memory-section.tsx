@@ -3,9 +3,9 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $systemPresets, fetchSystemPresets, presetDisplayName } from '@/modules/conversation'
-import { requestGateway } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import { requestResource } from '@/shared/lib/resource-request'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -21,7 +21,7 @@ import {
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { MemoryCounts, MemoryItem, MemoryListResponse } from '@protocol'
+import type { MemoryCounts, MemoryItem } from '@protocol'
 
 import {
   $companionEditors,
@@ -128,13 +128,15 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       setHint(null)
 
       try {
-        const result = await requestGateway<MemoryListResponse>('memory.list', {
-          kind: 'recall',
-          status,
-          system_preset_id: presetId,
-          q: query.trim(),
-          offset: page * PAGE_SIZE,
-          limit: PAGE_SIZE
+        const result = await requestResource('GET /api/memories', {
+          query: {
+            kind: 'recall',
+            status,
+            system_preset_id: presetId,
+            q: query.trim(),
+            offset: page * PAGE_SIZE,
+            limit: PAGE_SIZE
+          }
         })
 
         if (!isLive() || !sameFilter() || requestId !== loadId.current || result.system_preset_id !== presetId) {
@@ -241,11 +243,13 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     setSavedHint(null)
 
     try {
-      const updated = await requestGateway<MemoryItem>('memory.update', {
-        memory_id: selected.id,
-        content: draft.content.trim(),
-        expected_version: draft.baseVersion,
-        system_preset_id: presetId
+      const updated = await requestResource('PATCH /api/memories/{memory_id}', {
+        path: { memory_id: selected.id },
+        body: {
+          content: draft.content.trim(),
+          expected_version: draft.baseVersion,
+          system_preset_id: presetId
+        }
       })
 
       if (!isCurrent()) {
@@ -270,12 +274,14 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       let confirmed: MemoryItem | undefined
 
       try {
-        const result = await requestGateway<MemoryListResponse>('memory.list', {
-          kind: 'recall',
-          status: 'active',
-          system_preset_id: presetId,
-          q: draft.content.trim(),
-          limit: PAGE_SIZE
+        const result = await requestResource('GET /api/memories', {
+          query: {
+            kind: 'recall',
+            status: 'active',
+            system_preset_id: presetId,
+            q: draft.content.trim(),
+            limit: PAGE_SIZE
+          }
         })
 
         confirmed = result.memories.find(
@@ -346,7 +352,10 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     setBusy(true)
 
     try {
-      await requestGateway('memory.delete', { memory_id: selected.id, system_preset_id: presetId })
+      await requestResource('DELETE /api/memories/{memory_id}', {
+        path: { memory_id: selected.id },
+        query: { system_preset_id: presetId }
+      })
 
       if (!isCurrent()) {
         return

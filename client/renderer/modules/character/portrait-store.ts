@@ -3,13 +3,13 @@ import { atom } from 'nanostores'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import {
   currentClearEpoch,
   definePersistedAtom,
   registerStorageClearHandler,
   registerStorageRestoreHandler
 } from '@/shared/lib/storage'
-import { backendApi } from '@/shared/platform/desktop'
 
 import { resolvePortraitUrl } from './avatar-image'
 import { clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'
@@ -156,12 +156,7 @@ export async function hydratePortrait(): Promise<void> {
   const epoch = currentClearEpoch()
 
   try {
-    const res = await backendApi().api<{
-      asset_url?: string
-      id?: number
-    }>({
-      path: '/api/companion/avatar'
-    })
+    const res = await requestResource('GET /api/companion/avatar')
 
     if (currentClearEpoch() !== epoch) {
       return
@@ -212,14 +207,7 @@ export async function hydratePortraitHistory(): Promise<void> {
   const epoch = currentClearEpoch()
 
   try {
-    const res = await backendApi().api<{
-      history: Array<{
-        asset_url: string
-        id: number
-      }>
-    }>({
-      path: '/api/companion/avatar/history'
-    })
+    const res = await requestResource('GET /api/companion/avatar/history')
 
     if (currentClearEpoch() !== epoch) {
       return
@@ -269,10 +257,7 @@ export async function selectAvatar(avatarId: number): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {
-    await backendApi().api({
-      method: 'PUT',
-      path: `/api/companion/avatar/${avatarId}/select`
-    })
+    await requestResource('PUT /api/companion/avatar/{avatar_id}/select', { path: { avatar_id: avatarId } })
 
     if (currentClearEpoch() !== epoch) {
       return false

@@ -23,8 +23,8 @@ flowchart LR
 ```
 
 - Backend 运行于 Linux Docker；Client、Runner、Installer 支持 Windows 与 macOS 原生运行。底层库的跨平台能力不等于产品平台支持。
-- 主进程保管桌面身份并桥接本机执行；精灵宿主承载唯一聊天 WS，其他窗口经主进程代理。Runner 不持后端凭据，模型调用由 Backend 执行。
-- Client 提供窗口模式与 Windows 桌面模式。窗口模式由悬浮精灵、轻语和唯一主窗口承载，主窗口与桌面共用业务页面；打开主窗口隐藏精灵，宿主仍运行。Windows 桌面模式由交互屏的视频背景、原生桌面图标、透明交互界面与同一后台宿主共同呈现；仅交互屏创建背景并接管该屏任务栏与底部工作区预留，其他屏保留原生 Windows 桌面。两种模式都只由精灵宿主持有聊天 WS 与 Runner 派发权限。独立 Rust helper 管理 Explorer 视频层级与 Shell AppBar，原生文件呈现和操作仍归 Explorer；guardian 负责主进程或宿主异常时释放预留并恢复系统界面。
+- 主进程保管桌面身份、持有唯一聊天 WS 并桥接本机执行；所有渲染窗口通过受控 IPC 请求和订阅。Runner 不持后端凭据，模型调用由 Backend 执行。
+- Client 提供窗口模式与 Windows 桌面模式。窗口模式由悬浮精灵、轻语和唯一主窗口承载，主窗口与桌面共用业务页面；打开主窗口隐藏精灵，宿主仍运行。Windows 桌面模式由交互屏的视频背景、原生桌面图标、透明交互界面与同一后台宿主共同呈现；仅交互屏创建背景并接管该屏任务栏与底部工作区预留，其他屏保留原生 Windows 桌面。各渲染表面按舞台所有权执行声音和视觉表现。独立 Rust helper 管理 Explorer 视频层级与 Shell AppBar，原生文件呈现和操作仍归 Explorer；guardian 负责主进程或宿主异常时释放预留并恢复系统界面。
 - 进程拆分隔离职责与凭据，不构成完整安全沙箱。
 
 ## 模块职责
@@ -40,7 +40,7 @@ Installer 负责首次安装和环境修复；安装后的运行与更新由 Cli
 
 ## 依赖方向
 
-桌面 Client 与浏览器 Remote 独立构建，通过根 `shared/protocol.ts` 共用纯协议类型；浏览器代码不依赖 Electron 桥或桌面运行时。
+桌面 Client 与浏览器 Remote 独立构建，通过根 `shared/` 共用生成契约、HTTP 请求与 WS 协议核心；浏览器代码不依赖 Electron 桥或桌面运行时。
 
 Backend 保持单进程的模块化单体，按账户、配置、会话、记忆、陪伴、外观、场景、动作、桌面生活、动态、日记、媒体、资产、自动化和更新组织业务。`entrypoints` 解析与鉴权，`workflows` 协调跨业务流程，`features` 拥有数据和规则，`runtime` 管理账户/连接运行态与任务，`infrastructure` 提供数据库、网络、供应商与文件处理；显式装配集中在 `bootstrap`。
 

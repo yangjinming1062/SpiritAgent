@@ -1,11 +1,14 @@
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import { $locale } from '@/shared/store/locale'
 import { getStrings } from '@/shared/strings'
-import type { RequestGateway, VoiceOption } from '@/shared/voice-catalog'
+import type { VoiceOption } from '@/shared/voice-catalog'
 
-// 音色目录、匹配与设计由后端 `tts.*` JSON-RPC 方法支撑。目录项携带供应商，持久化与合成使用 voiceSelectionId 生成的唯一引用，避免供应商私有 id 冲突。
+import type { ApiSchemas } from '../../../../shared/api.generated'
+
+// 音色目录、匹配与设计由后端声音 REST 资源支撑。目录项携带供应商，持久化与合成使用 voiceSelectionId 生成的唯一引用，避免供应商私有 id 冲突。
 
 export type { VoiceOption } from '@/shared/voice-catalog'
 export { voiceProviderLabel, voiceSelectionId } from '@/shared/voice-catalog'
@@ -23,18 +26,7 @@ export interface VoiceCatalog {
   customVoices: CustomVoiceSummary[]
 }
 
-export interface CustomVoiceSummary {
-  candidate_id: string
-  kind: 'design' | 'clone'
-  voice_id: string
-  prompt: string
-  preview_audio_url: string
-  reference_audio_url: string | null
-  provider: string
-  model: string
-  version: number
-  available: boolean
-}
+export type CustomVoiceSummary = ApiSchemas['CustomVoiceSummary']
 
 export interface VoiceDesignPreview {
   candidateId: string
@@ -46,31 +38,7 @@ export interface VoiceDesignPreview {
   provider: string
 }
 
-interface CatalogResponse {
-  providers: string[]
-  voices: VoiceOption[]
-  supports_voice_design: boolean
-  voice_design_guide: string
-  supports_voice_prompt_generation: boolean
-  supports_voice_clone: boolean
-  custom_voices: CustomVoiceSummary[]
-}
-
-interface MatchResponse {
-  voice: VoiceOption | null
-  alternatives: VoiceOption[]
-}
-
-interface DesignResponse {
-  candidate_id: string
-  provider: string
-  voice_id: string
-  trial_audio_base64: string
-  trial_audio_mime: string
-  expected_version: number
-  kind: 'design' | 'clone'
-  prompt: string
-}
+type DesignResponse = ApiSchemas['VoicePreviewResponse']
 
 type FetchResult = { ok: true; catalog: VoiceCatalog } | { ok: false; reason: 'fetch_failed' }
 
@@ -80,12 +48,9 @@ export function invalidateVoiceCatalog(): void {
   $voiceCatalogRevision.set($voiceCatalogRevision.get() + 1)
 }
 
-export async function fetchVoiceCatalogRaw(
-  requestGateway: RequestGateway,
-  language: string | null = $locale.get()
-): Promise<FetchResult> {
+export async function fetchVoiceCatalogRaw(language: string | null = $locale.get()): Promise<FetchResult> {
   try {
-    const res = await requestGateway<CatalogResponse>('tts.list_voices', { language })
+    const res = await requestResource('GET /api/voices', { query: { language } })
 
     return {
       ok: true,
@@ -105,48 +70,51 @@ export async function fetchVoiceCatalogRaw(
 }
 
 export async function matchVoicePreference(
-  requestGateway: RequestGateway,
   preference: string,
   language: string | null = $locale.get()
 ): Promise<VoiceMatch> {
   try {
-    const res = await requestGateway<MatchResponse>('tts.match_voice', { language, preference })
+    const res = await requestResource('POST /api/voices/match', { body: { language, preference } })
 
     return { ok: true, voice: res.voice, alternatives: res.alternatives }
   } catch (error) {
-    log.warn('voice', 'tts.match_voice failed', error)
+    log.warn('voice', 'Voice match failed', error)
 
     return { ok: false, error }
   }
 }
 
 export async function designVoice(
-  requestGateway: RequestGateway,
   prompt: string,
   previewText: string,
   operationId: string,
   provider?: string
 ): Promise<VoiceDesignPreview> {
-  const res = await requestGateway<DesignResponse>('tts.design_voice', {
-    operation_id: operationId,
-    prompt,
-    preview_text: previewText,
-    provider
+  const res = await requestResource('POST /api/voices/candidates', {
+    body: {
+      kind: 'design',
+      operation_id: operationId,
+      prompt,
+      preview_text: previewText,
+      provider
+    }
   })
 
   return voicePreview(res)
 }
 
 export async function cloneVoice(
-  requestGateway: RequestGateway,
   sampleId: string,
   previewText: string,
   operationId: string
 ): Promise<VoiceDesignPreview> {
-  const res = await requestGateway<DesignResponse>('tts.clone_voice', {
-    operation_id: operationId,
-    sample_id: sampleId,
-    preview_text: previewText
+  const res = await requestResource('POST /api/voices/candidates', {
+    body: {
+      kind: 'clone',
+      operation_id: operationId,
+      sample_id: sampleId,
+      preview_text: previewText
+    }
   })
 
   return voicePreview(res)

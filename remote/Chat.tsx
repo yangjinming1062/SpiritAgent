@@ -2,6 +2,8 @@ import { IconArrowLeft, IconMicrophone, IconPhoto, IconPlus, IconSend, IconSquar
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { requestApi } from '../shared/api'
+
 import type { GatewayEvent, RemoteApi, RemoteGateway } from './api'
 import { errorText, readImage, record } from './api'
 import { activeReplyIsPersisted, advanceTurn, commandHistory, eventsAfterSnapshot, mergeMessages } from './chat-state'
@@ -10,8 +12,6 @@ import type {
   ActiveTurn,
   ChatAttachment,
   CompanionBubble,
-  History,
-  Resume,
   SessionInfo,
   SessionMessage,
   SystemPresetSummary
@@ -194,10 +194,7 @@ export function Chat({
 
   const loadSessions = useCallback(
     async (offset = 0) => {
-      const result = await api.request<{
-        sessions: SessionInfo[]
-        total: number
-      }>(`/api/sessions?limit=100&offset=${offset}`)
+      const result = await requestApi(api, 'GET /api/sessions', { query: { limit: 100, offset } })
 
       if (alive()) {
         setSessions(previous =>
@@ -231,7 +228,7 @@ export function Chat({
       hydration.current = buffered
 
       try {
-        const result = await gateway.request<Resume>('session.resume', {
+        const result = await gateway.request('session.resume', {
           session_id: id
         })
 
@@ -322,8 +319,8 @@ export function Chat({
 
       if (gateway.open && !metadataLoaded.current) {
         const [main, catalog] = await Promise.all([
-          gateway.request<Resume>('session.get_main'),
-          gateway.request<{ presets: SystemPresetSummary[] }>('system.list_presets')
+          requestApi(api, 'GET /api/sessions/main'),
+          requestApi(api, 'GET /api/presets')
         ])
 
         if (alive()) {
@@ -337,7 +334,7 @@ export function Chat({
         await resume(selectedRef.current)
       }
     })
-  }, [refresh, connected, gateway, loadSessions, resume, alive, runLatest])
+  }, [refresh, connected, gateway, loadSessions, resume, alive, runLatest, api])
 
   applyEvent.current = event => {
     const payload = record(event.payload) ? event.payload : {}
@@ -553,7 +550,7 @@ export function Chat({
     setFailure('')
 
     try {
-      const result = await gateway.request<{ status?: string; error?: string }>('prompt.submit', {
+      const result = await gateway.request('prompt.submit', {
         session_id: id,
         request_id: request.id,
         ...(request.replace
@@ -748,9 +745,7 @@ export function Chat({
               disabled={!connected || busy || !presets.some(item => item.id === preset)}
               onClick={() =>
                 run(async () => {
-                  const result = await gateway.request<{ session_id: string }>('session.create', {
-                    system_preset_id: preset
-                  })
+                  const result = await requestApi(api, 'POST /api/sessions', { body: { system_preset_id: preset } })
 
                   await loadSessions()
                   setShowCreate(false)
@@ -870,10 +865,9 @@ export function Chat({
                 const before = messages.find(message => typeof message.id === 'number')?.id
                 const height = listRef.current?.scrollHeight ?? 0
 
-                const result = await gateway.request<History>('session.history', {
-                  session_id: selected,
-                  before_id: before,
-                  limit: 60
+                const result = await requestApi(api, 'GET /api/sessions/{session_id}/history', {
+                  path: { session_id: selected },
+                  query: { limit: 60, before_id: before }
                 })
 
                 if (alive() && selectedRef.current === selected) {
@@ -1093,8 +1087,7 @@ function Message({
   replacing?: boolean
   replaceDisabled?: boolean
 }): ReactElement {
-  let content =
-    typeof message.content === 'string' ? message.content : typeof message.text === 'string' ? message.text : ''
+  let content = typeof message.content === 'string' ? message.content : ''
 
   let parts: unknown[] = []
 

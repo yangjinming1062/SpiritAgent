@@ -11,7 +11,7 @@ from slowapi.util import get_remote_address
 from entrypoints.http.rate_limit import limiter
 from entrypoints.http.routing import get_router
 
-router = get_router(prefix="", tag="admin")
+router = get_router(prefix="", tag="admin", identity="public")
 
 ADMIN_STATIC_PATH = Path(__file__).resolve().parents[3] / "static"
 

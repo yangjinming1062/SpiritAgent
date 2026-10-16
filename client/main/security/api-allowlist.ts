@@ -1,8 +1,6 @@
+import { findApiOperation } from '../../../shared/api'
+
 // 渲染层 api() 代理的 path/method 白名单：只放行自家后端产品 API 面；名单外（含绝对 URL、协议相对、路径穿越）一律拒绝，防止凭据被打任意 endpoint。
-const ALLOWED_API_PREFIXES = ['/api/remote', '/api/companion', '/api/config', '/api/sessions'] as const
-
-const ALLOWED_METHODS = new Set(['DELETE', 'GET', 'PATCH', 'POST', 'PUT'])
-
 function normalizeApiPathname(rawPath: string): string {
   if (!rawPath || rawPath.includes('\0')) {
     throw new Error('API path is required.')
@@ -10,6 +8,22 @@ function normalizeApiPathname(rawPath: string): string {
 
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rawPath) || rawPath.startsWith('//')) {
     throw new Error('API path must be a relative path under /api/.')
+  }
+
+  let decoded: string
+
+  try {
+    decoded = decodeURIComponent(rawPath.split(/[?#]/, 1)[0])
+  } catch {
+    throw new Error('API path encoding is invalid.')
+  }
+
+  if (
+    !decoded.startsWith('/') ||
+    decoded.includes('\\') ||
+    decoded.split('/').some(part => part === '.' || part === '..')
+  ) {
+    throw new Error('API path must not contain path traversal.')
   }
 
   let pathname: string
@@ -26,15 +40,19 @@ function normalizeApiPathname(rawPath: string): string {
 export function assertApiRequestAllowed(path: unknown, method?: unknown): void {
   const upper = String(method || 'GET').toUpperCase()
 
-  if (!ALLOWED_METHODS.has(upper)) {
+  if (!['DELETE', 'GET', 'PATCH', 'POST', 'PUT'].includes(upper)) {
     throw new Error(`API method not allowed: ${upper}`)
   }
 
   const pathname = normalizeApiPathname(String(path || ''))
 
-  const allowed = ALLOWED_API_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
+  const operation = findApiOperation(pathname, upper)
 
-  if (!allowed) {
-    throw new Error(`API path not allowed: ${pathname}`)
+  if (
+    !operation ||
+    !operation.identities.some(identity => identity === 'desktop') ||
+    !('ipc' in operation && operation.ipc)
+  ) {
+    throw new Error(`API operation not allowed: ${upper} ${pathname}`)
   }
 }

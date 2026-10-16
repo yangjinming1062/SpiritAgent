@@ -3,11 +3,11 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { MAX_USER_TEXT } from '@/modules/character'
-import { requestGateway } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { isRecord } from '@/shared/lib/is-record'
+import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
 import {
   BTN_GHOST,
@@ -20,19 +20,11 @@ import {
   SECTION_TITLE
 } from '@/shared/panel'
 import { gatewayApi } from '@/shared/platform/desktop'
-import { SpiritAgentGateway } from '@/shared/spiritagent'
 import { $gateway } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type {
-  MemoryItem,
-  MemoryListResponse,
-  MemoryProfileChange,
-  MemoryProfileUpdateRequest,
-  MemoryProfileUpdateResponse,
-  UserProfileField
-} from '@protocol'
+import type { MemoryItem, MemoryProfileChange, MemoryProfileUpdateRequest, UserProfileField } from '@protocol'
 
 import { $companionEditors, completeMemoryDraft, editMemoryDraft, setMemoryDraft } from './companion-editor-state'
 
@@ -57,9 +49,7 @@ export function useMemoryChanged(presetId: string, refresh: () => Promise<void>)
       }
     }
 
-    return gateway instanceof SpiritAgentGateway
-      ? gateway.onEvent(onEvent)
-      : gatewayApi().onGatewayEvent(({ event }) => onEvent(event))
+    return gatewayApi().onGatewayEvent(({ event }) => onEvent(event))
   }, [beginGuard, gateway, presetId, refresh])
 }
 
@@ -108,12 +98,14 @@ export function UserProfileSection(): React.ReactElement {
         let total = 0
 
         do {
-          const result = await requestGateway<MemoryListResponse>('memory.list', {
-            kind: 'user_profile',
-            status: 'active',
-            system_preset_id: 'companion',
-            offset: all.length,
-            limit: 100
+          const result = await requestResource('GET /api/memories', {
+            query: {
+              kind: 'user_profile',
+              status: 'active',
+              system_preset_id: 'companion',
+              offset: all.length,
+              limit: 100
+            }
           })
 
           if (!isLive() || generation !== requestId.current || result.system_preset_id !== 'companion') {
@@ -201,10 +193,12 @@ export function UserProfileSection(): React.ReactElement {
     setSavedHint(null)
 
     try {
-      const result = await requestGateway<MemoryProfileUpdateResponse>('memory.profile.update', {
-        system_preset_id: 'companion',
-        changes
-      } satisfies MemoryProfileUpdateRequest)
+      const result = await requestResource('PATCH /api/memories/profile', {
+        body: {
+          system_preset_id: 'companion',
+          changes
+        } satisfies MemoryProfileUpdateRequest
+      })
 
       if (!isCurrent()) {
         return
@@ -283,11 +277,13 @@ export function UserProfileSection(): React.ReactElement {
     setSavedHint(null)
 
     try {
-      const updated = await requestGateway<MemoryItem>('memory.update', {
-        memory_id: row.id,
-        content: draft.content.trim(),
-        expected_version: draft.baseVersion,
-        system_preset_id: 'companion'
+      const updated = await requestResource('PATCH /api/memories/{memory_id}', {
+        path: { memory_id: row.id },
+        body: {
+          content: draft.content.trim(),
+          expected_version: draft.baseVersion,
+          system_preset_id: 'companion'
+        }
       })
 
       if (!isCurrent()) {
@@ -358,7 +354,10 @@ export function UserProfileSection(): React.ReactElement {
     setBusy(true)
 
     try {
-      await requestGateway('memory.delete', { memory_id: row.id, system_preset_id: 'companion' })
+      await requestResource('DELETE /api/memories/{memory_id}', {
+        path: { memory_id: row.id },
+        query: { system_preset_id: 'companion' }
+      })
 
       if (!isCurrent()) {
         return

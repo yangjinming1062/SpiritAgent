@@ -25,7 +25,7 @@ async def user_is_active(db: AsyncSession, user_id: int) -> bool:
 async def require_account(db: AsyncSession, user_id: int) -> AccountIdentity:
     user = await db.scalar(select(User).where(User.id == user_id))
     if user is None:
-        raise RequestError(status_code=404, detail="用户不存在。")
+        raise RequestError(status_code=404, message="用户不存在。")
     return AccountIdentity(user.id, user.username)
 
 

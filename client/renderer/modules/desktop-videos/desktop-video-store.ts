@@ -1,11 +1,15 @@
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
-import { backendDetailMessage, backendErrorDetail, ipcErrorStatus } from '@/shared/lib/ipc-error'
+import { apiSucceeded, captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
+import { authedResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi, fileApi } from '@/shared/platform/desktop'
 import { $presentation } from '@/shared/store/presentation'
+
+import type { ApiInput, ApiOperation, ApiOperationKey } from '../../../../shared/api'
+import type { ApiSchemas } from '../../../../shared/api.generated'
+import { ApiError } from '../../../../shared/errors'
 
 import { desktopDisplayResolution } from './display'
 import type {
@@ -23,8 +27,6 @@ import type {
   DesktopVideoState
 } from './types'
 
-const API = '/api/companion/desktop-videos'
-const DESKTOP_MODE_GATE_ERROR = '桌面模式当前未启用'
 // 网关重连/显示器热插拔后，桌面激活信号经精灵窗 companion.signal 抵达后端存在秒级传播差；
 // 主进程 presentation 已是 desktop+active，模式门禁 409 属暂态，按退避覆盖该窗口期。
 const MODE_GATE_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 15000] as const
@@ -74,8 +76,8 @@ export async function refreshDesktopVideos(): Promise<void> {
       refreshAgain = false
 
       const results = await Promise.all([
-        authedApi<DesktopVideoState>({ path: `${API}/state` }),
-        authedApi<{ sets: DesktopVideoSet[]; version: number }>({ path: `${API}/sets` })
+        authedResource('GET /api/companion/desktop-videos/state'),
+        authedResource('GET /api/companion/desktop-videos/sets')
       ])
 
       if (!scope?.() || epoch !== currentEpoch) {
@@ -112,12 +114,11 @@ export async function refreshDesktopVideos(): Promise<void> {
   return request
 }
 
-async function mutation<T>(
-  path: string,
-  body: object = {},
-  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'POST'
-): Promise<T> {
-  const result = await authedApi<T>({ path: `${API}${path}`, method, body })
+async function mutation<K extends ApiOperationKey>(
+  operation: K,
+  input: ApiInput<K> = {}
+): Promise<ApiOperation<K>['response']> {
+  const result = await authedResource(operation, input)
 
   if (!result.ok) {
     throw result.reason === 'err' ? result.error : new Error('Account changed')
@@ -141,7 +142,7 @@ function waitForRetry(delayMs: number): Promise<void> {
 }
 
 function isDesktopModeGateError(error: unknown): boolean {
-  return ipcErrorStatus(error) === 409 && backendDetailMessage(error, '') === DESKTOP_MODE_GATE_ERROR
+  return error instanceof ApiError && error.status === 409 && error.business.code === 'desktop_mode_inactive'
 }
 
 /** 桌面渲染激活后，网关呈现信号可能尚未抵达 Backend；只重试明确的模式门禁，其他错误保持原语义。 */
@@ -179,18 +180,24 @@ function ensureCurrentWithRetry(): Promise<DesktopVideoState> {
       throw new Error('无法读取桌面显示器分辨率，请选择可用的桌面显示器或等待读取完成。')
     }
 
-    return mutation<DesktopVideoState>('/ensure-current', {
-      trigger: 'entry',
-      target_width: target.width,
-      target_height: target.height
+    return mutation('POST /api/companion/desktop-videos/ensure-current', {
+      body: {
+        trigger: 'entry',
+        target_width: target.width,
+        target_height: target.height
+      }
     })
   })
 }
 
 export function desktopVideoAspectMismatch(error: unknown): DesktopVideoAspectMismatch | null {
-  const detail = backendErrorDetail(error)
+  if (!(error instanceof ApiError) || error.business.code !== 'aspect_ratio_mismatch') {
+    return null
+  }
 
-  if (!detail || typeof detail !== 'object' || !('reason' in detail) || detail.reason !== 'aspect_ratio_mismatch') {
+  const detail = error.business.details
+
+  if (!detail || typeof detail !== 'object') {
     return null
   }
 
@@ -260,19 +267,19 @@ export async function createDesktopVideoSet(input: {
   target_width: number
   target_height: number
 }): Promise<DesktopVideoSet> {
-  const set = await mutation<DesktopVideoSet>('/sets', input)
+  const set = await mutation('POST /api/companion/desktop-videos/sets', { body: input })
   await refreshDesktopVideos()
 
   return set
 }
 
 export async function renameDesktopVideoSet(setId: number, name: string): Promise<void> {
-  await mutation(`/sets/${setId}`, { name }, 'PATCH')
+  await mutation('PATCH /api/companion/desktop-videos/sets/{set_id}', { path: { set_id: setId }, body: { name } })
   await refreshDesktopVideos()
 }
 
 export async function deleteDesktopVideoSet(setId: number): Promise<void> {
-  applyState(await mutation<DesktopVideoState>(`/sets/${setId}`, {}, 'DELETE'))
+  applyState(await mutation('DELETE /api/companion/desktop-videos/sets/{set_id}', { path: { set_id: setId } }))
   await refreshDesktopVideos()
 }
 
@@ -334,7 +341,7 @@ export async function activateDesktopVideoSet(set: DesktopVideoSet): Promise<boo
         return
       }
 
-      const state = await mutation<DesktopVideoState>(`/sets/${set.id}/activate`)
+      const state = await mutation('PUT /api/companion/desktop-videos/current', { body: { set_id: set.id } })
 
       if (isCurrent()) {
         applyState(state)
@@ -368,10 +375,14 @@ export async function generateDesktopVideoAction(
   feedback = '',
   aspectPolicy: DesktopVideoAspectPolicy = 'ask'
 ): Promise<DesktopVideoAction> {
-  const generated = await mutation<DesktopVideoAction>(`/actions/${action.id}/generate`, {
-    ...desktopActionGuard(action, set),
-    feedback,
-    aspect_policy: aspectPolicy
+  const generated = await mutation('POST /api/companion/desktop-videos/actions/{action_id}/draft/commands', {
+    path: { action_id: action.id },
+    body: {
+      command: 'generate-video',
+      ...desktopActionGuard(action, set),
+      feedback,
+      aspect_policy: aspectPolicy
+    }
   })
 
   await refreshDesktopVideos()
@@ -386,11 +397,15 @@ export async function generateDesktopVideoImage(
   regenerate = false,
   aspectPolicy: DesktopVideoAspectPolicy = 'ask'
 ): Promise<void> {
-  await mutation(`/actions/${action.id}/image`, {
-    ...desktopActionGuard(action, set),
-    feedback,
-    regenerate,
-    aspect_policy: aspectPolicy
+  await mutation('POST /api/companion/desktop-videos/actions/{action_id}/draft/commands', {
+    path: { action_id: action.id },
+    body: {
+      command: 'generate-image',
+      ...desktopActionGuard(action, set),
+      feedback,
+      regenerate,
+      aspect_policy: aspectPolicy
+    }
   })
   await refreshDesktopVideos()
 }
@@ -401,7 +416,7 @@ function videoRefinementInput(
   source: DesktopVideoRefinementSource,
   feedback: string,
   aspectPolicy: 'keep' | 'expand'
-): object {
+): ApiSchemas['DesktopVideoRefineRequest'] {
   return {
     ...desktopActionGuard(action, set),
     expected_action_version: action.version,
@@ -418,10 +433,10 @@ export function previewDesktopVideoRefinement(
   feedback: string,
   aspectPolicy: 'keep' | 'expand'
 ): Promise<DesktopVideoRefinementPreview> {
-  return mutation<DesktopVideoRefinementPreview>(
-    `/actions/${action.id}/refine-video/preview`,
-    videoRefinementInput(action, set, source, feedback, aspectPolicy)
-  )
+  return mutation('POST /api/companion/desktop-videos/actions/{action_id}/refine-video/preview', {
+    path: { action_id: action.id },
+    body: videoRefinementInput(action, set, source, feedback, aspectPolicy)
+  })
 }
 
 export async function refineDesktopVideo(
@@ -431,10 +446,10 @@ export async function refineDesktopVideo(
   feedback: string,
   aspectPolicy: 'keep' | 'expand'
 ): Promise<void> {
-  await mutation<DesktopVideoAction>(
-    `/actions/${action.id}/refine-video`,
-    videoRefinementInput(action, set, source, feedback, aspectPolicy)
-  )
+  await mutation('POST /api/companion/desktop-videos/actions/{action_id}/draft/commands', {
+    path: { action_id: action.id },
+    body: { ...videoRefinementInput(action, set, source, feedback, aspectPolicy), command: 'refine-video' }
+  })
   await refreshDesktopVideos()
 }
 
@@ -447,11 +462,15 @@ export async function confirmDesktopVideoImage(
     throw new Error('图片草稿已失效')
   }
 
-  await mutation(`/actions/${action.id}/confirm-image`, {
-    draft_id: action.draft.id,
-    expected_base_version: set.base_version,
-    expected_resolution_revision: set.resolution_revision,
-    generate_video: generateVideo
+  await mutation('POST /api/companion/desktop-videos/actions/{action_id}/draft/commands', {
+    path: { action_id: action.id },
+    body: {
+      command: 'confirm-image',
+      draft_id: action.draft.id,
+      expected_base_version: set.base_version,
+      expected_resolution_revision: set.resolution_revision,
+      generate_video: generateVideo
+    }
   })
   await refreshDesktopVideos()
 }
@@ -461,7 +480,13 @@ export async function cancelDesktopVideoDraft(action: DesktopVideoAction): Promi
     return
   }
 
-  await mutation(`/actions/${action.id}/cancel`, { draft_id: action.draft.id })
+  await mutation('POST /api/companion/desktop-videos/actions/{action_id}/draft/commands', {
+    path: { action_id: action.id },
+    body: {
+      command: 'cancel',
+      draft_id: action.draft.id
+    }
+  })
   await refreshDesktopVideos()
 }
 
@@ -470,7 +495,13 @@ export async function pauseDesktopVideoDraft(action: DesktopVideoAction): Promis
     return
   }
 
-  await mutation(`/actions/${action.id}/pause`, { draft_id: action.draft.id })
+  await mutation('POST /api/companion/desktop-videos/actions/{action_id}/draft/commands', {
+    path: { action_id: action.id },
+    body: {
+      command: 'pause',
+      draft_id: action.draft.id
+    }
+  })
   await refreshDesktopVideos()
 }
 
@@ -479,10 +510,14 @@ export async function resumeDesktopVideoDraft(action: DesktopVideoAction, set: D
     throw new Error('制作草稿已失效')
   }
 
-  await mutation(`/actions/${action.id}/resume`, {
-    draft_id: action.draft.id,
-    expected_base_version: set.base_version,
-    expected_resolution_revision: set.resolution_revision
+  await mutation('POST /api/companion/desktop-videos/actions/{action_id}/draft/commands', {
+    path: { action_id: action.id },
+    body: {
+      command: 'resume',
+      draft_id: action.draft.id,
+      expected_base_version: set.base_version,
+      expected_resolution_revision: set.resolution_revision
+    }
   })
   await refreshDesktopVideos()
 }
@@ -493,11 +528,14 @@ export async function getDesktopVideoPrompt(
   additionalRequirements = '',
   aspectPolicy: Exclude<DesktopVideoAspectPolicy, 'expand'> = 'ask'
 ): Promise<DesktopVideoPrompt> {
-  return mutation<DesktopVideoPrompt>(`/actions/${action.id}/external-prompt`, {
-    ...desktopActionGuard(action, set),
-    expected_set_id: set.id,
-    aspect_policy: aspectPolicy,
-    requirements: additionalRequirements.trim()
+  return mutation('POST /api/companion/desktop-videos/actions/{action_id}/external-prompt', {
+    path: { action_id: action.id },
+    body: {
+      ...desktopActionGuard(action, set),
+      expected_set_id: set.id,
+      aspect_policy: aspectPolicy,
+      requirements: additionalRequirements.trim()
+    }
   })
 }
 
@@ -531,7 +569,7 @@ export async function designDesktopVideoAction(input: {
   duration_seconds: number
   expected_set_id: number
 }): Promise<DesktopVideoProposal> {
-  const proposal = await mutation<DesktopVideoProposal>('/design', input)
+  const proposal = await mutation('POST /api/companion/desktop-videos/design', { body: input })
   await refreshDesktopVideos()
 
   return proposal
@@ -546,10 +584,14 @@ export async function reviewDesktopVideoAction(
     throw new Error('制作草稿已失效')
   }
 
-  await mutation<DesktopVideoAction>(`/actions/${action.id}/${accept ? 'accept' : 'reject'}`, {
-    draft_id: action.draft.id,
-    expected_base_version: set.base_version,
-    expected_resolution_revision: set.resolution_revision
+  await mutation('POST /api/companion/desktop-videos/actions/{action_id}/draft/decision', {
+    path: { action_id: action.id },
+    body: {
+      decision: accept ? 'accept' : 'reject',
+      draft_id: action.draft.id,
+      expected_base_version: set.base_version,
+      expected_resolution_revision: set.resolution_revision
+    }
   })
   await refreshDesktopVideos()
 }
@@ -558,7 +600,7 @@ export async function setDesktopVideoPreferences(preferences: {
   pinned?: boolean
   autonomous_enabled?: boolean
 }): Promise<void> {
-  applyState(await mutation<DesktopVideoState>('/preferences', preferences, 'PUT'))
+  applyState(await mutation('PUT /api/companion/desktop-videos/preferences', { body: preferences }))
 }
 
 export async function playDesktopVideoAction(
@@ -567,10 +609,12 @@ export async function playDesktopVideoAction(
   reason = 'user'
 ): Promise<DesktopVideoPlayCommand> {
   const command = await withDesktopModeGateRetry(() =>
-    mutation<DesktopVideoPlayCommand>('/play', {
-      action_id: actionId,
-      expected_set_id: setId,
-      reason
+    mutation('POST /api/companion/desktop-videos/play', {
+      body: {
+        action_id: actionId,
+        expected_set_id: setId,
+        reason
+      }
     })
   )
 
@@ -596,8 +640,12 @@ function publishPlayCommand(command: DesktopVideoPlayCommand): void {
 }
 
 export async function claimDesktopVideoPlay(playId: string, clientId: string): Promise<boolean> {
-  return (await mutation<{ claimed: boolean }>(`/plays/${encodeURIComponent(playId)}/claim`, { client_id: clientId }))
-    .claimed
+  return (
+    await mutation('POST /api/companion/desktop-videos/plays/{play_id}/claim', {
+      path: { play_id: playId },
+      body: { client_id: clientId }
+    })
+  ).claimed
 }
 
 export async function acknowledgeDesktopVideoPlay(
@@ -606,10 +654,13 @@ export async function acknowledgeDesktopVideoPlay(
   status: DesktopVideoReceiptStatus,
   error?: string
 ): Promise<void> {
-  await mutation(`/plays/${encodeURIComponent(playId)}/receipt`, {
-    client_id: clientId,
-    status,
-    ...(error ? { error } : {})
+  await mutation('POST /api/companion/desktop-videos/plays/{play_id}/receipt', {
+    path: { play_id: playId },
+    body: {
+      client_id: clientId,
+      status,
+      ...(error ? { error } : {})
+    }
   })
 }
 

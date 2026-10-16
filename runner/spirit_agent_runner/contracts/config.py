@@ -5,7 +5,7 @@ from .context import current_context
 _TRUTHY_STRINGS = frozenset({"1", "true", "yes", "on"})
 
 
-# Desktop 经 spiritagent.config.update 推送完整配置前为空，消费者按 cfg_get(default=...) 读取。
+# Desktop 经 config.replace 推送完整配置前为空，消费者按 cfg_get(default=...) 读取。
 def is_truthy_value(value: Any, default: bool = False) -> bool:
     """把配置值归一为 bool：不在真值集合内的回落到 ``default``。"""
     if value is None:

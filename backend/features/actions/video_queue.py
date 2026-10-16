@@ -4,7 +4,6 @@ from typing import Literal
 
 from infrastructure.database import SESSION_LOCAL
 from runtime.paid_work import GenerationWorkPaused
-from sqlalchemy import select
 
 from features.actions.generation.queries import _load_generation_context
 from features.actions.generation.references import _require_new_paid_step, require_action_matting_model
@@ -46,25 +45,3 @@ async def inspect_video_queue_owner(
     except GenerationWorkPaused:
         return "paused"
     return "ready"
-
-
-async def has_untracked_video_attempts() -> bool:
-    async with SESSION_LOCAL() as db:
-        jobs = await db.scalars(
-            select(CompanionAction).where(
-                CompanionAction.media_type == "video",
-                CompanionAction.generation_state_json.is_not(None),
-            ),
-        )
-        for job in jobs:
-            state = MediaChainState.model_validate_json(job.generation_state_json or "{}")
-            if (
-                not state.queue_request_id
-                and not state.result_url
-                and not state.source_path
-                and not job.artifact_path
-                and state.stop_reason not in {"submit_failed", "provider_failed", "content_policy_blocked"}
-                and (state.phase == "submitting" or job.provider_task_id)
-            ):
-                return True
-    return False

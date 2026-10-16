@@ -5,7 +5,6 @@ from features.actions.schemas import ActionPlayRequest
 from features.companion.affect_emit import emit_companion_message
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.idle_expression import check_idle_expression
-from features.companion.intent_contracts import CompanionSignal
 from features.companion.intents import queue_companion_intent
 from features.companion.proactive_runtime import (
     get_presentation_snapshot,
@@ -16,11 +15,9 @@ from features.companion.should_act import should_act
 from features.desktop_life.service import choose_idle_desktop_action
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.config import SETTINGS
-from infrastructure.constants import JSONRPC_INVALID_PARAMS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import coerce_hour_0_23, coerce_non_negative_float
-from runtime.desktop.jsonrpc import JsonRpcError
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import interrupt_user_event_tasks
 from runtime.gateway_contracts import GatewaySession, RegisterMethod
@@ -48,8 +45,6 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
 
     async def companion_idle_expression(params: dict) -> dict:
         trigger = params.get("trigger", "periodic")
-        if not isinstance(trigger, str) or trigger not in {"periodic", "user_return"}:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "trigger must be periodic or user_return")
         if await get_disturbance_tier(user_id) != "autonomous":
             return {"expressed": False, "action_id": None, "reason": "autonomous tier required"}
         now = time.monotonic()
@@ -107,33 +102,27 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
             "reason": result.reason,
         }
 
-    register("companion.idle_expression", companion_idle_expression, concurrent=True)
+    register("companion.idle_expression", companion_idle_expression)
 
     async def companion_signal(params: dict) -> dict[str, bool]:
-        try:
-            signal = CompanionSignal.model_validate(params)
-        except ValueError as exc:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+        available = params["available"]
+        event = params.get("event")
         became_available = observe_companion_presence(
             user_id,
-            signal.available,
-            presentation_mode=signal.presentation_mode,
+            available,
+            presentation_mode=params["presentation_mode"],
         )
-        if not signal.available:
+        if not available:
             await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
             return {"queued": False}
-        queued = await queue_companion_intent(user_id, "desktop_available" if became_available else signal.event)
-        if became_available and signal.event == "context_changed":
-            queued = await queue_companion_intent(user_id, signal.event) or queued
+        queued = await queue_companion_intent(user_id, "desktop_available" if became_available else event)
+        if became_available and event == "context_changed":
+            queued = await queue_companion_intent(user_id, event) or queued
         return {"queued": queued}
 
     register("companion.signal", companion_signal)
 
     async def companion_should_act(params: dict) -> dict:
-        kind = params.get("kind", "periodic_provision")
-        if kind != "periodic_provision":
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"kind must be periodic_provision, got {kind!r}")
-
         # 空间自主决策只服务自主档；客户端另以桌面精灵可见性拦截。
         if await get_disturbance_tier(user_id) != "autonomous":
             return {"should_act": False, "action": "stay", "reason": "autonomous tier required"}
@@ -150,8 +139,6 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
         idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
         local_hour = coerce_hour_0_23(params.get("local_hour"))
         focused_category = params.get("focused_category")
-        if focused_category is not None and not isinstance(focused_category, str):
-            focused_category = None
         fullscreen = bool(params.get("fullscreen"))
         screen_locked = bool(params.get("screen_locked"))
         seconds_since_last_action = coerce_non_negative_float(params.get("seconds_since_last_action"))
@@ -184,4 +171,4 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
             return {"should_act": False, "action": "stay", "reason": "presentation changed"}
         return res.model_dump()
 
-    register("companion.should_act", companion_should_act, concurrent=True)
+    register("companion.should_act", companion_should_act)

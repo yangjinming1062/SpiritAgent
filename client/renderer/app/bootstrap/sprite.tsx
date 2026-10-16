@@ -6,7 +6,7 @@ import { useSurfaceSpriteLink } from '@/app/windows/sprite/use-surface-sprite-li
 import { useDesktopCompanionActivityPublisher } from '@/app/workflows/desktop-companion-activity'
 import { $auth } from '@/shared/store/auth'
 
-// 精灵窗入口装配：桌面走位与表面的联动 + 宿主 WS 生命周期。WS 只在鉴权后挂载，$auth 切回未鉴权时组件卸载由 useGatewayBoot 的 cleanup 拆掉连接。
+// 精灵窗装配桌面走位、表面联动和账户连接视图；网络与本机工具生命周期归主进程。
 function GatewayBooter({ sessionId }: { sessionId: string }): null {
   useGatewayBoot(sessionId)
 

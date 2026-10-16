@@ -72,16 +72,16 @@ export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpO
   }
 
   async function mintWsTicket(baseUrl: string, token: string): Promise<string> {
-    const res = (await fetchJson(`${baseUrl}/api/user/ws-ticket`, token, {
+    const res = (await fetchJson(`${baseUrl}/api/gateway/ticket`, token, {
       method: 'POST',
       timeoutMs: 5000
-    })) as { access_token?: unknown } | null
+    })) as { ticket?: unknown } | null
 
-    if (typeof res?.access_token !== 'string' || !res.access_token) {
+    if (typeof res?.ticket !== 'string' || !res.ticket) {
       throw new Error('Backend returned an empty WebSocket ticket')
     }
 
-    return res.access_token
+    return res.ticket
   }
 
   async function waitForSpiritAgent(baseUrl: string, token?: string): Promise<void> {

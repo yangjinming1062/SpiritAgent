@@ -6,12 +6,11 @@ import {
   type ConversationRuntime,
   conversationRuntimes
 } from '@/modules/conversation'
-import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { $gatewayActiveToolCount } from '@/shared/store/gateway'
 
-const remoteTools = new Set<symbol>()
 let stopListening: (() => void) | undefined
 
-// 会话与Runner各自保留执行状态，此处只装配持续表现，瞬态和语音仍由character裁决。
+// 持续表现读取会话状态，瞬态和语音仍由 character 裁决。
 export function syncConversationActivity(): void {
   const current = $spriteState.get()
 
@@ -22,7 +21,7 @@ export function syncConversationActivity(): void {
   const active = conversationRuntimes().filter(runtime => runtime.isCurrent() && runtime.$chatTurnInFlight.get())
 
   const working =
-    remoteTools.size > 0 ||
+    $gatewayActiveToolCount.get() > 0 ||
     active.some(runtime => {
       const assistant = runtime.$chatMessageList.get().findLast(item => item.role === 'assistant')
 
@@ -33,18 +32,6 @@ export function syncConversationActivity(): void {
 
   if (next !== current) {
     setSpriteState(next, { force: true })
-  }
-}
-
-export function holdRemoteToolActivity(): () => void {
-  const token = Symbol('remote-tool')
-  remoteTools.add(token)
-  syncConversationActivity()
-
-  return () => {
-    if (remoteTools.delete(token)) {
-      syncConversationActivity()
-    }
   }
 }
 
@@ -75,6 +62,7 @@ export function bindConversationActivity(): void {
     $chatSessionId.listen(refresh),
     $companionSessionId.listen(refresh),
     $conversationViews.listen(refresh),
+    $gatewayActiveToolCount.listen(syncConversationActivity),
     $spriteState.listen((state, previous) => {
       if (state === 'idle' || previous === 'speaking' || previous === 'emotional' || previous === 'interacting') {
         syncConversationActivity()
@@ -94,17 +82,10 @@ export function bindConversationActivity(): void {
 function disposeConversationActivity(): void {
   stopListening?.()
   stopListening = undefined
-  remoteTools.clear()
 }
-
-const stopClear = registerStorageClearHandler(() => {
-  remoteTools.clear()
-  syncConversationActivity()
-})
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     disposeConversationActivity()
-    stopClear()
   })
 }

@@ -1,8 +1,10 @@
 export {
   type ConnectionState,
   type GatewayEvent,
-  JsonRpcGatewayClient,
-  type SlashCommandResultPayload,
+  type RpcMethod,
+  type RpcRequest,
+  type RpcRequester,
+  type RpcResponse,
   SpiritAgentRpcError,
   SpiritAgentRpcErrorCode
-} from './json-rpc-gateway'
+} from '../../../../../shared/gateway'

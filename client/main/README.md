@@ -8,7 +8,7 @@
 |---|---|
 | `entry.ts` | 唯一组合根，显式装配，不展开业务逻辑 |
 | `preload.ts` | 沙盒 preload，暴露 `window.spiritagent` |
-| `backend` | 多账户凭据、会话与 HTTP |
+| `backend` | 多账户凭据、会话、HTTP 与账户 WS 网关 |
 | `runner` | 进程、本地 RPC 及 Runner 更新 |
 | `lifecycle` | 窗口、托盘、退出与桌面更新 |
 | `ipc` | 注册能力通道，装配 Runner 宿主及资产、历史、语音缓存 |
@@ -32,7 +32,7 @@
 
 ### 凭据与请求
 
-凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)，多账户存储在 [session.ts](backend/session.ts)。凭据读取须在 `app.whenReady()` 后触发，避免 safeStorage 尚未就绪时缓存解密失败。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 仅访问受控相对路径，拒绝绝对 URL、协议相对地址与穿越；白名单见 [api-allowlist.ts](security/api-allowlist.ts)。`api()`、资产读取、`ws-url` 签发与 401 通知集中在 [connection.ts](ipc/connection.ts)。
+凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)，多账户存储在 [session.ts](backend/session.ts)。凭据读取须在 `app.whenReady()` 后触发，避免 safeStorage 尚未就绪时缓存解密失败。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 仅访问受控相对路径，拒绝绝对 URL、协议相对地址与穿越；白名单见 [api-allowlist.ts](security/api-allowlist.ts)。`api()`、资产读取与 401 通知集中在 [connection.ts](ipc/connection.ts)，WS 票据仅由主进程账户网关申请与消费。
 
 ### 文件与媒体
 
@@ -40,12 +40,13 @@
 - 白名单仅进程内且有容量限制，重启须重新选择，历史附件路径不自动恢复权限。
 - `chat:set-pending-feed` 信箱不校验白名单，取用方仍须走受控读取。
 
-## 网关宿主与代理
+## 账户网关与窗口订阅
 
-- 只有宿主可获取网关票 `ws-url`、上报网关状态、注入事件、答复代理 RPC 和派发 Runner 工具，入口核对 sender；`ws-url` 与 Runner 派发、取消经 [assertGatewayHost](security/ipc-trust.ts)。
-- 其他表面只能请求代理能力；`tool.call` 不转发到其他窗口，TypeScript 类型不能代替运行时校验。
+[gateway.ts](backend/gateway.ts) 持有账户唯一 WS、票据、重连、工具派发、取消与串行工具清单同步。网络连接与已受理调用不依赖窗口存活；刷新同一登录的凭据保留连接和在途调用，换号才废弃旧连接与迟到结果。共享 [gateway.ts](../../shared/gateway.ts) 处理 JSON-RPC、心跳、事件水位和快照缓冲。
 
-[代理等待](ipc/gateway.ts)有超时，网关 closed / error 时统一 reject；宿主渲染器崩溃、重载或销毁时由主进程同步关闭状态并终止等待，状态仅在变化时广播至代理窗口。代理 RPC 使用结果信封透传业务错误的 `code`、`message` 与 `data`，渲染代理还原错误类型；桥接失败与超时保留普通错误。[连接缓存](backend/ensure-backend.ts)只保存后端地址与就绪结果，凭据按请求读取；reset 使在途解析失效。票据签发前后核对鉴权会话，拒绝换号后的迟到结果。
+所有业务窗口通过 [gateway.ts](ipc/gateway.ts) 请求与订阅。主进程禁止渲染层执行 `tools.sync`、`tool.result`；`tool.call`、`tool.cancel` 直接派发 Runner，不交给窗口。IPC 的请求、事件与状态带鉴权会话 ID，窗口先订阅后读取状态，旧身份事件不能灌入新视图。准备后端或票据失败时同样发布可恢复状态；重试保留原因，连通后清除。窗口重载恢复启动失败与非 `headless` 工具工作态，取消和换号释放所属活动。
+
+[连接缓存](backend/ensure-backend.ts)只保存后端地址与就绪结果，凭据按请求读取；reset 使在途解析失效，票据签发前后核对登录身份和实际凭据。IPC 结构化错误的透传与还原遵循 [错误信封](../../docs/PROTOCOL.md#错误信封)。
 
 ## 窗口与几何
 
@@ -69,7 +70,7 @@
 
 显示器逻辑坐标用于窗口布局。Windows 桌景尺寸经 `desktop-display-resolutions.ts` 调用原生宿主的只读 `display-bounds` 查询，按显示器 ID、几何和查询代次缓存；启动及显示器变更后发布真实像素，查询不可用时返回空值，禁止从已取整的 DIP 反推尺寸。
 
-交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口，保留原生 Windows 界面。网关票及 Runner 派发仍只授予隐藏精灵宿主。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
+交互界面使用完整 preload，账户、配置、更新与启动器仅授权交互界面；交互屏背景使用 [preload-background.ts](preload-background.ts)，仅接收缓存媒体与播放状态并回报播放生命周期。其他屏幕不创建背景窗口，保留原生 Windows 界面。隐藏精灵宿主仍可通过受控直调读取本机场景与活动信息；模型工具由主进程派发。背景媒体由交互界面提交已认证资源引用，主进程通过账户资产缓存读取原始字节；播放命令与回执按账户和呈现代次隔离，锁屏、全屏及减少动态效果时暂停。
 
 呈现切换 IPC 允许精灵宿主、主窗口和交互桌面；托盘复用同一串行入口。录音、转写和附件上传状态由 [ui-state.ts](ipc/ui-state.ts) 合并，切换入口共同消费阻止原因。该桥按账户在进程内持有页面、会话、主对话草稿与阅读位置，核对鉴权会话和合法 sender；主动切换等待来源捕获与目标恢复，失败保留来源界面。快照不持久化文件访问许可，主窗口与桌面通过受控导航交接。桌面组件缺失时在关闭旧窗口前拒绝启用，广播实际窗口模式及失败原因。
 
@@ -118,11 +119,11 @@
 | 首次或重新握手 | 强制 full config，成功读取清单才就绪；最多三次尝试，配置 RPC 5 秒、清单 RPC 10 秒，启动等待 60 秒 |
 | 运行中保存配置 | 比对 Runner 最近成功应用的快照；忽略仅桌面消费的 `ui`、`shortcuts`、`companion`、`language`、`sync`，未知节仍参与 |
 | 推送成功、清单刷新失败 | 保留原清单和就绪状态，留下 `toolsRefreshPending`，下次保存继续读清单 |
-| 握手耗尽或运行期配置推送失败 | 撤销新执行资格，保留连接供保存配置、`runner_ready` 或 `autoStart` 原位重试 |
+| 握手耗尽或运行期配置推送失败 | 撤销新执行资格，保留连接供保存配置、`runner.ready` 或 `autoStart` 原位重试 |
 | WS／进程启动失败、初次等待超时 | 收尾端点、连接和进程；断连废弃旧清单，重连未报告 ready 时可重新启动 |
 | 停止与重启 | 等待在途启动及回滚完成，操作代次阻断旧启动清理新实例 |
 
-派发入口透传 `call_id` 并分类结果；取消定位该调用的 RPC `req_id`，窗口等直调不带 `call_id`。`tools.sync` 归 renderer 宿主，不由桥发送。取消、日志恢复和结果未知的定义归 [调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
+派发入口透传 `call_id` 并分类结果；取消定位该调用的 RPC `req_id`，窗口等直调不带 `call_id`。`tools.sync` 由主进程账户网关串行发送，Runner 状态与清单刷新会撤销或更新云端能力。取消、日志恢复和结果未知的定义归 [调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
 
 [session-runtime.ts](backend/session-runtime.ts)负责懒创建及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 广播器直接广播，仍是当前会话才自动启动 Runner；应用就绪后另有 200 ms 定时入口，须与恢复路径共同保持幂等。
 
@@ -139,6 +140,8 @@
 - 更新状态广播给全部窗口，不假定主窗口存在；实际消费方由渲染层 `update-bridge` 挂载位置决定。
 
 ## 网络与缓存
+
+Electron 网络经 `net.fetch`、`net.WebSocket` 保持系统代理与证书语义。
 
 字节缓存键与落盘范围见 [Client](../README.md#资产与历史缓存)。账户隔离及取消由缓存各自的所有者实施。
 

@@ -1,9 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 
 class DesktopConfigResponse(BaseModel):
-    config: dict
+    config: dict[str, JsonValue]
 
 
 class DesktopConfigPutRequest(BaseModel):
-    config: dict
+    model_config = ConfigDict(extra="forbid")
+
+    config: dict[str, JsonValue]

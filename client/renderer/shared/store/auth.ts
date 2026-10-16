@@ -5,7 +5,7 @@ import { accountApi } from '@/shared/platform/desktop'
 import type { DesktopActivatePayload, DesktopAuthBroadcast, DesktopAuthSnapshot } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
-import { tearDownPrimaryGateway } from './gateway'
+import { setPrimaryGateway } from './gateway'
 
 type AuthState =
   | { kind: 'pending' }
@@ -59,7 +59,7 @@ export async function applyAuthBroadcast(payload: DesktopAuthBroadcast): Promise
     const sessionChanged = previous.kind === 'authenticated' && previous.snapshot.sessionId !== next?.sessionId
 
     if (sessionChanged) {
-      tearDownPrimaryGateway()
+      setPrimaryGateway(null)
     }
 
     if (previous.kind !== 'authenticated' || previous.snapshot.accountId !== next?.accountId) {

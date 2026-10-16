@@ -27,7 +27,7 @@ import {
 import { MediaStage } from '@/modules/character/rendering'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
-import { NotificationStack, requestGateway } from '@/shared'
+import { NotificationStack } from '@/shared'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
 import { useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
@@ -150,7 +150,7 @@ export function SpriteWindow(): React.JSX.Element {
 
     validityCheckedRef.current = true
 
-    void checkVoiceValidity($companionVoiceId.get(), requestGateway).then(result => {
+    void checkVoiceValidity($companionVoiceId.get()).then(result => {
       if (result.valid) {
         return
       }

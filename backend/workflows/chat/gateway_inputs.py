@@ -1,6 +1,6 @@
 import contextlib
 from collections.abc import AsyncIterator
-from typing import Any, TypeGuard
+from typing import Any
 
 from features.conversation.attachments import (
     audio_file_id_from_url,
@@ -61,25 +61,6 @@ def _require_str(params: dict[str, Any], key: str) -> str:
     v = params.get(key)
     if not isinstance(v, str):
         raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a string")
-    return v
-
-
-def _optional_str(params: dict[str, Any], key: str) -> str | None:
-    v = params.get(key)
-    if v is not None and not isinstance(v, str):
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a string")
-    return v
-
-
-def _is_nonneg_int(v: object) -> TypeGuard[int]:
-    """type(v) is int 拒绝 bool（Python 把 bool 当 int 子类）。"""
-    return type(v) is int and v >= 0
-
-
-def _require_nonneg_int(params: dict[str, Any], key: str) -> int:
-    v = params.get(key)
-    if not _is_nonneg_int(v):
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a non-negative int")
     return v
 
 

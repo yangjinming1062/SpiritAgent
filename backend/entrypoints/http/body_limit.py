@@ -1,30 +1,22 @@
 """在框架读取 JSON / multipart 前限制请求体；大上传入口先核对有效登录。"""
 
-import re
-
 from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from features.accounts.deps import authenticate_remote_session, get_current_admin_token, get_current_session
 from infrastructure.config import SETTINGS
 from infrastructure.constants import SCENE_DOWNLOAD_MAX_BYTES, STT_MAX_AUDIO_BYTES
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.http_contracts import find_http_operation
 from starlette.datastructures import Headers
 from starlette.formparsers import MultiPartException
-from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from entrypoints.http.errors import error_response
 
 _KIB = 1024
 _MIB = 1024 * _KIB
 _DEFAULT_MAX_BYTES = 64 * _KIB
 _UPLOAD_OVERHEAD_BYTES = _MIB
-_IMAGE_UPLOAD_PATH = re.compile(
-    r"/api/companion/(?:avatar/(?:from-image|adopt|\d+/fullbody/reference(?:/adopt)?)"
-    r"|outfits(?:/(?:prompt|adopt|\d+/adopt))?"
-    r"|scenes/(?:generate|adopt|\d+/adopt))",
-)
-_BACKUP_UPLOAD_PATH = re.compile(r"/api/admin/users/\d+/import")
-_DESKTOP_VIDEO_UPLOAD_PATH = re.compile(r"/api/companion/desktop-videos/actions/\d+/upload")
-_DESKTOP_IMAGE_UPLOAD_PATH = re.compile(r"/api/companion/desktop-videos/actions/\d+/image-upload")
 
 
 class _RequestBodyTooLarge(MultiPartException):
@@ -32,30 +24,19 @@ class _RequestBodyTooLarge(MultiPartException):
 
 
 def _body_policy(scope: Scope) -> tuple[int, bool | None]:
-    path = scope["path"].rstrip("/")
-    if scope["method"] == "PUT" and path == "/api/companion/persona":
-        return 32 * _KIB, None
-    if scope["method"] != "POST":
+    operation = find_http_operation(scope["path"], scope["method"])
+    if operation is None or operation.upload == "json":
         return _DEFAULT_MAX_BYTES, None
-    if _IMAGE_UPLOAD_PATH.fullmatch(path):
-        # 最大请求含两个 8 MiB base64 图像字段；其余字段继续由 DTO 校验。
-        return 16 * _MIB + _DEFAULT_MAX_BYTES, False
-    if path == "/api/companion/video-packs":
-        # 12 个 32 MiB 片段经 base64 编码后的总量，加上 JSON 字段开销。
-        return 512 * _MIB + _DEFAULT_MAX_BYTES, False
-    if path == "/api/media/videos":
-        return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
-    if _DESKTOP_VIDEO_UPLOAD_PATH.fullmatch(path):
-        return SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES, False
-    if _DESKTOP_IMAGE_UPLOAD_PATH.fullmatch(path):
-        return SCENE_DOWNLOAD_MAX_BYTES + _UPLOAD_OVERHEAD_BYTES, False
-    if path in {"/api/media/stt", "/api/media/audios", "/api/media/voice-samples"}:
-        return STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES, False
-    if _BACKUP_UPLOAD_PATH.fullmatch(path):
-        return 4 * 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES, True
-    if path == "/api/update/versions":
-        return 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES, True
-    return _DEFAULT_MAX_BYTES, None
+    limits = {
+        "image": 16 * _MIB + _DEFAULT_MAX_BYTES,
+        "image_file": SCENE_DOWNLOAD_MAX_BYTES + _UPLOAD_OVERHEAD_BYTES,
+        "action_pack": 512 * _MIB + _DEFAULT_MAX_BYTES,
+        "video": SETTINGS.video_attachment_max_bytes + _UPLOAD_OVERHEAD_BYTES,
+        "audio": STT_MAX_AUDIO_BYTES + _UPLOAD_OVERHEAD_BYTES,
+        "backup": 4 * 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES,
+        "release": 1024 * _MIB + _UPLOAD_OVERHEAD_BYTES,
+    }
+    return limits[operation.upload], operation.permits("admin")
 
 
 async def _authenticate_upload(scope: Scope, *, admin_only: bool) -> None:
@@ -89,12 +70,9 @@ class BodyLimitMiddleware:
         headers = Headers(scope=scope)
         lengths = headers.getlist("content-length")
         if lengths and (len(set(lengths)) != 1 or not lengths[0].isascii() or not lengths[0].isdigit()):
-            await JSONResponse(status_code=400, content={"detail": "无效的 Content-Length。"})(scope, receive, send)
+            await error_response(400, "无效的 Content-Length。")(scope, receive, send)
             return
-        too_large = JSONResponse(
-            status_code=413,
-            content={"detail": "请求内容超过大小上限。"},
-        )
+        too_large = error_response(413, "请求内容超过大小上限。")
         # 先按长度判断位数，避免不可信的超长整数头触发 int() 的解释器限制。
         if lengths and (len(lengths[0]) > 20 or int(lengths[0]) > max_bytes):
             await too_large(scope, receive, send)
@@ -103,7 +81,7 @@ class BodyLimitMiddleware:
             try:
                 await _authenticate_upload(scope, admin_only=admin_only)
             except HTTPException as exc:
-                await JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)(
+                await error_response(exc.status_code, str(exc.detail), headers=exc.headers)(
                     scope,
                     receive,
                     send,

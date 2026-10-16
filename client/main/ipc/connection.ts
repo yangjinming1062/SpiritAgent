@@ -1,13 +1,13 @@
-import type { BrowserWindow, IpcMain, WebContents } from 'electron'
+import type { IpcMain, WebContents } from 'electron'
 
 import { IPC, type IpcInvokeContract, type SpiritAgentApiRequest } from '@ipc/contracts'
 
 import { assertApiRequestAllowed } from '../security/api-allowlist'
-import { assertGatewayHost } from '../security/ipc-trust'
 import type { BackendConnection } from '../shared/backend-port'
 import { dataUrlFromBuffer } from '../shared/mime'
 import { httpErrorFromResponse, isUnauthorized, sendToSender } from '../shared/utils'
 
+import { registerApiResult } from './api-result'
 import { type AssetDiskCache, type CachedAsset, resolveBackendAssetUrl } from './asset-disk-cache'
 
 export type GetCurrentAuth = () => null | { sessionId: string; token: string }
@@ -50,9 +50,7 @@ interface ConnectionIpcDeps {
   ) => Promise<unknown>
   getCurrentAuth: GetCurrentAuth
   getSelectedAccountId: () => string | null
-  getMainWindow: () => BrowserWindow | null | undefined
   ipcMain: IpcMain
-  mintWsTicket: (baseUrl: string, token: string) => Promise<string>
   resolvePathTimeoutMs: (path?: string, method?: string, fallbackMs?: number) => number
 }
 
@@ -163,9 +161,7 @@ export function registerConnectionIpc({
   fetchJson,
   getCurrentAuth,
   getSelectedAccountId,
-  getMainWindow,
   ipcMain,
-  mintWsTicket,
   resolvePathTimeoutMs
 }: ConnectionIpcDeps): void {
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
@@ -179,33 +175,7 @@ export function registerConnectionIpc({
     getSelectedAccountId
   })
 
-  ipcMain.handle(IPC.invoke.gatewayWsUrl, async event => {
-    assertGatewayHost(event.sender, getMainWindow(), 'gatewayWsUrl')
-
-    const auth = getCurrentAuth()
-
-    if (!auth) {
-      throw new Error('An authenticated session is required for the gateway')
-    }
-
-    return callBackend(event.sender, async connection => {
-      const assertCurrentAuth = (): void => {
-        const current = getCurrentAuth()
-
-        if (current?.sessionId !== auth.sessionId || current.token !== auth.token || connection.token !== auth.token) {
-          throw new Error('Gateway authentication changed while issuing a ticket')
-        }
-      }
-
-      assertCurrentAuth()
-      const ticket = await mintWsTicket(connection.baseUrl, auth.token)
-      assertCurrentAuth()
-
-      return `${connection.baseUrl.replace(/^http/, 'ws')}/api/chat/ws?ticket=${encodeURIComponent(ticket)}`
-    })
-  })
-
-  ipcMain.handle(IPC.invoke.api, async (event, request: SpiritAgentApiRequest) => {
+  registerApiResult(ipcMain, IPC.invoke.api, async (event, request: SpiritAgentApiRequest) => {
     assertApiRequestAllowed(request?.path, request?.method)
 
     const auth = getCurrentAuth()

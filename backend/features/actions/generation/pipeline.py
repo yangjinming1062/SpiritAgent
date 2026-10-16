@@ -63,7 +63,6 @@ from features.media.review_service import create_media_review
 from features.media.video_queue.contracts import VideoQueueInfo, VideoQueueOwner
 from features.media.video_queue.service import (
     acknowledge_video_attempt,
-    adopt_video_attempt,
     enqueue_video_attempt,
     wait_video_attempt,
 )
@@ -627,14 +626,6 @@ async def _run_action_attempt(
                 entity_id=job.id,
                 generation_id=state.generation_id,
             )
-            if not state.queue_request_id and job.provider_task_id:
-                state.queue_request_id = await adopt_video_attempt(
-                    owner,
-                    state.providers[attempt],
-                    attempt,
-                    job.provider_task_id,
-                )
-                await _save_action_state(job, state)
             if not state.queue_request_id:
                 resolution = state.providers[attempt].video_resolution
                 if not resolution:

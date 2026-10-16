@@ -64,7 +64,7 @@ def _probe_system_activity() -> tuple[bool, str | None]:
 
 
 def network_reachable(host: str = "1.1.1.1", port: int = 443, timeout: float = 1.5) -> bool:
-    """轻量连通性探测（供 ``spiritagent.info`` 上报网络状态），避免握手超时。"""
+    """轻量连通性探测（供 ``runner.info`` 上报网络状态），避免握手超时。"""
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True

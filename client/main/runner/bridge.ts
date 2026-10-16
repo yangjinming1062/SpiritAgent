@@ -6,6 +6,14 @@ import path from 'node:path'
 
 import { errorMessage, sleep } from '@runtime'
 
+import type {
+  RunnerMethod,
+  RunnerRequest,
+  RunnerRequester,
+  RunnerRequestOptions,
+  RunnerResponse,
+  RunnerTools
+} from '../../../shared/runner'
 import { atomicWriteFile, createSerialQueue, RunnerNotConnectedError } from '../shared/utils'
 
 import type { RunnerProcess, RunnerProcessState } from './process'
@@ -76,20 +84,16 @@ export type RunnerBridgeEvent =
       capabilitiesHealth?: null | RunnerCapabilitiesHealth
       probeFailed: boolean | null
       runnerVersion: null | string
-      tools: Record<string, unknown>[] | null
+      tools: RunnerTools | null
       type: 'runner_ready' | 'running'
     }
   | { error: Error; phase: string; type: 'error' }
   | { errors?: string[]; reason?: string; type: 'stopped' | 'stopping' }
 
 export interface RunnerBridge {
-  dispatch: <T = unknown>(
-    method: string,
-    params?: Record<string, unknown>,
-    opts?: { id?: number | string; timeoutMs?: number }
-  ) => Promise<T>
+  dispatch: RunnerRequester
   getStatus: () => RunnerBridgeStatus
-  getTools: () => Record<string, unknown>[]
+  getTools: () => RunnerTools
   onEvent: (callback: (event: RunnerBridgeEvent) => void) => () => void
   start: (args?: RunnerBridgeStartOptions) => Promise<RunnerBridgeStatus>
   stop: (options?: { reason?: string }) => Promise<{ errors?: string[]; noop?: boolean; ok: boolean }>
@@ -114,7 +118,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
   let runnerProcess: null | RunnerProcess = null
   let wsServer: null | RunnerWsServer = null
-  let cachedTools: Record<string, unknown>[] | null = null
+  let cachedTools: RunnerTools | null = null
   let toolsGeneration = 0
   let toolsRefreshPending = false
   let handshakePending = false
@@ -374,7 +378,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
         }
       } else if (ev.type === 'error') {
         log(`[runner-bridge] ws server error: ${errorMessage(ev.error)}`)
-      } else if (ev.type === 'notification' && ev.method !== 'runner_capabilities_changed') {
+      } else if (ev.type === 'notification' && ev.method !== 'runner.capabilities_changed') {
         // Client 不消费运行期能力通知（PROTOCOL「能力与进程代次」），该通知属预期事件。
         log(`[runner-bridge] unhandled ws server event: notification ${ev.method}`)
       }
@@ -610,13 +614,13 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     })
   }
 
-  async function requestTools(server: RunnerWsServer): Promise<Record<string, unknown>[]> {
-    const result = await server.call<{ tools?: Record<string, unknown>[] }>('get_tools', {}, { timeoutMs: 10_000 })
+  async function requestTools(server: RunnerWsServer): Promise<RunnerTools> {
+    const result = await server.call('tools.list', {}, { timeoutMs: 10_000 })
 
     return result?.tools ?? []
   }
 
-  async function fetchTools(server: RunnerWsServer): Promise<Record<string, unknown>[] | null> {
+  async function fetchTools(server: RunnerWsServer): Promise<RunnerTools | null> {
     try {
       const tools = await requestTools(server)
       log(`[runner-bridge] got ${tools.length} tools from runner`)
@@ -630,7 +634,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       return tools
     } catch (error: unknown) {
       const msg = errorMessage(error)
-      log(`[runner-bridge] get_tools failed: ${msg}`)
+      log(`[runner-bridge] tools.list failed: ${msg}`)
 
       return null
     }
@@ -707,27 +711,27 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     return { errors, ok: errors.length === 0 }
   }
 
-  async function dispatch<T = unknown>(
-    method: string,
-    params: Record<string, unknown> = {},
-    opts: { id?: number | string; timeoutMs?: number } = {}
-  ): Promise<T> {
+  async function dispatch<K extends RunnerMethod>(
+    method: K,
+    params: RunnerRequest<K>,
+    opts: RunnerRequestOptions = {}
+  ): Promise<RunnerResponse<K>> {
     if (!wsServer || !wsServer.getStatus()?.connected) {
       throw new RunnerNotConnectedError('Runner is not connected.')
     }
 
     if (
-      method !== 'spiritagent.cancel' &&
-      method !== 'spiritagent.call_result' &&
+      method !== 'calls.cancel' &&
+      method !== 'calls.get' &&
       (state.phase !== 'running' || handshakePending || cachedTools === null)
     ) {
       throw new RunnerNotConnectedError(`Runner is not ready: ${state.lastError || state.phase}.`)
     }
 
-    return wsServer.call<T>(method, params, opts)
+    return wsServer.call(method, params, opts)
   }
 
-  function getTools(): Record<string, unknown>[] {
+  function getTools(): RunnerTools {
     return state.phase === 'running' && wsServer?.getStatus().connected ? (cachedTools ?? []) : []
   }
 

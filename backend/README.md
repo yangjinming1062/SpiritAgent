@@ -17,7 +17,7 @@
 | 主动信息检索、来源分享与反馈 | [话题模块](features/topics/README.md)、[夜间检索](workflows/nightly/topic_discovery.py) |
 | 动态与日记 | [动态](features/posts/README.md)、[journal_service.py](features/journal/journal_service.py)；REST 在 `entrypoints/http/routes/companion_posts.py`、`companion_journal.py` |
 | 手机扫码与远程访问 | [远程网页](#远程网页)、[remote.py](entrypoints/http/routes/remote.py) |
-| 激活、登录、WS 票据与凭据 | [user.py](entrypoints/http/routes/user.py)、[账户](features/accounts/)、[远程身份](features/accounts/remote/README.md) |
+| 激活、登录、WS 票据与凭据 | [user.py](entrypoints/http/routes/user.py)、[网关](entrypoints/http/routes/gateway.py)、[账户](features/accounts/)、[远程身份](features/accounts/remote/README.md) |
 | 管理后台、配置与用户维护 | [admin.py](entrypoints/http/routes/admin.py)、[后台结构](static/admin.html)、[交互](static/admin.js)、[样式](static/admin.css)、[配置与迁移](#配置与迁移) |
 | 供应商与任务链 | [ai_tasks.py](infrastructure/ai/tasks.py)、[registrations.py](bootstrap/registrations.py)、[providers/base.py](infrastructure/ai/providers/base.py)、[llm_client.py](infrastructure/ai/llm_client.py) |
 | 桌面配置同步 | [config.py](entrypoints/http/routes/config.py)、[desktop_config.py](features/configuration/desktop_config.py) |
@@ -53,7 +53,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 [routes/__init__.py](entrypoints/http/routes/__init__.py) 显式登记资源路由及其前缀、名称与响应结构。`/api` 同时用于资产、备份、限流及客户端，不能作为部署配置修改。文件与业务错误由协议适配层转换，业务操作不返回 FastAPI 响应对象。
 
-[body_limit.py](entrypoints/http/body_limit.py) 在解析前限制请求体，实际流超限也返回 413，大载荷入口先验证当前登录。WS 入口是 [chat.py](entrypoints/http/routes/chat.py)，RPC 和斜杠命令分别在 [handlers.py](entrypoints/desktop/handlers.py)、[slash_commands.py](features/conversation/slash_commands.py)；`command.dispatch` 是命令执行权威，Client 只镜像补全和确认元数据。管理页面可加载不代表管理 API 免鉴权。
+[body_limit.py](entrypoints/http/body_limit.py) 在解析前读取路由策略限制请求体，实际流超限也返回 413，大载荷入口先验证当前登录。WS 入口是 [gateway.py](entrypoints/http/routes/gateway.py)，RPC 和斜杠命令分别在 [handlers.py](entrypoints/desktop/handlers.py)、[slash_commands.py](features/conversation/slash_commands.py)；`command.dispatch` 是命令执行权威，Client 只镜像补全和确认元数据。管理页面可加载不代表管理 API 免鉴权。
 
 ## 配置与运行生命周期
 
@@ -67,7 +67,15 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 `system_settings` 和点键 `user_settings` 逐值 JSON 编码。用户设置只经 [settings/values.py](features/configuration/settings/values.py) 读写，消费方直接使用解码值。
 
-启动自动执行 Alembic 升级；空库从 `0001` 基线创建，当前 head 为 `0002`，包含账户音色方案。结构变更新增迁移，并比对 ORM 类型、默认值及索引；autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
+启动自动执行 [Alembic 迁移](alembic/versions/)，空库从基线创建。结构变更新增迁移，并比对 ORM 类型、默认值及索引；autogenerate 不足以核对部分索引的 `WHERE`、索引方法与操作符类，迁移中转义的 `%%` 须还原为 `%`。
+
+存量视频升级前停止执行器。迁移若检测到缺少队列归属的未决任务，在 `backend` 目录运行 [升级检查工具](tools/video_queue_upgrade.py)，按原供应商记录核实终态后登记；工具不联系供应商或重新提交制作：
+
+```bash
+uv run --frozen python -m tools.video_queue_upgrade --settled media:123 --expected-state-sha256 <检查输出的指纹> --outcome failed --note "已按原任务记录核实失败的依据"
+```
+
+先不带参数检查，再使用输出的状态指纹登记。成功任务须提供原供应商的 `--result-url`；其他参数见 `--help`。登记在行锁内核对状态，变化后须重新检查；全部未决任务查实后才可继续迁移，当前队列的请求、冷却及未消费结果保留。
 
 ### 装配与启停
 

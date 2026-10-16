@@ -2,9 +2,9 @@ import asyncio
 from typing import Any, Protocol
 
 from features.conversation.history import build_session_messages
+from infrastructure.api_errors import redact_message
 from infrastructure.database import SESSION_LOCAL
 from runtime.conversation import ActiveTurnSnapshot, ToolSnapshot
-from runtime.desktop.jsonrpc import redact_message
 
 
 class EventPublisher(Protocol):

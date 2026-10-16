@@ -485,3 +485,41 @@ class DesktopVideoClaimRequest(BaseModel):
 class DesktopVideoReceipt(DesktopVideoClaimRequest):
     status: Literal["started", "completed", "interrupted", "failed", "rejected"]
     error: str | None = Field(default=None, max_length=500)
+
+
+class DesktopVideoGenerateCommand(DesktopVideoGenerateRequest):
+    command: Literal["generate-video"]
+
+
+class DesktopVideoImageCommand(DesktopVideoImageRequest):
+    command: Literal["generate-image"]
+
+
+class DesktopVideoRefineCommand(DesktopVideoRefineRequest):
+    command: Literal["refine-video"]
+
+
+class DesktopVideoConfirmImageCommand(DesktopVideoConfirmImageRequest):
+    command: Literal["confirm-image"]
+
+
+class DesktopVideoCancelCommand(DesktopVideoCancelRequest):
+    command: Literal["cancel"]
+
+
+class DesktopVideoPauseCommand(DesktopVideoDraftRequest):
+    command: Literal["pause"]
+
+
+class DesktopVideoResumeCommand(DesktopVideoDraftRequest):
+    command: Literal["resume"]
+
+
+class DesktopVideoDecisionRequest(DesktopVideoDraftRequest):
+    decision: Literal["accept", "reject"]
+
+
+class DesktopVideoSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    set_id: int = Field(gt=0)

@@ -2,6 +2,7 @@ import { app } from 'electron'
 
 import { errorMessage } from '@runtime'
 
+import { readHttpError } from '../../../shared/errors'
 import { resolvePathTimeoutMs, resolveTimeoutMs } from '../security/hardening'
 
 interface BackendRequestErrorOptions {
@@ -206,18 +207,12 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
     }
 
     if (!res.ok) {
-      const payloadObj = payload as { detail?: string } | null | undefined
-
-      const detail =
-        payloadObj && typeof payloadObj === 'object' && typeof payloadObj.detail === 'string'
-          ? payloadObj.detail
-          : typeof payload === 'string' && payload
-            ? payload
-            : `${res.status} ${res.statusText || ''}`.trim()
+      const business = readHttpError(payload)
+      const detail = business?.message ?? `${res.status} ${res.statusText || ''}`.trim()
 
       throw new BackendRequestError({
         body: payload,
-        code: `http-${res.status}`,
+        code: business?.code ?? `http-${res.status}`,
         message: `Backend ${method} ${url.pathname} failed: ${detail}`,
         status: res.status
       })

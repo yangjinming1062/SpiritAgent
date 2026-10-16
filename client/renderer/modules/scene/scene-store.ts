@@ -1,27 +1,23 @@
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { apiSucceeded, captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
+import { authedResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { trimOldest } from '@/shared/lib/trim-oldest'
 import { backendApi } from '@/shared/platform/desktop'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
-type SceneStatus = 'cancelled' | 'description_failed' | 'failed' | 'pending' | 'ready'
-export type ScenePolicy = 'llm_may_replace' | 'locked'
-interface SceneImageSize {
-  width: number
-  height: number
-}
+import type { ApiInput, ApiOperation, ApiOperationKey } from '../../../../shared/api'
+import type { ApiSchemas } from '../../../../shared/api.generated'
+
+type SceneStatus = ApiSchemas['SceneStatus']
+export type ScenePolicy = ApiSchemas['ScenePolicy']
+type SceneImageSize = ApiSchemas['SceneImageDimensions']
 export const SCENE_IMAGE_SIZE: Readonly<SceneImageSize> = { width: 2560, height: 1440 }
-interface SceneRegeneration {
-  task_id: string
-  status: 'cancelled' | 'failed' | 'pending' | 'ready'
-  stage: string
-  error: string | null
-}
+type SceneRegeneration = ApiSchemas['SceneRegenerationResponse']
 export interface ActiveScene {
   id: string
   title: string
@@ -43,22 +39,7 @@ export interface ActiveScene {
   regeneration: SceneRegeneration | null
 }
 export type SceneAsset = ActiveScene
-interface SceneWire extends Omit<ActiveScene, 'assetUrl' | 'id' | 'thumbnailUrl'> {
-  id: number
-}
-interface SceneStateWire {
-  active: SceneWire | null
-  pending: SceneWire | null
-  regenerating: SceneWire | null
-  policy: ScenePolicy
-  version: number
-  switch_version: number
-}
-interface SceneListWire {
-  scenes: SceneWire[]
-  total: number
-  version: number
-}
+type SceneWire = ApiSchemas['SceneResponse']
 interface SceneGenerationInput {
   notes?: string
   image?: string
@@ -246,8 +227,8 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   $scenePage.set(page)
   $sceneLibraryStatus.set('loading')
 
-  const result = await authedApi<SceneListWire>({
-    path: `/api/companion/scenes?q=${encodeURIComponent(query)}&offset=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`
+  const result = await authedResource('GET /api/companion/scenes', {
+    query: { q: query, offset: page * PAGE_SIZE, limit: PAGE_SIZE }
   })
 
   if (!apiSucceeded(result, 'scene', 'Scene library could not be loaded:') || !result.value) {
@@ -292,7 +273,7 @@ async function fetchSceneDetail(sceneId: string, deferMedia = false): Promise<Sc
     startEvent === eventVersion &&
     read >= (detailReads.get(sceneId) ?? -1)
 
-  const result = await authedApi<SceneWire>({ path: `/api/companion/scenes/${encodeURIComponent(sceneId)}` })
+  const result = await authedResource('GET /api/companion/scenes/{scene_id}', { path: { scene_id: Number(sceneId) } })
 
   if (!isCurrent()) {
     return null
@@ -381,7 +362,7 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
   const request = ++stateRequest
   const epoch = currentClearEpoch()
   const isCurrent = (): boolean => request === stateRequest && epoch === currentClearEpoch()
-  const result = await authedApi<SceneStateWire>({ path: '/api/companion/scenes/state' })
+  const result = await authedResource('GET /api/companion/scenes/state')
 
   if (!apiSucceeded(result, 'scene', 'Scene state could not be loaded:') || !result.value) {
     return
@@ -473,11 +454,14 @@ const sceneError = (error: unknown): string =>
   backendDetailMessage(error, getStrings().living.toasts.sceneRegenerateFailed)
 
 // 写请求使在途的状态读取失效；返回非空 body，失败或请求期间账户被清理则抛出可直接展示的文案。
-async function sceneRequest<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: object): Promise<T> {
+async function sceneRequest<K extends ApiOperationKey>(
+  operation: K,
+  input: ApiInput<K> = {}
+): Promise<ApiOperation<K>['response']> {
   const epoch = currentClearEpoch()
   mutationRevision++
   stateRequest++
-  const result = await authedApi<T>({ path: `/api/companion/scenes${path}`, method, ...(body ? { body } : {}) })
+  const result = await authedResource(operation, input)
 
   if (epoch !== currentClearEpoch()) {
     throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
@@ -496,9 +480,12 @@ async function sceneRequest<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE'
   return result.value
 }
 
-async function mutate<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: object): Promise<T> {
+async function mutate<K extends ApiOperationKey>(
+  operation: K,
+  input: ApiInput<K> = {}
+): Promise<ApiOperation<K>['response']> {
   const epoch = currentClearEpoch()
-  const value = await sceneRequest<T>(path, method, body)
+  const value = await sceneRequest(operation, input)
 
   await hydrateScene()
 
@@ -519,7 +506,16 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
   submitting = true
 
   try {
-    const row = await sceneRequest<SceneWire>('/generate', 'POST', input)
+    const { content_type, ...details } = input
+    const mime = (['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const).find(value => value === content_type)
+
+    if (content_type && !mime) {
+      throw new Error('仅支持 PNG / JPEG / WebP / GIF 图片')
+    }
+
+    const row = await sceneRequest('POST /api/companion/scenes', {
+      body: { ...details, content_type: mime, source: 'generate' }
+    })
 
     if (version === startVersion) {
       $pendingScene.set(toScene(row, row.url || ''))
@@ -553,7 +549,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
 export async function prepareScenePrompt(
   input: Pick<SceneGenerationInput, 'notes'>
 ): Promise<{ id: string; prompt: string }> {
-  const row = await mutate<SceneWire>('/prompt', 'POST', input)
+  const row = await mutate('POST /api/companion/scenes/prompt', { body: input })
 
   return { id: String(row.id), prompt: row.prompt }
 }
@@ -562,21 +558,27 @@ export async function adoptSceneImage(
   image: { base64: string; contentType: string },
   sceneId?: string
 ): Promise<string | null> {
-  const path = sceneId ? `/${encodeURIComponent(sceneId)}/adopt` : '/adopt'
-  const result = await mutate<SceneWire>(path, 'POST', { image: image.base64, content_type: image.contentType })
+  const result = await mutate('POST /api/companion/scenes', {
+    body: {
+      source: 'import',
+      scene_id: sceneId ? Number(sceneId) : undefined,
+      image: image.base64,
+      content_type: image.contentType
+    }
+  })
 
   return result ? String(result.id) : null
 }
 
 export async function cancelSceneTask(sceneId: string): Promise<void> {
-  await mutate(`/${sceneId}/discard`, 'POST')
+  await mutate('POST /api/companion/scenes/{scene_id}/discard', { path: { scene_id: Number(sceneId) } })
 }
 
 export async function activateScene(sceneId: string): Promise<void> {
   const epoch = currentClearEpoch()
 
   try {
-    await mutate('/activate', 'POST', { scene_id: Number(sceneId) })
+    await mutate('PUT /api/companion/scenes/current', { body: { scene_id: Number(sceneId) } })
 
     if (epoch === currentClearEpoch()) {
       notify({ kind: 'success', message: getStrings().living.toasts.sceneRollbackSuccess })
@@ -589,23 +591,26 @@ export async function activateScene(sceneId: string): Promise<void> {
 }
 
 export async function deleteScene(sceneId: string): Promise<void> {
-  await mutate(`/${sceneId}`, 'DELETE')
+  await mutate('DELETE /api/companion/scenes/{scene_id}', { path: { scene_id: Number(sceneId) } })
 }
 
 export async function editScene(sceneId: string, title: string, description: string): Promise<void> {
-  await mutate(`/${sceneId}`, 'PATCH', { title, description })
+  await mutate('PATCH /api/companion/scenes/{scene_id}', {
+    path: { scene_id: Number(sceneId) },
+    body: { title, description }
+  })
 }
 
 export async function regenerateScene(sceneId: string): Promise<void> {
-  await mutate(`/${sceneId}/regenerate`, 'POST')
+  await mutate('POST /api/companion/scenes/{scene_id}/regenerate', { path: { scene_id: Number(sceneId) } })
 }
 
 export async function analyzeScene(sceneId: string): Promise<void> {
-  await mutate(`/${sceneId}/analyze`, 'POST')
+  await mutate('POST /api/companion/scenes/{scene_id}/analyze', { path: { scene_id: Number(sceneId) } })
 }
 
 export async function setScenePolicy(policy: ScenePolicy): Promise<void> {
-  await mutate('/policy', 'PATCH', { policy })
+  await mutate('PATCH /api/companion/scenes/policy', { body: { policy } })
 }
 
 export function onSceneEvent(event: { payload?: unknown; type: string }): void {

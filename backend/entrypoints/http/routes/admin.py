@@ -7,12 +7,12 @@ import features.configuration.admin_operations as configuration_admin
 import features.configuration.social_accounts as social_accounts
 import workflows.maintenance.admin_operations as maintenance_admin
 import workflows.nightly.log_queries as nightly_logs
-from fastapi import Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.exceptions import RequestValidationError
+from fastapi import Depends, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.routing import APIRoute
 from features.accounts.deps import get_current_admin_token
 from features.accounts.schemas import (
+    RegenerateActivationRequest,
     UserBackupImportResponse,
     UserCreate,
     UserListResponse,
@@ -28,9 +28,10 @@ from features.media.video_queue.contracts import VideoQueueList, VideoQueueReque
 from infrastructure.ai.config import ModelDiscoveryRequest
 from infrastructure.ai.models import ModelDiscoveryResponse
 from infrastructure.database import DbSession
+from infrastructure.http_contracts import operation_policy
 from infrastructure.logger import get_logger
-from infrastructure.request_errors import RequestError
 from infrastructure.web.xiaohongshu import XhsLoginQrCode, XhsLoginVerification
+from pydantic import JsonValue
 from runtime.responses import MessageResponse
 from starlette.responses import Response
 from workflows.maintenance.backup.serializers import BACKUP_SECTION_IDS, BackupImportMode
@@ -48,20 +49,7 @@ class _AdminRoute(APIRoute):
 
         async def handle(request: Request) -> Response:
             login_management = request.url.path.startswith("/api/admin/social/xiaohongshu/login")
-            try:
-                response = await handler(request)
-            except RequestValidationError as exc:
-                # 管理请求包含密钥，校验响应只返回字段位置与原因。
-                detail = [{key: error[key] for key in ("loc", "msg", "type")} for error in exc.errors()]
-                raise HTTPException(
-                    status_code=422,
-                    detail=detail,
-                    headers={"Cache-Control": "no-store"} if login_management else None,
-                ) from None
-            except HTTPException as exc:
-                if login_management:
-                    exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
-                raise
+            response = await handler(request)
             if login_management:
                 response.headers["Cache-Control"] = "no-store"
             return response
@@ -69,7 +57,7 @@ class _AdminRoute(APIRoute):
         return handle
 
 
-router = get_router(dependencies=[Depends(get_current_admin_token)])
+router = get_router(dependencies=[Depends(get_current_admin_token)], identity="admin")
 router.route_class = _AdminRoute
 
 
@@ -78,176 +66,151 @@ async def video_queue(db: DbSession) -> VideoQueueList:
     return await list_video_queue(db)
 
 
-@router.post("/video-queue/{request_id}/resolve", response_model=VideoQueueRequestView)
+@router.post(
+    "/video-queue/{request_id}/resolve",
+    response_model=VideoQueueRequestView,
+)
 async def reconcile_video_queue(
     request_id: str,
     payload: VideoQueueResolution,
     admin: CurrentAdmin,
     db: DbSession,
 ) -> VideoQueueRequestView:
-    try:
-        return await resolve_video_queue(db, request_id, payload, admin)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    return await resolve_video_queue(db, request_id, payload, admin)
 
 
-@router.post("/ai/models/discover", response_model=ModelDiscoveryResponse)
+@router.post(
+    "/ai/models/discover",
+    response_model=ModelDiscoveryResponse,
+)
 async def discover_ai_models(payload: ModelDiscoveryRequest, db: DbSession) -> ModelDiscoveryResponse:
-    try:
-        result = await configuration_admin.discover_ai_models(payload=payload, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await configuration_admin.discover_ai_models(payload=payload, db=db)
     return result
 
 
 @router.get("/users", response_model=UserListResponse)
 async def list_users(db: DbSession) -> UserListResponse:
-    try:
-        result = await account_admin.list_users(db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await account_admin.list_users(db=db)
     return result
 
 
 @router.post("/users", response_model=UserResponse)
 async def create_user(payload: UserCreate, db: DbSession) -> UserResponse:
-    try:
-        result = await account_admin.create_user(payload=payload, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await account_admin.create_user(payload=payload, db=db)
     return result
 
 
 @router.patch("/users/{user_id}", response_model=UserResponse)
 async def update_user(user_id: int, payload: UserUpdate, db: DbSession) -> UserResponse:
-    try:
-        result = await account_admin.update_user(user_id=user_id, payload=payload, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await account_admin.update_user(user_id=user_id, payload=payload, db=db)
     return result
 
 
-@router.delete("/users/{user_id}", response_model=MessageResponse)
+@router.delete(
+    "/users/{user_id}",
+    response_model=MessageResponse,
+)
 async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
     """被遗忘权：在维护边界内停稳该用户的运行时，先删文件再删行（外键级联清理其余数据）；文件先于行删除，任一步失败都保留用户行，管理员重试即可继续清理。"""
-    try:
-        result = await maintenance_admin.delete_user(user_id=user_id, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await maintenance_admin.delete_user(user_id=user_id, db=db)
     return result
 
 
-@router.patch("/users/{user_id}/toggle-active", response_model=UserResponse)
-async def toggle_user_active(user_id: int, db: DbSession) -> UserResponse:
-    try:
-        result = await account_admin.toggle_user_active(user_id=user_id, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
-    return result
+@router.post(
+    "/users/{user_id}/activation",
+    response_model=UserResponse,
+)
+async def regenerate_activation(user_id: int, payload: RegenerateActivationRequest, db: DbSession) -> UserResponse:
+    return await account_admin.regenerate_activation(user_id, payload, db)
 
 
-@router.get("/model-configs", response_model=UserModelConfigListResponse)
+@router.get(
+    "/model-configs",
+    response_model=UserModelConfigListResponse,
+)
 async def list_model_configs(db: DbSession) -> UserModelConfigListResponse:
-    try:
-        result = await configuration_admin.list_model_configs(db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await configuration_admin.list_model_configs(db=db)
     return result
 
 
 @router.get("/runtime-info")
 async def runtime_info() -> dict[str, str]:
     """把 ``public_base_url`` 暴露给 admin 页：创建账号时自动填进激活码的 ``baseUrl``，留空时前端再降级到 ``http://localhost:10620``。"""
-    try:
-        result = await configuration_admin.runtime_info()
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await configuration_admin.runtime_info()
     return result
 
 
 @router.get("/system-settings")
-async def get_system_settings() -> dict[str, Any]:
+async def get_system_settings() -> dict[str, JsonValue]:
     """获取系统全部动态配置项（敏感 Key 自动脱敏）。"""
-    try:
-        result = await configuration_admin.get_system_settings()
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await configuration_admin.get_system_settings()
     return result
 
 
 @router.put("/system-settings")
-async def update_system_settings(payload: dict[str, Any], db: DbSession) -> dict[str, Any]:
+async def update_system_settings(payload: dict[str, JsonValue], db: DbSession) -> dict[str, JsonValue]:
     """更新系统动态配置，实时持久化到数据库并热重载生效。"""
-    try:
-        result = await configuration_admin.update_system_settings(payload=payload, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await configuration_admin.update_system_settings(payload=payload, db=db)
     return result
 
 
-@router.get("/nightly-activity-logs", response_model=NightlyActivityLogListResponse)
+@router.get(
+    "/nightly-activity-logs",
+    response_model=NightlyActivityLogListResponse,
+)
 async def list_nightly_activity_logs(
     db: DbSession,
     user_id: int | None = None,
     target_date: date | None = None,
 ) -> NightlyActivityLogListResponse:
     """查询夜间自主活动日志。可选按 user_id 和 target_date 过滤。"""
-    try:
-        result = await nightly_logs.list_nightly_activity_logs(db=db, user_id=user_id, target_date=target_date)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await nightly_logs.list_nightly_activity_logs(db=db, user_id=user_id, target_date=target_date)
     return result
 
 
-@router.get("/social/xiaohongshu/login/status", response_model=XiaohongshuAdminLoginStatus)
+@router.get(
+    "/social/xiaohongshu/login/status",
+    response_model=XiaohongshuAdminLoginStatus,
+)
 async def xiaohongshu_login_status(
     session_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9_-]{16,96}$"),
 ) -> XiaohongshuAdminLoginStatus:
-    try:
-        return await social_accounts.login_status(session_id=session_id)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    return await social_accounts.login_status(session_id=session_id)
 
 
-@router.post("/social/xiaohongshu/login/qrcode", response_model=XhsLoginQrCode)
+@router.post(
+    "/social/xiaohongshu/login/qrcode",
+    response_model=XhsLoginQrCode,
+)
 async def refresh_xiaohongshu_login_qrcode() -> XhsLoginQrCode:
-    try:
-        return await social_accounts.refresh_login_qrcode()
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    return await social_accounts.refresh_login_qrcode()
 
 
-@router.post("/social/xiaohongshu/login/verification", response_model=XiaohongshuAdminLoginStatus)
+@router.post(
+    "/social/xiaohongshu/login/verification",
+    response_model=XiaohongshuAdminLoginStatus,
+)
 async def submit_xiaohongshu_login_verification(payload: XhsLoginVerification) -> XiaohongshuAdminLoginStatus:
-    try:
-        return await social_accounts.submit_login_verification(payload)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    return await social_accounts.submit_login_verification(payload)
 
 
-@router.delete("/social/xiaohongshu/login", response_model=MessageResponse)
+@router.delete(
+    "/social/xiaohongshu/login",
+    response_model=MessageResponse,
+)
 async def clear_xiaohongshu_saved_login() -> MessageResponse:
-    try:
-        return await social_accounts.clear_saved_login()
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    return await social_accounts.clear_saved_login()
 
 
-@router.put("/{user_id}/model-config")
+@router.put("/users/{user_id}/model-config")
 async def upsert_model_config(user_id: int, payload: UserModelConfigRequest, db: DbSession) -> MessageResponse:
-    try:
-        result = await configuration_admin.upsert_model_config(user_id=user_id, payload=payload, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await configuration_admin.upsert_model_config(user_id=user_id, payload=payload, db=db)
     return result
 
 
-@router.delete("/{user_id}/model-config")
+@router.delete("/users/{user_id}/model-config")
 async def delete_model_config(user_id: int, db: DbSession) -> MessageResponse:
-    try:
-        result = await configuration_admin.delete_model_config(user_id=user_id, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await configuration_admin.delete_model_config(user_id=user_id, db=db)
     return result
 
 
@@ -258,14 +221,15 @@ async def export_user_backup(
     db: DbSession,
 ) -> FileResponse:
     """始终导出全量数据；恢复范围在导入时选择。"""
-    try:
-        result = await maintenance_admin.export_user_backup(user_id=user_id, admin=admin, db=db)
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await maintenance_admin.export_user_backup(user_id=user_id, admin=admin, db=db)
     return file_response(result)
 
 
-@router.post("/users/{user_id}/import", response_model=UserBackupImportResponse)
+@router.post(
+    "/users/{user_id}/import",
+    response_model=UserBackupImportResponse,
+    openapi_extra=operation_policy(upload="backup"),
+)
 async def import_user_backup(
     user_id: int,
     db: DbSession,
@@ -277,14 +241,11 @@ async def import_user_backup(
     ),
 ) -> UserBackupImportResponse:
     """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。只写入所选分组，不动未勾选内容。"""
-    try:
-        result = await maintenance_admin.import_user_backup(
-            user_id=user_id,
-            db=db,
-            file=file,
-            mode=mode,
-            sections=sections,
-        )
-    except RequestError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    result = await maintenance_admin.import_user_backup(
+        user_id=user_id,
+        db=db,
+        file=file,
+        mode=mode,
+        sections=sections,
+    )
     return result

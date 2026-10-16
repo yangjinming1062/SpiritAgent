@@ -36,13 +36,6 @@ interface Snapshot {
   locked: boolean
 }
 
-interface ShouldActRpcResponse {
-  should_act?: boolean
-  action?: string
-  params?: Record<string, unknown>
-  reason?: string
-}
-
 let lastConsultAt = 0
 let lastAutonomousActionAt = 0
 let lastSnapshot: Snapshot | null = null
@@ -214,7 +207,7 @@ async function consultAutonomyLLM(force = false): Promise<void> {
 
     // 请求失败时不做任何自主动作。
     const res = await gateway
-      .request<ShouldActRpcResponse | null>('companion.should_act', {
+      .request('companion.should_act', {
         kind: 'periodic_provision',
         idle_seconds: idle,
         local_hour: hour,

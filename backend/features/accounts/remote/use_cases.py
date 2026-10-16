@@ -52,7 +52,7 @@ async def create_pairing(user_id: int, db: AsyncSession) -> PairingResponse:
         select(User.id).where(User.id == user_id, User.is_active.is_(True)).with_for_update(),
     )
     if active_user_id is None:
-        raise RequestError(status_code=401, detail="账户已停用。")
+        raise RequestError(status_code=401, message="账户已停用。")
     await db.execute(
         update(RemotePairing)
         .where(
@@ -78,7 +78,7 @@ async def pairing_status(pairing_id: int, user_id: int, db: AsyncSession) -> Pai
         select(RemotePairing).where(RemotePairing.id == pairing_id, RemotePairing.user_id == user_id),
     )
     if pairing is None:
-        raise RequestError(status_code=404, detail="二维码不存在。")
+        raise RequestError(status_code=404, message="二维码不存在。")
     return _pairing_response(pairing)
 
 
@@ -87,7 +87,7 @@ async def cancel_pairing(pairing_id: int, user_id: int, db: AsyncSession) -> Non
         select(RemotePairing).where(RemotePairing.id == pairing_id, RemotePairing.user_id == user_id).with_for_update(),
     )
     if pairing is None:
-        raise RequestError(status_code=404, detail="二维码不存在。")
+        raise RequestError(status_code=404, message="二维码不存在。")
     if pairing.consumed_at is None:
         pairing.cancelled_at = utc_now()
     await db.commit()
@@ -97,13 +97,13 @@ async def exchange_pairing(payload: ExchangeRequest, db: AsyncSession, old_token
     digest = hash_remote_token(payload.token)
     user_id = await db.scalar(select(RemotePairing.user_id).where(RemotePairing.token_hash == digest))
     if user_id is None:
-        raise RequestError(status_code=401, detail="二维码无效，请重新连接。")
+        raise RequestError(status_code=401, message="二维码无效，请重新连接。")
     # 与二维码刷新、凭据重置共用用户锁；对待兑换码再取行锁。
     user = await db.scalar(
         select(User).where(User.id == user_id, User.is_active.is_(True)).with_for_update(),
     )
     if is_user_in_maintenance(user_id):
-        raise RequestError(status_code=503, detail="用户数据正在维护，请稍后重试。")
+        raise RequestError(status_code=503, message="用户数据正在维护，请稍后重试。")
     pairing = await db.scalar(select(RemotePairing).where(RemotePairing.token_hash == digest).with_for_update())
     if (
         user is None
@@ -112,7 +112,7 @@ async def exchange_pairing(payload: ExchangeRequest, db: AsyncSession, old_token
         or pairing.cancelled_at is not None
         or ensure_utc(pairing.expires_at) <= utc_now()
     ):
-        raise RequestError(status_code=401, detail="二维码已失效，请重新连接。")
+        raise RequestError(status_code=401, message="二维码已失效，请重新连接。")
     pairing.consumed_at = utc_now()
     token = new_remote_token()
     device = RemoteSession(
@@ -165,7 +165,7 @@ async def revoke_remote_device(device_id: int, user_id: int, db: AsyncSession) -
         await db.scalar(select(RemoteSession.id).where(RemoteSession.id == device_id, RemoteSession.user_id == user_id))
         is None
     ):
-        raise RequestError(status_code=404, detail="设备不存在。")
+        raise RequestError(status_code=404, message="设备不存在。")
     await revoke_remote_grants(db, user_id, device_id)
     await db.commit()
 

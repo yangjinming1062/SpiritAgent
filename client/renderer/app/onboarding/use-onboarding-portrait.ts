@@ -21,23 +21,16 @@ import {
   selectPortraitEntry
 } from '@/modules/character'
 import type { HistoryGalleryItem } from '@/shared'
-import { authedApi } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
-import { backendApi } from '@/shared/platform/desktop'
+import { authedResource, requestResource } from '@/shared/lib/resource-request'
+
+import type { ApiSchemas } from '../../../../shared/api.generated'
 
 import type { Phase } from './back-transition'
 import { useRegeneratePortrait } from './use-regenerate-portrait'
 
-interface AvatarResponse {
-  asset_url?: string | null
-  id?: number
-}
-
-interface SavedAvatarResponse {
-  asset_url: string
-  id: number
-}
+type AvatarResponse = Pick<ApiSchemas['AvatarAssetResponse'], 'asset_url' | 'id'>
 
 interface PortraitOptions {
   begin: () => () => boolean
@@ -187,9 +180,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
   const pickPresentationImage = (): Promise<void> => pickImage('选择光线与构图参考图', setPresentationRef)
 
   const fetchAvatarPrompt = async (): Promise<string> => {
-    const response = await backendApi().api<{ prompt: string }>({
-      path: '/api/companion/avatar/prompt',
-      method: 'POST',
+    const response = await requestResource('POST /api/companion/avatar/prompt', {
       body: { feedback: $regenFeedback.get().trim() || undefined, has_reference: Boolean(refImage) }
     })
 
@@ -199,9 +190,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
   const adoptAvatarSeed = async (image: PickedImage): Promise<void> => {
     const isLive = begin()
 
-    const response = await backendApi().api<SavedAvatarResponse>({
-      path: '/api/companion/avatar/adopt',
-      method: 'POST',
+    const response = await requestResource('POST /api/companion/avatar/adopt', {
       body: { image: image.base64, content_type: image.contentType }
     })
 
@@ -241,9 +230,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
     setSealingPortrait(true)
 
     try {
-      const result = await authedApi({
-        path: '/api/companion/portrait/confirm',
-        method: 'POST',
+      const result = await authedResource('POST /api/companion/portrait/confirm', {
         body: { expected_avatar_id: expectedAvatarId }
       })
 
@@ -293,9 +280,8 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
 
     const isLive = begin()
 
-    const res = await backendApi().api<SavedAvatarResponse & { seed_fullbody_url: string }>({
-      path: `/api/companion/avatar/${activeAvatarId}/fullbody/confirm`,
-      method: 'POST',
+    const res = await requestResource('POST /api/companion/avatar/{avatar_id}/fullbody/confirm', {
+      path: { avatar_id: activeAvatarId },
       body: { expected_url: expectedUrl }
     })
 
@@ -339,7 +325,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
         return 'portrait-generate'
       }
 
-      const response = await backendApi().api<AvatarResponse>({ path: '/api/companion/avatar', method: 'GET' })
+      const response = await requestResource('GET /api/companion/avatar')
 
       if (!isLive()) {
         return 'portrait-generate'
@@ -355,7 +341,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
         return 'fullbody-reference'
       }
 
-      if (avatar && response.id != null) {
+      if (avatar && response?.id != null) {
         const index = $portraitHistory.get().findIndex(entry => entry.avatarId === response.id)
 
         if (index >= 0) {

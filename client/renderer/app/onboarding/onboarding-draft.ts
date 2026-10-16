@@ -1,18 +1,15 @@
 import { assembleCharacterPersona, assemblePersona, type OnboardingAnswers } from '@/modules/character'
-import { requestGateway } from '@/shared'
-import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage, isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
+import { authedResource, requestResource } from '@/shared/lib/resource-request'
 import { sleep } from '@runtime'
+
+import type { ApiSchemas } from '../../../../shared/api.generated'
 
 import type { QKey } from './onboarding-questions'
 
-// REST 与 onboarding.get_state 使用相同的恢复结构。
-export interface OnboardingResumeState {
-  answers?: Record<string, string>
-  next_field?: string | null
-  complete?: boolean
-}
+export type OnboardingResumeState = ApiSchemas['OnboardingStateResponse']
 
 // 串行草稿写入归引导视图持有；释放后，排队任务与重试均不能使用新账户。
 export class OnboardingDraft {
@@ -47,12 +44,12 @@ export class OnboardingDraft {
       }
 
       try {
-        await requestGateway('onboarding.submit', { field, value })
+        await requestResource('PATCH /api/companion/onboarding', { body: { field, value } })
 
         return isCurrent()
       } catch (error) {
         if (isCurrent()) {
-          log.warn('onboarding', `onboarding.submit ${field} failed`, error)
+          log.warn('onboarding', `onboarding ${field} failed`, error)
         }
 
         return false
@@ -69,29 +66,13 @@ export class OnboardingDraft {
       return null
     }
 
-    const result = await authedApi<OnboardingResumeState>({ path: '/api/companion/onboarding/state' })
-
-    if (!isCurrent()) {
-      return null
-    }
-
-    if (result.ok) {
-      return result.value
-    }
-
-    if (result.reason === 'unauth') {
-      return null
-    }
-
-    log.warn('onboarding', 'resume state REST failed', result.error)
-
     try {
-      const state = await requestGateway<OnboardingResumeState>('onboarding.get_state', {})
+      const state = await requestResource('GET /api/companion/onboarding')
 
       return isCurrent() ? state : null
     } catch (error) {
       if (isCurrent()) {
-        log.warn('onboarding', 'resume state gateway failed', error)
+        log.warn('onboarding', 'resume state failed', error)
       }
 
       return null
@@ -145,9 +126,7 @@ export class OnboardingDraft {
       return false
     }
 
-    const result = await authedApi({
-      path: '/api/companion/persona',
-      method: 'PUT',
+    const result = await authedResource('PUT /api/companion/persona', {
       body: { definition_json: JSON.stringify(payload) }
     })
 

@@ -55,7 +55,7 @@ import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft } from '@/shared/lib/icons'
-import { backendDetailMessage, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, Toggle, WizardModal } from '@/shared/panel'
 import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
@@ -63,6 +63,7 @@ import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { useStrings } from '@/shared/strings'
 import { desktopMediaObjectFit } from '@client-shared/desktop-media-geometry'
+import { errorMessage } from '@runtime'
 
 import {
   readyDesktopLifeResolution,
@@ -82,17 +83,19 @@ function DesktopLifeCover({ url, target }: { url: string | null; target?: Deskto
   const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
   const [size, setSize] = useState({ url, width: 0, height: 0 })
 
-  const owner = target?.actions.find(action =>
-    [
-      action.draft?.image_url,
-      action.draft?.candidate_poster_url,
-      action.current?.poster_url,
-      action.current?.image_url
-    ].includes(url)
+  const owner = target?.actions.find(
+    action =>
+      url !== null &&
+      [
+        action.draft?.image_url,
+        action.draft?.candidate_poster_url,
+        action.current?.poster_url,
+        action.current?.image_url
+      ].includes(url)
   )
 
   const geometryMode =
-    owner?.draft && [owner.draft.image_url, owner.draft.candidate_poster_url].includes(url)
+    owner?.draft && url !== null && [owner.draft.image_url, owner.draft.candidate_poster_url].includes(url)
       ? owner.draft.geometry_mode
       : owner?.current?.geometry_mode
 
@@ -436,7 +439,7 @@ function VideoRefinementModal({
         })
         .catch((error: unknown) => {
           if (current && scope?.() && isLive()) {
-            setChecked({ key: inputKey, error: backendDetailMessage(error, unwrapIpcErrorMessage(error)) })
+            setChecked({ key: inputKey, error: backendDetailMessage(error, errorMessage(error)) })
           }
         })
     }, 300)

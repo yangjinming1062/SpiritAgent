@@ -13,7 +13,7 @@ import {
 import type { Phase } from './back-transition'
 import type { OnboardingAudioTag } from './onboarding-audio'
 
-// 全部字段都经 onboarding.submit 提交，与后端 ONBOARDING_FIELDS 一致。
+// 全部字段都经 onboarding PATCH 提交，与后端 ONBOARDING_FIELDS 一致。
 export type QKey = keyof OnboardingAnswers
 
 // chip 选的是答案类别而非答案本身——见 CALL_NAME_KINDS。

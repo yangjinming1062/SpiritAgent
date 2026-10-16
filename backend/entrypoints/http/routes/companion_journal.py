@@ -16,10 +16,13 @@ from infrastructure.database import DbSession
 from entrypoints.http.auth import CurrentUser
 from entrypoints.http.routing import get_router
 
-router = get_router(prefix="/api/companion", tag="companion")
+router = get_router(prefix="/api/companion", tag="companion", remote=True)
 
 
-@router.get("/diary", response_model=DiaryListResponse)
+@router.get(
+    "/diary",
+    response_model=DiaryListResponse,
+)
 async def get_diary(
     user: CurrentUser,
     db: DbSession,
@@ -32,11 +35,17 @@ async def get_diary(
     return DiaryListResponse(entries=[response_for_diary(r) for r in rows], unread_diary_ids=unread_ids)
 
 
-@router.get("/diary/unread", response_model=DiaryUnreadResponse)
+@router.get(
+    "/diary/read-state",
+    response_model=DiaryUnreadResponse,
+)
 async def get_diary_unread(user: CurrentUser, db: DbSession) -> DiaryUnreadResponse:
     return DiaryUnreadResponse(has_unread=await has_unread_diary(db, user.id))
 
 
-@router.post("/diary/read", response_model=DiaryUnreadResponse)
+@router.patch(
+    "/diary/read-state",
+    response_model=DiaryUnreadResponse,
+)
 async def read_diary(user: CurrentUser, db: DbSession, body: DiaryReadRequest) -> DiaryUnreadResponse:
     return DiaryUnreadResponse(has_unread=await mark_diary_read(db, user.id, [str(value) for value in body.diary_ids]))

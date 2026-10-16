@@ -9,7 +9,7 @@ from infrastructure.attachments import gc_session as attachments_gc_session
 from infrastructure.constants import SESSION_HISTORY_PRE_BUFFER, SESSION_HISTORY_TRUNCATE_THRESHOLD
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from runtime.conversation import LastSubmissionSnapshot, decode_session_settings
+from runtime.conversation import LastSubmissionSnapshot
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -158,31 +158,6 @@ async def last_submission(user_id: int, conversation_id: int) -> LastSubmissionS
             row.replace_reply_message_id,
             row.result_message_id,
         )
-
-
-async def update_session_settings(
-    user_id: int,
-    conversation_id: int,
-    patch: dict[str, Any],
-) -> tuple[ConversationSnapshot, dict[str, Any]]:
-    async with SESSION_LOCAL() as db:
-        conv = await db.scalar(
-            select(Conversation)
-            .where(Conversation.id == conversation_id, Conversation.user_id == user_id)
-            .with_for_update(),
-        )
-        if conv is None:
-            raise ConversationNotFoundError("Session not found")
-        settings = decode_session_settings(conv.settings_json)
-        for key, value in patch.items():
-            if value is None:
-                settings.pop(key, None)
-            else:
-                settings[key] = value
-        if patch:
-            conv.settings_json = json.dumps(settings, ensure_ascii=False)
-            await db.commit()
-        return conversation_snapshot(conv), settings
 
 
 async def retry_message_text(user_id: int, session_id: str, message_id: int) -> str:

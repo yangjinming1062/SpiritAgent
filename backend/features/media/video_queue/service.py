@@ -30,7 +30,7 @@ from features.media.video_polling import poll_video_task
 
 from .contracts import VideoQueueInfo, VideoQueueKind, VideoQueueOwner, VideoQueueStoppedError
 from .models import VideoQueueLane, VideoQueueRequest
-from .ports import has_untracked_attempts, inspect_owner
+from .ports import inspect_owner
 
 logger = get_logger(__name__)
 _ACTIVE = ("claimed", "submitting", "processing", "blocked")
@@ -153,75 +153,6 @@ async def enqueue_video_attempt(
             raise VideoQueueStoppedError("视频制作任务的归属或冻结配置不一致")
         if row.state == "paused":
             row.state, row.pause_requested, row.enqueued_at = "queued", False, utc_now()
-            row.revision += 1
-        await db.commit()
-        return row.token
-
-
-async def adopt_video_attempt(
-    owner: VideoQueueOwner,
-    frozen: FrozenMediaProvider,
-    attempt_index: int,
-    task_id: str,
-) -> str:
-    """登记已知句柄只用于续查；首次启用前必须先收敛旧版在途任务。"""
-    config = await resolve_frozen_media_provider(owner.user_id, "video_gen", frozen)
-    if config is None:
-        raise VideoQueueStoppedError("原视频凭据不可用，请先核对原任务")
-    lane_id = await _lane_id(config)
-    async with SESSION_LOCAL() as db:
-        lane = await db.get(VideoQueueLane, lane_id, with_for_update=True)
-        if lane is None:
-            raise RuntimeError("Video queue lane is missing")
-        row = await db.scalar(
-            select(VideoQueueRequest)
-            .where(
-                VideoQueueRequest.generation_id == owner.generation_id,
-                VideoQueueRequest.attempt_index == attempt_index,
-            )
-            .with_for_update(),
-        )
-        if row is not None and (_owner(row) != owner or row.frozen_json != frozen.model_dump_json()):
-            raise VideoQueueStoppedError("视频制作任务的归属或冻结配置不一致")
-        if row is not None and row.state not in _PENDING:
-            if row.provider_task_id != task_id:
-                raise VideoQueueStoppedError("视频句柄与已登记任务不一致")
-            return row.token
-        occupied = await db.scalar(
-            select(VideoQueueRequest.id)
-            .where(
-                VideoQueueRequest.lane_id == lane_id,
-                VideoQueueRequest.state.in_(_ACTIVE),
-            )
-            .limit(1),
-        )
-        if occupied is not None:
-            raise VideoQueueStoppedError("该视频密钥仍有在途任务，请先核对原任务")
-        if row is None:
-            row = VideoQueueRequest(
-                token=uuid4().hex,
-                lane_id=lane_id,
-                user_id=owner.user_id,
-                kind=owner.kind,
-                entity_id=owner.entity_id,
-                generation_id=owner.generation_id,
-                attempt_index=attempt_index,
-                frozen_json=frozen.model_dump_json(),
-                request_json=None,
-                model=frozen.model,
-                state="processing",
-                provider_task_id=task_id,
-                revision=0,
-                enqueued_at=utc_now(),
-                cancel_requested=False,
-                pause_requested=False,
-                rate_limit_count=0,
-            )
-            db.add(row)
-        else:
-            if row.lane_id != lane_id:
-                raise VideoQueueStoppedError("原视频密钥已变更，请先核对原任务")
-            row.state, row.provider_task_id, row.request_json = "processing", task_id, None
             row.revision += 1
         await db.commit()
         return row.token
@@ -813,11 +744,9 @@ def _worker_error(task: asyncio.Task[None]) -> None:
 
 
 async def prepare_video_queue() -> None:
-    """新旧部署不能混跑，旧版无凭据指纹的在途请求须先核对收尾。"""
+    """恢复持久队列；远端占用由独立任务继续收尾。"""
     global _STOPPING, _LEADER
     _STOPPING = False
-    if await has_untracked_attempts():
-        raise RuntimeError("视频队列启用前请先在旧版本停止新视频提交，并核对收尾未登记密钥指纹的在途视频任务")
     connection = await ENGINE.connect()
     connection = await connection.execution_options(isolation_level="AUTOCOMMIT")
     try:

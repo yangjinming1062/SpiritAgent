@@ -4,10 +4,9 @@ import { useEffect, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { authedApi } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { authedResource, requestResource } from '@/shared/lib/resource-request'
 import { BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
-import { backendApi } from '@/shared/platform/desktop'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
 
@@ -171,9 +170,8 @@ export function FullbodyReferencePanel({
   }
 
   const fetchSelfSourcePrompt = async (): Promise<string> => {
-    const res = await backendApi().api<{ prompt: string }>({
-      path: `/api/companion/avatar/${avatarId}/fullbody/reference/prompt`,
-      method: 'POST',
+    const res = await requestResource('POST /api/companion/avatar/{avatar_id}/fullbody/reference/prompt', {
+      path: { avatar_id: avatarId },
       body: { feedback: feedback.trim() || undefined }
     })
 
@@ -183,9 +181,8 @@ export function FullbodyReferencePanel({
   const adoptSelfSourceImage = async (image: PickedImage): Promise<void> => {
     const isLive = begin()
 
-    const result = await authedApi<{ seed_fullbody_url?: string; image_url?: string }>({
-      path: `/api/companion/avatar/${avatarId}/fullbody/reference/adopt`,
-      method: 'POST',
+    const result = await authedResource('POST /api/companion/avatar/{avatar_id}/fullbody/reference/adopt', {
+      path: { avatar_id: avatarId },
       body: { image: image.base64, content_type: image.contentType }
     })
 
@@ -197,7 +194,9 @@ export function FullbodyReferencePanel({
       throw result.error
     }
 
-    const expectedUrl = result.value?.image_url || result.value?.seed_fullbody_url
+    const expectedUrl =
+      result.value && ('image_url' in result.value ? result.value.image_url : result.value.seed_fullbody_url)
+
     const hydrated = await hydrateFullbodyReference(avatarId)
 
     if (!isLive()) {

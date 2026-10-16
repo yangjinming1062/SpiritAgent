@@ -68,12 +68,12 @@ async def design_configuration(user_id: int, provider_name: str = "") -> Provide
 
 async def upload_voice_sample(user_id: int, file: UploadSource) -> VoiceSampleResponse:
     if file.size is not None and file.size > STT_MAX_AUDIO_BYTES:
-        raise RequestError(status_code=413, detail="声音样本不能超过 24 MiB")
+        raise RequestError(status_code=413, message="声音样本不能超过 24 MiB")
     data = await file.read(STT_MAX_AUDIO_BYTES + 1)
     if not data:
-        raise RequestError(status_code=422, detail="音频文件为空，请重新录制或上传")
+        raise RequestError(status_code=422, message="音频文件为空，请重新录制或上传")
     if len(data) > STT_MAX_AUDIO_BYTES:
-        raise RequestError(status_code=413, detail="声音样本不能超过 24 MiB")
+        raise RequestError(status_code=413, message="声音样本不能超过 24 MiB")
     try:
         normalized, duration = await asyncio.to_thread(
             voice_sample_wav_bytes,
@@ -82,7 +82,7 @@ async def upload_voice_sample(user_id: int, file: UploadSource) -> VoiceSampleRe
             max_bytes=VOICE_REFERENCE_MAX_BASE64_BYTES * 3 // 4,
         )
     except (ValueError, VideoProcessError) as exc:
-        raise RequestError(status_code=422, detail=str(exc)) from exc
+        raise RequestError(status_code=422, message=str(exc)) from exc
     path = await save_companion_asset_async(
         normalized,
         user_id=user_id,

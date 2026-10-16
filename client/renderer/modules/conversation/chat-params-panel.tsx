@@ -4,15 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Brain, type IconComponent, Loader2, RefreshCw, Sparkles, Thermometer, X } from '@/shared/lib/icons'
 import { type ReasoningEffort, resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
+import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { SessionRuntimeInfo } from '@protocol'
 import { clamp } from '@runtime'
 
 import {
-  type CompressContextResponse,
   DEFAULT_THRESHOLD,
   formatTokenNumber,
   getReasoningOptions,
@@ -280,11 +279,10 @@ export function ChatParamsPanel({
     }
 
     pendingPatchRef.current = {}
-    void gateway
-      .request<{ info: SessionRuntimeInfo }>('session.set_settings', {
-        session_id: targetId,
-        settings: patch
-      })
+    void requestResource('PATCH /api/sessions/{session_id}', {
+      path: { session_id: targetId },
+      body: { settings: patch }
+    })
       .then(res => {
         if (!controller.isCurrent()) {
           return
@@ -375,7 +373,7 @@ export function ChatParamsPanel({
     setCompressing(true)
 
     try {
-      const res = await gateway.request<CompressContextResponse>('session.compress_context', {
+      const res = await gateway.request('session.compress_context', {
         session_id: sessionId
       })
 

@@ -4,25 +4,16 @@ from typing import Any
 
 from features.configuration.settings.values import load_user_settings
 from features.conversation.ai_routing import conversation_ai_task
-from features.conversation.fork import ForkNotAllowedError, SourceNotFoundError
+from features.conversation.fork import SourceNotFoundError
 from features.conversation.gateway_queries import (
-    ConversationNotFoundError,
-    ForkAttachmentError,
-    create_conversation,
-    ensure_main_conversation,
-    fork_conversation,
     has_message,
-    history_page,
     history_snapshot,
     last_submission,
     message_count,
     undo_history,
-    update_session_settings,
 )
-from features.conversation.request_contracts import PromptPresetListResponse, PromptPresetSummary
 from features.conversation.slash_commands import (
     SlashCommandContext,
-    list_commands_for_user,
     resolve_slash_command,
     suggest_commands,
 )
@@ -30,7 +21,6 @@ from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.undo import UndoNotAllowedError
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.constants import (
-    JSONRPC_INTERNAL_ERROR,
     JSONRPC_INVALID_PARAMS,
     JSONRPC_METHOD_NOT_FOUND,
     JSONRPC_SLASH_CONFIRM_REQUIRED,
@@ -38,28 +28,21 @@ from infrastructure.constants import (
 )
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from pydantic import ValidationError
 from runtime.conversation import (
     LastSubmissionSnapshot,
     RuntimeSession,
-    SessionCreateResult,
     SessionResumeResult,
     SessionRuntimeInfo,
-    SessionSettingsPatch,
     build_runtime_info,
     new_runtime_session,
 )
 from runtime.desktop.connection import UserEventPublisher
 from runtime.desktop.jsonrpc import JsonRpcError
 from runtime.gateway_contracts import GatewaySession, RegisterMethod
-from runtime.presets import SYSTEM_PRESET_CATALOG
 
 from workflows.chat.gateway_inputs import (
-    _is_nonneg_int,
     _reject_read_only_session,
-    _require_nonneg_int,
     _require_owned_conv,
-    _require_str,
     desktop_history_lock,
 )
 from workflows.chat.history_commands import _do_compress_history
@@ -91,7 +74,7 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
         return runtime
 
     def _require_runtime(params: dict[str, Any]) -> RuntimeSession:
-        session_id = _require_str(params, "session_id")
+        session_id = params["session_id"]
         runtime = runtime_sessions.get(session_id)
         if runtime is None:
             raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {session_id!r}")
@@ -166,80 +149,11 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
         async with runtime.snapshot_lock:
             await publisher.push_event(event_type, payload, session_id=session_id)
 
-    async def session_get_main(_params: dict) -> dict:
-        conv = await ensure_main_conversation(user_id)
-        return await _mounted_history(conv)
-
-    register("session.get_main", session_get_main)
-
-    async def session_create(params: dict) -> dict:
-        preset_id = params.get("system_preset_id")
-        if not isinstance(preset_id, str) or preset_id not in SYSTEM_PRESET_CATALOG:
-            raise JsonRpcError(
-                JSONRPC_INVALID_PARAMS,
-                f"system_preset_id must be one of {sorted(SYSTEM_PRESET_CATALOG)}",
-            )
-        conv = await create_conversation(user_id, preset_id)
-        runtime = _mount_runtime(conv)
-        await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
-        logger.info(
-            "session.create",
-            extra={"user_id": user_id, "session_id": runtime.session_id, "system_preset_id": preset_id},
-        )
-        await dispatcher.flush_unsent()
-        return SessionCreateResult(
-            session_id=runtime.session_id,
-            info=await _runtime_info(runtime, conv),
-        ).model_dump()
-
-    register("session.create", session_create)
-
-    async def system_list_presets(_params: dict) -> dict:
-        """返回内置系统预设的元数据清单（不含 body）。body 永远不下发到客户端。"""
-        return PromptPresetListResponse(
-            presets=[
-                PromptPresetSummary(id=p.id, name=p.name, description=p.description, icon_key=p.icon_key)
-                for p in SYSTEM_PRESET_CATALOG.values()
-            ],
-        ).model_dump()
-
-    register("system.list_presets", system_list_presets)
-
-    async def session_fork(params: dict) -> dict:
-        source_session_id = _require_str(params, "source_session_id")
-        source_message_id = _require_nonneg_int(params, "source_message_id")
-        try:
-            conv, message_count = await fork_conversation(user_id, source_session_id, source_message_id)
-        except ForkNotAllowedError as exc:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
-        except (SourceNotFoundError, ConversationNotFoundError) as exc:
-            raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, str(exc)) from exc
-        except ForkAttachmentError as exc:
-            raise JsonRpcError(JSONRPC_INTERNAL_ERROR, str(exc)) from exc
-        logger.info(
-            "session.fork",
-            extra={
-                "user_id": user_id,
-                "source_session_id": source_session_id,
-                "source_message_id": source_message_id,
-                "new_session_id": str(conv.id),
-                "message_count": message_count,
-            },
-        )
-        await publisher.push_event("session.list_changed", {"session_id": str(conv.id)})
-        return await _mounted_history(conv)
-
-    register("session.fork", session_fork)
-
     async def session_resume(params: dict) -> dict:
-        stored_id = _require_str(params, "session_id")
+        stored_id = params["session_id"]
         last_seq = params.get("last_seq")
         after_id = params.get("after_id")
         history_revision = params.get("history_revision")
-        if history_revision is not None and not _is_nonneg_int(history_revision):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "history_revision must be a non-negative int")
-        if after_id is not None and not _is_nonneg_int(after_id):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "after_id must be a non-negative int")
         conv = await _require_owned_conv(user_id, stored_id)
 
         # 重放流身份匹配且仍覆盖游标时才重放，否则回源恢复。
@@ -248,7 +162,7 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
         )
         if (
             revision_matches
-            and isinstance(last_seq, int)
+            and last_seq is not None
             and last_seq > 0
             and params.get("stream_id") == dispatcher.stream_id
         ):
@@ -299,23 +213,6 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
 
     register("session.resume", session_resume)
 
-    async def session_history(params: dict) -> dict:
-        stored_id = _require_str(params, "session_id")
-        before_id = params.get("before_id")
-        limit = params.get("limit", 50)
-        if before_id is not None and (not _is_nonneg_int(before_id) or before_id == 0):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "before_id must be a positive int")
-        if type(limit) is not int or not 1 <= limit <= 100:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "limit must be between 1 and 100")
-        try:
-            return await history_page(user_id, stored_id, before_id, limit)
-        except ConversationNotFoundError as exc:
-            raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, str(exc)) from exc
-        except ValueError as exc:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
-
-    register("session.history", session_history)
-
     async def session_interrupt(params: dict) -> dict:
         runtime = _require_runtime(params)
         if (
@@ -330,25 +227,6 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
 
     register("session.interrupt", session_interrupt)
 
-    async def session_set_settings(params: dict) -> dict:
-        runtime = _require_runtime(params)
-        try:
-            settings_patch = SessionSettingsPatch.model_validate(params.get("settings")).model_dump(exclude_unset=True)
-        except ValidationError as exc:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "Invalid session parameters") from exc
-        try:
-            conv, settings = await update_session_settings(user_id, runtime.conversation_id, settings_patch)
-        except ConversationNotFoundError as exc:
-            raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, str(exc)) from exc
-        runtime.settings = settings
-        return {
-            "session_id": runtime.session_id,
-            "settings": dict(runtime.settings),
-            "info": (await _runtime_info(runtime, conv)).model_dump(),
-        }
-
-    register("session.set_settings", session_set_settings)
-
     async def session_compress_context(params: dict) -> dict:
         runtime = _require_runtime(params)
         _reject_read_only_session(runtime)
@@ -360,7 +238,15 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
             if result["compressed"]:
                 await publish_history_change(
                     "command.result",
-                    {"command": "compress", "result": {"status": "ok", "hydrate": True, "payload": result}},
+                    {
+                        "command": "compress",
+                        "result": {
+                            "status": "ok",
+                            "message": f"已压缩 {result['replaced_count']} 条早期消息",
+                            "hydrate": True,
+                            "payload": result,
+                        },
+                    },
                     session_id=runtime.session_id,
                 )
             return result
@@ -368,14 +254,14 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
     register("session.compress_context", session_compress_context)
 
     async def session_undo_to_message(params: dict) -> dict:
-        session_id = _require_str(params, "session_id")
+        session_id = params["session_id"]
         if not bool(params.get("confirmed")):
             raise JsonRpcError(
                 JSONRPC_SLASH_CONFIRM_REQUIRED,
                 "session.undo_to_message requires confirmed=true",
-                data={"requires_confirmation": True},
+                details={"requires_confirmation": True},
             )
-        source_message_id = _require_nonneg_int(params, "source_message_id")
+        source_message_id = params["source_message_id"]
         owned = await _require_owned_conv(user_id, session_id)
         session_id = str(owned.id)
         runtime = runtime_sessions.get(session_id)
@@ -412,8 +298,8 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
     async def command_dispatch(params: dict) -> dict:
         """Slash 命令分发：按 command 查 SLASH_COMMANDS 并执行 handler，返回 {command, result} 并同步广播 command.result 事件给同 session 各窗口。"""
         runtime = _require_runtime(params)
-        raw_command = params.get("command")
-        if not isinstance(raw_command, str) or not raw_command.strip():
+        raw_command = params["command"]
+        if not raw_command.strip():
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "command must be a non-empty string")
 
         name = raw_command.strip().lstrip("/").lower()
@@ -421,12 +307,12 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "command name is empty")
 
         cmd = resolve_slash_command(name)
-        if cmd is None or cmd.handler is None:
+        if cmd is None:
             suggestions = suggest_commands(name)
             raise JsonRpcError(
                 JSONRPC_INVALID_PARAMS,
                 f"unknown command: /{name}",
-                data={"suggestions": suggestions},
+                details={"suggestions": suggestions},
             )
 
         confirmed = bool(params.get("confirmed"))
@@ -434,13 +320,13 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
             raise JsonRpcError(
                 JSONRPC_SLASH_CONFIRM_REQUIRED,
                 f"command /{name} requires explicit confirmation",
-                data={"requires_confirmation": True, "command": cmd.name},
+                details={"requires_confirmation": True, "command": cmd.name},
             )
 
         args_raw = params.get("args")
         args_list: list[str] = []
         if isinstance(args_raw, list):
-            args_list = [str(a) for a in args_raw if isinstance(a, str | int | float)]
+            args_list = [str(arg) for arg in args_raw]
         elif isinstance(args_raw, str):
             args_list = args_raw.split()
 
@@ -465,11 +351,5 @@ def register_chat_handlers(session: GatewaySession, register: RegisterMethod) ->
         return result_payload
 
     register("command.dispatch", command_dispatch)
-
-    async def command_list(_params: dict) -> dict:
-        """列出可用 slash 命令元数据；供客户端自动补全与确认弹窗使用。"""
-        return {"commands": list_commands_for_user()}
-
-    register("command.list", command_list)
 
     register_submission_handler(session, register, _require_runtime, publish_history_change)

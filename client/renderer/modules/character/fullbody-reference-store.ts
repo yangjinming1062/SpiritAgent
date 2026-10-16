@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import {
   currentClearEpoch,
   persistString,
@@ -10,9 +11,10 @@ import {
   registerStorageClearHandler,
   storedJson
 } from '@/shared/lib/storage'
-import { backendApi } from '@/shared/platform/desktop'
 import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
+
+import type { ApiSchemas } from '../../../../shared/api.generated'
 
 import { parseImageDataUrl, type PickedImage, resolvePortraitUrl } from './avatar-image'
 import { patchAvatarSeeds } from './avatar-seeds-store'
@@ -40,16 +42,6 @@ type FullbodyReferenceIndex = Record<string, FullbodyReferenceRecord[]>
 
 export interface FullbodyReferenceVersion extends FullbodyReferenceRecord {
   previewUrl: string
-}
-
-interface ReferenceResponse {
-  id: number
-  asset_url?: string | null
-  seed_fullbody_url?: string | null
-  avatar_id?: number
-  image_url?: string
-  status?: string
-  error?: string | null
 }
 
 const EMPTY_STATE: FullbodyReferenceState = {
@@ -154,7 +146,7 @@ function beginOperation(avatarId: number): () => boolean {
 // 全身种子图写入本地缓存，自备图流程直接读取该缓存。preview 解析失败时不要显式传 null：store 的显式 display 分支会冲掉旧展示 URL，导致自备图弹窗突然缺参考图；缺省 undefined 交给 resolveDisplayUrl 保留 previous。
 function syncSeeds(
   avatarId: number,
-  response: ReferenceResponse,
+  response: ApiSchemas['AvatarAssetResponse'],
   rawUrl: string | null,
   previewUrl: string | null
 ): Promise<void> {
@@ -199,46 +191,41 @@ function updateReference(
         $fullbodyReference.set({ ...base, history, busy: true, error: null, errorMessage: null })
       }
 
-      const response = await backendApi().api<ReferenceResponse>({
-        path: generate ? `/api/companion/avatar/${avatarId}/fullbody/reference` : '/api/companion/avatar',
-        method: generate ? 'POST' : 'GET',
-        ...(generate
-          ? {
-              body: {
-                feedback: feedback.trim() || undefined,
-                mode,
-                ...(base.candidateId ? { candidate_id: base.candidateId } : {}),
-                // 微调编辑上一版，不接受参考图；参考图只随重新生成发送。
-                ...(mode !== 'edit' && reference
-                  ? { image: reference.base64, content_type: reference.contentType }
-                  : {})
-              }
+      const response = generate
+        ? await requestResource('POST /api/companion/avatar/{avatar_id}/fullbody/reference', {
+            path: { avatar_id: avatarId },
+            body: {
+              feedback: feedback.trim() || undefined,
+              mode,
+              ...(base.candidateId ? { candidate_id: base.candidateId } : {}),
+              ...(mode !== 'edit' && reference ? { image: reference.base64, content_type: reference.contentType } : {})
             }
-          : {})
-      })
+          })
+        : await requestResource('GET /api/companion/avatar')
 
       if (!isCurrent()) {
         return false
       }
 
-      if (!response || (response.avatar_id ?? response.id) !== avatarId) {
+      if (!response || ('avatar_id' in response ? response.avatar_id : response.id) !== avatarId) {
         throw new Error('The active avatar changed')
       }
 
+      const asset = 'asset_url' in response ? response : null
+
       const candidate = generate
-        ? response.image_url
+        ? 'avatar_id' in response
           ? response
           : null
-        : await backendApi().api<ReferenceResponse | null>({
-            path: `/api/companion/avatar/${avatarId}/fullbody/candidate`,
-            method: 'GET'
+        : await requestResource('GET /api/companion/avatar/{avatar_id}/fullbody/candidate', {
+            path: { avatar_id: avatarId }
           })
 
       if (!isCurrent()) {
         return false
       }
 
-      const rawUrl = candidate?.image_url || response.seed_fullbody_url || null
+      const rawUrl = candidate?.image_url || asset?.seed_fullbody_url || null
 
       if (generate && !rawUrl) {
         throw new Error('The fullbody reference response has no image')
@@ -279,8 +266,8 @@ function updateReference(
         history
       })
 
-      if (!candidate) {
-        await syncSeeds(avatarId, response, rawUrl, previewUrl)
+      if (!candidate && asset) {
+        await syncSeeds(avatarId, asset, rawUrl, previewUrl)
       }
 
       return isCurrent() && (!rawUrl || Boolean(previewUrl))
@@ -331,9 +318,8 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
   $fullbodyReference.set({ ...current, busy: true, error: null, errorMessage: null })
 
   try {
-    const response = await backendApi().api<ReferenceResponse>({
-      path: `/api/companion/avatar/${avatarId}/fullbody/reference/adopt`,
-      method: 'POST',
+    const response = await requestResource('POST /api/companion/avatar/{avatar_id}/fullbody/reference/adopt', {
+      path: { avatar_id: avatarId },
       body: { image: image.base64, content_type: image.contentType }
     })
 
@@ -341,11 +327,11 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
       return false
     }
 
-    if (!response || (response.avatar_id ?? response.id) !== avatarId) {
+    if (!response || ('avatar_id' in response ? response.avatar_id : response.id) !== avatarId) {
       throw new Error('The active avatar changed')
     }
 
-    const rawUrl = response.seed_fullbody_url || null
+    const rawUrl = 'image_url' in response ? response.image_url : response.seed_fullbody_url || null
     const previewUrl = await resolvePortraitUrl(rawUrl, { preferCache: true })
 
     if (!isCurrent()) {
@@ -377,13 +363,19 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
       busy: false,
       error: rawUrl && !previewUrl ? 'preview' : null,
       errorMessage: null,
-      candidateId: null,
-      candidateStatus: null,
-      candidateError: null,
+      candidateId: 'avatar_id' in response ? response.id : null,
+      candidateStatus:
+        'avatar_id' in response &&
+        (response.status === 'pending' || response.status === 'ready' || response.status === 'failed')
+          ? response.status
+          : null,
+      candidateError: 'error' in response ? response.error : null,
       history
     })
 
-    await syncSeeds(avatarId, response, rawUrl, previewUrl)
+    if ('asset_url' in response) {
+      await syncSeeds(avatarId, response, rawUrl, previewUrl)
+    }
 
     return Boolean(rawUrl && previewUrl)
   } catch (error) {
@@ -434,11 +426,10 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
   $fullbodyReference.set({ ...current, busy: true, errorMessage: null })
 
   try {
-    const response = await backendApi().api<ReferenceResponse>({
-      path: `/api/companion/avatar/${avatarId}/fullbody/candidate/${current.candidateId}/accept`,
-      method: 'POST',
-      body: {}
-    })
+    const response = await requestResource(
+      'POST /api/companion/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/accept',
+      { path: { avatar_id: avatarId, candidate_id: current.candidateId } }
+    )
 
     if (!isCurrent()) {
       return false
@@ -493,11 +484,10 @@ export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<
   $fullbodyReference.set({ ...current, busy: true, candidateError: null })
 
   try {
-    const result = await backendApi().api<ReferenceResponse>({
-      path: `/api/companion/avatar/${avatarId}/fullbody/candidate/${current.candidateId}/analyze`,
-      method: 'POST',
-      body: {}
-    })
+    const result = await requestResource(
+      'POST /api/companion/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/analyze',
+      { path: { avatar_id: avatarId, candidate_id: current.candidateId } }
+    )
 
     if (!isCurrent()) {
       return false

@@ -8,6 +8,14 @@ import { WebSocketServer } from 'ws'
 
 import { errorMessage, sleep } from '@runtime'
 
+import type { RunnerEventPayloads } from '../../../shared/api.generated'
+import type {
+  RunnerMethod,
+  RunnerRequest,
+  RunnerRequester,
+  RunnerRequestOptions,
+  RunnerResponse
+} from '../../../shared/runner'
 import { isFiniteNumber, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -15,20 +23,9 @@ const JSON_RPC_VERSION = '2.0'
 const HEARTBEAT_INTERVAL_MS = 10_000
 const HEARTBEAT_DEADLINE_MS = 120_000
 
-interface CapabilityHealthItem {
-  available: boolean
-  reason?: string | null
-}
-
-export type RunnerCapabilitiesHealth = Record<string, CapabilityHealthItem>
-
-export interface RunnerCapabilities {
-  microphone?: boolean
-  platform?: string
-  python?: string
-  screen_capture?: boolean
-  system_activity?: boolean
-}
+type RunnerReady = RunnerEventPayloads['runner.ready']
+export type RunnerCapabilitiesHealth = RunnerReady['capabilities_health']
+export type RunnerCapabilities = RunnerReady['capabilities']
 
 export interface CreateRunnerWsServerOptions {
   authToken?: string
@@ -43,24 +40,18 @@ export interface RunnerWsStatus {
 }
 
 export type RunnerWsEvent =
-  | {
-      capabilities: null | RunnerCapabilities
-      capabilities_health?: null | RunnerCapabilitiesHealth
-      probe_failed: boolean | null
-      type: 'runner_ready'
-      version: null | string
-    }
+  | (RunnerReady & { type: 'runner_ready' })
   | { code?: number; type: 'disconnected' }
   | { error: unknown; type: 'error' }
-  | { method: string; params: unknown; type: 'notification' }
+  | {
+      method: 'runner.capabilities_changed'
+      params: RunnerEventPayloads['runner.capabilities_changed']
+      type: 'notification'
+    }
   | { type: 'connected' }
 
 export interface RunnerWsServer {
-  call: <T = unknown>(
-    method: string,
-    params?: Record<string, unknown>,
-    options?: { id?: number | string; timeoutMs?: number }
-  ) => Promise<T>
+  call: RunnerRequester
   getStatus: () => RunnerWsStatus
   onEvent: (callback: (event: RunnerWsEvent) => void) => () => void
   start: (options?: { path?: string }) => Promise<{ path: null | string; transport: null | string }>
@@ -79,13 +70,7 @@ interface JsonRpcMessage {
   id?: number | string
   jsonrpc?: string
   method?: string
-  params?: {
-    capabilities?: RunnerCapabilities
-    capabilities_health?: RunnerCapabilitiesHealth
-    probe_failed?: boolean
-    version?: string
-    [key: string]: unknown
-  }
+  params?: Partial<RunnerReady>
   result?: unknown
 }
 
@@ -194,28 +179,59 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
 
     // 通知（无 id，有 method）
     if (method) {
-      if (method === 'runner_ready') {
-        log('[runner-ws] runner_ready received')
+      const params = message.params
+
+      if (
+        method === 'runner.ready' &&
+        params &&
+        typeof params.version === 'string' &&
+        typeof params.run_generation === 'string' &&
+        typeof params.pid === 'number' &&
+        typeof params.probe_failed === 'boolean' &&
+        typeof params.reconnect_streak === 'number' &&
+        params.capabilities &&
+        params.capabilities_health
+      ) {
+        log('[runner-ws] runner.ready received')
         emit({
-          capabilities: message.params?.capabilities ?? null,
-          capabilities_health: message.params?.capabilities_health ?? null,
-          probe_failed: message.params?.probe_failed ?? null,
           type: 'runner_ready',
-          version: message.params?.version ?? null
+          version: params.version,
+          run_generation: params.run_generation,
+          pid: params.pid,
+          capabilities: params.capabilities,
+          capabilities_health: params.capabilities_health,
+          probe_failed: params.probe_failed,
+          reconnect_streak: params.reconnect_streak
+        })
+      } else if (
+        method === 'runner.capabilities_changed' &&
+        params &&
+        typeof params.run_generation === 'string' &&
+        typeof params.probe_failed === 'boolean' &&
+        params.capabilities
+      ) {
+        emit({
+          method,
+          params: {
+            run_generation: params.run_generation,
+            capabilities: params.capabilities,
+            probe_failed: params.probe_failed
+          },
+          type: 'notification'
         })
       } else {
-        emit({ method, params: message.params || {}, type: 'notification' })
+        log(`[runner-ws] rejected notification ${method}`)
       }
 
       return
     }
   }
 
-  function call<T = unknown>(
-    method: string,
-    params: Record<string, unknown> = {},
-    { id: requestedId, timeoutMs }: { id?: number | string; timeoutMs?: number } = {}
-  ): Promise<T> {
+  function call<K extends RunnerMethod>(
+    method: K,
+    params: RunnerRequest<K>,
+    { id: requestedId, timeoutMs }: RunnerRequestOptions = {}
+  ): Promise<RunnerResponse<K>> {
     if (closed) {
       return Promise.reject(new RunnerNotConnectedError('Runner WS server is closed.'))
     }
@@ -229,7 +245,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
 
     const effectiveTimeoutMs = isFiniteNumber(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS
 
-    return new Promise((resolve, reject) => {
+    return new Promise<RunnerResponse<K>>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!pending.has(id)) {
           return
@@ -239,7 +255,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
         reject(new Error(`Runner call '${method}' (id=${id}) timed out after ${effectiveTimeoutMs}ms.`))
       }, effectiveTimeoutMs)
 
-      pending.set(id, { method, reject, resolve: resolve as (val: unknown) => void, timer })
+      pending.set(id, { method, reject, resolve: value => resolve(value as RunnerResponse<K>), timer })
 
       const sent = sendToRunner({
         id,

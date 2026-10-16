@@ -26,7 +26,7 @@ async def discover_ai_models(payload: ModelDiscoveryRequest, db: AsyncSession) -
     try:
         return await discover_configured_models(db, payload)
     except ValueError as exc:
-        raise RequestError(status_code=422, detail=str(exc)) from None
+        raise RequestError(status_code=422, message=str(exc)) from None
 
 
 def _config_list_item(r: UserModelConfig) -> UserModelConfigListItem:
@@ -59,7 +59,7 @@ async def update_system_settings(payload: dict[str, Any], db: AsyncSession) -> d
     try:
         await save_system_settings(db, payload)
     except ValueError as exc:
-        raise RequestError(status_code=422, detail=str(exc)) from exc
+        raise RequestError(status_code=422, message=str(exc)) from exc
     return get_system_settings_for_admin()
 
 
@@ -73,7 +73,7 @@ async def upsert_model_config(user_id: int, payload: UserModelConfigRequest, db:
         try:
             ai_config = prepare_ai_config(payload.ai_config, previous, SETTINGS.ai_config)
         except ValueError as exc:
-            raise RequestError(status_code=422, detail=str(exc)) from exc
+            raise RequestError(status_code=422, message=str(exc)) from exc
         if config:
             config.ai_config = ai_config.model_dump(mode="json")
         else:
@@ -84,6 +84,6 @@ async def upsert_model_config(user_id: int, payload: UserModelConfigRequest, db:
 
 async def delete_model_config(user_id: int, db: AsyncSession) -> MessageResponse:
     async with configuration_lock:
-        await db.delete(await get_or_404(db, UserModelConfig, user_id=user_id, detail="模型配置不存在。"))
+        await db.delete(await get_or_404(db, UserModelConfig, user_id=user_id, message="模型配置不存在。"))
         await db.commit()
     return MessageResponse(message="模型配置已删除。")

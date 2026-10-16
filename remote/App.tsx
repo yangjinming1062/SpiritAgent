@@ -2,6 +2,8 @@ import { IconHeart, IconMessageCircle, IconSettings, IconSparkles } from '@table
 import type { ReactElement } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import { requestApi } from '../shared/api'
+
 import { ApiError, errorText, record, RemoteApi, RemoteGateway } from './api'
 import { Chat, clearChatState } from './Chat'
 import { Companion } from './Companion'
@@ -219,8 +221,8 @@ export function App(): ReactElement {
 
     let current = true
     void Promise.allSettled([
-      api.request<{ has_unread: boolean }>('/api/companion/posts/unread'),
-      api.request<{ has_unread: boolean }>('/api/companion/diary/unread')
+      requestApi(api, 'GET /api/companion/posts/read-state'),
+      requestApi(api, 'GET /api/companion/diary/read-state')
     ]).then(([posts, diary]) => {
       if (!current) {
         return
@@ -332,7 +334,7 @@ export function App(): ReactElement {
               unread={{ feed: unread.feed, diary: unread.diary }}
             />
           ) : tab === 'companion' ? (
-            <Companion api={api} connected={connected} gateway={gateway} refresh={refresh} />
+            <Companion api={api} connected={connected} refresh={refresh} />
           ) : (
             <Settings
               api={api}

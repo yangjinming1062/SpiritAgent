@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
+from infrastructure.api_errors import ApiErrorResponse, api_error
 from infrastructure.logger import current_request_id, get_logger, set_request_id
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -60,7 +61,7 @@ async def correlated_exception_response(request: Request, exc: Exception) -> JSO
     headers = {REQUEST_ID_HEADER: rid} if rid else {}
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal Server Error", "reason": "internal_error", "status": 500},
+        content=ApiErrorResponse(error=api_error(500, "Internal Server Error")).model_dump(mode="json"),
         headers=headers,
     )
 

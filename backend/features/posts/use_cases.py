@@ -40,7 +40,7 @@ from features.posts.store import (
 
 
 def _error(exc: PostError) -> RequestError:
-    return RequestError(status_code=404 if isinstance(exc, PostNotFoundError) else 409, detail=str(exc))
+    return RequestError(status_code=404 if isinstance(exc, PostNotFoundError) else 409, message=str(exc))
 
 
 async def get_posts(user_id: int, db: AsyncSession, cursor: str | None = None, limit: int = 20) -> PostListResponse:
@@ -49,7 +49,7 @@ async def get_posts(user_id: int, db: AsyncSession, cursor: str | None = None, l
     try:
         rows, next_cursor = await list_posts(db, user_id, cursor=cursor, limit=limit)
     except PostError as exc:
-        raise RequestError(status_code=400, detail=str(exc)) from exc
+        raise RequestError(status_code=400, message=str(exc)) from exc
     return PostListResponse(
         posts=[response_for_post(row) for row in rows],
         next_cursor=next_cursor,
@@ -104,7 +104,7 @@ async def discard_publication_recovery(user_id: int, db: AsyncSession, publicati
 async def get_post_detail(user_id: int, db: AsyncSession, post_id: UUID) -> PostResponse:
     row = await get_post(db, user_id, str(post_id))
     if row is None:
-        raise RequestError(status_code=404, detail="找不到动态")
+        raise RequestError(status_code=404, message="找不到动态")
     return response_for_post(row)
 
 

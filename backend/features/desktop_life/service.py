@@ -83,6 +83,7 @@ from features.desktop_life.queries import activated_desktop_environment
 from features.desktop_life.repository import (
     DesktopVideoAspectRatioError,
     DesktopVideoError,
+    DesktopVideoModeError,
     DesktopVideoNotFoundError,
     DesktopVideoStateError,
     claim_desktop_play,
@@ -142,7 +143,7 @@ def _lock(user_id: int) -> asyncio.Lock:
 def _require_desktop_mode(user_id: int) -> None:
     presentation = get_presentation_snapshot(user_id)
     if presentation is None or presentation.mode != "desktop":
-        raise DesktopVideoStateError("桌面模式当前未启用")
+        raise DesktopVideoModeError("桌面模式当前未启用")
 
 
 async def _wait_desktop_mode(user_id: int) -> None:
@@ -728,7 +729,7 @@ async def _image_geometry(
     except DesktopVideoAspectRatioError as exc:
         if action is not None and action.continuity == "base" and action.key != "idle" and image == row.base_image_path:
             idle = await _shared_base_adjustment_action(db, row)
-            exc.detail.update(adjust_action_id=idle.id, adjust_action_name=idle.name)
+            exc.details.update(adjust_action_id=idle.id, adjust_action_name=idle.name)
         raise
     return geometry_mode, width, height, data
 
@@ -1740,16 +1741,16 @@ async def upload_desktop_action(
                     extension,
                     aspect_ratio=target_ratio,
                 )
-            exc.detail["duration_seconds"] = seconds
+            exc.details["duration_seconds"] = seconds
         except DesktopVideoError as planning_error:
-            exc.detail["adjustment_error"] = str(planning_error)
+            exc.details["adjustment_error"] = str(planning_error)
         except Exception:
             logger.warning(
                 "Desktop video adjustment preview unavailable",
                 extra={"action_id": action_id},
                 exc_info=True,
             )
-            exc.detail["adjustment_error"] = "视频调整暂时不可用，请稍后重试"
+            exc.details["adjustment_error"] = "视频调整暂时不可用，请稍后重试"
         raise
     seconds = initial.duration_seconds
     providers: list[FrozenMediaProvider] = []
@@ -1932,6 +1933,8 @@ async def review_desktop_action(
         progress = desktop_progress(action)
         row = await _suite(db, user_id, action.set_id)
         if action.stage == "complete" and progress and draft_id == progress.generation_id:
+            if not accepted:
+                raise DesktopVideoStateError("该视频已被采用，不能拒绝同一草稿")
             return desktop_action_response(action)
         _validate_draft(
             row,

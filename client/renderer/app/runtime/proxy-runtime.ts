@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 
 import { $auth } from '@/shared/store/auth'
 
-import { createProxyGatewayRuntime } from './gateway-proxy-runtime'
+import { startGatewayView } from './gateway-runtime'
 
 export function ProxyGatewayPump(): null {
   const auth = useStore($auth)
@@ -14,10 +14,7 @@ export function ProxyGatewayPump(): null {
       return
     }
 
-    const runtime = createProxyGatewayRuntime(sessionId)
-    runtime.start()
-
-    return runtime.dispose
+    return startGatewayView(sessionId)
   }, [sessionId])
 
   return null

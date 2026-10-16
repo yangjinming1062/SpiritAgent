@@ -34,7 +34,6 @@ from runtime.gateway_contracts import GatewaySession, RegisterMethod
 
 from workflows.chat.emitter import JsonRpcEmitter
 from workflows.chat.gateway_inputs import (
-    _is_nonneg_int,
     _reject_read_only_session,
     _require_owned_conv,
     _require_str,
@@ -69,32 +68,23 @@ def register_submission_handler(
         fingerprint: str,
     ) -> dict:
         response_preference = params.get("response_preference")
-        if response_preference is not None and response_preference not in ("text", "voice"):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "response_preference must be text or voice")
 
         edit_message_id = params.get("edit_message_id")
         retry_message_id = params.get("retry_message_id")
         replace_reply_message_id = params.get("replace_reply_message_id")
-        if replace_reply_message_id is not None:
-            if not _is_nonneg_int(replace_reply_message_id) or replace_reply_message_id == 0:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "replace_reply_message_id must be a positive int")
-            if any(key in params for key in ("text", "batch", "attachments", "edit_message_id", "retry_message_id")):
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "answer replacement reuses the original turn")
-        if retry_message_id is not None:
-            if not _is_nonneg_int(retry_message_id) or retry_message_id == 0:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "retry_message_id must be a positive int")
-            if any(
-                key in params for key in ("text", "batch", "attachments", "edit_message_id", "replace_reply_message_id")
-            ):
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "reply retries reuse the original message and attachments")
-        if edit_message_id is not None:
-            if not _is_nonneg_int(edit_message_id) or edit_message_id == 0:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "edit_message_id must be a positive int")
-            if "batch" in params or "attachments" in params:
-                raise JsonRpcError(
-                    JSONRPC_INVALID_PARAMS,
-                    "message edits only accept text; original attachments are retained",
-                )
+        if replace_reply_message_id is not None and any(
+            key in params for key in ("text", "batch", "attachments", "edit_message_id", "retry_message_id")
+        ):
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "answer replacement reuses the original turn")
+        if retry_message_id is not None and any(
+            key in params for key in ("text", "batch", "attachments", "edit_message_id", "replace_reply_message_id")
+        ):
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "reply retries reuse the original message and attachments")
+        if edit_message_id is not None and ("batch" in params or "attachments" in params):
+            raise JsonRpcError(
+                JSONRPC_INVALID_PARAMS,
+                "message edits only accept text; original attachments are retained",
+            )
 
         precursor_user_message_ids: list[int] = []
         replacement = None
@@ -113,13 +103,9 @@ def register_submission_handler(
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
             attachments = []
         elif batch is not None:
-            if not isinstance(batch, list) or not batch:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "batch must be a non-empty list")
             validated_batch = []
             for item in batch:
-                if not isinstance(item, dict):
-                    raise JsonRpcError(JSONRPC_INVALID_PARAMS, "each item in batch must be an object")
-                t = _require_str(item, "text")
+                t = item["text"]
                 att = _validate_attachments(item, runtime.session_id)
                 validated_batch.append({"text": t, "attachments": att})
             # 整批合为一个回合，附件上限按全批合计。
@@ -316,7 +302,7 @@ def register_submission_handler(
     async def prompt_submit(params: dict) -> dict:
         runtime = _require_runtime(params)
         _reject_read_only_session(runtime)
-        raw_id = _require_str(params, "request_id")
+        raw_id = params["request_id"]
         try:
             request_id = str(UUID(raw_id))
         except ValueError as exc:
@@ -341,14 +327,9 @@ def register_submission_handler(
                         raise JsonRpcError(
                             JSONRPC_TURN_BUSY,
                             "当前会话有正在生成的回复，请稍后再试",
-                            data={"reason": "turn_busy"},
                         )
                     await _require_owned_conv(user_id, runtime.session_id)
                     replace_reply_message_id = params.get("replace_reply_message_id")
-                    if replace_reply_message_id is not None and (
-                        not _is_nonneg_int(replace_reply_message_id) or replace_reply_message_id == 0
-                    ):
-                        raise JsonRpcError(JSONRPC_INVALID_PARAMS, "replace_reply_message_id must be a positive int")
                     receipt, created = await reserve_submission(
                         user_id,
                         runtime.conversation_id,

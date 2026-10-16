@@ -1,12 +1,16 @@
 import { atom } from 'nanostores'
 
-import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded } from '@/shared/lib/authed-api'
 import { isRecord } from '@/shared/lib/is-record'
+import { authedResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { createUnreadMirror } from '@/shared/lib/unread-mirror'
 
-export type PostContentType = 'text' | 'image' | 'video' | 'audio'
-type ReplyStatus = 'none' | 'pending' | 'running' | 'completed' | 'failed'
+import type { ApiInput } from '../../../../shared/api'
+import type { ApiSchemas } from '../../../../shared/api.generated'
+
+export type PostContentType = ApiSchemas['PostContentType']
+type ReplyStatus = ApiSchemas['PostCommentResponse']['reply_status']
 
 export interface PostCommentEntry {
   content: string
@@ -20,17 +24,7 @@ export interface PostCommentEntry {
   replyError: string | null
 }
 
-interface CommentWire {
-  content: string
-  created_at: string
-  updated_at: string
-  id: string
-  post_id: string
-  role: 'user' | 'companion'
-  reply_to_comment_id: string | null
-  reply_status: ReplyStatus
-  reply_error: string | null
-}
+type CommentWire = ApiSchemas['PostCommentResponse']
 
 export interface PostEntry {
   audioUrl: string | null
@@ -43,22 +37,7 @@ export interface PostEntry {
   title: string
 }
 
-interface PostWire {
-  audio_url: string | null
-  body: string
-  comments: CommentWire[]
-  id: string
-  content_type: PostContentType
-  media_url: string | null
-  published_at: string
-  title: string
-}
-
-interface ListWire {
-  posts: PostWire[]
-  next_cursor: string | null
-  unread_post_ids: string[]
-}
+type PostWire = ApiSchemas['PostResponse']
 
 export const $posts = atom<PostEntry[]>([])
 export const $postsHasUnread = atom(false)
@@ -71,9 +50,7 @@ const deletedComments = new Set<string>()
 
 const postsUnread = createUnreadMirror({
   scope: 'posts',
-  unreadPath: '/api/companion/posts/unread',
-  readPath: '/api/companion/posts/read',
-  idField: 'post_ids',
+  resource: 'posts',
   $hasUnread: $postsHasUnread
 })
 
@@ -163,8 +140,7 @@ async function fetchPage(more: boolean): Promise<string[] | null> {
   loading.set(true)
 
   try {
-    const query = more && cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
-    const result = await authedApi<ListWire>({ path: `/api/companion/posts${query}` })
+    const result = await authedResource('GET /api/companion/posts', { query: { cursor: more ? cursor : undefined } })
 
     if (version !== revision || epoch !== currentClearEpoch()) {
       return null
@@ -203,9 +179,13 @@ export async function loadMorePosts(): Promise<boolean> {
   return (await fetchPage(true)) !== null
 }
 
-async function postCommentResult(path: string, body?: { content: string }): Promise<boolean> {
+type CommentOperation =
+  | 'POST /api/companion/posts/{post_id}/comments'
+  | 'POST /api/companion/posts/{post_id}/comments/{comment_id}/reply/retry'
+
+async function postCommentResult<K extends CommentOperation>(operation: K, input: ApiInput<K>): Promise<boolean> {
   const epoch = currentClearEpoch()
-  const result = await authedApi<CommentWire>({ method: 'POST', path, ...(body ? { body } : {}) })
+  const result = await authedResource(operation, input)
 
   if (epoch !== currentClearEpoch() || !apiSucceeded(result, 'posts', 'comment failed') || !isComment(result.value)) {
     return false
@@ -217,11 +197,13 @@ async function postCommentResult(path: string, body?: { content: string }): Prom
 }
 
 export function commentPost(id: string, content: string): Promise<boolean> {
-  return postCommentResult(`/api/companion/posts/${id}/comments`, { content })
+  return postCommentResult('POST /api/companion/posts/{post_id}/comments', { path: { post_id: id }, body: { content } })
 }
 
 export function retryPostReply(id: string, commentId: string): Promise<boolean> {
-  return postCommentResult(`/api/companion/posts/${id}/comments/${commentId}/reply/retry`)
+  return postCommentResult('POST /api/companion/posts/{post_id}/comments/{comment_id}/reply/retry', {
+    path: { post_id: id, comment_id: commentId }
+  })
 }
 
 function removeComment(postId: string, commentId: string): void {
@@ -233,7 +215,10 @@ function removeComment(postId: string, commentId: string): void {
 
 export async function deletePostComment(id: string, commentId: string): Promise<boolean> {
   const epoch = currentClearEpoch()
-  const result = await authedApi<null>({ method: 'DELETE', path: `/api/companion/posts/${id}/comments/${commentId}` })
+
+  const result = await authedResource('DELETE /api/companion/posts/{post_id}/comments/{comment_id}', {
+    path: { post_id: id, comment_id: commentId }
+  })
 
   if (epoch !== currentClearEpoch() || !apiSucceeded(result, 'posts', 'delete failed')) {
     return false

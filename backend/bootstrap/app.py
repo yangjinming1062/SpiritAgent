@@ -3,14 +3,18 @@
 from pathlib import Path
 
 from entrypoints.http.body_limit import BodyLimitMiddleware
+from entrypoints.http.errors import http_exception_handler, request_exception_handler, validation_exception_handler
 from entrypoints.http.rate_limit import limiter, rate_limit_exception_handler, stash_user_id_middleware
 from entrypoints.http.remote_static import RemoteStaticFiles
 from entrypoints.http.routes import ROUTERS
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from infrastructure.config import SETTINGS
 from infrastructure.correlation import correlated_exception_response, correlation_id_middleware
+from infrastructure.request_errors import RequestError
 from slowapi.errors import RateLimitExceeded
+from starlette.exceptions import HTTPException
 
 import bootstrap.models  # noqa: F401 -- 路由加载前显式登记完整 ORM。
 from bootstrap.backup import register_backup_tables
@@ -36,6 +40,9 @@ app.middleware("http")(stash_user_id_middleware)
 app.middleware("http")(correlation_id_middleware)
 # 兜底：ServerErrorMiddleware 在最外层，BaseHTTPMiddleware 抛 raise 时 post-call_next 不跑；从 ContextVar 写 header，让 500/404 也带 X-Request-ID。
 app.add_exception_handler(Exception, correlated_exception_response)
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestError, request_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(RateLimitExceeded, rate_limit_exception_handler)
 
 

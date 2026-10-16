@@ -1,54 +1,31 @@
-import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded } from '@/shared/lib/authed-api'
+import { authedResource } from '@/shared/lib/resource-request'
 
-type PublicationStatus =
-  | 'queued'
-  | 'running'
-  | 'published'
-  | 'partial'
-  | 'failed'
-  | 'blocked'
-  | 'result_unknown'
-  | 'declined'
-  | 'discarded'
+import type { ApiSchemas } from '../../../../shared/api.generated'
 
-export interface VideoPublicationRecovery {
-  publication_id: string
-  status: PublicationStatus
-  post_id: string | null
-  error: string | null
-  title: string
-  video_status: 'pending' | 'ready' | 'failed' | 'unknown' | 'discarded'
-  media_url: string | null
-  can_adopt: boolean
-  can_discard: boolean
-}
-
-interface VideoPublicationRecoveryList {
-  items: VideoPublicationRecovery[]
-  next_offset: number | null
-}
+export type VideoPublicationRecovery = ApiSchemas['PostPublicationRecovery']
+type VideoPublicationRecoveryList = ApiSchemas['PostPublicationRecoveryList']
 
 export async function listVideoPublications(offset = 0): Promise<VideoPublicationRecoveryList | null> {
-  const result = await authedApi<VideoPublicationRecoveryList>({
-    path: `/api/companion/posts/publications/recovery?offset=${offset}`
+  const result = await authedResource('GET /api/companion/posts/publications', {
+    query: { state: 'recoverable', offset }
   })
 
   return apiSucceeded(result, 'posts', 'video recovery list failed') ? result.value : null
 }
 
 export async function queryVideoPublication(id: string): Promise<VideoPublicationRecovery | null> {
-  const result = await authedApi<VideoPublicationRecovery>({
-    method: 'POST',
-    path: `/api/companion/posts/publications/${encodeURIComponent(id)}/query`
+  const result = await authedResource('POST /api/companion/posts/publications/{publication_id}/query', {
+    path: { publication_id: id }
   })
 
   return apiSucceeded(result, 'posts', 'video recovery query failed') ? result.value : null
 }
 
 export async function resolveVideoPublication(id: string, action: 'adopt' | 'discard'): Promise<boolean> {
-  const result = await authedApi<{ status: PublicationStatus }>({
-    method: 'POST',
-    path: `/api/companion/posts/publications/${encodeURIComponent(id)}/${action}`
+  const result = await authedResource('POST /api/companion/posts/publications/{publication_id}/decision', {
+    path: { publication_id: id },
+    body: { decision: action === 'adopt' ? 'accept' : 'reject' }
   })
 
   return apiSucceeded(result, 'posts', 'video recovery decision failed') && result.value !== null

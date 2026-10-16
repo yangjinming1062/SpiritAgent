@@ -7,6 +7,9 @@ function emptyTurn(): ActiveTurn {
     request_id: '',
     origin_kind: 'remote',
     message_ids: [],
+    assistant_message_id: null,
+    messages: [],
+    replace_reply_message_id: null,
     text: '',
     reasoning: '',
     bubbles: [],
@@ -45,7 +48,7 @@ export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): A
     return {
       ...fresh,
       replace_reply_message_id:
-        typeof payload.replace_reply_message_id === 'number' ? payload.replace_reply_message_id : undefined,
+        typeof payload.replace_reply_message_id === 'number' ? payload.replace_reply_message_id : null,
       request_id: typeof payload.request_id === 'string' ? payload.request_id : fresh.request_id,
       running: true
     }

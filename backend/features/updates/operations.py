@@ -76,7 +76,7 @@ async def _get_latest(db: AsyncSession) -> UpdateVersion:
     # 请求级会话要到响应（含安装包下载）发送完毕才关闭，读完即提交，不让连接占用到那时。
     await db.commit()
     if latest is None:
-        raise RequestError(status_code=404, detail="No active version")
+        raise RequestError(status_code=404, message="No active version")
     return latest
 
 
@@ -94,7 +94,7 @@ def _release_manifest(
 ) -> ReleaseManifestResponse:
     """electron-updater 平台清单；文件名、摘要与大小在上传时一并落库。"""
     if not filename or not sha512 or size is None:
-        raise RequestError(status_code=404, detail="No active release for this platform")
+        raise RequestError(status_code=404, message="No active release for this platform")
     return ReleaseManifestResponse(
         version=latest.version,
         releaseDate=latest.created_at.isoformat(),
@@ -119,10 +119,10 @@ async def get_latest_runner_yml(db: AsyncSession) -> FileResult:
     """提供构建时签名的 Runner wheel 清单，供 Client 预取、验签与重启后安装。"""
     latest = await _get_latest(db)
     if not latest.runner_filename:
-        raise RequestError(status_code=404, detail="No active release with a runner asset")
+        raise RequestError(status_code=404, message="No active release with a runner asset")
     manifest_path = VERSIONS_DIR / latest.version / "latest-runner.yml"
     if not manifest_path.exists():
-        raise RequestError(status_code=404, detail="latest-runner.yml not found")
+        raise RequestError(status_code=404, message="latest-runner.yml not found")
     return FileResult(path=str(manifest_path), media_type="application/yaml", filename="latest-runner.yml")
 
 
@@ -220,17 +220,17 @@ async def _run_release_io[T](function: Callable[..., T], *args: Any, **kwargs: A
 
 async def create_version(admin: str, db: AsyncSession, file: UploadSource, release_notes: str) -> UpdateVersionItem:
     if not file.filename or not file.filename.endswith(".zip"):
-        raise RequestError(status_code=400, detail="上传文件必须是 .zip。")
+        raise RequestError(status_code=400, message="上传文件必须是 .zip。")
 
     # 限定为纯 semver——该值会成为 VERSIONS_DIR 下的路径片段，否则文件名可逃出目录。
     if not (match := re.search(r"\d+\.\d+\.\d+", file.filename)):
-        raise RequestError(status_code=400, detail="文件名须包含 1.2.3 形式的版本号。")
+        raise RequestError(status_code=400, message="文件名须包含 1.2.3 形式的版本号。")
     version = match.group(0)
 
     versions_dir = VERSIONS_DIR / version
     async with _VERSION_LOCK:
         if (await db.execute(select(UpdateVersion).where(UpdateVersion.version == version))).scalar_one_or_none():
-            raise RequestError(status_code=400, detail=f"版本 {version} 已存在。")
+            raise RequestError(status_code=400, message=f"版本 {version} 已存在。")
         # 上传、解压与摘要计算耗时较长，查重后先结束读事务。
         await db.commit()
 
@@ -250,12 +250,12 @@ async def create_version(admin: str, db: AsyncSession, file: UploadSource, relea
             except _BAD_ZIP_ERRORS as exc:
                 if isinstance(exc, OSError) and exc.errno is not None:
                     logger.exception("release extraction storage failed")
-                    raise RequestError(status_code=503, detail="更新包存储暂时不可用。") from exc
-                raise RequestError(status_code=400, detail="无效 zip 文件。") from exc
+                    raise RequestError(status_code=503, message="更新包存储暂时不可用。") from exc
+                raise RequestError(status_code=400, message="无效 zip 文件。") from exc
             try:
                 exe_file, mac_file, wheel_file = await _run_release_io(_inspect_release, stage, version)
             except ValueError as exc:
-                raise RequestError(status_code=400, detail=str(exc)) from exc
+                raise RequestError(status_code=400, message=str(exc)) from exc
 
             # 摘要与大小在换入前算好：换入后 stage 下的路径失效。
             record = UpdateVersion(
@@ -291,7 +291,7 @@ async def create_version(admin: str, db: AsyncSession, file: UploadSource, relea
 
 
 async def update_version(id: int, payload: UpdateVersionUpdate, _admin: str, db: AsyncSession) -> UpdateVersionItem:
-    record = await get_or_404(db, UpdateVersion, id=id, detail="版本不存在。")
+    record = await get_or_404(db, UpdateVersion, id=id, message="版本不存在。")
     apply_partial(record, payload)
     await db.commit()
     return UpdateVersionItem.model_validate(record)
@@ -299,7 +299,7 @@ async def update_version(id: int, payload: UpdateVersionUpdate, _admin: str, db:
 
 async def delete_version(id: int, _admin: str, db: AsyncSession) -> MessageResponse:
     async with _VERSION_LOCK:
-        record = await get_or_404(db, UpdateVersion, id=id, detail="版本不存在。")
+        record = await get_or_404(db, UpdateVersion, id=id, message="版本不存在。")
         versions_dir = VERSIONS_DIR / record.version
         # 先删记录再删目录：中途失败只留下无记录的残留目录，同版本再次上传时会整体替换。
         await db.delete(record)
@@ -315,11 +315,11 @@ async def delete_version(id: int, _admin: str, db: AsyncSession) -> MessageRespo
 async def get_latest_file(filename: str, db: AsyncSession) -> FileResult:
     latest = await _get_latest(db)
     if not any(filename.endswith(s) for s in DOWNLOAD_SUFFIXES):
-        raise RequestError(status_code=400, detail="Invalid filename")
+        raise RequestError(status_code=400, message="Invalid filename")
     base_dir = (VERSIONS_DIR / latest.version).resolve()
     file_path = (base_dir / filename).resolve()
     if not file_path.is_relative_to(base_dir):
-        raise RequestError(status_code=400, detail="Invalid filename")
+        raise RequestError(status_code=400, message="Invalid filename")
     if not file_path.exists():
-        raise RequestError(status_code=404, detail="File not found")
+        raise RequestError(status_code=404, message="File not found")
     return FileResult(path=str(file_path), media_type="application/octet-stream", filename=filename)

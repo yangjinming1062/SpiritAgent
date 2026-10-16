@@ -8,8 +8,8 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from infrastructure.ai.error_classifier import FailoverReason, classify_api_error, is_content_policy_error_message
-from infrastructure.ai.llm_client import build_provider, resolve_provider_chain
-from infrastructure.ai.providers.base import ProviderConfig, ServiceType, VideoGenProvider
+from infrastructure.ai.llm_client import resolve_provider_chain
+from infrastructure.ai.providers.base import ProviderConfig, ServiceType
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.ai.tasks import AI_TASK_BY_ID, AiTaskKey
 from infrastructure.database import SESSION_LOCAL
@@ -216,28 +216,12 @@ async def resolve_frozen_media_provider(
     return replace(current, model=frozen.model) if current is not None else None
 
 
-async def cancel_frozen_video_task(user_id: int, state: MediaChainState, task_id: str, provider_name: str = "") -> str:
-    """按提交时冻结的端点撤销远端任务；端点变更后不向新地址发送旧句柄，无法撤销时如实返回原因。"""
+async def cancel_video_chain_attempt(state: MediaChainState) -> str:
+    """放弃业务结果后请求队列取消，已提交工作仍由队列核对终态。"""
     if state.queue_request_id:
         await cancel_queue_request(state.queue_request_id)
-        return "not_cancellable"
-    pinned = (
-        state.providers[state.active_index]
-        if state.active_index is not None and 0 <= state.active_index < len(state.providers)
-        else None
-    )
-    frozen_list = (
-        [pinned]
-        if pinned is not None
-        else [frozen for frozen in state.providers if not provider_name or frozen.provider == provider_name]
-    )
-    for frozen in frozen_list:
-        config = await resolve_frozen_media_provider(user_id, "video_gen", frozen)
-        if config is None:
-            continue
-        provider = build_provider(config, VideoGenProvider)
-        return await provider.cancel(task_id)
-    return "unavailable"
+        return "queue_owned"
+    return "not_submitted"
 
 
 async def cancel_removed_action_video_tasks(user_id: int, tasks: Sequence[RemovedActionVideoTask]) -> None:
@@ -253,7 +237,7 @@ async def cancel_removed_action_video_tasks(user_id: int, tasks: Sequence[Remove
             state = MediaChainState()
         try:
             async with asyncio.timeout(15):
-                outcome = await cancel_frozen_video_task(user_id, state, task.task_id, provider_name=task.provider)
+                outcome = await cancel_video_chain_attempt(state)
         except Exception:
             logger.warning(
                 "Removed action task cancellation failed",

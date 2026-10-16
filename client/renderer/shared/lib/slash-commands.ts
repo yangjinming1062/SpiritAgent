@@ -1,10 +1,14 @@
 import { atom } from 'nanostores'
 
-// 斜杠命令元数据：权威源在服务端注册表，经 RPC 拉到本窗口；本地只用于自动补全与确认弹窗，dispatch 仍以服务端为准。
+// 斜杠命令元数据：权威源在服务端注册表，经 REST 拉到本窗口；本地只用于自动补全与确认弹窗，dispatch 仍以服务端为准。
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $gateway } from '@/shared/store/gateway'
 import { errorMessage } from '@runtime'
+
+import type { ApiSchemas } from '../../../../shared/api.generated'
+
+import { requestResource } from './resource-request'
 
 export interface SlashCommandMeta {
   /** 主名（小写，无前导 /）。 */
@@ -17,13 +21,7 @@ export interface SlashCommandMeta {
   requiresConfirmation: boolean
 }
 
-// 服务端 ``command.list`` 返回的原始条目。
-interface ServerCommandEntry {
-  name: string
-  aliases?: readonly string[]
-  description?: string
-  requires_confirmation?: boolean
-}
+type ServerCommandEntry = ApiSchemas['CommandSummary']
 
 // 启动前与账户清理后为空；拉取失败也保持空，由下次连通或再次进入命令模式时重试。
 export const $slashCommandMeta = atom<readonly SlashCommandMeta[]>([])
@@ -159,10 +157,6 @@ export function fuzzyFilterCommands(query: string, limit = 8): ScoredSlashComman
   return scored.slice(0, limit)
 }
 
-interface SlashCommandListResponse {
-  commands: readonly ServerCommandEntry[]
-}
-
 /** 从网关拉取命令元数据写入本窗口 atom；已有数据则跳过，失败保持空以便重试；返回前网关已替换或账户已清理时丢弃结果。 */
 export async function fetchSlashCommandMeta(): Promise<void> {
   if ($slashCommandMeta.get().length > 0) {
@@ -183,14 +177,14 @@ export async function fetchSlashCommandMeta(): Promise<void> {
 
   slashMetaInflight = (async () => {
     try {
-      const res = await gateway.request<SlashCommandListResponse>('command.list', {})
+      const res = await requestResource('GET /api/commands')
 
       if ($gateway.get() === gateway && currentClearEpoch() === epoch) {
         $slashCommandMeta.set((res.commands ?? []).map(normalizeServerEntry))
       }
     } catch (error) {
       const msg = errorMessage(error)
-      log.error('slash-commands', `command.list failed: ${msg}`, error)
+      log.error('slash-commands', `commands load failed: ${msg}`, error)
     } finally {
       slashMetaInflight = null
     }

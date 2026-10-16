@@ -35,6 +35,10 @@ def invalidate_user_interaction_stats(user_id: int) -> None:
     _counters.pop(user_id, None)
 
 
+def invalidate_user_timezone(user_id: int) -> None:
+    _TZ_CACHE.pop(user_id, None)
+
+
 async def _tz_for(user_id: int) -> str | None:
     if user_id not in _TZ_CACHE:
         async with SESSION_LOCAL() as db:

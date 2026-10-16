@@ -1,6 +1,7 @@
 """config resource operations; transaction and failure semantics belong to the owning capability."""
 
 from infrastructure.request_errors import RequestError
+from infrastructure.timezone import parse_timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.snapshots import AccountIdentity
@@ -17,11 +18,16 @@ async def get_config(user: AccountIdentity, db: AsyncSession) -> DesktopConfigRe
 async def put_config(body: DesktopConfigPutRequest, user: AccountIdentity, db: AsyncSession) -> DesktopConfigResponse:
     values = await load_user_settings(db, user.id)
     updates = flatten_config(body.config)
+    if "timezone" in updates:
+        zone = parse_timezone(updates["timezone"]) if isinstance(updates["timezone"], str) else None
+        if zone is None:
+            raise RequestError(status_code=422, message="时区必须为有效的 IANA 时区")
+        updates["timezone"] = zone.key
     if "companion.information_discovery_enabled" in updates and not isinstance(
         updates["companion.information_discovery_enabled"],
         bool,
     ):
-        raise RequestError(status_code=422, detail="主动信息检索开关必须为布尔值")
+        raise RequestError(status_code=422, message="主动信息检索开关必须为布尔值")
     await put_user_settings(db, user.id, updates)
     await db.commit()
     return DesktopConfigResponse(

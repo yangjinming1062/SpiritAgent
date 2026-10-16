@@ -6,6 +6,8 @@ import { BrowserWindow, type WebContents } from 'electron'
 
 import type { IpcEventChannel, IpcEventContract, SurfacePlaybackClaim } from '@ipc/contracts'
 
+import { type BusinessError, readHttpError } from '../../../shared/errors'
+
 export function fileExists(filePath: string): boolean {
   try {
     return fs.statSync(filePath).isFile()
@@ -94,7 +96,11 @@ export function isFiniteNumber(value: unknown): value is number {
 export class HttpError extends Error {
   readonly status: number
 
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    readonly business?: BusinessError
+  ) {
     super(message)
     this.name = 'HttpError'
     this.status = status
@@ -103,9 +109,14 @@ export class HttpError extends Error {
 
 /** 非 2xx 响应转为 HttpError：正文只用于诊断文案，读取失败时回落状态文本；pathname 不得带签名参数。 */
 export async function httpErrorFromResponse(res: Response, pathname: string): Promise<HttpError> {
-  const detail = await res.text().catch(() => '')
+  const body: unknown = await res.json().catch(() => null)
+  const business = readHttpError(body)
 
-  return new HttpError(res.status, `${res.status} ${pathname}: ${detail || res.statusText}`)
+  return new HttpError(
+    res.status,
+    business?.message ?? `${res.status} ${pathname}: ${res.statusText}`,
+    business ?? undefined
+  )
 }
 
 /** Runner 未连接、请求未发出。 */

@@ -41,7 +41,7 @@ async def serve_file(file_id: str) -> MediaFile:
     """提供临时媒体文件（公开 URL，供 LLM 访问，无需鉴权）。"""
     result = get_file_path(file_id)
     if result is None:
-        raise RequestError(status_code=404, detail="File not found or expired")
+        raise RequestError(status_code=404, message="File not found or expired")
     path, content_type = result
     return MediaFile(path=path, media_type=content_type)
 
@@ -55,18 +55,16 @@ async def speech_to_text(
     if audio_file is None:
         raise RequestError(
             status_code=422,
-            detail={"error": "Missing audio file", "reason": "missing_audio_file", "status": 422},
+            message="Missing audio file",
+            code="missing_audio_file",
         )
     file_bytes = await _read_capped(
         audio_file,
         STT_MAX_AUDIO_BYTES,
         RequestError(
             status_code=413,
-            detail={
-                "error": f"Audio file too large (max {STT_MAX_AUDIO_BYTES // (1024 * 1024)} MB)",
-                "reason": "payload_too_large",
-                "status": 413,
-            },
+            message=f"Audio file too large (max {STT_MAX_AUDIO_BYTES // (1024 * 1024)} MB)",
+            code="payload_too_large",
         ),
     )
     mime_type = _resolve_mime_type(audio_file.content_type)
@@ -87,12 +85,14 @@ async def text_to_speech(body: TtsRequest, user_id: int) -> SpeechAudio:
     if not text:
         raise RequestError(
             status_code=400,
-            detail={"error": "text is required", "reason": "missing_params", "status": 400},
+            message="text is required",
+            code="missing_params",
         )
     if len(text) > TTS_MAX_TEXT_CHARS:
         raise RequestError(
             status_code=413,
-            detail={"error": f"text exceeds {TTS_MAX_TEXT_CHARS} chars", "reason": "payload_too_large", "status": 413},
+            message=f"text exceeds {TTS_MAX_TEXT_CHARS} chars",
+            code="payload_too_large",
         )
     try:
         result = await synthesize_speech(user_id, text, voice, language, task=AiTaskKey.speech_preview)

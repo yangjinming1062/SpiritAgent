@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from features.appearance.schemas import ImageAdoptRequest
 from features.scenes.models import SceneOrigin, ScenePolicy, SceneSource, SceneStatus
 
 
@@ -77,6 +78,8 @@ class SceneStateResponse(BaseModel):
 class SceneGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    source: Literal["generate"]
+
     notes: str | None = Field(default=None, max_length=500)
     image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
     # 客户端声明的类型只做入口约束；场景服务按图片实际格式编码。
@@ -117,3 +120,8 @@ class ScenePolicyRequest(BaseModel):
 
 class ScenePolicyResponse(BaseModel):
     policy: ScenePolicy
+
+
+class SceneImportRequest(ImageAdoptRequest):
+    source: Literal["import"]
+    scene_id: int | None = Field(default=None, gt=0)

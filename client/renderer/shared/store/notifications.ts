@@ -1,9 +1,10 @@
 import { atom } from 'nanostores'
 
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { backendDetailMessage, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
+import { errorMessage } from '@runtime'
 
 export type NotificationKind = 'error' | 'warning' | 'info' | 'success'
 
@@ -85,7 +86,7 @@ function readableError(error: unknown, fallback: string): { message: string; det
 
   if (error instanceof Error) {
     // 先 cleanErrorText 再走共享的全文 JSON 解析取 detail 公开文案；解析不了保留清洗后的原文，纯文案错误不退化为兜底。
-    const raw = cleanErrorText(unwrapIpcErrorMessage(error))
+    const raw = cleanErrorText(errorMessage(error))
     detail = backendDetailMessage(raw, raw)
   } else if (typeof error === 'string') {
     detail = error

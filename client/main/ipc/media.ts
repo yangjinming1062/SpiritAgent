@@ -24,6 +24,7 @@ import * as store from '../shared/lib/runner-config-store'
 import { dataUrlFromBuffer, mimeTypeForPath, parseDataUrl } from '../shared/mime'
 import { httpErrorFromResponse } from '../shared/utils'
 
+import { registerApiResult } from './api-result'
 import { createBackendCaller, type GetCurrentAuth } from './connection'
 import { createTtsDiskCache } from './tts-disk-cache'
 
@@ -342,7 +343,8 @@ export function registerMediaIpc({
     }
   }
 
-  ipcMain.handle(
+  registerApiResult(
+    ipcMain,
     IPC.invoke.mediaAudioUpload,
     async (event, payload: AudioUploadPayload): Promise<AudioUploadResult> => {
       const authSessionId = payload?.authSessionId
@@ -401,7 +403,8 @@ export function registerMediaIpc({
     }
   )
 
-  ipcMain.handle(
+  registerApiResult(
+    ipcMain,
     IPC.invoke.mediaVoiceSampleUpload,
     async (event, payload: VoiceSampleUploadPayload): Promise<VoiceSampleUploadResult> => {
       const authSessionId = payload?.authSessionId
@@ -468,7 +471,7 @@ export function registerMediaIpc({
     }
   )
 
-  ipcMain.handle(IPC.invoke.mediaStt, async (event, payload?: MediaSttPayload) => {
+  registerApiResult(ipcMain, IPC.invoke.mediaStt, async (event, payload?: MediaSttPayload) => {
     const sttId = ++sttSeq
     const { data, mime } = parseDataUrl(payload?.dataUrl || '')
 
@@ -515,7 +518,7 @@ export function registerMediaIpc({
     }
   })
 
-  ipcMain.handle(IPC.invoke.mediaTts, async (event, payload?: MediaTtsPayload) => {
+  registerApiResult(ipcMain, IPC.invoke.mediaTts, async (event, payload?: MediaTtsPayload) => {
     const ttsId = ++ttsSeq
     const text = speechText(String(payload?.text || ''))
 
@@ -665,7 +668,8 @@ export function registerMediaIpc({
     }
   })
 
-  ipcMain.handle(
+  registerApiResult(
+    ipcMain,
     IPC.invoke.mediaVideoUpload,
     async (event, payload: AttachmentVideoUploadPayload): Promise<AttachmentVideoUploadResult> => {
       const authSessionId = payload?.authSessionId
@@ -714,7 +718,8 @@ export function registerMediaIpc({
     }
   )
 
-  ipcMain.handle(
+  registerApiResult(
+    ipcMain,
     IPC.invoke.mediaDesktopVideoUpload,
     async (event, payload: DesktopVideoUploadPayload): Promise<DesktopVideoUploadResult> => {
       const authSessionId = getCurrentAuth()?.sessionId

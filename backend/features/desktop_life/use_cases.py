@@ -22,6 +22,7 @@ from features.desktop_life.schemas import (
     DesktopVideoClaimRequest,
     DesktopVideoConfirmImageRequest,
     DesktopVideoCreateSetRequest,
+    DesktopVideoDecisionRequest,
     DesktopVideoDesignRequest,
     DesktopVideoDraftRequest,
     DesktopVideoEnsureRequest,
@@ -76,7 +77,9 @@ def _http_error(exc: DesktopVideoError) -> RequestError:
     )
     return RequestError(
         status_code=status,
-        detail=exc.detail if isinstance(exc, DesktopVideoAspectRatioError) else {"error": str(exc), "reason": str(exc)},
+        message=str(exc),
+        code=exc.code,
+        details=exc.details if isinstance(exc, DesktopVideoAspectRatioError) else None,
     )
 
 
@@ -186,14 +189,15 @@ async def upload_action(
     if extension not in ATTACHMENT_VIDEO_EXTENSIONS:
         raise RequestError(
             status_code=415,
-            detail={"error": "仅支持 MP4 或 MOV 视频", "reason": "unsupported_video_format"},
+            message="仅支持 MP4 或 MOV 视频",
+            code="unsupported_video_format",
         )
     max_bytes = SETTINGS.video_attachment_max_bytes
     if file.size is not None and file.size > max_bytes:
-        raise RequestError(status_code=413, detail={"error": "视频文件超过大小上限", "reason": "payload_too_large"})
+        raise RequestError(status_code=413, message="视频文件超过大小上限", code="payload_too_large")
     data = await file.read(max_bytes + 1)
     if len(data) > max_bytes:
-        raise RequestError(status_code=413, detail={"error": "视频文件超过大小上限", "reason": "payload_too_large"})
+        raise RequestError(status_code=413, message="视频文件超过大小上限", code="payload_too_large")
     try:
         return await upload_desktop_action(
             user_id,
@@ -211,37 +215,19 @@ async def upload_action(
         raise _http_error(exc) from exc
 
 
-async def accept_action(
+async def decide_action(
     action_id: int,
     user_id: int,
-    body: DesktopVideoDraftRequest | None = None,
+    body: DesktopVideoDecisionRequest,
 ) -> DesktopVideoActionResponse:
     try:
         return await review_desktop_action(
             user_id,
             action_id,
-            accepted=True,
-            draft_id=body.draft_id if body else None,
-            expected_base_version=body.expected_base_version if body else None,
-            expected_resolution_revision=body.expected_resolution_revision if body else None,
-        )
-    except DesktopVideoError as exc:
-        raise _http_error(exc) from exc
-
-
-async def reject_action(
-    action_id: int,
-    user_id: int,
-    body: DesktopVideoDraftRequest | None = None,
-) -> DesktopVideoActionResponse:
-    try:
-        return await review_desktop_action(
-            user_id,
-            action_id,
-            accepted=False,
-            draft_id=body.draft_id if body else None,
-            expected_base_version=body.expected_base_version if body else None,
-            expected_resolution_revision=body.expected_resolution_revision if body else None,
+            accepted=body.decision == "accept",
+            draft_id=body.draft_id,
+            expected_base_version=body.expected_base_version,
+            expected_resolution_revision=body.expected_resolution_revision,
         )
     except DesktopVideoError as exc:
         raise _http_error(exc) from exc
@@ -368,7 +354,8 @@ async def upload_image(
     if not data or len(data) > max_bytes:
         raise RequestError(
             status_code=413 if data else 400,
-            detail={"error": "图片为空或超过大小限制", "reason": "invalid_image_size"},
+            message="图片为空或超过大小限制",
+            code="invalid_image_size",
         )
     try:
         return await upload_desktop_image(

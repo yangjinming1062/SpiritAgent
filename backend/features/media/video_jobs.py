@@ -41,7 +41,6 @@ from features.media.chain import (
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
-    cancel_frozen_video_task,
     media_failure_reason,
     resolve_frozen_media_provider,
     video_failure_message,
@@ -641,19 +640,6 @@ async def inspect_video_queue_owner(
     return "ready"
 
 
-async def has_untracked_video_attempts() -> bool:
-    """首次启用队列前，禁止推测旧请求实际使用的密钥。"""
-    async with SESSION_LOCAL() as db:
-        jobs = await db.scalars(
-            select(VideoGenJob).where(VideoGenJob.status.in_(("submitting", "processing", "result_unknown"))),
-        )
-        for job in jobs:
-            state = MediaChainState.model_validate_json(job.generation_state_json)
-            if not state.queue_request_id and not state.result_url:
-                return True
-    return False
-
-
 async def _submit_next_video(job_id: int, user_id: int) -> bool:
     """只登记共享队列；付费提交和轮询由队列后台任务拥有。"""
     while True:
@@ -765,14 +751,6 @@ async def _wait_queued_video(job_id: int, state: MediaChainState) -> VideoJobSta
         state.video_queue = info
 
     return await wait_video_attempt(request_id, on_submitted=on_submitted, on_queue=on_queue)
-
-
-async def _pinned_video_provider(user_id: int, state: MediaChainState) -> VideoGenProvider | None:
-    """当前尝试所绑定的供应商；配置或端点已变更时返回 None。"""
-    if state.active_index is None:
-        return None
-    config = await resolve_frozen_media_provider(user_id, "video_gen", state.providers[state.active_index])
-    return build_provider(config, VideoGenProvider) if config is not None else None
 
 
 async def _fail_or_keep_best(job_id: int, reason: str) -> None:
@@ -909,7 +887,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
             return
 
         if not state.queue_request_id:
-            # 旧句柄没有可核对的密钥指纹，由首次启用前的人工收尾处理。
+            # 制作状态必须对应持久队列；缺失引用时保留未知结果，防止重发。
             await _fail_or_keep_best(job_id, "submit_result_unknown")
             return
         try:
@@ -1108,27 +1086,6 @@ async def cleanup_user_video_jobs(user_id: int) -> None:
                 params = _VideoJobParams.model_validate_json(row.params_json)
                 state = MediaChainState.model_validate_json(row.generation_state_json)
             await cancel_owner_video_attempts("media", job_id, state.generation_id)
-            if (
-                not state.queue_request_id
-                and not state.result_url
-                and row.provider_task_id
-                and row.status not in {"succeeded", "review_pending"}
-            ):
-                try:
-                    async with asyncio.timeout(15):
-                        outcome = await cancel_frozen_video_task(
-                            user_id,
-                            state,
-                            row.provider_task_id,
-                            provider_name=row.provider,
-                        )
-                except Exception:
-                    logger.warning("Abandoned video cancellation will retry", extra={"job_id": job_id}, exc_info=True)
-                    continue
-                logger.info("Abandoned video cancellation", extra={"job_id": job_id, "outcome": outcome})
-                if outcome == "unavailable":
-                    # 原端点已不可用时保留任务供下一次补偿，不向新地址发送旧句柄。
-                    continue
             paths = asset_paths([row.video_url, row.candidate_video_url, row.generation_state_json], user_id)
             attempts = {row.generation_attempt_index, *(entry.attempt for entry in state.candidates)}
             paths.update(
@@ -1196,17 +1153,10 @@ async def query_post_video_job(user_id: int, job_id: int) -> VideoJobSnapshot:
                 await db.commit()
                 return video_job_snapshot(current)
         result_url = state.result_url
-        if not result_url and (state.queue_request_id or row.provider_task_id):
-            if state.queue_request_id:
-                result = await get_video_attempt_status(state.queue_request_id)
-                if result is None:
-                    return video_job_snapshot(row)
-            else:
-                # 旧任务只读查询用于启用共享队列前收尾，不猜测原密钥归属。
-                provider = await _pinned_video_provider(user_id, state)
-                if provider is None:
-                    raise ValueError("原视频服务配置已变更，暂不能查询")
-                result = await provider.poll(row.provider_task_id or "")
+        if not result_url and state.queue_request_id:
+            result = await get_video_attempt_status(state.queue_request_id)
+            if result is None:
+                return video_job_snapshot(row)
             if result.status == "failed":
                 async with SESSION_LOCAL() as db:
                     current = await db.get(VideoGenJob, job_id, with_for_update=True)

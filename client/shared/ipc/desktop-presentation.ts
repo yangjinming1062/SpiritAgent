@@ -190,8 +190,7 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
   const page = APP_PAGES.find(item => item === value.page)
   const section = SETTINGS_SECTIONS.find(item => item === value.section)
 
-  const companionSection =
-    value.companionSection === 'home' ? 'profile' : COMPANION_SECTIONS.find(item => item === value.companionSection)
+  const companionSection = COMPANION_SECTIONS.find(item => item === value.companionSection)
 
   const settingsTab = value.settingsTab === 'skills' || value.settingsTab === 'toolsets' ? value.settingsTab : undefined
 

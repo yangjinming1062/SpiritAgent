@@ -6,12 +6,13 @@ import { useAutoSave } from '@/shared/hooks/use-auto-save'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
+import { requestResource } from '@/shared/lib/resource-request'
 import { BTN_SUBTLE, EmptyState, HINT_TEXT, LoadingBlock, SettingsSectionIntro } from '@/shared/panel'
 import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagent'
 import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
-import type { SessionRuntimeInfo, SpiritAgentConfigResponse } from '@protocol'
+import type { SpiritAgentConfigResponse } from '@protocol'
 
 import { AgentDefaultsSection, type AgentFormState } from './inference/agent-defaults-section'
 import { type ChatFormState, ContextCompressionSection } from './inference/context-compression-section'
@@ -111,8 +112,7 @@ export function InferencePage(): React.JSX.Element {
     }
 
     if (gateway?.connectionState === 'open' && $gateway.get() === gateway && sessionId) {
-      void gateway
-        .request<{ info: SessionRuntimeInfo }>('session.set_settings', { session_id: sessionId, settings: {} })
+      void requestResource('GET /api/sessions/{session_id}', { path: { session_id: sessionId } })
         .then(result => {
           if (
             isCurrent() &&

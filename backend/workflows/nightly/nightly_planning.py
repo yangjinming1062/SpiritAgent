@@ -26,7 +26,7 @@ from features.desktop_life.schemas import DesktopVideoDesignRequest
 from features.desktop_life.service import design_desktop_action, get_desktop_video_state
 from features.media.identity_rendering import render_character_appearance
 from features.media.image_generation import resolve_image_gen_chain
-from features.memory.memory_admin import MemoryListItem
+from features.memory.contracts import MemoryListItem
 from features.posts.queries import recent_post_summaries
 from features.scenes.nightly import (
     SceneSnapshot,

@@ -1,30 +1,26 @@
 import { atom } from 'nanostores'
 
-import type { ConnectionState } from '@/shared/lib/gateway-protocol'
+import type { ConnectionState, RpcRequester } from '@/shared/lib/gateway-protocol'
 
 export interface SpiritAgentGatewayLike {
   readonly connectionState: ConnectionState
-  readonly isProxy: boolean
-  close?: () => void
-  request: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>
+  readonly isPresentationHost: boolean
+  request: RpcRequester
 }
 
-// 各窗持有宿主连接或 IPC 代理，业务请求只消费公共请求能力。
+// 所有窗口通过主进程 IPC 访问同一账户连接。
 export const $gateway = atom<SpiritAgentGatewayLike | null>(null)
 
 export const $gatewayState = atom<ConnectionState>('idle')
+export const $gatewayActiveToolCount = atom(0)
 
 export function setPrimaryGateway(gateway: SpiritAgentGatewayLike | null): void {
   $gateway.set(gateway)
   $gatewayState.set(gateway?.connectionState ?? 'closed')
+  $gatewayActiveToolCount.set(0)
 }
 
-// 先断开连接再清空引用，阻止旧会话继续收发。
-export function tearDownPrimaryGateway(): void {
-  $gateway.get()?.close?.()
-  setPrimaryGateway(null)
-}
-
-export function reportPrimaryGatewayState(state: ConnectionState): void {
+export function reportPrimaryGatewayState(state: ConnectionState, activeToolCount: number): void {
   $gatewayState.set(state)
+  $gatewayActiveToolCount.set(activeToolCount)
 }

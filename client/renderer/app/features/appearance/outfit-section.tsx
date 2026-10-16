@@ -27,6 +27,7 @@ import { saveCreationDraftImage } from '@/shared/lib/creation-draft-image'
 import { ArrowBackUp, ArrowLeft, FileImage, ImageIcon, Pencil, Plus, Send, Trash2 } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -40,7 +41,6 @@ import {
   Spinner,
   Toggle
 } from '@/shared/panel'
-import { backendApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
@@ -261,11 +261,9 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
 
   // 自备图（着装立绘）：有草稿时提示词/采纳都走草稿重绘语境，否则走创建语境。
   const fetchOutfitSelfSourcePrompt = async (): Promise<string> => {
-    const res = await backendApi().api<{ prompt: string }>({
-      path: session.draft ? `/api/companion/outfits/${session.draft.id}/prompt` : '/api/companion/outfits/prompt',
-      method: 'POST',
+    const res = await requestResource('POST /api/companion/outfits/prompt', {
       body: session.draft
-        ? { feedback: text.trim() || undefined }
+        ? { outfit_id: session.draft.id, feedback: text.trim() || undefined }
         : {
             description: text.trim() || undefined,
             image: session.refImage?.base64,
@@ -281,16 +279,19 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
     const importAtSubmit = $appearanceUiImportRevision.get()
     const selectedDraftId = $appearanceUi.get().draftId
 
-    const res = await backendApi().api<{ id?: number; fullbody_url?: string }>({
-      path: session.draft ? `/api/companion/outfits/${session.draft.id}/adopt` : '/api/companion/outfits/adopt',
-      method: 'POST',
-      // 草稿重绘语境的采纳不收 description（schema forbid，描述沿用草稿 source_json 里的原文）。
-      body: {
-        image: image.base64,
-        content_type: image.contentType,
-        ...(session.draft ? {} : { description: text.trim() || undefined })
-      }
-    })
+    const res = session.draft
+      ? await requestResource('POST /api/companion/outfits/{outfit_id}/image', {
+          path: { outfit_id: session.draft.id },
+          body: { source: 'import', image: image.base64, content_type: image.contentType }
+        })
+      : await requestResource('POST /api/companion/outfits', {
+          body: {
+            source: 'import',
+            image: image.base64,
+            content_type: image.contentType,
+            description: text.trim() || undefined
+          }
+        })
 
     if (!isLive()) {
       return

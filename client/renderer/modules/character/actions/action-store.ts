@@ -1,22 +1,17 @@
 import { atom } from 'nanostores'
 
-/** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；账户快照先恢复再网络校准，失败保留已有目录。 */
-import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded } from '@/shared/lib/authed-api'
 import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
+/** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；账户快照先恢复再网络校准，失败保留已有目录。 */
+import { authedResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { sleep } from '@runtime'
 
 import { resetActionPlayback } from './action-runtime'
-import type {
-  ActionCatalogManifest,
-  ActionClipEntry,
-  ActionPackWire,
-  NormalizedRect,
-  PeekGeometry
-} from './action-types'
+import type { ActionCatalogManifest, ActionClipEntry, NormalizedRect, PeekGeometry } from './action-types'
 
 export interface ActiveActionCatalog {
   packId: number
@@ -31,13 +26,6 @@ export interface ActiveActionCatalog {
 }
 
 export type ActionCatalogStatus = 'idle' | 'loading' | 'ready' | 'unavailable'
-
-interface CatalogWireResponse {
-  pack_id: number
-  catalog_version: number
-  appearance_epoch: number
-  manifest_url: string | null
-}
 
 interface PersistedActionCatalog {
   packId: number
@@ -180,10 +168,9 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
   let terminal = false
 
   const ensure = (async (): Promise<boolean> => {
-    const accepted = await authedApi<unknown>({
-      body: { action },
-      method: 'POST',
-      path: `/api/companion/video-packs/${initial.packId}/ensure-system-action`
+    const accepted = await authedResource('POST /api/companion/video-packs/{pack_id}/production', {
+      path: { pack_id: initial.packId },
+      body: { command: 'ensure', action }
     })
 
     if (!isCurrent() || !apiSucceeded(accepted, 'action-store', 'ensure-system-action request failed')) {
@@ -208,7 +195,7 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
         return !terminal
       }
 
-      const listed = await authedApi<{ packs: ActionPackWire[] }>({ path: '/api/companion/video-packs' })
+      const listed = await authedResource('GET /api/companion/video-packs')
 
       if (!isCurrent()) {
         return false
@@ -445,7 +432,7 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
     }
 
     try {
-      const res = await authedApi<CatalogWireResponse>({ path: '/api/companion/actions/catalog' })
+      const res = await authedResource('GET /api/companion/actions/catalog')
 
       if (stale()) {
         return

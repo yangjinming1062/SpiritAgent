@@ -13,6 +13,7 @@ from features.scenes.schemas import (
     SceneActivateRequest,
     SceneDescriptionRequest,
     SceneGenerateRequest,
+    SceneImportRequest,
     SceneListResponse,
     ScenePolicyRequest,
     ScenePolicyResponse,
@@ -47,9 +48,9 @@ def _decode_image(image_b64: str) -> bytes:
 
 def _scene_http_error(exc: SceneError) -> RequestError:
     if isinstance(exc, SceneNotFoundError):
-        return RequestError(status_code=404, detail={"error": "找不到对应的场景", "reason": str(exc)})
+        return RequestError(status_code=404, message="找不到对应的场景", details={"reason": str(exc)})
     status_code = 409 if isinstance(exc, SceneStateError) else 400
-    return RequestError(status_code=status_code, detail={"error": str(exc), "reason": str(exc)})
+    return RequestError(status_code=status_code, message=str(exc))
 
 
 async def read_scene_state(user_id: int, db: AsyncSession) -> SceneStateResponse:
@@ -64,7 +65,9 @@ async def read_scene_state(user_id: int, db: AsyncSession) -> SceneStateResponse
     )
 
 
-async def post_scene_generate(user_id: int, body: SceneGenerateRequest) -> SceneResponse:
+async def create_scene(user_id: int, body: SceneGenerateRequest | SceneImportRequest) -> SceneResponse:
+    if isinstance(body, SceneImportRequest):
+        return await _adopt_scene_image(user_id, body.scene_id, body)
     try:
         row = await schedule_scene_generation(
             user_id,
@@ -83,14 +86,6 @@ async def post_scene_prompt(user_id: int, body: ScenePromptRequest) -> SceneResp
     except SceneError as exc:
         raise _scene_http_error(exc) from exc
     return response_for_scene(row)
-
-
-async def post_scene_adopt(user_id: int, scene_id: int, body: ImageAdoptRequest) -> SceneResponse:
-    return await _adopt_scene_image(user_id, scene_id, body)
-
-
-async def post_scene_upload(user_id: int, body: ImageAdoptRequest) -> SceneResponse:
-    return await _adopt_scene_image(user_id, None, body)
 
 
 async def _adopt_scene_image(user_id: int, scene_id: int | None, body: ImageAdoptRequest) -> SceneResponse:

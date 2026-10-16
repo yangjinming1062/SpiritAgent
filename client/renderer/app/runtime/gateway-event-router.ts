@@ -17,7 +17,7 @@ import { decodePayload, type EventRouteContext } from './gateway-event-util'
 import { handleCharacterEvent } from './handlers/character-events'
 import { handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
-import { handleToolCall, handleToolCancel, handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
+import { handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
 
 const TURN_EVENTS = new Set([
   'message.start',
@@ -31,7 +31,7 @@ const TURN_EVENTS = new Set([
   'tool.complete'
 ])
 
-// 网关事件路由：只保留分派、窗口角色校验与公共守卫；各能力状态更新在 handlers/，跨模块后续动作进 app/workflows。精灵窗宿主与代理窗口共用；宿主专属 Runner 分发在 handlers/tool-dispatch。
+// 网关事件路由只负责视图分派与窗口守卫；设备调用由主进程消费。
 
 export function handleGatewayEvent(event: GatewayEvent): void {
   // 换号及登出期间的旧连接事件没有当前账户所有权；断连收尾由runtime生命周期负责。
@@ -59,7 +59,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     return
   }
 
-  const ctx: EventRouteContext = { isProxy: $gateway.get()?.isProxy ?? false }
+  const ctx: EventRouteContext = { isPresentationHost: $gateway.get()?.isPresentationHost ?? false }
 
   switch (event.type) {
     case 'companion.topic_feedback.updated':
@@ -148,16 +148,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
 
-    case 'tool.call':
-      handleToolCall(event, ctx)
-
-      break
-
-    case 'tool.cancel':
-      handleToolCancel(event, ctx)
-
-      break
-
     case 'tool.complete':
       if (runtime) {
         handleToolComplete(runtime)
@@ -186,8 +176,6 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'companion.video.progress':
 
     case 'companion.video.ready':
-
-    case 'avatar.regenerated':
       handleCharacterEvent(event)
 
       break

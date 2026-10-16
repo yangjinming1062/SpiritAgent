@@ -1,5 +1,6 @@
 """显式装配注册：供应商、工具、事件与域钩子在此集中登记；导入业务包无注册副作用，注册表覆盖式幂等。"""
 
+from entrypoints.desktop.event_contracts import validate_gateway_event
 from entrypoints.desktop.handlers import terminate_remote_sessions, terminate_user_gateway
 from entrypoints.tools import agent_delegate, cronjob_tool, search_tools_tool
 from entrypoints.tools import memory as memory_tools
@@ -13,7 +14,6 @@ from entrypoints.tools.builtin.video_generation_tool import register as register
 from entrypoints.tools.builtin.web_tools import register as register_web
 from features.actions.asset_retirement import delete_outfit_action_packs
 from features.actions.expression_catalog import available_expression_prompt_entries
-from features.actions.video_queue import has_untracked_video_attempts as untracked_action_videos
 from features.actions.video_queue import inspect_video_queue_owner as inspect_action_video_owner
 from features.appearance.action_cleanup import set_outfit_action_cleanup
 from features.appearance.character_card import character_snapshot_is_current, render_character_identity
@@ -27,12 +27,10 @@ from features.configuration.queries import user_ai_config
 from features.conversation.reply_media import deliver_video_result
 from features.desktop_life.generation import set_desktop_update_handler
 from features.desktop_life.service import schedule_pending_desktop_updates
-from features.desktop_life.video_queue import has_untracked_video_attempts as untracked_desktop_videos
 from features.desktop_life.video_queue import inspect_video_queue_owner as inspect_desktop_video_owner
 from features.journal.journal_indexes import delete_diary_record
 from features.media.delivery import set_video_result_handler
 from features.media.reference_reader import MediaReferenceReaders, set_media_reference_readers
-from features.media.video_jobs import has_untracked_video_attempts as untracked_media_videos
 from features.media.video_jobs import inspect_video_queue_owner as inspect_media_video_owner
 from features.media.video_queue.ports import configure_video_queue_ports
 from features.media.video_queue.service import cancel_video_attempt
@@ -70,6 +68,7 @@ from infrastructure.ai.providers.qwen.tts import QwenTTSProvider
 from infrastructure.ai.providers.qwen.video import QwenVideoGenProvider
 from infrastructure.ai.providers.registry import register as register_provider
 from runtime.channels import ChannelLifecycle, register_channel_lifecycle
+from runtime.desktop.jsonrpc import configure_event_validator
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
@@ -133,6 +132,7 @@ def register_internal_event_handlers() -> None:
 
 def wire_domain_hooks() -> None:
     """业务域内需要触达生成流程或跨域副作用的少数入口，经装配层注入，保持域间依赖可登记、可检查。"""
+    configure_event_validator(validate_gateway_event)
     set_job_intent_invalidator(invalidate_cron_companion_intents)
     set_video_result_handler(deliver_video_result)
     register_asset_contributions()
@@ -143,7 +143,6 @@ def wire_domain_hooks() -> None:
             "action": inspect_action_video_owner,
             "desktop": inspect_desktop_video_owner,
         },
-        (untracked_media_videos, untracked_action_videos, untracked_desktop_videos),
         cancel_video_attempt,
     )
     register_channel_lifecycle(

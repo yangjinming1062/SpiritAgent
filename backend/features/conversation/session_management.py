@@ -1,4 +1,5 @@
 import asyncio
+import json
 from contextlib import AsyncExitStack
 from typing import Literal
 
@@ -7,6 +8,7 @@ from infrastructure.attachments import gc_session as attachments_gc_session
 from infrastructure.constants import SEARCH_INPUT_MAX_LEN, SESSION_PREVIEW_MAX_CHARS, SQL_LIKE_ESCAPE_CHAR
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
+from runtime.conversation import decode_session_settings
 from runtime.events.emit import emit_ws_event
 from runtime.presets import SYSTEM_PRESET_CATALOG, resolve_preset_meta
 from runtime.turn_ownership import conversation_is_running, conversation_lock
@@ -23,8 +25,9 @@ from features.conversation.schemas import (
     DesktopSessionListResponse,
     DesktopSessionOperationResponse,
     DesktopSessionPatchRequest,
-    DesktopSessionSearchResponse,
 )
+from features.conversation.snapshots import ConversationSnapshot
+from features.conversation.turn_access import conversation_snapshot
 from features.media.video_jobs import cleanup_user_media
 
 logger = get_logger(__name__)
@@ -78,7 +81,7 @@ async def _get_conversation_or_404(db: AsyncSession, user_id: int, session_id: s
     """按 id 查会话并强制归属校验，未命中抛 404。"""
     conv = await Conversation.by_session_id(db, session_id, user_id=user_id)
     if conv is None:
-        raise RequestError(status_code=404, detail="Session not found")
+        raise RequestError(status_code=404, message="Session not found")
     return conv
 
 
@@ -91,6 +94,7 @@ async def list_sessions(
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
     include_subagents: bool = False,
+    query: str | None = None,
 ) -> DesktopSessionListResponse:
     q = select(Conversation, _preview_subquery).where(Conversation.user_id == user_id)
 
@@ -117,6 +121,28 @@ async def list_sessions(
         if not include_subagents:
             q = q.where(Conversation.parent_id.is_(None))
     # parent_id 只标记子 Agent 会话，派生会话照常列出；include_subagents 只约束未归档列表，归档视图保留子会话。
+    if query:
+        query = query[:SEARCH_INPUT_MAX_LEN]
+        escaped = (
+            query.replace(SQL_LIKE_ESCAPE_CHAR, SQL_LIKE_ESCAPE_CHAR * 2)
+            .replace("%", f"{SQL_LIKE_ESCAPE_CHAR}%")
+            .replace("_", f"{SQL_LIKE_ESCAPE_CHAR}_")
+        )
+        pattern = f"%{escaped}%"
+        content_ids = (
+            select(Message.conversation_id)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(Conversation.user_id == user_id, message_contains_text(query))
+            .distinct()
+            .correlate(None)
+        )
+        q = q.where(
+            or_(
+                Conversation.title.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
+                cast(Conversation.id, String).like(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
+                Conversation.id.in_(content_ids),
+            ),
+        )
     if min_messages > 0:
         q = q.where(func.coalesce(msg_stats.c.msg_count, 0) >= min_messages)
 
@@ -172,97 +198,30 @@ async def list_sessions(
     return DesktopSessionListResponse(limit=limit, offset=offset, total=total_q, sessions=sessions)
 
 
-async def search_sessions(
-    user_id: int,
-    db: AsyncSession,
-    q: str,
-    archived: Literal["only", "exclude", "include"] = "exclude",
-) -> DesktopSessionSearchResponse:
-    """按标题、会话 id 或会话内任意消息检索；每用户最多 20 条（按最近活跃排序），q 必填且限长，不含子 Agent 会话。"""
-    # 限制搜索词长度——LIKE 对多 KB 字符串慢，无 UX 理由让用户搜 10k 字符。
-    if len(q) > SEARCH_INPUT_MAX_LEN:
-        q = q[:SEARCH_INPUT_MAX_LEN]
-    # 转义 SQL LIKE 元字符，保证用户输入按字面量匹配。
-    escaped = (
-        q.replace(SQL_LIKE_ESCAPE_CHAR, SQL_LIKE_ESCAPE_CHAR * 2)
-        .replace("%", f"{SQL_LIKE_ESCAPE_CHAR}%")
-        .replace("_", f"{SQL_LIKE_ESCAPE_CHAR}_")
-    )
-    pattern = f"%{escaped}%"
-
-    # 内容候选按最近活跃排序，与最终列表同序；标题和 ID 匹配不占此额度。
-    content_match_ids = (
-        select(Conversation.id)
-        .select_from(Message)
-        .where(message_contains_text(q))
-        .join(Conversation, Conversation.id == Message.conversation_id)
-        .where(Conversation.user_id == user_id, Conversation.parent_id.is_(None))
-        .group_by(Conversation.id)
-        .order_by(desc(Conversation.updated_at), desc(Conversation.id))
-        .limit(200)
-        .correlate(None)
-    )
-
-    archived_filter = {
-        "only": Conversation.archived_at.isnot(None),
-        "exclude": Conversation.archived_at.is_(None),
-        "include": None,
-    }[archived]
-
-    if archived_filter is not None:
-        content_match_ids = content_match_ids.where(archived_filter)
-
-    rows_query = (
-        select(Conversation, _preview_subquery, func.coalesce(func.sum(visible_bubble_count()), 0).label("msg_count"))
-        .outerjoin(Message, Message.conversation_id == Conversation.id)
-        .where(
-            Conversation.user_id == user_id,
-            Conversation.parent_id.is_(None),
-            or_(
-                Conversation.title.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
-                cast(Conversation.id, String).like(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
-                Conversation.id.in_(content_match_ids),
-            ),
-        )
-        .group_by(Conversation.id)
-        .order_by(desc(Conversation.updated_at), desc(Conversation.id))
-        .limit(20)
-    )
-    if archived_filter is not None:
-        rows_query = rows_query.where(archived_filter)
-
-    rows = (await db.execute(rows_query)).all()
-
-    sessions = []
-    for conv, preview, msg_count in rows:
-        sessions.append(
-            _conversation_to_session_info(
-                conv,
-                msg_count=int(msg_count or 0),
-                input_tok=0,
-                output_tok=0,
-                tool_count=0,
-                preview=preview,
-            ),
-        )
-
-    return DesktopSessionSearchResponse(sessions=sessions)
-
-
 async def patch_session(
     user_id: int,
     db: AsyncSession,
     session_id: str,
     body: DesktopSessionPatchRequest,
-) -> DesktopSessionOperationResponse:
-    conv = await _get_conversation_or_404(db, user_id, session_id)
-    if conv.kind == SPECIAL_KIND or not conv.is_renamable:
-        raise RequestError(status_code=403, detail="System preset conversations cannot be modified or deleted")
+) -> ConversationSnapshot:
+    conv = await db.scalar(
+        select(Conversation)
+        .where(
+            Conversation.id == int(session_id) if session_id.isdecimal() else False,
+            Conversation.user_id == user_id,
+        )
+        .with_for_update(),
+    )
+    if conv is None:
+        raise RequestError(status_code=404, message="Session not found")
+    metadata = body.model_dump(exclude_unset=True, exclude={"settings"})
+    if metadata and (conv.kind == SPECIAL_KIND or not conv.is_renamable):
+        raise RequestError(status_code=403, message="System preset conversations cannot be modified or deleted")
     if body.title is not None:
         conv.title = body.title
     if body.pinned is not None:
         if body.pinned and conv.archived_at is not None:
-            raise RequestError(status_code=400, detail="Archived session cannot be pinned")
+            raise RequestError(status_code=400, message="Archived session cannot be pinned")
         conv.pinned_at = func.now() if body.pinned else None
     if body.archived is not None:
         if body.archived:
@@ -270,15 +229,24 @@ async def patch_session(
             conv.archived_at = func.now()
         else:
             conv.archived_at = None
-    emit_ws_event(db, user_id=user_id, event_type="session.list_changed", payload={"session_id": str(conv.id)})
+    if body.settings is not None:
+        settings = decode_session_settings(conv.settings_json)
+        for key, value in body.settings.model_dump(exclude_unset=True).items():
+            if value is None:
+                settings.pop(key, None)
+            else:
+                settings[key] = value
+        conv.settings_json = json.dumps(settings, ensure_ascii=False)
+    if metadata:
+        emit_ws_event(db, user_id=user_id, event_type="session.list_changed", payload={"session_id": str(conv.id)})
     await db.commit()
-    return DesktopSessionOperationResponse(ok=True)
+    return conversation_snapshot(conv)
 
 
 async def delete_session(user_id: int, db: AsyncSession, session_id: str) -> DesktopSessionOperationResponse:
     conv = await _get_conversation_or_404(db, user_id, session_id)
     if conv.kind == SPECIAL_KIND or not conv.is_deletable:
-        raise RequestError(status_code=403, detail="System preset conversations cannot be modified or deleted")
+        raise RequestError(status_code=403, message="System preset conversations cannot be modified or deleted")
     descendants = select(Conversation.id).where(Conversation.parent_id == conv.id).cte("descendants", recursive=True)
     descendants = descendants.union(
         select(Conversation.id).join(descendants, Conversation.parent_id == descendants.c.id),
@@ -288,7 +256,7 @@ async def delete_session(user_id: int, db: AsyncSession, session_id: str) -> Des
         for sid in subtree:
             # 取锁前发现回合在跑则直接 409，不排队等回合结束再删
             if conversation_is_running(str(sid)):
-                raise RequestError(status_code=409, detail="请先停止当前任务，再删除会话")
+                raise RequestError(status_code=409, message="请先停止当前任务，再删除会话")
             await locks.enter_async_context(conversation_lock(str(sid)))
         async with user_asset_lock(user_id):
             removed = await collect_message_asset_releases(db, user_id, subtree)

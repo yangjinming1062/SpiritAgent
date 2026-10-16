@@ -1,9 +1,9 @@
 import { atom } from 'nanostores'
 
-import { authedApi } from '@/shared/lib/authed-api'
+import type { AuthedApiResult } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
+import { authedResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
-import type { SpiritAgentApiRequest } from '@ipc/contracts'
 import type { CharacterCard, CharacterFeatureKey, CharacterOverrides } from '@protocol'
 
 import { $activeAvatarId } from './portrait-store'
@@ -49,7 +49,7 @@ function publish(card: CharacterCard | null): void {
 
 export async function hydrateCharacterCard(): Promise<void> {
   const generation = ++requestGeneration
-  const result = await authedApi<CharacterCard>({ path: '/api/companion/character-card' })
+  const result = await authedResource('GET /api/companion/character-card')
 
   if (generation !== requestGeneration) {
     return
@@ -73,10 +73,10 @@ function publishMutation(card: CharacterCard): void {
 }
 
 // 写请求：请求错误抛出；未登录、发起后换号或换形象、响应无内容时返回 false，成功则发布响应并返回 true。
-async function mutateCard(request: SpiritAgentApiRequest): Promise<boolean> {
+async function mutateCard(write: () => Promise<AuthedApiResult<CharacterCard>>): Promise<boolean> {
   const epoch = currentClearEpoch()
   const avatarId = $activeAvatarId.get()
-  const result = await authedApi<CharacterCard>(request)
+  const result = await write()
 
   if (!result.ok) {
     if (result.reason === 'err') {
@@ -100,17 +100,17 @@ export function saveCharacterCard(
   expectedRevision: number,
   changes: CharacterOverrides
 ): Promise<boolean> {
-  return mutateCard({
-    body: { changes, expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision },
-    method: 'PATCH',
-    path: '/api/companion/character-card'
-  })
+  return mutateCard(() =>
+    authedResource('PATCH /api/companion/character-card', {
+      body: { changes, expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision }
+    })
+  )
 }
 
 export async function extractCharacterCard(expectedAvatarId: number, expectedRevision: number): Promise<void> {
-  await mutateCard({
-    body: { expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision },
-    method: 'POST',
-    path: '/api/companion/character-card/extract'
-  })
+  await mutateCard(() =>
+    authedResource('POST /api/companion/character-card/extract', {
+      body: { expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision }
+    })
+  )
 }

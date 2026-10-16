@@ -21,6 +21,7 @@ import { IPC } from '@ipc/contracts'
 
 import { createBackendClient, isRetryableBackendError } from './backend/client'
 import { createEnsureBackend } from './backend/ensure-backend'
+import { createDesktopGateway } from './backend/gateway'
 import { createBackendHttp, createElectronFetch } from './backend/http'
 import { createBackendSession } from './backend/session'
 import { createSessionRuntime } from './backend/session-runtime'
@@ -256,6 +257,7 @@ const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactor
 
 const authBroadcaster = createAuthBroadcaster({
   autoStartBridge: () => runnerHost.autoStart(),
+  onGatewayAuthChanged: () => gatewayRuntime?.authChanged(),
   configSync,
   ensureBackendSession,
   log: rememberLog,
@@ -379,6 +381,7 @@ registerOnboardingAudioIpc({
 
 // onRestored 在异步回调里才调用，先占位避免 session/runtime 互相前置。
 let runnerHost: ReturnType<typeof createRunnerHost>
+let gatewayRuntime: ReturnType<typeof createDesktopGateway> | undefined
 
 const sessionRuntime = createSessionRuntime({
   createSession: createBackendSession,
@@ -421,15 +424,8 @@ registerConnectionIpc({
   fetchJson: backendHttp.fetchJson,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   getSelectedAccountId: () => sessionRuntime.ensureBackendSession().getSelectedAccountId(),
-  getMainWindow,
   ipcMain,
-  mintWsTicket: backendHttp.mintWsTicket,
   resolvePathTimeoutMs
-})
-registerGatewayIpc({
-  getMainWindow,
-  ipcMain,
-  rememberLog
 })
 
 const mediaIpc = registerMediaIpc({
@@ -452,6 +448,33 @@ runnerHost = createRunnerHost({
   rememberLog,
   spiritagentHome: SPIRITAGENT_HOME
 })
+
+gatewayRuntime = createDesktopGateway({
+  ensureBackend,
+  getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
+  getTools: () => runnerHost.getBridge()?.getTools() ?? [],
+  dispatchCall: request => runnerHost.dispatchCall(request),
+  cancelCall: callId => runnerHost.cancelCall(callId),
+  mintWsTicket: backendHttp.mintWsTicket,
+  syncTimezone: async (baseUrl, token) => {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+
+    if (timezone) {
+      await backendHttp.fetchJson(`${baseUrl}/api/config`, token, { method: 'PUT', body: { config: { timezone } } })
+    }
+  },
+  onState: (snapshot, authSessionId) =>
+    broadcastToAllWindows(IPC.event.gatewayStateChanged, { ...snapshot, authSessionId }),
+  onEvent: (event, authSessionId) => broadcastToAllWindows(IPC.event.gatewayEvent, { event, authSessionId }),
+  onExpired: authSessionId => broadcastToAllWindows(IPC.event.authSessionExpired, authSessionId),
+  log: rememberLog
+})
+registerGatewayIpc({ ipcMain, gateway: gatewayRuntime })
+runnerHost.onStatus(event =>
+  gatewayRuntime?.runnerStatus(event.type === 'running' || event.type === 'runner_ready' ? (event.tools ?? []) : [])
+)
+powerMonitor.on('resume', () => gatewayRuntime?.reconnect())
+app.on('before-quit', () => gatewayRuntime?.close())
 
 const autoUpdater = createAutoUpdater({
   app,

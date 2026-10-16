@@ -3,6 +3,7 @@ import { type Dispatch, type SetStateAction, useCallback, useRef } from 'react'
 
 import { requestGateway } from '@/shared'
 import { captureAuthScope } from '@/shared/lib/authed-api'
+import type { RpcRequester } from '@/shared/lib/gateway-protocol'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
@@ -14,7 +15,6 @@ import { $gateway } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { ChatAttachment } from '@protocol'
-import type { PromptSubmissionResult } from '@protocol'
 import { errorMessage } from '@runtime'
 
 import { basename } from './chat-path'
@@ -118,12 +118,12 @@ export function useChatSubmit({
 
     const requestCurrent = (): boolean => authScope() && $gateway.get() === gateway
 
-    const requestGateway = async <T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> => {
+    const requestGateway: RpcRequester = async (method, params) => {
       if (!requestCurrent()) {
         throw new Error('Gateway request owner changed')
       }
 
-      return gateway.request<T>(method, params)
+      return gateway.request(method, params)
     }
 
     const edit = $chatEditDraft.get()
@@ -227,7 +227,7 @@ export function useChatSubmit({
       })
 
       try {
-        controller.acceptPromptSubmission(await requestGateway<PromptSubmissionResult>('prompt.submit', submission))
+        controller.acceptPromptSubmission(await requestGateway('prompt.submit', submission))
 
         if ($chatEditDraft.get() === edit) {
           $chatEditDraft.set(null)
@@ -316,16 +316,10 @@ export function useChatSubmit({
           attachments.push({ type: 'image', url: dataUrl })
           displayAttachments.push({ type: 'image', url: dataUrl })
         } else {
-          const ref = await requestGateway<{ ref_text?: string }>('image.attach', {
-            path: currentPending.value,
-            session_id: id
-          })
-
-          if (ref.ref_text) {
-            fullText = `${fullText}\n${ref.ref_text}`.trim()
-            promptText = `${promptText}\n${ref.ref_text}`.trim()
-            displayAttachments.push({ type: 'image', url: currentPending.value })
-          }
+          const ref = `@file:${currentPending.value}`
+          fullText = `${fullText}\n${ref}`.trim()
+          promptText = `${promptText}\n${ref}`.trim()
+          displayAttachments.push({ type: 'image', url: currentPending.value })
         }
       } else if (currentPending?.type === 'video' && currentPending.url) {
         attachments.push({ type: 'video', url: currentPending.url })

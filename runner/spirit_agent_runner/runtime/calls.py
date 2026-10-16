@@ -4,7 +4,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from spirit_agent_runner.contracts.rpc import RpcError
+from spirit_agent_runner.contracts.rpc import RpcError, ToolExecuteRequest
 from spirit_agent_runner.contracts.scope import SkillScope
 from spirit_agent_runner.contracts.tooling import ToolError
 
@@ -42,20 +42,16 @@ class CallManager:
             call.task.cancel()
         return {"ok": True} if calls else {"ok": False, "error": "no_in_flight"}
 
-    async def execute(self, connection_id: str, req_id: object, method: str, params: dict[str, Any]) -> Any:
+    async def execute(self, connection_id: str, req_id: object, request: ToolExecuteRequest) -> Any:
         if self._closing:
             raise RpcError(-32000, "Runner is stopping", {"disposition": "failed"})
-        name = params.get("name")
-        args = params.get("args", {})
-        call_id = params.get("call_id")
+        name, args, call_id = request.name, request.args, request.call_id
+        scope = (
+            SkillScope(request.skill_scope.user_id, request.skill_scope.system_preset_id)
+            if request.skill_scope is not None
+            else None
+        )
         try:
-            if not isinstance(name, str) or not name:
-                raise ValueError("A non-empty 'name' string is required")
-            if not isinstance(args, dict):
-                raise ValueError("Tool 'args' must be an object")
-            if call_id is not None and (not isinstance(call_id, str) or not call_id):
-                raise ValueError("Tool 'call_id' must be a non-empty string")
-            scope = SkillScope.parse(params.get("skill_scope")) if method == "execute_scoped_tool" else None
             context = self.config.context(call_id=call_id, skill_scope=scope)
             self.executor.catalog.definition(name, context)
         except (ValueError, ToolError) as error:

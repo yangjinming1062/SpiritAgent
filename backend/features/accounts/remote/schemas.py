@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class PairingResponse(BaseModel):
     id: int
-    url: str | None = None
+    url: str | None = Field(default=None, exclude_if=lambda value: value is None)
     expires_at: datetime
     state: Literal["pending", "paired", "cancelled", "expired"]
 
@@ -39,8 +39,3 @@ class RemoteSessionResponse(BaseModel):
 
 class DeviceListResponse(BaseModel):
     items: list[DeviceResponse]
-
-
-class RemoteTicketResponse(BaseModel):
-    ticket: str
-    expires_in: int

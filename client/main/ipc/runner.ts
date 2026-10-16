@@ -3,10 +3,11 @@ import type { BrowserWindow, IpcMain } from 'electron'
 import { type DesktopRunnerState, IPC, type RunnerCallOutcome, type RunnerCallRequest } from '@ipc/contracts'
 import { errorMessage, sleep } from '@runtime'
 
+import { isJsonValue } from '../../../shared/gateway'
 import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
 import type { CreateRunnerProcessOptions, RunnerProcess } from '../runner/process'
 import type { CreateRunnerWsServerOptions, RunnerWsServer } from '../runner/rpc-ws'
-import { assertGatewayHost } from '../security/ipc-trust'
+import { assertSpriteHost } from '../security/ipc-trust'
 import type { BackendSessionPort } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
 import { RunnerNotConnectedError, RunnerRpcError, sendToWindow } from '../shared/utils'
@@ -27,6 +28,9 @@ export interface RunnerHost {
   autoStop: () => Promise<void>
   getBridge: () => null | RunnerBridge
   registerIpc: (ipcMain: IpcMain) => void
+  dispatchCall: (request: RunnerCallRequest) => Promise<RunnerCallOutcome>
+  cancelCall: (callId: string) => Promise<unknown>
+  onStatus: (handler: (event: RunnerBridgeEvent) => void) => () => void
   restartForCurrentSession: () => Promise<void>
 }
 
@@ -56,9 +60,10 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
   let runnerBridge: null | RunnerBridge = null
   let appliedConfig: null | string = null
   let configGeneration = 0
-  // 在途的模型派发调用：call_id → 本次 Runner 请求 id，供按调用取消（spiritagent.cancel 的 req_id）。
+  // 在途的模型派发调用：call_id → 本次 Runner 请求 id，供按调用取消（calls.cancel 的 req_id）。
   const inflightCalls = new Map<string, string>()
   let nextCallRequestId = 1
+  const statusHandlers = new Set<(event: RunnerBridgeEvent) => void>()
 
   function ensureRunnerBridge(): RunnerBridge {
     if (runnerBridge) {
@@ -77,6 +82,10 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
       const config = store.read()
 
+      if (!isJsonValue(config)) {
+        throw new Error('Runner config must contain JSON values')
+      }
+
       const nextConfig = JSON.stringify(
         Object.fromEntries(Object.entries(config).filter(([key]) => !DESKTOP_CONFIG_SECTIONS.has(key)))
       )
@@ -86,7 +95,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       }
 
       const generation = configGeneration
-      await server.call('spiritagent.config.update', { config }, { timeoutMs: 5000 })
+      await server.call('config.replace', { config }, { timeoutMs: 5000 })
 
       if (generation === configGeneration) {
         appliedConfig = nextConfig
@@ -116,6 +125,8 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     store.setPushTarget(() => runnerBridge?.syncConfig())
 
     runnerBridge.onEvent((ev: RunnerBridgeEvent) => {
+      statusHandlers.forEach(handler => handler(ev))
+
       if (ev.type === 'running' || ev.type === 'runner_ready') {
         sendToWindow(options.getMainWindow(), IPC.event.runnerStatus, { tools: ev.tools ?? [], type: ev.type })
       } else {
@@ -202,6 +213,65 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     }
   }
 
+  async function dispatchCall(request: RunnerCallRequest): Promise<RunnerCallOutcome> {
+    const name = request?.name
+    const callId = request?.callId
+
+    if (typeof name !== 'string' || !name || typeof callId !== 'string' || !callId) {
+      throw new Error('runner:dispatch-call requires a tool name and call_id')
+    }
+
+    const bridge = ensureRunnerBridge()
+    const requestId = `tool_${nextCallRequestId++}`
+    const args = request.args ?? {}
+
+    if (!isJsonValue(args)) {
+      return { status: 'failed', error: 'Runner arguments must contain JSON values' }
+    }
+
+    inflightCalls.set(callId, requestId)
+
+    try {
+      const dispatchOptions = { id: requestId, timeoutMs: TOOL_CALL_TIMEOUT_MS }
+
+      const result = await bridge.dispatch(
+        'tools.execute',
+        {
+          name,
+          args,
+          call_id: callId,
+          ...(request.skillScope ? { skill_scope: request.skillScope } : {})
+        },
+        dispatchOptions
+      )
+
+      return { result, status: 'completed' }
+    } catch (error: unknown) {
+      return runnerCallOutcomeFromError(error)
+    } finally {
+      if (inflightCalls.get(callId) === requestId) {
+        inflightCalls.delete(callId)
+      }
+    }
+  }
+
+  async function cancelCall(callId: string): Promise<unknown> {
+    const requestId = typeof callId === 'string' ? inflightCalls.get(callId) : undefined
+    const bridge = runnerBridge
+
+    if (!requestId || !bridge) {
+      return { noop: true, ok: true }
+    }
+
+    const status = bridge.getStatus()
+
+    if (!status.wsServer?.connected) {
+      return { noop: true, ok: true }
+    }
+
+    return bridge.dispatch('calls.cancel', { req_id: requestId })
+  }
+
   function registerIpc(ipcMain: IpcMain): void {
     ipcMain.handle(IPC.invoke.runnerGetTools, async () => {
       const deadline = Date.now() + 6000
@@ -236,80 +306,39 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
     // 渲染层直调（窗口查询、点击预演、情境快照），不带 call_id，不记调用日志。
     ipcMain.handle(IPC.invoke.runnerInvoke, async (event, name: string, args?: Record<string, unknown>) => {
-      assertGatewayHost(event.sender, options.getMainWindow(), 'runner:invoke')
+      assertSpriteHost(event.sender, options.getMainWindow(), 'runner:invoke')
 
       if (typeof name !== 'string' || !name) {
         throw new Error('runner:invoke requires a non-empty tool name')
       }
 
-      return ensureRunnerBridge().dispatch('execute_tool', { args: args ?? {}, name })
-    })
+      const values = args ?? {}
 
-    // 模型派发的设备调用：call_id 透传给 Runner 调用日志（PROTOCOL「调用日志与未知结果」），失败按结局分类返回。
-    ipcMain.handle(
-      IPC.invoke.runnerDispatchCall,
-      async (event, request: RunnerCallRequest): Promise<RunnerCallOutcome> => {
-        assertGatewayHost(event.sender, options.getMainWindow(), 'runner:dispatch-call')
-
-        const name = request?.name
-        const callId = request?.callId
-
-        if (typeof name !== 'string' || !name || typeof callId !== 'string' || !callId) {
-          throw new Error('runner:dispatch-call requires a tool name and call_id')
-        }
-
-        const bridge = ensureRunnerBridge()
-        const requestId = `tool_${nextCallRequestId++}`
-        const params: Record<string, unknown> = { args: request.args ?? {}, call_id: callId, name }
-        inflightCalls.set(callId, requestId)
-
-        try {
-          const dispatchOptions = { id: requestId, timeoutMs: TOOL_CALL_TIMEOUT_MS }
-
-          const result = request.skillScope
-            ? await bridge.dispatch(
-                'execute_scoped_tool',
-                { ...params, skill_scope: request.skillScope },
-                dispatchOptions
-              )
-            : await bridge.dispatch('execute_tool', params, dispatchOptions)
-
-          return { result, status: 'completed' }
-        } catch (error: unknown) {
-          return runnerCallOutcomeFromError(error)
-        } finally {
-          if (inflightCalls.get(callId) === requestId) {
-            inflightCalls.delete(callId)
-          }
-        }
+      if (!isJsonValue(values)) {
+        throw new Error('Runner arguments must contain JSON values')
       }
-    )
+
+      return ensureRunnerBridge().dispatch('tools.execute', { args: values, name })
+    })
 
     ipcMain.handle(
       IPC.invoke.runnerGetState,
       async (): Promise<DesktopRunnerState> => ({ phase: runnerBridge?.getStatus().phase ?? 'idle' })
     )
-
-    // 只取消指定调用：后端中断回合时逐个下发 tool.cancel，其他会话与定时任务的在途调用不受影响。
-    ipcMain.handle(IPC.invoke.runnerCancel, async (event, callId: string) => {
-      assertGatewayHost(event.sender, options.getMainWindow(), 'runner:cancel')
-
-      const requestId = typeof callId === 'string' ? inflightCalls.get(callId) : undefined
-      const bridge = runnerBridge
-
-      if (!requestId || !bridge) {
-        return { noop: true, ok: true }
-      }
-
-      const status = bridge.getStatus()
-
-      if (!status.wsServer?.connected) {
-        return { noop: true, ok: true }
-      }
-
-      return bridge.dispatch('spiritagent.cancel', { req_id: requestId })
-    })
   }
 
-  return { autoStart, autoStop, getBridge: () => runnerBridge, registerIpc, restartForCurrentSession }
+  return {
+    autoStart,
+    autoStop,
+    getBridge: () => runnerBridge,
+    registerIpc,
+    restartForCurrentSession,
+    dispatchCall,
+    cancelCall,
+    onStatus: handler => {
+      statusHandlers.add(handler)
+
+      return () => statusHandlers.delete(handler)
+    }
+  }
 }

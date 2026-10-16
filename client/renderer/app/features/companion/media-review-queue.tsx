@@ -1,21 +1,17 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
-import { $videoPacks, type SystemActionKey, systemActionNames } from '@/modules/character'
+import { $videoPacks, systemActionNames } from '@/modules/character'
 import { ChatMediaCard } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
+import { requestResource } from '@/shared/lib/resource-request'
 import { BTN_SUBTLE, SECTION_TITLE, WizardModal } from '@/shared/panel'
-import { backendApi } from '@/shared/platform/desktop'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 
-interface PendingMediaReview {
-  id: number
-  media_type: 'image' | 'video'
-  media_url: string
-  system_slot: '' | SystemActionKey
-  title: string
-}
+import type { ApiSchemas } from '../../../../../shared/api.generated'
+
+type PendingMediaReview = ApiSchemas['MediaReviewResponse']
 
 const EMPTY_REVIEWS: PendingMediaReview[] = []
 
@@ -28,12 +24,7 @@ export function MediaReviewQueue(): React.JSX.Element {
   const trigger = useRef<HTMLButtonElement>(null)
   const modal = useRef<HTMLDivElement>(null)
 
-  const { data, error, reload, setData } = useAsyncLoader(() =>
-    backendApi().api<PendingMediaReview[]>({
-      path: '/api/companion/media-reviews',
-      method: 'GET'
-    })
-  )
+  const { data, error, reload, setData } = useAsyncLoader(() => requestResource('GET /api/companion/media-reviews'))
 
   const rows = data ?? EMPTY_REVIEWS
   const failed = error !== null
@@ -126,7 +117,7 @@ export function MediaReviewQueue(): React.JSX.Element {
               )}
               {!failed && rows.length === 0 && <p className="text-xs text-faint">{t.mediaReviewEmpty}</p>}
               {rows.map(row => {
-                const title = row.system_slot ? slotNames[row.system_slot] : row.title
+                const title = Object.entries(slotNames).find(([slot]) => slot === row.system_slot)?.[1] ?? row.title
 
                 return (
                   <div className="space-y-1" key={row.id}>

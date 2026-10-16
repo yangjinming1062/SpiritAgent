@@ -42,6 +42,10 @@ class AccountChatRuntime:
 _ACCOUNTS: dict[int, AccountChatRuntime] = {}
 
 
+def get_account_runtime(user_id: int) -> AccountChatRuntime | None:
+    return _ACCOUNTS.get(user_id)
+
+
 def acquire_account_runtime(user_id: int, connection_id: str) -> AccountChatRuntime:
     account = _ACCOUNTS.setdefault(user_id, AccountChatRuntime(user_id))
     account.connection_leases.add(connection_id)

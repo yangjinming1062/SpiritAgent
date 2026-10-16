@@ -8,14 +8,16 @@ import {
   saveCreationDraftImage,
   subscribeCreationDraftImage
 } from '@/shared/lib/creation-draft-image'
-import { backendDetailMessage, ipcErrorStatus, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
-import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
+import { errorMessage } from '@runtime'
 
+import type { ApiSchemas } from '../../../../../shared/api.generated'
 import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
 
 import { hydrateWardrobe } from './wardrobe-store'
@@ -197,7 +199,7 @@ export function useOutfitDesignSession(
             return
           }
 
-          const rawError = unwrapIpcErrorMessage(err)
+          const rawError = errorMessage(err)
 
           const timedOut =
             (err instanceof Error && err.name === 'TimeoutError') ||
@@ -267,9 +269,8 @@ export function useOutfitDesignSession(
 
     try {
       // 确认转正参考图，并由服务端安排基础动作；就绪后由用户选择穿上。
-      await backendApi().api({
-        path: `/api/companion/outfits/${draft.id}/confirm`,
-        method: 'POST',
+      await requestResource('POST /api/companion/outfits/{outfit_id}/confirm', {
+        path: { outfit_id: draft.id },
         body: {}
       })
 
@@ -363,14 +364,10 @@ export function useOutfitDesignSession(
   }
 }
 
-async function runCreate(
-  description: string,
-  image: PickedImage | null
-): Promise<{ id?: number; fullbody_url?: string }> {
-  return backendApi().api<{ id?: number; fullbody_url?: string }>({
-    path: '/api/companion/outfits',
-    method: 'POST',
+async function runCreate(description: string, image: PickedImage | null): Promise<ApiSchemas['OutfitResponse']> {
+  return requestResource('POST /api/companion/outfits', {
     body: {
+      source: 'generate',
       description: description || undefined,
       image: image?.base64,
       content_type: image?.contentType
@@ -382,10 +379,9 @@ async function runRegenerate(
   id: number,
   feedback: string,
   mode: ImageReviseMode
-): Promise<{ id?: number; fullbody_url?: string }> {
-  return backendApi().api<{ id?: number; fullbody_url?: string }>({
-    path: `/api/companion/outfits/${id}/regenerate`,
-    method: 'POST',
-    body: { feedback: feedback || undefined, mode }
+): Promise<ApiSchemas['OutfitResponse']> {
+  return requestResource('POST /api/companion/outfits/{outfit_id}/image', {
+    path: { outfit_id: id },
+    body: { source: 'generate', feedback: feedback || undefined, mode }
   })
 }

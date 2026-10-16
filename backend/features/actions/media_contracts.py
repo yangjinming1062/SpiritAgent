@@ -80,6 +80,7 @@ class VideoPackCreateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    source: Literal["import"]
     outfit_id: int
     clips: list[ActionMediaUpload] = Field(min_length=1, max_length=12)
     canvas_width: int = Field(default=512, gt=0, le=1024)
@@ -92,6 +93,7 @@ class VideoPackGenerateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    source: Literal["generate"]
     outfit_id: int | None = None
     force: bool = False
     source_pack_id: int | None = None
@@ -105,6 +107,22 @@ class VideoPackEnsureSystemActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["peek_left", "peek_right"]
+
+
+class VideoPackRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: Literal["retry"]
+
+
+class VideoPackEnsureRequest(VideoPackEnsureSystemActionRequest):
+    command: Literal["ensure"]
+
+
+class VideoPackSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pack_id: int = Field(gt=0)
 
 
 class PendingActionReview(BaseModel):
