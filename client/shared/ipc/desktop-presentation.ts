@@ -165,7 +165,7 @@ export const APP_PAGES = ['chat', 'companion', 'posts', 'settings'] as const
 export type AppPage = (typeof APP_PAGES)[number]
 export const SETTINGS_SECTIONS = ['companionship', 'voice', 'display', 'devices', 'application', 'advanced'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
-export const COMPANION_SECTIONS = ['home', 'profile', 'voice', 'appearance', 'scene', 'desktop-life', 'memory'] as const
+export const COMPANION_SECTIONS = ['profile', 'voice', 'appearance', 'scene', 'desktop-life', 'memory'] as const
 export type CompanionSection = (typeof COMPANION_SECTIONS)[number]
 export type PostsTab = 'posts' | 'diary'
 
@@ -191,7 +191,10 @@ export function normalizeAppNavigation(raw: unknown): AppNavigationTarget {
   const value = raw as Record<string, unknown>
   const page = APP_PAGES.find(item => item === value.page)
   const section = SETTINGS_SECTIONS.find(item => item === value.section)
-  const companionSection = COMPANION_SECTIONS.find(item => item === value.companionSection)
+
+  const companionSection =
+    value.companionSection === 'home' ? 'profile' : COMPANION_SECTIONS.find(item => item === value.companionSection)
+
   const postsTab = value.postsTab === 'posts' || value.postsTab === 'diary' ? value.postsTab : undefined
   const settingsTab = value.settingsTab === 'skills' || value.settingsTab === 'toolsets' ? value.settingsTab : undefined
 

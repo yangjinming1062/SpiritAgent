@@ -26,7 +26,13 @@ export function VoicePage({
   return (
     <div className="space-y-4">
       <p className={HINT_TEXT}>{t.onboardingHint}</p>
-      <VoiceManager disabled={confirming} name={name} onVoiceSelected={onVoiceSelected} preference={preference} />
+      <VoiceManager
+        compact
+        disabled={confirming}
+        name={name}
+        onVoiceSelected={onVoiceSelected}
+        preference={preference}
+      />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button className={BTN_SUBTLE} disabled={confirming} onClick={onDescribe} type="button">
           {t.describePreference}

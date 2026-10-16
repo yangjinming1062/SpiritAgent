@@ -64,6 +64,131 @@ export interface SystemPresetListResponse {
   presets: SystemPresetSummary[]
 }
 
+export type PersonaEditableField = 'name' | 'personality' | 'relationship' | 'speaking_style'
+
+export interface PersonaResponse {
+  definition_json: string
+  is_complete: boolean
+  personality_tags: string[]
+  current_mood: string | null
+}
+
+export interface PersonaUpdateRequest {
+  definition_json: string
+  /** 编辑开始时的字段值；缺失字段使用 null，服务端在锁内校验后合并可编辑字段。 */
+  expected_fields?: Partial<Record<PersonaEditableField, string | null>>
+}
+
+export type CharacterFeatureKey =
+  | 'head_shape'
+  | 'facial_features'
+  | 'facial_surface'
+  | 'head_identifiers'
+  | 'body_shape'
+  | 'proportions'
+  | 'limbs_and_appendages'
+  | 'body_surface'
+export type CharacterFeatures = Record<CharacterFeatureKey, string>
+export type CharacterOverrides = Partial<Record<CharacterFeatureKey, string | null>>
+export type ExtractionStatus = 'pending' | 'running' | 'ready' | 'failed'
+
+export interface CharacterCard {
+  avatar_id: number
+  revision: number
+  features: CharacterFeatures
+  automatic: CharacterFeatures
+  overrides: CharacterOverrides
+  status: ExtractionStatus
+  portrait_status: ExtractionStatus
+  body_status: ExtractionStatus
+  error: string | null
+}
+
+export interface CharacterCardExtractRequest {
+  expected_avatar_id: number
+  expected_revision: number
+}
+
+export interface CharacterCardUpdateRequest extends CharacterCardExtractRequest {
+  changes: CharacterOverrides
+}
+
+export interface MemoryEvidence {
+  fingerprint: string
+  message_id?: number
+  session_id?: number
+  quote?: string
+  stance?: 'supports' | 'opposes'
+  created_at?: string
+  source_unavailable?: boolean
+}
+
+export interface MemoryItem {
+  id: number
+  system_preset_id: string
+  content_version: number
+  content: string
+  context: string | null
+  tags: string | null
+  basis: 'explicit' | 'inferred' | 'observed' | 'system'
+  status: 'active' | 'candidate' | 'invalidated' | 'forgotten'
+  usage: 'contextual' | 'background'
+  reason: string
+  source_kind: string
+  evidence: MemoryEvidence[]
+  importance: number
+  created_at: string
+  updated_at: string
+  expires_at: string | null
+  reviewed_at: string | null
+}
+
+export interface MemoryCounts {
+  active: number
+  candidate: number
+  invalidated: number
+  expired: number
+  user_profile: number
+}
+
+export interface MemoryListRequest {
+  system_preset_id?: string
+  session_id?: string
+  kind?: 'user_profile' | 'recall' | 'diary' | 'reflection' | 'interaction_stats'
+  status?: 'active' | 'candidate' | 'invalidated' | 'expired'
+  tag?: string
+  q?: string
+  offset?: number
+  limit?: number
+}
+
+export interface MemoryListResponse {
+  memories: MemoryItem[]
+  counts: MemoryCounts
+  total: number
+  system_preset_id: string
+  session_id?: string | null
+}
+
+export type UserProfileField = 'user_call_name' | 'user_gender' | 'user_birthday' | 'user_hobbies' | 'user_freeform'
+
+export interface MemoryProfileChange {
+  field: UserProfileField
+  value: string | null
+  /** 0 表示编辑开始时没有有效资料槽位。 */
+  expected_version: number
+}
+
+export interface MemoryProfileUpdateRequest {
+  system_preset_id: 'companion'
+  changes: MemoryProfileChange[]
+}
+
+export interface MemoryProfileUpdateResponse {
+  memories: MemoryItem[]
+  system_preset_id: 'companion'
+}
+
 /** 助手消息附带的生成媒体；与正文正交，仅渲染端消费。 */
 export interface ChatMediaItem {
   type: 'image' | 'video' | 'audio'

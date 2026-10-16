@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { $outfits, hydrateWardrobe } from '@/modules/character'
 import {
@@ -56,7 +56,7 @@ import { useImageActions } from '@/shared/hooks/use-image-actions'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import { ArrowLeft } from '@/shared/lib/icons'
 import { backendDetailMessage, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
-import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, WizardModal } from '@/shared/panel'
+import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, PanelSelect, Toggle, WizardModal } from '@/shared/panel'
 import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
@@ -568,6 +568,17 @@ export function DesktopLifePage({
   const ui = useStore($desktopLifeUi)
   const { selectedSetId, selectedActionId, create, feedback, design, addActionOpen } = ui
   const createOpen = ui.creating
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const libraryScrollTop = useRef(ui.libraryScrollTop ?? 0)
+  libraryScrollTop.current = ui.libraryScrollTop ?? 0
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current
+
+    if (element) {
+      element.scrollTop = selectedSetId === null && !createOpen ? libraryScrollTop.current : 0
+    }
+  }, [selectedSetId, selectedActionId, createOpen])
 
   const setCreate = (next: React.SetStateAction<typeof create>): void => {
     updateDesktopLifeUi({ create: typeof next === 'function' ? next($desktopLifeUi.get().create) : next })
@@ -586,6 +597,7 @@ export function DesktopLifePage({
 
   const setCreateOpen = (creating: boolean): void => updateDesktopLifeUi({ creating })
   const [busy, setBusy] = useState(false)
+  const [preferencesSaving, setPreferencesSaving] = useState(false)
   const [aspectChoice, setAspectChoice] = useState<DesktopVideoAspectMismatch | null>(null)
   const resolveAspectChoice = useRef<((policy: DesktopVideoAspectPolicy | null) => void) | null>(null)
   const aspectGeneration = useRef(0)
@@ -694,6 +706,7 @@ export function DesktopLifePage({
     setDiscardAction(null)
     setRefinement(null)
     setBusy(false)
+    setPreferencesSaving(false)
     setRename('')
     setDesignMessage(null)
   }, [authSessionId])
@@ -793,6 +806,23 @@ export function DesktopLifePage({
     } finally {
       if (isLive()) {
         setBusy(false)
+      }
+    }
+  }
+
+  const savePreferences = async (change: Parameters<typeof setDesktopVideoPreferences>[0]): Promise<void> => {
+    if (busy || preferencesSaving) {
+      return
+    }
+
+    const isLive = beginAsync()
+    setPreferencesSaving(true)
+
+    try {
+      await run(() => setDesktopVideoPreferences(change))
+    } finally {
+      if (isLive()) {
+        setPreferencesSaving(false)
       }
     }
   }
@@ -1147,13 +1177,13 @@ export function DesktopLifePage({
     }
   }
 
-  const activate = async (): Promise<void> => {
-    if (!selected) {
+  const activate = async (target: DesktopVideoSet | undefined = selected): Promise<void> => {
+    if (!target) {
       return
     }
 
     const scope = captureAuthScope()
-    const activated = await activateDesktopVideoSet(selected)
+    const activated = await activateDesktopVideoSet(target)
 
     if (activated && scope?.() && $presentation.get().effectiveMode !== 'desktop') {
       await shellApi().presentation.setMode('desktop')
@@ -1657,38 +1687,16 @@ export function DesktopLifePage({
     []
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6"
+      onScroll={event => {
+        if (selectedSetId === null && !createOpen) {
+          updateDesktopLifeUi({ libraryScrollTop: event.currentTarget.scrollTop })
+        }
+      }}
+      ref={scrollRef}
+    >
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-        <header className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-strong">
-              {createOpen ? t.createSet : selected?.title || t.title}
-            </h2>
-            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
-              {createOpen ? t.createHint : !selected ? t.hint : t.savedCurrent}
-            </p>
-          </div>
-          {!selected && !createOpen && (
-            <button className={BTN_PRIMARY} disabled={busy} onClick={openCreate} type="button">
-              {t.createSet}
-            </button>
-          )}
-        </header>
-        {!createOpen && (
-          <p className="text-sm text-muted">
-            {recommendationResolution && recommendationDisplay
-              ? `${t.recommendationDisplay}: ${recommendationDisplay.label} · ${resolutionLabel(recommendationResolution.width, recommendationResolution.height)}`
-              : t.recommendationUnavailable}
-          </p>
-        )}
-        {selected && !createOpen && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-muted">
-              {t.targetResolution}: {resolutionLabel(selected.target_width, selected.target_height)}
-            </span>
-            <DesktopLifeRecommendation display={recommendationDisplay} set={selected} />
-          </div>
-        )}
         {(selected || createOpen) && (
           <button
             className={`${BTN_GHOST} self-start`}
@@ -1706,6 +1714,74 @@ export function DesktopLifePage({
             <ArrowLeft size={15} />
             {selectedActionId !== null && !createOpen ? t.returnToScene : t.back}
           </button>
+        )}
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-strong">
+              {createOpen ? t.createSet : selected?.title || t.title}
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
+              {createOpen ? t.createHint : !selected ? t.hint : t.savedCurrent}
+            </p>
+          </div>
+          {!selected && !createOpen && (
+            <button className={BTN_PRIMARY} disabled={busy} onClick={openCreate} type="button">
+              {t.createSet}
+            </button>
+          )}
+        </header>
+        {!createOpen && state && (
+          <section aria-label={t.preferences} className="space-y-4 rounded-xl border border-line-hairline p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-strong">{t.autonomy}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted">{t.autonomyHint}</p>
+              </div>
+              <Toggle
+                ariaLabel={t.autonomy}
+                checked={state.autonomous_enabled}
+                disabled={busy}
+                onChange={() => void savePreferences({ autonomous_enabled: !state.autonomous_enabled })}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-strong">{t.pin}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted">{t.pinHint}</p>
+              </div>
+              <Toggle
+                ariaLabel={t.pin}
+                checked={state.pinned}
+                disabled={busy}
+                onChange={() => void savePreferences({ pinned: !state.pinned })}
+              />
+            </div>
+            {state.pinned && (
+              <p className="text-xs text-muted" role="status">
+                {t.pinnedHint}
+              </p>
+            )}
+            {preferencesSaving && (
+              <p aria-live="polite" className="text-xs text-muted">
+                {t.preferencesSaving}
+              </p>
+            )}
+          </section>
+        )}
+        {!createOpen && (
+          <p className="text-sm text-muted">
+            {recommendationResolution && recommendationDisplay
+              ? `${t.recommendationDisplay}: ${recommendationDisplay.label} · ${resolutionLabel(recommendationResolution.width, recommendationResolution.height)}`
+              : t.recommendationUnavailable}
+          </p>
+        )}
+        {selected && !createOpen && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted">
+              {t.targetResolution}: {resolutionLabel(selected.target_width, selected.target_height)}
+            </span>
+            <DesktopLifeRecommendation display={recommendationDisplay} set={selected} />
+          </div>
         )}
         {(error || state?.preparation_error) && (
           <div className="rounded-xl bg-warning/10 p-4 text-sm text-body" role="status">
@@ -2128,77 +2204,72 @@ export function DesktopLifePage({
                 )
 
                 return (
-                  <button
-                    className="flex flex-col gap-3 rounded-2xl border border-line-hairline p-4 text-left hover:bg-black/5"
+                  <article
+                    className="flex min-w-0 flex-col gap-3 rounded-2xl border border-line-hairline p-4"
                     key={item.id}
-                    onClick={() => setSelectedSetId(item.id)}
-                    type="button"
                   >
-                    <DesktopLifeCover
-                      target={item}
-                      url={
-                        idle?.current?.poster_url ||
-                        idle?.draft?.candidate_poster_url ||
-                        idle?.draft?.image_url ||
-                        item.base_image_url
-                      }
-                    />
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <strong className="text-base text-strong">{item.title}</strong>
-                      {item.is_current && (
-                        <span className="rounded-full bg-accent/10 px-2 py-1 text-xs text-accent">{t.current}</span>
-                      )}
-                    </div>
-                    <span className="text-sm text-muted">
-                      {unfinished ? t.continue : idle?.playable ? t.ready : t.notCreated}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-muted">
-                        {resolutionLabel(item.target_width, item.target_height)}
+                    <button
+                      className="flex w-full min-w-0 flex-col gap-3 text-left"
+                      onClick={() => setSelectedSetId(item.id)}
+                      type="button"
+                    >
+                      <DesktopLifeCover
+                        target={item}
+                        url={
+                          idle?.current?.poster_url ||
+                          idle?.draft?.candidate_poster_url ||
+                          idle?.draft?.image_url ||
+                          item.base_image_url
+                        }
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <strong className="text-base text-strong">{item.title}</strong>
+                        {item.is_current && (
+                          <span className="rounded-full bg-accent/10 px-2 py-1 text-xs text-accent">{t.current}</span>
+                        )}
+                      </div>
+                      <span className="text-sm text-muted">
+                        {unfinished ? t.continue : idle?.playable ? t.ready : t.notCreated}
                       </span>
-                      <DesktopLifeRecommendation display={recommendationDisplay} set={item} />
-                    </div>
-                  </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted">
+                          {resolutionLabel(item.target_width, item.target_height)}
+                        </span>
+                        <DesktopLifeRecommendation display={recommendationDisplay} set={item} />
+                      </div>
+                    </button>
+                    <button
+                      className={`${BTN_SUBTLE} self-start`}
+                      disabled={busy || (item.is_current && !unfinished)}
+                      onClick={() => {
+                        if (idle?.playable && !item.is_current) {
+                          void run(() => activate(item))
+                        } else {
+                          setSelectedSetId(item.id)
+                        }
+                      }}
+                      type="button"
+                    >
+                      {idle?.playable && !item.is_current
+                        ? t.play
+                        : item.is_current && !unfinished
+                          ? t.current
+                          : t.continue}
+                    </button>
+                  </article>
                 )
               })}
             </div>
-            <details className="border-t border-line-hairline pt-4">
-              <summary className="cursor-pointer text-sm text-muted">{t.preferences}</summary>
-              <div className="mt-4 flex flex-col gap-4 text-sm text-body">
-                {state && (
-                  <>
-                    <label className="flex items-center gap-3">
-                      <input
-                        checked={state.pinned}
-                        disabled={busy}
-                        onChange={event => void run(() => setDesktopVideoPreferences({ pinned: event.target.checked }))}
-                        type="checkbox"
-                      />
-                      {t.pin}
-                    </label>
-                    <label className="flex items-center gap-3">
-                      <input
-                        checked={state.autonomous_enabled}
-                        disabled={busy}
-                        onChange={event =>
-                          void run(() => setDesktopVideoPreferences({ autonomous_enabled: event.target.checked }))
-                        }
-                        type="checkbox"
-                      />
-                      {t.autonomy}
-                    </label>
-                  </>
-                )}
-                <button
-                  className={`${BTN_GHOST} self-start`}
-                  disabled={loading || busy}
-                  onClick={() => void refreshDesktopVideos()}
-                  type="button"
-                >
-                  {t.refresh}
-                </button>
-              </div>
-            </details>
+            <div className="flex flex-col gap-4 text-sm text-body">
+              <button
+                className={`${BTN_GHOST} self-start`}
+                disabled={loading || busy}
+                onClick={() => void refreshDesktopVideos()}
+                type="button"
+              >
+                {t.refresh}
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -2225,8 +2296,8 @@ export function DesktopLifePage({
                 </button>
               ))}
           </div>
-          <details className="mt-5 border-t border-line-hairline pt-4">
-            <summary className="cursor-pointer text-sm font-medium text-strong">{t.addCustom}</summary>
+          <section className="mt-5 border-t border-line-hairline pt-4">
+            <h3 className="text-sm font-medium text-strong">{t.addCustom}</h3>
             <form
               className="mt-4 flex flex-col gap-3"
               onSubmit={event => {
@@ -2322,7 +2393,7 @@ export function DesktopLifePage({
                 {t.startAction}
               </button>
             </form>
-          </details>
+          </section>
         </WizardModal>
       )}
       {discardAction && (

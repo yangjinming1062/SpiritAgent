@@ -63,9 +63,7 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
         if value is not None and not isinstance(value, str):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "value must be a string or null")
         try:
-            return (
-                await submit_onboarding(user_id, field, value, expected_version=params.get("expected_version"))
-            ).model_dump()
+            return (await submit_onboarding(user_id, field, value)).model_dump()
         except PersonaValidationError as exc:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
 

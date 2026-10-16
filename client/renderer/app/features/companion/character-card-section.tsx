@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import {
   $avatarSeeds,
@@ -14,19 +14,16 @@ import {
 } from '@/modules/character'
 import { PortraitLightbox } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useAutoSave } from '@/shared/hooks/use-auto-save'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
+import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 
-function sameChanges(left: CharacterOverrides, right: CharacterOverrides): boolean {
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)])
-
-  return [...keys].every(key => left[key as keyof CharacterOverrides] === right[key as keyof CharacterOverrides])
-}
+import { $companionEditors, updateCompanionEditors } from './companion-editor-state'
 
 export function CharacterCardSection({ avatarId }: { avatarId: number }): React.JSX.Element {
   const strings = useStrings()
@@ -35,27 +32,35 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
   const authKind = useStore($auth).kind
   const card = useStore($characterCard)
   const images = useStore($avatarSeeds)
-  const [editing, setEditing] = useState(false)
-  const [changes, setChanges] = useState<CharacterOverrides>({})
-  const [revision, setRevision] = useState(0)
+  const english = useStore($locale) === 'en'
+  const draft = useStore($companionEditors).characterCards[String(avatarId)]
+  const editing = !!draft
+  const changes = draft?.changes ?? {}
+  const revision = draft?.revision ?? 0
   const [hint, setHint] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
   const [zoom, setZoom] = useState<string | null>(null)
-  const mountedRef = useRef(true)
-  const latestChangesRef = useRef(changes)
-  const revisionRef = useRef(revision)
-  latestChangesRef.current = changes
-  revisionRef.current = revision
   const begin = useAsyncGuard()
   const current = card?.avatar_id === avatarId ? card : null
   const analyzing = current?.status === 'pending' || current?.status === 'running'
 
-  useEffect(
-    () => () => {
-      mountedRef.current = false
-    },
-    []
-  )
+  const setChanges = (next: CharacterOverrides): void => {
+    setSaved(false)
+
+    if (draft) {
+      updateCompanionEditors({
+        characterCards: { ...$companionEditors.get().characterCards, [String(avatarId)]: { ...draft, changes: next } }
+      })
+    }
+  }
+
+  const closeEditor = (): void => {
+    const cards = { ...$companionEditors.get().characterCards }
+    delete cards[String(avatarId)]
+    updateCompanionEditors({ characterCards: cards })
+    setHint(null)
+  }
 
   const refresh = useCallback((): void => {
     const isLive = begin()
@@ -91,6 +96,7 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
     const isLive = begin()
     setBusy(true)
     setHint(null)
+    setSaved(false)
 
     try {
       await operation(isLive)
@@ -109,38 +115,6 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
     }
   }
 
-  const persist = async (nextChanges: CharacterOverrides): Promise<void> => {
-    if (!(await saveCharacterCard(avatarId, revisionRef.current, nextChanges))) {
-      throw new Error(t.operationFailed)
-    }
-
-    const savedCard = $characterCard.get()
-
-    if (mountedRef.current && savedCard?.avatar_id === avatarId) {
-      revisionRef.current = savedCard.revision
-      setRevision(savedCard.revision)
-
-      if (sameChanges(latestChangesRef.current, nextChanges)) {
-        setChanges({})
-      }
-    }
-  }
-
-  const { status: saveStatus } = useAutoSave({
-    dirty: editing && Object.keys(changes).length > 0,
-    onError: error => {
-      if (mountedRef.current) {
-        setHint(backendDetailMessage(error, t.operationFailed))
-
-        if (ipcErrorStatus(error) === 409) {
-          void hydrateCharacterCard().catch(refreshError => log.warn('character-card', 'Refresh failed', refreshError))
-        }
-      }
-    },
-    onSave: persist,
-    value: changes
-  })
-
   return (
     <section className="space-y-3">
       <p className={SECTION_TITLE}>{t.title}</p>
@@ -151,10 +125,20 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
             <button
               className={cn(BTN_GHOST, 'shrink-0 whitespace-nowrap')}
               onClick={() => {
-                setRevision(current.revision)
-                setChanges({})
-                setEditing(true)
+                updateCompanionEditors({
+                  characterCards: {
+                    ...$companionEditors.get().characterCards,
+                    [String(avatarId)]: {
+                      revision: current.revision,
+                      features: current.features,
+                      automatic: current.automatic,
+                      overrides: current.overrides,
+                      changes: {}
+                    }
+                  }
+                })
                 setHint(null)
+                setSaved(false)
               }}
               type="button"
             >
@@ -162,6 +146,9 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
             </button>
           )}
         </div>
+        {editing && Object.keys(changes).length > 0 && (
+          <p className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</p>
+        )}
         {images.avatarId === avatarId && (
           <div className="flex gap-3">
             {[
@@ -202,11 +189,11 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
                           <label className={FIELD_LABEL} htmlFor={`character-${key}`}>
                             {t.fields[key]}
                           </label>
-                          {(Object.hasOwn(changes, key) ? changes[key] != null : current.overrides[key] != null) && (
+                          {(Object.hasOwn(changes, key) ? changes[key] != null : draft?.overrides[key] != null) && (
                             <button
                               className={BTN_GHOST}
                               disabled={busy}
-                              onClick={() => setChanges(previous => ({ ...previous, [key]: null }))}
+                              onClick={() => setChanges({ ...changes, [key]: null })}
                               type="button"
                             >
                               {t.restore}
@@ -218,12 +205,12 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
                           disabled={busy}
                           id={`character-${key}`}
                           maxLength={1000}
-                          onChange={event => setChanges(previous => ({ ...previous, [key]: event.target.value }))}
+                          onChange={event => setChanges({ ...changes, [key]: event.target.value })}
                           rows={3}
                           value={
                             Object.hasOwn(changes, key)
-                              ? (changes[key] ?? current.automatic[key])
-                              : current.features[key]
+                              ? (changes[key] ?? draft?.automatic[key] ?? '')
+                              : (draft?.features[key] ?? '')
                           }
                         />
                       </div>
@@ -236,12 +223,12 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
 
                       return (
                         <div className="flex min-w-0 items-baseline gap-2" key={key}>
-                          <dt className="w-36 shrink-0 truncate text-[12px] text-muted" title={t.fields[key]}>
+                          <dt className="w-28 shrink-0 whitespace-normal text-[12px] text-muted">
                             {t.fields[key]}
                             {strings.settings.persona.detailSeparator}
                           </dt>
                           <dd className="flex min-w-0 flex-1 items-baseline gap-2">
-                            <span className="min-w-0 flex-1 truncate text-sm text-body" title={value}>
+                            <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-body">
                               {value}
                             </span>
                             {current.overrides[key] != null && (
@@ -258,7 +245,19 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
           </div>
         )}
         {editing && current && revision !== current.revision && (
-          <p className="text-xs text-amber-300/90">{t.conflict}</p>
+          <div className="space-y-2 rounded-xl border border-line-hairline p-3 text-xs text-amber-300/90">
+            <p>{t.conflict}</p>
+            <dl className="space-y-1">
+              {[...PORTRAIT_FEATURE_KEYS, ...BODY_FEATURE_KEYS]
+                .filter(key => current.features[key] !== draft?.features[key])
+                .map(key => (
+                  <div key={key}>
+                    <dt>{t.fields[key]}</dt>
+                    <dd className="whitespace-pre-wrap break-words text-body">{current.features[key] || t.unknown}</dd>
+                  </div>
+                ))}
+            </dl>
+          </div>
         )}
         {analyzing && <p className={HINT_TEXT}>{t.analyzing}</p>}
         {current?.status === 'failed' && <p className="text-xs text-amber-300/90">{t.failed}</p>}
@@ -267,24 +266,101 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
             {hint}
           </p>
         )}
+        {saved && (
+          <p aria-live="polite" className={HINT_TEXT}>
+            {t.saved}
+          </p>
+        )}
         {editing ? (
           <div className="flex flex-wrap gap-2">
-            <button className={BTN_SUBTLE} disabled={busy} onClick={() => setEditing(false)} type="button">
+            <button
+              className={BTN_SUBTLE}
+              disabled={busy || !Object.keys(changes).length || revision !== current?.revision}
+              onClick={() =>
+                void run(async isLive => {
+                  const isCurrent = captureAuthScope()
+
+                  if (!isCurrent) {
+                    return
+                  }
+
+                  try {
+                    if (!(await saveCharacterCard(avatarId, revision, changes))) {
+                      throw new Error(t.operationFailed)
+                    }
+                  } catch (error) {
+                    await hydrateCharacterCard().catch(refreshError =>
+                      log.warn('character-card', 'Refresh failed', refreshError)
+                    )
+
+                    if (!isCurrent()) {
+                      return
+                    }
+
+                    const latest = $characterCard.get()
+
+                    const confirmed =
+                      latest?.avatar_id === avatarId &&
+                      [...PORTRAIT_FEATURE_KEYS, ...BODY_FEATURE_KEYS].every(
+                        key =>
+                          !Object.hasOwn(changes, key) || (latest.overrides[key] ?? null) === (changes[key] ?? null)
+                      )
+
+                    if (!confirmed) {
+                      throw error
+                    }
+                  }
+
+                  if (
+                    isCurrent() &&
+                    JSON.stringify($companionEditors.get().characterCards[String(avatarId)]) === JSON.stringify(draft)
+                  ) {
+                    const cards = { ...$companionEditors.get().characterCards }
+                    delete cards[String(avatarId)]
+                    updateCompanionEditors({ characterCards: cards })
+
+                    if (isLive()) {
+                      setHint(null)
+                    }
+                  }
+
+                  if (isLive()) {
+                    setSaved(true)
+                  }
+                })
+              }
+              type="button"
+            >
+              {busy ? common.saving : english ? 'Save changes' : '保存修改'}
+            </button>
+            <button className={BTN_GHOST} disabled={busy} onClick={closeEditor} type="button">
               {common.cancel}
             </button>
             {current && revision !== current.revision && (
               <button
                 className={BTN_SUBTLE}
                 disabled={busy}
-                onClick={() => setRevision(current.revision)}
+                onClick={() => {
+                  if (draft) {
+                    updateCompanionEditors({
+                      characterCards: {
+                        ...$companionEditors.get().characterCards,
+                        [String(avatarId)]: {
+                          ...draft,
+                          revision: current.revision,
+                          features: current.features,
+                          automatic: current.automatic,
+                          overrides: current.overrides
+                        }
+                      }
+                    })
+                  }
+                }}
                 type="button"
               >
-                {t.merge}
+                {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
               </button>
             )}
-            {saveStatus === 'saving' && <span className={HINT_TEXT}>{common.saving}</span>}
-            {saveStatus === 'saved' && <span className={HINT_TEXT}>{t.saved}</span>}
-            {saveStatus === 'error' && <span className="text-[10px] text-danger-fg">{t.operationFailed}</span>}
           </div>
         ) : (
           <div className="flex gap-2">

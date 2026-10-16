@@ -2,9 +2,10 @@ from infrastructure.config import SETTINGS
 from infrastructure.database import session_scope
 from infrastructure.text import utc_now
 from runtime.events.emit import emit_ws_event
-from runtime.memory_scope import EmbeddingItem, MemoryScope
-from sqlalchemy import func, or_, select
+from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
 
 from features.memory.memory_learning import MemoryRecord, memory_record
 from features.memory.memory_namespaces import KIND_TO_PREFIX, RECALL_TAGS, participates_in_recall
@@ -12,11 +13,15 @@ from features.memory.memory_store import (
     active_memory_filter,
     backfill_memory_embeddings,
     fingerprint_history,
+    forget_record,
     get_memory,
     memory_write_lock,
     scope_filter,
+    upsert_slotted_memory,
 )
 from features.memory.models import USER_PROFILE_MAX_CONTENT_CHARS, Memory
+from features.memory.profile_fields import MemoryProfileChange, validate_profile_value
+from features.memory.prompts import CONTEXT_LABELS
 
 _LIST_DEFAULT_LIMIT = 100
 _LIST_MAX_LIMIT = 500
@@ -37,24 +42,18 @@ def _list_item(row: Memory) -> MemoryListItem:
     )
 
 
-async def list_memories(
-    db: AsyncSession,
+def _memory_list_query(
     scope: MemoryScope,
     *,
     kind: str | None = None,
     status: str = "active",
     tag: str | None = None,
     q: str | None = None,
-    limit: int | None = _LIST_DEFAULT_LIMIT,
-) -> list[MemoryListItem]:
-    """列出用户记忆；内部批处理可用 limit=None 读取全部，分页调用仍限制条数。"""
+) -> Select[tuple[Memory]]:
     if kind is not None and kind not in KIND_TO_PREFIX:
         raise ValueError(f"kind must be one of {sorted(KIND_TO_PREFIX)}")
     if tag is not None and tag not in RECALL_TAGS:
         raise ValueError(f"tag must be in {sorted(RECALL_TAGS)}")
-    if limit is not None and (limit <= 0 or limit > _LIST_MAX_LIMIT):
-        limit = _LIST_DEFAULT_LIMIT
-
     if status not in {"active", "candidate", "invalidated", "expired"}:
         raise ValueError("Invalid memory status filter")
     stmt = select(Memory).where(scope_filter(scope))
@@ -67,7 +66,7 @@ async def list_memories(
         if status == "candidate":
             stmt = stmt.where(or_(Memory.expires_at.is_(None), Memory.expires_at > func.now()))
     if kind is not None:
-        stmt = stmt.where(Memory.context.like(KIND_TO_PREFIX[kind] + "%"))
+        stmt = stmt.where(Memory.context.startswith(KIND_TO_PREFIX[kind], autoescape=True))
     if tag:
         # tags 是 JSON 字符串；每行只有寥寥数个短 token，子串匹配足够 UI 使用
         stmt = stmt.where(Memory.tags.ilike(f'%"{tag}"%'))
@@ -76,8 +75,103 @@ async def list_memories(
             or_(Memory.content.icontains(q, autoescape=True), Memory.context.icontains(q, autoescape=True)),
         )
 
-    rows = (await db.execute(stmt.order_by(Memory.updated_at.desc(), Memory.id.desc()).limit(limit))).scalars().all()
+    return stmt
+
+
+async def list_memories(
+    db: AsyncSession,
+    scope: MemoryScope,
+    *,
+    kind: str | None = None,
+    status: str = "active",
+    tag: str | None = None,
+    q: str | None = None,
+    limit: int | None = _LIST_DEFAULT_LIMIT,
+    offset: int = 0,
+) -> list[MemoryListItem]:
+    """列出用户记忆；内部批处理可用 limit=None 读取全部，分页调用仍限制条数。"""
+    if limit is not None and (limit <= 0 or limit > _LIST_MAX_LIMIT):
+        limit = _LIST_DEFAULT_LIMIT
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    stmt = _memory_list_query(scope, kind=kind, status=status, tag=tag, q=q)
+    rows = (
+        (await db.execute(stmt.order_by(Memory.updated_at.desc(), Memory.id.desc()).limit(limit).offset(offset)))
+        .scalars()
+        .all()
+    )
     return [_list_item(row) for row in rows]
+
+
+async def memory_list_total(
+    db: AsyncSession,
+    scope: MemoryScope,
+    *,
+    kind: str | None,
+    status: str,
+    tag: str | None,
+    q: str | None,
+) -> int:
+    stmt = _memory_list_query(scope, kind=kind, status=status, tag=tag, q=q)
+    return await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+
+
+async def update_user_profile(scope: MemoryScope, changes: list[MemoryProfileChange]) -> list[MemoryListItem]:
+    if scope.system_preset_id != "companion":
+        raise ValueError("User profile is only available for the companion preset")
+    if len({change.field for change in changes}) != len(changes):
+        raise ValueError("Each profile field may only be changed once")
+    values = {change.field: validate_profile_value(change.field, change.value) for change in changes}
+    async with session_scope() as db:
+        await memory_write_lock(db, scope)
+        rows = list(
+            (
+                await db.scalars(
+                    select(Memory).where(
+                        scope_filter(scope),
+                        Memory.context.in_(CONTEXT_LABELS.values()),
+                    ),
+                )
+            ).all(),
+        )
+        slots = {row.context: row for row in rows}
+        now = utc_now()
+        current = {
+            row.context: row
+            for row in rows
+            if row.status == "active" and (row.expires_at is None or row.expires_at > now)
+        }
+        for change in changes:
+            row = current.get(CONTEXT_LABELS[change.field])
+            if (row.content_version if row is not None else 0) != change.expected_version:
+                raise ValueError("这条资料已在其他设备更新，请刷新后核对再保存。")
+        for change in changes:
+            context = CONTEXT_LABELS[change.field]
+            value = values[change.field]
+            if not value:
+                row = slots.get(context)
+                if row is not None:
+                    forget_record(row)
+            else:
+                await upsert_slotted_memory(
+                    db,
+                    scope,
+                    context,
+                    value,
+                    '["user_profile"]',
+                    source=MemorySource("manual"),
+                )
+        if changes:
+            emit_ws_event(
+                db,
+                user_id=scope.user_id,
+                event_type="memory.changed",
+                payload={"system_preset_id": scope.system_preset_id},
+            )
+        await db.flush()
+        result = await list_memories(db, scope, kind="user_profile", limit=None)
+        await db.commit()
+        return result
 
 
 async def update_memory(
@@ -142,23 +236,20 @@ async def update_memory(
 
 
 async def memory_counts(db: AsyncSession, scope: MemoryScope) -> dict[str, int]:
-    rows = (
+    recall = Memory.context.like("recall:%")
+    unexpired = or_(Memory.expires_at.is_(None), Memory.expires_at > func.now())
+    filters = {
+        "active": and_(recall, active_memory_filter()),
+        "candidate": and_(recall, Memory.status == "candidate", unexpired),
+        "invalidated": and_(recall, Memory.status == "invalidated"),
+        "expired": and_(recall, Memory.status.in_(("active", "candidate")), Memory.expires_at <= func.now()),
+        "user_profile": and_(Memory.context.startswith("user_profile:", autoescape=True), active_memory_filter()),
+    }
+    row = (
         await db.execute(
-            select(Memory.status, Memory.expires_at, Memory.context).where(
+            select(*(func.count().filter(condition).label(key) for key, condition in filters.items())).where(
                 scope_filter(scope),
-                Memory.status != "forgotten",
             ),
         )
-    ).all()
-    counts = dict.fromkeys(("active", "candidate", "invalidated", "expired", "user_profile"), 0)
-    now = utc_now()
-    for status, expiry, context in rows:
-        if context and context.startswith("user_profile:"):
-            if status == "active":
-                counts["user_profile"] += 1
-            continue
-        if not context or not context.startswith("recall:"):
-            continue
-        key = "expired" if status in {"active", "candidate"} and expiry and expiry <= now else status
-        counts[key] += 1
-    return counts
+    ).one()
+    return dict(row._mapping)

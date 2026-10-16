@@ -1,11 +1,13 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import {
   $avatarSeeds,
   $outfitPolicy,
   $outfits,
+  $videoPacks,
+  activateVideoPack,
   deleteOutfit,
   GenerationActionsGroup,
   hydrateAvatarSeeds,
@@ -31,14 +33,15 @@ import {
   BTN_GHOST,
   BTN_ICON,
   BTN_PRIMARY,
+  BTN_SUBTLE,
   confirmAction,
-  Disclosure,
   HINT_TEXT,
   INPUT_CLASS,
   Spinner,
   Toggle
 } from '@/shared/panel'
 import { backendApi } from '@/shared/platform/desktop'
+import { $locale } from '@/shared/store/locale'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@protocol'
@@ -58,15 +61,20 @@ interface OutfitSectionProps {
 export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSectionProps): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
+  const packs = useStore($videoPacks)
   const avatarSeeds = useStore($avatarSeeds)
   const dict = useStrings()
+  const english = useStore($locale) === 'en'
   const t = dict.living.outfit
   const common = dict.common
   const selfSourceDict = dict.selfSource
   const [busyId, setBusyId] = useState<number | null>(null)
   const [policyBusy, setPolicyBusy] = useState(false)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
-  const { designing, text, draftId } = useStore($appearanceUi)
+  const ui = useStore($appearanceUi)
+  const { designing, text, draftId } = ui
+  const listScrollTop = useLatestRef(ui.listScrollTop ?? 0)
+  const libraryRef = useRef<HTMLElement>(null)
   const importRevision = useStore($appearanceUiImportRevision)
   const setDesigning = (next: boolean): void => updateAppearanceUi({ designing: next })
   const setText = (next: string): void => updateAppearanceUi({ text: next })
@@ -76,6 +84,20 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
   const messagesRef = useRef<HTMLDivElement>(null)
   const begin = useAsyncGuard()
   const onMaterialReadyRef = useLatestRef(onMaterialReady)
+
+  useLayoutEffect(() => {
+    const element = libraryRef.current
+
+    if (element) {
+      element.scrollTop = listScrollTop.current
+    }
+
+    return () => {
+      if (element) {
+        updateAppearanceUi({ listScrollTop: element.scrollTop })
+      }
+    }
+  }, [designing, listScrollTop])
 
   // 确认入柜后重拉列表——新装转为参考图就绪。
   const session = useOutfitDesignSession(
@@ -152,8 +174,13 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
   }, [session.busy, session.draft, session.lastRequest])
 
   const withBusy = (id: number, action: () => Promise<unknown>): void => {
+    const epoch = currentClearEpoch()
     setBusyId(id)
-    void action().finally(() => setBusyId(null))
+    void action().finally(() => {
+      if (epoch === currentClearEpoch()) {
+        setBusyId(null)
+      }
+    })
   }
 
   const completeDescription = async (id: number): Promise<void> => {
@@ -521,7 +548,27 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
           </div>
         </section>
       ) : (
-        <section aria-labelledby="appearance-outfits-heading" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <section
+          aria-labelledby="appearance-outfits-heading"
+          className="@container flex min-h-0 flex-1 flex-col overflow-y-auto"
+          onScroll={event => updateAppearanceUi({ listScrollTop: event.currentTarget.scrollTop })}
+          ref={libraryRef}
+        >
+          <div className="mx-4 mt-3 flex items-center justify-between gap-4 rounded-xl border border-line-hairline p-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-strong">{t.policyLabel}</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">{t.policyDesc}</p>
+              <p aria-live="polite" className="mt-1 text-xs text-muted">
+                {policyBusy ? common.saving : outfitPolicy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
+              </p>
+            </div>
+            <Toggle
+              ariaLabel={t.policyToggleAria}
+              checked={outfitPolicy !== 'locked'}
+              disabled={policyBusy}
+              onChange={() => void togglePolicy()}
+            />
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 pt-3">
             <div className="flex min-w-0 items-baseline gap-2">
               <h2 className="text-sm font-semibold text-strong" id="appearance-outfits-heading">
@@ -535,30 +582,30 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
             </button>
           </div>
 
-          <div className="grid grid-cols-2 content-start items-start gap-3 px-4 py-4 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 content-start items-start gap-3 px-4 py-4 @min-[640px]:grid-cols-3 @min-[920px]:grid-cols-4">
             {outfits.map(outfit => {
               const statusLabel = outfit.active ? t.wearing : (t.statusLabels[outfit.status] ?? '')
               const canEdit = outfit.status === 'draft'
               const canDelete = !outfit.active
+              const pack = packs.find(item => item.outfit_id === outfit.id)
+              const canWear = pack?.status === 'ready' && pack.identity_review !== 'review'
+
+              const openOutfit = (): void => {
+                if (canEdit) {
+                  updateAppearanceUi({ draftId: outfit.id })
+                  session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
+                  setDesigning(true)
+                } else {
+                  onSelectOutfit(outfit.id)
+                }
+              }
 
               return (
                 <article
                   className="group relative min-w-0 overflow-hidden rounded-xl border border-line-hairline bg-surface-card transition hover:border-line-strong"
                   key={outfit.id}
                 >
-                  <button
-                    className="block w-full text-left"
-                    onClick={() => {
-                      if (canEdit) {
-                        updateAppearanceUi({ draftId: outfit.id })
-                        session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
-                        setDesigning(true)
-                      } else {
-                        onSelectOutfit(outfit.id)
-                      }
-                    }}
-                    type="button"
-                  >
+                  <button className="block w-full text-left" onClick={openOutfit} type="button">
                     <div className="relative aspect-[4/5] overflow-hidden bg-fill-trough">
                       {outfit.fullbodyUrl ? (
                         <img
@@ -583,6 +630,50 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
                       <p className="truncate text-[11px] font-medium text-strong">{outfit.name}</p>
                     </div>
                   </button>
+
+                  <div className="px-2 pb-2">
+                    <button
+                      className={cn(BTN_SUBTLE, 'w-full justify-center')}
+                      disabled={busyId === outfit.id || (outfit.active && !onMaterialReady)}
+                      onClick={() => {
+                        if (onMaterialReady && outfit.status === 'ready') {
+                          onMaterialReady(outfit.id)
+                        } else if (canWear && pack && !outfit.active) {
+                          const epoch = currentClearEpoch()
+                          withBusy(outfit.id, async () => {
+                            if (!(await activateVideoPack(pack.id)) && epoch === currentClearEpoch()) {
+                              onSelectOutfit(outfit.id)
+                            }
+                          })
+                        } else {
+                          openOutfit()
+                        }
+                      }}
+                      type="button"
+                    >
+                      {onMaterialReady && outfit.status === 'ready'
+                        ? english
+                          ? 'Choose this outfit'
+                          : '选这套衣服'
+                        : outfit.active
+                          ? t.wearing
+                          : canEdit
+                            ? t.actions.continueDesign
+                            : canWear
+                              ? dict.living.appearance.videoActivate
+                              : pack?.identity_review === 'review'
+                                ? english
+                                  ? 'Review appearance'
+                                  : '查看并确认'
+                                : pack?.status === 'processing'
+                                  ? english
+                                    ? 'View progress'
+                                    : '查看进度'
+                                  : english
+                                    ? 'Prepare to wear'
+                                    : '准备穿上'}
+                    </button>
+                  </div>
 
                   <details className="border-t border-line-hairline px-2 py-2">
                     <summary className="cursor-pointer text-xs text-muted">{dict.common.moreActions}</summary>
@@ -655,21 +746,6 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
             })}
 
             {outfits.length === 0 ? <p className="self-center text-xs text-muted">{t.empty}</p> : null}
-          </div>
-          <div className="px-4 pb-4">
-            <Disclosure hint={t.policyDesc} title={t.policyLabel}>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-muted">
-                  {outfitPolicy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
-                </span>
-                <Toggle
-                  ariaLabel={t.policyToggleAria}
-                  checked={outfitPolicy !== 'locked'}
-                  disabled={policyBusy}
-                  onChange={() => void togglePolicy()}
-                />
-              </div>
-            </Disclosure>
           </div>
         </section>
       )}

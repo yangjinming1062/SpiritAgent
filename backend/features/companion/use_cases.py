@@ -26,11 +26,9 @@ async def submit_onboarding(
     user_id: int,
     field: str,
     value: str | None,
-    *,
-    expected_version: object,
 ) -> OnboardingStateResponse:
     async with SESSION_LOCAL() as db:
-        return await submit_onboarding_field(db, user_id, field, value, expected_version=expected_version)
+        return await submit_onboarding_field(db, user_id, field, value)
 
 
 async def voice_catalog(user_id: int, language: str | None) -> VoicesListResponse:

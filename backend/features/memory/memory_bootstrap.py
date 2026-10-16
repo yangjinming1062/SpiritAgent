@@ -5,7 +5,7 @@ from runtime.memory_scope import MemoryScope, MemorySource
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.memory.memory_store import active_memory_filter, memory_write_lock, scope_filter, upsert_slotted_memory
+from features.memory.memory_store import active_memory_filter, scope_filter, upsert_slotted_memory
 from features.memory.models import Memory
 from features.memory.prompts import CONTEXT_LABELS, USER_PROFILE_LABELS_TEXTS
 
@@ -57,27 +57,13 @@ async def record_user_profile(
     db: AsyncSession,
     scope: MemoryScope,
     profile: dict[str, str],
-    *,
-    expected_versions: dict[str, int] | None = None,
 ) -> None:
-    """把 user_* 字段写入 Memory；空值跳过（不插不删），使人设编辑器可重复保存而不清空既有行。"""
+    """保存引导回答；空值跳过，明确遗忘由记忆维护入口处理。"""
     changed = False
     for user_key, val in profile.items():
         if not val:
             continue
-        ctx = CONTEXT_LABELS.get(user_key, f"user_profile:{user_key.removeprefix('user_')}")
-        if expected_versions is not None and user_key in expected_versions:
-            # 与编辑、遗忘共用事务写锁；0 表示开始编辑时没有有效槽位。
-            await memory_write_lock(db, scope)
-            current_version = await db.scalar(
-                select(Memory.content_version).where(
-                    scope_filter(scope),
-                    active_memory_filter(),
-                    Memory.context == ctx,
-                ),
-            )
-            if (current_version or 0) != expected_versions[user_key]:
-                raise ValueError("这条资料已在其他设备更新，请刷新后再保存。")
+        ctx = CONTEXT_LABELS[user_key]
         await upsert_slotted_memory(db, scope, ctx, val, _USER_PROFILE_TAGS_JSON, source=MemorySource("onboarding"))
         changed = True
     if changed:

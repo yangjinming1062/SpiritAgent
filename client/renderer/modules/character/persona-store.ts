@@ -3,14 +3,17 @@ import { atom } from 'nanostores'
 import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import type { PersonaResponse } from '@protocol'
 
 import type { PersonaPayload } from './persona'
 
 export const $persona = atom<PersonaPayload | null>(null)
 export const $personalityTags = atom<string[]>([])
 export const $companionMood = atom<string | null>(null)
+let requestGeneration = 0
 
 function resetPersona(): void {
+  requestGeneration += 1
   $persona.set(null)
   $personalityTags.set([])
   $companionMood.set(null)
@@ -18,55 +21,15 @@ function resetPersona(): void {
 
 registerStorageClearHandler(resetPersona)
 
-export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; error?: unknown }> {
-  const isCurrent = captureAuthScope()
+export function applyPersonaResponse(response: PersonaResponse): void {
+  requestGeneration += 1
 
-  if (!isCurrent) {
-    return { ok: false }
+  if (!response.is_complete) {
+    return
   }
 
-  // 全部结构化 persona 字段都在 definition_json（JSON 字符串 blob）里面，而不是作为顶层扁平 key 出现在线协议里。
-  const result = await authedApi<{
-    definition_json?: string
-    is_complete?: boolean
-    personality_tags?: string[]
-    current_mood?: string | null
-  }>({
-    path: '/api/companion/persona'
-  })
+  const parsed = safeJsonParse<Record<string, string>>(response.definition_json, {})
 
-  if (!isCurrent()) {
-    return { ok: false }
-  }
-
-  if (!result.ok) {
-    if (result.reason === 'unauth') {
-      return { ok: false }
-    }
-
-    // 调用方刚刚成功 PUT 了新 persona 时，这里的 GET 短暂失败不代表保存失败——后端是有数据的。传 `silent: true` 保持 $persona 不动，避免同时弹出「保存失败」提示又让设置页因为 $persona 变 null 而隐藏「编辑」按钮。GET 失败由调用方作为软提示暴露。
-    if (!opts.silent) {
-      resetPersona()
-    }
-
-    return { error: result.error, ok: false }
-  }
-
-  const p = result.value
-
-  if (!p) {
-    return { ok: false }
-  }
-
-  // 早返回：先看一眼 p.is_complete，避开未设置 persona 的合法空态。
-  if (!p.is_complete) {
-    // 「还没设置 persona」是合法状态，不是错误：保持 $persona 不动（不要置空），这样「保存刚刚成功，hydrate 落地却读到陈旧 is_complete」的竞态，不会让那些依赖 $persona 的消费者把它当成清空。
-    return { ok: true }
-  }
-
-  const parsed = safeJsonParse<Record<string, string>>(p.definition_json, {})
-
-  // 伙伴人设只映射伙伴字段。
   $persona.set({
     biological_type: parsed.biological_type,
     gender: parsed.gender,
@@ -75,10 +38,44 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     relationship: parsed.relationship,
     speaking_style: parsed.speaking_style ?? ''
   })
+  $personalityTags.set(response.personality_tags)
+  $companionMood.set(response.current_mood?.trim() || null)
+}
 
-  $personalityTags.set(p.personality_tags ?? [])
+export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; error?: unknown }> {
+  const isCurrent = captureAuthScope()
 
-  $companionMood.set(p.current_mood?.trim() || null)
+  if (!isCurrent) {
+    return { ok: false }
+  }
+
+  const generation = ++requestGeneration
+
+  const result = await authedApi<PersonaResponse>({
+    path: '/api/companion/persona'
+  })
+
+  if (!isCurrent() || generation !== requestGeneration) {
+    return { ok: false }
+  }
+
+  if (!result.ok) {
+    if (result.reason === 'unauth') {
+      return { ok: false }
+    }
+
+    if (!opts.silent) {
+      resetPersona()
+    }
+
+    return { error: result.error, ok: false }
+  }
+
+  if (!result.value) {
+    return { ok: false }
+  }
+
+  applyPersonaResponse(result.value)
 
   return { ok: true }
 }

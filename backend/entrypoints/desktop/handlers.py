@@ -388,6 +388,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         "memory.list",
         "memory.update",
         "memory.delete",
+        "memory.profile.update",
     }
 
     def register(method: str, handler: Callable[[dict], Awaitable[Any]], *, concurrent: bool = False) -> None:

@@ -5,6 +5,7 @@ import type { BrowserWindow, IpcMain, WebContents } from 'electron'
 import {
   type AppNavigationTarget,
   IPC,
+  isCompanionEditorUiSnapshot,
   isDesktopLifeUiSnapshot,
   type MainUiStateData,
   type MainUiStateSnapshot,
@@ -60,7 +61,18 @@ function stateData(raw: MainUiStateData): MainUiStateData {
     throw new Error('制作草稿状态无效。')
   }
 
-  return structuredClone({ navigation: normalizeAppNavigation(raw.navigation), conversation, desktopLife })
+  const companionEditors = raw.companionEditors
+
+  if (!isCompanionEditorUiSnapshot(companionEditors)) {
+    throw new Error('伙伴编辑状态无效。')
+  }
+
+  return structuredClone({
+    navigation: normalizeAppNavigation(raw.navigation),
+    conversation,
+    desktopLife,
+    companionEditors
+  })
 }
 
 // 仅在本机进程内保留账户视图；字节和文件授权仍由既有资源入口管理。

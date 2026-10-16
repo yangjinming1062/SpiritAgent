@@ -47,6 +47,7 @@ type VoiceTab = 'fixed' | 'design' | 'clone'
 type VoiceOperation = 'idle' | 'generating' | 'confirming'
 interface VoiceManagerProps {
   name: string
+  compact?: boolean
   preference?: string
   disabled?: boolean
   onVoiceSelected?: (voiceId: string, label: string, serverConfirmed: boolean) => Promise<void>
@@ -61,6 +62,7 @@ export function VoiceManager(props: VoiceManagerProps): React.JSX.Element {
 
 function VoiceManagerSession({
   name,
+  compact = false,
   preference,
   disabled = false,
   onVoiceSelected
@@ -417,12 +419,45 @@ function VoiceManagerSession({
   const voices = catalog?.voices.filter(voice => !genderFilter || voice.gender === genderFilter) ?? []
 
   const displayedVoices =
-    showAll || genderFilter
+    !compact || showAll || genderFilter
       ? voices
       : voices.filter((voice, index) => index < 3 || voiceSelectionId(voice) === currentVoice)
 
+  const currentFixed = catalog?.voices.find(voice => voiceSelectionId(voice) === currentVoice)
+  const currentCustom = catalog?.customVoices.find(voice => voice.voice_id === currentVoice)
+  const customLabels = { design: t.designHeading, clone: t.cloneHeading }
+
+  const currentVoiceLabel =
+    currentFixed?.label || (currentCustom ? customLabels[currentCustom.kind] : t.savedUnavailable)
+
   return (
     <div className="space-y-4">
+      {!compact && catalogStatus === 'ready' && currentVoice && (
+        <SettingCard className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="min-w-0">
+            <p className={SETTINGS_ROW_DESC}>{locale === 'en' ? 'Current voice' : '当前声音'}</p>
+            <p className={SETTINGS_ROW_TITLE}>{currentVoiceLabel}</p>
+          </div>
+          <button
+            className={BTN_SUBTLE}
+            disabled={blocked || (!currentFixed && !currentCustom?.available)}
+            onClick={() => {
+              if (currentCustom) {
+                void previewAudio(currentCustom.preview_audio_url)
+              } else if (currentFixed) {
+                const signal = beginPlayback()
+
+                if (signal) {
+                  void speakScripted(sampleLine(name), currentVoice, 'voice.preview', signal)
+                }
+              }
+            }}
+            type="button"
+          >
+            {t.preview}
+          </button>
+        </SettingCard>
+      )}
       <div>
         <CapsuleTabs
           ariaLabel={t.methodAria}
@@ -489,7 +524,7 @@ function VoiceManagerSession({
               </p>
             )}
           </SettingCard>
-          {voices.length > 3 && !genderFilter && (
+          {compact && voices.length > 3 && !genderFilter && (
             <button className={BTN_SUBTLE} onClick={() => setShowAll(value => !value)} type="button">
               {showAll ? t.showRecommended : t.showAll}
             </button>

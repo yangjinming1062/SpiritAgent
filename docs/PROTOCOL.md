@@ -70,6 +70,8 @@ Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend
 
 人工 `memory.list/update/delete` 必须且只能提供 `session_id`、`system_preset_id` 之一；跨域 ID 与不存在统一视为未找到。列表、数量、状态和证据属于同域，切换预设后丢弃旧请求结果。用户资料固定属于陪伴域，删除后可补填，不重启引导。
 
+`memory.list` 使用服务端搜索与 `offset` 分页，返回筛选后 `total`，状态 `counts` 始终覆盖当前预设。`memory.profile.update` 只在陪伴域原子保存已登记资料字段，逐项携带编辑起点版本；空值表示明确遗忘，任一版本冲突全批拒绝。类型真源见 [共享协议](../shared/protocol.ts)，写入与遗忘语义归 [记忆模块](../backend/features/memory/README.md#修订与遗忘)。
+
 模型记忆工具只能使用服务端验证的原始证据，证据消息须来自用户本人的对话：自动化会话与子 Agent 会话（其“用户”消息由父 Agent 撰写）不能作证；用户手写或手改的记录只有在更新的用户消息作证时才可改动；系统写入的伙伴自身记录（basis system，如夜间活动）不进入审阅；人工纠正仍保留伙伴记录归属，不转成用户明确表达。更新携当前 ID 与版本，并发冲突整批拒绝。候选、失效、过期和已遗忘内容不得作为有效事实召回。模型不得指定身份、作用域或来源；具体决策结构见 [memory_policy](../backend/features/memory/memory_policy.py)。
 
 学习技能工具随 `tools.sync` 同步开放。Backend 派发时将 `skill_scope` 放在模型参数之外，Client 转发 `execute_scoped_tool`，Runner 在调用期间固定用户与预设目录。异步和委派继承该域，不读取界面当前选择。Runner 的 [SkillScope](../runner/spirit_agent_runner/contracts/scope.py) 只接受固定的预设 id 集合，新增或改名预设须同步，否则该预设的带域调用均被拒绝。
@@ -272,6 +274,8 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 完整路由见[伙伴端点](../backend/entrypoints/http/routes/companion.py)。初始资产与重复启动守卫见[生成服务](../backend/features/appearance/README.md#后台任务与初始资产)，编辑上传见 [PIPELINE](PIPELINE.md#编辑上传与身份采纳)。
 
 ### 角色卡编辑
+
+人设 PUT 同时承接首次引导的确认保存和日常资料维护。引导保存完整资料并补写逐题提交未能保存的用户回答；资料维护提交 `expected_fields`，只接受已完成人设的四个可编辑字段，在行锁内校验原始值后合并，保留视觉与声音字段。冲突返回 409，两端保留草稿并展示最新内容。手机仅开放资料保存、角色卡修改与重新提取所需的精确接口和个人资料 RPC，继续使用设备身份及同源校验。
 
 角色卡 GET/PATCH 读取与局部编辑，extract 发起重新提取/失败重试，见[结构](../backend/features/appearance/character_card_models.py)与[伙伴端点](../backend/entrypoints/http/routes/companion.py)。写入校验预期形象和修订，冲突 409 且 Client 保留草稿；changes 未传不变，null 恢复自动值，空字符串显式清空。
 

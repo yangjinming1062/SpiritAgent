@@ -59,14 +59,6 @@ export interface Diary {
   body: string
 }
 
-export interface Memory {
-  id: number
-  content: string | null
-  context: string | null
-  content_version: number
-  updated_at: string | null
-}
-
 export interface Scene {
   id: number
   title: string

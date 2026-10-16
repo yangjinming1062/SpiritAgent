@@ -2,7 +2,13 @@ import { atom, computed } from 'nanostores'
 
 import { setChatSession, switchSession } from '@/modules/conversation'
 import { log } from '@/shared/lib/log'
-import { definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+import {
+  definePersistedAtom,
+  registerCompanionStorageKey,
+  registerStorageClearHandler,
+  registerStorageRestoreHandler,
+  storedJson
+} from '@/shared/lib/storage'
 import { $gatewayState } from '@/shared/store/gateway'
 import {
   APP_PAGES,
@@ -18,9 +24,19 @@ import {
 
 export { APP_PAGES, SETTINGS_SECTIONS }
 
+const NAVIGATION_KEY = registerCompanionStorageKey('da.app.navigation.v2')
+
+function normalizeStoredNavigation(): void {
+  const saved = storedJson<Record<string, unknown> | null>(NAVIGATION_KEY, null)
+
+  if (saved && typeof saved === 'object' && saved.companionSection === 'home') {
+    navigation.set(normalizeAppNavigation(saved))
+  }
+}
+
 const navigation = definePersistedAtom<AppNavigationTarget>({
-  key: 'da.app.navigation.v2',
-  fallback: { page: 'chat', section: 'companionship', companionSection: 'home', postsTab: 'posts' },
+  key: NAVIGATION_KEY,
+  fallback: { page: 'chat', section: 'companionship', companionSection: 'profile', postsTab: 'posts' },
   isPersistable: (value): value is AppNavigationTarget => {
     if (!value || typeof value !== 'object') {
       return false
@@ -42,9 +58,12 @@ const navigation = definePersistedAtom<AppNavigationTarget>({
   }
 })
 
+normalizeStoredNavigation()
+registerStorageRestoreHandler(normalizeStoredNavigation)
+
 export const $appPage = computed(navigation.$atom, value => value.page ?? 'chat')
 export const $settingsSection = computed(navigation.$atom, value => value.section ?? 'companionship')
-export const $companionSection = computed(navigation.$atom, value => value.companionSection ?? 'home')
+export const $companionSection = computed(navigation.$atom, value => value.companionSection ?? 'profile')
 export const $postsTab = computed(navigation.$atom, value => value.postsTab ?? 'posts')
 export const $appNavigationTarget = atom<AppNavigationTarget>({})
 export const $appNavigationRevision = atom(0)

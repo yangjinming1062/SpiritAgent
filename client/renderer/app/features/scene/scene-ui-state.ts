@@ -9,6 +9,7 @@ interface SceneUiState {
   view: ScenePageView
   notes: string
   editDrafts: Record<string, { title: string; description: string }>
+  listScrollTop?: number
 }
 
 const FALLBACK: SceneUiState = { view: { kind: 'library' }, notes: '', editDrafts: {} }
@@ -20,6 +21,8 @@ function validState(value: unknown): value is SceneUiState {
   }
 
   return (
+    (value.listScrollTop === undefined ||
+      (typeof value.listScrollTop === 'number' && Number.isFinite(value.listScrollTop) && value.listScrollTop >= 0)) &&
     (value.view.kind === 'library' ||
       value.view.kind === 'create' ||
       (value.view.kind === 'detail' && typeof value.view.sceneId === 'string')) &&

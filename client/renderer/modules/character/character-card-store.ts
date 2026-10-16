@@ -4,28 +4,22 @@ import { authedApi } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import type { SpiritAgentApiRequest } from '@ipc/contracts'
+import type { CharacterCard, CharacterFeatureKey, CharacterOverrides } from '@protocol'
 
 import { $activeAvatarId } from './portrait-store'
 
-export const PORTRAIT_FEATURE_KEYS = ['head_shape', 'facial_features', 'facial_surface', 'head_identifiers'] as const
-export const BODY_FEATURE_KEYS = ['body_shape', 'proportions', 'limbs_and_appendages', 'body_surface'] as const
-export type CharacterFeatureKey = (typeof PORTRAIT_FEATURE_KEYS)[number] | (typeof BODY_FEATURE_KEYS)[number]
-export type CharacterFeatures = Record<CharacterFeatureKey, string>
-export type CharacterOverrides = Partial<Record<CharacterFeatureKey, string | null>>
-export type ExtractionStatus = 'pending' | 'running' | 'ready' | 'failed'
-
-export interface CharacterCard {
-  avatar_id: number
-  revision: number
-  features: CharacterFeatures
-  automatic: CharacterFeatures
-  overrides: CharacterOverrides
-  status: ExtractionStatus
-  portrait_status: ExtractionStatus
-  body_status: ExtractionStatus
-  error: string | null
-}
-
+export const PORTRAIT_FEATURE_KEYS = [
+  'head_shape',
+  'facial_features',
+  'facial_surface',
+  'head_identifiers'
+] as const satisfies readonly CharacterFeatureKey[]
+export const BODY_FEATURE_KEYS = [
+  'body_shape',
+  'proportions',
+  'limbs_and_appendages',
+  'body_surface'
+] as const satisfies readonly CharacterFeatureKey[]
 export const $characterCard = atom<CharacterCard | null>(null)
 let requestGeneration = 0
 

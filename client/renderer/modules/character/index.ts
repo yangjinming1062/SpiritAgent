@@ -41,7 +41,6 @@ export {
   PORTRAIT_FEATURE_KEYS,
   saveCharacterCard
 } from './character-card-store'
-export type { CharacterOverrides } from './character-card-store'
 export {
   $companionLifecycle,
   $effectiveTier,
@@ -79,7 +78,7 @@ export {
   USER_GENDER_PRESETS,
   VOICE_PRESETS
 } from './persona-presets'
-export { $companionMood, $persona, hydratePersona } from './persona-store'
+export { $companionMood, $persona, applyPersonaResponse, hydratePersona } from './persona-store'
 export {
   $activeAvatarId,
   $portraitHistory,
@@ -193,3 +192,4 @@ export {
   retryOutfitDescription,
   setOutfitPolicy
 } from './wardrobe/wardrobe-store'
+export type { CharacterOverrides } from '@protocol'

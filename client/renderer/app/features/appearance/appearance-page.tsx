@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
-import { $outfits, hydrateAvatarSeeds, hydrateWardrobe } from '@/modules/character'
+import { $outfits, hydrateAvatarSeeds, hydrateVideoPack, hydrateWardrobe } from '@/modules/character'
 import { $auth } from '@/shared/store/auth'
 
 import { $appearanceUi, updateAppearanceUi } from './appearance-ui-state'
@@ -41,6 +41,7 @@ export function AppearancePage({
         }
       })
       void hydrateAvatarSeeds()
+      void hydrateVideoPack(true)
 
       return () => {
         current = false
@@ -57,18 +58,16 @@ export function AppearancePage({
   }, [loaded, outfits, selectedOutfitId])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        {selectedOutfitId === null ? (
-          <OutfitSection onMaterialReady={onMaterialReady} onSelectOutfit={setSelectedOutfitId} />
-        ) : (
-          <VideoSection
-            onBack={() => setSelectedOutfitId(null)}
-            onMaterialReady={onMaterialReady}
-            outfitId={selectedOutfitId}
-          />
-        )}
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {selectedOutfitId === null ? (
+        <OutfitSection onMaterialReady={onMaterialReady} onSelectOutfit={setSelectedOutfitId} />
+      ) : (
+        <VideoSection
+          onBack={() => setSelectedOutfitId(null)}
+          onMaterialReady={onMaterialReady}
+          outfitId={selectedOutfitId}
+        />
+      )}
     </div>
   )
 }

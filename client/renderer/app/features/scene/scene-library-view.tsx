@@ -3,7 +3,7 @@ import type React from 'react'
 import { type ActiveScene, PAGE_SIZE, type SceneAsset, type ScenePolicy } from '@/modules/scene'
 import { AlertCircle, Loader2, Plus, RefreshCw, Search, Sparkles } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, Disclosure, HINT_TEXT, INPUT_CLASS, SettingCard, Toggle } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard, Toggle } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface SceneLibraryViewProps {
@@ -13,6 +13,7 @@ interface SceneLibraryViewProps {
   onCreate: () => void
   onOpen: (sceneId: string) => void
   onPolicyChange: () => void
+  policyBusy: boolean
   onRetryLoad: () => void
   onSearch: () => void
   onSetPage: (page: number) => void
@@ -42,6 +43,7 @@ export function SceneLibraryView({
   page,
   pending,
   policy,
+  policyBusy,
   query,
   regenerating,
   slow,
@@ -53,6 +55,23 @@ export function SceneLibraryView({
 
   return (
     <>
+      <SettingCard>
+        <div className="flex items-center justify-between gap-4 p-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-strong">{t.policyLabel}</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted">{t.policyDesc}</p>
+            <p aria-live="polite" className="mt-1 text-xs text-muted">
+              {policyBusy ? t.refreshing : policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
+            </p>
+          </div>
+          <Toggle
+            ariaLabel={t.policyToggleAria}
+            checked={policy !== 'locked'}
+            disabled={policyBusy}
+            onChange={onPolicyChange}
+          />
+        </div>
+      </SettingCard>
       <p className="text-[11px] leading-relaxed text-faint">{t.intro}</p>
 
       <div className="flex items-center justify-between gap-3">
@@ -229,15 +248,6 @@ export function SceneLibraryView({
           </button>
         </div>
       ) : null}
-
-      <Disclosure hint={t.policyDesc} title={t.policyLabel}>
-        <div className="flex items-center justify-between gap-2.5">
-          <span className="text-[11px] text-faint">
-            {policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
-          </span>
-          <Toggle ariaLabel={t.policyToggleAria} checked={policy !== 'locked'} onChange={onPolicyChange} />
-        </div>
-      </Disclosure>
     </>
   )
 }

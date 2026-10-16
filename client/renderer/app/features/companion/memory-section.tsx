@@ -1,395 +1,629 @@
 import { useStore } from '@nanostores/react'
-import { atom } from 'nanostores'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $systemPresets, fetchSystemPresets, presetDisplayName } from '@/modules/conversation'
 import { requestGateway } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useAutoSave } from '@/shared/hooks/use-auto-save'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS, PanelSelect } from '@/shared/panel'
+import {
+  BTN_GHOST,
+  BTN_SUBTLE,
+  CapsuleTabs,
+  CHIP,
+  confirmAction,
+  HINT_TEXT,
+  INPUT_CLASS,
+  PanelSelect
+} from '@/shared/panel'
+import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
+import type { MemoryCounts, MemoryItem, MemoryListResponse } from '@protocol'
 
-import { editMemoryDraft, type MemoryDraft, useMemoryChanged, UserProfileSection } from './user-profile-section'
+import {
+  $companionEditors,
+  completeMemoryDraft,
+  editMemoryDraft,
+  memoryBrowser,
+  setMemoryDraft,
+  updateCompanionEditors,
+  updateMemoryBrowser
+} from './companion-editor-state'
+import { useMemoryChanged, UserProfileSection } from './user-profile-section'
 
-type MemoryTab = 'active' | 'candidate' | 'invalidated' | 'expired'
-
-// 召回记忆的 context 形如 recall:< 主题 >（后端 memory_namespaces.py），界面只展示主题。
-const RECALL_CONTEXT_PREFIX = /^recall:/
-
-const $memoryBrowserTab = atom<MemoryTab>('active')
-
-interface MemoryRow {
-  id: number
-  content_version: number
-  basis: 'explicit' | 'inferred' | 'observed' | 'system'
-  usage: 'contextual' | 'background'
-  reason: string
-  expires_at: string | null
-  evidence: Array<{ message_id: number; quote: string; stance: 'supports' | 'opposes'; created_at: string }>
-  context: string | null
-  tags: string | null
-  content: string | null
-  created_at: string | null
-  updated_at: string | null
-}
-
-interface MemoryCounts {
-  active: number
-  candidate: number
-  invalidated: number
-  expired: number
-  user_profile: number
-}
-
-interface ListResponse {
-  system_preset_id: string
-  memories: MemoryRow[]
-  counts: MemoryCounts
-}
+const PAGE_SIZE = 20
 
 export function MemorySection(): React.ReactElement {
   const presets = useStore($systemPresets)
-  const [presetId, setPresetId] = useState('companion')
+  const memory = useStore($companionEditors).memory
+  const english = useStore($locale) === 'en'
   const dict = useStrings()
+  const { presetId, section } = memory
   useEffect(() => {
     void fetchSystemPresets()
   }, [])
 
   return (
-    <section>
-      <label className="mb-3 block">
-        {dict.settings.memory.presetLabel}
+    <section className="space-y-4">
+      <label className="block text-sm text-body">
+        {english ? 'Whose memories' : '查看谁的记忆'}
         <PanelSelect
           ariaLabel={dict.settings.memory.presetLabel}
-          onChange={next => {
-            $memoryBrowserTab.set('active')
-            setPresetId(next)
-          }}
+          onChange={next =>
+            updateCompanionEditors({
+              memory: {
+                ...$companionEditors.get().memory,
+                presetId: next,
+                section: next === 'companion' ? section : 'recall'
+              }
+            })
+          }
           options={presets.map(preset => ({ value: preset.id, label: presetDisplayName(dict, preset) }))}
           value={presetId}
           widthClass="w-full"
         />
       </label>
-      <ScopedMemorySection key={presetId} presetId={presetId} />
+      {presetId === 'companion' && (
+        <CapsuleTabs
+          ariaLabel={english ? 'Memory type' : '记忆类型'}
+          onChange={next => updateCompanionEditors({ memory: { ...$companionEditors.get().memory, section: next } })}
+          options={[
+            { value: 'recall', label: english ? 'Remembered things' : '记住的事' },
+            { value: 'profile', label: dict.settings.memory.profile.title }
+          ]}
+          value={section}
+        />
+      )}
+      {section === 'profile' && presetId === 'companion' ? (
+        <UserProfileSection />
+      ) : (
+        <RecallBrowser key={presetId} presetId={presetId} />
+      )}
     </section>
   )
 }
 
-function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactElement {
+function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.memory
-
-  const tab = useStore($memoryBrowserTab)
-
-  const [rows, setRows] = useState<MemoryRow[]>([])
+  const english = useStore($locale) === 'en'
+  const memory = useStore($companionEditors).memory
+  const browser = memory.browsers[presetId] ?? memoryBrowser(presetId)
+  const { status, page, query } = browser
+  const [rows, setRows] = useState<MemoryItem[]>([])
   const [counts, setCounts] = useState<MemoryCounts | null>(null)
-  const [userProfileCount, setUserProfileCount] = useState<number | null>(null)
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [hint, setHint] = useState<string | null>(null)
-  const [draftById, setDraftById] = useState<Record<number, MemoryDraft | undefined>>({})
-  const [savingById, setSavingById] = useState<Record<number, boolean>>({})
-  const draftByIdRef = useRef(draftById)
-  draftByIdRef.current = draftById
-  const beginGuard = useAsyncGuard()
-  const loadIdRef = useRef(0)
-  const scopeRef = useRef(0)
-
-  const beginScopeGuard = useCallback(() => {
-    const isLive = beginGuard()
-    const scope = scopeRef.current
-
-    return () => isLive() && scope === scopeRef.current
-  }, [beginGuard])
+  const [savedHint, setSavedHint] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const loadId = useRef(0)
+  const listRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const begin = useAsyncGuard()
 
   const load = useCallback(
-    async (nextTab: MemoryTab, background = false): Promise<void> => {
-      const isLive = beginScopeGuard()
-      const id = ++loadIdRef.current
+    async (background = false): Promise<void> => {
+      const sameFilter = (): boolean => {
+        const current = memoryBrowser(presetId)
+
+        return current.status === status && current.page === page && current.query === query
+      }
+
+      if (!sameFilter()) {
+        return
+      }
+
+      const isLive = begin()
+      const requestId = ++loadId.current
 
       if (!background) {
         setLoading(true)
         setRows([])
-        setDraftById({})
-        setSavingById({})
       }
 
       setHint(null)
 
       try {
-        const res = await requestGateway<ListResponse>('memory.list', {
+        const result = await requestGateway<MemoryListResponse>('memory.list', {
           kind: 'recall',
-          status: nextTab,
-          system_preset_id: presetId
+          status,
+          system_preset_id: presetId,
+          q: query.trim(),
+          offset: page * PAGE_SIZE,
+          limit: PAGE_SIZE
         })
 
-        if (!isLive() || loadIdRef.current !== id || res.system_preset_id !== presetId) {
+        if (!isLive() || !sameFilter() || requestId !== loadId.current || result.system_preset_id !== presetId) {
           return
         }
 
-        const list = res.memories ?? []
-        setRows(list)
-        setCounts(res.counts ?? null)
-        setUserProfileCount(current => current ?? res.counts?.user_profile ?? null)
-      } catch (err) {
-        if (!isLive() || loadIdRef.current !== id) {
+        setRows(result.memories)
+        setCounts(result.counts)
+        setTotal(result.total)
+
+        if (page > 0 && page * PAGE_SIZE >= result.total) {
+          updateMemoryBrowser(presetId, {
+            page: Math.max(0, Math.ceil(result.total / PAGE_SIZE) - 1),
+            selectedId: null,
+            editorOpen: false
+          })
+        }
+      } catch (error) {
+        if (!isLive() || requestId !== loadId.current) {
           return
         }
 
         setHint(t.loadFailedHint)
-        notifyError(err, t.loadFailedToast)
+        notifyError(error, t.loadFailedToast)
       } finally {
-        if (isLive() && loadIdRef.current === id) {
+        if (isLive() && requestId === loadId.current) {
           setLoading(false)
         }
       }
     },
-    [beginScopeGuard, presetId, t.loadFailedHint, t.loadFailedToast]
+    [begin, page, presetId, query, status, t.loadFailedHint, t.loadFailedToast]
   )
 
   useEffect(() => {
-    void load(tab)
+    const timeout = window.setTimeout(() => void load(), 200)
 
     return () => {
-      loadIdRef.current += 1
-      scopeRef.current += 1
+      window.clearTimeout(timeout)
+      loadId.current += 1
     }
-  }, [tab, load])
-
-  const refresh = useCallback(() => load(tab, true), [load, tab])
+  }, [load])
+  const refresh = useCallback(() => load(true), [load])
   useMemoryChanged(presetId, refresh)
 
-  // 编辑期间固定原版本；后台刷新不能让旧草稿覆盖其他设备的新内容。
-  const saveRecall = useCallback(
-    async (id: number, snapshot?: MemoryDraft): Promise<boolean> => {
-      const isLive = beginScopeGuard()
-      const draft = snapshot ?? draftByIdRef.current[id]
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = memoryBrowser(presetId).scrollTop
+    }
+  }, [browser.editorOpen, loading, presetId])
 
-      if (!draft || draft.baseVersion === null) {
-        return false
+  const selected = rows.find(row => row.id === browser.selectedId) ?? rows[0]
+  const draftKey = selected ? `${presetId}:${selected.id}` : ''
+  const draft = memory.drafts[draftKey]
+  const conflict = !!draft && selected?.content_version !== draft.baseVersion
+
+  const pageScroller = (): HTMLElement | null => {
+    let element = contentRef.current?.parentElement ?? null
+
+    while (element) {
+      if (['auto', 'scroll'].includes(getComputedStyle(element).overflowY)) {
+        return element
       }
 
-      setSavingById(s => ({ ...s, [id]: true }))
+      element = element.parentElement
+    }
+
+    return null
+  }
+
+  const selectRow = (id: number): void => {
+    updateMemoryBrowser(presetId, { selectedId: id, editorOpen: true, pageScrollTop: pageScroller()?.scrollTop ?? 0 })
+    window.requestAnimationFrame(() => document.getElementById(`memory-${id}`)?.focus({ preventScroll: true }))
+  }
+
+  const backToList = (): void => {
+    updateMemoryBrowser(presetId, { editorOpen: false })
+    window.requestAnimationFrame(() => {
+      const scroller = pageScroller()
+
+      if (scroller) {
+        scroller.scrollTop = browser.pageScrollTop ?? 0
+      }
+
+      listRef.current
+        ?.querySelector<HTMLButtonElement>(`[data-memory-id="${selected?.id}"]`)
+        ?.focus({ preventScroll: true })
+    })
+  }
+
+  const save = async (): Promise<void> => {
+    if (!selected || !draft || busy) {
+      return
+    }
+
+    const isLive = begin()
+    const isCurrent = captureAuthScope()
+
+    if (!isCurrent) {
+      return
+    }
+
+    setBusy(true)
+    setHint(null)
+    setSavedHint(null)
+
+    try {
+      const updated = await requestGateway<MemoryItem>('memory.update', {
+        memory_id: selected.id,
+        content: draft.content.trim(),
+        expected_version: draft.baseVersion,
+        system_preset_id: presetId
+      })
+
+      if (!isCurrent()) {
+        return
+      }
+
+      completeMemoryDraft('drafts', draftKey, draft, updated)
+
+      if (!isLive()) {
+        return
+      }
+
+      setSavedHint(
+        status === 'active' ? t.saved : english ? 'Saved. This memory is in use again.' : '已保存，这条记忆已重新生效。'
+      )
+      await load(true)
+    } catch (error) {
+      if (!isCurrent()) {
+        return
+      }
+
+      let confirmed: MemoryItem | undefined
 
       try {
-        const updated = await requestGateway<MemoryRow>('memory.update', {
-          memory_id: id,
-          content: draft.content,
-          expected_version: draft.baseVersion,
-          system_preset_id: presetId
+        const result = await requestGateway<MemoryListResponse>('memory.list', {
+          kind: 'recall',
+          status: 'active',
+          system_preset_id: presetId,
+          q: draft.content.trim(),
+          limit: PAGE_SIZE
         })
 
-        if (!isLive()) {
-          return false
-        }
+        confirmed = result.memories.find(
+          row =>
+            row.id === selected.id && row.content === draft.content.trim() && row.content_version > draft.baseVersion
+        )
+      } catch {
+        // 原写请求的错误仍交给页面呈现，读取失败时保留原稿与版本。
+      }
 
-        setRows(prev => (tab === 'active' ? prev.map(r => (r.id === id ? updated : r)) : prev.filter(r => r.id !== id)))
-        const latest = draftByIdRef.current[id]
-        setDraftById(prev => ({
-          ...prev,
-          [id]:
-            latest && (latest.content !== draft.content || latest.baseVersion !== draft.baseVersion)
-              ? editMemoryDraft(undefined, latest.content, updated)
-              : undefined
-        }))
+      if (!isCurrent()) {
+        return
+      }
 
-        return true
-      } catch (err) {
-        if (!isLive()) {
-          return false
-        }
+      if (confirmed) {
+        completeMemoryDraft('drafts', draftKey, draft, confirmed)
+      }
 
-        setHint(t.saveFailedHint)
-        notifyError(err, t.saveFailedToast)
+      if (isLive()) {
+        await load(true)
 
-        return false
-      } finally {
         if (isLive()) {
-          setSavingById(s => {
-            const next = { ...s }
-            delete next[id]
-
-            return next
-          })
+          if (confirmed) {
+            setSavedHint(
+              status === 'active'
+                ? t.saved
+                : english
+                  ? 'Saved. This memory is in use again.'
+                  : '已保存，这条记忆已重新生效。'
+            )
+          } else {
+            notifyError(error, t.saveFailedToast)
+            setHint(t.saveFailedHint)
+          }
         }
       }
-    },
-    [beginScopeGuard, presetId, t.saveFailedHint, t.saveFailedToast, tab]
-  )
+    } finally {
+      if (isLive()) {
+        setBusy(false)
+      }
+    }
+  }
 
-  const del = useCallback(
-    async (id: number) => {
-      const isLive = beginScopeGuard()
-      setSavingById(prev => ({ ...prev, [id]: true }))
+  const forget = async (): Promise<void> => {
+    if (!selected || busy) {
+      return
+    }
 
-      try {
-        await requestGateway('memory.delete', { memory_id: id, system_preset_id: presetId })
+    const isLive = begin()
+    const isCurrent = captureAuthScope()
 
-        if (isLive()) {
-          setRows(prev => prev.filter(r => r.id !== id))
-          setDraftById(prev => ({ ...prev, [id]: undefined }))
-        }
-      } catch (err) {
-        if (!isLive()) {
-          return
-        }
+    if (!isCurrent) {
+      return
+    }
 
+    if (
+      !(await confirmAction({
+        title: english ? 'Forget this memory?' : '忘记这条记忆？',
+        description: selected.content ?? '',
+        confirmLabel: english ? 'Forget' : '忘记',
+        variant: 'destructive'
+      })) ||
+      !isLive()
+    ) {
+      return
+    }
+
+    setBusy(true)
+
+    try {
+      await requestGateway('memory.delete', { memory_id: selected.id, system_preset_id: presetId })
+
+      if (!isCurrent()) {
+        return
+      }
+
+      setMemoryDraft('drafts', draftKey, undefined)
+
+      if (!isLive()) {
+        return
+      }
+
+      updateMemoryBrowser(presetId, { selectedId: null, editorOpen: false })
+      await load(true)
+    } catch (error) {
+      if (isLive()) {
         setHint(t.deleteFailedHint)
-        notifyError(err, t.deleteFailedToast)
-      } finally {
-        if (isLive()) {
-          setSavingById(prev => ({ ...prev, [id]: false }))
-        }
+        notifyError(error, t.deleteFailedToast)
       }
-    },
-    [beginScopeGuard, presetId, t.deleteFailedHint, t.deleteFailedToast]
-  )
-
-  const switchTab = (next: MemoryTab): void => {
-    if (next !== tab) {
-      $memoryBrowserTab.set(next)
+    } finally {
+      if (isLive()) {
+        setBusy(false)
+      }
     }
   }
 
   return (
-    <section>
-      {presetId === 'companion' && <UserProfileSection onCount={setUserProfileCount} />}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <CapsuleTabs
-          ariaLabel={t.tabAriaLabel}
-          onChange={switchTab}
-          options={[
-            { label: t.tabActive(counts?.active ?? '…'), value: 'active' },
-            { label: t.tabCandidate(counts?.candidate ?? '…'), value: 'candidate' },
-            { label: t.tabInvalidated(counts?.invalidated ?? '…'), value: 'invalidated' },
-            { label: t.tabExpired(counts?.expired ?? '…'), value: 'expired' }
-          ]}
-          size="sm"
-          value={tab}
+    <div className="@container space-y-3" ref={contentRef}>
+      <label className="block">
+        <span className="sr-only">{english ? 'Search memories' : '搜索记忆'}</span>
+        <input
+          className={INPUT_CLASS}
+          onChange={event => {
+            setSavedHint(null)
+            updateMemoryBrowser(presetId, {
+              query: event.target.value,
+              page: 0,
+              selectedId: null,
+              editorOpen: false,
+              scrollTop: 0
+            })
+          }}
+          placeholder={english ? 'Search remembered things' : '搜索记住的事'}
+          type="search"
+          value={query}
         />
-        <span className={cn(HINT_TEXT, 'ml-auto')}>{t.userProfileHint(userProfileCount ?? '…')}</span>
-      </div>
-
-      <p className={cn(HINT_TEXT, 'mb-3')}>{t.maintenanceHint}</p>
-      {hint && <p className="mb-2 text-xs text-amber-300/90">{hint}</p>}
-
-      {loading ? (
-        <p className="text-xs text-muted">{t.loading}</p>
-      ) : rows.length === 0 ? (
-        <p className="text-xs text-muted">{t.empty}</p>
-      ) : (
-        <div className="space-y-2.5">
-          {rows.map(r => {
-            const tags = parseTags(r.tags)
-            const edit = draftById[r.id]
-            const draft = edit?.content ?? r.content ?? ''
-            const dirty = edit !== undefined
-            const saving = !!savingById[r.id]
-
-            return (
-              <MemoryRowEditor
-                dirty={dirty}
-                key={r.id}
-                onAutoSave={async () => {
-                  if (!(await saveRecall(r.id, edit))) {
-                    throw new Error(t.saveFailedToast)
-                  }
-                }}
-                onChange={value => setDraftById(d => ({ ...d, [r.id]: editMemoryDraft(d[r.id], value, r) }))}
-                onDelete={() => void del(r.id)}
-                row={r}
-                saving={saving}
-                tags={tags}
-                value={draft}
-              />
-            )
-          })}
+      </label>
+      <CapsuleTabs
+        ariaLabel={t.tabAriaLabel}
+        onChange={next =>
+          updateMemoryBrowser(presetId, { status: next, page: 0, selectedId: null, editorOpen: false, scrollTop: 0 })
+        }
+        options={[
+          { label: t.tabActive(counts?.active ?? '…'), value: 'active' },
+          { label: t.tabCandidate(counts?.candidate ?? '…'), value: 'candidate' },
+          { label: t.tabInvalidated(counts?.invalidated ?? '…'), value: 'invalidated' },
+          { label: t.tabExpired(counts?.expired ?? '…'), value: 'expired' }
+        ]}
+        size="sm"
+        value={status}
+      />
+      <p className={HINT_TEXT}>{t.maintenanceHint}</p>
+      {hint && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p aria-live="polite" className="text-xs text-amber-300/90">
+            {hint}
+          </p>
+          <button className={BTN_GHOST} onClick={() => void load()} type="button">
+            {dict.common.retry}
+          </button>
         </div>
       )}
-    </section>
+      {savedHint && (
+        <p aria-live="polite" className={HINT_TEXT}>
+          {savedHint}
+        </p>
+      )}
+      {loading ? (
+        <p className={HINT_TEXT}>{t.loading}</p>
+      ) : rows.length === 0 ? (
+        !hint && (
+          <p className={HINT_TEXT}>{query ? (english ? 'No matching memories.' : '没有找到匹配的记忆。') : t.empty}</p>
+        )
+      ) : (
+        <div className="grid min-w-0 items-start gap-4 @min-[720px]:grid-cols-[minmax(220px,0.85fr)_minmax(0,1.4fr)]">
+          <div className={cn('min-w-0 space-y-3', browser.editorOpen && 'hidden @min-[720px]:block')}>
+            <div
+              className="max-h-[65vh] space-y-2 overflow-y-auto"
+              onScroll={event => updateMemoryBrowser(presetId, { scrollTop: event.currentTarget.scrollTop })}
+              ref={listRef}
+            >
+              {rows.map(row => (
+                <button
+                  aria-current={selected?.id === row.id ? 'true' : undefined}
+                  className={cn(
+                    'liquid-glass-card w-full rounded-xl border p-3 text-left',
+                    selected?.id === row.id ? 'border-accent' : 'border-transparent'
+                  )}
+                  data-memory-id={row.id}
+                  key={row.id}
+                  onClick={() => selectRow(row.id)}
+                  type="button"
+                >
+                  <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm leading-6 text-body">
+                    {row.content}
+                  </p>
+                  <p className={cn(HINT_TEXT, 'mt-2')}>
+                    {row.context?.replace(/^recall:/, '') || '—'} ·{' '}
+                    {row.updated_at ? new Date(row.updated_at).toLocaleDateString(english ? 'en' : 'zh-CN') : '—'}
+                  </p>
+                  {memory.drafts[`${presetId}:${row.id}`] && (
+                    <span className="text-xs text-accent">{english ? 'Unsaved changes' : '未保存修改'}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                className={BTN_SUBTLE}
+                disabled={page === 0}
+                onClick={() =>
+                  updateMemoryBrowser(presetId, { page: page - 1, selectedId: null, editorOpen: false, scrollTop: 0 })
+                }
+                type="button"
+              >
+                {english ? 'Previous' : '上一页'}
+              </button>
+              <span className={HINT_TEXT}>
+                {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))} ·{' '}
+                {english ? `${total} memories` : `共 ${total} 条`}
+              </span>
+              <button
+                className={BTN_SUBTLE}
+                disabled={(page + 1) * PAGE_SIZE >= total}
+                onClick={() =>
+                  updateMemoryBrowser(presetId, { page: page + 1, selectedId: null, editorOpen: false, scrollTop: 0 })
+                }
+                type="button"
+              >
+                {english ? 'Next' : '下一页'}
+              </button>
+            </div>
+          </div>
+          {selected && (
+            <div
+              className={cn(
+                'liquid-glass-card min-w-0 space-y-3 rounded-2xl p-4',
+                !browser.editorOpen && 'hidden @min-[720px]:block'
+              )}
+            >
+              <button className={cn(BTN_GHOST, '@min-[720px]:hidden')} onClick={backToList} type="button">
+                ← {english ? 'Back' : '返回'}
+              </button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-sm font-medium text-strong" htmlFor={`memory-${selected.id}`}>
+                  {english ? 'Memory content' : '记忆内容'}
+                </label>
+                {draft && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
+              </div>
+              <textarea
+                className={cn(INPUT_CLASS, 'min-h-40 resize-y')}
+                disabled={busy}
+                id={`memory-${selected.id}`}
+                onChange={event => {
+                  setSavedHint(null)
+                  setMemoryDraft('drafts', draftKey, editMemoryDraft(draft, event.target.value, selected))
+                }}
+                rows={7}
+                value={draft?.content ?? selected.content ?? ''}
+              />
+              {status !== 'active' && (
+                <p className={HINT_TEXT}>
+                  {english ? 'Saving makes this memory available again.' : '保存后，这条记忆会重新生效。'}
+                </p>
+              )}
+              {conflict && (
+                <div className="space-y-2 rounded-xl border border-line-hairline p-3">
+                  <p className="text-xs text-amber-300/90">
+                    {english
+                      ? 'This memory changed on another device. Latest content:'
+                      : '这条记忆已在其他设备修改，最新内容：'}
+                  </p>
+                  <p className="whitespace-pre-wrap break-words text-sm text-body">{selected.content}</p>
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={busy}
+                    onClick={() => {
+                      if (draft) {
+                        setMemoryDraft('drafts', draftKey, {
+                          ...draft,
+                          baseContent: selected.content ?? '',
+                          baseVersion: selected.content_version
+                        })
+                      }
+                    }}
+                    type="button"
+                  >
+                    {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+                  </button>
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={busy || !draft?.content.trim() || conflict}
+                  onClick={() => void save()}
+                  type="button"
+                >
+                  {busy
+                    ? dict.common.saving
+                    : status === 'active'
+                      ? english
+                        ? 'Save changes'
+                        : '保存修改'
+                      : english
+                        ? 'Save and remember again'
+                        : '保存并重新记住'}
+                </button>
+                <button
+                  className={BTN_GHOST}
+                  disabled={busy || !draft}
+                  onClick={() => setMemoryDraft('drafts', draftKey, undefined)}
+                  type="button"
+                >
+                  {dict.common.cancel}
+                </button>
+                <button
+                  className={cn(BTN_GHOST, 'text-danger-fg')}
+                  disabled={busy}
+                  onClick={() => void forget()}
+                  type="button"
+                >
+                  {english ? 'Forget this memory' : '忘记这条记忆'}
+                </button>
+              </div>
+              <p className={HINT_TEXT}>
+                {selected.context?.replace(/^recall:/, '') || '—'} · {t.updated} {selected.updated_at ?? '—'}
+              </p>
+              <MemoryDetails row={selected} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
-function parseTags(raw: string | null): string[] {
-  const parsed = safeJsonParse<unknown>(raw, [])
-
-  return Array.isArray(parsed) ? parsed.map(String) : []
-}
-
-function MemoryRowEditor({
-  dirty,
-  onAutoSave,
-  onChange,
-  onDelete,
-  row,
-  saving,
-  tags,
-  value
-}: {
-  dirty: boolean
-  onAutoSave: () => Promise<void>
-  onChange: (value: string) => void
-  onDelete: () => void
-  row: MemoryRow
-  saving: boolean
-  tags: string[]
-  value: string
-}): React.ReactElement {
+function MemoryDetails({ row }: { row: MemoryItem }): React.ReactElement {
   const t = useStrings().settings.memory
-  const { status: saveStatus } = useAutoSave({ dirty, onSave: onAutoSave, value })
+  const parsed = safeJsonParse<unknown>(row.tags, [])
+  const tags = Array.isArray(parsed) ? parsed.map(String) : []
 
   return (
-    <div className="liquid-glass-card rounded-2xl p-3.5">
-      <p className={cn(HINT_TEXT, 'mb-2')}>
+    <details className="space-y-2 border-t border-line-hairline pt-3 text-xs text-muted">
+      <summary className="cursor-pointer">{t.evidence}</summary>
+      <p>
         {t.basis[row.basis]} · {t.usage[row.usage]}
       </p>
-      {row.reason && <p className={cn(HINT_TEXT, 'mb-2')}>{row.reason}</p>}
+      {row.reason && <p className="whitespace-pre-wrap break-words">{row.reason}</p>}
       {row.expires_at && (
-        <p className={HINT_TEXT}>
+        <p>
           {t.expires} {row.expires_at}
         </p>
       )}
-      {row.evidence.length > 0 && (
-        <details className="mb-2 text-xs text-muted">
-          <summary>{t.evidence}</summary>
-          {row.evidence.map((e, i) => (
-            <blockquote className="mt-1 border-l pl-2" key={`${e.message_id}-${i}`}>
-              {t.stance[e.stance]} · {e.created_at}
-              <br />
-              {e.quote}
-            </blockquote>
-          ))}
-        </details>
-      )}
-      <textarea
-        className={cn(INPUT_CLASS, 'resize-none')}
-        disabled={false}
-        onChange={e => onChange(e.target.value)}
-        rows={3}
-        value={value}
-      />
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap gap-1">
         {tags.map(tag => (
           <span className={CHIP} key={tag}>
             {tag}
           </span>
         ))}
       </div>
-      <p className={cn(HINT_TEXT, 'mt-1')}>
-        {row.context?.replace(RECALL_CONTEXT_PREFIX, '') || '—'} · {t.updated} {row.updated_at ?? '—'} ·{' '}
-        {t.charCount(value.length)}
-      </p>
-      <div className="mt-2 flex items-center gap-2">
-        {saveStatus === 'saving' && <span className={HINT_TEXT}>{t.saving}</span>}
-        {saveStatus === 'saved' && !dirty && <span className={HINT_TEXT}>{t.saved}</span>}
-        {saveStatus === 'error' && <span className="text-[10px] text-danger-fg">{t.saveFailedHint}</span>}
-        <button className={BTN_GHOST} disabled={saving} onClick={onDelete} type="button">
-          {t.delete}
-        </button>
-      </div>
-    </div>
+      {row.evidence.map((entry, index) => (
+        <blockquote className="border-l border-line-hairline pl-2" key={`${entry.fingerprint}-${index}`}>
+          {entry.stance ? t.stance[entry.stance] : ''} · {entry.created_at}
+          <br />
+          {entry.quote}
+        </blockquote>
+      ))}
+    </details>
   )
 }

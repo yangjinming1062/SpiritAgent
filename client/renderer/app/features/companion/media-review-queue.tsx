@@ -1,8 +1,12 @@
-import { type SystemActionKey, systemActionNames } from '@/modules/character'
+import { useStore } from '@nanostores/react'
+import { useEffect, useRef, useState } from 'react'
+
+import { $videoPacks, type SystemActionKey, systemActionNames } from '@/modules/character'
 import { ChatMediaCard } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
-import { SECTION_TITLE } from '@/shared/panel'
+import { BTN_SUBTLE, SECTION_TITLE, WizardModal } from '@/shared/panel'
 import { backendApi } from '@/shared/platform/desktop'
+import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 
 interface PendingMediaReview {
@@ -13,10 +17,16 @@ interface PendingMediaReview {
   title: string
 }
 
+const EMPTY_REVIEWS: PendingMediaReview[] = []
+
 export function MediaReviewQueue(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona
   const slotNames = systemActionNames(dict.living.appearance)
+  const english = useStore($locale) === 'en'
+  const [open, setOpen] = useState(false)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const modal = useRef<HTMLDivElement>(null)
 
   const { data, error, reload, setData } = useAsyncLoader(() =>
     backendApi().api<PendingMediaReview[]>({
@@ -25,36 +35,113 @@ export function MediaReviewQueue(): React.JSX.Element {
     })
   )
 
-  const rows = data ?? []
+  const rows = data ?? EMPTY_REVIEWS
   const failed = error !== null
 
-  return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className={SECTION_TITLE}>{t.mediaReviewTitle}</p>
-        <button className="rounded-md border border-line-standard px-2 py-1 text-xs" onClick={reload} type="button">
-          {t.mediaReviewRefresh}
-        </button>
-      </div>
-      {failed && (
-        <p className="text-xs text-danger-fg" role="alert">
-          {t.mediaReviewLoadError}
-        </p>
-      )}
-      {!failed && rows.length === 0 && <p className="text-xs text-faint">{t.mediaReviewEmpty}</p>}
-      {rows.map(row => {
-        const title = row.system_slot ? slotNames[row.system_slot] : row.title
+  useEffect(() => {
+    window.addEventListener('focus', reload)
+    const unsubscribe = $videoPacks.listen(reload)
 
-        return (
-          <div className="space-y-1" key={row.id}>
-            {title && <p className="text-sm text-fg">{title}</p>}
-            <ChatMediaCard
-              item={{ type: row.media_type, url: row.media_url, review_id: String(row.id) }}
-              onReviewed={() => setData(current => current?.filter(item => item.id !== row.id) ?? null)}
-            />
-          </div>
-        )
-      })}
-    </section>
+    return () => {
+      window.removeEventListener('focus', reload)
+      unsubscribe()
+    }
+  }, [reload])
+
+  useEffect(() => {
+    if (open && (document.activeElement === document.body || document.activeElement === trigger.current)) {
+      modal.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    }
+  }, [open, rows])
+
+  const close = (): void => {
+    setOpen(false)
+    requestAnimationFrame(() => {
+      const target =
+        trigger.current ??
+        document.querySelector<HTMLButtonElement>('[data-companion-navigation] button[aria-current="page"]')
+
+      target?.focus()
+    })
+  }
+
+  return (
+    <>
+      {failed ? (
+        <button className={BTN_SUBTLE} onClick={reload} type="button">
+          {english ? 'Review items could not load · Retry' : '待确认内容加载失败 · 重试'}
+        </button>
+      ) : rows.length > 0 ? (
+        <button className={BTN_SUBTLE} onClick={() => setOpen(true)} ref={trigger} type="button">
+          {english ? 'Awaiting review' : '待确认'} · {rows.length}
+        </button>
+      ) : null}
+      {open && (
+        <div
+          onKeyDownCapture={event => {
+            if (event.key !== 'Tab') {
+              return
+            }
+
+            const items = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>(
+                'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls]'
+              )
+            ).filter(item => item.getClientRects().length > 0)
+
+            const first = items[0]
+            const last = items[items.length - 1]
+
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault()
+              last?.focus()
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault()
+              first?.focus()
+            }
+          }}
+          ref={modal}
+        >
+          <WizardModal
+            onClose={close}
+            regionId="companion-media-review"
+            title={t.mediaReviewTitle}
+            widthClass="max-w-2xl"
+          >
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className={SECTION_TITLE}>{t.mediaReviewTitle}</p>
+                <button
+                  className="rounded-md border border-line-standard px-2 py-1 text-xs"
+                  onClick={reload}
+                  type="button"
+                >
+                  {t.mediaReviewRefresh}
+                </button>
+              </div>
+              {failed && (
+                <p className="text-xs text-danger-fg" role="alert">
+                  {t.mediaReviewLoadError}
+                </p>
+              )}
+              {!failed && rows.length === 0 && <p className="text-xs text-faint">{t.mediaReviewEmpty}</p>}
+              {rows.map(row => {
+                const title = row.system_slot ? slotNames[row.system_slot] : row.title
+
+                return (
+                  <div className="space-y-1" key={row.id}>
+                    {title && <p className="text-sm text-fg">{title}</p>}
+                    <ChatMediaCard
+                      item={{ type: row.media_type, url: row.media_url, review_id: String(row.id) }}
+                      onReviewed={() => setData(current => current?.filter(item => item.id !== row.id) ?? null)}
+                    />
+                  </div>
+                )
+              })}
+            </section>
+          </WizardModal>
+        </div>
+      )}
+    </>
   )
 }

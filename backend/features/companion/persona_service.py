@@ -1,6 +1,5 @@
 import json
-import re
-from datetime import date
+from collections.abc import Mapping
 from typing import Any
 
 from infrastructure.constants import DEFAULT_LANGUAGE
@@ -22,12 +21,14 @@ from features.media.identity_contracts import CharacterCardSnapshot
 from features.media.identity_rendering import render_character_appearance
 from features.memory.memory_bootstrap import read_user_profile, record_user_profile
 from features.memory.models import USER_PROFILE_MAX_CONTENT_CHARS
+from features.memory.profile_fields import validate_profile_birthday
 
 # 人设字段顺序属于对外契约的一部分，它决定渲染出的系统提示词片段形状
 _REQUIRED_FIELDS: tuple[str, ...] = ("name", "personality", "speaking_style")
 _OPTIONAL_FIELDS: tuple[str, ...] = ("relationship", "biological_type", "gender")
 _KNOWN_FIELDS: frozenset[str] = frozenset(_REQUIRED_FIELDS + _OPTIONAL_FIELDS)
 _MAX_FIELD_LEN: int = 500
+_EDITABLE_FIELDS = frozenset({"name", "personality", "relationship", "speaking_style"})
 
 # 引导问答的原始字段，按提问顺序排列；未完成时以草稿存 definition_json，user_* 由 update_persona 路由进 Memory。
 ONBOARDING_FIELDS: tuple[str, ...] = (
@@ -60,24 +61,16 @@ class PersonaValidationError(ValueError):
         self.field = field
 
 
-# user_birthday 统一为 YYYY-MM-DD 真实日期；两个写入口各自校验，不信任前端。
-_BIRTHDAY_PATTERN: re.Pattern[str] = re.compile(r"\d{4}-\d{2}-\d{2}")
+class PersonaConflictError(ValueError):
+    pass
 
 
 def _validate_birthday(value: str | None) -> None:
     """空白视为未填写，直接通过。"""
-    stripped = (value or "").strip()
-    if not stripped:
-        return
-    if not _BIRTHDAY_PATTERN.fullmatch(stripped):
-        raise PersonaValidationError("persona.user_birthday must be formatted as YYYY-MM-DD", "user_birthday")
     try:
-        date.fromisoformat(stripped)
+        validate_profile_birthday(value)
     except ValueError as exc:
-        raise PersonaValidationError(
-            f"persona.user_birthday is not a real date: {stripped!r}",
-            "user_birthday",
-        ) from exc
+        raise PersonaValidationError(str(exc), "user_birthday") from exc
 
 
 def load_persona_definition(persona: Persona | PersonaSnapshot | None) -> dict[str, str]:
@@ -128,30 +121,53 @@ async def get_or_create_persona(db: AsyncSession, user_id: int) -> Persona:
     return await get_or_create_persona_row(db, user_id)
 
 
-async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, Any]) -> Persona:
+async def update_persona(
+    db: AsyncSession,
+    user_id: int,
+    definition: dict[str, Any],
+    *,
+    expected_fields: Mapping[str, str | None] | None = None,
+) -> Persona:
     if not isinstance(definition, dict):
         raise PersonaValidationError("persona definition must be an object")
-    user_profile = _validate_user_profile(definition)
-    _validate_birthday(user_profile.get("user_birthday"))
-    persona_def = {k: v for k, v in definition.items() if not k.startswith("user_")}
-    cleaned = _validate_definition(persona_def)
-
-    await record_user_profile(db, MemoryScope(user_id, "companion"), user_profile)
     persona = await get_or_create_persona(db, user_id)
     await db.refresh(persona, with_for_update=True)
     current_draft = load_persona_definition(persona)
+    if expected_fields is not None:
+        if not persona.is_complete:
+            raise PersonaValidationError("请先完成伙伴资料引导，再编辑伙伴资料。")
+        submitted = set(definition)
+        if not submitted or not submitted.issubset(_EDITABLE_FIELDS):
+            raise PersonaValidationError("只能编辑名字、性格、关系和说话方式。")
+        if not submitted.issubset(expected_fields):
+            raise PersonaValidationError("expected_fields must contain the original value for each edited field")
+        for key, original in expected_fields.items():
+            if (current_draft.get(key) or None) != (original or None):
+                raise PersonaConflictError("伙伴资料已在其他设备更新，请刷新后核对再保存。")
+        persona_def = {key: value for key, value in current_draft.items() if key in _KNOWN_FIELDS}
+        for key in submitted:
+            value = definition[key]
+            if key == "relationship" and isinstance(value, str) and not value.strip():
+                persona_def.pop(key, None)
+            else:
+                persona_def[key] = value
+        cleaned = _validate_definition(persona_def)
+    else:
+        user_profile = _validate_user_profile(definition)
+        _validate_birthday(user_profile.get("user_birthday"))
+        persona_def = {key: value for key, value in definition.items() if not key.startswith("user_")}
+        cleaned = _validate_definition(persona_def)
+        await record_user_profile(db, MemoryScope(user_id, "companion"), user_profile)
+        avatar = await read_appearance_readiness(db, user_id)
+        if avatar is not None and avatar.is_fullbody_confirmed:
+            for locked in ("biological_type", "gender"):
+                if locked in current_draft:
+                    cleaned[locked] = current_draft[locked]
+                else:
+                    cleaned.pop(locked, None)
     for voice_field in ("voice", "voice_setup_skipped"):
         if current_draft.get(voice_field):
             cleaned[voice_field] = current_draft[voice_field]
-    # 锁定字段只保留已有值；原本缺失的字段也不能通过 PUT 补入。
-    avatar = await read_appearance_readiness(db, user_id)
-    sealed = avatar is not None and avatar.is_fullbody_confirmed
-    if sealed:
-        for locked in ("biological_type", "gender"):
-            if locked in current_draft:
-                cleaned[locked] = current_draft[locked]
-            else:
-                cleaned.pop(locked, None)
     persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
     # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
     persona.is_complete = True
@@ -233,18 +249,12 @@ async def submit_onboarding_field(
     user_id: int,
     field: str,
     value: str | None,
-    *,
-    expected_version: int | None = None,
 ) -> OnboardingStateResponse:
     """保存引导回答；人设定型后仅修改个人资料与声音选择。"""
     if field not in ONBOARDING_FIELDS:
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)
     if field == "voice_setup_skipped" and value not in (None, "true"):
         raise PersonaValidationError("voice_setup_skipped must be true or null", field)
-    if expected_version is not None and (
-        type(expected_version) is not int or expected_version < 0 or not field.startswith("user_")
-    ):
-        raise PersonaValidationError("expected_version must be a non-negative int for user profile fields", field)
     if field == "user_birthday":
         _validate_birthday(value)
     persona = await get_or_create_persona(db, user_id)
@@ -252,15 +262,11 @@ async def submit_onboarding_field(
     if persona.is_complete:
         if field.startswith("user_"):
             if value and value.strip():
-                try:
-                    await record_user_profile(
-                        db,
-                        MemoryScope(user_id, "companion"),
-                        {field: value.strip()[:_ONBOARDING_MAX_LEN]},
-                        expected_versions={field: expected_version} if expected_version is not None else None,
-                    )
-                except ValueError as exc:
-                    raise PersonaValidationError(str(exc), field) from exc
+                await record_user_profile(
+                    db,
+                    MemoryScope(user_id, "companion"),
+                    {field: value.strip()[:_ONBOARDING_MAX_LEN]},
+                )
                 await db.commit()
             # 传空值不动 Memory 行：清除 user_* 条目通过记忆管理删除
             return _state(load_persona_definition(persona), None, True)

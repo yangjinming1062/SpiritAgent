@@ -81,6 +81,12 @@ def require_remote_origin(request: Request) -> None:
 
 def remote_content_allowed(path: str, method: str) -> bool:
     path = path.rstrip("/")
+    if path == "/api/companion/persona":
+        return method in {"GET", "PUT"}
+    if path == "/api/companion/character-card":
+        return method in {"GET", "PATCH"}
+    if path == "/api/companion/character-card/extract":
+        return method == "POST"
     if path == "/api/companion/topics/feedback":
         return method == "GET"
     if path.startswith("/api/companion/topics/") and path.endswith("/feedback"):
@@ -102,7 +108,7 @@ def remote_content_allowed(path: str, method: str) -> bool:
     if path in {"/api/media/stt", "/api/media/tts", "/api/media/videos", "/api/media/audios"}:
         return method == "POST"
     return method == "GET" and (
-        path in {"/api/companion/persona", "/api/companion/avatar", "/api/companion/character-card"}
+        path == "/api/companion/avatar"
         or path.startswith("/api/companion/asset/")
         or path.startswith("/api/media/audios/")
     )

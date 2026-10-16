@@ -93,13 +93,14 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
   const creationRevision = useRef(0)
   const submittingRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
+  const [policyBusy, setPolicyBusy] = useState(false)
   const createDraft: SceneCreateDraft = { notes: ui.notes, reference }
   const editDrafts = ui.editDrafts
   const [detailLoading, setDetailLoading] = useState(false)
   const [zoom, setZoom] = useState<ImageZoom | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SceneAsset | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const returnScrollTop = useRef(0)
+  const returnScrollTop = useRef(ui.listScrollTop ?? 0)
   const begin = useAsyncGuard()
   const detail = view.kind === 'detail' ? (details[view.sceneId] ?? null) : null
 
@@ -223,6 +224,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
 
     if (view.kind === 'library' && scrollRef.current) {
       returnScrollTop.current = scrollRef.current.scrollTop
+      updateSceneUi({ listScrollTop: returnScrollTop.current })
     }
 
     setView(next)
@@ -402,6 +404,11 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
   }
 
   const handlePolicy = async (): Promise<void> => {
+    if (policyBusy) {
+      return
+    }
+
+    setPolicyBusy(true)
     const isLive = begin()
     const next = policy === 'locked' ? 'llm_may_replace' : 'locked'
     triggerHaptic('selection')
@@ -415,6 +422,10 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
     } catch (error) {
       if (isLive()) {
         notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneLockFailed) })
+      }
+    } finally {
+      if (isLive()) {
+        setPolicyBusy(false)
       }
     }
   }
@@ -448,6 +459,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
               page={page}
               pending={pending}
               policy={policy}
+              policyBusy={policyBusy}
               query={queryDraft}
               regenerating={regenerating}
               slow={slow}

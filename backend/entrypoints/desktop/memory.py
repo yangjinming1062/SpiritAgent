@@ -1,11 +1,15 @@
-from features.memory.use_cases import forget_manual_memory, list_memory_view, resolve_scope, update_manual_memory
+from features.memory.profile_fields import MemoryProfileChange
+from features.memory.use_cases import (
+    forget_manual_memory,
+    list_memory_view,
+    resolve_scope,
+    update_manual_memory,
+    update_profile,
+)
 from infrastructure.constants import JSONRPC_INVALID_PARAMS, JSONRPC_METHOD_NOT_FOUND
-from infrastructure.logger import get_logger
 from runtime.desktop.jsonrpc import JsonRpcError
 from runtime.gateway_contracts import GatewaySession, RegisterMethod
 from runtime.memory_scope import MemoryScope
-
-logger = get_logger(__name__)
 
 
 def register_handlers(session: GatewaySession, register: RegisterMethod) -> None:
@@ -29,6 +33,9 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
         tag = params.get("tag")
         q = params.get("q")
         limit = params.get("limit")
+        offset = params.get("offset", 0)
+        if type(offset) is not int or offset < 0:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "offset must be a non-negative int")
         try:
             scope = await _memory_scope(params)
             view = await list_memory_view(
@@ -38,12 +45,14 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
                 tag=tag if isinstance(tag, str) else None,
                 query=q if isinstance(q, str) else None,
                 limit=int(limit) if isinstance(limit, int) else 100,
+                offset=offset,
             )
         except ValueError as exc:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc))
         return {
             "memories": [row.model_dump() for row in view.memories],
             "counts": view.counts,
+            "total": view.total,
             "system_preset_id": scope.system_preset_id,
             "session_id": params.get("session_id"),
         }
@@ -78,8 +87,24 @@ def register_handlers(session: GatewaySession, register: RegisterMethod) -> None
             raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"memory {memory_id} not found")
         return {"deleted": ok}
 
+    async def memory_profile_update(params: dict) -> dict:
+        if params.get("system_preset_id") != "companion" or "session_id" in params:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "system_preset_id must be companion")
+        changes = params.get("changes")
+        if not isinstance(changes, list) or len(changes) > 5:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "changes must be a list of up to five registered profile fields")
+        try:
+            validated = [MemoryProfileChange.model_validate(change) for change in changes]
+            scope = await _memory_scope(params)
+            rows = await update_profile(scope, validated)
+        except ValueError as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+        return {"memories": [row.model_dump() for row in rows], "system_preset_id": "companion"}
+
     register("memory.list", memory_list)
 
     register("memory.update", memory_update)
 
     register("memory.delete", memory_delete)
+
+    register("memory.profile.update", memory_profile_update)

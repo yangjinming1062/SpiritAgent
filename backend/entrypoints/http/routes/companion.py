@@ -97,7 +97,12 @@ from features.appearance.views import (
     retry_outfit_description_view,
     select_avatar_view,
 )
-from features.companion.persona_service import PersonaValidationError, confirm_portrait, get_onboarding_state
+from features.companion.persona_service import (
+    PersonaConflictError,
+    PersonaValidationError,
+    confirm_portrait,
+    get_onboarding_state,
+)
 from features.companion.schemas import (
     CompanionOperationResponse,
     OnboardingStateResponse,
@@ -251,7 +256,9 @@ async def get_persona(user: CurrentUser, db: DbSession) -> PersonaResponse:
 async def put_persona(body: PersonaUpdate, user: CurrentUser, db: DbSession) -> PersonaResponse:
     data = safe_json_loads(body.definition_json, default={})
     try:
-        result = await update_persona_view(db, user.id, data)
+        result = await update_persona_view(db, user.id, data, expected_fields=body.expected_fields)
+    except PersonaConflictError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
     except PersonaValidationError as exc:
         raise HTTPException(status_code=422, detail={"error": "Persona validation error", "reason": str(exc)})
     # 延迟调度标签 LLM 抽取；同步执行会阻塞 PUT 超过 renderer 的 15s socket 超时，导致 onboarding 阶段后续 POST /avatar 无法触发。

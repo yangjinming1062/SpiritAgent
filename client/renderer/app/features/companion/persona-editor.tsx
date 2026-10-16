@@ -1,58 +1,61 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import {
   $persona,
-  assemblePersona,
+  applyPersonaResponse,
   hydratePersona,
   PERSONALITY_PRESETS,
   RELATIONSHIP_PRESETS,
   SPEAKING_STYLE_PRESETS
 } from '@/modules/character'
-import { useAutoSave } from '@/shared/hooks/use-auto-save'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, Chip, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
-import { backendApi } from '@/shared/platform/desktop'
+import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
+import type { PersonaEditableField, PersonaResponse, PersonaUpdateRequest } from '@protocol'
 
-type PersonaDraft = Record<'name' | 'personality' | 'relationship' | 'speakingStyle', string>
+import { $companionEditors, updateCompanionEditors } from './companion-editor-state'
 
+type PersonaValues = Record<PersonaEditableField, string>
 interface PersonaField {
-  key: keyof PersonaDraft
+  key: PersonaEditableField
   label: string
   placeholder: string
   presets?: readonly string[]
-  required?: boolean
 }
 
-function draftOf(persona: ReturnType<typeof $persona.get>): PersonaDraft {
+function valuesOf(persona: ReturnType<typeof $persona.get>): PersonaValues {
   return {
     name: persona?.name ?? '',
     personality: persona?.personality ?? '',
     relationship: persona?.relationship ?? '',
-    speakingStyle: persona?.speaking_style ?? ''
+    speaking_style: persona?.speaking_style ?? ''
   }
 }
 
-// 可编辑的 persona 字段：name/relationship/personality/speaking_style；锁定的视觉锚点字段（biological_type/gender）刻意不可编辑——见 docs/DESIGN.md「身份锁定与角色卡」。
+function baseOf(persona: ReturnType<typeof $persona.get>): Record<PersonaEditableField, string | null> {
+  return {
+    name: persona?.name ?? null,
+    personality: persona?.personality ?? null,
+    relationship: persona?.relationship ?? null,
+    speaking_style: persona?.speaking_style ?? null
+  }
+}
+
 export function PersonaSection(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona
-
+  const english = useStore($locale) === 'en'
   const persona = useStore($persona)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(() => draftOf(persona))
+  const draft = useStore($companionEditors).persona
+  const [busy, setBusy] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
-  // 查看态降级提示与编辑态 hint 分槽：hydrate 失败提示不能串进编辑校验文案，反之亦然。
-  const [staleHint, setStaleHint] = useState<string | null>(null)
-  const mountedRef = useRef(true)
-
-  useEffect(
-    () => () => {
-      mountedRef.current = false
-    },
-    []
-  )
+  const [saved, setSaved] = useState(false)
+  const begin = useAsyncGuard()
 
   const fields: readonly PersonaField[] = [
     { key: 'name', label: t.nameLabel, placeholder: t.namePlaceholder },
@@ -69,134 +72,161 @@ export function PersonaSection(): React.JSX.Element {
       presets: PERSONALITY_PRESETS
     },
     {
-      key: 'speakingStyle',
+      key: 'speaking_style',
       label: t.speakingStyleLabel,
       placeholder: t.speakingStylePlaceholder,
-      presets: SPEAKING_STYLE_PRESETS,
-      required: true
+      presets: SPEAKING_STYLE_PRESETS
     }
   ]
 
-  const setField = (key: keyof PersonaDraft, value: string): void =>
-    setDraft(previous => ({ ...previous, [key]: value }))
+  const dirty = draft && fields.some(({ key }) => draft.values[key].trim() !== (draft.base[key] ?? ''))
+  const latest = valuesOf(persona)
+  const latestBase = baseOf(persona)
+  const conflict = draft && fields.some(({ key }) => latestBase[key] !== draft.base[key])
 
-  const startEdit = (): void => {
-    setDraft(draftOf(persona))
-    setHint(null)
-    setEditing(true)
-  }
-
-  const hasValidDraft = draft.name.trim().length > 0 && draft.speakingStyle.trim().length > 0
-
-  const hasChanges =
-    draft.name.trim() !== (persona?.name ?? '') ||
-    draft.personality.trim() !== (persona?.personality ?? '') ||
-    draft.relationship.trim() !== (persona?.relationship ?? '') ||
-    draft.speakingStyle.trim() !== (persona?.speaking_style ?? '')
-
-  useEffect(() => {
-    if (!editing) {
+  const save = async (): Promise<void> => {
+    if (!draft) {
       return
     }
 
-    if (!draft.name.trim()) {
-      setHint(t.hintEmptyName)
-    } else if (!draft.speakingStyle.trim()) {
-      setHint(t.hintEmptySpeakingStyle)
-    } else {
-      setHint(null)
-    }
-  }, [draft.name, draft.speakingStyle, editing, t.hintEmptyName, t.hintEmptySpeakingStyle])
+    if (!draft.values.name.trim() || !draft.values.speaking_style.trim()) {
+      setHint(!draft.values.name.trim() ? t.hintEmptyName : t.hintEmptySpeakingStyle)
 
-  const persist = async (nextDraft: PersonaDraft): Promise<void> => {
-    const trimmed = nextDraft.name.trim()
-    const trimmedSpeakingStyle = nextDraft.speakingStyle.trim()
-
-    if (!trimmed) {
-      throw new Error(t.hintEmptyName)
+      return
     }
 
-    if (!trimmedSpeakingStyle) {
-      throw new Error(t.hintEmptySpeakingStyle)
+    if (!draft.values.personality.trim()) {
+      setHint(english ? 'Enter a personality.' : '请填写性格。')
+
+      return
     }
 
-    // PUT 与 hydrate 的失败模式分开—— PUT 成功后即便 GET 短暂失败也不能当成保存失败（诱导用户重试会造成重复写入）；把当前 persona 作为 previous 传入，让锁定字段原样带回。
-    await backendApi().api({
-      body: {
-        definition_json: JSON.stringify(
-          assemblePersona(
-            {
-              name: nextDraft.name.trim(),
-              personality: nextDraft.personality.trim(),
-              relationship: nextDraft.relationship.trim(),
-              speaking_style: nextDraft.speakingStyle.trim()
-            },
-            persona ?? undefined
+    const isLive = begin()
+    const isCurrent = captureAuthScope()
+
+    if (!isCurrent) {
+      return
+    }
+
+    setBusy(true)
+    setHint(null)
+    setSaved(false)
+
+    try {
+      const expectedFields = Object.fromEntries(fields.map(({ key }) => [key, draft.base[key]]))
+
+      const body: PersonaUpdateRequest = {
+        definition_json: JSON.stringify({
+          name: draft.values.name.trim(),
+          personality: draft.values.personality.trim(),
+          relationship: draft.values.relationship.trim(),
+          speaking_style: draft.values.speaking_style.trim()
+        }),
+        expected_fields: expectedFields
+      }
+
+      const saved = await authedApi<PersonaResponse>({ body, method: 'PUT', path: '/api/companion/persona' })
+
+      if (!saved.ok) {
+        if (saved.reason === 'err') {
+          throw saved.error
+        }
+
+        return
+      }
+
+      if (!isCurrent()) {
+        return
+      }
+
+      if (!saved.value) {
+        throw new Error(t.hintSaveFailed)
+      }
+
+      applyPersonaResponse(saved.value)
+
+      if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
+        updateCompanionEditors({ persona: null })
+      }
+
+      if (isLive()) {
+        setSaved(true)
+      }
+    } catch (error) {
+      if (!isCurrent()) {
+        return
+      }
+
+      const refreshed = await hydratePersona({ silent: true })
+
+      if (!isCurrent()) {
+        return
+      }
+
+      const current = valuesOf($persona.get())
+
+      if (refreshed.ok && fields.every(({ key }) => current[key] === draft.values[key].trim())) {
+        if (JSON.stringify($companionEditors.get().persona) === JSON.stringify(draft)) {
+          updateCompanionEditors({ persona: null })
+        }
+
+        if (isLive()) {
+          setSaved(true)
+        }
+      } else if (isLive()) {
+        setHint(
+          backendDetailMessage(
+            error,
+            ipcErrorStatus(error) === 409
+              ? english
+                ? 'Details changed on another device. Review the latest values.'
+                : '资料已在其他设备修改，请核对最新内容。'
+              : t.hintSaveFailed
           )
         )
-      },
-      method: 'PUT',
-      path: '/api/companion/persona'
-    })
-
-    const result = await hydratePersona({ silent: true })
-
-    // 本地副本未刷出时给查看态降级提示：当前展示的是旧值，下次保存或重启后更新。
-    if (mountedRef.current) {
-      setStaleHint(result.ok ? null : t.hintHydrateFailed)
+      }
+    } finally {
+      if (isLive()) {
+        setBusy(false)
+      }
     }
   }
 
-  const { status: saveStatus, retry: retrySave } = useAutoSave({
-    dirty: editing && hasValidDraft && hasChanges,
-    onError: error => {
-      if (mountedRef.current) {
-        setHint(error instanceof Error && error.message ? error.message : t.hintSaveFailed)
-      }
-    },
-    onSave: persist,
-    value: draft
-  })
-
-  if (!editing) {
-    const saved = draftOf(persona)
-    const details = fields.filter(({ key }) => key !== 'name' && saved[key])
-
+  if (!draft) {
     return (
       <section>
         <p className={cn(SECTION_TITLE, 'mb-2')}>{t.sectionTitle}</p>
         <div className="liquid-glass-card rounded-2xl p-4">
           <div className="flex min-w-0 items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_6px_var(--ui-accent)]" />
-                <p
-                  className="truncate text-[15px] font-medium tracking-tight text-strong"
-                  title={persona?.name || t.defaultName}
-                >
-                  {persona?.name || t.defaultName}
-                </p>
-              </div>
-              {details.length > 0 ? (
-                <dl className="mt-2 space-y-1.5">
-                  {details.map(({ key, label }) => (
-                    <div className="flex min-w-0 items-baseline gap-2" key={key}>
-                      <dt className="w-24 shrink-0 text-[12px] text-muted">
-                        {label}
-                        {t.detailSeparator}
-                      </dt>
-                      <dd className="min-w-0 flex-1 truncate text-[13px] leading-5 text-body" title={saved[key]}>
-                        {saved[key]}
+              <p className="break-words text-[15px] font-medium text-strong">{persona?.name || t.defaultName}</p>
+              <dl className="mt-2 space-y-2">
+                {fields
+                  .filter(({ key }) => key !== 'name' && latest[key])
+                  .map(({ key, label }) => (
+                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-3" key={key}>
+                      <dt className="w-24 shrink-0 text-xs text-muted">{label}</dt>
+                      <dd className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-body">
+                        {latest[key]}
                       </dd>
                     </div>
                   ))}
-                </dl>
-              ) : (
-                <p className="mt-1 text-[13px] leading-relaxed text-body">{t.noPersonality}</p>
+              </dl>
+              {saved && (
+                <p aria-live="polite" className={cn(HINT_TEXT, 'mt-2')}>
+                  {t.hintSaved}
+                </p>
               )}
-              {staleHint && <p className="mt-2 text-xs text-amber-300/90">{staleHint}</p>}
             </div>
-            <button className={cn(BTN_GHOST, 'shrink-0 whitespace-nowrap')} onClick={startEdit} type="button">
+            <button
+              className={cn(BTN_GHOST, 'shrink-0')}
+              onClick={() => {
+                updateCompanionEditors({ persona: { values: latest, base: latestBase } })
+                setHint(null)
+                setSaved(false)
+              }}
+              type="button"
+            >
               {t.editAction}
             </button>
           </div>
@@ -206,52 +236,94 @@ export function PersonaSection(): React.JSX.Element {
   }
 
   return (
-    <section>
-      <p className={cn(SECTION_TITLE, 'mb-1.5')}>{t.editHeading}</p>
-      <div className="space-y-3">
-        {fields.map(({ key, label, placeholder, presets, required }) => (
-          <label className="block" key={key}>
-            <span className={FIELD_LABEL}>{label}</span>
-            <input
-              className={INPUT_CLASS}
-              onChange={e => setField(key, e.target.value)}
-              placeholder={placeholder}
-              required={required}
-              value={draft[key]}
-            />
-            {presets && (
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {presets.map(p => (
-                  <Chip active={draft[key] === p} key={p} label={p} onClick={() => setField(key, p)} />
-                ))}
-              </div>
-            )}
-          </label>
-        ))}
-        {hint && <p className="text-[11px] text-amber-300/90">{hint}</p>}
-        <div className="flex gap-2">
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className={SECTION_TITLE}>{t.editHeading}</p>
+        {dirty && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
+      </div>
+      {fields.map(({ key, label, placeholder, presets }) => (
+        <label className="block" key={key}>
+          <span className={FIELD_LABEL}>{label}</span>
+          <input
+            className={INPUT_CLASS}
+            disabled={busy}
+            maxLength={500}
+            onChange={event =>
+              updateCompanionEditors({ persona: { ...draft, values: { ...draft.values, [key]: event.target.value } } })
+            }
+            placeholder={placeholder}
+            value={draft.values[key]}
+          />
+          {presets && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {presets.map(value => (
+                <Chip
+                  active={draft.values[key] === value}
+                  key={value}
+                  label={value}
+                  onClick={() => {
+                    if (!busy) {
+                      updateCompanionEditors({ persona: { ...draft, values: { ...draft.values, [key]: value } } })
+                    }
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </label>
+      ))}
+      {conflict && (
+        <div className="rounded-xl border border-line-hairline p-3 text-xs text-amber-300/90">
+          <p>
+            {english
+              ? 'These details changed on another device. Review the latest values before saving.'
+              : '资料已在其他设备修改，请核对最新内容后再保存。'}
+          </p>
+          <dl className="mt-2 space-y-1">
+            {fields
+              .filter(({ key }) => latest[key] !== (draft.base[key] ?? ''))
+              .map(({ key, label }) => (
+                <div key={key}>
+                  <dt>{label}</dt>
+                  <dd className="whitespace-pre-wrap break-words text-body">{latest[key] || '—'}</dd>
+                </div>
+              ))}
+          </dl>
           <button
-            className={cn(BTN_SUBTLE, 'flex-1')}
-            disabled={!hasValidDraft || saveStatus === 'saving' || saveStatus === 'error'}
-            onClick={() => {
-              setHint(null)
-              setEditing(false)
-            }}
+            className={cn(BTN_SUBTLE, 'mt-2')}
+            disabled={busy}
+            onClick={() => updateCompanionEditors({ persona: { ...draft, base: latestBase } })}
             type="button"
           >
-            {dict.common.done}
+            {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
           </button>
-          {saveStatus === 'saving' && <span className={cn(HINT_TEXT, 'self-center')}>{dict.common.saving}</span>}
-          {saveStatus === 'saved' && <span className={cn(HINT_TEXT, 'self-center')}>{t.hintSaved}</span>}
-          {saveStatus === 'error' && (
-            <>
-              <span className="self-center text-xs text-danger-fg">{t.hintSaveFailed}</span>
-              <button className={BTN_SUBTLE} onClick={retrySave} type="button">
-                {dict.common.retry}
-              </button>
-            </>
-          )}
         </div>
+      )}
+      {hint && (
+        <p aria-live="polite" className="text-xs text-amber-300/90">
+          {hint}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          className={BTN_SUBTLE}
+          disabled={busy || !dirty || !!conflict}
+          onClick={() => void save()}
+          type="button"
+        >
+          {busy ? dict.common.saving : english ? 'Save changes' : '保存修改'}
+        </button>
+        <button
+          className={BTN_GHOST}
+          disabled={busy}
+          onClick={() => {
+            updateCompanionEditors({ persona: null })
+            setHint(null)
+          }}
+          type="button"
+        >
+          {dict.common.cancel}
+        </button>
       </div>
     </section>
   )

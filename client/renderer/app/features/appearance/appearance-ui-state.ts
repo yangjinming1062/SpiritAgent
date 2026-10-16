@@ -8,6 +8,7 @@ interface AppearanceUiState {
   designing: boolean
   text: string
   draftId: number | null
+  listScrollTop?: number
 }
 
 const FALLBACK: AppearanceUiState = { selectedOutfitId: null, designing: false, text: '', draftId: null }
@@ -18,6 +19,8 @@ function validState(value: unknown): value is AppearanceUiState {
     isRecord(value) &&
     typeof value.designing === 'boolean' &&
     typeof value.text === 'string' &&
+    (value.listScrollTop === undefined ||
+      (typeof value.listScrollTop === 'number' && Number.isFinite(value.listScrollTop) && value.listScrollTop >= 0)) &&
     [value.selectedOutfitId, value.draftId].every(
       id => id === null || (typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
     )

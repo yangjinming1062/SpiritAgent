@@ -1,6 +1,7 @@
 """伙伴资料公开请求，返回用户可见 DTO。"""
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from infrastructure.text import safe_json_loads
@@ -31,7 +32,13 @@ async def get_persona_view(db: AsyncSession, user_id: int) -> PersonaResponse:
     )
 
 
-async def update_persona_view(db: AsyncSession, user_id: int, definition: dict[str, Any]) -> PersonaResponse:
-    persona = await update_persona(db, user_id, definition)
+async def update_persona_view(
+    db: AsyncSession,
+    user_id: int,
+    definition: dict[str, Any],
+    *,
+    expected_fields: Mapping[str, str | None] | None = None,
+) -> PersonaResponse:
+    persona = await update_persona(db, user_id, definition, expected_fields=expected_fields)
     schedule_personality_tag_refresh(persona.id, user_id)
     return _response(persona.is_complete, persona.definition_json, persona.personality_tags_json, persona.current_mood)

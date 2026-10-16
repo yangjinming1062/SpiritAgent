@@ -5,55 +5,40 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MAX_USER_TEXT } from '@/modules/character'
 import { requestGateway } from '@/shared'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { useAutoSave } from '@/shared/hooks/use-auto-save'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { isRecord } from '@/shared/lib/is-record'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, DatePicker, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import {
+  BTN_GHOST,
+  BTN_SUBTLE,
+  confirmAction,
+  DatePicker,
+  FIELD_LABEL,
+  HINT_TEXT,
+  INPUT_CLASS,
+  SECTION_TITLE
+} from '@/shared/panel'
 import { gatewayApi } from '@/shared/platform/desktop'
 import { SpiritAgentGateway } from '@/shared/spiritagent'
 import { $gateway } from '@/shared/store/gateway'
+import { $locale } from '@/shared/store/locale'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
+import type {
+  MemoryItem,
+  MemoryListResponse,
+  MemoryProfileChange,
+  MemoryProfileUpdateRequest,
+  MemoryProfileUpdateResponse,
+  UserProfileField
+} from '@protocol'
 
-type ProfileFieldKey = 'user_call_name' | 'user_gender' | 'user_birthday' | 'user_hobbies' | 'user_freeform'
-
-interface ProfileField {
-  context: string
-  key: ProfileFieldKey
-  multiline?: boolean
-  date?: boolean
-}
-
-interface ProfileMemoryRow {
-  id: number
-  content_version: number
-  context: string | null
-  content: string | null
-}
-
-export interface MemoryDraft {
-  content: string
-  baseContent: string
-  baseVersion: number | null
-}
-
-export function editMemoryDraft(
-  previous: MemoryDraft | undefined,
-  content: string,
-  row?: { content: string | null; content_version: number }
-): MemoryDraft | undefined {
-  const baseContent = previous?.baseContent ?? row?.content ?? ''
-
-  return content === baseContent
-    ? undefined
-    : { content, baseContent, baseVersion: previous ? previous.baseVersion : (row?.content_version ?? null) }
-}
+import { $companionEditors, completeMemoryDraft, editMemoryDraft, setMemoryDraft } from './companion-editor-state'
 
 export function useMemoryChanged(presetId: string, refresh: () => Promise<void>): void {
   const gateway = useStore($gateway)
   const beginGuard = useAsyncGuard()
-
   useEffect(() => {
     if (!gateway) {
       return
@@ -78,32 +63,13 @@ export function useMemoryChanged(presetId: string, refresh: () => Promise<void>)
   }, [beginGuard, gateway, presetId, refresh])
 }
 
-interface ProfileListResponse {
-  system_preset_id: string
-  memories: ProfileMemoryRow[]
-  counts: { user_profile: number }
-}
-
-interface ProfileEntryEditorProps {
-  busy: boolean
-  date?: boolean
-  dirty: boolean
-  inputId: string
-  label: string
-  maxLength?: number
+interface ProfileField {
+  context: string
+  key: UserProfileField
   multiline?: boolean
-  onChange: (value: string) => void
-  onDelete?: () => void
-  onAutoSave: () => Promise<void>
-  persisted: boolean
-  value: string
+  date?: boolean
 }
 
-const PROFILE_PRESET_ID = 'companion'
-// 资料 context 形如 user_profile:< 键 >（后端 memory_namespaces.py）；自定义条目只展示键名。
-const USER_PROFILE_CONTEXT_PREFIX = /^user_profile:/
-
-// 标签与后端资料槽位一一对应；未知标签保留为可编辑的自定义条目。
 const PROFILE_FIELDS: readonly ProfileField[] = [
   { context: 'user_profile:preferred_name', key: 'user_call_name' },
   { context: 'user_profile:gender', key: 'user_gender' },
@@ -112,35 +78,24 @@ const PROFILE_FIELDS: readonly ProfileField[] = [
   { context: 'user_profile:freeform', key: 'user_freeform', multiline: true }
 ]
 
-// 草稿 trim 后非空且不同于已存内容才需要保存，返回待提交的值。
-function pendingValue(draft: string, saved: string | null | undefined): string | null {
-  const value = draft.trim()
-
-  return value && value !== (saved ?? '').trim() ? value : null
-}
-
-export function UserProfileSection({
-  onCount
-}: {
-  onCount: React.Dispatch<React.SetStateAction<number | null>>
-}): React.ReactElement {
+export function UserProfileSection(): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.memory
   const p = t.profile
-
-  const [rows, setRows] = useState<ProfileMemoryRow[]>([])
+  const english = useStore($locale) === 'en'
+  const drafts = useStore($companionEditors).memory.profileDrafts
+  const [rows, setRows] = useState<MemoryItem[] | null>(null)
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
-  const [drafts, setDrafts] = useState<Record<string, MemoryDraft | undefined>>({})
-  const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({})
-  const loadIdRef = useRef(0)
-  const beginGuard = useAsyncGuard()
+  const [savedHint, setSavedHint] = useState<string | null>(null)
+  const begin = useAsyncGuard()
+  const requestId = useRef(0)
 
-  // background 静默刷新用于写后对账，不把表单切成 loading 占位。
   const load = useCallback(
-    async (background = false): Promise<void> => {
-      const isLive = beginGuard()
-      const id = ++loadIdRef.current
+    async (background = false): Promise<MemoryItem[] | null> => {
+      const isLive = begin()
+      const generation = ++requestId.current
 
       if (!background) {
         setLoading(true)
@@ -149,283 +104,496 @@ export function UserProfileSection({
       setHint(null)
 
       try {
-        const res = await requestGateway<ProfileListResponse>('memory.list', {
-          kind: 'user_profile',
-          status: 'active',
-          system_preset_id: PROFILE_PRESET_ID
-        })
+        const all: MemoryItem[] = []
+        let total = 0
 
-        if (!isLive() || loadIdRef.current !== id || res.system_preset_id !== PROFILE_PRESET_ID) {
-          return
+        do {
+          const result = await requestGateway<MemoryListResponse>('memory.list', {
+            kind: 'user_profile',
+            status: 'active',
+            system_preset_id: 'companion',
+            offset: all.length,
+            limit: 100
+          })
+
+          if (!isLive() || generation !== requestId.current || result.system_preset_id !== 'companion') {
+            return null
+          }
+
+          all.push(...result.memories)
+          total = result.total
+
+          if (!result.memories.length) {
+            break
+          }
+        } while (all.length < total)
+
+        setRows(all)
+
+        return all
+      } catch (error) {
+        if (isLive() && generation === requestId.current) {
+          setHint(t.loadFailedHint)
+          notifyError(error, t.loadFailedToast)
         }
 
-        setRows(res.memories)
-        onCount(res.counts.user_profile)
-      } catch (err) {
-        if (!isLive() || loadIdRef.current !== id) {
-          return
-        }
-
-        setHint(t.loadFailedHint)
-        notifyError(err, t.loadFailedToast)
+        return null
       } finally {
-        if (isLive() && loadIdRef.current === id) {
+        if (isLive() && generation === requestId.current) {
           setLoading(false)
         }
       }
     },
-    [beginGuard, onCount, t.loadFailedHint, t.loadFailedToast]
+    [begin, t.loadFailedHint, t.loadFailedToast]
   )
 
   useEffect(() => {
     void load()
 
     return () => {
-      loadIdRef.current += 1
+      requestId.current += 1
     }
   }, [load])
 
-  const refresh = useCallback(() => load(true), [load])
-  useMemoryChanged(PROFILE_PRESET_ID, refresh)
+  const refresh = useCallback(async (): Promise<void> => {
+    await load(true)
+  }, [load])
 
-  const setBusy = (key: string, busy: boolean): void => {
-    setBusyKeys(previous => ({ ...previous, [key]: busy }))
-  }
+  useMemoryChanged('companion', refresh)
+  const rowOf = (field: ProfileField): MemoryItem | undefined => rows?.find(row => row.context === field.context)
+  const changed = PROFILE_FIELDS.filter(field => !!drafts[field.key])
+  const conflicts = changed.filter(field => drafts[field.key]?.baseVersion !== (rowOf(field)?.content_version ?? 0))
 
-  // 三个写操作共用的失败与收尾：卸载后不再回写，失败提示由调用方给出。
-  const guarded = async (
-    key: string,
-    failure: { hint: string; toast: string },
-    action: (isLive: () => boolean) => Promise<void>
-  ): Promise<boolean> => {
-    const isLive = beginGuard()
-    setBusy(key, true)
+  const saveProfile = async (): Promise<void> => {
+    const isLive = begin()
+    const isCurrent = captureAuthScope()
+
+    if (!isCurrent) {
+      return
+    }
+
+    const changes: MemoryProfileChange[] = changed.map(field => ({
+      field: field.key,
+      value: drafts[field.key].content.trim() || null,
+      expected_version: drafts[field.key].baseVersion
+    }))
+
+    const cleared = changed.filter(field => !drafts[field.key].content.trim() && drafts[field.key].baseVersion !== 0)
+
+    if (
+      cleared.length &&
+      !(await confirmAction({
+        title: english ? 'Forget these details?' : '忘记这些资料？',
+        description: cleared.map(field => p.fields[field.key]).join('、'),
+        confirmLabel: english ? 'Save and forget' : '保存并遗忘',
+        variant: 'destructive'
+      }))
+    ) {
+      return
+    }
+
+    if (!isLive()) {
+      return
+    }
+
+    setBusy(true)
+    setHint(null)
+    setSavedHint(null)
 
     try {
-      await action(isLive)
+      const result = await requestGateway<MemoryProfileUpdateResponse>('memory.profile.update', {
+        system_preset_id: 'companion',
+        changes
+      } satisfies MemoryProfileUpdateRequest)
 
-      return true
-    } catch (err) {
-      if (isLive()) {
-        setHint(failure.hint)
-        notifyError(err, failure.toast)
-      }
-
-      return false
-    } finally {
-      if (isLive()) {
-        setBusy(key, false)
-      }
-    }
-  }
-
-  // 资料槽位的 context 在后端唯一（uq_memories_user_context），按 context 取首条即可。
-  const rowOf = (field: ProfileField): ProfileMemoryRow | undefined => rows.find(row => row.context === field.context)
-
-  const saveKnown = async (field: ProfileField): Promise<boolean> => {
-    const row = rowOf(field)
-    const draft = drafts[field.key]
-    const value = pendingValue(draft?.content ?? row?.content ?? '', draft?.baseContent ?? row?.content)
-
-    if (!value) {
-      return false
-    }
-
-    return guarded(field.key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async isLive => {
-      await requestGateway('onboarding.submit', {
-        field: field.key,
-        value,
-        expected_version: draft?.baseVersion ?? 0
-      })
-
-      if (!isLive()) {
+      if (!isCurrent()) {
         return
       }
 
-      setDrafts(previous => ({ ...previous, [field.key]: undefined }))
-
-      if (row) {
-        setRows(previous =>
-          previous.map(entry => (entry.context === field.context ? { ...entry, content: value } : entry))
+      for (const field of changed) {
+        completeMemoryDraft(
+          'profileDrafts',
+          field.key,
+          drafts[field.key],
+          result.memories.find(row => row.context === field.context)
         )
       }
 
-      await load(true)
-    })
+      if (!isLive()) {
+        return
+      }
+
+      setRows(result.memories)
+      setSavedHint(t.saved)
+    } catch (error) {
+      if (isLive()) {
+        const latest = await load(true)
+
+        if (!isLive()) {
+          return
+        }
+
+        const confirmed =
+          !!latest &&
+          changed.every(
+            field =>
+              (latest.find(row => row.context === field.context)?.content ?? '') === drafts[field.key].content.trim()
+          )
+
+        if (confirmed && latest) {
+          for (const field of changed) {
+            completeMemoryDraft(
+              'profileDrafts',
+              field.key,
+              drafts[field.key],
+              latest.find(row => row.context === field.context)
+            )
+          }
+
+          setSavedHint(t.saved)
+        } else {
+          setHint(t.saveFailedHint)
+          notifyError(error, t.saveFailedToast)
+        }
+      }
+    } finally {
+      if (isLive()) {
+        setBusy(false)
+      }
+    }
   }
 
-  const saveExtra = async (row: ProfileMemoryRow): Promise<boolean> => {
-    const key = row.context ?? String(row.id)
+  const saveExtra = async (row: MemoryItem): Promise<void> => {
+    const key = `extra:${row.id}`
     const draft = drafts[key]
-    const value = pendingValue(draft?.content ?? row.content ?? '', draft?.baseContent ?? row.content)
 
-    if (!value || draft?.baseVersion === undefined || draft.baseVersion === null) {
-      return false
+    if (!draft) {
+      return
     }
 
-    return guarded(key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async isLive => {
-      const updated = await requestGateway<ProfileMemoryRow>('memory.update', {
+    const isLive = begin()
+    const isCurrent = captureAuthScope()
+
+    if (!isCurrent) {
+      return
+    }
+
+    setBusy(true)
+    setHint(null)
+    setSavedHint(null)
+
+    try {
+      const updated = await requestGateway<MemoryItem>('memory.update', {
         memory_id: row.id,
-        content: value,
+        content: draft.content.trim(),
         expected_version: draft.baseVersion,
-        system_preset_id: PROFILE_PRESET_ID
+        system_preset_id: 'companion'
       })
 
-      if (!isLive()) {
+      if (!isCurrent()) {
         return
       }
 
-      setDrafts(previous => ({ ...previous, [key]: undefined }))
-      setRows(previous => previous.map(entry => (entry.id === row.id ? updated : entry)))
-    })
-  }
-
-  const remove = async (key: string, memoryId: number): Promise<void> => {
-    await guarded(key, { hint: t.deleteFailedHint, toast: t.deleteFailedToast }, async isLive => {
-      await requestGateway('memory.delete', { memory_id: memoryId, system_preset_id: PROFILE_PRESET_ID })
+      completeMemoryDraft('profileDrafts', key, draft, updated)
 
       if (!isLive()) {
         return
       }
 
-      setDrafts(previous => ({ ...previous, [key]: undefined }))
-      setRows(previous => previous.filter(row => row.id !== memoryId))
-    })
+      setRows(
+        previous =>
+          previous?.map(entry =>
+            entry.id === updated.id && entry.content_version <= updated.content_version ? updated : entry
+          ) ?? null
+      )
+      setSavedHint(t.saved)
+    } catch (error) {
+      if (isLive()) {
+        const latest = await load(true)
+
+        if (!isLive()) {
+          return
+        }
+
+        const confirmed = latest?.find(
+          entry =>
+            entry.id === row.id && entry.content === draft.content.trim() && entry.content_version > draft.baseVersion
+        )
+
+        if (confirmed) {
+          completeMemoryDraft('profileDrafts', key, draft, confirmed)
+          setSavedHint(t.saved)
+        } else {
+          setHint(t.saveFailedHint)
+          notifyError(error, t.saveFailedToast)
+        }
+      }
+    } finally {
+      if (isLive()) {
+        setBusy(false)
+      }
+    }
   }
 
-  const extraRows = rows.filter(row => !PROFILE_FIELDS.some(field => field.context === row.context))
+  const forgetExtra = async (row: MemoryItem): Promise<void> => {
+    const isLive = begin()
+    const isCurrent = captureAuthScope()
+
+    if (!isCurrent) {
+      return
+    }
+
+    if (
+      !(await confirmAction({
+        title: english ? 'Forget this detail?' : '忘记这条资料？',
+        description: row.content ?? '',
+        confirmLabel: english ? 'Forget' : '忘记',
+        variant: 'destructive'
+      })) ||
+      !isLive()
+    ) {
+      return
+    }
+
+    setBusy(true)
+
+    try {
+      await requestGateway('memory.delete', { memory_id: row.id, system_preset_id: 'companion' })
+
+      if (!isCurrent()) {
+        return
+      }
+
+      setMemoryDraft('profileDrafts', `extra:${row.id}`, undefined)
+
+      if (!isLive()) {
+        return
+      }
+
+      await load(true)
+    } catch (error) {
+      if (isLive()) {
+        setHint(t.deleteFailedHint)
+        notifyError(error, t.deleteFailedToast)
+      }
+    } finally {
+      if (isLive()) {
+        setBusy(false)
+      }
+    }
+  }
 
   return (
-    <section className="mb-6">
-      <p className={cn(SECTION_TITLE, 'mb-2')}>{p.title}</p>
-      <p className={cn(HINT_TEXT, 'mb-3')}>{p.hint}</p>
-      {hint && <p className="mb-2 text-xs text-amber-300/90">{hint}</p>}
-
-      {loading ? (
-        <p className="text-xs text-muted">{t.loading}</p>
-      ) : (
-        <div className="space-y-2.5">
-          {PROFILE_FIELDS.map(field => {
-            const row = rowOf(field)
-            const edit = drafts[field.key]
-            const draft = edit?.content ?? row?.content ?? ''
-
-            return (
-              <ProfileEntryEditor
-                busy={!!busyKeys[field.key]}
-                date={field.date}
-                dirty={pendingValue(draft, edit?.baseContent ?? row?.content) !== null}
-                inputId={`profile-${field.key}`}
-                key={field.key}
-                label={`${p.fields[field.key]} · ${row ? p.set : p.unset}`}
-                maxLength={MAX_USER_TEXT}
-                multiline={field.multiline}
-                onAutoSave={async () => {
-                  if (!(await saveKnown(field))) {
-                    throw new Error(t.saveFailedToast)
-                  }
-                }}
-                onChange={value =>
-                  setDrafts(previous => ({
-                    ...previous,
-                    [field.key]: editMemoryDraft(previous[field.key], value, row)
-                  }))
-                }
-                onDelete={row ? () => void remove(field.key, row.id) : undefined}
-                persisted={!!row}
-                value={draft}
-              />
-            )
-          })}
-          {extraRows.map(row => {
-            const key = row.context ?? String(row.id)
-            const edit = drafts[key]
-            const draft = edit?.content ?? row.content ?? ''
-
-            return (
-              <ProfileEntryEditor
-                busy={!!busyKeys[key]}
-                dirty={pendingValue(draft, edit?.baseContent ?? row.content) !== null}
-                inputId={`profile-memory-${row.id}`}
-                key={row.id}
-                label={row.context?.replace(USER_PROFILE_CONTEXT_PREFIX, '') || '—'}
-                multiline
-                onAutoSave={async () => {
-                  if (!(await saveExtra(row))) {
-                    throw new Error(t.saveFailedToast)
-                  }
-                }}
-                onChange={value =>
-                  setDrafts(previous => ({ ...previous, [key]: editMemoryDraft(previous[key], value, row) }))
-                }
-                onDelete={() => void remove(key, row.id)}
-                persisted
-                value={draft}
-              />
-            )
-          })}
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className={SECTION_TITLE}>{p.title}</p>
+        {changed.length > 0 && <span className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</span>}
+      </div>
+      <p className={HINT_TEXT}>{p.hint}</p>
+      {hint && (
+        <div className="flex items-center gap-2">
+          <p aria-live="polite" className="text-xs text-amber-300/90">
+            {hint}
+          </p>
+          <button className={BTN_GHOST} onClick={() => void load()} type="button">
+            {dict.common.retry}
+          </button>
         </div>
       )}
-    </section>
-  )
-}
-
-function ProfileEntryEditor({
-  busy,
-  date = false,
-  dirty,
-  inputId,
-  label,
-  maxLength,
-  multiline = false,
-  onChange,
-  onDelete,
-  onAutoSave,
-  persisted,
-  value
-}: ProfileEntryEditorProps): React.ReactElement {
-  const dict = useStrings()
-  const t = dict.settings.memory
-  const { status: saveStatus } = useAutoSave({ dirty, onSave: onAutoSave, value })
-
-  const inputProps = {
-    className: cn(INPUT_CLASS, multiline && 'resize-none'),
-    disabled: busy,
-    id: inputId,
-    maxLength,
-    onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(event.target.value),
-    value
-  }
-
-  return (
-    <div className="liquid-glass-card rounded-2xl p-3.5">
-      <label className={cn(HINT_TEXT, 'mb-2 block')} htmlFor={inputId}>
-        {label}
-      </label>
-      {multiline ? (
-        <textarea {...inputProps} rows={3} />
-      ) : date ? (
-        <DatePicker
-          clearLabel={dict.common.clear}
-          disabled={busy}
-          id={inputId}
-          onChange={onChange}
-          placeholder={dict.common.pickDate}
-          value={value}
-        />
-      ) : (
-        <input {...inputProps} />
+      {savedHint && (
+        <p aria-live="polite" className={HINT_TEXT}>
+          {savedHint}
+        </p>
       )}
-      <div className="mt-2 flex items-center gap-2">
-        {saveStatus === 'saving' && <span className={HINT_TEXT}>{t.saving}</span>}
-        {saveStatus === 'saved' && persisted && !dirty && <span className={HINT_TEXT}>{t.saved}</span>}
-        {saveStatus === 'error' && <span className="text-[10px] text-danger-fg">{t.saveFailedHint}</span>}
-        {onDelete && (
-          <button className={BTN_GHOST} disabled={busy} onClick={onDelete} type="button">
-            {t.delete}
-          </button>
-        )}
-      </div>
-    </div>
+      {loading ? (
+        <p className={HINT_TEXT}>{t.loading}</p>
+      ) : !rows ? null : (
+        <>
+          <div className="liquid-glass-card space-y-4 rounded-2xl p-4">
+            {PROFILE_FIELDS.map(field => {
+              const row = rowOf(field)
+              const value = drafts[field.key]?.content ?? row?.content ?? ''
+
+              const onChange = (next: string): void => {
+                setSavedHint(null)
+                setMemoryDraft('profileDrafts', field.key, editMemoryDraft(drafts[field.key], next, row))
+              }
+
+              return (
+                <div className="block" key={field.key}>
+                  <label className={FIELD_LABEL} htmlFor={`profile-${field.key}`}>
+                    {p.fields[field.key]}
+                  </label>
+                  {field.date ? (
+                    <DatePicker
+                      clearLabel={dict.common.clear}
+                      disabled={busy}
+                      id={`profile-${field.key}`}
+                      onChange={onChange}
+                      placeholder={dict.common.pickDate}
+                      value={value}
+                    />
+                  ) : field.multiline ? (
+                    <textarea
+                      className={INPUT_CLASS}
+                      disabled={busy}
+                      id={`profile-${field.key}`}
+                      maxLength={MAX_USER_TEXT}
+                      onChange={event => onChange(event.target.value)}
+                      rows={2}
+                      value={value}
+                    />
+                  ) : (
+                    <input
+                      className={INPUT_CLASS}
+                      disabled={busy}
+                      id={`profile-${field.key}`}
+                      maxLength={MAX_USER_TEXT}
+                      onChange={event => onChange(event.target.value)}
+                      value={value}
+                    />
+                  )}
+                </div>
+              )
+            })}
+            {conflicts.length > 0 && (
+              <div className="space-y-2 rounded-xl border border-line-hairline p-3">
+                <p className="text-xs text-amber-300/90">
+                  {english
+                    ? 'These details changed on another device. Review the latest values:'
+                    : '资料已在其他设备修改，请核对最新内容：'}
+                </p>
+                <dl className="space-y-1">
+                  {conflicts.map(field => (
+                    <div key={field.key}>
+                      <dt className={HINT_TEXT}>{p.fields[field.key]}</dt>
+                      <dd className="whitespace-pre-wrap break-words text-sm text-body">
+                        {rowOf(field)?.content || '—'}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={busy}
+                  onClick={() => {
+                    for (const field of conflicts) {
+                      setMemoryDraft('profileDrafts', field.key, {
+                        ...drafts[field.key],
+                        baseContent: rowOf(field)?.content ?? '',
+                        baseVersion: rowOf(field)?.content_version ?? 0
+                      })
+                    }
+                  }}
+                  type="button"
+                >
+                  {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+                </button>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className={BTN_SUBTLE}
+                disabled={busy || !changed.length || !!conflicts.length}
+                onClick={() => void saveProfile()}
+                type="button"
+              >
+                {busy ? dict.common.saving : english ? 'Save changes' : '保存修改'}
+              </button>
+              <button
+                className={BTN_GHOST}
+                disabled={busy || !changed.length}
+                onClick={() => {
+                  for (const field of PROFILE_FIELDS) {
+                    setMemoryDraft('profileDrafts', field.key, undefined)
+                  }
+                }}
+                type="button"
+              >
+                {dict.common.cancel}
+              </button>
+            </div>
+          </div>
+          {rows
+            .filter(row => !PROFILE_FIELDS.some(field => field.context === row.context))
+            .map(row => {
+              const key = `extra:${row.id}`
+              const draft = drafts[key]
+              const conflict = !!draft && draft.baseVersion !== row.content_version
+
+              return (
+                <div className="liquid-glass-card space-y-3 rounded-2xl p-4" key={row.id}>
+                  <label className="block">
+                    <span className={FIELD_LABEL}>
+                      {row.context?.replace(/^user_profile:/, '') || (english ? 'Additional detail' : '补充资料')}
+                    </span>
+                    <textarea
+                      className={INPUT_CLASS}
+                      disabled={busy}
+                      onChange={event => {
+                        setSavedHint(null)
+                        setMemoryDraft('profileDrafts', key, editMemoryDraft(draft, event.target.value, row))
+                      }}
+                      rows={2}
+                      value={draft?.content ?? row.content ?? ''}
+                    />
+                  </label>
+                  {draft && <p className={HINT_TEXT}>{english ? 'Unsaved changes' : '未保存修改'}</p>}
+                  {conflict && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-amber-300/90">
+                        {english ? 'Latest content:' : '其他设备保存的最新内容：'}
+                      </p>
+                      <p className="whitespace-pre-wrap break-words text-sm text-body">{row.content}</p>
+                      <button
+                        className={BTN_SUBTLE}
+                        disabled={busy}
+                        onClick={() => {
+                          if (draft) {
+                            setMemoryDraft('profileDrafts', key, {
+                              ...draft,
+                              baseContent: row.content ?? '',
+                              baseVersion: row.content_version
+                            })
+                          }
+                        }}
+                        type="button"
+                      >
+                        {english ? 'Keep my edits after review' : '已核对，保留我的修改'}
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className={BTN_SUBTLE}
+                      disabled={busy || !draft?.content.trim() || conflict}
+                      onClick={() => void saveExtra(row)}
+                      type="button"
+                    >
+                      {english ? 'Save changes' : '保存修改'}
+                    </button>
+                    <button
+                      className={BTN_GHOST}
+                      disabled={busy || !draft}
+                      onClick={() => setMemoryDraft('profileDrafts', key, undefined)}
+                      type="button"
+                    >
+                      {dict.common.cancel}
+                    </button>
+                    <button
+                      className={cn(BTN_GHOST, 'text-danger-fg')}
+                      disabled={busy}
+                      onClick={() => void forgetExtra(row)}
+                      type="button"
+                    >
+                      {english ? 'Forget this detail' : '忘记这条资料'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+        </>
+      )}
+    </section>
   )
 }

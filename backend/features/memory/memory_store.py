@@ -170,7 +170,7 @@ async def upsert_slotted_memory(
             tags=tags,
             source_kind=source.kind,
             source_refs=refs,
-            basis="explicit" if source.kind == "onboarding" else "system",
+            basis="explicit" if source.kind in {"onboarding", "manual"} else "system",
         )
         .on_conflict_do_update(
             index_elements=["user_id", "system_preset_id", "context"],
@@ -182,7 +182,7 @@ async def upsert_slotted_memory(
                 "source_refs": refs,
                 "content_version": Memory.content_version + 1,
                 "status": "active",
-                "basis": "explicit" if source.kind == "onboarding" else "system",
+                "basis": "explicit" if source.kind in {"onboarding", "manual"} else "system",
                 "usage": "contextual",
                 "reason": "",
                 "expires_at": None,

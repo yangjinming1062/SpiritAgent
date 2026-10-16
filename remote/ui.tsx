@@ -100,6 +100,15 @@ export function useAlive(): () => boolean {
   return useCallback(() => alive.current, [])
 }
 
+export function focusAfterRender(selector: string): void {
+  const content = document.querySelector('.content')
+  requestAnimationFrame(() => {
+    if (content?.isConnected) {
+      content.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true })
+    }
+  })
+}
+
 export function useTask(): {
   busy: boolean
   error: string

@@ -6,15 +6,23 @@ from infrastructure.database import SESSION_LOCAL
 from runtime.memory_scope import EmbeddingItem, MemoryScope, MemorySource, validate_memory_scope
 
 from features.conversation.memory_scope import resolve_memory_scope
-from features.memory.memory_admin import MemoryListItem, list_memories, memory_counts, update_memory
+from features.memory.memory_admin import (
+    MemoryListItem,
+    list_memories,
+    memory_counts,
+    memory_list_total,
+    update_memory,
+    update_user_profile,
+)
 from features.memory.memory_store import backfill_memory_embeddings, create_memory, delete_memory
+from features.memory.profile_fields import MemoryProfileChange
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryListView:
     memories: list[MemoryListItem]
     counts: dict[str, int]
-    scope: MemoryScope
+    total: int
 
 
 async def resolve_scope(user_id: int, session_id: str | None, preset_id: str | None) -> MemoryScope:
@@ -36,10 +44,16 @@ async def list_memory_view(
     tag: str | None,
     query: str | None,
     limit: int,
+    offset: int = 0,
 ) -> MemoryListView:
     async with SESSION_LOCAL() as db:
-        rows = await list_memories(db, scope, kind=kind, status=status, tag=tag, q=query, limit=limit)
-        return MemoryListView(rows, await memory_counts(db, scope), scope)
+        rows = await list_memories(db, scope, kind=kind, status=status, tag=tag, q=query, limit=limit, offset=offset)
+        total = await memory_list_total(db, scope, kind=kind, status=status, tag=tag, q=query)
+        return MemoryListView(rows, await memory_counts(db, scope), total)
+
+
+async def update_profile(scope: MemoryScope, changes: list[MemoryProfileChange]) -> list[MemoryListItem]:
+    return await update_user_profile(scope, changes)
 
 
 async def update_manual_memory(
