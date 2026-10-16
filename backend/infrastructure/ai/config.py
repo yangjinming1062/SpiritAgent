@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from infrastructure.ai.models import ModelModality
+from infrastructure.ai.models import SERVICE_OUTPUT_MODALITY, SERVICE_REQUIRED_INPUT_MODALITIES, ModelModality
 from infrastructure.ai.tasks import AI_TASK_BY_ID, AiTaskKey
 
 CAPABILITY_SERVICES = ("llm", "stt", "tts", "image_gen", "video_gen", "embedding")
@@ -30,8 +30,8 @@ class CapabilityCard(BaseModel):
     model_name: str = Field(min_length=1, max_length=128)
     context_window: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
     max_output_tokens: int | None = Field(default=None, gt=0, le=9_007_199_254_740_991, strict=True)
-    input_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
-    output_modalities: frozenset[ModelModality] = frozenset({ModelModality.text})
+    input_modalities: frozenset[ModelModality] = Field(min_length=1)
+    output_modalities: frozenset[ModelModality] = Field(min_length=1)
 
 
 class CapabilityChains(BaseModel):
@@ -115,11 +115,17 @@ class AIConfig(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("供应商与模型卡片的 ID 不能重复")
         for service, card in self.models():
-            if service == "llm":
-                if card.context_window is None or card.max_output_tokens is None:
-                    raise ValueError("请填写 LLM 的上下文窗口与输出 Token 上限（正整数 tokens）")
-                if ModelModality.text not in card.output_modalities:
-                    raise ValueError("LLM 模型须支持文字输出")
+            missing = [
+                f"{modality.value} 输入"
+                for modality in sorted(SERVICE_REQUIRED_INPUT_MODALITIES[service] - card.input_modalities)
+            ]
+            output = SERVICE_OUTPUT_MODALITY[service]
+            if output not in card.output_modalities:
+                missing.append(f"{output.value} 输出")
+            if missing:
+                raise ValueError(f"模型 {card.model_name} 缺少{'、'.join(missing)}能力，请手动配置输入输出类型")
+            if service == "llm" and (card.context_window is None or card.max_output_tokens is None):
+                raise ValueError("请填写 LLM 的上下文窗口与输出 Token 上限（正整数 tokens）")
             if (
                 card.context_window is not None
                 and card.max_output_tokens is not None

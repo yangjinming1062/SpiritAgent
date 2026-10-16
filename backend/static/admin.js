@@ -784,7 +784,9 @@ function abilityCardHtml(definition, service, multiTask) {
     const models = aiModels(editor, service);
     const cards = ownChain.map(id => resolved.cards.find(card => card.id === id) ?? models.find(card => card.id === id) ?? { id, model_name: '模型引用失效', provider_name: '模型不存在', issue: '模型引用失效' });
     const sourceLabel = resolved.source.includes('默认') ? `${resolved.source.startsWith('用户') ? '用户' : '系统'}默认 · ${READINESS_KEY_LABELS[service]}` : `${resolved.source.startsWith('用户') ? '用户' : '系统'}任务 · ${task.label} · ${SERVICE_SHORT[service]}`;
-    const chain = cards.length ? cards.map((card, index) => chainNodeHtml(card, index, cards.length)).join('') : `<div class="chain-placeholder"><div>${icon(service)} <span>${resolved.source === '未配置' ? '默认链未配置' : `继承${esc(sourceLabel)}`}</span>${resolved.source !== '未配置' && !resolved.cards.some(card => card.available) ? '<p class="hint">所选链没有可用模型</p>' : ''}</div><button class="btn btn--text" data-ai-source="${esc(resolved.sourceKey)}">查看来源 →</button></div>`;
+    const inheritedIssues = resolved.cards.filter(card => !card.available && card.issue).map(card => `<p class="hint">${esc(card.model_name)}：${esc(card.issue)}</p>`).join('');
+    const unavailableHint = resolved.source !== '未配置' && !resolved.cards.some(card => card.available) ? '<p class="hint">所选链没有可用模型</p>' + inheritedIssues : '';
+    const chain = cards.length ? cards.map((card, index) => chainNodeHtml(card, index, cards.length)).join('') : `<div class="chain-placeholder"><div>${icon(service)} <span>${resolved.source === '未配置' ? '默认链未配置' : `继承${esc(sourceLabel)}`}</span>${unavailableHint}</div><button class="btn btn--text" data-ai-source="${esc(resolved.sourceKey)}">查看来源 →</button></div>`;
     return `<article class="ability-card${aiView.group === key ? ' selected' : ''}" data-ai-group="${key}" tabindex="-1"><div class="ability-heading">${icon(service)}<h3>${esc(multiTask ? task.label : READINESS_KEY_LABELS[service])}</h3>${multiTask ? `<span class="hint">${READINESS_KEY_LABELS[service]}</span>` : ''}<span class="chain-state pill ${cards.length && !resolved.cards.some(card => card.available) ? 'pill--red' : 'pill--muted'}">${cards.length ? '独立配置' : '默认继承'}</span></div>${aiUsageHtml(task)}<div class="chain-track">${chain}</div></article>`;
 }
 function renderAiChain() {
@@ -1068,7 +1070,7 @@ function modelEntries(config, service, scope, system = null) {
         const provider = config.providers.find(item => item.id === card.provider_id) ?? system?.providers.find(item => item.id === card.provider_id);
         const settings = defaults?.[service]?.[provider?.provider_type];
         const keySet = Boolean(provider?.api_key || (provider?.api_key_set && !provider?.clear_api_key));
-        const issue = !provider ? '供应商引用失效' : !settings ? '供应商不支持此能力' : !card.model_name?.trim() ? '未填写模型名称' : service === 'llm' && (!parseAiContextWindow(card.context_window) || !parseAiContextWindow(card.max_output_tokens)) ? '缺窗口或输出上限' : !(provider.base_url || settings.base_url) ? '缺 Base URL' : settings.requires_api_key && !keySet ? '缺 API Key' : '';
+        const issue = !provider ? '供应商引用失效' : !settings ? '供应商不支持此能力' : !card.model_name?.trim() ? '未填写模型名称' : aiModelCapabilityIssue(card, service) || (service === 'llm' && (!parseAiContextWindow(card.context_window) || !parseAiContextWindow(card.max_output_tokens)) ? '缺窗口或输出上限' : !(provider.base_url || settings.base_url) ? '缺 Base URL' : settings.requires_api_key && !keySet ? '缺 API Key' : '');
         return { ...card, service, scope, provider: provider?.provider_type, provider_name: provider?.name ?? '供应商不存在', available: !issue, issue };
     });
 }
@@ -1079,16 +1081,29 @@ function aiModels(editor, service) {
     return [...modelEntries(editor.config, service, isSystem ? '系统' : '用户', isSystem ? null : system), ...(isSystem ? [] : modelEntries(system, service, '系统'))];
 }
 
-function aiModelSupportsTask(card, task) {
+function aiModelCapabilityIssue(card, service, required = [service === 'stt' ? 'audio' : 'text']) {
+    const issues = [];
+    const missing = required.filter(type => !(card.input_modalities ?? []).includes(type));
+    if (missing.length) issues.push('缺少' + missing.map(type => AI_MODALITIES[type]).join('、') + '输入');
+    if (!(card.output_modalities ?? []).includes(AI_OUTPUTS[service])) issues.push('缺少' + AI_MODALITIES[AI_OUTPUTS[service]] + '输出');
+    return issues.join('；');
+}
+
+function aiModelTaskIssue(card, task) {
     const supported = tabCache.models?.ai_provider_support?.[task.service] ?? [];
-    if (!supported.includes(card.provider)) return false;
+    if (!supported.includes(card.provider)) return '供应商不支持此任务能力';
     const settings = (tabCache.models?.ai_provider_defaults ?? aiEditors.system.defaults)?.[task.service]?.[card.provider];
     const required = task.service === 'stt' ? ['audio'] : task.id === 'voice_clone' ? ['text', 'audio'] : ['text'];
-    if (!required.every(type => (card.input_modalities ?? []).includes(type) && (settings?.input_modalities ?? []).includes(type))) return false;
-    if (!(card.output_modalities ?? []).includes(AI_OUTPUTS[task.service])) return false;
-    if (task.id === 'voice_design' && task.service === 'tts') return settings?.supports_voice_design && (!settings.voice_design_model || card.model_name === settings.voice_design_model);
-    if (task.id === 'voice_clone') return settings?.supports_voice_clone && card.model_name === settings.voice_clone_model;
-    return true;
+    const capabilityIssue = aiModelCapabilityIssue(card, task.service, required);
+    if (capabilityIssue) return capabilityIssue;
+    if (!required.every(type => (settings?.input_modalities ?? []).includes(type))) return '供应商不支持所需输入类型';
+    if (task.id === 'voice_design' && task.service === 'tts' && !(settings?.supports_voice_design && (!settings.voice_design_model || card.model_name === settings.voice_design_model))) return '模型不支持音色设计';
+    if (task.id === 'voice_clone' && !(settings?.supports_voice_clone && card.model_name === settings.voice_clone_model)) return '模型不支持声音克隆';
+    return '';
+}
+
+function aiModelSupportsTask(card, task) {
+    return !aiModelTaskIssue(card, task);
 }
 
 function effectiveTaskChain(system, user, task) {
@@ -1103,7 +1118,11 @@ function effectiveTaskChain(system, user, task) {
     let values = task.service === 'embedding' ? layer.values.slice(0, 1) : layer.values;
     const catalog = [...modelEntries(layer.owner, task.service, layer.scope, layer.owner === user ? system : null), ...(layer.owner === user ? modelEntries(system, task.service, '系统') : [])];
     values = values.map(value => catalog.find(card => card.id === (layer.refs ? value : value.id)) ?? { id: value, model_name: '模型引用失效', provider_name: '模型不存在', available: false, issue: '模型引用失效' });
-    const cards = layer.refs ? values.map(card => card.provider && !aiModelSupportsTask(card, task) ? { ...card, available: false, issue: '模型不支持此任务能力' } : card) : values.filter(card => !card.provider || aiModelSupportsTask(card, task));
+    const compatible = values.filter(card => !card.provider || aiModelSupportsTask(card, task));
+    const cards = (layer.refs || !compatible.length ? values : compatible).map(card => {
+        const issue = card.provider ? aiModelTaskIssue(card, task) : '';
+        return issue ? { ...card, available: false, issue } : card;
+    });
     const sourceKey = `${layer.owner === user ? 'user' : 'system'}:${layer.refs ? `task:${task.id}:` : ''}${task.service}`;
     return { cards, source: layer.source, sourceKey };
 }
@@ -1144,6 +1163,8 @@ function validateAiCards(editorName) {
             const provider = aiSource(editor, card.provider_id);
             if (!provider || !(editor.support[service] ?? []).includes(provider.provider_type)) return fail(aiGroupLabel(service) + '：请选择支持此能力的已有供应商');
             if (!card.model_name?.trim()) return fail(aiGroupLabel(service) + '：请填写具体模型名称');
+            const capabilityIssue = aiModelCapabilityIssue(card, service);
+            if (capabilityIssue) return fail(card.model_name + '：' + capabilityIssue + '，请根据模型元数据或供应商说明手动配置');
             if (service === 'image_gen' && provider.provider_type === 'local' && card.model_name !== 'qwen') return fail('本地生图使用固定 Qwen 工作流');
             if (service === 'llm') {
                 const window = parseAiContextWindow(card.context_window);
@@ -1164,7 +1185,12 @@ function validateAiCards(editorName) {
             const models = aiModels(editor, service);
             if (new Set(chain).size !== chain.length) return fail(task.label + '：不能重复引用同一模型卡片');
             if (service === 'embedding' && chain.length > 1) return fail('记忆向量只能选择一张模型卡片');
-            if (chain.some(id => !models.some(card => card.id === id && aiModelSupportsTask(card, task)))) return fail(task.label + '：请引用支持此能力的已有模型卡片');
+            for (const id of chain) {
+                const card = models.find(item => item.id === id);
+                if (!card) return fail(task.label + '：引用的模型卡片不存在');
+                const issue = aiModelTaskIssue(card, task);
+                if (issue) return fail(task.label + ' · ' + card.model_name + '：' + issue);
+            }
         }
     }
     for (const [card, window] of windows) card.context_window = window;
@@ -1294,16 +1320,21 @@ function newAiId() {
     return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
 }
 
-function newAiModel(providerId, service, providerType) {
-    return { id: newAiId(), provider_id: providerId, model_name: service === 'image_gen' && providerType === 'local' ? 'qwen' : '',
-        input_modalities: [service === 'stt' ? 'audio' : 'text'], output_modalities: [AI_OUTPUTS[service]],
+function aiModelModalities(metadata = null) {
+    return { input_modalities: structuredClone(metadata?.input_modalities ?? []), output_modalities: structuredClone(metadata?.output_modalities ?? []) };
+}
+
+function newAiModel(providerId, service, providerType, modelName = '') {
+    const name = service === 'image_gen' && providerType === 'local' ? 'qwen' : modelName;
+    return { id: newAiId(), provider_id: providerId, model_name: name,
+        ...aiModelModalities(),
         ...(service === 'llm' ? { context_window: '', max_output_tokens: '' } : {}) };
 }
 
 function aiModelNeedsConfiguration(card, service) {
     const window = parseAiContextWindow(card.context_window);
     const output = parseAiContextWindow(card.max_output_tokens);
-    return !card.model_name?.trim() || (service === 'llm' && (!window || !output || output > window));
+    return !card.model_name?.trim() || Boolean(aiModelCapabilityIssue(card, service)) || (service === 'llm' && (!window || !output || output > window));
 }
 
 function aiTokenField(card, field, label, choices, required = false) {
@@ -1317,12 +1348,16 @@ function aiModelFields(card, service, settings, localImage) {
     const choices = aiCatalogModels(state.catalog, service);
     const selected = state.metadata;
     const candidates = state.candidates?.[card.model_name] ?? [];
+    const missingMetadata = [['input_modalities', '输入类型'], ['output_modalities', '输出类型']].filter(([field]) => !selected?.[field]?.length).map(([, label]) => label);
+    const capabilityIssue = aiModelCapabilityIssue(card, service);
     const types = (field, title) => `<div class="field"><span>${title}</span><div>${Object.entries(AI_MODALITIES).filter(([type]) => type !== 'embeddings' || field === 'output_modalities').map(([type, label]) => `<label style="display:inline-flex;gap:.35rem;margin-right:1rem"><input type="checkbox" data-ai-modality="${field}" value="${type}"${(card[field] ?? []).includes(type) ? ' checked' : ''}>${label}</label>`).join('')}</div></div>`;
     return `<div class="field"><label>模型名称<input type="text" data-ai-field="model_name" list="models-${card.id}" value="${esc(card.model_name)}" placeholder="搜索列表或填写供应商模型 ID" required${localImage ? ' readonly' : ''}></label>
         <datalist id="models-${card.id}">${choices.map(model => `<option value="${esc(model.model_name)}">${esc(model.display_name || model.model_name)}</option>`).join('')}</datalist>
         <div class="layer-actions"><button class="btn btn--ghost" data-ai-action="model-info"${state.loading || !card.model_name ? ' disabled' : ''}>获取模型信息</button></div>
         ${state.loading ? '<p class="hint">正在获取模型信息…</p>' : ''}
         ${(state.warnings ?? []).map(message => `<p class="hint">${esc(message)}</p>`).join('')}
+        ${missingMetadata.length ? `<p class="hint">未取得${missingMetadata.join('、')}元数据，请按供应商说明核对下方配置，缺项须手动补全。</p>` : ''}
+        <p class="hint" data-ai-capability-issue${capabilityIssue ? '' : ' hidden'}>${capabilityIssue ? esc(capabilityIssue) + '，补全后才能保存。' : ''}</p>
         ${candidates.length ? `<label>请选择对应的 OpenRouter 模型<select data-ai-catalog-choice><option value="">模型名称有多个匹配</option>${candidates.map(model => `<option value="${esc(model.catalog_id || model.model_name)}">${esc(model.display_name + ' · ' + model.model_name)}</option>`).join('')}</select></label>` : ''}
         ${selected ? `<p class="hint">${aiModelMetadataHtml(selected)}</p><button class="btn btn--ghost" data-ai-action="apply-model-info">填入建议值</button>` : ''}
         ${localImage ? '<p class="hint">固定 Qwen 工作流，模型文件由服务匹配。</p>' : ''}
@@ -1494,11 +1529,13 @@ function renderAiModelPickerResults() {
     $('#aiModelPickerList').innerHTML = models.map(model => {
         const added = existing.has(model.model_name);
         const pending = aiModelNeedsConfiguration(model, aiService(picker.group));
+        const capabilityIssue = aiModelCapabilityIssue(model, aiService(picker.group));
         const ambiguous = state.candidates[model.model_name]?.length;
         return `<label class="ai-model-option"><input type="checkbox" data-ai-pick-model="${esc(model.model_name)}"${added ? ' disabled' : picker.selected.has(model.model_name) ? ' checked' : ''}>
             <span><strong>${esc(model.model_name)}</strong> ${added ? '<span class="keybadge">已添加</span>' : pending ? '<span class="keybadge off">待补全</span>' : ''}
                 ${model.display_name && model.display_name !== model.model_name ? `<span class="hint">${esc(model.display_name)}</span>` : ''}
-                <span class="hint">${aiModelMetadataHtml(model) || '暂无参数信息，添加后可手动配置。'}</span>
+                <span class="hint">${aiModelMetadataHtml(model) || '暂无参数信息，添加后须手动配置。'}</span>
+                ${capabilityIssue ? `<span class="hint">${esc(capabilityIssue)}，添加后须手动补全。</span>` : ''}
                 ${ambiguous ? '<span class="hint">存在多个目录匹配，添加后请选择对应模型。</span>' : ''}
             </span></label>`;
     }).join('');
@@ -1524,7 +1561,7 @@ function addAiModelPickerSelection() {
     const editor = aiEditors[picker.editorName];
     const provider = aiSource(editor, picker.providerId);
     const cards = names.map(name => {
-        const card = { ...newAiModel(provider.id, aiService(picker.group), provider.provider_type), model_name: name };
+        const card = newAiModel(provider.id, aiService(picker.group), provider.provider_type, name);
         const metadata = picker.catalog.models.find(model => model.model_name === name);
         if (metadata) applyAiModelMetadata(card, metadata);
         return card;
@@ -1618,6 +1655,12 @@ function bindAiCardEvents() {
                 const values = new Set(card[target.dataset.aiModality] ?? []);
                 if (target.checked) values.add(target.value); else values.delete(target.value);
                 card[target.dataset.aiModality] = [...values];
+                const notice = target.closest('[data-ai-group]').querySelector('[data-ai-capability-issue]');
+                if (notice) {
+                    const issue = aiModelCapabilityIssue(card, aiService(group));
+                    notice.hidden = !issue;
+                    notice.textContent = issue ? issue + '，补全后才能保存。' : '';
+                }
             } else if (target.dataset.aiField) {
                 const field = target.dataset.aiField;
                 card[field] = target.value;
@@ -1639,8 +1682,7 @@ function bindAiCardEvents() {
             if (target.dataset.aiField === 'model_name') {
                 const catalog = aiModelDiscoveryState(card, group).catalog;
                 const metadata = catalog?.models.find(model => model.model_name === card.model_name);
-                card.input_modalities = metadata?.input_modalities ?? [aiService(group) === 'stt' ? 'audio' : 'text'];
-                card.output_modalities = metadata?.output_modalities ?? [AI_OUTPUTS[aiService(group)]];
+                Object.assign(card, aiModelModalities(metadata));
                 if (aiService(group) === 'llm') { card.context_window = ''; card.max_output_tokens = ''; }
                 if (metadata) applyAiModelMetadata(card, metadata);
                 aiModelDiscovery.set(card, { catalog, modelName: card.model_name, metadata: metadata ?? null, candidates: catalog?.candidates ?? {} });
