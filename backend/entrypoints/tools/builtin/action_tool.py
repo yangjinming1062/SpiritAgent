@@ -95,7 +95,11 @@ def register(registry: ToolsRegistry) -> None:
                     "type": "string",
                     "minLength": 10,
                     "maxLength": 600,
-                    "description": "角色独立完成一个表达目标所需的可见姿态、运动过程、节奏与神态。",
+                    "description": (
+                        "角色独立完成一个表达目标所需的主要运动部位、方向、节奏、稳定支撑与必要衔接；"
+                        "保持姿态也可以是完整表达，不为填满时长额外编排律动。次数和频率按目标必要性安排。"
+                        "未专门设计呼吸动作时，安静状态的呼吸仅在胸腹或结构适用的局部微小变化，头肩、身体位置与重心安定。"
+                    ),
                 },
                 "use_when": {
                     "type": "array",
@@ -115,13 +119,13 @@ def register(registry: ToolsRegistry) -> None:
                     "minimum": 1,
                     "maximum": int(ABSOLUTE_MAX_DURATION_SECONDS),
                     "default": 4,
-                    "description": "预计时长（整秒），按动作特性填写 1–15，默认 4 秒。",
+                    "description": "预计时长（整秒），按一次可见表达与必要停留填写 1–15，默认 4 秒；长期陪伴不意味着延长单个片段，不用额外动作填满。",
                 },
                 "clip_kind": {
                     "type": "string",
                     "enum": ["loop", "once"],
                     "default": "once",
-                    "description": "loop 首尾可循环；once 完整播放一次。",
+                    "description": "loop 持续保持状态或运动首尾自然衔接，接触关系与已有物品的可见状态也须连续，不为循环强加往复；once 完成一次表达并自然收束。",
                 },
             },
             ["name", "motion_description"],

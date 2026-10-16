@@ -617,7 +617,13 @@ async def _run_action_attempt(
                     await _require_new_paid_step(pack, context)
                     status = await current.submit(
                         VideoGenRequest(
-                            prompt=build_video_prompt(entry, context.identity),
+                            prompt=build_video_prompt(
+                                entry,
+                                context.identity,
+                                system_slot=job.system_slot or "",
+                                feedback=context.feedback,
+                                action_feedback=context.action_feedback.get(job.key, ""),
+                            ),
                             duration=int(round(entry.duration_seconds)),
                             resolution=resolution,
                             first_frame_image=pose_uri,

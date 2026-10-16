@@ -70,6 +70,7 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_BASE,
     DESKTOP_VIDEO_LOOP,
     DESKTOP_VIDEO_ONCE,
+    DESKTOP_VIDEO_QUIET,
 )
 from features.desktop_life.queries import activated_desktop_environment
 from features.desktop_life.repository import (
@@ -230,17 +231,21 @@ async def get_desktop_external_prompt(
     if language == "en":
         kind = "looping" if action.kind == "loop" else "single-action"
         cycle = (
-            "Image 1 is the required opening and ending frame. Enter the activity from this pose, complete it, then restore the same pose, gaze, object positions, camera and lighting."
-            if has_base
-            else "The ending joins the opening naturally in pose, gaze and object positions for continuous looping."
+            DESKTOP_VIDEO_QUIET[language]
+            if action.key == "idle"
+            else "Image 1 is the required opening and ending frame. Complete the target activity once at its required speed, pausing only where appropriate. After completion, return naturally through the actual action to the opening pose, gaze, support contacts, prop positions and visible prop states, settling across the boundary. Keep the camera and lighting stable; do not add unrelated back-and-forth motion, reverse actions or reset visible prop states to match the endpoints."
+            if has_base and action.kind != "loop"
+            else "Continue the target activity, pausing only where appropriate. The ending pose, gaze, support contacts, prop positions and visible prop states join the opening naturally, with continuous motion direction and speed across the boundary. Preserve repetition required by the target itself; do not add unrelated back-and-forth motion, reverse actions or reset visible prop states to close the loop."
             if action.kind == "loop"
-            else "Complete the target action once, then hold its natural finishing state."
+            else "Complete the target action once at its required speed, pausing only where appropriate, then hold its natural finishing state."
         )
     else:
         kind = "循环" if action.kind == "loop" else "单次"
         cycle = (
-            "图 1 是必须使用的起止画面。" + DESKTOP_VIDEO_BASE
-            if has_base
+            DESKTOP_VIDEO_QUIET[language]
+            if action.key == "idle"
+            else "图 1 是必须使用的起止画面。" + DESKTOP_VIDEO_BASE
+            if has_base and action.kind != "loop"
             else DESKTOP_VIDEO_LOOP
             if action.kind == "loop"
             else DESKTOP_VIDEO_ONCE
@@ -248,13 +253,13 @@ async def get_desktop_external_prompt(
     prompt = DESKTOP_EXTERNAL_VIDEO_TEMPLATES[language].format(
         duration_seconds=action.duration_seconds,
         references=(
-            "图 1 是已确认的起始画面，人物外观、穿着、环境、物品和构图均以此为准。"
+            "图 1 是已确认的起始画面，人物外观、穿着、环境、物品、构图和光线均以此为准。"
             if confirmed and language != "en"
-            else "Image 1 is the confirmed opening frame. Preserve its visible identity, clothing, environment, props and framing."
+            else "Image 1 is the confirmed opening frame. Preserve its visible identity, clothing, environment, props, framing and lighting."
             if confirmed
-            else "图 1 提供人物外观，图 2 提供着装，图 3 提供场景环境。"
+            else "图 1 的头像只提供面容与头部特征，图 2 的着装图提供身体结构、比例和当前造型，图 3 提供环境与光线。头像和着装图的姿态、背景与取景不限制新开场。"
             if language != "en"
-            else "Image 1 provides identity, image 2 clothing, and image 3 the environment."
+            else "Image 1 is the portrait and provides only the face and head features. Image 2 provides body structure, proportions and current styling. Image 3 provides the environment and lighting. The poses, backgrounds and framing of images 1 and 2 do not constrain the new opening."
         ),
         kind=kind,
         motion=description,
@@ -263,18 +268,30 @@ async def get_desktop_external_prompt(
     output_ratio = desktop_aspect_ratio(output_width, output_height)
     prompt += (
         f"\nDesktop target: {row.target_width}×{row.target_height}. Output aspect ratio: {output_ratio}; use the highest available native resolution and preserve the confirmed image framing."
+        if language == "en" and confirmed
+        else f"\nDesktop target: {row.target_width}×{row.target_height}. Output aspect ratio: {output_ratio}; use the highest available native resolution and compose a coherent new opening frame for the activity according to the reference roles above."
         if language == "en"
         else f"\n桌景目标分辨率为 {row.target_width}×{row.target_height}，本次输出画幅为 {output_ratio}；使用可用的最高原生清晰度，保留已确认图片的构图。"
+        if confirmed
+        else f"\n桌景目标分辨率为 {row.target_width}×{row.target_height}，本次输出画幅为 {output_ratio}；使用可用的最高原生清晰度，按上述参考职责安排符合活动的连贯新开场。"
     )
     conditions = {"use_when": json.loads(action.use_when_json), "avoid_when": json.loads(action.avoid_when_json)}
     prompt += (
         "\nUsage conditions: "
         + json.dumps(conditions, ensure_ascii=False)
         + ". Use the actual body, available props and space; if required conditions are missing, explain why instead of redesigning the body or room."
+        if language == "en" and confirmed
+        else "\nUsage conditions: "
+        + json.dumps(conditions, ensure_ascii=False)
+        + ". Preserve the reference body structure and current styling. Compose a new opening using image 3's environment, with compatible everyday props needed by the activity; if the conditions cannot support it, explain why. Do not redesign the body or replace the environment without support from the references."
         if language == "en"
         else "\n适用与避免条件："
         + json.dumps(conditions, ensure_ascii=False)
         + "。使用实际身体、已有物品和空间；必要条件缺失时说明原因，不能改造身体或房间布局来完成活动。"
+        if confirmed
+        else "\n适用与避免条件："
+        + json.dumps(conditions, ensure_ascii=False)
+        + "。保留参考中的身体结构和当前造型，按图 3 的环境安排新开场与活动所需的相容日用品；必要条件无法支持时说明原因，不能改造身体或无依据替换环境。"
     )
     if extra:
         if confirmed:
@@ -282,14 +299,14 @@ async def get_desktop_external_prompt(
                 "\nAdditional user requirements adjust only the activity and expressions compatible with image 1; "
                 f"preserve its opening composition and the playback requirements above: {extra}"
                 if language == "en"
-                else f"\n用户补充要求仅调整与图 1 相容的活动和过程神态，保留图中的开场构图及上述播放要求：{extra}"
+                else f"\n用户本次调整仅改变与图 1 相容的活动和过程神态，保留图中的开场构图及上述播放要求：{extra}"
             )
         else:
             prompt += (
                 "\nAdditional user requirements (take precedence for the specified activity, expression and opening framing; "
                 f"preserve the identity, styling, environment and playback mode above): {extra}"
                 if language == "en"
-                else f"\n用户补充要求（对应的活动、神态与开场构图细节以此为准，身份、造型、环境与播放方式沿用上述要求）：{extra}"
+                else f"\n用户本次调整（对应的活动、神态与开场构图细节以此为准，身份、造型、环境与播放方式沿用上述要求）：{extra}"
             )
     return DesktopVideoExternalPromptResponse(
         draft_id=progress.generation_id if progress and action.stage != "complete" else None,
@@ -2164,8 +2181,11 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int) -> None:
             row = await db.get(DesktopVideoSet, proposal.set_id)
             snapshot = DesktopVisualSnapshot.model_validate_json(row.context_json)
             reviewed_base_version, reviewed_base_path = row.base_version, row.base_image_path
-            portrait_path = row.base_image_path or snapshot.portrait_path
             request = DesktopVideoDesignRequest.model_validate_json(proposal.design_json)
+            use_base_reference = request.continuity == "base"
+            if use_base_reference and not row.base_image_path:
+                raise DesktopVideoStateError("请先制作安静相伴的基础画面，再设计与它衔接的活动")
+            portrait_path = row.base_image_path if use_base_reference else snapshot.portrait_path
             language = resolve_language(await get_user_setting(db, user_id, "language"))
             existing = list(
                 await db.scalars(
@@ -2216,7 +2236,9 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int) -> None:
                     raise LlmCallBlockedError("自主制作当前已关闭")
 
         portrait = await asyncio.to_thread(read_valid_image_data_uri, portrait_path)
-        outfit = await asyncio.to_thread(read_valid_image_data_uri, row.base_image_path or snapshot.outfit_path)
+        outfit = (
+            portrait if use_base_reference else await asyncio.to_thread(read_valid_image_data_uri, snapshot.outfit_path)
+        )
         if not portrait or not outfit:
             raise DesktopVideoStateError("参考图片无法读取")
         raw = await vision_chat(
@@ -2226,18 +2248,16 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int) -> None:
                 {
                     "design": request.model_dump(exclude={"expected_set_id"}),
                     "output_language": language,
-                    "identity": snapshot.identity.features.model_dump() if not row.base_image_path else {},
+                    "identity": snapshot.identity.features.model_dump() if not use_base_reference else {},
                     "persona": snapshot.persona,
-                    "outfit": snapshot.outfit_description if not row.base_image_path else "",
-                    "environment": snapshot.scene_description
-                    if not row.base_image_path
-                    else "以已确认图片中的环境为准",
-                    "reference_mode": "confirmed" if row.base_image_path else "sources",
+                    "outfit": snapshot.outfit_description if not use_base_reference else "",
+                    "environment": snapshot.scene_description if not use_base_reference else "以已确认图片中的环境为准",
+                    "reference_mode": "confirmed" if use_base_reference else "sources",
                     "existing_actions": existing_payload,
                 },
                 ensure_ascii=False,
             ),
-            reference_images=(portrait,) if row.base_image_path else (portrait, outfit),
+            reference_images=(portrait,) if use_base_reference else (portrait, outfit),
             before_submit=before_submit,
             task=AiTaskKey.desktop_life,
         )

@@ -832,16 +832,21 @@ MEDIA_IMAGE_GUIDANCES: dict[str, str] = {
 MEDIA_VIDEO_GUIDANCES: dict[str, str] = {
     "zh": (
         "video_generate 的 prompt 用简洁、正面的描述表达本轮需要的画面与动作：交代必要的起始状态和目标动作，"
-        "复杂动作再说明关键步骤；时序、环境细节与镜头变化按请求需要补充。保持姿态的画面描述持续的姿态与神态，"
+        "复杂动作再说明关键步骤与停顿，写清运动部位和稳定支撑；时序、环境细节与镜头变化按请求需要补充。"
+        "安静保持时描述稳定的身体与神态，未明确要求的呼吸只表现为近乎不可察的局部变化；"
+        "镜头固定，眨眼可偶发也可省略，不为填满时长增加摇摆或手势。明确要求的动作与运镜按请求执行。"
         "动作进程与所选时长相称。参考图提供身份与造型，开场由本次内容决定。"
         "本人出镜传 subject='self'，需要换造型时传 outfit_override；"
         "reference_image 可用本会话图片工具结果中的 url，用户附件没有可用地址。"
     ),
     "en": (
         "Use concise, positive descriptions in video_generate's prompt for the scene and action this turn needs: "
-        "give the necessary starting state and target action, with key steps for complex motion. Add timing, "
-        "setting details and camera changes when the request needs them. For a held pose, describe its sustained "
-        "posture and expression. Match the action's progression to the chosen duration. Reference images provide "
+        "give the necessary starting state and target action, with key steps and pauses for complex motion, "
+        "identifying moving parts and stable support. Add timing, setting details and camera changes as needed. "
+        "For a quiet held pose, describe a settled body and expression, a fixed camera and barely visible local "
+        "breathing unless specifically requested otherwise. Blinking is optional; do not add swaying or gestures "
+        "to fill the duration. Follow explicit requests for action and camera motion. "
+        "Match the action's progression to the chosen duration. Reference images provide "
         "identity and styling; the current content determines the opening. Pass subject='self' when the character "
         "appears and outfit_override for a different outfit; reference_image can use a url from this conversation's "
         "image results, and user attachments have no usable address."

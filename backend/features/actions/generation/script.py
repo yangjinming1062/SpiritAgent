@@ -19,10 +19,12 @@ from features.actions.prompts import (
     PEEK_GEOMETRY_INSTRUCTIONS,
     VIDEO_ACTION_POSE_TEMPLATE,
     VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
+    VIDEO_PROMPT_IDLE_REQUIREMENTS,
     VIDEO_PROMPT_LOOP_CYCLE,
     VIDEO_PROMPT_LOOP_TAIL,
     VIDEO_PROMPT_ONCE_CYCLE,
     VIDEO_PROMPT_SKELETON,
+    VIDEO_PROMPT_USER_FEEDBACK_TEMPLATE,
 )
 from features.actions.schemas import ABSOLUTE_MAX_DURATION_SECONDS, PeekGeometry
 from features.appearance.character_card import (
@@ -36,7 +38,12 @@ logger = get_logger(__name__)
 
 # 系统槽位的固定语义；动态动作语义由提案规格携带。
 SYSTEM_ACTION_SEMANTICS: dict[str, str] = {
-    "idle": ("沿用参考图中的基本待机姿态，安定地陪伴观看者。全程稳定保持身体朝向、重心与放松的神态。"),
+    "idle": (
+        "沿用参考图中的基本待机姿态，安定地陪伴观看者。全程保持原有支撑或悬浮关系，"
+        "身体朝向、重心、躯干与头部的位置安定，已有肢体自然停放在原处。"
+        "身体结构适合呼吸时，只在胸腹或相应局部呈现几乎不可察的自然呼吸，其余部位保持安定。"
+        "有眼睛时可偶发自然眨眼，也可保持平静注视；神态放松，头发、衣物与附属结构沿用首帧形态安定停留。"
+    ),
     "walk_left": (
         "身体及已有头部全程侧向画面左侧，采用符合实际身体结构的运动方式，在原地循环表现向左移动。"
         "躯干中心位置固定，朝向稳定，运动周期自然衔接。"
@@ -308,7 +315,14 @@ async def inspect_peek_geometry(
         return None
 
 
-def build_video_prompt(entry: VideoActionScriptEntry, identity: CharacterCardSnapshot) -> str:
+def build_video_prompt(
+    entry: VideoActionScriptEntry,
+    identity: CharacterCardSnapshot,
+    *,
+    system_slot: str = "",
+    feedback: str = "",
+    action_feedback: str = "",
+) -> str:
     is_loop = entry.clip_kind == "loop"
     prompt = VIDEO_PROMPT_SKELETON.format(
         motion=entry.motion_prompt,
@@ -316,6 +330,13 @@ def build_video_prompt(entry: VideoActionScriptEntry, identity: CharacterCardSna
         tail_clause=VIDEO_PROMPT_LOOP_TAIL if is_loop else "",
         cycle_clause=VIDEO_PROMPT_LOOP_CYCLE if is_loop else VIDEO_PROMPT_ONCE_CYCLE,
     )
+    if system_slot == "idle" or feedback.strip() or action_feedback.strip():
+        prompt += "\n\n" + VIDEO_PROMPT_USER_FEEDBACK_TEMPLATE.format(
+            feedback=feedback.strip() or "无",
+            action_feedback=action_feedback.strip() or "无",
+        )
+    if system_slot == "idle":
+        prompt += "\n" + VIDEO_PROMPT_IDLE_REQUIREMENTS
     return prompt + "\n" + render_character_video_identity(identity)
 
 

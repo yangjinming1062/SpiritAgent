@@ -87,8 +87,14 @@ VIDEO_GENERATION_DESC = (
 VIDEO_GENERATION_PARAM_DESCS = {
     "prompt": (
         "Use concise, positive descriptions of the requested scene and action. Give the necessary starting state "
-        "and target action, with key steps for complex motion; add timing, setting details and camera changes "
-        "when the request needs them. For a held pose, describe its sustained posture and expression. Match the "
+        "and the requested action or sequence. Keep every explicitly requested subject and action, in the stated "
+        "order; focus an open-ended request on a clear subject. Add key steps and pauses when the motion needs them. "
+        "Identify what moves and what stays "
+        "supported; hair, fabric and props respond to actual motion or environmental forces. For a held pose, "
+        "describe stable support, resting body parts and sustained expression; unless specifically requested otherwise, "
+        "breathing in a quiet state is barely visible and local, "
+        "and blinking is optional rather than a repeating beat. Describe a fixed camera for a still composition; "
+        "specify camera motion only when it serves the request. Match the "
         "action's progression to the clip length. Describe the result as real footage. With subject='self', "
         "focus on the present scene and action; the character's appearance and styling are applied automatically."
     ),

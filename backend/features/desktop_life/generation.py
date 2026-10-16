@@ -68,6 +68,7 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_LOOP,
     DESKTOP_VIDEO_MOTION_TEMPLATE,
     DESKTOP_VIDEO_ONCE,
+    DESKTOP_VIDEO_QUIET,
     DESKTOP_VIDEO_REFINE_REVIEW,
     DESKTOP_VIDEO_REFINE_SCORE,
     DESKTOP_VIDEO_REVIEW,
@@ -770,6 +771,7 @@ async def _prepare_motion(
                 "persona": snapshot.persona,
                 "action": progress.action_description,
                 "kind": action.kind,
+                "quiet_companionship": action.key == "idle",
                 "duration_seconds": progress.duration_seconds,
                 "feedback": progress.feedback,
                 "continuity": progress.continuity,
@@ -947,6 +949,7 @@ async def _evaluate_candidate(
                         "motion_prompt": progress.motion_prompt,
                         "feedback": progress.feedback,
                         "kind": action.kind,
+                        "quiet_companionship": action.key == "idle",
                         "duration_seconds": progress.duration_seconds,
                         "frame_times_seconds": samples.times_seconds,
                         "reference_frame_count": len(references),
@@ -1284,12 +1287,15 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     request = VideoGenRequest(
                         prompt=DESKTOP_VIDEO_MOTION_TEMPLATE.format(
                             duration_seconds=progress.duration_seconds,
-                            cycle=DESKTOP_VIDEO_BASE
-                            if progress.continuity == "base"
+                            cycle=DESKTOP_VIDEO_QUIET["zh"]
+                            if action.key == "idle"
+                            else DESKTOP_VIDEO_BASE
+                            if progress.continuity == "base" and action.kind != "loop"
                             else DESKTOP_VIDEO_LOOP
                             if action.kind == "loop"
                             else DESKTOP_VIDEO_ONCE,
                             motion=progress.motion_prompt,
+                            feedback=progress.feedback.strip() or "无",
                             aspect_ratio=progress.aspect_ratio,
                         ),
                         duration=progress.duration_seconds,
