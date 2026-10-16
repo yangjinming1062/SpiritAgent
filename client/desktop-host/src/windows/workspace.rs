@@ -255,7 +255,8 @@ impl WindowRelocation {
         {
             return Ok(false);
         }
-        if current.within_tolerance(self.target, 2) && workspace.placed(window) {
+        // 程序可自行约束尺寸；校正后以稳定窗口已完整进入工作区为准。
+        if (current.within_tolerance(self.target, 2) || self.corrected) && workspace.placed(window) {
             return Ok(true);
         }
         if self.corrected {
