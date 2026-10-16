@@ -56,7 +56,7 @@ remote/*
 !remote/*.tsx
 !remote/style.css
 shared/*
-!shared/protocol.ts
+!shared/*.ts
 runner/
 installer/
 docs/

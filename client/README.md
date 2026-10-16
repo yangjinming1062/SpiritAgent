@@ -82,4 +82,4 @@
 
 桌面 [remote-page.tsx](renderer/app/features/remote/remote-page.tsx) 提供扫码与授权设备管理；窗口和导航标识统一为 `remote`。二维码轮询及设备查询按组件生命周期和账户代次守卫，查询失败显示实际状态，不用旧结果覆盖当前账户。
 
-手机应用归独立 [Remote](../remote/README.md)，桌面与其仅共用根 `shared/protocol.ts` 的纯协议类型。授权与恢复规则见 [远程访问](../docs/PROTOCOL.md#远程访问)。
+手机应用归独立 [Remote](../remote/README.md)，共享代码的依赖边界见 [ARCHITECTURE](../docs/ARCHITECTURE.md#依赖方向)，授权与恢复规则见 [远程访问](../docs/PROTOCOL.md#远程访问)。

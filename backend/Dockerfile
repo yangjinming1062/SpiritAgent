@@ -5,7 +5,7 @@ RUN npm install --global pnpm@11.5.2
 COPY remote/package.json remote/pnpm-lock.yaml remote/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY remote/ ./
-COPY shared/protocol.ts ../shared/protocol.ts
+COPY shared/ ../shared/
 RUN pnpm build
 
 FROM python:3.13-slim
