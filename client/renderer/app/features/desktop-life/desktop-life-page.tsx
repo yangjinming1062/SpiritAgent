@@ -2051,9 +2051,6 @@ export function DesktopLifePage({
               <div className="rounded-2xl bg-accent/5 px-5 py-12 text-center">
                 <h3 className="text-lg font-medium text-strong">{t.noSets}</h3>
                 <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted">{t.emptyHint}</p>
-                <button className={`${BTN_PRIMARY} mt-5`} onClick={openCreate} type="button">
-                  {t.createSet}
-                </button>
               </div>
             )}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
