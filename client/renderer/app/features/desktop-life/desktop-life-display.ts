@@ -1,9 +1,17 @@
 import { desktopDisplayResolution } from '@/modules/desktop-videos'
 import type { DesktopResolution } from '@client-shared/desktop-media-geometry'
-import type { DesktopLifeUiSnapshot, PresentationState } from '@ipc/contracts'
+import type { DesktopLifeUiSnapshot, PresentationDisplay, PresentationState } from '@ipc/contracts'
 
 type Creation = DesktopLifeUiSnapshot['create']
 type Displays = Pick<PresentationState, 'displayId' | 'displays'>
+
+export function resolveDesktopLifeRecommendationDisplay(presentation: Displays): PresentationDisplay | undefined {
+  return (
+    presentation.displays.find(display => display.id === presentation.displayId) ??
+    presentation.displays.find(display => display.isPrimary) ??
+    presentation.displays[0]
+  )
+}
 
 export function reconcileDesktopLifeDisplay(
   creation: Creation,

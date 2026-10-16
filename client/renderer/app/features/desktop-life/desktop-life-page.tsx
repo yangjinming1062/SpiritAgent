@@ -63,7 +63,11 @@ import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
 import { desktopMediaObjectFit } from '@client-shared/desktop-media-geometry'
 
-import { readyDesktopLifeResolution, reconcileDesktopLifeDisplay } from './desktop-life-display'
+import {
+  readyDesktopLifeResolution,
+  reconcileDesktopLifeDisplay,
+  resolveDesktopLifeRecommendationDisplay
+} from './desktop-life-display'
 import { DesktopLifeDisplayPicker, DesktopLifeRecommendation, resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
 import { useDesktopLifeStrings } from './desktop-life-strings'
@@ -1643,7 +1647,7 @@ export function DesktopLifePage({
 
   const selectedOutfit = outfits.find(outfit => String(outfit.id) === create.outfitId)
   const materialReady = selectedScene?.status === 'ready' && selectedOutfit?.status === 'ready'
-  const recommendationDisplay = presentation.displays.find(display => display.id === presentation.displayId)
+  const recommendationDisplay = resolveDesktopLifeRecommendationDisplay(presentation)
   const recommendationResolution = desktopDisplayResolution(recommendationDisplay)
 
   const resolutionReady = readyDesktopLifeResolution(create, presentation) !== null
