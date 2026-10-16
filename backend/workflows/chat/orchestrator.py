@@ -57,6 +57,7 @@ from workflows.chat.prompt_presets import COMPANION_MEDIA_TOOL_NAMES
 from workflows.chat.prompts import REPLACE_REPLY_GUIDANCES
 from workflows.chat.streaming import (
     _assign_tool_call_ids,
+    _FinalReplyStreamError,
     _generate_llm_response,
     _IncompleteResponseError,
     _InvalidCompanionReplyError,
@@ -559,12 +560,12 @@ async def _run_chat_turn(
                 unavailable_tool_names=frozenset(schemas_by_name.keys() - available_by_name.keys()),
             )
             active_schemas = [available_by_name[name] for name in active_tool_names if name in available_by_name]
-            # 供应商链按顺序尝试，仅在流式首事件或完整响应到达前允许回退；每个槽位使用自己的模型与窗口。
-            response_started = False
+            # 正文交付前按链切换；每个槽位使用自己的模型、窗口和干净的请求副本。
+            text_delivered = False
 
-            def set_response_started() -> None:
-                nonlocal response_started
-                response_started = True
+            def set_text_delivered() -> None:
+                nonlocal text_delivered
+                text_delivered = True
 
             # 工具步用尽（媒体请求受理后的额度、聊天的循环上限、动作型工具成功后的额度、连续没有新信息）：
             # 本次调用只依据已有结果生成最终回复，沿用最终回复重试的无工具请求形态。主动回合保持各自的上限报错，由意图收尾逻辑处理。
@@ -576,7 +577,8 @@ async def _run_chat_turn(
                 )
             )
 
-            async def _call(provider: ChatProvider, native_audio: bool) -> _LLMTurnResult:
+            async def _call(provider: ChatProvider, native_audio: bool, has_next_attempt: bool) -> _LLMTurnResult:
+                nonlocal reply_only
                 input_length = len(current_context["input"])
                 call_context = {
                     **current_context,
@@ -588,7 +590,7 @@ async def _run_chat_turn(
                         transcripts=audio_transcripts,
                     ),
                 }
-                retry_available = True
+                recovery_used = False
                 reply_format_error = None
                 while True:
                     try:
@@ -601,7 +603,7 @@ async def _run_chat_turn(
                                 resolve_context_tokens(provider.config),
                                 provider,
                                 delivery=delivery,
-                                on_response_started=set_response_started,
+                                on_text_delivered=set_text_delivered,
                                 reasoning_effort=inference.reasoning_effort,
                                 temperature=inference.temperature,
                                 turn_request=req.message.content,
@@ -616,24 +618,37 @@ async def _run_chat_turn(
                                 media_turn=media_turn,
                                 pace_bubbles=has_viewer and not headless and replacement is None,
                                 final_reply_only=reply_only,
-                                allow_voice_fallback=not retry_available,
+                                allow_voice_fallback=recovery_used,
                             )
                         current_context["input"].extend(call_context["input"][input_length:])
                         result.generation_origin = GenerationOrigin.from_config(provider.config)
                         return result
                     except _IncompleteResponseError as exc:
-                        del call_context["input"][input_length:]
-                        if not retry_available or not exc.retryable:
+                        reply_only = reply_only or exc.final_reply
+                        if has_next_attempt or recovery_used or not exc.retryable:
                             raise
-                        retry_available = False
-                        logger.warning("Retrying incomplete LLM response before text delivery: %s", exc)
+                        recovery_used = True
+                        logger.warning(
+                            "Retrying incomplete response at the final chain attempt",
+                            extra={
+                                "provider": provider.provider_name,
+                                "model": provider.config.model,
+                                "error": str(exc),
+                            },
+                        )
                     except _InvalidCompanionReplyError as exc:
-                        del call_context["input"][input_length:]
-                        if not retry_available:
+                        reply_only = True
+                        if has_next_attempt or recovery_used:
                             raise
-                        retry_available = False
+                        recovery_used = True
                         reply_format_error = exc
-                        logger.warning("Editing final companion reply after format validation failed")
+                        logger.warning(
+                            "Editing companion reply at the final chain attempt",
+                            extra={"provider": provider.provider_name, "model": provider.config.model},
+                        )
+                    except _FinalReplyStreamError:
+                        reply_only = True
+                        raise
 
             try:
                 async with session_scope() as db:
@@ -648,7 +663,7 @@ async def _run_chat_turn(
                     ),
                     _call,
                     user_id=user_id,
-                    stream_started=lambda: response_started,
+                    stream_started=lambda: text_delivered,
                 )
             except LLMRuntimeError as exc:
                 # 链已耗尽或响应开始后失败：补发结尾 error 帧，让渲染端消息状态机干净收尾。

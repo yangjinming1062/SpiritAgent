@@ -32,7 +32,7 @@ class FailoverReason(enum.Enum):
     model_not_found = "model_not_found"  # 模型无效或不接受图像/视频输入
     provider_policy_blocked = "provider_policy_blocked"  # 聚合商账号级数据策略屏蔽唯一端点
     content_policy_blocked = "content_policy_blocked"  # 供应商安全过滤拒绝该 prompt，对同一请求确定
-    format_error = "format_error"  # 请求畸形，重试结果相同
+    format_error = "format_error"  # 请求参数或响应结构不可用
     attachment_fetch_failed = "attachment_fetch_failed"  # 供应商拉取 image_url 失败，需提示用户
     empty_result = "empty_result"  # 成功响应但无产物（如零张图）
     unknown = "unknown"
@@ -272,13 +272,20 @@ def classify_api_error(
 
 
 def _classify(error: BaseException, s: _Signals) -> FailoverReason:
+    # SDK 会把响应丢失包装成连接异常，仍须保留禁止重发的语义。
+    current = error
+    for _ in range(_CAUSE_CHAIN_MAX_DEPTH):
+        if isinstance(current, ProviderResultUnknownError):
+            return FailoverReason.result_unknown
+        cause = current.__cause__ or current.__context__
+        if cause is None or cause is current:
+            break
+        current = cause
     # 内容策略须早于状态码：避免 400 安全拦截降级为 format_error、无状态码拦截落入 unknown
     if s.has(_CONTENT_POLICY_BLOCKED_PATTERNS):
         return FailoverReason.content_policy_blocked
     if _GROK_ENTITLEMENT_PATTERN in s.text or ("out of available resources" in s.text and "grok" in s.text):
         return FailoverReason.auth
-    if isinstance(error, ProviderResultUnknownError):
-        return FailoverReason.result_unknown
     # 响应体校验失败（APIError 子类，非 APIStatusError）：状态码取自 .response
     if isinstance(error, openai.APIResponseValidationError):
         if s.status_code is not None and s.has(_CONTEXT_OVERFLOW_PATTERNS):

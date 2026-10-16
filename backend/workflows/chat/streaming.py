@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from features.conversation.replies import CompanionReply, LinkBubble
 from features.media.turn_state import MediaTurnState
-from infrastructure.ai.error_classifier import FailoverReason, LLMRuntimeError, classify_api_error
+from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
 from infrastructure.ai.llm_retry import call_with_retry
 from infrastructure.ai.providers.base import ChatProvider, ProviderConfig
 from infrastructure.ai.providers.speech_style import speech_style_guidance
@@ -58,8 +58,16 @@ BUBBLE_BREAK_MAX_SECONDS = 1.5
 
 
 class _IncompleteResponseError(RuntimeError):
-    def __init__(self, reason: str, *, text_emitted: bool) -> None:
-        self.retryable = not text_emitted and reason != "content_filter"
+    def __init__(
+        self,
+        reason: str,
+        *,
+        text_emitted: bool,
+        final_reply: bool = False,
+        retryable: bool = True,
+    ) -> None:
+        self.retryable = retryable and not text_emitted and reason != "content_filter"
+        self.final_reply = final_reply or reason == "empty_output"
         super().__init__(f"LLM response incomplete: {reason}")
 
 
@@ -76,12 +84,17 @@ class _StreamErrorEvent(RuntimeError):
 class _InvalidCompanionReplyError(RuntimeError):
     def __init__(self, error: ValueError, raw_reply: str) -> None:
         self.raw_reply = raw_reply
+        self.classified = ClassifiedError(FailoverReason.format_error, None, "Invalid companion reply format")
         self.validation_errors = (
             error.errors(include_input=False, include_url=False, include_context=False)
             if isinstance(error, ValidationError)
             else [{"type": "value_error", "loc": (), "msg": str(error)}]
         )
         super().__init__("Invalid companion reply format")
+
+
+class _FinalReplyStreamError(LLMRuntimeError):
+    """最终回复流失败；保留供应商分类，后续模型仍只生成回复。"""
 
 
 @dataclass
@@ -181,7 +194,7 @@ async def _generate_llm_response(
     provider: ChatProvider,
     *,
     delivery: Literal["stream", "buffered", "complete"],
-    on_response_started: Callable[[], None] | None,
+    on_text_delivered: Callable[[], None] | None,
     reasoning_effort: str,
     temperature: float,
     turn_request: str,
@@ -198,7 +211,7 @@ async def _generate_llm_response(
     final_reply_only: bool = False,
     allow_voice_fallback: bool = False,
 ) -> _LLMTurnResult:
-    """单次 LLM 调用与正文交付；完整响应或流式首事件到达时锁定供应商，陪伴终端对象校验后交付气泡数组。"""
+    """单次 LLM 调用与正文交付；正文发送时锁定供应商，未确认的正文和推理留在本次尝试。"""
     reasoning = await provider.reasoning_param(reasoning_effort)
     reply_repair = reply_preference is not None and reply_format_error is not None
     instructions = (
@@ -377,7 +390,10 @@ async def _generate_llm_response(
     turn_parts: list[str] = []
     bubble_parts: list[str] = []
     reasoning_parts: list[str] = []
+    pending_reasoning: list[str] = []
+    reasoning_items: list[dict[str, Any]] = []
     tool_calls_list: list[dict] = []
+    tool_call_started = False
     final_prompt_tokens = final_completion_tokens = 0
     final_usage_payload: dict | None = None
     pending_text: list[str] = []
@@ -413,8 +429,26 @@ async def _generate_llm_response(
         )
         return exc
 
+    async def _flush_reasoning() -> None:
+        if pending_reasoning:
+            await emitter.send_json({"type": "reasoning.delta", "content": "".join(pending_reasoning)})
+            pending_reasoning.clear()
+
+    async def _collect_reasoning(text: str) -> None:
+        reasoning_parts.append(text)
+        pending_reasoning.append(text)
+        if text_emitted:
+            await _flush_reasoning()
+
     async def _send_text(text: str) -> None:
         nonlocal text_emitted
+        if not text_emitted:
+            text = "".join(bubble_parts)
+            if not text.strip():
+                return
+            if on_text_delivered is not None:
+                on_text_delivered()
+            await _flush_reasoning()
         text_emitted = True
         payload = {"type": "chunk", "content": text}
         await emitter.send_json(payload)
@@ -436,39 +470,53 @@ async def _generate_llm_response(
                 bubble_parts.append(event.text)
                 await _send_text(event.text)
 
+    def _check_refusal(items: list[Any], *, final_reply: bool) -> None:
+        if any(
+            getattr(part, "type", None) == "refusal"
+            for item in items
+            if getattr(item, "type", None) == "message"
+            for part in getattr(item, "content", ())
+        ):
+            raise _IncompleteResponseError("content_filter", text_emitted=text_emitted, final_reply=final_reply)
+
     async def _collect_output_item(item: Any) -> None:
+        _check_refusal([item], final_reply=_has_final_reply(None))
         if getattr(item, "type", None) == "function_call":
             # Responses shape dict 与 DB / 工具派发共用。
             tool_calls_list.append(item.model_dump(exclude_none=True))
         elif getattr(item, "type", None) == "reasoning":
             if hasattr(item, "model_dump"):
-                context["input"].append(item.model_dump(exclude_none=True))
+                reasoning_items.append(item.model_dump(exclude_none=True))
             if delivery == "complete" or not reasoning_parts:
                 extracted = _reasoning_item_text(item)
                 if extracted:
-                    reasoning_parts.append(extracted)
-                    await emitter.send_json({"type": "reasoning.delta", "content": extracted})
+                    await _collect_reasoning(extracted)
+
+    def _has_final_reply(response: Any) -> bool:
+        has_tools = (
+            tool_call_started
+            or bool(tool_calls_list)
+            or any(getattr(item, "type", None) == "function_call" for item in getattr(response, "output", ()))
+        )
+        text = getattr(response, "output_text", "") or "".join([*pending_text, *turn_parts, *bubble_parts])
+        return not has_tools and bool(text.strip())
 
     if delivery == "complete":
         completed_response = response
-        if on_response_started is not None:
-            on_response_started()
         if response.status == "incomplete":
             raise _IncompleteResponseError(
                 getattr(response.incomplete_details, "reason", None) or "unknown",
                 text_emitted=False,
+                final_reply=_has_final_reply(response),
             )
         if response.status != "completed":
-            raise RuntimeError(
+            raise _IncompleteResponseError(
                 getattr(response.error, "message", None) or f"LLM response not completed: {response.status}",
+                text_emitted=False,
+                final_reply=_has_final_reply(response),
+                retryable=False,
             )
-        if any(
-            getattr(part, "type", None) == "refusal"
-            for item in response.output
-            if getattr(item, "type", None) == "message"
-            for part in getattr(item, "content", ())
-        ):
-            raise _IncompleteResponseError("content_filter", text_emitted=False)
+        _check_refusal(response.output, final_reply=_has_final_reply(response))
         # 必须先检查全部输出项；完整响应也可能同时包含正文和工具调用。
         for item in response.output:
             await _collect_output_item(item)
@@ -493,10 +541,6 @@ async def _generate_llm_response(
         response_finished = False
         try:
             async for chunk in response:
-                # 保持首个供应商事件后禁止回退的边界，独立于正文缓冲。
-                if on_response_started is not None:
-                    on_response_started()
-                    on_response_started = None
                 event_type = str(getattr(chunk, "type", ""))
                 if event_type == "response.output_text.delta":
                     if delivery == "buffered":
@@ -510,19 +554,35 @@ async def _generate_llm_response(
                 ):
                     delta = getattr(chunk, "delta", None)
                     if isinstance(delta, str) and delta:
-                        reasoning_parts.append(delta)
-                        await emitter.send_json({"type": "reasoning.delta", "content": delta})
+                        await _collect_reasoning(delta)
                 elif event_type == "response.output_item.done":
                     await _collect_output_item(getattr(chunk, "item", None))
+                elif event_type == "response.output_item.added":
+                    if getattr(getattr(chunk, "item", None), "type", None) == "function_call":
+                        tool_call_started = True
+                elif event_type in ("response.function_call_arguments.delta", "response.function_call_arguments.done"):
+                    tool_call_started = True
+                elif event_type in ("response.refusal.delta", "response.refusal.done"):
+                    raise _IncompleteResponseError(
+                        "content_filter",
+                        text_emitted=text_emitted,
+                        final_reply=_has_final_reply(None),
+                    )
                 elif event_type == "response.incomplete":
-                    details = getattr(getattr(chunk, "response", None), "incomplete_details", None)
+                    incomplete = getattr(chunk, "response", None)
+                    details = getattr(incomplete, "incomplete_details", None)
                     raise _IncompleteResponseError(
                         getattr(details, "reason", None) or "unknown",
                         text_emitted=text_emitted,
+                        final_reply=_has_final_reply(incomplete),
                     )
                 elif event_type == "response.completed":
-                    response_finished = True
                     completed_response = getattr(chunk, "response", None)
+                    _check_refusal(
+                        getattr(completed_response, "output", []),
+                        final_reply=_has_final_reply(completed_response),
+                    )
+                    response_finished = True
                     if usage := getattr(getattr(chunk, "response", None), "usage", None):
                         final_prompt_tokens, final_completion_tokens = usage.input_tokens, usage.output_tokens
                         final_usage_payload = {
@@ -532,15 +592,32 @@ async def _generate_llm_response(
                 elif event_type == "response.failed":
                     failed_response = getattr(chunk, "response", None)
                     error = getattr(failed_response, "error", None)
-                    raise RuntimeError(getattr(error, "message", None) or "LLM response failed")
+                    raise _IncompleteResponseError(
+                        getattr(error, "message", None) or "LLM response failed",
+                        text_emitted=text_emitted,
+                        final_reply=_has_final_reply(failed_response),
+                        retryable=False,
+                    )
                 elif event_type == "error":
                     stream_error = _StreamErrorEvent(getattr(chunk, "code", None), getattr(chunk, "message", None))
                     raise LLMRuntimeError(classify_api_error(stream_error)) from stream_error
             if not response_finished:
-                raise RuntimeError("LLM stream ended before completion")
+                raise _IncompleteResponseError(
+                    "LLM stream ended before completion",
+                    text_emitted=text_emitted,
+                    final_reply=_has_final_reply(completed_response),
+                    retryable=False,
+                )
 
+        except LLMRuntimeError as exc:
+            if _has_final_reply(completed_response):
+                raise _FinalReplyStreamError(exc.classified) from exc
+            raise
         finally:
-            await response.aclose()
+            try:
+                await response.aclose()
+            except Exception as exc:
+                logger.warning("Failed to close LLM response stream", extra={"error_type": type(exc).__name__})
             # 工作台已显示的增量在失败时也须收尾；缓冲的未确认正文始终丢弃；flush 失败不得覆盖正在传播的原始流异常。
             if delivery == "stream" and (text_emitted or response_finished):
                 with contextlib.suppress(Exception):
@@ -552,13 +629,19 @@ async def _generate_llm_response(
             getattr(completed_response, "output_text", "") or "".join(pending_text),
         )
 
+    requires_text = reply_preference is None and not media_turn.text_reply_media()
     # 确认完整终态且没有工具调用，才交付正文；工具轮的重叠台词不能先进入气泡或 TTS。
     if delivery != "stream" and not tool_calls_list:
         text = "".join(pending_text)
-        if reply_preference is not None and not text.strip() and not allow_silence and reply_format_error is None:
+        if (
+            not text.strip()
+            and not allow_silence
+            and reply_format_error is None
+            and (reply_preference is not None or requires_text)
+        ):
             # 模型完成响应却没有任何正文：不是可编辑的草稿。先按不完整终态重试；恢复预算用尽后仍为空，
             # 视为没有台词的回复，只交付本回合已生成的媒体（没有媒体则照常报告格式错误）。
-            if not allow_voice_fallback:
+            if reply_preference is None or not allow_voice_fallback:
                 raise _IncompleteResponseError("empty_output", text_emitted=False)
             text = '{"kind":"dialogue","bubbles":[]}'
         if reply_preference is not None:
@@ -659,7 +742,11 @@ async def _generate_llm_response(
     turn_duration_ms = int((time.monotonic() - turn_start_time) * 1000)
 
     turn_content = "".join(pending_text) if reply is not None else "\n\n".join(turn_parts)
+    if requires_text and not tool_calls_list and not turn_content.strip():
+        raise _IncompleteResponseError("empty_output", text_emitted=text_emitted)
     turn_reasoning = "".join(reasoning_parts).strip() or None
+    await _flush_reasoning()
+    context["input"].extend(reasoning_items)
 
     return _LLMTurnResult(
         turn_content=turn_content if not tool_calls_list else "",

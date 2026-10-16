@@ -117,6 +117,9 @@ async def _guarded_stream(
             if event_type == "error":
                 terminal_status = "error"
             yield chunk
+    except LlmCallBlockedError as exc:
+        error = exc
+        raise
     except Exception as exc:
         classified = classify_api_error(exc)
         logger.warning(
@@ -137,7 +140,9 @@ async def _guarded_stream(
             call_id=call_id,
             call_started=call_started,
             status=(
-                "error"
+                "blocked"
+                if isinstance(error, LlmCallBlockedError)
+                else "error"
                 if error is not None and not isinstance(error, (asyncio.CancelledError, GeneratorExit))
                 else terminal_status
                 or ("cancelled" if isinstance(error, (asyncio.CancelledError, GeneratorExit)) else "error")

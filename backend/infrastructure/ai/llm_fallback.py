@@ -18,22 +18,23 @@ logger = get_logger(__name__)
 async def execute_media_with_fallback[T](
     chain: Sequence[ProviderConfig],
     required_modalities: frozenset[ModelModality],
-    call_fn: Callable[[ChatProvider, bool], Awaitable[T]],
+    call_fn: Callable[[ChatProvider, bool, bool], Awaitable[T]],
     *,
     user_id: int | None,
     stream_started: Callable[[], bool] | None = None,
 ) -> T:
-    """原生音频优先；转写和文本回退不能跨过流已开始的边界。"""
+    """原生音频优先；回调获知是否还有后续尝试，正文交付后不再切换。"""
     text_requirements = required_modalities - {ModelModality.audio}
     native = [config for config in chain if required_modalities <= effective_input_modalities(config)]
     text = [config for config in chain if text_requirements <= effective_input_modalities(config)]
     if ModelModality.audio not in required_modalities:
-        return await execute_with_fallback(
+        return await _execute_with_fallback(
             native,
             ChatProvider,
-            lambda provider: call_fn(provider, False),
+            lambda provider, has_next: call_fn(provider, False, has_next),
             user_id=user_id,
             stream_started=stream_started,
+            prefer_content_policy_error=False,
         )
     if not chain:
         raise MissingLlmConfigError("未配置可用模型")
@@ -42,9 +43,11 @@ async def execute_media_with_fallback[T](
             return await _execute_with_fallback(
                 native,
                 ChatProvider,
-                lambda provider: call_fn(provider, True),
+                lambda provider, has_next: call_fn(provider, True, has_next),
                 user_id=user_id,
                 stream_started=stream_started,
+                has_later_attempts=bool(text),
+                prefer_content_policy_error=False,
             )
         except LlmCallBlockedError:
             raise
@@ -54,9 +57,10 @@ async def execute_media_with_fallback[T](
     return await _execute_with_fallback(
         text,
         ChatProvider,
-        lambda provider: call_fn(provider, False),
+        lambda provider, has_next: call_fn(provider, False, has_next),
         user_id=user_id,
         stream_started=stream_started,
+        prefer_content_policy_error=False,
     )
 
 
@@ -73,7 +77,7 @@ async def execute_with_fallback[P: BaseProvider, T](
     return await _execute_with_fallback(
         chain,
         provider_type,
-        call_fn,
+        lambda provider, _has_next: call_fn(provider),
         user_id=user_id,
         stream_started=stream_started,
     )
@@ -82,12 +86,14 @@ async def execute_with_fallback[P: BaseProvider, T](
 async def _execute_with_fallback[P: BaseProvider, T](
     chain: Sequence[ProviderConfig],
     provider_type: type[P],
-    call_fn: Callable[[P], Awaitable[T]],
+    call_fn: Callable[[P, bool], Awaitable[T]],
     *,
     user_id: int | None,
     stream_started: Callable[[], bool] | None,
+    has_later_attempts: bool = False,
+    prefer_content_policy_error: bool = True,
 ) -> T:
-    """按已解析的供应商链依次调用 call_fn；链为空时抛 MissingLlmConfigError。should_fallback 时切下一家；结果未知、流已开始或已到末槽时抛出。链内出现过内容策略拦截时优先抛它，便于调用方清洗提示词重试；末家结果未知或流已开始时如实抛出，不能被改写成可重发的拦截。"""
+    """按链调用；结果未知或流已开始后停止。独立生成默认优先保留内容策略拦截供提示词清洗，聊天按末项实际错误收尾。"""
     if not chain:
         raise MissingLlmConfigError("no provider configured")
 
@@ -115,12 +121,12 @@ async def _execute_with_fallback[P: BaseProvider, T](
         started = time.monotonic()
         try:
             with ai_call_context(config.task):
-                result = await call_fn(provider)
+                result = await call_fn(provider, idx + 1 < chain_size or has_later_attempts)
         except LlmCallBlockedError:
             raise
         except Exception as exc:
             classified = classify_api_error(exc)
-            if classified.reason == FailoverReason.content_policy_blocked:
+            if prefer_content_policy_error and classified.reason == FailoverReason.content_policy_blocked:
                 content_policy_error = exc
             log_failure = partial(
                 log,

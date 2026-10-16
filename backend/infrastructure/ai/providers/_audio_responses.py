@@ -19,6 +19,8 @@ class AudioResponseEvent:
         "response.created",
         "response.output_text.delta",
         "response.reasoning_text.delta",
+        "response.function_call_arguments.delta",
+        "response.refusal.delta",
         "response.output_item.done",
         "response.completed",
         "response.incomplete",
@@ -161,6 +163,7 @@ class AudioChatStream:
     async def _events(self) -> AsyncIterator[AudioResponseEvent]:
         text = ""
         reasoning = ""
+        refusal = ""
         calls: dict[int, dict] = {}
         response_id = ""
         created = 0
@@ -186,6 +189,9 @@ class AudioChatStream:
                     if value := getattr(delta, "reasoning_content", None):
                         reasoning += value
                         yield AudioResponseEvent("response.reasoning_text.delta", delta=value)
+                    if delta.refusal:
+                        refusal += delta.refusal
+                        yield AudioResponseEvent("response.refusal.delta", delta=delta.refusal)
                     for call in delta.tool_calls or []:
                         current = calls.setdefault(
                             call.index,
@@ -196,6 +202,10 @@ class AudioChatStream:
                         if call.function:
                             current["function"]["name"] += call.function.name or ""
                             current["function"]["arguments"] += call.function.arguments or ""
+                        yield AudioResponseEvent(
+                            "response.function_call_arguments.delta",
+                            delta=call.function.arguments if call.function else "",
+                        )
                     finish = choice.finish_reason or finish
             if finish is None:
                 raise RuntimeError("音频流在完成状态之前结束")
@@ -213,6 +223,7 @@ class AudioChatStream:
                                 "role": "assistant",
                                 "content": text or None,
                                 "reasoning_content": reasoning,
+                                "refusal": refusal or None,
                                 "tool_calls": [calls[index] for index in sorted(calls)] or None,
                             },
                         },
