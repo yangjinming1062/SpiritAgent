@@ -63,6 +63,7 @@ import { fileApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { $presentation } from '@/shared/store/presentation'
+import { desktopMediaObjectFit } from '@client-shared/desktop-media-geometry'
 
 import { DesktopLifeResolutionSettings, ResolutionFields, resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
@@ -75,14 +76,52 @@ function isActionPaused(action: DesktopVideoAction): boolean {
 function DesktopLifeCover({ url, target }: { url: string | null; target?: DesktopVideoSet }): React.JSX.Element {
   const t = useDesktopLifeStrings()
   const media = useResolvedMediaSrc({ type: 'image', url: url ?? '' })
+  const [size, setSize] = useState({ url, width: 0, height: 0 })
+
+  const owner = target?.actions.find(action =>
+    [
+      action.draft?.image_url,
+      action.draft?.candidate_poster_url,
+      action.current?.poster_url,
+      action.current?.image_url
+    ].includes(url)
+  )
+
+  const geometryMode =
+    owner?.draft && [owner.draft.image_url, owner.draft.candidate_poster_url].includes(url)
+      ? owner.draft.geometry_mode
+      : owner?.current?.geometry_mode
+
+  const frameWidth = target?.target_width ?? 16
+  const frameHeight = target?.target_height ?? 9
 
   return media.status === 'ready' ? (
-    <img
-      alt=""
-      className="w-full rounded-lg bg-black/20 object-contain"
-      src={media.src}
-      style={{ aspectRatio: target ? target.target_width / target.target_height : 16 / 9 }}
-    />
+    <div
+      className="relative isolate w-full overflow-hidden rounded-lg bg-black/20"
+      style={{ aspectRatio: frameWidth / frameHeight }}
+    >
+      <div
+        className="absolute -inset-8 -z-10 bg-cover bg-center blur-xl brightness-75"
+        style={{ backgroundImage: `url("${media.src}")` }}
+      />
+      <img
+        alt=""
+        className="h-full w-full object-center"
+        onLoad={event =>
+          setSize({ url, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
+        }
+        src={media.src}
+        style={{
+          objectFit: desktopMediaObjectFit(
+            size.url === url ? size.width : 0,
+            size.height,
+            frameWidth,
+            frameHeight,
+            geometryMode ?? 'keep'
+          )
+        }}
+      />
+    </div>
   ) : (
     <div
       className="flex w-full items-center justify-center rounded-lg bg-black/10 text-xs text-muted"
@@ -141,12 +180,23 @@ function ResolvedDesktopLifePreview({
   const imageUrl = draft ? action.draft?.candidate_poster_url || action.draft?.image_url : action.current?.poster_url
   const url = videoUrl || imageUrl || ''
   const media = useResolvedMediaSrc({ type: videoUrl ? 'video' : 'image', url })
+  const posterMedia = useResolvedMediaSrc({ type: 'image', url: imageUrl || '' })
   const [failed, setFailed] = useState(false)
+  const [size, setSize] = useState({ width: 0, height: 0 })
   const video = useRef<HTMLVideoElement>(null)
   const frameWidth = draft ? (action.draft?.target_width ?? set.target_width) : set.target_width
   const frameHeight = draft ? (action.draft?.target_height ?? set.target_height) : set.target_height
   const actualWidth = draft ? action.draft?.frame_width : action.current?.width
   const actualHeight = draft ? action.draft?.frame_height : action.current?.height
+  const geometryMode = draft ? action.draft?.geometry_mode : action.current?.geometry_mode
+
+  const objectFit = desktopMediaObjectFit(
+    size.width || actualWidth || 0,
+    size.height || actualHeight || 0,
+    frameWidth,
+    frameHeight,
+    geometryMode ?? 'target'
+  )
 
   useEffect(() => {
     if (!active) {
@@ -157,29 +207,43 @@ function ResolvedDesktopLifePreview({
   return (
     <div className="flex flex-col gap-2">
       <div
-        className="flex w-full items-center justify-center overflow-hidden rounded-xl bg-black/20"
+        className="relative isolate flex w-full items-center justify-center overflow-hidden rounded-xl bg-black/20"
         style={{ aspectRatio: frameWidth / frameHeight }}
       >
+        {posterMedia.status === 'ready' && (
+          <div
+            className="absolute -inset-8 -z-10 bg-cover bg-center blur-xl brightness-75"
+            style={{ backgroundImage: `url("${posterMedia.src}")` }}
+          />
+        )}
         {media.status === 'ready' && !failed ? (
           videoUrl ? (
             <video
-              className="h-full w-full object-contain"
+              className="h-full w-full object-center"
               controls
               loop={action.kind === 'loop'}
               muted
               onError={() => setFailed(true)}
+              onLoadedMetadata={event =>
+                setSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })
+              }
               playsInline
               preload="metadata"
               ref={video}
               src={media.src}
+              style={{ objectFit }}
             />
           ) : (
             <img
               alt={action.name}
-              className="h-full w-full object-contain"
+              className="h-full w-full object-center"
               onError={() => setFailed(true)}
-              onLoad={onImageReady}
+              onLoad={event => {
+                setSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
+                onImageReady?.()
+              }}
               src={media.src}
+              style={{ objectFit }}
             />
           )
         ) : (

@@ -21,6 +21,7 @@ from features.desktop_life.schemas import (
     DesktopVisualSnapshot,
     desktop_visual_hash,
 )
+from features.media.character_images import ImageChainState
 
 
 def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[str, dict[str, int | str]]) -> None:
@@ -109,7 +110,11 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             else None
         )
         if progress:
-            progress.image_chain_json = progress.video_chain_json = None
+            if progress.image_chain_json:
+                image_chain = ImageChainState.model_validate_json(progress.image_chain_json)
+                if image_chain.phase != "complete":
+                    progress.image_chain_json = None
+            progress.video_chain_json = None
             progress.provider_task_id = progress.download_url = None
             progress.submission_unknown = False
             payload["generation_state_json"] = progress.model_dump_json()
@@ -210,8 +215,6 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
                         value.get("source_path"),
                         value.get("base_image_path"),
                         value.get("source_image_path"),
-                        value.get("expansion_canvas_path"),
-                        value.get("expansion_generated_path"),
                     )
                     if path
                 )
@@ -299,8 +302,23 @@ def validate_desktop_files(
             validate_base_image(progress.pose_path)
             validate_base_image(progress.previous_pose_path)
             validate_base_image(progress.source_image_path)
-            validate_base_image(progress.expansion_canvas_path)
-            validate_base_image(progress.expansion_generated_path)
+            if progress.image_chain_json:
+                image_chain = ImageChainState.model_validate_json(progress.image_chain_json)
+                if image_chain.phase == "complete":
+                    if image_chain.inputs is None:
+                        raise ValueError("桌面图片制作缺少冻结输入。")
+                    selected = [
+                        candidate
+                        for slot in range(image_chain.inputs.n)
+                        if (candidate := image_chain.best(slot)) is not None
+                    ]
+                    image_paths = {candidate.path for candidate in selected} | {
+                        path for candidate in selected for path in candidate.artifacts
+                    }
+                else:
+                    image_paths = image_chain.stored_paths()
+                for reference in image_paths:
+                    validate_base_image(reference)
             if progress.video_refinement is not None:
                 refinement = progress.video_refinement
                 validate_base_image(refinement.image_path)

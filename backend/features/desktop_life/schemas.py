@@ -102,9 +102,6 @@ class DesktopVideoProgress(BaseModel):
     geometry_mode: Literal["target", "keep"] = "target"
     source_image_path: str | None = None
     expand_image: bool = False
-    expansion_canvas_path: str | None = None
-    expansion_generated_path: str | None = None
-    expansion_box: tuple[int, int, int, int] | None = None
     source: Literal["user_requested", "autonomous", "external_upload"]
     feedback: str = ""
     paused_by_user: bool = False
@@ -134,6 +131,7 @@ class DesktopVideoProgress(BaseModel):
     provider_task_id: str | None = None
     download_url: str | None = None
     source_path: str | None = None
+    reprocess_only: bool = False
     video_refinement: DesktopVideoRefinementInput | None = None
     candidate: DesktopVideoAsset | None = None
     identity_score: int | None = None
@@ -161,6 +159,7 @@ class DesktopVideoCurrentResponse(BaseModel):
     duration_ms: int
     width: int
     height: int
+    geometry_mode: Literal["target", "keep"]
     continuity: Literal["independent", "base"]
     base_version: int | None = None
     transition: Literal["base", "fade"] = "fade"
@@ -480,6 +479,7 @@ class DesktopVideoPlayCommand(BaseModel):
     expires_at: datetime
     video_url: str
     poster_url: str
+    geometry_mode: Literal["target", "keep"]
     version: int
     transition: Literal["base", "fade"] = "fade"
     continuity: Literal["independent", "base"]

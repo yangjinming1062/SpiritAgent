@@ -14,6 +14,7 @@ from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import build_data_uri, resolve_asset_reference, signed_companion_asset_url
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.media_geometry import MAX_DESKTOP_CROP_FRACTION, crop_fraction
 from infrastructure.video_processing.desktop import extract_desktop_first_frame
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video, run_ffmpeg
 from PIL import Image
@@ -53,14 +54,13 @@ def inspect_desktop_video_reference(data: bytes, extension: str) -> VideoReferen
 def reference_video_ratio(provider: VideoGenProvider, aspect_ratio: str) -> str | None:
     """视频参考只采用明确画幅；图生视频的 adaptive 能力不代表任意参考输出画幅。"""
     target = Fraction(aspect_ratio.replace(":", "/"))
-    return next(
-        (
-            ratio
-            for ratio in provider.aspect_ratios
-            if abs(float(Fraction(ratio.replace(":", "/")) / target) - 1) <= 0.01
-        ),
-        None,
-    )
+    ratios: list[tuple[float, str]] = []
+    for ratio in provider.aspect_ratios:
+        native = Fraction(ratio.replace(":", "/"))
+        loss = crop_fraction(native.numerator, native.denominator, target.numerator, target.denominator)
+        if loss <= MAX_DESKTOP_CROP_FRACTION + 1e-9:
+            ratios.append((loss, ratio))
+    return min(ratios, key=lambda item: item[0])[1] if ratios else None
 
 
 def _validate_reference_decoding(data: bytes, extension: str) -> None:
@@ -139,6 +139,7 @@ async def plan_desktop_video_refinement(
             continue
         frozen = FrozenMediaProvider.from_config(config)
         frozen.video_resolution = resolution
+        frozen.video_aspect_ratio = ratio
         providers.append(frozen)
         seconds = duration
     if seconds is None or not providers:
@@ -154,6 +155,7 @@ async def desktop_video_refinement_request(
     progress: DesktopVideoProgress,
     provider: VideoGenProvider,
     resolution: str,
+    native_ratio: str,
 ) -> VideoGenRequest:
     refinement = progress.video_refinement
     if refinement is None:
@@ -165,9 +167,8 @@ async def desktop_video_refinement_request(
     extension = resolved[0].suffix.lstrip(".").lower()
     metadata = await asyncio.to_thread(inspect_desktop_video_reference, data, extension)
     provider.validate_reference_video(metadata)
-    ratio = reference_video_ratio(provider, progress.aspect_ratio)
-    if ratio is None:
-        raise DesktopVideoStateError(f"当前视频模型不支持 {progress.aspect_ratio} 输出画幅")
+    if native_ratio not in provider.aspect_ratios:
+        raise DesktopVideoStateError("视频模型的冻结画幅已不再可用，请重新选择模型")
     if SETTINGS.public_base_url.strip():
         url = signed_companion_asset_url(refinement.video_path, ttl_seconds=24 * 60 * 60)
         if url is None:
@@ -175,6 +176,6 @@ async def desktop_video_refinement_request(
         reference = SETTINGS.public_base_url.strip().rstrip("/") + url
     else:
         reference = build_data_uri(data, resolved[1])
-    request = _request(progress.feedback, ratio, progress.duration_seconds, resolution, reference)
+    request = _request(progress.feedback, native_ratio, progress.duration_seconds, resolution, reference)
     provider.validate_request(request)
     return request

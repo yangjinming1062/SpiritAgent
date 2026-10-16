@@ -68,6 +68,7 @@ export interface DesktopBackgroundRequest {
   kind: 'loop' | 'once'
   continuity: 'base' | 'independent'
   transition: 'base' | 'fade'
+  geometryMode: 'target' | 'keep'
   baseVersion: number | null
   theme: string
   reduceMotion: boolean

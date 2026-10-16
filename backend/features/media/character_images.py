@@ -18,7 +18,9 @@ from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
+from infrastructure.image_expansion import expansion_canvas, finish_expansion
 from infrastructure.logger import get_logger
+from infrastructure.media_geometry import MAX_DESKTOP_CROP_FRACTION, can_crop_to_aspect
 from infrastructure.network import download_capped
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from infrastructure.video_processing.image import prepare_transparent_image
@@ -43,6 +45,20 @@ logger = get_logger(__name__)
 _SIZE_ASPECT_TOLERANCE = 0.02
 
 
+class ImageExpansionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target_width: int = Field(gt=0)
+    target_height: int = Field(gt=0)
+
+
+class ImageExpansionCanvas(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    box: tuple[int, int, int, int]
+    width: int
+    height: int
+
+
 class CharacterImageInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,8 +74,8 @@ class CharacterImageInput(BaseModel):
     identity_text: str = ""
     max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
     size_enforced: bool = False
-    require_target_aspect: bool = False
     prefer_transparent_background: bool = False
+    expansion: ImageExpansionInput | None = None
 
 
 class SceneImageInput(BaseModel):
@@ -95,6 +111,8 @@ class ImageChainState(MediaChainState):
     pending_path: str | None = None
     remaining_slots: list[int] = Field(default_factory=list)
     size_rejected: int = 0
+    expansion_rejected: bool = False
+    expansion_canvases: dict[int, ImageExpansionCanvas] = Field(default_factory=dict)
 
     def selected_origin(self, slot: int = 0) -> GenerationOrigin | None:
         candidate = self.best(slot)
@@ -138,6 +156,7 @@ class ImageChainState(MediaChainState):
             *(candidate.path for candidate in self.candidates),
             *(path for candidate in self.candidates for path in candidate.artifacts),
             *(path for path in frozen if path and asset_store.parse_companion_asset_path(path) is not None),
+            *(canvas.path for canvas in self.expansion_canvases.values()),
         } - {""}
 
 
@@ -192,7 +211,6 @@ def _validate_image(
     size: str | None = None,
     size_enforced: bool = False,
     exact_size: bool = False,
-    target_aspect: str | None = None,
 ) -> str:
     ext = asset_store.sniff_media_ext(data)
     if ext not in ("png", "jpg", "webp", "gif"):
@@ -204,14 +222,7 @@ def _validate_image(
     except Exception as exc:
         raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
     native_mismatch = size_enforced and size and not _size_matches_request(size, width, height, exact_size=exact_size)
-    target_mismatch = target_aspect and not _size_matches_request(
-        target_aspect,
-        width,
-        height,
-        exact_size=True,
-        tolerance=0.01,
-    )
-    if native_mismatch or target_mismatch:
+    if native_mismatch:
         logger.info(
             "image size gate rejected candidate",
             extra={"width": width, "height": height, "requested_size": size},
@@ -305,17 +316,31 @@ async def _complete_images(
                 "图片生成结果未知，请核对供应商任务后再决定是否重做",
                 result_unknown=True,
             )
+        if state.expansion_rejected:
+            raise ImageGenerationError("扩图周边未完成适配或仍有灰边，请重新调整图片")
         if state.size_rejected:
             raise ImageGenerationError("生成图片画幅不符合要求")
         if isinstance(state.inputs, SceneImageInput) and any(candidate.evaluated for candidate in state.candidates):
             raise ImageGenerationError("场景生成未通过内容检查，请调整环境描述后重试")
         raise ImageGenerationError("图片生成失败，未取得可用候选")
-    state.finish(state.inputs.n)
-    await _save_progress(state, writer)
     retained = set(selected) | {
         path for candidate in state.candidates if candidate.path in selected for path in candidate.artifacts
     }
-    for path in state.stored_paths() - retained:
+    obsolete = state.stored_paths() - retained
+    if isinstance(state.inputs, CharacterImageInput) and state.inputs.expansion:
+        state.candidates = [candidate for candidate in state.candidates if candidate.path in selected]
+        attempts = {candidate.attempt for candidate in state.candidates}
+        state.expansion_canvases = {
+            index: canvas for index, canvas in state.expansion_canvases.items() if index in attempts
+        }
+        state.inputs.reference_image = state.inputs.identity_reference = ""
+        state.inputs.secondary_reference_image = None
+        state.pending_path = None
+        state.pending_urls = []
+        state.pending_slots = state.remaining_slots = []
+    state.finish(state.inputs.n)
+    await _save_progress(state, writer)
+    for path in obsolete:
         await asyncio.to_thread(asset_store.unlink_companion_asset, path)
     logger.info(
         "image chain selected",
@@ -336,7 +361,6 @@ async def generate_character_images(
     aspect_ratio: str | None = None,
     target_width: int | None = None,
     target_height: int | None = None,
-    require_target_aspect: bool = False,
     n: int = 1,
     secondary_reference_image: str | None = None,
     image_edit: bool = False,
@@ -348,6 +372,7 @@ async def generate_character_images(
     max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     size_enforced: bool = False,
     prefer_transparent_background: bool = False,
+    expansion: ImageExpansionInput | None = None,
     selection: ProviderSelection | None = None,
 ) -> list[str]:
     """返回已保存的用户资产；恢复只消费冻结输入、已知结果和未提交的链尾。"""
@@ -362,8 +387,6 @@ async def generate_character_images(
     if state.inputs is None:
         if (target_width is None) != (target_height is None):
             raise ValueError("图片画布须同时提供目标宽高")
-        if require_target_aspect and target_width is None:
-            raise ValueError("严格画幅检查须提供目标宽高")
         if image_edit and secondary_reference_image:
             raise ImageGenerationError("图像编辑不支持附加参考图，请改用重新生成")
         state.inputs = CharacterImageInput(
@@ -378,8 +401,8 @@ async def generate_character_images(
             identity_text=identity_text,
             max_image_bytes=max_image_bytes,
             size_enforced=size_enforced,
-            require_target_aspect=require_target_aspect,
             prefer_transparent_background=prefer_transparent_background,
+            expansion=expansion,
         )
         async with SESSION_LOCAL() as db:
             chain, error = await resolve_image_gen_chain(
@@ -403,10 +426,22 @@ async def generate_character_images(
                 provider.background = "transparent"
             if target_width is not None and target_height is not None:
                 canvas = select_image_canvas(config, target_width, target_height)
-                native_aspect = _expected_aspect_ratio(canvas.aspect_ratio or canvas.size, exact_size=canvas.exact_size)
-                if require_target_aspect and (
-                    native_aspect is None or abs(native_aspect / (target_width / target_height) - 1) > 0.01
-                ):
+                if "x" in canvas.size.lower():
+                    native_width, native_height = (int(value) for value in canvas.size.lower().split("x"))
+                    can_fit = can_crop_to_aspect(native_width, native_height, target_width, target_height)
+                else:
+                    native_aspect = _expected_aspect_ratio(canvas.aspect_ratio or canvas.size)
+                    target_aspect = target_width / target_height
+                    can_fit = (
+                        native_aspect is not None
+                        and 1
+                        - min(
+                            native_aspect / target_aspect,
+                            target_aspect / native_aspect,
+                        )
+                        <= MAX_DESKTOP_CROP_FRACTION + 1e-9
+                    )
+                if not can_fit:
                     continue
                 provider.image_size = canvas.size
                 provider.image_aspect_ratio = canvas.aspect_ratio
@@ -414,7 +449,7 @@ async def generate_character_images(
                 provider.image_exact_size = canvas.exact_size
             planned.append((config, provider))
         if not planned:
-            raise ImageGenerationError("当前图片生成供应商均不支持目标原生画幅，无法保留完整原图进行扩展")
+            raise ImageGenerationError("当前图片生成供应商没有可在少量裁边后适配目标的原生画幅")
         chain = [config for config, _provider in planned]
         state.providers = [provider for _config, provider in planned]
         configs = dict(enumerate(chain))
@@ -565,18 +600,39 @@ async def _run_image_chain(
                                 if state.pending_path and pending and asset_store.resolve_companion_asset_path(*pending)
                                 else state.pending_urls[0]
                             )
+                            stored_pending = source == state.pending_path
                             data, _ = await image_asset_bytes(source, max_bytes=inputs.max_image_bytes)
                             provider = state.providers[state.active_index or 0]
                             ext = await asyncio.to_thread(
                                 _validate_image,
                                 data,
                                 size=provider.image_size or provider.image_aspect_ratio or inputs.size,
-                                size_enforced=inputs.size_enforced,
+                                size_enforced=inputs.size_enforced and not stored_pending,
                                 exact_size=scene or provider.image_exact_size,
-                                target_aspect=(inputs.aspect_ratio or inputs.size)
-                                if isinstance(inputs, CharacterImageInput) and inputs.require_target_aspect
-                                else None,
                             )
+                            if isinstance(inputs, CharacterImageInput) and inputs.expansion and not stored_pending:
+                                canvas = state.expansion_canvases.get(state.active_index or 0)
+                                if canvas is None:
+                                    raise ImageGenerationError("扩图任务缺少冻结画布")
+                                canvas_data, _ = await image_asset_bytes(canvas.path, max_bytes=inputs.max_image_bytes)
+                                original_data, _ = await image_asset_bytes(
+                                    inputs.reference_image,
+                                    max_bytes=inputs.max_image_bytes,
+                                )
+                                try:
+                                    data = await asyncio.to_thread(
+                                        finish_expansion,
+                                        data,
+                                        canvas_data,
+                                        original_data,
+                                        canvas.box,
+                                        inputs.expansion.target_width,
+                                        inputs.expansion.target_height,
+                                    )
+                                except ValueError as exc:
+                                    state.expansion_rejected = True
+                                    raise ImageGenerationError(str(exc), can_fallback=True) from exc
+                                ext = "png"
                             if isinstance(inputs, CharacterImageInput) and inputs.prefer_transparent_background:
                                 data = await asyncio.to_thread(prepare_transparent_image, data)
                                 ext = "png"
@@ -630,6 +686,10 @@ async def _run_image_chain(
                         attempt=state.active_index or 0,
                         slot=state.pending_slots[0],
                     )
+                    if isinstance(inputs, CharacterImageInput) and inputs.expansion:
+                        canvas = state.expansion_canvases.get(candidate.attempt)
+                        if canvas is not None:
+                            candidate.artifacts.append(canvas.path)
                     state.candidates.append(candidate)
                     state.pending_urls.pop(0)
                     state.pending_slots.pop(0)
@@ -698,6 +758,39 @@ async def _run_image_chain(
                 await before_submit()
             batch_size = state.providers[index].max_images_per_request or len(state.remaining_slots)
             slots = state.remaining_slots[:batch_size]
+            state.active_index = index
+            submit_reference, submit_prompt = reference_uri, inputs.prompt
+            if isinstance(inputs, CharacterImageInput) and inputs.expansion:
+                canvas = state.expansion_canvases.get(index)
+                if canvas is None:
+                    provider = state.providers[index]
+                    size = provider.image_size or inputs.size
+                    if "x" in size.lower():
+                        width, height = (int(value) for value in size.lower().split("x"))
+                    else:
+                        ratio = _expected_aspect_ratio(provider.image_aspect_ratio or size)
+                        if ratio is None:
+                            raise ImageGenerationError("扩图供应商的原生画幅无效")
+                        height, width = 1536, round(1536 * ratio)
+                    original, _ = await image_asset_bytes(inputs.reference_image, max_bytes=inputs.max_image_bytes)
+                    data, box = await asyncio.to_thread(expansion_canvas, original, width, height)
+                    with Image.open(io.BytesIO(data)) as image:
+                        canvas_width, canvas_height = image.size
+                    path = await asset_store.save_companion_asset_async(
+                        data,
+                        user_id=user_id,
+                        label="expansion_canvas",
+                        ext="png",
+                        directory=state.storage_directory,
+                    )
+                    canvas = ImageExpansionCanvas(path=path, box=box, width=canvas_width, height=canvas_height)
+                    state.expansion_canvases[index] = canvas
+                    await _save_progress(state, save_progress)
+                submit_reference = await _materialize_reference(canvas.path, max_bytes=inputs.max_image_bytes)
+                submit_prompt = (
+                    f"参考画布为 {canvas.width}×{canvas.height} 像素，矩形 {canvas.box}（左、上、右、下）内为原图，"
+                    "其余灰色区域需要补全。输出与该画布相同构图的完整图像。\n" + inputs.prompt
+                )
             state.remaining_slots = state.remaining_slots[batch_size:]
             state.begin(index)
             await _save_progress(state, save_progress)
@@ -706,12 +799,12 @@ async def _run_image_chain(
                 background = provider.background
                 async with media_call_duration(config, state) as call_config:
                     result = await generate_images(
-                        inputs.prompt,
+                        submit_prompt,
                         size=provider.image_size or inputs.size,
                         n=len(slots),
                         user_id=user_id,
                         task=task,
-                        reference_image=reference_uri,
+                        reference_image=submit_reference,
                         secondary_reference_image=secondary_uri if isinstance(inputs, CharacterImageInput) else None,
                         image_edit=inputs.image_edit if isinstance(inputs, CharacterImageInput) else False,
                         provider_config=call_config,

@@ -332,10 +332,12 @@ export function useDesktopVideoWallpaper(): void {
     })
   }, [authSessionId, recordReceipt])
 
+  const firstPosterAction = current?.actions.find(action => action.key === 'idle')
+
   const firstPoster = firstNonBlank(
-    state?.current?.actions.find(action => action.key === 'idle')?.current?.poster_url,
+    firstPosterAction?.current?.poster_url,
     state?.current?.base_image_url,
-    state?.current?.actions.find(action => action.key === 'idle' && action.draft?.image_confirmed)?.draft?.image_url
+    firstPosterAction?.draft?.image_confirmed ? firstPosterAction.draft.image_url : null
   )
 
   // 保底渲染只使用当前启用套装，与播放指令和草稿制作状态分别处理。
@@ -343,6 +345,13 @@ export function useDesktopVideoWallpaper(): void {
 
   const videoUrl = firstNonBlank(activeCommand?.video_url, baseline?.video_url)
   const posterUrl = firstNonBlank(activeCommand?.poster_url, baseline?.poster_url, firstPoster)
+
+  const geometryMode =
+    activeCommand?.geometry_mode ??
+    baseline?.current?.geometry_mode ??
+    firstPosterAction?.current?.geometry_mode ??
+    firstPosterAction?.draft?.geometry_mode ??
+    'target'
 
   useEffect(() => {
     if (!active || !authSessionId) {
@@ -366,6 +375,7 @@ export function useDesktopVideoWallpaper(): void {
         kind: activeCommand?.kind ?? 'loop',
         continuity: activeCommand?.continuity ?? baseline?.continuity ?? 'independent',
         transition: activeCommand?.transition ?? baseline?.transition ?? 'fade',
+        geometryMode,
         baseVersion: activeCommand ? activeCommand.base_version : (baseline?.base_version ?? null),
         theme,
         reduceMotion,
@@ -396,6 +406,7 @@ export function useDesktopVideoWallpaper(): void {
     baseline?.version,
     baseline?.continuity,
     baseline?.transition,
+    geometryMode,
     current,
     state,
     baseline?.base_version,

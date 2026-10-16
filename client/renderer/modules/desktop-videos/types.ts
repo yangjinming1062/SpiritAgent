@@ -33,6 +33,7 @@ export interface DesktopVideoAsset {
   duration_ms: number | null
   width: number | null
   height: number | null
+  geometry_mode: 'target' | 'keep'
   continuity: DesktopVideoContinuity
   transition: DesktopVideoTransition
   base_version: number | null
@@ -163,6 +164,7 @@ export interface DesktopVideoPlayCommand {
   expires_at: string
   video_url: string
   poster_url: string | null
+  geometry_mode: 'target' | 'keep'
   version: number
 }
 

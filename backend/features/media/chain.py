@@ -74,6 +74,7 @@ class FrozenMediaProvider(BaseModel):
     image_resolution: str | None = None
     image_exact_size: bool = False
     video_resolution: str | None = Field(default=None, min_length=1)
+    video_aspect_ratio: str | None = None
 
     def generation_origin(self, service_type: ServiceType) -> GenerationOrigin:
         return GenerationOrigin(

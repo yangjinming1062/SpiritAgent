@@ -28,10 +28,17 @@ from infrastructure.assets.asset_store import (
 from infrastructure.assets.media_download import download_media_result
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from infrastructure.media_geometry import (
+    MAX_DESKTOP_CROP_FRACTION,
+    can_crop_to_aspect,
+    centered_crop_box,
+    crop_fraction,
+)
 from infrastructure.text import parse_llm_json, resolve_language
 from infrastructure.video_processing.desktop import (
     prepare_desktop_video,
     prepare_external_desktop_video,
+    prepare_fitted_external_desktop_video,
     sample_desktop_video_frames,
 )
 from infrastructure.video_processing.ffmpeg import VideoProcessError, VideoToolUnavailableError
@@ -53,10 +60,7 @@ from features.configuration.settings.values import get_user_setting
 from features.desktop_life.geometry import (
     desktop_aspect_matches,
     desktop_aspect_ratio,
-    expansion_canvas,
-    native_expansion_size,
     probe_desktop_image,
-    restore_expansion_source,
 )
 from features.desktop_life.models import DesktopVideoAction, DesktopVideoSet
 from features.desktop_life.prompts import (
@@ -108,7 +112,7 @@ from features.media.chain import (
     video_failure_message,
     video_provider_failure_reason,
 )
-from features.media.character_images import ImageChainState, generate_character_images
+from features.media.character_images import ImageChainState, ImageExpansionInput, generate_character_images
 from features.media.contracts import RemovedActionVideoTask
 from features.media.identity_review import score_character_frames_with_references
 from features.media.image_generation import ImageGenerationError
@@ -305,6 +309,7 @@ async def resolve_desktop_video_plan(
             if resolution:
                 frozen = FrozenMediaProvider.from_config(config)
                 frozen.video_resolution = resolution
+                frozen.video_aspect_ratio = _provider_ratio(current, aspect_ratio)
                 providers.append(frozen)
         if providers:
             return seconds, providers
@@ -383,14 +388,15 @@ def _frame_bytes(
         ImageOps.exif_transpose(image, in_place=True)
         with image.convert("RGB") as rgb, BytesIO() as output:
             width, height = rgb.size
+            box = (0, 0, width, height)
             if ratio:
                 left, right = (int(value) for value in ratio.split(":"))
-                target = left / right
-                if width / height > target:
-                    width = max(1, round(height * target))
-                else:
-                    height = max(1, round(width / target))
-            with ImageOps.fit(rgb, (width, height), method=Image.Resampling.LANCZOS) as fitted:
+                try:
+                    box = centered_crop_box(width, height, left, right)
+                except ValueError as exc:
+                    raise DesktopVideoStateError("图片画幅差异超过少量裁切范围，请先适配图片") from exc
+                width, height = box[2] - box[0], box[3] - box[1]
+            with rgb.crop(box) as fitted:
                 if pixel_bounds is not None:
                     minimum, maximum = pixel_bounds
                     scale = min(max(1.0, minimum / width, minimum / height), maximum / width, maximum / height)
@@ -411,19 +417,30 @@ def _provider_ratio(provider: VideoGenProvider, source_ratio: str) -> str | None
             return source_ratio
         lower, upper = (Fraction(str(bound)).limit_denominator(1000) for bound in bounds)
         return source_ratio if lower <= value <= upper else None
-    return next(
-        (
-            ratio
-            for ratio in provider.aspect_ratios
-            if abs(float(Fraction(ratio.replace(":", "/")) / value) - 1) <= 0.01
-        ),
-        None,
+    ratios: list[tuple[float, str]] = []
+    for ratio in provider.aspect_ratios:
+        native = Fraction(ratio.replace(":", "/"))
+        loss = crop_fraction(native.numerator, native.denominator, value.numerator, value.denominator)
+        if loss <= MAX_DESKTOP_CROP_FRACTION + 1e-9:
+            ratios.append((loss, ratio))
+    return min(ratios, key=lambda item: item[0])[1] if ratios else None
+
+
+def _delivery_aspect(progress: DesktopVideoProgress) -> str:
+    return (
+        desktop_aspect_ratio(progress.target_width, progress.target_height)
+        if progress.geometry_mode == "target"
+        else progress.aspect_ratio
     )
 
 
 async def _prepare_geometry(progress: DesktopVideoProgress, data: bytes) -> tuple[bytes, int, int]:
     normalized, width, height = await asyncio.to_thread(_frame_bytes, data)
-    progress.aspect_ratio = desktop_aspect_ratio(width, height)
+    progress.aspect_ratio = (
+        desktop_aspect_ratio(progress.target_width, progress.target_height)
+        if progress.geometry_mode == "target"
+        else desktop_aspect_ratio(width, height)
+    )
     progress.frame_width, progress.frame_height = width, height
     return normalized, width, height
 
@@ -447,6 +464,22 @@ async def prepare_uploaded_desktop_image(
             ext=sniff_media_ext(data) or "png",
             directory=directory,
         )
+    if (
+        progress.expand_image
+        and not progress.feedback.strip()
+        and can_crop_to_aspect(
+            _width,
+            _height,
+            progress.target_width,
+            progress.target_height,
+        )
+    ):
+        normalized, progress.frame_width, progress.frame_height = await asyncio.to_thread(
+            _frame_bytes,
+            normalized,
+            desktop_aspect_ratio(progress.target_width, progress.target_height),
+        )
+        progress.expand_image = False
     path = await save_companion_asset_async(
         normalized,
         user_id=user_id,
@@ -485,123 +518,72 @@ async def _prepare_expansion(
     progress: DesktopVideoProgress,
     directory: str,
 ) -> None:
-    if not progress.expansion_canvas_path:
-        source = resolve_asset_reference(progress.previous_pose_path or progress.source_image_path)
-        if source is None:
-            raise DesktopVideoStateError("要调整画幅的原图无法读取，请重新上传")
-        data = await asyncio.to_thread(source[0].read_bytes)
-        canvas, progress.expansion_box = await asyncio.to_thread(
-            expansion_canvas,
-            data,
+    source = resolve_asset_reference(progress.previous_pose_path or progress.source_image_path)
+    if source is None:
+        raise DesktopVideoStateError("要调整画幅的原图无法读取，请重新上传")
+    original = await asyncio.to_thread(source[0].read_bytes)
+    width, height = await asyncio.to_thread(probe_desktop_image, original)
+    if (
+        not progress.image_chain_json
+        and not progress.feedback.strip()
+        and can_crop_to_aspect(
+            width,
+            height,
             progress.target_width,
             progress.target_height,
         )
-        progress.expansion_canvas_path = await save_companion_asset_async(
-            canvas,
-            user_id=user_id,
-            label="desktop_expansion_canvas",
-            ext="png",
-            directory=directory,
+    ):
+        data, _width, _height = await asyncio.to_thread(_frame_bytes, original, _delivery_aspect(progress))
+        progress.image_origin = progress.previous_image_origin
+    else:
+        state = (
+            ImageChainState.model_validate_json(progress.image_chain_json)
+            if progress.image_chain_json
+            else ImageChainState()
         )
-        await _save_progress(user_id, action_id, progress, stage="image")
-    frozen = resolve_asset_reference(progress.expansion_canvas_path)
-    if frozen is None or progress.expansion_box is None:
-        raise DesktopVideoStateError("调整画幅的参考画布无法读取，请重新上传")
-    canvas_data = await asyncio.to_thread(frozen[0].read_bytes)
-    canvas_width, canvas_height = await asyncio.to_thread(probe_desktop_image, canvas_data)
-    state = (
-        ImageChainState.model_validate_json(progress.image_chain_json)
-        if progress.image_chain_json
-        else ImageChainState()
-    )
 
-    async def before_submit() -> None:
-        await _require_active_job(user_id, action_id, progress.generation_id)
+        async def before_submit() -> None:
+            await _require_active_job(user_id, action_id, progress.generation_id)
 
-    async def save_image(value: ImageChainState) -> None:
-        progress.image_chain_json = value.model_dump_json()
-        await _save_progress(user_id, action_id, progress, stage="image")
+        async def save_image(value: ImageChainState) -> None:
+            progress.image_chain_json = value.model_dump_json()
+            await _save_progress(user_id, action_id, progress, stage="image")
 
-    if not progress.expansion_generated_path:
-        reference = await asyncio.to_thread(read_valid_image_data_uri, progress.expansion_canvas_path)
-        identity = await asyncio.to_thread(
-            read_valid_image_data_uri,
-            progress.previous_pose_path or progress.source_image_path,
-        )
-        if not reference or not identity:
-            raise DesktopVideoStateError("调整画幅的原图无法读取")
+        reference = await asyncio.to_thread(build_data_uri, original, source[1])
         paths = await generate_character_images(
-            DESKTOP_POSE_EXPAND_TEMPLATE.format(
-                aspect_ratio=desktop_aspect_ratio(progress.target_width, progress.target_height),
-                width=canvas_width,
-                height=canvas_height,
-                box=progress.expansion_box,
-                feedback=progress.feedback.strip() or "无",
-            ),
+            DESKTOP_POSE_EXPAND_TEMPLATE.format(feedback=progress.feedback.strip() or "无"),
             user_id=user_id,
             task=AiTaskKey.desktop_life,
             storage_directory=directory,
             reference_image=reference,
-            identity_reference=identity,
+            identity_reference=reference,
             image_edit=True,
-            size=f"{canvas_width}x{canvas_height}",
-            aspect_ratio=desktop_aspect_ratio(progress.target_width, progress.target_height),
+            size=f"{progress.target_width}x{progress.target_height}",
+            aspect_ratio=_delivery_aspect(progress),
             target_width=progress.target_width,
             target_height=progress.target_height,
-            require_target_aspect=True,
+            expansion=ImageExpansionInput(target_width=progress.target_width, target_height=progress.target_height),
             size_enforced=True,
             state=state,
             save_progress=save_image,
             before_submit=before_submit,
             selection=progress.image_selection,
         )
-        progress.expansion_generated_path = paths[0]
-        await _save_progress(user_id, action_id, progress, stage="image")
-    generated = resolve_asset_reference(progress.expansion_generated_path)
-    if generated is None:
-        raise DesktopVideoStateError("调整画幅的生成结果无法读取")
-    generated_data = await asyncio.to_thread(generated[0].read_bytes)
-    native_width, native_height = await asyncio.to_thread(
-        native_expansion_size,
-        generated_data,
-        progress.target_width,
-        progress.target_height,
-    )
-    if (native_width, native_height) != (canvas_width, canvas_height):
-        original = resolve_asset_reference(progress.previous_pose_path or progress.source_image_path)
-        if original is None:
-            raise DesktopVideoStateError("调整画幅的原图无法读取")
-        original_data = await asyncio.to_thread(original[0].read_bytes)
-        canvas_data, progress.expansion_box = await asyncio.to_thread(
-            expansion_canvas,
-            original_data,
-            native_width,
-            native_height,
-            max_pixels=native_width * native_height,
-            max_edge=max(native_width, native_height),
-        )
-        progress.expansion_canvas_path = await save_companion_asset_async(
-            canvas_data,
-            user_id=user_id,
-            label="desktop_expansion_canvas",
-            ext="png",
-            directory=directory,
-        )
-        canvas_width, canvas_height = native_width, native_height
-        await _save_progress(user_id, action_id, progress, stage="image")
-    data = await asyncio.to_thread(restore_expansion_source, generated_data, canvas_data, progress.expansion_box)
-    await asyncio.to_thread(validate_image_bytes, data)
+        generated = resolve_asset_reference(paths[0])
+        if generated is None:
+            raise DesktopVideoStateError("调整画幅的生成结果无法读取")
+        data = await asyncio.to_thread(generated[0].read_bytes)
+        progress.image_origin = state.selected_origin()
+    normalized, _width, _height = await _prepare_geometry(progress, data)
     progress.pose_path = await save_companion_asset_async(
-        data,
+        normalized,
         user_id=user_id,
         label="desktop_pose",
         ext="png",
         directory=directory,
     )
-    progress.image_origin = state.selected_origin()
     progress.geometry_mode = "target"
-    progress.aspect_ratio = desktop_aspect_ratio(canvas_width, canvas_height)
-    progress.frame_width, progress.frame_height = canvas_width, canvas_height
+    progress.aspect_ratio = desktop_aspect_ratio(progress.target_width, progress.target_height)
     progress.expand_image = False
     progress.image_confirmed = False
     progress.motion_prompt = ""
@@ -745,7 +727,11 @@ async def _check_confirmed_geometry(
     ):
         raise DesktopVideoStateError("起始画面与桌景目标画幅不一致，请先选择保留原比例或 AI 调整")
     progress.frame_width, progress.frame_height = original_size
-    progress.aspect_ratio = desktop_aspect_ratio(*original_size)
+    progress.aspect_ratio = (
+        desktop_aspect_ratio(progress.target_width, progress.target_height)
+        if progress.geometry_mode == "target"
+        else desktop_aspect_ratio(*original_size)
+    )
 
 
 async def _prepare_motion(
@@ -803,14 +789,37 @@ async def _process_candidate(
         raise DesktopVideoStateError("已下载的视频无法读取")
     source = resolved[0]
     external = progress.source == "external_upload"
-    temporary = source.with_name(f"desktop-normalized-{progress.generation_id}.mp4")
-    processing = asyncio.create_task(
-        asyncio.to_thread(
-            prepare_external_desktop_video if external else prepare_desktop_video,
-            *([source] if external else [source, temporary]),
-            **({} if external else {"aspect_ratio": progress.aspect_ratio}),
-        ),
+    fit_external = (
+        external
+        and progress.geometry_mode == "target"
+        and (
+            progress.reprocess_only
+            or not desktop_aspect_matches(
+                progress.frame_width or progress.target_width,
+                progress.frame_height or progress.target_height,
+                progress.target_width,
+                progress.target_height,
+            )
+        )
     )
+    temporary = source.with_name(f"desktop-normalized-{progress.generation_id}.mp4")
+    if fit_external:
+        operation = asyncio.to_thread(
+            prepare_fitted_external_desktop_video,
+            source,
+            temporary,
+            aspect_ratio=_delivery_aspect(progress),
+        )
+    elif external:
+        operation = asyncio.to_thread(prepare_external_desktop_video, source)
+    else:
+        operation = asyncio.to_thread(
+            prepare_desktop_video,
+            source,
+            temporary,
+            aspect_ratio=_delivery_aspect(progress),
+        )
+    processing = asyncio.create_task(operation)
     try:
         try:
             result = await asyncio.shield(processing)
@@ -819,7 +828,7 @@ async def _process_candidate(
             raise
         video = (
             progress.source_path
-            if external
+            if external and not fit_external
             else await save_companion_asset_async(
                 await asyncio.to_thread(temporary.read_bytes),
                 user_id=user_id,
@@ -835,36 +844,48 @@ async def _process_candidate(
             ext="webp",
             directory=directory,
         )
-        if external or progress.video_refinement is not None:
-            progress.pose_path = await save_companion_asset_async(
+        image_path = progress.pose_path
+        if external or progress.video_refinement is not None or result.fitted:
+            image_path = await save_companion_asset_async(
                 result.first_frame,
                 user_id=user_id,
                 label="desktop_pose",
                 ext="png",
                 directory=directory,
             )
-            if external:
+            if external or progress.video_refinement is not None:
+                progress.pose_path = image_path
+            if external and progress.geometry_mode == "keep":
                 progress.aspect_ratio = desktop_aspect_ratio(result.width, result.height)
         progress.frame_width, progress.frame_height = result.width, result.height
         if (
             action.key == "idle"
             and progress.continuity == "base"
-            and (external or progress.replace_base or not progress.base_image_path)
+            and (external or result.fitted or progress.replace_base or not progress.base_image_path)
         ):
-            progress.base_image_path = progress.pose_path
+            if result.fitted and not progress.replace_base:
+                progress.replace_base = True
+                progress.base_version = (progress.base_version or 0) + 1
+            progress.base_image_path = image_path
         chain = MediaChainState.model_validate_json(progress.video_chain_json or "{}")
         video_origin = (
             chain.providers[chain.active_index].generation_origin(ServiceType.video_gen)
             if not external and chain.active_index is not None
+            else progress.video_refinement.video_origin
+            if progress.reprocess_only and progress.video_refinement
             else None
         )
         return DesktopVideoAsset(
             video_path=video or "",
             poster_path=poster,
-            image_path=progress.pose_path or "",
+            image_path=image_path or "",
             image_origin=None if external or progress.video_refinement is not None else progress.image_origin,
             source_image_path=progress.source_image_path,
-            source_video_path=progress.video_refinement.original_video_path if progress.video_refinement else None,
+            source_video_path=progress.video_refinement.original_video_path
+            if progress.video_refinement
+            else progress.source_path
+            if external
+            else None,
             geometry_mode=progress.geometry_mode,
             resolution_revision=progress.resolution_revision,
             video_origin=video_origin,
@@ -877,6 +898,7 @@ async def _process_candidate(
             source="external_upload" if external else "generated",
             transition="base"
             if not external
+            and not result.fitted
             and progress.video_refinement is None
             and progress.continuity == "base"
             and progress.pose_path == progress.base_image_path
@@ -884,7 +906,7 @@ async def _process_candidate(
             visual_description=progress.visual_description,
         )
     finally:
-        if not external:
+        if not external or fit_external:
             await asyncio.to_thread(temporary.unlink, missing_ok=True)
 
 
@@ -1098,11 +1120,22 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                 return
             generation_id = initial.generation_id
         action, snapshot, progress = await _job_inputs(user_id, action_id, generation_id)
+        progress.aspect_ratio = _delivery_aspect(progress)
         if desktop_progress_has_unknown_submission(progress):
             progress.submission_unknown = True
             await _save_progress(user_id, action_id, progress, stage=action.stage)
             raise DesktopVideoStateError(_unknown_submission_message(progress))
         directory = f"desktop/{action.set_id}/{action.id}/{generation_id}"
+        if progress.reprocess_only:
+            if not progress.source_path:
+                raise DesktopVideoStateError("已保存的视频无法读取，请重新上传或制作")
+            await _save_progress(user_id, action_id, progress, stage="process")
+            progress.candidate = await _process_candidate(user_id, action, progress, directory)
+            progress.force_review = True
+            progress.review_verdict, progress.review_reason = "review", "画幅已适配，请预览确认"
+            await _save_progress(user_id, action_id, progress, stage="review")
+            await _finish_job(user_id, action_id, progress)
+            return
         if progress.source == "external_upload":
             if progress.candidate is None:
                 if not progress.source_path:
@@ -1265,6 +1298,12 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     if chain.next_index >= len(chain.providers):
                         raise DesktopVideoStateError(f"当前视频模型均不支持已确认的 {progress.aspect_ratio} 画幅")
                     continue
+                frozen_ratio = chain.providers[index].video_aspect_ratio
+                if frozen_ratio is None:
+                    raise DesktopVideoStateError("视频制作任务缺少冻结画幅，请重新制作")
+                if not provider.supports_adaptive_aspect_ratio and frozen_ratio not in provider.aspect_ratios:
+                    raise DesktopVideoStateError("视频模型的冻结画幅已不再可用，请重新选择模型")
+                desired_ratio = frozen_ratio
                 if progress.video_refinement is None:
                     resolved = resolve_asset_reference(progress.pose_path)
                     if resolved is None:
@@ -1282,6 +1321,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                         progress,
                         provider,
                         chain.providers[index].video_resolution,
+                        native_ratio=desired_ratio,
                     )
                 else:
                     request = VideoGenRequest(
@@ -1296,7 +1336,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                             else DESKTOP_VIDEO_ONCE,
                             motion=progress.motion_prompt,
                             feedback=progress.feedback.strip() or "无",
-                            aspect_ratio=progress.aspect_ratio,
+                            aspect_ratio=desired_ratio,
                         ),
                         duration=progress.duration_seconds,
                         resolution=chain.providers[index].video_resolution,

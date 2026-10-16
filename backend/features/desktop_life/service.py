@@ -24,6 +24,7 @@ from infrastructure.assets.asset_store import (
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from infrastructure.media_geometry import can_crop_to_aspect
 from infrastructure.text import parse_llm_json, resolve_language, resolve_prompt_text, utc_now
 from infrastructure.video_processing.desktop import extract_desktop_first_frame
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
@@ -680,11 +681,13 @@ def _geometry_mode(
 ) -> Literal["target", "keep"]:
     if aspect_policy not in {"ask", "keep", "expand"}:
         raise DesktopVideoStateError("不支持的画幅处理方式")
+    if aspect_policy == "keep":
+        return "keep"
     if desktop_aspect_matches(width, height, row.target_width, row.target_height):
         return "target"
     if aspect_policy == "ask":
         raise DesktopVideoAspectRatioError(width, height, row.target_width, row.target_height, media_kind)
-    return "keep" if aspect_policy == "keep" else "target"
+    return "target"
 
 
 async def _image_geometry(
@@ -857,7 +860,18 @@ async def generate_desktop_image(
                 regenerate_image=regenerate,
             )
             await enqueue_asset_cleanup(db, user_id, old_paths - ({previous} if previous else set()))
-        require_new_generation_call(user_id)
+        local_fit = (
+            progress.expand_image
+            and not progress.feedback.strip()
+            and can_crop_to_aspect(
+                progress.frame_width or progress.target_width,
+                progress.frame_height or progress.target_height,
+                progress.target_width,
+                progress.target_height,
+            )
+        )
+        if not local_fit:
+            require_new_generation_call(user_id)
         action.generation_state_json = progress.model_dump_json()
         action.status, action.stage, action.error = "processing", "prepare", None
         await touch_desktop_state(db, user_id)
@@ -962,13 +976,7 @@ async def upload_desktop_image(
             await enqueue_asset_cleanup(
                 db,
                 user_id,
-                {
-                    saved_path,
-                    progress.source_image_path,
-                    progress.expansion_canvas_path,
-                    progress.expansion_generated_path,
-                }
-                - {None},
+                {saved_path, progress.source_image_path} - {None},
             )
             saved_action = await db.scalar(
                 select(DesktopVideoAction).where(
@@ -1120,12 +1128,16 @@ async def resume_desktop_action(
         if progress.source == "external_upload":
             if not progress.source_path and progress.candidate is None:
                 raise DesktopVideoStateError("上传的视频尚未保存完成，请稍后重试或重新上传")
-        else:
+        elif not progress.reprocess_only:
             require_new_generation_call(user_id)
         progress.paused_by_user = False
         progress.failure_reason = ""
         action.generation_state_json = progress.model_dump_json()
-        action.status, action.stage, action.error = "processing", "prepare", None
+        action.status, action.stage, action.error = (
+            "processing",
+            "process" if progress.reprocess_only else "prepare",
+            None,
+        )
         await touch_desktop_state(db, user_id)
         await db.commit()
         response = desktop_action_response(action)
@@ -1521,6 +1533,12 @@ async def _plan_refinement(
     width, height = (
         (row.target_width, row.target_height) if request.aspect_policy == "expand" else (asset.width, asset.height)
     )
+    if (
+        request.aspect_policy == "expand"
+        and not request.feedback.strip()
+        and can_crop_to_aspect(asset.width, asset.height, width, height)
+    ):
+        return (asset.duration_ms + 999) // 1000, width, height, []
     seconds, providers = await plan_desktop_video_refinement(
         user_id,
         data,
@@ -1594,9 +1612,11 @@ async def refine_desktop_video(
     async with SESSION_LOCAL() as db:
         _action, row, asset = await _refinement_source(db, user_id, action_id, request)
     seconds, _width, _height, providers = await _plan_refinement(user_id, row, asset, request)
+    local_fit = not providers
     async with _lock(user_id), SESSION_LOCAL() as db:
         action, row, asset = await _refinement_source(db, user_id, action_id, request, lock=True)
-        require_new_generation_call(user_id)
+        if not local_fit:
+            require_new_generation_call(user_id)
         removed_task = desktop_removed_video_task(action)
         old_paths = asset_paths(action.generation_state_json, user_id)
         progress = _refinement_progress(
@@ -1616,10 +1636,20 @@ async def refine_desktop_video(
             feedback=request.feedback,
             aspect_policy=request.aspect_policy,
         )
+        progress.source_image_path = asset.source_image_path
+        if local_fit:
+            progress.source = "external_upload" if asset.source == "external_upload" else "user_requested"
+            progress.source_path = asset.video_path
+            progress.reprocess_only = True
         action.attempt += 1
         action.duration_seconds = seconds
         action.generation_state_json = progress.model_dump_json()
-        action.status, action.stage, action.error, action.update_pending = "processing", "video", None, False
+        action.status, action.stage, action.error, action.update_pending = (
+            "processing",
+            "process" if local_fit else "video",
+            None,
+            False,
+        )
         await enqueue_asset_cleanup(db, user_id, old_paths - asset_paths(action.generation_state_json, user_id))
         await touch_desktop_state(db, user_id)
         await db.commit()
@@ -1690,16 +1720,21 @@ async def upload_desktop_action(
         observed_version = initial.version
         observed_base, observed_resolution = row.base_version, row.resolution_revision
     target_ratio = desktop_aspect_ratio(row.target_width, row.target_height)
+    local_fit = can_crop_to_aspect(width, height, row.target_width, row.target_height)
     try:
         geometry_mode = _geometry_mode(row, width, height, aspect_policy, "video")
     except DesktopVideoAspectRatioError as exc:
         try:
-            seconds, _providers = await plan_desktop_video_refinement(
-                user_id,
-                data,
-                extension,
-                aspect_ratio=target_ratio,
-            )
+            if local_fit:
+                _frame, duration_ms = await asyncio.to_thread(_uploaded_refinement_frame, data, extension)
+                seconds = (duration_ms + 999) // 1000
+            else:
+                seconds, _providers = await plan_desktop_video_refinement(
+                    user_id,
+                    data,
+                    extension,
+                    aspect_ratio=target_ratio,
+                )
             exc.detail["duration_seconds"] = seconds
         except DesktopVideoError as planning_error:
             exc.detail["adjustment_error"] = str(planning_error)
@@ -1715,7 +1750,8 @@ async def upload_desktop_action(
     providers: list[FrozenMediaProvider] = []
     source_frame: bytes | None = None
     source_duration_ms = 0
-    if aspect_policy == "expand":
+    ai_adjustment = aspect_policy == "expand" and not local_fit
+    if ai_adjustment:
         seconds, providers = await plan_desktop_video_refinement(
             user_id,
             data,
@@ -1740,7 +1776,7 @@ async def upload_desktop_action(
             raise DesktopVideoStateError("这个桌面动作正在制作，请等待当前任务完成")
         if old is not None and desktop_progress_has_unknown_submission(old):
             raise DesktopVideoStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
-        if aspect_policy == "expand":
+        if ai_adjustment:
             require_new_generation_call(user_id)
         initial.attempt += 1
         generation_id = uuid4().hex
@@ -1754,7 +1790,7 @@ async def upload_desktop_action(
             target_width=row.target_width,
             target_height=row.target_height,
             resolution_revision=row.resolution_revision,
-            aspect_ratio=desktop_aspect_ratio(row.target_width, row.target_height),
+            aspect_ratio=target_ratio if geometry_mode == "target" else desktop_aspect_ratio(width, height),
             generation_id=generation_id,
             source="external_upload",
             geometry_mode=geometry_mode,
@@ -1768,8 +1804,9 @@ async def upload_desktop_action(
             base_image_path=row.base_image_path if initial.continuity == "base" and initial.key != "idle" else None,
             replace_base=initial.key == "idle",
             video_chain_json=MediaChainState(providers=providers).model_dump_json(),
+            force_review=aspect_policy == "expand",
+            reprocess_only=aspect_policy == "expand" and local_fit,
         )
-        progress.aspect_ratio = desktop_aspect_ratio(width, height)
         await enqueue_asset_cleanup(db, user_id, old_paths)
         initial.generation_state_json = progress.model_dump_json()
         initial.status, initial.stage, initial.error = "processing", "upload", None
@@ -1988,6 +2025,7 @@ async def play_desktop_action(
             video_url="",
             poster_url="",
             version=action.version,
+            geometry_mode=progress.geometry_mode if progress else "target",
             continuity="independent",
             base_version=None,
         )

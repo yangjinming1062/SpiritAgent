@@ -49,6 +49,7 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     (value.kind !== 'loop' && value.kind !== 'once') ||
     (value.continuity !== 'base' && value.continuity !== 'independent') ||
     (value.transition !== 'base' && value.transition !== 'fade') ||
+    (value.geometryMode !== 'target' && value.geometryMode !== 'keep') ||
     !validId(value.baseVersion) ||
     (value.continuity === 'base' && value.baseVersion === null) ||
     (value.continuity === 'independent' && value.baseVersion !== null) ||
@@ -73,6 +74,7 @@ export function parseDesktopBackgroundRequest(raw: unknown): DesktopBackgroundRe
     kind: value.kind,
     continuity: value.continuity,
     transition: value.transition,
+    geometryMode: value.geometryMode,
     baseVersion: value.baseVersion as number | null,
     theme: normalizeUiTheme(value.theme),
     reduceMotion: value.reduceMotion,
@@ -96,6 +98,7 @@ export function emptyDesktopBackground(accountEpoch: number, revision: number, t
     kind: 'loop',
     continuity: 'independent',
     transition: 'fade',
+    geometryMode: 'target',
     baseVersion: null,
     theme,
     reduceMotion: false,

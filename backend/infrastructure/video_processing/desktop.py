@@ -1,4 +1,4 @@
-"""桌面生活视频处理：系统生成视频规范化，用户上传视频原样校验与封面生成。"""
+"""桌面生活视频校验与适配；原始上传保留，派生视频按目标画幅裁切。"""
 
 from dataclasses import dataclass
 from io import BytesIO
@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from infrastructure.media_geometry import centered_crop_box
 from infrastructure.video_processing.ffmpeg import (
     VideoProcessError,
     ffmpeg_stdout,
@@ -13,7 +14,6 @@ from infrastructure.video_processing.ffmpeg import (
     run_ffmpeg,
     video_frame_times,
 )
-from infrastructure.video_processing.process import extract_cover
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class DesktopVideoResult:
     duration_ms: int
     cover: bytes
     first_frame: bytes
+    fitted: bool = False
 
 
 @dataclass(frozen=True)
@@ -107,20 +108,73 @@ def extract_desktop_first_frame(src: Path) -> bytes:
     return data
 
 
-def prepare_desktop_video(src: Path, dst: Path, *, aspect_ratio: str | None = None) -> DesktopVideoResult:
+def _target_dimensions(aspect_ratio: str) -> tuple[int, int]:
+    try:
+        width, height = (int(value) for value in aspect_ratio.split(":"))
+        if min(width, height) <= 0:
+            raise ValueError
+    except (ValueError, TypeError) as exc:
+        raise VideoProcessError("桌面视频目标画幅无效") from exc
+    return width, height
+
+
+def _fit_filter(
+    first_frame: bytes,
+    aspect_ratio: str | None,
+) -> tuple[str, tuple[int, int], bool]:
+    with Image.open(BytesIO(first_frame)) as frame:
+        width, height = frame.size
+    if width * height > 3840 * 2160:
+        raise VideoProcessError("桌面视频分辨率超出处理上限")
+    target = _target_dimensions(aspect_ratio) if aspect_ratio else (width, height)
+    try:
+        crop_left, crop_top, crop_right, crop_bottom = centered_crop_box(
+            width,
+            height,
+            *target,
+            alignment=2,
+        )
+    except ValueError as exc:
+        raise VideoProcessError("桌面视频画幅差异超过少量裁切范围，请重新调整") from exc
+    output_width, output_height = crop_right - crop_left, crop_bottom - crop_top
+    return (
+        f"scale={width}:{height},setsar=1,crop={output_width}:{output_height}:{crop_left}:{crop_top}:exact=1",
+        (output_width, output_height),
+        (output_width, output_height) != (width, height),
+    )
+
+
+def _desktop_result(dst: Path, expected_size: tuple[int, int], *, fitted: bool) -> DesktopVideoResult:
+    output = probe_video(dst)
+    if (output.width, output.height) != expected_size:
+        raise VideoProcessError("桌面视频处理后的画幅无效")
+    run_ffmpeg(["-xerror", "-i", str(dst), "-map", "0:v:0", "-an", "-f", "null", "-"], label="桌面视频解码检查")
+    first_frame = extract_desktop_first_frame(dst)
+    with Image.open(BytesIO(first_frame)) as frame, BytesIO() as buffer:
+        frame.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+        frame.save(buffer, format="WEBP", quality=90)
+        cover = buffer.getvalue()
+    return DesktopVideoResult(
+        output.width,
+        output.height,
+        round(output.duration_seconds * 1000),
+        cover,
+        first_frame,
+        fitted,
+    )
+
+
+def prepare_desktop_video(
+    src: Path,
+    dst: Path,
+    *,
+    aspect_ratio: str | None = None,
+) -> DesktopVideoResult:
     probe = probe_video(src)
     if probe.width * probe.height > 3840 * 2160 or probe.fps > 120:
         raise VideoProcessError("桌面视频分辨率或帧率超出处理上限")
     first_frame = extract_desktop_first_frame(src)
-    with Image.open(BytesIO(first_frame)) as frame:
-        if aspect_ratio is not None:
-            try:
-                numerator, denominator = (int(value) for value in aspect_ratio.split(":"))
-                expected = numerator / denominator
-            except (ValueError, ZeroDivisionError) as exc:
-                raise VideoProcessError("桌面视频目标画幅无效") from exc
-            if expected <= 0 or abs(frame.width / frame.height / expected - 1) > 0.01:
-                raise VideoProcessError("桌面视频画幅与已确认图片不一致，请重做")
+    video_filter, expected_size, fitted = _fit_filter(first_frame, aspect_ratio)
     dst.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(
         [
@@ -132,7 +186,7 @@ def prepare_desktop_video(src: Path, dst: Path, *, aspect_ratio: str | None = No
             "-sn",
             "-dn",
             "-vf",
-            "scale=trunc(iw*max(sar\\,1)/2)*2:trunc(ih/min(sar\\,1)/2)*2,setsar=1,fps=24",
+            f"{video_filter},fps=24",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -147,16 +201,46 @@ def prepare_desktop_video(src: Path, dst: Path, *, aspect_ratio: str | None = No
         ],
         label="桌面视频处理",
     )
-    output = probe_video(dst)
-    run_ffmpeg(["-i", str(dst), "-map", "0:v:0", "-an", "-f", "null", "-"], label="桌面视频解码检查")
-    cover = extract_cover(dst, canvas_w=output.width, canvas_h=output.height)
-    return DesktopVideoResult(
-        output.width,
-        output.height,
-        round(output.duration_seconds * 1000),
-        cover,
-        extract_desktop_first_frame(dst),
+    return _desktop_result(dst, expected_size, fitted=fitted)
+
+
+def prepare_fitted_external_desktop_video(src: Path, dst: Path, *, aspect_ratio: str) -> DesktopVideoResult:
+    """生成裁切副本，保留源时间轴及音轨；调用方独立保留原文件。"""
+    source = prepare_external_desktop_video(src)
+    video_filter, expected_size, fitted = _fit_filter(source.first_frame, aspect_ratio)
+    probe = probe_video(src)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    audio_args = ["-c:a", "copy"] if all(codec in {"aac", "mp3"} for codec in probe.audio_codecs) else ["-c:a", "aac"]
+    run_ffmpeg(
+        [
+            "-i",
+            str(src),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-sn",
+            "-dn",
+            "-vf",
+            video_filter,
+            "-fps_mode",
+            "passthrough",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-preset",
+            "medium",
+            "-crf",
+            "20",
+            *audio_args,
+            "-movflags",
+            "+faststart",
+            str(dst),
+        ],
+        label="桌面视频画幅适配",
     )
+    return _desktop_result(dst, expected_size, fitted=fitted)
 
 
 def prepare_external_desktop_video(src: Path) -> DesktopVideoResult:

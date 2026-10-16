@@ -650,6 +650,7 @@ function isPlayCommand(value: unknown): value is DesktopVideoPlayCommand {
     (item.continuity !== 'base' || item.base_version !== null) &&
     (item.continuity !== 'independent' || item.base_version === null) &&
     (item.transition === 'base' || item.transition === 'fade') &&
+    (item.geometry_mode === 'target' || item.geometry_mode === 'keep') &&
     typeof item.version === 'number'
   )
 }
