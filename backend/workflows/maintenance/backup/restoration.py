@@ -19,7 +19,7 @@ from features.media.backup import restore_current_voices
 from features.media.contracts import RemovedActionVideoTask
 from features.media.voice_queries import custom_voice_tokens
 from features.topics.backup import validate_batch_merges
-from infrastructure.backup import BACKUP_REGISTRY, BackupContext
+from infrastructure.backup import BACKUP_REGISTRY, BackupContext, BackupImportMode
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
 from sqlalchemy.exc import IntegrityError, StatementError
@@ -45,7 +45,6 @@ from workflows.maintenance.backup.serializers import (
     IDENTITY_TABLES,
     POST_TABLES,
     TABLES,
-    BackupImportMode,
     insert_rows,
     read_table_rows,
 )

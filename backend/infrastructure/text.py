@@ -136,10 +136,8 @@ def format_day_marker(dt: datetime | None, tz_str: str | None, lang: str = "zh")
 
 def is_time_context_text(text: str) -> bool:
     text = text.lstrip()
-    return (
-        (text.startswith("--- ") and text.endswith(" ---"))
-        or text.startswith(TIME_NOTE_ZH_HEAD)
-        or text.startswith(TIME_NOTE_EN_HEAD)
+    return (text.startswith("--- ") and text.endswith(" ---")) or text.startswith(
+        (TIME_NOTE_ZH_HEAD, TIME_NOTE_EN_HEAD),
     )
 
 

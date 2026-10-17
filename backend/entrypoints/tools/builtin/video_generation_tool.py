@@ -19,7 +19,8 @@ from features.media.video_jobs import enqueue_video_job, ensure_video_capability
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.prompt_engineer import VisualReasoningError
 from infrastructure.ai.tasks import AiTaskKey
-from infrastructure.assets import asset_store
+from infrastructure.assets.asset_store import read_asset_data_uri
+from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import tool_error
@@ -47,10 +48,10 @@ def _video_reference(reference: str, user_id: int) -> str | None:
     """本人资产路径读为 data URI；data URI 与 http(s) 地址原样交给供应商链，其余值无效。"""
     if reference.startswith(("data:image/", "http://", "https://")):
         return reference
-    parsed = asset_store.parse_companion_asset_path(reference)
+    parsed = parse_companion_asset_path(reference)
     if parsed is None or parsed[0] != user_id:
         return None
-    return asset_store.read_asset_data_uri(reference)
+    return read_asset_data_uri(reference)
 
 
 def _result_unknown_payload(task_id: str, job: VideoJobSnapshot) -> dict[str, object]:

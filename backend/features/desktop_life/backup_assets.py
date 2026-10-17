@@ -8,12 +8,12 @@ from typing import Any
 
 from infrastructure.assets.asset_store import normalize_asset_reference
 from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.assets.references import asset_paths
 from infrastructure.config import SETTINGS
 from infrastructure.video_processing.desktop import extract_desktop_first_frame
 from infrastructure.video_processing.ffmpeg import VideoProcessError, probe_video
 from PIL import Image
 
-from features.assets.references import asset_paths
 from features.desktop_life.schemas import (
     DESKTOP_MAX_EDGE,
     DesktopVideoAsset,

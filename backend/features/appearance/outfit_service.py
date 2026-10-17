@@ -10,6 +10,7 @@ from infrastructure.ai.prompt_engineer import chat
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import build_data_uri, outfit_asset_directory, unlink_companion_asset
+from infrastructure.assets.references import asset_paths
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -55,7 +56,6 @@ from features.assets.lifecycle import (
     cleanup_user_assets,
     enqueue_asset_cleanup,
 )
-from features.assets.references import asset_paths
 from features.companion.persona_service import load_persona_definition
 from features.companion.policy_contracts import OUTFIT_POLICY_DEFAULT
 from features.companion.visual_state import change_outfit_policy, ensure_persona_snapshot, persona_snapshot

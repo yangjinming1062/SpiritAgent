@@ -3,8 +3,8 @@
 import contextlib
 import json
 
-from infrastructure.assets import asset_store
-from infrastructure.assets.asset_store import client_asset_url
+from infrastructure.assets.asset_store import client_asset_url, resolve_companion_asset_path
+from infrastructure.assets.paths import parse_companion_asset_path
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -138,8 +138,8 @@ def resolve_reply_media(state: MediaTurnState, media_id: str, media_type: str) -
     if artifact.type == "image" and artifact.status != "ready":
         raise ValueError("Images require a completed, available asset")
     if artifact.status == "ready":
-        parsed = asset_store.parse_companion_asset_path(artifact.url or "")
-        if parsed is None or parsed[0] != state.user_id or asset_store.resolve_companion_asset_path(*parsed) is None:
+        parsed = parse_companion_asset_path(artifact.url or "")
+        if parsed is None or parsed[0] != state.user_id or resolve_companion_asset_path(*parsed) is None:
             raise ValueError("Media asset is unavailable or belongs to another user")
     return MediaBubble(
         type=artifact.type,

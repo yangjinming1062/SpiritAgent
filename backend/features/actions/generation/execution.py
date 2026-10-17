@@ -118,7 +118,7 @@ async def _build_pack(
         # 用户维护或停机中断导入：上传源片段不可复用，与重启恢复一致按失败落库，避免包一直占着构建位。
         await _fail_pack(pack_id, "处理已中断，请重新提交")
         raise
-    except Exception as exc:  # noqa: BLE001 — 后台任务兜底：失败必须落库可见
+    except Exception as exc:  # 后台任务兜底：失败必须落库可见
         logger.exception("video pack build failed", extra={"pack_id": pack_id})
         # 只有处理错误自带公开文案；其余异常（含路径等内部信息）只进日志。
         public = str(exc) if isinstance(exc, (VideoProcessError, VideoPackError)) else "动作片段处理失败，请重新提交"
@@ -175,10 +175,10 @@ async def _generate_pack(pack_id: int) -> None:
                     await _run_action_pipeline(pack, job, entry, context)
             except GenerationWorkPaused:
                 return
-            except Exception as exc:  # noqa: BLE001 — 动作失败隔离，其他已请求动作仍可交付并独立重做
+            except Exception as exc:  # 动作失败隔离，其他已请求动作仍可交付并独立重做
                 try:
                     await _record_action_failure(pack_id, job, exc)
-                except Exception:  # noqa: BLE001 — 失败记录自身失败不能中断其余在制动作的收敛
+                except Exception:  # 失败记录自身失败不能中断其余在制动作的收敛
                     logger.exception(
                         "action failure record failed",
                         extra={"pack_id": pack_id, "action_id": job.id},
@@ -193,7 +193,7 @@ async def _generate_pack(pack_id: int) -> None:
         return
     except _GenerationRowGoneError:
         logger.info("video pack left generation", extra={"pack_id": pack_id})
-    except Exception as exc:  # noqa: BLE001 — 后台异常必须转为持久可见失败
+    except Exception as exc:  # 后台异常必须转为持久可见失败
         logger.exception("video pack generation failed", extra={"pack_id": pack_id})
         # 只结束本任务持有的动作，新受理的并行动作仍保留自己的供应商句柄。
         for job in jobs:
@@ -293,10 +293,10 @@ async def _generate_dynamic_actions(
                     return await _generate_one_dynamic(pack, job, context)
             except GenerationWorkPaused:
                 return False
-            except Exception as exc:  # noqa: BLE001 — 单动作失败隔离，不影响已就绪目录
+            except Exception as exc:  # 单动作失败隔离，不影响已就绪目录
                 try:
                     await _record_action_failure(pack_id, job, exc)
-                except Exception:  # noqa: BLE001 — 失败记录自身失败不能中断其余在制动作的收敛
+                except Exception:  # 失败记录自身失败不能中断其余在制动作的收敛
                     logger.exception(
                         "action failure record failed",
                         extra={"pack_id": pack_id, "action_id": job.id},
@@ -315,7 +315,7 @@ async def _generate_dynamic_actions(
                 await _publish_dynamic_catalog(pack_id)
             await _fulfill_pending_intents([job.id for job, succeeded in zip(jobs, outcomes, strict=True) if succeeded])
         return not is_user_in_maintenance(pack.user_id)
-    except Exception as exc:  # noqa: BLE001 — 后台任务兜底：失败必须落库可见
+    except Exception as exc:  # 后台任务兜底：失败必须落库可见
         logger.exception("dynamic action generation crashed", extra={"pack_id": pack_id})
         await _fail_dynamic_jobs(pack_id, _generation_error(exc), action_ids=list(claimed_ids))
         await _finalize_pack_generation(pack_id)

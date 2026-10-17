@@ -6,6 +6,7 @@ from pathlib import Path
 
 from infrastructure.assets.asset_store import outfit_asset_directory
 from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.assets.references import asset_paths
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import utc_now
@@ -24,7 +25,7 @@ from features.assets.lifecycle import (
     enqueue_asset_cleanup,
     enqueue_asset_cleanup_entries,
 )
-from features.assets.references import ACTION_ASSET_FIELDS, PACK_ASSET_FIELDS, AssetReferencesUnavailable, asset_paths
+from features.assets.references import ACTION_ASSET_FIELDS, PACK_ASSET_FIELDS, AssetReferencesUnavailable
 from features.media.contracts import RemovedActionVideoTask
 from features.media.review_service import release_action_reviews_for_packs
 

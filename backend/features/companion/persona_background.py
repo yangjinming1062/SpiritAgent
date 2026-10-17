@@ -44,7 +44,7 @@ async def _refresh_personality_tags(persona_id: int, user_id: int) -> None:
         except MissingLlmConfigError as exc:
             last_exc = exc
             break
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last_exc = exc
         if attempt < _BG_TASK_MAX_ATTEMPTS:
             await asyncio.sleep(

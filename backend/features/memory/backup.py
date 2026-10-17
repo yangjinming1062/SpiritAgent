@@ -3,12 +3,13 @@
 from functools import partial
 from typing import Any, get_args
 
+from infrastructure.ai.embedding_space import MEMORY_EMBEDDING_DIM
 from infrastructure.backup import BackupContext, BackupRows, BackupTable, IdMap
 from runtime.memory_scope import MemoryScope, MemorySource, validate_memory_scope
 from sqlalchemy import Select, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import MEMORY_EMBEDDING_DIM, MEMORY_SLOT_CONTEXT_PREFIXES, Memory
+from .models import MEMORY_SLOT_CONTEXT_PREFIXES, Memory
 
 _MEMORY_SOURCE_KINDS = frozenset((*get_args(MemorySource.__annotations__["kind"]), "import"))
 

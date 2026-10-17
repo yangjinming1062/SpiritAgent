@@ -121,7 +121,7 @@ class ConnectionManager:
 
     def local_user_ids(self) -> list[int]:
         """已注册 dispatcher 的 user_id 快照——outbox 轮询循环用它限定认领范围。"""
-        return list(self._dispatchers.keys())
+        return list(self._dispatchers)
 
     def register_remote(
         self,

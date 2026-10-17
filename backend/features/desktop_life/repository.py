@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.asset_store import client_asset_url, resolve_asset_reference
+from infrastructure.assets.references import asset_paths
 from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
@@ -13,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import lock_user_row
 from features.assets.lifecycle import enqueue_asset_cleanup
-from features.assets.references import asset_paths
 from features.desktop_life.models import (
     DesktopVideoAction,
     DesktopVideoPlayback,

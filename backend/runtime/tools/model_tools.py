@@ -91,7 +91,7 @@ def _coerce_json(value: str, expected_python_type: type) -> Any:
     return parsed if isinstance(parsed, expected_python_type) else value
 
 
-def _coerce_number(value: str, integer_only: bool = False) -> Any:
+def _coerce_number(value: str, integer_only: bool = False) -> int | float | str:
     if integer_only:
         # 先按整数解析：float 中转会在 2^53 以上丢精度（毫秒时间戳、雪花 ID 类参数）
         try:
@@ -109,7 +109,7 @@ def _coerce_number(value: str, integer_only: bool = False) -> Any:
     return value if integer_only else f
 
 
-def _coerce_boolean(value: str) -> Any:
+def _coerce_boolean(value: str) -> bool | str:
     low = value.strip().lower()
     if low == "true":
         return True

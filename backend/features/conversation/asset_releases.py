@@ -2,12 +2,13 @@
 
 from collections.abc import Iterable
 
+from infrastructure.assets.references import asset_paths
 from runtime.events.queries import invalidate_history_events
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.lifecycle import enqueue_asset_cleanup
-from features.assets.references import asset_paths, message_asset_paths
+from features.assets.references import message_asset_paths
 from features.media.queries import invalidate_conversation_video_jobs
 from features.media.voice_queries import custom_voice_tokens, voice_asset_references
 

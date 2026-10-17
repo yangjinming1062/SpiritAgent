@@ -225,7 +225,7 @@ def _enrich(model: ModelMetadata, suggestion: ModelMetadata) -> ModelMetadata:
 def _replace_suffix(base_url: str, suffix: str, replacement: str) -> str:
     url = urlsplit(base_url)
     path = url.path.rstrip("/")
-    return urlunsplit(url._replace(path=(path.removesuffix(suffix) if path.endswith(suffix) else path) + replacement))
+    return urlunsplit(url._replace(path=path.removesuffix(suffix) + replacement))
 
 
 async def _vendor_models(provider: ProviderCard, service: ServiceType) -> list[ModelMetadata]:

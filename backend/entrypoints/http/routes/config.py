@@ -11,8 +11,7 @@ router = get_router()
 
 @router.get("", response_model=DesktopConfigResponse)
 async def get_config(user: CurrentUser, db: DbSession) -> DesktopConfigResponse:
-    result = await desktop_configuration.get_config(user=user, db=db)
-    return result
+    return await desktop_configuration.get_config(user=user, db=db)
 
 
 @router.put("", response_model=DesktopConfigResponse)

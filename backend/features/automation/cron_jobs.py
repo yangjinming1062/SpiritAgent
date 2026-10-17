@@ -68,7 +68,7 @@ def compute_next_run_at(schedule: str, base: datetime) -> datetime | None:
     try:
         # croniter 保留 base 的 tzinfo——aware 进 aware 出。
         return croniter(schedule, base).get_next(datetime)
-    except Exception as exc:  # noqa: BLE001 - croniter 的公开异常集合随版本变化，非法表达式统一转为暂停任务
+    except Exception as exc:  # croniter 的公开异常集合随版本变化，非法表达式统一转为暂停任务
         logger.error(
             "Invalid cron expression",
             extra={"schedule": schedule, "error": str(exc)},

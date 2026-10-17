@@ -17,6 +17,7 @@ from features.media.chain import spawn_removed_action_task_cancellation
 from features.media.video_queue.service import anonymize_user_video_queue
 from infrastructure.assets.asset_store import delete_user_assets
 from infrastructure.attachments import gc_session as attachments_gc_session
+from infrastructure.backup import BackupImportMode
 from infrastructure.file_results import DeferredCleanup, FileResult
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
@@ -39,7 +40,6 @@ from workflows.maintenance.backup.restoration import BackupRestoreResult, load_b
 from workflows.maintenance.backup.serializers import (
     BACKUP_SECTION_IDS,
     TABLES,
-    BackupImportMode,
     serialize_rows,
     tables_for_sections,
 )

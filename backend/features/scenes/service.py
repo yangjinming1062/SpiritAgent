@@ -10,6 +10,7 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri, validate_image_bytes
+from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.config import SETTINGS
 from infrastructure.constants import SCENE_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
@@ -145,7 +146,7 @@ def _validate_ready(user_id: int, row: CompanionScene) -> None:
         or not row.description.strip()
     ):
         raise SceneStateError("场景图片、标题与描述齐全后才能启用")
-    parsed_path = asset_store.parse_companion_asset_path(row.media_path)
+    parsed_path = parse_companion_asset_path(row.media_path)
     if not parsed_path or parsed_path[0] != user_id or asset_store.resolve_companion_asset_path(*parsed_path) is None:
         raise SceneStateError("场景图片缺失，请重新创建或上传")
 
@@ -546,7 +547,7 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, *, target: Scene
 
 
 async def _scene_image_uri(user_id: int, path: str) -> str:
-    parsed_path = asset_store.parse_companion_asset_path(path)
+    parsed_path = parse_companion_asset_path(path)
     local = (
         asset_store.resolve_companion_asset_path(*parsed_path) if parsed_path and parsed_path[0] == user_id else None
     )

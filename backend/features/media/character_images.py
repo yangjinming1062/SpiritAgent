@@ -16,6 +16,7 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri
+from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.image_expansion import expansion_canvas, finish_expansion
@@ -159,7 +160,7 @@ class ImageChainState(MediaChainState):
             self.pending_path or "",
             *(candidate.path for candidate in self.candidates),
             *(path for candidate in self.candidates for path in candidate.artifacts),
-            *(path for path in frozen if path and asset_store.parse_companion_asset_path(path) is not None),
+            *(path for path in frozen if path and parse_companion_asset_path(path) is not None),
             *(canvas.path for canvas in self.expansion_canvases.values()),
         } - {""}
 
@@ -241,7 +242,7 @@ def _validate_image(
 
 async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES) -> tuple[bytes, str]:
     """读取图片链地址：companion-assets 裸路径、供应商 data URI 或原生 URL。"""
-    parsed = asset_store.parse_companion_asset_path(path)
+    parsed = parse_companion_asset_path(path)
     if parsed is not None:
         local = asset_store.resolve_companion_asset_path(*parsed)
         if local is None:
@@ -290,7 +291,7 @@ async def _freeze_input_references(
     frozen: dict[str, str] = {}
     for attr, label in fields:
         value = getattr(inputs, attr)
-        if not value or value in frozen or asset_store.parse_companion_asset_path(value) is not None:
+        if not value or value in frozen or parse_companion_asset_path(value) is not None:
             continue
         data, _ = await image_asset_bytes(value, max_bytes=inputs.max_image_bytes)
         ext = asset_store.sniff_media_ext(data)
@@ -662,7 +663,7 @@ async def _run_image_chain(
                     for attempt in range(max(1, store_attempts)):
                         try:
                             # 已落盘的转存文件优先续用，不再下载短时效供应商地址。
-                            pending = asset_store.parse_companion_asset_path(state.pending_path)
+                            pending = parse_companion_asset_path(state.pending_path)
                             source = (
                                 state.pending_path
                                 if state.pending_path and pending and asset_store.resolve_companion_asset_path(*pending)

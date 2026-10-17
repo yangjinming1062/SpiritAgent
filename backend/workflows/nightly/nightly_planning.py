@@ -962,7 +962,7 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
             )
         except ValidationError as exc:
             return _invalid_arguments(exc)
-        except Exception as exc:  # noqa: BLE001 - convert the service's public state/quota failure to the action ledger
+        except Exception as exc:  # 将业务公开的状态或额度错误写入动作账本。
             return ActionExecutionResult(status="failed", reason=str(exc))
         if result.status == "reused":
             return ActionExecutionResult(status="succeeded", fact=_fact(run, "action_reused", name=request.name))

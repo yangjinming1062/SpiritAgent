@@ -50,18 +50,14 @@ def format_memory_record(
 
 
 async def format_memories_block(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
-    rows = list(
-        (
-            await db.scalars(
-                select(Memory)
-                .where(
-                    scope_filter(scope),
-                    active_memory_filter(),
-                    Memory.context.like("recall:%"),
-                )
-                .order_by(Memory.updated_at.desc(), Memory.id),
-            )
-        ).all(),
+    rows = await db.scalars(
+        select(Memory)
+        .where(
+            scope_filter(scope),
+            active_memory_filter(),
+            Memory.context.like("recall:%"),
+        )
+        .order_by(Memory.updated_at.desc(), Memory.id),
     )
     return "\n".join(format_memory_record(r.content, r.basis, r.context, language=language) for r in rows)
 
@@ -72,21 +68,19 @@ async def format_background_memory_block(
     *,
     language: str = DEFAULT_LANGUAGE,
 ) -> str:
-    rows = list(
-        (
-            await db.scalars(
-                select(Memory)
-                .where(
-                    scope_filter(scope),
-                    active_memory_filter(),
-                    Memory.usage == "background",
-                    Memory.basis == "explicit",
-                    Memory.context.like("recall:%"),
-                )
-                .order_by(Memory.id),
+    rows = (
+        await db.scalars(
+            select(Memory)
+            .where(
+                scope_filter(scope),
+                active_memory_filter(),
+                Memory.usage == "background",
+                Memory.basis == "explicit",
+                Memory.context.like("recall:%"),
             )
-        ).all(),
-    )
+            .order_by(Memory.id),
+        )
+    ).all()
     if not rows:
         return ""
     return (

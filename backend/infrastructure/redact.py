@@ -99,11 +99,8 @@ def _redact_query_string(query: str) -> str:
         return query
     parts = []
     for pair in query.split("&"):
-        if "=" not in pair:
-            parts.append(pair)
-            continue
-        key, _, value = pair.partition("=")
-        parts.append(f"{key}=***" if key.lower() in _SENSITIVE_QUERY_PARAMS else pair)
+        key, separator, _ = pair.partition("=")
+        parts.append(f"{key}=***" if separator and key.lower() in _SENSITIVE_QUERY_PARAMS else pair)
     return "&".join(parts)
 
 

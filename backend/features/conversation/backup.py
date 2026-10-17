@@ -8,7 +8,7 @@ from typing import Any
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.assets.write_protection import user_asset_lock
 from infrastructure.backup import BackupContext, BackupRows, BackupTable, IdMap
-from runtime.memory_scope import MemoryScope
+from runtime.memory_scope import MemoryScope, validate_memory_scope
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,6 @@ from features.topics.schemas import TopicCardSnapshot
 from features.topics.store import validate_restored_topic_cards
 
 from .context_window import CHECKPOINT_SUBTYPE
-from .memory_scope import validate_memory_scope
 from .models import Conversation, Message
 from .replies import CompanionReply, CompanionReplyInput, LinkBubble, LinkBubbleInput, MediaBubble
 

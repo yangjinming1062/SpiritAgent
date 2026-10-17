@@ -127,8 +127,7 @@ async def advance_due_jobs(
             {"match": [(j.id, j.next_run_at) for j in one_shots]},
         )
         won.update(r[0] for r in res.all())
-    fired = [job for job in due_jobs if job.id in won and (job.one_shot or next_runs[job.id] is not None)]
-    return fired
+    return [job for job in due_jobs if job.id in won and (job.one_shot or next_runs[job.id] is not None)]
 
 
 async def delete_expired_jobs(db: AsyncSession, job_ids: set[int], now: datetime) -> None:

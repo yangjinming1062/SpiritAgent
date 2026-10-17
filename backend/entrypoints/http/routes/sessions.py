@@ -37,7 +37,6 @@ from features.conversation.session_operations import (
 from infrastructure.config import SETTINGS
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
-from infrastructure.logger import get_logger
 from runtime.conversation import SessionCreateResult
 from runtime.desktop.connection import UserEventPublisher
 from runtime.presets import SYSTEM_PRESET_CATALOG
@@ -49,8 +48,6 @@ from entrypoints.http.rate_limit import limiter
 from entrypoints.http.routing import get_router
 
 router = get_router(remote=True)
-
-logger = get_logger(__name__)
 
 
 @router.post(

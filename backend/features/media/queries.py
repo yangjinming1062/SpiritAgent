@@ -3,6 +3,7 @@
 from collections.abc import Collection
 
 from infrastructure.assets import asset_store
+from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.text import utc_now
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +16,7 @@ from .models import VideoGenJob
 def video_job_snapshot(row: VideoGenJob) -> VideoJobSnapshot:
     state = MediaChainState.model_validate_json(row.generation_state_json)
     path = row.video_url or row.candidate_video_url
-    parsed = asset_store.parse_companion_asset_path(path)
+    parsed = parse_companion_asset_path(path)
     available = (
         parsed is not None
         and parsed[0] == row.user_id

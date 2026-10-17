@@ -80,7 +80,7 @@ def _binary(name: str) -> str:
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[bytes]:
     try:
-        return subprocess.run(  # noqa: S603 — 参数列表固定构造，不经 shell
+        return subprocess.run(  # 参数列表固定构造，不经 shell。
             args,
             capture_output=True,
             timeout=_FFMPEG_TIMEOUT_SECONDS,

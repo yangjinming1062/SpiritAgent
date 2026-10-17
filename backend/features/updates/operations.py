@@ -81,9 +81,8 @@ async def _get_latest(db: AsyncSession) -> UpdateVersion:
 
 
 def _pick_asset(versions_dir: Path, *patterns: str) -> Path | None:
-    """按调用顺序拼接 pattern 后排序，取 versions_dir 中最后一条匹配文件。"""
-    candidates = [match for pattern in patterns for match in versions_dir.glob(pattern)]
-    return sorted(candidates)[-1] if candidates else None
+    """取 versions_dir 中按路径排序最后一条匹配文件。"""
+    return max((match for pattern in patterns for match in versions_dir.glob(pattern)), default=None)
 
 
 def _release_manifest(
@@ -314,7 +313,7 @@ async def delete_version(id: int, _admin: str, db: AsyncSession) -> MessageRespo
 
 async def get_latest_file(filename: str, db: AsyncSession) -> FileResult:
     latest = await _get_latest(db)
-    if not any(filename.endswith(s) for s in DOWNLOAD_SUFFIXES):
+    if not filename.endswith(DOWNLOAD_SUFFIXES):
         raise RequestError(status_code=400, message="Invalid filename")
     base_dir = (VERSIONS_DIR / latest.version).resolve()
     file_path = (base_dir / filename).resolve()

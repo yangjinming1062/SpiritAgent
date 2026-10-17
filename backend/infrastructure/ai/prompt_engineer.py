@@ -95,8 +95,7 @@ async def chat(
             task=task,
         )
     config = UserLlmConfig(chain[0] if chain else None, tuple(chain[1:]), user_id)
-    text = (await call_llm_once(config, system_prompt, user_payload)).strip()
-    return text
+    return (await call_llm_once(config, system_prompt, user_payload)).strip()
 
 
 def _response_failure_detail(response: Response) -> str:

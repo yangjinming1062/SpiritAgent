@@ -6,7 +6,9 @@ from typing import Any
 from infrastructure.ai.selection import GenerationOrigin
 from infrastructure.backup import BackupContext, BackupTable
 
-from .character_card_models import CharacterFeatures, CharacterOverrides, CompanionCharacterCard
+from features.media.identity_contracts import CharacterFeatures, CharacterOverrides
+
+from .character_card_models import CompanionCharacterCard
 from .models import AvatarAsset, CompanionOutfit, OutfitSource
 
 

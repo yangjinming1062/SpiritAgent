@@ -60,7 +60,7 @@ async def _run_proposal_review(proposal_id: int, user_id: int) -> None:
             outcome = await review_proposal(proposal_id, user_id)
         except GenerationWorkPaused:
             return
-        except Exception:  # noqa: BLE001 — 评审失败必须落库为可重试状态，不静默
+        except Exception:  # 评审失败必须落库为可重试状态，不静默
             logger.exception("action proposal review failed", extra={"proposal_id": proposal_id})
             await defer_failed_review(proposal_id, user_id)
             return

@@ -9,6 +9,7 @@ from infrastructure.ai.prompt_engineer import vision_chat
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import read_asset_data_uri
+from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json
@@ -25,7 +26,7 @@ async def _companion_reference_uri(user_id: int) -> str:
         paths = await confirmed_media_reference_paths(db, user_id)
     for path in paths:
         bare = asset_store.normalize_asset_reference(path)
-        parsed = asset_store.parse_companion_asset_path(bare)
+        parsed = parse_companion_asset_path(bare)
         if parsed is not None and parsed[0] == user_id and (uri := await asyncio.to_thread(read_asset_data_uri, bare)):
             return uri
     raise ImageReviewUnavailableError("场景图片已保留，但伙伴的已确认形象无法读取；请修复形象后重试分析")

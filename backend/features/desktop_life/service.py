@@ -21,6 +21,7 @@ from infrastructure.assets.asset_store import (
     signed_companion_asset_url,
     sniff_media_ext,
 )
+from infrastructure.assets.references import asset_paths
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -41,7 +42,6 @@ from features.assets.lifecycle import (
     collect_asset_directory_paths,
     enqueue_asset_cleanup,
 )
-from features.assets.references import asset_paths
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.proactive_runtime import get_presentation_snapshot, get_user_proactive_record
 from features.companion.prompt_runtime import load_companion_prompt_context

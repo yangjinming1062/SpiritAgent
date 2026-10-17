@@ -19,6 +19,8 @@ from infrastructure.assets.asset_store import (
     video_job_asset_path,
 )
 from infrastructure.assets.media_download import download_media_result
+from infrastructure.assets.paths import parse_companion_asset_path
+from infrastructure.assets.references import asset_paths
 from infrastructure.assets.write_protection import asset_write_context
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
@@ -35,7 +37,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
-from features.assets.references import asset_paths
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.media.chain import (
     FrozenMediaProvider,
@@ -124,7 +125,7 @@ async def _require_not_abandoned(job_id: int) -> None:
 
 def _stored_asset_file(user_id: int, storage_path: str | None) -> Path | None:
     """本用户裸资产路径对应的已存在文件。"""
-    parsed = asset_store.parse_companion_asset_path(storage_path)
+    parsed = parse_companion_asset_path(storage_path)
     if parsed is None or parsed[0] != user_id:
         return None
     resolved = asset_store.resolve_companion_asset_path(*parsed)

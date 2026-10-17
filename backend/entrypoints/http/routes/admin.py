@@ -27,20 +27,18 @@ from features.media.video_queue import admin as video_queue_admin
 from features.media.video_queue.contracts import VideoQueueList, VideoQueueRequestView, VideoQueueResolution
 from infrastructure.ai.config import ModelDiscoveryRequest
 from infrastructure.ai.models import ModelDiscoveryResponse
+from infrastructure.backup import BackupImportMode
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
-from infrastructure.logger import get_logger
 from infrastructure.web.xiaohongshu import XhsLoginQrCode, XhsLoginVerification
 from pydantic import JsonValue
 from runtime.responses import MessageResponse
 from starlette.responses import Response
-from workflows.maintenance.backup.serializers import BACKUP_SECTION_IDS, BackupImportMode
+from workflows.maintenance.backup.serializers import BACKUP_SECTION_IDS
 
 from entrypoints.http.auth import CurrentAdmin
 from entrypoints.http.file_results import file_response
 from entrypoints.http.routing import get_router
-
-logger = get_logger(__name__)
 
 
 class _AdminRoute(APIRoute):
@@ -100,26 +98,22 @@ async def retry_video_queue_lane(lane_id: str, admin: CurrentAdmin, db: DbSessio
     response_model=ModelDiscoveryResponse,
 )
 async def discover_ai_models(payload: ModelDiscoveryRequest, db: DbSession) -> ModelDiscoveryResponse:
-    result = await configuration_admin.discover_ai_models(payload=payload, db=db)
-    return result
+    return await configuration_admin.discover_ai_models(payload=payload, db=db)
 
 
 @router.get("/users", response_model=UserListResponse)
 async def list_users(db: DbSession) -> UserListResponse:
-    result = await account_admin.list_users(db=db)
-    return result
+    return await account_admin.list_users(db=db)
 
 
 @router.post("/users", response_model=UserResponse)
 async def create_user(payload: UserCreate, db: DbSession) -> UserResponse:
-    result = await account_admin.create_user(payload=payload, db=db)
-    return result
+    return await account_admin.create_user(payload=payload, db=db)
 
 
 @router.patch("/users/{user_id}", response_model=UserResponse)
 async def update_user(user_id: int, payload: UserUpdate, db: DbSession) -> UserResponse:
-    result = await account_admin.update_user(user_id=user_id, payload=payload, db=db)
-    return result
+    return await account_admin.update_user(user_id=user_id, payload=payload, db=db)
 
 
 @router.delete(
@@ -128,8 +122,7 @@ async def update_user(user_id: int, payload: UserUpdate, db: DbSession) -> UserR
 )
 async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
     """被遗忘权：在维护边界内停稳该用户的运行时，先删文件再删行（外键级联清理其余数据）；文件先于行删除，任一步失败都保留用户行，管理员重试即可继续清理。"""
-    result = await maintenance_admin.delete_user(user_id=user_id, db=db)
-    return result
+    return await maintenance_admin.delete_user(user_id=user_id, db=db)
 
 
 @router.post(
@@ -145,29 +138,25 @@ async def regenerate_activation(user_id: int, payload: RegenerateActivationReque
     response_model=UserModelConfigListResponse,
 )
 async def list_model_configs(db: DbSession) -> UserModelConfigListResponse:
-    result = await configuration_admin.list_model_configs(db=db)
-    return result
+    return await configuration_admin.list_model_configs(db=db)
 
 
 @router.get("/runtime-info")
 async def runtime_info() -> dict[str, str]:
     """把 ``public_base_url`` 暴露给 admin 页：创建账号时自动填进激活码的 ``baseUrl``，留空时前端再降级到 ``http://localhost:10620``。"""
-    result = await configuration_admin.runtime_info()
-    return result
+    return await configuration_admin.runtime_info()
 
 
 @router.get("/system-settings")
 async def get_system_settings() -> dict[str, JsonValue]:
     """获取系统全部动态配置项（敏感 Key 自动脱敏）。"""
-    result = await configuration_admin.get_system_settings()
-    return result
+    return await configuration_admin.get_system_settings()
 
 
 @router.put("/system-settings")
 async def update_system_settings(payload: dict[str, JsonValue], db: DbSession) -> dict[str, JsonValue]:
     """更新系统动态配置，实时持久化到数据库并热重载生效。"""
-    result = await configuration_admin.update_system_settings(payload=payload, db=db)
-    return result
+    return await configuration_admin.update_system_settings(payload=payload, db=db)
 
 
 @router.get(
@@ -180,8 +169,7 @@ async def list_nightly_activity_logs(
     target_date: date | None = None,
 ) -> NightlyActivityLogListResponse:
     """查询夜间自主活动日志。可选按 user_id 和 target_date 过滤。"""
-    result = await nightly_logs.list_nightly_activity_logs(db=db, user_id=user_id, target_date=target_date)
-    return result
+    return await nightly_logs.list_nightly_activity_logs(db=db, user_id=user_id, target_date=target_date)
 
 
 @router.get(
@@ -220,14 +208,12 @@ async def clear_xiaohongshu_saved_login() -> MessageResponse:
 
 @router.put("/users/{user_id}/model-config")
 async def upsert_model_config(user_id: int, payload: UserModelConfigRequest, db: DbSession) -> MessageResponse:
-    result = await configuration_admin.upsert_model_config(user_id=user_id, payload=payload, db=db)
-    return result
+    return await configuration_admin.upsert_model_config(user_id=user_id, payload=payload, db=db)
 
 
 @router.delete("/users/{user_id}/model-config")
 async def delete_model_config(user_id: int, db: DbSession) -> MessageResponse:
-    result = await configuration_admin.delete_model_config(user_id=user_id, db=db)
-    return result
+    return await configuration_admin.delete_model_config(user_id=user_id, db=db)
 
 
 @router.get("/users/{user_id}/export")
@@ -257,11 +243,10 @@ async def import_user_backup(
     ),
 ) -> UserBackupImportResponse:
     """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。只写入所选分组，不动未勾选内容。"""
-    result = await maintenance_admin.import_user_backup(
+    return await maintenance_admin.import_user_backup(
         user_id=user_id,
         db=db,
         file=file,
         mode=mode,
         sections=sections,
     )
-    return result

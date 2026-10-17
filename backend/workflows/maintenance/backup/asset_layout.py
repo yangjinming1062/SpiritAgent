@@ -6,13 +6,13 @@ from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any
 
-from features.assets.references import asset_paths
 from infrastructure.assets.asset_store import (
     dated_asset_directory,
     outfit_asset_directory,
     pack_asset_directory,
     scene_asset_directory,
 )
+from infrastructure.assets.references import asset_paths
 
 
 @dataclass

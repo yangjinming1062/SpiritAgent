@@ -25,6 +25,7 @@ from infrastructure.ai.prompt_engineer import VisualReasoningError, vision_chat
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import build_data_uri
+from infrastructure.assets.paths import parse_companion_asset_path
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.text import parse_llm_json, tool_error
@@ -321,7 +322,7 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
         prior = state.inspections.get(media_id)
         if prior is not None:
             return _inspection_result(prior)
-        parsed = asset_store.parse_companion_asset_path(artifact.url)
+        parsed = parse_companion_asset_path(artifact.url)
         local = asset_store.resolve_companion_asset_path(*parsed) if parsed and parsed[0] == state.user_id else None
         if local is None:
             return tool_error("图片资产不可访问")

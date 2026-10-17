@@ -52,13 +52,10 @@ class MiniMaxImageGenProvider(ImageGenProvider):
         body = raise_for_minimax_response(resp)
 
         data = body.get("data") or {}
-        assets: list[ImageAsset] = []
         if payload["response_format"] == "base64":
-            for b64 in data.get("image_base64", []) or []:
-                assets.append(ImageAsset(b64=b64, mime="image/jpeg"))
+            assets = [ImageAsset(b64=b64, mime="image/jpeg") for b64 in data.get("image_base64", []) or []]
         else:
-            for url in data.get("image_urls", []) or []:
-                assets.append(ImageAsset(url=url, mime="image/jpeg"))
+            assets = [ImageAsset(url=url, mime="image/jpeg") for url in data.get("image_urls", []) or []]
 
         if not assets:
             # 200 + base_resp 0 但 image 列表为空——可能是静默审核、subject_reference 被拒或 API 字段名变更；"returned no images" 让错误分类切换下一家。

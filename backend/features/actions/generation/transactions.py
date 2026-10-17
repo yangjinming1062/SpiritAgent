@@ -232,7 +232,7 @@ async def _publish_catalog(db: AsyncSession, pack: CompanionActionPack) -> int |
     """从任务行聚合发布动作目录（spiritagent.action.pack），CAS 推进。必需槽位不齐或失败返回 None：不回滚已成功素材，可再次发布恢复。"""
     try:
         return await publish_action_catalog(db, pack)
-    except Exception:  # noqa: BLE001 — 目录发布失败不回滚素材；调用方据 None 跳过目录广播与自动启用
+    except Exception:  # 目录发布失败不回滚素材；调用方据 None 跳过目录广播与自动启用
         logger.exception("action catalog publish failed", extra={"pack_id": pack.id})
         return None
 
