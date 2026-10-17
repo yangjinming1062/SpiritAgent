@@ -1,3 +1,4 @@
+import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { captureAuthScope } from '@/shared/lib/authed-api'
@@ -80,6 +81,8 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
   start: () => void
   stop: () => Promise<void>
 } {
+  const auth = useStore($auth)
+  const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const { markAssistantTerminal, pushPendingPrompt, pushUserMessage, schedulePendingFlush } = runtime
   const [recording, setRecording] = useState(false)
   const ownerToken = useRef(Symbol('recording-view'))
@@ -103,16 +106,31 @@ export function useVoiceRecorder({ isReadOnlySession, runtime, eligible = true }
   const finishUploadActivity = useRef<(() => void) | null>(null)
 
   useEffect(() => {
+    const authCurrent = captureAuthScope()
+    let disposed = false
+    configRef.current = {}
+
+    if (!authSessionId || !authCurrent) {
+      return
+    }
+
     void getSpiritAgentConfig()
       .then(c => {
-        configRef.current = { voice: c.voice }
+        if (!disposed && authCurrent()) {
+          configRef.current = { voice: c.voice }
+        }
       })
       .catch((error: unknown) => {
-        // 读取失败时按默认时长上限录音。
-        log.warn('voice-recorder', 'Could not load recording limit', error)
-        configRef.current = {}
+        if (!disposed && authCurrent()) {
+          // 读取失败时按默认时长上限录音。
+          log.warn('voice-recorder', 'Could not load recording limit', error)
+        }
       })
-  }, [])
+
+    return () => {
+      disposed = true
+    }
+  }, [authSessionId])
 
   const cancelAutoStop = useCallback(() => {
     if (autoStopRef.current) {

@@ -131,14 +131,21 @@ export function setSessionSort(sort: SessionSort): void {
 }
 
 export async function fetchSessions(): Promise<void> {
+  const authCurrent = captureAuthScope()
+
+  if (!authCurrent) {
+    return
+  }
+
   const token = ++sessionsToken
+  const isCurrent = (): boolean => token === sessionsToken && authCurrent()
   $sessionsLoading.set(true)
   $sessionsError.set(null)
 
   try {
     const res = await requestResource('sessions.list_sessions', { query: { order: $sessionSort.get() } })
 
-    if (token === sessionsToken) {
+    if (isCurrent()) {
       const sessions = res.sessions || []
       // 列表只返回一页；当前会话不在其中时沿用本地条目，避免专业对话因找不到当前会话而切走。
       const activeId = $chatSessionId.get()
@@ -151,9 +158,8 @@ export async function fetchSessions(): Promise<void> {
       }
     }
   } catch (err) {
-    log.error('session-list', 'Failed to fetch sessions:', err)
-
-    if (token === sessionsToken) {
+    if (isCurrent()) {
+      log.error('session-list', 'Failed to fetch sessions:', err)
       $sessionsError.set(errorMessage(err))
     }
   } finally {
@@ -164,17 +170,26 @@ export async function fetchSessions(): Promise<void> {
 }
 
 export async function fetchArchived(): Promise<void> {
+  const authCurrent = captureAuthScope()
+
+  if (!authCurrent) {
+    return
+  }
+
   const token = ++archivedToken
+  const isCurrent = (): boolean => token === archivedToken && authCurrent()
   $archivedLoading.set(true)
 
   try {
     const res = await requestResource('sessions.list_sessions', { query: { archived: 'only', limit: 100 } })
 
-    if (token === archivedToken) {
+    if (isCurrent()) {
       $archivedSessions.set(res.sessions || [])
     }
   } catch (err) {
-    log.error('session-list', 'Failed to fetch archived sessions:', err)
+    if (isCurrent()) {
+      log.error('session-list', 'Failed to fetch archived sessions:', err)
+    }
   } finally {
     if (token === archivedToken) {
       $archivedLoading.set(false)
@@ -193,17 +208,26 @@ export async function runSessionSearch(query: string): Promise<void> {
     return
   }
 
+  const authCurrent = captureAuthScope()
+
+  if (!authCurrent) {
+    return
+  }
+
   const token = ++searchToken
+  const isCurrent = (): boolean => token === searchToken && authCurrent()
   $searchLoading.set(true)
 
   try {
     const res = await requestResource('sessions.list_sessions', { query: { q, archived: 'include' } })
 
-    if (token === searchToken) {
+    if (isCurrent()) {
       $searchResults.set(res.sessions || [])
     }
   } catch (err) {
-    log.error('session-list', 'Failed to search sessions:', err)
+    if (isCurrent()) {
+      log.error('session-list', 'Failed to search sessions:', err)
+    }
   } finally {
     if (token === searchToken) {
       $searchLoading.set(false)

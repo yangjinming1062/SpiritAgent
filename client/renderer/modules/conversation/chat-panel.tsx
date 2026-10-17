@@ -7,6 +7,7 @@ import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { SlidersHorizontal } from '@/shared/lib/icons'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import { cn } from '@/shared/lib/utils'
+import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
 import type { ConversationVariant } from './chat-dock-message-bubble'
@@ -44,6 +45,8 @@ export function ChatPanel({
   surfaceClassName,
   variant
 }: ChatPanelProps): React.JSX.Element {
+  const auth = useStore($auth)
+  const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const { controller, eligible } = useConversationView()
   const { $chatSessionId } = controller
 
@@ -58,8 +61,10 @@ export function ChatPanel({
   const dict = useStrings()
 
   useEffect(() => {
-    void fetchSlashCommandMeta()
-  }, [])
+    if (authSessionId) {
+      void fetchSlashCommandMeta()
+    }
+  }, [authSessionId])
 
   const closeParamsPanel = (): void => {
     setParamsPanelOpen(false)

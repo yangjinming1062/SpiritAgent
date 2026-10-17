@@ -56,6 +56,7 @@ import {
 } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { INPUT_CLASS, SearchField } from '@/shared/panel'
+import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import type { SessionInfo } from '@protocol'
 
@@ -110,6 +111,8 @@ export function SessionSidebar({
   headerAction?: React.ReactNode
   onSessionSelected?: () => void
 }): React.JSX.Element {
+  const auth = useStore($auth)
+  const authSessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
   const sessions = useStore($sessions)
   const loading = useStore($sessionsLoading)
   const sessionsError = useStore($sessionsError)
@@ -145,6 +148,10 @@ export function SessionSidebar({
   const searchActive = search.trim().length > 0
 
   useEffect(() => {
+    if (!authSessionId) {
+      return
+    }
+
     const q = search.trim()
 
     if (!q) {
@@ -156,18 +163,22 @@ export function SessionSidebar({
     const timer = setTimeout(() => void runSessionSearch(q), 300)
 
     return () => clearTimeout(timer)
-  }, [search])
+  }, [authSessionId, search])
 
   useEffect(() => {
+    if (!authSessionId) {
+      return
+    }
+
     void fetchSessions()
     void fetchArchived()
-  }, [])
+  }, [authSessionId])
 
   useEffect(() => {
-    if (!presetsFetched) {
+    if (authSessionId && !presetsFetched) {
       void fetchSystemPresets()
     }
-  }, [presetsFetched])
+  }, [authSessionId, presetsFetched])
 
   const handleCreate = (): void => {
     setPickerOpen(true)

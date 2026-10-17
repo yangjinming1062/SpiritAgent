@@ -1,10 +1,9 @@
 import { atom } from 'nanostores'
 
 // 斜杠命令元数据：权威源在服务端注册表，经 REST 拉到本窗口；本地只用于自动补全与确认弹窗，dispatch 仍以服务端为准。
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
-import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
-import { $gateway } from '@/shared/store/gateway'
-import { errorMessage } from '@runtime'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 
 import type { ApiSchemas } from '../../../../shared/api.generated'
 
@@ -26,9 +25,12 @@ type ServerCommandEntry = ApiSchemas['CommandSummary']
 // 启动前与账户清理后为空；拉取失败也保持空，由下次连通或再次进入命令模式时重试。
 export const $slashCommandMeta = atom<readonly SlashCommandMeta[]>([])
 
-registerStorageClearHandler(() => $slashCommandMeta.set([]))
+let slashMetaInflight: { isCurrent: () => boolean; promise: Promise<void> } | null = null
 
-let slashMetaInflight: Promise<void> | null = null
+registerStorageClearHandler(() => {
+  slashMetaInflight = null
+  $slashCommandMeta.set([])
+})
 
 function normalizeServerEntry(entry: ServerCommandEntry): SlashCommandMeta {
   return {
@@ -157,38 +159,36 @@ export function fuzzyFilterCommands(query: string, limit = 8): ScoredSlashComman
   return scored.slice(0, limit)
 }
 
-/** 从网关拉取命令元数据写入本窗口 atom；已有数据则跳过，失败保持空以便重试；返回前网关已替换或账户已清理时丢弃结果。 */
+/** 登录后通过 REST 拉取命令元数据；同一鉴权会话共用在途请求，账户失效后丢弃结果。 */
 export async function fetchSlashCommandMeta(): Promise<void> {
-  if ($slashCommandMeta.get().length > 0) {
+  const authCurrent = captureAuthScope()
+
+  if (!authCurrent || $slashCommandMeta.get().length > 0) {
     return
   }
 
-  if (slashMetaInflight) {
-    return slashMetaInflight
+  if (slashMetaInflight?.isCurrent()) {
+    return slashMetaInflight.promise
   }
 
-  const gateway = $gateway.get()
-
-  if (!gateway) {
-    return
-  }
-
-  const epoch = currentClearEpoch()
-
-  slashMetaInflight = (async () => {
-    try {
-      const res = await requestResource('resource_catalog.get_commands')
-
-      if ($gateway.get() === gateway && currentClearEpoch() === epoch) {
+  const load = requestResource('resource_catalog.get_commands')
+    .then(res => {
+      if (authCurrent()) {
         $slashCommandMeta.set((res.commands ?? []).map(normalizeServerEntry))
       }
-    } catch (error) {
-      const msg = errorMessage(error)
-      log.error('slash-commands', `commands load failed: ${msg}`, error)
-    } finally {
-      slashMetaInflight = null
-    }
-  })()
+    })
+    .catch(error => {
+      if (authCurrent()) {
+        log.error('slash-commands', 'commands load failed:', error)
+      }
+    })
+    .finally(() => {
+      if (slashMetaInflight?.promise === load) {
+        slashMetaInflight = null
+      }
+    })
 
-  return slashMetaInflight
+  slashMetaInflight = { isCurrent: authCurrent, promise: load }
+
+  return load
 }
