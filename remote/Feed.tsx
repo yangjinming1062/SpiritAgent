@@ -2,8 +2,6 @@ import { IconMessageCircle, IconRefresh } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { requestApi } from '../shared/api'
-
 import type { RemoteApi, RemoteGateway } from './api'
 import { ApiError, record } from './api'
 import { DiaryView } from './Companion'
@@ -102,11 +100,12 @@ function Posts({
   usePageScroll('posts', initialized.current)
 
   const load = useCallback(
-    async (more = false, nextCursor?: string) => {
+    async (nextCursor?: string) => {
       const current = ++revision.current
+      const more = nextCursor !== undefined
 
-      const result = await requestApi(api, 'companion_posts.get_posts', {
-        query: { cursor: more ? nextCursor : undefined }
+      const result = await api.invoke('companion_posts.get_posts', {
+        query: { cursor: nextCursor }
       })
 
       if (!alive() || current !== revision.current) {
@@ -135,7 +134,7 @@ function Posts({
         document.visibilityState === 'visible' &&
         document.hasFocus()
       ) {
-        await requestApi(api, 'companion_posts.read_posts', { body: { post_ids: result.unread_post_ids } })
+        await api.invoke('companion_posts.read_posts', { body: { post_ids: result.unread_post_ids } })
         if (alive() && current === revision.current) {
           onReadRef.current()
         }
@@ -146,7 +145,7 @@ function Posts({
 
   const loadRecovery = useCallback(
     async (offset = 0) => {
-      const result = await requestApi(api, 'companion_posts.get_publication_recoveries', {
+      const result = await api.invoke('companion_posts.get_publication_recoveries', {
         query: { state: 'recoverable', offset }
       })
 
@@ -172,7 +171,7 @@ function Posts({
       postReads.current.set(id, current)
 
       try {
-        const post = await requestApi(api, 'companion_posts.get_post_detail', { path: { post_id: id } })
+        const post = await api.invoke('companion_posts.get_post_detail', { path: { post_id: id } })
 
         if (alive() && postReads.current.get(id) === current) {
           setPosts(previous => previous.map(item => (item.id === id ? post : item)))
@@ -294,7 +293,7 @@ function Posts({
                   disabled={busy}
                   onClick={() =>
                     run(async () => {
-                      const next = await requestApi(api, 'companion_posts.query_publication_recovery', {
+                      const next = await api.invoke('companion_posts.query_publication_recovery', {
                         path: { publication_id: item.publication_id }
                       })
 
@@ -314,7 +313,7 @@ function Posts({
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        await requestApi(api, 'companion_posts.decide_publication', {
+                        await api.invoke('companion_posts.decide_publication', {
                           path: { publication_id: item.publication_id },
                           body: { decision: 'accept' }
                         })
@@ -332,7 +331,7 @@ function Posts({
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        await requestApi(api, 'companion_posts.decide_publication', {
+                        await api.invoke('companion_posts.decide_publication', {
                           path: { publication_id: item.publication_id },
                           body: { decision: 'reject' }
                         })
@@ -364,7 +363,7 @@ function Posts({
       ))}
       {posts.length === 0 && !busy ? <Empty title="这里会留下伙伴的日常">新的动态发布后，会出现在这里。</Empty> : null}
       {cursor ? (
-        <button className="load-more" disabled={busy} onClick={() => run(() => load(true, cursor))} type="button">
+        <button className="load-more" disabled={busy} onClick={() => run(() => load(cursor))} type="button">
           更多动态
         </button>
       ) : null}
@@ -376,6 +375,9 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
   const { run, busy, error } = useTask()
   const alive = useAlive()
   const [comment, setComment] = usePageState(`post.${post.id}.comment`, '')
+  const refreshMedia = () => {
+    void run(refresh)
+  }
 
   return (
     <article className="post-card">
@@ -390,22 +392,12 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
       <p className="post-body">{post.body}</p>
       {post.media_url ? (
         <Media
-          refresh={() => {
-            void run(refresh)
-          }}
+          refresh={refreshMedia}
           type={post.content_type === 'video' ? 'video' : post.content_type === 'audio' ? 'audio' : 'image'}
           url={post.media_url}
         />
       ) : null}
-      {post.audio_url ? (
-        <Media
-          refresh={() => {
-            void run(refresh)
-          }}
-          type="audio"
-          url={post.audio_url}
-        />
-      ) : null}
+      {post.audio_url ? <Media refresh={refreshMedia} type="audio" url={post.audio_url} /> : null}
       <div className="post-comments">
         {post.comments.map(item => (
           <div className={`comment ${item.role}`} key={item.id}>
@@ -420,7 +412,7 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
                     disabled={busy}
                     onClick={() =>
                       run(async () => {
-                        await requestApi(api, 'companion_posts.retry_comment_reply', {
+                        await api.invoke('companion_posts.retry_comment_reply', {
                           path: { post_id: post.id, comment_id: item.id }
                         })
                         await refresh()
@@ -435,7 +427,7 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
                   disabled={busy}
                   onClick={() =>
                     run(async () => {
-                      await requestApi(api, 'companion_posts.remove_comment', {
+                      await api.invoke('companion_posts.remove_comment', {
                         path: { post_id: post.id, comment_id: item.id }
                       })
                       await refresh()
@@ -457,7 +449,7 @@ function PostCard({ api, post, refresh }: { api: RemoteApi; post: Post; refresh:
         onSubmit={event => {
           event.preventDefault()
           void run(async () => {
-            await requestApi(api, 'companion_posts.post_comment', {
+            await api.invoke('companion_posts.post_comment', {
               path: { post_id: post.id },
               body: { content: comment.trim() }
             })

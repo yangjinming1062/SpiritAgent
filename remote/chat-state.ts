@@ -18,58 +18,60 @@ function emptyTurn(): ActiveTurn {
 }
 
 function finishSegment(turn: ActiveTurn): ActiveTurn {
-  return { ...turn, text: '', bubbles: turn.text ? [...turn.bubbles, { type: 'text', text: turn.text }] : turn.bubbles }
+  return turn.text ? { ...turn, text: '', bubbles: [...turn.bubbles, { type: 'text', text: turn.text }] } : turn
 }
 
 export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): ActiveTurn | null {
-  if (
-    event.type === 'message.complete' ||
-    event.type === 'error' ||
-    (event.type === 'session.state' && !event.payload.running)
-  ) {
-    return null
-  }
-
-  const turn = previous ?? emptyTurn()
-  if (event.type === 'message.start') {
-    const fresh =
-      event.payload.request_id && turn.request_id && event.payload.request_id !== turn.request_id
-        ? emptyTurn()
-        : finishSegment(turn)
-    return {
-      ...fresh,
-      replace_reply_message_id: event.payload.replace_reply_message_id ?? null,
-      request_id: event.payload.request_id ?? fresh.request_id,
-      origin_kind: event.payload.origin_kind ?? fresh.origin_kind,
-      running: true
-    }
-  }
-  if (event.type === 'message.break') {
-    return finishSegment(turn)
-  }
-  if (event.type === 'message.delta') {
-    return { ...turn, text: turn.text + event.payload.text }
-  }
-  if (event.type === 'message.bubble') {
-    const bubbles = [...turn.bubbles]
-    bubbles[event.payload.bubble_index] = event.payload.bubble
-    return { ...turn, assistant_message_id: event.payload.message_id, bubbles }
-  }
-  if (event.type === 'tool.start' || event.type === 'tool.complete') {
-    if (!previous) {
+  switch (event.type) {
+    case 'message.complete':
+    case 'error':
       return null
+    case 'session.state':
+      return event.payload.running ? previous : null
+    case 'message.start': {
+      const turn = previous ?? emptyTurn()
+      const fresh =
+        event.payload.request_id && turn.request_id && event.payload.request_id !== turn.request_id
+          ? emptyTurn()
+          : finishSegment(turn)
+      return {
+        ...fresh,
+        replace_reply_message_id: event.payload.replace_reply_message_id ?? null,
+        request_id: event.payload.request_id ?? fresh.request_id,
+        origin_kind: event.payload.origin_kind ?? fresh.origin_kind,
+        running: true
+      }
     }
-    const name = event.payload.name ?? '正在处理任务'
-    const callId = event.payload.call_id ?? name
-    return {
-      ...turn,
-      tools: [
-        ...turn.tools.filter(tool => tool.call_id !== callId),
-        { name, call_id: callId, status: event.type === 'tool.complete' ? 'complete' : 'running' }
-      ]
+    case 'message.break':
+      return finishSegment(previous ?? emptyTurn())
+    case 'message.delta': {
+      const turn = previous ?? emptyTurn()
+      return { ...turn, text: turn.text + event.payload.text }
     }
+    case 'message.bubble': {
+      const turn = previous ?? emptyTurn()
+      const bubbles = [...turn.bubbles]
+      bubbles[event.payload.bubble_index] = event.payload.bubble
+      return { ...turn, assistant_message_id: event.payload.message_id, bubbles }
+    }
+    case 'tool.start':
+    case 'tool.complete': {
+      if (!previous) {
+        return null
+      }
+      const name = event.payload.name ?? '正在处理任务'
+      const callId = event.payload.call_id ?? name
+      return {
+        ...previous,
+        tools: [
+          ...previous.tools.filter(tool => tool.call_id !== callId),
+          { name, call_id: callId, status: event.type === 'tool.complete' ? 'complete' : 'running' }
+        ]
+      }
+    }
+    default:
+      return previous
   }
-  return previous
 }
 
 export function commandHistory(event: GatewayEvent): SessionMessage[] | null {

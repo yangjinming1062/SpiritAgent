@@ -294,30 +294,18 @@ export function Media({
     )
   }
 
-  if (type === 'video') {
-    return (
-      <video
-        className="media"
-        controls
-        key={`${url}:${revision}`}
-        onError={onError}
-        onPlay={event => pauseMedia(event.currentTarget)}
-        playsInline
-        preload="metadata"
-        src={url}
-      />
-    )
-  }
+  if (type !== 'image') {
+    const Tag = type === 'video' ? 'video' : 'audio'
 
-  if (type === 'audio') {
     return (
-      <audio
-        className="voice"
+      <Tag
+        className={type === 'video' ? 'media' : 'voice'}
         controls
         key={`${url}:${revision}`}
         onError={onError}
         onPlay={event => pauseMedia(event.currentTarget)}
-        preload="none"
+        playsInline={type === 'video' || undefined}
+        preload={type === 'video' ? 'metadata' : 'none'}
         src={url}
       />
     )

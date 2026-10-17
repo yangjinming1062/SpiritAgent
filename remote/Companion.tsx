@@ -1,8 +1,6 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { requestApi } from '../shared/api'
-
 import type { RemoteApi } from './api'
 import { Assets } from './Assets'
 import { MemoryView } from './Memory'
@@ -74,7 +72,7 @@ export function DiaryView({
 
   const load = useCallback(async () => {
     const revision = ++request.current
-    const result = await requestApi(api, 'companion_journal.get_diary', {
+    const result = await api.invoke('companion_journal.get_diary', {
       query: { from: from || undefined, to: to || undefined, limit: 100 }
     })
 
@@ -90,7 +88,7 @@ export function DiaryView({
         document.visibilityState === 'visible' &&
         document.hasFocus()
       ) {
-        await requestApi(api, 'companion_journal.read_diary', { body: { diary_ids: result.unread_diary_ids } })
+        await api.invoke('companion_journal.read_diary', { body: { diary_ids: result.unread_diary_ids } })
         if (alive() && revision === request.current) {
           onReadRef.current()
         }

@@ -1,16 +1,9 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type {
-  MemoryCounts,
-  MemoryItem,
-  MemoryProfileChange,
-  MemoryProfileUpdateRequest,
-  SystemPresetSummary,
-  UserProfileField
-} from '@protocol'
+import type { MemoryCounts, MemoryItem, SystemPresetSummary, UserProfileField } from '@protocol'
 
-import { requestApi } from '../shared/api'
+import type { ApiInput } from '../shared/api'
 
 import type { RemoteApi } from './api'
 import { Empty, focusAfterRender, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
@@ -43,25 +36,28 @@ function updatedLabel(value: string): string {
     : value
 }
 
+async function* readActiveMemories(
+  api: RemoteApi,
+  query: ApiInput<'resource_catalog.get_memories'>['query']
+): AsyncGenerator<MemoryItem[]> {
+  let offset = 0
+  while (true) {
+    const result = await api.invoke('resource_catalog.get_memories', {
+      query: { ...query, status: 'active', limit: 500, offset }
+    })
+    yield result.memories
+    offset += result.memories.length
+    if (!result.memories.length || offset >= result.total) {
+      return
+    }
+  }
+}
+
 async function readProfile(api: RemoteApi): Promise<MemoryItem[]> {
   const memories: MemoryItem[] = []
-  let total = 0
-  do {
-    const result = await requestApi(api, 'resource_catalog.get_memories', {
-      query: {
-        system_preset_id: 'companion',
-        status: 'active',
-        kind: 'user_profile',
-        limit: 500,
-        offset: memories.length
-      }
-    })
-    memories.push(...result.memories)
-    total = result.total
-    if (!result.memories.length) {
-      break
-    }
-  } while (memories.length < total)
+  for await (const page of readActiveMemories(api, { system_preset_id: 'companion', kind: 'user_profile' })) {
+    memories.push(...page)
+  }
 
   return memories
 }
@@ -72,29 +68,16 @@ async function findSavedMemory(
   row: MemoryItem,
   content: string
 ): Promise<MemoryItem | null> {
-  let offset = 0
-  let total = 0
-  do {
-    const result = await requestApi(api, 'resource_catalog.get_memories', {
-      query: {
-        system_preset_id: preset,
-        status: 'active',
-        kind: row.context?.startsWith('user_profile:') ? 'user_profile' : 'recall',
-        q: content.trim(),
-        limit: 500,
-        offset
-      }
-    })
-    const saved = result.memories.find(value => value.id === row.id)
+  for await (const page of readActiveMemories(api, {
+    system_preset_id: preset,
+    kind: row.context?.startsWith('user_profile:') ? 'user_profile' : 'recall',
+    q: content.trim()
+  })) {
+    const saved = page.find(value => value.id === row.id)
     if (saved) {
       return saved
     }
-    total = result.total
-    offset += result.memories.length
-    if (!result.memories.length) {
-      break
-    }
-  } while (offset < total)
+  }
 
   return null
 }
@@ -109,7 +92,7 @@ export function MemoryView({ api, refresh }: { api: RemoteApi; refresh: number }
 
   useEffect(() => {
     void runLatest(async () => {
-      const result = await requestApi(api, 'resource_catalog.get_presets')
+      const result = await api.invoke('resource_catalog.get_presets')
       if (alive()) {
         setPresets(result.presets)
       }
@@ -186,7 +169,7 @@ function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; 
 
   const load = useCallback(async () => {
     const revision = ++request.current
-    const result = await requestApi(api, 'resource_catalog.get_memories', {
+    const result = await api.invoke('resource_catalog.get_memories', {
       query: {
         system_preset_id: preset,
         status,
@@ -428,7 +411,7 @@ function MemoryEditor({
             run(async () => {
               let updated: MemoryItem
               try {
-                updated = await requestApi(api, 'resource_catalog.patch_memory', {
+                updated = await api.invoke('resource_catalog.patch_memory', {
                   path: { memory_id: row.id },
                   body: {
                     system_preset_id: preset,
@@ -490,7 +473,7 @@ function MemoryEditor({
             if (!window.confirm('让伙伴忘记这条记忆？此操作无法撤销。')) {
               return
             }
-            await requestApi(api, 'resource_catalog.delete_memory', {
+            await api.invoke('resource_catalog.delete_memory', {
               path: { memory_id: row.id },
               query: { system_preset_id: preset }
             })
@@ -555,6 +538,61 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
 
     return { base: { ...values }, values, versions }
   }
+
+  const saveProfile = () =>
+    run(async () => {
+      if (!draft) {
+        return
+      }
+      const forgotten = changedFields.filter(({ key }) => !draft.values[key]?.trim() && draft.base[key])
+      if (
+        forgotten.length &&
+        !window.confirm(`让伙伴忘记这些资料：${forgotten.map(field => field.label).join('、')}？其他修改会一起保存。`)
+      ) {
+        return
+      }
+      const changes = changedFields.map(({ key }) => ({
+        field: key,
+        value: draft.values[key]?.trim() || null,
+        expected_version: draft.versions[key] ?? 0
+      }))
+      let updated: MemoryItem[]
+      try {
+        const result = await api.invoke('resource_catalog.patch_memory_profile', {
+          body: { system_preset_id: 'companion', changes }
+        })
+        updated = result.memories
+      } catch (failure) {
+        if (!alive()) {
+          throw failure
+        }
+        let latest: MemoryItem[] | null = null
+        try {
+          latest = await readProfile(api)
+        } catch {
+          // 核对失败不清理草稿，也不改变预期版本。
+        }
+        if (
+          !latest ||
+          !changedFields.every(({ key, context }) => {
+            const actual = latest.find(row => row.context === context)?.content ?? null
+
+            return actual === (draft.values[key]?.trim() || null)
+          })
+        ) {
+          if (alive() && latest) {
+            setRows(latest)
+          }
+          throw failure
+        }
+        updated = latest
+      }
+      if (alive()) {
+        setRows(updated)
+        setDraft(null)
+        setSaved(true)
+      }
+    })
 
   return (
     <>
@@ -661,62 +699,7 @@ function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): Rea
               <button
                 className="primary"
                 disabled={busy || !loaded || !changedFields.length || Boolean(conflictingFields.length)}
-                onClick={() =>
-                  run(async () => {
-                    if (!draft) {
-                      return
-                    }
-                    const forgotten = changedFields.filter(({ key }) => !draft.values[key]?.trim() && draft.base[key])
-                    if (
-                      forgotten.length &&
-                      !window.confirm(
-                        `让伙伴忘记这些资料：${forgotten.map(field => field.label).join('、')}？其他修改会一起保存。`
-                      )
-                    ) {
-                      return
-                    }
-                    const changes: MemoryProfileChange[] = changedFields.map(({ key }) => ({
-                      field: key,
-                      value: draft.values[key]?.trim() || null,
-                      expected_version: draft.versions[key] ?? 0
-                    }))
-                    try {
-                      const result = await requestApi(api, 'resource_catalog.patch_memory_profile', {
-                        body: {
-                          system_preset_id: 'companion',
-                          changes
-                        } satisfies MemoryProfileUpdateRequest
-                      })
-                      if (alive()) {
-                        setRows(result.memories)
-                        setDraft(null)
-                        setSaved(true)
-                      }
-                    } catch (failure) {
-                      try {
-                        const latest = await readProfile(api)
-                        if (alive()) {
-                          setRows(latest)
-                          if (
-                            changes.every(change => {
-                              const context = PROFILE_FIELDS.find(field => field.key === change.field)?.context
-                              const actual = latest.find(row => row.context === context)?.content ?? null
-
-                              return actual === change.value
-                            })
-                          ) {
-                            setDraft(null)
-                            setSaved(true)
-                            return
-                          }
-                        }
-                      } catch {
-                        // 核对失败不清理草稿，也不改变预期版本。
-                      }
-                      throw failure
-                    }
-                  })
-                }
+                onClick={saveProfile}
                 type="button"
               >
                 {busy ? '保存中…' : '保存修改'}

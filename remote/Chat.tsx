@@ -2,7 +2,7 @@ import { IconArrowLeft, IconMicrophone, IconPhoto, IconPlus, IconSend, IconSquar
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { type ApiResponse, requestApi } from '../shared/api'
+import type { ApiResponse, HttpCallOptions } from '../shared/api'
 import { EVENT_POLICIES } from '../shared/api.generated'
 import { eventsAfterSnapshot } from '../shared/gateway'
 import { createTurnCancellation, type TurnReference } from '../shared/turn-cancellation'
@@ -69,6 +69,21 @@ function readPendingPrompt(key: string): PendingPrompt | null {
     attachments,
     retry: typeof value.retry === 'number' ? value.retry : undefined,
     replace: typeof value.replace === 'number' ? value.replace : undefined
+  }
+}
+
+async function readTurnReceipt(api: RemoteApi, turn: TurnReference, options?: HttpCallOptions) {
+  try {
+    return await api.invoke(
+      'sessions.get_turn',
+      { path: { session_id: turn.sessionId, request_id: turn.requestId } },
+      options
+    )
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return null
+    }
+    throw error
   }
 }
 
@@ -146,7 +161,6 @@ export function Chat({
   const navigation = useRef(0)
   const hydration = useRef<{
     sessionId: string
-    revision: number
     events: GatewayEvent[]
   } | null>(null)
   const applyEvent = useRef<(event: GatewayEvent) => void>(() => {})
@@ -165,21 +179,7 @@ export function Chat({
     () =>
       createTurnCancellation({
         isCurrent: alive,
-        read: (turn, signal) =>
-          api
-            .invoke(
-              'sessions.get_turn',
-              {
-                path: { session_id: turn.sessionId, request_id: turn.requestId }
-              },
-              { signal, timeoutMs: 15_000 }
-            )
-            .catch(error => {
-              if (error instanceof ApiError && error.status === 404) {
-                return null
-              }
-              throw error
-            }),
+        read: (turn, signal) => readTurnReceipt(api, turn, { signal, timeoutMs: 15_000 }),
         cancel: (turn, signal) =>
           api.invoke(
             'sessions.cancel_turn',
@@ -202,6 +202,38 @@ export function Chat({
   const draftKey = (id: string) => `remote:${userId}:${device}:draft:${id}`
   const promptKey = (id: string) => `remote:${userId}:${device}:submission:${id}`
   const cancellationKey = useCallback((id: string) => `remote:${userId}:${device}:cancellation:${id}`, [userId, device])
+
+  const confirmPrompt = useCallback(
+    (id: string, request: PendingPrompt) => {
+      const submissionKey = `remote:${userId}:${device}:submission:${id}`
+      const savedDraftKey = `remote:${userId}:${device}:draft:${id}`
+      const stored = readPendingPrompt(submissionKey)
+      if (stored && stored.id !== request.id) {
+        return
+      }
+      sessionStorage.removeItem(submissionKey)
+      if (!request.replace && sessionStorage.getItem(savedDraftKey)?.trim() === request.text) {
+        sessionStorage.removeItem(savedDraftKey)
+      }
+      if (!alive() || selectedRef.current !== id || pending.current?.id !== request.id) {
+        return
+      }
+      pending.current = null
+      if (!request.replace) {
+        setDraft(value => (value.trim() === request.text ? '' : value))
+        setAttachments(value =>
+          value.length === request.attachments.length &&
+          value.every(
+            (attachment, index) =>
+              attachment.type === request.attachments[index].type && attachment.url === request.attachments[index].url
+          )
+            ? []
+            : value
+        )
+      }
+    },
+    [alive, userId, device]
+  )
 
   const releaseRecording = useCallback(() => {
     recordingRevision.current++
@@ -243,7 +275,7 @@ export function Chat({
 
   const loadSessions = useCallback(
     async (offset = 0) => {
-      const result = await requestApi(api, 'sessions.list_sessions', { query: { limit: 100, offset } })
+      const result = await api.invoke('sessions.list_sessions', { query: { limit: 100, offset } })
 
       if (alive()) {
         setSessions(previous =>
@@ -271,7 +303,6 @@ export function Chat({
       const revision = ++navigation.current
       const buffered = {
         sessionId: id,
-        revision,
         events: [] as GatewayEvent[]
       }
       hydration.current = buffered
@@ -318,16 +349,7 @@ export function Chat({
         const prior = readPendingPrompt(pendingKey)
         let confirmed = receipt?.request_id === prior?.id || result.active_turn?.request_id === prior?.id
         if (prior && !confirmed) {
-          const known = await api
-            .invoke('sessions.get_turn', {
-              path: { session_id: id, request_id: prior.id }
-            })
-            .catch(error => {
-              if (error instanceof ApiError && error.status === 404) {
-                return null
-              }
-              throw error
-            })
+          const known = await readTurnReceipt(api, { sessionId: id, requestId: prior.id })
           confirmed = known !== null
           if (!alive() || revision !== navigation.current || selectedRef.current !== id) {
             return
@@ -341,21 +363,7 @@ export function Chat({
         }
 
         if (prior && confirmed) {
-          sessionStorage.removeItem(pendingKey)
-          pending.current = null
-          if (!prior.replace) {
-            setDraft(value => (value.trim() === prior.text ? '' : value))
-            setAttachments(value =>
-              value.length === prior.attachments.length &&
-              value.every(
-                (attachment, index) =>
-                  attachment.type === prior.attachments[index].type && attachment.url === prior.attachments[index].url
-              )
-                ? []
-                : value
-            )
-            sessionStorage.removeItem(`remote:${userId}:${device}:draft:${id}`)
-          }
+          confirmPrompt(id, prior)
         }
         setReadOnly(result.info?.is_automation === true)
         setHasMore(result.truncated === true || Boolean(result.next_cursor))
@@ -388,7 +396,7 @@ export function Chat({
         }
       }
     },
-    [alive, api, cancellationKey, cancellations, gateway, userId, device]
+    [alive, api, cancellationKey, cancellations, confirmPrompt, gateway, userId, device]
   )
 
   finishCancellation.current = async (receipt, turn, error) => {
@@ -429,8 +437,8 @@ export function Chat({
 
       if (!metadataLoaded.current) {
         const [main, catalog] = await Promise.all([
-          requestApi(api, 'sessions.get_main_session'),
-          requestApi(api, 'resource_catalog.get_presets')
+          api.invoke('sessions.get_main_session'),
+          api.invoke('resource_catalog.get_presets')
         ])
 
         if (alive()) {
@@ -476,16 +484,8 @@ export function Chat({
     } else if (event.type === 'message.persisted') {
       setMessages(previous => mergeMessages(previous, event.payload.messages))
 
-      if (event.payload.request_id === pending.current?.id) {
-        pending.current = null
-
-        if (selectedRef.current) {
-          sessionStorage.removeItem(promptKey(selectedRef.current))
-          sessionStorage.removeItem(draftKey(selectedRef.current))
-        }
-
-        setDraft('')
-        setAttachments([])
+      if (pending.current?.id === event.payload.request_id && selectedRef.current) {
+        confirmPrompt(selectedRef.current, pending.current)
         setFailure('')
       }
     } else if (event.type === 'message.replaced') {
@@ -498,17 +498,14 @@ export function Chat({
       )
       pauseMedia()
       setFailure('')
-      if (event.payload.request_id === pending.current?.id && selectedRef.current) {
-        pending.current = null
-        sessionStorage.removeItem(promptKey(selectedRef.current))
+      if (pending.current?.id === event.payload.request_id && selectedRef.current) {
+        confirmPrompt(selectedRef.current, pending.current)
       }
       scheduleListRefresh()
     } else if (event.type === 'message.complete') {
       if (selectedRef.current) {
-        if (event.payload.request_id === pending.current?.id) {
-          pending.current = null
-          sessionStorage.removeItem(promptKey(selectedRef.current))
-          sessionStorage.removeItem(draftKey(selectedRef.current))
+        if (pending.current?.id === event.payload.request_id) {
+          confirmPrompt(selectedRef.current, pending.current)
         }
         const id = selectedRef.current
         void runLatest(() => resume(id))
@@ -539,9 +536,8 @@ export function Chat({
             )
           )
         }
-        if (event.payload.request_id === pending.current?.id && selectedRef.current) {
-          pending.current = null
-          sessionStorage.removeItem(promptKey(selectedRef.current))
+        if (pending.current?.id === event.payload.request_id && selectedRef.current) {
+          confirmPrompt(selectedRef.current, pending.current)
         }
       }
       if (typeof event.payload.error === 'string') {
@@ -565,22 +561,14 @@ export function Chat({
     }
   }
 
-  useEffect(
-    () =>
-      gateway.subscribeEvent(event => {
-        const sessionId = event.session_id
-
-        if (hydration.current && sessionId === hydration.current.sessionId) {
-          hydration.current.events.push(event)
-        } else {
-          applyEvent.current(event)
-        }
-      }),
-    [gateway]
-  )
-
   useEffect(() => {
     const remove = gateway.subscribeEvent(event => {
+      if (hydration.current && event.session_id === hydration.current.sessionId) {
+        hydration.current.events.push(event)
+      } else {
+        applyEvent.current(event)
+      }
+
       if (event.type !== 'session.list_changed') {
         return
       }
@@ -665,18 +653,7 @@ export function Chat({
     setFailure('')
 
     try {
-      const known = awaitingReceipt
-        ? await api
-            .invoke('sessions.get_turn', {
-              path: { session_id: id, request_id: request.id }
-            })
-            .catch(error => {
-              if (error instanceof ApiError && error.status === 404) {
-                return null
-              }
-              throw error
-            })
-        : null
+      const known = awaitingReceipt ? await readTurnReceipt(api, { sessionId: id, requestId: request.id }) : null
       if (awaitingReceipt && !known && cancellations.requested({ sessionId: id, requestId: request.id })) {
         return
       }
@@ -703,23 +680,9 @@ export function Chat({
 
       cancellations.observe({ sessionId: id, requestId: request.id }, result)
 
-      if (readPendingPrompt(promptKey(id))?.id === request.id) {
-        sessionStorage.removeItem(promptKey(id))
-      }
-      if (!request.replace && sessionStorage.getItem(draftKey(id))?.trim() === request.text) {
-        sessionStorage.removeItem(draftKey(id))
-      }
+      confirmPrompt(id, request)
 
       if (alive() && selectedRef.current === id) {
-        if (pending.current?.id === request.id) {
-          pending.current = null
-          if (!request.replace) {
-            setDraft(value => (value.trim() === request.text ? '' : value))
-            setAttachments(value => (value === request.attachments ? [] : value))
-            sessionStorage.removeItem(draftKey(id))
-          }
-        }
-
         if (result.status === 'failed' || result.status === 'interrupted') {
           setFailure(result.error || '上一回合已结束，请查看会话后重新提交')
         }
@@ -884,7 +847,7 @@ export function Chat({
               disabled={busy || !presets.some(item => item.id === preset)}
               onClick={() =>
                 run(async () => {
-                  const result = await requestApi(api, 'sessions.create_session', {
+                  const result = await api.invoke('sessions.create_session', {
                     body: { system_preset_id: preset }
                   })
 
@@ -1022,7 +985,7 @@ export function Chat({
                 const before = messages.find(message => typeof message.id === 'number')?.id
                 const height = listRef.current?.scrollHeight ?? 0
 
-                const result = await requestApi(api, 'sessions.get_session_history', {
+                const result = await api.invoke('sessions.get_session_history', {
                   path: { session_id: selected },
                   query: { limit: 60, before_id: before }
                 })

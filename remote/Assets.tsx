@@ -2,7 +2,7 @@ import { IconPhoto, IconPlus, IconRefresh } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { type ApiInput, type ApiOperationKey, requestApi } from '../shared/api'
+import type { ApiInput, ApiOperationKey } from '../shared/api'
 import type { ApiSchemas } from '../shared/api.generated'
 
 import type { RemoteApi } from './api'
@@ -22,6 +22,57 @@ import {
 } from './ui'
 
 type SceneState = ApiSchemas['SceneStateResponse']
+
+function useAssetSubmission(key: string, onCheck: () => Promise<void>) {
+  const alive = useAlive()
+  const [submitted, setSubmitted] = usePageState(`${key}.submitted`, false)
+  const [reconciled, setReconciled] = useState(false)
+
+  const submit = async <Result,>(task: () => Promise<Result>): Promise<Result> => {
+    setSubmitted(true)
+    setReconciled(false)
+    try {
+      return await task()
+    } catch (failure) {
+      if (alive() && failure instanceof ApiError && failure.status !== null && failure.status < 500) {
+        setSubmitted(false)
+      }
+      throw failure
+    }
+  }
+  const check = async () => {
+    await onCheck()
+    if (alive()) {
+      setReconciled(true)
+    }
+  }
+
+  return { check, clearSubmission: () => setSubmitted(false), reconciled, submit, submitted }
+}
+
+function AssetResultRecovery({
+  onCheck,
+  onContinue,
+  reconciled
+}: {
+  onCheck: () => Promise<void>
+  onContinue: () => void
+  reconciled: boolean
+}): ReactElement {
+  return (
+    <div className="creation-status">
+      <p>上次制作的结果尚未确认。请先刷新，核对原来的结果。</p>
+      <div className="button-row">
+        <button onClick={onCheck} type="button">
+          刷新结果
+        </button>
+        <button disabled={!reconciled} onClick={onContinue} type="button">
+          已核对，继续调整
+        </button>
+      </div>
+    </div>
+  )
+}
 
 function AssetSteps({
   kind,
@@ -79,8 +130,7 @@ function AssetCreator({
   const [source, setSource] = usePageState<'ai' | 'upload'>(`${kind}.source`, 'ai')
   const [image, setImage] = usePageState<Awaited<ReturnType<typeof readImage>> | null>(`${kind}.image`, null, false)
   const [prompt, setPrompt] = usePageState(`${kind}.prompt`, '')
-  const [submitted, setSubmitted] = usePageState(`${kind}.submitted`, false)
-  const [reconciled, setReconciled] = useState(false)
+  const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(kind, onCheck)
   const picker = useRef<HTMLInputElement>(null)
   const scene = kind === 'scene'
   const label = scene ? '背景' : '衣服'
@@ -150,20 +200,10 @@ function AssetCreator({
           </button>
           {!busy ? (
             <div className="button-row">
-              <button
-                onClick={() =>
-                  run(async () => {
-                    await onCheck()
-                    if (alive()) {
-                      setReconciled(true)
-                    }
-                  })
-                }
-                type="button"
-              >
+              <button onClick={() => run(check)} type="button">
                 刷新制作列表
               </button>
-              <button disabled={!reconciled} onClick={() => setSubmitted(false)} type="button">
+              <button disabled={!reconciled} onClick={clearSubmission} type="button">
                 已核对结果，开始新的制作
               </button>
             </div>
@@ -178,42 +218,33 @@ function AssetCreator({
           }
           onClick={() =>
             run(async () => {
-              setSubmitted(true)
-              setReconciled(false)
-              let result: { id: number }
-              try {
+              const result = await submit(async () => {
                 if (source === 'upload') {
                   if (!image) {
                     return
                   }
                   const imported = { source: 'import' as const, image: image.base64, content_type: image.type }
-                  result = scene
-                    ? await requestApi(api, 'companion_scenes.create_scene', { body: imported })
-                    : await requestApi(api, 'companion.post_outfit', {
+                  return scene
+                    ? api.invoke('companion_scenes.create_scene', { body: imported })
+                    : api.invoke('companion.post_outfit', {
                         body: { ...imported, description: description.trim() || undefined }
                       })
-                } else {
-                  result = scene
-                    ? await requestApi(api, 'companion_scenes.create_scene', {
-                        body: { source: 'generate', notes: description.trim() || undefined, ...imageBody }
-                      })
-                    : await requestApi(api, 'companion.post_outfit', {
-                        body: { source: 'generate', description: description.trim() || undefined, ...imageBody }
-                      })
                 }
-              } catch (failure) {
-                if (alive() && failure instanceof ApiError && failure.status !== null && failure.status < 500) {
-                  setSubmitted(false)
-                }
-                throw failure
-              }
-              if (alive()) {
+                return scene
+                  ? api.invoke('companion_scenes.create_scene', {
+                      body: { source: 'generate', notes: description.trim() || undefined, ...imageBody }
+                    })
+                  : api.invoke('companion.post_outfit', {
+                      body: { source: 'generate', description: description.trim() || undefined, ...imageBody }
+                    })
+              })
+              if (result && alive()) {
                 setDescription('')
                 setImage(null)
                 setPrompt('')
                 setSource('ai')
                 await onCreated(result.id)
-                setSubmitted(false)
+                clearSubmission()
               }
             })
           }
@@ -251,27 +282,19 @@ function AssetCreator({
             onClick={() =>
               run(async () => {
                 if (scene) {
-                  setSubmitted(true)
-                  setReconciled(false)
-                  let result: Scene
-                  try {
-                    result = await requestApi(api, 'companion_scenes.post_scene_prompt', {
+                  const result = await submit(() =>
+                    api.invoke('companion_scenes.post_scene_prompt', {
                       body: { notes: description.trim() || undefined }
                     })
-                  } catch (failure) {
-                    if (alive() && failure instanceof ApiError && failure.status !== null && failure.status < 500) {
-                      setSubmitted(false)
-                    }
-                    throw failure
-                  }
+                  )
                   if (alive()) {
                     setPrompt(result.prompt)
                     setSource('ai')
                     await onCreated(result.id)
-                    setSubmitted(false)
+                    clearSubmission()
                   }
                 } else {
-                  const result = await requestApi(api, 'companion.post_outfit_prompt', {
+                  const result = await api.invoke('companion.post_outfit_prompt', {
                     body: { description: description.trim() || undefined, ...imageBody }
                   })
                   if (alive()) {
@@ -345,7 +368,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
     const [library, current, detail] = await Promise.all([
       Promise.all(
         Array.from({ length: Math.ceil(browseLimit / 100) }, (_, index) =>
-          requestApi(api, 'companion_scenes.scene_list_route', {
+          api.invoke('companion_scenes.scene_list_route', {
             query: { q: query, offset: index * 100, limit: Math.min(100, browseLimit - index * 100) }
           })
         )
@@ -353,9 +376,9 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
         scenes: [...new Map(pages.flatMap(page => page.scenes).map(scene => [scene.id, scene])).values()],
         total: pages[0]?.total ?? 0
       })),
-      requestApi(api, 'companion_scenes.read_scene_state'),
+      api.invoke('companion_scenes.read_scene_state'),
       selectedId
-        ? requestApi(api, 'companion_scenes.scene_detail_route', { path: { scene_id: selectedId } }).catch(failure => {
+        ? api.invoke('companion_scenes.scene_detail_route', { path: { scene_id: selectedId } }).catch(failure => {
             if (failure instanceof ApiError && failure.status === 404) {
               return null
             }
@@ -374,7 +397,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
   }, [alive, api, browseLimit, query, selectedId, setSelected])
 
   useEffect(() => {
-    void runLatest(() => load())
+    void runLatest(load)
   }, [load, refresh, runLatest])
   const pending = Boolean(state?.pending || state?.regenerating)
 
@@ -385,7 +408,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
 
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        void runLatest(() => load())
+        void runLatest(load)
       }
     }, 5000)
 
@@ -427,7 +450,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
               aria-label="刷新背景"
               className="icon-button"
               disabled={busy}
-              onClick={() => run(() => load())}
+              onClick={() => run(load)}
               type="button"
             >
               <IconRefresh size={20} />
@@ -442,7 +465,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                 void run(async () => {
                   setPolicySaving(true)
                   try {
-                    await requestApi(api, 'companion_scenes.patch_scene_policy', { body: { policy } })
+                    await api.invoke('companion_scenes.patch_scene_policy', { body: { policy } })
                     await load()
                   } finally {
                     if (alive()) {
@@ -481,7 +504,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                 const id = state.pending?.id ?? state.regenerating?.id
 
                 if (id) {
-                  await requestApi(api, 'companion_scenes.post_scene_discard', { path: { scene_id: id } })
+                  await api.invoke('companion_scenes.post_scene_discard', { path: { scene_id: id } })
                   await load()
                 }
               })
@@ -497,13 +520,13 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
           api={api}
           disabled={pending}
           kind="scene"
-          onCheck={() => load()}
+          onCheck={load}
           onClose={() => {
             setCreating(false)
             focusAfterRender('[data-create-asset="scene"]')
           }}
           onCreated={async id => {
-            const row = await requestApi(api, 'companion_scenes.scene_detail_route', { path: { scene_id: id } })
+            const row = await api.invoke('companion_scenes.scene_detail_route', { path: { scene_id: id } })
             if (alive()) {
               setSelected(row)
               setCreating(false)
@@ -522,7 +545,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
             setSelected(null)
             focusAfterRender(`[data-scene-id="${selected.id}"]`)
           }}
-          onUpdate={() => load()}
+          onUpdate={load}
           scene={selected}
         />
       ) : null}
@@ -577,7 +600,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                       if (!alive()) {
                         return
                       }
-                      await requestApi(api, 'companion_scenes.post_scene_activate', { body: { scene_id: row.id } })
+                      await api.invoke('companion_scenes.post_scene_activate', { body: { scene_id: row.id } })
                       await load()
                     })
                   }}
@@ -624,8 +647,7 @@ function SceneDetail({
   const alive = useAlive()
   const [title, setTitle] = usePageState(`scene.${scene.id}.title`, scene.title)
   const [description, setDescription] = usePageState(`scene.${scene.id}.description`, scene.description)
-  const [submitted, setSubmitted] = usePageState(`scene.${scene.id}.submitted`, false)
-  const [reconciled, setReconciled] = useState(false)
+  const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`scene.${scene.id}`, onUpdate)
   const previous = useRef({ title: scene.title, description: scene.description })
   const [loadedImage, setLoadedImage] = useState('')
   const picker = useRef<HTMLInputElement>(null)
@@ -635,20 +657,13 @@ function SceneDetail({
     (scene.regeneration?.status === 'failed' &&
       (scene.regeneration.stage === 'analyze' || scene.regeneration.stage === 'review_failed'))
   const regenerate = () =>
-    run(async () => {
-      setSubmitted(true)
-      setReconciled(false)
-      try {
-        await requestApi(api, 'companion_scenes.post_scene_regenerate', { path: { scene_id: scene.id } })
+    run(() =>
+      submit(async () => {
+        await api.invoke('companion_scenes.post_scene_regenerate', { path: { scene_id: scene.id } })
         await onUpdate()
-        setSubmitted(false)
-      } catch (failure) {
-        if (alive() && failure instanceof ApiError && failure.status !== null && failure.status < 500) {
-          setSubmitted(false)
-        }
-        throw failure
-      }
-    })
+        clearSubmission()
+      })
+    )
 
   useEffect(() => {
     const old = previous.current
@@ -702,7 +717,7 @@ function SceneDetail({
           disabled={busy || !title.trim() || !description.trim()}
           onClick={() =>
             run(async () => {
-              await requestApi(api, 'companion_scenes.scene_edit_route', {
+              await api.invoke('companion_scenes.scene_edit_route', {
                 path: { scene_id: scene.id },
                 body: { title, description }
               })
@@ -735,7 +750,7 @@ function SceneDetail({
           disabled={busy}
           onClick={() =>
             run(async () => {
-              await requestApi(api, 'companion_scenes.scene_analyze_route', { path: { scene_id: scene.id } })
+              await api.invoke('companion_scenes.scene_analyze_route', { path: { scene_id: scene.id } })
               await onUpdate()
             })
           }
@@ -746,27 +761,7 @@ function SceneDetail({
       ) : null}
       {error ? <Notice>{error}</Notice> : null}
       {submitted && !busy ? (
-        <div className="creation-status">
-          <p>上次制作的结果尚未确认。请先刷新，核对原来的结果。</p>
-          <div className="button-row">
-            <button
-              onClick={() =>
-                run(async () => {
-                  await onUpdate()
-                  if (alive()) {
-                    setReconciled(true)
-                  }
-                })
-              }
-              type="button"
-            >
-              刷新结果
-            </button>
-            <button disabled={!reconciled} onClick={() => setSubmitted(false)} type="button">
-              已核对，继续调整
-            </button>
-          </div>
-        </div>
+        <AssetResultRecovery onCheck={() => run(check)} onContinue={clearSubmission} reconciled={reconciled} />
       ) : null}
       {scene.url || scene.status === 'pending' ? (
         <div className="creation-footer">
@@ -775,7 +770,7 @@ function SceneDetail({
             disabled={current || busy || scene.status !== 'ready' || loadedImage !== scene.url}
             onClick={() =>
               run(async () => {
-                await requestApi(api, 'companion_scenes.post_scene_activate', { body: { scene_id: scene.id } })
+                await api.invoke('companion_scenes.post_scene_activate', { body: { scene_id: scene.id } })
                 await onUpdate()
               })
             }
@@ -832,7 +827,7 @@ function SceneDetail({
                 if (!window.confirm('删除这个背景？删除后无法恢复。')) {
                   return
                 }
-                await requestApi(api, 'companion_scenes.delete_scene_route', { path: { scene_id: scene.id } })
+                await api.invoke('companion_scenes.delete_scene_route', { path: { scene_id: scene.id } })
 
                 if (alive()) {
                   onClose()
@@ -859,7 +854,7 @@ function SceneDetail({
               const image = await readImage(file)
 
               if (alive()) {
-                await requestApi(api, 'companion_scenes.create_scene', {
+                await api.invoke('companion_scenes.create_scene', {
                   body: { source: 'import', scene_id: scene.id, image: image.base64, content_type: image.type }
                 })
                 await onUpdate()
@@ -889,8 +884,8 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
   const load = useCallback(async () => {
     const current = ++revision.current
     const [wardrobe, videos] = await Promise.all([
-      requestApi(api, 'companion.get_outfits'),
-      requestApi(api, 'companion.get_video_packs')
+      api.invoke('companion.get_outfits'),
+      api.invoke('companion.get_video_packs')
     ])
 
     if (alive() && current === revision.current) {
@@ -965,7 +960,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
                 void run(async () => {
                   setPolicySaving(true)
                   try {
-                    await requestApi(api, 'companion.patch_outfit_policy', { body: { policy: value } })
+                    await api.invoke('companion.patch_outfit_policy', { body: { policy: value } })
                     await load()
                   } finally {
                     if (alive()) {
@@ -1068,7 +1063,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
                         return
                       }
                       void run(async () => {
-                        await requestApi(api, 'companion.put_video_pack_selection', { body: { pack_id: pack.id } })
+                        await api.invoke('companion.put_video_pack_selection', { body: { pack_id: pack.id } })
                         await load()
                       })
                     }}
@@ -1105,27 +1100,19 @@ function OutfitDetail({
   const { run, busy, error } = useTask()
   const alive = useAlive()
   const [feedback, setFeedback] = usePageState(`outfit.${outfit.id}.feedback`, '')
-  const [submitted, setSubmitted] = usePageState(`outfit.${outfit.id}.submitted`, false)
-  const [reconciled, setReconciled] = useState(false)
+  const { check, clearSubmission, reconciled, submit, submitted } = useAssetSubmission(`outfit.${outfit.id}`, onUpdate)
   const [loadedImage, setLoadedImage] = useState('')
   const picker = useRef<HTMLInputElement>(null)
   const pack = packs.find(item => item.status === 'ready') ?? packs[0]
   const produce = <K extends ApiOperationKey>(operation: K, input: ApiInput<K>) =>
-    run(async () => {
-      setSubmitted(true)
-      setReconciled(false)
-      try {
-        await requestApi(api, operation, input)
+    run(() =>
+      submit(async () => {
+        await api.invoke(operation, input)
         await onUpdate()
-        setSubmitted(false)
+        clearSubmission()
         setFeedback('')
-      } catch (failure) {
-        if (alive() && failure instanceof ApiError && failure.status !== null && failure.status < 500) {
-          setSubmitted(false)
-        }
-        throw failure
-      }
-    })
+      })
+    )
   const regenerate = (mode: 'edit' | 'regenerate') =>
     produce('companion.post_outfit_regenerate', {
       path: { outfit_id: outfit.id },
@@ -1157,48 +1144,26 @@ function OutfitDetail({
       ) : null}
       {error ? <Notice>{error}</Notice> : null}
       {submitted && !busy ? (
-        <div className="creation-status">
-          <p>上次制作的结果尚未确认。请先刷新，核对原来的结果。</p>
-          <div className="button-row">
-            <button
-              onClick={() =>
-                run(async () => {
-                  await onUpdate()
-                  if (alive()) {
-                    setReconciled(true)
-                  }
-                })
-              }
-              type="button"
-            >
-              刷新结果
-            </button>
-            <button disabled={!reconciled} onClick={() => setSubmitted(false)} type="button">
-              已核对，继续调整
-            </button>
-          </div>
-        </div>
+        <AssetResultRecovery onCheck={() => run(check)} onContinue={clearSubmission} reconciled={reconciled} />
       ) : null}
       <div className="creation-footer">
         {outfit.status === 'draft' ? (
-          <>
-            <button
-              className="primary full"
-              disabled={busy || submitted || !outfit.fullbody_url || loadedImage !== outfit.fullbody_url}
-              onClick={() =>
-                run(async () => {
-                  await requestApi(api, 'companion.post_outfit_confirm', {
-                    path: { outfit_id: outfit.id },
-                    body: {}
-                  })
-                  await onUpdate()
+          <button
+            className="primary full"
+            disabled={busy || submitted || !outfit.fullbody_url || loadedImage !== outfit.fullbody_url}
+            onClick={() =>
+              run(async () => {
+                await api.invoke('companion.post_outfit_confirm', {
+                  path: { outfit_id: outfit.id },
+                  body: {}
                 })
-              }
-              type="button"
-            >
-              满意，保存这套衣服
-            </button>
-          </>
+                await onUpdate()
+              })
+            }
+            type="button"
+          >
+            满意，保存这套衣服
+          </button>
         ) : null}
         {outfit.status === 'ready' ? (
           <button
@@ -1207,7 +1172,7 @@ function OutfitDetail({
             onClick={() =>
               pack
                 ? run(async () => {
-                    await requestApi(api, 'companion.put_video_pack_selection', { body: { pack_id: pack.id } })
+                    await api.invoke('companion.put_video_pack_selection', { body: { pack_id: pack.id } })
                     await onUpdate()
                   })
                 : produce('companion.post_video_pack', { body: { source: 'generate', outfit_id: outfit.id } })
@@ -1284,7 +1249,7 @@ function OutfitDetail({
             disabled={busy}
             onClick={() =>
               run(async () => {
-                await requestApi(api, 'companion.post_retry_outfit_description', {
+                await api.invoke('companion.post_retry_outfit_description', {
                   path: { outfit_id: outfit.id }
                 })
                 await onUpdate()
@@ -1314,7 +1279,7 @@ function OutfitDetail({
                 ) {
                   return
                 }
-                await requestApi(api, 'companion.delete_outfit_route', { path: { outfit_id: outfit.id } })
+                await api.invoke('companion.delete_outfit_route', { path: { outfit_id: outfit.id } })
 
                 if (alive()) {
                   onClose()
@@ -1341,7 +1306,7 @@ function OutfitDetail({
               const image = await readImage(file)
 
               if (alive()) {
-                await requestApi(api, 'companion.post_outfit_regenerate', {
+                await api.invoke('companion.post_outfit_regenerate', {
                   path: { outfit_id: outfit.id },
                   body: { source: 'import', image: image.base64, content_type: image.type }
                 })

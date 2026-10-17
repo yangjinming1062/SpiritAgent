@@ -42,6 +42,7 @@ const FEATURE_GROUPS: { title: string; fields: { key: CharacterFeatureKey; label
     ]
   }
 ]
+const FEATURE_FIELDS = FEATURE_GROUPS.flatMap(group => group.fields)
 
 interface PersonaDraft {
   base: Partial<Record<PersonaEditableField, string | null>>
@@ -170,9 +171,6 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
         } catch {
           // 核对失败时保留编辑起点与原错误。
         }
-        if (alive() && latest) {
-          setPersona(latest)
-        }
         const latestDefinition = latest ? definitionOf(latest) : {}
         if (
           !latest ||
@@ -180,6 +178,9 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
             ({ key }) => (editableValue(latestDefinition, key) ?? '') === (draft.values[key] ?? '').trim()
           )
         ) {
+          if (alive() && latest) {
+            setPersona(latest)
+          }
           throw failure
         }
         updated = latest
@@ -215,23 +216,21 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
         } catch {
           // 核对失败时保留草稿和修订号。
         }
-        if (alive() && latest !== undefined) {
-          setCard(latest)
-        }
         if (
           !latest ||
           latest.avatar_id !== cardDraft.avatarId ||
-          !FEATURE_GROUPS.every(group =>
-            group.fields.every(({ key }) => {
-              if (!Object.hasOwn(cardDraft.changes, key)) {
-                return true
-              }
-              const value = cardDraft.changes[key]
+          !FEATURE_FIELDS.every(({ key }) => {
+            if (!Object.hasOwn(cardDraft.changes, key)) {
+              return true
+            }
+            const value = cardDraft.changes[key]
 
-              return value === null ? latest.overrides[key] == null : latest.overrides[key] === value?.trim()
-            })
-          )
+            return value === null ? latest.overrides[key] == null : latest.overrides[key] === value?.trim()
+          })
         ) {
+          if (alive() && latest !== undefined) {
+            setCard(latest)
+          }
           throw failure
         }
         updated = latest
@@ -464,7 +463,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
             <p>角色卡已更新，草稿仍保留。请核对下面的最新特征后继续。</p>
             {card ? (
               <dl>
-                {FEATURE_GROUPS.flatMap(group => group.fields).map(({ key, label }) => (
+                {FEATURE_FIELDS.map(({ key, label }) => (
                   <div key={key}>
                     <dt>{label}</dt>
                     <dd>{card.features[key] || '尚未整理'}</dd>

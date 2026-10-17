@@ -1,8 +1,7 @@
 import { IconHeart, IconMessageCircle, IconSettings, IconSparkles } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { requestApi } from '../shared/api'
 import { EVENT_POLICIES } from '../shared/api.generated'
 import type { GatewayNetworkEvent } from '../shared/gateway'
 
@@ -79,6 +78,12 @@ export function App(): ReactElement {
   const tabRef = useRef(tab)
   tabRef.current = tab
   const activeGateway = useRef<RemoteGateway | null>(null)
+  const disconnect = useCallback(() => {
+    pauseMedia()
+    activeGateway.current?.close()
+    activeGateway.current = null
+    api.clear()
+  }, [])
 
   useEffect(() => {
     document.querySelector('.content')?.scrollTo({ top: 0 })
@@ -115,10 +120,7 @@ export function App(): ReactElement {
 
     const invalidate = () => {
       clearChatState()
-      pauseMedia()
-      activeGateway.current?.close()
-      activeGateway.current = null
-      api.clear()
+      disconnect()
 
       if (live) {
         setSession(null)
@@ -225,11 +227,9 @@ export function App(): ReactElement {
     return () => {
       live = false
       clearTimeout(eventTimer)
-      pauseMedia()
-      activeGateway.current?.close()
-      api.clear()
+      disconnect()
     }
-  }, [])
+  }, [disconnect])
 
   useEffect(() => {
     if (session) {
@@ -258,8 +258,8 @@ export function App(): ReactElement {
 
     let current = true
     void Promise.allSettled([
-      requestApi(api, 'companion_posts.get_posts_unread'),
-      requestApi(api, 'companion_journal.get_diary_unread')
+      api.invoke('companion_posts.get_posts_unread'),
+      api.invoke('companion_journal.get_diary_unread')
     ]).then(([posts, diary]) => {
       if (!current) {
         return
@@ -377,9 +377,7 @@ export function App(): ReactElement {
               api={api}
               onLogout={() => {
                 clearChatState()
-                pauseMedia()
-                activeGateway.current?.close()
-                api.clear()
+                disconnect()
                 setSession(null)
                 setGateway(null)
                 setError('')

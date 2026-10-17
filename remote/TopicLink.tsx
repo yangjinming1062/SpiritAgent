@@ -66,7 +66,9 @@ export function TopicLink({
         void runLatest(load)
       }
     })
-    void runLatest(load)
+    if (!gateway.open) {
+      void runLatest(load)
+    }
 
     return () => {
       removeEvent()

@@ -17,8 +17,7 @@ export function errorText(error: unknown): string {
 
 export class RemoteApi implements ApiTransport {
   private csrf = ''
-  private revision = 0
-  private controllers = new Set<AbortController>()
+  private controller = new AbortController()
   onExpired: () => void = () => {}
 
   authenticate(session: RemoteSession): void {
@@ -27,19 +26,16 @@ export class RemoteApi implements ApiTransport {
   }
 
   clear(): void {
-    this.revision++
+    this.controller.abort()
+    this.controller = new AbortController()
     this.csrf = ''
-    this.controllers.forEach(controller => controller.abort())
-    this.controllers.clear()
   }
 
   async invoke<Operation extends ApiOperationKey>(
     operation: Operation,
     ...args: ApiArguments<Operation>
   ): Promise<ApiResponse<Operation>> {
-    const revision = this.revision
-    const controller = new AbortController()
-    this.controllers.add(controller)
+    const controller = this.controller
     try {
       const transport = createHttpClient({
         fetch: (input, options) =>
@@ -52,12 +48,12 @@ export class RemoteApi implements ApiTransport {
         headers: () => new Headers(this.csrf ? { 'X-CSRF-Token': this.csrf } : undefined)
       })
       const value = await transport.invoke(operation, ...args)
-      if (revision !== this.revision) {
+      if (controller.signal.aborted) {
         throw new DOMException('账户已切换', 'AbortError')
       }
       return value
     } catch (error) {
-      if (revision !== this.revision || controller.signal.aborted) {
+      if (controller.signal.aborted) {
         throw new ApiError(
           null,
           {
@@ -69,12 +65,10 @@ export class RemoteApi implements ApiTransport {
           { cause: error }
         )
       }
-      if (revision === this.revision && error instanceof ApiError && error.isLoginExpired && this.csrf) {
+      if (error instanceof ApiError && error.isLoginExpired && this.csrf) {
         this.onExpired()
       }
       throw error
-    } finally {
-      this.controllers.delete(controller)
     }
   }
 }
