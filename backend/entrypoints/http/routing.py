@@ -1,10 +1,13 @@
 import sys
 from collections.abc import Callable
+from inspect import isclass, signature
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.routing import APIRoute
 from infrastructure.api_errors import ApiErrorResponse
 from infrastructure.http_contracts import HttpIdentity, HttpOperation, register_http_operation
+from starlette.responses import Response
 
 
 class ContractRouter(APIRouter):
@@ -15,7 +18,18 @@ class ContractRouter(APIRouter):
         super().__init__(**kwargs)
 
     def add_api_route(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
+        operation_id = kwargs.get("operation_id") or f"{endpoint.__module__.rsplit('.', 1)[-1]}.{endpoint.__name__}"
+        kwargs["operation_id"] = operation_id
         responses = dict(kwargs.get("responses") or {})
+        response_type = signature(endpoint).return_annotation
+        if isclass(response_type) and issubclass(response_type, Response):
+            kwargs["response_class"] = response_type
+            status = kwargs.get("status_code") or 200
+            if status != 204:
+                responses.setdefault(
+                    status,
+                    {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+                )
         for status in (400, 401, 403, 404, 409, 413, 422, 429, 500, 503):
             responses.setdefault(status, {"model": ApiErrorResponse})
         kwargs["responses"] = responses
@@ -27,20 +41,28 @@ class ContractRouter(APIRouter):
             "upload": overrides.get("upload", "json"),
             "wait_for_model": overrides.get("wait_for_model", False),
             "ipc": overrides.get("ipc", "desktop" in identities),
-            "route_path": self.prefix + path,
         }
         extra["x-spiritagent"] = policy
         kwargs["openapi_extra"] = extra
+        super().add_api_route(path, endpoint, **kwargs)
+        route = self.routes[-1]
+        if (
+            isinstance(route, APIRoute)
+            and route.body_field is not None
+            and getattr(route.body_field.field_info, "media_type", None) == "multipart/form-data"
+        ):
+            policy["ipc"] = False
+            route.openapi_extra = {**(route.openapi_extra or {}), "x-spiritagent": policy}
         for method in kwargs.get("methods") or ["GET"]:
             register_http_operation(
                 HttpOperation(
+                    operation_id=operation_id,
                     path=self.prefix + path,
                     method=method.upper(),
                     identities=identities,
                     upload=policy["upload"],
                 ),
             )
-        super().add_api_route(path, endpoint, **kwargs)
 
 
 def get_router(

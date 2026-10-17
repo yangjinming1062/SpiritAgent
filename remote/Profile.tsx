@@ -9,6 +9,8 @@ import type {
   PersonaResponse
 } from '@protocol'
 
+import type { ApiResponse } from '../shared/api'
+
 import type { RemoteApi } from './api'
 import { ApiError, record } from './api'
 import { Media, Notice, useAlive, usePageScroll, usePageState, useTask } from './ui'
@@ -52,12 +54,7 @@ interface CardDraft {
   changes: CharacterOverrides
 }
 
-interface Avatar {
-  id: number
-  asset_url: string
-  seed_fullbody_url: string
-  is_fullbody_confirmed: boolean
-}
+type Avatar = ApiResponse<'companion.get_avatar'>
 
 function definitionOf(persona: PersonaResponse): Record<string, unknown> {
   const value: unknown = JSON.parse(persona.definition_json)
@@ -91,14 +88,14 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
 
   const load = useCallback(async () => {
     const [nextPersona, nextAvatar, nextCard] = await Promise.all([
-      api.request<PersonaResponse>('/api/companion/persona'),
-      api.request<Avatar>('/api/companion/avatar').catch(failure => {
+      api.invoke('companion.get_persona'),
+      api.invoke('companion.get_avatar').catch(failure => {
         if (failure instanceof ApiError && failure.status === 404) {
           return null
         }
         throw failure
       }),
-      api.request<CharacterCard | null>('/api/companion/character-card')
+      api.invoke('companion.get_character_card_route')
     ])
 
     if (alive()) {
@@ -123,7 +120,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
       ? setInterval(() => {
           if (document.visibilityState === 'visible') {
             void runLatest(async () => {
-              const next = await api.request<CharacterCard | null>('/api/companion/character-card')
+              const next = await api.invoke('companion.get_character_card_route')
               if (alive()) {
                 setCard(next)
               }
@@ -157,9 +154,11 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
       }
       let updated: PersonaResponse
       try {
-        updated = await api.request<PersonaResponse>('/api/companion/persona', 'PUT', {
-          definition_json: JSON.stringify(draft.values),
-          expected_fields: draft.base
+        updated = await api.invoke('companion.put_persona', {
+          body: {
+            definition_json: JSON.stringify(draft.values),
+            expected_fields: Object.fromEntries(PERSONA_FIELDS.map(({ key }) => [key, draft.base[key] ?? null]))
+          }
         })
       } catch (failure) {
         if (!alive()) {
@@ -167,7 +166,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
         }
         let latest: PersonaResponse | null = null
         try {
-          latest = await api.request<PersonaResponse>('/api/companion/persona')
+          latest = await api.invoke('companion.get_persona')
         } catch {
           // 核对失败时保留编辑起点与原错误。
         }
@@ -199,10 +198,12 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
       }
       let updated: CharacterCard
       try {
-        updated = await api.request<CharacterCard>('/api/companion/character-card', 'PATCH', {
-          expected_avatar_id: cardDraft.avatarId,
-          expected_revision: cardDraft.revision,
-          changes: cardDraft.changes
+        updated = await api.invoke('companion.patch_character_card_route', {
+          body: {
+            expected_avatar_id: cardDraft.avatarId,
+            expected_revision: cardDraft.revision,
+            changes: cardDraft.changes
+          }
         })
       } catch (failure) {
         if (!alive()) {
@@ -210,7 +211,7 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
         }
         let latest: CharacterCard | null | undefined
         try {
-          latest = await api.request<CharacterCard | null>('/api/companion/character-card')
+          latest = await api.invoke('companion.get_character_card_route')
         } catch {
           // 核对失败时保留草稿和修订号。
         }
@@ -506,9 +507,8 @@ export function Profile({ api, refresh }: { api: RemoteApi; refresh: number }): 
               disabled={busy || analyzing}
               onClick={() =>
                 run(async () => {
-                  const updated = await api.request<CharacterCard>('/api/companion/character-card/extract', 'POST', {
-                    expected_avatar_id: card.avatar_id,
-                    expected_revision: card.revision
+                  const updated = await api.invoke('companion.extract_character_card_route', {
+                    body: { expected_avatar_id: card.avatar_id, expected_revision: card.revision }
                   })
                   if (alive()) {
                     setCard(updated)

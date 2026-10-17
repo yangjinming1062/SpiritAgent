@@ -84,32 +84,12 @@ async def fork_conversation(user_id: int, session_id: str, source_message_id: in
         return conversation_snapshot(conv), result.message_count
 
 
-async def has_message(conversation_id: int, message_id: int) -> bool:
-    async with SESSION_LOCAL() as db:
-        return (
-            await db.scalar(
-                select(Message.id).where(Message.id == message_id, Message.conversation_id == conversation_id),
-            )
-            is not None
-        )
-
-
 async def history_snapshot(
     conversation_id: int,
-    after_id: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool, str | None, int]:
     async with SESSION_LOCAL() as db:
-        if after_id is not None:
-            messages = await build_session_messages(conversation_id, db, after_id=after_id)
-            truncated, next_cursor = False, None
-        else:
-            messages, truncated, next_cursor = await _fetch_truncated_history(conversation_id, db)
+        messages, truncated, next_cursor = await _fetch_truncated_history(conversation_id, db)
         return messages, truncated, next_cursor, await count_conversation_bubbles(db, conversation_id)
-
-
-async def message_count(conversation_id: int) -> int:
-    async with SESSION_LOCAL() as db:
-        return await count_conversation_bubbles(db, conversation_id)
 
 
 async def history_page(user_id: int, session_id: str, before_id: int | None, limit: int) -> dict[str, Any]:

@@ -78,13 +78,7 @@ import { createRunnerBridge } from './runner/bridge'
 import { createRunnerProcess } from './runner/process'
 import { createRunnerWsServer } from './runner/rpc-ws'
 import { RunnerUpdater } from './runner/updater'
-import {
-  ASSET_FETCH_TIMEOUT_MS,
-  DEFAULT_CSP_POLICY,
-  DEFAULT_FETCH_TIMEOUT_MS,
-  DEV_CSP_POLICY,
-  resolvePathTimeoutMs
-} from './security/hardening'
+import { ASSET_FETCH_TIMEOUT_MS, DEFAULT_CSP_POLICY, DEV_CSP_POLICY } from './security/hardening'
 import { isSenderWindow } from './security/ipc-trust'
 import { resolveDesktopHome } from './security/paths'
 import type { BackendSessionPort } from './shared/backend-port'
@@ -418,14 +412,13 @@ const voicePlaybackStore = createVoicePlaybackStore({ spiritagentHome: SPIRITAGE
 registerConnectionIpc({
   assetDiskCache,
   assetFetchTimeoutMs: ASSET_FETCH_TIMEOUT_MS,
-  defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
   ensureBackend,
   fetchImpl: electronFetch,
-  fetchJson: backendHttp.fetchJson,
+  invokeApi: backendHttp.invoke,
+  getGateway: () => gatewayRuntime ?? null,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   getSelectedAccountId: () => sessionRuntime.ensureBackendSession().getSelectedAccountId(),
-  ipcMain,
-  resolvePathTimeoutMs
+  ipcMain
 })
 
 const mediaIpc = registerMediaIpc({
@@ -454,13 +447,22 @@ gatewayRuntime = createDesktopGateway({
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   getTools: () => runnerHost.getBridge()?.getTools() ?? [],
   dispatchCall: request => runnerHost.dispatchCall(request),
+  queryCall: callId => {
+    const bridge = runnerHost.getBridge()
+
+    if (!bridge) {
+      return Promise.reject(new Error('Runner is not available for result recovery'))
+    }
+
+    return bridge.dispatch('calls.get', { call_id: callId })
+  },
   cancelCall: callId => runnerHost.cancelCall(callId),
   mintWsTicket: backendHttp.mintWsTicket,
   syncTimezone: async (baseUrl, token) => {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
     if (timezone) {
-      await backendHttp.fetchJson(`${baseUrl}/api/config`, token, { method: 'PUT', body: { config: { timezone } } })
+      await backendHttp.invoke(baseUrl, token, 'config.put_config', { body: { config: { timezone } } })
     }
   },
   onState: (snapshot, authSessionId) =>
@@ -469,7 +471,11 @@ gatewayRuntime = createDesktopGateway({
   onExpired: authSessionId => broadcastToAllWindows(IPC.event.authSessionExpired, authSessionId),
   log: rememberLog
 })
-registerGatewayIpc({ ipcMain, gateway: gatewayRuntime })
+registerGatewayIpc({
+  ipcMain,
+  gateway: gatewayRuntime,
+  isPresenceSender: sender => isSenderWindow(sender, getMainWindow())
+})
 runnerHost.onStatus(event =>
   gatewayRuntime?.runnerStatus(event.type === 'running' || event.type === 'runner_ready' ? (event.tools ?? []) : [])
 )

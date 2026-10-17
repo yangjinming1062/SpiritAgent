@@ -1,7 +1,8 @@
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
-import { activityHost, shellApi } from '@/shared/platform/desktop'
+import { requestResource } from '@/shared/lib/resource-request'
+import { activityHost, gatewayApi, shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
@@ -158,12 +159,13 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
 
   const request = ++idleExpressionRequest
   idleExpressionInFlight = true
-  void gateway
-    .request('companion.idle_expression', {
+  void requestResource('companion.idle_expression', {
+    body: {
       idle_seconds: idleSeconds,
       local_hour: hour,
       ...(desktop ? { trigger: userReturned ? 'user_return' : 'periodic' } : {})
-    })
+    }
+  })
     .catch(error => {
       log.warn('activity', 'companion.idle_expression failed', error)
     })
@@ -331,10 +333,19 @@ async function reportCompanionSignal(available: boolean, context: string | null 
   const event = available && pendingSignalContextChange ? 'context_changed' : undefined
 
   try {
-    await gateway.request('companion.signal', {
-      available,
-      presentation_mode: presentation.effectiveMode,
-      ...(event ? { event } : {})
+    const auth = $auth.get()
+
+    if (auth.kind !== 'authenticated') {
+      return
+    }
+
+    await gatewayApi().gatewayPresence({
+      authSessionId: auth.snapshot.sessionId,
+      signal: {
+        available,
+        presentation_mode: presentation.effectiveMode,
+        ...(event ? { event } : {})
+      }
     })
 
     if (
@@ -690,9 +701,7 @@ function stopActivityMonitor(): void {
 
 // 客户端 stats RPC 节流：前 10 次逐次发送让后端尽快越过当日阈值，之后每 60 秒至多一次，其间事件丢弃。
 export function reportInteractionStat(kind: 'chat_turn'): void {
-  const gateway = $gateway.get()
-
-  if (!gateway) {
+  if ($auth.get().kind !== 'authenticated') {
     return
   }
 
@@ -706,7 +715,7 @@ export function reportInteractionStat(kind: 'chat_turn'): void {
 
   lastChatTurnSentAt = now
 
-  void gateway.request('companion.record_interaction_stats', { kind, hour: new Date().getHours() }).catch(() => {
+  void requestResource('companion.record_interaction', { body: { kind, hour: new Date().getHours() } }).catch(() => {
     // 即发即忘
   })
 }

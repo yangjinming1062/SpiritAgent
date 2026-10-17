@@ -11,6 +11,8 @@ import YAML from 'yaml'
 
 import { errorMessage, sleep } from '@runtime'
 
+import { createHttpClient, executeHttp, resolveApiRequest } from '../../../shared/api'
+
 import { venvPythonFor } from './venv'
 
 const execFileP = promisify(execFile)
@@ -94,7 +96,8 @@ export class RunnerUpdater {
     await fsp.rm(stagingDir, { force: true, recursive: true })
     await fsp.mkdir(stagingDir, { recursive: true })
 
-    const manifest = await this.fetchManifest(`${updateBaseUrl}/latest-runner.yml`)
+    const backendBaseUrl = updateBaseUrl.replace(/\/api\/update\/?$/, '')
+    const manifest = await this.fetchManifest(backendBaseUrl)
 
     if (!manifest) {
       throw new Error('manifest fetch failed after retries')
@@ -130,10 +133,9 @@ export class RunnerUpdater {
       throw new Error('manifest signature verification failed')
     }
 
-    const wheelUrl = `${updateBaseUrl}/${manifest.path}`
     const wheelStagingPath = path.join(stagingDir, wheelName)
 
-    await this.fetchToFile(wheelUrl, wheelStagingPath)
+    await this.fetchToFile(backendBaseUrl, manifest.path, wheelStagingPath)
 
     const wheelHash = (await hashOfFile(wheelStagingPath, 'sha512')).toUpperCase()
 
@@ -356,10 +358,18 @@ export class RunnerUpdater {
   }
 
   // 清单抓取（含 YAML 解析）失败时线性退避重试，末次失败原样抛出。
-  private async fetchManifest(url: string): Promise<null | RunnerUpdateManifest> {
+  private async fetchManifest(baseUrl: string): Promise<null | RunnerUpdateManifest> {
     for (let attempt = 1; ; attempt++) {
       try {
-        return YAML.parse(await this.fetchText(url))
+        const bytes = await createHttpClient({ fetch: this.fetchImpl, baseUrl }).invoke(
+          'update.get_latest_runner_yml',
+          {},
+          {
+            timeoutMs: 30_000
+          }
+        )
+
+        return YAML.parse(new TextDecoder().decode(bytes))
       } catch (err) {
         if (attempt >= MANIFEST_FETCH_ATTEMPTS) {
           throw err
@@ -370,30 +380,22 @@ export class RunnerUpdater {
     }
   }
 
-  private async fetchText(url: string): Promise<string> {
-    const res = await this.fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(30_000) })
+  private async fetchToFile(baseUrl: string, filename: string, dest: string): Promise<void> {
+    const request = resolveApiRequest('update.get_latest_file', { path: { filename } })
+    await executeHttp({
+      fetch: this.fetchImpl,
+      url: `${baseUrl}${request.path}`,
+      method: request.method,
+      timeoutMs: 60_000,
+      response: 'empty',
+      onResponse: async response => {
+        if (!response.body) {
+          throw new Error('Response body is empty')
+        }
 
-    if (!res.ok) {
-      throw new Error(`${res.status} ${res.statusText}`)
-    }
-
-    return res.text()
-  }
-
-  private async fetchToFile(url: string, dest: string): Promise<void> {
-    const signal = AbortSignal.timeout(60_000)
-    const res = await this.fetchImpl(url, { redirect: 'follow', signal })
-
-    if (!res.ok) {
-      throw new Error(`${res.status} ${res.statusText}`)
-    }
-
-    if (!res.body) {
-      throw new Error('Response body is empty')
-    }
-
-    // pipeline 传递写盘错误并在失败时销毁两端；同一超时覆盖响应体读取。
-    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(dest), { signal })
+        await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(dest))
+      }
+    })
   }
 }
 

@@ -170,7 +170,7 @@ export function FullbodyReferencePanel({
   }
 
   const fetchSelfSourcePrompt = async (): Promise<string> => {
-    const res = await requestResource('POST /api/companion/avatar/{avatar_id}/fullbody/reference/prompt', {
+    const res = await requestResource('companion.post_fullbody_prompt', {
       path: { avatar_id: avatarId },
       body: { feedback: feedback.trim() || undefined }
     })
@@ -181,7 +181,7 @@ export function FullbodyReferencePanel({
   const adoptSelfSourceImage = async (image: PickedImage): Promise<void> => {
     const isLive = begin()
 
-    const result = await authedResource('POST /api/companion/avatar/{avatar_id}/fullbody/reference/adopt', {
+    const result = await authedResource('companion.post_fullbody_adopt', {
       path: { avatar_id: avatarId },
       body: { image: image.base64, content_type: image.contentType }
     })

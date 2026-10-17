@@ -54,7 +54,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
   useEffect(() => {
     let mounted = true
     const isLive = beginAsync()
-    void requestResource('GET /api/companion/media-reviews/{review_id}', {
+    void requestResource('companion.get_visual_media_review', {
       path: { review_id: Number(item.review_id) }
     })
       .then(result => {
@@ -88,7 +88,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
     setError('')
 
     try {
-      const result = await requestResource('POST /api/companion/media-reviews/{review_id}/decision', {
+      const result = await requestResource('companion.decide_visual_media_review', {
         path: { review_id: Number(item.review_id) },
         body: { decision }
       })
@@ -105,7 +105,7 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
       }
 
       try {
-        const current = await requestResource('GET /api/companion/media-reviews/{review_id}', {
+        const current = await requestResource('companion.get_visual_media_review', {
           path: { review_id: Number(item.review_id) }
         })
 

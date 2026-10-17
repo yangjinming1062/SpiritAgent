@@ -47,7 +47,7 @@ async function readProfile(api: RemoteApi): Promise<MemoryItem[]> {
   const memories: MemoryItem[] = []
   let total = 0
   do {
-    const result = await requestApi(api, 'GET /api/memories', {
+    const result = await requestApi(api, 'resource_catalog.get_memories', {
       query: {
         system_preset_id: 'companion',
         status: 'active',
@@ -75,7 +75,7 @@ async function findSavedMemory(
   let offset = 0
   let total = 0
   do {
-    const result = await requestApi(api, 'GET /api/memories', {
+    const result = await requestApi(api, 'resource_catalog.get_memories', {
       query: {
         system_preset_id: preset,
         status: 'active',
@@ -99,15 +99,7 @@ async function findSavedMemory(
   return null
 }
 
-export function MemoryView({
-  api,
-  connected,
-  refresh
-}: {
-  api: RemoteApi
-  connected: boolean
-  refresh: number
-}): ReactElement {
+export function MemoryView({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const { runLatest, error } = useTask()
   const alive = useAlive()
   const [presets, setPresets] = useState<SystemPresetSummary[]>([])
@@ -116,15 +108,13 @@ export function MemoryView({
   const profile = preset === 'companion' && kind === 'user_profile'
 
   useEffect(() => {
-    if (connected) {
-      void runLatest(async () => {
-        const result = await requestApi(api, 'GET /api/presets')
-        if (alive()) {
-          setPresets(result.presets)
-        }
-      })
-    }
-  }, [alive, connected, api, runLatest])
+    void runLatest(async () => {
+      const result = await requestApi(api, 'resource_catalog.get_presets')
+      if (alive()) {
+        setPresets(result.presets)
+      }
+    })
+  }, [alive, api, runLatest])
 
   return (
     <>
@@ -161,28 +151,17 @@ export function MemoryView({
           </button>
         ) : null}
       </div>
-      {!connected ? <Notice>尚未连接。已经输入的修改会保留，连接恢复后可以继续保存。</Notice> : null}
       {error ? <Notice>{error}</Notice> : null}
       {profile ? (
-        <UserProfile api={api} connected={connected} refresh={refresh} />
+        <UserProfile api={api} refresh={refresh} />
       ) : (
-        <MemoryList api={api} connected={connected} key={preset} preset={preset} refresh={refresh} />
+        <MemoryList api={api} key={preset} preset={preset} refresh={refresh} />
       )}
     </>
   )
 }
 
-function MemoryList({
-  api,
-  connected,
-  preset,
-  refresh
-}: {
-  api: RemoteApi
-  connected: boolean
-  preset: string
-  refresh: number
-}): ReactElement {
+function MemoryList({ api, preset, refresh }: { api: RemoteApi; preset: string; refresh: number }): ReactElement {
   const { run, runLatest, busy, error } = useTask()
   const alive = useAlive()
   const [rows, setRows] = useState<MemoryItem[]>([])
@@ -207,7 +186,7 @@ function MemoryList({
 
   const load = useCallback(async () => {
     const revision = ++request.current
-    const result = await requestApi(api, 'GET /api/memories', {
+    const result = await requestApi(api, 'resource_catalog.get_memories', {
       query: {
         system_preset_id: preset,
         status,
@@ -232,10 +211,8 @@ function MemoryList({
   }, [alive, api, offset, preset, query, setOffset, setSelected, status])
 
   useEffect(() => {
-    if (connected) {
-      void runLatest(load)
-    }
-  }, [connected, load, refresh, runLatest])
+    void runLatest(load)
+  }, [load, refresh, runLatest])
   usePageScroll(`memory.${preset}.${status}.${offset}.${query}.${showEditor ? selected : 'list'}`, loaded)
   const selectedRow = rows.find(row => row.id === selected)
 
@@ -276,7 +253,7 @@ function MemoryList({
       </div>
       {error ? (
         <Notice error={error}>
-          <button disabled={busy || !connected} onClick={() => run(load)} type="button">
+          <button disabled={busy} onClick={() => run(load)} type="button">
             重新加载记忆
           </button>
         </Notice>
@@ -310,7 +287,7 @@ function MemoryList({
             ) : null}
             <div aria-label="记忆分页" className="memory-pagination">
               <button
-                disabled={!connected || busy || offset === 0}
+                disabled={busy || offset === 0}
                 onClick={() => {
                   setOffset(Math.max(0, offset - 20))
                   setShowEditor(false)
@@ -323,7 +300,7 @@ function MemoryList({
                 {total ? `${Math.floor(offset / 20) + 1} / ${Math.ceil(total / 20)}` : '0'} · 共 {total} 条
               </span>
               <button
-                disabled={!connected || busy || offset + 20 >= total}
+                disabled={busy || offset + 20 >= total}
                 onClick={() => {
                   setOffset(offset + 20)
                   setShowEditor(false)
@@ -349,7 +326,6 @@ function MemoryList({
                 </button>
                 <MemoryEditor
                   api={api}
-                  connected={connected}
                   key={selectedRow.id}
                   onChanged={() => runLatest(load)}
                   preset={preset}
@@ -360,7 +336,7 @@ function MemoryList({
           </div>
         </div>
       </div>
-      <button className="load-more" disabled={!connected || busy} onClick={() => run(load)} type="button">
+      <button className="load-more" disabled={busy} onClick={() => run(load)} type="button">
         刷新记忆
       </button>
     </>
@@ -369,13 +345,11 @@ function MemoryList({
 
 function MemoryEditor({
   api,
-  connected,
   row,
   preset,
   onChanged
 }: {
   api: RemoteApi
-  connected: boolean
   row: MemoryItem
   preset: string
   onChanged: () => Promise<void>
@@ -441,7 +415,7 @@ function MemoryEditor({
       {error ? (
         <Notice error={error}>
           <p>草稿已保留。请检查最新内容后重试。</p>
-          <button disabled={busy || !connected} onClick={() => run(onChanged)} type="button">
+          <button disabled={busy} onClick={() => run(onChanged)} type="button">
             刷新最新内容
           </button>
         </Notice>
@@ -449,12 +423,12 @@ function MemoryEditor({
       <div className="button-row">
         <button
           className="primary"
-          disabled={!connected || busy || conflict || !draft.content.trim() || (!dirty && active)}
+          disabled={busy || conflict || !draft.content.trim() || (!dirty && active)}
           onClick={() =>
             run(async () => {
               let updated: MemoryItem
               try {
-                updated = await requestApi(api, 'PATCH /api/memories/{memory_id}', {
+                updated = await requestApi(api, 'resource_catalog.patch_memory', {
                   path: { memory_id: row.id },
                   body: {
                     system_preset_id: preset,
@@ -510,13 +484,13 @@ function MemoryEditor({
       </details>
       <button
         className="danger"
-        disabled={!connected || busy}
+        disabled={busy}
         onClick={() =>
           run(async () => {
             if (!window.confirm('让伙伴忘记这条记忆？此操作无法撤销。')) {
               return
             }
-            await requestApi(api, 'DELETE /api/memories/{memory_id}', {
+            await requestApi(api, 'resource_catalog.delete_memory', {
               path: { memory_id: row.id },
               query: { system_preset_id: preset }
             })
@@ -540,15 +514,7 @@ interface ProfileDraft {
   versions: Partial<Record<UserProfileField, number>>
 }
 
-function UserProfile({
-  api,
-  connected,
-  refresh
-}: {
-  api: RemoteApi
-  connected: boolean
-  refresh: number
-}): ReactElement {
+function UserProfile({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const { run, runLatest, busy, error } = useTask()
   const alive = useAlive()
   const [rows, setRows] = useState<MemoryItem[]>([])
@@ -575,10 +541,8 @@ function UserProfile({
   }, [alive, api])
 
   useEffect(() => {
-    if (connected) {
-      void runLatest(load)
-    }
-  }, [connected, load, refresh, runLatest])
+    void runLatest(load)
+  }, [load, refresh, runLatest])
   usePageScroll(`memory.profile.${extra ? selected : 'form'}`, loaded)
 
   const startDraft = (): ProfileDraft => {
@@ -597,7 +561,7 @@ function UserProfile({
       {error ? (
         <Notice error={error}>
           <p>未保存的修改已保留。</p>
-          <button disabled={busy || !connected} onClick={() => run(load)} type="button">
+          <button disabled={busy} onClick={() => run(load)} type="button">
             刷新我的资料
           </button>
         </Notice>
@@ -614,14 +578,7 @@ function UserProfile({
           >
             ← 返回
           </button>
-          <MemoryEditor
-            api={api}
-            connected={connected}
-            key={extra.id}
-            onChanged={() => runLatest(load)}
-            preset="companion"
-            row={extra}
-          />
+          <MemoryEditor api={api} key={extra.id} onChanged={() => runLatest(load)} preset="companion" row={extra} />
         </>
       ) : (
         <>
@@ -703,7 +660,7 @@ function UserProfile({
             <div className="button-row">
               <button
                 className="primary"
-                disabled={!connected || busy || !loaded || !changedFields.length || Boolean(conflictingFields.length)}
+                disabled={busy || !loaded || !changedFields.length || Boolean(conflictingFields.length)}
                 onClick={() =>
                   run(async () => {
                     if (!draft) {
@@ -724,7 +681,7 @@ function UserProfile({
                       expected_version: draft.versions[key] ?? 0
                     }))
                     try {
-                      const result = await requestApi(api, 'PATCH /api/memories/profile', {
+                      const result = await requestApi(api, 'resource_catalog.patch_memory_profile', {
                         body: {
                           system_preset_id: 'companion',
                           changes

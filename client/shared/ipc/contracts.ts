@@ -1,4 +1,6 @@
-import type { RpcMethod, RpcRequest, RpcResponse } from '../../../shared/gateway'
+import type { ApiInput, ApiOperationKey, ApiResponse } from '../../../shared/api'
+import type { API_OPERATIONS } from '../../../shared/api.generated'
+import type { GatewayEvent, RpcRequest } from '../../../shared/gateway'
 import type { RunnerRequest, RunnerTools } from '../../../shared/runner'
 
 import type {
@@ -69,15 +71,10 @@ export interface DesktopUpdateInfo {
   version: string
 }
 
-/** 会话历史磁盘快照：主进程缓存，渲染层本地秒开 + 增量合并的载荷。 */
+/** 会话历史磁盘快照；实时交付位置由主进程网关持有。 */
 export interface SessionHistorySnapshot {
-  historyRevision?: number
-  currentSeq: number
   info?: Record<string, unknown>
-  lastMessageId: null | number
   messages: unknown[]
-  nextCursor: null | string
-  truncated: boolean
   writtenAt: number
 }
 
@@ -361,12 +358,19 @@ export interface DesktopAuthBroadcast {
   snapshot: DesktopAuthSnapshot | null
 }
 
-export interface SpiritAgentApiRequest {
-  authSessionId?: string
-  body?: unknown
-  method?: string
-  path: string
+export type DesktopApiOperationKey = {
+  [Operation in ApiOperationKey]: (typeof API_OPERATIONS)[Operation]['ipc'] extends true ? Operation : never
+}[ApiOperationKey]
+
+export interface SpiritAgentApiRequest<Operation extends DesktopApiOperationKey = DesktopApiOperationKey> {
+  authSessionId: string
+  operation: Operation
+  input: ApiInput<Operation>
 }
+
+export type DesktopApiInvoke = <Operation extends DesktopApiOperationKey>(
+  request: SpiritAgentApiRequest<Operation>
+) => Promise<DesktopApiResult<ApiResponse<Operation>>>
 
 export interface SpiritAgentSelectPathsOptions {
   defaultPath?: string
@@ -469,15 +473,11 @@ export interface DesktopGatewaySnapshot {
   error: string | null
   hasConnected: boolean
   activeToolCount: number
+  recovery: 'replayed' | 'snapshot_required' | null
+  streamId: string | null
 }
 
-export interface DesktopGatewayEvent<P = unknown> {
-  stream_id?: string
-  payload?: P
-  seq?: number
-  session_id?: string
-  type: string
-}
+export type DesktopGatewayEvent = GatewayEvent
 
 export type DesktopApiResult<T = unknown> =
   | { ok: true; value: T }
@@ -487,25 +487,10 @@ export type DesktopApiResult<T = unknown> =
       error: { code: string; message: string; details: unknown; request_id: string }
     }
 
-export interface DesktopGatewayRequest<K extends RpcMethod> {
+export interface DesktopPresenceRequest {
   authSessionId: string
-  method: K
-  params: RpcRequest<K>
+  signal: RpcRequest<'companion.signal'>
 }
-
-export type DesktopGatewayInvoke = <K extends RpcMethod>(
-  request: DesktopGatewayRequest<K>
-) => Promise<DesktopGatewayRpcResult<RpcResponse<K>>>
-
-export interface DesktopGatewayRpcError {
-  code?: number
-  data?: unknown
-  message: string
-}
-
-export type DesktopGatewayRpcResult<T = unknown> =
-  | { ok: true; result: T }
-  | { error: DesktopGatewayRpcError; ok: false }
 
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {
@@ -549,7 +534,7 @@ export interface IpcInvokeContract {
   'spiritagent:background:acknowledge': (playback: DesktopBackgroundPlayback) => void
 
   // 连接与启动
-  'spiritagent:gateway:request': DesktopGatewayInvoke
+  'spiritagent:gateway:presence': (request: DesktopPresenceRequest) => Promise<void>
   'spiritagent:gateway:get-state': (authSessionId: string) => DesktopGatewaySnapshot | Promise<DesktopGatewaySnapshot>
 
   // 鉴权
@@ -585,7 +570,7 @@ export interface IpcInvokeContract {
   'spiritagent:ui-state:reply': (reply: UiStateReply) => void
 
   // 后端 API 代理
-  'spiritagent:api': (request: SpiritAgentApiRequest) => Promise<DesktopApiResult> | DesktopApiResult
+  'spiritagent:api': DesktopApiInvoke
   'spiritagent:api:asset': (request: {
     preferCache?: boolean
     cacheOnly?: boolean
@@ -801,7 +786,7 @@ export const IPC = {
     authRefresh: 'spiritagent:auth:refresh',
     authLogout: 'spiritagent:auth:logout',
     authGetSession: 'spiritagent:auth:get-session',
-    gatewayRequest: 'spiritagent:gateway:request',
+    gatewayPresence: 'spiritagent:gateway:presence',
     gatewayGetState: 'spiritagent:gateway:get-state',
     api: 'spiritagent:api',
     apiAsset: 'spiritagent:api:asset',

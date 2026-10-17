@@ -5,6 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from features.accounts.deps import authenticate_remote_session, get_current_session
 from features.accounts.gateway import (
     GatewayIdentity,
+    GatewayTicketRequest,
     GatewayTicketResponse,
     consume_gateway_ticket,
     issue_gateway_ticket,
@@ -30,6 +31,7 @@ async def gateway_ticket(
     request: Request,
     response: Response,
     db: DbSession,
+    body: GatewayTicketRequest | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(BEARER_SCHEME),
 ) -> GatewayTicketResponse:
     if credentials is not None:
@@ -39,6 +41,7 @@ async def gateway_ticket(
             user_id=user.id,
             login_record_id=login.id,
             client_context=ChatRequestClientContext.model_validate(context) if context else None,
+            stream_id=body.stream_id if body else None,
         )
     else:
         user, device = await authenticate_remote_session(request, db)
@@ -46,6 +49,7 @@ async def gateway_ticket(
             user_id=user.id,
             device_id=device.id,
             client_context=ChatRequestClientContext(platform_hints="SpiritAgentRemote mobile browser"),
+            stream_id=body.stream_id if body else None,
         )
     response.headers["Cache-Control"] = "no-store"
     return issue_gateway_ticket(identity)

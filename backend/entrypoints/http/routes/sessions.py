@@ -1,16 +1,19 @@
 from typing import Literal
+from uuid import UUID
 
 from fastapi import HTTPException, Query, Request
 from features.conversation import session_management
 from features.conversation.fork import ForkNotAllowedError, SourceNotFoundError
-from features.conversation.gateway_queries import (
-    ConversationNotFoundError,
-    ForkAttachmentError,
-    create_conversation,
-    ensure_main_conversation,
-    fork_conversation,
-    get_conversation,
-    history_page,
+from features.conversation.http_contracts import (
+    CommandDispatchRequest,
+    CommandDispatchResult,
+    PromptSubmitRequest,
+    PromptSubmitResult,
+    SessionCompressionResult,
+    SessionSnapshotResponse,
+    SessionUndoRequest,
+    SessionUndoResult,
+    TurnCancelResult,
 )
 from features.conversation.replies import VoiceBubbleView
 from features.conversation.reply_audio import client_reply_bubbles, synthesize_reply_audio
@@ -22,6 +25,15 @@ from features.conversation.schemas import (
     SessionForkRequest,
     SessionHistoryResponse,
 )
+from features.conversation.session_operations import (
+    ConversationNotFoundError,
+    ForkAttachmentError,
+    create_conversation,
+    ensure_main_conversation,
+    fork_conversation,
+    get_conversation,
+    history_page,
+)
 from infrastructure.config import SETTINGS
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
@@ -29,15 +41,101 @@ from infrastructure.logger import get_logger
 from runtime.conversation import SessionCreateResult
 from runtime.desktop.connection import UserEventPublisher
 from runtime.presets import SYSTEM_PRESET_CATALOG
+from workflows.chat.operations import chat_operations
 from workflows.chat.session_resources import patch_session_resource, session_resource
 
-from entrypoints.http.auth import CurrentUser
+from entrypoints.http.auth import CurrentActor, CurrentUser
 from entrypoints.http.rate_limit import limiter
 from entrypoints.http.routing import get_router
 
 router = get_router(remote=True)
 
 logger = get_logger(__name__)
+
+
+@router.post(
+    "/{session_id}/turns",
+    operation_id="sessions.submit_turn",
+    response_model=PromptSubmitResult,
+    openapi_extra=operation_policy(upload="chat"),
+)
+async def submit_turn(actor: CurrentActor, session_id: str, body: PromptSubmitRequest) -> PromptSubmitResult:
+    result = await chat_operations(actor).submit({**body.model_dump(exclude_unset=True), "session_id": session_id})
+    return PromptSubmitResult.model_validate(result)
+
+
+@router.get(
+    "/{session_id}/turns/{request_id}",
+    operation_id="sessions.get_turn",
+    response_model=PromptSubmitResult,
+)
+async def get_turn(actor: CurrentActor, session_id: str, request_id: UUID) -> PromptSubmitResult:
+    result = await chat_operations(actor).receipt({"session_id": session_id, "request_id": str(request_id)})
+    return PromptSubmitResult.model_validate(result)
+
+
+@router.post(
+    "/{session_id}/turns/{request_id}/cancel",
+    operation_id="sessions.cancel_turn",
+    response_model=TurnCancelResult,
+)
+async def cancel_turn(actor: CurrentActor, session_id: str, request_id: UUID) -> TurnCancelResult:
+    result = await chat_operations(actor).cancel({"session_id": session_id, "request_id": str(request_id)})
+    return TurnCancelResult.model_validate(result)
+
+
+@router.get(
+    "/{session_id}/snapshot",
+    operation_id="sessions.snapshot",
+    response_model=SessionSnapshotResponse,
+)
+async def get_session_snapshot(
+    actor: CurrentActor,
+    session_id: str,
+    stream_id: str | None = Query(default=None, max_length=128),
+) -> SessionSnapshotResponse:
+    params = {
+        "session_id": session_id,
+        "stream_id": stream_id,
+    }
+    result = await chat_operations(actor).snapshot(params)
+    return SessionSnapshotResponse.model_validate(result)
+
+
+@router.post(
+    "/{session_id}/history/undo",
+    operation_id="sessions.undo",
+    response_model=SessionUndoResult,
+)
+async def undo_session_history(actor: CurrentActor, session_id: str, body: SessionUndoRequest) -> SessionUndoResult:
+    result = await chat_operations(actor).undo({**body.model_dump(exclude_unset=True), "session_id": session_id})
+    return SessionUndoResult.model_validate(result)
+
+
+@router.post(
+    "/{session_id}/history/compression",
+    operation_id="sessions.compress",
+    response_model=SessionCompressionResult,
+    openapi_extra=operation_policy(wait_for_model=True),
+)
+async def compress_session_history(actor: CurrentActor, session_id: str) -> SessionCompressionResult:
+    result = await chat_operations(actor).compress({"session_id": session_id})
+    return SessionCompressionResult.model_validate(result)
+
+
+@router.post(
+    "/{session_id}/commands",
+    operation_id="sessions.command",
+    response_model=CommandDispatchResult,
+    openapi_extra=operation_policy(wait_for_model=True),
+)
+async def dispatch_session_command(
+    actor: CurrentActor,
+    session_id: str,
+    body: CommandDispatchRequest,
+) -> CommandDispatchResult:
+    result = await chat_operations(actor).command({**body.model_dump(exclude_unset=True), "session_id": session_id})
+    return CommandDispatchResult.model_validate(result)
 
 
 @router.post(

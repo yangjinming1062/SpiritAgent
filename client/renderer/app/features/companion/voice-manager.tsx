@@ -119,7 +119,7 @@ function VoiceManagerSession({
     previewAbort.current = null
 
     if (id) {
-      void requestResource('DELETE /api/voices/operations/{operation_id}', {
+      void requestResource('voices.delete_voice_operation', {
         path: { operation_id: encodeURIComponent(id) }
       }).catch(failure => {
         log.warn('voice-manager', 'Could not cancel voice operation', failure)
@@ -281,7 +281,7 @@ function VoiceManagerSession({
       let designProvider = provider
 
       if (mode !== 'preview') {
-        const generated = await requestResource('POST /api/voices/prompt', {
+        const generated = await requestResource('voices.post_voice_prompt', {
           body: {
             operation_id: id,
             preference: preference?.trim() || undefined,
@@ -325,7 +325,7 @@ function VoiceManagerSession({
       let voiceId = id
 
       if (preview) {
-        const result = await requestResource('POST /api/voices/candidates/{candidate_id}/confirmation', {
+        const result = await requestResource('voices.post_voice_confirmation', {
           path: { candidate_id: preview.candidateId },
           body: {
             expected_version: preview.expectedVersion

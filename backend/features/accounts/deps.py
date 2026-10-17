@@ -153,11 +153,16 @@ async def authenticate_remote_session(
     user, device = row
     if is_user_in_maintenance(user.id):
         raise HTTPException(status_code=503, detail="用户数据正在维护，请稍后重试。")
-    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+    write_request = request.method not in {"GET", "HEAD", "OPTIONS"}
+    csrf = request.headers.get("x-csrf-token")
+    if write_request:
         require_remote_origin(request)
-        csrf = request.headers.get("x-csrf-token", "")
-        if len(csrf) != 64 or not csrf.isascii() or not hmac.compare_digest(csrf, remote_csrf_token(token)):
+    if (write_request or csrf is not None) and (
+        csrf is None or len(csrf) != 64 or not csrf.isascii() or not hmac.compare_digest(csrf, remote_csrf_token(token))
+    ):
+        if write_request:
             raise HTTPException(status_code=403, detail="页面授权校验失败，请刷新页面。")
+        raise HTTPException(status_code=401, detail="页面授权已变化，请刷新页面后重新连接。")
     request.state.user_id = user.id
     request.state.remote_device_id = device.id
     set_request_user_id(user.id)

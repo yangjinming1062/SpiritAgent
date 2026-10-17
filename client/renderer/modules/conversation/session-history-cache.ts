@@ -3,18 +3,13 @@ import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/sto
 import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import type { SessionHistorySnapshot } from '@ipc/contracts'
-import type { SessionMessage, SessionResumeResponse, SessionRuntimeInfo } from '@protocol'
+import type { SessionMessage, SessionRuntimeInfo, SessionSnapshot } from '@protocol'
 
 const PERSIST_DEBOUNCE_MS = 800
 
 interface HistoryCacheState {
-  historyRevision?: number
-  currentSeq: number
   info?: SessionRuntimeInfo
-  lastMessageId: null | number
   messages: SessionMessage[]
-  nextCursor: null | string
-  truncated: boolean
 }
 
 const memoryBySession = new Map<string, HistoryCacheState>()
@@ -35,27 +30,10 @@ function currentAuthSessionId(): null | string {
   return auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
 }
 
-function lastIdFrom(messages: SessionMessage[]): null | number {
-  let last: null | number = null
-
-  for (const m of messages) {
-    if (typeof m.id === 'number' && Number.isFinite(m.id)) {
-      last = last === null || m.id > last ? m.id : last
-    }
-  }
-
-  return last
-}
-
 function toSnapshot(state: HistoryCacheState): SessionHistorySnapshot {
   return {
-    currentSeq: state.currentSeq,
-    historyRevision: state.historyRevision,
     info: state.info as Record<string, unknown> | undefined,
-    lastMessageId: state.lastMessageId,
     messages: state.messages,
-    nextCursor: state.nextCursor,
-    truncated: state.truncated,
     writtenAt: Date.now()
   }
 }
@@ -110,13 +88,8 @@ export async function loadLocalSessionHistory(sessionId: string): Promise<null |
     }
 
     const state: HistoryCacheState = {
-      historyRevision: snap.historyRevision,
-      currentSeq: snap.currentSeq,
       info: snap.info as SessionRuntimeInfo | undefined,
-      lastMessageId: snap.lastMessageId,
-      messages: cloneMessages(snap.messages),
-      nextCursor: snap.nextCursor,
-      truncated: snap.truncated
+      messages: cloneMessages(snap.messages)
     }
 
     memoryBySession.set(sessionId, state)
@@ -133,23 +106,14 @@ export function rememberFullHistory(
   sessionId: string,
   messages: SessionMessage[],
   opts?: {
-    historyRevision?: number
-    currentSeq?: number
     info?: SessionRuntimeInfo
-    nextCursor?: null | string
-    truncated?: boolean
   }
 ): void {
   const prev = memoryBySession.get(sessionId)
 
   const next: HistoryCacheState = {
-    historyRevision: opts?.historyRevision ?? prev?.historyRevision,
-    currentSeq: typeof opts?.currentSeq === 'number' ? opts.currentSeq : (prev?.currentSeq ?? 0),
     info: opts?.info ?? prev?.info,
-    lastMessageId: lastIdFrom(messages),
-    messages: cloneMessages(messages),
-    nextCursor: opts?.nextCursor ?? null,
-    truncated: opts?.truncated ?? false
+    messages: cloneMessages(messages)
   }
 
   memoryBySession.set(sessionId, next)
@@ -157,105 +121,15 @@ export function rememberFullHistory(
   schedulePersist(sessionId)
 }
 
-function updateHistorySeq(
-  sessionId: string,
-  currentSeq: number,
-  info?: SessionRuntimeInfo,
-  historyRevision?: number
-): void {
-  const state = memoryBySession.get(sessionId)
-
-  if (!state) {
-    return
-  }
-
-  state.currentSeq = currentSeq
-  state.historyRevision = historyRevision ?? state.historyRevision
-
-  if (info) {
-    state.info = info
-  }
-
-  schedulePersist(sessionId)
-}
-
-/** 增量合并：按后端 Message.id 去重追加，返回合并后的完整列表。 */
-function mergeIncrementalHistory(
-  sessionId: string,
-  incoming: SessionMessage[],
-  opts?: {
-    historyRevision?: number
-    currentSeq?: number
-    info?: SessionRuntimeInfo
-  }
-): null | SessionMessage[] {
-  const state = memoryBySession.get(sessionId)
-
-  if (!state) {
-    return null
-  }
-
-  const seen = new Set(state.messages.map(m => m.id))
-
-  for (const message of incoming) {
-    if (typeof message.id === 'number') {
-      if (seen.has(message.id)) {
-        continue
-      }
-
-      seen.add(message.id)
-
-      if (Number.isFinite(message.id) && (state.lastMessageId === null || message.id > state.lastMessageId)) {
-        state.lastMessageId = message.id
-      }
-    }
-
-    state.messages.push({ ...message })
-  }
-
-  if (typeof opts?.currentSeq === 'number') {
-    state.currentSeq = opts.currentSeq
-  }
-
-  if (opts?.info) {
-    state.info = opts.info
-  }
-
-  state.historyRevision = opts?.historyRevision ?? state.historyRevision
-
-  schedulePersist(sessionId)
-
-  return [...state.messages]
-}
-
-/** 本地缓存按消息锚点增量恢复；替换历史和待完成媒体要求回源。 */
 export async function syncSessionHistory(params: {
   sessionId: string
-  request: (body: { after_id?: number; history_revision?: number }) => Promise<SessionResumeResponse>
-}): Promise<SessionResumeResponse & { current_seq: number; kind: 'full' | 'incremental' | 'noop' }> {
+  request: () => Promise<SessionSnapshot>
+}): Promise<SessionSnapshot> {
   const epoch = currentClearEpoch()
   const authSessionId = currentAuthSessionId()
-  const local = memoryBySession.get(params.sessionId)
   let invalidation = invalidations.get(params.sessionId)
   let historyRevision = historyRevisions.get(params.sessionId)
-  const body: { after_id?: number; history_revision?: number } = {}
-
-  if (local?.historyRevision !== undefined) {
-    body.history_revision = local.historyRevision
-  }
-
-  // 离线期间的视频完成事件可能已过重放窗口，增量锚点无法发现原等待卡片的变化。
-  const hasPendingMedia = local?.messages.some(
-    message =>
-      message.content_type === 'companion_reply' &&
-      message.bubbles.some(bubble => bubble.type === 'video' && bubble.status === 'pending')
-  )
-
-  if (!invalidation && !hasPendingMedia && local?.lastMessageId && local.lastMessageId > 0) {
-    body.after_id = local.lastMessageId
-  }
-
-  let res = await params.request(body)
+  let res = await params.request()
 
   // 每次返回先核对账户；语音或媒体更新撞上在途快照时，有界重取全量。
   for (let retry = 0; ; retry++) {
@@ -276,41 +150,14 @@ export async function syncSessionHistory(params: {
 
     invalidation = invalidations.get(params.sessionId)
     historyRevision = historyRevisions.get(params.sessionId)
-    res = await params.request({})
+    res = await params.request()
   }
 
   invalidations.delete(params.sessionId)
 
-  // noop 与增量以本地缓存兜底，全量只认服务端返回。
-  const currentSeq = typeof res.current_seq === 'number' ? res.current_seq : (local?.currentSeq ?? 0)
-  const info = res.info ?? local?.info
+  rememberFullHistory(params.sessionId, res.messages, { info: res.info })
 
-  let messages = Array.isArray(res.messages) ? res.messages : []
-  let kind: 'full' | 'incremental' | 'noop' = 'full'
-
-  if (res.resumed) {
-    updateHistorySeq(params.sessionId, currentSeq, res.info, res.history_revision)
-    messages = local ? [...local.messages] : []
-    kind = 'noop'
-  } else if (res.incremental) {
-    messages =
-      mergeIncrementalHistory(params.sessionId, messages, {
-        currentSeq,
-        info,
-        historyRevision: res.history_revision
-      }) ?? messages
-    kind = 'incremental'
-  } else {
-    rememberFullHistory(params.sessionId, messages, {
-      historyRevision: res.history_revision,
-      currentSeq,
-      info,
-      nextCursor: res.next_cursor,
-      truncated: res.truncated
-    })
-  }
-
-  return { ...res, current_seq: currentSeq, info, messages, incremental: false, kind }
+  return res
 }
 
 function cancelPersist(sessionId: string): void {

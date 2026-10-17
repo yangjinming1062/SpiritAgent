@@ -12,19 +12,11 @@ import {
   removeVoicePlayback,
   showMediaHint
 } from '@/modules/conversation'
-import { type GatewayEvent, type RpcResponse } from '@/shared/lib/gateway-protocol'
+import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
-import type {
-  CacheUsageSummary,
-  ChatMediaItem,
-  CompanionBubble,
-  PromptSubmissionResult,
-  SessionMessage,
-  SessionResumeResponse,
-  UndoAnchor
-} from '@protocol'
+import type { ChatMediaItem, CompanionBubble } from '@protocol'
 
-import { decodePayload, type EventRouteContext } from '../gateway-event-util'
+import type { EventRouteContext } from '../gateway-event-util'
 
 // 会话回合事件：message.*、Slash、压缩与撤回。
 
@@ -95,7 +87,7 @@ export function handleConversationEvent(
   switch (event.type) {
     case 'message.start': {
       $chatTurnInFlight.set(true)
-      const payload = decodePayload<{ replace_reply_message_id?: number }>(event.payload)
+      const payload = event.payload
       runtime.$replacingReplyMessageId.set(payload.replace_reply_message_id ?? null)
 
       if (!payload.replace_reply_message_id) {
@@ -109,8 +101,8 @@ export function handleConversationEvent(
     }
 
     case 'message.delta': {
-      const payload = decodePayload<{ text?: string }>(event.payload)
-      const text = payload.text ?? ''
+      const payload = event.payload
+      const text = payload.text
 
       if (text) {
         appendAssistantDelta(text)
@@ -120,7 +112,7 @@ export function handleConversationEvent(
     }
 
     case 'message.reasoning.delta': {
-      const text = decodePayload<{ text?: string }>(event.payload).text ?? ''
+      const text = event.payload.text
 
       if (text) {
         appendAssistantReasoningDelta(text)
@@ -139,43 +131,29 @@ export function handleConversationEvent(
 
     case 'message.bubble': {
       // 结构化回复逐泡交付：按气泡顺序到达，语音泡的音频已就绪（失败时为空，同 message.voice 降级）。
-      const payload = decodePayload<{ message_id?: number; bubble_index?: number; bubble?: CompanionBubble }>(
-        event.payload
-      )
+      const payload = event.payload
 
-      if (typeof payload.message_id === 'number' && typeof payload.bubble_index === 'number' && payload.bubble) {
-        const exists = runtime.$chatMessageList
-          .get()
-          .some(
-            item =>
-              item.backendMessageId === payload.message_id &&
-              runtime.$chatMessageBodies.get()[item.id]?.replyIndex === payload.bubble_index
-          )
+      const exists = runtime.$chatMessageList
+        .get()
+        .some(
+          item =>
+            item.backendMessageId === payload.message_id &&
+            runtime.$chatMessageBodies.get()[item.id]?.replyIndex === payload.bubble_index
+        )
 
-        appendCompanionBubble(payload.message_id, payload.bubble_index, payload.bubble)
+      appendCompanionBubble(payload.message_id, payload.bubble_index, payload.bubble)
 
-        if (!exists) {
-          rememberReply(undefined, [payload.bubble])
-        }
+      if (!exists) {
+        rememberReply(undefined, [payload.bubble])
       }
 
       break
     }
 
     case 'message.media': {
-      const payload = decodePayload<{
-        session_id: string
-        message_id: number
-        media_id: string
-        bubble: CompanionBubble
-      }>(event.payload)
+      const payload = event.payload
 
-      if (
-        payload.session_id === $chatSessionId.get() &&
-        typeof payload.message_id === 'number' &&
-        typeof payload.media_id === 'string' &&
-        (payload.bubble?.type === 'image' || payload.bubble?.type === 'video')
-      ) {
+      if (payload.session_id === $chatSessionId.get()) {
         updateMediaBubble(payload.message_id, payload.media_id, payload.bubble)
       }
 
@@ -183,19 +161,9 @@ export function handleConversationEvent(
     }
 
     case 'message.audio': {
-      const payload = decodePayload<{
-        session_id?: string
-        message_id?: number
-        audio_url?: string
-        duration?: number
-        transcript?: string
-      }>(event.payload)
+      const payload = event.payload
 
-      if (
-        payload.session_id !== $chatSessionId.get() ||
-        typeof payload.message_id !== 'number' ||
-        typeof payload.audio_url !== 'string'
-      ) {
+      if (payload.session_id !== $chatSessionId.get()) {
         break
       }
 
@@ -228,19 +196,9 @@ export function handleConversationEvent(
     }
 
     case 'message.voice': {
-      const payload = decodePayload<{
-        session_id: string
-        message_id: number
-        bubble_index: number
-        bubble: CompanionBubble
-      }>(event.payload)
+      const payload = event.payload
 
-      if (
-        payload.session_id === $chatSessionId.get() &&
-        typeof payload.message_id === 'number' &&
-        typeof payload.bubble_index === 'number' &&
-        payload.bubble
-      ) {
+      if (payload.session_id === $chatSessionId.get()) {
         updateVoiceBubble(payload.message_id, payload.bubble_index, payload.bubble)
       }
 
@@ -248,38 +206,26 @@ export function handleConversationEvent(
     }
 
     case 'message.persisted': {
-      const p = decodePayload<{
-        role?: string
-        request_id?: string
-        messages?: SessionMessage[]
-        message_ids?: unknown
-      }>(event.payload)
+      const payload = event.payload
 
-      if (p.role === 'user' && Array.isArray(p.message_ids)) {
-        mergePersistedUserMessages(
-          p.messages ?? [],
-          p.request_id,
-          p.message_ids.filter((id): id is number => typeof id === 'number')
-        )
+      if (payload.role === 'user') {
+        mergePersistedUserMessages(payload.messages, payload.request_id ?? undefined, payload.message_ids)
       }
 
       break
     }
 
     case 'session.snapshot': {
-      const snapshot = decodePayload<SessionResumeResponse>(event.payload)
+      const snapshot = event.payload
 
-      if (Array.isArray(snapshot.messages)) {
-        runtime.applyRemoteSnapshot(snapshot)
-
-        syncConversationActivity()
-      }
+      runtime.applyRemoteSnapshot(snapshot)
+      syncConversationActivity()
 
       break
     }
 
     case 'session.state': {
-      const payload = decodePayload<Partial<PromptSubmissionResult> & { running?: boolean }>(event.payload)
+      const payload = event.payload
 
       applySessionState(payload)
 
@@ -295,33 +241,23 @@ export function handleConversationEvent(
     }
 
     case 'message.complete': {
-      const payload = decodePayload<{
-        bubbles?: CompanionBubble[]
-        cache_usage?: CacheUsageSummary
-        media?: ChatMediaItem[]
-        message_id?: number
-        reasoning?: string
-        text?: string
-        usage?: { completion_tokens?: number; prompt_tokens?: number; total_tokens?: number; context_window?: number }
-        can_replace_reply?: boolean
-      }>(event.payload)
+      const payload = event.payload
 
-      // 形状异常时按缺省处理：本分支抛错会跳过下方回合收尾，让 $chatTurnInFlight 卡住。
-      const bubbles = Array.isArray(payload.bubbles) ? payload.bubbles : undefined
-      const media = Array.isArray(payload.media) ? payload.media : undefined
+      const bubbles = payload.bubbles ?? undefined
+      const media = payload.media ?? undefined
       const text = chatDisplayText(payload.text ?? '')
 
       const replyExists =
-        payload.message_id !== undefined &&
+        payload.message_id !== null &&
         runtime.$chatMessageList.get().some(item => item.backendMessageId === payload.message_id)
 
-      setSessionCacheUsage(payload.cache_usage)
+      setSessionCacheUsage(payload.cache_usage ?? undefined)
 
       if (payload.usage) {
         setSessionContextUsage({
-          contextLimit: payload.usage.context_window,
-          completionTokens: payload.usage.completion_tokens,
-          promptTokens: payload.usage.prompt_tokens,
+          contextLimit: payload.usage.context_window ?? undefined,
+          completionTokens: payload.usage.completion_tokens ?? undefined,
+          promptTokens: payload.usage.prompt_tokens ?? undefined,
           totalTokens:
             payload.usage.total_tokens ??
             (payload.usage.prompt_tokens && payload.usage.completion_tokens
@@ -334,9 +270,13 @@ export function handleConversationEvent(
       const hadBreak = $turnHadBubbleBreak.get()
 
       if (bubbles && typeof payload.message_id === 'number') {
-        finalizeCompanionReply(bubbles, payload.message_id, payload.reasoning)
+        finalizeCompanionReply(bubbles, payload.message_id, payload.reasoning ?? undefined)
       } else {
-        finalizeAssistantMessage(hadBreak ? undefined : payload.text, media, hadBreak ? undefined : payload.reasoning)
+        finalizeAssistantMessage(
+          hadBreak ? undefined : (payload.text ?? undefined),
+          media,
+          hadBreak ? undefined : (payload.reasoning ?? undefined)
+        )
 
         if (typeof payload.message_id === 'number') {
           bindTrailingAssistantMessageId(payload.message_id)
@@ -344,7 +284,7 @@ export function handleConversationEvent(
       }
 
       if (!replyExists) {
-        rememberReply(payload.text, bubbles, media)
+        rememberReply(payload.text ?? undefined, bubbles, media)
       }
 
       const lastReply = runtime.$chatMessageList.get().findLast(item => item.backendMessageId === payload.message_id)
@@ -393,13 +333,11 @@ export function handleConversationEvent(
     case 'error': {
       $chatTurnInFlight.set(false)
 
-      const payload = decodePayload<{ message?: string; retry_message_id?: number; replace_reply_message_id?: number }>(
-        event.payload
-      )
+      const payload = event.payload
 
       if (runtime.$replacingReplyMessageId.get() || payload.replace_reply_message_id) {
         runtime.$replacingReplyMessageId.set(null)
-        pushStatusPill('status_command_result', payload.message ?? getStrings().chat.sendFailed)
+        pushStatusPill('status_command_result', payload.message)
         syncConversationActivity()
 
         break
@@ -407,10 +345,10 @@ export function handleConversationEvent(
 
       clearPendingPrompts()
       markAssistantTerminal({
-        error: payload.message ?? getStrings().chat.sendFailed,
+        error: payload.message,
         retryMessageId:
           Number.isSafeInteger(payload.retry_message_id) && (payload.retry_message_id ?? 0) > 0
-            ? payload.retry_message_id
+            ? (payload.retry_message_id ?? undefined)
             : undefined
       })
       syncConversationActivity()
@@ -420,27 +358,20 @@ export function handleConversationEvent(
     }
 
     case 'command.result': {
-      // 服务端在 command.dispatch RPC response 之外另行广播此事件（PROTOCOL「事件路由」）；触发窗口已通过 RPC 渲染过 pill，本路径只服务其他窗口，RPC 路径的 pushStatusPill 已幂等执行。
-      const payload = decodePayload<RpcResponse<'command.dispatch'>>(event.payload)
-
-      const r = payload.result
-
-      if (!r) {
-        break
-      }
+      const result = event.payload.result
 
       // 仅同步 status_cleared/compress_summary 等历史变化（hydrate=true）：其他窗口需本地 hydrateChatMessages，否则显示陈旧列表。
-      if (r.status === 'ok' && r.hydrate) {
-        const messages = decodePayload<{ messages?: unknown }>(r.payload).messages
+      if (result.status === 'ok' && result.hydrate && result.payload && 'messages' in result.payload) {
+        const messages = result.payload.messages
 
-        if (Array.isArray(messages)) {
+        if (messages) {
           const sid = $chatSessionId.get()
-          hydrateChatMessages(messages as SessionMessage[])
+          hydrateChatMessages(messages)
 
           if (sid) {
-            rememberFullHistory(sid, messages as SessionMessage[])
+            rememberFullHistory(sid, messages)
 
-            if (typeof decodePayload<{ cleared_count?: number }>(r.payload).cleared_count === 'number') {
+            if ('cleared_count' in result.payload) {
               removeVoicePlayback(sid)
             }
           }
@@ -452,71 +383,59 @@ export function handleConversationEvent(
 
     case 'compress.completed': {
       // 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补（PROTOCOL「事件路由」）。
-      const p = decodePayload<{ subtype?: string; text?: string; message_id?: number }>(event.payload)
+      const payload = event.payload
 
-      if (p.subtype === 'compress_summary' && typeof p.text === 'string') {
-        pushStatusPill('compress_summary', p.text, typeof p.message_id === 'number' ? p.message_id : undefined)
+      if (payload.subtype === 'compress_summary') {
+        pushStatusPill('compress_summary', payload.text, payload.message_id ?? undefined)
       }
 
       break
     }
 
     case 'message.replaced': {
-      const payload = decodePayload<{ replaced_message_id?: number; message?: SessionMessage }>(event.payload)
+      const payload = event.payload
 
-      if (typeof payload.replaced_message_id === 'number' && payload.message) {
-        runtime.replaceAssistantReplyMessage(payload.replaced_message_id, payload.message)
-        const sid = $chatSessionId.get()
+      runtime.replaceAssistantReplyMessage(payload.replaced_message_id, payload.message)
+      const sid = $chatSessionId.get()
 
-        if (sid) {
-          removeVoicePlayback(sid, [payload.replaced_message_id])
-          invalidateSessionHistory(sid)
-        }
+      if (sid) {
+        removeVoicePlayback(sid, [payload.replaced_message_id])
+        invalidateSessionHistory(sid)
       }
 
       break
     }
 
     case 'message.edited': {
-      const payload = decodePayload<{ messages?: SessionMessage[] }>(event.payload)
+      const payload = event.payload
 
-      if (Array.isArray(payload.messages)) {
-        hydrateEditedChatMessages(payload.messages)
-        const sid = $chatSessionId.get()
+      hydrateEditedChatMessages(payload.messages)
+      const sid = $chatSessionId.get()
 
-        if (sid) {
-          rememberFullHistory(sid, payload.messages)
-        }
+      if (sid) {
+        rememberFullHistory(sid, payload.messages)
       }
 
       break
     }
 
     case 'message.deleted': {
-      // 多窗口同步：session.undo_to_message RPC 之外服务端另发此事件给同 user 其他窗口；发起窗口已通过 RPC hydrate，本事件供其它窗口追上（session-id 过滤已在路由统一完成）。
-      const p = decodePayload<{
-        session_id?: string
-        deleted_count?: number
-        anchor?: Partial<UndoAnchor>
-        messages?: unknown[]
-      }>(event.payload)
+      const payload = event.payload
 
-      if (Array.isArray(p.messages)) {
-        const sid = p.session_id || $chatSessionId.get()
-        forgetDeletedVoiceMessages(p.messages as SessionMessage[])
-        hydrateChatMessages(p.messages as SessionMessage[])
+      const sid = payload.session_id || $chatSessionId.get()
+      forgetDeletedVoiceMessages(payload.messages)
+      hydrateChatMessages(payload.messages)
 
-        if (sid) {
-          rememberFullHistory(sid, p.messages as SessionMessage[])
-        }
+      if (sid) {
+        rememberFullHistory(sid, payload.messages)
       }
 
       // 跟随窗口从事件 payload 取 anchor 推到草稿总线——对话组件用 session_id 过滤应用。
-      if (p.session_id && p.anchor) {
+      if (payload.session_id) {
         $chatDraftFromUndo.set({
-          session_id: p.session_id,
-          text: p.anchor.text ?? '',
-          attachments: p.anchor.attachments
+          session_id: payload.session_id,
+          text: payload.anchor.text,
+          attachments: payload.anchor.attachments
         })
       }
 

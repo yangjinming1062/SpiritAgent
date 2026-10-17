@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { isAiWaitingApi } from '@protocol'
 import { errorMessage } from '@runtime'
 
 import { assertUserSelectedPath } from './user-selected-paths'
@@ -34,29 +33,6 @@ export const DEV_CSP_POLICY = buildCspPolicy("'self' 'unsafe-inline' 'unsafe-eva
 
 const SAFE_ENV_SUFFIXES: Set<string> = new Set(['dist', 'example', 'sample', 'template'])
 const SENSITIVE_EXTENSIONS: Set<string> = new Set(['.kdbx', '.p12', '.pem', '.pfx'])
-
-function positiveRounded(value: unknown): null | number {
-  const parsed = Number(value)
-
-  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null
-}
-
-export function resolveTimeoutMs(timeoutMs?: null | number | string, fallbackMs = DEFAULT_FETCH_TIMEOUT_MS): number {
-  if (timeoutMs === 0) {
-    return 0
-  }
-
-  return positiveRounded(timeoutMs) ?? positiveRounded(fallbackMs) ?? DEFAULT_FETCH_TIMEOUT_MS
-}
-
-// 0 表示明确等待模型结果；省略期限的普通请求仍使用默认值。
-export function resolvePathTimeoutMs(
-  pathStr?: null | string,
-  method?: null | string,
-  fallbackMs = DEFAULT_FETCH_TIMEOUT_MS
-): number {
-  return typeof pathStr === 'string' && isAiWaitingApi(pathStr, method || 'GET') ? 0 : resolveTimeoutMs(fallbackMs)
-}
 
 export interface SafeStorageApi {
   decryptString?: (encrypted: Buffer) => string

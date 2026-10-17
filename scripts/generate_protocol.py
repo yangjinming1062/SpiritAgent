@@ -4,8 +4,9 @@ import argparse
 import copy
 import json
 import sys
+from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -54,8 +55,14 @@ def ts_type(schema: dict[str, Any]) -> str:
     return "unknown"
 
 
-def add_model(schemas: dict[str, Any], model: type, namespace: str = "") -> str:
-    schema = model.model_json_schema(ref_template="#/components/schemas/{model}")
+def add_model(
+    schemas: dict[str, Any],
+    model: type,
+    namespace: str = "",
+    *,
+    mode: Literal["validation", "serialization"] = "validation",
+) -> str:
+    schema = model.model_json_schema(ref_template="#/components/schemas/{model}", mode=mode)
     definitions = schema.pop("$defs", {}) | {model.__name__: schema}
 
     def project(value: Any) -> Any:
@@ -71,9 +78,10 @@ def add_model(schemas: dict[str, Any], model: type, namespace: str = "") -> str:
         return result
 
     for name, definition in definitions.items():
-        schemas.setdefault(name, definition)
-        if namespace:
-            schemas[namespace + name] = project(definition)
+        if mode == "serialization" and "properties" in definition:
+            omitted = omitted_serialized_fields().get(definition.get("title", name), set())
+            definition["required"] = [key for key in definition["properties"] if key not in omitted]
+        schemas[namespace + name] = project(definition)
     return f"ApiSchemas[{literal(namespace + model.__name__)}]"
 
 
@@ -92,9 +100,29 @@ def schema_refs(value: object) -> set[str]:
     return refs | set().union(*(schema_refs(item) for item in value.values()))
 
 
+@cache
+def omitted_serialized_fields() -> dict[str, set[str]]:
+    from pydantic import BaseModel
+
+    omitted: dict[str, set[str]] = {}
+    pending = list(BaseModel.__subclasses__())
+    seen: set[type] = set()
+    while pending:
+        model = pending.pop()
+        if model in seen:
+            continue
+        seen.add(model)
+        pending.extend(model.__subclasses__())
+        omitted.setdefault(model.__name__, set()).update(
+            field.serialization_alias or field.alias or name
+            for name, field in model.model_fields.items()
+            if field.exclude or field.exclude_if is not None
+        )
+    return omitted
+
+
 def response_schemas(document: dict, schemas: dict) -> set[str]:
     """HTTP 响应包含默认值；输入保留可省略性，exclude_if 继续按实际输出标为可选。"""
-    from pydantic import BaseModel
 
     inputs: set[str] = set()
     outputs: set[str] = set()
@@ -118,20 +146,7 @@ def response_schemas(document: dict, schemas: dict) -> set[str]:
         schemas[name + "Input"] = input_schema(originals[name], shared)
     for name in inputs - outputs:
         schemas[name] = input_schema(originals[name], shared)
-    omitted: dict[str, set[str]] = {}
-    pending = list(BaseModel.__subclasses__())
-    seen: set[type] = set()
-    while pending:
-        model = pending.pop()
-        if model in seen:
-            continue
-        seen.add(model)
-        pending.extend(model.__subclasses__())
-        omitted.setdefault(model.__name__, set()).update(
-            field.serialization_alias or field.alias or name
-            for name, field in model.model_fields.items()
-            if field.exclude or field.exclude_if is not None
-        )
+    omitted = omitted_serialized_fields()
     for name in outputs:
         schema = schemas.get(name, {})
         if "properties" in schema:
@@ -164,40 +179,64 @@ def generate() -> str:
     add_model(schemas, ApiErrorResponse)
     shared = response_schemas(document, schemas)
     operations = []
-    policies = []
+    policies = {}
     for path, item in document["paths"].items():
         for method, operation in item.items():
             if method not in {"get", "post", "put", "patch", "delete", "head", "options"}:
                 continue
             parameters = input_schema(item.get("parameters", []) + operation.get("parameters", []), shared)
-            request_content = operation.get("requestBody", {}).get("content", {})
+            request_body = operation.get("requestBody", {})
+            request_content = request_body.get("content", {})
             request_schema = next(iter(request_content.values()), {}).get("schema")
             body = ts_type(input_schema(request_schema, shared)) if request_schema else "undefined"
             if "multipart/form-data" in request_content:
                 body = "FormData"
+            encoding = "multipart" if "multipart/form-data" in request_content else "json"
+            if request_content and "application/json" not in request_content and encoding != "multipart":
+                body, encoding = "Uint8Array", "binary"
             responses = operation.get("responses", {})
             success = next((value for code, value in responses.items() if code.startswith("2")), {})
             content = success.get("content", {})
             response_schema = next(iter(content.values()), {}).get("schema")
-            response = ts_type(response_schema) if response_schema is not None else "undefined"
-            response_kind = "json" if "application/json" in content else "binary"
-            if not content and operation.get("responses", {}).get("204") is not None:
-                response_kind = "empty"
-            key = method.upper() + " " + path
+            response_kind = "json" if "application/json" in content else "binary" if content else "empty"
+            response = ts_type(response_schema) if response_kind == "json" else "Uint8Array" if content else "undefined"
+            key = operation["operationId"]
+            if key in policies:
+                raise ValueError(f"Duplicate HTTP operationId: {key}")
+            input_fields = []
+            for location in ("path", "query"):
+                present = any(parameter.get("in") == location for parameter in parameters)
+                required = any(
+                    parameter.get("in") == location and parameter.get("required") for parameter in parameters
+                )
+                value = object_parameters(parameters, location) if present else "never"
+                input_fields.append(f"{location}{'' if required else '?'}: {value}")
+            body_optional = "" if request_body.get("required") else "?"
+            body_input_type = body if request_schema else "never"
+            input_fields.append(f"body{body_optional}: {body_input_type}")
             operations.append(
                 f"  {literal(key)}: {{ path: {object_parameters(parameters, 'path')}; "
-                f"query: {object_parameters(parameters, 'query')}; body: {body}; response: {response} }}",
+                f"query: {object_parameters(parameters, 'query')}; body: {body}; "
+                f"input: {{ {'; '.join(input_fields)} }}; response: {response} }}",
             )
             policy = operation.get(
                 "x-spiritagent",
-                {"identities": ["public"], "upload": "json", "wait_for_model": False},
+                {"identities": ["public"], "upload": "json", "wait_for_model": False, "ipc": False},
             )
-            policies.append({"key": key, "path": path, "method": method.upper(), "response": response_kind, **policy})
+            policies[key] = {
+                "path": path,
+                "method": method.upper(),
+                "encoding": encoding,
+                "response": response_kind,
+                "identities": policy["identities"],
+                "wait_for_model": policy["wait_for_model"],
+                "ipc": policy["ipc"],
+            }
     rpc_operations = []
     rpc_policies = {}
     for name, contract in sorted(RPC_CONTRACTS.items()):
-        request = add_model(schemas, contract.request, "Rpc")
-        response = add_model(schemas, contract.response, "Rpc")
+        request = add_model(schemas, contract.request, "RpcInput")
+        response = add_model(schemas, contract.response, "Rpc", mode="serialization")
         rpc_operations.append(f"  {literal(name)}: {{ request: {request}; response: {response} }}")
         rpc_policies[name] = {
             "remote": contract.remote,
@@ -205,14 +244,25 @@ def generate() -> str:
             "wait_for_model": contract.wait_for_model,
         }
     events = [
-        f"  {literal(name)}: {add_model(schemas, model, 'Rpc')}" for name, model in sorted(EVENT_CONTRACTS.items())
+        f"  {literal(name)}: {add_model(schemas, contract.payload, 'Rpc', mode='serialization')}"
+        for name, contract in sorted(EVENT_CONTRACTS.items())
     ]
+    event_policies = {
+        name: {
+            "audience": contract.audience,
+            "snapshot": contract.recovery == "session",
+            "recovery": contract.recovery,
+            "baseline": contract.baseline,
+        }
+        for name, contract in sorted(EVENT_CONTRACTS.items())
+    }
     runner_operations = [
-        f"  {literal(name)}: {{ request: {add_model(schemas, contract.request, 'Runner')}; response: {add_model(schemas, contract.response, 'Runner')} }}"
+        f"  {literal(name)}: {{ request: {add_model(schemas, contract.request, 'RunnerInput')}; response: {add_model(schemas, contract.response, 'Runner', mode='serialization')} }}"
         for name, contract in sorted(RUNNER_CONTRACTS.items())
     ]
     runner_events = [
-        f"  {literal(name)}: {add_model(schemas, model, 'Runner')}" for name, model in sorted(RUNNER_EVENTS.items())
+        f"  {literal(name)}: {add_model(schemas, model, 'Runner', mode='serialization')}"
+        for name, model in sorted(RUNNER_EVENTS.items())
     ]
     lines = ["// 由 scripts/generate_protocol.py 从服务端公开契约生成。", "", "export interface ApiSchemas {"]
     lines.extend(f"  {literal(name)}: {ts_type(value)}" for name, value in sorted(schemas.items()))
@@ -244,6 +294,8 @@ def generate() -> str:
     )
     lines.append("export const API_OPERATIONS = " + json.dumps(policies, ensure_ascii=False, indent=2) + " as const")
     lines.append("export const RPC_POLICIES = " + json.dumps(rpc_policies, ensure_ascii=False, indent=2) + " as const")
+    event_policy_json = json.dumps(event_policies, ensure_ascii=False, indent=2)
+    lines.append(f"export const EVENT_POLICIES = {event_policy_json} as const")
     return "\n".join(lines) + "\n"
 
 

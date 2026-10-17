@@ -69,7 +69,7 @@ class ReplayBuffer:
         """返回 seq > last_seq 的所有帧；last_seq 之后已有帧被裁剪或序号失同步时返回 None，调用方走完整状态同步。"""
         self._prune(time.monotonic())
         # 客户端 seq 超过服务端（网关重建 / 服务重启后 seq 重置）→ 失同步
-        if last_seq <= 0 or last_seq > self._current_seq:
+        if last_seq < 0 or last_seq > self._current_seq:
             return None
         if last_seq == self._current_seq:
             return []

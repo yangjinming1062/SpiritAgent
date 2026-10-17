@@ -133,7 +133,7 @@ export async function reportReceipt(
   reason: string = '',
   visibleDurationMs: number = 0
 ): Promise<void> {
-  const result = await authedResource('POST /api/companion/actions/playback/{play_id}/receipt', {
+  const result = await authedResource('companion_actions.submit_playback_receipt', {
     path: { play_id: command.play_id },
     body: { play_id: command.play_id, status, visible_duration_ms: visibleDurationMs, error: reason || null }
   })

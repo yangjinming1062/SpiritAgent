@@ -1,11 +1,10 @@
 import { atom } from 'nanostores'
 
-import type { ConnectionState, RpcRequester } from '@/shared/lib/gateway-protocol'
+import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 
 export interface SpiritAgentGatewayLike {
   readonly connectionState: ConnectionState
   readonly isPresentationHost: boolean
-  request: RpcRequester
 }
 
 // 所有窗口通过主进程 IPC 访问同一账户连接。

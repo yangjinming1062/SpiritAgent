@@ -53,7 +53,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 [routes/__init__.py](entrypoints/http/routes/__init__.py) 显式登记资源路由及其前缀、名称与响应结构。`/api` 同时用于资产、备份、限流及客户端，不能作为部署配置修改。文件与业务错误由协议适配层转换，业务操作不返回 FastAPI 响应对象。
 
-[body_limit.py](entrypoints/http/body_limit.py) 在解析前读取路由策略限制请求体，实际流超限也返回 413，大载荷入口先验证当前登录。WS 入口是 [gateway.py](entrypoints/http/routes/gateway.py)，RPC 和斜杠命令分别在 [handlers.py](entrypoints/desktop/handlers.py)、[slash_commands.py](features/conversation/slash_commands.py)；`command.dispatch` 是命令执行权威，Client 只镜像补全和确认元数据。管理页面可加载不代表管理 API 免鉴权。
+[body_limit.py](entrypoints/http/body_limit.py) 在解析前读取路由策略限制请求体，实际流超限也返回 413，大载荷入口先验证当前登录；聊天正文与批量图片使用独立预算。业务操作统一由 HTTP 受理，路由登记稳定操作标识，身份、编码和等待策略生成到跨端契约。WS 的 [handlers.py](entrypoints/desktop/handlers.py) 只处理连接控制、工具同步与回执、桌面情境信号；斜杠确认和执行由会话业务操作负责，Client 只镜像补全和确认元数据。管理页面可加载不代表管理 API 免鉴权。
 
 ## 配置与运行生命周期
 
@@ -83,7 +83,7 @@ ORM 留在数据所属模块。跨模块读取使用冻结 DTO 或只读快照�
 
 事务内异步通知经 `emit_ws_event` 写 outbox，聊天流另走会话 emitter。持久化与端到端恢复语义归 PROTOCOL；实现入口为 [event_store/loop.py](runtime/events/loop.py)。
 
-回路按本进程持有的桌面或远程 dispatcher 认领事件；只有远程连接时，仅认领 [REMOTE_EVENT_PREFIXES](runtime/desktop/connection.py) 允许的共享通知，桌面执行与主动回合指令仍要求桌面连接（含断线宽限）。内部处理器派生任务即标记送达，投递失败按预算退避并转死信。LISTEN 专线探活、重连与周期扫描共同唤醒；[outbox_gc.py](runtime/events/outbox_gc.py) 不过期清理普通离线待投递行，过期主动回合请求另行处理。
+回路按本进程持有的桌面或远程 dispatcher 认领事件；只有远程连接时，依据[事件契约](entrypoints/desktop/event_contracts.py)的受众筛选精确事件名称，桌面执行与主动回合指令仍要求桌面连接（含断线宽限）。内部处理器派生任务即标记送达，投递失败按预算退避并转死信。LISTEN 专线探活、重连与周期扫描共同唤醒；[outbox_gc.py](runtime/events/outbox_gc.py) 不过期清理普通离线待投递行，过期主动回合请求另行处理。
 
 ## 数据与运行可靠性
 
@@ -168,7 +168,7 @@ Caddy 自动签发续期证书并代理 HTTP 与 WS；Backend 的明文 10620 �
 
 ### 运营参数
 
-`/admin/` 维护三级 AI 配置、用户覆盖与运营参数，保存即时生效；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。自主动态快照的保留期由 [publication.py](features/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
+`/admin/` 维护三级 AI 配置、用户覆盖与运营参数，保存即时生效；继承、凭据与预算见 [AI 配置契约](../docs/PROTOCOL.md#ai-配置与密钥)。管理页复用共享 HTTP 核心，`pnpm --dir remote build` 同时构建手机页面与 `admin-http.js`；源码运行 Backend 前须完成该构建，Docker 镜像已包含产物。自主动态快照的保留期由 [publication.py](features/posts/publication.py) 实现，启动及小时维护负责回收；未知、在途、永久幂等和仍有引用的记录保留。
 
 ### LLM 调试日志
 

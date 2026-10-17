@@ -44,7 +44,7 @@ export class OnboardingDraft {
       }
 
       try {
-        await requestResource('PATCH /api/companion/onboarding', { body: { field, value } })
+        await requestResource('onboarding.patch_onboarding', { body: { field, value } })
 
         return isCurrent()
       } catch (error) {
@@ -67,7 +67,7 @@ export class OnboardingDraft {
     }
 
     try {
-      const state = await requestResource('GET /api/companion/onboarding')
+      const state = await requestResource('onboarding.get_onboarding')
 
       return isCurrent() ? state : null
     } catch (error) {
@@ -126,7 +126,7 @@ export class OnboardingDraft {
       return false
     }
 
-    const result = await authedResource('PUT /api/companion/persona', {
+    const result = await authedResource('companion.put_persona', {
       body: { definition_json: JSON.stringify(payload) }
     })
 

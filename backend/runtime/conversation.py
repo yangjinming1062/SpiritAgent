@@ -67,24 +67,6 @@ class LastSubmissionSnapshot:
     result_message_id: int | None = None
 
 
-class SessionResumeResult(BaseModel):
-    session_id: str
-    message_count: int
-    messages: list[dict[str, Any]] = Field(default_factory=list)
-    info: SessionRuntimeInfo
-    resumed: bool = False
-    replayed_count: int = 0
-    current_seq: int = 0
-    stream_id: str = ""
-    active_turn: ActiveTurnSnapshot | None = None
-    last_submission: LastSubmissionSnapshot | None = None
-    truncated: bool = False
-    next_cursor: str | None = None
-    # after_id 命中且锚点仍存在时为 True：messages 仅为增量，客户端按 id 合并本地缓存。
-    incremental: bool = False
-    history_revision: int = 0
-
-
 class ToolsSyncResult(BaseModel):
     count: int
 

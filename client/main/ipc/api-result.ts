@@ -4,7 +4,7 @@ import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
 import type { DesktopApiResult, IPC, IpcInvokeContract } from '@ipc/contracts'
 
-import { HttpError } from '../shared/utils'
+import { ApiError } from '../../../shared/errors'
 
 type ApiResultChannel =
   | typeof IPC.invoke.api
@@ -29,11 +29,11 @@ export function registerApiResult<C extends ApiResultChannel>(
       try {
         return { ok: true, value: await handler(event, ...args) }
       } catch (error) {
-        const business = error instanceof HttpError ? error.business : undefined
+        const business = error instanceof ApiError ? error.business : undefined
 
         return {
           ok: false,
-          status: error instanceof HttpError ? error.status : null,
+          status: error instanceof ApiError ? error.status : null,
           error: business ?? {
             code: 'desktop_request_failed',
             message: error instanceof Error ? error.message : 'Request failed',

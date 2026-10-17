@@ -3,6 +3,8 @@ import type { ReactElement } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { requestApi } from '../shared/api'
+import { EVENT_POLICIES } from '../shared/api.generated'
+import type { GatewayNetworkEvent } from '../shared/gateway'
 
 import { ApiError, errorText, record, RemoteApi, RemoteGateway } from './api'
 import { Chat, clearChatState } from './Chat'
@@ -13,6 +15,37 @@ import { Notice, PageHeader, PageStateProvider, pauseMedia, useTask } from './ui
 
 type Tab = 'messages' | 'feed' | 'companion' | 'me'
 const api = new RemoteApi()
+
+function resourceDomain(type: GatewayNetworkEvent['type']): 'companion' | 'diary' | 'posts' | null {
+  switch (type) {
+    case 'companion.post.created':
+    case 'companion.post.comment':
+    case 'companion.post.comment.deleted':
+    case 'companion.posts.read':
+      return 'posts'
+    case 'companion.diary.created':
+    case 'companion.diary.deleted':
+    case 'companion.diary.read':
+      return 'diary'
+    case 'memory.changed':
+    case 'companion.voice.updated':
+    case 'companion.scene.updated':
+    case 'companion.scene.activated':
+    case 'companion.outfit.updated':
+    case 'companion.video.ready':
+    case 'companion.video.activated':
+    case 'companion.video.failed':
+    case 'companion.video.progress':
+    case 'companion.action.job_updated':
+    case 'companion.action.catalog_changed':
+    case 'companion.character_card.updated':
+    case 'companion.desktop_video.updated':
+    case 'companion.topic_feedback.updated':
+      return 'companion'
+    default:
+      return null
+  }
+}
 
 function takePairingToken(): string | null {
   const hash = location.hash.slice(1)
@@ -35,6 +68,7 @@ export function App(): ReactElement {
   const [error, setError] = useState('')
   const [tab, setTab] = useState<Tab>('messages')
   const [connected, setConnected] = useState(false)
+  const [connectionError, setConnectionError] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [unreadRefresh, setUnreadRefresh] = useState(0)
   const [unread, setUnread] = useState({
@@ -97,11 +131,9 @@ export function App(): ReactElement {
 
     const load = async () => {
       try {
-        const next = await api.request<RemoteSession>(
-          pairingToken ? '/api/remote/session/exchange' : '/api/remote/session',
-          pairingToken ? 'POST' : 'GET',
-          pairingToken
-            ? {
+        const next = pairingToken
+          ? await api.invoke('remote.exchange_pairing', {
+              body: {
                 token: pairingToken,
                 device_name: /iPhone|iPad/.test(navigator.userAgent)
                   ? 'iPhone / iPad'
@@ -109,8 +141,8 @@ export function App(): ReactElement {
                     ? 'Android 手机'
                     : '网页设备'
               }
-            : undefined
-        )
+            })
+          : await api.invoke('remote.current_remote_session')
 
         if (!live) {
           return
@@ -141,11 +173,12 @@ export function App(): ReactElement {
           setUnread({ messages: false, feed: false, diary: false })
         }
 
-        const client = new RemoteGateway(api, invalidate)
+        const client = new RemoteGateway(api)
         activeGateway.current = client
-        client.subscribeState(open => {
+        client.subscribeState((open, message) => {
           setConnected(open)
-          if (open) {
+          setConnectionError(message)
+          if (open && client.lastRecovery?.recovery === 'snapshot_required') {
             setRefresh(value => value + 1)
           }
         })
@@ -157,15 +190,19 @@ export function App(): ReactElement {
             setUnread(previous => ({ ...previous, messages: true }))
           }
 
-          const posts = event.type.startsWith('companion.post')
-          const diary = event.type.startsWith('companion.diary')
-
-          if (event.type.startsWith('companion.') || event.type === 'memory.changed') {
+          if (event.type === 'session.snapshot') {
+            return
+          }
+          const domain = resourceDomain(event.type)
+          const resource = EVENT_POLICIES[event.type].recovery === 'resource'
+          const mood = event.type === 'companion.mood'
+          const message = event.type === 'companion.message'
+          if ((resource && domain) || mood || message) {
             scheduleRefresh(
-              (!posts && tabRef.current === 'companion') ||
-                (diary && tabRef.current === 'feed') ||
-                (event.type === 'companion.message' && tabRef.current === 'messages'),
-              posts || diary
+              ((domain === 'companion' || mood) && tabRef.current === 'companion') ||
+                (domain === 'diary' && tabRef.current === 'feed') ||
+                (message && tabRef.current === 'messages'),
+              domain === 'posts' || domain === 'diary'
             )
           }
         })
@@ -221,8 +258,8 @@ export function App(): ReactElement {
 
     let current = true
     void Promise.allSettled([
-      requestApi(api, 'GET /api/companion/posts/read-state'),
-      requestApi(api, 'GET /api/companion/diary/read-state')
+      requestApi(api, 'companion_posts.get_posts_unread'),
+      requestApi(api, 'companion_journal.get_diary_unread')
     ]).then(([posts, diary]) => {
       if (!current) {
         return
@@ -313,7 +350,7 @@ export function App(): ReactElement {
     >
       <div className="app">
         <div aria-live="polite" className={`connection ${connected ? '' : 'offline'}`}>
-          {connected ? '已连接' : '正在重新连接，已受理的任务会继续运行'}
+          {connected ? '已连接' : connectionError || '实时连接正在恢复，已受理的任务会继续运行'}
         </div>
         <main className="content">
           {tab === 'messages' ? (
@@ -334,7 +371,7 @@ export function App(): ReactElement {
               unread={{ feed: unread.feed, diary: unread.diary }}
             />
           ) : tab === 'companion' ? (
-            <Companion api={api} connected={connected} refresh={refresh} />
+            <Companion api={api} refresh={refresh} />
           ) : (
             <Settings
               api={api}
@@ -422,7 +459,7 @@ function Settings({
         disabled={task.busy}
         onClick={() =>
           task.run(async () => {
-            await api.request('/api/remote/session', 'DELETE')
+            await api.invoke('remote.logout_remote_session')
             onLogout()
           })
         }

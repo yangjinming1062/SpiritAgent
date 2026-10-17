@@ -269,7 +269,7 @@ export function useOutfitDesignSession(
 
     try {
       // 确认转正参考图，并由服务端安排基础动作；就绪后由用户选择穿上。
-      await requestResource('POST /api/companion/outfits/{outfit_id}/confirm', {
+      await requestResource('companion.post_outfit_confirm', {
         path: { outfit_id: draft.id },
         body: {}
       })
@@ -365,7 +365,7 @@ export function useOutfitDesignSession(
 }
 
 async function runCreate(description: string, image: PickedImage | null): Promise<ApiSchemas['OutfitResponse']> {
-  return requestResource('POST /api/companion/outfits', {
+  return requestResource('companion.post_outfit', {
     body: {
       source: 'generate',
       description: description || undefined,
@@ -380,7 +380,7 @@ async function runRegenerate(
   feedback: string,
   mode: ImageReviseMode
 ): Promise<ApiSchemas['OutfitResponse']> {
-  return requestResource('POST /api/companion/outfits/{outfit_id}/image', {
+  return requestResource('companion.post_outfit_regenerate', {
     path: { outfit_id: id },
     body: { source: 'generate', feedback: feedback || undefined, mode }
   })

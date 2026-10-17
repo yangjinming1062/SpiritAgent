@@ -32,7 +32,7 @@
 
 ### 凭据与请求
 
-凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)，多账户存储在 [session.ts](backend/session.ts)。凭据读取须在 `app.whenReady()` 后触发，避免 safeStorage 尚未就绪时缓存解密失败。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 仅访问受控相对路径，拒绝绝对 URL、协议相对地址与穿越；白名单见 [api-allowlist.ts](security/api-allowlist.ts)。`api()`、资产读取与 401 通知集中在 [connection.ts](ipc/connection.ts)，WS 票据仅由主进程账户网关申请与消费。
+凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)，多账户存储在 [session.ts](backend/session.ts)。凭据读取须在 `app.whenReady()` 后触发，避免 safeStorage 尚未就绪时缓存解密失败。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 只接受登记的操作标识和参数，类型与 [主进程准入](security/api-allowlist.ts) 均由生成契约的 `ipc` 策略约束。multipart 上传通过专用媒体 IPC 传递字节或已授权路径，由主进程构建 `FormData`，不跨 Electron 传递该对象。`api()`、资产读取与本站登录失效通知集中在 [connection.ts](ipc/connection.ts)，WS 票据仅由主进程账户网关申请与消费。
 
 ### 文件与媒体
 
@@ -42,9 +42,11 @@
 
 ## 账户网关与窗口订阅
 
-[gateway.ts](backend/gateway.ts) 持有账户唯一 WS、票据、重连、工具派发、取消与串行工具清单同步。网络连接与已受理调用不依赖窗口存活；刷新同一登录的凭据保留连接和在途调用，换号才废弃旧连接与迟到结果。共享 [gateway.ts](../../shared/gateway.ts) 处理 JSON-RPC、心跳、事件水位和快照缓冲。
+[gateway.ts](backend/gateway.ts) 持有账户唯一 WS、工具派发、取消、结果待确认队列与串行工具清单同步。网络连接与已受理调用不依赖窗口存活；刷新同一登录的凭据保留连接和在途调用，换号使旧连接与迟到结果失效。共享 [GatewayConnection](../../shared/gateway.ts) 负责票据重取、退避重连、心跳、连接重放与会话快照缓冲。
 
-所有业务窗口通过 [gateway.ts](ipc/gateway.ts) 请求与订阅。主进程禁止渲染层执行 `tools.sync`、`tool.result`；`tool.call`、`tool.cancel` 直接派发 Runner，不交给窗口。IPC 的请求、事件与状态带鉴权会话 ID，窗口先订阅后读取状态，旧身份事件不能灌入新视图。准备后端或票据失败时同样发布可恢复状态；重试保留原因，连通后清除。窗口重载恢复启动失败与非 `headless` 工具工作态，取消和换号释放所属活动。
+业务窗口通过 [connection.ts](ipc/connection.ts) 提交稳定操作标识与参数，主进程核对策略、登录身份后使用共享 HTTP 核心；同一会话的在途快照合并为一个完整基线。[gateway.ts](ipc/gateway.ts) 只提供连接状态和受控桌面情境上报，设备 RPC 不暴露给窗口；`tool.call`、`tool.cancel` 直接派发 Runner。IPC 带鉴权会话 ID，窗口先订阅再读状态，旧身份事件不能写入新视图。启动失败保留可恢复原因，连通后清除；窗口重载恢复启动失败与非 `headless` 工具工作态。
+
+工具完成结果保留至 Backend 确认，连接恢复或回执超时只补交结果。进程恢复后按未决 `call_id` 查询 Runner 调用日志；仍在执行时仅在服务端继续等待的范围内查询，未知结果不重新执行。取消可按当前 RPC 请求或跨本地连接的 `call_id` 定位，换号释放所属活动与重试。
 
 [连接缓存](backend/ensure-backend.ts)只保存后端地址与就绪结果，凭据按请求读取；reset 使在途解析失效，票据签发前后核对登录身份和实际凭据。IPC 结构化错误的透传与还原遵循 [错误信封](../../docs/PROTOCOL.md#错误信封)。
 
@@ -123,7 +125,7 @@
 | WS／进程启动失败、初次等待超时 | 收尾端点、连接和进程；断连废弃旧清单，重连未报告 ready 时可重新启动 |
 | 停止与重启 | 等待在途启动及回滚完成，操作代次阻断旧启动清理新实例 |
 
-派发入口透传 `call_id` 并分类结果；取消定位该调用的 RPC `req_id`，窗口等直调不带 `call_id`。`tools.sync` 由主进程账户网关串行发送，Runner 状态与清单刷新会撤销或更新云端能力。取消、日志恢复和结果未知的定义归 [调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
+派发入口透传 `call_id` 并分类结果；取消优先使用当前 RPC `req_id`，恢复后按 `call_id` 定位，窗口等直调不带 `call_id`。`tools.sync` 由主进程账户网关串行发送，Runner 状态与清单刷新会撤销或更新云端能力。取消、日志恢复和结果未知的定义归 [调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
 
 [session-runtime.ts](backend/session-runtime.ts)负责懒创建及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 广播器直接广播，仍是当前会话才自动启动 Runner；应用就绪后另有 200 ms 定时入口，须与恢复路径共同保持幂等。
 
@@ -150,7 +152,7 @@ Electron 网络经 `net.fetch`、`net.WebSocket` 保持系统代理与证书语�
 收听记录由 [voice-playback.ts](ipc/voice-playback.ts) 校验鉴权会话与载荷，[voice-playback-store.ts](ipc/voice-playback-store.ts) 串行原子写盘并单向合并已听状态；跨窗口广播仅携带当前账户的记录，清理代次阻断旧写入。记录独立于历史快照，缓存生命周期见 [Client](../README.md#资产与历史缓存)；两者的账户代次与按会话串行写入由 [account-queue.ts](ipc/account-queue.ts) 共用。
 移除账户先等待旧下载与写入再删目录，同账户新请求等待清理；下载超时覆盖响应体读取。
 
-[hardening.ts](security/hardening.ts)按路径和方法配置请求等待，同步生成入口有更长超时：头像、全身参考与外观的生图链取长预算以覆盖供应商回退，候选身体特征分析按后端分析时限，提示词整合、采纳与确认类入口及语音重试各有较长超时。新增入口须核对后端该入口的同步时限与可能的用户锁等待。超时不代表后端任务已停；401 按结构化状态处理，不匹配错误文案。
+HTTP 等待由操作契约与 [共享请求核心](../../shared/api.ts) 管理，模型等待不设耗时中断，非模型操作和媒体字节传输保留明确预算。超时不证明后端任务已停；只有本站登录失效信封触发退出，供应商错误保留来源与业务码。
 
 ### 语音与附件
 

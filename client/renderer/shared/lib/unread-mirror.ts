@@ -56,8 +56,8 @@ export function createUnreadMirror(config: UnreadMirrorConfig): UnreadMirror {
         version = unreadRevision
 
         const result = await (resource === 'posts'
-          ? authedResource('GET /api/companion/posts/read-state')
-          : authedResource('GET /api/companion/diary/read-state'))
+          ? authedResource('companion_posts.get_posts_unread')
+          : authedResource('companion_journal.get_diary_unread'))
 
         if (
           !isCurrent() ||
@@ -102,8 +102,8 @@ export function createUnreadMirror(config: UnreadMirrorConfig): UnreadMirror {
     const version = ++unreadRevision
 
     const result = await (resource === 'posts'
-      ? authedResource('PATCH /api/companion/posts/read-state', { body: { post_ids: ids } })
-      : authedResource('PATCH /api/companion/diary/read-state', { body: { diary_ids: ids } }))
+      ? authedResource('companion_posts.read_posts', { body: { post_ids: ids } })
+      : authedResource('companion_journal.read_diary', { body: { diary_ids: ids } }))
 
     if (!isCurrent() || !apiSucceeded(result, scope, 'read failed') || !isUnreadWire(result.value)) {
       return false

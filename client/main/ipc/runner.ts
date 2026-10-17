@@ -259,7 +259,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     const requestId = typeof callId === 'string' ? inflightCalls.get(callId) : undefined
     const bridge = runnerBridge
 
-    if (!requestId || !bridge) {
+    if (!bridge) {
       return { noop: true, ok: true }
     }
 
@@ -269,7 +269,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       return { noop: true, ok: true }
     }
 
-    return bridge.dispatch('calls.cancel', { req_id: requestId })
+    return bridge.dispatch('calls.cancel', requestId ? { req_id: requestId } : { call_id: callId })
   }
 
   function registerIpc(ipcMain: IpcMain): void {

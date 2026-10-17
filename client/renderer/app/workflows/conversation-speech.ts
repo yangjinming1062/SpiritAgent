@@ -26,11 +26,10 @@ import {
   setVoiceSurfaceMounted,
   toggleVoiceBar
 } from '@/modules/speech'
-import { backendApi } from '@/shared/platform/desktop'
+import { requestResource } from '@/shared/lib/resource-request'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { voicePlaybackKey } from '@ipc/contracts'
-import type { CompanionBubble } from '@protocol'
 
 let dispose: (() => void) | undefined
 
@@ -125,9 +124,8 @@ export function bindConversationSpeech(): void {
 
       const auth = $auth.get()
 
-      const result = await backendApi().api<CompanionBubble>({
-        path: '/api/sessions/messages/' + reference.messageId + '/voice/' + reference.bubbleIndex,
-        method: 'POST'
+      const result = await requestResource('sessions.retry_voice_bubble', {
+        path: { message_id: reference.messageId, bubble_index: reference.bubbleIndex }
       })
 
       const currentAuth = $auth.get()

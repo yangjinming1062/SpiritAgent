@@ -13,8 +13,8 @@ import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { NotificationStack } from '@/shared/components/notifications'
 import { initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
+import { createGatewayView } from '@/shared/lib/gateway-view'
 import { CaptureWindowIdContext } from '@/shared/lib/interactive-regions'
-import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { ConfirmHost } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
@@ -67,7 +67,7 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
     import.meta.hot.dispose(offUpdateBridge)
   }
 
-  setPrimaryGateway(new IpcGatewayProxy())
+  setPrimaryGateway(createGatewayView())
 
   const container = document.getElementById('root')
 

@@ -1,9 +1,4 @@
 import type { ApiOperations, ApiSchemas } from './api.generated'
-import { findApiOperation } from './api'
-
-export function isAiWaitingApi(path: string, method = 'GET'): boolean {
-  return findApiOperation(path, method)?.wait_for_model ?? false
-}
 
 /** 图像迭代意图：微调上一版，或从固定参考重新生成。与后端 ImageReviseMode 对齐。 */
 export type ImageReviseMode = 'edit' | 'regenerate'
@@ -129,13 +124,12 @@ export type CompanionBubble = ApiSchemas['RpcReplyBubbleView']
 
 export type SessionMessage = ApiSchemas['RpcSessionMessageView']
 
-/** `session.undo_to_message` RPC 的 anchor 子类型：撤回后服务端把锚点消息的用户正文与图片退回客户端输入框。 */
-export type UndoAnchor = ApiSchemas['RpcUndoAnchor']
+/** 撤回后把锚点消息的用户正文与图片退回客户端输入框。 */
+export type UndoAnchor = ApiSchemas['UndoAnchor']
 
-/** `session.undo_to_message` RPC 的返回形态。 */
-export type UndoResponse = ApiSchemas['RpcSessionUndoResult']
+export type UndoResponse = ApiSchemas['SessionUndoResult']
 
-export type ActiveTurnSnapshot = ApiSchemas['RpcActiveTurnView']
+export type ActiveTurnSnapshot = ApiSchemas['ActiveTurnView']
 
 export interface PromptSubmissionState {
   replace_reply_message_id?: number | null
@@ -147,11 +141,11 @@ export interface PromptSubmissionState {
   retry_message_id?: number | null
 }
 
-export type PromptSubmissionResult = ApiSchemas['RpcPromptSubmitResult']
+export type PromptSubmissionResult = ApiSchemas['PromptSubmitResult']
 
-export type SessionResumeResponse = ApiSchemas['RpcGatewaySessionResumeResult']
+export type { SessionSnapshot } from './gateway'
 
-export type SessionRuntimeInfo = ApiSchemas['RpcSessionRuntimeInfo']
+export type SessionRuntimeInfo = ApiSchemas['SessionRuntimeInfo']
 
 /** `/api/config` 读写共用的 config 结构：GET 响应与 PUT 请求都以 `{ config }` 包裹，PUT 只需携带要改的字段。 */
 export interface SpiritAgentConfigResponse {
@@ -176,21 +170,10 @@ export interface SpiritAgentConfigResponse {
 }
 
 /** 手机网页的一次性扫码授权；url 仅在创建响应提供。 */
-export interface RemotePairing {
-  id: number
-  url?: string
-  expires_at: string
-  state: 'pending' | 'paired' | 'cancelled' | 'expired'
-}
+export type RemotePairing = ApiSchemas['PairingResponse']
 
-export interface RemoteDevice {
-  id: number
-  name: string
-  expires_at: string
-  last_seen_at: string
-  created_at: string
-}
+export type RemoteDevice = ApiSchemas['DeviceResponse']
 
-export type PromptSubmissionRequest = ApiSchemas['RpcPromptSubmitRequest']
+export type PromptSubmissionRequest = ApiSchemas['PromptSubmitRequest']
 
-export type MemoryListRequest = ApiOperations['GET /api/memories']['query']
+export type MemoryListRequest = ApiOperations['resource_catalog.get_memories']['query']

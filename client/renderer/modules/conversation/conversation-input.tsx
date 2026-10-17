@@ -41,6 +41,7 @@ export interface ChatSubmitState {
   pending: PendingAttachment | null
   recording: boolean
   sending: boolean
+  stopping?: boolean
   text: string
 }
 
@@ -98,12 +99,12 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   const {
     editAttachments,
     editMessageId,
-    gatewayState,
     isGenerating,
     isReadOnlySession,
     pending,
     recording,
     sending,
+    stopping,
     text
   } = submit
 
@@ -185,15 +186,16 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     setSlashDismissed(true)
   }
 
-  const showStop = !isEditing && isGenerating && !text.trim() && !pending && externalPaths.length === 0
+  const showStop =
+    (isEditing && sending) || (!isEditing && isGenerating && !text.trim() && !pending && externalPaths.length === 0)
 
   const sendDisabled =
     waitingForSession ||
     isReadOnlySession ||
-    (isEditing && isGenerating) ||
+    (isEditing && isGenerating && !showStop) ||
+    (stopping && !showStop) ||
     (!showStop &&
       (sending ||
-        gatewayState !== 'open' ||
         (!text.trim() && !pending && externalPaths.length === 0) ||
         (pending?.type === 'video' && pending.status !== 'ready')))
 
@@ -478,9 +480,20 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
             <Mic className="size-3.5" />
           </button>
 
+          {stopping ? (
+            <span className="text-xs text-muted" role="status">
+              {dict.chat.input.stopPending}
+            </span>
+          ) : null}
           <button
             aria-label={
-              showStop ? dict.chat.input.stopGenerating : isEditing ? dict.chat.edit.send : dict.chat.input.sendMessage
+              showStop && stopping
+                ? dict.chat.input.stopPending
+                : showStop
+                  ? dict.chat.input.stopGenerating
+                  : isEditing
+                    ? dict.chat.edit.send
+                    : dict.chat.input.sendMessage
             }
             className={cn(
               'inline-flex size-7 items-center justify-center rounded-xl transition disabled:pointer-events-none disabled:opacity-30',
@@ -491,11 +504,13 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
             disabled={sendDisabled}
             onClick={() => (showStop ? onStop() : onSend())}
             title={
-              showStop
-                ? dict.chat.input.stopGenerating
-                : isEditing
-                  ? dict.chat.edit.send
-                  : dict.chat.input.sendMessageShortcut
+              showStop && stopping
+                ? dict.chat.input.stopPending
+                : showStop
+                  ? dict.chat.input.stopGenerating
+                  : isEditing
+                    ? dict.chat.edit.send
+                    : dict.chat.input.sendMessageShortcut
             }
             type="button"
           >

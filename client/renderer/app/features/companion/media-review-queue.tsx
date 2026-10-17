@@ -24,7 +24,9 @@ export function MediaReviewQueue(): React.JSX.Element {
   const trigger = useRef<HTMLButtonElement>(null)
   const modal = useRef<HTMLDivElement>(null)
 
-  const { data, error, reload, setData } = useAsyncLoader(() => requestResource('GET /api/companion/media-reviews'))
+  const { data, error, reload, setData } = useAsyncLoader(() =>
+    requestResource('companion.get_pending_visual_media_reviews')
+  )
 
   const rows = data ?? EMPTY_REVIEWS
   const failed = error !== null

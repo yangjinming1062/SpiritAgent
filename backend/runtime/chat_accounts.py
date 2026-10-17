@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from infrastructure.logger import get_logger
+from infrastructure.request_errors import RequestError
 
 from runtime.conversation import RuntimeSession
 from runtime.task_supervisor import TASK_SUPERVISOR
@@ -15,25 +16,39 @@ logger = get_logger(__name__)
 class AccountChatRuntime:
     user_id: int
     runtime_sessions: dict[str, RuntimeSession] = field(default_factory=dict)
+    admission_tasks: dict[asyncio.Task, tuple[str, str]] = field(default_factory=dict)
     background_tasks: set[asyncio.Task] = field(default_factory=set)
     connection_leases: set[str] = field(default_factory=set)
 
     def track(self, task: asyncio.Task) -> None:
         self.background_tasks.add(task)
+
+        def report_error(done: asyncio.Task) -> None:
+            error = done.exception()
+            if isinstance(error, RequestError) and 400 <= error.status_code < 500:
+                return
+            logger.warning("account background task failed", extra={"user_id": self.user_id}, exc_info=error)
+
         TASK_SUPERVISOR.register(
             task,
             owner="conversation.accounts",
             user_id=self.user_id,
             cancel_on_maintenance=False,
-            on_error=lambda done: logger.warning(
-                "account background task failed",
-                extra={"user_id": self.user_id},
-                exc_info=done.exception(),
-            ),
+            on_error=report_error,
         )
 
         def finished(done: asyncio.Task) -> None:
             self.background_tasks.discard(done)
+            release_unused_account_runtime(self.user_id)
+
+        task.add_done_callback(finished)
+
+    def track_admission(self, task: asyncio.Task, session_id: str, request_id: str) -> None:
+        self.admission_tasks[task] = (session_id, request_id)
+        self.track(task)
+
+        def finished(done: asyncio.Task) -> None:
+            self.admission_tasks.pop(done, None)
             release_unused_account_runtime(self.user_id)
 
         task.add_done_callback(finished)
@@ -60,7 +75,7 @@ def release_account_runtime(user_id: int, connection_id: str) -> None:
 
 def release_unused_account_runtime(user_id: int) -> None:
     account = _ACCOUNTS.get(user_id)
-    if account is None or account.connection_leases or account.background_tasks:
+    if account is None or account.connection_leases or account.background_tasks or account.admission_tasks:
         return
     if any(runtime.busy for runtime in account.runtime_sessions.values()):
         return
@@ -76,12 +91,25 @@ async def _wait_turn_settlement(runtimes: list[RuntimeSession]) -> None:
             await asyncio.gather(*(asyncio.shield(task) for task in pending), return_exceptions=True)
 
 
+async def _wait_admissions(user_id: int | None = None) -> None:
+    while pending := [
+        task
+        for account in tuple(_ACCOUNTS.values())
+        if user_id is None or account.user_id == user_id
+        for task in account.admission_tasks
+        if not task.done() and task is not asyncio.current_task()
+    ]:
+        await asyncio.gather(*(asyncio.shield(task) for task in pending), return_exceptions=True)
+
+
 async def wait_user_turns(user_id: int) -> None:
+    await _wait_admissions(user_id)
     if (account := _ACCOUNTS.get(user_id)) is not None:
         await _wait_turn_settlement(list(account.runtime_sessions.values()))
 
 
 async def drain_account_turns() -> None:
+    await _wait_admissions()
     accounts = tuple(_ACCOUNTS.values())
     await _wait_turn_settlement([runtime for account in accounts for runtime in account.runtime_sessions.values()])
     pending = [

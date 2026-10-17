@@ -261,7 +261,7 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
 
   // 自备图（着装立绘）：有草稿时提示词/采纳都走草稿重绘语境，否则走创建语境。
   const fetchOutfitSelfSourcePrompt = async (): Promise<string> => {
-    const res = await requestResource('POST /api/companion/outfits/prompt', {
+    const res = await requestResource('companion.post_outfit_prompt', {
       body: session.draft
         ? { outfit_id: session.draft.id, feedback: text.trim() || undefined }
         : {
@@ -280,11 +280,11 @@ export function OutfitSection({ onSelectOutfit, onMaterialReady }: OutfitSection
     const selectedDraftId = $appearanceUi.get().draftId
 
     const res = session.draft
-      ? await requestResource('POST /api/companion/outfits/{outfit_id}/image', {
+      ? await requestResource('companion.post_outfit_regenerate', {
           path: { outfit_id: session.draft.id },
           body: { source: 'import', image: image.base64, content_type: image.contentType }
         })
-      : await requestResource('POST /api/companion/outfits', {
+      : await requestResource('companion.post_outfit', {
           body: {
             source: 'import',
             image: image.base64,

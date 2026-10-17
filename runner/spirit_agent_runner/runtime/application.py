@@ -12,6 +12,7 @@ from spirit_agent_runner.contracts.rpc import (
     RUNNER_CONTRACTS,
     CallCancelRequest,
     CallGetRequest,
+    CancelCallTarget,
     ConfigReplaceRequest,
     RpcError,
     ToolExecuteRequest,
@@ -61,7 +62,9 @@ class RunnerRuntime:
         if isinstance(request, ToolExecuteRequest):
             return await self.calls.execute(connection_id, req_id, request)
         if isinstance(request, CallCancelRequest):
-            return self.calls.cancel(connection_id, request.req_id)
+            if isinstance(request.root, CancelCallTarget):
+                return self.calls.cancel_call(request.root.call_id)
+            return self.calls.cancel(connection_id, request.root.req_id)
         if method == "tools.list":
             async with self.config_lock:
                 context = self.config.context()

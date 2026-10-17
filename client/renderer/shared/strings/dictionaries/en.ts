@@ -863,6 +863,7 @@ export const dict: Dictionary = {
       releaseToSendVoice: 'Release to send voice',
       pressToRecordVoice: 'Press and hold to record a voice message',
       stopGenerating: 'Stop generating',
+      stopPending: 'Stopping, awaiting confirmation',
       sendMessage: 'Send message',
       sendMessageShortcut: 'Send message (Enter)'
     },

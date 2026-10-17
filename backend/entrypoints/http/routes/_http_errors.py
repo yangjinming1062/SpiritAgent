@@ -6,12 +6,12 @@ logger = get_logger(__name__)
 
 
 def classified_request_error(classified: ClassifiedError) -> RequestError:
-    """保留上游 4xx；其他供应商失败统一映射 500。"""
+    """供应商身份失败属于上游故障，不改变本站登录身份。"""
     upstream = classified.status_code or 500
     return RequestError(
-        status_code=upstream if 400 <= upstream < 500 else 500,
+        status_code=502 if upstream in (401, 403) else upstream if 400 <= upstream < 500 else 502,
         message=classified.message or classified.reason.value,
-        code=classified.reason.value,
+        code=f"provider_{classified.reason.value}",
         details={"upstream_status": classified.status_code},
     )
 

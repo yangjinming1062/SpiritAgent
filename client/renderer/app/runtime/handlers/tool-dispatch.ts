@@ -3,12 +3,11 @@ import type { ConversationRuntime } from '@/modules/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { getStrings } from '@/shared/strings'
 
-import { decodePayload } from '../gateway-event-util'
-
-export function handleToolStart(event: GatewayEvent, runtime: ConversationRuntime): void {
-  const p = decodePayload<{ name?: string }>(event.payload)
-
-  runtime.setAssistantTool(p.name ?? getStrings().chat.tools.genericName)
+export function handleToolStart(
+  event: Extract<GatewayEvent, { type: 'tool.start' }>,
+  runtime: ConversationRuntime
+): void {
+  runtime.setAssistantTool(event.payload.name ?? getStrings().chat.tools.genericName)
   syncConversationActivity()
 }
 

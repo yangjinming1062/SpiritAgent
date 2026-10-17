@@ -38,7 +38,9 @@ export function TopicLink({
   )
 
   const load = useCallback(async () => {
-    const snapshots = await api.request<unknown>(`/api/companion/topics/feedback?topic_ids=${bubble.topic_id}`)
+    const snapshots = await api.invoke('companion_topics.read_feedback', {
+      query: { topic_ids: [bubble.topic_id] }
+    })
 
     if (!Array.isArray(snapshots)) {
       throw new Error('无法读取话题反馈')
@@ -74,8 +76,9 @@ export function TopicLink({
 
   const update = (value: TopicFeedbackValue): void => {
     void run(async () => {
-      const result = await api.request<unknown>(`/api/companion/topics/${bubble.topic_id}/feedback`, 'PUT', {
-        value: feedback?.value === value ? null : value
+      const result = await api.invoke('companion_topics.update_feedback', {
+        path: { topic_id: bubble.topic_id },
+        body: { value: feedback?.value === value ? null : value }
       })
 
       if (!isTopicFeedbackSnapshot(result) || result.topic_id !== bubble.topic_id) {

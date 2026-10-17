@@ -13,8 +13,8 @@ import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { NotificationStack } from '@/shared/components/notifications'
 import { initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
+import { createGatewayView } from '@/shared/lib/gateway-view'
 import { CaptureWindowIdContext, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
-import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { log } from '@/shared/lib/log'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { ConfirmHost } from '@/shared/panel'
@@ -64,7 +64,7 @@ export function bootstrapDesktop(RootComponent: React.ComponentType): void {
   document.documentElement.dataset.role = 'desktop'
   setSurfaceRole('desktop')
   initRenderer()
-  setPrimaryGateway(new IpcGatewayProxy())
+  setPrimaryGateway(createGatewayView())
   const offUpdate = installUpdateBridge()
 
   if (import.meta.hot) {

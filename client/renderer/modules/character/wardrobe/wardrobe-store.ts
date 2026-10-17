@@ -136,7 +136,7 @@ export async function hydrateWardrobe(): Promise<void> {
     await showOutfits(snapshot.get(), version, true)
   }
 
-  const result = await authedResource('GET /api/companion/outfits')
+  const result = await authedResource('companion.get_outfits')
 
   if (version !== revision || epoch !== currentClearEpoch()) {
     return
@@ -163,7 +163,7 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {
-    const result = await requestResource('PATCH /api/companion/outfits/policy', { body: { policy } })
+    const result = await requestResource('companion.patch_outfit_policy', { body: { policy } })
 
     if (epoch !== currentClearEpoch() || $auth.get().kind !== 'authenticated') {
       return false
@@ -182,11 +182,11 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
 }
 
 export async function deleteOutfit(outfitId: number): Promise<void> {
-  await requestResource('DELETE /api/companion/outfits/{outfit_id}', { path: { outfit_id: outfitId } })
+  await requestResource('companion.delete_outfit_route', { path: { outfit_id: outfitId } })
   await hydrateWardrobe()
 }
 
 export async function retryOutfitDescription(outfitId: number): Promise<void> {
-  await requestResource('POST /api/companion/outfits/{outfit_id}/description/retry', { path: { outfit_id: outfitId } })
+  await requestResource('companion.post_retry_outfit_description', { path: { outfit_id: outfitId } })
   await hydrateWardrobe()
 }

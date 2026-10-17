@@ -250,7 +250,7 @@ export function hydrateAvatarSeeds(): Promise<AvatarSeeds> {
       }
 
       const seqBeforeRequest = writeSeq
-      const res = await requestResource('GET /api/companion/avatar')
+      const res = await requestResource('companion.get_avatar')
 
       if (isStale(gen, currentClearEpoch())) {
         return $avatarSeeds.get()
@@ -312,7 +312,7 @@ export async function refreshAvatarSeeds(): Promise<void> {
   const epoch = currentClearEpoch()
   const seq = writeSeq
   const requestSeq = patchRequestSeq
-  const response = await requestResource('GET /api/companion/avatar')
+  const response = await requestResource('companion.get_avatar')
 
   if (isStale(gen, epoch) || writeSeq !== seq || patchRequestSeq !== requestSeq || !response?.id) {
     return

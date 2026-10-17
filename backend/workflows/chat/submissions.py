@@ -9,10 +9,10 @@ from uuid import UUID
 from features.companion.proactive_runtime import user_turn_activity
 from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.edit import EditNotAllowedError
-from features.conversation.gateway_queries import edit_message_input, replacement_reply_input, retry_message_text
 from features.conversation.replacement import ReplyReplacementNotAllowedError
 from features.conversation.request_contracts import ChatMessageRequest, ChatRequest
 from features.conversation.retry import ReplyRetryNotAllowedError
+from features.conversation.session_operations import edit_message_input, replacement_reply_input, retry_message_text
 from features.conversation.submissions import (
     SubmissionConflictError,
     find_submission,
@@ -22,24 +22,23 @@ from features.conversation.submissions import (
 )
 from features.conversation.turn_store import persist_extra_user_messages
 from infrastructure.config import SETTINGS
-from infrastructure.constants import JSONRPC_INVALID_PARAMS, JSONRPC_TURN_BUSY
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
+from infrastructure.request_errors import RequestError
+from runtime.business_actor import BusinessActor
 from runtime.conversation import ActiveTurnSnapshot, RuntimeSession
 from runtime.desktop.connection import UserEventPublisher
-from runtime.desktop.jsonrpc import JsonRpcError
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import interrupt_user_event_tasks
-from runtime.gateway_contracts import GatewaySession, RegisterMethod
 
-from workflows.chat.emitter import JsonRpcEmitter
-from workflows.chat.gateway_inputs import (
+from workflows.chat.emitter import ChatEventEmitter
+from workflows.chat.inputs import (
     _reject_read_only_session,
     _require_owned_conv,
     _require_str,
     _resolve_llm_config,
     _validate_attachments,
-    desktop_history_lock,
+    conversation_history_lock,
 )
 from workflows.chat.orchestrator import run_chat_turn
 
@@ -51,13 +50,12 @@ class PublishHistoryChange(Protocol):
 logger = get_logger(__name__)
 
 
-def register_submission_handler(
-    session: GatewaySession,
-    register: RegisterMethod,
-    require_runtime: Callable[[dict[str, Any]], RuntimeSession],
+def create_submission_handler(
+    actor: BusinessActor,
+    require_runtime: Callable[[dict[str, Any]], Awaitable[RuntimeSession]],
     publish_history_change: PublishHistoryChange,
-) -> None:
-    user_id = session.user_id
+) -> Callable[[dict[str, Any]], Awaitable[dict]]:
+    user_id = actor.user_id
     publisher = UserEventPublisher(user_id)
     _require_runtime = require_runtime
 
@@ -75,14 +73,14 @@ def register_submission_handler(
         if replace_reply_message_id is not None and any(
             key in params for key in ("text", "batch", "attachments", "edit_message_id", "retry_message_id")
         ):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "answer replacement reuses the original turn")
+            raise RequestError(422, "answer replacement reuses the original turn")
         if retry_message_id is not None and any(
             key in params for key in ("text", "batch", "attachments", "edit_message_id", "replace_reply_message_id")
         ):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "reply retries reuse the original message and attachments")
+            raise RequestError(422, "reply retries reuse the original message and attachments")
         if edit_message_id is not None and ("batch" in params or "attachments" in params):
-            raise JsonRpcError(
-                JSONRPC_INVALID_PARAMS,
+            raise RequestError(
+                422,
                 "message edits only accept text; original attachments are retained",
             )
 
@@ -93,14 +91,14 @@ def register_submission_handler(
             try:
                 replacement = await replacement_reply_input(user_id, runtime.session_id, replace_reply_message_id)
             except ReplyReplacementNotAllowedError as exc:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+                raise RequestError(422, str(exc)) from exc
             text = replacement.text
             attachments = []
         elif retry_message_id is not None:
             try:
                 text = await retry_message_text(user_id, runtime.session_id, retry_message_id)
             except ReplyRetryNotAllowedError as exc:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+                raise RequestError(422, str(exc)) from exc
             attachments = []
         elif batch is not None:
             validated_batch = []
@@ -110,8 +108,8 @@ def register_submission_handler(
                 validated_batch.append({"text": t, "attachments": att})
             # 整批合为一个回合，附件上限按全批合计。
             if sum(len(item["attachments"] or ()) for item in validated_batch) > SETTINGS.max_attachments_per_turn:
-                raise JsonRpcError(
-                    JSONRPC_INVALID_PARAMS,
+                raise RequestError(
+                    422,
                     f"too many attachments (max {SETTINGS.max_attachments_per_turn})",
                 )
 
@@ -138,12 +136,12 @@ def register_submission_handler(
 
         snapshot = ActiveTurnSnapshot(
             request_id=params["request_id"],
-            origin_kind=session.origin_kind,
+            origin_kind=actor.origin_kind,
             replace_reply_message_id=replace_reply_message_id,
         )
 
-        emitter = JsonRpcEmitter(
-            dispatcher=publisher,
+        emitter = ChatEventEmitter(
+            publisher=publisher,
             session_id=runtime.session_id,
             active_turn=snapshot,
             snapshot_lock=runtime.snapshot_lock,
@@ -161,7 +159,7 @@ def register_submission_handler(
                     text,
                 )
             except EditNotAllowedError as exc:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+                raise RequestError(422, str(exc)) from exc
         persisted_message_id = await persist_submission_input(
             user_id,
             runtime.conversation_id,
@@ -187,7 +185,7 @@ def register_submission_handler(
             )
         # 输入持久化后刷新列表，不等待回复生成。
         await publisher.push_event("session.list_changed", {"session_id": runtime.session_id})
-        client_context = session.session_client_context
+        client_context = actor.client_context
         runtime.active_turn = snapshot
         runtime.cancel_requested = False
         started = False
@@ -249,8 +247,8 @@ def register_submission_handler(
                     user_id,
                     emitter,
                     session_client_context=client_context,
-                    desktop_interaction=session.origin_kind == "desktop",
-                    track_task=session.account.track,
+                    desktop_interaction=actor.origin_kind == "desktop",
+                    track_task=actor.account.track,
                     session_settings=runtime.settings,
                     persisted_message_id=persisted_message_id,
                     final_reply_only=retry_message_id is not None or replacement is not None,
@@ -268,7 +266,7 @@ def register_submission_handler(
             except Exception:
                 status = "failed"
                 error = "本次回复未能完成，请稍后重试。"
-                logger.exception("prompt.submit chat turn failed", extra={"user_id": user_id})
+                logger.exception("chat turn failed", extra={"user_id": user_id})
                 await emitter.send_json(
                     {
                         "type": "error",
@@ -290,24 +288,26 @@ def register_submission_handler(
                         None if runtime.cancel_requested else "任务已中断，请核对已执行的操作后再继续。",
                     ),
                 )
-                session.account.track(runtime.settlement_task)
+                actor.account.track(runtime.settlement_task)
                 runtime.settlement_task.add_done_callback(lambda _done: turn_activity.close())
             else:
                 turn_activity.close()
 
         runtime.chat_task.add_done_callback(finished)
-        session.account.track(runtime.chat_task)
-        return {"queued": True, "request_id": params["request_id"], "status": "accepted"}
+        actor.account.track(runtime.chat_task)
+        return {
+            "queued": True,
+            "request_id": params["request_id"],
+            "status": "accepted",
+            "message_ids": snapshot.message_ids,
+            "messages": snapshot.messages,
+            "replace_reply_message_id": replace_reply_message_id,
+        }
 
-    async def prompt_submit(params: dict) -> dict:
-        runtime = _require_runtime(params)
+    async def admit_prompt(params: dict) -> dict:
+        runtime = await _require_runtime(params)
         _reject_read_only_session(runtime)
-        raw_id = params["request_id"]
-        try:
-            request_id = str(UUID(raw_id))
-        except ValueError as exc:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "request_id must be a UUID") from exc
-        params = {**params, "session_id": runtime.session_id, "request_id": request_id}
+        request_id = params["request_id"]
         fingerprint = hashlib.sha256(
             json.dumps(
                 {key: value for key, value in params.items() if key != "request_id"},
@@ -322,11 +322,12 @@ def register_submission_handler(
             with contextlib.ExitStack() as admission:
                 admission.enter_context(user_turn_activity(user_id, enabled=True))
                 await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
-                async with desktop_history_lock(runtime.session_id):
+                async with conversation_history_lock(runtime.session_id):
                     if runtime.busy:
-                        raise JsonRpcError(
-                            JSONRPC_TURN_BUSY,
+                        raise RequestError(
+                            409,
                             "当前会话有正在生成的回复，请稍后再试",
+                            code="turn_busy",
                         )
                     await _require_owned_conv(user_id, runtime.session_id)
                     replace_reply_message_id = params.get("replace_reply_message_id")
@@ -335,8 +336,8 @@ def register_submission_handler(
                         runtime.conversation_id,
                         request_id,
                         fingerprint,
-                        session.origin_kind,
-                        session.origin_id,
+                        actor.origin_kind,
+                        actor.origin_id,
                         replace_reply_message_id=replace_reply_message_id,
                     )
                     if not created:
@@ -354,6 +355,20 @@ def register_submission_handler(
                         )
                         raise
         except SubmissionConflictError as exc:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+            raise RequestError(422, str(exc)) from exc
 
-    register("prompt.submit", prompt_submit)
+    async def prompt_submit(params: dict) -> dict:
+        try:
+            session_id = str(int(params["session_id"]))
+        except (TypeError, ValueError) as exc:
+            raise RequestError(404, "会话不存在") from exc
+        try:
+            request_id = str(UUID(params["request_id"]))
+        except (TypeError, ValueError) as exc:
+            raise RequestError(422, "request_id must be a UUID") from exc
+        params = {**params, "session_id": session_id, "request_id": request_id}
+        admission = asyncio.create_task(admit_prompt(params))
+        actor.account.track_admission(admission, session_id, request_id)
+        return await asyncio.shield(admission)
+
+    return prompt_submit

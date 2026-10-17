@@ -5,12 +5,10 @@ import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch, persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
-import { backendApi } from '@/shared/platform/desktop'
-import { $gateway, type SpiritAgentGatewayLike } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
-import type { SessionInfo, SessionResumeResponse, SystemPresetSummary, UndoResponse } from '@protocol'
+import type { SessionInfo, SessionSnapshot, SystemPresetSummary, UndoResponse } from '@protocol'
 import { errorMessage } from '@runtime'
 
 import type { ConversationRuntime } from './chat-runtime'
@@ -68,7 +66,7 @@ let sessionsToken = 0
 let archivedToken = 0
 let searchToken = 0
 let presetsToken = 0
-let presetsLoad: { gateway: SpiritAgentGatewayLike; epoch: number; promise: Promise<void> } | null = null
+let presetsLoad: { epoch: number; promise: Promise<void> } | null = null
 // 会话跳转（切换、打开主对话、新建、派生）共用：只有最后发起的跳转可以改写当前会话视图。
 let navigationToken = 0
 
@@ -138,9 +136,7 @@ export async function fetchSessions(): Promise<void> {
   $sessionsError.set(null)
 
   try {
-    const res = await backendApi().api<{ sessions: SessionInfo[] }>({
-      path: `/api/sessions?order=${$sessionSort.get()}`
-    })
+    const res = await requestResource('sessions.list_sessions', { query: { order: $sessionSort.get() } })
 
     if (token === sessionsToken) {
       const sessions = res.sessions || []
@@ -172,9 +168,7 @@ export async function fetchArchived(): Promise<void> {
   $archivedLoading.set(true)
 
   try {
-    const res = await backendApi().api<{ sessions: SessionInfo[] }>({
-      path: '/api/sessions?archived=only&limit=100'
-    })
+    const res = await requestResource('sessions.list_sessions', { query: { archived: 'only', limit: 100 } })
 
     if (token === archivedToken) {
       $archivedSessions.set(res.sessions || [])
@@ -203,9 +197,7 @@ export async function runSessionSearch(query: string): Promise<void> {
   $searchLoading.set(true)
 
   try {
-    const res = await backendApi().api<{ sessions: SessionInfo[] }>({
-      path: `/api/sessions?q=${encodeURIComponent(q)}&archived=include`
-    })
+    const res = await requestResource('sessions.list_sessions', { query: { q, archived: 'include' } })
 
     if (token === searchToken) {
       $searchResults.set(res.sessions || [])
@@ -222,7 +214,7 @@ export async function runSessionSearch(query: string): Promise<void> {
 type SessionPatchBody = { archived?: boolean; pinned?: boolean; title?: string }
 
 async function patchSessionOrThrow(sessionId: string, body: SessionPatchBody): Promise<void> {
-  await backendApi().api({ body, method: 'PATCH', path: `/api/sessions/${sessionId}` })
+  await requestResource('sessions.patch_session', { path: { session_id: sessionId }, body })
 }
 
 async function patchSession(sessionId: string, body: SessionPatchBody): Promise<boolean> {
@@ -368,27 +360,27 @@ export function onSessionListChanged(payload: { session_id?: string; deleted?: b
 
 export async function createNewSession(systemPresetId: string): Promise<string | null> {
   const epoch = currentClearEpoch()
-  const gw = $gateway.get()
+  const authCurrent = captureAuthScope()
 
-  if (!gw) {
+  if (!authCurrent) {
     return null
   }
 
   const token = ++navigationToken
 
   const isCurrentNavigation = (): boolean =>
-    token === navigationToken && epoch === currentClearEpoch() && $gateway.get() === gw
+    token === navigationToken && epoch === currentClearEpoch() && Boolean(authCurrent?.())
 
   try {
-    const res = await requestResource('POST /api/sessions', { body: { system_preset_id: systemPresetId } })
+    const res = await requestResource('sessions.create_session', { body: { system_preset_id: systemPresetId } })
 
-    if (epoch !== currentClearEpoch() || $gateway.get() !== gw) {
+    if (epoch !== currentClearEpoch() || !authCurrent?.()) {
       return null
     }
 
     if (token === navigationToken) {
       const runtime = getConversationRuntime(res.session_id)
-      const snapshot = await gw.request('session.resume', { session_id: res.session_id })
+      const snapshot = await requestResource('sessions.snapshot', { path: { session_id: res.session_id } })
 
       if (!isCurrentNavigation()) {
         return null
@@ -410,23 +402,23 @@ export async function createNewSession(systemPresetId: string): Promise<string |
 
 /** 拉取系统预设元数据；同网关共用在途请求，已拉取过则跳过。 */
 export function fetchSystemPresets(): Promise<void> {
-  const gw = $gateway.get()
+  const authCurrent = captureAuthScope()
   const epoch = currentClearEpoch()
 
-  if (!gw || $systemPresetsFetched.get()) {
+  if (!authCurrent || $systemPresetsFetched.get()) {
     return Promise.resolve()
   }
 
-  if (presetsLoad?.gateway === gw && presetsLoad.epoch === epoch) {
+  if (presetsLoad?.epoch === epoch) {
     return presetsLoad.promise
   }
 
   const token = ++presetsToken
-  const isCurrent = (): boolean => token === presetsToken && epoch === currentClearEpoch() && $gateway.get() === gw
+  const isCurrent = (): boolean => token === presetsToken && epoch === currentClearEpoch() && Boolean(authCurrent?.())
   $systemPresetsLoading.set(true)
 
   const load = Promise.resolve()
-    .then(() => requestResource('GET /api/presets'))
+    .then(() => requestResource('resource_catalog.get_presets'))
     .then(res => {
       if (isCurrent()) {
         $systemPresets.set(res.presets || [])
@@ -448,13 +440,13 @@ export function fetchSystemPresets(): Promise<void> {
       }
     })
 
-  presetsLoad = { gateway: gw, epoch, promise: load }
+  presetsLoad = { epoch, promise: load }
 
   return load
 }
 
 // 派生资源不返回列表条目，先按派生规则用源会话信息补齐；列表刷新后以服务端条目为准，标题带副本后缀。
-function forkSessionInfo(sourceSessionId: string, res: SessionResumeResponse): SessionInfo {
+function forkSessionInfo(sourceSessionId: string, res: SessionSnapshot): SessionInfo {
   const source = findSessionInfo(sourceSessionId)
   const now = Date.now()
 
@@ -479,17 +471,17 @@ function forkSessionInfo(sourceSessionId: string, res: SessionResumeResponse): S
 /** 从源会话某条消息派生新会话并挂载 hydrate；发起后已换号或换网关返回 null，请求失败向上抛出。 */
 export async function forkConversation(sourceSessionId: string, sourceMessageId: number): Promise<string | null> {
   const epoch = currentClearEpoch()
-  const gw = $gateway.get()
+  const authCurrent = captureAuthScope()
 
-  if (!gw) {
+  if (!authCurrent) {
     throw new Error(getStrings().chat.fork.internalError)
   }
 
   const token = ++navigationToken
-  const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
+  const isCurrent = (): boolean => epoch === currentClearEpoch() && Boolean(authCurrent?.())
 
   try {
-    const created = await requestResource('POST /api/sessions/{session_id}/forks', {
+    const created = await requestResource('sessions.fork_session', {
       path: { session_id: sourceSessionId },
       body: { source_message_id: sourceMessageId }
     })
@@ -498,23 +490,18 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
       return null
     }
 
-    const res = await gw.request('session.resume', { session_id: created.session_id })
+    const res = await requestResource('sessions.snapshot', { path: { session_id: created.session_id } })
 
     if (!isCurrent()) {
       return null
     }
 
-    rememberFullHistory(res.session_id, res.messages || [], {
-      currentSeq: res.current_seq,
-      info: res.info,
-      nextCursor: res.next_cursor,
-      truncated: res.truncated
-    })
+    rememberFullHistory(res.session_id, res.messages, { info: res.info })
     // 先补入本地条目，派生对话立即显示来源标题；随后刷新列表对齐服务端。
     $sessions.set([forkSessionInfo(sourceSessionId, res), ...$sessions.get()])
 
     if (token === navigationToken) {
-      getConversationRuntime(res.session_id).hydrateChatMessages(res.messages || [], res.info)
+      getConversationRuntime(res.session_id).applyRemoteSnapshot(res)
       setChatSession(res.session_id)
     }
 
@@ -535,19 +522,18 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
 /** 撤回消息：同会话内硬删除 Message.id >= source_message_id 的全部行（含锚点），锚点载荷落回输入框作草稿；发起后已换号或换网关返回 null，请求失败向上抛出。 */
 export async function undoToMessage(sessionId: string, sourceMessageId: number): Promise<UndoResponse | null> {
   const epoch = currentClearEpoch()
-  const gw = $gateway.get()
+  const authCurrent = captureAuthScope()
 
-  if (!gw) {
+  if (!authCurrent) {
     throw new Error(getStrings().chat.undo.internalError)
   }
 
-  const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
+  const isCurrent = (): boolean => epoch === currentClearEpoch() && Boolean(authCurrent?.())
 
   try {
-    const res = await gw.request('session.undo_to_message', {
-      session_id: sessionId,
-      source_message_id: sourceMessageId,
-      confirmed: true
+    const res = await requestResource('sessions.undo', {
+      path: { session_id: sessionId },
+      body: { source_message_id: sourceMessageId, confirmed: true }
     })
 
     if (!isCurrent()) {
@@ -594,19 +580,18 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
 }
 
 let companionLoad: Promise<string | null> | null = null
-let companionLoadGateway: SpiritAgentGatewayLike | null = null
 let companionLoadEpoch = -1
 
 // 固定轻语只水合陪伴runtime，不参与主对话的navigationToken。
 export async function ensureCompanionSession(): Promise<string | null> {
-  const gateway = $gateway.get()
+  const authCurrent = captureAuthScope()
   const epoch = currentClearEpoch()
 
-  if (!gateway) {
+  if (!authCurrent) {
     return null
   }
 
-  if (companionLoad && companionLoadGateway === gateway && companionLoadEpoch === epoch) {
+  if (companionLoad && companionLoadEpoch === epoch) {
     return companionLoad
   }
 
@@ -615,9 +600,9 @@ export async function ensureCompanionSession(): Promise<string | null> {
       const knownId = $companionSessionId.get()
       const knownRuntime = knownId ? findConversationRuntime(knownId) : undefined
       const snapshot = knownRuntime?.captureHistorySync()
-      const result = await resumeMainSession(gateway)
+      const result = await resumeMainSession()
 
-      if (epoch !== currentClearEpoch() || $gateway.get() !== gateway) {
+      if (epoch !== currentClearEpoch() || !authCurrent?.()) {
         return null
       }
 
@@ -628,12 +613,7 @@ export async function ensureCompanionSession(): Promise<string | null> {
 
       if (accepted) {
         void runtime.recoverUnconfirmedSubmission()
-        rememberFullHistory(result.session_id, result.messages || [], {
-          currentSeq: result.current_seq,
-          info: result.info,
-          nextCursor: result.next_cursor,
-          truncated: result.truncated
-        })
+        rememberFullHistory(result.session_id, result.messages, { info: result.info })
       }
 
       return result.session_id
@@ -647,7 +627,6 @@ export async function ensureCompanionSession(): Promise<string | null> {
   })()
 
   companionLoad = load
-  companionLoadGateway = gateway
   companionLoadEpoch = epoch
 
   try {
@@ -655,14 +634,13 @@ export async function ensureCompanionSession(): Promise<string | null> {
   } finally {
     if (companionLoad === load) {
       companionLoad = null
-      companionLoadGateway = null
       companionLoadEpoch = -1
     }
   }
 }
 
 // 挂载服务端快照：快照已挂上同一会话时不再重置，保留展示快照期间入列的待发消息；回合状态以服务端 running 为准。
-function mountSyncedSession(result: SessionResumeResponse, historySync?: ConversationHistorySync): boolean {
+function mountSyncedSession(result: SessionSnapshot, historySync?: ConversationHistorySync): boolean {
   if ($chatSessionId.get() !== result.session_id) {
     setChatSession(result.session_id)
   }
@@ -678,16 +656,19 @@ function mountSyncedSession(result: SessionResumeResponse, historySync?: Convers
 }
 
 export async function switchSession(sessionId: string): Promise<void> {
-  const gw = $gateway.get()
+  const authCurrent = captureAuthScope()
 
-  if (!gw) {
+  if (!authCurrent) {
     return
   }
 
   const token = ++navigationToken
   const epoch = currentClearEpoch()
   $sessionNavigationError.set(null)
-  const isCurrent = (): boolean => token === navigationToken && epoch === currentClearEpoch() && $gateway.get() === gw
+
+  const isCurrent = (): boolean =>
+    token === navigationToken && epoch === currentClearEpoch() && Boolean(authCurrent?.())
+
   const runtime = getConversationRuntime(sessionId)
   const release = retainConversationRuntime(runtime)
   const localSnapshot = runtime.captureHistorySync()
@@ -710,10 +691,10 @@ export async function switchSession(sessionId: string): Promise<void> {
 
     const synced = await syncSessionHistory({
       sessionId,
-      request: body => gw.request('session.resume', { session_id: sessionId, ...body })
+      request: () => requestResource('sessions.snapshot', { path: { session_id: sessionId } })
     })
 
-    // 快速 A→B 切换时丢弃过期响应，避免旧会话写回覆盖新会话；未传活水位 last_seq，服务端只走增量或全量。
+    // 快速 A→B 切换时丢弃过期响应，避免旧会话写回覆盖新会话。
     if (!isCurrent()) {
       return
     }
@@ -737,13 +718,12 @@ export async function restoreConversationSelection(sessionId: string): Promise<v
     throw new Error('Conversation restore requires an authenticated account')
   }
 
-  const gateway = $gateway.get()
   const token = ++navigationToken
   const runtime = getConversationRuntime(sessionId)
   const release = retainConversationRuntime(runtime)
 
   const ownerCurrent = (): boolean =>
-    authCurrent() && token === navigationToken && $gateway.get() === gateway && runtime.isCurrent()
+    authCurrent() && token === navigationToken && Boolean(authCurrent?.()) && runtime.isCurrent()
 
   const assertCurrent = (): void => {
     if (!ownerCurrent()) {
@@ -764,13 +744,13 @@ export async function restoreConversationSelection(sessionId: string): Promise<v
 
     setChatSession(sessionId)
 
-    if (gateway?.connectionState === 'open') {
+    if (authCurrent()) {
       const snapshot = runtime.captureHistorySync()
 
       try {
         const synced = await syncSessionHistory({
           sessionId,
-          request: body => gateway.request('session.resume', { session_id: sessionId, ...body })
+          request: () => requestResource('sessions.snapshot', { path: { session_id: sessionId } })
         })
 
         assertCurrent()
@@ -804,24 +784,23 @@ export async function restoreConversationSelection(sessionId: string): Promise<v
 
 let openMainPromise: Promise<string | null> | null = null
 let openMainToken = 0
-let openMainGateway: SpiritAgentGatewayLike | null = null
 let openMainEpoch = -1
 
 // 挂载主会话并加载其对话流。被更晚的会话跳转取代后仍完成挂载与缓存，但不再改写当前视图。
-export async function openMainSession(onMounted?: (res: SessionResumeResponse) => void): Promise<string | null> {
-  const gw = $gateway.get()
+export async function openMainSession(onMounted?: (res: SessionSnapshot) => void): Promise<string | null> {
+  const authCurrent = captureAuthScope()
   const epoch = currentClearEpoch()
 
-  if (!gw) {
+  if (!authCurrent) {
     return null
   }
 
-  if (openMainPromise && openMainToken === navigationToken && openMainGateway === gw && openMainEpoch === epoch) {
+  if (openMainPromise && openMainToken === navigationToken && openMainEpoch === epoch) {
     return openMainPromise
   }
 
   const token = ++navigationToken
-  const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
+  const isCurrent = (): boolean => epoch === currentClearEpoch() && Boolean(authCurrent?.())
   const isLatest = (): boolean => token === navigationToken
   $sessionNavigationError.set(null)
 
@@ -854,7 +833,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
             const synced = await syncSessionHistory({
               sessionId: knownCompanionId,
-              request: body => gw.request('session.resume', { session_id: knownCompanionId, ...body })
+              request: () => requestResource('sessions.snapshot', { path: { session_id: knownCompanionId } })
             })
 
             if (!isCurrent()) {
@@ -889,7 +868,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
         conversationRuntimes().map(runtime => [runtime.$chatSessionId.get(), runtime.captureHistorySync()])
       )
 
-      const res = await resumeMainSession(gw)
+      const res = await resumeMainSession()
 
       if (!isCurrent()) {
         return null
@@ -905,12 +884,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
       if (accepted) {
         void runtime.recoverUnconfirmedSubmission()
-        rememberFullHistory(res.session_id, res.messages || [], {
-          currentSeq: res.current_seq,
-          info: res.info,
-          nextCursor: res.next_cursor,
-          truncated: res.truncated
-        })
+        rememberFullHistory(res.session_id, res.messages, { info: res.info })
       }
 
       onMounted?.(res)
@@ -930,7 +904,6 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
   })()
 
   openMainPromise = load
-  openMainGateway = gw
   openMainEpoch = epoch
   openMainToken = token
 
@@ -939,7 +912,6 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
   } finally {
     if (openMainPromise === load) {
       openMainPromise = null
-      openMainGateway = null
       openMainEpoch = -1
     }
   }
@@ -953,10 +925,8 @@ registerStorageClearHandler(() => {
   presetsLoad = null
   navigationToken++
   openMainPromise = null
-  openMainGateway = null
   openMainEpoch = -1
   companionLoad = null
-  companionLoadGateway = null
   companionLoadEpoch = -1
   $sessions.set([])
   $sessionsLoading.set(false)
@@ -978,7 +948,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {
-    await backendApi().api({ method: 'DELETE', path: `/api/sessions/${sessionId}` })
+    await requestResource('sessions.delete_session', { path: { session_id: sessionId } })
   } catch (err) {
     log.error('session-list', 'Failed to delete session:', err)
 
@@ -1016,13 +986,14 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   return true
 }
 
-async function resumeMainSession(gateway: SpiritAgentGatewayLike): Promise<SessionResumeResponse> {
+async function resumeMainSession(): Promise<SessionSnapshot> {
   const epoch = currentClearEpoch()
-  const resource = await requestResource('GET /api/sessions/main')
+  const authCurrent = captureAuthScope()
+  const resource = await requestResource('sessions.get_main_session')
 
-  if (epoch !== currentClearEpoch() || $gateway.get() !== gateway) {
+  if (epoch !== currentClearEpoch() || !authCurrent?.()) {
     throw new Error('Account changed')
   }
 
-  return gateway.request('session.resume', { session_id: resource.session_id })
+  return requestResource('sessions.snapshot', { path: { session_id: resource.session_id } })
 }

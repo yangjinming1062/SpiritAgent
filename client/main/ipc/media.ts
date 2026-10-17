@@ -17,12 +17,12 @@ import {
 } from '@ipc/contracts'
 import { errorMessage, sleep } from '@runtime'
 
+import { type ApiTransport, createHttpClient } from '../../../shared/api'
 import { speechText } from '../../shared/speech-text'
 import { readUserSelectedFile } from '../security/hardening'
 import type { BackendConnection } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
 import { dataUrlFromBuffer, mimeTypeForPath, parseDataUrl } from '../shared/mime'
-import { httpErrorFromResponse } from '../shared/utils'
 
 import { registerApiResult } from './api-result'
 import { createBackendCaller, type GetCurrentAuth } from './connection'
@@ -147,33 +147,12 @@ class BoundedTtsQueue {
   }
 }
 
-async function postBackend({
-  body,
-  fetchImpl = globalThis.fetch,
-  headers,
-  timeoutMs,
-  token,
-  url
-}: {
-  body: FormData | string
-  fetchImpl?: typeof globalThis.fetch
-  headers?: Record<string, string>
-  timeoutMs: number
-  token: null | string
-  url: string
-}): Promise<{ body: Buffer; headers: Headers }> {
-  const res = await fetchImpl(url, {
-    body,
-    headers: { ...headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    method: 'POST',
-    signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined
+function createMediaHttp(connection: BackendConnection, fetchImpl = globalThis.fetch): ApiTransport {
+  return createHttpClient({
+    fetch: fetchImpl,
+    baseUrl: connection.baseUrl,
+    headers: () => new Headers(connection.token ? { Authorization: `Bearer ${connection.token}` } : undefined)
   })
-
-  if (!res.ok) {
-    throw await httpErrorFromResponse(res, new URL(url).pathname)
-  }
-
-  return { body: Buffer.from(await res.arrayBuffer()), headers: res.headers }
 }
 
 function formatKv(
@@ -222,18 +201,14 @@ async function sttViaBackend({
 
   form.append('audio_file', blob, actualFilename)
 
-  const qs = language ? `?language=${encodeURIComponent(language)}` : ''
-  const url = `${connection.baseUrl}/api/media/stt${qs}`
-
-  const { body } = await postBackend({
-    body: form,
-    fetchImpl,
-    timeoutMs: 0,
-    token: connection.token,
-    url
-  })
-
-  const parsed = JSON.parse(body.toString('utf8')) as { text?: string }
+  const parsed = await createMediaHttp(connection, fetchImpl).invoke(
+    'media.speech_to_text',
+    {
+      body: form,
+      query: language ? { language } : {}
+    },
+    { timeoutMs: 0 }
+  )
 
   if (typeof parsed?.text !== 'string') {
     throw new Error('Backend STT returned no text')
@@ -255,29 +230,27 @@ async function ttsViaBackend({
   text: string
   voice?: string
 }): Promise<{ buffer: Buffer; mimeType: string; voiceOut?: string }> {
-  const payload: Record<string, unknown> = { text }
+  let mimeType = 'audio/mpeg'
+  let voiceOut: string | undefined
 
-  if (voice) {
-    payload.voice = voice
-  }
-
-  if (language) {
-    payload.language = language
-  }
-
-  const { body, headers } = await postBackend({
-    body: JSON.stringify(payload),
-    fetchImpl,
-    headers: { 'Content-Type': 'application/json' },
-    timeoutMs: 0,
-    token: connection.token,
-    url: `${connection.baseUrl}/api/media/tts`
-  })
+  const bytes = await createMediaHttp(connection, fetchImpl).invoke(
+    'media.text_to_speech',
+    {
+      body: { text, ...(voice ? { voice } : {}), ...(language ? { language } : {}) }
+    },
+    {
+      timeoutMs: 0,
+      onResponse: response => {
+        mimeType = response.headers.get('content-type') || 'audio/mpeg'
+        voiceOut = response.headers.get('x-voice-used') || undefined
+      }
+    }
+  )
 
   return {
-    buffer: body,
-    mimeType: headers.get('content-type') || 'audio/mpeg',
-    voiceOut: headers.get('x-voice-used') || undefined
+    buffer: Buffer.from(bytes),
+    mimeType,
+    voiceOut
   }
 }
 
@@ -368,21 +341,19 @@ export function registerMediaIpc({
       form.append('file', new Blob([data], { type: mime }), path.basename(payload.filename))
       form.append('session_id', payload.sessionId)
 
-      const { body } = await callBackend(event.sender, connection => {
+      const parsed = await callBackend(event.sender, connection => {
         assertUploadAccount(authSessionId)
 
-        return postBackend({
-          body: form,
-          fetchImpl,
-          timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
-          token: connection.token,
-          url: `${connection.baseUrl}/api/media/audios`
-        })
+        return createMediaHttp(connection, fetchImpl).invoke(
+          'media.upload_chat_audio',
+          {
+            body: form
+          },
+          { timeoutMs: ATTACH_VIDEO_TIMEOUT_MS }
+        )
       })
 
       assertUploadAccount(authSessionId)
-
-      const parsed: unknown = JSON.parse(body.toString('utf8'))
 
       if (
         !parsed ||
@@ -428,21 +399,19 @@ export function registerMediaIpc({
       const form = new FormData()
       form.append('file', new Blob([data], { type: mime }), path.basename(payload.filename))
 
-      const { body } = await callBackend(event.sender, connection => {
+      const parsed = await callBackend(event.sender, connection => {
         assertUploadAccount(authSessionId)
 
-        return postBackend({
-          body: form,
-          fetchImpl,
-          timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
-          token: connection.token,
-          url: `${connection.baseUrl}/api/media/voice-samples`
-        })
+        return createMediaHttp(connection, fetchImpl).invoke(
+          'media.upload_voice_reference',
+          {
+            body: form
+          },
+          { timeoutMs: ATTACH_VIDEO_TIMEOUT_MS }
+        )
       })
 
       assertUploadAccount(authSessionId)
-
-      const parsed: unknown = JSON.parse(body.toString('utf8'))
 
       if (
         !parsed ||
@@ -692,23 +661,19 @@ export function registerMediaIpc({
       form.append('file', blob, path.basename(resolvedPath))
       form.append('session_id', payload.sessionId)
 
-      const { body } = await callBackend(event.sender, connection => {
+      const parsed = await callBackend(event.sender, connection => {
         assertUploadAccount(authSessionId)
 
-        return postBackend({
-          body: form,
-          fetchImpl,
-          timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
-          token: connection.token,
-          url: `${connection.baseUrl}/api/media/videos`
-        })
+        return createMediaHttp(connection, fetchImpl).invoke(
+          'media.upload_chat_video',
+          {
+            body: form
+          },
+          { timeoutMs: ATTACH_VIDEO_TIMEOUT_MS }
+        )
       })
 
       assertUploadAccount(authSessionId)
-
-      const parsed = JSON.parse(body.toString('utf8')) as {
-        url?: string
-      }
 
       if (typeof parsed?.url !== 'string' || !parsed.url) {
         throw new Error('Backend video upload returned no url')
@@ -775,28 +740,20 @@ export function registerMediaIpc({
         throw new Error('Authentication changed during desktop video upload')
       }
 
-      const { body } = await callBackend(event.sender, connection => {
+      const response = await callBackend(event.sender, connection => {
         assertUploadAccount(authSessionId)
 
-        return postBackend({
-          body: form,
-          fetchImpl,
-          timeoutMs: DESKTOP_VIDEO_UPLOAD_TIMEOUT_MS,
-          token: connection.token,
-          url: `${connection.baseUrl}/api/companion/desktop-videos/actions/${payload.actionId}/${payload.mediaKind === 'image' ? 'image-upload' : 'upload'}`
-        })
+        const client = createMediaHttp(connection, fetchImpl)
+        const input = { path: { action_id: payload.actionId }, body: form }
+        const options = { timeoutMs: DESKTOP_VIDEO_UPLOAD_TIMEOUT_MS }
+
+        return payload.mediaKind === 'image'
+          ? client.invoke('companion_desktop_videos.upload_image', input, options)
+          : client.invoke('companion_desktop_videos.upload_action', input, options)
       })
 
       if (getCurrentAuth()?.sessionId !== authSessionId) {
         throw new Error('Authentication changed during desktop video upload')
-      }
-
-      let response: unknown
-
-      try {
-        response = JSON.parse(body.toString('utf8'))
-      } catch {
-        throw new Error('Backend desktop video upload returned invalid JSON')
       }
 
       return { response }

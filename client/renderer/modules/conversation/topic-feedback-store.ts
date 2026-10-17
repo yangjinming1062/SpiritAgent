@@ -1,6 +1,7 @@
 import { map } from 'nanostores'
 
-import { apiSucceeded, authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { apiSucceeded, captureAuthScope } from '@/shared/lib/authed-api'
+import { authedResource } from '@/shared/lib/resource-request'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import {
   isTopicFeedbackSnapshot,
@@ -39,7 +40,7 @@ export function loadTopicFeedback(topicId: number): Promise<void> {
   }
 
   const request = (async () => {
-    const result = await authedApi<unknown>({ path: `/api/companion/topics/feedback?topic_ids=${topicId}` })
+    const result = await authedResource('companion_topics.read_feedback', { query: { topic_ids: [topicId] } })
 
     if (!isCurrent()) {
       return
@@ -77,9 +78,8 @@ export async function setTopicFeedback(topicId: number, value: TopicFeedbackValu
   $topicFeedbackSaving.setKey(topicId, true)
 
   try {
-    const result = await authedApi<unknown>({
-      path: `/api/companion/topics/${topicId}/feedback`,
-      method: 'PUT',
+    const result = await authedResource('companion_topics.update_feedback', {
+      path: { topic_id: topicId },
       body: { value }
     })
 

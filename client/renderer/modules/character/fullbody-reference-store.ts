@@ -192,7 +192,7 @@ function updateReference(
       }
 
       const response = generate
-        ? await requestResource('POST /api/companion/avatar/{avatar_id}/fullbody/reference', {
+        ? await requestResource('companion.post_fullbody_reference', {
             path: { avatar_id: avatarId },
             body: {
               feedback: feedback.trim() || undefined,
@@ -201,7 +201,7 @@ function updateReference(
               ...(mode !== 'edit' && reference ? { image: reference.base64, content_type: reference.contentType } : {})
             }
           })
-        : await requestResource('GET /api/companion/avatar')
+        : await requestResource('companion.get_avatar')
 
       if (!isCurrent()) {
         return false
@@ -217,7 +217,7 @@ function updateReference(
         ? 'avatar_id' in response
           ? response
           : null
-        : await requestResource('GET /api/companion/avatar/{avatar_id}/fullbody/candidate', {
+        : await requestResource('companion.get_fullbody_candidate', {
             path: { avatar_id: avatarId }
           })
 
@@ -318,7 +318,7 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
   $fullbodyReference.set({ ...current, busy: true, error: null, errorMessage: null })
 
   try {
-    const response = await requestResource('POST /api/companion/avatar/{avatar_id}/fullbody/reference/adopt', {
+    const response = await requestResource('companion.post_fullbody_adopt', {
       path: { avatar_id: avatarId },
       body: { image: image.base64, content_type: image.contentType }
     })
@@ -426,10 +426,9 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
   $fullbodyReference.set({ ...current, busy: true, errorMessage: null })
 
   try {
-    const response = await requestResource(
-      'POST /api/companion/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/accept',
-      { path: { avatar_id: avatarId, candidate_id: current.candidateId } }
-    )
+    const response = await requestResource('companion.post_fullbody_candidate_accept', {
+      path: { avatar_id: avatarId, candidate_id: current.candidateId }
+    })
 
     if (!isCurrent()) {
       return false
@@ -484,10 +483,9 @@ export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<
   $fullbodyReference.set({ ...current, busy: true, candidateError: null })
 
   try {
-    const result = await requestResource(
-      'POST /api/companion/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/analyze',
-      { path: { avatar_id: avatarId, candidate_id: current.candidateId } }
-    )
+    const result = await requestResource('companion.post_fullbody_candidate_analyze', {
+      path: { avatar_id: avatarId, candidate_id: current.candidateId }
+    })
 
     if (!isCurrent()) {
       return false

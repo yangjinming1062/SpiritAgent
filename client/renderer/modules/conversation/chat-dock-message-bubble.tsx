@@ -6,7 +6,6 @@ import { usePanelActivity } from '@/shared/context/panel-activity'
 import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { ArrowBackUp, ChevronDown, Copy, GitFork, Pencil, RefreshCw, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { $gatewayState } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { voicePlaybackKey } from '@ipc/contracts'
@@ -119,7 +118,6 @@ function MessageBubbleWithBody({
   const retryableMessage = useStore($retryableAssistantMessage)
   const replaceableMessage = useStore($replaceableAssistantMessage)
   const replacingReplyId = useStore($replacingReplyMessageId)
-  const gatewayState = useStore($gatewayState)
 
   // 右键菜单是纯临时态：局部 useState，不持久化、不入 store；多窗口各自独立。
   const panelActive = usePanelActivity()
@@ -380,7 +378,6 @@ function MessageBubbleWithBody({
                   {retryableMessage?.id === message.id && (
                     <button
                       className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line-standard px-2 py-1 text-strong transition hover:bg-fill-hover disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={gatewayState !== 'open'}
                       onClick={() => void retryAssistantReply(message.id)}
                       type="button"
                     >
@@ -430,7 +427,6 @@ function MessageBubbleWithBody({
           {replaceableMessage?.id === message.id ? (
             <button
               className="inline-flex items-center gap-1 self-start rounded-md px-2 py-1 text-xs text-muted transition hover:bg-fill-hover hover:text-strong disabled:opacity-50"
-              disabled={gatewayState !== 'open'}
               onClick={() => void replaceAssistantReply(message.id)}
               type="button"
             >

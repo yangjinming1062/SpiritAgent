@@ -61,7 +61,7 @@ export async function hydrateDiary(opts: { from?: string; to?: string } = {}): P
   $diaryLoading.set(true)
 
   try {
-    const result = await authedResource('GET /api/companion/diary', { query: opts })
+    const result = await authedResource('companion_journal.get_diary', { query: opts })
 
     if (
       !isCurrent() ||

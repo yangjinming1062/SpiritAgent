@@ -2,86 +2,50 @@ import type { Net } from 'electron'
 
 import { errorMessage, sleep } from '@runtime'
 
-import { resolvePathTimeoutMs, resolveTimeoutMs } from '../security/hardening'
+import { type ApiArguments, type ApiOperationKey, type ApiResponse, createHttpClient } from '../../../shared/api'
 import { resolveNormalizedBackendUrl } from '../shared/config'
-import { httpErrorFromResponse } from '../shared/utils'
 
 interface BackendHttpOptions {
   electronNet: Net
   spiritagentHome: null | string
 }
 
-// net.fetch 走 Chromium 网络栈（系统代理与证书）；其签名不收 URL 对象，统一在此适配为标准 fetch。
 export function createElectronFetch(electronNet: Pick<Net, 'fetch'>): typeof globalThis.fetch {
   return (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init)
 }
 
 export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpOptions) {
-  async function fetchJson(
-    url: string,
-    token?: string,
-    options: { body?: unknown; method?: string; timeoutMs?: number } = {}
-  ): Promise<unknown> {
-    const timeoutMs = resolveTimeoutMs(options.timeoutMs ?? resolvePathTimeoutMs(new URL(url).pathname, options.method))
-    const body = options.body !== undefined ? JSON.stringify(options.body) : undefined
+  const fetchImpl = createElectronFetch(electronNet)
 
-    const headers: Record<string, string> = {
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
-
-    const res = await electronNet.fetch(url, {
-      body,
-      headers,
-      method: options.method || 'GET',
-      signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined
-    })
-
-    if (!res.ok) {
-      throw await httpErrorFromResponse(res, new URL(url).pathname)
-    }
-
-    let text: string
-
-    try {
-      text = await res.text()
-    } catch (error) {
-      throw new Error(`Failed to read response from ${url} (status ${res.status}): ${errorMessage(error)}`, {
-        cause: error
-      })
-    }
-
-    if (!text) {
-      return null
-    }
-
-    const looksHtml = /^\s*<(?:!doctype|html)/i.test(text)
-    const contentType = String(res.headers.get('content-type') || '')
-
-    if (looksHtml || contentType.includes('text/html')) {
-      throw new Error(
-        `Expected JSON from ${url} but got HTML (status ${res.status}). The endpoint is likely missing on the SpiritAgent backend.`
-      )
-    }
-
-    try {
-      return JSON.parse(text)
-    } catch {
-      throw new Error(`Invalid JSON from ${url} (status ${res.status}): ${text.slice(0, 200)}`)
-    }
+  function invoke<K extends ApiOperationKey>(
+    baseUrl: string,
+    token: string | undefined,
+    operation: K,
+    ...args: ApiArguments<K>
+  ): Promise<ApiResponse<K>> {
+    return createHttpClient({
+      fetch: fetchImpl,
+      baseUrl,
+      headers: () => (token ? { Authorization: `Bearer ${token}` } : {})
+    }).invoke(operation, ...args)
   }
 
-  async function mintWsTicket(baseUrl: string, token: string): Promise<string> {
-    const res = (await fetchJson(`${baseUrl}/api/gateway/ticket`, token, {
-      method: 'POST',
-      timeoutMs: 5000
-    })) as { ticket?: unknown } | null
+  async function mintWsTicket(baseUrl: string, token: string, streamId?: string): Promise<string> {
+    const response = await invoke(
+      baseUrl,
+      token,
+      'gateway.gateway_ticket',
+      {
+        body: streamId ? { stream_id: streamId } : undefined
+      },
+      { timeoutMs: 5000 }
+    )
 
-    if (typeof res?.ticket !== 'string' || !res.ticket) {
+    if (!response.ticket) {
       throw new Error('Backend returned an empty WebSocket ticket')
     }
 
-    return res.ticket
+    return response.ticket
   }
 
   async function waitForSpiritAgent(baseUrl: string, token?: string): Promise<void> {
@@ -90,18 +54,16 @@ export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpO
 
     while (Date.now() < deadline) {
       try {
-        await fetchJson(`${baseUrl}/health`, token)
+        await invoke(baseUrl, token, 'system.health', {}, { timeoutMs: Math.min(5000, deadline - Date.now()) })
 
         return
       } catch (error) {
         lastError = error
-        await sleep(500)
+        await sleep(Math.min(500, Math.max(0, deadline - Date.now())))
       }
     }
 
-    const lastErrorMsg = errorMessage(lastError)
-
-    throw new Error(`SpiritAgent backend did not become ready: ${lastErrorMsg || 'timeout'}`)
+    throw new Error(`SpiritAgent backend did not become ready: ${errorMessage(lastError) || 'timeout'}`)
   }
 
   async function resolveRemoteBackend(): Promise<null | { baseUrl: string }> {
@@ -110,7 +72,7 @@ export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpO
     return url ? { baseUrl: url } : null
   }
 
-  return { fetchJson, mintWsTicket, resolveRemoteBackend, waitForSpiritAgent }
+  return { invoke, mintWsTicket, resolveRemoteBackend, waitForSpiritAgent }
 }
 
 export type BackendHttp = ReturnType<typeof createBackendHttp>

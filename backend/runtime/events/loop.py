@@ -16,7 +16,7 @@ from infrastructure.text import safe_json_loads, utc_now
 from sqlalchemy import Row, and_, or_, select, update
 
 from runtime.background import BackgroundTask
-from runtime.desktop.connection import MANAGER, REMOTE_EVENT_PREFIXES, set_event_loop_hooks
+from runtime.desktop.connection import MANAGER, remote_event_types, set_event_loop_hooks
 from runtime.events.models import WSEvent
 
 logger = get_logger(__name__)
@@ -129,7 +129,7 @@ async def _claim_pending_events(local_user_ids: list[int]) -> list[Row]:
                     WSEvent.user_id.in_(MANAGER.local_user_ids()),
                     and_(
                         WSEvent.user_id.in_(local_user_ids),
-                        or_(*(WSEvent.event_type.startswith(prefix) for prefix in REMOTE_EVENT_PREFIXES)),
+                        WSEvent.event_type.in_(remote_event_types()),
                     ),
                 ),
                 WSEvent.status == "PENDING",

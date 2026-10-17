@@ -1,9 +1,10 @@
-import { type RpcRequester, SpiritAgentRpcError, SpiritAgentRpcErrorCode } from '@/shared/lib/gateway-protocol'
+import { requestResource } from '@/shared/lib/resource-request'
 import type { SlashCommandMeta } from '@/shared/lib/slash-commands'
 import { confirmAction } from '@/shared/panel'
 import { getStrings } from '@/shared/strings'
-import type { SessionMessage } from '@protocol'
 import { errorMessage } from '@runtime'
+
+import { ApiError } from '../../../../shared/errors'
 
 import type { ConversationRuntime } from './chat-runtime'
 import type { PendingAttachment } from './chat-runtime-types'
@@ -14,27 +15,23 @@ import { removeVoicePlayback } from './voice-playback'
 function slashErrorToMessage(err: unknown): string {
   const dict = getStrings().chat.slash
 
-  if (err instanceof SpiritAgentRpcError) {
-    if (err.code === SpiritAgentRpcErrorCode.SlashConfirmRequired) {
+  if (err instanceof ApiError) {
+    if (err.code === 'confirmation_required') {
       return dict.confirmRequired
     }
 
-    if (err.code === SpiritAgentRpcErrorCode.SlashBusy) {
+    if (err.code === 'turn_busy') {
       return dict.busyStop
     }
 
-    if (err.code === SpiritAgentRpcErrorCode.SlashGeneric) {
-      return dict.genericFailed
-    }
+    const details = err.business.details
 
-    if (err.code === SpiritAgentRpcErrorCode.InvalidParams) {
-      const suggestions = (err.data as { details?: { suggestions?: string[] } } | undefined)?.details?.suggestions
+    if (typeof details === 'object' && details !== null && 'suggestions' in details) {
+      const suggestions = details.suggestions
 
-      if (suggestions?.length) {
+      if (Array.isArray(suggestions) && suggestions.every(item => typeof item === 'string') && suggestions.length) {
         return dict.unknownWithSuggestions(suggestions)
       }
-
-      return dict.unknown
     }
   }
 
@@ -56,7 +53,7 @@ function slashPreCheck(pending: PendingAttachment | null, sending: boolean): str
   return null
 }
 
-/** 单条 slash 命令的执行入口（由 send() 调用）：confirm → RPC → hydrate/pill → 错误映射。需确认的命令每次调用都会弹确认弹窗（confirmAction），以取得 PROTOCOL「Slash 命令」要求的确认。 */
+/** 单条 slash 命令的执行入口（由 send() 调用）：confirm → HTTP → hydrate/pill → 错误映射。需确认的命令每次调用都会弹确认弹窗（confirmAction），以取得 PROTOCOL「Slash 命令」要求的确认。 */
 async function executeSlashCommand(
   cmd: SlashCommandMeta,
   args: string[],
@@ -64,10 +61,9 @@ async function executeSlashCommand(
     runtime: ConversationRuntime
     onFinish?: () => void
     onStart?: () => void
-    requestGateway: RpcRequester
   }
 ): Promise<void> {
-  const { requestGateway, onStart, onFinish, runtime } = opts
+  const { onStart, onFinish, runtime } = opts
   const { $chatSessionId, hydrateChatMessages, markAssistantTerminal, pushStatusPill } = runtime
 
   if (cmd.requiresConfirmation) {
@@ -93,28 +89,26 @@ async function executeSlashCommand(
 
     sid = await ensureChatSession(runtime)
 
-    const result = await requestGateway('command.dispatch', {
-      args,
-      command: cmd.name,
-      confirmed: true,
-      session_id: sid
+    const result = await requestResource('sessions.command', {
+      path: { session_id: sid },
+      body: { args, command: cmd.name, confirmed: true }
     })
 
     const r = result.result
 
     if (r.status === 'ok') {
       // hydrate=true 时，payload.messages 已包含服务端写入的 status_cleared / compress_summary marker 行——前端 hydrateChatMessages 后再 pushStatusPill 会产生重复 pill，所以 hydrate 路径只更新消息列表，不再追加 status_command_result。
-      if (r.hydrate && r.payload) {
-        const raw = r.payload.messages
+      if (r.hydrate && r.payload && 'messages' in r.payload) {
+        const messages = r.payload.messages
 
-        if (Array.isArray(raw)) {
-          rememberFullHistory(sid, raw as SessionMessage[])
+        if (messages) {
+          rememberFullHistory(sid, messages)
 
           if (isCurrentSession()) {
-            hydrateChatMessages(raw as SessionMessage[])
+            hydrateChatMessages(messages)
           }
 
-          if (typeof r.payload.cleared_count === 'number') {
+          if ('cleared_count' in r.payload) {
             removeVoicePlayback(sid)
           }
         }

@@ -6,7 +6,6 @@ import { Brain, type IconComponent, Loader2, RefreshCw, Sparkles, Thermometer, X
 import { type ReasoningEffort, resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { requestResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
-import { $gateway, $gatewayState } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import { clamp } from '@runtime'
@@ -235,11 +234,9 @@ export function ChatParamsPanel({
   const params = dict.chat.params
   const cacheUsage = useStore($sessionCacheUsage)
   const settings = useStore($sessionSettings)
-  const gateway = useStore($gateway)
-  const gatewayState = useStore($gatewayState)
   // 自动化会话的历史由任务维护，手动压缩沿用只读权限。
   const isReadOnlySession = useIsReadOnlySession()
-  const canEdit = gatewayState === 'open' && sessionId !== null && eligible && !isReadOnlySession
+  const canEdit = sessionId !== null && eligible && !isReadOnlySession
   const contextStatus = useContextStatus()
   const [compressing, setCompressing] = useState(false)
 
@@ -268,18 +265,12 @@ export function ChatParamsPanel({
     const revision = revisionRef.current
     const visibleSettings = $sessionSettings.get()
 
-    if (
-      !controller.isCurrent() ||
-      Object.keys(patch).length === 0 ||
-      !targetId ||
-      !gateway ||
-      gateway.connectionState !== 'open'
-    ) {
+    if (!controller.isCurrent() || Object.keys(patch).length === 0 || !targetId) {
       return
     }
 
     pendingPatchRef.current = {}
-    void requestResource('PATCH /api/sessions/{session_id}', {
+    void requestResource('sessions.patch_session', {
       path: { session_id: targetId },
       body: { settings: patch }
     })
@@ -306,7 +297,6 @@ export function ChatParamsPanel({
         }
       })
   }, [
-    gateway,
     params.resetConfirm,
     params.saveFailed,
     sessionId,
@@ -321,7 +311,7 @@ export function ChatParamsPanel({
       revisionRef.current += 1
       Object.assign(pendingPatchRef.current, incremental)
 
-      if (!sessionId || !gateway || gateway.connectionState !== 'open') {
+      if (!sessionId) {
         return
       }
 
@@ -333,7 +323,7 @@ export function ChatParamsPanel({
         flushPending()
       }, 350)
     },
-    [sessionId, gateway, flushPending]
+    [sessionId, flushPending]
   )
 
   useEffect(
@@ -366,15 +356,15 @@ export function ChatParamsPanel({
   }
 
   const handleManualCompress = async (): Promise<void> => {
-    if (compressing || isReadOnlySession || !sessionId || !gateway || gateway.connectionState !== 'open') {
+    if (compressing || isReadOnlySession || !sessionId) {
       return
     }
 
     setCompressing(true)
 
     try {
-      const res = await gateway.request('session.compress_context', {
-        session_id: sessionId
+      const res = await requestResource('sessions.compress', {
+        path: { session_id: sessionId }
       })
 
       if (!controller.isCurrent()) {

@@ -38,9 +38,18 @@ class CallGetRequest(BaseModel):
     call_id: str = Field(min_length=1, strict=True)
 
 
-class CallCancelRequest(BaseModel):
+class CancelRequestTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    req_id: str | int
+
+
+class CancelCallTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    req_id: str | int | None = None
+    call_id: str = Field(min_length=1, strict=True)
+
+
+class CallCancelRequest(RootModel[CancelRequestTarget | CancelCallTarget]):
+    pass
 
 
 class RunnerEmptyRequest(BaseModel):

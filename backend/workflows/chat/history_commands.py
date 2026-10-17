@@ -1,22 +1,21 @@
 import json
 from typing import Any
 
-from features.conversation.gateway_queries import ConversationNotFoundError, all_messages, clear_history
 from features.conversation.memory_scope import conversation_memory_scope
+from features.conversation.session_operations import ConversationNotFoundError, all_messages, clear_history
 from features.conversation.slash_commands import SlashCommandContext, SlashCommandResult, register_slash_command
 from features.conversation.snapshots import ConversationSnapshot
 from features.memory.memory_namespaces import normalize_recall_context
 from features.memory.use_cases import remember_manual
 from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.config import SETTINGS
-from infrastructure.constants import JSONRPC_INTERNAL_ERROR, JSONRPC_METHOD_NOT_FOUND, JSONRPC_SLASH_BUSY
 from infrastructure.logger import get_logger
+from infrastructure.request_errors import RequestError
 from runtime.client_context import ChatRequestClientContext
 from runtime.conversation import RuntimeSession
-from runtime.desktop.jsonrpc import JsonRpcError
 
 from workflows.chat.context_compressor import CompressionFailedError
-from workflows.chat.gateway_inputs import _reject_read_only_session, _require_owned_conv, desktop_history_lock
+from workflows.chat.inputs import _reject_read_only_session, _require_owned_conv, conversation_history_lock
 from workflows.chat.orchestrator import compress_session_history
 
 logger = get_logger(__name__)
@@ -28,13 +27,13 @@ async def _do_compress_history(
     runtime: RuntimeSession,
     client_context: ChatRequestClientContext | None,
 ) -> dict[str, Any]:
-    """session.compress_context 与 /压缩 命令的共用实现；调用方持会话锁并已校验在途回合。compressed=False 时返回体不含 messages/summary，True 时含 delivered messages 给前端 hydrate；摘要失败抛 JSON-RPC 错误，不当作无需压缩。"""
+    """历史压缩与 /压缩 命令的共用实现；调用方持会话锁并已校验在途回合。compressed=False 时返回体不含 messages/summary，True 时含 delivered messages 给前端 hydrate；摘要失败抛业务错误，不当作无需压缩。"""
     try:
         result = await compress_session_history(conv, user_id, runtime.settings, client_context)
     except MissingLlmConfigError as exc:
-        raise JsonRpcError(JSONRPC_INTERNAL_ERROR, "模型服务暂未配置，请联系管理员") from exc
+        raise RequestError(500, "模型服务暂未配置，请联系管理员") from exc
     except CompressionFailedError as exc:
-        raise JsonRpcError(JSONRPC_INTERNAL_ERROR, "上下文压缩失败，请稍后重试") from exc
+        raise RequestError(500, "上下文压缩失败，请稍后重试") from exc
     usage = {"total_tokens": result.total_tokens, "context_window": result.context_window}
     if result.info is None:
         return {
@@ -62,13 +61,13 @@ async def _do_compress_history(
 )
 async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
     _reject_read_only_session(ctx.runtime)
-    async with desktop_history_lock(ctx.session_id):
+    async with conversation_history_lock(ctx.session_id):
         if ctx.runtime.busy:
-            raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再清理会话")
+            raise RequestError(409, "请先停止当前生成再清理会话", code="turn_busy")
         try:
             result = await clear_history(ctx.user_id, ctx.session_id)
         except ConversationNotFoundError as exc:
-            raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, str(exc)) from exc
+            raise RequestError(404, str(exc)) from exc
     cleared = result["cleared_count"]
     return SlashCommandResult(
         status="ok",
@@ -85,15 +84,15 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
     requires_confirmation=False,
 )
 async def _slash_compress(ctx: SlashCommandContext) -> SlashCommandResult:
-    """``/压缩`` 命令 handler：复用 session.compress_context 的核心实现。"""
+    """``/压缩`` 命令 handler：复用历史压缩用例。"""
     _reject_read_only_session(ctx.runtime)
-    async with desktop_history_lock(ctx.session_id):
+    async with conversation_history_lock(ctx.session_id):
         if ctx.runtime.busy:
-            raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再压缩会话")
+            raise RequestError(409, "请先停止当前生成再压缩会话", code="turn_busy")
         conv = await _require_owned_conv(ctx.user_id, ctx.session_id)
         try:
             result = await _do_compress_history(conv, ctx.user_id, ctx.runtime, ctx.client_context)
-        except JsonRpcError as exc:
+        except RequestError as exc:
             return SlashCommandResult(status="error", message=exc.message, hydrate=False)
     if not result["compressed"]:
         return SlashCommandResult(

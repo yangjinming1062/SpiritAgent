@@ -1,11 +1,8 @@
-import { backendApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
-import type { SpiritAgentApiRequest } from '@ipc/contracts'
 
 import { log } from './log'
 import { currentClearEpoch } from './storage'
 
-/** 鉴权 RPC 的统一返回：不把 auth-loss / 网络错 / 后端错 / void body 压成同一个 null，调用方按 reason 分流——避免各 store 把"登出 race"误判成"请求成功无返回"而把状态卡在中间态。 */
 export type AuthedApiResult<T> =
   | { ok: true; value: T | null }
   | { ok: false; reason: 'unauth' }
@@ -27,29 +24,6 @@ export function captureAuthScope(): (() => boolean) | null {
 
     return current.kind === 'authenticated' && current.snapshot.sessionId === sessionId && currentClearEpoch() === epoch
   }
-}
-
-export async function authedApi<T>(opts: SpiritAgentApiRequest): Promise<AuthedApiResult<T>> {
-  // 请求结果只属于发起时的鉴权会话和清理代次。
-  const auth = $auth.get()
-  const isCurrent = captureAuthScope()
-
-  if (!isCurrent || auth.kind !== 'authenticated') {
-    return { ok: false, reason: 'unauth' }
-  }
-
-  let result: AuthedApiResult<T>
-
-  try {
-    result = {
-      ok: true,
-      value: (await backendApi().api<T>({ ...opts, authSessionId: auth.snapshot.sessionId })) as T | null
-    }
-  } catch (error) {
-    result = { error, ok: false, reason: 'err' }
-  }
-
-  return isCurrent() ? result : { ok: false, reason: 'unauth' }
 }
 
 /** 收窄到成功结果；真实请求错误记一条警告，登出（unauth）静默。 */

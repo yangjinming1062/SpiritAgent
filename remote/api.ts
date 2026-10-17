@@ -1,13 +1,7 @@
-import { isAiWaitingApi } from '@protocol'
-
-import { ApiError, readHttpError } from '../shared/errors'
-import {
-  type GatewayEvent,
-  JsonRpcGatewayClient,
-  type RpcMethod,
-  type RpcRequest,
-  type RpcResponse
-} from '../shared/gateway'
+import type { ApiArguments, ApiOperationKey, ApiResponse, ApiTransport } from '../shared/api'
+import { createHttpClient } from '../shared/api'
+import { ApiError } from '../shared/errors'
+import { GatewayConnection, type GatewayEvent, type SessionSnapshot } from '../shared/gateway'
 export { ApiError } from '../shared/errors'
 export type { GatewayEvent } from '../shared/gateway'
 
@@ -21,7 +15,7 @@ export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败，请稍后重试'
 }
 
-export class RemoteApi {
+export class RemoteApi implements ApiTransport {
   private csrf = ''
   private revision = 0
   private controllers = new Set<AbortController>()
@@ -39,147 +33,141 @@ export class RemoteApi {
     this.controllers.clear()
   }
 
-  async request<T>(
-    path: string,
-    method = 'GET',
-    body?: unknown,
-    timeoutMs = isAiWaitingApi(path, method) ? 0 : 180_000
-  ): Promise<T> {
+  async invoke<Operation extends ApiOperationKey>(
+    operation: Operation,
+    ...args: ApiArguments<Operation>
+  ): Promise<ApiResponse<Operation>> {
     const revision = this.revision
     const controller = new AbortController()
     this.controllers.add(controller)
-    const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined
-    const headers = new Headers()
-
-    if (method !== 'GET' && this.csrf) {
-      headers.set('X-CSRF-Token', this.csrf)
-    }
-
-    let payload: BodyInit | undefined
-
-    if (body instanceof FormData) {
-      payload = body
-    } else if (body !== undefined) {
-      headers.set('Content-Type', 'application/json')
-      payload = JSON.stringify(body)
-    }
-
     try {
-      const response = await fetch(path, {
-        method,
-        body: payload,
-        headers,
+      const transport = createHttpClient({
+        fetch: (input, options) =>
+          fetch(input, {
+            ...options,
+            signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
+          }),
         credentials: 'same-origin',
-        signal: controller.signal
+        defaultTimeoutMs: 180_000,
+        headers: () => new Headers(this.csrf ? { 'X-CSRF-Token': this.csrf } : undefined)
       })
-
-      const value: unknown = response.status === 204 ? null : await response.json()
-
+      const value = await transport.invoke(operation, ...args)
       if (revision !== this.revision) {
         throw new DOMException('账户已切换', 'AbortError')
       }
-
-      if (!response.ok) {
-        if (response.status === 401 && this.csrf) {
-          this.onExpired()
-        }
-
-        const business = readHttpError(value) ?? {
-          code: 'http_error',
-          message: `请求失败（${response.status}）`,
-          details: null,
-          request_id: ''
-        }
-        throw new ApiError(response.status, business)
+      return value
+    } catch (error) {
+      if (revision !== this.revision || controller.signal.aborted) {
+        throw new ApiError(
+          null,
+          {
+            code: 'cancelled',
+            message: '账户已切换，请求已取消',
+            details: null,
+            request_id: ''
+          },
+          { cause: error }
+        )
       }
-
-      return value as T
+      if (revision === this.revision && error instanceof ApiError && error.isLoginExpired && this.csrf) {
+        this.onExpired()
+      }
+      throw error
     } finally {
-      clearTimeout(timer)
       this.controllers.delete(controller)
     }
   }
 }
 
 export class RemoteGateway {
-  private readonly gateway = new JsonRpcGatewayClient(
-    url => new WebSocket(url),
-    error => console.error('Gateway event consumer failed', error)
-  )
+  private readonly connection: GatewayConnection
   private stopped = false
-  private connecting: Promise<void> | null = null
-  private retryTimer: ReturnType<typeof setTimeout> | undefined
+  private connectionError = ''
+  private readonly stateHandlers = new Set<(open: boolean, error: string) => void>()
 
-  constructor(
-    private api: RemoteApi,
-    private invalidated: () => void
-  ) {
-    this.gateway.onState(state => {
-      if (!this.stopped && (state === 'closed' || state === 'error')) {
-        if ([1008, 4401, 4403].includes(this.gateway.lastCloseCode ?? 0)) {
-          this.invalidated()
-        } else {
-          this.reconnect()
+  constructor(private api: RemoteApi) {
+    this.connection = new GatewayConnection({
+      createSocket: url => new WebSocket(url),
+      url: async streamId => {
+        const { ticket } = await this.api.invoke('gateway.gateway_ticket', {
+          body: { stream_id: streamId ?? null }
+        })
+        const url = new URL('/api/gateway/ws', location.origin)
+        url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+        url.searchParams.set('ticket', ticket)
+        return url.href
+      },
+      onExpired: () => {
+        if (!this.stopped) {
+          this.api.onExpired()
+        }
+      },
+      onError: error => {
+        if (this.stopped) {
+          return
+        }
+        this.connectionError = errorText(error)
+        this.notifyState()
+        if (error instanceof ApiError && error.code === 'gateway_policy_rejected') {
+          void this.api.invoke('remote.current_remote_session').catch(failure => {
+            if (!this.stopped) {
+              this.connectionError = errorText(failure)
+              this.notifyState()
+            }
+          })
         }
       }
+    })
+    this.connection.client.onState(state => {
+      if (state === 'connecting' || state === 'open') {
+        this.connectionError = ''
+      }
+      this.notifyState()
     })
   }
 
   get open(): boolean {
-    return this.gateway.connectionState === 'open'
+    return this.connection.client.connectionState === 'open'
+  }
+
+  get error(): string {
+    return this.connectionError
+  }
+
+  get lastRecovery() {
+    return this.connection.client.lastRecovery
   }
 
   subscribeEvent(handler: (event: GatewayEvent) => void): () => void {
-    return this.gateway.onEvent(handler)
+    return this.connection.client.onEvent(handler)
   }
 
-  subscribeState(handler: (open: boolean) => void): () => void {
-    return this.gateway.onState(state => handler(state === 'open'))
+  subscribeState(handler: (open: boolean, error: string) => void): () => void {
+    this.stateHandlers.add(handler)
+    handler(this.open, this.error)
+    return () => this.stateHandlers.delete(handler)
+  }
+
+  private notifyState(): void {
+    this.stateHandlers.forEach(handler => handler(this.open, this.error))
+  }
+
+  snapshot(sessionId: string): Promise<SessionSnapshot> {
+    return this.connection.client.synchronize(sessionId, streamId =>
+      this.api.invoke('sessions.snapshot', {
+        path: { session_id: sessionId },
+        ...(streamId ? { query: { stream_id: streamId } } : {})
+      })
+    )
   }
 
   connect(): Promise<void> {
-    if (this.stopped || this.open) {
-      return Promise.resolve()
-    }
-    if (!this.connecting) {
-      this.connecting = this.openSocket().finally(() => {
-        this.connecting = null
-      })
-    }
-    return this.connecting
-  }
-
-  private async openSocket(): Promise<void> {
-    try {
-      const { ticket } = await this.api.request<{ ticket: string }>('/api/gateway/ticket', 'POST', {})
-      if (this.stopped) {
-        return
-      }
-      const url = new URL('/api/gateway/ws', location.origin)
-      url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      url.searchParams.set('ticket', ticket)
-      await this.gateway.connect(url.href)
-    } catch {
-      this.reconnect()
-    }
+    return this.connection.connect()
   }
 
   close(): void {
     this.stopped = true
-    clearTimeout(this.retryTimer)
-    this.gateway.close()
-  }
-
-  request<K extends RpcMethod>(method: K, params: RpcRequest<K>): Promise<RpcResponse<K>> {
-    return this.gateway.request(method, params)
-  }
-
-  private reconnect(): void {
-    if (this.stopped) {
-      return
-    }
-    clearTimeout(this.retryTimer)
-    this.retryTimer = setTimeout(() => void this.connect(), 2500)
+    this.connection.close()
   }
 }
 

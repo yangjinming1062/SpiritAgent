@@ -58,10 +58,8 @@ export function ChatPanel({
   const dict = useStrings()
 
   useEffect(() => {
-    if (gatewayState === 'open') {
-      void fetchSlashCommandMeta()
-    }
-  }, [gatewayState])
+    void fetchSlashCommandMeta()
+  }, [])
 
   const closeParamsPanel = (): void => {
     setParamsPanelOpen(false)

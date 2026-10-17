@@ -140,7 +140,7 @@ async function fetchPage(more: boolean): Promise<string[] | null> {
   loading.set(true)
 
   try {
-    const result = await authedResource('GET /api/companion/posts', { query: { cursor: more ? cursor : undefined } })
+    const result = await authedResource('companion_posts.get_posts', { query: { cursor: more ? cursor : undefined } })
 
     if (version !== revision || epoch !== currentClearEpoch()) {
       return null
@@ -179,9 +179,7 @@ export async function loadMorePosts(): Promise<boolean> {
   return (await fetchPage(true)) !== null
 }
 
-type CommentOperation =
-  | 'POST /api/companion/posts/{post_id}/comments'
-  | 'POST /api/companion/posts/{post_id}/comments/{comment_id}/reply/retry'
+type CommentOperation = 'companion_posts.post_comment' | 'companion_posts.retry_comment_reply'
 
 async function postCommentResult<K extends CommentOperation>(operation: K, input: ApiInput<K>): Promise<boolean> {
   const epoch = currentClearEpoch()
@@ -197,11 +195,11 @@ async function postCommentResult<K extends CommentOperation>(operation: K, input
 }
 
 export function commentPost(id: string, content: string): Promise<boolean> {
-  return postCommentResult('POST /api/companion/posts/{post_id}/comments', { path: { post_id: id }, body: { content } })
+  return postCommentResult('companion_posts.post_comment', { path: { post_id: id }, body: { content } })
 }
 
 export function retryPostReply(id: string, commentId: string): Promise<boolean> {
-  return postCommentResult('POST /api/companion/posts/{post_id}/comments/{comment_id}/reply/retry', {
+  return postCommentResult('companion_posts.retry_comment_reply', {
     path: { post_id: id, comment_id: commentId }
   })
 }
@@ -216,7 +214,7 @@ function removeComment(postId: string, commentId: string): void {
 export async function deletePostComment(id: string, commentId: string): Promise<boolean> {
   const epoch = currentClearEpoch()
 
-  const result = await authedResource('DELETE /api/companion/posts/{post_id}/comments/{comment_id}', {
+  const result = await authedResource('companion_posts.remove_comment', {
     path: { post_id: id, comment_id: commentId }
   })
 

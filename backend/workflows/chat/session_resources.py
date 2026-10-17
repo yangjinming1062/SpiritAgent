@@ -4,9 +4,9 @@ from dataclasses import asdict
 
 from features.configuration.settings.values import load_user_settings
 from features.conversation.ai_routing import conversation_ai_task
-from features.conversation.gateway_queries import get_conversation
 from features.conversation.schemas import DesktopSessionPatchRequest
 from features.conversation.session_management import patch_session
+from features.conversation.session_operations import get_conversation
 from features.conversation.snapshots import ConversationSnapshot
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.database import SESSION_LOCAL

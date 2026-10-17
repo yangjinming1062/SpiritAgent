@@ -10,13 +10,14 @@ import {
   SPEAKING_STYLE_PRESETS
 } from '@/modules/character'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
-import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
+import { authedResource } from '@/shared/lib/resource-request'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, Chip, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
-import type { PersonaEditableField, PersonaResponse, PersonaUpdateRequest } from '@protocol'
+import type { PersonaEditableField, PersonaUpdateRequest } from '@protocol'
 
 import { $companionEditors, updateCompanionEditors } from './companion-editor-state'
 
@@ -125,7 +126,7 @@ export function PersonaSection(): React.JSX.Element {
         expected_fields: expectedFields
       }
 
-      const saved = await authedApi<PersonaResponse>({ body, method: 'PUT', path: '/api/companion/persona' })
+      const saved = await authedResource('companion.put_persona', { body })
 
       if (!saved.ok) {
         if (saved.reason === 'err') {

@@ -17,7 +17,7 @@ from .tools import ToolExecutor
 class InflightCall:
     task: asyncio.Task[Any]
     cancel_event: threading.Event
-    dispatched: bool
+    call_id: str | None
 
 
 class CallManager:
@@ -27,16 +27,15 @@ class CallManager:
         self._inflight: dict[tuple[str, str], InflightCall] = {}
         self._closing = False
 
-    def cancel(self, connection_id: str, req_id: object = None) -> dict[str, Any]:
-        if req_id is None:
-            calls = [
-                call
-                for (connection, _), call in self._inflight.items()
-                if connection == connection_id and call.dispatched
-            ]
-        else:
-            call = self._inflight.get((connection_id, str(req_id)))
-            calls = [call] if call else []
+    def cancel(self, connection_id: str, req_id: str | int) -> dict[str, Any]:
+        call = self._inflight.get((connection_id, str(req_id)))
+        return self._cancel_calls([call] if call else [])
+
+    def cancel_call(self, call_id: str) -> dict[str, Any]:
+        return self._cancel_calls([call for call in self._inflight.values() if call.call_id == call_id])
+
+    @staticmethod
+    def _cancel_calls(calls: list[InflightCall]) -> dict[str, Any]:
         for call in calls:
             call.cancel_event.set()
             call.task.cancel()
@@ -61,7 +60,7 @@ class CallManager:
             raise RpcError(-32000, "RPC request is already in flight", {"disposition": "failed"})
         task = asyncio.current_task()
         assert task is not None
-        self._inflight[key] = InflightCall(task, context.cancel_event, dispatched=call_id is not None)
+        self._inflight[key] = InflightCall(task, context.cancel_event, call_id)
         claim_task: asyncio.Task[journal.ClaimOutcome] | None = None
         claim_token = None
         try:

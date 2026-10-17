@@ -112,7 +112,7 @@ export function InferencePage(): React.JSX.Element {
     }
 
     if (gateway?.connectionState === 'open' && $gateway.get() === gateway && sessionId) {
-      void requestResource('GET /api/sessions/{session_id}', { path: { session_id: sessionId } })
+      void requestResource('sessions.get_session', { path: { session_id: sessionId } })
         .then(result => {
           if (
             isCurrent() &&

@@ -6,8 +6,6 @@ import { BrowserWindow, type WebContents } from 'electron'
 
 import type { IpcEventChannel, IpcEventContract, SurfacePlaybackClaim } from '@ipc/contracts'
 
-import { type BusinessError, readHttpError } from '../../../shared/errors'
-
 export function fileExists(filePath: string): boolean {
   try {
     return fs.statSync(filePath).isFile()
@@ -92,33 +90,6 @@ export function isFiniteNumber(value: unknown): value is number {
   return Number.isFinite(value)
 }
 
-/** 后端 HTTP 失败的结构化错误：携带 status，禁止用文案前缀推断状态码。 */
-export class HttpError extends Error {
-  readonly status: number
-
-  constructor(
-    status: number,
-    message: string,
-    readonly business?: BusinessError
-  ) {
-    super(message)
-    this.name = 'HttpError'
-    this.status = status
-  }
-}
-
-/** 非 2xx 响应转为 HttpError：正文只用于诊断文案，读取失败时回落状态文本；pathname 不得带签名参数。 */
-export async function httpErrorFromResponse(res: Response, pathname: string): Promise<HttpError> {
-  const body: unknown = await res.json().catch(() => null)
-  const business = readHttpError(body)
-
-  return new HttpError(
-    res.status,
-    business?.message ?? `${res.status} ${pathname}: ${res.statusText}`,
-    business ?? undefined
-  )
-}
-
 /** Runner 未连接、请求未发出。 */
 export class RunnerNotConnectedError extends Error {}
 
@@ -132,14 +103,6 @@ export class RunnerRpcError extends Error {
     this.code = code
     this.disposition = disposition
   }
-}
-
-function isHttpStatus(error: unknown, status: number): boolean {
-  return error instanceof HttpError && error.status === status
-}
-
-export function isUnauthorized(error: unknown): boolean {
-  return isHttpStatus(error, 401)
 }
 
 // ENOENT 或格式损坏时返回 null，由调用方走默认分支。

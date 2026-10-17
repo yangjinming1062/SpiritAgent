@@ -1,14 +1,23 @@
-import { SpiritAgentRpcError, SpiritAgentRpcErrorCode } from '@/shared/lib/gateway-protocol'
+import { requestResource } from '@/shared/lib/resource-request'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
-import { $gateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
-import type { PromptSubmissionRequest, PromptSubmissionResult, SessionMessage } from '@protocol'
+import type { PromptSubmissionResult, SessionMessage } from '@protocol'
 import { errorMessage, sleep } from '@runtime'
+
+import type { GatewayEventPayloads } from '../../../../shared/api.generated'
+import { ApiError } from '../../../../shared/errors'
+import { createTurnCancellation, type TurnReference } from '../../../../shared/turn-cancellation'
 
 import type { ChatMessageController } from './chat-message-controller'
 import { extractMessageContent, isPositiveInt, splitUserText } from './chat-message-rules'
+import {
+  type ConversationSubmission,
+  readConversationTurn,
+  recoverConversationTurn,
+  submitConversationTurn
+} from './chat-requests'
 import type { ConversationState } from './chat-runtime-state'
 import type { ChatMessageListItem, PendingPromptItem } from './chat-runtime-types'
 import { FLUSH_DEBOUNCE_MS, nextChatMessageId } from './conversation-state'
@@ -25,6 +34,7 @@ export function createChatSubmissionController(
     $chatMessageList,
     $chatMessageBodies,
     $chatTurnInFlight,
+    $stoppingRequestId,
     $lastAssistantStreaming,
     $retryableAssistantMessage,
     $replaceableAssistantMessage,
@@ -36,19 +46,114 @@ export function createChatSubmissionController(
   const { markAssistantTerminal } = messages.api
 
   let flushTimer: ReturnType<typeof setTimeout> | null = null
+  const settledRequests = new Set<string>()
+
+  function rememberSettled(requestId: string): void {
+    settledRequests.add(requestId)
+
+    if (settledRequests.size > 500) {
+      settledRequests.delete(settledRequests.values().next().value!)
+    }
+  }
+
+  const cancellation = createTurnCancellation({
+    isCurrent,
+    read: turn => readConversationTurn(turn.sessionId, turn.requestId),
+    cancel: turn =>
+      requestResource('sessions.cancel_turn', {
+        path: { session_id: turn.sessionId, request_id: turn.requestId }
+      }),
+    onSettled: async (receipt, turn) => {
+      if ($stoppingRequestId.get() === turn.requestId) {
+        $stoppingRequestId.set(null)
+      }
+
+      if (!ownsTurn(turn)) {
+        return
+      }
+
+      mergePersistedUserMessages(receipt.messages, receipt.request_id, receipt.message_ids, false)
+      applySessionState({ ...receipt, running: false })
+      await refreshAfterCancellation(turn)
+    },
+    onRejected: async (error, turn) => {
+      if ($stoppingRequestId.get() === turn.requestId) {
+        $stoppingRequestId.set(null)
+      }
+
+      if (!ownsTurn(turn)) {
+        return
+      }
+
+      if (state.submission.unconfirmedSubmission?.requestId === turn.requestId) {
+        state.submission.unconfirmedSubmission = null
+      }
+
+      state.submission.activeRequestId = null
+      state.submission.settledRequestId = turn.requestId
+      rememberSettled(turn.requestId)
+      $chatTurnInFlight.set(false)
+      markAssistantTerminal({ error: errorMessage(error, getStrings().chat.sendFailed) })
+      await refreshAfterCancellation(turn)
+    },
+    onError: error => notifyError(error, getStrings().chat.sendFailed)
+  })
+
+  function ownsTurn(turn: TurnReference): boolean {
+    return (
+      isCurrent() &&
+      $chatSessionId.get() === turn.sessionId &&
+      (!state.submission.activeRequestId || state.submission.activeRequestId === turn.requestId)
+    )
+  }
+
+  async function refreshAfterCancellation(turn: TurnReference): Promise<void> {
+    presentationPorts().setSpriteState('idle', { force: true })
+
+    try {
+      await requestResource('sessions.snapshot', { path: { session_id: turn.sessionId } })
+    } catch (error) {
+      if (isCurrent()) {
+        notifyError(error, getStrings().chat.sendFailed)
+      }
+    }
+
+    if (isCurrent() && $chatSessionId.get() === turn.sessionId) {
+      submitPendingBatch()
+    }
+  }
+
+  function cancellationRequested(requestId: string): boolean {
+    const sessionId = $chatSessionId.get()
+
+    return Boolean(sessionId && cancellation.requested({ sessionId, requestId }))
+  }
+
+  function submissionFailed(params: ConversationSubmission, error: unknown): void {
+    if (error instanceof ApiError && error.status !== null && error.status >= 400 && error.status < 500) {
+      cancellation.rejected({ sessionId: params.session_id, requestId: params.request_id }, error)
+    }
+  }
+
+  async function stopActiveTurn(): Promise<void> {
+    cancelPendingFlush()
+    const sessionId = $chatSessionId.get()
+    const requestId = state.submission.activeRequestId ?? state.submission.unconfirmedSubmission?.requestId
+
+    if (!sessionId || !requestId || !isCurrent()) {
+      return
+    }
+
+    $chatTurnInFlight.set(true)
+    $stoppingRequestId.set(requestId)
+    await cancellation.request({ sessionId, requestId })
+  }
 
   async function replaceAssistantReply(messageId: string): Promise<void> {
     const sessionId = $chatSessionId.get()
-    const gateway = $gateway.get()
     const message = $replaceableAssistantMessage.get()
 
-    if (
-      !sessionId ||
-      !gateway ||
-      gateway.connectionState !== 'open' ||
-      message?.id !== messageId ||
-      !message.backendMessageId
-    ) {
+    if (!sessionId || message?.id !== messageId || !message.backendMessageId) {
       return
     }
 
@@ -64,13 +169,16 @@ export function createChatSubmissionController(
     })
 
     try {
-      acceptPromptSubmission(await gateway.request('prompt.submit', params))
+      acceptPromptSubmission(await submitConversationTurn(params))
     } catch (error) {
+      submissionFailed(params, error)
+
       if (
         isCurrent() &&
         epoch === currentClearEpoch() &&
         $chatSessionId.get() === sessionId &&
-        state.submission.unconfirmedSubmission?.requestId === params.request_id
+        state.submission.unconfirmedSubmission?.requestId === params.request_id &&
+        !cancellationRequested(params.request_id)
       ) {
         $chatTurnInFlight.set(false)
         $replacingReplyMessageId.set(null)
@@ -81,16 +189,9 @@ export function createChatSubmissionController(
 
   async function retryAssistantReply(messageId: string): Promise<void> {
     const sessionId = $chatSessionId.get()
-    const gateway = $gateway.get()
     const body = $chatMessageBodies.get()[messageId]
 
-    if (
-      !sessionId ||
-      !gateway ||
-      gateway.connectionState !== 'open' ||
-      $retryableAssistantMessage.get()?.id !== messageId ||
-      !body?.retryMessageId
-    ) {
+    if (!sessionId || $retryableAssistantMessage.get()?.id !== messageId || !body?.retryMessageId) {
       return
     }
 
@@ -98,25 +199,25 @@ export function createChatSubmissionController(
     $chatTurnInFlight.set(true)
     conversationVoiceSink().cancel($chatSessionId.get())
 
+    const params = preparePromptSubmission({
+      session_id: sessionId,
+      retry_message_id: body.retryMessageId,
+      response_preference: presentationPorts().getResponsePreference()
+    })
+
     try {
-      acceptPromptSubmission(
-        await gateway.request(
-          'prompt.submit',
-          preparePromptSubmission({
-            session_id: sessionId,
-            retry_message_id: body.retryMessageId,
-            response_preference: presentationPorts().getResponsePreference()
-          })
-        )
-      )
+      acceptPromptSubmission(await submitConversationTurn(params))
     } catch (error) {
-      // 已收到开始/完成事件时请求已被接受，迟到的 RPC 失败不能覆盖新回复。
+      submissionFailed(params, error)
+
+      // 已收到开始/完成事件时请求已被接受，迟到的请求失败不能覆盖新回复。
       if (
         isCurrent() &&
         epoch === currentClearEpoch() &&
         $chatSessionId.get() === sessionId &&
         $chatMessageBodies.get()[messageId] === body &&
-        state.submission.unconfirmedSubmission !== null
+        state.submission.unconfirmedSubmission !== null &&
+        !cancellationRequested(params.request_id)
       ) {
         $chatTurnInFlight.set(false)
         notifyError(error, getStrings().chat.sendFailed)
@@ -190,9 +291,9 @@ export function createChatSubmissionController(
   }
 
   function preparePromptSubmission(
-    params: Omit<PromptSubmissionRequest, 'request_id'>,
+    params: Omit<ConversationSubmission, 'request_id'>,
     bubbleIds: string[] = []
-  ): PromptSubmissionRequest {
+  ): ConversationSubmission {
     const fingerprint = JSON.stringify(params)
 
     const requestId =
@@ -218,7 +319,7 @@ export function createChatSubmissionController(
     bindTrailingUserMessageIds(ids, requestId)
 
     if (requestId) {
-      if (trackActive) {
+      if (trackActive && !settledRequests.has(requestId) && requestId !== state.submission.settledRequestId) {
         state.submission.activeRequestId = requestId
       }
 
@@ -260,11 +361,20 @@ export function createChatSubmissionController(
     }
   }
 
-  function applySessionState(event: Partial<PromptSubmissionResult> & { running?: boolean }): void {
+  function applySessionState(event: Partial<GatewayEventPayloads['session.state']>): void {
+    if (event.request_id && event.running === false) {
+      rememberSettled(event.request_id)
+
+      if ($stoppingRequestId.get() === event.request_id) {
+        $stoppingRequestId.set(null)
+      }
+    }
+
     if (
       event.request_id &&
       ((state.submission.activeRequestId && event.request_id !== state.submission.activeRequestId) ||
-        (event.running && event.request_id === state.submission.settledRequestId))
+        (event.running &&
+          (event.request_id === state.submission.settledRequestId || settledRequests.has(event.request_id))))
     ) {
       return
     }
@@ -295,6 +405,11 @@ export function createChatSubmissionController(
       markAssistantTerminal({ error: event.error || getStrings().chat.sendFailed })
     }
 
+    const stopped =
+      event.request_id && $chatSessionId.get()
+        ? cancellation.settled({ sessionId: $chatSessionId.get()!, requestId: event.request_id })
+        : false
+
     $chatTurnInFlight.set(false)
     $replacingReplyMessageId.set(null)
 
@@ -306,9 +421,20 @@ export function createChatSubmissionController(
     if (event.request_id === state.submission.unconfirmedSubmission?.requestId) {
       state.submission.unconfirmedSubmission = null
     }
+
+    if (stopped) {
+      presentationPorts().setSpriteState('idle', { force: true })
+      submitPendingBatch()
+    }
   }
 
   function acceptPromptSubmission(result: PromptSubmissionResult): void {
+    const sessionId = $chatSessionId.get()
+
+    if (sessionId) {
+      cancellation.observe({ sessionId, requestId: result.request_id }, result)
+    }
+
     if (!isCurrent() || result.request_id !== state.submission.submittedRequestId) {
       return
     }
@@ -318,7 +444,7 @@ export function createChatSubmissionController(
         result.messages ?? [],
         result.request_id,
         result.message_ids ?? [],
-        result.status === 'accepted' || result.status === 'running'
+        (result.status === 'accepted' || result.status === 'running') && !settledRequests.has(result.request_id)
       )
     }
 
@@ -333,13 +459,14 @@ export function createChatSubmissionController(
     }
 
     const pending = state.submission.unconfirmedSubmission
-    const gateway = $gateway.get()
+
+    if (pending && cancellationRequested(pending.requestId)) {
+      return cancellation.request({ sessionId: pending.params.session_id, requestId: pending.requestId })
+    }
 
     if (
       !pending ||
-      !gateway ||
       !isCurrent() ||
-      gateway.connectionState !== 'open' ||
       ($chatTurnInFlight.get() && state.submission.activeRequestId !== pending.requestId)
     ) {
       return
@@ -352,7 +479,7 @@ export function createChatSubmissionController(
 
     const recovery = (async (): Promise<void> => {
       try {
-        const result = await gateway.request('prompt.submit', pending.params)
+        const result = await recoverConversationTurn(pending.params)
 
         if (isCurrent() && state.submission.unconfirmedSubmission === pending) {
           acceptPromptSubmission(result)
@@ -383,7 +510,8 @@ export function createChatSubmissionController(
   function acceptsTurnEvent(requestId?: string): boolean {
     return (
       !requestId ||
-      (requestId !== state.submission.settledRequestId &&
+      (!settledRequests.has(requestId) &&
+        requestId !== state.submission.settledRequestId &&
         (!state.submission.activeRequestId || state.submission.activeRequestId === requestId))
     )
   }
@@ -434,14 +562,13 @@ export function createChatSubmissionController(
   }
 
   function submitPendingBatch(): void {
-    if ($chatTurnInFlight.get() || flushTimer !== null) {
+    if ($chatTurnInFlight.get() || $stoppingRequestId.get() !== null || flushTimer !== null) {
       return
     }
 
     const sessionId = $chatSessionId.get()
-    const gateway = $gateway.get()
 
-    if (!sessionId || !gateway || gateway.connectionState !== 'open') {
+    if (!sessionId) {
       return
     }
 
@@ -534,20 +661,17 @@ export function createChatSubmissionController(
         return
       }
 
-      const g = $gateway.get()
-
-      // 首次提交前已确认连接；只有退避重试期间断连会走到这里。
-      if (!g || g.connectionState !== 'open') {
-        failSubmit()
-
-        return
-      }
-
       try {
         presentationPorts().setSpriteState('thinking')
-        acceptPromptSubmission(await g.request('prompt.submit', batchPayload))
+        acceptPromptSubmission(await submitConversationTurn(batchPayload))
       } catch (err: unknown) {
-        const turnBusy = err instanceof SpiritAgentRpcError && err.code === SpiritAgentRpcErrorCode.TurnBusy
+        submissionFailed(batchPayload, err)
+
+        if (cancellationRequested(batchPayload.request_id)) {
+          return
+        }
+
+        const turnBusy = err instanceof ApiError && err.code === 'turn_busy'
 
         if (turnBusy && state.historyEditRevision !== submittedRevision && $chatSessionId.get() === sessionId) {
           // 另一个窗口的编辑先被接受；本批尚未落库，回到队列等该回合结束。
@@ -573,11 +697,23 @@ export function createChatSubmissionController(
   const abandonDisconnectedTurn = (): void => {
     state.submission.submissionGeneration++
     cancelPendingFlush()
+
     // 已受理回合继续执行，重连后由恢复快照确认终态。
-    $chatTurnInFlight.set(false)
+    if (!state.submission.activeRequestId || !cancellationRequested(state.submission.activeRequestId)) {
+      $chatTurnInFlight.set(false)
+    }
   }
 
   return {
+    activeRequestId: (): string | null => state.submission.activeRequestId,
+    stopActiveTurn,
+    cancellationRequested,
+    submissionFailed,
+    disposeSubmission: () => {
+      cancelPendingFlush()
+      cancellation.close()
+      $stoppingRequestId.set(null)
+    },
     retryAssistantReply,
     replaceAssistantReply,
     bindTrailingUserMessageIds,

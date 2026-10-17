@@ -28,7 +28,7 @@ async def admin_login(payload: AdminLoginRequest, request: Request) -> AdminToke
     return AdminTokenResponse(access_token=token, expires_in=expires_in)
 
 
-@router.get("/admin/")
+@router.get("/admin/", include_in_schema=False)
 async def admin_page() -> FileResponse:
     return FileResponse(ADMIN_STATIC_PATH / "admin.html", headers={"Cache-Control": "no-cache"})
 

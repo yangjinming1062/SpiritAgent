@@ -50,7 +50,7 @@ export function invalidateVoiceCatalog(): void {
 
 export async function fetchVoiceCatalogRaw(language: string | null = $locale.get()): Promise<FetchResult> {
   try {
-    const res = await requestResource('GET /api/voices', { query: { language } })
+    const res = await requestResource('voices.list_voices', { query: { language } })
 
     return {
       ok: true,
@@ -74,7 +74,7 @@ export async function matchVoicePreference(
   language: string | null = $locale.get()
 ): Promise<VoiceMatch> {
   try {
-    const res = await requestResource('POST /api/voices/match', { body: { language, preference } })
+    const res = await requestResource('voices.post_voice_match', { body: { language, preference } })
 
     return { ok: true, voice: res.voice, alternatives: res.alternatives }
   } catch (error) {
@@ -90,7 +90,7 @@ export async function designVoice(
   operationId: string,
   provider?: string
 ): Promise<VoiceDesignPreview> {
-  const res = await requestResource('POST /api/voices/candidates', {
+  const res = await requestResource('voices.post_voice_candidate', {
     body: {
       kind: 'design',
       operation_id: operationId,
@@ -108,7 +108,7 @@ export async function cloneVoice(
   previewText: string,
   operationId: string
 ): Promise<VoiceDesignPreview> {
-  const res = await requestResource('POST /api/voices/candidates', {
+  const res = await requestResource('voices.post_voice_candidate', {
     body: {
       kind: 'clone',
       operation_id: operationId,

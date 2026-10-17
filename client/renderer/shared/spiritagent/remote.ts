@@ -1,38 +1,26 @@
-import { backendApi } from '@/shared/platform/desktop'
-import { $auth } from '@/shared/store/auth'
-import type { SpiritAgentApiRequest } from '@ipc/contracts'
+import { requestResource } from '@/shared/lib/resource-request'
 import type { RemoteDevice, RemotePairing } from '@protocol'
 
-function remoteApi<T>(request: SpiritAgentApiRequest): Promise<T> {
-  const auth = $auth.get()
-
-  if (auth.kind !== 'authenticated') {
-    return Promise.reject(new Error('Account is not signed in'))
-  }
-
-  return backendApi().api<T>({ ...request, authSessionId: auth.snapshot.sessionId })
-}
-
 export function createRemotePairing(): Promise<RemotePairing> {
-  return remoteApi({ method: 'POST', path: '/api/remote/pairings' })
+  return requestResource('remote.create_pairing')
 }
 
 export function getRemotePairing(id: number): Promise<RemotePairing> {
-  return remoteApi({ path: `/api/remote/pairings/${id}` })
+  return requestResource('remote.pairing_status', { path: { pairing_id: id } })
 }
 
-export function cancelRemotePairing(id: number): Promise<void> {
-  return remoteApi({ method: 'DELETE', path: `/api/remote/pairings/${id}` })
+export async function cancelRemotePairing(id: number): Promise<void> {
+  await requestResource('remote.cancel_pairing', { path: { pairing_id: id } })
 }
 
 export function listRemoteDevices(): Promise<{ items: RemoteDevice[] }> {
-  return remoteApi({ path: '/api/remote/devices' })
+  return requestResource('remote.list_remote_devices')
 }
 
-export function revokeRemoteDevice(id: number): Promise<void> {
-  return remoteApi({ method: 'DELETE', path: `/api/remote/devices/${id}` })
+export async function revokeRemoteDevice(id: number): Promise<void> {
+  await requestResource('remote.revoke_remote_device', { path: { device_id: id } })
 }
 
-export function revokeAllRemoteDevices(): Promise<void> {
-  return remoteApi({ method: 'DELETE', path: '/api/remote/devices' })
+export async function revokeAllRemoteDevices(): Promise<void> {
+  await requestResource('remote.revoke_all_remote_devices')
 }

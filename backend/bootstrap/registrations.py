@@ -1,6 +1,6 @@
 """显式装配注册：供应商、工具、事件与域钩子在此集中登记；导入业务包无注册副作用，注册表覆盖式幂等。"""
 
-from entrypoints.desktop.event_contracts import validate_gateway_event
+from entrypoints.desktop.event_contracts import EVENT_CONTRACTS, gateway_event_audience, serialize_gateway_event
 from entrypoints.desktop.handlers import terminate_remote_sessions, terminate_user_gateway
 from entrypoints.tools import agent_delegate, cronjob_tool, search_tools_tool
 from entrypoints.tools import memory as memory_tools
@@ -68,7 +68,8 @@ from infrastructure.ai.providers.qwen.tts import QwenTTSProvider
 from infrastructure.ai.providers.qwen.video import QwenVideoGenProvider
 from infrastructure.ai.providers.registry import register as register_provider
 from runtime.channels import ChannelLifecycle, register_channel_lifecycle
-from runtime.desktop.jsonrpc import configure_event_validator
+from runtime.desktop.connection import configure_event_audience
+from runtime.desktop.jsonrpc import configure_event_serializer
 from runtime.events.contracts import COMPANION_TURN_EVENT
 from runtime.events.loop import register_internal_event_handler
 from runtime.tools.registry import REGISTRY
@@ -132,7 +133,8 @@ def register_internal_event_handlers() -> None:
 
 def wire_domain_hooks() -> None:
     """业务域内需要触达生成流程或跨域副作用的少数入口，经装配层注入，保持域间依赖可登记、可检查。"""
-    configure_event_validator(validate_gateway_event)
+    configure_event_serializer(serialize_gateway_event)
+    configure_event_audience(gateway_event_audience, event_types=EVENT_CONTRACTS)
     set_job_intent_invalidator(invalidate_cron_companion_intents)
     set_video_result_handler(deliver_video_result)
     register_asset_contributions()

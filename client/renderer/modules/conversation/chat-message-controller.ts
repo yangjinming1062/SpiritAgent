@@ -46,7 +46,7 @@ export function createChatMessageController(state: ConversationState) {
       const media =
         current ??
         (bubble.status === 'pending' && videoQueueUpdates.has(bubble.media_id)
-          ? { ...bubble, video_queue: videoQueueUpdates.get(bubble.media_id) }
+          ? { ...bubble, video_queue: videoQueueUpdates.get(bubble.media_id) ?? null }
           : bubble)
 
       if (messageId !== undefined && media.status !== 'pending') {

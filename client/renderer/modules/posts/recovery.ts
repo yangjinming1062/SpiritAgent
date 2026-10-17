@@ -7,7 +7,7 @@ export type VideoPublicationRecovery = ApiSchemas['PostPublicationRecovery']
 type VideoPublicationRecoveryList = ApiSchemas['PostPublicationRecoveryList']
 
 export async function listVideoPublications(offset = 0): Promise<VideoPublicationRecoveryList | null> {
-  const result = await authedResource('GET /api/companion/posts/publications', {
+  const result = await authedResource('companion_posts.get_publication_recoveries', {
     query: { state: 'recoverable', offset }
   })
 
@@ -15,7 +15,7 @@ export async function listVideoPublications(offset = 0): Promise<VideoPublicatio
 }
 
 export async function queryVideoPublication(id: string): Promise<VideoPublicationRecovery | null> {
-  const result = await authedResource('POST /api/companion/posts/publications/{publication_id}/query', {
+  const result = await authedResource('companion_posts.query_publication_recovery', {
     path: { publication_id: id }
   })
 
@@ -23,7 +23,7 @@ export async function queryVideoPublication(id: string): Promise<VideoPublicatio
 }
 
 export async function resolveVideoPublication(id: string, action: 'adopt' | 'discard'): Promise<boolean> {
-  const result = await authedResource('POST /api/companion/posts/publications/{publication_id}/decision', {
+  const result = await authedResource('companion_posts.decide_publication', {
     path: { publication_id: id },
     body: { decision: action === 'adopt' ? 'accept' : 'reject' }
   })

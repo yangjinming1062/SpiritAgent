@@ -128,7 +128,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       setHint(null)
 
       try {
-        const result = await requestResource('GET /api/memories', {
+        const result = await requestResource('resource_catalog.get_memories', {
           query: {
             kind: 'recall',
             status,
@@ -243,7 +243,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     setSavedHint(null)
 
     try {
-      const updated = await requestResource('PATCH /api/memories/{memory_id}', {
+      const updated = await requestResource('resource_catalog.patch_memory', {
         path: { memory_id: selected.id },
         body: {
           content: draft.content.trim(),
@@ -274,7 +274,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
       let confirmed: MemoryItem | undefined
 
       try {
-        const result = await requestResource('GET /api/memories', {
+        const result = await requestResource('resource_catalog.get_memories', {
           query: {
             kind: 'recall',
             status: 'active',
@@ -352,7 +352,7 @@ function RecallBrowser({ presetId }: { presetId: string }): React.ReactElement {
     setBusy(true)
 
     try {
-      await requestResource('DELETE /api/memories/{memory_id}', {
+      await requestResource('resource_catalog.delete_memory', {
         path: { memory_id: selected.id },
         query: { system_preset_id: presetId }
       })

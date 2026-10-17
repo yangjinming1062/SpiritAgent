@@ -1,8 +1,9 @@
 import { conversationRuntimes, findConversationRuntime, syncSessionHistory } from '@/modules/conversation'
 import { captureAuthScope } from '@/shared/lib/authed-api'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
-import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
+import { createGatewayView } from '@/shared/lib/gateway-view'
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import { gatewayApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
 import { $gateway, reportPrimaryGatewayState, setPrimaryGateway } from '@/shared/store/gateway'
@@ -26,7 +27,7 @@ export function startGatewayView(
   }
 
   const desktop = gatewayApi()
-  const gateway = new IpcGatewayProxy(presentationHost)
+  const gateway = createGatewayView(presentationHost)
   let disposed = false
   let syncGeneration = 0
   let observedState: ConnectionState | undefined
@@ -37,7 +38,7 @@ export function startGatewayView(
 
   setPrimaryGateway(gateway)
 
-  const syncConversations = (): void => {
+  const syncConversations = (replayed = false): void => {
     const generation = ++syncGeneration
 
     for (const runtime of conversationRuntimes()) {
@@ -47,18 +48,23 @@ export function startGatewayView(
         continue
       }
 
+      if (replayed && runtime.$historyHydrated.get()) {
+        void runtime.recoverUnconfirmedSubmission()
+
+        if (!runtime.$chatTurnInFlight.get()) {
+          runtime.submitPendingBatch()
+        }
+
+        continue
+      }
+
       const snapshot = runtime.captureHistorySync()
       void syncSessionHistory({
         sessionId: targetId,
-        request: body => gateway.request('session.resume', { session_id: targetId, ...body })
+        request: () => requestResource('sessions.snapshot', { path: { session_id: targetId } })
       })
         .then(result => {
-          if (
-            !isCurrent() ||
-            generation !== syncGeneration ||
-            gateway.connectionState !== 'open' ||
-            findConversationRuntime(targetId) !== runtime
-          ) {
+          if (!isCurrent() || generation !== syncGeneration || findConversationRuntime(targetId) !== runtime) {
             return
           }
 
@@ -83,12 +89,15 @@ export function startGatewayView(
       (snapshot.state === observedSnapshot?.state &&
         snapshot.error === observedSnapshot.error &&
         snapshot.hasConnected === observedSnapshot.hasConnected &&
-        snapshot.activeToolCount === observedSnapshot.activeToolCount)
+        snapshot.activeToolCount === observedSnapshot.activeToolCount &&
+        snapshot.recovery === observedSnapshot.recovery &&
+        snapshot.streamId === observedSnapshot.streamId)
     ) {
       return
     }
 
     observedSnapshot = snapshot
+    const firstState = observedState === undefined
     const stateChanged = snapshot.state !== observedState
     observedState = snapshot.state
     reportPrimaryGatewayState(snapshot.state, snapshot.activeToolCount)
@@ -103,18 +112,14 @@ export function startGatewayView(
       return
     }
 
-    if (snapshot.state === 'open') {
+    if (snapshot.state === 'open' || firstState) {
       if (presentationHost) {
-        void resumeHostHistory(gateway, isCurrent)
+        void resumeHostHistory(isCurrent, snapshot.recovery === 'replayed')
       } else {
-        syncConversations()
+        syncConversations(snapshot.recovery === 'replayed')
       }
     } else if (snapshot.state === 'closed' || snapshot.state === 'error') {
       syncGeneration++
-
-      for (const runtime of conversationRuntimes()) {
-        runtime.abandonDisconnectedTurn()
-      }
     }
   }
 

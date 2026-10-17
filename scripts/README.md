@@ -12,7 +12,7 @@
 | Python | 提交前 hook；Backend 依赖变化另跑分层检查 |
 | Client | `pnpm --dir client lint`（含路径解析后的模块／窗口边界、平台桥访问与静态值依赖环）、`pnpm --dir client typecheck` |
 | 手机远程页面 | `pnpm --dir remote lint`、`pnpm --dir remote typecheck`、`pnpm --dir remote build`；扫码、麦克风和后台恢复须在 iOS Safari、Android Chrome 实机验收 |
-| 共享协议 `shared/` | 先执行 `backend/.venv/Scripts/python.exe scripts/generate_protocol.py --check`（其他环境使用 Backend Python），再同时执行 Client 与 Remote 的 lint、typecheck 和构建 |
+| 共享协议 `shared/` | 先执行 `backend/.venv/Scripts/python.exe scripts/generate_protocol.py --check`（其他环境使用 Backend Python），再同时执行 Client 与 Remote 的 lint、typecheck 和构建；Remote lint 及提交前格式化覆盖全部手写共享 TS，生成的 `api.generated.ts` 只核对生成漂移 |
 | Windows 桌面 helper | 在 Windows 执行 `pnpm --dir client build:native`，或在 `client/desktop-host/` 做对应目标的 `cargo check --locked`；交互与恢复另做实机验收 |
 | preload、构建入口或资源 | `pnpm --dir client build` 并核对实际产物 |
 | Installer 前端与编排 | `pnpm --dir installer build`，以及完整载荷下的目标平台 Tauri 构建和安装验收 |
@@ -108,7 +108,7 @@ macOS `afterSign` 调用 [notarize.cjs](../client/scripts/notarize.cjs)，electr
 
 `pnpm --dir remote build` 编译独立浏览器入口，产物位于 `remote/dist/`。Backend 在 `/remote/` 同源提供页面；开发可运行 `pnpm --dir remote dev`，但 Secure Cookie 和手机录音仍要求 HTTPS 同源环境。
 
-[Backend Dockerfile](../backend/Dockerfile) 先使用 Remote 独立锁定的 Node.js / pnpm 依赖构建网页，再复制到 Python 镜像的 `static/remote/`；构建上下文仍为仓库根。[.dockerignore](../.dockerignore) 只允许必要的 Remote 与共享协议构建源进入上下文，排除桌面产物、运行数据和凭据。部署时配置公网 HTTPS 地址，反向代理须保留 WS 升级及请求 Origin。
+[Backend Dockerfile](../backend/Dockerfile) 使用 Remote 独立锁定的 Node.js / pnpm 依赖构建手机网页和管理端共享 HTTP 产物，再复制到 Python 镜像的 `static/remote/`；构建上下文为仓库根。[.dockerignore](../.dockerignore) 只允许必要的 Remote 与共享协议构建源进入上下文，排除桌面产物、运行数据和凭据。部署时配置公网 HTTPS 地址，反向代理须保留 WS 升级及请求 Origin；固定文件名的管理端 HTTP 脚本禁止长期缓存。
 
 ## 构建安装器
 

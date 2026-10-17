@@ -1,12 +1,7 @@
 import { getStrings } from '@/shared/strings'
-import type { ActiveTurnSnapshot, SessionMessage, SessionResumeResponse, SessionRuntimeInfo } from '@protocol'
+import type { ActiveTurnSnapshot, SessionMessage, SessionRuntimeInfo, SessionSnapshot } from '@protocol'
 
-import {
-  mergeIncrementalHistoryRows,
-  mergeLiveHistoryRows,
-  preserveLiveHistoryRows,
-  projectSessionMessages
-} from './chat-history-projection'
+import { mergeLiveHistoryRows, preserveLiveHistoryRows, projectSessionMessages } from './chat-history-projection'
 import type { ChatMessageController } from './chat-message-controller'
 import type { ConversationState } from './chat-runtime-state'
 import type { ConversationHistorySync } from './chat-runtime-types'
@@ -52,7 +47,7 @@ export function createChatHistoryController(
   const { companionBubbleBody, splitUserBubblesEnabled, clearReplyState, clearInflightReply } = messages.internal
   const { bindTrailingUserMessageIds, mergePersistedUserMessages } = submission
 
-  let snapshotPosition: { streamId: string; seq: number } | null = null
+  let lastSnapshotReadId = 0
 
   function replaceAssistantReplyMessage(replacedMessageId: number, message: SessionMessage): void {
     if (!isCurrent() || typeof message.id !== 'number') {
@@ -161,63 +156,24 @@ export function createChatHistoryController(
     $historyHydrated.set(true)
   }
 
-  function applyRemoteSnapshot(
-    snapshot: Partial<SessionResumeResponse>,
-    historySync?: ConversationHistorySync
-  ): boolean {
-    if (
-      !isCurrent() ||
-      !Array.isArray(snapshot.messages) ||
-      (historySync && historySync.historyRevision !== state.historyReplacementRevision)
-    ) {
+  function applyRemoteSnapshot(snapshot: Partial<SessionSnapshot>, historySync?: ConversationHistorySync): boolean {
+    if (!isCurrent() || !Array.isArray(snapshot.messages)) {
       return false
     }
 
-    // 宿主的增量广播可能先于本窗口的完整历史，未初始化时不能据此建立历史基底。
-    if (snapshot.incremental && !$historyHydrated.get()) {
-      return false
-    }
-
-    if (snapshot.resumed) {
-      if (snapshot.info) {
-        hydrateSessionInfo(snapshot.info)
-      }
-
-      if (snapshot.replayed_count === 0 && snapshot.active_turn?.running && !$chatTurnInFlight.get()) {
-        restoreActiveTurn(snapshot.active_turn)
-      }
-
+    if (snapshot.snapshot_read_id !== undefined && snapshot.snapshot_read_id <= lastSnapshotReadId) {
       return true
     }
 
-    if (snapshot.stream_id && typeof snapshot.current_seq === 'number') {
-      if (snapshotPosition?.streamId === snapshot.stream_id && snapshot.current_seq <= snapshotPosition.seq) {
-        if (snapshot.current_seq === snapshotPosition.seq && snapshot.info) {
-          hydrateSessionInfo(snapshot.info)
-        }
-
-        return true
-      }
+    if (historySync && historySync.historyRevision !== state.historyReplacementRevision) {
+      return false
     }
 
     const historyChanged =
       snapshot.history_revision !== undefined && snapshot.history_revision !== (state.serverHistoryRevision ?? 0)
 
-    if (historyChanged && !snapshot.incremental) {
+    if (historyChanged) {
       hydrateEditedChatMessages(snapshot.messages)
-    } else if (snapshot.incremental) {
-      const original = $chatMessageList.get()
-      const originalBodies = $chatMessageBodies.get()
-      const incomingIds = new Set(snapshot.messages.map(message => message.id))
-      replaceChatMessages(snapshot.messages, snapshot.info, false)
-      const incoming = $chatMessageList.get()
-      const incomingBodies = $chatMessageBodies.get()
-
-      const merged = mergeIncrementalHistoryRows(original, incoming, incomingIds)
-      $chatMessageBodies.set(
-        Object.fromEntries(merged.map(item => [item.id, incomingBodies[item.id] ?? originalBodies[item.id]]))
-      )
-      $chatMessageList.set(merged)
     } else if (!hydrateSyncedChatMessages(snapshot.messages, snapshot.info, historySync ?? captureHistorySync())) {
       return false
     }
@@ -261,9 +217,7 @@ export function createChatHistoryController(
       }
     }
 
-    if (snapshot.stream_id && typeof snapshot.current_seq === 'number') {
-      snapshotPosition = { streamId: snapshot.stream_id, seq: snapshot.current_seq }
-    }
+    lastSnapshotReadId = snapshot.snapshot_read_id ?? lastSnapshotReadId
 
     return true
   }

@@ -62,6 +62,10 @@ def resolve_future(user_id: int, call_id: str, result: str) -> bool:
     return True
 
 
+def pending_call_ids(user_id: int) -> list[str]:
+    return [call_id for (owner, call_id), future in _PENDING.items() if owner == user_id and not future.done()]
+
+
 def discard_user(user_id: int) -> None:
     """以「桌面离线」错误兑现该用户所有未决等待。刻意不用 cancel()：CancelledError 继承 BaseException，会穿透 chat 回合各层的 except Exception 导致回合静默死亡；用错误兑现能让回合正常收尾并如实告知。"""
     for key in [k for k in _PENDING if k[0] == user_id]:

@@ -3,16 +3,13 @@ import path from 'node:path'
 
 import { errorMessage } from '@runtime'
 
+import type { ApiResponse } from '../../../shared/api'
+import { ApiError } from '../../../shared/errors'
 import type { SafeStorageApi } from '../security/hardening'
+import type { BackendClientContext } from '../shared/backend-port'
 import { atomicWriteFile, createSerialQueue, safeReadJson } from '../shared/utils'
 
-import {
-  type BackendClient,
-  BackendRequestError,
-  createBackendClient,
-  type FetchFunction,
-  normalizeBaseUrl
-} from './client'
+import { type BackendClient, createBackendClient, type FetchFunction, normalizeBaseUrl } from './client'
 
 const SESSION_FILENAME = 'agent-session.json'
 const SESSION_SCHEMA_VERSION = 3
@@ -74,11 +71,7 @@ interface StoredAccountsPayload {
   schemaVersion: number
 }
 
-interface TokenAuthResponse {
-  access_token?: string
-  expires_in: number
-  user?: unknown
-}
+type TokenAuthResponse = ApiResponse<'user.activate'>
 
 interface ActiveSession extends SavedAccount {
   sessionId: string
@@ -113,7 +106,7 @@ export interface SessionSnapshot {
 }
 
 export interface BackendSession {
-  activate: (payload?: { clientContext?: unknown; code?: string }) => Promise<null | SessionSnapshot>
+  activate: (payload?: { clientContext?: BackendClientContext; code?: string }) => Promise<null | SessionSnapshot>
   client: () => BackendClient
   getSession: () => null | SessionSnapshot
   getSelectedAccountId: () => null | string
@@ -122,10 +115,13 @@ export interface BackendSession {
   logout: (
     expectedSessionId?: string
   ) => Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
-  refresh: (payload?: { clientContext?: unknown }) => Promise<null | SessionSnapshot>
+  refresh: (payload?: { clientContext?: BackendClientContext }) => Promise<null | SessionSnapshot>
   removeAccount: (accountId: string) => Promise<void>
   restoreSession: () => Promise<null | SessionSnapshot>
-  switchAccount: (accountId: string, payload?: { clientContext?: unknown }) => Promise<null | SessionSnapshot>
+  switchAccount: (
+    accountId: string,
+    payload?: { clientContext?: BackendClientContext }
+  ) => Promise<null | SessionSnapshot>
 }
 
 function encryptToken(raw: string, safeStorage?: null | SafeStorageApi): EncryptedToken {
@@ -252,7 +248,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   const backendAt = (baseUrl: string): BackendClient => createBackendClient({ baseUrl, fetch: fetchImpl })
 
   const logoutBackend = (account: ActiveSession): Promise<unknown> =>
-    backendAt(account.baseUrl).post('/api/user/logout', { token: account.token })
+    backendAt(account.baseUrl).invoke('user.logout', {}, { headers: { Authorization: `Bearer ${account.token}` } })
 
   function loadAccounts(): void {
     if (loaded) {
@@ -362,11 +358,11 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   }
 
   function translateBackendError(error: unknown): never {
-    if (!(error instanceof BackendRequestError)) {
+    if (!(error instanceof ApiError)) {
       throw error
     }
 
-    if (error.status === 401) {
+    if (error.isLoginExpired) {
       throw new SessionError({ cause: error, code: 'bad-credentials', message: '激活码无效。', status: 401 })
     }
 
@@ -433,7 +429,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     })
   }
 
-  async function activateCode(code: string, clientContext?: unknown): Promise<null | SessionSnapshot> {
+  async function activateCode(code: string, clientContext?: BackendClientContext): Promise<null | SessionSnapshot> {
     loadAccounts()
 
     if (cached?.activationCode === code && cached.tokenExpiresAt > now()) {
@@ -454,7 +450,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     let response: TokenAuthResponse
 
     try {
-      response = await backendAt(baseUrl).post<TokenAuthResponse>('/api/user/activate', {
+      response = await backendAt(baseUrl).invoke('user.activate', {
         body: { client_context: clientContext || undefined, client_version: appVersion, code }
       })
     } catch (error) {
@@ -482,7 +478,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   function activate({
     clientContext,
     code
-  }: { clientContext?: unknown; code?: string } = {}): Promise<null | SessionSnapshot> {
+  }: { clientContext?: BackendClientContext; code?: string } = {}): Promise<null | SessionSnapshot> {
     if (!code) {
       return Promise.reject(new SessionError({ code: 'missing-code', message: 'Activation code is required.' }))
     }
@@ -490,7 +486,10 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     return enqueue(() => activateCode(code, clientContext))
   }
 
-  function switchAccount(id: string, payload: { clientContext?: unknown } = {}): Promise<null | SessionSnapshot> {
+  function switchAccount(
+    id: string,
+    payload: { clientContext?: BackendClientContext } = {}
+  ): Promise<null | SessionSnapshot> {
     return enqueue(async () => {
       loadAccounts()
       const account = accounts.find(item => item.id === id)
@@ -507,7 +506,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     })
   }
 
-  async function refresh(payload: { clientContext?: unknown } = {}): Promise<null | SessionSnapshot> {
+  async function refresh(payload: { clientContext?: BackendClientContext } = {}): Promise<null | SessionSnapshot> {
     if (!cached) {
       throw new SessionError({ code: 'not-logged-in', message: 'Cannot refresh without an active session.' })
     }
@@ -516,10 +515,13 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     const epoch = sessionEpoch
 
     try {
-      const response = await backendAt(current.baseUrl).post<TokenAuthResponse>('/api/user/refresh', {
-        body: { client_context: payload.clientContext || undefined, client_version: appVersion },
-        token: current.token
-      })
+      const response = await backendAt(current.baseUrl).invoke(
+        'user.refresh_session',
+        {
+          body: { client_context: payload.clientContext || undefined, client_version: appVersion }
+        },
+        { headers: { Authorization: `Bearer ${current.token}` } }
+      )
 
       if (epoch !== sessionEpoch || cached?.id !== current.id) {
         throw new SessionError({ code: 'session-superseded', message: 'Session changed during refresh.' })
@@ -540,7 +542,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
 
       return snapshot()
     } catch (error) {
-      if (epoch === sessionEpoch && error instanceof BackendRequestError && error.status === 401) {
+      if (epoch === sessionEpoch && error instanceof ApiError && error.isLoginExpired) {
         await enqueue(async () => {
           if (epoch === sessionEpoch) {
             clearActive()

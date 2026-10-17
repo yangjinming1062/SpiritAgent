@@ -1,6 +1,7 @@
 import type { DesktopBackgroundBridge, DesktopBridge, DesktopFileBridge } from '@client-shared/ipc/bridge'
-import type { DesktopApiResult, SpiritAgentApiRequest } from '@ipc/contracts'
+import type { DesktopApiOperationKey, DesktopApiResult, SpiritAgentApiRequest } from '@ipc/contracts'
 
+import type { ApiResponse } from '../../../../shared/api'
 import { ApiError } from '../../../../shared/errors'
 
 type ApiValueCall<F> = F extends (...args: infer Args) => Promise<DesktopApiResult<infer Value>>
@@ -8,7 +9,9 @@ type ApiValueCall<F> = F extends (...args: infer Args) => Promise<DesktopApiResu
   : never
 
 type BackendPort = Pick<DesktopBridge, 'apiAsset' | 'apiAssetBuffer' | 'sessionHistory'> & {
-  api: <T = unknown>(request: SpiritAgentApiRequest) => Promise<T>
+  api: <Operation extends DesktopApiOperationKey>(
+    request: SpiritAgentApiRequest<Operation>
+  ) => Promise<ApiResponse<Operation>>
 }
 type AccountPort = Pick<
   DesktopBridge,
@@ -16,7 +19,7 @@ type AccountPort = Pick<
 >
 type GatewayPort = Pick<
   DesktopBridge,
-  'gatewayRequest' | 'gatewayGetState' | 'onGatewayStateChanged' | 'onGatewayEvent'
+  'gatewayPresence' | 'gatewayGetState' | 'onGatewayStateChanged' | 'onGatewayEvent'
 >
 type RunnerPort = Pick<
   DesktopBridge,
@@ -74,7 +77,8 @@ async function apiValue<T>(response: Promise<DesktopApiResult<T>>): Promise<T> {
 
 // 能力按调用用途收窄，延迟读取 preload；保留原桥的调用与订阅语义。
 export const backendApi = (): BackendPort => ({
-  api: <T = unknown>(request: SpiritAgentApiRequest) => apiValue(window.spiritagent.api<T>(request)),
+  api: <Operation extends DesktopApiOperationKey>(request: SpiritAgentApiRequest<Operation>) =>
+    apiValue(window.spiritagent.api(request)),
   apiAsset: window.spiritagent.apiAsset,
   apiAssetBuffer: window.spiritagent.apiAssetBuffer,
   sessionHistory: window.spiritagent.sessionHistory

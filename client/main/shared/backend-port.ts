@@ -1,21 +1,14 @@
-/** Runner/托盘/配置同步对后端的最小端口。只描述结构契约，不 import backend 实现，保持 shared 为叶子、runner 与 backend 互不直连。 */
+import type { ApiOperation, ApiTransport } from '../../../shared/api'
+
+export type BackendClientContext = ApiOperation<'user.activate'>['body']['client_context']
 
 export interface BackendConnection {
   baseUrl: string
   token: null | string
 }
 
-export interface BackendRequestPortOptions {
-  body?: unknown
-  timeoutMs?: number
-  token?: string
-}
-
-export interface BackendClientPort {
+export interface BackendClientPort extends ApiTransport {
   baseUrl: string
-  get: <T = unknown>(path: string, options?: BackendRequestPortOptions) => Promise<T>
-  post: <T = unknown>(path: string, options?: BackendRequestPortOptions) => Promise<T>
-  put: <T = unknown>(path: string, options?: BackendRequestPortOptions) => Promise<T>
 }
 
 export interface SessionSnapshotPort {
@@ -32,13 +25,16 @@ export interface BackendSessionPort {
   client: () => BackendClientPort
   getSession: () => null | SessionSnapshotPort
   getToken: () => null | string
-  activate: (payload?: { clientContext?: unknown; code?: string }) => Promise<null | SessionSnapshotPort>
+  activate: (payload?: { clientContext?: BackendClientContext; code?: string }) => Promise<null | SessionSnapshotPort>
   /** Token 失效后仍返回本机选中的账户。 */
   getSelectedAccountId: () => null | string
   listAccounts: () => Array<{ active: boolean; baseUrl: string; id: string; username: string }>
   logout: (expectedSessionId?: string) => Promise<{ ignored?: boolean; ok: boolean }>
-  refresh: (payload?: { clientContext?: unknown }) => Promise<null | SessionSnapshotPort>
+  refresh: (payload?: { clientContext?: BackendClientContext }) => Promise<null | SessionSnapshotPort>
   removeAccount: (accountId: string) => Promise<void>
   restoreSession: () => Promise<null | SessionSnapshotPort>
-  switchAccount: (accountId: string, payload?: { clientContext?: unknown }) => Promise<null | SessionSnapshotPort>
+  switchAccount: (
+    accountId: string,
+    payload?: { clientContext?: BackendClientContext }
+  ) => Promise<null | SessionSnapshotPort>
 }

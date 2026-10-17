@@ -1,11 +1,16 @@
 import type { IpcMain, WebContents } from 'electron'
 
-import { IPC, type IpcInvokeContract, type SpiritAgentApiRequest } from '@ipc/contracts'
+import { type DesktopApiOperationKey, IPC, type IpcInvokeContract, type SpiritAgentApiRequest } from '@ipc/contracts'
 
-import { assertApiRequestAllowed } from '../security/api-allowlist'
+import { type ApiArguments, apiErrorFromResponse } from '../../../shared/api'
+import { ApiError } from '../../../shared/errors'
+import { isRecord } from '../../../shared/gateway'
+import type { DesktopGateway } from '../backend/gateway'
+import type { BackendHttp } from '../backend/http'
+import { assertApiOperationAllowed } from '../security/api-allowlist'
 import type { BackendConnection } from '../shared/backend-port'
 import { dataUrlFromBuffer } from '../shared/mime'
-import { httpErrorFromResponse, isUnauthorized, sendToSender } from '../shared/utils'
+import { sendToSender } from '../shared/utils'
 
 import { registerApiResult } from './api-result'
 import { type AssetDiskCache, type CachedAsset, resolveBackendAssetUrl } from './asset-disk-cache'
@@ -28,7 +33,12 @@ export function createBackendCaller({
     } catch (error) {
       const current = getCurrentAuth()
 
-      if (isUnauthorized(error) && connection.token && current?.token === connection.token) {
+      if (
+        error instanceof ApiError &&
+        error.isLoginExpired &&
+        connection.token &&
+        current?.token === connection.token
+      ) {
         sendToSender(sender, IPC.event.authSessionExpired, current.sessionId)
       }
 
@@ -40,18 +50,13 @@ export function createBackendCaller({
 interface ConnectionIpcDeps {
   assetDiskCache: AssetDiskCache
   assetFetchTimeoutMs: number
-  defaultFetchTimeoutMs: number
   ensureBackend: () => Promise<BackendConnection>
   fetchImpl?: typeof globalThis.fetch
-  fetchJson: (
-    url: string,
-    token?: string,
-    options?: { body?: unknown; method?: string; timeoutMs?: number }
-  ) => Promise<unknown>
+  invokeApi: BackendHttp['invoke']
+  getGateway: () => DesktopGateway | null
   getCurrentAuth: GetCurrentAuth
   getSelectedAccountId: () => string | null
   ipcMain: IpcMain
-  resolvePathTimeoutMs: (path?: string, method?: string, fallbackMs?: number) => number
 }
 
 type AssetRequest = Parameters<IpcInvokeContract['spiritagent:api:asset-buffer']>[0]
@@ -136,7 +141,7 @@ export function createBackendAssetReader({
       })
 
       if (!res.ok) {
-        throw await httpErrorFromResponse(res, new URL(raw, connection.baseUrl).pathname)
+        throw await apiErrorFromResponse(res)
       }
 
       const buffer = Buffer.from(await res.arrayBuffer())
@@ -155,14 +160,13 @@ export function createBackendAssetReader({
 export function registerConnectionIpc({
   assetDiskCache,
   assetFetchTimeoutMs,
-  defaultFetchTimeoutMs,
   ensureBackend,
   fetchImpl = globalThis.fetch,
-  fetchJson,
+  invokeApi,
+  getGateway,
   getCurrentAuth,
   getSelectedAccountId,
-  ipcMain,
-  resolvePathTimeoutMs
+  ipcMain
 }: ConnectionIpcDeps): void {
   const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
 
@@ -176,11 +180,11 @@ export function registerConnectionIpc({
   })
 
   registerApiResult(ipcMain, IPC.invoke.api, async (event, request: SpiritAgentApiRequest) => {
-    assertApiRequestAllowed(request?.path, request?.method)
+    assertApiOperationAllowed(request?.operation)
 
     const auth = getCurrentAuth()
 
-    if (request?.authSessionId !== undefined && request.authSessionId !== auth?.sessionId) {
+    if (!auth || request.authSessionId !== auth.sessionId || !isRecord(request.input)) {
       throw new Error('API authentication changed before dispatch')
     }
 
@@ -191,11 +195,29 @@ export function registerConnectionIpc({
         throw new Error('API authentication changed while resolving backend')
       }
 
-      return fetchJson(`${connection.baseUrl}${request.path}`, connection.token || undefined, {
-        body: request?.body,
-        method: request?.method,
-        timeoutMs: resolvePathTimeoutMs(request?.path, request?.method, defaultFetchTimeoutMs)
-      })
+      if (request.operation === 'sessions.snapshot') {
+        const inputPath: unknown = request.input.path
+        const sessionId = isRecord(inputPath) ? inputPath.session_id : undefined
+
+        if (typeof sessionId !== 'string' || !sessionId) {
+          throw new Error('A conversation is required')
+        }
+
+        const load = (streamId?: string) =>
+          invokeApi(connection.baseUrl, connection.token || undefined, 'sessions.snapshot', {
+            path: { session_id: sessionId },
+            query: streamId ? { stream_id: streamId } : {}
+          })
+
+        return getGateway()?.synchronize(auth.sessionId, sessionId, load) ?? load()
+      }
+
+      return invokeApi<DesktopApiOperationKey>(
+        connection.baseUrl,
+        connection.token || undefined,
+        request.operation,
+        ...([request.input] as ApiArguments<DesktopApiOperationKey>)
+      )
     })
   })
 

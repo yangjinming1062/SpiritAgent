@@ -9,7 +9,7 @@ import {
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
-import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
+import type { BackendClientContext, BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'
 import { confirmAccountRemoval, showAccountRemovalError } from '../shared/lib/account-removal'
 import { broadcastToAllWindows, createSerialQueue } from '../shared/utils'
@@ -107,7 +107,7 @@ interface AuthIpcDeps {
   autoStartBridge: () => void
   autoStopBridge: () => Promise<void>
   broadcastAuthChanged: (session: null | SessionSnapshotPort, removedAccountId?: string) => Promise<void>
-  buildClientContext: () => { client_context?: unknown }
+  buildClientContext: () => { client_context?: BackendClientContext }
   ensureBackendSession: () => BackendSessionPort
   getSessionAfterRestore: () => Promise<null | SessionSnapshotPort>
   log: (message: string) => void

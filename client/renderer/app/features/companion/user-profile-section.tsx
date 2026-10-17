@@ -98,7 +98,7 @@ export function UserProfileSection(): React.ReactElement {
         let total = 0
 
         do {
-          const result = await requestResource('GET /api/memories', {
+          const result = await requestResource('resource_catalog.get_memories', {
             query: {
               kind: 'user_profile',
               status: 'active',
@@ -193,7 +193,7 @@ export function UserProfileSection(): React.ReactElement {
     setSavedHint(null)
 
     try {
-      const result = await requestResource('PATCH /api/memories/profile', {
+      const result = await requestResource('resource_catalog.patch_memory_profile', {
         body: {
           system_preset_id: 'companion',
           changes
@@ -277,7 +277,7 @@ export function UserProfileSection(): React.ReactElement {
     setSavedHint(null)
 
     try {
-      const updated = await requestResource('PATCH /api/memories/{memory_id}', {
+      const updated = await requestResource('resource_catalog.patch_memory', {
         path: { memory_id: row.id },
         body: {
           content: draft.content.trim(),
@@ -354,7 +354,7 @@ export function UserProfileSection(): React.ReactElement {
     setBusy(true)
 
     try {
-      await requestResource('DELETE /api/memories/{memory_id}', {
+      await requestResource('resource_catalog.delete_memory', {
         path: { memory_id: row.id },
         query: { system_preset_id: 'companion' }
       })

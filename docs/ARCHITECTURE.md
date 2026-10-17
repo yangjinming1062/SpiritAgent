@@ -18,7 +18,7 @@ flowchart LR
         Backend <--> DB
         Backend <--> Provider
     end
-    Client <-->|聊天 WS 与 REST| Backend
+    Client <-->|业务 HTTP、事件与设备 WS| Backend
     Mobile[手机浏览器] <-->|设备 Cookie、REST 与远程 WS| Backend
 ```
 
@@ -72,7 +72,7 @@ Runner 使用 `runner/spirit_agent_runner/` 平铺 Python 包，源码与安装�
 
 ### 通信选择
 
-Backend 与 Client 通过 WebSocket 交付持续会话和事件，通过 REST 操作独立资源。Client 与 Runner 使用本地 OS IPC 承载 WebSocket 帧，由 Client 建立端点、Runner 主动连接。
+Backend 与 Client 通过 HTTP 受理全部业务操作，通过 WebSocket 交付实时事件、连接控制与设备指令。两端共用生成契约和 HTTP、连接恢复核心；Client 主进程持有凭据和连接，各窗口只提交类型化操作与订阅事件。Client 与 Runner 使用本地 OS IPC 承载 WebSocket 帧，由 Client 建立端点、Runner 主动连接。
 本地 IPC 避免标准输出污染协议，也不暴露 TCP 监听端口；它仍需要端点权限和启动 token。
 
 Remote 由 Backend 同源托管，使用独立设备身份、REST 与 WS；云端功能不依赖桌面在线，本机调用仍走 Client 与 Runner。身份与恢复规则见 [远程访问](PROTOCOL.md#远程访问)。

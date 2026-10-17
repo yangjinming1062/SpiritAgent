@@ -12,7 +12,6 @@ from infrastructure.constants import (
     JSONRPC_INVALID_REQUEST,
     JSONRPC_METHOD_NOT_FOUND,
     JSONRPC_PARSE_ERROR,
-    JSONRPC_TURN_BUSY,
 )
 from infrastructure.logger import get_logger
 from pydantic import JsonValue
@@ -24,12 +23,12 @@ logger = get_logger(__name__)
 OUTBOX_QUEUE_MAX = 1024
 
 
-_EVENT_VALIDATOR: Callable[[str, Any], None] | None = None
+_EVENT_SERIALIZER: Callable[[str, Any], dict[str, JsonValue]] | None = None
 
 
-def configure_event_validator(validator: Callable[[str, Any], None]) -> None:
-    global _EVENT_VALIDATOR
-    _EVENT_VALIDATOR = validator
+def configure_event_serializer(serializer: Callable[[str, Any], dict[str, JsonValue]]) -> None:
+    global _EVENT_SERIALIZER
+    _EVENT_SERIALIZER = serializer
 
 
 class JsonRpcError(Exception):
@@ -143,7 +142,7 @@ class JsonRpcDispatcher:
             task.cancel()
 
     def enable_hold(self) -> None:
-        """激活事件 hold：push_event 只追加到缓冲，等到挂载（session.resume）时再 flush。"""
+        """连接恢复前暂存事件，gateway.resume 重放或冲刷后恢复交付。"""
         self._hold_events = True
         self._cancel_hold_timeout()
 
@@ -253,8 +252,8 @@ class JsonRpcDispatcher:
                 return True
             # 未送达且已离开缓冲和发送队列的事件必须重新入队。
             self._pending_outbox_events.pop(previous_seq, None)
-        if _EVENT_VALIDATOR is not None:
-            _EVENT_VALIDATOR(event_type, payload)
+        if _EVENT_SERIALIZER is not None:
+            payload = _EVENT_SERIALIZER(event_type, payload)
         if session_id is None and isinstance(payload, dict) and isinstance(payload.get("session_id"), str):
             session_id = payload["session_id"]
         writer_running = self._writer_task is not None and not self._writer_task.done()
@@ -317,11 +316,12 @@ class JsonRpcDispatcher:
             self._record_delivered(f.seq)
         return True
 
-    async def _flush_locked(self, after_seq: int) -> None:
+    async def _flush_locked(self, after_seq: int) -> bool:
         # 外层循环覆盖发送挂起期间新入缓冲的帧。
         while unsent := self.replay_buffer.get_unsent(after_seq):
             if not await self._send_frames(unsent):
-                return
+                return False
+        return True
 
     async def replay(self, last_seq: int) -> int | None:
         """在 send lock 内重放 last_seq 之后的帧、补发新帧并释放 hold，返回重放帧数；缓冲已不覆盖 last_seq 时返回 None 且保持 hold。"""
@@ -330,8 +330,8 @@ class JsonRpcDispatcher:
             if frames is None:
                 return None
             self._cancel_hold_timeout()
-            await self._send_frames(frames)
-            await self._flush_locked(last_seq)
+            if not await self._send_frames(frames) or not await self._flush_locked(last_seq):
+                return None
             self._hold_events = False
             return len(frames)
 
@@ -357,7 +357,7 @@ class JsonRpcDispatcher:
         public = api_error(
             400 if code != JSONRPC_INTERNAL_ERROR else 500,
             message,
-            code="turn_busy" if code == JSONRPC_TURN_BUSY else f"rpc_{abs(code)}",
+            code=f"rpc_{abs(code)}",
             details=details,
         )
         error = {"code": code, "message": public.message, "data": public.model_dump(mode="json")}

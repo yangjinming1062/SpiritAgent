@@ -1,17 +1,23 @@
+import { fileURLToPath } from 'node:url'
+
 import js from '@eslint/js'
 import typescriptEslint from '@typescript-eslint/eslint-plugin'
 import typescriptParser from '@typescript-eslint/parser'
 import perfectionist from 'eslint-plugin-perfectionist'
+import React from 'react'
 import reactPlugin from 'eslint-plugin-react'
 import hooksPlugin from 'eslint-plugin-react-hooks'
 import unusedImports from 'eslint-plugin-unused-imports'
 import globals from 'globals'
 
+const projectRoot = fileURLToPath(new URL('..', import.meta.url))
+
 export default [
-  { ignores: ['node_modules/**', 'dist/**', '*.config.*'] },
+  { ignores: ['**/node_modules/**', '**/dist/**', '**/*.config.*', '**/api.generated.ts'] },
   js.configs.recommended,
   {
-    files: ['**/*.{ts,tsx}'],
+    basePath: projectRoot,
+    files: ['remote/**/*.{ts,tsx}', 'shared/*.ts'],
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {
@@ -27,7 +33,7 @@ export default [
       'react-hooks': hooksPlugin,
       'unused-imports': unusedImports
     },
-    settings: { react: { version: 'detect' } },
+    settings: { react: { version: React.version } },
     rules: {
       ...reactPlugin.configs.recommended.rules,
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],

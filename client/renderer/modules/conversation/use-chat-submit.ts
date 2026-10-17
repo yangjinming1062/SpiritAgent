@@ -1,9 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type Dispatch, type SetStateAction, useCallback, useRef } from 'react'
 
-import { requestGateway } from '@/shared'
 import { captureAuthScope } from '@/shared/lib/authed-api'
-import type { RpcRequester } from '@/shared/lib/gateway-protocol'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
@@ -11,13 +9,13 @@ import { currentClearEpoch } from '@/shared/lib/storage'
 import { confirmAction } from '@/shared/panel'
 import { fileApi } from '@/shared/platform/desktop'
 import { presentationPorts } from '@/shared/presentation-ports'
-import { $gateway } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { ChatAttachment } from '@protocol'
 import { errorMessage } from '@runtime'
 
 import { basename } from './chat-path'
+import { submitConversationTurn } from './chat-requests'
 import type { ConversationRuntime } from './chat-runtime'
 import { executeSlashCommand, slashPreCheck } from './chat-slash'
 import {
@@ -45,6 +43,7 @@ export interface ChatSubmit {
   handleStop: () => Promise<void>
   pending: PendingAttachment | null
   sending: boolean
+  stopping: boolean
   send: () => Promise<void>
   setPending: Dispatch<SetStateAction<PendingAttachment | null>>
   setText: Dispatch<SetStateAction<string>>
@@ -55,7 +54,6 @@ const appendLine = (text: string, line: string): string => (text ? `${text}\n${l
 
 export function useChatSubmit({
   externalPaths,
-  gatewayState,
   isReadOnlySession,
   onClearExternalPaths,
   onPreCheckFail
@@ -63,22 +61,12 @@ export function useChatSubmit({
   const view = useConversationView()
   const controller = view.controller
 
-  const {
-    $chatEditDraft,
-    $chatMessageBodies,
-    $chatMessageList,
-    $chatSessionId,
-    $chatTurnInFlight,
-    $pendingPromptBatch,
-    cancelPendingFlush,
-    finalizeAssistantMessage,
-    markAssistantTerminal,
-    submitPendingBatch
-  } = controller
+  const { $chatEditDraft, $chatMessageList, $chatSessionId, $chatTurnInFlight, $pendingPromptBatch } = controller
 
   const text = useStore(controller.$text)
   const pending = useStore(controller.$pending)
   const sending = useStore(controller.$sending)
+  const stoppingRequestId = useStore(controller.$stoppingRequestId)
 
   const setText: Dispatch<SetStateAction<string>> = useCallback(
     next => {
@@ -110,21 +98,12 @@ export function useChatSubmit({
 
   const send = useCallback(async (): Promise<void> => {
     const authScope = captureAuthScope()
-    const gateway = $gateway.get()
 
-    if (!view.eligible || !controller.isCurrent() || !authScope || !gateway) {
+    if (!view.eligible || !controller.isCurrent() || !authScope) {
       return
     }
 
-    const requestCurrent = (): boolean => authScope() && $gateway.get() === gateway
-
-    const requestGateway: RpcRequester = async (method, params) => {
-      if (!requestCurrent()) {
-        throw new Error('Gateway request owner changed')
-      }
-
-      return gateway.request(method, params)
-    }
+    const requestCurrent = authScope
 
     const edit = $chatEditDraft.get()
     const currentText = edit?.text ?? controller.$text.get()
@@ -157,10 +136,6 @@ export function useChatSubmit({
     }
 
     if (!edit && trimmed === '/') {
-      return
-    }
-
-    if (gatewayState !== 'open') {
       return
     }
 
@@ -227,19 +202,22 @@ export function useChatSubmit({
       })
 
       try {
-        controller.acceptPromptSubmission(await requestGateway('prompt.submit', submission))
+        controller.acceptPromptSubmission(await submitConversationTurn(submission))
 
         if ($chatEditDraft.get() === edit) {
           $chatEditDraft.set(null)
         }
       } catch (err) {
-        // 已收到修订事件时，服务端已接受；迟到的 RPC 失败不能中止新回合。
+        controller.submissionFailed(submission, err)
+
+        // 已收到修订事件时，服务端已接受；迟到的请求失败不能中止新回合。
         if (
           requestCurrent() &&
           controller.isCurrent() &&
           $chatSessionId.get() === edit.sessionId &&
           $chatEditDraft.get() === edit &&
-          controller.isPromptUnconfirmed(submission.request_id)
+          controller.isPromptUnconfirmed(submission.request_id) &&
+          !controller.cancellationRequested(submission.request_id)
         ) {
           $chatTurnInFlight.set(false)
           notifyError(err, getStrings().chat.edit.failed)
@@ -269,7 +247,6 @@ export function useChatSubmit({
             setSending(true)
             setText('')
           },
-          requestGateway,
           runtime: controller
         })
 
@@ -423,7 +400,6 @@ export function useChatSubmit({
     view.scoped,
     view.runtime,
     externalPathsRef,
-    gatewayState,
     isReadOnlySession,
     onClearExternalPaths,
     onPreCheckFail,
@@ -442,52 +418,8 @@ export function useChatSubmit({
     }
 
     conversationVoiceSink().cancel($chatSessionId.get())
-    cancelPendingFlush()
-    $chatTurnInFlight.set(false)
-    const sid = $chatSessionId.get()
-
-    // 停止对会话是尽力请求，失败仍在本地收尾；本回合在途的本机调用由后端中断回合时逐个下发 tool.cancel 取消。
-    if (sid) {
-      try {
-        await requestGateway('session.interrupt', { session_id: sid })
-      } catch (err) {
-        log.warn('use-chat-submit', 'session.interrupt failed', err)
-      }
-    }
-
-    if (!controller.isCurrent()) {
-      return
-    }
-
-    presentationPorts().setSpriteState('idle', { force: true })
-
-    // 等待中断期间已切到其他会话：收尾与排队提交不作用于新会话。
-    if ($chatSessionId.get() !== sid) {
-      return
-    }
-
-    const lastItem = $chatMessageList.get().at(-1)
-    const lastBody = lastItem ? $chatMessageBodies.get()[lastItem.id] : undefined
-
-    if (lastItem?.role === 'assistant' && lastBody?.streaming && lastBody.text.trim()) {
-      finalizeAssistantMessage()
-    } else {
-      markAssistantTerminal({ cancelled: true })
-    }
-
-    submitPendingBatch()
-  }, [
-    controller,
-    view.eligible,
-    $chatMessageBodies,
-    $chatMessageList,
-    $chatSessionId,
-    $chatTurnInFlight,
-    cancelPendingFlush,
-    finalizeAssistantMessage,
-    markAssistantTerminal,
-    submitPendingBatch
-  ])
+    await controller.stopActiveTurn()
+  }, [controller, view.eligible, $chatSessionId])
 
   return {
     cancelEdit: () => {
@@ -500,6 +432,9 @@ export function useChatSubmit({
     pending,
     send,
     sending,
+    stopping:
+      stoppingRequestId !== null &&
+      (!controller.activeRequestId() || stoppingRequestId === controller.activeRequestId()),
     setPending,
     setText: next => {
       const edit = $chatEditDraft.get()

@@ -4,10 +4,9 @@ import {
   type AttachmentVideoUploadPayload,
   type AudioUploadPayload,
   type DesktopActivatePayload,
+  type DesktopApiOperationKey,
   type DesktopApiResult,
   type DesktopAuthBroadcast,
-  type DesktopGatewayRequest,
-  type DesktopGatewayRpcResult,
   type DesktopLogoutPayload,
   type DesktopPrefsHydrated,
   type DesktopRunnerStatusEvent,
@@ -38,7 +37,7 @@ import {
   type VoiceSampleUploadPayload
 } from '@ipc/contracts'
 
-import type { RpcMethod, RpcResponse } from '../../shared/gateway'
+import type { ApiResponse } from '../../shared/api'
 import type { DesktopBridge, DesktopFileBridge } from '../shared/ipc/bridge'
 
 type InvokeChannel = keyof IpcInvokeContract
@@ -142,7 +141,8 @@ const desktopBridge = {
     onNavigate: (cb: EventCallback<typeof IPC.event.desktopNavigate>) => subscribe(IPC.event.desktopNavigate, cb)
   },
   activate: (payload: DesktopActivatePayload) => invoke(IPC.invoke.authActivate, payload),
-  api: <T = unknown>(request: SpiritAgentApiRequest) => invoke(IPC.invoke.api, request) as Promise<DesktopApiResult<T>>,
+  api: <Operation extends DesktopApiOperationKey>(request: SpiritAgentApiRequest<Operation>) =>
+    invoke(IPC.invoke.api, request) as Promise<DesktopApiResult<ApiResponse<Operation>>>,
   apiAsset: (request: InvokePayload<typeof IPC.invoke.apiAsset>) => invoke(IPC.invoke.apiAsset, request),
   apiAssetBuffer: (request: InvokePayload<typeof IPC.invoke.apiAssetBuffer>) =>
     invoke(IPC.invoke.apiAssetBuffer, request),
@@ -162,8 +162,8 @@ const desktopBridge = {
     onChanged: (callback: EventCallback<typeof IPC.event.voicePlaybackChanged>) =>
       subscribe(IPC.event.voicePlaybackChanged, callback)
   },
-  gatewayRequest: <K extends RpcMethod>(payload: DesktopGatewayRequest<K>) =>
-    invoke(IPC.invoke.gatewayRequest, payload) as Promise<DesktopGatewayRpcResult<RpcResponse<K>>>,
+  gatewayPresence: (payload: InvokePayload<typeof IPC.invoke.gatewayPresence>) =>
+    invoke(IPC.invoke.gatewayPresence, payload),
   gatewayGetState: (authSessionId: string) => invoke(IPC.invoke.gatewayGetState, authSessionId),
   onGatewayStateChanged: (cb: EventCallback<typeof IPC.event.gatewayStateChanged>) =>
     subscribe(IPC.event.gatewayStateChanged, cb),

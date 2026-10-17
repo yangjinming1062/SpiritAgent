@@ -6,7 +6,6 @@ import {
   acceptPlayCommand,
   actionCatalogChanged,
   type ActionClipEntry,
-  type ActionPlayCommand,
   applyServerCompanionVoiceId,
   hydrateActionCatalog,
   hydrateCharacterCard,
@@ -27,9 +26,6 @@ import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { shellApi } from '@/shared/platform/desktop'
 import { $auth } from '@/shared/store/auth'
-import type { VideoQueueState } from '@protocol'
-
-import { decodePayload } from '../gateway-event-util'
 
 // 角色/形象事件处理：心情、衣柜、头像重生与视频动作播放；只更新 character 域状态，不接触会话。
 
@@ -37,7 +33,11 @@ function authed(): boolean {
   return $auth.get().kind === 'authenticated'
 }
 
-async function acceptRequestedAction(command: ActionPlayCommand, accountId: string, sessionId: string): Promise<void> {
+async function acceptRequestedAction(
+  command: Extract<GatewayEvent, { type: 'companion.action.play_requested' }>['payload'],
+  accountId: string,
+  sessionId: string
+): Promise<void> {
   let cancelled = false
 
   const identityMatches = (): boolean => {
@@ -131,23 +131,19 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
 export function handleCharacterEvent(event: GatewayEvent): void {
   switch (event.type) {
     case 'companion.voice.updated': {
-      const payload = decodePayload<{ voice_id?: unknown }>(event.payload)
-
-      if (typeof payload.voice_id === 'string') {
-        void applyServerCompanionVoiceId(payload.voice_id).catch(error =>
-          log.warn('voice-selection', 'Could not apply server voice:', error)
-        )
-        invalidateVoiceCatalog()
-      }
+      void applyServerCompanionVoiceId(event.payload.voice_id).catch(error =>
+        log.warn('voice-selection', 'Could not apply server voice:', error)
+      )
+      invalidateVoiceCatalog()
 
       break
     }
 
     case 'companion.mood': {
-      const mood = decodePayload<{ mood?: unknown }>(event.payload).mood
+      const mood = event.payload.mood.trim()
 
-      if (typeof mood === 'string' && mood.trim()) {
-        $companionMood.set(mood.trim())
+      if (mood) {
+        $companionMood.set(mood)
       }
 
       break
@@ -188,7 +184,7 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     case 'companion.action.job_updated': {
       // 动作生成进度：驱动生成态文案；具体阶段文本由衣柜页消费包列表渲染。
       if (authed()) {
-        videoPackEventReceived(decodePayload<{ packId?: number; action?: string }>(event.payload))
+        videoPackEventReceived(event.payload)
         void hydrateVideoPack(true)
       }
 
@@ -203,21 +199,10 @@ export function handleCharacterEvent(event: GatewayEvent): void {
         break
       }
 
-      const p = decodePayload<ActionPlayCommand>(event.payload)
+      const command = event.payload
 
-      if (!p.play_id || !p.pack_id || !p.action_id) {
+      if (!command.play_id || !command.pack_id || !command.action_id) {
         break
-      }
-
-      const command: ActionPlayCommand = {
-        play_id: p.play_id,
-        pack_id: p.pack_id,
-        appearance_epoch: p.appearance_epoch ?? 0,
-        action_id: p.action_id,
-        asset_revision_id: p.asset_revision_id ?? null,
-        repeat_count: p.repeat_count ?? 1,
-        expires_at: p.expires_at ?? null,
-        source: p.source ?? 'chat_expression'
       }
 
       void acceptRequestedAction(command, identity.snapshot.accountId, identity.snapshot.sessionId).catch(error =>
@@ -229,12 +214,9 @@ export function handleCharacterEvent(event: GatewayEvent): void {
 
     case 'companion.video.ready':
     case 'companion.video.activated': {
-      // 视频包就绪 / 激活：生成态收敛并重新水合激活包（写持久化状态前先走 authedApi）。
+      // 视频包就绪 / 激活后重新读取当前账户的激活包。
       if (authed()) {
-        videoGenReady(
-          decodePayload<{ packId?: number; outfitId?: number | null; action?: string }>(event.payload),
-          event.type === 'companion.video.ready'
-        )
+        videoGenReady(event.payload, event.type === 'companion.video.ready')
         void hydrateVideoPack(true)
       }
 
@@ -244,29 +226,19 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     case 'companion.video.progress': {
       // 按参考生成的阶段推进：只更新生成态文案，不触碰已激活包的显示。
       if (authed()) {
-        const p = decodePayload<{
-          stage?: string
-          packId?: number
-          outfitId?: number | null
-          action?: string
-          video_queue?: VideoQueueState | null
-        }>(event.payload)
-
-        videoGenProgress(p.stage, p, p.video_queue)
+        videoGenProgress(event.payload.stage, event.payload, event.payload.video_queue)
       }
 
       break
     }
 
     case 'companion.video.failed': {
-      const p = decodePayload<{ reason?: string; packId?: number; outfitId?: number | null; action?: string }>(
-        event.payload
-      )
+      const payload = event.payload
 
-      log.warn('events', 'video pack failed:', p.reason)
+      log.warn('events', 'video pack failed:', payload.reason)
 
       if (authed()) {
-        videoGenFailed(p.reason, p)
+        videoGenFailed(payload.reason, payload)
         void hydrateVideoPack(true)
       }
 

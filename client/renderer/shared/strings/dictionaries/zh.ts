@@ -808,6 +808,7 @@ export const dict = {
       releaseToSendVoice: '松开发送语音',
       pressToRecordVoice: '按住录制语音消息',
       stopGenerating: '停止生成',
+      stopPending: '正在停止，等待确认',
       sendMessage: '发送消息',
       sendMessageShortcut: '发送消息 (Enter)'
     },

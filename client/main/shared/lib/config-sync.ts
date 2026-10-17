@@ -1,6 +1,7 @@
 import { type DesktopPrefsHydrated, normalizeUiTheme, type SpiritAgentUiTheme } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
+import { isJsonValue } from '../../../../shared/errors'
 import type { BackendClientPort, BackendConnection } from '../backend-port'
 
 import * as store from './runner-config-store'
@@ -34,7 +35,6 @@ const RETRY_BACKOFF_MAX_MS = 60000
 export interface ConfigSyncDeps {
   createBackendClient: (options: { baseUrl: string }) => BackendClientPort
   ensureBackend: () => Promise<BackendConnection>
-  /** 网络/5xx 等可重试错误；由 entry 注入 BackendRequestError 判定，shared 不依赖 backend。 */
   isRetryableError: (error: unknown) => boolean
   log: (chunk: string) => void
   onHydrated: (payload: DesktopPrefsHydrated) => void
@@ -284,7 +284,18 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       }
 
       const uploadedJson = JSON.stringify(payload)
-      await backendClient(conn.baseUrl).put('/api/config', { body: { config: payload }, token: conn.token })
+
+      if (!isJsonValue(payload)) {
+        throw new TypeError('配置包含无法上传的值')
+      }
+
+      await backendClient(conn.baseUrl).invoke(
+        'config.put_config',
+        { body: { config: payload } },
+        {
+          headers: { Authorization: `Bearer ${conn.token}` }
+        }
+      )
       await waitForServerMirror()
 
       if (epoch !== authEpoch) {
@@ -350,9 +361,13 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
         return
       }
 
-      const res = await backendClient(conn.baseUrl).get<{ config: Record<string, unknown> }>('/api/config', {
-        token: conn.token
-      })
+      const res = await backendClient(conn.baseUrl).invoke(
+        'config.get_config',
+        {},
+        {
+          headers: { Authorization: `Bearer ${conn.token}` }
+        }
+      )
 
       if (epoch !== authEpoch) {
         return

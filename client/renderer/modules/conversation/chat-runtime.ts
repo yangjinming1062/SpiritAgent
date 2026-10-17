@@ -30,7 +30,7 @@ export function createConversationRuntime(sessionId: string | null) {
 
   const dispose = (): void => {
     alive = false
-    submission.cancelPendingFlush()
+    submission.disposeSubmission()
     revisionListeners.forEach(stop => stop())
     releaseVoicePlaybackStore(sessionId)
   }

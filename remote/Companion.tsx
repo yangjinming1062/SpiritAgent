@@ -12,15 +12,7 @@ import { Empty, Notice, PageHeader, useAlive, usePageScroll, usePageState, useTa
 
 type Section = 'profile' | 'memory' | 'scene' | 'outfit'
 
-export function Companion({
-  api,
-  connected,
-  refresh
-}: {
-  api: RemoteApi
-  connected: boolean
-  refresh: number
-}): ReactElement {
+export function Companion({ api, refresh }: { api: RemoteApi; refresh: number }): ReactElement {
   const [savedSection, setSection] = usePageState<Section>('companion.section', 'profile')
   const items = [
     { id: 'profile', title: '资料' },
@@ -52,7 +44,7 @@ export function Companion({
       ) : section === 'memory' ? (
         <>
           <PageHeader subtitle="查看、修改或忘记聊天中记住的事" title="记忆" />
-          <MemoryView api={api} connected={connected} refresh={refresh} />
+          <MemoryView api={api} refresh={refresh} />
         </>
       ) : (
         <Assets api={api} key={section} kind={section} refresh={refresh} />
@@ -82,7 +74,7 @@ export function DiaryView({
 
   const load = useCallback(async () => {
     const revision = ++request.current
-    const result = await requestApi(api, 'GET /api/companion/diary', {
+    const result = await requestApi(api, 'companion_journal.get_diary', {
       query: { from: from || undefined, to: to || undefined, limit: 100 }
     })
 
@@ -98,7 +90,7 @@ export function DiaryView({
         document.visibilityState === 'visible' &&
         document.hasFocus()
       ) {
-        await requestApi(api, 'PATCH /api/companion/diary/read-state', { body: { diary_ids: result.unread_diary_ids } })
+        await requestApi(api, 'companion_journal.read_diary', { body: { diary_ids: result.unread_diary_ids } })
         if (alive() && revision === request.current) {
           onReadRef.current()
         }

@@ -1,75 +1,47 @@
 import { app } from 'electron'
 
-import { errorMessage } from '@runtime'
+import { type ApiTransport, createHttpClient, type HttpFetch } from '../../../shared/api'
+import { ApiError } from '../../../shared/errors'
 
-import { readHttpError } from '../../../shared/errors'
-import { resolvePathTimeoutMs, resolveTimeoutMs } from '../security/hardening'
+export type FetchFunction = HttpFetch
 
-interface BackendRequestErrorOptions {
-  body?: unknown
-  cause?: unknown
-  code?: null | string
-  message: string
-  status?: null | number
+interface BackendClientOptions {
+  baseUrl: string
+  fetch: FetchFunction
 }
 
-export class BackendRequestError extends Error {
-  body: unknown
-  code: null | string
-  status: null | number
-
-  constructor({ body, cause, code, message, status }: BackendRequestErrorOptions) {
-    super(message)
-    this.name = 'BackendRequestError'
-    this.status = status ?? null
-    this.code = code ?? null
-    this.body = body ?? null
-
-    if (cause) {
-      this.cause = cause
-    }
-  }
-
-  get isNetwork(): boolean {
-    return this.status === null && this.code !== null
-  }
-
-  get isServerError(): boolean {
-    return this.status !== null && this.status >= 500
-  }
+export interface BackendClient extends ApiTransport {
+  baseUrl: string
 }
 
-/** 网络失败与 5xx 值得重试；其余错误重试也不会成功。 */
 export function isRetryableBackendError(error: unknown): boolean {
-  return error instanceof BackendRequestError && (error.isNetwork || error.isServerError)
+  return error instanceof ApiError && (error.isNetwork || error.isServerError)
 }
 
 export function normalizeBaseUrl(raw?: null | string): string {
-  const value = String(raw || '').trim()
-
-  if (!value) {
-    throw new BackendRequestError({
-      code: 'invalid-base-url',
-      message: 'Backend base URL is required.'
-    })
-  }
-
   let parsed: URL
 
   try {
-    parsed = new URL(value)
-  } catch (error: unknown) {
-    const msg = errorMessage(error)
-    throw new BackendRequestError({
-      code: 'invalid-base-url',
-      message: `Backend base URL is not valid: ${msg}`
-    })
+    parsed = new URL(String(raw || '').trim())
+  } catch (cause) {
+    throw new ApiError(
+      null,
+      {
+        code: 'invalid_base_url',
+        message: '服务器地址无效',
+        details: null,
+        request_id: ''
+      },
+      { cause }
+    )
   }
 
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new BackendRequestError({
-      code: 'invalid-base-url',
-      message: `Backend base URL must be http:// or https://, got ${parsed.protocol}`
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new ApiError(null, {
+      code: 'invalid_base_url',
+      message: '服务器地址必须使用 HTTP 或 HTTPS',
+      details: null,
+      request_id: ''
     })
   }
 
@@ -79,152 +51,14 @@ export function normalizeBaseUrl(raw?: null | string): string {
   return parsed.toString().replace(/\/+$/, '')
 }
 
-// JSON → 序列化为 JSON 字符串；string → 原样；Buffer/Uint8Array → 字节。
-function encodeBody(body: unknown): { body: string | Uint8Array | undefined; contentType: null | string } {
-  if (body === undefined || body === null) {
-    return { body: undefined, contentType: null }
-  }
-
-  if (typeof body === 'string') {
-    return { body, contentType: 'text/plain' }
-  }
-
-  if (body instanceof Uint8Array) {
-    return { body, contentType: 'application/octet-stream' }
-  }
-
-  return { body: JSON.stringify(body), contentType: 'application/json' }
-}
-
-interface MinimalFetchResponse {
-  headers: { get: (name: string) => null | string }
-  ok: boolean
-  status: number
-  statusText?: string
-  text: () => Promise<string>
-}
-
-async function decodeResponseBody(res: MinimalFetchResponse): Promise<unknown> {
-  const contentType = res.headers.get('content-type') || ''
-  const isJson = contentType.includes('application/json')
-  const text = await res.text()
-
-  if (!text) {
-    return isJson ? null : ''
-  }
-
-  if (isJson) {
-    try {
-      return JSON.parse(text)
-    } catch {
-      return text
-    }
-  }
-
-  return text
-}
-
-export type FetchFunction = (url: string, init?: RequestInit) => Promise<MinimalFetchResponse | Response>
-
-interface BackendClientOptions {
-  baseUrl?: string
-  fetch?: FetchFunction
-}
-
-interface BackendRequestOptions {
-  body?: unknown
-  timeoutMs?: number
-  token?: string
-}
-
-export interface BackendClient {
-  baseUrl: string
-  get: <T = unknown>(path: string, options?: BackendRequestOptions) => Promise<T>
-  post: <T = unknown>(path: string, options?: BackendRequestOptions) => Promise<T>
-  put: <T = unknown>(path: string, options?: BackendRequestOptions) => Promise<T>
-}
-
-export function createBackendClient(options: BackendClientOptions = {}): BackendClient {
-  if (typeof options.fetch !== 'function') {
-    throw new TypeError('createBackendClient requires a fetch implementation (pass options.fetch)')
-  }
-
-  const fetchImpl = options.fetch
+export function createBackendClient(options: BackendClientOptions): BackendClient {
   const baseUrl = normalizeBaseUrl(options.baseUrl)
-  const userAgent = `SpiritAgentDesktop/${app.getVersion()} (Electron)`
 
-  async function request<T = unknown>(
-    method: string,
-    pathStr: string,
-    { body, timeoutMs, token }: BackendRequestOptions = {}
-  ): Promise<T> {
-    let url: URL
-
-    try {
-      url = new URL(pathStr, `${baseUrl}/`)
-    } catch (error: unknown) {
-      const msg = errorMessage(error)
-      throw new BackendRequestError({
-        code: 'invalid-path',
-        message: `Backend request path is not valid: ${msg}`
-      })
-    }
-
-    const { body: encodedBody, contentType } = encodeBody(body)
-
-    const finalHeaders: Record<string, string> = {
-      Accept: 'application/json',
-      'User-Agent': userAgent,
-      ...(contentType ? { 'Content-Type': contentType } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
-
-    const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs ?? resolvePathTimeoutMs(url.pathname, method))
-    const signal = effectiveTimeoutMs > 0 ? AbortSignal.timeout(effectiveTimeoutMs) : undefined
-
-    let res: MinimalFetchResponse
-    let payload: unknown
-
-    try {
-      res = await fetchImpl(url.toString(), {
-        body: encodedBody,
-        headers: finalHeaders,
-        method,
-        signal
-      })
-      // 超时同样覆盖响应体读取：响应头到达后连接仍可能停滞。
-      payload = await decodeResponseBody(res)
-    } catch (error: unknown) {
-      const timedOut = signal?.aborted ?? false
-      const errMessage = (error as { message?: string } | undefined)?.message || String(error)
-      throw new BackendRequestError({
-        cause: error,
-        code: timedOut ? 'timeout' : 'network-error',
-        message: timedOut
-          ? `Backend request timed out after ${effectiveTimeoutMs}ms: ${method} ${url.pathname}`
-          : `Backend request failed: ${method} ${url.pathname} (${errMessage})`
-      })
-    }
-
-    if (!res.ok) {
-      const business = readHttpError(payload)
-      const detail = business?.message ?? `${res.status} ${res.statusText || ''}`.trim()
-
-      throw new BackendRequestError({
-        body: payload,
-        code: business?.code ?? `http-${res.status}`,
-        message: `Backend ${method} ${url.pathname} failed: ${detail}`,
-        status: res.status
-      })
-    }
-
-    return payload as T
-  }
-
-  return {
+  const transport = createHttpClient({
     baseUrl,
-    get: (p, opt) => request('GET', p, opt),
-    post: (p, opt) => request('POST', p, opt),
-    put: (p, opt) => request('PUT', p, opt)
-  }
+    fetch: options.fetch,
+    headers: () => ({ 'User-Agent': `SpiritAgentDesktop/${app.getVersion()} (Electron)` })
+  })
+
+  return { baseUrl, invoke: transport.invoke }
 }

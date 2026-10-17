@@ -47,7 +47,7 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exception_handler)
 
 
 # 挂根路径，避免 Docker HEALTHCHECK / k8s livenessProbe（默认 /health）返回 404。
-@app.get("/health")
+@app.get("/health", operation_id="system.health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 

@@ -37,7 +37,7 @@ export function createAccountLifecycleRuntime() {
     let state: OnboardingState | undefined
 
     try {
-      state = await requestResource('GET /api/companion/onboarding')
+      state = await requestResource('onboarding.get_onboarding')
     } catch (error) {
       if (isCurrent()) {
         log.warn('account-lifecycle', 'onboarding state failed', error)

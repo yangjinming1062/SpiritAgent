@@ -11,10 +11,10 @@
   "description": "唤生手机远程页面",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && vite build --config vite.admin.config.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
-    "fix": "eslint . --fix && prettier --config .prettierrc --write \"*.{ts,tsx,css,html,mjs,json}\" ../shared/protocol.ts && tsc --noEmit"
+    "lint": "cd .. && node remote/node_modules/eslint/bin/eslint.js --config remote/eslint.config.mjs remote shared",
+    "fix": "pnpm lint --fix && prettier --config .prettierrc --write \"*.{ts,tsx,css,html,mjs,json}\" \"../shared/!(*.generated).ts\" && tsc --noEmit"
   },
   "dependencies": {
     "@tabler/icons-react": "3.44.0",

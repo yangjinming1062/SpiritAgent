@@ -49,7 +49,7 @@ function publish(card: CharacterCard | null): void {
 
 export async function hydrateCharacterCard(): Promise<void> {
   const generation = ++requestGeneration
-  const result = await authedResource('GET /api/companion/character-card')
+  const result = await authedResource('companion.get_character_card_route')
 
   if (generation !== requestGeneration) {
     return
@@ -101,7 +101,7 @@ export function saveCharacterCard(
   changes: CharacterOverrides
 ): Promise<boolean> {
   return mutateCard(() =>
-    authedResource('PATCH /api/companion/character-card', {
+    authedResource('companion.patch_character_card_route', {
       body: { changes, expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision }
     })
   )
@@ -109,7 +109,7 @@ export function saveCharacterCard(
 
 export async function extractCharacterCard(expectedAvatarId: number, expectedRevision: number): Promise<void> {
   await mutateCard(() =>
-    authedResource('POST /api/companion/character-card/extract', {
+    authedResource('companion.extract_character_card_route', {
       body: { expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision }
     })
   )

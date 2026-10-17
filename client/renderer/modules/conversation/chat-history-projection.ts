@@ -186,18 +186,3 @@ export function mergeLiveHistoryRows(
     ...liveList.filter(item => item.backendMessageId === undefined || !replaced.has(item.backendMessageId))
   ]
 }
-
-export function mergeIncrementalHistoryRows(
-  original: ChatMessageListItem[],
-  incoming: ChatMessageListItem[],
-  incomingIds: ReadonlySet<number | undefined>
-): ChatMessageListItem[] {
-  const persisted = [
-    ...original.filter(item => item.backendMessageId !== undefined && !incomingIds.has(item.backendMessageId)),
-    ...incoming
-  ]
-
-  persisted.sort((a, b) => (a.backendMessageId ?? 0) - (b.backendMessageId ?? 0))
-
-  return [...persisted, ...original.filter(item => item.backendMessageId === undefined)]
-}

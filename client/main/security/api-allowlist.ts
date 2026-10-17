@@ -1,58 +1,16 @@
-import { findApiOperation } from '../../../shared/api'
+import type { DesktopApiOperationKey } from '@ipc/contracts'
 
-// 渲染层 api() 代理的 path/method 白名单：只放行自家后端产品 API 面；名单外（含绝对 URL、协议相对、路径穿越）一律拒绝，防止凭据被打任意 endpoint。
-function normalizeApiPathname(rawPath: string): string {
-  if (!rawPath || rawPath.includes('\0')) {
-    throw new Error('API path is required.')
+import type { ApiOperationKey } from '../../../shared/api'
+import { API_OPERATIONS } from '../../../shared/api.generated'
+
+export function assertApiOperationAllowed(operation: unknown): asserts operation is DesktopApiOperationKey {
+  if (typeof operation !== 'string' || !Object.hasOwn(API_OPERATIONS, operation)) {
+    throw new Error('Unknown API operation')
   }
 
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rawPath) || rawPath.startsWith('//')) {
-    throw new Error('API path must be a relative path under /api/.')
-  }
+  const policy = API_OPERATIONS[operation as ApiOperationKey]
 
-  let decoded: string
-
-  try {
-    decoded = decodeURIComponent(rawPath.split(/[?#]/, 1)[0])
-  } catch {
-    throw new Error('API path encoding is invalid.')
-  }
-
-  if (
-    !decoded.startsWith('/') ||
-    decoded.includes('\\') ||
-    decoded.split('/').some(part => part === '.' || part === '..')
-  ) {
-    throw new Error('API path must not contain path traversal.')
-  }
-
-  let pathname: string
-
-  try {
-    pathname = new URL(rawPath, 'http://127.0.0.1').pathname
-  } catch {
-    throw new Error('API path is invalid.')
-  }
-
-  return pathname
-}
-
-export function assertApiRequestAllowed(path: unknown, method?: unknown): void {
-  const upper = String(method || 'GET').toUpperCase()
-
-  if (!['DELETE', 'GET', 'PATCH', 'POST', 'PUT'].includes(upper)) {
-    throw new Error(`API method not allowed: ${upper}`)
-  }
-
-  const pathname = normalizeApiPathname(String(path || ''))
-
-  const operation = findApiOperation(pathname, upper)
-
-  if (
-    !operation ||
-    !operation.identities.some(identity => identity === 'desktop') ||
-    !('ipc' in operation && operation.ipc)
-  ) {
-    throw new Error(`API operation not allowed: ${upper} ${pathname}`)
+  if (!policy.identities.some(identity => identity === 'desktop') || !('ipc' in policy && policy.ipc)) {
+    throw new Error('API operation is not available to desktop views: ' + operation)
   }
 }

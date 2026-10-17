@@ -1,6 +1,5 @@
 import type { GatewayEvent } from './api'
-import { record } from './api'
-import type { ActiveTurn, CompanionBubble, Resume, SessionMessage } from './types'
+import type { ActiveTurn, SessionMessage } from './types'
 
 function emptyTurn(): ActiveTurn {
   return {
@@ -23,68 +22,45 @@ function finishSegment(turn: ActiveTurn): ActiveTurn {
 }
 
 export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): ActiveTurn | null {
-  const payload = record(event.payload) ? event.payload : {}
-
   if (
     event.type === 'message.complete' ||
     event.type === 'error' ||
-    (event.type === 'session.state' && payload.running === false)
+    (event.type === 'session.state' && !event.payload.running)
   ) {
     return null
   }
 
   const turn = previous ?? emptyTurn()
-
-  if (event.type === 'message.replaced') {
-    return previous
-  }
-
   if (event.type === 'message.start') {
     const fresh =
-      typeof payload.request_id === 'string' && turn.request_id && payload.request_id !== turn.request_id
+      event.payload.request_id && turn.request_id && event.payload.request_id !== turn.request_id
         ? emptyTurn()
         : finishSegment(turn)
-
     return {
       ...fresh,
-      replace_reply_message_id:
-        typeof payload.replace_reply_message_id === 'number' ? payload.replace_reply_message_id : null,
-      request_id: typeof payload.request_id === 'string' ? payload.request_id : fresh.request_id,
+      replace_reply_message_id: event.payload.replace_reply_message_id ?? null,
+      request_id: event.payload.request_id ?? fresh.request_id,
+      origin_kind: event.payload.origin_kind ?? fresh.origin_kind,
       running: true
     }
   }
-
   if (event.type === 'message.break') {
     return finishSegment(turn)
   }
-
-  if (event.type === 'message.delta' && typeof payload.text === 'string') {
-    return { ...turn, text: turn.text + payload.text }
+  if (event.type === 'message.delta') {
+    return { ...turn, text: turn.text + event.payload.text }
   }
-
-  if (event.type === 'message.bubble' && record(payload.bubble) && typeof payload.bubble_index === 'number') {
+  if (event.type === 'message.bubble') {
     const bubbles = [...turn.bubbles]
-    bubbles[payload.bubble_index] = payload.bubble as unknown as CompanionBubble
-
-    const messageId = payload.message_id
-
-    return {
-      ...turn,
-      assistant_message_id:
-        typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0
-          ? messageId
-          : turn.assistant_message_id,
-      bubbles
-    }
+    bubbles[event.payload.bubble_index] = event.payload.bubble
+    return { ...turn, assistant_message_id: event.payload.message_id, bubbles }
   }
-
   if (event.type === 'tool.start' || event.type === 'tool.complete') {
     if (!previous) {
       return null
     }
-    const name = typeof payload.name === 'string' ? payload.name : '正在处理任务'
-    const callId = typeof payload.call_id === 'string' ? payload.call_id : name
-
+    const name = event.payload.name ?? '正在处理任务'
+    const callId = event.payload.call_id ?? name
     return {
       ...turn,
       tools: [
@@ -93,38 +69,18 @@ export function advanceTurn(previous: ActiveTurn | null, event: GatewayEvent): A
       ]
     }
   }
-
   return previous
 }
 
-export function eventsAfterSnapshot(events: GatewayEvent[], snapshot: Resume): GatewayEvent[] {
-  const requestId = snapshot.active_turn?.request_id ?? snapshot.last_submission?.request_id
-
-  return events.filter(event => {
-    if (event.seq === undefined || event.seq > (snapshot.current_seq ?? 0)) {
-      return true
-    }
-
-    return (
-      (event.type === 'error' || event.type === 'session.state') &&
-      record(event.payload) &&
-      event.payload.request_id === requestId
-    )
-  })
-}
-
 export function commandHistory(event: GatewayEvent): SessionMessage[] | null {
-  if (event.type !== 'command.result' || !record(event.payload) || !record(event.payload.result)) {
+  if (event.type !== 'command.result') {
     return null
   }
 
   const result = event.payload.result
 
-  return result.status === 'ok' &&
-    result.hydrate === true &&
-    record(result.payload) &&
-    Array.isArray(result.payload.messages)
-    ? (result.payload.messages as SessionMessage[])
+  return result.status === 'ok' && result.hydrate === true && result.payload && 'messages' in result.payload
+    ? result.payload.messages
     : null
 }
 

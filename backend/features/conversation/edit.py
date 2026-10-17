@@ -69,7 +69,6 @@ async def replace_user_message(
             delete(Message).where(Message.conversation_id == conv.id, Message.id >= source_message_id),
         )
         db.add(replacement)
-        # 新 id 使旧快照的 after_id 失效，断线重连必须全量恢复修订后的历史。
         await db.commit()
     await cancel_reply_audio(user_id, removed)
     return replacement

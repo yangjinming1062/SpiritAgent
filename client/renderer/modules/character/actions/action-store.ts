@@ -168,7 +168,7 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
   let terminal = false
 
   const ensure = (async (): Promise<boolean> => {
-    const accepted = await authedResource('POST /api/companion/video-packs/{pack_id}/production', {
+    const accepted = await authedResource('companion.produce_video_pack', {
       path: { pack_id: initial.packId },
       body: { command: 'ensure', action }
     })
@@ -195,7 +195,7 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
         return !terminal
       }
 
-      const listed = await authedResource('GET /api/companion/video-packs')
+      const listed = await authedResource('companion.get_video_packs')
 
       if (!isCurrent()) {
         return false
@@ -432,7 +432,7 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
     }
 
     try {
-      const res = await authedResource('GET /api/companion/actions/catalog')
+      const res = await authedResource('companion_actions.get_catalog')
 
       if (stale()) {
         return

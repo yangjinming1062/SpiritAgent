@@ -44,19 +44,12 @@ async def build_session_messages(
     conv_id: int,
     db: AsyncSession,
     *,
-    after_id: int | None = None,
     before_id: int | None = None,
     latest: int | None = None,
     only_ids: list[int] | None = None,
 ) -> list[dict]:
-    """按时间正序重建会话消息列表；``after_id`` 只取其后的消息，``latest`` 只取最近的若干条，二者互斥。"""
-    if after_id is not None and latest is not None:
-        raise ValueError("after_id and latest are mutually exclusive")
-    if after_id is not None and before_id is not None:
-        raise ValueError("after_id and before_id are mutually exclusive")
+    """按 Message.id 正序重建消息；支持向前分页、最近条数与指定消息集合。"""
     stmt = select(Message).where(Message.conversation_id == conv_id)
-    if after_id is not None:
-        stmt = stmt.where(Message.id > after_id)
     if before_id is not None:
         stmt = stmt.where(Message.id < before_id)
     if only_ids is not None:

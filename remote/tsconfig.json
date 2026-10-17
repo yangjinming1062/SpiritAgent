@@ -21,7 +21,7 @@
       "@protocol": ["../shared/protocol.ts"]
     }
   },
-  "include": ["*.ts", "*.tsx", "../shared/protocol.ts"],
+  "include": ["*.ts", "*.tsx", "../shared/*.ts"],
   "references": [],
   "exclude": ["node_modules", "dist"]
 }

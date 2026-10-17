@@ -28,26 +28,15 @@ function parseSnapshot(value: unknown): null | SessionHistorySnapshot {
 
   if (
     !Array.isArray(input.messages) ||
-    !isFiniteNumber(input.currentSeq) ||
     !isFiniteNumber(input.writtenAt) ||
-    (input.lastMessageId !== null && !isFiniteNumber(input.lastMessageId)) ||
-    (input.nextCursor !== null && typeof input.nextCursor !== 'string') ||
-    typeof input.truncated !== 'boolean' ||
-    (input.historyRevision !== undefined &&
-      (!Number.isSafeInteger(input.historyRevision) || input.historyRevision < 0)) ||
     (input.info !== undefined && (!input.info || typeof input.info !== 'object' || Array.isArray(input.info)))
   ) {
     return null
   }
 
   return {
-    currentSeq: input.currentSeq,
-    historyRevision: input.historyRevision,
     info: input.info,
-    lastMessageId: input.lastMessageId,
     messages: input.messages,
-    nextCursor: input.nextCursor,
-    truncated: input.truncated,
     writtenAt: input.writtenAt
   }
 }

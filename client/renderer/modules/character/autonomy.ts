@@ -1,4 +1,5 @@
 import { log } from '@/shared/lib/log'
+import { requestResource } from '@/shared/lib/resource-request'
 import { $gateway } from '@/shared/store/gateway'
 import { $presentation } from '@/shared/store/presentation'
 import { $runnerPhase } from '@/shared/store/runner-status'
@@ -206,8 +207,8 @@ async function consultAutonomyLLM(force = false): Promise<void> {
     }
 
     // 请求失败时不做任何自主动作。
-    const res = await gateway
-      .request('companion.should_act', {
+    const res = await requestResource('companion.movement_decision', {
+      body: {
         kind: 'periodic_provision',
         idle_seconds: idle,
         local_hour: hour,
@@ -215,12 +216,12 @@ async function consultAutonomyLLM(force = false): Promise<void> {
         fullscreen: focus?.fullscreen ?? false,
         screen_locked: locked,
         seconds_since_last_action: secondsSinceLastAction
-      })
-      .catch(error => {
-        log.warn('autonomy', 'companion.should_act failed', error)
+      }
+    }).catch(error => {
+      log.warn('autonomy', 'companion.movement_decision failed', error)
 
-        return null
-      })
+      return null
+    })
 
     if (isCurrent() && res?.should_act && res.action) {
       lastAutonomousActionAt = Date.now()

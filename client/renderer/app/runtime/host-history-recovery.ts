@@ -8,10 +8,10 @@ import {
   syncSessionHistory
 } from '@/modules/conversation'
 import { log } from '@/shared/lib/log'
-import type { SpiritAgentGatewayLike } from '@/shared/store/gateway'
+import { requestResource } from '@/shared/lib/resource-request'
 
 /** 恢复当前会话；失败只回退仍被选中的会话。 */
-export async function resumeHostHistory(gateway: SpiritAgentGatewayLike, isCurrent: () => boolean): Promise<void> {
+export async function resumeHostHistory(isCurrent: () => boolean, replayed = false): Promise<void> {
   const sid = $chatSessionId.get()
 
   if (sid) {
@@ -25,16 +25,26 @@ export async function resumeHostHistory(gateway: SpiritAgentGatewayLike, isCurre
       const runtime = getConversationRuntime(sid)
       const hasMessages = runtime.$chatMessageList.get().length > 0
 
-      // 先呈现缓存，再以消息锚点回源。
+      // 先呈现缓存，再取得当前完整基线。
       if (local && !hasMessages) {
         runtime.hydrateChatMessages(local.messages, local.info)
+      }
+
+      if (replayed && runtime.$historyHydrated.get()) {
+        void runtime.recoverUnconfirmedSubmission()
+
+        if (!runtime.$chatTurnInFlight.get()) {
+          runtime.submitPendingBatch()
+        }
+
+        return
       }
 
       const snapshot = runtime.captureHistorySync()
 
       const synced = await syncSessionHistory({
         sessionId: sid,
-        request: body => gateway.request('session.resume', { session_id: sid, ...body })
+        request: () => requestResource('sessions.snapshot', { path: { session_id: sid } })
       })
 
       if (!isCurrent() || $chatSessionId.get() !== sid) {

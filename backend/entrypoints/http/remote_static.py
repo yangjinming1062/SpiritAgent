@@ -17,7 +17,9 @@ class RemoteStaticFiles(StaticFiles):
                 raise
             response = await super().get_response("index.html", scope)
         response.headers["Cache-Control"] = (
-            "public, max-age=31536000, immutable" if Path(path).suffix in (".js", ".css") else "no-store"
+            "public, max-age=31536000, immutable"
+            if Path(path).suffix in (".js", ".css") and Path(path).name != "admin-http.js"
+            else "no-store"
         )
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"

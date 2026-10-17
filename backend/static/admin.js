@@ -1,4 +1,3 @@
-const API_BASE = '';
 const TOKEN_KEY = 'spiritagent_admin_token';
 const tabCache = { users: null, models: null, logs: null, versions: null };
 
@@ -133,30 +132,31 @@ function showTab(name) {
 
 function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
 
-async function errorText(resp) {
-    const body = await resp.json().catch(() => null);
-    const error = body?.error;
-    const fields = error?.details?.fields;
-    if (Array.isArray(fields)) return fields.map(item => `${item?.loc?.at(-1) ?? ''}: ${item?.msg ?? ''}`).join('；');
-    return typeof error?.message === 'string' ? error.message : `HTTP ${resp.status}`;
-}
+const adminHttp = SpiritAgentHttp.createHttpClient({
+    fetch: (url, options) => fetch(url, options),
+    credentials: 'same-origin',
+    headers: () => getToken() ? { Authorization: 'Bearer ' + getToken() } : {},
+});
 
-async function apiFetch(path, options = {}) {
-    const headers = { ...(getToken() ? { Authorization: 'Bearer ' + getToken() } : {}) };
-    if (!(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
-    let resp;
-    try { resp = await fetch(API_BASE + path, { ...options, headers: { ...headers, ...(options.headers || {}) } }); }
-    catch (error) { if (error.name !== 'AbortError') { $('#runtimeChip').textContent = '连接失败'; $('#runtimeChip').className = 'status-chip failed'; } throw error; }
-    if (resp.status === 401) {
-        stopXhsLogin();
-        sessionStorage.removeItem(TOKEN_KEY);
-        location.reload();
-        throw new Error('会话已过期，请重新登录');
+async function invoke(operation, input = {}, options = {}) {
+    try {
+        const result = await adminHttp.invoke(operation, input, options);
+        $('#runtimeChip').textContent = '已连接';
+        $('#runtimeChip').className = 'status-chip connected';
+        return result;
+    } catch (error) {
+        if (error.isLoginExpired && getToken()) {
+            stopXhsLogin();
+            sessionStorage.removeItem(TOKEN_KEY);
+            location.reload();
+        } else if (error.isNetwork) {
+            $('#runtimeChip').textContent = '连接失败';
+            $('#runtimeChip').className = 'status-chip failed';
+        }
+        const fields = error.business?.details?.fields;
+        if (Array.isArray(fields)) error.message = fields.map(item => `${item?.loc?.at(-1) ?? ''}: ${item?.msg ?? ''}`).join('；');
+        throw error;
     }
-    if (!resp.ok) throw new Error(await errorText(resp));
-    $('#runtimeChip').textContent = '已连接';
-    $('#runtimeChip').className = 'status-chip connected';
-    return resp;
 }
 
 function enterApp() {
@@ -178,17 +178,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
     if (!u || !p) return;
     const err = $('#loginError');
     try {
-        const resp = await fetch(API_BASE + '/admin/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: u, password: p }),
-        });
-        if (!resp.ok) {
-            throw new Error(resp.status === 401 ? '用户名或密码错误'
-                : resp.status === 429 ? '登录尝试过于频繁，请稍后再试'
-                : await errorText(resp));
-        }
-        const data = await resp.json();
+        const data = await invoke('page.admin_login', { body: { username: u, password: p } });
         sessionStorage.setItem(TOKEN_KEY, data.access_token);
         err.style.display = 'none';
         enterApp();
@@ -202,11 +192,11 @@ $('#loginForm').addEventListener('submit', async (e) => {
 
 async function loadUsers() {
     try {
-        const data = await (await apiFetch('/api/admin/users')).json();
+        const data = await invoke('admin.list_users');
         tabCache.users = data;
         if (!tabCache.models) {
             // 用户表展示能力覆盖列，静默拉取；失败不阻塞用户列表。
-            apiFetch('/api/admin/model-configs').then(r => r.json()).then(d => { tabCache.models = d; renderUsers(tabCache.users); }).catch(() => {});
+            invoke('admin.list_model_configs').then(data => { tabCache.models = data; renderUsers(tabCache.users); }).catch(() => {});
         }
         renderUsers(data);
     } catch (e) { $('#userList').innerHTML = stateRow(5, '加载失败：' + e.message, '', true); }
@@ -286,7 +276,7 @@ const DEFAULT_BASE_URL = 'http://localhost:10620';
 // 每次打开弹窗时读取，系统设置中修改 public_base_url 后立即生效。
 async function fetchPublicBaseUrl() {
     try {
-        const data = await (await apiFetch('/api/admin/runtime-info')).json();
+        const data = await invoke('admin.runtime_info');
         return typeof data?.public_base_url === 'string' ? data.public_base_url : '';
     } catch (e) {
         toast('读取公网访问地址失败，请核对后端地址：' + e.message, 'warn');
@@ -358,10 +348,8 @@ async function saveUser() {
     // 编辑时激活码只随后端地址变化；未变化时不弹出激活码。
     const previousCode = id ? findCachedUser(id)?.activation_code : null;
     try {
-        const method = id ? 'PATCH' : 'POST';
-        const url = id ? `/api/admin/users/${id}` : '/api/admin/users';
-        const resp = await apiFetch(url, { method, body: JSON.stringify(payload) });
-        const data = await resp.json();
+        const data = id ? await invoke('admin.update_user', { path: { user_id: Number(id) }, body: payload })
+            : await invoke('admin.create_user', { body: payload });
         closeModal('userModal');
         toast(id ? '用户已更新' : '用户已创建');
         loadUsers();
@@ -373,7 +361,7 @@ async function patchActivationUser(id, body, { regenerate = false, btn, busy, do
     const original = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = busy; }
     try {
-        const data = await (await apiFetch(`/api/admin/users/${id}${regenerate ? '/activation' : ''}`, { method: regenerate ? 'POST' : 'PATCH', body: JSON.stringify(body) })).json();
+        const data = await invoke(regenerate ? 'admin.regenerate_activation' : 'admin.update_user', { path: { user_id: Number(id) }, body });
         if (data.activation_code && onCode) onCode(data.activation_code);
         toast(done);
         loadUsers();
@@ -464,7 +452,7 @@ async function toggleUser(id) {
     try {
         const user = findCachedUser(id);
         if (!user) throw new Error('用户数据尚未加载');
-        await apiFetch(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: !user.is_active }) });
+        await invoke('admin.update_user', { path: { user_id: Number(id) }, body: { is_active: !user.is_active } });
         toast('状态已切换');
         loadUsers();
     } catch (e) { toast(e.message, 'err'); }
@@ -473,7 +461,7 @@ async function toggleUser(id) {
 async function deleteUser(id) {
     if (!confirm('确定彻底删除此用户及其所有关联数据？此操作不可撤销。')) return;
     try {
-        await apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+        await invoke('admin.delete_user', { path: { user_id: Number(id) } });
         toast('用户已删除');
         loadUsers();
     } catch (e) { toast(e.message, 'err'); }
@@ -528,11 +516,14 @@ async function exportUser(id) {
     const btn = $('#exportSubmitBtn');
     btn.disabled = true;
     try {
-        const resp = await apiFetch(`/api/admin/users/${id}/export`);
-        const blob = await resp.blob();
+        let disposition = '';
+        const bytes = await invoke('admin.export_user_backup', { path: { user_id: Number(id) } }, {
+            timeoutMs: 180_000,
+            onResponse: response => { disposition = response.headers.get('Content-Disposition') || ''; },
+        });
+        const blob = new Blob([bytes], { type: 'application/zip' });
         let filename = `spiritagent-user-${id}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.zip`;
-        const cd = resp.headers.get('Content-Disposition') || '';
-        const m = cd.match(/filename="?([^"]+)"?/);
+        const m = disposition.match(/filename="?([^"]+)"?/);
         if (m) filename = m[1];
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -589,12 +580,9 @@ async function submitUserBackup() {
     try {
         const fd = new FormData();
         fd.append('file', file);
-        const qs = new URLSearchParams({ mode });
-        if (sections) for (const item of sections) qs.append('sections', item);
-        const resp = await apiFetch(`/api/admin/users/${userId}/import?${qs.toString()}`, {
-            method: 'POST', body: fd, headers: {},
-        });
-        const data = await resp.json();
+        const data = await invoke('admin.import_user_backup', {
+            path: { user_id: Number(userId) }, query: { mode, sections }, body: fd,
+        }, { timeoutMs: 180_000 });
         const total = Object.values(data.imported || {}).reduce((a, b) => a + b, 0);
         const restoredFiles = Number(data.restored_files) || 0;
         const failures = Array.isArray(data.failed) ? data.failed : [];
@@ -719,7 +707,9 @@ function renderOverviewGroups(readiness) {
 }
 async function loadOverview() {
     try {
-        const [models, versions, logs] = await Promise.all(['/api/admin/model-configs', '/api/admin/updates/versions', '/api/admin/nightly-activity-logs'].map(async path => (await apiFetch(path)).json()));
+        const [models, versions, logs] = await Promise.all([
+            invoke('admin.list_model_configs'), invoke('update.list_versions'), invoke('admin.list_nightly_activity_logs'),
+        ]);
         tabCache.models = models;
         tabCache.versions = versions;
         renderOverviewGroups(computeReadiness(cloneAiConfig(models.system_ai_config)));
@@ -889,8 +879,8 @@ async function loadAiView() {
     const revision = ++aiLoadRevision;
     try {
         const [models, users] = await Promise.all([
-            !aiCacheStale && tabCache.models ? tabCache.models : apiFetch('/api/admin/model-configs').then(response => response.json()),
-            tabCache.users ?? apiFetch('/api/admin/users').then(response => response.json()),
+            !aiCacheStale && tabCache.models ? tabCache.models : invoke('admin.list_model_configs'),
+            tabCache.users ?? invoke('admin.list_users'),
         ]);
         if (revision !== aiLoadRevision) return;
         tabCache.models = models; tabCache.users = users;
@@ -932,7 +922,8 @@ async function saveAiScope() {
     $('#modelDetailBody').inert = true;
     updateSaveActions();
     try {
-        await apiFetch(scope === 'system' ? '/api/admin/system-settings' : `/api/admin/users/${aiView.userId}/model-config`, { method: 'PUT', body: JSON.stringify({ ai_config: payload }) });
+        if (scope === 'system') await invoke('admin.update_system_settings', { body: { ai_config: payload } });
+        else await invoke('admin.upsert_model_config', { path: { user_id: Number(aiView.userId) }, body: { ai_config: payload } });
         const saved = savedAiConfig(payload);
         if (scope === 'system') { lastSystemAiRaw = saved; aiEditors.system.config = cloneAiConfig(saved); }
         else { lastUserAiRaw = saved; aiEditors.user.config = cloneAiConfig(saved); }
@@ -948,7 +939,7 @@ async function saveAiScope() {
 async function refreshAiCache() {
     resetAiDiscovery();
     try {
-        const models = await (await apiFetch('/api/admin/model-configs')).json();
+        const models = await invoke('admin.list_model_configs');
         tabCache.models = models;
         aiCacheStale = false;
         if (!aiSystemDirty) { lastSystemAiRaw = structuredClone(models.system_ai_config); aiEditors.system.config = cloneAiConfig(lastSystemAiRaw); }
@@ -968,7 +959,7 @@ function discardAiEdits() {
 function loadOverviewIfActive() { if ($('#panel-overview').classList.contains('active')) void loadOverview(); }
 async function deleteModelConfig(userId) {
     if (!confirm('确定删除此用户的全部覆盖配置？删除后该用户继承系统配置。')) return;
-    try { await apiFetch(`/api/admin/users/${userId}/model-config`, { method: 'DELETE' }); tabCache.models.items = tabCache.models.items.filter(item => item.user_id !== userId); clearAiDirty(); await refreshAiCache(); showModelConfigForUserSilent(userId); renderAiScope(); toast('用户覆盖配置已清除'); }
+    try { await invoke('admin.delete_model_config', { path: { user_id: Number(userId) } }); tabCache.models.items = tabCache.models.items.filter(item => item.user_id !== userId); clearAiDirty(); await refreshAiCache(); showModelConfigForUserSilent(userId); renderAiScope(); toast('用户覆盖配置已清除'); }
     catch (error) { toast(error.message, 'err'); }
 }
 async function openAiUserScope(userId) { showTab('ai'); await loadAiView(); await changeAiScope(String(userId)); }
@@ -1441,10 +1432,9 @@ function aiModelMetadataHtml(metadata) {
 }
 
 async function requestAiModelDiscovery(state, options = {}) {
-    const response = await apiFetch('/api/admin/ai/models/discover', { method: 'POST', body: JSON.stringify({
+    return invoke('admin.discover_ai_models', { body: {
         provider: JSON.parse(state.snapshot), user_id: state.editorName === 'system' ? null : Number(state.userId), service: aiService(state.group), ...options
-    }) });
-    return response.json();
+    } });
 }
 
 function openAiModelPicker(editorName, group) {
@@ -2042,7 +2032,7 @@ async function loadSystemSettings() {
     if (settingsLoaded || settingsDirty) return;
     if (settingsLoadPromise) return settingsLoadPromise;
     settingsLoadPromise = (async () => {
-        try { renderSystemSettings(await (await apiFetch('/api/admin/system-settings')).json()); }
+        try { renderSystemSettings(await invoke('admin.get_system_settings')); }
         catch (error) { toast('加载系统参数失败：' + error.message, 'err'); }
         finally { settingsLoadPromise = null; }
     })();
@@ -2092,8 +2082,7 @@ async function saveSystemSettingsForm() {
     }
     settingsSaving = true; $('#panel-settings').inert = true; updateSaveActions();
     try {
-        const response = await apiFetch('/api/admin/system-settings', { method: 'PUT', body: JSON.stringify(payload) });
-        renderSystemSettings(await response.json());
+        renderSystemSettings(await invoke('admin.update_system_settings', { body: payload }));
         toast('系统参数已保存并实时生效'); return true;
     } catch (error) { toast('保存系统参数失败：' + error.message, 'err'); return false; }
     finally { settingsSaving = false; $('#panel-settings').inert = false; updateSaveActions(); syncXhsLoginVisibility(); }
@@ -2180,7 +2169,7 @@ function syncXhsLoginVisibility() {
     } else renderXhsLogin();
 }
 
-async function xhsLoginRequest(path, { method = 'GET', body, polling = false } = {}) {
+async function xhsLoginRequest(operation, input = {}, { polling = false } = {}) {
     if (!xhsLoginViewVisible() || !settingsLoaded || settingsSaving || xhsConfigHasDraft() || !lastSettingsRaw?.xhs_mcp_base_url || xhsLogin.busy) return null;
     if (xhsLogin.controller) {
         if (polling) return null;
@@ -2196,12 +2185,11 @@ async function xhsLoginRequest(path, { method = 'GET', body, polling = false } =
     renderXhsLogin();
     const current = () => xhsLogin.controller === controller && xhsLogin.revision === revision && getToken() === token && xhsLoginViewVisible() && !xhsConfigHasDraft();
     try {
-        const response = await apiFetch(`/api/admin/social/xiaohongshu/login${path}`, { method, ...(body ? { body: JSON.stringify(body) } : {}), signal: controller.signal, cache: 'no-store' });
-        const result = await response.json();
+        const result = await invoke(operation, input, { signal: controller.signal });
         if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('服务返回的登录状态无法读取。');
         return current() ? result : null;
     } catch (error) {
-        if (current() && error.name !== 'AbortError') {
+        if (current() && error.code !== 'cancelled') {
             xhsLogin.error = error.message || '小红书登录操作失败';
             xhsLogin.sourceErrors++;
         }
@@ -2236,7 +2224,7 @@ function armXhsQrTimers() {
 async function startXhsQrLogin() {
     stopXhsLogin();
     xhsLogin.status = 'unchecked';
-    const result = await xhsLoginRequest('/qrcode', { method: 'POST' });
+    const result = await xhsLoginRequest('admin.refresh_xiaohongshu_login_qrcode');
     if (!result) return;
     if (typeof result.is_logged_in !== 'boolean') {
         xhsLogin.error = '服务返回的登录状态无法读取。';
@@ -2308,8 +2296,7 @@ function applyXhsLoginStatus(result) {
 }
 
 async function checkXhsLogin(polling = false) {
-    const path = '/status' + (xhsLogin.sessionId ? '?session_id=' + encodeURIComponent(xhsLogin.sessionId) : '');
-    const result = await xhsLoginRequest(path, { polling });
+    const result = await xhsLoginRequest('admin.xiaohongshu_login_status', { query: { session_id: xhsLogin.sessionId } }, { polling });
     if (result) applyXhsLoginStatus(result);
     if (!polling && xhsLogin.image) armXhsQrTimers();
 }
@@ -2335,7 +2322,7 @@ async function submitXhsVerification(event) {
     const sessionId = xhsLogin.sessionId;
     input.value = '';
     xhsLogin.verificationError = '';
-    const result = await xhsLoginRequest('/verification', { method: 'POST', body: { session_id: sessionId, code } });
+    const result = await xhsLoginRequest('admin.submit_xiaohongshu_login_verification', { body: { session_id: sessionId, code } });
     if (result) applyXhsLoginStatus(result);
     if (xhsLogin.image) armXhsQrTimers();
 }
@@ -2343,7 +2330,7 @@ async function submitXhsVerification(event) {
 async function clearXhsSavedLogin() {
     if (!confirm('确定清除小红书采集账号的登录信息？当前扫码也将结束；外部原版服务可能保留已发出的二维码。')) return;
     stopXhsLogin();
-    const result = await xhsLoginRequest('', { method: 'DELETE' });
+    const result = await xhsLoginRequest('admin.clear_xiaohongshu_saved_login');
     if (!result) return;
     xhsLogin.status = 'unchecked';
     xhsLogin.message = typeof result.message === 'string' ? result.message : '已清除已保存的登录信息；现存二维码到期前仍可能完成登录。';
@@ -2371,7 +2358,7 @@ async function loadVideoQueue() {
     button.disabled = true;
     $('#videoQueueStatus').textContent = '正在读取队列…';
     try {
-        const data = await apiFetch('/api/admin/video-queue').then(response => response.json());
+        const data = await invoke('admin.video_queue');
         videoQueueSnapshot = data.queues;
         $('#videoQueueStatus').textContent = videoQueueSnapshot.length ? `${videoQueueSnapshot.length} 个供应商密钥队列 · 更新于 ${new Date().toLocaleTimeString('zh-CN')}` : '当前没有视频生成任务。';
         $('#videoQueueList').innerHTML = videoQueueSnapshot.map(queue => {
@@ -2430,9 +2417,9 @@ async function resolveVideoQueue(event) {
     errorElement.hidden = true;
     form.inert = true;
     try {
-        await apiFetch(`/api/admin/video-queue/${encodeURIComponent(resolution.id)}/resolve`, {
-            method: 'POST',
-            body: JSON.stringify({ expected_revision: resolution.revision, action, task_id: action === 'attach_task' ? taskId : null, note }),
+        await invoke('admin.reconcile_video_queue', {
+            path: { request_id: resolution.id },
+            body: { expected_revision: resolution.revision, action, ...(action === 'attach_task' ? { task_id: taskId } : {}), note },
         });
         closeModal('videoQueueResolveModal');
         videoQueueResolution = null;
@@ -2447,11 +2434,10 @@ async function resolveVideoQueue(event) {
 async function loadLogs() {
     const userId = $('#logUserId').value.trim();
     const dateVal = $('#logDate').value;
-    const params = new URLSearchParams();
-    if (userId) params.set('user_id', userId);
-    if (dateVal) params.set('target_date', dateVal);
     try {
-        const data = await (await apiFetch('/api/admin/nightly-activity-logs' + (params.toString() ? '?' + params : ''))).json();
+        const data = await invoke('admin.list_nightly_activity_logs', { query: {
+            ...(userId ? { user_id: Number(userId) } : {}), ...(dateVal ? { target_date: dateVal } : {}),
+        } });
         tabCache.logs = data;
         renderLogs(data);
     } catch (e) { $('#logList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
@@ -2501,7 +2487,7 @@ async function openLogDetail(id) {
 
 async function loadVersions() {
     try {
-        const data = await (await apiFetch('/api/admin/updates/versions')).json();
+        const data = await invoke('update.list_versions');
         renderVersions(data);
     } catch (e) { $('#versionList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
 }
@@ -2536,7 +2522,7 @@ function renderVersions(data) {
 
 async function setActive(id, active) {
     try {
-        await apiFetch(`/api/admin/updates/versions/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: active }) });
+        await invoke('update.update_version', { path: { id: Number(id) }, body: { is_active: active } });
         toast(active ? '版本已上线' : '版本已下线');
         loadVersions();
     } catch (e) { toast(e.message, 'err'); }
@@ -2545,7 +2531,7 @@ async function setActive(id, active) {
 async function deleteVersion(id) {
     if (!confirm('确定永久删除此版本及其文件？此操作不可撤销。')) return;
     try {
-        await apiFetch(`/api/admin/updates/versions/${id}`, { method: 'DELETE' });
+        await invoke('update.delete_version', { path: { id: Number(id) } });
         toast('版本已删除');
         loadVersions();
     } catch (e) { toast(e.message, 'err'); }
@@ -2566,8 +2552,7 @@ $('#uploadForm').addEventListener('submit', async (e) => {
     $('#uploadForm').inert = true;
     status.textContent = '正在上传并处理版本，请稍候…'; status.style.color = 'var(--primary)';
     try {
-        const resp = await apiFetch('/api/admin/updates/versions', { method: 'POST', body: formData, headers: {} });
-        const data = await resp.json();
+        const data = await invoke('update.create_version', { body: formData }, { timeoutMs: 180_000 });
         status.textContent = `发布成功 · v${data.version}`; status.style.color = 'var(--green)';
         $('#uploadForm').reset(); $('#fileName').textContent = '';
         toast('新版本已发布');

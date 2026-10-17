@@ -5,7 +5,7 @@ import secrets
 import time
 from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from runtime.client_context import ChatRequestClientContext
 
 TICKET_TTL_SECONDS = 60
@@ -17,6 +17,13 @@ class GatewayIdentity:
     login_record_id: int | None = None
     device_id: int | None = None
     client_context: ChatRequestClientContext | None = None
+    stream_id: str | None = None
+
+
+class GatewayTicketRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    stream_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class GatewayTicketResponse(BaseModel):

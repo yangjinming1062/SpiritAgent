@@ -52,7 +52,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
   const generation = ++requestGeneration
 
-  const result = await authedResource('GET /api/companion/persona')
+  const result = await authedResource('companion.get_persona')
 
   if (!isCurrent() || generation !== requestGeneration) {
     return { ok: false }

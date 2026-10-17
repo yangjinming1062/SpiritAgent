@@ -5,10 +5,6 @@ JSONRPC_INVALID_REQUEST: int = -32600
 JSONRPC_METHOD_NOT_FOUND: int = -32601
 JSONRPC_INVALID_PARAMS: int = -32602
 JSONRPC_INTERNAL_ERROR: int = -32603
-JSONRPC_SLASH_CONFIRM_REQUIRED: int = -32001  # 未传 confirmed=true；失败 data 触发前端 confirm。
-JSONRPC_SLASH_BUSY: int = -32002  # 回合生成中拒绝命令。
-JSONRPC_SLASH_GENERIC: int = -32003  # handler 未映射异常兜底。
-JSONRPC_TURN_BUSY: int = -32004  # prompt.submit 回合在途，可有限重试。
 
 # LLM 预算、温度边界与标题/摘要回退值。
 TEMPERATURE_MIN: float = 0.0

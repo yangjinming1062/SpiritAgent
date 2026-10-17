@@ -1,11 +1,4 @@
-import type {
-  DesktopApiResult,
-  DesktopGatewayInvoke,
-  IpcEventContract,
-  IpcInvokeContract,
-  IpcSendContract,
-  SpiritAgentApiRequest
-} from './contracts'
+import type { DesktopApiInvoke, IpcEventContract, IpcInvokeContract, IpcSendContract } from './contracts'
 
 type AsyncIpc<T extends (...args: never[]) => unknown> = (...args: Parameters<T>) => Promise<Awaited<ReturnType<T>>>
 
@@ -64,7 +57,7 @@ export interface DesktopBridge {
     quit: AsyncIpc<IpcInvokeContract['spiritagent:desktop:quit']>
     onNavigate: EventSubscription<'spiritagent:desktop:navigate'>
   }
-  gatewayRequest: DesktopGatewayInvoke
+  gatewayPresence: AsyncIpc<IpcInvokeContract['spiritagent:gateway:presence']>
   gatewayGetState: AsyncIpc<IpcInvokeContract['spiritagent:gateway:get-state']>
   onGatewayStateChanged: EventSubscription<'spiritagent:gateway:state-changed'>
   onGatewayEvent: EventSubscription<'spiritagent:gateway:event'>
@@ -72,7 +65,7 @@ export interface DesktopBridge {
   refreshSession: AsyncIpc<IpcInvokeContract['spiritagent:auth:refresh']>
   logout: AsyncIpc<IpcInvokeContract['spiritagent:auth:logout']>
   getSession: AsyncIpc<IpcInvokeContract['spiritagent:auth:get-session']>
-  api: <T = unknown>(request: SpiritAgentApiRequest) => Promise<DesktopApiResult<T>>
+  api: DesktopApiInvoke
   /** 把后端服务的二进制资产以 data URL 的形式取回；仅查本地缓存时未命中返回 null。 */
   apiAsset: AsyncIpc<IpcInvokeContract['spiritagent:api:asset']>
   /** 把后端服务的二进制资产以原始字节取回——用于视频片段等大体积负载,不能接受 base64 膨胀。支持通过 contentHash 做磁盘缓存。 */

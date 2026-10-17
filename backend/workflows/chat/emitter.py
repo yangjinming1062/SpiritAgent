@@ -27,18 +27,18 @@ _TRANSLATED: dict[str, str] = {
 }
 
 
-class JsonRpcEmitter:
+class ChatEventEmitter:
     """翻译回合帧并维护恢复快照；快照与事件发布共用锁，保持挂载水位一致。"""
 
     def __init__(
         self,
         *,
-        dispatcher: EventPublisher,
+        publisher: EventPublisher,
         session_id: str,
         active_turn: ActiveTurnSnapshot | None = None,
         snapshot_lock: asyncio.Lock | None = None,
     ) -> None:
-        self._dispatcher = dispatcher
+        self._publisher = publisher
         self._session_id = session_id
         self.active_turn = active_turn
         self.failed = False
@@ -97,7 +97,7 @@ class JsonRpcEmitter:
                     payload.pop("retry_message_id", None)
             payload["request_id"] = turn.request_id
             payload["origin_kind"] = turn.origin_kind
-        await self._dispatcher.push_event(event_name, payload, session_id=self._session_id)
+        await self._publisher.push_event(event_name, payload, session_id=self._session_id)
 
     @staticmethod
     def _translate(raw_type: str, data: dict) -> Any:

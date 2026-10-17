@@ -8,25 +8,25 @@
 
 | 链路 | 传输与鉴权 |
 |---|---|
-| Backend ↔ Client | `/api/gateway/ws`，主进程以 Bearer JWT 请求 `POST /api/gateway/ticket`，使用一次性不透明票据握手；签发与有效期见 [gateway](../backend/features/accounts/gateway.py) |
+| Backend ↔ Client | 主进程以 Bearer JWT 调用业务 HTTP；`POST /api/gateway/ticket` 签发一次性不透明票据后连接 `/api/gateway/ws`；签发与有效期见 [gateway](../backend/features/accounts/gateway.py) |
 | 手机浏览器 ↔ Backend | `/remote/` 同源页面，独立设备 Cookie；`POST /api/gateway/ticket` 签发票据后连接 `/api/gateway/ws`，身份约束见 [远程访问](#远程访问) |
 | Client ↔ Runner | Windows 命名管道 / macOS UDS 承载 WebSocket 帧，以本次启动 token 鉴权 |
 
-WS 和本地 IPC 使用 JSON-RPC 2.0；REST、上传及下载不套 RPC 信封。请求带 `id`，响应以相同 `id` 返回 `result` 或 `error`；通知不带 `id`，不应被响应。Backend WS 的心跳与 `session.ack` 均使用普通 RPC 请求；Client 与 Runner 的本地连接以 WebSocket 协议层 ping/pong 探活。
+云端控制 WS 与 Client / Runner 本地连接使用 JSON-RPC 2.0；业务 HTTP、上传、下载及 Electron IPC 不套 RPC 信封。RPC 请求带 `id`，响应以相同 `id` 返回 `result` 或 `error`；通知不带 `id`，不应被响应。Backend WS 的心跳与 `gateway.ack` 均使用普通 RPC 请求；Client 与 Runner 的本地连接以 WebSocket 协议层 ping/pong 探活。
 
 ### 登录、握手与心跳
 
 ticket 关联登录记录，每张票据在 60 秒内独立消费一次，并发签发不使其他未消费票据失效；首次握手尝试即消费，后续初始化失败或后端重启后须重新取得。HTTP 与 WS 常规日志隐藏票据及资产签名参数。握手及入站处理核对用户与登录有效性。正常刷新不撤销登录，注销、另一端激活或管理员停用则清理连接与本机工具等待，已受理回合按[序号与恢复](#序号与恢复)继续执行。长效凭据不进 WS URL，握手只接受 `?ticket=`。
 
-关闭码 `1008` 停止自动重连，表示策略拒绝，不能据此断言令牌失效；账户维护使用 `1012`，客户端退避重连，维护期间票据请求返回 503。心跳用 `session.ping`，无入站帧超时以 `4000/heartbeat` 重连；探测间隔和超时见 [JsonRpcGatewayClient](../shared/gateway.ts)。
+关闭码 `1008` 或 `4403` 停止自动重连并显示策略拒绝，不能据此清除登录；票据失效 `4401` 重新签发票据。仅 HTTP 明确返回本站登录失效才退出账户。账户维护使用 `1012`，客户端退避重连，维护期间票据请求返回 503。心跳用 `gateway.ping`，无入站帧超时以 `4000/heartbeat` 重连；探测间隔和超时见 [GatewayConnection](../shared/gateway.ts)。
 
-WS 持续收包，普通业务请求按接收顺序执行；心跳、ACK、工具同步与回执、即时自主决策独立执行。并发策略见 [RPC 契约](../backend/entrypoints/desktop/contracts.py)。每条连接的在途请求有上限，超限以 `1013` 关闭；断连取消该连接未完成的 RPC，已受理回合按[序号与恢复](#序号与恢复)继续运行。自主空间与窗口空闲表达持续等待模型结果，同类咨询在途合并，迟到结果重核上下文；处理入口见 [handlers.py](../backend/entrypoints/desktop/handlers.py)。
+WS 只处理连接恢复、ACK、心跳、工具同步、结果回执与桌面情境信号，方法和并发策略归 [RPC 契约](../backend/entrypoints/desktop/contracts.py)。每条连接的在途控制请求有上限，超限以 `1013` 关闭；断连取消该连接未完成的控制请求。自主决策和空闲表达通过 HTTP 调用，同类咨询在途合并，迟到结果重核上下文。
 
 ### 通道分工
 
-路由的 `operation_policy` 是身份、载荷和等待策略的唯一声明。[生成器](../scripts/generate_protocol.py) 从 OpenAPI、RPC、事件及 Runner 契约生成[跨端类型与操作映射](../shared/api.generated.ts)，分别反映输入省略规则与响应序列化；检查入口见 [Scripts](../scripts/README.md#按改动选择验证)。
+路由的稳定 `operationId` 和 `operation_policy` 共同定义操作、身份、编码、载荷与等待策略。[生成器](../scripts/generate_protocol.py) 从 OpenAPI、控制 RPC、事件及 Runner 契约生成[跨端类型与操作映射](../shared/api.generated.ts)，分别反映输入必填规则与响应序列化。调用方按操作标识提交参数，主进程不接受渲染层指定任意业务路径；检查入口见 [Scripts](../scripts/README.md#按改动选择验证)。
 
-依赖持续会话、进程内运行上下文和流式交付的操作走 WS；独立资源操作与较大载荷走 REST。REST 不要求聊天在线，但仍独立校验身份、权限与资源归属，不能因此视为可任意重试。
+聊天提交、停止、快照、命令与资源操作统一走业务 HTTP，实时事件与设备指令走 WS。HTTP 不要求 WS 在线，仍独立校验身份、权限与资源归属。已受理回合由账户运行态持有；网络失败不证明操作未受理，不能自动重做副作用。
 
 聊天流走会话 emitter；需和业务状态共同提交的异步通知走 outbox，两者不能混称。
 
@@ -97,26 +97,27 @@ Client 决定唯一主窗口、窗口模式精灵显隐及窗口位置。Backend
 
 ```mermaid
 flowchart TD
-    Resume[session.resume] --> Replay{当前连接流可重放?}
+    Resume[gateway.resume] --> Replay{当前连接流可重放?}
     Replay -->|是| Frames[重放事件并按 seq 去重]
-    Replay -->|否| Anchor{after_id 有效?}
-    Anchor -->|是| Delta[合并增量历史]
-    Anchor -->|否| Full[完整加载历史]
+    Replay -->|否| Snapshot[HTTP 会话快照与资源回源]
+    Frames --> Baseline{视图已有历史基线?}
+    Baseline -->|否| Snapshot
+    Baseline -->|是| Live[继续消费事件]
 ```
 
 - `seq` 是当前连接的网关重放流位置，跨聊天 Session 共享；宽限期重连可复用。网关销毁、登录记录更换或服务重启后可重新开始，不是数据库消息 ID 或永久递增编号。
-- `stream_id` 标识连接重放流，变更时重置旧序号；请求重放须同时带流身份与 `last_seq`。Client 按 `seq` 去重并用 `session.ack` 确认消费。ACK 只裁剪重放缓冲，不证明业务提交或工具执行；RPC 响应不属于该事件流。
-- 重放、增量合并与全量替换分别处理，不能混用旧流游标。
-- 已受理用户回合归账户运行态持有，桌面或远程端断连、退出、重新激活与登录授权失效只释放连接，不取消回合；重连通过 `session.resume` 恢复。只有用户显式调用 `session.interrupt` 才取消回合，终态为 `cancelled`；账户维护及 Backend 正常停机等待回合收尾。真实调用失败仍按失败处理，进程崩溃或强制终止后由重启恢复标记中断，不自动重做已执行操作。
-- 历史同步复用已有会话运行时，不取消在途回合；停止回复须显式调用 `session.interrupt`。快照与流游标在同一运行态锁内取得，挂载期间暂存事件，快照内已表达的回合帧不重复追加；桌面主进程通过内部 `session.snapshot` 将同一快照同步各个渲染窗口。
+- `stream_id` 标识连接重放流；`gateway.resume` 携带流身份与 `last_seq`，Client 按 `seq` 去重并用 `gateway.ack` 确认消费。ACK 只裁剪重放缓冲，不证明业务提交或工具执行。HTTP 与 RPC 响应不属于事件流，快照水位不推进连接消费游标。
+- 桌面流绑定登录记录，Remote 每个浏览器连接持有独立流。签发票据时可申请恢复当前身份的断线流；活跃标签页、其他设备或其他账户的流不能被接管。宽限期过后或服务重启回源恢复。
+- 已受理用户回合归账户运行态持有，断连、HTTP 请求结束、退出或登录失效不取消回合。显式停止使用 `POST /api/sessions/{session_id}/turns/{request_id}/cancel`，迟到停止不能取消新回合。停止先于受理时保留原请求的停止意图，受理后补交；确认终态前显示等待，只查询原回执，不重发提交。账户维护及 Backend 正常停机等待收尾；进程崩溃后标记中断，不自动重做已执行操作。
+- `GET /api/sessions/{session_id}/snapshot` 在会话发布锁内先固定可选流水位，再读取历史与在途回合；无 WS 时水位为空。读取期间新发布的媒体变化保留在水位之后。挂载期间缓冲会话事件，先应用快照，再按原序交付尚未被覆盖的帧；受众与恢复分类归事件契约。主进程合并同一会话的在途快照请求，以完整基线向各窗口发布内部 `session.snapshot`；成功重放且视图已有基线时不重拉历史，流切换后重新取得所属基线。
 - 历史携持久化消息 ID 与毫秒级创建时间。全量恢复达到防御上限时返回 `truncated` 与 `next_cursor`（本页首条 ID，未截断为 null）；可用 `GET /api/sessions/{id}/history` 携 `before_id` 向前分页读取更早历史。
-- 握手后所有事件帧（含回合帧与 `tool.call`）先暂存，直到会话恢复 RPC（`session.resume`）或约 10 秒超时后才冲刷；重放缓冲容量与时限见 [buffer](../backend/runtime/desktop/buffer.py)，恢复结果字段见 [runtime](../backend/runtime/conversation.py) 的 `SessionResumeResult`。
+- 握手后事件帧先暂存，`gateway.resume` 完成重放或冲刷后才报告连接就绪；握手 hold 另有防御性时限。重放容量与时限见 [buffer](../backend/runtime/desktop/buffer.py)，快照字段见 [HTTP 契约](../backend/features/conversation/http_contracts.py)。
 
 ### 表达通道
 
-正文只承载可读台词；`companion.mood` 更新身份区，不创建消息；视觉表达只经 `companion.action.play_requested` 派发；`companion.should_act` 返回空间意图，由 Client 计算位置。动作受当前形象能力限制，控制字段不得编码进聊天文本。
+正文只承载可读台词；`companion.mood` 更新身份区，不创建消息；视觉表达只经 `companion.action.play_requested` 派发；移动决策 HTTP 返回空间意图，由 Client 计算位置。动作受当前形象能力限制，控制字段不得编码进聊天文本。
 
-当前心情由用户陪伴回合独立更新，不由工作、自动化或主动回合顺带生成。自主视觉表达与空间咨询须通过档位、可见性与锁屏闸门，空闲视觉表达还需满足空闲条件。可见性以桌面精灵窗实际显示（表面快照 `spriteVisible`：窗口存在、未隐藏且未最小化）且未被完整入口或轻语收起为准；Client 发出 `companion.should_act` / `companion.idle_expression` 前检查，`should_act` 结果返回后再次核对。
+当前心情由用户陪伴回合独立更新，不由工作、自动化或主动回合顺带生成。自主视觉表达与空间咨询须通过档位、可见性与锁屏闸门，空闲视觉表达还需满足空闲条件。可见性以桌面精灵窗实际显示（表面快照 `spriteVisible`：窗口存在、未隐藏且未最小化）且未被完整入口或轻语收起为准；Client 发出移动决策或空闲表达请求前检查，决策返回后再次核对。
 
 ### 结构化回复与终端交付
 
@@ -156,7 +157,7 @@ flowchart TD
 
 窗口、桌面、通知和恢复快照共用伙伴声音导航 `#/companion/voice`；设置的 `voice` 分类管理回复偏好与聊天录音时长。固定目录、手写设计、自主设计与克隆能力独立报告；目录为空不隐藏可用自定义能力，缺少 LLM 时仍可手写设计。
 
-媒体模块拥有设计、克隆各一套当前方案及其不可变版本。试听候选绑定输入、账户和方案版本，确认时原子校验；描述或样本变化须重新试听，迟到、取消或旧版本结果不能覆盖当前方案。未确认候选在 24 小时后回收。生成与合成可持续等待，由账户隔离的操作标识取消；声音制作不进入普通 RPC 队列，取消记录覆盖取消先到和描述生成到试听制作之间的间隔，保留范围见 [voice_operations.py](../backend/features/media/voice_operations.py)。
+媒体模块拥有设计、克隆各一套当前方案及其不可变版本。试听候选绑定输入、账户和方案版本，确认时原子校验；描述或样本变化须重新试听，迟到、取消或旧版本结果不能覆盖当前方案。未确认候选在 24 小时后回收。生成与合成可持续等待，由账户隔离的操作标识取消；取消记录覆盖取消先到和描述生成到试听制作之间的间隔，保留范围见 [voice_operations.py](../backend/features/media/voice_operations.py)。
 
 克隆样本经 `POST /api/media/voice-samples` 上传为独立账户资产，不使用会话附件的配额或删除语义；上传、读取及音频转换均校验账户与实际内容。Client 主进程桥在请求前后核对鉴权会话，换号后的结果不能交给新账户。自定义音色仅使用媒体模块签发的不透明方案引用，设置和音色 ID 不携带描述或音频字节；上传限额与转换规格见 [voices.py](../backend/features/media/voices.py)。
 
@@ -201,9 +202,9 @@ LLM、媒体、语音、向量及素材传输等待结果或明确错误，不�
 
 ### Slash 命令
 
-Slash 元动作走 `command.dispatch`，不交给 LLM。`GET /api/commands` 返回名称、别名、说明和确认标记；clear、compress、remember 的注册与实现见 [handlers](../backend/entrypoints/desktop/handlers.py) 和 [slash_commands](../backend/features/conversation/slash_commands.py)。
+Slash 元动作走 `POST /api/sessions/{session_id}/commands`，不交给 LLM。`GET /api/commands` 返回名称、别名、说明和确认标记；注册与实现见 [slash_commands](../backend/features/conversation/slash_commands.py)，执行与确认由会话业务操作校验。
 
-`//` 或不符合命令起始规则的输入视为普通文本；符合命令形式但未识别时提示错误，不退回 `prompt.submit`。编辑消息时的斜杠按正文处理。需要确认的命令由服务端再次校验 `confirmed=true`；影响历史的命令另检查在途状态。clear 需确认，compress 无需确认；清空保留会话并写清理状态行，不等于删除长期记忆或撤销工具。remember 只写当前认证记忆域，自动化无记忆域。
+`//` 或不符合命令起始规则的输入视为普通文本；符合命令形式但未识别时提示错误，不作为普通回合提交。编辑消息时的斜杠按正文处理。需要确认的命令由服务端再次校验 `confirmed=true`；影响历史的命令另检查在途状态。clear 需确认，compress 无需确认；清空保留会话并写清理状态行，不等于删除长期记忆或撤销工具。remember 只写当前认证记忆域，自动化无记忆域。
 
 响应与 `command.result` 可能同时到达，Client 幂等消费；`hydrate=true` 替换历史，否则展示状态。自动压缩在聊天调用前按上下文阈值触发，`compress.completed` 插入压缩状态，不与手动压缩的全量替换混用。摘要检查点在历史与事件中以消息 `subtype=compress_summary` 标识，正文格式不作识别依据。主动回合也保存压缩检查点，临时意图不进入摘要；无头检查点与 `compress.completed` 通知同事务写入 outbox，客户端按消息 ID 去重。管理端自动压缩开关是总闸门，用户不能覆盖关闭；阈值使用会话覆盖或系统默认，固定会话不继承普通对话的全局聊天偏好。
 
@@ -213,7 +214,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`GET /api/commands` 返�
 
 | 修改范围 | 定义入口 |
 |---|---|
-| 实时对话、工具同步、命令 | [网关 handlers](../backend/entrypoints/desktop/handlers.py)、[RPC 契约](../backend/entrypoints/desktop/contracts.py) |
+| 对话与命令、实时交付与工具同步 | [会话 HTTP](../backend/entrypoints/http/routes/sessions.py)、[网关 handlers](../backend/entrypoints/desktop/handlers.py)、[控制契约](../backend/entrypoints/desktop/contracts.py) |
 | 目录、记忆、引导与声音 | [资源目录](../backend/entrypoints/http/routes/resource_catalog.py)、[引导](../backend/entrypoints/http/routes/onboarding.py)、[声音](../backend/entrypoints/http/routes/voices.py) |
 | 会话 REST 与传输结构 | [会话端点](../backend/entrypoints/http/routes/sessions.py)、[schema](../backend/features/conversation/schemas.py) |
 | 伙伴资料、头像与全身、角色卡、衣柜、动作包、媒体复核与资产读取 | [伙伴端点](../backend/entrypoints/http/routes/companion.py)、[伙伴 schema](../backend/features/appearance/schemas.py)、[动作包 schema](../backend/features/actions/media_contracts.py) |
@@ -242,7 +243,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`GET /api/commands` 返�
 
 ### 角色卡编辑
 
-人设 PUT 同时承接首次引导的确认保存和日常资料维护。引导保存完整资料并补写逐题提交未能保存的用户回答；资料维护提交 `expected_fields`，只接受已完成人设的四个可编辑字段，在行锁内校验原始值后合并，保留视觉与声音字段。冲突返回 409，两端保留草稿并展示最新内容。手机仅开放资料保存、角色卡修改与重新提取所需的精确接口和个人资料 RPC，继续使用设备身份及同源校验。
+人设 PUT 同时承接首次引导的确认保存和日常资料维护。引导保存完整资料并补写逐题提交未能保存的用户回答；资料维护提交 `expected_fields`，只接受已完成人设的四个可编辑字段，在行锁内校验原始值后合并，保留视觉与声音字段。冲突返回 409，两端保留草稿并展示最新内容。手机仅开放资料保存、角色卡修改与重新提取所需的业务 HTTP，继续使用设备身份及同源校验。
 
 角色卡 GET/PATCH 读取与局部编辑，extract 发起重新提取/失败重试，见[结构](../backend/features/appearance/character_card_models.py)与[伙伴端点](../backend/entrypoints/http/routes/companion.py)。写入校验预期形象和修订，冲突 409 且 Client 保留草稿；changes 未传不变，null 恢复自动值，空字符串显式清空。
 
@@ -397,15 +398,15 @@ sequenceDiagram
 | unknown | 保留核对，不自动重试 |
 | not_found | 无记录不能证明未执行 |
 
-认领刷盘后执行、终态落盘后回复；取消、死亡或损坏记录无可信终态时视为未知，迟到者不得覆盖。日志有保留期，无标识直调不记日志，不可写时仍可能执行，不承诺副作用恰好一次。`calls.get` 可查询，但 Client/Backend 不自动调用，仍需核对外部效果。
+认领刷盘后执行、终态落盘后回复；取消、死亡或损坏记录无可信终态时视为未知，迟到者不得覆盖。日志有保留期，无标识直调不记日志，不可写时仍可能执行，不承诺副作用恰好一次。Client 恢复服务端未决回执时调用 `calls.get` 查询原结果，仍在执行则继续等待；未知或无记录须核对外部效果，不重新调用执行入口。
 
-取消按发起连接与 RPC 编号定位，重连编号不命中旧调用。断线/超时不证明停止，线程可继续收尾；Backend 中断逐个发取消，未交 Runner 不执行、已执行尽力取消。同批结果分别保存已完成、未知和未执行，不能全部记取消导致继续时重复副作用。
+取消可按发起连接与 RPC 编号定位，也可按 `call_id` 定位重连前仍在执行的同一调用；请求只能选择一种标识。断线/超时不证明停止，线程可继续收尾；Backend 中断逐个发取消，未交 Runner 不执行、已执行尽力取消。同批结果分别保存已完成、未知和未执行，不能全部记取消导致继续时重复副作用。
 
 错误 disposition、保留和取消范围见 [calls.py](../runner/spirit_agent_runner/runtime/calls.py)、[journal.py](../runner/spirit_agent_runner/runtime/journal.py)、[Client IPC](../client/main/ipc/runner.ts)，结果保存见 [persistence](../backend/workflows/chat/persistence.py)。
 
 ### 后端等待与取消
 
-等待表按 `(user_id, call_id)` 寻址，身份来自认证。派发前检查桌面和工具，发送失败快速返回；结果只兑现同用户未完成的等待，重复或迟到结果不重新启动回合。等待随回合取消时下发 `tool.cancel`，超时按结果未知回传模型。
+等待表按 `(user_id, call_id)` 寻址，身份来自认证。派发前检查桌面和工具，发送失败快速返回；`tool.result` 返回 `accepted` 或 `no_longer_pending`，重复或迟到回执不重新启动回合。主进程保留完成结果直至确认，断线及确认超时只补发结果；流 ACK 不代替该确认。等待随回合取消时下发 `tool.cancel`，超时按结果未知回传模型。
 
 设备调用的时限由内向外递增：Runner 工具自身时限（终端前台上限默认 600 秒）短于 Client 派发上限（[ipc/runner.ts](../client/main/ipc/runner.ts)，11 分钟），再短于 Backend 等待上限（`ipc_future_timeout_seconds`，默认 720 秒）。外层短于内层会把仍在正常执行的工具报成结果未知，调整任一层时保持次序。
 
@@ -494,7 +495,7 @@ standard 使用独立 automation 任务会话，可离线运行云端部分；�
 
 ### 扫码、设备身份与权限
 
-桌面主动生成五分钟有效的一次性授权码，刷新使该账户的旧待兑换码失效。授权码位于链接 fragment，手机读取后立即清除，通过 POST 原子兑换。服务端只保存凭据摘要，设备授权三十天有效；Cookie 带 `Secure`、`HttpOnly`、`SameSite=Strict` 和 `__Host-` 约束。写请求校验同源与 CSRF，WS 使用独立用途的短效单次票据。
+桌面主动生成五分钟有效的一次性授权码，刷新使该账户的旧待兑换码失效。授权码位于链接 fragment，手机读取后立即清除，通过 POST 原子兑换。服务端只保存凭据摘要，设备授权三十天有效；Cookie 带 `Secure`、`HttpOnly`、`SameSite=Strict` 和 `__Host-` 约束。已登录页面的 HTTP 请求携带 CSRF 头并绑定当前 Cookie；其他标签页换号后，旧页面读取返回本站登录失效并清理旧状态。首次读取授权与无请求头的媒体读取仍可使用 Cookie。写请求另校验同源，CSRF 失败返回权限错误；WS 使用独立用途的短效单次票据。
 
 授权与设备接口见 [remote API](../backend/entrypoints/http/routes/remote.py)。手机授权独立于桌面登录，桌面换号不改手机账户；手机扫码换号时撤销原浏览器授权并清除旧状态。账户停用、删除或安全凭据重置同步撤销手机授权，授权与提交账本不进入用户备份。
 
@@ -502,9 +503,9 @@ standard 使用独立 automation 任务会话，可离线运行云端部分；�
 
 ### 多端会话与恢复
 
-账户及会话统一持有运行态、互斥和工具轮数预算，各连接独立持有流序号、重放与 ACK，手机 ACK 不裁剪桌面数据。同会话忙碌时拒绝新提交；`prompt.submit` 携带持久化 `request_id`，相同标识与内容返回原受理结果，标识相同但内容不同拒绝，重连不再次执行工具。
+账户及会话统一持有运行态、互斥和工具轮数预算，各连接独立持有流序号、重放与 ACK，手机 ACK 不裁剪桌面数据。同会话忙碌时拒绝新提交；HTTP 回合提交携带持久化 `request_id`，相同标识与内容返回原受理结果，标识相同但内容不同拒绝。响应不明时按标识查询回执，重连不再次执行工具。
 
-已保存用户输入和共享业务事件同步至同账户在线端，各端按消息 ID 合并。`session.resume` 返回持久历史、运行状态和在途回合快照，生成中加入也能得到已产生的内容；历史向前分页使用 `GET /api/sessions/{id}/history`。手机断网或切后台不取消已受理回合，返回时恢复历史和进度；服务重启后的中断回合显示实际状态，不自动重做工具。
+已保存用户输入和共享业务事件同步至同账户在线端，各端按消息 ID 合并。HTTP 会话快照返回持久历史、运行状态和在途回合，生成中加入也能得到已产生的内容；历史向前分页使用 `GET /api/sessions/{id}/history`。手机断网或切后台不取消已受理回合，返回时恢复历史和进度；服务重启后的中断回合显示实际状态，不自动重做工具。
 
 动态、日记沿用账户已读状态；会话未读与语音收听进度按设备保存。页面聚焦重新校准数据，异步回写校验账户与页面生命周期。独立资产任务重连后查询原任务；记忆编辑绑定草稿初始版本，回源不提升该版本，冲突保留草稿。
 
@@ -588,9 +589,9 @@ Runner 暂存保留原名与摘要，安装前复核，仅版本一致的新桌�
 
 ### 错误信封
 
-HTTP 错误统一返回 `{error:{code,message,details,request_id}}`，状态码保留 HTTP 语义，校验细节只包含字段位置、原因和类型，不返回原始输入。RPC 保留 JSON-RPC 数字错误码，`error.data` 使用同一业务错误结构；`prompt.submit` 回合在途返回 `-32004`，业务码为 `turn_busy`。客户端按码处理，不匹配文案。公开模型与脱敏逻辑见 [api_errors](../backend/infrastructure/api_errors.py)。
+HTTP 错误统一返回 `{error:{code,message,details,request_id}}`，校验细节只包含字段位置、原因和类型，不返回原始输入。回合忙碌返回 HTTP 409 与 `turn_busy`。控制 RPC 保留 JSON-RPC 数字错误码，`error.data` 使用同一业务错误结构。供应商鉴权失败使用 `provider_auth`，上游状态保留在详情；本站 `401 / unauthenticated` 才代表登录失效。HTTP 业务错误经 IPC 在调用端还原为同一 `ApiError`，客户端按码处理，不匹配文案；本机处理失败保留诊断原因，与网络失败区分。公开模型与脱敏逻辑见 [api_errors](../backend/infrastructure/api_errors.py)。
 
-主进程通过结构化 IPC 传递 HTTP 与 RPC 结果，渲染层还原同一业务错误类型。网络失败、取消和断连独立表达，不伪造业务受理结果。
+主进程通过结构化 IPC 传递业务 HTTP 结果，渲染层还原同一业务错误类型。网络失败、取消和断连独立表达，不伪造业务受理结果。
 
 错误码以 [Backend constants](../backend/infrastructure/constants.py)、[Runner 调用管理](../runner/spirit_agent_runner/runtime/calls.py)与 [RPC 边界](../runner/spirit_agent_runner/transport/rpc.py)为准；未知执行结果的恢复语义见[调用日志](#调用日志与未知结果)，不能合并成普通失败。
 

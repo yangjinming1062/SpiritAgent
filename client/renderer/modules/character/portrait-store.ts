@@ -156,7 +156,7 @@ export async function hydratePortrait(): Promise<void> {
   const epoch = currentClearEpoch()
 
   try {
-    const res = await requestResource('GET /api/companion/avatar')
+    const res = await requestResource('companion.get_avatar')
 
     if (currentClearEpoch() !== epoch) {
       return
@@ -207,7 +207,7 @@ export async function hydratePortraitHistory(): Promise<void> {
   const epoch = currentClearEpoch()
 
   try {
-    const res = await requestResource('GET /api/companion/avatar/history')
+    const res = await requestResource('companion.get_avatar_history')
 
     if (currentClearEpoch() !== epoch) {
       return
@@ -257,7 +257,7 @@ export async function selectAvatar(avatarId: number): Promise<boolean> {
   const epoch = currentClearEpoch()
 
   try {
-    await requestResource('PUT /api/companion/avatar/{avatar_id}/select', { path: { avatar_id: avatarId } })
+    await requestResource('companion.put_avatar_select', { path: { avatar_id: avatarId } })
 
     if (currentClearEpoch() !== epoch) {
       return false

@@ -73,9 +73,9 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         let result: PortraitResponse | null
 
         if (mode === 'reload') {
-          result = await requestResource('GET /api/companion/avatar')
+          result = await requestResource('companion.get_avatar')
         } else if (mode !== 'edit' && (primaryRef || mode === 'generate')) {
-          result = await requestResource('POST /api/companion/avatar', {
+          result = await requestResource('companion.post_avatar', {
             body: primaryRef
               ? {
                   source: 'reference',
@@ -90,7 +90,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
               : { source: 'generate', feedback }
           })
         } else {
-          result = await requestResource('POST /api/companion/avatar', { body: { source: 'generate', feedback, mode } })
+          result = await requestResource('companion.post_avatar', { body: { source: 'generate', feedback, mode } })
         }
 
         if (!isCurrent()) {

@@ -6,7 +6,7 @@
 
 | 入口 | 职责 |
 |---|---|
-| [gateway.py](gateway.py)、[submission_gateway.py](submission_gateway.py)、[history_commands.py](history_commands.py) | 账户受理、提交幂等与历史用例；连接权限和协议帧留在 entrypoints |
+| [operations.py](operations.py)、[submissions.py](submissions.py)、[history_commands.py](history_commands.py) | HTTP 业务操作、账户受理、提交幂等与历史用例；连接控制留在 entrypoints |
 | [orchestrator.py](orchestrator.py) | `run_chat_turn`：会话互斥、轮数与取消收尾、委派、回退锁定及终态 |
 | [turn_inputs.py](turn_inputs.py) | 会话设置、历史转换、工具集合、资料域和 Token 估算 |
 | [prompt_presets.py](prompt_presets.py)、[prompt_blocks.py](prompt_blocks.py)、[system_prompt.py](system_prompt.py) | 预设体、排除集合、共享块与每次调用前的环境/动作快照 |
@@ -21,7 +21,7 @@
 | [chat_emitter.py](chat_emitter.py)、[turn_errors.py](turn_errors.py) | 交付接口、`HeadlessEmitter` 与脱敏错误帧 |
 | [images.py](images.py) | 协调会话媒体状态、外观冻结参考、验图和一次重做预算 |
 
-调用方分别为桌面与远程网页 `prompt.submit`、`standard_turns`、`companion_turns` 和委派。传入 `persisted_message_id` 时，由调用方保存并发布用户输入，本层不重复插入或通知。
+调用方分别为桌面与远程网页的 HTTP 回合提交、`standard_turns`、`companion_turns` 和委派。HTTP 受理交接由账户任务持有，调用方取消不能中断已经持久化的受理；传入 `persisted_message_id` 时，由调用方保存并发布用户输入，本层不重复插入或通知。
 
 ## 提示词与运行时数据
 

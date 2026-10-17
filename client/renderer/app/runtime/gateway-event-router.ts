@@ -13,23 +13,37 @@ import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 
 import { $devMode, pushDevLog } from './dev-log'
-import { decodePayload, type EventRouteContext } from './gateway-event-util'
+import type { EventRouteContext } from './gateway-event-util'
 import { handleCharacterEvent } from './handlers/character-events'
 import { handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
 import { handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
 
-const TURN_EVENTS = new Set([
-  'message.start',
-  'message.delta',
-  'message.reasoning.delta',
-  'message.break',
-  'message.bubble',
-  'message.complete',
-  'error',
-  'tool.start',
-  'tool.complete'
-])
+function turnRequestId(event: GatewayEvent): string | null {
+  switch (event.type) {
+    case 'message.start':
+
+    case 'message.delta':
+
+    case 'message.reasoning.delta':
+
+    case 'message.break':
+
+    case 'message.bubble':
+
+    case 'message.complete':
+
+    case 'error':
+
+    case 'tool.start':
+
+    case 'tool.complete':
+      return event.payload.request_id
+
+    default:
+      return null
+  }
+}
 
 // 网关事件路由只负责视图分派与窗口守卫；设备调用由主进程消费。
 
@@ -45,17 +59,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
   // 语音与媒体 outbox 事件在载荷中标识会话，其余会话事件使用信封路由。
   const sessionId =
-    event.type === 'message.voice' || event.type === 'message.media'
-      ? decodePayload<{ session_id: string }>(event.payload).session_id
-      : event.session_id
+    event.type === 'message.voice' || event.type === 'message.media' ? event.payload.session_id : event.session_id
 
   const runtime = typeof sessionId === 'string' ? findConversationRuntime(sessionId) : undefined
 
-  if (
-    runtime &&
-    TURN_EVENTS.has(event.type) &&
-    !runtime.acceptsTurnEvent(decodePayload<{ request_id?: string }>(event.payload).request_id)
-  ) {
+  if (runtime && !runtime.acceptsTurnEvent(turnRequestId(event) ?? undefined)) {
     return
   }
 
@@ -75,7 +83,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
       break
 
     case 'session.list_changed':
-      onSessionListChanged(decodePayload<{ session_id?: string; deleted?: boolean }>(event.payload))
+      onSessionListChanged(event.payload)
 
       break
 
@@ -128,9 +136,9 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     }
 
     case 'compress.completed': {
-      const payload = decodePayload<{ subtype?: string; text?: string }>(event.payload)
+      const payload = event.payload
 
-      if (sessionId && payload.subtype === 'compress_summary' && typeof payload.text === 'string') {
+      if (sessionId && payload.subtype === 'compress_summary') {
         invalidateSessionHistory(sessionId)
       }
 

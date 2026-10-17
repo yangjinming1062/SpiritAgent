@@ -1,12 +1,15 @@
 import { IconArrowLeft, IconMicrophone, IconPhoto, IconPlus, IconSend, IconSquare, IconX } from '@tabler/icons-react'
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { requestApi } from '../shared/api'
+import { type ApiResponse, requestApi } from '../shared/api'
+import { EVENT_POLICIES } from '../shared/api.generated'
+import { eventsAfterSnapshot } from '../shared/gateway'
+import { createTurnCancellation, type TurnReference } from '../shared/turn-cancellation'
 
 import type { GatewayEvent, RemoteApi, RemoteGateway } from './api'
-import { errorText, readImage, record } from './api'
-import { activeReplyIsPersisted, advanceTurn, commandHistory, eventsAfterSnapshot, mergeMessages } from './chat-state'
+import { ApiError, errorText, readImage, record } from './api'
+import { activeReplyIsPersisted, advanceTurn, commandHistory, mergeMessages } from './chat-state'
 import { TopicLink } from './TopicLink'
 import type {
   ActiveTurn,
@@ -72,7 +75,7 @@ function readPendingPrompt(key: string): PendingPrompt | null {
 export function clearChatState(): void {
   try {
     for (const key of Object.keys(sessionStorage)) {
-      if (/^remote:\d+:\d+:submission:/.test(key)) {
+      if (/^remote:\d+:\d+:(?:submission|cancellation):/.test(key)) {
         sessionStorage.removeItem(key)
       }
     }
@@ -125,6 +128,9 @@ export function Chat({
   const listRefreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [turn, setTurn] = useState<ActiveTurn | null>(null)
+  const [stoppingId, setStoppingId] = useState<string | null>(null)
+  const turnRef = useRef(turn)
+  turnRef.current = turn
   const [readOnly, setReadOnly] = useState(false)
   const [hasMore, setHasMore] = useState(false)
   const [draft, setDraft] = useState('')
@@ -151,8 +157,51 @@ export function Chat({
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const recordingRevision = useRef(0)
   const pending = useRef<PendingPrompt | null>(null)
+  const settledRequests = useRef(new Set<string>())
+  const finishCancellation = useRef<
+    (receipt: ApiResponse<'sessions.get_turn'> | null, turn: TurnReference, error?: unknown) => Promise<void>
+  >(async () => {})
+  const cancellations = useMemo(
+    () =>
+      createTurnCancellation({
+        isCurrent: alive,
+        read: (turn, signal) =>
+          api
+            .invoke(
+              'sessions.get_turn',
+              {
+                path: { session_id: turn.sessionId, request_id: turn.requestId }
+              },
+              { signal, timeoutMs: 15_000 }
+            )
+            .catch(error => {
+              if (error instanceof ApiError && error.status === 404) {
+                return null
+              }
+              throw error
+            }),
+        cancel: (turn, signal) =>
+          api.invoke(
+            'sessions.cancel_turn',
+            {
+              path: { session_id: turn.sessionId, request_id: turn.requestId }
+            },
+            { signal, timeoutMs: 15_000 }
+          ),
+        onSettled: (receipt, turn) => finishCancellation.current(receipt, turn),
+        onRejected: (error, turn) => finishCancellation.current(null, turn, error),
+        onError: (error, turn) => {
+          if (alive() && selectedRef.current === turn.sessionId) {
+            setFailure(errorText(error))
+          }
+        }
+      }),
+    [api, alive]
+  )
+  useEffect(() => () => cancellations.close(), [cancellations])
   const draftKey = (id: string) => `remote:${userId}:${device}:draft:${id}`
   const promptKey = (id: string) => `remote:${userId}:${device}:submission:${id}`
+  const cancellationKey = useCallback((id: string) => `remote:${userId}:${device}:cancellation:${id}`, [userId, device])
 
   const releaseRecording = useCallback(() => {
     recordingRevision.current++
@@ -194,7 +243,7 @@ export function Chat({
 
   const loadSessions = useCallback(
     async (offset = 0) => {
-      const result = await requestApi(api, 'GET /api/sessions', { query: { limit: 100, offset } })
+      const result = await requestApi(api, 'sessions.list_sessions', { query: { limit: 100, offset } })
 
       if (alive()) {
         setSessions(previous =>
@@ -228,9 +277,7 @@ export function Chat({
       hydration.current = buffered
 
       try {
-        const result = await gateway.request('session.resume', {
-          session_id: id
-        })
+        const result = await gateway.snapshot(id)
 
         if (!alive() || revision !== navigation.current || selectedRef.current !== id) {
           return
@@ -243,6 +290,7 @@ export function Chat({
           (result.history_revision ?? 0) !== (historyRevisions.current.get(id) ?? 0) ||
           buffered.events.some(
             event =>
+              event.stream_id === result.stream_id &&
               event.seq !== undefined &&
               event.seq <= (result.current_seq ?? 0) &&
               (event.type === 'message.replaced' || commandHistory(event) !== null)
@@ -256,7 +304,9 @@ export function Chat({
               )
             : incoming
         )
-        setTurn(result.active_turn ?? null)
+        setTurn(
+          result.active_turn && !settledRequests.current.has(result.active_turn.request_id) ? result.active_turn : null
+        )
         const receipt = result.last_submission
 
         if (!result.active_turn && receipt && (receipt.status === 'failed' || receipt.status === 'interrupted')) {
@@ -266,8 +316,31 @@ export function Chat({
 
         const pendingKey = `remote:${userId}:${device}:submission:${id}`
         const prior = readPendingPrompt(pendingKey)
+        let confirmed = receipt?.request_id === prior?.id || result.active_turn?.request_id === prior?.id
+        if (prior && !confirmed) {
+          const known = await api
+            .invoke('sessions.get_turn', {
+              path: { session_id: id, request_id: prior.id }
+            })
+            .catch(error => {
+              if (error instanceof ApiError && error.status === 404) {
+                return null
+              }
+              throw error
+            })
+          confirmed = known !== null
+          if (!alive() || revision !== navigation.current || selectedRef.current !== id) {
+            return
+          }
+          if (known && (known.status === 'failed' || known.status === 'interrupted')) {
+            setFailure(known.error || '上一回合已中断，请核对会话后重试')
+          }
+          if (known) {
+            cancellations.observe({ sessionId: id, requestId: known.request_id }, known)
+          }
+        }
 
-        if (prior && (receipt?.request_id === prior.id || result.active_turn?.request_id === prior.id)) {
+        if (prior && confirmed) {
           sessionStorage.removeItem(pendingKey)
           pending.current = null
           if (!prior.replace) {
@@ -286,6 +359,11 @@ export function Chat({
         }
         setReadOnly(result.info?.is_automation === true)
         setHasMore(result.truncated === true || Boolean(result.next_cursor))
+        const stopId = sessionStorage.getItem(cancellationKey(id))
+        if (stopId) {
+          setStoppingId(stopId)
+          void cancellations.request({ sessionId: id, requestId: stopId })
+        }
         if (document.visibilityState === 'visible') {
           setSeenAt(previous => {
             const next = { ...previous, [id]: Date.now() / 1000 }
@@ -310,17 +388,49 @@ export function Chat({
         }
       }
     },
-    [alive, gateway, userId, device]
+    [alive, api, cancellationKey, cancellations, gateway, userId, device]
   )
+
+  finishCancellation.current = async (receipt, turn, error) => {
+    setStoppingId(current => (current === turn.requestId ? null : current))
+    settledRequests.current.add(turn.requestId)
+    if (settledRequests.current.size > 500) {
+      settledRequests.current.delete(settledRequests.current.values().next().value!)
+    }
+    if (sessionStorage.getItem(cancellationKey(turn.sessionId)) === turn.requestId) {
+      sessionStorage.removeItem(cancellationKey(turn.sessionId))
+    }
+    if (!alive()) {
+      return
+    }
+    if (pending.current?.id === turn.requestId) {
+      pending.current = null
+      sessionStorage.removeItem(promptKey(turn.sessionId))
+    }
+    if (selectedRef.current === turn.sessionId) {
+      if (turnRef.current?.request_id && turnRef.current.request_id !== turn.requestId) {
+        return
+      }
+      setTurn(current => (current?.request_id === turn.requestId ? null : current))
+      if (error) {
+        setFailure(errorText(error))
+      } else {
+        setFailure(
+          receipt?.status === 'failed' || receipt?.status === 'interrupted' ? receipt.error || '回复已中断' : ''
+        )
+      }
+      await resume(turn.sessionId)
+    }
+  }
 
   useEffect(() => {
     void runLatest(async () => {
       await loadSessions()
 
-      if (gateway.open && !metadataLoaded.current) {
+      if (!metadataLoaded.current) {
         const [main, catalog] = await Promise.all([
-          requestApi(api, 'GET /api/sessions/main'),
-          requestApi(api, 'GET /api/presets')
+          requestApi(api, 'sessions.get_main_session'),
+          requestApi(api, 'resource_catalog.get_presets')
         ])
 
         if (alive()) {
@@ -330,17 +440,25 @@ export function Chat({
         }
       }
 
-      if (gateway.open && selectedRef.current) {
+      if (selectedRef.current) {
         await resume(selectedRef.current)
       }
     })
-  }, [refresh, connected, gateway, loadSessions, resume, alive, runLatest, api])
+  }, [refresh, loadSessions, resume, alive, runLatest, api])
 
   applyEvent.current = event => {
-    const payload = record(event.payload) ? event.payload : {}
-    const sessionId = event.session_id ?? (typeof payload.session_id === 'string' ? payload.session_id : undefined)
+    const sessionId = event.session_id
 
     if (sessionId !== selectedRef.current) {
+      return
+    }
+    if (
+      event.type !== 'session.snapshot' &&
+      EVENT_POLICIES[event.type].baseline &&
+      'request_id' in event.payload &&
+      typeof event.payload.request_id === 'string' &&
+      settledRequests.current.has(event.payload.request_id)
+    ) {
       return
     }
 
@@ -355,10 +473,10 @@ export function Chat({
     } else if (event.type === 'message.start') {
       setFailure('')
       setRetryMessage(null)
-    } else if (event.type === 'message.persisted' && Array.isArray(payload.messages)) {
-      setMessages(previous => mergeMessages(previous, payload.messages as SessionMessage[]))
+    } else if (event.type === 'message.persisted') {
+      setMessages(previous => mergeMessages(previous, event.payload.messages))
 
-      if (payload.request_id === pending.current?.id) {
+      if (event.payload.request_id === pending.current?.id) {
         pending.current = null
 
         if (selectedRef.current) {
@@ -370,28 +488,24 @@ export function Chat({
         setAttachments([])
         setFailure('')
       }
-    } else if (
-      event.type === 'message.replaced' &&
-      typeof payload.replaced_message_id === 'number' &&
-      record(payload.message)
-    ) {
-      const message = payload.message as unknown as SessionMessage
+    } else if (event.type === 'message.replaced') {
+      const message = event.payload.message
       setMessages(previous =>
         mergeMessages(
-          previous.filter(item => item.id !== payload.replaced_message_id),
+          previous.filter(item => item.id !== event.payload.replaced_message_id),
           [message]
         )
       )
       pauseMedia()
       setFailure('')
-      if (payload.request_id === pending.current?.id && selectedRef.current) {
+      if (event.payload.request_id === pending.current?.id && selectedRef.current) {
         pending.current = null
         sessionStorage.removeItem(promptKey(selectedRef.current))
       }
       scheduleListRefresh()
     } else if (event.type === 'message.complete') {
       if (selectedRef.current) {
-        if (payload.request_id === pending.current?.id) {
+        if (event.payload.request_id === pending.current?.id) {
           pending.current = null
           sessionStorage.removeItem(promptKey(selectedRef.current))
           sessionStorage.removeItem(draftKey(selectedRef.current))
@@ -401,38 +515,41 @@ export function Chat({
       }
 
       scheduleListRefresh()
-    } else if (event.type === 'session.state' && payload.running === false) {
+    } else if (event.type === 'session.state' && event.payload.running === false) {
+      if (event.payload.request_id) {
+        settledRequests.current.add(event.payload.request_id)
+      }
       if (
-        payload.status === 'completed' &&
-        typeof payload.replace_reply_message_id === 'number' &&
-        Array.isArray(payload.messages)
+        event.payload.status === 'completed' &&
+        typeof event.payload.replace_reply_message_id === 'number' &&
+        Array.isArray(event.payload.messages)
       ) {
-        const reply = (payload.messages as SessionMessage[]).find(
-          message => message.id === payload.result_message_id && message.role === 'assistant'
+        const reply = event.payload.messages.find(
+          message => message.id === event.payload.result_message_id && message.role === 'assistant'
         )
 
         if (reply) {
-          if (messages.some(message => message.id === payload.replace_reply_message_id)) {
+          if (messages.some(message => message.id === event.payload.replace_reply_message_id)) {
             pauseMedia()
           }
           setMessages(previous =>
             mergeMessages(
-              previous.filter(item => item.id !== payload.replace_reply_message_id),
+              previous.filter(item => item.id !== event.payload.replace_reply_message_id),
               [reply]
             )
           )
         }
-        if (payload.request_id === pending.current?.id && selectedRef.current) {
+        if (event.payload.request_id === pending.current?.id && selectedRef.current) {
           pending.current = null
           sessionStorage.removeItem(promptKey(selectedRef.current))
         }
       }
-      if (typeof payload.error === 'string') {
-        setFailure(payload.error)
+      if (typeof event.payload.error === 'string') {
+        setFailure(event.payload.error)
       }
     } else if (event.type === 'error') {
-      setFailure(typeof payload.message === 'string' ? payload.message : '回复暂时未完成')
-      setRetryMessage(typeof payload.retry_message_id === 'number' ? payload.retry_message_id : null)
+      setFailure(event.payload.message)
+      setRetryMessage(event.payload.retry_message_id ?? null)
     } else if (
       event.type === 'message.media' ||
       event.type === 'video_gen.queue' ||
@@ -451,8 +568,7 @@ export function Chat({
   useEffect(
     () =>
       gateway.subscribeEvent(event => {
-        const payload = record(event.payload) ? event.payload : {}
-        const sessionId = event.session_id ?? (typeof payload.session_id === 'string' ? payload.session_id : undefined)
+        const sessionId = event.session_id
 
         if (hydration.current && sessionId === hydration.current.sessionId) {
           hydration.current.events.push(event)
@@ -469,9 +585,7 @@ export function Chat({
         return
       }
 
-      const payload = record(event.payload) ? event.payload : {}
-
-      if (payload.deleted === true && payload.session_id === selectedRef.current) {
+      if (event.payload.deleted && event.payload.session_id === selectedRef.current) {
         navigation.current++
         selectedRef.current = null
         setSelected(null)
@@ -518,10 +632,11 @@ export function Chat({
   const submit = async (retry?: number, replace?: number) => {
     const id = selectedRef.current
 
-    if (!id || !connected || readOnly || turn?.running) {
+    if (!id || readOnly || turn?.running) {
       return
     }
 
+    const awaitingReceipt = pending.current !== null
     const request = pending.current ?? {
       id: crypto.randomUUID(),
       text: replace ? '' : draft.trim(),
@@ -550,22 +665,43 @@ export function Chat({
     setFailure('')
 
     try {
-      const result = await gateway.request('prompt.submit', {
-        session_id: id,
-        request_id: request.id,
-        ...(request.replace
-          ? { replace_reply_message_id: request.replace }
-          : request.retry
-            ? { retry_message_id: request.retry }
-            : {
-                text: request.text,
-                attachments: request.attachments.map(attachment => ({
-                  type: attachment.type,
-                  file_url: attachment.url
-                }))
-              }),
-        response_preference: 'text'
-      })
+      const known = awaitingReceipt
+        ? await api
+            .invoke('sessions.get_turn', {
+              path: { session_id: id, request_id: request.id }
+            })
+            .catch(error => {
+              if (error instanceof ApiError && error.status === 404) {
+                return null
+              }
+              throw error
+            })
+        : null
+      if (awaitingReceipt && !known && cancellations.requested({ sessionId: id, requestId: request.id })) {
+        return
+      }
+      const result =
+        known ??
+        (await api.invoke('sessions.submit_turn', {
+          path: { session_id: id },
+          body: {
+            request_id: request.id,
+            ...(request.replace
+              ? { replace_reply_message_id: request.replace }
+              : request.retry
+                ? { retry_message_id: request.retry }
+                : {
+                    text: request.text,
+                    attachments: request.attachments.map(attachment => ({
+                      type: attachment.type,
+                      file_url: attachment.url
+                    }))
+                  }),
+            response_preference: 'text'
+          }
+        }))
+
+      cancellations.observe({ sessionId: id, requestId: request.id }, result)
 
       if (readPendingPrompt(promptKey(id))?.id === request.id) {
         sessionStorage.removeItem(promptKey(id))
@@ -591,6 +727,9 @@ export function Chat({
         await resume(id)
       }
     } catch (failure) {
+      if (failure instanceof ApiError && failure.status !== null && failure.status >= 400 && failure.status < 500) {
+        cancellations.rejected({ sessionId: id, requestId: request.id }, failure)
+      }
       if (alive() && selectedRef.current === id && pending.current?.id === request.id) {
         setFailure(errorText(failure))
       }
@@ -667,7 +806,7 @@ export function Chat({
       )
       form.append('session_id', id)
       void api
-        .request<{ url: string; duration: number; mime_type: string }>('/api/media/audios', 'POST', form)
+        .invoke('media.upload_chat_audio', { body: form })
         .then(result => {
           if (alive() && revision === recordingRevision.current && id === selectedRef.current) {
             setAttachments(previous => [...previous, { type: 'audio', url: result.url }])
@@ -742,10 +881,12 @@ export function Chat({
             </label>
             <button
               className="primary full"
-              disabled={!connected || busy || !presets.some(item => item.id === preset)}
+              disabled={busy || !presets.some(item => item.id === preset)}
               onClick={() =>
                 run(async () => {
-                  const result = await requestApi(api, 'POST /api/sessions', { body: { system_preset_id: preset } })
+                  const result = await requestApi(api, 'sessions.create_session', {
+                    body: { system_preset_id: preset }
+                  })
 
                   await loadSessions()
                   setShowCreate(false)
@@ -761,7 +902,7 @@ export function Chat({
         {mainId ? (
           <button
             className="companion-chat"
-            disabled={!connected || busy}
+            disabled={busy}
             onClick={() => run(() => openSession(mainId))}
             type="button"
           >
@@ -778,7 +919,7 @@ export function Chat({
           {listed.map(item => (
             <button
               className="session-row"
-              disabled={!connected || busy}
+              disabled={busy}
               key={item.id}
               onClick={() => run(() => openSession(item.id))}
               type="button"
@@ -836,19 +977,35 @@ export function Chat({
         <span className="avatar small">✦</span>
         <div>
           <strong>{title}</strong>
-          <small>{turn?.running ? '正在回复' : connected ? '与你保持连接' : '连接中'}</small>
+          <small>
+            {stoppingId && (!turn || turn.request_id === stoppingId)
+              ? '正在停止，等待确认'
+              : turn?.running
+                ? '正在回复'
+                : connected
+                  ? '与你保持连接'
+                  : '连接中'}
+          </small>
         </div>
-        {turn?.running ? (
+        {turn?.running || pending.current ? (
           <button
             className="subtle"
-            onClick={() =>
-              run(async () => {
-                await gateway.request('session.interrupt', {
-                  session_id: selected
-                })
-                await resume(selected)
+            onClick={() => {
+              const stop = async () => {
+                const requestId = turn?.request_id ?? pending.current?.id
+                if (!requestId) {
+                  return
+                }
+                sessionStorage.setItem(cancellationKey(selected), requestId)
+                setStoppingId(requestId)
+                await cancellations.request({ sessionId: selected, requestId })
+              }
+              void stop().catch(error => {
+                if (alive()) {
+                  setFailure(errorText(error))
+                }
               })
-            }
+            }}
             type="button"
           >
             停止
@@ -865,7 +1022,7 @@ export function Chat({
                 const before = messages.find(message => typeof message.id === 'number')?.id
                 const height = listRef.current?.scrollHeight ?? 0
 
-                const result = await requestApi(api, 'GET /api/sessions/{session_id}/history', {
+                const result = await requestApi(api, 'sessions.get_session_history', {
                   path: { session_id: selected },
                   query: { limit: 60, before_id: before }
                 })
@@ -901,7 +1058,7 @@ export function Chat({
                   ? () => run(() => submit(undefined, message.id))
                   : undefined
               }
-              replaceDisabled={!connected || readOnly || busy || Boolean(turn?.running) || Boolean(pending.current)}
+              replaceDisabled={readOnly || busy || Boolean(turn?.running) || Boolean(pending.current)}
               replacing={turn?.replace_reply_message_id === message.id}
               userId={userId}
             />
@@ -941,7 +1098,7 @@ export function Chat({
                 重试回复
               </button>
             ) : pending.current ? (
-              <button disabled={!connected} onClick={() => run(() => submit())} type="button">
+              <button disabled={busy} onClick={() => run(() => submit())} type="button">
                 确认并重试发送
               </button>
             ) : null}
@@ -1017,7 +1174,6 @@ export function Chat({
               aria-label="发送"
               className="send-button"
               disabled={
-                !connected ||
                 busy ||
                 Boolean(turn?.running) ||
                 recording ||
@@ -1241,7 +1397,9 @@ function Bubble({
             disabled={busy}
             onClick={() =>
               run(async () => {
-                await api.request(`/api/sessions/messages/${messageId}/voice/${index}`, 'POST', {})
+                await api.invoke('sessions.retry_voice_bubble', {
+                  path: { message_id: messageId, bubble_index: index }
+                })
                 refresh()
               })
             }

@@ -1,5 +1,6 @@
 """面向客户端的事件载荷；内部任务事件不属于网关协议。"""
 
+from dataclasses import dataclass
 from typing import Literal
 
 from features.actions.schemas import ActionPlayCommand
@@ -9,7 +10,9 @@ from features.conversation.client_contracts import (
     ReplyBubbleView,
     SessionMessageView,
 )
+from features.conversation.http_contracts import CommandDispatchResult
 from features.conversation.replies import VoiceBubbleView
+from features.conversation.schemas import UndoAnchor
 from features.desktop_life.schemas import DesktopVideoPlayCommand
 from features.journal.schemas import DiaryEntryResponse
 from features.media.video_queue.contracts import VideoQueueInfo
@@ -17,7 +20,7 @@ from features.posts.schemas import PostCommentResponse, PostResponse
 from features.topics.schemas import TopicFeedbackSnapshot
 from pydantic import BaseModel, JsonValue
 
-from entrypoints.desktop.contracts import CommandDispatchResult, EmptyResult
+from entrypoints.desktop.contracts import EmptyResult
 
 
 class TurnEvent(BaseModel):
@@ -110,7 +113,7 @@ class MessageEditedEvent(BaseModel):
 
 class MessageDeletedEvent(MessageEditedEvent):
     deleted_count: int
-    anchor: dict[str, JsonValue]
+    anchor: UndoAnchor
 
 
 class CompressionEvent(TurnEvent):
@@ -269,63 +272,78 @@ class DiaryDeletedEvent(BaseModel):
     entry_date: str
 
 
-EVENT_CONTRACTS: dict[str, type[BaseModel]] = {
-    "message.delta": MessageDeltaEvent,
-    "message.reasoning.delta": MessageDeltaEvent,
-    "message.start": TurnEvent,
-    "message.break": TurnEvent,
-    "message.bubble": MessageBubbleEvent,
-    "message.complete": MessageCompleteEvent,
-    "message.replaced": MessageReplacedEvent,
-    "message.persisted": MessagePersistedEvent,
-    "message.edited": MessageEditedEvent,
-    "message.deleted": MessageDeletedEvent,
-    "message.audio": MessageAudioEvent,
-    "message.voice": MessageVoiceEvent,
-    "message.media": MessageMediaEvent,
-    "tool.start": ToolProgressEvent,
-    "tool.complete": ToolProgressEvent,
-    "tool.call": ToolCallEvent,
-    "tool.cancel": ToolCancelEvent,
-    "session.state": SessionStateEvent,
-    "session.list_changed": SessionListChangedEvent,
-    "command.result": CommandDispatchResult,
-    "compress.completed": CompressionEvent,
-    "error": GatewayErrorEvent,
-    "system.notification": SystemNotificationEvent,
-    "memory.changed": MemoryChangedEvent,
-    "companion.message": CompanionMessageEvent,
-    "companion.mood": MoodEvent,
-    "companion.voice.updated": VoiceUpdatedEvent,
-    "companion.scene.updated": SceneChangedEvent,
-    "companion.scene.activated": SceneChangedEvent,
-    "companion.outfit.updated": OutfitChangedEvent,
-    "companion.video.ready": PackEvent,
-    "companion.video.activated": PackEvent,
-    "companion.video.failed": PackFailedEvent,
-    "companion.video.progress": PackProgressEvent,
-    "companion.action.job_updated": ActionJobEvent,
-    "companion.action.catalog_changed": ActionCatalogEvent,
-    "companion.action.play_requested": ActionPlayCommand,
-    "companion.character_card.updated": CharacterCardEvent,
-    "companion.desktop_video.updated": DesktopVideoUpdatedEvent,
-    "companion.desktop_video.play_requested": DesktopVideoPlayCommand,
-    "video_gen.queue": VideoQueueEvent,
-    "video_gen.completed": VideoCompletedEvent,
-    "video_gen.failed": VideoFailedEvent,
-    "companion.post.created": PostResponse,
-    "companion.post.comment": PostCommentEvent,
-    "companion.post.comment.deleted": PostCommentDeletedEvent,
-    "companion.posts.read": EmptyResult,
-    "companion.diary.created": DiaryEntryResponse,
-    "companion.diary.deleted": DiaryDeletedEvent,
-    "companion.diary.read": EmptyResult,
-    "companion.topic_feedback.updated": TopicFeedbackSnapshot,
+@dataclass(frozen=True)
+class EventContract:
+    payload: type[BaseModel]
+    audience: Literal["all", "desktop"]
+    recovery: Literal["session", "resource", "transient", "device"]
+    baseline: bool = False
+
+
+EVENT_CONTRACTS: dict[str, EventContract] = {
+    "message.delta": EventContract(MessageDeltaEvent, "all", "session", baseline=True),
+    "message.reasoning.delta": EventContract(MessageDeltaEvent, "all", "session", baseline=True),
+    "message.start": EventContract(TurnEvent, "all", "session", baseline=True),
+    "message.break": EventContract(TurnEvent, "all", "session", baseline=True),
+    "message.bubble": EventContract(MessageBubbleEvent, "all", "session", baseline=True),
+    "message.complete": EventContract(MessageCompleteEvent, "all", "session"),
+    "message.replaced": EventContract(MessageReplacedEvent, "all", "session"),
+    "message.persisted": EventContract(MessagePersistedEvent, "all", "session"),
+    "message.edited": EventContract(MessageEditedEvent, "all", "session"),
+    "message.deleted": EventContract(MessageDeletedEvent, "all", "session"),
+    "message.audio": EventContract(MessageAudioEvent, "all", "session"),
+    "message.voice": EventContract(MessageVoiceEvent, "all", "session"),
+    "message.media": EventContract(MessageMediaEvent, "all", "session"),
+    "tool.start": EventContract(ToolProgressEvent, "all", "session", baseline=True),
+    "tool.complete": EventContract(ToolProgressEvent, "all", "session", baseline=True),
+    "tool.call": EventContract(ToolCallEvent, "desktop", "device"),
+    "tool.cancel": EventContract(ToolCancelEvent, "desktop", "device"),
+    "session.state": EventContract(SessionStateEvent, "all", "session"),
+    "session.list_changed": EventContract(SessionListChangedEvent, "all", "resource"),
+    "command.result": EventContract(CommandDispatchResult, "all", "session"),
+    "compress.completed": EventContract(CompressionEvent, "all", "session"),
+    "error": EventContract(GatewayErrorEvent, "all", "transient"),
+    "system.notification": EventContract(SystemNotificationEvent, "all", "transient"),
+    "memory.changed": EventContract(MemoryChangedEvent, "all", "resource"),
+    "companion.message": EventContract(CompanionMessageEvent, "all", "transient"),
+    "companion.mood": EventContract(MoodEvent, "all", "transient"),
+    "companion.voice.updated": EventContract(VoiceUpdatedEvent, "desktop", "resource"),
+    "companion.scene.updated": EventContract(SceneChangedEvent, "all", "resource"),
+    "companion.scene.activated": EventContract(SceneChangedEvent, "all", "resource"),
+    "companion.outfit.updated": EventContract(OutfitChangedEvent, "all", "resource"),
+    "companion.video.ready": EventContract(PackEvent, "all", "resource"),
+    "companion.video.activated": EventContract(PackEvent, "all", "resource"),
+    "companion.video.failed": EventContract(PackFailedEvent, "all", "resource"),
+    "companion.video.progress": EventContract(PackProgressEvent, "all", "resource"),
+    "companion.action.job_updated": EventContract(ActionJobEvent, "desktop", "resource"),
+    "companion.action.catalog_changed": EventContract(ActionCatalogEvent, "desktop", "resource"),
+    "companion.action.play_requested": EventContract(ActionPlayCommand, "desktop", "transient"),
+    "companion.character_card.updated": EventContract(CharacterCardEvent, "all", "resource"),
+    "companion.desktop_video.updated": EventContract(DesktopVideoUpdatedEvent, "desktop", "resource"),
+    "companion.desktop_video.play_requested": EventContract(DesktopVideoPlayCommand, "desktop", "transient"),
+    "video_gen.queue": EventContract(VideoQueueEvent, "all", "resource"),
+    "video_gen.completed": EventContract(VideoCompletedEvent, "all", "resource"),
+    "video_gen.failed": EventContract(VideoFailedEvent, "all", "resource"),
+    "companion.post.created": EventContract(PostResponse, "all", "resource"),
+    "companion.post.comment": EventContract(PostCommentEvent, "all", "resource"),
+    "companion.post.comment.deleted": EventContract(PostCommentDeletedEvent, "all", "resource"),
+    "companion.posts.read": EventContract(EmptyResult, "all", "resource"),
+    "companion.diary.created": EventContract(DiaryEntryResponse, "all", "resource"),
+    "companion.diary.deleted": EventContract(DiaryDeletedEvent, "all", "resource"),
+    "companion.diary.read": EventContract(EmptyResult, "all", "resource"),
+    "companion.topic_feedback.updated": EventContract(TopicFeedbackSnapshot, "all", "resource"),
 }
 
 
-def validate_gateway_event(event_type: str, payload: object) -> None:
-    model = EVENT_CONTRACTS.get(event_type)
-    if model is None:
+def serialize_gateway_event(event_type: str, payload: object) -> dict[str, JsonValue]:
+    contract = EVENT_CONTRACTS.get(event_type)
+    if contract is None:
         raise ValueError(f"Unknown gateway event: {event_type}")
-    model.model_validate({} if payload is None else payload)
+    return contract.payload.model_validate({} if payload is None else payload).model_dump(mode="json")
+
+
+def gateway_event_audience(event_type: str) -> str:
+    contract = EVENT_CONTRACTS.get(event_type)
+    if contract is None:
+        raise ValueError(f"Unknown gateway event: {event_type}")
+    return contract.audience

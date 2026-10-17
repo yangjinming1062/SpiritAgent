@@ -177,7 +177,7 @@ export async function fetchSlashCommandMeta(): Promise<void> {
 
   slashMetaInflight = (async () => {
     try {
-      const res = await requestResource('GET /api/commands')
+      const res = await requestResource('resource_catalog.get_commands')
 
       if ($gateway.get() === gateway && currentClearEpoch() === epoch) {
         $slashCommandMeta.set((res.commands ?? []).map(normalizeServerEntry))

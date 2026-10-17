@@ -99,6 +99,8 @@ Windows Chromium 启动器重启时只接管本次创建且 exe、独立 profile
 
 [journal.py](spirit_agent_runner/runtime/journal.py) 持有原子认领、参数指纹、持有者与终态。取消发生在认领线程未结束时，先等待认领再记未知结果；完成与取消写入串行，无认领凭据不能补写终态。保存结果重放不再次执行或裁切。保留期、日志不可写和结果未知的恢复边界统一归 [调用日志契约](../docs/PROTOCOL.md#调用日志与未知结果)。
 
+`calls.cancel` 以发起连接的 RPC `req_id` 或业务 `call_id` 定位在途调用，两者不能同时提供。后者用于 Client 重连后的取消，查询结果仍通过 `calls.get`，不调用执行入口取得旧结果。
+
 ## 按预设学习技能
 
 `ToolContext` 固定学习域并通过 `ContextVar` 传递，结束后恢复；允许预设在 [学习域契约](spirit_agent_runner/contracts/scope.py) 登记，Backend 新增或改名须同步。目录与隔离契约归 [学习作用域](../docs/PROTOCOL.md#预设记忆与学习作用域)，读取依次合并本域、静态技能和 `skills.external_dirs`。

@@ -188,16 +188,16 @@ function AssetCreator({
                   }
                   const imported = { source: 'import' as const, image: image.base64, content_type: image.type }
                   result = scene
-                    ? await requestApi(api, 'POST /api/companion/scenes', { body: imported })
-                    : await requestApi(api, 'POST /api/companion/outfits', {
+                    ? await requestApi(api, 'companion_scenes.create_scene', { body: imported })
+                    : await requestApi(api, 'companion.post_outfit', {
                         body: { ...imported, description: description.trim() || undefined }
                       })
                 } else {
                   result = scene
-                    ? await requestApi(api, 'POST /api/companion/scenes', {
+                    ? await requestApi(api, 'companion_scenes.create_scene', {
                         body: { source: 'generate', notes: description.trim() || undefined, ...imageBody }
                       })
-                    : await requestApi(api, 'POST /api/companion/outfits', {
+                    : await requestApi(api, 'companion.post_outfit', {
                         body: { source: 'generate', description: description.trim() || undefined, ...imageBody }
                       })
                 }
@@ -255,7 +255,7 @@ function AssetCreator({
                   setReconciled(false)
                   let result: Scene
                   try {
-                    result = await requestApi(api, 'POST /api/companion/scenes/prompt', {
+                    result = await requestApi(api, 'companion_scenes.post_scene_prompt', {
                       body: { notes: description.trim() || undefined }
                     })
                   } catch (failure) {
@@ -271,7 +271,7 @@ function AssetCreator({
                     setSubmitted(false)
                   }
                 } else {
-                  const result = await requestApi(api, 'POST /api/companion/outfits/prompt', {
+                  const result = await requestApi(api, 'companion.post_outfit_prompt', {
                     body: { description: description.trim() || undefined, ...imageBody }
                   })
                   if (alive()) {
@@ -345,7 +345,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
     const [library, current, detail] = await Promise.all([
       Promise.all(
         Array.from({ length: Math.ceil(browseLimit / 100) }, (_, index) =>
-          requestApi(api, 'GET /api/companion/scenes', {
+          requestApi(api, 'companion_scenes.scene_list_route', {
             query: { q: query, offset: index * 100, limit: Math.min(100, browseLimit - index * 100) }
           })
         )
@@ -353,9 +353,9 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
         scenes: [...new Map(pages.flatMap(page => page.scenes).map(scene => [scene.id, scene])).values()],
         total: pages[0]?.total ?? 0
       })),
-      requestApi(api, 'GET /api/companion/scenes/state'),
+      requestApi(api, 'companion_scenes.read_scene_state'),
       selectedId
-        ? requestApi(api, 'GET /api/companion/scenes/{scene_id}', { path: { scene_id: selectedId } }).catch(failure => {
+        ? requestApi(api, 'companion_scenes.scene_detail_route', { path: { scene_id: selectedId } }).catch(failure => {
             if (failure instanceof ApiError && failure.status === 404) {
               return null
             }
@@ -442,7 +442,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                 void run(async () => {
                   setPolicySaving(true)
                   try {
-                    await requestApi(api, 'PATCH /api/companion/scenes/policy', { body: { policy } })
+                    await requestApi(api, 'companion_scenes.patch_scene_policy', { body: { policy } })
                     await load()
                   } finally {
                     if (alive()) {
@@ -481,7 +481,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                 const id = state.pending?.id ?? state.regenerating?.id
 
                 if (id) {
-                  await requestApi(api, 'POST /api/companion/scenes/{scene_id}/discard', { path: { scene_id: id } })
+                  await requestApi(api, 'companion_scenes.post_scene_discard', { path: { scene_id: id } })
                   await load()
                 }
               })
@@ -503,7 +503,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
             focusAfterRender('[data-create-asset="scene"]')
           }}
           onCreated={async id => {
-            const row = await requestApi(api, 'GET /api/companion/scenes/{scene_id}', { path: { scene_id: id } })
+            const row = await requestApi(api, 'companion_scenes.scene_detail_route', { path: { scene_id: id } })
             if (alive()) {
               setSelected(row)
               setCreating(false)
@@ -577,7 +577,7 @@ function SceneLibrary({ api, refresh }: { api: RemoteApi; refresh: number }): Re
                       if (!alive()) {
                         return
                       }
-                      await requestApi(api, 'PUT /api/companion/scenes/current', { body: { scene_id: row.id } })
+                      await requestApi(api, 'companion_scenes.post_scene_activate', { body: { scene_id: row.id } })
                       await load()
                     })
                   }}
@@ -634,7 +634,7 @@ function SceneDetail({
       setSubmitted(true)
       setReconciled(false)
       try {
-        await requestApi(api, 'POST /api/companion/scenes/{scene_id}/regenerate', { path: { scene_id: scene.id } })
+        await requestApi(api, 'companion_scenes.post_scene_regenerate', { path: { scene_id: scene.id } })
         await onUpdate()
         setSubmitted(false)
       } catch (failure) {
@@ -697,7 +697,7 @@ function SceneDetail({
           disabled={busy || !title.trim() || !description.trim()}
           onClick={() =>
             run(async () => {
-              await requestApi(api, 'PATCH /api/companion/scenes/{scene_id}', {
+              await requestApi(api, 'companion_scenes.scene_edit_route', {
                 path: { scene_id: scene.id },
                 body: { title, description }
               })
@@ -730,7 +730,7 @@ function SceneDetail({
           disabled={busy}
           onClick={() =>
             run(async () => {
-              await requestApi(api, 'POST /api/companion/scenes/{scene_id}/analyze', { path: { scene_id: scene.id } })
+              await requestApi(api, 'companion_scenes.scene_analyze_route', { path: { scene_id: scene.id } })
               await onUpdate()
             })
           }
@@ -770,7 +770,7 @@ function SceneDetail({
             disabled={current || busy || scene.status !== 'ready' || loadedImage !== scene.url}
             onClick={() =>
               run(async () => {
-                await requestApi(api, 'PUT /api/companion/scenes/current', { body: { scene_id: scene.id } })
+                await requestApi(api, 'companion_scenes.post_scene_activate', { body: { scene_id: scene.id } })
                 await onUpdate()
               })
             }
@@ -822,7 +822,7 @@ function SceneDetail({
                 if (!window.confirm('删除这个背景？删除后无法恢复。')) {
                   return
                 }
-                await requestApi(api, 'DELETE /api/companion/scenes/{scene_id}', { path: { scene_id: scene.id } })
+                await requestApi(api, 'companion_scenes.delete_scene_route', { path: { scene_id: scene.id } })
 
                 if (alive()) {
                   onClose()
@@ -849,7 +849,7 @@ function SceneDetail({
               const image = await readImage(file)
 
               if (alive()) {
-                await requestApi(api, 'POST /api/companion/scenes', {
+                await requestApi(api, 'companion_scenes.create_scene', {
                   body: { source: 'import', scene_id: scene.id, image: image.base64, content_type: image.type }
                 })
                 await onUpdate()
@@ -879,8 +879,8 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
   const load = useCallback(async () => {
     const current = ++revision.current
     const [wardrobe, videos] = await Promise.all([
-      requestApi(api, 'GET /api/companion/outfits'),
-      requestApi(api, 'GET /api/companion/video-packs')
+      requestApi(api, 'companion.get_outfits'),
+      requestApi(api, 'companion.get_video_packs')
     ])
 
     if (alive() && current === revision.current) {
@@ -955,7 +955,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
                 void run(async () => {
                   setPolicySaving(true)
                   try {
-                    await requestApi(api, 'PATCH /api/companion/outfits/policy', { body: { policy: value } })
+                    await requestApi(api, 'companion.patch_outfit_policy', { body: { policy: value } })
                     await load()
                   } finally {
                     if (alive()) {
@@ -1058,7 +1058,7 @@ function Wardrobe({ api, refresh }: { api: RemoteApi; refresh: number }): ReactE
                         return
                       }
                       void run(async () => {
-                        await requestApi(api, 'PUT /api/companion/video-packs/current', { body: { pack_id: pack.id } })
+                        await requestApi(api, 'companion.put_video_pack_selection', { body: { pack_id: pack.id } })
                         await load()
                       })
                     }}
@@ -1117,7 +1117,7 @@ function OutfitDetail({
       }
     })
   const regenerate = (mode: 'edit' | 'regenerate') =>
-    produce('POST /api/companion/outfits/{outfit_id}/image', {
+    produce('companion.post_outfit_regenerate', {
       path: { outfit_id: outfit.id },
       body: { source: 'generate', feedback: feedback.trim() || undefined, mode }
     })
@@ -1177,7 +1177,7 @@ function OutfitDetail({
               disabled={busy || submitted || !outfit.fullbody_url || loadedImage !== outfit.fullbody_url}
               onClick={() =>
                 run(async () => {
-                  await requestApi(api, 'POST /api/companion/outfits/{outfit_id}/confirm', {
+                  await requestApi(api, 'companion.post_outfit_confirm', {
                     path: { outfit_id: outfit.id },
                     body: {}
                   })
@@ -1197,10 +1197,10 @@ function OutfitDetail({
             onClick={() =>
               pack
                 ? run(async () => {
-                    await requestApi(api, 'PUT /api/companion/video-packs/current', { body: { pack_id: pack.id } })
+                    await requestApi(api, 'companion.put_video_pack_selection', { body: { pack_id: pack.id } })
                     await onUpdate()
                   })
-                : produce('POST /api/companion/video-packs', { body: { source: 'generate', outfit_id: outfit.id } })
+                : produce('companion.post_video_pack', { body: { source: 'generate', outfit_id: outfit.id } })
             }
             type="button"
           >
@@ -1259,7 +1259,7 @@ function OutfitDetail({
           <button
             disabled={busy || submitted}
             onClick={() =>
-              produce('POST /api/companion/video-packs/{pack_id}/production', {
+              produce('companion.produce_video_pack', {
                 path: { pack_id: pack.id },
                 body: { command: 'retry' }
               })
@@ -1274,7 +1274,7 @@ function OutfitDetail({
             disabled={busy}
             onClick={() =>
               run(async () => {
-                await requestApi(api, 'POST /api/companion/outfits/{outfit_id}/description/retry', {
+                await requestApi(api, 'companion.post_retry_outfit_description', {
                   path: { outfit_id: outfit.id }
                 })
                 await onUpdate()
@@ -1304,7 +1304,7 @@ function OutfitDetail({
                 ) {
                   return
                 }
-                await requestApi(api, 'DELETE /api/companion/outfits/{outfit_id}', { path: { outfit_id: outfit.id } })
+                await requestApi(api, 'companion.delete_outfit_route', { path: { outfit_id: outfit.id } })
 
                 if (alive()) {
                   onClose()
@@ -1331,7 +1331,7 @@ function OutfitDetail({
               const image = await readImage(file)
 
               if (alive()) {
-                await requestApi(api, 'POST /api/companion/outfits/{outfit_id}/image', {
+                await requestApi(api, 'companion.post_outfit_regenerate', {
                   path: { outfit_id: outfit.id },
                   body: { source: 'import', image: image.base64, content_type: image.type }
                 })

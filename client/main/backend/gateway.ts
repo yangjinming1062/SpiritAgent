@@ -9,26 +9,26 @@ import type {
 } from '@ipc/contracts'
 import { errorMessage } from '@runtime'
 
-import { type ApiSchemas, RPC_POLICIES } from '../../../shared/api.generated'
+import { ApiError } from '../../../shared/errors'
 import {
+  GatewayConnection,
   type GatewayEvent,
   isJsonValue,
-  isRecord,
-  JsonRpcGatewayClient,
-  type RpcMethod,
-  type RpcRequest
+  type JsonValue,
+  type RpcRequest,
+  type SessionSnapshot
 } from '../../../shared/gateway'
-import type { RunnerTools } from '../../../shared/runner'
+import type { RunnerResponse, RunnerTools } from '../../../shared/runner'
 import type { BackendConnection } from '../shared/backend-port'
-import { isUnauthorized } from '../shared/utils'
 
 interface GatewayOptions {
   ensureBackend: () => Promise<BackendConnection>
   getCurrentAuth: () => null | { sessionId: string; token: string }
   getTools: () => RunnerTools
   dispatchCall: (request: RunnerCallRequest) => Promise<RunnerCallOutcome>
+  queryCall: (callId: string) => Promise<RunnerResponse<'calls.get'>>
   cancelCall: (callId: string) => Promise<unknown>
-  mintWsTicket: (baseUrl: string, token: string) => Promise<string>
+  mintWsTicket: (baseUrl: string, token: string, streamId?: string) => Promise<string>
   syncTimezone: (baseUrl: string, token: string) => Promise<void>
   onEvent: (event: GatewayEvent, authSessionId: string) => void
   onState: (snapshot: DesktopGatewaySnapshot, authSessionId: string) => void
@@ -36,7 +36,7 @@ interface GatewayOptions {
   log: (message: string) => void
 }
 
-function callResult(outcome: RunnerCallOutcome): ApiSchemas['JsonValue'] {
+function callResult(outcome: RunnerCallOutcome): JsonValue {
   switch (outcome.status) {
     case 'completed':
       return isJsonValue(outcome.result)
@@ -52,247 +52,381 @@ function callResult(outcome: RunnerCallOutcome): ApiSchemas['JsonValue'] {
     case 'unknown':
       return {
         ok: false,
-        error:
-          'The local runner call ended without a result, so the outcome is unknown: the tool may or may not have run. Do not rerun it automatically; check its effects or ask the user first.'
+        error: 'The tool outcome is unknown. It may have run; check its effects before considering another execution.'
       }
   }
 }
 
-/** 账户连接归主进程所有；窗口重载和视图切换不改变网络与设备调用生命周期。 */
+function emptySnapshot(): DesktopGatewaySnapshot {
+  return { state: 'idle', error: null, hasConnected: false, activeToolCount: 0, recovery: null, streamId: null }
+}
+
 export function createDesktopGateway(options: GatewayOptions) {
-  let current: { sessionId: string; token: string } | null = null
-  let client: JsonRpcGatewayClient | null = null
+  let authSessionId: string | null = null
   let revision = 0
-  let connecting: Promise<void> | null = null
-  let retry: ReturnType<typeof setTimeout> | undefined
-  let attempt = 0
-  let expired = false
-  let snapshot: DesktopGatewaySnapshot = { state: 'idle', error: null, hasConnected: false, activeToolCount: 0 }
-  let connectionToken: string | null = null
-  let toolsGeneration = 0
+  let connection: GatewayConnection | null = null
+  let snapshot = emptySnapshot()
   let toolsSignature: string | null = null
+  let toolsGeneration = 0
   let toolsTail = Promise.resolve()
   const active = new Map<string, { cancelled: boolean; headless: boolean }>()
-  const seen = new Set<string>()
+  const receipts = new Map<string, JsonValue>()
+  const delivering = new Set<string>()
+  const completed = new Set<string>()
+  const cancelled = new Set<string>()
+  const recovering = new Set<string>()
+  const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const receiptTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  const isCurrent = (connection: JsonRpcGatewayClient, generation: number): boolean =>
-    client === connection && generation === revision && current?.sessionId === options.getCurrentAuth()?.sessionId
+  const isCurrent = (epoch: number): boolean =>
+    epoch === revision && authSessionId === options.getCurrentAuth()?.sessionId
 
-  function publishState(state: DesktopGatewayState, error = snapshot.error): void {
-    if (!current) {
+  function publish(state: DesktopGatewayState, error = snapshot.error): void {
+    if (!authSessionId) {
       return
     }
 
-    const next = {
+    const next: DesktopGatewaySnapshot = {
       state,
       error: state === 'open' ? null : error,
       hasConnected: snapshot.hasConnected || state === 'open',
-      activeToolCount: [...active.values()].filter(call => !call.cancelled && !call.headless).length
+      activeToolCount: [...active.values()].filter(call => !call.cancelled && !call.headless).length,
+      recovery: connection?.client.lastRecovery?.recovery ?? null,
+      streamId: connection?.client.streamId || null
     }
 
-    if (
-      next.state !== snapshot.state ||
-      next.error !== snapshot.error ||
-      next.hasConnected !== snapshot.hasConnected ||
-      next.activeToolCount !== snapshot.activeToolCount
-    ) {
+    if (JSON.stringify(next) !== JSON.stringify(snapshot)) {
       snapshot = next
-      options.onState(snapshot, current.sessionId)
+      options.onState(snapshot, authSessionId)
     }
   }
 
-  function scheduleReconnect(): void {
-    if (!current || expired || retry) {
+  async function deliver(callId: string, epoch: number): Promise<void> {
+    const client = connection?.client
+
+    if (!isCurrent(epoch) || !receipts.has(callId) || delivering.has(callId) || client?.connectionState !== 'open') {
       return
     }
 
-    retry = setTimeout(
-      () => {
-        retry = undefined
-        void connect()
-      },
-      Math.min(1000 * 2 ** Math.min(attempt++, 5), 30_000)
-    )
+    delivering.add(callId)
+
+    try {
+      await client.request('tool.result', { call_id: callId, result: receipts.get(callId)! })
+
+      if (isCurrent(epoch)) {
+        clearTimeout(receiptTimers.get(callId))
+        receiptTimers.delete(callId)
+        receipts.delete(callId)
+        completed.add(callId)
+
+        if (completed.size > 500) {
+          completed.delete(completed.values().next().value!)
+        }
+      }
+    } catch (error) {
+      if (isCurrent(epoch)) {
+        options.log('[gateway] tool receipt retained: ' + errorMessage(error))
+
+        if (!receiptTimers.has(callId)) {
+          receiptTimers.set(
+            callId,
+            setTimeout(() => {
+              receiptTimers.delete(callId)
+              void deliver(callId, epoch)
+            }, 5000)
+          )
+        }
+      }
+    } finally {
+      if (isCurrent(epoch)) {
+        delivering.delete(callId)
+      }
+    }
   }
 
-  async function syncTools(readyTools?: RunnerTools): Promise<void> {
-    const connection = client
+  async function recoverCall(callId: string, epoch: number): Promise<void> {
+    if (
+      !isCurrent(epoch) ||
+      connection?.client.connectionState !== 'open' ||
+      active.has(callId) ||
+      receipts.has(callId) ||
+      completed.has(callId) ||
+      recovering.has(callId) ||
+      cancelled.has(callId)
+    ) {
+      return
+    }
+
+    recovering.add(callId)
+
+    try {
+      const recorded = await options.queryCall(callId)
+
+      if (!isCurrent(epoch)) {
+        return
+      }
+
+      if (recorded.status === 'claimed') {
+        const client = connection?.client
+
+        if (client?.connectionState !== 'open') {
+          return
+        }
+
+        const status = await client.request('gateway.resume', { stream_id: client.streamId, last_seq: client.sequence })
+
+        if (!isCurrent(epoch) || cancelled.has(callId) || !status.pending_calls.includes(callId)) {
+          return
+        }
+
+        const timer = setTimeout(() => {
+          recoveryTimers.delete(callId)
+          void recoverCall(callId, epoch)
+        }, 5000)
+
+        recoveryTimers.set(callId, timer)
+
+        return
+      }
+
+      receipts.set(
+        callId,
+        recorded.status === 'completed' && isJsonValue(recorded.result)
+          ? recorded.result
+          : {
+              ok: false,
+              error:
+                recorded.error ??
+                'The original tool result is unavailable. Its effects are unknown; do not rerun it automatically.'
+            }
+      )
+      await deliver(callId, epoch)
+    } catch (error) {
+      if (isCurrent(epoch)) {
+        options.log('[gateway] tool journal query failed: ' + errorMessage(error))
+
+        if (connection?.client.connectionState === 'open' && !recoveryTimers.has(callId)) {
+          recoveryTimers.set(
+            callId,
+            setTimeout(() => {
+              recoveryTimers.delete(callId)
+              void recoverCall(callId, epoch)
+            }, 5000)
+          )
+        }
+      }
+    } finally {
+      if (isCurrent(epoch)) {
+        recovering.delete(callId)
+      }
+    }
+  }
+
+  function reconcile(): void {
+    const epoch = revision
+
+    for (const callId of receipts.keys()) {
+      void deliver(callId, epoch)
+    }
+
+    for (const callId of connection?.client.lastRecovery?.pending_calls ?? []) {
+      void recoverCall(callId, epoch)
+    }
+  }
+
+  async function syncTools(tools = options.getTools()): Promise<void> {
+    const client = connection?.client
     const epoch = revision
     const generation = ++toolsGeneration
-
-    if (!connection || connection.connectionState !== 'open') {
-      return
-    }
-
-    const tools = readyTools ?? options.getTools()
     const signature = JSON.stringify(tools)
 
     const task = toolsTail.then(async () => {
       if (
-        !isCurrent(connection, epoch) ||
+        !isCurrent(epoch) ||
         generation !== toolsGeneration ||
         signature === toolsSignature ||
-        connection.connectionState !== 'open'
+        client?.connectionState !== 'open'
       ) {
         return
       }
 
-      await connection.request('tools.sync', { tools, skill_scope_version: 1 })
+      await client.request('tools.sync', { tools, skill_scope_version: 1 })
 
-      if (isCurrent(connection, epoch) && connection.connectionState === 'open') {
+      if (isCurrent(epoch)) {
         toolsSignature = signature
       }
     })
 
-    toolsTail = task.catch(error => options.log(`[gateway] tools.sync failed: ${errorMessage(error)}`))
+    toolsTail = task.catch(error => options.log('[gateway] tools.sync failed: ' + errorMessage(error)))
     await toolsTail
   }
 
-  function executeDeviceCommand(event: GatewayEvent, connection: JsonRpcGatewayClient, epoch: number): boolean {
-    if (event.type !== 'tool.call' && event.type !== 'tool.cancel') {
-      return false
-    }
-
-    const payload = isRecord(event.payload) ? event.payload : {}
-    const callId = payload.call_id
-
-    if (typeof callId !== 'string' || !callId) {
-      return true
+  function receive(event: GatewayEvent, epoch: number): void {
+    if (!isCurrent(epoch)) {
+      return
     }
 
     if (event.type === 'tool.cancel') {
+      const callId = event.payload.call_id
+      cancelled.add(callId)
+      clearTimeout(recoveryTimers.get(callId))
+      recoveryTimers.delete(callId)
       const call = active.get(callId)
 
-      if (call && !call.cancelled) {
+      if (call) {
         call.cancelled = true
-        publishState(snapshot.state)
-        void options.cancelCall(callId).catch(error => options.log(`[gateway] cancel failed: ${errorMessage(error)}`))
+        publish(snapshot.state)
       }
 
-      return true
+      void options
+        .cancelCall(callId)
+        .catch(error => options.log('[gateway] cancellation failed: ' + errorMessage(error)))
+
+      return
     }
 
-    if (seen.has(callId)) {
-      return true
+    if (event.type !== 'tool.call') {
+      options.onEvent(event, authSessionId!)
+
+      return
     }
 
-    seen.add(callId)
+    const payload = event.payload
+    const callId = payload.call_id
 
-    if (seen.size > 500) {
-      seen.delete(seen.values().next().value!)
+    if (receipts.has(callId)) {
+      void deliver(callId, epoch)
+
+      return
     }
 
-    const scope = payload.skill_scope
+    if (active.has(callId) || completed.has(callId)) {
+      return
+    }
+
+    if (cancelled.has(callId)) {
+      receipts.set(callId, { ok: false, error: 'The call was cancelled before dispatch.' })
+      void deliver(callId, epoch)
+
+      return
+    }
+
     let skillScope: MemoryToolScope | undefined
 
-    if (scope != null) {
+    if (payload.skill_scope) {
+      const scope = payload.skill_scope
+
       if (
-        !isRecord(scope) ||
-        !Number.isInteger(scope.user_id) ||
-        typeof scope.user_id !== 'number' ||
         scope.user_id <= 0 ||
+        !Number.isSafeInteger(scope.user_id) ||
         (scope.system_preset_id !== 'companion' &&
           scope.system_preset_id !== 'copywriter' &&
           scope.system_preset_id !== 'language_teacher')
       ) {
-        void connection
-          .request('tool.result', {
-            call_id: callId,
-            result: { ok: false, error: 'Invalid server-controlled skill scope' }
-          })
-          .catch(error => options.log(`[gateway] rejected tool result delivery failed: ${errorMessage(error)}`))
+        receipts.set(callId, { ok: false, error: 'Invalid server-controlled skill scope' })
+        void deliver(callId, epoch)
 
-        return true
+        return
       }
 
       skillScope = { user_id: scope.user_id, system_preset_id: scope.system_preset_id }
     }
 
-    const call = { cancelled: false, headless: payload.headless === true }
+    const call = { cancelled: false, headless: payload.headless }
     active.set(callId, call)
-    publishState(snapshot.state)
+    publish(snapshot.state)
 
     void (async () => {
       try {
         const outcome = await options.dispatchCall({
           callId,
-          name: typeof payload.name === 'string' ? payload.name : '',
-          args: isRecord(payload.args) ? payload.args : {},
+          name: payload.name,
+          args: payload.args,
           ...(skillScope ? { skillScope } : {})
         })
 
-        if (!call.cancelled && isCurrent(connection, epoch)) {
-          await connection.request('tool.result', { call_id: callId, result: callResult(outcome) })
+        if (isCurrent(epoch)) {
+          receipts.set(callId, callResult(outcome))
+          await deliver(callId, epoch)
         }
       } catch (error) {
-        options.log(`[gateway] tool result delivery failed: ${errorMessage(error)}`)
+        if (isCurrent(epoch)) {
+          receipts.set(callId, { ok: false, error: 'The tool result is unknown: ' + errorMessage(error) })
+          await deliver(callId, epoch)
+        }
       } finally {
-        if (active.get(callId) === call) {
+        if (isCurrent(epoch) && active.get(callId) === call) {
           active.delete(callId)
-          publishState(snapshot.state)
+          publish(snapshot.state)
         }
       }
     })()
+  }
 
-    return true
+  async function verifyLogin(epoch: number): Promise<void> {
+    const current = options.getCurrentAuth()
+
+    if (!current || !isCurrent(epoch)) {
+      return
+    }
+
+    const token = current.token
+
+    try {
+      const backend = await options.ensureBackend()
+
+      if (!isCurrent(epoch) || backend.token !== token || options.getCurrentAuth()?.token !== token) {
+        return
+      }
+
+      await options.mintWsTicket(backend.baseUrl, token, connection?.client.streamId || undefined)
+    } catch (error) {
+      if (isCurrent(epoch) && options.getCurrentAuth()?.token === token) {
+        if (error instanceof ApiError && error.isLoginExpired) {
+          options.onExpired(current.sessionId)
+        } else {
+          options.log('[gateway] login verification failed: ' + errorMessage(error))
+        }
+      }
+    }
   }
 
   function replaceAuth(): void {
     const next = options.getCurrentAuth()
 
-    if (next?.sessionId === current?.sessionId) {
-      const credentialChanged = next?.token !== current?.token
-      current = next
-
-      if (credentialChanged) {
-        expired = false
-        clearTimeout(retry)
-        retry = undefined
-
-        if (client?.connectionState === 'open') {
-          connectionToken = next?.token ?? null
-        }
-
-        const pending = connecting
-
-        if (pending) {
-          void pending.finally(() => {
-            if (connecting === pending) {
-              connecting = null
-            }
-
-            void connect()
-          })
-        }
-      }
-
+    if (next?.sessionId === authSessionId) {
       return
     }
 
     revision++
-    toolsGeneration++
-    toolsSignature = null
-    clearTimeout(retry)
-    retry = undefined
-    const previous = client
-    client = null
-    previous?.close()
-    current = next
-    connecting = null
-    snapshot = { state: 'idle', error: null, hasConnected: false, activeToolCount: 0 }
-    connectionToken = null
+    const prior = connection
+    connection = null
+    prior?.close()
 
-    for (const [callId, call] of active) {
-      call.cancelled = true
-      void options
-        .cancelCall(callId)
-        .catch(error => options.log(`[gateway] account cancellation failed: ${errorMessage(error)}`))
+    for (const callId of active.keys()) {
+      void options.cancelCall(callId).catch(error => options.log(errorMessage(error)))
+    }
+
+    for (const timer of recoveryTimers.values()) {
+      clearTimeout(timer)
+    }
+
+    for (const timer of receiptTimers.values()) {
+      clearTimeout(timer)
     }
 
     active.clear()
-    seen.clear()
-    attempt = 0
-    expired = false
+    receipts.clear()
+    delivering.clear()
+    completed.clear()
+    cancelled.clear()
+    recovering.clear()
+    recoveryTimers.clear()
+    receiptTimers.clear()
+    authSessionId = next?.sessionId ?? null
+    snapshot = emptySnapshot()
+    toolsSignature = null
+    toolsGeneration++
 
     if (!next) {
       return
@@ -300,181 +434,122 @@ export function createDesktopGateway(options: GatewayOptions) {
 
     const epoch = revision
 
-    const connection = new JsonRpcGatewayClient(
-      url => new net.WebSocket(url),
-      error => options.log(`[gateway] event consumer failed: ${errorMessage(error)}`)
-    )
-
-    client = connection
-    connection.onEvent(event => {
-      if (isCurrent(connection, epoch) && !executeDeviceCommand(event, connection, epoch)) {
-        options.onEvent(event, next.sessionId)
-      }
-    })
-    connection.onState(state => {
-      if (!isCurrent(connection, epoch)) {
-        return
-      }
-
-      // 已建立连接仍须处理断开；仅忽略同一登录刷新凭据后的旧握手失败。
-      if (
-        (state === 'closed' || state === 'error') &&
-        snapshot.state !== 'open' &&
-        connectionToken !== options.getCurrentAuth()?.token
-      ) {
-        return
-      }
-
-      publishState(state, snapshot.error ?? (state === 'error' ? 'Could not connect to SpiritAgent gateway' : null))
-
-      if (state === 'open') {
-        connectionToken = options.getCurrentAuth()?.token ?? null
-        clearTimeout(retry)
-        retry = undefined
-        attempt = 0
-        toolsSignature = null
-        void syncTools()
-      } else if (state === 'closed' || state === 'error') {
-        toolsGeneration++
-        toolsSignature = null
-
-        if ([1008, 4401, 4403].includes(connection.lastCloseCode ?? 0)) {
-          expired = true
-          options.onExpired(next.sessionId)
-        } else {
-          scheduleReconnect()
-        }
-      }
-    })
-  }
-
-  async function connect(): Promise<void> {
-    replaceAuth()
-
-    if (!current || expired || !client || client.connectionState === 'open') {
-      return
-    }
-
-    if (connecting) {
-      return connecting
-    }
-
-    const connection = client
-    const epoch = revision
-    const auth = current
-    connectionToken = auth.token
-    publishState('connecting')
-
-    const task = (async () => {
-      try {
+    const transport = new GatewayConnection({
+      createSocket: url => new net.WebSocket(url),
+      url: async streamId => {
+        publish('connecting')
         const backend = await options.ensureBackend()
+        const current = options.getCurrentAuth()
 
-        if (
-          !isCurrent(connection, epoch) ||
-          backend.token !== auth.token ||
-          options.getCurrentAuth()?.token !== auth.token
-        ) {
-          return
+        if (!isCurrent(epoch) || !current || current.token !== backend.token) {
+          throw new Error('Gateway authentication changed')
         }
 
-        void options
-          .syncTimezone(backend.baseUrl, auth.token)
-          .catch(error => options.log(`[gateway] timezone update failed: ${errorMessage(error)}`))
-        const ticket = await options.mintWsTicket(backend.baseUrl, auth.token)
+        const token = current.token
 
-        if (!isCurrent(connection, epoch) || options.getCurrentAuth()?.token !== auth.token) {
-          return
+        const ticket = await options.mintWsTicket(backend.baseUrl, token, streamId).catch(error => {
+          if (!isCurrent(epoch) || options.getCurrentAuth()?.token !== token) {
+            throw new Error('Gateway authentication changed', { cause: error })
+          }
+
+          throw error
+        })
+
+        if (!isCurrent(epoch) || options.getCurrentAuth()?.token !== token) {
+          throw new Error('Gateway authentication changed')
         }
 
-        await connection.connect(
-          `${backend.baseUrl.replace(/^http/, 'ws')}/api/gateway/ws?ticket=${encodeURIComponent(ticket)}`
-        )
-      } catch (error) {
-        if (isCurrent(connection, epoch) && options.getCurrentAuth()?.token === auth.token) {
-          const message = errorMessage(error) || 'Could not connect to SpiritAgent gateway'
-          publishState('error', message)
-          options.log(`[gateway] connection failed: ${message}`)
+        void options.syncTimezone(backend.baseUrl, token).catch(error => options.log(errorMessage(error)))
 
-          if (isUnauthorized(error)) {
-            expired = true
-            options.onExpired(auth.sessionId)
-          } else {
-            scheduleReconnect()
+        return backend.baseUrl.replace(/^http/, 'ws') + '/api/gateway/ws?ticket=' + encodeURIComponent(ticket)
+      },
+      onExpired: () => {
+        if (isCurrent(epoch)) {
+          options.onExpired(next.sessionId)
+        }
+      },
+      onError: error => {
+        if (isCurrent(epoch)) {
+          publish('error', errorMessage(error))
+          options.log('[gateway] ' + errorMessage(error))
+
+          if (error instanceof ApiError && error.code === 'gateway_policy_rejected') {
+            void verifyLogin(epoch)
           }
         }
       }
-    })()
+    })
 
-    connecting = task
-    await task
+    connection = transport
+    transport.client.onEvent(event => receive(event, epoch))
+    transport.client.onState(state => {
+      if (!isCurrent(epoch)) {
+        return
+      }
 
-    if (connecting === task) {
-      connecting = null
-    }
+      publish(state)
 
-    // 定时刷新凭据不一定广播账户变化；旧准备任务结束后接续最新凭据。
-    if (isCurrent(connection, epoch) && options.getCurrentAuth()?.token !== auth.token) {
-      void connect()
-    }
+      if (state === 'open') {
+        toolsSignature = null
+        void syncTools()
+        reconcile()
+      } else if (state === 'closed' || state === 'error') {
+        toolsSignature = null
+        toolsGeneration++
+      }
+    })
   }
 
-  function authChanged(): void {
+  function authorize(sessionId: string): GatewayConnection {
     replaceAuth()
-    void connect()
+
+    if (!connection || sessionId !== authSessionId) {
+      throw new Error('Gateway authentication changed')
+    }
+
+    return connection
   }
 
   return {
-    authChanged,
-    reconnect: () => {
-      clearTimeout(retry)
-      retry = undefined
-      attempt = 0
-      void connect()
-    },
-    runnerStatus: (tools: RunnerTools) => void syncTools(tools),
-    getState: (authSessionId: string): DesktopGatewaySnapshot => {
+    authChanged: () => {
       replaceAuth()
-
-      if (!current || current.sessionId !== authSessionId) {
-        throw new Error('Gateway authentication changed')
-      }
-
-      void connect()
+      connection?.reconnect()
+    },
+    reconnect: () => {
+      replaceAuth()
+      connection?.reconnect()
+    },
+    runnerStatus: (tools: RunnerTools) => {
+      void syncTools(tools)
+      reconcile()
+    },
+    getState: (sessionId: string): DesktopGatewaySnapshot => {
+      const transport = authorize(sessionId)
+      void transport.connect()
 
       return snapshot
     },
-    request: async (authSessionId: string, method: RpcMethod, params: RpcRequest<RpcMethod>): Promise<unknown> => {
-      replaceAuth()
-      const connection = client
-      const epoch = revision
-
-      if (!current || current.sessionId !== authSessionId || !connection) {
-        throw new Error('Gateway authentication changed')
-      }
-
-      if (!Object.hasOwn(RPC_POLICIES, method)) {
-        throw new Error('Unknown gateway method')
-      }
-
-      if (['tools.sync', 'tool.result'].includes(method)) {
-        throw new Error('Gateway device operations are restricted to the main process')
-      }
-
-      const result = await connection.request(method, params)
-
-      if (!isCurrent(connection, epoch)) {
-        throw new Error('Gateway authentication changed')
-      }
-
-      return result
+    presence: async (sessionId: string, signal: RpcRequest<'companion.signal'>): Promise<void> => {
+      await authorize(sessionId).client.request('companion.signal', signal)
     },
+    synchronize: (sessionId: string, conversationId: string, load: (streamId?: string) => Promise<SessionSnapshot>) =>
+      authorize(sessionId).client.synchronize(conversationId, load),
     close: (): void => {
       revision++
-      current = null
-      clearTimeout(retry)
-      retry = undefined
-      client?.close()
-      client = null
+      authSessionId = null
+      connection?.close()
+      connection = null
+
+      for (const timer of recoveryTimers.values()) {
+        clearTimeout(timer)
+      }
+
+      for (const timer of receiptTimers.values()) {
+        clearTimeout(timer)
+      }
+
+      recoveryTimers.clear()
+      receiptTimers.clear()
     }
   }
 }

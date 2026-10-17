@@ -1,9 +1,9 @@
 import { atom, computed, map } from 'nanostores'
 
-import type { PromptSubmissionRequest } from '@protocol'
 import type { CacheUsageSummary, SessionRuntimeInfo } from '@protocol'
 
 import { normalizeChatSessionKind, toSessionSettings } from './chat-message-rules'
+import type { ConversationSubmission } from './chat-requests'
 import type {
   ChatMessageBody,
   ChatMessageListItem,
@@ -20,7 +20,7 @@ interface PromptSubmissionState {
   activeRequestId: string | null
   settledRequestId: string | null
   submissionRecovery: Promise<void> | null
-  unconfirmedSubmission: { params: PromptSubmissionRequest; fingerprint: string; requestId: string } | null
+  unconfirmedSubmission: { params: ConversationSubmission; fingerprint: string; requestId: string } | null
 }
 
 // 每个会话只有这一份状态；控制器持有同一对象，不复制消息或在途提交。
@@ -48,12 +48,20 @@ export function createConversationState(sessionId: string | null) {
   const $pendingPromptBatch = atom<PendingPromptItem[]>([])
 
   const $chatTurnInFlight = atom<boolean>(false)
+  const $stoppingRequestId = atom<string | null>(null)
   const $replacingReplyMessageId = atom<number | null>(null)
 
   const $replaceableAssistantMessage = computed(
-    [$chatMessageList, $chatMessageBodies, $chatTurnInFlight, $pendingPromptBatch, $chatSessionReadOnly],
-    (list, bodies, inFlight, pending, readOnly): ChatMessageListItem | null => {
-      if (readOnly || inFlight || pending.length > 0) {
+    [
+      $chatMessageList,
+      $chatMessageBodies,
+      $chatTurnInFlight,
+      $pendingPromptBatch,
+      $chatSessionReadOnly,
+      $stoppingRequestId
+    ],
+    (list, bodies, inFlight, pending, readOnly, stopping): ChatMessageListItem | null => {
+      if (readOnly || inFlight || stopping !== null || pending.length > 0) {
         return null
       }
 
@@ -68,9 +76,16 @@ export function createConversationState(sessionId: string | null) {
   )
 
   const $retryableAssistantMessage = computed(
-    [$chatMessageList, $chatMessageBodies, $chatTurnInFlight, $pendingPromptBatch, $chatSessionReadOnly],
-    (list, bodies, inFlight, pending, readOnly): ChatMessageListItem | null => {
-      if (readOnly || inFlight || pending.length > 0) {
+    [
+      $chatMessageList,
+      $chatMessageBodies,
+      $chatTurnInFlight,
+      $pendingPromptBatch,
+      $chatSessionReadOnly,
+      $stoppingRequestId
+    ],
+    (list, bodies, inFlight, pending, readOnly, stopping): ChatMessageListItem | null => {
+      if (readOnly || inFlight || stopping !== null || pending.length > 0) {
         return null
       }
 
@@ -199,6 +214,7 @@ export function createConversationState(sessionId: string | null) {
       $chatSessionReadOnly,
       $pendingPromptBatch,
       $chatTurnInFlight,
+      $stoppingRequestId,
       $replacingReplyMessageId,
       $replaceableAssistantMessage,
       $retryableAssistantMessage,

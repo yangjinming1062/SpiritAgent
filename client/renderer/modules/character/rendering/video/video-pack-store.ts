@@ -396,7 +396,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
 
   const read = (async (): Promise<boolean> => {
     try {
-      const res = await authedResource('GET /api/companion/video-packs')
+      const res = await authedResource('companion.get_video_packs')
 
       if (epoch !== currentClearEpoch() || revision !== generationRevision) {
         return false
@@ -536,11 +536,11 @@ export async function generateVideoPack(
 
   try {
     const res = opts.retryPackId
-      ? await authedResource('POST /api/companion/video-packs/{pack_id}/production', {
+      ? await authedResource('companion.produce_video_pack', {
           path: { pack_id: opts.retryPackId },
           body: { command: 'retry' }
         })
-      : await authedResource('POST /api/companion/video-packs', {
+      : await authedResource('companion.post_video_pack', {
           body: {
             source: 'generate',
             force: opts.force === true,
@@ -596,7 +596,7 @@ export async function generateVideoPack(
 
 export async function activateVideoPack(packId: number): Promise<boolean> {
   const epoch = currentClearEpoch()
-  const res = await authedResource('PUT /api/companion/video-packs/current', { body: { pack_id: packId } })
+  const res = await authedResource('companion.put_video_pack_selection', { body: { pack_id: packId } })
 
   if (epoch !== currentClearEpoch()) {
     return false

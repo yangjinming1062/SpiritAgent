@@ -180,7 +180,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
   const pickPresentationImage = (): Promise<void> => pickImage('选择光线与构图参考图', setPresentationRef)
 
   const fetchAvatarPrompt = async (): Promise<string> => {
-    const response = await requestResource('POST /api/companion/avatar/prompt', {
+    const response = await requestResource('companion.post_avatar_prompt', {
       body: { feedback: $regenFeedback.get().trim() || undefined, has_reference: Boolean(refImage) }
     })
 
@@ -190,7 +190,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
   const adoptAvatarSeed = async (image: PickedImage): Promise<void> => {
     const isLive = begin()
 
-    const response = await requestResource('POST /api/companion/avatar/adopt', {
+    const response = await requestResource('companion.post_avatar_adopt', {
       body: { image: image.base64, content_type: image.contentType }
     })
 
@@ -230,7 +230,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
     setSealingPortrait(true)
 
     try {
-      const result = await authedResource('POST /api/companion/portrait/confirm', {
+      const result = await authedResource('companion.post_portrait_confirm', {
         body: { expected_avatar_id: expectedAvatarId }
       })
 
@@ -280,7 +280,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
 
     const isLive = begin()
 
-    const res = await requestResource('POST /api/companion/avatar/{avatar_id}/fullbody/confirm', {
+    const res = await requestResource('companion.post_fullbody_confirm', {
       path: { avatar_id: activeAvatarId },
       body: { expected_url: expectedUrl }
     })
@@ -325,7 +325,7 @@ export function useOnboardingPortrait({ begin, imageSealed, setHint, setPhase, e
         return 'portrait-generate'
       }
 
-      const response = await requestResource('GET /api/companion/avatar')
+      const response = await requestResource('companion.get_avatar')
 
       if (!isLive()) {
         return 'portrait-generate'

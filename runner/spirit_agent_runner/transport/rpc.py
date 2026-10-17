@@ -26,7 +26,7 @@ class RunnerTransport:
         self._baseline: tuple[dict[str, Any], bool] | None = None
 
     async def notification(self, ws: Any, method: str, params: dict[str, Any]) -> None:
-        RUNNER_EVENTS[method].model_validate(params)
+        params = RUNNER_EVENTS[method].model_validate(params).model_dump(mode="json")
         await ws.send(json.dumps({"jsonrpc": "2.0", "method": method, "params": params}))
 
     async def process_request(self, ws: Any, connection_id: str, req: dict[str, Any]) -> None:
@@ -39,7 +39,7 @@ class RunnerTransport:
             method = req.get("method", "")
             result = await self.runtime.handle(connection_id, req_id, method, params)
             try:
-                RUNNER_CONTRACTS[method].response.model_validate(result)
+                result = RUNNER_CONTRACTS[method].response.model_validate(result).model_dump(mode="json")
             except ValidationError as error:
                 raise RpcError(
                     -32603,

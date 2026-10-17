@@ -41,8 +41,8 @@ class SubmissionReceipt:
         }
 
 
-def _receipt(row: PromptSubmission, conversation_id: int, fingerprint: str) -> SubmissionReceipt:
-    if row.conversation_id != conversation_id or row.fingerprint != fingerprint:
+def _receipt(row: PromptSubmission, conversation_id: int, fingerprint: str | None) -> SubmissionReceipt:
+    if row.conversation_id != conversation_id or (fingerprint is not None and row.fingerprint != fingerprint):
         raise SubmissionConflictError("提交标识已用于另一条消息")
     return SubmissionReceipt(
         row.request_id,
@@ -58,7 +58,7 @@ async def find_submission(
     user_id: int,
     conversation_id: int,
     request_id: str,
-    fingerprint: str,
+    fingerprint: str | None,
 ) -> SubmissionReceipt | None:
     async with session_scope() as db:
         row = await db.scalar(
@@ -68,6 +68,8 @@ async def find_submission(
             ),
         )
         if row is None:
+            return None
+        if fingerprint is None and row.conversation_id != conversation_id:
             return None
         receipt = _receipt(row, conversation_id, fingerprint)
         delivered_ids = [*receipt.message_ids]
@@ -83,6 +85,10 @@ async def find_submission(
             receipt.replace_reply_message_id,
             receipt.result_message_id,
         )
+
+
+async def get_submission(user_id: int, conversation_id: int, request_id: str) -> SubmissionReceipt | None:
+    return await find_submission(user_id, conversation_id, request_id, None)
 
 
 async def reserve_submission(

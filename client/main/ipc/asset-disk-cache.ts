@@ -4,9 +4,10 @@ import path from 'node:path'
 
 import { sleep } from '@runtime'
 
+import { apiErrorFromResponse } from '../../../shared/api'
 import { ASSET_FETCH_TIMEOUT_MS } from '../security/hardening'
 import { mimeTypeForPath } from '../shared/mime'
-import { atomicWriteFile, httpErrorFromResponse, isAccountId } from '../shared/utils'
+import { atomicWriteFile, isAccountId } from '../shared/utils'
 
 interface AssetMeta {
   contentHash?: string
@@ -300,7 +301,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
 
     if (!res.ok) {
       if (isAuthFailureStatus(res.status) || !localCached) {
-        throw await httpErrorFromResponse(res, assetPath)
+        throw await apiErrorFromResponse(res)
       }
 
       console.warn(
