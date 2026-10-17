@@ -17,7 +17,6 @@ import {
   $appPage,
   applyAppNavigation
 } from '@/app/navigation/app-navigation'
-import { SpriteStatusBadge } from '@/modules/character'
 import {
   $chatSessionId,
   $companionSessionId,
@@ -212,9 +211,6 @@ export function MainRoot(): React.JSX.Element {
               }
             }}
           >
-            <div className={styles.titleArea}>
-              <SpriteStatusBadge compact />
-            </div>
             <div className={styles.titleActions}>
               <PresentationModeButton className={styles.modeButton} />
               <CompanionMenu />

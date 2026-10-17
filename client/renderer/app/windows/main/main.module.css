@@ -46,15 +46,9 @@ html[data-maximized='true'] .shell {
   border-bottom: 1px solid var(--ui-line-hairline);
   display: flex;
   flex: 0 0 44px;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 0 14px 0 20px;
   -webkit-app-region: drag;
-}
-.titleArea {
-  align-items: center;
-  display: flex;
-  gap: 14px;
-  min-width: 0;
 }
 .titleActions {
   align-items: center;

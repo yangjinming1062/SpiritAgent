@@ -175,7 +175,6 @@ export {
   updateDragPosition
 } from './spatial'
 export { peekMaskRects } from './spatial-peek'
-export { SpriteStatusBadge } from './sprite-status-badge'
 export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
 export { playSpriteGesture } from './sprite/gesture'

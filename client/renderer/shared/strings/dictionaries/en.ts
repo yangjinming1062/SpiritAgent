@@ -1035,8 +1035,6 @@ export const dict: Dictionary = {
   },
 
   companion: {
-    statusBusy: 'Busy',
-    statusCompanion: 'With you',
     menu: {
       quietOff: (minutes: number) => `End quiet (${minutes} min left)`,
       quietOn: (minutes: number) => `Quiet for ${minutes} min`,

@@ -978,8 +978,6 @@ export const dict = {
   },
 
   companion: {
-    statusBusy: '忙碌中',
-    statusCompanion: '陪伴中',
     menu: {
       quietOff: (minutes: number) => `结束安静（剩 ${minutes} 分钟）`,
       quietOn: (minutes: number) => `安静 ${minutes} 分钟`,

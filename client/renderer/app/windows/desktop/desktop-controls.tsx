@@ -3,7 +3,7 @@ import type React from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 
 import { usePresentationModeSwitch } from '@/app/components/presentation-mode-switch'
-import { $userPreferredTier, setDisturbanceTier, SpriteStatusBadge } from '@/modules/character'
+import { $userPreferredTier, setDisturbanceTier } from '@/modules/character'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { Monitor, SlidersHorizontal, Video, Wifi, WifiOff, X } from '@/shared/lib/icons'
@@ -174,17 +174,14 @@ export function DesktopControls({
                 })}
               </span>
             </time>
-            <div className={styles.statuses}>
-              <SpriteStatusBadge />
-              <span className={styles.connection} data-tone={connectionTone} role="status">
-                {connectionTone === 'offline' ? (
-                  <WifiOff aria-hidden="true" size={15} />
-                ) : (
-                  <Wifi aria-hidden="true" size={15} />
-                )}
-                {connectionLabel}
-              </span>
-            </div>
+            <span className={styles.connection} data-tone={connectionTone} role="status">
+              {connectionTone === 'offline' ? (
+                <WifiOff aria-hidden="true" size={15} />
+              ) : (
+                <Wifi aria-hidden="true" size={15} />
+              )}
+              {connectionLabel}
+            </span>
             <button
               className={styles.wallpaper}
               data-error={wallpaperError}
