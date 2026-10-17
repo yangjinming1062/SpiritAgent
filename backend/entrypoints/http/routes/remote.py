@@ -1,4 +1,6 @@
-from fastapi import Depends, Request, Response
+from typing import Annotated
+
+from fastapi import Depends, Path, Request, Response
 from features.accounts.remote import use_cases as remote_use_cases
 from features.accounts.remote.schemas import (
     DeviceListResponse,
@@ -16,6 +18,7 @@ from features.accounts.remote.security import (
 )
 from features.accounts.snapshots import AccountIdentity, RemoteDeviceIdentity
 from infrastructure.config import SETTINGS
+from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from runtime.channels import terminate_remote_sessions
@@ -33,6 +36,7 @@ async def _private_response(response: Response) -> None:
 
 
 router = get_router(dependencies=[Depends(_private_response)])
+ResourceId = Annotated[int, Path(ge=1, le=POSTGRES_INT4_MAX)]
 
 
 def _session_response(user: AccountIdentity, device: RemoteDeviceIdentity, token: str) -> RemoteSessionResponse:
@@ -52,7 +56,7 @@ async def create_pairing(session: CurrentSession, db: DbSession) -> PairingRespo
     "/pairings/{pairing_id}",
     response_model=PairingResponse,
 )
-async def pairing_status(pairing_id: int, session: CurrentSession, db: DbSession) -> PairingResponse:
+async def pairing_status(pairing_id: ResourceId, session: CurrentSession, db: DbSession) -> PairingResponse:
     return await remote_use_cases.pairing_status(pairing_id, session[0].id, db)
 
 
@@ -60,7 +64,7 @@ async def pairing_status(pairing_id: int, session: CurrentSession, db: DbSession
     "/pairings/{pairing_id}",
     response_model=MessageResponse,
 )
-async def cancel_pairing(pairing_id: int, session: CurrentSession, db: DbSession) -> MessageResponse:
+async def cancel_pairing(pairing_id: ResourceId, session: CurrentSession, db: DbSession) -> MessageResponse:
     await remote_use_cases.cancel_pairing(pairing_id, session[0].id, db)
     return MessageResponse(message="二维码已取消。")
 
@@ -116,7 +120,7 @@ async def list_remote_devices(session: CurrentSession, db: DbSession) -> DeviceL
     "/devices/{device_id}",
     response_model=MessageResponse,
 )
-async def revoke_remote_device(device_id: int, session: CurrentSession, db: DbSession) -> MessageResponse:
+async def revoke_remote_device(device_id: ResourceId, session: CurrentSession, db: DbSession) -> MessageResponse:
     await remote_use_cases.revoke_remote_device(device_id, session[0].id, db)
     await terminate_remote_sessions(session[0].id, device_id)
     return MessageResponse(message="设备授权已撤销。")

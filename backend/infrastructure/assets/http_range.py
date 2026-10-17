@@ -2,13 +2,14 @@ import asyncio
 import functools
 import re
 from collections.abc import AsyncIterator
+from contextlib import ExitStack
 from pathlib import Path
-from typing import BinaryIO
 
 from fastapi import HTTPException, Request, Response
 from starlette.responses import StreamingResponse
 
 from infrastructure.assets.asset_store import compute_file_sha256
+from infrastructure.async_io import run_blocking
 
 _RANGE_PATTERN = re.compile(r"^bytes=(\d*)-(\d*)$")
 _CHUNK_SIZE = 256 * 1024  # 256 KB
@@ -27,6 +28,8 @@ def _get_file_sha256(file_path: Path) -> str:
 
 def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int] | None:
     """解析 Range 头（bytes=0-499 / 500- / -500），返回闭区间 (start, end)，非法或不可满足时返回 None。"""
+    if file_size <= 0:
+        return None
     match = _RANGE_PATTERN.match(range_header.strip())
     if not match:
         return None
@@ -61,22 +64,16 @@ def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int] | 
 
 
 async def _iter_file(file_path: Path, start: int, length: int) -> AsyncIterator[bytes]:
-    def _open_and_seek() -> BinaryIO:
-        fh = open(file_path, "rb")  # noqa: SIM115
-        fh.seek(start)
-        return fh
-
-    f = await asyncio.to_thread(_open_and_seek)
-    try:
+    with ExitStack() as files:
+        f = await run_blocking(lambda: files.enter_context(file_path.open("rb")))
+        await run_blocking(f.seek, start)
         remaining = length
         while remaining > 0:
-            chunk = await asyncio.to_thread(f.read, min(_CHUNK_SIZE, remaining))
+            chunk = await run_blocking(f.read, min(_CHUNK_SIZE, remaining))
             if not chunk:
                 break
             remaining -= len(chunk)
             yield chunk
-    finally:
-        await asyncio.to_thread(f.close)
 
 
 async def serve_ranged_file(request: Request, file_path: Path, media_type: str) -> Response:

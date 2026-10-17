@@ -13,6 +13,7 @@ from infrastructure.assets.write_protection import (
     prune_completed_asset_writes,
     user_asset_lock,
 )
+from infrastructure.async_io import run_blocking
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
@@ -221,7 +222,7 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
             if entry.path in referenced or asset_write_in_progress(entry.path):
                 continue
             try:
-                await asyncio.to_thread(unlink_companion_asset, entry.path)
+                await run_blocking(unlink_companion_asset, entry.path)
                 if (Path(SETTINGS.data_dir) / entry.path).exists():
                     raise OSError("Asset remains on disk after cleanup")
             except OSError as exc:
@@ -234,7 +235,7 @@ async def _cleanup_user_assets(user_id: int, *, discover: bool = False) -> int:
             else:
                 deleted_ids.append(entry.id)
                 deleted_paths.append(entry.path)
-        await asyncio.to_thread(_remove_empty_directories, user_id)
+        await run_blocking(_remove_empty_directories, user_id)
 
     # 进程在此处退出时文件已删除、待办仍在；下一次按文件不存在幂等收敛。
     async with SESSION_LOCAL() as db:

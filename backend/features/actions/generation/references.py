@@ -8,6 +8,7 @@ from infrastructure.ai.llm_client import build_provider, resolve_provider_chain
 from infrastructure.ai.providers.base import VideoGenProvider
 from infrastructure.ai.selection import ProviderSelection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.async_io import run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from infrastructure.video_processing.matting import require_matting_model
@@ -30,7 +31,7 @@ from features.media.chain import FrozenMediaProvider, MediaChainState
 from features.media.character_images import ImageChainState
 
 from .errors import VideoPackError, VideoPackStateError, _GenerationRowGoneError
-from .helpers import _artifact_abs_path, _image_data_uri, _pack_dir, _process_thread
+from .helpers import _artifact_abs_path, _image_data_uri, _pack_dir
 from .queries import _active_avatar, _get_pack, _job_result_unresolved, _load_generation_context
 
 
@@ -174,12 +175,12 @@ def _freeze_action_video_plan(
 async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationContext) -> GenerationContext:
     if context.reference_alignment == "ready":
         return context
-    outfit_reference = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    outfit_reference = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
     async with SESSION_LOCAL() as db:
         avatar = await avatar_snapshot(db, pack.user_id, context.identity.avatar_id)
     if avatar is None or not avatar.asset_url:
         raise VideoPackStateError("头像形象无法读取")
-    portrait_source = await _process_thread(load_avatar_bytes_as_data_uri, avatar.asset_url)
+    portrait_source = await run_blocking(load_avatar_bytes_as_data_uri, avatar.asset_url)
     if not portrait_source:
         raise VideoPackStateError("头像形象无法读取")
 
@@ -245,8 +246,8 @@ async def _require_current_identity_image(context: GenerationContext, avatar: Av
     """已制作的包只在身份图变化后失效：冻结的全身身份图须与当前已采纳全身图一致，角色卡文字修订不影响。"""
     if avatar is None or avatar.id != context.identity.avatar_id:
         raise VideoPackStateError("该动作包对应的角色形象已切换，请重新生成动作包")
-    frozen = await _process_thread(read_portrait_bytes, context.identity_reference_path)
-    current = await _process_thread(read_portrait_bytes, avatar.seed_fullbody_url)
+    frozen = await run_blocking(read_portrait_bytes, context.identity_reference_path)
+    current = await run_blocking(read_portrait_bytes, avatar.seed_fullbody_url)
     if frozen is None or current is None:
         raise VideoPackStateError("全身形象无法读取，暂不能启用该动作包")
     if frozen[0] != current[0]:

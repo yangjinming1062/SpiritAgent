@@ -3,6 +3,7 @@ import contextlib
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import asdict
+from functools import partial
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -194,12 +195,12 @@ async def call_with_retry(
     context_length = resolve_context_tokens(config)
     if create_kwargs.get("model") != config.model:
         raise ValueError("调用模型必须来自当前能力卡片")
-    if not request_input_modalities(create_kwargs.get("input")) <= effective_input_modalities(config):
+    required_media = request_input_modalities(create_kwargs.get("input"))
+    if not required_media <= effective_input_modalities(config):
         raise LLMRuntimeError(
             ClassifiedError(FailoverReason.model_not_found, None, "当前模型卡片不支持请求中的媒体类型"),
         )
     create_kwargs["max_output_tokens"] = request_output_budget(config, create_kwargs)
-    required_media = request_input_modalities(create_kwargs.get("input"))
     if config.provider_name == "mimo" and required_media & {"audio", "video"}:
         if not isinstance(client, AsyncOpenAI):
             raise ValueError("音频请求不能使用文本格式恢复客户端")
@@ -226,6 +227,15 @@ async def call_with_retry(
     call_started = time.monotonic()
     accumulator = current_usage_accumulator()
     task = current_call_task()
+    record_usage = partial(
+        _record_usage,
+        config=config,
+        call_id=call_id,
+        call_started=call_started,
+        stream=is_stream,
+        accumulator=accumulator,
+        task=task,
+    )
 
     log_event(
         call_id=call_id,
@@ -237,34 +247,19 @@ async def call_with_retry(
         request=summarize_llm_request(create_kwargs),
         stream=is_stream,
         context_length=context_length,
-        task=current_call_task(),
+        task=task,
     )
 
     try:
         result = await client.responses.create(**create_kwargs, extra_headers={"Idempotency-Key": call_id})
     except (LlmCallBlockedError, asyncio.CancelledError) as exc:
-        _record_usage(
+        record_usage(
             None,
-            config=config,
-            call_id=call_id,
-            call_started=call_started,
             status="cancelled" if isinstance(exc, asyncio.CancelledError) else "blocked",
-            stream=is_stream,
-            accumulator=accumulator,
-            task=task,
         )
         raise
     except Exception as exc:
-        _record_usage(
-            None,
-            config=config,
-            call_id=call_id,
-            call_started=call_started,
-            status="error",
-            stream=is_stream,
-            accumulator=accumulator,
-            task=task,
-        )
+        record_usage(None, status="error")
         classified = classify_api_error(
             exc,
             approx_tokens=approx_responses_tokens(str(create_kwargs.get("instructions") or ""), input_items),
@@ -300,15 +295,9 @@ async def call_with_retry(
             accumulator=accumulator,
             task=task,
         )
-    _record_usage(
+    record_usage(
         getattr(result, "usage", None),
-        config=config,
-        call_id=call_id,
-        call_started=call_started,
         status=str(getattr(result, "status", "unknown")),
-        stream=False,
-        accumulator=accumulator,
-        task=task,
     )
     log_event(
         call_id=call_id,

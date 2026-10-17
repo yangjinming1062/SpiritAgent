@@ -45,7 +45,7 @@ _SAMPLE_TTL = timedelta(hours=24)
 
 def validate_voice_prompt(prompt: str) -> str:
     prompt = prompt.strip()
-    if not prompt or len(prompt) > MAX_VOICE_DESIGN_PROMPT_CHARS:
+    if not prompt or len(prompt) > MAX_VOICE_DESIGN_PROMPT_CHARS or "\x00" in prompt:
         raise ValueError(f"声音描述须为 1–{MAX_VOICE_DESIGN_PROMPT_CHARS} 个字符")
     return prompt
 

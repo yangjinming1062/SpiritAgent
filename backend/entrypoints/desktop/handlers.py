@@ -71,10 +71,7 @@ class UserGatewaySession:
             ),
         )
 
-        def finished(done: asyncio.Task) -> None:
-            self.background_tasks.discard(done)
-
-        task.add_done_callback(finished)
+        task.add_done_callback(self.background_tasks.discard)
 
 
 _USER_SESSIONS: dict[int, UserGatewaySession] = {}
@@ -106,6 +103,8 @@ async def drain() -> None:
         tasks.extend(session.background_tasks)
     await _cancel_tasks(tasks)
     await drain_account_turns()
+    for user_id in list(_USER_SESSIONS):
+        await terminate_user_gateway(user_id)
     for user_id in list(_REMOTE_SESSIONS):
         await terminate_remote_sessions(user_id)
 

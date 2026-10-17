@@ -11,10 +11,30 @@ from features.conversation.snapshots import ConversationSnapshot
 from infrastructure.ai.user_config import resolve_user_llm_config
 from infrastructure.database import SESSION_LOCAL
 from runtime.chat_accounts import get_account_runtime
-from runtime.conversation import SessionCreateResult, build_runtime_info, decode_session_settings, new_runtime_session
+from runtime.conversation import (
+    RuntimeSession,
+    SessionCreateResult,
+    SessionRuntimeInfo,
+    build_runtime_info,
+    decode_session_settings,
+    new_runtime_session,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from workflows.chat.turn_inputs import merge_session_settings, resolve_inference_settings
+
+
+async def session_runtime_info(
+    user_id: int,
+    runtime: RuntimeSession,
+    conv: ConversationSnapshot,
+) -> SessionRuntimeInfo:
+    async with SESSION_LOCAL() as db:
+        user_settings = await load_user_settings(db, user_id)
+        llm_config = await resolve_user_llm_config(db, user_id, conversation_ai_task(conv))
+    effective = merge_session_settings(user_settings, runtime.settings, conv=conv)
+    settings = runtime.settings | asdict(resolve_inference_settings(effective, conv=conv))
+    return build_runtime_info(llm_config, runtime, settings, system_preset_id=conv.system_preset_id)
 
 
 async def session_resource(user_id: int, conv: ConversationSnapshot) -> SessionCreateResult:
@@ -27,14 +47,9 @@ async def session_resource(user_id: int, conv: ConversationSnapshot) -> SessionC
             kind=conv.kind,
             is_automation=conv.is_automation,
         )
-    async with SESSION_LOCAL() as db:
-        user_settings = await load_user_settings(db, user_id)
-        llm_config = await resolve_user_llm_config(db, user_id, conversation_ai_task(conv))
-    effective = merge_session_settings(user_settings, runtime.settings, conv=conv)
-    settings = runtime.settings | asdict(resolve_inference_settings(effective, conv=conv))
     return SessionCreateResult(
         session_id=str(conv.id),
-        info=build_runtime_info(llm_config, runtime, settings, system_preset_id=conv.system_preset_id),
+        info=await session_runtime_info(user_id, runtime, conv),
     )
 
 

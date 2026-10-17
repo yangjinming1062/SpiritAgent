@@ -7,10 +7,9 @@ import shutil
 import tempfile
 import zipfile
 import zlib
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
+from infrastructure.async_io import run_blocking
 from infrastructure.file_results import FileResult
 from infrastructure.hashing import sha512_b64
 from infrastructure.logger import get_logger
@@ -62,16 +61,11 @@ _BAD_ZIP_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, OSErr
 
 
 async def _get_latest(db: AsyncSession) -> UpdateVersion:
-    latest = (
-        (
-            await db.execute(
-                select(UpdateVersion)
-                .where(UpdateVersion.is_active.is_(True))
-                .order_by(UpdateVersion.created_at.desc()),
-            )
-        )
-        .scalars()
-        .first()
+    latest = await db.scalar(
+        select(UpdateVersion)
+        .where(UpdateVersion.is_active.is_(True))
+        .order_by(UpdateVersion.created_at.desc())
+        .limit(1),
     )
     # 请求级会话要到响应（含安装包下载）发送完毕才关闭，读完即提交，不让连接占用到那时。
     await db.commit()
@@ -199,24 +193,6 @@ def _replace_version_dir(stage: Path, versions_dir: Path) -> None:
     stage.rename(versions_dir)
 
 
-async def _run_release_io[T](function: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-    """取消仍等文件线程退出，暂存目录与上传流才能安全关闭。"""
-    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                continue
-            except Exception:
-                break
-        if not task.cancelled():
-            task.exception()
-        raise
-
-
 async def create_version(admin: str, db: AsyncSession, file: UploadSource, release_notes: str) -> UpdateVersionItem:
     if not file.filename or not file.filename.endswith(".zip"):
         raise RequestError(status_code=400, message="上传文件必须是 .zip。")
@@ -242,17 +218,17 @@ async def create_version(admin: str, db: AsyncSession, file: UploadSource, relea
             # 上传包可达数百 MB：写盘与解压移出事件循环
             with open(zip_path, "wb") as f:
                 while chunk := await file.read(CHUNK_SIZE):
-                    await _run_release_io(f.write, chunk)
+                    await run_blocking(f.write, chunk)
 
             try:
-                await _run_release_io(_extract_archive_entries, zip_path, stage)
+                await run_blocking(_extract_archive_entries, zip_path, stage)
             except _BAD_ZIP_ERRORS as exc:
                 if isinstance(exc, OSError) and exc.errno is not None:
                     logger.exception("release extraction storage failed")
                     raise RequestError(status_code=503, message="更新包存储暂时不可用。") from exc
                 raise RequestError(status_code=400, message="无效 zip 文件。") from exc
             try:
-                exe_file, mac_file, wheel_file = await _run_release_io(_inspect_release, stage, version)
+                exe_file, mac_file, wheel_file = await run_blocking(_inspect_release, stage, version)
             except ValueError as exc:
                 raise RequestError(status_code=400, message=str(exc)) from exc
 
@@ -261,10 +237,10 @@ async def create_version(admin: str, db: AsyncSession, file: UploadSource, relea
                 version=version,
                 release_notes=release_notes,
                 exe_filename=exe_file.name,
-                exe_sha512=await _run_release_io(sha512_b64, exe_file),
+                exe_sha512=await run_blocking(sha512_b64, exe_file),
                 exe_size=exe_file.stat().st_size,
                 mac_filename=mac_file.name if mac_file else None,
-                mac_sha512=await _run_release_io(sha512_b64, mac_file) if mac_file else None,
+                mac_sha512=await run_blocking(sha512_b64, mac_file) if mac_file else None,
                 mac_size=mac_file.stat().st_size if mac_file else None,
                 runner_filename=f"runner/{wheel_file.name}",
                 is_active=True,
@@ -272,12 +248,12 @@ async def create_version(admin: str, db: AsyncSession, file: UploadSource, relea
             )
             # 提交失败时删除刚换入的目录；被取消时提交结果未知，目录保留：已入库即为发布，否则是残留，下次同版本上传会替换。
             try:
-                await _run_release_io(_replace_version_dir, stage, versions_dir)
+                await run_blocking(_replace_version_dir, stage, versions_dir)
                 db.add(record)
                 await db.commit()
             except Exception:
                 try:
-                    await _run_release_io(shutil.rmtree, versions_dir)
+                    await run_blocking(shutil.rmtree, versions_dir)
                 except OSError:
                     logger.warning(
                         "failed to clean rejected release directory",
@@ -305,7 +281,7 @@ async def delete_version(id: int, _admin: str, db: AsyncSession) -> MessageRespo
         await db.commit()
         if versions_dir.exists():
             try:
-                await asyncio.to_thread(shutil.rmtree, versions_dir)
+                await run_blocking(shutil.rmtree, versions_dir)
             except OSError:
                 logger.warning("update version files removal failed", extra={"path": str(versions_dir)}, exc_info=True)
     return MessageResponse(message="Version deleted")
@@ -313,12 +289,15 @@ async def delete_version(id: int, _admin: str, db: AsyncSession) -> MessageRespo
 
 async def get_latest_file(filename: str, db: AsyncSession) -> FileResult:
     latest = await _get_latest(db)
-    if not filename.endswith(DOWNLOAD_SUFFIXES):
+    if "\x00" in filename or not filename.endswith(DOWNLOAD_SUFFIXES):
         raise RequestError(status_code=400, message="Invalid filename")
     base_dir = (VERSIONS_DIR / latest.version).resolve()
-    file_path = (base_dir / filename).resolve()
+    try:
+        file_path = (base_dir / filename).resolve()
+    except (OSError, ValueError) as exc:
+        raise RequestError(status_code=400, message="Invalid filename") from exc
     if not file_path.is_relative_to(base_dir):
         raise RequestError(status_code=400, message="Invalid filename")
-    if not file_path.exists():
+    if not file_path.is_file():
         raise RequestError(status_code=404, message="File not found")
     return FileResult(path=str(file_path), media_type="application/octet-stream", filename=filename)

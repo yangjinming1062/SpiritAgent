@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import Body, Query
+from fastapi import Body, Path, Query
 from features.companion.schemas import CompanionOperationResponse
 from features.scenes import http_use_cases as _scenes
 from features.scenes.schemas import (
@@ -17,6 +17,7 @@ from features.scenes.schemas import (
     SceneResponse,
     SceneStateResponse,
 )
+from infrastructure.constants import POSTGRES_INT4_MAX, POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 
@@ -60,7 +61,10 @@ async def post_scene_prompt(user: CurrentUser, body: ScenePromptRequest) -> Scen
     "/scenes/{scene_id}/discard",
     response_model=SceneResponse,
 )
-async def post_scene_discard(user: CurrentUser, scene_id: int) -> SceneResponse:
+async def post_scene_discard(
+    user: CurrentUser,
+    scene_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+) -> SceneResponse:
     return await _scenes.post_scene_discard(user_id=user.id, scene_id=scene_id)
 
 
@@ -69,7 +73,10 @@ async def post_scene_discard(user: CurrentUser, scene_id: int) -> SceneResponse:
     response_model=SceneResponse,
     status_code=202,
 )
-async def post_scene_regenerate(user: CurrentUser, scene_id: int) -> SceneResponse:
+async def post_scene_regenerate(
+    user: CurrentUser,
+    scene_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+) -> SceneResponse:
     return await _scenes.post_scene_regenerate(user_id=user.id, scene_id=scene_id)
 
 
@@ -77,7 +84,10 @@ async def post_scene_regenerate(user: CurrentUser, scene_id: int) -> SceneRespon
     "/scenes/{scene_id}",
     response_model=CompanionOperationResponse,
 )
-async def delete_scene_route(user: CurrentUser, scene_id: int) -> CompanionOperationResponse:
+async def delete_scene_route(
+    user: CurrentUser,
+    scene_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+) -> CompanionOperationResponse:
     return await _scenes.delete_scene_route(user_id=user.id, scene_id=scene_id)
 
 
@@ -104,8 +114,8 @@ async def patch_scene_policy(user: CurrentUser, db: DbSession, body: ScenePolicy
 async def scene_list_route(
     user: CurrentUser,
     db: DbSession,
-    q: str = Query(default="", max_length=200),
-    offset: int = Query(default=0, ge=0),
+    q: str = Query(default="", max_length=200, pattern=r"^[^\x00]*$"),
+    offset: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
     limit: int = Query(default=30, ge=1, le=100),
 ) -> SceneListResponse:
     return await _scenes.scene_list_route(user_id=user.id, db=db, q=q, offset=offset, limit=limit)
@@ -115,7 +125,11 @@ async def scene_list_route(
     "/scenes/{scene_id}",
     response_model=SceneResponse,
 )
-async def scene_detail_route(user: CurrentUser, db: DbSession, scene_id: int) -> SceneResponse:
+async def scene_detail_route(
+    user: CurrentUser,
+    db: DbSession,
+    scene_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+) -> SceneResponse:
     return await _scenes.scene_detail_route(user_id=user.id, db=db, scene_id=scene_id)
 
 
@@ -123,7 +137,11 @@ async def scene_detail_route(user: CurrentUser, db: DbSession, scene_id: int) ->
     "/scenes/{scene_id}",
     response_model=SceneResponse,
 )
-async def scene_edit_route(user: CurrentUser, scene_id: int, body: SceneDescriptionRequest) -> SceneResponse:
+async def scene_edit_route(
+    user: CurrentUser,
+    scene_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    body: SceneDescriptionRequest,
+) -> SceneResponse:
     return await _scenes.scene_edit_route(user_id=user.id, scene_id=scene_id, body=body)
 
 
@@ -132,5 +150,8 @@ async def scene_edit_route(user: CurrentUser, scene_id: int, body: SceneDescript
     response_model=SceneResponse,
     status_code=202,
 )
-async def scene_analyze_route(user: CurrentUser, scene_id: int) -> SceneResponse:
+async def scene_analyze_route(
+    user: CurrentUser,
+    scene_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+) -> SceneResponse:
     return await _scenes.scene_analyze_route(user_id=user.id, scene_id=scene_id)

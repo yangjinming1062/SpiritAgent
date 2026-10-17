@@ -102,6 +102,12 @@ def _validate_definition(definition: dict[str, Any]) -> dict[str, str]:
     return cleaned
 
 
+def _onboarding_profile_value(field: str, value: str | None) -> str:
+    if value is not None and "\x00" in value:
+        raise PersonaValidationError(f"persona.{field} must not contain NUL characters", field)
+    return (value or "").strip()[:_ONBOARDING_MAX_LEN]
+
+
 def _validate_user_profile(definition: dict[str, Any]) -> dict[str, str]:
     """取出 user_* 回答：None 视为未填写，其余须为字符串；与引导问答一致，去空白后截断到 _ONBOARDING_MAX_LEN。"""
     profile: dict[str, str] = {}
@@ -112,7 +118,7 @@ def _validate_user_profile(definition: dict[str, Any]) -> dict[str, str]:
             raise PersonaValidationError("unknown user profile field", key)
         if value is not None and not isinstance(value, str):
             raise PersonaValidationError(f"persona.{key} must be a string", key)
-        profile[key] = (value or "").strip()[:_ONBOARDING_MAX_LEN]
+        profile[key] = _onboarding_profile_value(key, value)
     return profile
 
 
@@ -255,6 +261,8 @@ async def submit_onboarding_field(
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)
     if field == "voice_setup_skipped" and value not in (None, "true"):
         raise PersonaValidationError("voice_setup_skipped must be true or null", field)
+    if field.startswith("user_"):
+        value = _onboarding_profile_value(field, value)
     if field == "user_birthday":
         _validate_birthday(value)
     persona = await get_or_create_persona(db, user_id)

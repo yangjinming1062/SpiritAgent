@@ -126,6 +126,8 @@ async def _slash_remember(ctx: SlashCommandContext) -> SlashCommandResult:
         )
 
     max_chars = SETTINGS.memory_recall_max_content_chars
+    if "\x00" in content:
+        return SlashCommandResult(status="error", message="要记住的内容不能包含空字符")
     if len(content) > max_chars:
         return SlashCommandResult(status="error", message=f"要记住的内容最多 {max_chars} 个字符，请精简后再试")
     context = normalize_recall_context("manual")

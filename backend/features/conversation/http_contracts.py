@@ -2,6 +2,7 @@
 
 from typing import Literal
 
+from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from runtime.conversation import LastSubmissionSnapshot, SessionRuntimeInfo, ToolSnapshot
 
@@ -50,18 +51,18 @@ class SessionUndoResult(BaseModel):
 
 
 class PromptBatchMessage(BusinessRequest):
-    text: str
+    text: str = Field(pattern=r"^[^\x00]*$")
     attachments: list[ChatAttachment] | None = None
 
 
 class PromptSubmitRequest(BusinessRequest):
     request_id: str = Field(min_length=1)
-    text: str | None = None
+    text: str | None = Field(default=None, pattern=r"^[^\x00]*$")
     attachments: list[ChatAttachment] | None = None
     batch: list[PromptBatchMessage] | None = Field(default=None, min_length=1)
-    edit_message_id: int | None = Field(default=None, gt=0)
-    retry_message_id: int | None = Field(default=None, gt=0)
-    replace_reply_message_id: int | None = Field(default=None, gt=0)
+    edit_message_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
+    retry_message_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
+    replace_reply_message_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
     response_preference: Literal["text", "voice"] | None = None
 
     @model_validator(mode="after")
@@ -95,7 +96,7 @@ class PromptSubmitResult(BaseModel):
 
 
 class SessionUndoRequest(BusinessRequest):
-    source_message_id: int = Field(ge=0)
+    source_message_id: int = Field(ge=0, le=POSTGRES_INT4_MAX)
     confirmed: bool = False
 
 

@@ -34,6 +34,8 @@ def validate_profile_birthday(value: str | None) -> None:
 
 def validate_profile_value(field: UserProfileField, value: str | None) -> str:
     content = (value or "").strip()
+    if "\x00" in content:
+        raise ValueError(f"{field} must not contain NUL characters")
     if len(content) > USER_PROFILE_MAX_CONTENT_CHARS:
         raise ValueError(f"{field} exceeds {USER_PROFILE_MAX_CONTENT_CHARS} chars")
     if field == "user_birthday":

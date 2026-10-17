@@ -361,7 +361,7 @@ async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> Com
         await db.commit()
     try:
         saved = await _save_image(user_id, scene_id, data, target=target)
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         await _mark_failed(user_id, scene_id, "图片保存失败，请重新上传")
         raise
     _launch_task(scene_id, user_id)

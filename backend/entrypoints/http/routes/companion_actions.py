@@ -1,5 +1,8 @@
 """动作库 REST 入口：目录、提案、播放回执、额度状态与管理操作。"""
 
+from typing import Annotated
+
+from fastapi import Path
 from features.actions import use_cases as _actions
 from features.actions.schemas import (
     ActionBudgetStatus,
@@ -9,6 +12,7 @@ from features.actions.schemas import (
     ActionPlaybackReceipt,
 )
 from features.companion.schemas import CompanionOperationResponse
+from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from pydantic import BaseModel, ConfigDict
@@ -36,7 +40,7 @@ async def design_action(body: ActionDesignRequest, user: CurrentUser, db: DbSess
 
 @router.post("/playback/{play_id}/receipt")
 async def submit_playback_receipt(
-    play_id: str,
+    play_id: Annotated[str, Path(min_length=1, max_length=36, pattern=r"^[^\x00]*$")],
     receipt: ActionPlaybackReceipt,
     user: CurrentUser,
     db: DbSession,
@@ -58,7 +62,7 @@ class ActionUpdateRequest(BaseModel):
 
 @router.patch("/{action_id}")
 async def set_action_enabled(
-    action_id: int,
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     body: ActionUpdateRequest,
     user: CurrentUser,
     db: DbSession,
@@ -71,6 +75,10 @@ async def set_action_enabled(
     "/{action_id}",
     response_model=CompanionOperationResponse,
 )
-async def delete_action(action_id: int, user: CurrentUser, db: DbSession) -> CompanionOperationResponse:
+async def delete_action(
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser,
+    db: DbSession,
+) -> CompanionOperationResponse:
     """删除动作与素材版本行；必需系统槽位一律不可删除。素材文件在 manifest 与版本引用释放后按引用回收，不在本请求内同步删文件；删除后同步发布目录。"""
     return await _actions.delete_action(action_id=action_id, user_id=user.id, db=db)

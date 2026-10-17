@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
+from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import SESSION_LOCAL, get_db
 from infrastructure.http_contracts import find_http_operation
 from infrastructure.logger import set_request_user_id
@@ -68,17 +69,26 @@ async def get_current_session(
 
     try:
         uid = int(user_id)
+        if not 1 <= uid <= POSTGRES_INT4_MAX:
+            raise ValueError("invalid account id")
     except (ValueError, TypeError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌用户标识无效。")
 
-    login_record = (
-        await db.execute(select(LoginRecord).where(LoginRecord.token_jti == token_jti, LoginRecord.is_active.is_(True)))
-    ).scalar_one_or_none()
-    if login_record is None:
+    row = (
+        await db.execute(
+            select(User, LoginRecord)
+            .join(LoginRecord, LoginRecord.user_id == User.id)
+            .where(
+                LoginRecord.token_jti == token_jti,
+                LoginRecord.user_id == uid,
+                LoginRecord.is_active.is_(True),
+            ),
+        )
+    ).one_or_none()
+    if row is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="当前会话已失效，请重新登录")
-
-    user = (await db.execute(select(User).where(User.id == uid, User.is_active.is_(True)))).scalar_one_or_none()
-    if user is None:
+    user, login_record = row
+    if not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已停用。")
     if is_user_in_maintenance(uid):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="用户数据正在维护，请稍后重试。")

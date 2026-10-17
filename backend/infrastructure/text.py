@@ -58,18 +58,13 @@ def parse_llm_json(text: str | None) -> Any:
         return json.loads(s)
     except json.JSONDecodeError:
         pass
-    start_obj, end_obj = s.find("{"), s.rfind("}")
-    if start_obj != -1 and end_obj > start_obj:
-        try:
-            return json.loads(s[start_obj : end_obj + 1])
-        except json.JSONDecodeError:
-            pass
-    start_arr, end_arr = s.find("["), s.rfind("]")
-    if start_arr != -1 and end_arr > start_arr:
-        try:
-            return json.loads(s[start_arr : end_arr + 1])
-        except json.JSONDecodeError:
-            pass
+    for opening, closing in (("{", "}"), ("[", "]")):
+        start, end = s.find(opening), s.rfind(closing)
+        if start != -1 and end > start:
+            try:
+                return json.loads(s[start : end + 1])
+            except json.JSONDecodeError:
+                pass
     return None
 
 

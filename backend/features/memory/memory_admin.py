@@ -180,6 +180,8 @@ async def update_memory(
     content = (content or "").strip()
     if not content:
         raise ValueError("content must be non-empty")
+    if "\x00" in content:
+        raise ValueError("content must not contain NUL characters")
     async with session_scope() as db:
         await memory_write_lock(db, scope)
         row = await get_memory(db, scope, memory_id)

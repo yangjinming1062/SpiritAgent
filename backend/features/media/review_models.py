@@ -1,5 +1,3 @@
-from typing import TYPE_CHECKING
-
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import (
     JSON,
@@ -9,9 +7,6 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
-
-if TYPE_CHECKING:
-    pass
 
 
 class CompanionMediaReview(ModelBase, TimestampMixin):

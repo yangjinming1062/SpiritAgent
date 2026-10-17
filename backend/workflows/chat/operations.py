@@ -4,8 +4,6 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from features.configuration.settings.values import load_user_settings
-from features.conversation.ai_routing import conversation_ai_task
 from features.conversation.fork import SourceNotFoundError
 from features.conversation.http_contracts import SessionSnapshotResponse
 from features.conversation.session_operations import (
@@ -21,16 +19,12 @@ from features.conversation.slash_commands import (
 from features.conversation.snapshots import ConversationSnapshot
 from features.conversation.submissions import get_submission
 from features.conversation.undo import UndoNotAllowedError
-from infrastructure.ai.user_config import resolve_user_llm_config
-from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.request_errors import RequestError
 from runtime.business_actor import BusinessActor
 from runtime.conversation import (
     LastSubmissionSnapshot,
     RuntimeSession,
-    SessionRuntimeInfo,
-    build_runtime_info,
     new_runtime_session,
 )
 from runtime.desktop.connection import MANAGER, UserEventPublisher
@@ -41,8 +35,8 @@ from workflows.chat.inputs import (
     _require_owned_conv,
     conversation_history_lock,
 )
+from workflows.chat.session_resources import session_runtime_info
 from workflows.chat.submissions import create_submission_handler
-from workflows.chat.turn_inputs import merge_session_settings, resolve_inference_settings
 
 logger = get_logger(__name__)
 
@@ -81,14 +75,6 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
         conv = await _require_owned_conv(user_id, params["session_id"])
         return _mount_runtime(conv)
 
-    async def _runtime_info(runtime: RuntimeSession, conv: ConversationSnapshot) -> SessionRuntimeInfo:
-        async with SESSION_LOCAL() as db:
-            user_settings = await load_user_settings(db, user_id)
-            llm_config = await resolve_user_llm_config(db, user_id, conversation_ai_task(conv))
-        effective = merge_session_settings(user_settings, runtime.settings, conv=conv)
-        settings = runtime.settings | asdict(resolve_inference_settings(effective, conv=conv))
-        return build_runtime_info(llm_config, runtime, settings, system_preset_id=conv.system_preset_id)
-
     async def _last_submission(runtime: RuntimeSession) -> LastSubmissionSnapshot | None:
         return await last_submission(user_id, runtime.conversation_id)
 
@@ -119,7 +105,7 @@ def chat_operations(actor: BusinessActor) -> ChatOperations:
                 conv = latest_conv
                 messages, truncated, next_cursor, message_count = await history_snapshot(conv.id)
             last_submission = await _last_submission(runtime)
-            info = await _runtime_info(runtime, conv)
+            info = await session_runtime_info(user_id, runtime, conv)
             snapshot = deepcopy(runtime.active_turn)
             if snapshot is not None and snapshot.message_ids:
                 last_input = max(snapshot.message_ids)

@@ -1,7 +1,7 @@
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import HTTPException, Query, Request
+from fastapi import HTTPException, Path, Query, Request
 from features.conversation import session_management
 from features.conversation.fork import ForkNotAllowedError, SourceNotFoundError
 from features.conversation.http_contracts import (
@@ -35,6 +35,7 @@ from features.conversation.session_operations import (
     history_page,
 )
 from infrastructure.config import SETTINGS
+from infrastructure.constants import POSTGRES_INT4_MAX, POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from runtime.conversation import SessionCreateResult
@@ -143,7 +144,7 @@ async def dispatch_session_command(
 async def retry_voice_bubble(
     request: Request,
     user: CurrentUser,
-    message_id: int,
+    message_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     bubble_index: int,
 ) -> VoiceBubbleView:
     try:
@@ -163,12 +164,12 @@ async def list_sessions(
     user: CurrentUser,
     db: DbSession,
     limit: int = Query(default=40, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    min_messages: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
+    min_messages: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
     include_subagents: bool = False,
-    q: str | None = Query(default=None, max_length=512),
+    q: str | None = Query(default=None, max_length=512, pattern=r"^[^\x00]*$"),
 ) -> DesktopSessionListResponse:
     return await session_management.list_sessions(
         user.id,
@@ -235,7 +236,7 @@ async def fork_session(user: CurrentUser, session_id: str, body: SessionForkRequ
 async def get_session_history(
     user: CurrentUser,
     session_id: str,
-    before_id: int | None = Query(default=None, gt=0),
+    before_id: int | None = Query(default=None, gt=0, le=POSTGRES_INT4_MAX),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> SessionHistoryResponse:
     try:

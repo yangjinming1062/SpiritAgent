@@ -76,12 +76,26 @@ async def fork_conversation(user_id: int, session_id: str, source_message_id: in
             await copy_forked_media_attachments(db, str(conv.forked_from_id), str(conv_id))
         except Exception as exc:
             logger.exception("session.fork video copy failed", extra={"new_session_id": conv_id})
-            await _discard_forked_conversation(db, conv_id)
+            await _settle_fork_cleanup(db, conv_id)
             raise ForkAttachmentError("音视频附件复制失败，请稍后重试") from exc
         except asyncio.CancelledError:
-            await asyncio.shield(_discard_forked_conversation(db, conv_id))
+            await _settle_fork_cleanup(db, conv_id)
             raise
         return conversation_snapshot(conv), result.message_count
+
+
+async def _settle_fork_cleanup(db: AsyncSession, conv_id: int) -> None:
+    """废弃任务结束后才允许关闭数据库会话，期间取消延后传播。"""
+    cleanup = asyncio.create_task(_discard_forked_conversation(db, conv_id))
+    cancelled = False
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            cancelled = True
+    cleanup.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 async def history_snapshot(

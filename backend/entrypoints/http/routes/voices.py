@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from fastapi import Body, HTTPException
+from fastapi import Body, HTTPException, Path
 from features.companion.schemas import VoiceMatchResponse, VoicesListResponse
 from features.companion.voice_catalog import list_tts_voices, match_user_voice, normalize_voice_language
 from features.media.voice_contracts import VoiceConfirmResponse, VoicePreviewResponse, VoicePromptResponse
@@ -38,7 +38,7 @@ class VoiceCloneRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["clone"]
     operation_id: str = Field(min_length=1)
-    sample_id: str = Field(min_length=1)
+    sample_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     preview_text: str = Field(min_length=1)
 
 
@@ -135,7 +135,7 @@ async def post_voice_prompt(user: CurrentUser, body: VoicePromptRequest) -> Voic
 )
 async def post_voice_confirmation(
     user: CurrentUser,
-    candidate_id: str,
+    candidate_id: Annotated[str, Path(pattern=r"^[a-f0-9]{32}$")],
     body: VoiceConfirmRequest,
 ) -> VoiceConfirmResponse:
     try:

@@ -119,4 +119,4 @@ class PostReadRequest(BaseModel):
 
 class PostCommentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    content: str = Field(min_length=1, max_length=POST_COMMENT_MAX_CHARS)
+    content: str = Field(min_length=1, max_length=POST_COMMENT_MAX_CHARS, pattern=r"^[^\x00]*$")

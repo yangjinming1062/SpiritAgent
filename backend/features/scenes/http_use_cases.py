@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.appearance.schemas import ImageAdoptRequest
 from features.companion.schemas import CompanionOperationResponse
+from features.companion.visual_state import persona_snapshot
 from features.scenes.models import SceneOrigin
 from features.scenes.queries import get_scene, get_scene_state, list_scenes, response_for_scene
 from features.scenes.schemas import (
@@ -144,14 +145,14 @@ async def scene_list_route(
     offset: int = 0,
     limit: int = 30,
 ) -> SceneListResponse:
-    state = await get_scene_state(db, user_id)
+    persona = await persona_snapshot(db, user_id)
     rows, total = await list_scenes(db, user_id, query=q, offset=offset, limit=limit)
     return SceneListResponse(
         scenes=[response_for_scene(row) for row in rows],
         total=total,
         offset=offset,
         limit=limit,
-        version=state.version,
+        version=persona.scene_state_version if persona else 0,
     )
 
 

@@ -19,6 +19,7 @@ async def discover_configured_models(db: AsyncSession, request: ModelDiscoveryRe
         raise ValueError("此供应商适配器不支持所选能力")
     if request.user_id is None:
         previous = SETTINGS.ai_config.find_provider(request.provider.id)
+        provider = prepare_provider_card(request.provider, previous)
     else:
         if not await account_exists(db, request.user_id):
             raise ValueError("用户不存在")
@@ -31,8 +32,6 @@ async def discover_configured_models(db: AsyncSession, request: ModelDiscoveryRe
             provider = system_provider.model_copy(deep=True)
         else:
             provider = prepare_provider_card(request.provider, previous)
-    if request.user_id is None:
-        provider = prepare_provider_card(request.provider, previous)
     base = configured_base_url(provider.provider_type, provider.base_url, ServiceType(request.service))
     url = urlsplit(base)
     if (
@@ -44,6 +43,7 @@ async def discover_configured_models(db: AsyncSession, request: ModelDiscoveryRe
         or url.fragment
     ):
         raise ValueError("请填写有效的 HTTP(S) Base URL，不包含查询参数或地址内凭据")
+    await db.commit()
     return await discover_models(
         provider,
         ServiceType(request.service),

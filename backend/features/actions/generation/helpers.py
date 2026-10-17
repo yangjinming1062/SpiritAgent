@@ -1,9 +1,6 @@
 """动作制作：helpers。"""
 
-import asyncio
-import contextlib
 import json
-from collections.abc import Callable
 from pathlib import Path
 
 from infrastructure.assets.asset_store import (
@@ -13,6 +10,7 @@ from infrastructure.assets.asset_store import (
     save_companion_asset_async,
     sniff_media_ext,
 )
+from infrastructure.async_io import run_blocking
 from infrastructure.config import SETTINGS
 from infrastructure.video_processing.frames import action_frame_video_input
 from infrastructure.video_processing.process import HITMASK_FPS, HITMASK_GRID_H, HITMASK_GRID_W, sample_key_frames
@@ -26,23 +24,13 @@ from .errors import VideoPackError
 from .execution_state import _SOURCE_EXT_BY_MIME
 
 
-async def _process_thread[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T:
-    task = asyncio.create_task(asyncio.to_thread(fn, *args, **kwargs))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        with contextlib.suppress(Exception):
-            await task
-        raise
-
-
 def _pack_dir(pack: CompanionActionPack) -> str:
     return pack_asset_directory(pack.outfit_id, pack.id)
 
 
 async def _reference_hash(outfit: OutfitSnapshot | None, avatar: AvatarSnapshot | None) -> str:
     """参考版本指纹包含外观 ID、身份 ID 与参考图实际字节，阻断迟到结果。"""
-    reference = await _process_thread(load_avatar_bytes_as_data_uri, outfit.fullbody_url) if outfit is not None else ""
+    reference = await run_blocking(load_avatar_bytes_as_data_uri, outfit.fullbody_url) if outfit is not None else ""
     return make_action_reference_hash(
         outfit.id if outfit is not None else None,
         outfit.fullbody_url if outfit is not None else "",
@@ -53,7 +41,7 @@ async def _reference_hash(outfit: OutfitSnapshot | None, avatar: AvatarSnapshot 
 
 async def _copy_portrait_asset(path: str, *, user_id: int, label: str, directory: str) -> str | None:
     """把头像或外观图复制为本任务独有的冻结资产；源不可读时返回 None。"""
-    loaded = await _process_thread(read_portrait_bytes, path)
+    loaded = await run_blocking(read_portrait_bytes, path)
     if loaded is None:
         return None
     data = loaded[0]
@@ -92,13 +80,13 @@ def _artifact_abs_path(stored: str) -> Path:
 
 async def _clip_frame_uris(clip: VideoClipSpec) -> tuple[str, ...]:
     """交付片段的首、中、末帧 data URI，供身份评分与复核。"""
-    frames = await _process_thread(sample_key_frames, _artifact_abs_path(clip.path))
+    frames = await run_blocking(sample_key_frames, _artifact_abs_path(clip.path))
     return tuple(build_data_uri(frame, "image/webp") for frame in frames)
 
 
 async def _action_sample_uris(clip: ImageClipSpec | VideoClipSpec) -> tuple[str, ...]:
     if clip.media_type == "image":
-        return (await _process_thread(_image_data_uri, _artifact_abs_path(clip.path)),)
+        return (await run_blocking(_image_data_uri, _artifact_abs_path(clip.path)),)
     return await _clip_frame_uris(clip)
 
 

@@ -1,6 +1,5 @@
 """管理端只返回不含凭据的队列视图，核对操作使用版本锁。"""
 
-from infrastructure.ai.configuration_reader import read_user_ai_config
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
@@ -10,6 +9,7 @@ from runtime.responses import MessageResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.configuration.queries import user_ai_configs
 from features.media.chain import FrozenMediaProvider
 
 from .contracts import VideoQueueLaneView, VideoQueueList, VideoQueueRequestView, VideoQueueResolution
@@ -46,6 +46,8 @@ async def list_video_queue(db: AsyncSession) -> VideoQueueList:
             .order_by(VideoQueueRequest.enqueued_at, VideoQueueRequest.id),
         ),
     )
+    if not rows:
+        return VideoQueueList(queues=[])
     lanes = {
         row.id: row
         for row in await db.scalars(
@@ -55,8 +57,8 @@ async def list_video_queue(db: AsyncSession) -> VideoQueueList:
         )
     }
     names = {provider.id: provider.name for provider in SETTINGS.ai_config.providers}
-    for user_id in {row.user_id for row in rows if row.user_id is not None}:
-        config = await read_user_ai_config(db, user_id)
+    configs = await user_ai_configs(db, {row.user_id for row in rows if row.user_id is not None})
+    for config in configs.values():
         names.update({provider.id: provider.name for provider in config.providers})
     views: dict[int, VideoQueueLaneView] = {}
     for row in rows:

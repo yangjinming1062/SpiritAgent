@@ -23,7 +23,7 @@ from features.conversation.attachments import (
     save_video_attachment,
     video_mime_for_ext,
 )
-from features.conversation.models import Conversation
+from features.conversation.models import Conversation, parse_session_id
 from features.conversation.speech_contracts import ChatAudioUploadResponse, ChatVideoUploadResponse
 from features.media.http_contracts import MediaFile
 
@@ -59,9 +59,10 @@ async def upload_chat_audio(
     session_id: str,
 ) -> ChatAudioUploadResponse:
     raw_id = session_id.strip()
-    if not raw_id.isdigit() or len(raw_id) > 20:
+    conversation_id = parse_session_id(raw_id) if raw_id.isdecimal() and len(raw_id) <= 20 else None
+    if conversation_id is None:
         raise RequestError(status_code=422, message="Invalid session_id")
-    session_id = str(int(raw_id))
+    session_id = str(conversation_id)
     if await Conversation.by_session_id(db, session_id, user_id=user_id) is None:
         raise RequestError(status_code=404, message="Session not found")
     if file.size is None or file.size <= 0:
@@ -133,13 +134,16 @@ async def upload_chat_video(
             code="missing_video_file",
         )
     raw_session_id = session_id.strip()
-    if not raw_session_id.isdigit() or len(raw_session_id) > 20:
+    conversation_id = (
+        parse_session_id(raw_session_id) if raw_session_id.isdecimal() and len(raw_session_id) <= 20 else None
+    )
+    if conversation_id is None:
         raise RequestError(
             status_code=422,
             message="Invalid session_id",
             code="invalid_session_id",
         )
-    session_id = str(int(raw_session_id))
+    session_id = str(conversation_id)
     if await Conversation.by_session_id(db, session_id, user_id=user_id) is None:
         raise RequestError(
             status_code=404,

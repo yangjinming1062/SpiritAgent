@@ -8,11 +8,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
-    pass
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
     from features.accounts.models import User
 
 

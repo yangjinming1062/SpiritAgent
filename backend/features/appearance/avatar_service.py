@@ -440,7 +440,13 @@ async def persist_portrait_or_draft(
     try:
         file_id, _public_url = await asyncio.shield(task)
     except asyncio.CancelledError:
-        result = (await asyncio.gather(task, return_exceptions=True))[0]
+        settled = asyncio.gather(task, return_exceptions=True)
+        while not settled.done():
+            try:
+                await asyncio.shield(settled)
+            except asyncio.CancelledError:
+                continue
+        result = settled.result()[0]
         if isinstance(result, tuple):
             delete_portrait_file(f"temp-media/{result[0]}")
         raise

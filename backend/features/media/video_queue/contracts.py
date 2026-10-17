@@ -63,12 +63,12 @@ class VideoQueueResolutionBase(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     expected_revision: int = Field(ge=0)
-    note: str = Field(min_length=1, max_length=1000)
+    note: str = Field(min_length=1, max_length=1000, pattern=r"^[^\x00]*$")
 
 
 class VideoQueueAttachTask(VideoQueueResolutionBase):
     action: Literal["attach_task"]
-    task_id: str = Field(min_length=1, max_length=128)
+    task_id: str = Field(min_length=1, max_length=128, pattern=r"^[^\x00]*$")
 
 
 class VideoQueueConfirmFinished(VideoQueueResolutionBase):

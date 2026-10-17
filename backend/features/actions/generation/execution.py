@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+from infrastructure.async_io import run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from runtime.paid_work import GenerationWorkPaused
@@ -21,7 +22,7 @@ from features.appearance.avatar_service import get_avatar_job_lock
 from .catalog import _fulfill_pending_intents, _publish_dynamic_catalog, _publish_ready
 from .errors import VideoPackError, _generation_error, _GenerationRowGoneError
 from .execution_state import _ACTION_INFLIGHT, _action_pipeline_semaphore, _pack_finalize_lock, logger
-from .helpers import _clip_row_values, _pack_dir, _process_thread, _source_ext
+from .helpers import _clip_row_values, _pack_dir, _source_ext
 from .pipeline import _prepare_clip, _prepare_image, _run_action_pipeline
 from .planning import _compose_scripts, _prepare_action_video_plan
 from .queries import _load_generation_context, _must_succeed_actions
@@ -72,7 +73,7 @@ async def _build_pack(
             work = Path(tmp)
             for action, (data, content_type) in clips.items():
                 src = work / f"{action}_src{_source_ext(content_type)}"
-                await _process_thread(src.write_bytes, data)
+                await run_blocking(src.write_bytes, data)
                 start, end = action_ranges.get(action, (None, None))
                 if content_type.startswith("image/"):
                     result = await _prepare_image(

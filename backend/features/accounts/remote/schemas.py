@@ -13,7 +13,7 @@ class PairingResponse(BaseModel):
 
 class ExchangeRequest(BaseModel):
     token: str = Field(min_length=32, max_length=128)
-    device_name: str = Field(default="手机浏览器", min_length=1, max_length=80)
+    device_name: str = Field(default="手机浏览器", min_length=1, max_length=80, pattern=r"^[^\x00]*$")
 
 
 class DeviceResponse(BaseModel):

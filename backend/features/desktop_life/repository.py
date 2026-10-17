@@ -1,6 +1,7 @@
 """桌面生活资产的状态、选择与播放回执；生成流程由应用层管理。"""
 
 import json
+from collections.abc import Sequence
 from datetime import timedelta
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ from infrastructure.assets.asset_store import client_asset_url, resolve_asset_re
 from infrastructure.assets.references import asset_paths
 from infrastructure.text import ensure_utc, utc_now
 from runtime.events.emit import emit_ws_event
-from sqlalchemy import select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.accounts.models import lock_user_row
@@ -271,21 +272,61 @@ async def desktop_set_response(
     *,
     current_id: int | None,
 ) -> DesktopVideoSetResponse:
-    actions = list(
-        await db.scalars(
-            select(DesktopVideoAction)
-            .where(DesktopVideoAction.set_id == row.id, DesktopVideoAction.user_id == row.user_id)
-            .order_by(DesktopVideoAction.id),
-        ),
+    return (await desktop_set_responses(db, [row], current_id=current_id))[0]
+
+
+async def desktop_set_responses(
+    db: AsyncSession,
+    rows: Sequence[DesktopVideoSet],
+    *,
+    current_id: int | None,
+) -> list[DesktopVideoSetResponse]:
+    if not rows:
+        return []
+    owners = [(row.id, row.user_id) for row in rows]
+    actions_by_set: dict[int, list[DesktopVideoAction]] = {}
+    for action in await db.scalars(
+        select(DesktopVideoAction)
+        .where(tuple_(DesktopVideoAction.set_id, DesktopVideoAction.user_id).in_(owners))
+        .order_by(DesktopVideoAction.id),
+    ):
+        actions_by_set.setdefault(action.set_id, []).append(action)
+    recent_proposals = (
+        select(
+            DesktopVideoProposal.id,
+            func.row_number()
+            .over(partition_by=DesktopVideoProposal.set_id, order_by=DesktopVideoProposal.updated_at.desc())
+            .label("position"),
+        )
+        .where(tuple_(DesktopVideoProposal.set_id, DesktopVideoProposal.user_id).in_(owners))
+        .subquery()
     )
-    proposals = list(
-        await db.scalars(
-            select(DesktopVideoProposal)
-            .where(DesktopVideoProposal.set_id == row.id, DesktopVideoProposal.user_id == row.user_id)
-            .order_by(DesktopVideoProposal.updated_at.desc())
-            .limit(25),
-        ),
-    )
+    proposals_by_set: dict[int, list[DesktopVideoProposal]] = {}
+    for proposal in await db.scalars(
+        select(DesktopVideoProposal)
+        .join(recent_proposals, DesktopVideoProposal.id == recent_proposals.c.id)
+        .where(recent_proposals.c.position <= 25)
+        .order_by(DesktopVideoProposal.updated_at.desc()),
+    ):
+        proposals_by_set.setdefault(proposal.set_id, []).append(proposal)
+    return [
+        _desktop_set_response(
+            row,
+            actions_by_set.get(row.id, []),
+            proposals_by_set.get(row.id, []),
+            current_id=current_id,
+        )
+        for row in rows
+    ]
+
+
+def _desktop_set_response(
+    row: DesktopVideoSet,
+    actions: Sequence[DesktopVideoAction],
+    proposals: Sequence[DesktopVideoProposal],
+    *,
+    current_id: int | None,
+) -> DesktopVideoSetResponse:
     proposal_responses = []
     for proposal in proposals:
         design = DesktopVideoDesignRequest.model_validate_json(proposal.design_json)
@@ -515,6 +556,23 @@ async def fulfill_desktop_play_intents(
     return emitted
 
 
+async def _has_newer_started_play(db: AsyncSession, state: DesktopVideoState, play_id: int) -> bool:
+    return (
+        await db.scalar(
+            select(DesktopVideoPlayback.id)
+            .where(
+                DesktopVideoPlayback.user_id == state.user_id,
+                DesktopVideoPlayback.set_id == state.current_set_id,
+                DesktopVideoPlayback.set_epoch == state.set_epoch,
+                DesktopVideoPlayback.started_at.is_not(None),
+                DesktopVideoPlayback.id > play_id,
+            )
+            .limit(1),
+        )
+        is not None
+    )
+
+
 async def claim_desktop_play(
     db: AsyncSession,
     user_id: int,
@@ -562,18 +620,7 @@ async def claim_desktop_play(
     ):
         play.status = "rejected"
         return False
-    latest_started = await db.scalar(
-        select(DesktopVideoPlayback)
-        .where(
-            DesktopVideoPlayback.user_id == user_id,
-            DesktopVideoPlayback.set_id == state.current_set_id,
-            DesktopVideoPlayback.set_epoch == state.set_epoch,
-            DesktopVideoPlayback.started_at.is_not(None),
-        )
-        .order_by(DesktopVideoPlayback.id.desc())
-        .limit(1),
-    )
-    if latest_started is not None and latest_started.id > play.id:
+    if await _has_newer_started_play(db, state, play.id):
         play.status = "rejected"
         return False
     play.client_id = client_id
@@ -610,18 +657,7 @@ async def record_desktop_receipt(
         play.started_at = utc_now()
         if not current or play.presentation_revision != presentation_revision:
             return
-        latest_started = await db.scalar(
-            select(DesktopVideoPlayback)
-            .where(
-                DesktopVideoPlayback.user_id == user_id,
-                DesktopVideoPlayback.set_id == state.current_set_id,
-                DesktopVideoPlayback.set_epoch == state.set_epoch,
-                DesktopVideoPlayback.started_at.is_not(None),
-            )
-            .order_by(DesktopVideoPlayback.id.desc())
-            .limit(1),
-        )
-        if latest_started is not None and latest_started.id > play.id:
+        if await _has_newer_started_play(db, state, play.id):
             return
         action = await desktop_action(db, user_id, play.action_id)
         state.selected_play_id = play.play_id

@@ -18,6 +18,10 @@ def settings_to_config(values: dict[str, Any]) -> dict[str, Any]:
         node = config
         for part in parents:
             node = node.setdefault(part, {})
+            if not isinstance(node, dict):
+                raise ValueError("配置项不能同时作为配置分组")
+        if leaf in node and isinstance(node[leaf], dict):
+            raise ValueError("配置分组不能同时作为配置项")
         node[leaf] = value
     return config
 

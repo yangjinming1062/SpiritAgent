@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from infrastructure.ai.models import SERVICE_OUTPUT_MODALITY, SERVICE_REQUIRED_INPUT_MODALITIES, ModelModality
 from infrastructure.ai.tasks import AI_TASK_BY_ID, AiTaskKey
+from infrastructure.constants import POSTGRES_INT4_MAX
 
 CAPABILITY_SERVICES = ("llm", "stt", "tts", "image_gen", "video_gen", "embedding")
 
@@ -185,7 +186,7 @@ class ModelDiscoveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     provider: ProviderCardUpdate
-    user_id: int | None = Field(default=None, gt=0)
+    user_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
     service: Literal["llm", "stt", "tts", "image_gen", "video_gen", "embedding"]
     model_name: str | None = Field(default=None, min_length=1, max_length=128)
     catalog_id: str | None = Field(default=None, min_length=1, max_length=256)

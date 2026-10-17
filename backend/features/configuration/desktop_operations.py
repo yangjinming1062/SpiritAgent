@@ -4,9 +4,11 @@ from infrastructure.request_errors import RequestError
 from infrastructure.timezone import parse_timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.accounts.locking import lock_account
 from features.accounts.snapshots import AccountIdentity
 from features.configuration.desktop_config import flatten_config, settings_to_config
 from features.configuration.schemas import DesktopConfigPutRequest, DesktopConfigResponse
+from features.configuration.settings.models import UserSetting
 from features.configuration.settings.values import load_user_settings, put_user_settings
 
 
@@ -16,8 +18,11 @@ async def get_config(user: AccountIdentity, db: AsyncSession) -> DesktopConfigRe
 
 
 async def put_config(body: DesktopConfigPutRequest, user: AccountIdentity, db: AsyncSession) -> DesktopConfigResponse:
+    await lock_account(db, user.id)
     values = await load_user_settings(db, user.id)
     updates = flatten_config(body.config)
+    if any("\x00" in key or len(key) > UserSetting.setting_key.type.length for key in updates):
+        raise RequestError(status_code=422, message="配置项键名包含无效字符或超出长度上限")
     if "timezone" in updates:
         zone = parse_timezone(updates["timezone"]) if isinstance(updates["timezone"], str) else None
         if zone is None:
@@ -28,8 +33,10 @@ async def put_config(body: DesktopConfigPutRequest, user: AccountIdentity, db: A
         bool,
     ):
         raise RequestError(status_code=422, message="主动信息检索开关必须为布尔值")
+    try:
+        config = settings_to_config({"companion.information_discovery_enabled": False} | values | updates)
+    except ValueError as exc:
+        raise RequestError(status_code=422, message=str(exc)) from exc
     await put_user_settings(db, user.id, updates)
     await db.commit()
-    return DesktopConfigResponse(
-        config=settings_to_config({"companion.information_discovery_enabled": False} | values | updates),
-    )
+    return DesktopConfigResponse(config=config)

@@ -1,6 +1,7 @@
 from typing import Annotated, Literal
 
 from infrastructure.ai.selection import GenerationOrigin
+from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.actions.schemas import PeekGeometry
@@ -81,7 +82,7 @@ class VideoPackCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: Literal["import"]
-    outfit_id: int
+    outfit_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
     clips: list[ActionMediaUpload] = Field(min_length=1, max_length=12)
     canvas_width: int = Field(default=512, gt=0, le=1024)
     canvas_height: int = Field(default=768, gt=0, le=1024)
@@ -94,9 +95,9 @@ class VideoPackGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: Literal["generate"]
-    outfit_id: int | None = None
+    outfit_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
     force: bool = False
-    source_pack_id: int | None = None
+    source_pack_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
     action: str | None = Field(default=None, min_length=1, max_length=32)
     feedback: str = Field(default="", max_length=1000)
 
@@ -122,7 +123,7 @@ class VideoPackEnsureRequest(VideoPackEnsureSystemActionRequest):
 class VideoPackSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    pack_id: int = Field(gt=0)
+    pack_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
 
 
 class PendingActionReview(BaseModel):

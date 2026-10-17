@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Literal
 
 from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
+from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from features.media.identity_contracts import CharacterCardSnapshot
@@ -307,10 +308,10 @@ class DesktopVideoRefinePreviewResponse(BaseModel):
 
 class DesktopVideoCreateSetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    request_id: str = Field(min_length=1, max_length=80)
-    name: str = Field(min_length=1, max_length=160)
-    scene_id: int = Field(gt=0)
-    outfit_id: int = Field(gt=0)
+    request_id: str = Field(min_length=1, max_length=80, pattern=r"^[^\x00]*$")
+    name: str = Field(min_length=1, max_length=160, pattern=r"^[^\x00]*$")
+    scene_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
+    outfit_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
     source: Literal["ai", "image_upload", "video_upload"] = "ai"
     feedback: str = Field(default="", max_length=1000)
     target_width: int = Field(gt=0, le=DESKTOP_MAX_EDGE, strict=True)
@@ -326,7 +327,7 @@ class DesktopVideoCreateSetRequest(BaseModel):
 
 class DesktopVideoRenameSetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=160)
+    name: str = Field(min_length=1, max_length=160, pattern=r"^[^\x00]*$")
 
     @field_validator("name")
     @classmethod
@@ -370,7 +371,7 @@ class DesktopVideoCancelRequest(BaseModel):
 class DesktopVideoExternalPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_set_id: int | None = Field(default=None, gt=0)
+    expected_set_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
     requirements: str = Field(default="", max_length=1000)
     expected_draft_id: str | None = None
     expected_base_version: int | None = Field(default=None, ge=0)
@@ -417,8 +418,8 @@ class DesktopVideoPreferences(BaseModel):
 class DesktopVideoDesignRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=64)
-    motion_description: str = Field(min_length=10, max_length=600)
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[^\x00]*$")
+    motion_description: str = Field(min_length=10, max_length=600, pattern=r"^[^\x00]*$")
     kind: Literal["loop", "once"] = "once"
     continuity: Literal["independent", "base"] = "independent"
     allowed_triggers: list[Literal["periodic", "user_return", "chat", "manual"]] = Field(
@@ -430,7 +431,7 @@ class DesktopVideoDesignRequest(BaseModel):
     use_when: list[str] = Field(default_factory=list, max_length=8)
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
     reason: str = Field(default="", max_length=400)
-    expected_set_id: int | None = Field(default=None, gt=0)
+    expected_set_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
 
     @field_validator("name", "motion_description")
     @classmethod
@@ -456,8 +457,8 @@ class DesktopVideoDesignRequest(BaseModel):
 
 class DesktopVideoPlayRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action_id: int = Field(gt=0)
-    expected_set_id: int | None = Field(default=None, gt=0)
+    action_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
+    expected_set_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
     reason: str = Field(default="", max_length=400)
 
 
@@ -484,7 +485,7 @@ class DesktopVideoClaimRequest(BaseModel):
 
 class DesktopVideoReceipt(DesktopVideoClaimRequest):
     status: Literal["started", "completed", "interrupted", "failed", "rejected"]
-    error: str | None = Field(default=None, max_length=500)
+    error: str | None = Field(default=None, max_length=500, pattern=r"^[^\x00]*$")
 
 
 class DesktopVideoGenerateCommand(DesktopVideoGenerateRequest):
@@ -522,4 +523,4 @@ class DesktopVideoDecisionRequest(DesktopVideoDraftRequest):
 class DesktopVideoSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    set_id: int = Field(gt=0)
+    set_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)

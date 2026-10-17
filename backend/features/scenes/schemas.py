@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
+from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from features.appearance.schemas import ImageAdoptRequest
@@ -81,7 +82,7 @@ class SceneGenerateRequest(BaseModel):
 
     source: Literal["generate"]
 
-    notes: str | None = Field(default=None, max_length=500)
+    notes: str | None = Field(default=None, max_length=500, pattern=r"^[^\x00]*$")
     image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
     # 客户端声明的类型只做入口约束；场景服务按图片实际格式编码。
     content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
@@ -90,20 +91,20 @@ class SceneGenerateRequest(BaseModel):
 class ScenePromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    notes: str | None = Field(default=None, max_length=500)
+    notes: str | None = Field(default=None, max_length=500, pattern=r"^[^\x00]*$")
 
 
 class SceneActivateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scene_id: int = Field(gt=0)
+    scene_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
 
 
 class SceneDescriptionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1, max_length=80)
-    description: str = Field(min_length=1, max_length=2000)
+    title: str = Field(min_length=1, max_length=80, pattern=r"^[^\x00]*$")
+    description: str = Field(min_length=1, max_length=2000, pattern=r"^[^\x00]*$")
 
     @field_validator("title", "description")
     @classmethod
@@ -125,4 +126,4 @@ class ScenePolicyResponse(BaseModel):
 
 class SceneImportRequest(ImageAdoptRequest):
     source: Literal["import"]
-    scene_id: int | None = Field(default=None, gt=0)
+    scene_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)

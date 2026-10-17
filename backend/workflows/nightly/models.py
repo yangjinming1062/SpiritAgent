@@ -1,12 +1,8 @@
 from datetime import date, datetime
-from typing import TYPE_CHECKING
 
 from infrastructure.models import ModelBase
 from sqlalchemy import JSON, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
-
-if TYPE_CHECKING:
-    pass
 
 
 class NightlyActivityLog(ModelBase):

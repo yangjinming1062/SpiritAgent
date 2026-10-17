@@ -287,7 +287,12 @@ async def create_comment(db: AsyncSession, user_id: int, post_id: str, content: 
     return row
 
 
-async def delete_comment(db: AsyncSession, user_id: int, post_id: str, comment_id: str) -> None:
+async def _user_comment_for_update(
+    db: AsyncSession,
+    user_id: int,
+    post_id: str,
+    comment_id: str,
+) -> CompanionPostComment:
     row = await db.scalar(
         select(CompanionPostComment)
         .where(
@@ -300,6 +305,11 @@ async def delete_comment(db: AsyncSession, user_id: int, post_id: str, comment_i
     )
     if row is None:
         raise PostNotFoundError("找不到评论")
+    return row
+
+
+async def delete_comment(db: AsyncSession, user_id: int, post_id: str, comment_id: str) -> None:
+    row = await _user_comment_for_update(db, user_id, post_id, comment_id)
     await db.delete(row)
     emit_ws_event(
         db,
@@ -311,18 +321,7 @@ async def delete_comment(db: AsyncSession, user_id: int, post_id: str, comment_i
 
 
 async def retry_reply(db: AsyncSession, user_id: int, post_id: str, comment_id: str) -> CompanionPostComment:
-    row = await db.scalar(
-        select(CompanionPostComment)
-        .where(
-            CompanionPostComment.id == comment_id,
-            CompanionPostComment.post_id == post_id,
-            CompanionPostComment.user_id == user_id,
-            CompanionPostComment.role == "user",
-        )
-        .with_for_update(),
-    )
-    if row is None:
-        raise PostNotFoundError("找不到评论")
+    row = await _user_comment_for_update(db, user_id, post_id, comment_id)
     if row.reply_status != "failed":
         raise PostError("只有失败的回复可以重试")
     row.reply_status, row.reply_error = "pending", None

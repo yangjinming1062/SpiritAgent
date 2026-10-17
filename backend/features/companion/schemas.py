@@ -1,6 +1,7 @@
 from typing import Literal
 
 from infrastructure.ai.voice_types import VoiceEntry
+from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.voice_contracts import CustomVoiceSummary
@@ -26,7 +27,7 @@ class PersonaResponse(BaseModel):
 class PortraitConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_avatar_id: int = Field(gt=0)
+    expected_avatar_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
 
 
 class VoicesListResponse(BaseModel):

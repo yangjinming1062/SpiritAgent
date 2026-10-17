@@ -39,6 +39,7 @@ class AccountChatRuntime:
 
         def finished(done: asyncio.Task) -> None:
             self.background_tasks.discard(done)
+            self.admission_tasks.pop(done, None)
             release_unused_account_runtime(self.user_id)
 
         task.add_done_callback(finished)
@@ -46,12 +47,6 @@ class AccountChatRuntime:
     def track_admission(self, task: asyncio.Task, session_id: str, request_id: str) -> None:
         self.admission_tasks[task] = (session_id, request_id)
         self.track(task)
-
-        def finished(done: asyncio.Task) -> None:
-            self.admission_tasks.pop(done, None)
-            release_unused_account_runtime(self.user_id)
-
-        task.add_done_callback(finished)
 
 
 _ACCOUNTS: dict[int, AccountChatRuntime] = {}

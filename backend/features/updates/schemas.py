@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UpdateVersionItem(BaseModel):
@@ -22,7 +22,7 @@ class UpdateVersionItem(BaseModel):
 
 
 class UpdateVersionUpdate(BaseModel):
-    release_notes: str | None = None
+    release_notes: str | None = Field(default=None, pattern=r"^[^\x00]*$")
     is_active: bool | None = None
 
 

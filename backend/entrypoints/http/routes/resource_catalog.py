@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import HTTPException, Query
+from fastapi import HTTPException, Path, Query
 from features.conversation.request_contracts import PromptPresetListResponse, PromptPresetSummary
 from features.conversation.slash_commands import list_commands_for_user
 from features.memory.admin_contracts import (
@@ -16,6 +16,7 @@ from features.memory.use_cases import (
     forget_manual_memory,
     list_memory_view,
 )
+from infrastructure.constants import POSTGRES_INT4_MAX, POSTGRES_INT8_MAX
 from infrastructure.http_contracts import operation_policy
 from pydantic import BaseModel
 from runtime.memory_scope import MemoryScope, validate_memory_scope
@@ -69,9 +70,9 @@ async def get_memories(
     kind: str | None = None,
     status: Literal["active", "candidate", "invalidated", "expired"] = "active",
     tag: str | None = None,
-    q: str | None = None,
+    q: str | None = Query(default=None, pattern=r"^[^\x00]*$"),
     limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
 ) -> MemoryListResponse:
     scope = _scope(user.id, system_preset_id)
     try:
@@ -99,7 +100,11 @@ async def patch_memory_profile(user: CurrentUser, body: MemoryProfileRequest) ->
     response_model=MemoryListItem,
     openapi_extra=operation_policy(wait_for_model=True),
 )
-async def patch_memory(user: CurrentUser, memory_id: int, body: MemoryUpdateRequest) -> MemoryListItem:
+async def patch_memory(
+    user: CurrentUser,
+    memory_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    body: MemoryUpdateRequest,
+) -> MemoryListItem:
     scope = _scope(user.id, body.system_preset_id)
     try:
         row = await update_memory(scope, memory_id, content=body.content, expected_version=body.expected_version)
@@ -116,7 +121,11 @@ async def patch_memory(user: CurrentUser, memory_id: int, body: MemoryUpdateRequ
     "/memories/{memory_id}",
     response_model=MemoryDeleteResponse,
 )
-async def delete_memory(user: CurrentUser, memory_id: int, system_preset_id: str) -> MemoryDeleteResponse:
+async def delete_memory(
+    user: CurrentUser,
+    memory_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    system_preset_id: str,
+) -> MemoryDeleteResponse:
     scope = _scope(user.id, system_preset_id)
     if not await forget_manual_memory(scope, memory_id):
         raise HTTPException(status_code=404, detail="Memory not found")

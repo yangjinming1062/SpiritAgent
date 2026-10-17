@@ -25,6 +25,7 @@ from infrastructure.assets.asset_store import (
     validate_image_bytes,
 )
 from infrastructure.assets.media_download import download_media_result
+from infrastructure.async_io import run_blocking
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
 from infrastructure.media_geometry import (
@@ -48,7 +49,11 @@ from runtime.user_maintenance import track_user_task
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.appearance.character_card import render_character_identity, require_character_snapshot
+from features.appearance.character_card import (
+    CharacterCardNotReadyError,
+    render_character_identity,
+    require_character_snapshot,
+)
 from features.appearance.onboarding import initial_outfit
 from features.appearance.queries import avatar_snapshot, ready_outfit_snapshot
 from features.assets.lifecycle import cleanup_asset_directories_after_task
@@ -248,7 +253,10 @@ async def load_desktop_visual_snapshot(
     outfit_id: int | None = None,
     initial: bool = False,
 ) -> DesktopVisualSnapshot:
-    identity = await require_character_snapshot(db, user_id)
+    try:
+        identity = await require_character_snapshot(db, user_id)
+    except CharacterCardNotReadyError as exc:
+        raise DesktopVideoStateError(str(exc)) from exc
     avatar = await avatar_snapshot(db, user_id, identity.avatar_id)
     persona = await persona_snapshot(db, user_id)
     if avatar is None or not avatar.seed_fullbody_url or not avatar.asset_url:
@@ -849,28 +857,23 @@ async def _process_candidate(
     )
     temporary = source.with_name(f"desktop-normalized-{progress.generation_id}.mp4")
     if fit_external:
-        operation = asyncio.to_thread(
+        operation = run_blocking(
             prepare_fitted_external_desktop_video,
             source,
             temporary,
             aspect_ratio=_delivery_aspect(progress),
         )
     elif external:
-        operation = asyncio.to_thread(prepare_external_desktop_video, source)
+        operation = run_blocking(prepare_external_desktop_video, source)
     else:
-        operation = asyncio.to_thread(
+        operation = run_blocking(
             prepare_desktop_video,
             source,
             temporary,
             aspect_ratio=_delivery_aspect(progress),
         )
-    processing = asyncio.create_task(operation)
     try:
-        try:
-            result = await asyncio.shield(processing)
-        except asyncio.CancelledError:
-            await asyncio.gather(processing, return_exceptions=True)
-            raise
+        result = await operation
         video = (
             progress.source_path
             if external and not fit_external

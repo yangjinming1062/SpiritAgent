@@ -5,6 +5,7 @@ from infrastructure.request_errors import RequestError
 from infrastructure.text import apply_partial, utc_now
 from runtime.channels import terminate_remote_sessions, terminate_user_gateway
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
@@ -31,19 +32,21 @@ async def list_users(db: AsyncSession) -> UserListResponse:
 
 
 async def create_user(payload: UserCreate, db: AsyncSession) -> UserResponse:
-    if (await db.execute(select(User).where(User.username == payload.username))).scalar_one_or_none():
-        raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message="用户名已存在。")
     raw_token = generate_activation_token()
-    code = encode_activation_code(payload.base_url, raw_token)
-    user = User(
-        username=payload.username,
-        activation_code=code,
-        activation_token_hash=hash_activation_token(raw_token),
-        nightly_activity_enabled=payload.nightly_activity_enabled,
+    user = await db.scalar(
+        insert(User)
+        .values(
+            username=payload.username,
+            activation_code=encode_activation_code(payload.base_url, raw_token),
+            activation_token_hash=hash_activation_token(raw_token),
+            nightly_activity_enabled=payload.nightly_activity_enabled,
+        )
+        .on_conflict_do_nothing(index_elements=[User.username])
+        .returning(User),
     )
-    db.add(user)
+    if user is None:
+        raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message="用户名已存在。")
     await db.commit()
-    await db.refresh(user)
     return UserResponse.model_validate(user)
 
 

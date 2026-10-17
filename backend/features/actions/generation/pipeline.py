@@ -19,6 +19,7 @@ from infrastructure.assets.asset_store import (
     unlink_companion_asset,
 )
 from infrastructure.assets.media_download import download_media_result
+from infrastructure.async_io import run_blocking
 from infrastructure.video_processing.frames import prepare_action_frame
 from infrastructure.video_processing.image import prepare_action_image
 from infrastructure.video_processing.matting import matte_video
@@ -78,7 +79,6 @@ from .helpers import (
     _hitmask_content_rect,
     _image_data_uri,
     _pack_dir,
-    _process_thread,
 )
 from .planning import _prepare_action_video_plan
 from .references import _require_new_paid_step, require_action_matting_model
@@ -100,7 +100,7 @@ async def _prepare_clip(
 ) -> ActionResult:
     """处理单动作片段并转存片段、封面与命中遮罩；封面/遮罩从最终交付片段读取（libvpx 解码 VP9 alpha），遮罩落盘供 hitmask_ref 按帧查询。"""
     dst = work / f"{action}.{TARGET_EXT}"
-    processed = await _process_thread(
+    processed = await run_blocking(
         prepare_action_clip,
         src,
         dst,
@@ -111,14 +111,14 @@ async def _prepare_clip(
         preserve_resolution=preserve_resolution,
     )
     canvas_w, canvas_h = processed.width, processed.height
-    hitmask = await _process_thread(build_hitmask, dst, canvas_w=canvas_w, canvas_h=canvas_h)
-    cover = await _process_thread(extract_cover, dst, canvas_w=canvas_w, canvas_h=canvas_h)
+    hitmask = await run_blocking(build_hitmask, dst, canvas_w=canvas_w, canvas_h=canvas_h)
+    cover = await run_blocking(extract_cover, dst, canvas_w=canvas_w, canvas_h=canvas_h)
     stored, cover_stored, hitmask_stored = await _save_action_materials(
         user_id,
         directory,
         label_prefix=f"video_{action}",
         media_ext="webm",
-        media=await _process_thread(dst.read_bytes),
+        media=await run_blocking(dst.read_bytes),
         cover=cover,
         hitmask=hitmask,
     )
@@ -149,13 +149,13 @@ async def _prepare_image(
     directory: str,
 ) -> ActionResult:
     dst = work / f"{action}.png"
-    processed = await _process_thread(prepare_action_image, src, dst, canvas_w=canvas_w, canvas_h=canvas_h)
+    processed = await run_blocking(prepare_action_image, src, dst, canvas_w=canvas_w, canvas_h=canvas_h)
     stored, cover_stored, hitmask_stored = await _save_action_materials(
         user_id,
         directory,
         label_prefix=f"action_image_{action}",
         media_ext="png",
-        media=await _process_thread(dst.read_bytes),
+        media=await run_blocking(dst.read_bytes),
         cover=processed.cover,
         hitmask=processed.hitmask,
     )
@@ -184,7 +184,7 @@ async def _review_pack_identity(
 ) -> tuple[str, str]:
     """必需动作的静态图或视频采样帧与头像、当前着装合成的冻结参考复核；不可用时转人工预览。"""
     try:
-        reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+        reference_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
         frame_uris: list[str] = []
         for slot in REQUIRED_SYSTEM_SLOTS:
             if slot in results:
@@ -214,8 +214,8 @@ async def _prepare_action_pose(
     if job.pose_path and _artifact_abs_path(job.pose_path).is_file():
         return
     require_action_matting_model()
-    reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
-    identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    reference_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
     pose_state = (
         ImageChainState.model_validate_json(job.pose_generation_state_json)
         if job.pose_generation_state_json
@@ -254,8 +254,8 @@ async def _prepare_action_pose(
         directory=_pack_dir(pack),
     )
     await _advance_job(job.id, stage="pose", pose_path=job.pose_path)
-    pose_data = await _process_thread(_artifact_abs_path(paths[0]).read_bytes)
-    prepared = await _process_thread(prepare_action_frame, pose_data, preserve_resolution=entry.media_type == "image")
+    pose_data = await run_blocking(_artifact_abs_path(paths[0]).read_bytes)
+    prepared = await run_blocking(prepare_action_frame, pose_data, preserve_resolution=entry.media_type == "image")
     await save_action_pose_asset_async(
         prepared,
         user_id=pack.user_id,
@@ -304,8 +304,8 @@ async def _run_image_pipeline(
             setattr(job, key, value)
         job.stage = "process"
     if job.system_slot in ("peek_left", "peek_right"):
-        identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
-        sample_uri = await _process_thread(_image_data_uri, _artifact_abs_path(result.clip.path))
+        identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
+        sample_uri = await run_blocking(_image_data_uri, _artifact_abs_path(result.clip.path))
         geometry = await inspect_peek_geometry(
             pack.user_id,
             job.system_slot,
@@ -318,7 +318,7 @@ async def _run_image_pipeline(
     review_id = None
     replacing_current = accepted_action_asset(job) is not None
     if pack.status == "ready" or replacing_current:
-        identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+        identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
         verdict, reason = await review_character_frames(
             pack.user_id,
             identity_uri,
@@ -382,7 +382,7 @@ async def _run_action_pipeline(
         raise VideoPackStateError("视频规格与素材类型不符")
     await _prepare_action_video_plan(job)
     state = MediaChainState.model_validate_json(job.generation_state_json or "")
-    identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    identity_uri = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
     if (
         state.phase == "ready"
         and state.active_index is None
@@ -632,7 +632,7 @@ async def _run_action_attempt(
                     raise VideoPackStateError("动作制作资料缺少分辨率，请重新生成该动作")
                 if not job.pose_path or not _artifact_abs_path(job.pose_path).is_file():
                     raise VideoPackError("动作起始姿态图不可读，请恢复原素材")
-                pose_uri = await _process_thread(_action_video_frame_uri, _artifact_abs_path(job.pose_path))
+                pose_uri = await run_blocking(_action_video_frame_uri, _artifact_abs_path(job.pose_path))
 
                 await _require_new_paid_step(pack, context)
                 state.queue_request_id = await enqueue_video_attempt(
@@ -722,8 +722,8 @@ async def _run_action_attempt(
     with tempfile.TemporaryDirectory(prefix="video-action-") as tmp:
         work = Path(tmp)
         matte = work / "matte.mkv"
-        await _process_thread(matte_video, _artifact_abs_path(source_path), matte)
-        await _process_thread(validate_action_clip, matte)
+        await run_blocking(matte_video, _artifact_abs_path(source_path), matte)
+        await run_blocking(validate_action_clip, matte)
         canvas = json.loads(pack.canvas_spec)
         result = await _prepare_clip(
             work,

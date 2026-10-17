@@ -17,6 +17,7 @@ from features.posts.schemas import (
     PostResponse,
     PostUnreadResponse,
 )
+from infrastructure.constants import POSTGRES_INT8_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 
@@ -60,7 +61,7 @@ async def get_publication_recoveries(
     user: CurrentUser,
     state: Literal["recoverable"] = Query(...),
     limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=POSTGRES_INT8_MAX),
 ) -> PostPublicationRecoveryList:
     return await _posts.get_publication_recoveries(user_id=user.id, limit=limit, offset=offset)
 

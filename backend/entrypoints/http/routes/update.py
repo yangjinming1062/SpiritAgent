@@ -1,8 +1,11 @@
+from typing import Annotated
+
 import features.updates.operations as updates
-from fastapi import File, Form, UploadFile
+from fastapi import File, Form, Path, UploadFile
 from fastapi.responses import FileResponse
 from features.updates.release_contracts import ReleaseManifestResponse
 from features.updates.schemas import UpdateVersionItem, UpdateVersionListResponse, UpdateVersionUpdate
+from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 from runtime.responses import MessageResponse
@@ -57,7 +60,7 @@ async def create_version(
     admin: CurrentAdmin,
     db: DbSession,
     file: UploadFile = File(...),
-    release_notes: str = Form(""),
+    release_notes: Annotated[str, Form(pattern=r"^[^\x00]*$")] = "",
 ) -> UpdateVersionItem:
     # Build-UpdateZip 产出的更新包，必须含 Windows 安装程序（*.exe）。
     return await updates.create_version(admin=admin, db=db, file=file, release_notes=release_notes)
@@ -69,7 +72,7 @@ async def create_version(
     openapi_extra=operation_policy(identities=("admin",)),
 )
 async def update_version(
-    id: int,
+    id: Annotated[int, Path(ge=1, le=POSTGRES_INT4_MAX)],
     payload: UpdateVersionUpdate,
     _admin: CurrentAdmin,
     db: DbSession,
@@ -82,7 +85,11 @@ async def update_version(
     response_model=MessageResponse,
     openapi_extra=operation_policy(identities=("admin",)),
 )
-async def delete_version(id: int, _admin: CurrentAdmin, db: DbSession) -> MessageResponse:
+async def delete_version(
+    id: Annotated[int, Path(ge=1, le=POSTGRES_INT4_MAX)],
+    _admin: CurrentAdmin,
+    db: DbSession,
+) -> MessageResponse:
     return await updates.delete_version(id=id, _admin=_admin, db=db)
 
 

@@ -760,28 +760,45 @@ async def prepare_video_queue() -> None:
     except BaseException:
         await connection.close()
         raise
+    try:
+        async with SESSION_LOCAL() as db:
+            await db.execute(
+                update(VideoQueueRequest)
+                .where(VideoQueueRequest.state == "claimed")
+                .values(
+                    state="queued",
+                    revision=VideoQueueRequest.revision + 1,
+                ),
+            )
+            await db.execute(
+                update(VideoQueueRequest)
+                .where(VideoQueueRequest.state == "submitting")
+                .values(
+                    state="blocked",
+                    error_reason="result_unknown",
+                    error_message="视频提交中断，等待核对原任务",
+                    revision=VideoQueueRequest.revision + 1,
+                ),
+            )
+            await db.commit()
+        await cleanup_video_queue()
+    except BaseException:
+        await _close_leader(connection)
+        raise
     _LEADER = connection
-    async with SESSION_LOCAL() as db:
-        await db.execute(
-            update(VideoQueueRequest)
-            .where(VideoQueueRequest.state == "claimed")
-            .values(
-                state="queued",
-                revision=VideoQueueRequest.revision + 1,
-            ),
-        )
-        await db.execute(
-            update(VideoQueueRequest)
-            .where(VideoQueueRequest.state == "submitting")
-            .values(
-                state="blocked",
-                error_reason="result_unknown",
-                error_message="视频提交中断，等待核对原任务",
-                revision=VideoQueueRequest.revision + 1,
-            ),
-        )
-        await db.commit()
-    await cleanup_video_queue()
+
+
+async def _close_leader(connection: AsyncConnection) -> None:
+    try:
+        # AUTOCOMMIT 仍有 SQLAlchemy 事务状态；取消探活后先清除失效事务，失联会话的锁随连接关闭释放。
+        await connection.rollback()
+        if not connection.invalidated:
+            await connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _LEADER_KEY})
+    except BaseException:
+        await connection.invalidate()
+        raise
+    finally:
+        await connection.close()
 
 
 async def start_video_queue() -> None:
@@ -796,15 +813,14 @@ async def stop_video_queue() -> None:
 
 async def drain_video_queue() -> None:
     global _LEADER
-    await _WORK.drain()
-    _LANES.clear()
-    _CONFIGS.clear()
-    if _LEADER is not None:
-        try:
-            await _LEADER.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _LEADER_KEY})
-        finally:
-            await _LEADER.close()
-            _LEADER = None
+    try:
+        await _WORK.drain()
+    finally:
+        _LANES.clear()
+        _CONFIGS.clear()
+        connection, _LEADER = _LEADER, None
+        if connection is not None:
+            await _close_leader(connection)
 
 
 async def resume_user_video_queue(user_id: int) -> None:

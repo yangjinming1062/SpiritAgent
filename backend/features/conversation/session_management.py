@@ -12,13 +12,13 @@ from runtime.conversation import decode_session_settings
 from runtime.events.emit import emit_ws_event
 from runtime.presets import SYSTEM_PRESET_CATALOG, resolve_preset_meta
 from runtime.turn_ownership import conversation_is_running, conversation_lock
-from sqlalchemy import String, asc, case, cast, desc, func, or_, select
+from sqlalchemy import BigInteger, String, asc, case, cast, desc, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.conversation.asset_releases import collect_message_asset_releases
 from features.conversation.formatting import message_contains_text, visible_bubble_count
 from features.conversation.main_conversation import SPECIAL_KIND
-from features.conversation.models import Conversation, Message
+from features.conversation.models import Conversation, Message, parse_session_id
 from features.conversation.reply_audio import cancel_reply_audio
 from features.conversation.schemas import (
     DesktopSessionInfo,
@@ -144,7 +144,7 @@ async def list_sessions(
             ),
         )
     if min_messages > 0:
-        q = q.where(func.coalesce(msg_stats.c.msg_count, 0) >= min_messages)
+        q = q.where(func.coalesce(msg_stats.c.msg_count, 0) >= literal(min_messages, BigInteger()))
 
     total_q = (await db.execute(select(func.count()).select_from(q.subquery()))).scalar_one()
 
@@ -204,10 +204,13 @@ async def patch_session(
     session_id: str,
     body: DesktopSessionPatchRequest,
 ) -> ConversationSnapshot:
+    conversation_id = parse_session_id(session_id) if session_id.isdecimal() else None
+    if conversation_id is None:
+        raise RequestError(status_code=404, message="Session not found")
     conv = await db.scalar(
         select(Conversation)
         .where(
-            Conversation.id == int(session_id) if session_id.isdecimal() else False,
+            Conversation.id == conversation_id,
             Conversation.user_id == user_id,
         )
         .with_for_update(),

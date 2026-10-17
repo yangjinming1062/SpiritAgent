@@ -3,7 +3,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import Body, File, Form, UploadFile
+from fastapi import Body, File, Form, Path, UploadFile
 from features.companion.schemas import CompanionOperationResponse
 from features.desktop_life import use_cases as _desktop
 from features.desktop_life.schemas import (
@@ -35,6 +35,7 @@ from features.desktop_life.schemas import (
     DesktopVideoSetResponse,
     DesktopVideoStateResponse,
 )
+from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import DbSession
 from infrastructure.http_contracts import operation_policy
 
@@ -58,7 +59,11 @@ async def read_sets(user: CurrentUser, db: DbSession) -> DesktopVideoListRespons
     "/actions/{action_id}",
     response_model=DesktopVideoActionResponse,
 )
-async def read_action(action_id: int, user: CurrentUser, db: DbSession) -> DesktopVideoActionResponse:
+async def read_action(
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser,
+    db: DbSession,
+) -> DesktopVideoActionResponse:
     return await _desktop.read_action(action_id=action_id, user_id=user.id, db=db)
 
 
@@ -79,7 +84,7 @@ async def prepare_current(
     response_model=DesktopVideoRefinePreviewResponse,
 )
 async def preview_video_refinement(
-    action_id: int,
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     body: DesktopVideoRefineRequest,
 ) -> DesktopVideoRefinePreviewResponse:
@@ -92,7 +97,7 @@ async def preview_video_refinement(
     openapi_extra=operation_policy(wait_for_model=True),
 )
 async def external_prompt(
-    action_id: int,
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     db: DbSession,
     body: DesktopVideoExternalPromptRequest | None = None,
@@ -107,11 +112,11 @@ async def external_prompt(
     openapi_extra=operation_policy(upload="video"),
 )
 async def upload_action(
-    action_id: int,
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     file: UploadFile = File(...),
     expected_action_version: int = Form(..., ge=0),
-    expected_set_id: int | None = Form(None),
+    expected_set_id: int | None = Form(None, gt=0, le=POSTGRES_INT4_MAX),
     expected_draft_id: str | None = Form(None),
     expected_base_version: int | None = Form(None),
     expected_resolution_revision: int | None = Form(None),
@@ -194,7 +199,7 @@ async def create_set(user: CurrentUser, body: DesktopVideoCreateSetRequest) -> D
     response_model=DesktopVideoSetResponse,
 )
 async def rename_set(
-    set_id: int,
+    set_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     db: DbSession,
     body: DesktopVideoRenameSetRequest,
@@ -206,7 +211,11 @@ async def rename_set(
     "/sets/{set_id}",
     response_model=DesktopVideoStateResponse,
 )
-async def delete_set(set_id: int, user: CurrentUser, db: DbSession) -> DesktopVideoStateResponse:
+async def delete_set(
+    set_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser,
+    db: DbSession,
+) -> DesktopVideoStateResponse:
     return await _desktop.delete_set(set_id=set_id, user_id=user.id, db=db)
 
 
@@ -216,11 +225,11 @@ async def delete_set(set_id: int, user: CurrentUser, db: DbSession) -> DesktopVi
     openapi_extra=operation_policy(upload="image_file"),
 )
 async def upload_image(
-    action_id: int,
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     file: UploadFile = File(...),
     expected_action_version: int = Form(..., ge=0),
-    expected_set_id: int | None = Form(None),
+    expected_set_id: int | None = Form(None, gt=0, le=POSTGRES_INT4_MAX),
     expected_draft_id: str | None = Form(None),
     expected_base_version: int | None = Form(None),
     expected_resolution_revision: int | None = Form(None),
@@ -245,7 +254,7 @@ async def upload_image(
     status_code=202,
 )
 async def command_draft(
-    action_id: int,
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     body: Annotated[
         DesktopVideoGenerateCommand
@@ -298,7 +307,7 @@ async def command_draft(
     response_model=DesktopVideoActionResponse,
 )
 async def decide_draft(
-    action_id: int,
+    action_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     body: DesktopVideoDecisionRequest,
 ) -> DesktopVideoActionResponse:

@@ -19,6 +19,7 @@ from features.media.backup import restore_current_voices
 from features.media.contracts import RemovedActionVideoTask
 from features.media.voice_queries import custom_voice_tokens
 from features.topics.backup import validate_batch_merges
+from infrastructure.async_io import run_blocking
 from infrastructure.backup import BACKUP_REGISTRY, BackupContext, BackupImportMode
 from infrastructure.config import SETTINGS
 from infrastructure.logger import get_logger
@@ -294,7 +295,7 @@ async def _preflight_tables(
             conversation_merge_conflict = str(exc)
     id_map: dict[str, dict[str, int | str]] = {}
     rewriter = UrlRewriter(
-        await asyncio.to_thread(planned_asset_mapping, extract_root, source_user_id, target_user_id),
+        await run_blocking(planned_asset_mapping, extract_root, source_user_id, target_user_id),
         source_user_id=source_user_id,
         target_user_id=target_user_id,
         extract_root=extract_root,
@@ -332,12 +333,12 @@ async def _preflight_tables(
             available_rows = {name: rows[name] for name in successful | set(group) if name in rows}
             staged_map = dict(id_map)
             try:
-                await asyncio.to_thread(_validate_voice_dependencies, table, rows, successful, rewriter)
+                await run_blocking(_validate_voice_dependencies, table, rows, successful, rewriter)
                 if table == "conversations" and conversation_merge_conflict is not None:
                     raise ValueError(conversation_merge_conflict)
                 async with db.begin_nested():
                     for member in group:
-                        await asyncio.to_thread(validate_row_files, member, rows[member], rewriter)
+                        await run_blocking(validate_row_files, member, rows[member], rewriter)
                         staged_map[member], _ = await _restore_table(
                             db,
                             member,
@@ -352,7 +353,7 @@ async def _preflight_tables(
                             asset_owner_id=target_user_id,
                         )
                     if table == "companion_action_packs":
-                        await asyncio.to_thread(
+                        await run_blocking(
                             validate_action_files,
                             available_rows,
                             extract_root,
@@ -368,7 +369,7 @@ async def _preflight_tables(
                             write_files=False,
                         )
                     if table == "desktop_video_sets":
-                        await asyncio.to_thread(
+                        await run_blocking(
                             validate_desktop_files,
                             available_rows,
                             extract_root,
@@ -758,7 +759,7 @@ async def restore_backup_rows(
             target_user_id,
             rewriter,
             conversations=id_map.get("conversations", {}),
-            referenced_files=await asyncio.to_thread(referenced_backup_files, extract_root, compatible_rows),
+            referenced_files=await run_blocking(referenced_backup_files, extract_root, compatible_rows),
             include_conversation_files=conversation_files_in_scope,
         )
         if skipped_conversation_files:
@@ -770,7 +771,7 @@ async def restore_backup_rows(
                     reason="对应会话未能恢复，附件缺少可用的目标会话。",
                 ),
             )
-        await asyncio.to_thread(rewriter.scan, compatible_rows)
+        await run_blocking(rewriter.scan, compatible_rows)
         for table, original_id in rewriter.inserted_rows:
             mapping = layout.rows.get((table, original_id), layout.mapping)
             aliases = {

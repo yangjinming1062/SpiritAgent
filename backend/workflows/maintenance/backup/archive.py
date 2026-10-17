@@ -7,6 +7,7 @@ import hashlib
 import json
 import shutil
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -67,25 +68,21 @@ def write_backup_archive(
 def extract_backup_archive(zip_path: Path, extract_root: Path) -> None:
     """校验总大小、重复条目与路径越界后解压；清单、库存与校验和由 `load_manifest` 校验。"""
     try:
-        zf = zipfile.ZipFile(zip_path, "r")
-    except zipfile.BadZipFile:
-        raise BackupArchiveError("无效 zip 文件。") from None
-
-    try:
-        if sum(entry.file_size for entry in zf.infolist()) > _MAX_EXTRACTED_BYTES:
-            raise BackupArchiveTooLargeError(f"备份解压后超过 {_MAX_EXTRACTED_BYTES // 1024**3} GB。")
-        if len(set(zf.namelist())) != len(zf.namelist()):
-            raise BackupArchiveError("备份包含重复文件。")
-        extract_resolved = extract_root.resolve()
-        for name in zf.namelist():
-            target_path = (extract_root / name).resolve()
-            if not target_path.is_relative_to(extract_resolved):
-                raise BackupArchiveError(f"非法归档条目：{name}")
-            if name.endswith("/"):
-                target_path.mkdir(parents=True, exist_ok=True)
-                continue
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(name) as src, open(target_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-    finally:
-        zf.close()
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            if sum(entry.file_size for entry in zf.infolist()) > _MAX_EXTRACTED_BYTES:
+                raise BackupArchiveTooLargeError(f"备份解压后超过 {_MAX_EXTRACTED_BYTES // 1024**3} GB。")
+            if len(set(zf.namelist())) != len(zf.namelist()):
+                raise BackupArchiveError("备份包含重复文件。")
+            extract_resolved = extract_root.resolve()
+            for name in zf.namelist():
+                target_path = (extract_root / name).resolve()
+                if not target_path.is_relative_to(extract_resolved):
+                    raise BackupArchiveError(f"非法归档条目：{name}")
+                if name.endswith("/"):
+                    target_path.mkdir(parents=True, exist_ok=True)
+                    continue
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(name) as src, open(target_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+    except (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError) as exc:
+        raise BackupArchiveError("无效 zip 文件。") from exc

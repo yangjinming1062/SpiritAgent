@@ -18,14 +18,14 @@ class ActivateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     code: str = Field(min_length=1, max_length=2048)
-    client_version: str = Field(default="desktop-app", max_length=64)
+    client_version: str = Field(default="desktop-app", max_length=64, pattern=r"^[^\x00]*$")
     client_context: ChatRequestClientContext | None = None
 
 
 class RefreshRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    client_version: str = Field(default="desktop-app", max_length=64)
+    client_version: str = Field(default="desktop-app", max_length=64, pattern=r"^[^\x00]*$")
     client_context: ChatRequestClientContext | None = None
 
 
@@ -65,7 +65,7 @@ class AdminTokenResponse(BaseModel):
 
 
 class UserCreate(BaseModel):
-    username: str = Field(min_length=1, max_length=64)
+    username: str = Field(min_length=1, max_length=64, pattern=r"^[^\x00]*$")
     base_url: str = Field(min_length=1, max_length=255)
     nightly_activity_enabled: bool = True
 

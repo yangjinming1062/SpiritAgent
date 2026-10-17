@@ -21,6 +21,7 @@ from infrastructure.assets.write_protection import (
     protect_asset_write,
     user_asset_lock,
 )
+from infrastructure.async_io import run_blocking
 from infrastructure.config import SETTINGS
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.logger import get_logger
@@ -263,22 +264,18 @@ async def save_companion_asset_async(data: bytes, *, user_id: int, label: str, e
     """在线程写盘；取消时等写盘退出并删除未交接的资产。"""
     async with user_asset_lock(user_id):
         with asset_write_context():
-            task = asyncio.create_task(
-                asyncio.to_thread(
-                    save_companion_asset,
-                    data,
-                    user_id=user_id,
-                    label=label,
-                    ext=ext,
-                    directory=directory,
-                ),
-            )
+            result: str | None = None
+
+            def write() -> str:
+                nonlocal result
+                result = save_companion_asset(data, user_id=user_id, label=label, ext=ext, directory=directory)
+                return result
+
             try:
-                return await asyncio.shield(task)
+                return await run_blocking(write)
             except asyncio.CancelledError:
-                result = (await asyncio.gather(task, return_exceptions=True))[0]
-                if isinstance(result, str):
-                    await asyncio.to_thread(unlink_companion_asset, result)
+                if result is not None:
+                    await run_blocking(unlink_companion_asset, result)
                 raise
 
 
@@ -311,13 +308,7 @@ async def _save_generation_asset_async(data: bytes, user_id: int, bare_path: str
     """固定路径由任务先行登记；取消时等原子写盘完成，已落盘结果保留给恢复路径，不当作失败清理。"""
     async with user_asset_lock(user_id):
         with asset_write_context():
-            task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, bare_path))
-            try:
-                return await asyncio.shield(task)
-            except asyncio.CancelledError:
-                # 写盘自身的失败不能顶替取消向上传播
-                await asyncio.gather(task, return_exceptions=True)
-                raise
+            return await run_blocking(_save_generation_asset, data, user_id, bare_path)
 
 
 async def save_video_job_asset_async(

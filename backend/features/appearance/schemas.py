@@ -1,5 +1,6 @@
 from typing import Literal
 
+from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SucceededStatus = Literal["succeeded"]
@@ -32,7 +33,7 @@ class FullbodyReferenceGenerateRequest(BaseModel):
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
     mode: ImageReviseMode
-    candidate_id: int | None = Field(default=None, gt=0)
+    candidate_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
 
 
 class FullbodyConfirmRequest(BaseModel):
@@ -122,7 +123,7 @@ class OutfitRegenerateRequest(BaseModel):
 class OutfitPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    outfit_id: int | None = Field(default=None, gt=0)
+    outfit_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
     feedback: str | None = Field(default=None, max_length=500)
 
     description: str | None = Field(default=None, max_length=500)

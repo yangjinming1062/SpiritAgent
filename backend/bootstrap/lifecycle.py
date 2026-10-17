@@ -48,7 +48,10 @@ async def _best_effort_shutdown(step: str, operation: Awaitable[object]) -> None
 
 def _run_migrations() -> None:
     """升级到最新 Alembic 版本。"""
-    cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    config_path = Path(__file__).parents[1] / "alembic.ini"
+    cfg = Config()
+    cfg.file_config["DEFAULT"]["here"] = config_path.parent.as_posix()
+    cfg.file_config.read(config_path, encoding="utf-8")
     # 跳过 fileConfig，否则 alembic.ini 的 WARNING root 会接管全局日志、禁用已建 logger。
     cfg.attributes["configure_logger"] = False
     cfg.set_main_option("sqlalchemy.url", database_url("postgresql+psycopg").replace("%", "%%"))

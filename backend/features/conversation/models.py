@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
-from infrastructure.constants import DEFAULT_SESSION_TITLE
+from infrastructure.constants import DEFAULT_SESSION_TITLE, POSTGRES_INT4_MAX
 from infrastructure.models import ModelBase, TimestampMixin
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +9,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from features.accounts.models import User
+
+
+def parse_session_id(session_id: str) -> int | None:
+    try:
+        value = int(session_id)
+    except (ValueError, TypeError):
+        return None
+    return value if 0 < value <= POSTGRES_INT4_MAX else None
 
 
 class Conversation(ModelBase, TimestampMixin):
@@ -75,9 +83,8 @@ class Conversation(ModelBase, TimestampMixin):
         user_id: int,
     ) -> "Conversation | None":
         """session_id 为 Conversation.id 的 str 形式；非法、缺失或不属于该 user_id 时返 None。"""
-        try:
-            conv_id = int(session_id)
-        except (ValueError, TypeError):
+        conv_id = parse_session_id(session_id)
+        if conv_id is None:
             return None
         stmt = select(cls).where(cls.id == conv_id, cls.user_id == user_id)
         return (await db.execute(stmt)).scalar_one_or_none()

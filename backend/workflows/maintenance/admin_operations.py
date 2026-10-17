@@ -16,6 +16,7 @@ from features.conversation.identifiers import conversation_ids
 from features.media.chain import spawn_removed_action_task_cancellation
 from features.media.video_queue.service import anonymize_user_video_queue
 from infrastructure.assets.asset_store import delete_user_assets
+from infrastructure.async_io import run_blocking
 from infrastructure.attachments import gc_session as attachments_gc_session
 from infrastructure.backup import BackupImportMode
 from infrastructure.file_results import DeferredCleanup, FileResult
@@ -69,7 +70,7 @@ async def delete_user(user_id: int, db: AsyncSession) -> MessageResponse:
         session_ids = [str(conv_id) for conv_id in await conversation_ids(db, user_id)]
         await db.rollback()
         await anonymize_user_video_queue(user_id)
-        await asyncio.to_thread(_purge_user_files, user_id, session_ids)
+        await run_blocking(_purge_user_files, user_id, session_ids)
         await delete_account_record(db, user_id)
         await db.commit()
     return MessageResponse(message="用户已删除。")
@@ -84,12 +85,12 @@ async def export_user_backup(user_id: int, admin: str, db: AsyncSession) -> File
     rows_by_table = {tbl: await serialize_rows(db, tbl, user_id) for tbl in TABLES}
     # 用 commit 而非 rollback 结束快照：rollback 会使 user 过期，打包线程读取其属性将触发懒加载；打包与下载可能持续数分钟，不能占着事务。
     await db.commit()
-    files = await asyncio.to_thread(collect_files_for_export, user_id, rows_by_table)
+    files = await run_blocking(collect_files_for_export, user_id, rows_by_table)
 
     fd, tmp = tempfile.mkstemp(prefix="spiritagent-export-", suffix=".zip")
     os.close(fd)
     try:
-        await asyncio.to_thread(
+        await run_blocking(
             write_backup_archive,
             Path(tmp),
             BackupUserSnapshot(user.id, user.username),
@@ -108,7 +109,7 @@ async def export_user_backup(user_id: int, admin: str, db: AsyncSession) -> File
         Path(tmp).unlink(missing_ok=True)
         logger.info("backup export media changed; retry required", extra={"user_id": user_id})
         raise RequestError(status_code=409, message=str(exc)) from exc
-    except Exception:
+    except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
 
@@ -144,21 +145,23 @@ async def import_user_backup(
         # 分块 spool，避免大压缩包整体驻留内存
         with open(zip_path, "wb") as out:
             while chunk := await file.read(ARCHIVE_UPLOAD_CHUNK_BYTES):
-                await asyncio.to_thread(out.write, chunk)
+                await run_blocking(out.write, chunk)
 
         try:
-            await asyncio.to_thread(extract_backup_archive, zip_path, extract_root)
+            await run_blocking(extract_backup_archive, zip_path, extract_root)
         except BackupArchiveTooLargeError as exc:
             raise RequestError(status_code=413, message=str(exc)) from exc
         except BackupArchiveError as exc:
             raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message=str(exc)) from exc
+        except OSError as exc:
+            raise RequestError(status_code=503, message="备份解压存储暂时不可用，请稍后重试。") from exc
 
         try:
-            manifest = await asyncio.to_thread(load_manifest, extract_root)
+            manifest = await run_blocking(load_manifest, extract_root)
         except ValueError as exc:
             raise RequestError(status_code=status.HTTP_400_BAD_REQUEST, message=f"备份无效：{exc}") from exc
         source_uid = int(manifest["source_user_id"])
-        read_result = await asyncio.to_thread(
+        read_result = await run_blocking(
             load_backup_rows,
             extract_root,
             list(manifest["tables"]),

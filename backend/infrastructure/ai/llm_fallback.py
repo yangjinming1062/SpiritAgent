@@ -72,8 +72,6 @@ async def execute_with_fallback[P: BaseProvider, T](
     user_id: int | None,
     stream_started: Callable[[], bool] | None = None,
 ) -> T:
-    if not chain:
-        raise MissingLlmConfigError("no provider configured")
     return await _execute_with_fallback(
         chain,
         provider_type,

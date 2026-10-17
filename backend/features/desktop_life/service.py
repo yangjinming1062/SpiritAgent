@@ -96,6 +96,7 @@ from features.desktop_life.repository import (
     desktop_progress,
     desktop_removed_video_task,
     desktop_set_response,
+    desktop_set_responses,
     desktop_state,
     desktop_state_response,
     emit_desktop_play,
@@ -169,7 +170,7 @@ async def list_desktop_video_sets(db: AsyncSession, user_id: int) -> DesktopVide
         ),
     )
     return DesktopVideoListResponse(
-        sets=[await desktop_set_response(db, row, current_id=state.current_set_id if state else None) for row in rows],
+        sets=await desktop_set_responses(db, rows, current_id=state.current_set_id if state else None),
         version=state.version if state else 0,
     )
 

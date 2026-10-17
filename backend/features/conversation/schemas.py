@@ -1,6 +1,6 @@
 from typing import Literal
 
-from infrastructure.constants import TITLE_MAX_CHARS
+from infrastructure.constants import POSTGRES_INT4_MAX, TITLE_MAX_CHARS
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.conversation import SessionSettingsPatch
 
@@ -41,7 +41,7 @@ class SessionCreateRequest(BaseModel):
 class SessionForkRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_message_id: int = Field(ge=0)
+    source_message_id: int = Field(ge=0, le=POSTGRES_INT4_MAX)
 
 
 class SessionHistoryResponse(BaseModel):
@@ -53,7 +53,7 @@ class SessionHistoryResponse(BaseModel):
 class DesktopSessionPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str | None = Field(default=None, max_length=TITLE_MAX_CHARS)
+    title: str | None = Field(default=None, max_length=TITLE_MAX_CHARS, pattern=r"^[^\x00]*$")
     pinned: bool | None = None
     archived: bool | None = None
     settings: SessionSettingsPatch | None = None

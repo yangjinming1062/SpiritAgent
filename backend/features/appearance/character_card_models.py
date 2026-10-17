@@ -2,6 +2,7 @@
 
 from typing import Literal
 
+from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.models import ModelBase, TimestampMixin
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import ForeignKey, Integer, String, Text, text
@@ -23,7 +24,7 @@ class CharacterCardResponse(CharacterCardSnapshot):
 class CharacterCardUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_avatar_id: int = Field(gt=0)
+    expected_avatar_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
     expected_revision: int = Field(ge=0)
     changes: CharacterOverrides
 
@@ -31,7 +32,7 @@ class CharacterCardUpdate(BaseModel):
 class CharacterCardExtract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_avatar_id: int = Field(gt=0)
+    expected_avatar_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
     expected_revision: int = Field(ge=0)
 
 

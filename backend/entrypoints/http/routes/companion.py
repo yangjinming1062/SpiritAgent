@@ -2,7 +2,7 @@ import asyncio
 import base64
 from typing import Annotated
 
-from fastapi import Body, HTTPException, Request, Response, status
+from fastapi import Body, HTTPException, Path, Request, Response, status
 from features.actions.generation.catalog import list_pack_responses
 from features.actions.generation.commands import delete_pack as delete_video_pack
 from features.actions.generation.errors import VideoPackError, VideoPackNotFoundError, VideoPackStateError
@@ -138,6 +138,7 @@ from infrastructure.assets.asset_store import (
 )
 from infrastructure.assets.http_range import serve_ranged_file
 from infrastructure.config import SETTINGS
+from infrastructure.constants import POSTGRES_INT4_MAX
 from infrastructure.database import SESSION_LOCAL, DbSession
 from infrastructure.http_contracts import operation_policy
 from infrastructure.logger import get_logger
@@ -216,7 +217,10 @@ async def get_pending_visual_media_reviews(user: CurrentUser) -> list[MediaRevie
     "/media-reviews/{review_id}",
     response_model=MediaReviewResponse,
 )
-async def get_visual_media_review(review_id: int, user: CurrentUser) -> MediaReviewResponse:
+async def get_visual_media_review(
+    review_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser,
+) -> MediaReviewResponse:
     row = await get_media_review(user.id, review_id)
     if row is None:
         raise RequestError(status_code=404, message="待确认动作不存在")
@@ -227,7 +231,11 @@ async def get_visual_media_review(review_id: int, user: CurrentUser) -> MediaRev
     "/media-reviews/{review_id}/decision",
     response_model=MediaReviewResponse,
 )
-async def decide_visual_media_review(review_id: int, body: ResourceDecision, user: CurrentUser) -> MediaReviewResponse:
+async def decide_visual_media_review(
+    review_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    body: ResourceDecision,
+    user: CurrentUser,
+) -> MediaReviewResponse:
     try:
         operation = accept_media_review if body.decision == "accept" else reject_media_review
         row = await operation(user.id, review_id)
@@ -487,7 +495,11 @@ async def get_avatar_history(user: CurrentUser, db: DbSession) -> AvatarHistoryR
     "/avatar/{avatar_id}/select",
     response_model=AvatarAssetResponse,
 )
-async def put_avatar_select(avatar_id: int, user: CurrentUser, db: DbSession) -> AvatarAssetResponse:
+async def put_avatar_select(
+    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser,
+    db: DbSession,
+) -> AvatarAssetResponse:
     try:
         async with get_avatar_job_lock(user.id):
             asset = await select_avatar_view(db, user.id, avatar_id)
@@ -506,7 +518,7 @@ async def put_avatar_select(avatar_id: int, user: CurrentUser, db: DbSession) ->
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_reference(
     request: Request,
-    avatar_id: int,
+    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     body: FullbodyReferenceGenerateRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
@@ -540,7 +552,10 @@ async def post_fullbody_reference(
     "/avatar/{avatar_id}/fullbody/candidate",
     response_model=FullbodyCandidateResponse | None,
 )
-async def get_fullbody_candidate(avatar_id: int, user: CurrentUser) -> FullbodyCandidateResponse | None:
+async def get_fullbody_candidate(
+    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser,
+) -> FullbodyCandidateResponse | None:
     return await latest_fullbody_candidate(user.id, avatar_id)
 
 
@@ -550,8 +565,8 @@ async def get_fullbody_candidate(avatar_id: int, user: CurrentUser) -> FullbodyC
     openapi_extra=operation_policy(wait_for_model=True),
 )
 async def post_fullbody_candidate_analyze(
-    avatar_id: int,
-    candidate_id: int,
+    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    candidate_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
 ) -> FullbodyCandidateResponse:
     try:
@@ -568,8 +583,8 @@ async def post_fullbody_candidate_analyze(
     openapi_extra=operation_policy(wait_for_model=True),
 )
 async def post_fullbody_candidate_accept(
-    avatar_id: int,
-    candidate_id: int,
+    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    candidate_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
 ) -> AvatarAssetResponse:
     try:
@@ -587,7 +602,7 @@ async def post_fullbody_candidate_accept(
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_confirm(
     request: Request,
-    avatar_id: int,
+    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     body: FullbodyConfirmRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse:
@@ -623,7 +638,7 @@ def _avatar_request_error(exc: AvatarGenerationError | VisualReasoningError) -> 
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_prompt(
     request: Request,
-    avatar_id: int,
+    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     body: FullbodyPromptRequest = Body(default_factory=FullbodyPromptRequest),
 ) -> ImagePromptResponse:
@@ -651,7 +666,7 @@ async def post_fullbody_prompt(
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_adopt(
     request: Request,
-    avatar_id: int,
+    avatar_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     body: FullbodyAdoptRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
@@ -789,7 +804,7 @@ async def post_outfit_prompt(
     openapi_extra=operation_policy(identities=("desktop", "remote"), upload="image", wait_for_model=True),
 )
 async def post_outfit_regenerate(
-    outfit_id: int,
+    outfit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     body: Annotated[OutfitRegenerateRequest | OutfitImageImportRequest, Body(discriminator="source")],
     user: CurrentUser,
     db: DbSession,
@@ -823,7 +838,7 @@ async def post_outfit_regenerate(
     openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
 )
 async def post_outfit_confirm(
-    outfit_id: int,
+    outfit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     db: DbSession,
     body: OutfitConfirmRequest = Body(default_factory=OutfitConfirmRequest),
@@ -841,7 +856,11 @@ async def post_outfit_confirm(
     response_model=OutfitResponse,
     openapi_extra=operation_policy(identities=("desktop", "remote"), wait_for_model=True),
 )
-async def post_retry_outfit_description(outfit_id: int, user: CurrentUser, db: DbSession) -> OutfitResponse:
+async def post_retry_outfit_description(
+    outfit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser,
+    db: DbSession,
+) -> OutfitResponse:
     try:
         outfit = await retry_outfit_description_view(db, user.id, outfit_id)
     except OutfitError as exc:
@@ -855,7 +874,7 @@ async def post_retry_outfit_description(outfit_id: int, user: CurrentUser, db: D
     openapi_extra=operation_policy(identities=("desktop", "remote")),
 )
 async def delete_outfit_route(
-    outfit_id: int,
+    outfit_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     user: CurrentUser,
     db: DbSession,
 ) -> CompanionOperationResponse:
@@ -972,7 +991,7 @@ async def post_video_pack(
     openapi_extra=operation_policy(identities=("desktop", "remote")),
 )
 async def produce_video_pack(
-    pack_id: int,
+    pack_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     body: Annotated[VideoPackEnsureRequest | VideoPackRetryRequest, Body(discriminator="command")],
     user: CurrentUser,
     db: DbSession,
@@ -1006,7 +1025,11 @@ async def put_video_pack_selection(
     response_model=CompanionOperationResponse,
     openapi_extra=operation_policy(identities=("desktop", "remote")),
 )
-async def delete_video_pack_route(pack_id: int, user: CurrentUser, db: DbSession) -> CompanionOperationResponse:
+async def delete_video_pack_route(
+    pack_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
+    user: CurrentUser,
+    db: DbSession,
+) -> CompanionOperationResponse:
     try:
         await delete_video_pack(db, user.id, pack_id)
     except VideoPackError as exc:
@@ -1021,7 +1044,7 @@ async def delete_video_pack_route(pack_id: int, user: CurrentUser, db: DbSession
 )
 async def serve_companion_asset(
     request: Request,
-    user_id: int,
+    user_id: Annotated[int, Path(gt=0, le=POSTGRES_INT4_MAX)],
     asset_path: str,
     session: OptionalSession,
     expires: int | None = None,

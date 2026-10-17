@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.async_io import run_blocking
 from infrastructure.database import SESSION_LOCAL
 from sqlalchemy import update
 
@@ -21,7 +22,7 @@ from features.media.chain import MediaChainState
 
 from .errors import VideoPackError, VideoPackStateError, _GenerationRowGoneError
 from .execution_state import _SYSTEM_ACTION_SECONDS
-from .helpers import _artifact_abs_path, _image_data_uri, _process_thread
+from .helpers import _artifact_abs_path, _image_data_uri
 from .references import _freeze_action_video_plan, _require_new_paid_step, _resolve_action_video_plan
 from .transactions import _advance_job
 
@@ -90,7 +91,7 @@ async def _compose_scripts(
             video_specs.append(spec.model_copy(update=values))
         else:
             image_specs.append(spec.model_copy(update=values))
-    reference = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    reference = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
     entries: dict[str, ActionScriptEntry] = {}
     jobs_by_key = {job.key: job for job in jobs}
 

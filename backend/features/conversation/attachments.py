@@ -9,10 +9,12 @@ import secrets
 import shutil
 import threading
 from collections.abc import Sequence
+from itertools import batched
 from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote, urlsplit
 
+from infrastructure.async_io import run_blocking
 from infrastructure.attachments import session_dir
 from infrastructure.config import SETTINGS
 from infrastructure.constants import ATTACHMENT_VIDEO_EXTENSIONS, VIDEO_INLINE_MAX_PER_REQUEST
@@ -220,17 +222,21 @@ async def _rewrite_rows(
     session_id: str,
 ) -> int:
     """把引用了被删文件的行改写为占位文本；返回改写行数。不内部 commit。"""
-    rewritten = 0
+    updates: dict[int, str] = {}
     for message_id, content in rows:
         parts = safe_json_loads(content or "[]", default=[])
         if not isinstance(parts, list):
             continue
         new_parts, changed = _rewrite_parts(parts, file_ids, session_id=session_id)
         if changed:
-            message = await db.get(Message, message_id)
-            if message is not None:
-                message.content = json.dumps(new_parts, ensure_ascii=False)
-                rewritten += 1
+            updates[message_id] = json.dumps(new_parts, ensure_ascii=False)
+    if not updates:
+        return 0
+    rewritten = 0
+    for batch in batched(updates, 1000):
+        for message in await db.scalars(select(Message).where(Message.id.in_(batch))):
+            message.content = updates[message.id]
+            rewritten += 1
     return rewritten
 
 
@@ -390,14 +396,16 @@ async def copy_forked_media_attachments(db: AsyncSession, source_session_id: str
         return 0
     stop = threading.Event()
     copy_task = asyncio.create_task(
-        asyncio.to_thread(_copy_media_files, source_session_id, target_session_id, file_ids, stop),
+        run_blocking(_copy_media_files, source_session_id, target_session_id, file_ids, stop),
     )
     try:
         copied = await asyncio.shield(copy_task)
     except asyncio.CancelledError:
         # 线程无法中断：通知它在文件之间停止并等其退出，调用方随后撤销派生会话时目录才不会被它重建。
         stop.set()
-        await asyncio.gather(copy_task, return_exceptions=True)
+        copy_task.cancel()
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await copy_task
         raise
     rewritten = 0
     for message in messages:

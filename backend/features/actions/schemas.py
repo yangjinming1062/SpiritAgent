@@ -3,6 +3,7 @@
 import json
 from typing import Annotated, Literal
 
+from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 ABSOLUTE_MAX_DURATION_SECONDS = 15.0
@@ -68,14 +69,14 @@ class ActionDesignRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=64)
-    motion_description: str = Field(min_length=10, max_length=600)
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[^\x00]*$")
+    motion_description: str = Field(min_length=10, max_length=600, pattern=r"^[^\x00]*$")
     use_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
     avoid_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
-    reason: str = Field(min_length=1, max_length=400)
+    reason: str = Field(min_length=1, max_length=400, pattern=r"^[^\x00]*$")
     duration_seconds: float = Field(ge=1, le=ABSOLUTE_MAX_DURATION_SECONDS)
     clip_kind: str = Field(pattern="^(loop|once)$")
-    expected_pack_id: int | None = None
+    expected_pack_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
 
     @field_validator("duration_seconds")
     @classmethod
@@ -101,9 +102,9 @@ class ActionPlayRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    action_id: int
+    action_id: int = Field(gt=0, le=POSTGRES_INT4_MAX)
     reason: str = Field(default="", max_length=200)
-    expected_pack_id: int | None = None
+    expected_pack_id: int | None = Field(default=None, gt=0, le=POSTGRES_INT4_MAX)
 
 
 class ActionPlayResult(BaseModel):
@@ -123,8 +124,8 @@ class ActionPlaybackReceipt(BaseModel):
 
     play_id: str
     status: str = Field(pattern="^(started|completed|interrupted|rejected)$")
-    visible_duration_ms: int = 0
-    error: str | None = None
+    visible_duration_ms: int = Field(default=0, ge=0, le=POSTGRES_INT4_MAX)
+    error: str | None = Field(default=None, pattern=r"^[^\x00]*$")
 
 
 class ActionPlayCommand(BaseModel):
