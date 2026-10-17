@@ -18,7 +18,7 @@
     "@nanostores/react": "^1.1.0",
     "@nous-research/ui": "0.16.0",
     "@tailwindcss/vite": "^4.2.1",
-    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/api": "~2.12.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.577.0",
@@ -29,7 +29,7 @@
     "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.3",
+    "@tauri-apps/cli": "~2.12.3",
     "@types/node": "^26.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

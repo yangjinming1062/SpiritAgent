@@ -1,6 +1,5 @@
 //! 嵌入 payload zip 作为单 exe 分发源；资源就绪时直接用 `resource_dir/payload/`，否则解压到 `SPIRITAGENT_HOME/bootstrap-payload/`。
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -42,12 +41,10 @@ fn extract_to(dest: &Path) -> Result<()> {
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let raw_name = entry.name().to_string();
-        // 拒绝绝对路径或 `..`（zip slip）
-        if raw_name.contains("..") || Path::new(&raw_name).is_absolute() {
-            anyhow::bail!("refusing unsafe zip entry path: {raw_name}");
-        }
-        let out_path = dest_payload.join(&raw_name);
+        let relative_path = entry.enclosed_name().ok_or_else(|| {
+            anyhow::anyhow!("refusing unsafe zip entry path: {}", entry.name())
+        })?;
+        let out_path = dest_payload.join(relative_path);
         if entry.is_dir() {
             std::fs::create_dir_all(&out_path)?;
             continue;
@@ -55,8 +52,6 @@ fn extract_to(dest: &Path) -> Result<()> {
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut buf = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut buf)?;
         // 临时文件再 rename，避免半写入产物。
         let tmp = out_path.with_extension(format!(
             "{}.part",
@@ -65,8 +60,11 @@ fn extract_to(dest: &Path) -> Result<()> {
                 .and_then(|e| e.to_str())
                 .unwrap_or("bin")
         ));
-        std::fs::write(&tmp, &buf)
-            .with_context(|| format!("write {}", tmp.display()))?;
+        let mut file = std::fs::File::create(&tmp)
+            .with_context(|| format!("create {}", tmp.display()))?;
+        std::io::copy(&mut entry, &mut file)
+            .with_context(|| format!("extract payload file to {}", tmp.display()))?;
+        drop(file);
         // Windows rename 不覆盖已存在文件，先 remove；锁定的 exe 直接失败。
         if out_path.exists() {
             if out_path
@@ -81,7 +79,8 @@ fn extract_to(dest: &Path) -> Result<()> {
                     out_path.display()
                 );
             }
-            std::fs::remove_file(&out_path).ok();
+            std::fs::remove_file(&out_path)
+                .with_context(|| format!("remove previous payload file {}", out_path.display()))?;
         }
         std::fs::rename(&tmp, &out_path)
             .with_context(|| format!("rename {} -> {}", tmp.display(), out_path.display()))?;

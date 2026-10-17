@@ -2,7 +2,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 
-export type EggPhase = 'idle' | 'cracking' | 'hatching' | 'hatched' | 'failed'
+export type EggPhase = 'idle' | 'cracking' | 'hatching' | 'failed'
 
 interface EggProps {
   cracks: number
@@ -43,14 +43,13 @@ export function Egg({
   const isFailed = phase === 'failed'
   const isCracking = phase === 'cracking'
   const isHatching = phase === 'hatching'
-  const isHatched = phase === 'hatched'
 
   return (
     <div
       className={clsx(
         'relative flex items-center justify-center select-none',
         isFailed && 'animate-egg-tremor',
-        isCracking && !isFailed && 'scale-[1.01] transition-transform duration-300',
+        isCracking && 'scale-[1.01] transition-transform duration-300',
         className
       )}
       style={{ width: size, height: size }}
@@ -87,68 +86,64 @@ export function Egg({
           </filter>
         </defs>
 
-        {!isHatched && (
-          <ellipse
-            cx="160"
-            cy="170"
-            rx="125"
-            ry="135"
-            fill="url(#egg-ambient-glow)"
-            className={clsx(!isFailed && 'animate-egg-pulse')}
-          />
-        )}
+        <ellipse
+          cx="160"
+          cy="170"
+          rx="125"
+          ry="135"
+          fill="url(#egg-ambient-glow)"
+          className={clsx(!isFailed && 'animate-egg-pulse')}
+        />
 
         {/* 破壳核心暖光球 */}
-        {(isHatching || isHatched) && (
+        {isHatching && (
           <g className="animate-warm-glow">
             <circle cx="160" cy="170" r="75" fill="url(#egg-core-light)" />
             <circle cx="160" cy="170" r="35" fill="#ffffff" opacity="0.9" />
           </g>
         )}
 
-        {!isHatched && (
-          <g
-            className={clsx(
-              'transition-all duration-700 ease-out',
-              isHatching && 'scale-125 opacity-0'
-            )}
-            style={{ transformOrigin: '160px 170px' }}
-          >
-            <path
-              d="M 160 50 C 95 50 75 135 75 185 C 75 245 112 290 160 290 C 208 290 245 245 245 185 C 245 135 225 50 160 50 Z"
-              fill="var(--color-egg-shell, #fff4d6)"
-              stroke="color-mix(in srgb, var(--color-foreground, #17171a) 12%, transparent)"
-              strokeWidth="2"
-            />
+        <g
+          className={clsx(
+            'transition-all duration-700 ease-out',
+            isHatching && 'scale-125 opacity-0'
+          )}
+          style={{ transformOrigin: '160px 170px' }}
+        >
+          <path
+            d="M 160 50 C 95 50 75 135 75 185 C 75 245 112 290 160 290 C 208 290 245 245 245 185 C 245 135 225 50 160 50 Z"
+            fill="var(--color-egg-shell, #fff4d6)"
+            stroke="color-mix(in srgb, var(--color-foreground, #17171a) 12%, transparent)"
+            strokeWidth="2"
+          />
 
-            {/* 裂纹 */}
-            {CRACK_PATHS.slice(0, visibleCracks).map((pathD, idx) => {
-              const isFlashing = flashingIdx === idx
-              const strokeColor = isFailed
-                ? 'var(--color-destructive, #cf2d56)'
-                : isFlashing
-                  ? 'var(--color-crack-glow, #ffd166)'
-                  : 'color-mix(in srgb, var(--color-foreground, #17171a) 55%, #ffd166)'
+          {/* 裂纹 */}
+          {CRACK_PATHS.slice(0, visibleCracks).map((pathD, idx) => {
+            const isFlashing = flashingIdx === idx
+            const strokeColor = isFailed
+              ? 'var(--color-destructive, #cf2d56)'
+              : isFlashing
+                ? 'var(--color-crack-glow, #ffd166)'
+                : 'color-mix(in srgb, var(--color-foreground, #17171a) 55%, #ffd166)'
 
-              return (
-                <path
-                  key={idx}
-                  d={pathD}
-                  fill="none"
-                  stroke={strokeColor}
-                  strokeWidth={isFlashing ? 4 : 2.5}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  filter={isFailed ? undefined : 'url(#crack-glow-filter)'}
-                  className={clsx(
-                    'transition-all duration-300',
-                    isFlashing && 'animate-crack-flash'
-                  )}
-                />
-              )
-            })}
-          </g>
-        )}
+            return (
+              <path
+                key={idx}
+                d={pathD}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth={isFlashing ? 4 : 2.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                filter={isFailed ? undefined : 'url(#crack-glow-filter)'}
+                className={clsx(
+                  'transition-all duration-300',
+                  isFlashing && 'animate-crack-flash'
+                )}
+              />
+            )
+          })}
+        </g>
       </svg>
     </div>
   )

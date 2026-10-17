@@ -4,7 +4,7 @@ version = "1.2.0"
 description = "唤生 安装器 —— 由 installer/install.ps1 与 installer/install.sh 驱动桌面端安装"
 authors = ["唤生 <yjm1062@gmail.com>"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.90"
 
 # 输出二进制名即分发物名 `SpiritAgent-Setup.exe`；Tauri 以 [[bin]] 名为准，不使用 [package].name。
 [[bin]]
@@ -17,13 +17,13 @@ name = "spiritagent_bootstrap_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7.3", features = [] }
 # build.rs 把 ../payload/ 打包成单 zip 嵌入 SpiritAgent-Setup.exe；运行时由 embedded_payload 解压到 SPIRITAGENT_HOME。
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
+tauri = { version = "~2.12.4", features = [] }
+tauri-plugin-opener = "2.7.2"
 
 tokio = { version = "1", features = ["full"] }
 

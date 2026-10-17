@@ -35,13 +35,7 @@ fn main() {
 /// 递归打包 src 为 zip；arcname 用相对 POSIX 路径。
 fn build_payload_zip(src: &Path, dst: &Path) {
     use std::fs::File;
-    use std::io::Write;
 
-    fn io_other<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> std::io::Error {
-        std::io::Error::new(std::io::ErrorKind::Other, e)
-    }
-
-    // options 作参数传入，避免嵌套 fn 捕获环境（E0434）
     fn visit(
         dir: &Path,
         base: &Path,
@@ -60,9 +54,8 @@ fn build_payload_zip(src: &Path, dst: &Path) {
                     .expect("entry under base")
                     .to_string_lossy()
                     .replace('\\', "/");
-                zip.start_file(&rel, options).map_err(io_other)?;
-                let bytes = std::fs::read(&path)?;
-                zip.write_all(&bytes).map_err(io_other)?;
+                zip.start_file(&rel, options)?;
+                std::io::copy(&mut File::open(&path)?, zip)?;
             }
             // 跳过符号链接/特殊文件，避免 Windows 解压歧义
         }

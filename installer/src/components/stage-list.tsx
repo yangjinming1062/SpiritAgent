@@ -16,7 +16,7 @@ export function StageList({ bootstrap }: StageListProps): React.JSX.Element {
     if (logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [bootstrap.logs.length])
+  }, [bootstrap.logs])
 
   return (
     <div className="flex h-full overflow-hidden rounded-lg border border-line-strong bg-glass shadow-md backdrop-blur-xs">
@@ -37,8 +37,8 @@ export function StageList({ bootstrap }: StageListProps): React.JSX.Element {
                   !rec.state && 'text-text-faint'
                 )}
               >
-                <StateIcon state={rec.state ?? null} />
-                <span className="flex-1 truncate">{stageLabel(rec.info.name)}</span>
+                <StateIcon state={rec.state} />
+                <span className="flex-1 truncate">{stageLabel(name)}</span>
                 {rec.durationMs != null && (
                   <span className="text-[11px] font-mono text-text-muted">
                     {formatDuration(rec.durationMs)}

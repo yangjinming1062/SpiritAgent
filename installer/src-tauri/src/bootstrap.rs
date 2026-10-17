@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{mpsc, watch};
 
 use crate::events::{BootstrapEvent, LogStream, Manifest, StageState};
 use crate::install_script::{self, ScriptKind, ScriptSource};
@@ -55,13 +55,10 @@ pub async fn start_bootstrap(
     });
     drop(guard);
 
-    let app_for_task = app.clone();
     let state_for_task = state.inner().clone();
-    let args_for_task = args;
-    let cancel_rx = Arc::new(Mutex::new(Some(cancel_rx)));
 
     tokio::spawn(async move {
-        let _ = run_bootstrap(app_for_task, args_for_task, cancel_rx, on_event).await;
+        let _ = run_bootstrap(app, args, Some(cancel_rx), on_event).await;
         let mut guard = state_for_task.bootstrap.lock().await;
         if let Some(h) = guard.as_mut() {
             h.running = false;
@@ -106,12 +103,7 @@ pub async fn launch_spiritagent_desktop(app: AppHandle) -> Result<(), String> {
     tracing::info!(?exe_path, "launching SpiritAgent desktop");
 
     // 脱离安装器独立运行；macOS 走 LaunchServices 以规避 cwd/quarantine 异常。
-    let mut cmd = desktop_launch_command(&exe_path);
-    #[cfg(target_os = "windows")]
-    {
-        // DETACHED_PROCESS = 0x00000008
-        cmd.creation_flags(0x0000_0008);
-    }
+    let mut cmd = tokio::process::Command::from(desktop_launch_command(&exe_path));
 
     cmd.spawn().map_err(|e| {
         format!("failed to launch {}: {e}", exe_path.display())
@@ -234,14 +226,7 @@ pub(crate) fn spawn_installed_desktop() -> std::io::Result<()> {
     let exe = resolve_spiritagent_desktop_exe().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "no installed SpiritAgent desktop app")
     })?;
-    let mut cmd = desktop_launch_command_std(&exe);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        // DETACHED_PROCESS，与 launch_spiritagent_desktop 一致
-        cmd.creation_flags(0x0000_0008);
-    }
-    cmd.spawn().map(|_child| ())
+    desktop_launch_command(&exe).spawn().map(|_child| ())
 }
 
 #[cfg(target_os = "macos")]
@@ -254,23 +239,7 @@ fn app_bundle_for_exe(exe: &std::path::Path) -> Option<PathBuf> {
     }
 }
 
-fn desktop_launch_command(exe_path: &std::path::Path) -> tokio::process::Command {
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(app_bundle) = app_bundle_for_exe(exe_path) {
-            let mut cmd = tokio::process::Command::new("/usr/bin/open");
-            cmd.arg(app_bundle);
-            cmd.current_dir(crate::paths::spiritagent_home());
-            return cmd;
-        }
-    }
-
-    let mut cmd = tokio::process::Command::new(exe_path);
-    cmd.current_dir(exe_path.parent().unwrap_or_else(|| Path::new(".")));
-    cmd
-}
-
-fn desktop_launch_command_std(exe_path: &std::path::Path) -> std::process::Command {
+fn desktop_launch_command(exe_path: &Path) -> std::process::Command {
     #[cfg(target_os = "macos")]
     {
         if let Some(app_bundle) = app_bundle_for_exe(exe_path) {
@@ -283,15 +252,21 @@ fn desktop_launch_command_std(exe_path: &std::path::Path) -> std::process::Comma
 
     let mut cmd = std::process::Command::new(exe_path);
     cmd.current_dir(exe_path.parent().unwrap_or_else(|| Path::new(".")));
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS：桌面端脱离安装器独立运行。
+        cmd.creation_flags(0x0000_0008);
+    }
     cmd
 }
 
 async fn run_bootstrap(
     app: AppHandle,
     args: StartBootstrapArgs,
-    cancel_rx_holder: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
+    mut cancel_rx: Option<powershell::CancelRx>,
     on_event: Channel<BootstrapEvent>,
-) -> Result<String> {
+) -> Result<()> {
     let kind = ScriptKind::for_current_os();
 
     tracing::info!(?kind, "bootstrap starting");
@@ -315,14 +290,7 @@ async fn run_bootstrap(
         .await
         .map_err(|e| {
             let msg = format!("resolve install script failed: {e:#}");
-            emit_event(
-                &on_event,
-                BootstrapEvent::Failed {
-                    stage: None,
-                    error: msg.clone(),
-                },
-            );
-            anyhow!(msg)
+            fail_bootstrap(&on_event, None, msg)
         })?;
 
     let source_note = match &script.source {
@@ -341,22 +309,20 @@ async fn run_bootstrap(
 
     let bundle_ctx = build_bundle_context(&app);
 
-    if cancellation_signalled(&cancel_rx_holder).await {
+    if cancellation_signalled(&mut cancel_rx) {
         return Err(fail_bootstrap(&on_event, None, "cancelled by user".to_string()));
     }
-    let manifest_cancel_rx = cancel_rx_holder.lock().await.take();
-    let (manifest_result, unused_cancel_rx) = run_install_script(
+    let manifest_result = run_install_script(
         &on_event,
         &script.path,
         &manifest_args,
         args.spiritagent_home.as_deref(),
         &bundle_ctx,
-        manifest_cancel_rx,
+        &mut cancel_rx,
         Some("__manifest__".to_string()),
     )
     .await
     .map_err(|e| fail_bootstrap(&on_event, None, e.to_string()))?;
-    *cancel_rx_holder.lock().await = unused_cancel_rx;
 
     if manifest_result.killed {
         return Err(fail_bootstrap(&on_event, None, "cancelled by user".to_string()));
@@ -391,16 +357,12 @@ async fn run_bootstrap(
 
     // 3) 顺序执行各阶段
     for stage in &manifest.stages {
-        if cancellation_signalled(&cancel_rx_holder).await {
-            let err = "bootstrap cancelled by user".to_string();
-            emit_event(
+        if cancellation_signalled(&mut cancel_rx) {
+            return Err(fail_bootstrap(
                 &on_event,
-                BootstrapEvent::Failed {
-                    stage: Some(stage.name.clone()),
-                    error: err.clone(),
-                },
-            );
-            return Err(anyhow!(err));
+                Some(stage.name.clone()),
+                "bootstrap cancelled by user".into(),
+            ));
         }
 
         let started = Instant::now();
@@ -422,49 +384,41 @@ async fn run_bootstrap(
             "-Json".to_string(),
         ];
 
-        // 每阶段独占 cancel 接收者；结束后把未触发通道归还 holder，否则后续阶段无法取消。
-        let local_cancel_rx = cancel_rx_holder.lock().await.take();
-
-        let (stage_result, unused_cancel_rx) = run_install_script(
+        let stage_result = run_install_script(
             &on_event,
             &script.path,
             &stage_args,
             args.spiritagent_home.as_deref(),
             &bundle_ctx,
-            local_cancel_rx,
+            &mut cancel_rx,
             Some(stage.name.clone()),
         )
         .await
         .map_err(|e| fail_bootstrap(&on_event, Some(stage.name.clone()), e.to_string()))?;
 
-        *cancel_rx_holder.lock().await = unused_cancel_rx;
-
         let duration_ms = started.elapsed().as_millis() as u64;
 
-        if stage_result.killed {
-            emit_event(
-                &on_event,
-                BootstrapEvent::Stage {
-                    name: stage.name.clone(),
-                    state: StageState::Failed,
-                    duration_ms: Some(duration_ms),
-                    result: None,
-                    error: Some("cancelled by user".into()),
+        let result_frame = if stage_result.killed {
+            None
+        } else {
+            powershell::parse_stage_result(&stage_result.stdout)
+        };
+        let (state, error) = match result_frame.as_ref() {
+            None if stage_result.killed => (StageState::Failed, Some("cancelled by user".into())),
+            Some(frame) if frame.ok => (
+                if frame.skipped {
+                    StageState::Skipped
+                } else {
+                    StageState::Succeeded
                 },
-            );
-            emit_event(
-                &on_event,
-                BootstrapEvent::Failed {
-                    stage: Some(stage.name.clone()),
-                    error: "cancelled by user".into(),
-                },
-            );
-            return Err(anyhow!("cancelled by user"));
-        }
-
-        let result_frame = powershell::parse_stage_result(&stage_result.stdout);
-
-        match result_frame {
+                None,
+            ),
+            Some(frame) => (
+                StageState::Failed,
+                Some(frame.reason.clone().unwrap_or_else(|| {
+                    format!("exit code {:?}", stage_result.exit_code)
+                })),
+            ),
             None => {
                 let stdout_preview = truncate(&stage_result.stdout, STAGE_PREVIEW_CHARS);
                 let stderr_preview = truncate(&stage_result.stderr, STAGE_PREVIEW_CHARS);
@@ -477,7 +431,7 @@ async fn run_bootstrap(
                     stderr = %stderr_preview,
                     "stage produced no JSON result frame"
                 );
-                let err = format!(
+                let error = format!(
                     "{} -Stage {} produced no JSON result frame (exit={:?})\nstdout: {}\nstderr: {}",
                     kind.filename(),
                     stage.name,
@@ -485,82 +439,28 @@ async fn run_bootstrap(
                     stdout_preview,
                     stderr_preview
                 );
-                emit_event(
-                    &on_event,
-                    BootstrapEvent::Stage {
-                        name: stage.name.clone(),
-                        state: StageState::Failed,
-                        duration_ms: Some(duration_ms),
-                        result: None,
-                        error: Some(err.clone()),
-                    },
-                );
-                emit_event(
-                    &on_event,
-                    BootstrapEvent::Failed {
-                        stage: Some(stage.name.clone()),
-                        error: err.clone(),
-                    },
-                );
-                return Err(anyhow!(err));
+                (StageState::Failed, Some(error))
             }
-            Some(frame) if frame.ok && frame.skipped => {
-                emit_event(
-                    &on_event,
-                    BootstrapEvent::Stage {
-                        name: stage.name.clone(),
-                        state: StageState::Skipped,
-                        duration_ms: Some(duration_ms),
-                        result: Some(frame),
-                        error: None,
-                    },
-                );
-            }
-            Some(frame) if frame.ok => {
-                emit_event(
-                    &on_event,
-                    BootstrapEvent::Stage {
-                        name: stage.name.clone(),
-                        state: StageState::Succeeded,
-                        duration_ms: Some(duration_ms),
-                        result: Some(frame),
-                        error: None,
-                    },
-                );
-            }
-            Some(frame) => {
-                let err = frame
-                    .reason
-                    .clone()
-                    .unwrap_or_else(|| format!("exit code {:?}", stage_result.exit_code));
-                emit_event(
-                    &on_event,
-                    BootstrapEvent::Stage {
-                        name: stage.name.clone(),
-                        state: StageState::Failed,
-                        duration_ms: Some(duration_ms),
-                        result: Some(frame),
-                        error: Some(err.clone()),
-                    },
-                );
-                emit_event(
-                    &on_event,
-                    BootstrapEvent::Failed {
-                        stage: Some(stage.name.clone()),
-                        error: err.clone(),
-                    },
-                );
-                return Err(anyhow!(err));
-            }
+        };
+        emit_event(
+            &on_event,
+            BootstrapEvent::Stage {
+                name: stage.name.clone(),
+                state,
+                duration_ms: Some(duration_ms),
+                result: result_frame,
+                error: error.clone(),
+            },
+        );
+        if let Some(error) = error {
+            return Err(fail_bootstrap(&on_event, Some(stage.name.clone()), error));
         }
     }
 
     // install_root 即 spiritagent_home，负载直接落 $SPIRITAGENT_HOME
-    let spiritagent_home = args
+    let install_root = args
         .spiritagent_home
-        .clone()
         .unwrap_or_else(|| crate::paths::spiritagent_home().to_string_lossy().into_owned());
-    let install_root = PathBuf::from(&spiritagent_home);
 
     // 自拷贝到稳定路径供快捷方式指向；最佳努力，失败不中断安装
     if let Err(err) = crate::paths::copy_self_to_spiritagent_home() {
@@ -573,16 +473,15 @@ async fn run_bootstrap(
     emit_event(
         &on_event,
         BootstrapEvent::Complete {
-            install_root: install_root.to_string_lossy().into_owned(),
+            install_root,
         },
     );
 
-    Ok(install_root.to_string_lossy().into_owned())
+    Ok(())
 }
 
-async fn cancellation_signalled(holder: &Arc<Mutex<Option<mpsc::Receiver<()>>>>) -> bool {
-    let mut guard = holder.lock().await;
-    if let Some(rx) = guard.as_mut() {
+fn cancellation_signalled(cancel_rx: &mut Option<powershell::CancelRx>) -> bool {
+    if let Some(rx) = cancel_rx.as_mut() {
         rx.try_recv().is_ok()
     } else {
         false
@@ -595,15 +494,13 @@ async fn run_install_script(
     args: &[String],
     spiritagent_home_override: Option<&str>,
     bundle: &BundleContext,
-    cancel_rx: Option<mpsc::Receiver<()>>,
+    cancel_rx: &mut Option<powershell::CancelRx>,
     stage_name: Option<String>,
-) -> Result<(powershell::ScriptResult, Option<mpsc::Receiver<()>>)> {
+) -> Result<powershell::ScriptResult> {
     let on_event_stdout = on_event.clone();
     let stage_for_stdout = stage_name.clone();
     let on_event_stderr = on_event.clone();
-    let stage_for_stderr = stage_name.clone();
-    let stage_for_stdout_log = stage_name.clone();
-    let stage_for_stderr_log = stage_name.clone();
+    let stage_for_stderr = stage_name;
 
     let sink = StreamSink {
         on_stdout_line: Box::new(move |line: &str| {
@@ -616,7 +513,7 @@ async fn run_install_script(
                 },
             );
             // Tauri 事件流在失败页挂载后即丢弃，需同时落滚动日志
-            match &stage_for_stdout_log {
+            match &stage_for_stdout {
                 Some(name) => {
                     tracing::info!(target: "bootstrap.log", stage = %name, "{line}")
                 }
@@ -633,7 +530,7 @@ async fn run_install_script(
                 },
             );
             // stderr 用 warn! 以便与 stdout 区分
-            match &stage_for_stderr_log {
+            match &stage_for_stderr {
                 Some(name) => {
                     tracing::warn!(target: "bootstrap.log", stage = %name, "stderr: {line}")
                 }

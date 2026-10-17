@@ -27,8 +27,6 @@ BUNDLED_ONBOARDING_AUDIO_DIR_ARG=""
 
 MODE="stage"
 STAGE=""
-JSON_OUTPUT=0
-NON_INTERACTIVE=0
 
 usage() {
   cat <<EOF
@@ -51,8 +49,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -Manifest|--manifest)         MODE="manifest"; shift ;;
     -Stage|--stage)               MODE="stage"; STAGE="$2"; shift 2 ;;
-    -Json|--json)                 JSON_OUTPUT=1; shift ;;
-    -NonInteractive|--non-interactive) NON_INTERACTIVE=1; shift ;;
+    -Json|--json|-NonInteractive|--non-interactive) shift ;;
     --spiritagent-home)                  SPIRITAGENT_HOME_ARG="$2"; shift 2 ;;
     --bundled-runner-dir)         BUNDLED_RUNNER_DIR_ARG="$2"; shift 2 ;;
     --bundled-desktop-dir)        BUNDLED_DESKTOP_DIR_ARG="$2"; shift 2 ;;
@@ -73,18 +70,6 @@ DESKTOP_FORMAT="${SPIRITAGENT_INSTALLER_FORMAT:-$DEFAULT_DESKTOP_FORMAT}"
 
 emit_manifest() {
   printf '__SPIRITAGENT_MANIFEST__:{"protocol_version": %s, "stages": [{"name": "welcome", "title": "准备安装", "category": "setup", "needs_user_input": false}, {"name": "install-python", "title": "安装 Python 运行时", "category": "prereqs", "needs_user_input": false}, {"name": "unpack-runner", "title": "安装 唤生 运行器", "category": "payload", "needs_user_input": false}, {"name": "unpack-desktop", "title": "安装 唤生 桌面应用", "category": "payload", "needs_user_input": false}, {"name": "install-skills", "title": "安装内置技能", "category": "payload", "needs_user_input": false}, {"name": "finalize", "title": "完成安装", "category": "finalize", "needs_user_input": false}]}\n' "$PROTOCOL_VERSION"
-}
-
-emit_stage_ok() {
-  local stage="$1" skipped="${2:-0}" reason="${3:-}"
-  if [[ "$skipped" == "1" && -n "$reason" ]]; then
-    # reason 双引号转义后嵌入 JSON
-    local esc="${reason//\\/\\\\}"
-    esc="${esc//\"/\\\"}"
-    printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "%s", "skipped": true, "reason": "%s"}\n' "$stage" "$esc"
-  else
-    printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "%s"}\n' "$stage"
-  fi
 }
 
 emit_stage_err() {
@@ -149,28 +134,19 @@ test_python() {
     fi
   fi
 
-  local candidates=("$PYTHON_VERSION" "3.14")
-  local missing=()
-
-  for ver in "${candidates[@]}"; do
-    local found
+  local ver found
+  for ver in "$PYTHON_VERSION" "3.14"; do
     found=$("$UV_CMD" python find "$ver" 2>/dev/null || true)
     if [[ -n "$found" ]]; then
       PYTHON_VERSION="$ver"
       return 0
     fi
-    missing+=("$ver")
   done
 
   # 冷缓存：安装首选版本后只再查该版本
   "$UV_CMD" python install "$PYTHON_VERSION" 2>/dev/null || true
-  local found
   found=$("$UV_CMD" python find "$PYTHON_VERSION" 2>/dev/null || true)
-  if [[ -n "$found" ]]; then
-    return 0
-  fi
-
-  return 1
+  [[ -n "$found" ]]
 }
 
 # 阶段 1：welcome
@@ -290,10 +266,10 @@ stage_unpack_desktop() {
   fi
 
   # macOS 仅支持 dmg
-  local artifact=""
+  local artifacts=()
   case "$DESKTOP_FORMAT" in
     dmg)
-      artifact=$(ls -1 "$BUNDLED_DESKTOP_DIR"/*.dmg 2>/dev/null | head -1 || true)
+      artifacts=("$BUNDLED_DESKTOP_DIR"/*.dmg)
       ;;
     *)
       emit_stage_err unpack-desktop "desktop format '$DESKTOP_FORMAT' is not supported on this platform (use install.ps1 on Windows)"
@@ -301,6 +277,7 @@ stage_unpack_desktop() {
       ;;
   esac
 
+  local artifact="${artifacts[0]:-}"
   if [[ -z "$artifact" || ! -f "$artifact" ]]; then
     emit_stage_err unpack-desktop "no desktop artifact found in $BUNDLED_DESKTOP_DIR (format=$DESKTOP_FORMAT)"
     return 1
@@ -347,7 +324,7 @@ stage_install_skills() {
 
   # 尊重 .no-bundled-skills 标记
   if [[ -f "$SPIRITAGENT_HOME_RESOLVED/.no-bundled-skills" ]]; then
-    emit_stage_ok install-skills 1 "user opted out via .no-bundled-skills"
+    printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "install-skills", "skipped": true, "reason": "user opted out via .no-bundled-skills"}\n'
     return 0
   fi
 

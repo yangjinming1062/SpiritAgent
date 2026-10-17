@@ -42,15 +42,15 @@ pub struct BundleContext {
     pub installer_format: Option<String>,
 }
 
-/// 启动 install 脚本并流式返回输出。取消终止整棵进程树；返回值第二项为未触发的取消通道，须归还 holder。
+/// 启动 install 脚本并流式返回输出；各阶段共用取消通道，触发后终止整棵进程树。
 pub async fn run_script(
     script_path: &Path,
     args: &[String],
     sink: StreamSink,
     spiritagent_home_override: Option<&str>,
     bundle: &BundleContext,
-    mut cancel_rx: Option<CancelRx>,
-) -> Result<(ScriptResult, Option<CancelRx>)> {
+    cancel_rx: &mut Option<CancelRx>,
+) -> Result<ScriptResult> {
     let mut cmd = build_command(script_path, args);
 
     // 稳定 cwd，避免安装器被替换后从已删除目录启动报 getcwd 错误
@@ -108,10 +108,10 @@ pub async fn run_script(
         tokio::select! {
             () = output.read_line(&sink) => {}
             exit = child.wait() => break exit.context("waiting for install script to exit")?,
-            _ = recv_cancel(&mut cancel_rx) => {
+            _ = recv_cancel(cancel_rx) => {
                 tracing::warn!("cancellation received — terminating install script process tree");
                 killed = true;
-                cancel_rx = None;
+                *cancel_rx = None;
                 process_tree.kill(&mut child);
             }
         }
@@ -127,15 +127,12 @@ pub async fn run_script(
         tracing::warn!("install script exited but its output pipes are still held open; stopped reading");
     }
 
-    Ok((
-        ScriptResult {
-            stdout: output.stdout_text,
-            stderr: output.stderr_text,
-            exit_code: status.code(),
-            killed,
-        },
-        cancel_rx,
-    ))
+    Ok(ScriptResult {
+        stdout: output.stdout_text,
+        stderr: output.stderr_text,
+        exit_code: status.code(),
+        killed,
+    })
 }
 
 /// 脚本 stdout / stderr 的逐行转发与累计。

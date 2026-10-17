@@ -103,7 +103,6 @@ pub fn run() {
             bootstrap::cancel_bootstrap,
             bootstrap::launch_spiritagent_desktop,
             paths::get_log_path,
-            paths::get_spiritagent_home,
             paths::open_log_dir,
         ])
         .run(tauri::generate_context!())

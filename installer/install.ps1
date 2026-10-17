@@ -20,7 +20,6 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $InformationPreference = 'Continue'
 $ErrorActionPreference = "Stop"
 $ProtocolVersion = 2
-$ScriptName = "install.ps1"
 $RunnerWheelGlob = "spirit_agent-*.whl"
 $DefaultDesktopFormat = "nsis"
 $PythonVersion = "3.13"
@@ -44,21 +43,12 @@ function Emit-Manifest {
     Write-Output "__SPIRITAGENT_MANIFEST__:{`"protocol_version`": $ProtocolVersion, `"stages`": [{`"name`": `"welcome`", `"title`": `"\u51c6\u5907\u5b89\u88c5`", `"category`": `"setup`", `"needs_user_input`": false}, {`"name`": `"install-python`", `"title`": `"\u5b89\u88c5 Python \u8fd0\u884c\u65f6`", `"category`": `"prereqs`", `"needs_user_input`": false}, {`"name`": `"unpack-runner`", `"title`": `"\u5b89\u88c5 \u5524\u751f \u8fd0\u884c\u5668`", `"category`": `"payload`", `"needs_user_input`": false}, {`"name`": `"unpack-desktop`", `"title`": `"\u5b89\u88c5 \u5524\u751f \u684c\u9762\u5e94\u7528`", `"category`": `"payload`", `"needs_user_input`": false}, {`"name`": `"install-skills`", `"title`": `"\u5b89\u88c5\u5185\u7f6e\u6280\u80fd`", `"category`": `"payload`", `"needs_user_input`": false}, {`"name`": `"finalize`", `"title`": `"\u5b8c\u6210\u5b89\u88c5`", `"category`": `"finalize`", `"needs_user_input`": false}]}"
 }
 
-function Escape-JsonString([string]$s) {
-    if ($null -eq $s) { return "" }
-    return $s.Replace('\', '\\').Replace('"', '\"').Replace("`n", '\n').Replace("`r", '\r').Replace("`t", '\t')
-}
-
-function Emit-StageOk([string]$stage, [bool]$skipped = $false, [string]$reason = "") {
-    if ($skipped -and $reason) {
-        Write-Output ("__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"$stage`", `"skipped`": true, `"reason`": `"" + (Escape-JsonString $reason) + "`"}")
-    } else {
-        Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"$stage`"}"
-    }
+function Emit-StageResult([hashtable]$result) {
+    Write-Output ("__SPIRITAGENT_STAGE_RESULT__:" + (ConvertTo-Json -InputObject $result -Depth 4 -Compress))
 }
 
 function Emit-StageErr([string]$stage, [string]$reason) {
-    Write-Output ("__SPIRITAGENT_STAGE_RESULT__:{`"ok`": false, `"stage`": `"$stage`", `"reason`": `"" + (Escape-JsonString $reason) + "`"}")
+    Emit-StageResult @{ ok = $false; stage = $stage; reason = $reason }
 }
 
 function Install-Uv {
@@ -140,9 +130,7 @@ function Test-Python {
         if (-not (Install-Uv)) { return $false }
     }
 
-    $candidates = @($PythonVersion) + $PythonFallbackVersions
-    foreach ($ver in $candidates) {
-        if (-not $ver) { continue }
+    foreach ($ver in (@($PythonVersion) + $PythonFallbackVersions)) {
         try {
             $found = & $script:UvCmd python find $ver 2>$null
             if ($found) {
@@ -190,16 +178,14 @@ function Stage-Welcome {
     $marker = Join-Path $SpiritAgentHome ".spiritagent-bootstrap-complete"
     $isReinstall = Test-Path $marker
 
-    $escHome = Escape-JsonString $SpiritAgentHome
-    Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"welcome`", `"data`": {`"spiritagent_home`": `"$escHome`", `"is_reinstall`": $($isReinstall.ToString().ToLower())}}"
+    Emit-StageResult @{ ok = $true; stage = "welcome"; data = @{ spiritagent_home = $SpiritAgentHome; is_reinstall = $isReinstall } }
     return 0
 }
 
 # 阶段 2：安装 Python
 function Stage-InstallPython {
     if (Test-Python) {
-        $escVer = Escape-JsonString $script:PythonVersion
-        Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"install-python`", `"data`": {`"version`": `"$escVer`"}}"
+        Emit-StageResult @{ ok = $true; stage = "install-python"; data = @{ version = $script:PythonVersion } }
         return 0
     }
 
@@ -238,29 +224,37 @@ function Stage-UnpackRunner {
     # 创建 venv（依赖 install-python 完成）
     $venvDir = Join-Path $runnerDir ".venv"
     $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $venvOutput = & $script:UvCmd venv $venvDir --python $script:PythonVersion --clear 2>&1
-    if ($LASTEXITCODE) { $ErrorActionPreference = $prevEAP; Emit-StageErr "unpack-runner" "uv venv failed: $($venvOutput -join ' | ')"; return 1 }
-
-    # 安装 wheel（含依赖一次性装入 venv）
-    $pythonExe = Join-Path $venvDir "Scripts\python.exe"
-    $pipOutput = & $script:UvCmd pip install --python $pythonExe $wheel.FullName 2>&1
-    if ($LASTEXITCODE) {
-        # 网络不稳时回退国内镜像
-        $pypiIndex = $env:SPIRITAGENT_PYPI_INDEX_URL
-        if (-not $pypiIndex) { $pypiIndex = $env:PIP_INDEX_URL }
-        if (-not $pypiIndex) { $pypiIndex = "https://mirrors.aliyun.com/pypi/simple/" }
-        $pipOutputRetry = & $script:UvCmd pip install --python $pythonExe $wheel.FullName --index-url $pypiIndex 2>&1
+    try {
+        $ErrorActionPreference = "Continue"
+        $venvOutput = & $script:UvCmd venv $venvDir --python $script:PythonVersion --clear 2>&1
         if ($LASTEXITCODE) {
-            $ErrorActionPreference = $prevEAP; Emit-StageErr "unpack-runner" "uv pip install failed: $($pipOutputRetry -join ' | ')"; return 1
+            Emit-StageErr "unpack-runner" "uv venv failed: $($venvOutput -join ' | ')"
+            return 1
         }
-    }
 
-    $checkOutput = & $pythonExe -I -m spirit_agent_runner --check 2>&1
-    if ($LASTEXITCODE) {
-        $ErrorActionPreference = $prevEAP; Emit-StageErr "unpack-runner" "runner health check failed: $($checkOutput -join ' | ')"; return 1
+        # 安装 wheel（含依赖一次性装入 venv）
+        $pythonExe = Join-Path $venvDir "Scripts\python.exe"
+        $pipOutput = & $script:UvCmd pip install --python $pythonExe $wheel.FullName 2>&1
+        if ($LASTEXITCODE) {
+            # 网络不稳时回退国内镜像
+            $pypiIndex = $env:SPIRITAGENT_PYPI_INDEX_URL
+            if (-not $pypiIndex) { $pypiIndex = $env:PIP_INDEX_URL }
+            if (-not $pypiIndex) { $pypiIndex = "https://mirrors.aliyun.com/pypi/simple/" }
+            $pipOutputRetry = & $script:UvCmd pip install --python $pythonExe $wheel.FullName --index-url $pypiIndex 2>&1
+            if ($LASTEXITCODE) {
+                Emit-StageErr "unpack-runner" "uv pip install failed: $($pipOutputRetry -join ' | ')"
+                return 1
+            }
+        }
+
+        $checkOutput = & $pythonExe -I -m spirit_agent_runner --check 2>&1
+        if ($LASTEXITCODE) {
+            Emit-StageErr "unpack-runner" "runner health check failed: $($checkOutput -join ' | ')"
+            return 1
+        }
+    } finally {
+        $ErrorActionPreference = $prevEAP
     }
-    $ErrorActionPreference = $prevEAP
 
     # onboarding 音频：语言子目录 1:1 映射至 audio/onboarding/<lang>/
     $audioCount = 0
@@ -274,10 +268,7 @@ function Stage-UnpackRunner {
         $audioCount = (Get-ChildItem -Path $audioRoot -Filter "*.mp3" -Recurse -File -ErrorAction SilentlyContinue).Count
     }
 
-    $size = $wheel.Length
-    $escVenv = Escape-JsonString $venvDir
-    $escWheel = Escape-JsonString $wheel.Name
-    Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"unpack-runner`", `"data`": {`"venv`": `"$escVenv`", `"wheel`": `"$escWheel`", `"size_bytes`": $size, `"onboarding_audio_copied`": $audioCount}}"
+    Emit-StageResult @{ ok = $true; stage = "unpack-runner"; data = @{ venv = $venvDir; wheel = $wheel.Name; size_bytes = $wheel.Length; onboarding_audio_copied = $audioCount } }
     return 0
 }
 
@@ -321,21 +312,16 @@ function Stage-UnpackDesktop {
                 Emit-StageErr "unpack-desktop" "NSIS installer exited with code $($proc.ExitCode)"
                 return 1
             }
-            $escPath = Escape-JsonString $installDir
-            Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"unpack-desktop`", `"data`": {`"installed_path`": `"$escPath`", `"format`": `"nsis`"}}"
-            return 0
         }
         "zip" {
-            # ZIP 解压到 apps/SpiritAgent（与 NSIS 布局一致），对齐 bootstrap.rs 期望路径
-            $dest = Join-Path $SpiritAgentHome "apps\SpiritAgent"
-            if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-            Expand-Archive -Path $artifactPath -DestinationPath $dest -Force
-            $escPath = Escape-JsonString $dest
-            Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"unpack-desktop`", `"data`": {`"installed_path`": `"$escPath`", `"format`": `"zip`"}}"
-            return 0
+            # ZIP 回退路径与 bootstrap.rs 的桌面查找保持一致。
+            $installDir = Join-Path $SpiritAgentHome "apps\SpiritAgent"
+            if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+            Expand-Archive -Path $artifactPath -DestinationPath $installDir -Force
         }
     }
-    return 1
+    Emit-StageResult @{ ok = $true; stage = "unpack-desktop"; data = @{ installed_path = $installDir; format = $InstallerFormat } }
+    return 0
 }
 
 # 阶段 5：安装技能
@@ -352,7 +338,7 @@ function Stage-InstallSkills {
     # 尊重 .no-bundled-skills 标记
     $noSkillsMarker = Join-Path $SpiritAgentHome ".no-bundled-skills"
     if (Test-Path $noSkillsMarker) {
-        Emit-StageOk "install-skills" $true "user opted out via .no-bundled-skills"
+        Emit-StageResult @{ ok = $true; stage = "install-skills"; skipped = $true; reason = "user opted out via .no-bundled-skills" }
         return 0
     }
 
@@ -370,7 +356,7 @@ function Stage-InstallSkills {
     Install-OfficeCli | Out-Null
 
     $bundledCount = (Get-ChildItem -Path $skillsDir -Directory -ErrorAction SilentlyContinue | Measure-Object).Count
-    Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"install-skills`", `"data`": {`"bundled_count`": $bundledCount}}"
+    Emit-StageResult @{ ok = $true; stage = "install-skills"; data = @{ bundled_count = $bundledCount } }
     return 0
 }
 
@@ -379,8 +365,7 @@ function Stage-Finalize {
     $marker = Join-Path $SpiritAgentHome ".spiritagent-bootstrap-complete"
     Set-Content -Path $marker -Value "" -NoNewline
 
-    $escMarker = Escape-JsonString $marker
-    Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"finalize`", `"data`": {`"marker`": `"$escMarker`"}}"
+    Emit-StageResult @{ ok = $true; stage = "finalize"; data = @{ marker = $marker } }
     return 0
 }
 

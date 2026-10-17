@@ -8,31 +8,28 @@ export interface StageInfo {
   needs_user_input: boolean
 }
 
-export function stageLabel(name: string, fallback = '准备安装'): string {
-  const labels: Record<string, string> = {
-    welcome: '准备安装',
-    'install-python': '准备运行环境',
-    'unpack-runner': '安装电脑助手',
-    'unpack-desktop': '安装唤生应用',
-    'install-skills': '准备常用功能',
-    finalize: '完成安装设置'
-  }
+const STAGE_LABELS: Record<string, string> = {
+  welcome: '准备安装',
+  'install-python': '准备运行环境',
+  'unpack-runner': '安装电脑助手',
+  'unpack-desktop': '安装唤生应用',
+  'install-skills': '准备常用功能',
+  finalize: '完成安装设置'
+}
 
-  return labels[name] ?? fallback
+export function stageLabel(name: string): string {
+  return STAGE_LABELS[name] ?? '准备安装'
 }
 
 export type StageState = 'running' | 'succeeded' | 'skipped' | 'failed'
 
 export interface StageRecord {
-  info: StageInfo
   state: StageState | null
   durationMs?: number
-  error?: string
 }
 
 export interface BootstrapStateModel {
   status: 'idle' | 'running' | 'completed' | 'failed'
-  protocolVersion: number | null
   stages: Record<string, StageRecord>
   stageOrder: string[]
   currentStage: string | null
@@ -43,7 +40,6 @@ export interface BootstrapStateModel {
 
 const INITIAL: BootstrapStateModel = {
   status: 'idle',
-  protocolVersion: null,
   stages: {},
   stageOrder: [],
   currentStage: null,
@@ -60,13 +56,12 @@ export const $logPath = atom<string | null>(null)
 
 export const $progress = computed($bootstrap, (b) => {
   const total = b.stageOrder.length
-  if (total === 0) return { done: 0, total: 0, fraction: 0 }
   let done = 0
   for (const name of b.stageOrder) {
     const s = b.stages[name]?.state
     if (s === 'succeeded' || s === 'skipped') done += 1
   }
-  return { done, total, fraction: done / total }
+  return { done, total }
 })
 
 interface BootstrapManifestEvent {
@@ -133,13 +128,12 @@ function handleBootstrapEvent(payload: BootstrapEvent): void {
       const stages: Record<string, StageRecord> = {}
       const order: string[] = []
       for (const s of payload.stages) {
-        stages[s.name] = { info: s, state: null }
+        stages[s.name] = { state: null }
         order.push(s.name)
       }
       $bootstrap.set({
         ...cur,
         status: 'running',
-        protocolVersion: payload.protocolVersion,
         stages,
         stageOrder: order,
         currentStage: null,
@@ -157,10 +151,8 @@ function handleBootstrapEvent(payload: BootstrapEvent): void {
         break
       }
       const next: StageRecord = {
-        ...existing,
         state: payload.state,
-        durationMs: payload.durationMs,
-        error: payload.error
+        durationMs: payload.durationMs
       }
       $bootstrap.set({
         ...cur,

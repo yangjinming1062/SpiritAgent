@@ -4,7 +4,6 @@ import { useStore } from '@nanostores/react'
 import { Button } from '../components/button'
 import { Egg, type EggPhase } from '../components/egg'
 import { Halo } from '../components/halo'
-import { HatchOverlay } from '../components/hatch-overlay'
 import { StageList } from '../components/stage-list'
 import {
   cancelInstall,
@@ -30,8 +29,6 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
   const currentStageName = bootstrap.currentStage
   const currentStageIdx = currentStageName ? stageOrder.indexOf(currentStageName) : -1
 
-  const currentStageObj = currentStageName ? bootstrap.stages[currentStageName] : null
-
   let phase: EggPhase = 'idle'
   if (bootstrap.status === 'completed') {
     phase = 'hatching'
@@ -49,8 +46,8 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
       ? '安装完成，马上就好'
       : bootstrap.status === 'failed'
         ? '安装暂时停止，正在准备恢复选项'
-        : currentStageObj
-          ? stageLabel(currentStageObj.info.name)
+        : currentStageName
+          ? stageLabel(currentStageName)
           : '准备中…'
 
   return (
@@ -85,7 +82,12 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
           />
 
           {/* 破壳覆盖层，居中叠在主视觉上 */}
-          <HatchOverlay active={bootstrap.status === 'completed'} />
+          {bootstrap.status === 'completed' && (
+            <div
+              className="pointer-events-none absolute -inset-8 rounded-full bg-radial from-amber-200/35 via-amber-100/10 to-transparent opacity-0 animate-warm-glow"
+              aria-hidden="true"
+            />
+          )}
         </div>
 
         {/* 主视觉下方的动态文案 */}

@@ -203,11 +203,6 @@ pub fn get_log_path() -> String {
 }
 
 #[tauri::command]
-pub fn get_spiritagent_home() -> String {
-    spiritagent_home().to_string_lossy().into_owned()
-}
-
-#[tauri::command]
 pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let path = log_dir();
