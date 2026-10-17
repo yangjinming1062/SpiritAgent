@@ -15,7 +15,12 @@ from infrastructure.ai.providers.base import (
     ServiceType,
 )
 from infrastructure.ai.providers.registry import providers_supporting, resolve
-from infrastructure.ai.selection import GenerationOrigin, ProviderSelection, order_provider_chain
+from infrastructure.ai.selection import (
+    GenerationOrigin,
+    ProviderSelection,
+    has_provider_selection,
+    order_provider_chain,
+)
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import save_companion_asset_async, sniff_media_ext
@@ -56,6 +61,15 @@ class ImageReviewUnavailableError(ImageGenerationError):
     """已保存候选尚未完成场景内容核查；仅重试分析，不重新提交生图。"""
 
 
+@dataclass(frozen=True)
+class ResolvedImageGenChain:
+    """能力过滤后的调用链与过滤前来源选择的有效性。"""
+
+    providers: list[ProviderConfig]
+    error: str | None
+    preserve_order: bool
+
+
 async def resolve_image_gen_chain(
     db: AsyncSession,
     user_id: int,
@@ -67,9 +81,10 @@ async def resolve_image_gen_chain(
     prompt_chars: int = 0,
     environment_reference: bool = False,
     selection: ProviderSelection | None = None,
-) -> tuple[list[ProviderConfig], str | None]:
+) -> ResolvedImageGenChain:
     """按参考图/图像编辑能力过滤 image_gen 链；给出 ``prompt_chars`` 时跳过提示词放不下的供应商。"""
     full = order_provider_chain(await resolve_provider_chain(db, user_id, "image_gen", task=task), selection)
+    preserve_order = has_provider_selection(full, selection)
 
     def _fits(cfg: ProviderConfig) -> bool:
         limit = resolve(ServiceType.image_gen, cfg.provider_name).max_prompt_chars
@@ -93,12 +108,13 @@ async def resolve_image_gen_chain(
         if _fits(c) and _capable(c.provider_name) and (not has_reference or ModelModality.image in c.input_modalities)
     ]
     if not full or (capable == full and not has_reference):
-        return full, None
+        return ResolvedImageGenChain(full, None, preserve_order)
     if not any(_fits(c) for c in full):
         limit = max(resolve(ServiceType.image_gen, c.provider_name).max_prompt_chars or 0 for c in full)
-        return (
+        return ResolvedImageGenChain(
             [],
             f"提示词共 {prompt_chars} 字符，超过当前图片生成供应商的上限（{limit} 字符），请缩短描述或启用其他供应商",
+            preserve_order,
         )
     if not capable:
         # 可选供应商按能力声明列出，随注册与能力位变化，不手写名单。
@@ -113,8 +129,8 @@ async def resolve_image_gen_chain(
             else "以图生图"
         )
         hint = f"请启用 {names} 其中之一" if names else "请配置具备该能力的供应商"
-        return capable, f"当前图片生成供应商均不支持{action}，{hint}"
-    return capable, None
+        return ResolvedImageGenChain(capable, f"当前图片生成供应商均不支持{action}，{hint}", preserve_order)
+    return ResolvedImageGenChain(capable, None, preserve_order)
 
 
 async def _persist_user_asset_async(data: bytes, user_id: int, directory: str) -> str:
@@ -190,7 +206,7 @@ async def generate_images(
             chain, err = [provider_config], None
         else:
             async with SESSION_LOCAL() as db:
-                chain, err = await resolve_image_gen_chain(
+                resolved = await resolve_image_gen_chain(
                     db,
                     user_id,
                     task=task,
@@ -200,6 +216,7 @@ async def generate_images(
                     prompt_chars=len(prompt),
                     selection=selection,
                 )
+                chain, err = resolved.providers, resolved.error
             if not err and chain and prefer_transparent_background:
                 chain = [
                     config

@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Literal
 
 import httpx
-from infrastructure.ai._image_canvas import select_image_canvas
+from infrastructure.ai._image_canvas import ImageCanvas, select_image_canvas
 from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.providers._size_aspect import ASPECT_RATIOS, SIZE_TO_ASPECT
 from infrastructure.ai.providers.base import ProviderConfig, ServiceType
@@ -20,11 +20,15 @@ from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.image_expansion import expansion_canvas, finish_expansion
 from infrastructure.logger import get_logger
-from infrastructure.media_geometry import MAX_DESKTOP_CROP_FRACTION, can_crop_to_aspect
+from infrastructure.media_geometry import (
+    MAX_DESKTOP_CROP_FRACTION,
+    can_crop_to_aspect,
+    resolution_fit_key,
+)
 from infrastructure.network import download_capped
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from infrastructure.video_processing.image import prepare_transparent_image
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.chain import (
@@ -266,6 +270,14 @@ async def _materialize_reference(value: str | None, *, max_bytes: int) -> str | 
     return await asyncio.to_thread(build_data_uri, data, mime)
 
 
+def _reference_image_canvas(data: bytes) -> ImageCanvas:
+    normalized, _mime = asset_store.validate_image_bytes(data)
+    with Image.open(io.BytesIO(normalized)) as image:
+        ImageOps.exif_transpose(image, in_place=True)
+        width, height = image.size
+    return ImageCanvas(size=f"{width}x{height}", exact_size=True, native_width=width, native_height=height)
+
+
 async def _freeze_input_references(
     inputs: CharacterImageInput | SceneImageInput,
     *,
@@ -374,6 +386,10 @@ async def generate_character_images(
     prefer_transparent_background: bool = False,
     expansion: ImageExpansionInput | None = None,
     selection: ProviderSelection | None = None,
+    nearest_resolution: bool = False,
+    display_width: int | None = None,
+    display_height: int | None = None,
+    keep_aspect: bool = False,
 ) -> list[str]:
     """返回已保存的用户资产；恢复只消费冻结输入、已知结果和未提交的链尾。"""
     state = state if state is not None else ImageChainState()
@@ -387,6 +403,12 @@ async def generate_character_images(
     if state.inputs is None:
         if (target_width is None) != (target_height is None):
             raise ValueError("图片画布须同时提供目标宽高")
+        if target_width is not None and target_height is not None and min(target_width, target_height) <= 0:
+            raise ValueError("图片目标尺寸必须为正整数")
+        if (display_width is None) != (display_height is None):
+            raise ValueError("图片显示目标须同时提供宽高")
+        if nearest_resolution and (target_width is None or target_height is None):
+            raise ValueError("最接近分辨率的图片规划需要目标宽高")
         if image_edit and secondary_reference_image:
             raise ImageGenerationError("图像编辑不支持附加参考图，请改用重新生成")
         state.inputs = CharacterImageInput(
@@ -405,7 +427,7 @@ async def generate_character_images(
             expansion=expansion,
         )
         async with SESSION_LOCAL() as db:
-            chain, error = await resolve_image_gen_chain(
+            plan = await resolve_image_gen_chain(
                 db,
                 user_id,
                 task=task,
@@ -415,17 +437,49 @@ async def generate_character_images(
                 prompt_chars=len(prompt),
                 selection=selection,
             )
+        chain, error = plan.providers, plan.error
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
-        planned: list[tuple[ProviderConfig, FrozenMediaProvider]] = []
+        rank_by_resolution = nearest_resolution and not plan.preserve_order
+        local_edit_canvas: ImageCanvas | None = None
+        planned: list[tuple[ProviderConfig, FrozenMediaProvider, tuple[float, int, float]]] = []
         for config in chain:
             provider = FrozenMediaProvider.from_config(config)
             provider_cls = resolve(ServiceType.image_gen, provider.provider)
             provider.max_images_per_request = provider_cls.max_images_per_request
             if prefer_transparent_background and provider_cls.supports_transparent_background:
                 provider.background = "transparent"
+            fit_key = (0.0, 0, 0.0)
             if target_width is not None and target_height is not None:
-                canvas = select_image_canvas(config, target_width, target_height)
+                canvas_width, canvas_height = target_width, target_height
+                desktop_width = display_width if display_width is not None else target_width
+                desktop_height = display_height if display_height is not None else target_height
+                if nearest_resolution:
+                    if min(desktop_width, desktop_height) <= 0:
+                        raise ValueError("图片显示目标尺寸必须为正整数")
+                    if keep_aspect:
+                        scale = min(desktop_width / target_width, desktop_height / target_height)
+                        canvas_width, canvas_height = (
+                            max(1, round(target_width * scale)),
+                            max(
+                                1,
+                                round(target_height * scale),
+                            ),
+                        )
+                    else:
+                        canvas_width, canvas_height = desktop_width, desktop_height
+                try:
+                    if nearest_resolution and image_edit and config.provider_name == "local" and expansion is None:
+                        if local_edit_canvas is None:
+                            reference_data, _mime = await image_asset_bytes(reference_image, max_bytes=max_image_bytes)
+                            local_edit_canvas = await asyncio.to_thread(_reference_image_canvas, reference_data)
+                        canvas = local_edit_canvas
+                    else:
+                        canvas = select_image_canvas(config, canvas_width, canvas_height, nearest=nearest_resolution)
+                except ValueError:
+                    if nearest_resolution:
+                        continue
+                    raise
                 if "x" in canvas.size.lower():
                     native_width, native_height = (int(value) for value in canvas.size.lower().split("x"))
                     can_fit = can_crop_to_aspect(native_width, native_height, target_width, target_height)
@@ -443,15 +497,28 @@ async def generate_character_images(
                     )
                 if not can_fit:
                     continue
+                if nearest_resolution:
+                    if canvas.native_width is None or canvas.native_height is None:
+                        raise ValueError("图片档位缺少原生尺寸规格")
+                    fit_key = resolution_fit_key(
+                        canvas.native_width,
+                        canvas.native_height,
+                        desktop_width,
+                        desktop_height,
+                        keep_aspect=keep_aspect,
+                        output_aspect=(target_width, target_height),
+                    )
                 provider.image_size = canvas.size
                 provider.image_aspect_ratio = canvas.aspect_ratio
                 provider.image_resolution = canvas.resolution
                 provider.image_exact_size = canvas.exact_size
-            planned.append((config, provider))
+            planned.append((config, provider, fit_key))
         if not planned:
             raise ImageGenerationError("当前图片生成供应商没有可在少量裁边后适配目标的原生画幅")
-        chain = [config for config, _provider in planned]
-        state.providers = [provider for _config, provider in planned]
+        if rank_by_resolution:
+            planned.sort(key=lambda item: item[2])
+        chain = [config for config, _provider, _key in planned]
+        state.providers = [provider for _config, provider, _key in planned]
         configs = dict(enumerate(chain))
         if save_progress is not None:
             await _freeze_input_references(
@@ -508,7 +575,7 @@ async def generate_scene_images(
             max_image_bytes=max_image_bytes,
         )
         async with SESSION_LOCAL() as db:
-            chain, error = await resolve_image_gen_chain(
+            resolved = await resolve_image_gen_chain(
                 db,
                 user_id,
                 task=AiTaskKey.scene,
@@ -517,6 +584,7 @@ async def generate_scene_images(
                 environment_reference=True,
                 selection=selection,
             )
+        chain, error = resolved.providers, resolved.error
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
         for config in chain:

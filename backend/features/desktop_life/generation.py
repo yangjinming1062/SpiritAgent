@@ -5,13 +5,14 @@ import json
 from collections.abc import Awaitable, Callable
 from fractions import Fraction
 from io import BytesIO
+from typing import Literal
 from uuid import uuid4
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
 from infrastructure.ai.prompt_engineer import vision_chat
 from infrastructure.ai.providers.base import ServiceType, VideoGenProvider, VideoGenRequest
-from infrastructure.ai.selection import ProviderSelection, order_provider_chain
+from infrastructure.ai.selection import ProviderSelection, has_provider_selection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
     build_data_uri,
@@ -92,6 +93,12 @@ from features.desktop_life.schemas import (
     DesktopVideoProgress,
     DesktopVisualSnapshot,
     desktop_visual_hash,
+)
+from features.desktop_life.video_planning import (
+    DesktopVideoPlan,
+    DesktopVideoResolution,
+    freeze_desktop_video_plans,
+    nearest_desktop_video_resolution,
 )
 from features.desktop_life.video_refinement import (
     desktop_video_refinement_request,
@@ -291,6 +298,9 @@ async def resolve_desktop_video_plan(
     duration_seconds: int,
     continuity: str = "independent",
     aspect_ratio: str,
+    target_width: int,
+    target_height: int,
+    geometry_mode: Literal["target", "keep"],
     selection: ProviderSelection | None = None,
 ) -> tuple[int, list[FrozenMediaProvider]]:
     needs_last_frame = kind == "loop" or continuity == "base"
@@ -298,41 +308,49 @@ async def resolve_desktop_video_plan(
         chain = await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.desktop_life)
         if not await resolve_vision_chain(db, user_id, task=AiTaskKey.desktop_life):
             raise DesktopVideoStateError("请先配置视觉模型")
-    configured = [
-        (config, build_provider(config, VideoGenProvider)) for config in order_provider_chain(chain, selection)
-    ]
-    for index, (_, provider) in enumerate(configured):
+
+    def resolution_for(provider: VideoGenProvider, seconds: int, ratio: str) -> DesktopVideoResolution | None:
+        return nearest_desktop_video_resolution(
+            provider,
+            duration=seconds,
+            native_ratio=ratio,
+            delivery_ratio=aspect_ratio,
+            target_width=target_width,
+            target_height=target_height,
+            geometry_mode=geometry_mode,
+            first_frame=True,
+            last_frame=needs_last_frame,
+        )
+
+    plans: list[DesktopVideoPlan] = []
+    for config in order_provider_chain(chain, selection):
+        provider = build_provider(config, VideoGenProvider)
         if not provider.supports_first_frame or (needs_last_frame and not provider.supports_loop_frames):
             continue
-        if _provider_ratio(provider, aspect_ratio) is None:
+        ratio = _provider_ratio(provider, aspect_ratio)
+        if ratio is None:
             continue
         seconds = next(
             (
                 value
                 for value in sorted(provider.durations or (duration_seconds,))
                 if duration_seconds <= value <= 15
-                and provider.max_resolution(duration=value, first_frame=True, last_frame=needs_last_frame)
+                and provider.available_resolutions(duration=value, first_frame=True, last_frame=needs_last_frame)
             ),
             None,
         )
         if seconds is None:
             continue
-        providers: list[FrozenMediaProvider] = []
-        for config, current in configured[index:]:
-            if not current.supports_first_frame or (needs_last_frame and not current.supports_loop_frames):
-                continue
-            if _provider_ratio(current, aspect_ratio) is None:
-                continue
-            if current.durations is not None and seconds not in current.durations:
-                continue
-            resolution = current.max_resolution(duration=seconds, first_frame=True, last_frame=needs_last_frame)
-            if resolution:
-                frozen = FrozenMediaProvider.from_config(config)
-                frozen.video_resolution = resolution
-                frozen.video_aspect_ratio = _provider_ratio(current, aspect_ratio)
-                providers.append(frozen)
-        if providers:
-            return seconds, providers
+        choice = resolution_for(provider, seconds, ratio)
+        if choice is not None:
+            plans.append(DesktopVideoPlan(provider, ratio, seconds, choice))
+    result = freeze_desktop_video_plans(
+        plans,
+        preserve_order=has_provider_selection(chain, selection),
+        resolution_for=resolution_for,
+    )
+    if result is not None:
+        return result
     raise DesktopVideoStateError(
         f"当前视频模型均不支持已确认的 {aspect_ratio} 画幅及所需时长、首帧条件；"
         "请选择支持该画幅的模型，循环或衔接动作还需支持首尾帧",
@@ -582,6 +600,9 @@ async def _prepare_expansion(
             aspect_ratio=_delivery_aspect(progress),
             target_width=progress.target_width,
             target_height=progress.target_height,
+            nearest_resolution=True,
+            display_width=progress.target_width,
+            display_height=progress.target_height,
             expansion=ImageExpansionInput(target_width=progress.target_width, target_height=progress.target_height),
             size_enforced=True,
             state=state,
@@ -703,6 +724,10 @@ async def _prepare_pose(
         aspect_ratio=progress.aspect_ratio,
         target_width=progress.frame_width or progress.target_width,
         target_height=progress.frame_height or progress.target_height,
+        nearest_resolution=True,
+        display_width=progress.target_width,
+        display_height=progress.target_height,
+        keep_aspect=progress.geometry_mode == "keep",
         size_enforced=True,
         state=state,
         save_progress=save_image,
@@ -1202,6 +1227,9 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     await asyncio.to_thread(reference_video[0].read_bytes),
                     reference_video[0].suffix.lstrip("."),
                     aspect_ratio=progress.aspect_ratio,
+                    target_width=progress.target_width,
+                    target_height=progress.target_height,
+                    geometry_mode=progress.geometry_mode,
                     selection=progress.video_selection,
                     feedback=progress.feedback,
                 )
@@ -1212,6 +1240,9 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     duration_seconds=progress.duration_seconds,
                     continuity=progress.continuity,
                     aspect_ratio=progress.aspect_ratio,
+                    target_width=progress.target_width,
+                    target_height=progress.target_height,
+                    geometry_mode=progress.geometry_mode,
                     selection=progress.video_selection,
                 )
             progress.duration_seconds = seconds

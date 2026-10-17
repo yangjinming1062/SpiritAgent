@@ -6,10 +6,11 @@ from fractions import Fraction
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Literal
 
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
 from infrastructure.ai.providers.base import ProviderError, VideoGenProvider, VideoGenRequest, VideoReferenceMetadata
-from infrastructure.ai.selection import ProviderSelection, order_provider_chain
+from infrastructure.ai.selection import ProviderSelection, has_provider_selection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import build_data_uri, resolve_asset_reference, signed_companion_asset_url
 from infrastructure.config import SETTINGS
@@ -22,6 +23,12 @@ from PIL import Image
 from features.desktop_life.prompts import DESKTOP_VIDEO_REFINE_TEMPLATE
 from features.desktop_life.repository import DesktopVideoStateError
 from features.desktop_life.schemas import DesktopVideoProgress
+from features.desktop_life.video_planning import (
+    DesktopVideoPlan,
+    DesktopVideoResolution,
+    freeze_desktop_video_plans,
+    nearest_desktop_video_resolution,
+)
 from features.media.chain import FrozenMediaProvider
 
 
@@ -90,6 +97,9 @@ async def plan_desktop_video_refinement(
     extension: str,
     *,
     aspect_ratio: str,
+    target_width: int,
+    target_height: int,
+    geometry_mode: Literal["target", "keep"],
     selection: ProviderSelection | None = None,
     feedback: str = "",
 ) -> tuple[int, list[FrozenMediaProvider]]:
@@ -98,10 +108,8 @@ async def plan_desktop_video_refinement(
     except (OSError, ValueError, VideoProcessError) as exc:
         raise DesktopVideoStateError(str(exc) if isinstance(exc, VideoProcessError) else "参考视频无法读取") from exc
     async with SESSION_LOCAL() as db:
-        configs = order_provider_chain(
-            await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.desktop_life),
-            selection,
-        )
+        chain = await resolve_provider_chain(db, user_id, "video_gen", task=AiTaskKey.desktop_life)
+        configs = order_provider_chain(chain, selection)
         if not await resolve_vision_chain(db, user_id, task=AiTaskKey.desktop_life):
             raise DesktopVideoStateError("请先配置视觉模型")
     reference = (
@@ -109,9 +117,28 @@ async def plan_desktop_video_refinement(
         if SETTINGS.public_base_url.strip()
         else build_data_uri(data, "video/quicktime" if metadata.extension == "mov" else "video/mp4")
     )
-    seconds: int | None = None
-    providers: list[FrozenMediaProvider] = []
     errors: list[str] = []
+
+    def resolution_for(provider: VideoGenProvider, seconds: int, ratio: str) -> DesktopVideoResolution | None:
+        choice = nearest_desktop_video_resolution(
+            provider,
+            duration=seconds,
+            native_ratio=ratio,
+            delivery_ratio=aspect_ratio,
+            target_width=target_width,
+            target_height=target_height,
+            geometry_mode=geometry_mode,
+            reference_videos=True,
+        )
+        if choice is not None:
+            try:
+                provider.validate_request(_request(feedback, ratio, seconds, choice.resolution, reference))
+            except ProviderError as exc:
+                errors.append(str(exc))
+                return None
+        return choice
+
+    plans: list[DesktopVideoPlan] = []
     for config in configs:
         provider = build_provider(config, VideoGenProvider)
         if not provider.supports_reference_videos:
@@ -121,34 +148,35 @@ async def plan_desktop_video_refinement(
             ratio = reference_video_ratio(provider, aspect_ratio)
             if ratio is None:
                 raise DesktopVideoStateError(f"当前视频模型不支持 {aspect_ratio} 输出画幅，请更换视频模型或保留原片")
-            duration = seconds or next(
+            duration = next(
                 (
                     value
                     for value in sorted(provider.durations or ())
                     if value >= math.ceil(metadata.duration_seconds)
-                    and provider.max_resolution(duration=value, reference_videos=True)
+                    and provider.available_resolutions(duration=value, reference_videos=True)
                 ),
                 None,
             )
-            resolution = provider.max_resolution(duration=duration, reference_videos=True) if duration else None
-            if duration is None or resolution is None:
+            if duration is None:
                 continue
-            provider.validate_request(_request(feedback, ratio, duration, resolution, reference))
+            choice = resolution_for(provider, duration, ratio)
         except (ProviderError, DesktopVideoStateError) as exc:
             errors.append(str(exc))
             continue
-        frozen = FrozenMediaProvider.from_config(config)
-        frozen.video_resolution = resolution
-        frozen.video_aspect_ratio = ratio
-        providers.append(frozen)
-        seconds = duration
-    if seconds is None or not providers:
+        if choice is not None:
+            plans.append(DesktopVideoPlan(provider, ratio, duration, choice))
+    result = freeze_desktop_video_plans(
+        plans,
+        preserve_order=has_provider_selection(chain, selection),
+        resolution_for=resolution_for,
+    )
+    if result is None:
         raise DesktopVideoStateError(errors[0] if errors else "请在桌景视频调用链配置支持视频参考输入的模型")
     try:
         await asyncio.to_thread(_validate_reference_decoding, data, metadata.extension)
     except VideoProcessError as exc:
         raise DesktopVideoStateError(str(exc)) from exc
-    return seconds, providers
+    return result
 
 
 async def desktop_video_refinement_request(

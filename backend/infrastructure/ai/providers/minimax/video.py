@@ -118,7 +118,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         self.supports_reference_videos = self.supports_reference_videos and config.model in _MODEL_CAPABILITIES
         self._client = get_http(config.base_url, config.api_key)
 
-    def max_resolution(
+    def available_resolutions(
         self,
         *,
         duration: int,
@@ -126,15 +126,28 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
         reference_videos: bool = False,
-    ) -> str | None:
+    ) -> tuple[str, ...]:
         durations, resolutions = self.durations, self.resolutions
         if (
             duration not in durations
             or ((reference_images or reference_videos) and (first_frame or last_frame))
             or (reference_videos and not self.supports_reference_videos)
         ):
-            return None
-        return resolutions[-1]
+            return ()
+        return resolutions
+
+    def resolution_size(self, resolution: str, aspect_ratio: str) -> tuple[int, int]:
+        native = self.native_resolution(resolution)
+        short_edges = {"480P": 480, "768P": 768, "2K": 1440}
+        if native not in short_edges:
+            raise ValueError(f"MiniMax has no nominal size for resolution {resolution!r}")
+        short_edge = short_edges[native]
+        # H3 标称短边在宽于 16:9 的画幅按同档 16:9 像素预算收缩。
+        return self._nominal_resolution_size(
+            short_edge,
+            aspect_ratio,
+            max_pixels=short_edge * short_edge * 16 // 9,
+        )
 
     def validate_reference_video(self, metadata: VideoReferenceMetadata) -> None:
         if not self.supports_reference_videos:

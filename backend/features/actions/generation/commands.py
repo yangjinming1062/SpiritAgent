@@ -224,24 +224,24 @@ async def create_pack_from_reference(
         system_providers: list[FrozenMediaProvider] = []
         if not await resolve_vision_chain(db, user_id, task=AiTaskKey.window_action):
             raise VideoPackStateError("未配置视觉模型，无法根据角色参考图撰写动作脚本")
-        alignment_chain, alignment_error = await resolve_image_gen_chain(
+        alignment_chain = await resolve_image_gen_chain(
             db,
             user_id,
             task=AiTaskKey.window_action,
             has_reference=True,
             multiple_references=True,
         )
-        if not alignment_chain:
-            raise VideoPackStateError(alignment_error or "请配置支持头像与着装双参考的图像供应商")
-        image_chain, image_error = await resolve_image_gen_chain(
+        if not alignment_chain.providers:
+            raise VideoPackStateError(alignment_chain.error or "请配置支持头像与着装双参考的图像供应商")
+        image_chain = await resolve_image_gen_chain(
             db,
             user_id,
             task=AiTaskKey.window_action,
             has_reference=True,
             image_edit=True,
         )
-        if not image_chain:
-            raise VideoPackStateError(image_error or "请配置图像编辑供应商以生成动作姿态")
+        if not image_chain.providers:
+            raise VideoPackStateError(image_chain.error or "请配置图像编辑供应商以生成动作姿态")
         require_action_matting_model()
         pack = await _create_or_reset_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
         directory = _pack_dir(pack)

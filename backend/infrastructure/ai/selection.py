@@ -39,19 +39,17 @@ class ProviderSelection(BaseModel):
     mode: Literal["default", "current", "next"] = "default"
 
 
-def order_provider_chain(
+def _provider_selection_index(
     chain: Sequence[ProviderConfig],
     selection: ProviderSelection | None = None,
-) -> list[ProviderConfig]:
-    """在能力过滤前旋转当前链；来源失效时从首项开始，单次只遍历一圈。"""
-    ordered = list(chain)
-    if not ordered or selection is None or selection.mode == "default" or selection.origin is None:
-        return ordered
+) -> int | None:
+    if selection is None or selection.mode == "default" or selection.origin is None:
+        return None
     origin = selection.origin
-    index = next(
+    return next(
         (
             index
-            for index, config in enumerate(ordered)
+            for index, config in enumerate(chain)
             if config.task == origin.task
             and config.service_type == origin.service_type
             and config.provider_id == origin.provider_id
@@ -60,7 +58,23 @@ def order_provider_chain(
         ),
         None,
     )
+
+
+def has_provider_selection(
+    chain: Sequence[ProviderConfig],
+    selection: ProviderSelection | None,
+) -> bool:
+    return _provider_selection_index(chain, selection) is not None
+
+
+def order_provider_chain(
+    chain: Sequence[ProviderConfig],
+    selection: ProviderSelection | None = None,
+) -> list[ProviderConfig]:
+    """在能力过滤前旋转当前链；来源失效时从首项开始，单次只遍历一圈。"""
+    ordered = list(chain)
+    index = _provider_selection_index(chain, selection)
     if index is None:
         return ordered
-    start = (index + (selection.mode == "next")) % len(ordered)
+    start = (index + (selection is not None and selection.mode == "next")) % len(ordered)
     return ordered[start:] + ordered[:start]

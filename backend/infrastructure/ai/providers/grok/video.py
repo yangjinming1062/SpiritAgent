@@ -61,7 +61,7 @@ class GrokVideoGenProvider(VideoGenProvider):
     def native_resolution(self, resolution: str) -> str | None:
         return _RESOLUTION_TO_API.get(resolution.lower())
 
-    def max_resolution(
+    def available_resolutions(
         self,
         *,
         duration: int,
@@ -69,16 +69,17 @@ class GrokVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
         reference_videos: bool = False,
-    ) -> str | None:
+    ) -> tuple[str, ...]:
         if (
             reference_videos
             or duration not in _SUPPORTED_DURATIONS
             or (reference_images and (first_frame or last_frame))
         ):
-            return None
+            return ()
         if last_frame or reference_images:
-            return "720p" if self.supports_loop_frames else None
-        return "1080p" if (self.config.model) == "grok-imagine-video-1.5" else "720p"
+            return ("480p", "720p") if self.supports_loop_frames else ()
+        # Lite 的 1080p 来自 720p 放大，原生档仅列到 720p。
+        return _SUPPORTED_RESOLUTIONS if self.config.model == "grok-imagine-video-1.5" else ("480p", "720p")
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = self.config.model

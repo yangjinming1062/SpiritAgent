@@ -55,7 +55,7 @@ class QwenVideoGenProvider(VideoGenProvider):
     def native_resolution(self, resolution: str) -> str | None:
         return _RESOLUTION_TO_API.get(resolution.upper())
 
-    def max_resolution(
+    def available_resolutions(
         self,
         *,
         duration: int,
@@ -63,10 +63,10 @@ class QwenVideoGenProvider(VideoGenProvider):
         last_frame: bool = False,
         reference_images: bool = False,
         reference_videos: bool = False,
-    ) -> str | None:
+    ) -> tuple[str, ...]:
         if reference_videos or duration not in _DURATIONS or (reference_images and (first_frame or last_frame)):
-            return None
-        return "1080P"
+            return ()
+        return "480P", "720P", "1080P"
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         if req.reference_videos:

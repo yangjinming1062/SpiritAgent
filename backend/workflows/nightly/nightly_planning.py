@@ -426,8 +426,8 @@ async def _image_provider_available(
     has_reference: bool,
 ) -> bool:
     try:
-        chain, _ = await resolve_image_gen_chain(db, user_id, task=task, has_reference=has_reference)
-        return bool(chain)
+        chain = await resolve_image_gen_chain(db, user_id, task=task, has_reference=has_reference)
+        return bool(chain.providers)
     except Exception:
         logger.warning(
             "nightly image capability check failed",

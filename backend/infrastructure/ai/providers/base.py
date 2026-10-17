@@ -1,3 +1,4 @@
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
@@ -302,6 +303,18 @@ class VideoGenProvider(BaseProvider):
         """把输入档位映射为供应商原生档位，用于提交及模式上限检查。"""
         return next((value for value in self.resolutions or () if value.lower() == resolution.lower()), None)
 
+    def available_resolutions(
+        self,
+        *,
+        duration: int,
+        first_frame: bool = False,
+        last_frame: bool = False,
+        reference_images: bool = False,
+        reference_videos: bool = False,
+    ) -> tuple[str, ...]:
+        """配置模型在本次输入组合下的原生档，去除别名并按尺寸升序排列。"""
+        return ()
+
     def max_resolution(
         self,
         *,
@@ -312,7 +325,36 @@ class VideoGenProvider(BaseProvider):
         reference_videos: bool = False,
     ) -> str | None:
         """配置模型在本次输入组合下的最高原生档；未声明或组合不可用时返回 None。"""
-        return None
+        resolutions = self.available_resolutions(
+            duration=duration,
+            first_frame=first_frame,
+            last_frame=last_frame,
+            reference_images=reference_images,
+            reference_videos=reference_videos,
+        )
+        return resolutions[-1] if resolutions else None
+
+    def resolution_size(self, resolution: str, aspect_ratio: str) -> tuple[int, int]:
+        """按原生 P 档短边计算规划尺寸；供应商对齐后的实际尺寸须探测成品。"""
+        native = self.native_resolution(resolution)
+        if native is None or not native.lower().endswith("p") or not native[:-1].isdigit():
+            raise ValueError(f"{self.provider_name} has no nominal size for resolution {resolution!r}")
+        return self._nominal_resolution_size(int(native[:-1]), aspect_ratio)
+
+    @staticmethod
+    def _nominal_resolution_size(
+        short_edge: int,
+        aspect_ratio: str,
+        *,
+        max_pixels: int | None = None,
+    ) -> tuple[int, int]:
+        width, height = (float(value) for value in aspect_ratio.split(":"))
+        if not all(math.isfinite(value) and value > 0 for value in (width, height)):
+            raise ValueError(f"Invalid video aspect ratio {aspect_ratio!r}")
+        scale = short_edge / min(width, height)
+        if max_pixels is not None:
+            scale = min(scale, math.sqrt(max_pixels / (width * height)))
+        return max(1, round(width * scale)), max(1, round(height * scale))
 
     def validate_reference_video(self, metadata: VideoReferenceMetadata) -> None:
         raise ProviderError(f"{self.provider_name} does not support reference videos", status_code=400)

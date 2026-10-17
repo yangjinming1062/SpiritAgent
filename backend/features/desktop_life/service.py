@@ -1295,6 +1295,7 @@ async def generate_desktop_action(
         observed_draft = progress.generation_id if progress is not None and action.stage != "complete" else "none"
         observed_base = row.base_version
         observed_resolution = row.resolution_revision
+        target_width, target_height = row.target_width, row.target_height
         adjustment_action_id = action_id
         adjustment_draft = observed_draft
         geometry_mode, frame_width, frame_height, reused_data = (
@@ -1353,6 +1354,9 @@ async def generate_desktop_action(
             duration_seconds=duration,
             continuity=continuity,
             aspect_ratio=aspect_ratio,
+            target_width=target_width,
+            target_height=target_height,
+            geometry_mode=geometry_mode,
             selection=video_selection,
         )
     )
@@ -1550,6 +1554,9 @@ async def _plan_refinement(
         data,
         resolved[0].suffix,
         aspect_ratio=desktop_aspect_ratio(width, height),
+        target_width=row.target_width,
+        target_height=row.target_height,
+        geometry_mode="target" if request.aspect_policy == "expand" else "keep",
         selection=ProviderSelection(origin=asset.video_origin, mode="current"),
         feedback=request.feedback.strip(),
     )
@@ -1740,6 +1747,9 @@ async def upload_desktop_action(
                     data,
                     extension,
                     aspect_ratio=target_ratio,
+                    target_width=row.target_width,
+                    target_height=row.target_height,
+                    geometry_mode="target",
                 )
             exc.details["duration_seconds"] = seconds
         except DesktopVideoError as planning_error:
@@ -1763,6 +1773,9 @@ async def upload_desktop_action(
             data,
             extension,
             aspect_ratio=target_ratio,
+            target_width=row.target_width,
+            target_height=row.target_height,
+            geometry_mode="target",
         )
         source_frame, source_duration_ms = await asyncio.to_thread(_uploaded_refinement_frame, data, extension)
     async with _lock(user_id), SESSION_LOCAL() as db:
