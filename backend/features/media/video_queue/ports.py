@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from .contracts import VideoQueueKind, VideoQueueOwner, VideoQueueReadiness
 
 type OwnerInspector = Callable[[VideoQueueOwner, bool, str | None], Awaitable[VideoQueueReadiness]]
-type CancellationHandler = Callable[[str], Awaitable[None]]
+type CancellationHandler = Callable[[str], Awaitable[bool]]
 
 _INSPECTORS: dict[VideoQueueKind, OwnerInspector] = {}
 _CANCEL: CancellationHandler | None = None

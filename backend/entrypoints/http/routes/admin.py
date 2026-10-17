@@ -23,7 +23,7 @@ from features.accounts.schemas import (
 )
 from features.automation.schemas import NightlyActivityLogListResponse
 from features.configuration.social_accounts import XiaohongshuAdminLoginStatus
-from features.media.video_queue.admin import list_video_queue, resolve_video_queue
+from features.media.video_queue import admin as video_queue_admin
 from features.media.video_queue.contracts import VideoQueueList, VideoQueueRequestView, VideoQueueResolution
 from infrastructure.ai.config import ModelDiscoveryRequest
 from infrastructure.ai.models import ModelDiscoveryResponse
@@ -63,7 +63,7 @@ router.route_class = _AdminRoute
 
 @router.get("/video-queue", response_model=VideoQueueList)
 async def video_queue(db: DbSession) -> VideoQueueList:
-    return await list_video_queue(db)
+    return await video_queue_admin.list_video_queue(db)
 
 
 @router.post(
@@ -76,7 +76,23 @@ async def reconcile_video_queue(
     admin: CurrentAdmin,
     db: DbSession,
 ) -> VideoQueueRequestView:
-    return await resolve_video_queue(db, request_id, payload, admin)
+    return await video_queue_admin.resolve_video_queue(db, request_id, payload, admin)
+
+
+@router.post(
+    "/video-queue/{request_id}/cancel",
+    response_model=MessageResponse,
+)
+async def cancel_video_queue_request(request_id: str, admin: CurrentAdmin) -> MessageResponse:
+    return await video_queue_admin.cancel_video_queue_request(request_id, admin)
+
+
+@router.post(
+    "/video-queue/lanes/{lane_id}/retry",
+    response_model=MessageResponse,
+)
+async def retry_video_queue_lane(lane_id: str, admin: CurrentAdmin, db: DbSession) -> MessageResponse:
+    return await video_queue_admin.retry_video_queue_lane(db, lane_id, admin)
 
 
 @router.post(

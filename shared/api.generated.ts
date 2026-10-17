@@ -353,7 +353,7 @@ export interface ApiSchemas {
   "VideoQueueKind": "media" | "action" | "desktop"
   "VideoQueueLaneView": { "id": string; "provider": string; "provider_names": Array<string>; "next_retry_at": (string | null); "requests": Array<ApiSchemas["VideoQueueRequestView"]> }
   "VideoQueueList": { "queues": Array<ApiSchemas["VideoQueueLaneView"]> }
-  "VideoQueueRequestView": { "id": string; "revision": number; "kind": ApiSchemas["VideoQueueKind"]; "entity_id": (number | null); "user_id": (number | null); "model": string; "state": string; "provider_task_id": (string | null); "created_at": string; "updated_at": string; "error_message": (string | null) }
+  "VideoQueueRequestView": { "id": string; "revision": number; "kind": ApiSchemas["VideoQueueKind"]; "entity_id": (number | null); "user_id": (number | null); "model": string; "state": string; "cancel_requested": boolean; "provider_task_id": (string | null); "created_at": string; "updated_at": string; "error_message": (string | null) }
   "VoiceBubbleView": { "type": "voice"; "text": string; "audio": (ApiSchemas["ReplyAudio"] | null) }
   "VoiceCancelResponse": { "cancelled": boolean }
   "VoiceCloneRequest": { "kind": "clone"; "operation_id": string; "sample_id": string; "preview_text": string }
@@ -385,6 +385,8 @@ export interface ApiOperations {
   "system.health": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: { [key: string]: string } }
   "admin.video_queue": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["VideoQueueList"] }
   "admin.reconcile_video_queue": { path: { "request_id": string }; query: Record<string, never>; body: (ApiSchemas["VideoQueueAttachTask"] | ApiSchemas["VideoQueueConfirmFinished"]); input: { path: { "request_id": string }; query?: never; body: (ApiSchemas["VideoQueueAttachTask"] | ApiSchemas["VideoQueueConfirmFinished"]) }; response: ApiSchemas["VideoQueueRequestView"] }
+  "admin.cancel_video_queue_request": { path: { "request_id": string }; query: Record<string, never>; body: undefined; input: { path: { "request_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
+  "admin.retry_video_queue_lane": { path: { "lane_id": string }; query: Record<string, never>; body: undefined; input: { path: { "lane_id": string }; query?: never; body?: never }; response: ApiSchemas["MessageResponse"] }
   "admin.discover_ai_models": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["ModelDiscoveryRequest"]; input: { path?: never; query?: never; body: ApiSchemas["ModelDiscoveryRequest"] }; response: ApiSchemas["ModelDiscoveryResponse"] }
   "admin.list_users": { path: Record<string, never>; query: Record<string, never>; body: undefined; input: { path?: never; query?: never; body?: never }; response: ApiSchemas["UserListResponse"] }
   "admin.create_user": { path: Record<string, never>; query: Record<string, never>; body: ApiSchemas["UserCreate"]; input: { path?: never; query?: never; body: ApiSchemas["UserCreate"] }; response: ApiSchemas["UserResponse"] }
@@ -662,6 +664,28 @@ export const API_OPERATIONS = {
   },
   "admin.reconcile_video_queue": {
     "path": "/api/admin/video-queue/{request_id}/resolve",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "admin"
+    ],
+    "wait_for_model": false,
+    "ipc": false
+  },
+  "admin.cancel_video_queue_request": {
+    "path": "/api/admin/video-queue/{request_id}/cancel",
+    "method": "POST",
+    "encoding": "json",
+    "response": "json",
+    "identities": [
+      "admin"
+    ],
+    "wait_for_model": false,
+    "ipc": false
+  },
+  "admin.retry_video_queue_lane": {
+    "path": "/api/admin/video-queue/lanes/{lane_id}/retry",
     "method": "POST",
     "encoding": "json",
     "response": "json",

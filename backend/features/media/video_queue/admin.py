@@ -6,6 +6,7 @@ from infrastructure.logger import get_logger
 from infrastructure.redact import redact_sensitive_text
 from infrastructure.request_errors import RequestError
 from infrastructure.text import utc_now
+from runtime.responses import MessageResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,8 +14,26 @@ from features.media.chain import FrozenMediaProvider
 
 from .contracts import VideoQueueLaneView, VideoQueueList, VideoQueueRequestView, VideoQueueResolution
 from .models import VideoQueueLane, VideoQueueRequest
+from .service import cancel_video_attempt
 
 logger = get_logger(__name__)
+
+
+def _request_view(row: VideoQueueRequest) -> VideoQueueRequestView:
+    return VideoQueueRequestView(
+        id=row.token,
+        revision=row.revision,
+        kind=row.kind,
+        entity_id=row.entity_id,
+        user_id=row.user_id,
+        model=row.model,
+        state=row.state,
+        cancel_requested=row.cancel_requested,
+        provider_task_id=row.provider_task_id,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        error_message=row.error_message,
+    )
 
 
 async def list_video_queue(db: AsyncSession) -> VideoQueueList:
@@ -56,21 +75,7 @@ async def list_video_queue(db: AsyncSession) -> VideoQueueList:
         name = names.get(frozen.provider_id)
         if name and name not in view.provider_names:
             view.provider_names.append(name)
-        view.requests.append(
-            VideoQueueRequestView(
-                id=row.token,
-                revision=row.revision,
-                kind=row.kind,
-                entity_id=row.entity_id,
-                user_id=row.user_id,
-                model=row.model,
-                state=row.state,
-                provider_task_id=row.provider_task_id,
-                created_at=row.created_at,
-                updated_at=row.updated_at,
-                error_message=row.error_message,
-            ),
-        )
+        view.requests.append(_request_view(row))
     return VideoQueueList(queues=list(views.values()))
 
 
@@ -109,16 +114,28 @@ async def resolve_video_queue(
             "note": row.resolution_note,
         },
     )
-    return VideoQueueRequestView(
-        id=row.token,
-        revision=row.revision,
-        kind=row.kind,
-        entity_id=row.entity_id,
-        user_id=row.user_id,
-        model=row.model,
-        state=row.state,
-        provider_task_id=row.provider_task_id,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-        error_message=row.error_message,
+    return _request_view(row)
+
+
+async def cancel_video_queue_request(request_id: str, admin: str) -> MessageResponse:
+    if not await cancel_video_attempt(request_id):
+        raise RequestError(status_code=404, message="视频队列任务不存在")
+    logger.warning(
+        "video queue manually cancelled",
+        extra={"queue_request_id": request_id, "admin": admin},
     )
+    return MessageResponse(message="已请求取消该视频任务")
+
+
+async def retry_video_queue_lane(db: AsyncSession, lane_id: str, admin: str) -> MessageResponse:
+    lane = await db.scalar(select(VideoQueueLane).where(VideoQueueLane.token == lane_id).with_for_update())
+    if lane is None:
+        raise RequestError(status_code=404, message="视频队列不存在")
+    prior_not_before = lane.not_before
+    lane.not_before = None
+    await db.commit()
+    logger.warning(
+        "video queue lane cooldown cleared",
+        extra={"lane_token": lane.token, "prior_not_before": prior_not_before, "admin": admin},
+    )
+    return MessageResponse(message="已清除队列冷却，将按原顺序继续处理")

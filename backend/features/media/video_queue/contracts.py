@@ -40,6 +40,7 @@ class VideoQueueRequestView(BaseModel):
     user_id: int | None
     model: str
     state: str
+    cancel_requested: bool
     provider_task_id: str | None
     created_at: datetime
     updated_at: datetime

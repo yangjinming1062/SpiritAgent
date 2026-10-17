@@ -8,7 +8,7 @@ const TABS = {
     settings: { title: '系统参数', desc: '全局业务参数与运行时调优（实时热生效，无需重启容器）' },
     versions: { title: '版本发布', desc: '桌面端更新包与版本分发' },
     logs: { title: '夜间日志', desc: '夜间活动的执行状态与阶段结果' },
-    videoQueue: { title: '视频队列', desc: '查看生成占用、等待与限流状态，核对未知的远端结果' },
+    videoQueue: { title: '视频队列', desc: '查看生成状态、取消任务、重试限流队列与核对远端结果' },
 };
 
 const $  = (s, r = document) => r.querySelector(s);
@@ -2356,26 +2356,52 @@ async function loadVideoQueue() {
     const button = $('#videoQueueRefresh');
     if (button.disabled) return;
     button.disabled = true;
+    const list = $('#videoQueueList');
+    list.inert = true;
     $('#videoQueueStatus').textContent = '正在读取队列…';
     try {
         const data = await invoke('admin.video_queue');
         videoQueueSnapshot = data.queues;
         $('#videoQueueStatus').textContent = videoQueueSnapshot.length ? `${videoQueueSnapshot.length} 个供应商密钥队列 · 更新于 ${new Date().toLocaleTimeString('zh-CN')}` : '当前没有视频生成任务。';
-        $('#videoQueueList').innerHTML = videoQueueSnapshot.map(queue => {
+        list.innerHTML = videoQueueSnapshot.map(queue => {
             const requests = queue.requests ?? [];
             const names = (queue.provider_names ?? []).join('、');
             const rows = requests.map(request => `<tr>
                 <td><strong>${esc(VIDEO_QUEUE_KINDS[request.kind] ?? request.kind)}</strong><div class="hint">${esc(request.id)}</div><div class="hint">用户 ${esc(request.user_id ?? '已移除')} · 记录 ${esc(request.entity_id ?? '—')}</div></td>
                 <td>${esc(request.model)}<div class="hint">${esc(request.provider_task_id ?? '尚无远端任务 ID')}</div></td>
-                <td>${pill(VIDEO_QUEUE_STATES[request.state] ?? request.state, request.state === 'blocked' ? 'warn' : 'muted')}${request.error_message ? `<div class="hint">${esc(request.error_message)}</div>` : ''}</td>
+                <td>${pill(request.cancel_requested ? '取消中' : VIDEO_QUEUE_STATES[request.state] ?? request.state, request.state === 'blocked' ? 'warn' : 'muted')}${request.error_message ? `<div class="hint">${esc(request.error_message)}</div>` : ''}</td>
                 <td>${esc(fmtDate(request.created_at))}<div class="hint">更新 ${esc(fmtDate(request.updated_at))}</div></td>
-                <td class="td-actions">${request.state === 'blocked' ? `<button class="btn btn--ghost btn--sm" data-request-id="${esc(request.id)}" onclick="showVideoQueueResolve(this.dataset.requestId)">核对结果</button>` : '—'}</td>
+                <td class="td-actions">${request.state === 'blocked' ? `<button class="btn btn--ghost btn--sm" data-request-id="${esc(request.id)}" onclick="showVideoQueueResolve(this.dataset.requestId)">核对结果</button> ` : ''}<button class="btn btn--ghost btn--sm" data-queue-action="cancel" data-request-id="${esc(request.id)}" onclick="updateVideoQueue(this)"${request.cancel_requested ? ' disabled' : ''}>${request.cancel_requested ? '取消中' : '取消任务'}</button></td>
             </tr>`).join('');
-            return `<section class="card video-queue-card"><div class="card-head"><h3>${esc(names || queue.provider)}</h3><span class="count">${requests.length} 个请求</span></div><div class="video-queue-meta hint">供应商 ${esc(queue.provider)} · 队列 ${esc(queue.id)}${queue.next_retry_at ? ` · 下次可重试 ${esc(fmtDate(queue.next_retry_at))}` : ''}</div><div class="table-scroll"><table><thead><tr><th>任务与归属</th><th>模型与远端任务</th><th>状态</th><th>入队时间</th><th class="td-actions">操作</th></tr></thead><tbody>${rows || stateRow(5, '当前没有等待任务')}</tbody></table></div></section>`;
+            const retryButton = new Date(queue.next_retry_at).getTime() > Date.now() ? `<button class="btn btn--ghost btn--sm" data-queue-action="retry" data-lane-id="${esc(queue.id)}" onclick="updateVideoQueue(this)" title="清除冷却，按原顺序继续处理">立即重试</button>` : '';
+            return `<section class="card video-queue-card"><div class="card-head"><h3>${esc(names || queue.provider)}</h3><span class="count">${requests.length} 个请求</span>${retryButton}</div><div class="video-queue-meta hint">供应商 ${esc(queue.provider)} · 队列 ${esc(queue.id)}${queue.next_retry_at ? ` · 下次可重试 ${esc(fmtDate(queue.next_retry_at))}` : ''}</div><div class="table-scroll"><table><thead><tr><th>任务与归属</th><th>模型与远端任务</th><th>状态</th><th>入队时间</th><th class="td-actions">操作</th></tr></thead><tbody>${rows || stateRow(5, '当前没有等待任务')}</tbody></table></div></section>`;
         }).join('');
     } catch (error) {
         $('#videoQueueStatus').textContent = '读取失败：' + error.message;
-    } finally { button.disabled = false; }
+    } finally { button.disabled = false; list.inert = false; }
+}
+
+async function updateVideoQueue(button) {
+    const refresh = $('#videoQueueRefresh');
+    if (button.disabled || refresh.disabled) return;
+    const cancel = button.dataset.queueAction === 'cancel';
+    if (cancel && !confirm('确定取消该视频任务？排队任务将立即取消；已提交的任务会尝试取消，并等待远端结束。结果未知或原凭据不可用时仍需核对。')) return;
+    button.disabled = refresh.disabled = true;
+    const list = $('#videoQueueList');
+    list.inert = true;
+    try {
+        const result = await invoke(cancel ? 'admin.cancel_video_queue_request' : 'admin.retry_video_queue_lane', {
+            path: cancel ? { request_id: button.dataset.requestId } : { lane_id: button.dataset.laneId },
+        });
+        toast(result.message);
+    } catch (error) {
+        $('#videoQueueStatus').textContent = `${cancel ? '取消' : '重试'}失败：${error.message}`;
+        return;
+    } finally {
+        button.disabled = refresh.disabled = false;
+        list.inert = false;
+    }
+    await loadVideoQueue();
 }
 
 function showVideoQueueResolve(requestId) {

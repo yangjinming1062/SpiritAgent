@@ -174,7 +174,7 @@ async def get_video_attempt_status(request_id: str) -> VideoJobStatus | None:
 
 
 def _status(row: VideoQueueRequest) -> VideoJobStatus | None:
-    if row.state in ("stopped", "cancelled"):
+    if row.state in ("stopped", "cancelled") or (row.cancel_requested and row.state in _TERMINAL):
         raise VideoQueueStoppedError("本次视频制作已结束，请按需重新发起")
     if row.result_json:
         return _STATUS.validate_json(row.result_json)
@@ -243,17 +243,21 @@ async def acknowledge_video_attempt(request_id: str) -> None:
         await db.commit()
 
 
-async def cancel_video_attempt(request_id: str) -> None:
+async def cancel_video_attempt(request_id: str) -> bool:
+    """幂等请求取消，返回任务是否存在；远端占用保留到确定终态。"""
     async with SESSION_LOCAL() as db:
         row = await db.scalar(select(VideoQueueRequest).where(VideoQueueRequest.token == request_id).with_for_update())
-        if row is None or row.state in _TERMINAL:
-            return
+        if row is None:
+            return False
+        if row.state in _TERMINAL or row.cancel_requested:
+            return True
         row.cancel_requested, row.request_json = True, None
         if row.state in _PENDING or row.state == "claimed":
             row.state = "cancelled"
         row.revision += 1
         row.updated_at = utc_now()
         await db.commit()
+    return True
 
 
 async def pause_video_attempt(request_id: str) -> None:
@@ -336,10 +340,11 @@ async def _finish(request_id: str, status: VideoJobStatus) -> None:
         if row is None or row.state not in _ACTIVE or row.provider_task_id != status.task_id:
             return
         row.request_json = None
-        if row.user_id is None or row.entity_id is None:
+        if row.cancel_requested or row.user_id is None or row.entity_id is None:
             row.state, row.result_json = "cancelled", None
             row.error_reason, row.error_status_code, row.error_message = None, None, None
-            row.consumed_at = utc_now()
+            if row.user_id is None or row.entity_id is None:
+                row.consumed_at = utc_now()
         else:
             status = replace(status, error=_diagnostic(row.token, status.error))
             row.state = "succeeded" if status.status == "succeeded" else "failed"
@@ -447,7 +452,7 @@ async def _cooldown(row: VideoQueueRequest, exc: Exception) -> None:
         if lane is None or current is None or current.state != "submitting":
             return
         lane.not_before = max(lane.not_before or retry_at, retry_at)
-        current.state = "rate_limited"
+        current.state = "cancelled" if current.cancel_requested else "rate_limited"
         current.rate_limit_count += 1
         current.error_reason, current.error_status_code = "rate_limit", 429
         current.error_message = _diagnostic(row.token, classify_api_error(exc).message)
