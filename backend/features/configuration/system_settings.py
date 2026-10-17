@@ -139,7 +139,7 @@ def get_system_settings_for_admin() -> dict[str, Any]:
 
     result["ai_provider_support"] = {service: providers_supporting(service) for service in CAPABILITY_SERVICES}
     result["ai_provider_defaults"] = {
-        service: {name: value.model_dump() for name, value in defaults.items()}
+        service: {name: value.model_dump(mode="json") for name, value in defaults.items()}
         for service, defaults in provider_configuration_defaults().items()
     }
     result["ai_tasks"] = [task.model_dump(mode="json") for task in AI_TASKS]
