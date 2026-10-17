@@ -154,27 +154,32 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
             logger.warning("SSRF guard refused %s: %s", host, reason)
             raise httpcore.ConnectError(f"refusing to connect to {host} ({reason})")
 
-        validated = await anyio.to_thread.run_sync(
-            partial(_resolve_and_validate, host, port, trusted_service=trusted_service),
-        )
-
-        await self._init_backend()
-        last_error: Exception | None = None
-        for ip_str, resolved_port in validated:
-            try:
-                return await self._backend.connect_tcp(
-                    ip_str,
-                    resolved_port,
-                    timeout=timeout,
-                    local_address=local_address,
-                    socket_options=socket_options,
+        try:
+            # DNS、线程排队和各候选地址共享建连预算；放弃解析等待后不再发起 socket。
+            with anyio.fail_after(timeout) as deadline:
+                validated = await anyio.to_thread.run_sync(
+                    partial(_resolve_and_validate, host, port, trusted_service=trusted_service),
+                    abandon_on_cancel=True,
                 )
-            except (OSError, TimeoutError, httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
-                last_error = exc
-                continue
-        if last_error is not None:
-            raise last_error
-        raise httpcore.ConnectError(f"No validated addresses available for connect to {host}")
+                await self._init_backend()
+                last_error: Exception | None = None
+                for ip_str, resolved_port in validated:
+                    remaining = max(0.0, deadline.deadline - anyio.current_time()) if timeout is not None else None
+                    try:
+                        return await self._backend.connect_tcp(
+                            ip_str,
+                            resolved_port,
+                            timeout=remaining,
+                            local_address=local_address,
+                            socket_options=socket_options,
+                        )
+                    except (OSError, TimeoutError, httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                        last_error = exc
+                if last_error is not None:
+                    raise last_error
+                raise httpcore.ConnectError(f"No validated addresses available for connect to {host}")
+        except TimeoutError as exc:
+            raise httpcore.ConnectTimeout("DNS validation or connection timed out") from exc
 
     async def connect_unix_socket(  # type: ignore[override]
         self,

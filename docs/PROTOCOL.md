@@ -188,7 +188,7 @@ flowchart TD
 
 ### 模型失败与重试预算
 
-调用按输入能力筛选任务链，再依配置尝试，每项重算窗口与输出预算。正文交付前的明确供应商失败、不完整/空结果及交付校验失败可回退；合法工具调用和主动沉默有效。正文已交付、结果未知、取消或业务守卫终止后停止回退。嵌入固定单模型，失败退关键词召回。入口见 [llm_fallback.py](../backend/infrastructure/ai/llm_fallback.py)、[error_classifier.py](../backend/infrastructure/ai/error_classifier.py)。
+调用按输入能力筛选任务链，再依配置尝试，每项重算窗口与输出预算。正文交付前的明确供应商失败、不完整/空结果及交付校验失败可回退；合法工具调用和主动沉默有效。正文已交付、结果未知、已生成素材下载失败、取消或业务守卫终止后停止回退。嵌入固定单模型，失败退关键词召回。入口见 [llm_fallback.py](../backend/infrastructure/ai/llm_fallback.py)、[error_classifier.py](../backend/infrastructure/ai/error_classifier.py)。
 
 失败尝试的正文、推理和工具草稿丢弃，下一项从原上下文装配；实际交付正文才锁定模型。最终错误按末项真实原因脱敏报告，手动重试复用输入和工具结果。
 

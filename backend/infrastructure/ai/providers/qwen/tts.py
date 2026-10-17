@@ -4,10 +4,13 @@ from typing import ClassVar
 
 from mutagen import File, MutagenError
 
+from infrastructure.ai.error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError, classify_api_error
 from infrastructure.ai.providers.base import ProviderConfig, ProviderError, TTSProvider, TTSResult, pick_catalog_voice
-from infrastructure.ai.providers.http import download_bytes, get_http
+from infrastructure.ai.providers.http import get_http
 from infrastructure.ai.providers.qwen._errors import raise_for_qwen_response
 from infrastructure.ai.speech_contracts import SpeechStyle
+from infrastructure.assets.media_download import download_media_result
+from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 
 
 class QwenTTSProvider(TTSProvider):
@@ -116,7 +119,16 @@ class QwenTTSProvider(TTSProvider):
             raw = base64.b64decode(data_b64)
         elif url := audio.get("url"):
             # 临时 URL 24h 过期，下载后交付字节
-            raw = await download_bytes(url)
+            try:
+                raw = await download_media_result(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
+            except Exception as exc:
+                raise LLMRuntimeError(
+                    ClassifiedError(
+                        FailoverReason.result_download_failed,
+                        classify_api_error(exc).status_code,
+                        "语音已生成，但音频下载失败。",
+                    ),
+                ) from exc
         else:
             raise RuntimeError(f"qwen tts returned no audio: {body}")
         try:

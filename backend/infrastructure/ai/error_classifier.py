@@ -26,6 +26,7 @@ class FailoverReason(enum.Enum):
     server_error = "server_error"  # 500/502 内部错误
     timeout = "timeout"  # 连接/读取超时或断连
     result_unknown = "result_unknown"  # 非幂等请求可能已生效 —— 禁止自动重试或回退
+    result_download_failed = "result_download_failed"  # 生成已完成但成品下载失败，不得通过重新生成恢复
     context_overflow = "context_overflow"  # 上下文超限
     payload_too_large = "payload_too_large"  # 413
     image_too_large = "image_too_large"  # 单图超出供应商限制
@@ -46,8 +47,7 @@ class ClassifiedError:
 
     @property
     def should_fallback(self) -> bool:
-        # 简化回退策略：不区分错误类型，只要非结果未知（非幂等任务未决）即可切换到下一家以保障用户体验。
-        return self.reason != FailoverReason.result_unknown
+        return self.reason not in {FailoverReason.result_unknown, FailoverReason.result_download_failed}
 
 
 class LLMRuntimeError(Exception):

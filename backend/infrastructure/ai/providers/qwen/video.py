@@ -109,9 +109,11 @@ class QwenVideoGenProvider(VideoGenProvider):
             headers={"X-DashScope-Async": "enable"},
         )
         body = raise_for_qwen_response(resp)
-        output = body.get("output") or {}
+        output = body.get("output")
+        if not isinstance(output, dict):
+            raise ProviderResultUnknownError("POST", self.config.base_url)
         task_id = output.get("task_id") or ""
-        if not isinstance(task_id, str) or not task_id:
+        if not isinstance(task_id, str) or not task_id.strip():
             raise ProviderResultUnknownError("POST", self.config.base_url)
         return VideoJobStatus(task_id=task_id, status="queued")
 

@@ -1,4 +1,3 @@
-import asyncio
 from typing import ClassVar
 
 from infrastructure.ai.providers.base import (
@@ -8,7 +7,7 @@ from infrastructure.ai.providers.base import (
     ImageGenResult,
     ProviderConfig,
 )
-from infrastructure.ai.providers.http import download_as_b64, get_http
+from infrastructure.ai.providers.http import get_http
 from infrastructure.ai.providers.qwen._errors import raise_for_qwen_response
 
 # 千问文生图/图像编辑用「宽*高」；尺寸保持请求的画幅比例。
@@ -82,9 +81,4 @@ class QwenImageGenProvider(ImageGenProvider):
         if not urls:
             raise RuntimeError(f"qwen image_gen returned no images: {body}")
 
-        if req.response_format == "url":
-            return ImageGenResult(images=[ImageAsset(url=url) for url in urls])
-        b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
-        return ImageGenResult(
-            images=[ImageAsset(b64=b, mime="image/png") for b in b64s],
-        )
+        return ImageGenResult(images=[ImageAsset(url=url) for url in urls])

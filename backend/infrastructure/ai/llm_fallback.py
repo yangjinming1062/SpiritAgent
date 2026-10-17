@@ -91,7 +91,7 @@ async def _execute_with_fallback[P: BaseProvider, T](
     has_later_attempts: bool = False,
     prefer_content_policy_error: bool = True,
 ) -> T:
-    """按链调用；结果未知或流已开始后停止。独立生成默认优先保留内容策略拦截供提示词清洗，聊天按末项实际错误收尾。"""
+    """按链调用；结果未知、成品下载失败或流已开始后停止。独立生成默认优先保留内容策略拦截供提示词清洗，聊天按末项实际错误收尾。"""
     if not chain:
         raise MissingLlmConfigError("no provider configured")
 
@@ -124,6 +124,14 @@ async def _execute_with_fallback[P: BaseProvider, T](
             raise
         except Exception as exc:
             classified = classify_api_error(exc)
+            if classified.reason == FailoverReason.result_download_failed:
+                log_paid_call(
+                    config.provider_name,
+                    service,
+                    user_id=user_id,
+                    model=config.model,
+                    duration_ms=round((time.monotonic() - started) * 1000),
+                )
             if prefer_content_policy_error and classified.reason == FailoverReason.content_policy_blocked:
                 content_policy_error = exc
             log_failure = partial(
@@ -152,11 +160,7 @@ async def _execute_with_fallback[P: BaseProvider, T](
                 log_failure(phase="chain_fallback", next_provider=next_config.provider_name)
                 continue
             log_failure(phase="chain_result", total_chain_latency_ms=int((time.monotonic() - chain_started) * 1000))
-            if (
-                content_policy_error is not None
-                and classified.reason != FailoverReason.result_unknown
-                and not started_streaming
-            ):
+            if content_policy_error is not None and classified.should_fallback and not started_streaming:
                 raise content_policy_error
             raise
         duration_ms = round((time.monotonic() - started) * 1000)

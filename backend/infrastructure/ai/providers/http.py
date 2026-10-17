@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import contextlib
 import random
 import threading
 from collections.abc import AsyncIterator, Callable
@@ -9,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from openai import AsyncOpenAI, NotGiven
+from openai import AsyncOpenAI, NotGiven, OpenAIError
 
 from infrastructure.config import SETTINGS
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
@@ -43,7 +42,7 @@ REQUEST_VALIDATION_PATTERNS = (
 )
 
 
-class ProviderResultUnknownError(Exception):
+class ProviderResultUnknownError(OpenAIError):
     """非幂等请求可能已被供应商接受，但响应在确认前丢失。"""
 
     def __init__(self, method: str, url: str) -> None:
@@ -288,6 +287,7 @@ _pinned_generation: ContextVar[_ClientGeneration | None] = ContextVar(
 _clients: dict[tuple[str, str], _RotatingAsyncClient] = {}
 _clients_openai: dict[tuple[str, str], AsyncOpenAI] = {}
 _retirement_tasks: set[asyncio.Task[None]] = set()
+_shutdown_task: asyncio.Task[None] | None = None
 _closing = False
 
 
@@ -311,8 +311,14 @@ def _raw_transport(settings: _ClientSettings) -> httpx.AsyncBaseTransport:
     )
 
 
-def _openai_transport(_settings: _ClientSettings) -> httpx.AsyncBaseTransport:
-    return safe_outbound_async_transport()
+def _openai_transport(settings: _ClientSettings) -> httpx.AsyncBaseTransport:
+    # SDK 独占重试预算；结果未知须作为 OpenAIError 直接上抛，不能落入 SDK 的连接重试。
+    return _RetryAsyncTransport(
+        safe_outbound_async_transport(),
+        max_retries=0,
+        base_delay=settings.base_retry_delay,
+        max_delay=settings.max_retry_delay,
+    )
 
 
 def _acquire_generation(
@@ -361,8 +367,10 @@ async def _close_generation(generation: _ClientGeneration) -> None:
             generation.clients.clear()
             break
     for client in clients:
-        with contextlib.suppress(Exception):
+        try:
             await client.aclose()
+        except Exception:
+            logger.warning("Failed to close retired LLM HTTP client", exc_info=True)
 
 
 def _forget_retirement_task(task: asyncio.Task[None]) -> None:
@@ -399,16 +407,12 @@ def rotate_http_clients() -> None:
     _retire_generation(retiring)
 
 
-async def aclose_all() -> None:
-    global _closing, _generation
-    with _cache_lock:
-        _closing = True
-        retiring = _generation
-        _generation = _ClientGeneration(_settings_snapshot())
-        clients = list(_clients.values())
-        clients_openai = list(_clients_openai.values())
-        _clients.clear()
-        _clients_openai.clear()
+async def _close_all_clients(
+    retiring: _ClientGeneration,
+    clients: list[_RotatingAsyncClient],
+    clients_openai: list[AsyncOpenAI],
+) -> None:
+    global _closing
     _retire_generation(retiring)
     try:
         while True:
@@ -418,14 +422,50 @@ async def aclose_all() -> None:
                 break
             await asyncio.gather(*tasks, return_exceptions=True)
         for client_openai in clients_openai:
-            with contextlib.suppress(Exception):
+            try:
                 await client_openai.close()
+            except Exception:
+                logger.warning("Failed to close OpenAI client frontend", exc_info=True)
         for client in clients:
-            with contextlib.suppress(Exception):
+            try:
                 await client.aclose()
+            except Exception:
+                logger.warning("Failed to close provider HTTP client frontend", exc_info=True)
     finally:
         with _cache_lock:
             _closing = False
+
+
+def _report_client_shutdown(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
+        logger.warning("LLM HTTP client shutdown was cancelled")
+    elif error := task.exception():
+        logger.error("LLM HTTP client shutdown failed", exc_info=error)
+
+
+async def aclose_all() -> None:
+    """调用者取消只停止等待；共享关闭任务继续持有旧池与客户端，后续调用可接续等待。"""
+    global _closing, _generation, _shutdown_task
+    with _cache_lock:
+        task = _shutdown_task
+        if task is None or task.done():
+            _closing = True
+            retiring = _generation
+            _generation = _ClientGeneration(_settings_snapshot())
+            clients = list(_clients.values())
+            clients_openai = list(_clients_openai.values())
+            _clients.clear()
+            _clients_openai.clear()
+            task = None
+    if task is None:
+        task = asyncio.create_task(
+            _close_all_clients(retiring, clients, clients_openai),
+            name="llm-http-client-shutdown",
+        )
+        with _cache_lock:
+            _shutdown_task = task
+        task.add_done_callback(_report_client_shutdown)
+    await asyncio.shield(task)
 
 
 class _RetryAwareAsyncOpenAI(AsyncOpenAI):

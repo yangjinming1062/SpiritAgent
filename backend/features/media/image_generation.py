@@ -24,10 +24,10 @@ from infrastructure.ai.selection import (
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets import asset_store
 from infrastructure.assets.asset_store import save_companion_asset_async, sniff_media_ext
+from infrastructure.assets.media_download import download_media_result
 from infrastructure.constants import REMOTE_ASSET_DOWNLOAD_MAX_BYTES
 from infrastructure.database import SESSION_LOCAL
 from infrastructure.logger import get_logger
-from infrastructure.network import download_capped
 from infrastructure.video_processing.ffmpeg import VideoProcessError
 from infrastructure.video_processing.matting import require_matting_model
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -285,8 +285,8 @@ async def generate_images(
         for asset in result.images:
             if asset.url:
                 if persist_user_assets:
-                    # 供应商地址短时效：下载→魔数校验→转存正式资产，失败即本轮报错重试，不把短效 URL 落库。
-                    data = await download_capped(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
+                    # 已知成品只重试下载；转存位于生成回退之外，失败不再提交供应商。
+                    data = await download_media_result(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES)
                     urls.append(await _persist_user_asset_async(data, user_id, persist_directory))
                 else:
                     urls.append(asset.url)

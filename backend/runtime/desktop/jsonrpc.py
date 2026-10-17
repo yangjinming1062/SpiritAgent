@@ -242,17 +242,19 @@ class JsonRpcDispatcher:
         session_id: str | None = None,
         event_id: int | None = None,
     ) -> bool:
-        """事件帧入缓冲并交给 writer；返回 False 的帧不得在重连时补发。"""
-        if event_id is not None and (previous_seq := self._outbox_event_ids.get(event_id)) is not None:
-            if (
-                previous_seq not in self._pending_outbox_events
-                or previous_seq in self._queued_sequences
-                or self.replay_buffer.contains(previous_seq)
-            ):
+        """新事件入缓冲后交给 writer；重投复用原帧，排队失败返回 False。"""
+        buffered = None
+        previous_seq = self._outbox_event_ids.get(event_id) if event_id is not None else None
+        if event_id is not None and previous_seq is not None:
+            if previous_seq not in self._pending_outbox_events:
+                # 物理送达之后写库可能失败；重投只补送达标记，不重复发送客户端事件。
+                if event_id not in self._delivered_ids:
+                    self._delivered_ids.append(event_id)
                 return True
-            # 未送达且已离开缓冲和发送队列的事件必须重新入队。
-            self._pending_outbox_events.pop(previous_seq, None)
-        if _EVENT_SERIALIZER is not None:
+            if previous_seq in self._queued_sequences:
+                return True
+            buffered = self.replay_buffer.get_frame(previous_seq)
+        if buffered is None and _EVENT_SERIALIZER is not None:
             payload = _EVENT_SERIALIZER(event_type, payload)
         if session_id is None and isinstance(payload, dict) and isinstance(payload.get("session_id"), str):
             session_id = payload["session_id"]
@@ -264,17 +266,23 @@ class JsonRpcDispatcher:
                 extra={"event_type": event_type, "queue_size": self._outbox.qsize()},
             )
             return False
-        params: dict[str, Any] = {"type": event_type, "stream_id": self.stream_id}
-        if session_id is not None:
-            params["session_id"] = session_id
-        if payload is not None:
-            params["payload"] = payload
-        seq, frame = self.replay_buffer.append({"jsonrpc": JSON_RPC_VERSION, "method": "event", "params": params})
-        if event_id is not None:
-            self._pending_outbox_events[seq] = event_id
-            self._outbox_event_ids[event_id] = seq
-            if len(self._outbox_event_ids) > OUTBOX_QUEUE_MAX * 2:
-                self._outbox_event_ids.pop(next(iter(self._outbox_event_ids)))
+        if buffered is None:
+            params: dict[str, Any] = {"type": event_type, "stream_id": self.stream_id}
+            if session_id is not None:
+                params["session_id"] = session_id
+            if payload is not None:
+                params["payload"] = payload
+            seq, frame = self.replay_buffer.append({"jsonrpc": JSON_RPC_VERSION, "method": "event", "params": params})
+            if event_id is not None:
+                if previous_seq is not None:
+                    self._pending_outbox_events.pop(previous_seq, None)
+                self._pending_outbox_events[seq] = event_id
+                self._outbox_event_ids[event_id] = seq
+                if len(self._outbox_event_ids) > OUTBOX_QUEUE_MAX * 2:
+                    self._outbox_event_ids.pop(next(iter(self._outbox_event_ids)))
+        else:
+            # writer 发送失败后复用原序号重排，避免制造缺口触发完整状态恢复。
+            seq, frame = buffered.seq, buffered.frame
 
         if self._hold_events:
             return True
