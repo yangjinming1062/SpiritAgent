@@ -15,6 +15,9 @@ use windows_sys::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
 #[path = "launches.rs"]
 mod launches;
 use launches::{LaunchRequest, Launches};
+#[path = "activations.rs"]
+mod activations;
+use activations::{FocusAuthorization, PendingActivation};
 
 const APP_ID: PROPERTYKEY = PROPERTYKEY {
     fmtid: windows::core::GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
@@ -153,14 +156,22 @@ fn owned_by(mut window: HWND, owner: HWND) -> bool {
     false
 }
 
-fn activation_target(window: HWND) -> Result<HWND> {
+fn last_input() -> Option<u32> {
+    let mut input = LASTINPUTINFO {
+        cbSize: size_of::<LASTINPUTINFO>() as u32,
+        dwTime: 0,
+    };
+    (unsafe { GetLastInputInfo(&mut input) } != 0).then_some(input.dwTime)
+}
+
+fn activation_target(window: HWND) -> Result<Option<HWND>> {
     let root = unsafe { GetAncestor(window, GA_ROOTOWNER) };
     let popup = unsafe { GetLastActivePopup(root) };
     if !popup.is_null()
         && owned_by(popup, window)
         && unsafe { IsWindowVisible(popup) != 0 && IsWindowEnabled(popup) != 0 }
     {
-        return Ok(popup);
+        return Ok(Some(popup));
     }
     // 带隐藏 owner 的主窗口不能直接用 GetLastActivePopup 查弹窗；只在其所属分支内找可交互窗口。
     if unsafe { IsWindowEnabled(window) } == 0 {
@@ -169,48 +180,11 @@ fn activation_target(window: HWND) -> Result<HWND> {
                 && owned_by(*popup, window)
                 && unsafe { IsWindowVisible(*popup) != 0 && IsWindowEnabled(*popup) != 0 }
         }) {
-            return Ok(popup);
+            return Ok(Some(popup));
         }
-        return Err("该窗口正在等待对话框，但对话框暂时不可用。".into());
+        return Ok(None);
     }
-    Ok(window)
-}
-
-fn wait_for_window_change(mut ready: impl FnMut() -> bool) -> bool {
-    let started = Instant::now();
-    while started.elapsed() < Duration::from_millis(500) {
-        if ready() {
-            return true;
-        }
-        let mut message: MSG = unsafe { zeroed() };
-        while unsafe { PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) } != 0 {
-            unsafe {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    ready()
-}
-
-fn relocate_window(window: HWND, workspace: &Workspace) -> Result<()> {
-    let mut relocation = workspace.move_to_display(window)?;
-    let mut error = None;
-    let completed = wait_for_window_change(|| match relocation.poll(workspace) {
-        Ok(completed) => completed,
-        Err(reason) => {
-            error = Some(reason);
-            true
-        }
-    });
-    if let Some(error) = error {
-        return Err(error);
-    }
-    if !completed {
-        return Err("程序窗口拒绝移动或调整尺寸，请在 Windows 中手动调整。".into());
-    }
-    Ok(())
+    Ok(Some(window))
 }
 
 pub(super) struct Applications {
@@ -227,6 +201,8 @@ pub(super) struct Applications {
     revision: u64,
     published: Option<(Vec<RunningWindow>, Option<String>)>,
     launches: Launches,
+    activation: Option<PendingActivation>,
+    next_activation: u64,
 }
 
 impl Applications {
@@ -247,6 +223,8 @@ impl Applications {
             revision: 0,
             published: None,
             launches: Launches::default(),
+            activation: None,
+            next_activation: 0,
         })
     }
 
@@ -399,6 +377,7 @@ impl Applications {
         for &(event, handle) in events {
             match event {
                 0 => {
+                    self.cancel_operations();
                     self.windows.clear();
                     changed = true;
                 }
@@ -419,7 +398,7 @@ impl Applications {
                 _ => {}
             }
         }
-        let interval = if self.launches.pending() {
+        let interval = if self.launches.pending() || self.activation.is_some() {
             Duration::from_millis(100)
         } else {
             Duration::from_secs(2)
@@ -440,6 +419,19 @@ impl Applications {
                 (Vec::new(), Some(error))
             }
         };
+        if let Some(mut activation) = self.activation.take() {
+            let window = activation.root().window();
+            match self.eligible(window).and_then(|eligible| {
+                if !eligible {
+                    return Err("窗口已关闭或已离开当前桌面。".into());
+                }
+                activation.poll(workspace)
+            }) {
+                Ok(false) => self.activation = Some(activation),
+                Ok(true) => {},
+                Err(reason) => emit(json!({ "event": "warning", "reason": reason })),
+            }
+        }
         self.launches.poll(&self.windows, workspace);
         let encoded_sizes: Vec<usize> = windows
             .iter()
@@ -517,7 +509,7 @@ impl Applications {
         Ok(())
     }
 
-    pub(super) fn activate(&self, id: &str, allow_remote: bool, workspace: &Workspace) -> Result<()> {
+    pub(super) fn activate(&mut self, id: &str, allow_remote: bool, workspace: &Workspace) -> Result<String> {
         let tracked = self
             .windows
             .values()
@@ -530,78 +522,21 @@ impl Applications {
         if !allow_remote && !workspace.on_display(window) {
             return Err("窗口已移到其他屏幕，请重新选择程序。".into());
         }
-        let minimized = unsafe { IsIconic(window) } != 0;
-        let moving_root = !workspace.on_display(window);
-        if moving_root {
-            relocate_window(window, workspace)?;
-        } else if minimized {
-            unsafe {
-                ShowWindowAsync(window, SW_RESTORE);
-            }
+        let identity = tracked.identity.clone();
+        self.activation = None;
+        self.next_activation += 1;
+        let activation_id = format!("{}:activation:{}", self.session, self.next_activation);
+        self.activation = Some(PendingActivation::start(identity, activation_id.clone(), id.into(), self.parent_pid, workspace)?);
+        Ok(activation_id)
+    }
+
+    pub(super) fn authorize_focus(&mut self, activation_id: &str, granted: bool, workspace: &Workspace) -> Result<FocusAuthorization> {
+        let Some(pending) = self.activation.as_mut() else { return Ok(FocusAuthorization::Stale); };
+        let result = pending.authorize(activation_id, granted, workspace);
+        if result.is_err() || matches!(result, Ok(FocusAuthorization::Completed)) {
+            self.activation = None;
         }
-        if (moving_root || minimized)
-            && !wait_for_window_change(|| {
-                tracked.identity.valid()
-                    && unsafe { IsIconic(window) } == 0
-                    && (!moving_root || workspace.placed(window))
-            })
-        {
-            return Err("程序窗口拒绝还原或移动到所选屏幕，请在 Windows 中手动调整。".into());
-        }
-        // 最小化 owner 会临时隐藏模态弹窗，须等 owner 还原后再查其可交互分支。
-        let mut target = activation_target(window);
-        if minimized && target.is_err() {
-            wait_for_window_change(|| {
-                target = activation_target(window);
-                target.is_ok()
-            });
-        }
-        let target = target?;
-        if target != window && !workspace.on_display(target) {
-            relocate_window(target, workspace)?;
-        }
-        let source = unsafe { GetCurrentThreadId() };
-        let foreground = unsafe { GetForegroundWindow() };
-        let foreground_thread = unsafe { GetWindowThreadProcessId(foreground, null_mut()) };
-        let target_thread = unsafe { GetWindowThreadProcessId(target, null_mut()) };
-        if target_thread == 0 {
-            return Err("窗口已关闭，请重新选择程序。".into());
-        }
-        // 已显示窗口不会经由还原自动激活；目标线程也须加入当前桌面的输入队列。
-        let mut attachments = Vec::<InputAttachment>::new();
-        for thread in [foreground_thread, target_thread] {
-            if thread == 0
-                || thread == source
-                || attachments.iter().any(|attached| attached.target == thread)
-            {
-                continue;
-            }
-            if unsafe { AttachThreadInput(source, thread, 1) } == 0 {
-                return Err(failure("attach external window input"));
-            }
-            attachments.push(InputAttachment {
-                source,
-                target: thread,
-            });
-        }
-        let accepted = unsafe { SetForegroundWindow(target) } != 0;
-        while let Some(attached) = attachments.pop() {
-            drop(attached);
-        }
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_millis(350) {
-            let active = unsafe { GetForegroundWindow() };
-            if active == target || active == window || owned_by(active, window) {
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        Err(if accepted {
-            "窗口没有获得前台焦点，请重试。"
-        } else {
-            "Windows 拒绝切换到该窗口，请重试。"
-        }
-        .into())
+        result
     }
 
     pub(super) fn launch_external(
@@ -611,11 +546,17 @@ impl Applications {
         workspace: &Workspace,
     ) -> Result<()> {
         let request = LaunchRequest::external(target, app_id)?;
-        self.launches.start(request, workspace)
+        self.launches.start(request, self.parent_pid, workspace)
     }
 
-    pub(super) fn cancel_launches(&mut self) {
+    pub(super) fn cancel_operations(&mut self) {
+        self.activation = None;
         self.launches = Launches::default();
+    }
+
+    pub(super) fn cancel_interaction(&mut self) {
+        self.activation = None;
+        self.launches.cancel_placement();
     }
 
     pub(super) fn launch_jump_list(
@@ -625,6 +566,6 @@ impl Applications {
         workspace: &Workspace,
     ) -> Result<()> {
         let request = LaunchRequest::jump_list(task, target)?;
-        self.launches.start(request, workspace)
+        self.launches.start(request, self.parent_pid, workspace)
     }
 }

@@ -57,7 +57,13 @@ export interface ExplorerDesktopHost {
   }) => Promise<void>
   focus: (handle: Buffer, eligible?: () => boolean) => Promise<boolean>
   refreshApplications: (eligible: () => boolean) => Promise<void>
-  activateExternal: (windowId: string, allowRemote: boolean, eligible: () => boolean) => Promise<void>
+  activateExternal: (
+    windowId: string,
+    allowRemote: boolean,
+    eligible: () => boolean,
+    continuation?: () => boolean
+  ) => Promise<void>
+  cancelExternalInteraction: () => Promise<void>
   launchExternal: (target: string, appId: string, eligible: () => boolean) => Promise<void>
   closeExternal: (windowIds: string[], eligible: () => boolean) => Promise<void>
   getJumpListTasks: (target: string, eligible: () => boolean) => Promise<DesktopJumpListTask[]>
@@ -70,6 +76,56 @@ interface PendingRequest {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
+}
+
+interface ExternalActivation {
+  windowId: string
+  continuation: () => boolean
+  generation: number
+  host: ChildProcessWithoutNullStreams
+  nativeOperationId: string | null
+  authorizationRevision: number
+  bufferedFocus: ExternalFocusRequest | null
+  pendingFocus: ExternalFocusRequest | null
+  latestFocus: ExternalFocusRequest | null
+  authorizing: boolean
+  cancelGrant: (() => void) | null
+}
+
+interface ExternalFocusRequest {
+  operationId: string
+  activationId: string
+  revision: number
+}
+
+type ExternalFocusAuthorizationStatus = 'accepted' | 'deferred' | 'stale' | 'completed'
+type ForegroundGrantResult = 'allowed' | 'deferred' | 'cancelled'
+
+function parseExternalActivation(value: unknown): string {
+  const activationId =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as { activation_id?: unknown }).activation_id
+      : undefined
+
+  if (typeof activationId !== 'string' || !activationId || activationId.length > 256) {
+    throw new Error('Desktop helper returned an invalid external activation identity')
+  }
+
+  return activationId
+}
+
+function parseExternalFocusAuthorization(value: unknown): ExternalFocusAuthorizationStatus {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Desktop helper returned an invalid foreground authorization status')
+  }
+
+  const status = (value as { status?: unknown }).status
+
+  if (status !== 'accepted' && status !== 'deferred' && status !== 'stale' && status !== 'completed') {
+    throw new Error('Desktop helper returned an invalid foreground authorization status')
+  }
+
+  return status
 }
 
 function parseMessage(line: string): Record<string, unknown> {
@@ -189,6 +245,8 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   const serialize = createSerialQueue()
   let failureReported = false
+  let externalActivation: ExternalActivation | null = null
+  let foregroundGrantProcess: ChildProcessWithoutNullStreams | null = null
 
   let applicationBatch: {
     revision: number
@@ -272,6 +330,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
   }
 
   function reportFailure(reason: string): void {
+    clearExternalActivation()
     clearHeartbeat()
     rejectPending(new Error(reason))
 
@@ -315,6 +374,304 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
         }
       })
     })
+  }
+
+  function clearExternalActivation(): void {
+    const previous = externalActivation
+    externalActivation = null
+    previous?.cancelGrant?.()
+  }
+
+  function currentExternalActivation(activation: ExternalActivation, focus?: ExternalFocusRequest): boolean {
+    return (
+      externalActivation === activation &&
+      state === 'running' &&
+      generation === activation.generation &&
+      child === activation.host &&
+      !exited(activation.host) &&
+      !activation.host.killed &&
+      activation.continuation() &&
+      (focus === undefined || (activation.latestFocus === focus && activation.nativeOperationId === focus.operationId))
+    )
+  }
+
+  async function waitForForegroundGrant(activation: ExternalActivation, focus: ExternalFocusRequest): Promise<boolean> {
+    while (currentExternalActivation(activation, focus)) {
+      const previous = foregroundGrantProcess
+
+      if (!previous || exited(previous)) {
+        return true
+      }
+
+      await new Promise<void>(resolve => {
+        const finished = (): void => {
+          previous.removeListener('exit', finished)
+          previous.removeListener('close', finished)
+
+          if (activation.cancelGrant === finished) {
+            activation.cancelGrant = null
+          }
+
+          resolve()
+        }
+
+        activation.cancelGrant = finished
+        previous.once('exit', finished)
+        previous.once('close', finished)
+
+        if (exited(previous) || !currentExternalActivation(activation, focus)) {
+          finished()
+        }
+      })
+    }
+
+    return false
+  }
+
+  function runForegroundGrant(activation: ExternalActivation): Promise<ForegroundGrantResult> {
+    if (foregroundGrantProcess && !exited(foregroundGrantProcess)) {
+      return Promise.reject(new Error('上次前台授权辅助进程尚未退出。'))
+    }
+
+    return new Promise<ForegroundGrantResult>((resolve, reject) => {
+      const grant = spawn(options.helperPath, ['allow-foreground', String(process.pid), String(activation.host.pid)], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true
+      })
+
+      foregroundGrantProcess = grant
+
+      let stdout = ''
+      let stderr = ''
+      let settled = false
+
+      const finishFailure = (reason: string): void => {
+        if (settled) {
+          return
+        }
+
+        settled = true
+        activation.cancelGrant = null
+
+        if (!grant.killed && !exited(grant)) {
+          try {
+            grant.kill()
+          } catch (error) {
+            options.log(`[desktop] foreground grant helper termination: ${String(error)}`)
+          }
+        }
+
+        void waitForExit(grant, 2_000).then(stopped =>
+          reject(new Error(stopped ? reason : `${reason}; foreground grant helper could not be stopped`))
+        )
+      }
+
+      activation.cancelGrant = () => finishFailure('前台授权请求已失效。')
+      grant.stdout.setEncoding('utf8')
+      grant.stderr.setEncoding('utf8')
+      grant.stdout.on('data', (chunk: string) => {
+        if (!settled) {
+          stdout += chunk
+
+          if (Buffer.byteLength(stdout) > 8192) {
+            finishFailure('前台授权辅助进程输出过长。')
+          }
+        }
+      })
+      grant.stderr.on('data', (chunk: string) => {
+        if (!settled) {
+          stderr += chunk
+
+          if (Buffer.byteLength(stderr) > 4096) {
+            finishFailure('前台授权辅助进程诊断输出过长。')
+          }
+        }
+      })
+      grant.stdin.on('error', error => finishFailure(`前台授权命令通道失败：${error.message}`))
+      grant.once('error', error => finishFailure(`前台授权辅助进程无法启动：${error.message}`))
+      grant.once('close', code => {
+        if (foregroundGrantProcess === grant) {
+          foregroundGrantProcess = null
+        }
+
+        if (settled) {
+          return
+        }
+
+        try {
+          const event = code === 0 ? parseMessage(stdout.trim()).event : undefined
+
+          if (
+            code !== 0 ||
+            (event !== 'foreground_allowed' && event !== 'foreground_deferred' && event !== 'foreground_cancelled')
+          ) {
+            throw new Error(`前台授权辅助进程未确认成功 (${String(code)})${stderr ? `: ${stderr.trim()}` : ''}`)
+          }
+
+          settled = true
+          activation.cancelGrant = null
+          resolve(
+            event === 'foreground_allowed' ? 'allowed' : event === 'foreground_deferred' ? 'deferred' : 'cancelled'
+          )
+        } catch (error) {
+          finishFailure(error instanceof Error ? error.message : String(error))
+        }
+      })
+      grant.stdin.end()
+    })
+  }
+
+  function cancelExternalAuthorization(activation: ExternalActivation, focus: ExternalFocusRequest): void {
+    if (!currentExternalActivation(activation, focus)) {
+      return
+    }
+
+    clearExternalActivation()
+    void request({ command: 'cancel_external_interaction' }, 3_000).catch(failure =>
+      options.log(`[desktop] cancelling foreground authorization: ${String(failure)}`)
+    )
+  }
+
+  function failExternalAuthorization(
+    activation: ExternalActivation,
+    focus: ExternalFocusRequest,
+    error: unknown
+  ): void {
+    options.log(`[desktop] foreground authorization failed: ${error instanceof Error ? error.message : String(error)}`)
+
+    if (!currentExternalActivation(activation, focus)) {
+      return
+    }
+
+    options.onWarning?.('窗口前台授权未确认，请重新点击程序。')
+    cancelExternalAuthorization(activation, focus)
+  }
+
+  async function authorizeExternalFocus(activation: ExternalActivation): Promise<void> {
+    if (activation.authorizing) {
+      return
+    }
+
+    activation.authorizing = true
+
+    try {
+      while (currentExternalActivation(activation) && activation.pendingFocus) {
+        const focus = activation.pendingFocus
+        activation.pendingFocus = null
+
+        if (!(await waitForForegroundGrant(activation, focus)) || !currentExternalActivation(activation, focus)) {
+          continue
+        }
+
+        let grant: ForegroundGrantResult
+
+        try {
+          grant = await runForegroundGrant(activation)
+        } catch (error) {
+          if (currentExternalActivation(activation, focus)) {
+            failExternalAuthorization(activation, focus, error)
+          }
+
+          continue
+        }
+
+        if (!currentExternalActivation(activation, focus)) {
+          continue
+        }
+
+        if (grant === 'cancelled') {
+          cancelExternalAuthorization(activation, focus)
+
+          continue
+        }
+
+        try {
+          const result = await request<unknown>(
+            { command: 'authorize_external_focus', activation_id: focus.activationId, granted: grant === 'allowed' },
+            3_000
+          )
+
+          const status = parseExternalFocusAuthorization(result)
+
+          if (!currentExternalActivation(activation, focus)) {
+            continue
+          }
+
+          if (status === 'completed') {
+            clearExternalActivation()
+          } else if (status === 'deferred' || status === 'stale') {
+            // 本轮授权已消费，后续重规划必须由新令牌重新取得权限。
+            activation.latestFocus = null
+          }
+        } catch (error) {
+          failExternalAuthorization(activation, focus, error)
+        }
+      }
+    } finally {
+      activation.authorizing = false
+
+      if (externalActivation === activation && !currentExternalActivation(activation)) {
+        clearExternalActivation()
+      }
+    }
+  }
+
+  function externalFocusMessage(message: Record<string, unknown>): void {
+    const activation = externalActivation
+    const token = message.activation_id
+    const operationId = message.operation_id
+    const revision = message.authorization_revision
+
+    if (
+      !activation ||
+      !currentExternalActivation(activation) ||
+      message.window_id !== activation.windowId ||
+      typeof token !== 'string' ||
+      !token ||
+      token.length > 256 ||
+      typeof operationId !== 'string' ||
+      !operationId ||
+      operationId.length > 256 ||
+      typeof revision !== 'number' ||
+      !Number.isSafeInteger(revision) ||
+      revision < 1
+    ) {
+      return
+    }
+
+    const focus: ExternalFocusRequest = { operationId, activationId: token, revision }
+
+    if (activation.nativeOperationId === null) {
+      if (
+        !activation.bufferedFocus ||
+        activation.bufferedFocus.operationId !== operationId ||
+        activation.bufferedFocus.revision < revision
+      ) {
+        activation.bufferedFocus = focus
+      }
+
+      return
+    }
+
+    queueExternalFocus(activation, focus)
+  }
+
+  function queueExternalFocus(activation: ExternalActivation, focus: ExternalFocusRequest): void {
+    if (
+      !currentExternalActivation(activation) ||
+      activation.nativeOperationId !== focus.operationId ||
+      focus.revision <= activation.authorizationRevision
+    ) {
+      return
+    }
+
+    activation.authorizationRevision = focus.revision
+    activation.pendingFocus = focus
+    activation.latestFocus = focus
+    activation.cancelGrant?.()
+    void authorizeExternalFocus(activation).catch(error =>
+      options.log(`[desktop] foreground authorization failed: ${String(error)}`)
+    )
   }
 
   function launchHelper(
@@ -453,6 +810,8 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
             }
           } else if (message.event === 'applications') {
             applicationsMessage(message)
+          } else if (message.event === 'external_focus') {
+            externalFocusMessage(message)
           } else if (message.event === 'work_area') {
             if (!isPhysicalRect(message.work_area)) {
               throw new Error('Desktop helper returned an invalid work area')
@@ -587,6 +946,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
   }
 
   async function stopHost(): Promise<void> {
+    clearExternalActivation()
     clearHeartbeat()
     state = 'stopping'
     const process = child
@@ -661,7 +1021,7 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
         await request({ command: 'refresh_applications' }, 4_000)
       })
     },
-    activateExternal: (windowId, allowRemote, eligible) => {
+    activateExternal: (windowId, allowRemote, eligible, continuation = eligible) => {
       const currentGeneration = generation
 
       return serialize(async () => {
@@ -669,8 +1029,67 @@ export function createExplorerDesktopHost(options: HostOptions): ExplorerDesktop
           throw new Error('桌面已改变，请重新选择窗口。')
         }
 
-        await request({ command: 'activate_external', window_id: windowId, allow_remote: allowRemote }, 3_000)
+        clearExternalActivation()
+        const host = child
+
+        if (!host || exited(host) || host.killed) {
+          throw new Error('Desktop helper is not running')
+        }
+
+        const activation: ExternalActivation = {
+          windowId,
+          continuation,
+          generation: currentGeneration,
+          host,
+          nativeOperationId: null,
+          authorizationRevision: 0,
+          bufferedFocus: null,
+          pendingFocus: null,
+          latestFocus: null,
+          authorizing: false,
+          cancelGrant: null
+        }
+
+        externalActivation = activation
+
+        try {
+          const result = await request<unknown>(
+            { command: 'activate_external', window_id: windowId, allow_remote: allowRemote },
+            3_000
+          )
+
+          if (!currentExternalActivation(activation)) {
+            if (externalActivation === activation) {
+              clearExternalActivation()
+            }
+
+            return
+          }
+
+          activation.nativeOperationId = parseExternalActivation(result)
+          const buffered = activation.bufferedFocus
+          activation.bufferedFocus = null
+
+          if (buffered) {
+            queueExternalFocus(activation, buffered)
+          }
+        } catch (error) {
+          if (externalActivation === activation) {
+            clearExternalActivation()
+          }
+
+          throw error
+        }
       })
+    },
+    cancelExternalInteraction: () => {
+      clearExternalActivation()
+
+      if (state !== 'running' || !child || exited(child) || child.killed) {
+        return Promise.resolve()
+      }
+
+      return request({ command: 'cancel_external_interaction' }, 3_000)
     },
     launchExternal: (target, appId, eligible) => {
       const currentGeneration = generation

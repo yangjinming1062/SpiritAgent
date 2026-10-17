@@ -11,6 +11,7 @@ interface DesktopWindowsOptions {
   seedTheme: () => string | undefined
   installWindowHandlers: (win: BrowserWindow, options?: { reloadOnCrash?: boolean }) => void
   lockZoom: (win: BrowserWindow) => void
+  onInteraction: () => void
   onFailure: (reason: string) => void
 }
 
@@ -19,6 +20,8 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
   let interactive: BrowserWindow | null = null
   const backgrounds = new Set<BrowserWindow>()
   const displayBoundsByWindow = new WeakMap<BrowserWindow, Electron.Rectangle>()
+  const inputGenerations = new WeakMap<BrowserWindow, number>()
+  const blurGenerations = new WeakMap<BrowserWindow, number>()
   const readyWindows = new Map<BrowserWindow, { resolve: () => void; reject: (error: Error) => void }>()
 
   function makeWindow(display: Electron.Display, role: 'desktop' | 'desktop-background'): BrowserWindow {
@@ -67,6 +70,28 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
     win.on('unresponsive', () => options.onFailure('桌面暂时无响应，已恢复系统桌面。'))
 
     if (primary) {
+      inputGenerations.set(win, 0)
+      blurGenerations.set(win, 0)
+
+      const inputInteraction = (): void => {
+        inputGenerations.set(win, (inputGenerations.get(win) ?? 0) + 1)
+        options.onInteraction()
+      }
+
+      win.webContents.on('before-input-event', (_event, input) => {
+        if (input.type === 'keyDown') {
+          inputInteraction()
+        }
+      })
+      win.webContents.on('before-mouse-event', (_event, input) => {
+        if (input.type === 'mouseDown' || input.type === 'mouseWheel') {
+          inputInteraction()
+        }
+      })
+      win.on('blur', () => {
+        blurGenerations.set(win, (blurGenerations.get(win) ?? 0) + 1)
+      })
+
       // 桌面崩溃保持崩溃态直至 leave 销毁，不走共享 reload 恢复。
       options.installWindowHandlers(win, { reloadOnCrash: false })
       const expected = new URL(options.rendererUrlFor(role))
@@ -142,11 +167,29 @@ export function createDesktopWindows(options: DesktopWindowsOptions) {
     interactive = null
   }
 
+  function captureInteraction(sender: Pick<WebContents, 'id'>, requireFocusHistory = true): () => boolean {
+    const win = interactive
+
+    if (!win || !isSenderWindow(sender, win)) {
+      return () => false
+    }
+
+    const inputGeneration = inputGenerations.get(win)
+    const blurGeneration = blurGenerations.get(win)
+
+    return () =>
+      interactive === win &&
+      isSenderWindow(sender, win) &&
+      inputGenerations.get(win) === inputGeneration &&
+      (!requireFocusHistory || blurGenerations.get(win) === blurGeneration)
+  }
+
   return {
     getInteractive: () => interactive,
     getBackgrounds: () => backgrounds.values(),
     getBounds: (win: BrowserWindow) => displayBoundsByWindow.get(win),
     isDesktopSender: (sender: Pick<WebContents, 'id'>) => isSenderWindow(sender, interactive),
+    captureInteraction,
     getBackgroundWindow: (sender: Pick<WebContents, 'id'>) => [...backgrounds].find(win => isSenderWindow(sender, win)),
     createInteractive: (display: Electron.Display) => makeWindow(display, 'desktop'),
     createBackground: (display: Electron.Display) => makeWindow(display, 'desktop-background'),

@@ -11,6 +11,12 @@ mod appbar;
 pub(super) use appbar::RestoreAppBar;
 use appbar::AppBar;
 
+mod relocation;
+pub(super) use relocation::{FocusOutcome, FocusRequest, FocusReservation, WindowRelocation, WindowRestoration};
+use relocation::{NativeStep, Operations, RelocationPlan, WindowConstraint};
+
+pub(super) type WindowDispatch<T> = Result<Option<T>>;
+
 struct MonitorSnapshot {
     device: String,
     monitor: Bounds,
@@ -200,79 +206,10 @@ pub(super) struct Workspace {
     parent_pid: u32,
     enabled: bool,
     moving: HashSet<usize>,
-    pending: HashMap<usize, Instant>,
+    pending: HashMap<usize, WindowConstraint>,
     refused: HashSet<usize>,
-}
-
-pub(super) struct WindowRelocation {
-    identity: Identity,
-    target: Bounds,
-    maximized: bool,
-    destination_dpi: u32,
-    observed: Option<(Bounds, u32, Instant)>,
-    corrected: bool,
-}
-
-impl WindowRelocation {
-    pub(super) fn poll(&mut self, workspace: &Workspace) -> Result<bool> {
-        if !self.identity.valid() {
-            return Err("程序窗口已关闭或改变，无法完成移动。".into());
-        }
-        let window = self.identity.window();
-        if !workspace.on_display(window) || unsafe { IsIconic(window) } != 0 {
-            self.observed = None;
-            return Ok(false);
-        }
-        let dpi = unsafe { GetDpiForWindow(window) };
-        let awareness = unsafe {
-            GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(window))
-        };
-        if awareness == DPI_AWARENESS_PER_MONITOR_AWARE && dpi != self.destination_dpi {
-            self.observed = None;
-            return Ok(false);
-        }
-        let mut placement: WINDOWPLACEMENT = unsafe { zeroed() };
-        placement.length = size_of::<WINDOWPLACEMENT>() as u32;
-        if unsafe { GetWindowPlacement(window, &mut placement) } == 0 {
-            return Err(failure("复核程序窗口位置失败"));
-        }
-        if (unsafe { IsZoomed(window) } != 0) != self.maximized {
-            return Err("程序窗口状态已改变，未继续调整位置。".into());
-        }
-        let current = bounds(placement.rcNormalPosition);
-        if self
-            .observed
-            .as_ref()
-            .is_none_or(|(last, last_dpi, _)| *last != current || *last_dpi != dpi)
-        {
-            self.observed = Some((current, dpi, Instant::now()));
-            return Ok(false);
-        }
-        if self
-            .observed
-            .as_ref()
-            .is_some_and(|(_, _, started)| started.elapsed() < Duration::from_millis(100))
-        {
-            return Ok(false);
-        }
-        // 程序可自行约束尺寸；校正后以稳定窗口已完整进入工作区为准。
-        if (current.within_tolerance(self.target, 2) || self.corrected) && workspace.placed(window) {
-            return Ok(true);
-        }
-        if self.corrected {
-            return Ok(false);
-        }
-        // 目标程序已处理首次 WM_DPICHANGED；在相同 DPI 上校正最终物理尺寸，避免重复缩放。
-        placement.rcNormalPosition = rect(self.target);
-        placement.flags = WPF_ASYNCWINDOWPLACEMENT;
-        placement.showCmd = SW_SHOWNA as u32;
-        if unsafe { SetWindowPlacement(window, &placement) } == 0 {
-            return Err(failure("程序拒绝调整移动后的窗口尺寸"));
-        }
-        self.corrected = true;
-        self.observed = None;
-        Ok(false)
-    }
+    deferred: HashSet<usize>,
+    operations: Operations,
 }
 
 impl Workspace {
@@ -307,7 +244,7 @@ impl Workspace {
             })
     }
 
-    pub(super) fn move_to_display(&self, window: HWND) -> Result<WindowRelocation> {
+    pub(super) fn move_to_display(&self, window: HWND) -> WindowDispatch<WindowRelocation> {
         if !self.enabled {
             return Err("桌面探测模式不能移动程序窗口。".into());
         }
@@ -384,43 +321,53 @@ impl Workspace {
             transition.x -= self.target.x - self.display.monitor.x;
             transition.y -= self.target.y - self.display.monitor.y;
         }
+        let mut steps = Vec::new();
         // 最大化窗口仅修改还原矩形不会换屏；先迁移当前外框，再设置还原位置。
         if was_maximized && unsafe { IsIconic(window) } == 0 {
             let outer = rectangle(window)?;
             let visual = visible_bounds(window)?;
-            if unsafe {
-                SetWindowPos(
-                    window,
-                    null_mut(),
-                    self.target.x + outer.x - visual.x,
-                    self.target.y + outer.y - visual.y,
-                    self.target.width + outer.width - visual.width,
-                    self.target.height + outer.height - visual.height,
-                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS,
-                )
-            } == 0
-            {
-                return Err(failure("Windows 拒绝移动最大化程序窗口"));
-            }
+            steps.push(NativeStep::Position(Bounds {
+                x: self.target.x + outer.x - visual.x,
+                y: self.target.y + outer.y - visual.y,
+                width: self.target.width + outer.width - visual.width,
+                height: self.target.height + outer.height - visual.height,
+            }));
         }
         placement.rcNormalPosition = rect(transition);
-        placement.flags = WPF_ASYNCWINDOWPLACEMENT;
+        placement.flags = 0;
         placement.showCmd = if was_maximized {
             SW_SHOWMAXIMIZED
         } else {
             SW_SHOWNOACTIVATE
         } as u32;
-        if unsafe { SetWindowPlacement(window, &placement) } == 0 {
-            return Err(failure("Windows 拒绝移动程序窗口"));
-        }
-        Ok(WindowRelocation {
+        steps.push(NativeStep::Placement(placement));
+        WindowRelocation::start(RelocationPlan {
             identity,
             target,
+            work_area: self.target,
             maximized: was_maximized,
             destination_dpi,
-            observed: None,
-            corrected: false,
-        })
+        }, steps, self)
+    }
+
+    pub(super) fn restore_window(&self, window: HWND) -> WindowDispatch<WindowRestoration> {
+        if !self.enabled {
+            return Err("桌面探测模式不能还原程序窗口。".into());
+        }
+        let identity = Identity::capture(window)?;
+        if !self.on_display(window) {
+            return Err("程序窗口已离开所选屏幕，停止还原。".into());
+        }
+        let mut placement: WINDOWPLACEMENT = unsafe { zeroed() };
+        placement.length = size_of::<WINDOWPLACEMENT>() as u32;
+        if unsafe { GetWindowPlacement(window, &mut placement) } == 0 {
+            return Err(failure("读取程序窗口还原位置失败"));
+        }
+        let maximized = placement.showCmd == SW_SHOWMAXIMIZED as u32
+            || (unsafe { IsIconic(window) } != 0 && placement.flags & WPF_RESTORETOMAXIMIZED != 0);
+        placement.flags = 0;
+        placement.showCmd = if maximized { SW_SHOWMAXIMIZED } else { SW_SHOWNOACTIVATE } as u32;
+        WindowRestoration::start(identity, placement, maximized, self)
     }
 
     pub(super) fn prepare(
@@ -484,6 +431,8 @@ impl Workspace {
             moving: HashSet::new(),
             pending: HashMap::new(),
             refused: HashSet::new(),
+            deferred: HashSet::new(),
+            operations: Operations::default(),
         })
     }
 
@@ -501,6 +450,30 @@ impl Workspace {
 
     pub(super) fn current(&self) -> Bounds {
         self.target
+    }
+
+    pub(super) fn user_moving(&self, window: HWND) -> bool {
+        self.moving.contains(&(window as usize))
+    }
+
+    pub(super) fn bind_restoration(&self, handle: HANDLE) -> Result<()> {
+        self.operations.bind_restoration(handle)
+    }
+
+    pub(super) fn reserve_focus(&self, target: &Identity) -> WindowDispatch<FocusReservation> {
+        FocusReservation::reserve(target, self)
+    }
+
+    pub(super) fn cancel_window_operations(&mut self, window: HWND) {
+        self.operations.cancel_window(window);
+        self.pending.remove(&(window as usize));
+        self.deferred.remove(&(window as usize));
+    }
+
+    pub(super) fn cancel_operations(&mut self) {
+        self.operations.cancel_all();
+        self.pending.clear();
+        self.deferred.clear();
     }
 
     fn ensure_work_area(&mut self) -> Result<()> {
@@ -583,17 +556,18 @@ impl Workspace {
             .is_ok_and(|value| device(&value) == self.display.device)
     }
 
-    fn warn(&mut self, handle: usize) {
+    fn warn(&mut self, handle: usize, reason: String) {
         self.pending.remove(&handle);
         if self.refused.insert(handle) {
             emit(
-                json!({ "event": "warning", "reason": "部分程序窗口拒绝调整位置或大小，无法完整限制在桌面工作区。" }),
+                json!({ "event": "warning", "reason": format!("部分程序窗口未能调整到桌面工作区: {reason}") }),
             );
         }
     }
 
     fn constrain(&mut self, window: HWND) {
         let handle = window as usize;
+        self.deferred.remove(&handle);
         if !self.enabled
             || self.moving.contains(&handle)
             || self.refused.contains(&handle)
@@ -608,6 +582,10 @@ impl Workspace {
         if contains(self.target, visual) {
             return;
         }
+        if self.operations.active(window) {
+            self.deferred.insert(handle);
+            return;
+        }
         let width = visual.width.min(self.target.width);
         let height = visual.height.min(self.target.height);
         let x = visual
@@ -616,30 +594,29 @@ impl Workspace {
         let y = visual
             .y
             .clamp(self.target.y, self.target.y + self.target.height - height);
-        if unsafe {
-            SetWindowPos(
-                window,
-                null_mut(),
-                x + outer.x - visual.x,
-                y + outer.y - visual.y,
-                width + outer.width - visual.width,
-                height + outer.height - visual.height,
-                SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS,
-            )
-        } == 0
-        {
-            self.warn(handle);
-        } else {
-            self.pending.insert(handle, Instant::now());
+        let result = Identity::capture(window).and_then(|identity| {
+            let Some(task) = self.operations.start(&identity, vec![NativeStep::Position(Bounds {
+                x: x + outer.x - visual.x,
+                y: y + outer.y - visual.y,
+                width: width + outer.width - visual.width,
+                height: height + outer.height - visual.height,
+            })])? else { return Ok(None); };
+            Ok(Some(WindowConstraint { identity, task }))
+        });
+        match result {
+            Ok(Some(pending)) => { self.pending.insert(handle, pending); },
+            Ok(None) => { self.deferred.insert(handle); },
+            Err(error) => self.warn(handle, error),
         }
     }
 
     pub(super) fn poll(&mut self, events: &[(u32, usize)]) -> Result<()> {
+        self.operations.reap();
         let previous = self.target;
         self.ensure_work_area()?;
         let mut changed = HashSet::new();
         if self.target != previous {
-            self.pending.clear();
+            self.cancel_operations();
             self.refused.clear();
             changed.extend(top_windows()?.into_iter().map(|window| window as usize));
         }
@@ -647,13 +624,13 @@ impl Workspace {
             match event {
                 0 => {
                     self.moving.clear();
-                    self.pending.clear();
+                    self.cancel_operations();
                     self.refused.clear();
                     changed.extend(top_windows()?.into_iter().map(|window| window as usize));
                 }
                 EVENT_SYSTEM_MOVESIZESTART => {
                     self.moving.insert(handle);
-                    self.pending.remove(&handle);
+                    self.cancel_window_operations(handle as HWND);
                     self.refused.remove(&handle);
                 }
                 EVENT_SYSTEM_MOVESIZEEND => {
@@ -662,7 +639,7 @@ impl Workspace {
                 }
                 EVENT_OBJECT_DESTROY => {
                     self.moving.remove(&handle);
-                    self.pending.remove(&handle);
+                    self.cancel_window_operations(handle as HWND);
                     self.refused.remove(&handle);
                 }
                 EVENT_OBJECT_SHOW
@@ -674,22 +651,18 @@ impl Workspace {
                 _ => {}
             }
         }
-        let completed: Vec<usize> = self
-            .pending
-            .iter()
-            .filter_map(|(handle, started)| {
-                (started.elapsed() >= Duration::from_millis(250)).then_some(*handle)
-            })
-            .collect();
-        for handle in completed {
-            self.pending.remove(&handle);
-            let window = handle as HWND;
-            if self.eligible(window)
-                && visible_bounds(window).is_ok_and(|value| !contains(self.target, value))
-            {
-                self.warn(handle);
+        for handle in self.pending.keys().copied().collect::<Vec<_>>() {
+            let Some(mut pending) = self.pending.remove(&handle) else { continue; };
+            if pending.task.cancelled() || !pending.identity.valid() {
+                continue;
+            }
+            match pending.task.poll(&self.operations) {
+                Ok(true) if self.placed(pending.identity.window()) => {},
+                Ok(_) => { self.pending.insert(handle, pending); },
+                Err(error) => self.warn(handle, error),
             }
         }
+        changed.extend(self.deferred.drain());
         for handle in changed {
             self.constrain(handle as HWND);
         }

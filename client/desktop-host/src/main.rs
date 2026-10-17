@@ -94,6 +94,14 @@ enum Command {
         window_id: String,
         allow_remote: bool,
     },
+    CancelExternalInteraction {
+        id: u32,
+    },
+    AuthorizeExternalFocus {
+        id: u32,
+        activation_id: String,
+        granted: bool,
+    },
     LaunchExternal {
         id: u32,
         target: String,
@@ -127,6 +135,8 @@ impl Command {
             | Self::Focus { id, .. }
             | Self::RefreshApplications { id }
             | Self::ActivateExternal { id, .. }
+            | Self::CancelExternalInteraction { id }
+            | Self::AuthorizeExternalFocus { id, .. }
             | Self::LaunchExternal { id, .. }
             | Self::CloseExternal { id, .. }
             | Self::GetJumpListTasks { id, .. }
@@ -179,7 +189,7 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args
         .first()
-        .ok_or("missing check-runtime, display-bounds, host, guardian, or recover mode")?;
+        .ok_or("missing check-runtime, display-bounds, allow-foreground, host, guardian, or recover mode")?;
     if mode == "check-runtime" && args.len() == 1 {
         #[cfg(windows)]
         {
@@ -210,6 +220,19 @@ fn run() -> Result<()> {
         }
         #[cfg(not(windows))]
         return Err("Native display geometry is available on Windows only".into());
+    }
+    if mode == "allow-foreground" {
+        if args.len() != 3 {
+            return Err("expected allow-foreground followed by parent and host process IDs".into());
+        }
+        #[cfg(windows)]
+        {
+            let parent_pid = args[1].parse::<u32>().map_err(|_| "invalid parent process ID")?;
+            let host_pid = args[2].parse::<u32>().map_err(|_| "invalid host process ID")?;
+            return windows::allow_foreground(parent_pid, host_pid);
+        }
+        #[cfg(not(windows))]
+        return Err("Foreground authorization is available on Windows only".into());
     }
     if args.get(1).map(String::as_str) != Some("--journal") {
         return Err("expected --journal followed by an absolute path".into());

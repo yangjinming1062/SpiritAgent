@@ -1,5 +1,10 @@
 import type { DockState } from '@ipc/contracts'
 
+export interface ApplicationEligibility {
+  current: () => boolean
+  continuation: () => boolean
+}
+
 /** 原生窗口信息只在主进程内流转；渲染层只接收 Dock 投影。 */
 export interface RunningApplicationWindow {
   id: string

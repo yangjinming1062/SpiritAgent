@@ -21,7 +21,7 @@ import { DESKTOP_LAYOUT } from '../../shared/desktop-layout'
 import { registerDesktopPresentationIpc } from '../ipc/desktop-presentation'
 import { createUiStateBridge } from '../ipc/ui-state'
 import { isSenderWindow } from '../security/ipc-trust'
-import type { RunningApplicationsState } from '../shared/desktop-applications'
+import type { ApplicationEligibility, RunningApplicationsState } from '../shared/desktop-applications'
 import { atomicWriteFile, broadcastToAllWindows, createSerialQueue, sendToWindow } from '../shared/utils'
 
 import { createDesktopBackgroundRuntime } from './desktop-background-runtime'
@@ -106,6 +106,13 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
     seedTheme: options.seedTheme,
     lockZoom: options.lockZoom,
     installWindowHandlers: options.installWindowHandlers,
+    onInteraction: () => {
+      if (!disposed && status === 'active') {
+        void native
+          .cancelExternalInteraction()
+          .catch(error => options.log(`[desktop] cancelling external interaction: ${errorMessage(error)}`))
+      }
+    },
     onFailure: reason => {
       if (status === 'starting' || status === 'active') {
         scheduleRecovery(reason)
@@ -820,6 +827,22 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
       isDesktopSender(sender)
   }
 
+  function captureApplicationEligibility(sender: WebContents, interaction = true): ApplicationEligibility {
+    const eligible = captureDesktopEligibility(sender)
+
+    if (!interaction) {
+      return { current: eligible, continuation: eligible }
+    }
+
+    const currentInteraction = windows.captureInteraction(sender)
+    const continuationInteraction = windows.captureInteraction(sender, false)
+
+    return {
+      current: () => eligible() && currentInteraction(),
+      continuation: () => eligible() && continuationInteraction()
+    }
+  }
+
   function assertSettings(sender: WebContents): void {
     if (disposed) {
       throw new Error('桌面呈现已关闭。')
@@ -1135,7 +1158,7 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
   }
 
   return {
-    captureApplicationEligibility: captureDesktopEligibility,
+    captureApplicationEligibility,
     getRunningApplications: () => runningApplications,
     onRunningApplicationsChanged: (listener: (state: RunningApplicationsState) => void): (() => void) => {
       applicationListeners.add(listener)
@@ -1147,30 +1170,55 @@ export function createDesktopPresentation(options: DesktopPresentationOptions) {
 
       return serial(() => native.refreshApplications(eligible))
     },
-    activateExternal: (sender: WebContents, windowId: string, allowRemote: boolean): Promise<void> => {
-      const eligible = captureDesktopEligibility(sender)
+    activateExternal: (
+      sender: WebContents,
+      windowId: string,
+      allowRemote: boolean,
+      eligible: ApplicationEligibility
+    ): Promise<void> => {
+      assertDesktop(sender)
 
-      return serial(() => native.activateExternal(windowId, allowRemote, eligible))
+      return serial(async () => {
+        const win = windows.getInteractive()
+
+        if (!eligible.current() || fullscreen || !win || !win.isFocused()) {
+          throw new Error('桌面已改变，请重新选择程序。')
+        }
+
+        // 桌面已在前台，沿用原始交互；不重新激活已失焦的桌面。
+        win.focus()
+        await native.activateExternal(windowId, allowRemote, eligible.current, eligible.continuation)
+      })
     },
-    launchExternal: (sender: WebContents, target: string, appId: string): Promise<void> => {
-      const eligible = captureDesktopEligibility(sender)
+    launchExternal: (
+      sender: WebContents,
+      target: string,
+      appId: string,
+      eligible: ApplicationEligibility
+    ): Promise<void> => {
+      assertDesktop(sender)
 
-      return serial(() => native.launchExternal(target, appId, eligible))
+      return serial(() => native.launchExternal(target, appId, eligible.current))
     },
-    closeExternal: (sender: WebContents, windowIds: string[]): Promise<void> => {
-      const eligible = captureDesktopEligibility(sender)
+    closeExternal: (sender: WebContents, windowIds: string[], eligible: ApplicationEligibility): Promise<void> => {
+      assertDesktop(sender)
 
-      return serial(() => native.closeExternal(windowIds, eligible))
+      return serial(() => native.closeExternal(windowIds, eligible.current))
     },
     getJumpListTasks: (sender: WebContents, target: string) => {
       const eligible = captureDesktopEligibility(sender)
 
       return native.getJumpListTasks(target, eligible)
     },
-    activateJumpListTask: (sender: WebContents, target: string, taskId: string): Promise<void> => {
-      const eligible = captureDesktopEligibility(sender)
+    activateJumpListTask: (
+      sender: WebContents,
+      target: string,
+      taskId: string,
+      eligible: ApplicationEligibility
+    ): Promise<void> => {
+      assertDesktop(sender)
 
-      return serial(() => native.activateJumpListTask(target, taskId, eligible))
+      return serial(() => native.activateJumpListTask(target, taskId, eligible.current))
     },
     getState: snapshot,
     captureUiState: async (): Promise<void> => {

@@ -4,6 +4,7 @@ pub(super) struct DesktopLayers {
     pub(super) icons: Identity,
     view: Identity,
     list: Identity,
+    wallpaper: Identity,
     pub(super) background_parent: Identity,
     pub(super) layered: bool,
 }
@@ -17,8 +18,13 @@ impl DesktopLayers {
             GetWindowLongPtrW(icons.window(), GWL_EXSTYLE) as u32 & WS_EX_NOREDIRECTIONBITMAP != 0
                 && GetWindowLongPtrW(view.window(), GWL_EXSTYLE) as u32 & WS_EX_LAYERED != 0
         };
-        let background_parent = if layered {
-            icons.clone()
+        let wallpaper = if layered {
+            // 分层样式不代表 DefView 已透明；壁纸 WorkerW 分离后才可在图标下绘制。
+            let candidate = child(icons.window(), "WorkerW");
+            if candidate.is_null() || unsafe { IsWindowVisible(candidate) } == 0 {
+                return Ok(None);
+            }
+            Identity::capture(candidate)?
         } else {
             let mut candidate = unsafe { GetWindow(icons.window(), GW_HWNDNEXT) };
             let mut found = None;
@@ -38,10 +44,12 @@ impl DesktopLayers {
             };
             parent
         };
+        let background_parent = if layered { icons.clone() } else { wallpaper.clone() };
         let layers = Self {
             icons,
             view,
             list,
+            wallpaper,
             background_parent,
             layered,
         };
@@ -99,9 +107,11 @@ impl DesktopLayers {
         if !self.icons.valid()
             || !self.view.valid()
             || !self.list.valid()
+            || !self.wallpaper.valid()
             || !self.background_parent.valid()
             || self.view.pid != self.icons.pid
             || self.list.pid != self.icons.pid
+            || self.wallpaper.pid != self.icons.pid
             || self.background_parent.pid != self.icons.pid
             || unsafe { GetParent(self.view.window()) } != self.icons.window()
             || unsafe { GetParent(self.list.window()) } != self.view.window()
@@ -111,7 +121,15 @@ impl DesktopLayers {
             return false;
         }
         if self.layered {
+            let mut next = unsafe { GetWindow(self.view.window(), GW_HWNDNEXT) };
+            while !next.is_null() && next != self.wallpaper.window() {
+                next = unsafe { GetWindow(next, GW_HWNDNEXT) };
+            }
             return self.background_parent.window() == self.icons.window()
+                && unsafe { GetParent(self.wallpaper.window()) } == self.icons.window()
+                && child(self.icons.window(), "WorkerW") == self.wallpaper.window()
+                && unsafe { IsWindowVisible(self.wallpaper.window()) } != 0
+                && next == self.wallpaper.window()
                 && unsafe {
                     GetWindowLongPtrW(self.icons.window(), GWL_EXSTYLE) as u32
                         & WS_EX_NOREDIRECTIONBITMAP

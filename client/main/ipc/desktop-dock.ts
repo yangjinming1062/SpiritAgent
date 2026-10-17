@@ -7,7 +7,11 @@ import log from 'electron-log/main'
 
 import { type DockCatalog, type DockEntry, type DockState, type DockTask, IPC } from '@ipc/contracts'
 
-import type { RunningApplicationsState, RunningApplicationWindow } from '../shared/desktop-applications'
+import type {
+  ApplicationEligibility,
+  RunningApplicationsState,
+  RunningApplicationWindow
+} from '../shared/desktop-applications'
 import type { DesktopJumpListTask } from '../shared/desktop-jump-list'
 import { atomicWriteFile, createSerialQueue, safeReadJson, sendToWindow } from '../shared/utils'
 
@@ -116,13 +120,28 @@ export function registerDesktopDock(options: {
   getDesktopWindow: () => BrowserWindow | null
   getRunningApplications: () => RunningApplicationsState
   onRunningApplicationsChanged: (listener: (state: RunningApplicationsState) => void) => () => void
-  captureEligibility: (sender: WebContents) => () => boolean
+  captureEligibility: (sender: WebContents, interaction?: boolean) => ApplicationEligibility
   refreshApplications: (sender: WebContents) => Promise<void>
-  activateExternal: (sender: WebContents, windowId: string, allowRemote: boolean) => Promise<void>
-  launchExternal: (sender: WebContents, target: string, appId: string) => Promise<void>
-  closeExternal: (sender: WebContents, windowIds: string[]) => Promise<void>
+  activateExternal: (
+    sender: WebContents,
+    windowId: string,
+    allowRemote: boolean,
+    eligible: ApplicationEligibility
+  ) => Promise<void>
+  launchExternal: (
+    sender: WebContents,
+    target: string,
+    appId: string,
+    eligible: ApplicationEligibility
+  ) => Promise<void>
+  closeExternal: (sender: WebContents, windowIds: string[], eligible: ApplicationEligibility) => Promise<void>
   getJumpListTasks: (sender: WebContents, target: string) => Promise<DesktopJumpListTask[]>
-  activateJumpListTask: (sender: WebContents, target: string, taskId: string) => Promise<void>
+  activateJumpListTask: (
+    sender: WebContents,
+    target: string,
+    taskId: string,
+    eligible: ApplicationEligibility
+  ) => Promise<void>
 }): void {
   const filename = path.join(options.userData, 'desktop-dock.json')
   const saved = safeReadJson<SavedDock>(filename)
@@ -169,19 +188,19 @@ export function registerDesktopDock(options: {
 
   function withRunningApplications(
     sender: WebContents,
-    eligible: () => boolean,
+    eligible: ApplicationEligibility,
     action: () => Promise<void>
   ): Promise<void> {
     return serial(async () => {
       assertSender(sender)
 
-      if (!eligible()) {
+      if (!eligible.current()) {
         throw new Error('桌面已改变，请重新选择程序。')
       }
 
       await options.refreshApplications(sender)
 
-      if (!eligible()) {
+      if (!eligible.current()) {
         throw new Error('桌面已改变，请重新选择程序。')
       }
 
@@ -197,6 +216,7 @@ export function registerDesktopDock(options: {
     sender: WebContents,
     application: RunningDockApplication | undefined,
     allowRemote: boolean,
+    eligible: ApplicationEligibility,
     windowId?: string
   ): Promise<boolean> {
     const window =
@@ -213,7 +233,12 @@ export function registerDesktopDock(options: {
       return false
     }
 
-    await options.activateExternal(sender, window.id, allowRemote && windowId === undefined && !window.onDesktopDisplay)
+    await options.activateExternal(
+      sender,
+      window.id,
+      allowRemote && windowId === undefined && !window.onDesktopDisplay,
+      eligible
+    )
 
     return true
   }
@@ -221,17 +246,17 @@ export function registerDesktopDock(options: {
   async function launchApplication(
     sender: WebContents,
     target: string,
-    eligible: () => boolean,
+    eligible: ApplicationEligibility,
     assertCurrentTarget?: () => void
   ): Promise<void> {
     await validateTarget(target)
 
-    if (!eligible()) {
+    if (!eligible.current()) {
       throw new Error('桌面已改变，请重新选择程序。')
     }
 
     assertCurrentTarget?.()
-    await options.launchExternal(sender, target, targetIdentity(target))
+    await options.launchExternal(sender, target, targetIdentity(target), eligible)
   }
 
   async function requirePackagedApplication(target: string): Promise<InstalledApplication> {
@@ -791,7 +816,7 @@ export function registerDesktopDock(options: {
       const application = findRunningApplication(id)
       const entry = entries.find(item => item.id === id)
 
-      if (await activateRunningApplication(event.sender, application, Boolean(entry), windowId)) {
+      if (await activateRunningApplication(event.sender, application, Boolean(entry), eligible, windowId)) {
         return
       }
 
@@ -829,7 +854,7 @@ export function registerDesktopDock(options: {
 
       assertCurrentTarget()
 
-      if (await activateRunningApplication(event.sender, findRunningTarget(identity), true)) {
+      if (await activateRunningApplication(event.sender, findRunningTarget(identity), true, eligible)) {
         return
       }
 
@@ -838,7 +863,7 @@ export function registerDesktopDock(options: {
   })
   options.ipcMain.handle(IPC.invoke.dockTasks, (event, id: unknown) => {
     assertSender(event.sender)
-    const eligible = options.captureEligibility(event.sender)
+    const eligible = options.captureEligibility(event.sender, false)
 
     if (typeof id !== 'string') {
       throw new Error('无效程序。')
@@ -847,7 +872,7 @@ export function registerDesktopDock(options: {
     return taskReadSerial(async () => {
       assertSender(event.sender)
 
-      if (!eligible()) {
+      if (!eligible.current()) {
         return []
       }
 
@@ -855,7 +880,7 @@ export function registerDesktopDock(options: {
       const tasks = await options.getJumpListTasks(event.sender, target)
       const projected = await projectTasks(tasks, fallbackIcon)
 
-      return eligible() && taskTarget(id).target === target ? projected : []
+      return eligible.current() && taskTarget(id).target === target ? projected : []
     })
   })
   options.ipcMain.handle(IPC.invoke.dockActivateTask, (event, id: unknown, taskId: unknown) => {
@@ -869,12 +894,12 @@ export function registerDesktopDock(options: {
     return serial(async () => {
       assertSender(event.sender)
 
-      if (!eligible()) {
+      if (!eligible.current()) {
         throw new Error('桌面已改变，请重新执行程序任务。')
       }
 
       const { target } = taskTarget(id)
-      await options.activateJumpListTask(event.sender, target, taskId)
+      await options.activateJumpListTask(event.sender, target, taskId, eligible)
     })
   })
   options.ipcMain.handle(IPC.invoke.dockCloseWindows, (event, id: unknown, windowIds: unknown) => {
@@ -899,12 +924,12 @@ export function registerDesktopDock(options: {
         throw new Error('窗口已关闭或程序已改变，请重新选择。')
       }
 
-      await options.closeExternal(event.sender, windowIds)
+      await options.closeExternal(event.sender, windowIds, eligible)
     })
   })
   options.ipcMain.handle(IPC.invoke.dockPin, (event, runningId: unknown, beforeEntryId: unknown) => {
     assertSender(event.sender)
-    const eligible = options.captureEligibility(event.sender)
+    const eligible = options.captureEligibility(event.sender, false)
 
     if (typeof runningId !== 'string' || (beforeEntryId !== undefined && typeof beforeEntryId !== 'string')) {
       throw new Error('无效程序或固定位置。')
@@ -938,7 +963,7 @@ export function registerDesktopDock(options: {
       await validateTarget(selection.target)
 
       if (
-        !eligible() ||
+        !eligible.current() ||
         running.get(application.key) !== application ||
         !application.windows.some(window => window.onDesktopDisplay)
       ) {

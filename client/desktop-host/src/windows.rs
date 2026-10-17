@@ -44,6 +44,10 @@ fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
 }
 
+fn foreground_window() -> HWND {
+    unsafe { GetForegroundWindow() }
+}
+
 fn failure(operation: &str) -> String {
     format!("{operation}: Windows error {}", unsafe { GetLastError() })
 }
@@ -220,7 +224,7 @@ fn created(handle: HANDLE) -> Result<u64> {
     Ok((u64::from(birth.dwHighDateTime) << 32) | u64::from(birth.dwLowDateTime))
 }
 
-fn actual_parent() -> Result<u32> {
+fn parent(pid: u32) -> Result<u32> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return Err(failure("CreateToolhelp32Snapshot"));
@@ -228,7 +232,6 @@ fn actual_parent() -> Result<u32> {
     let _snapshot = OwnedHandle(snapshot);
     let mut entry: PROCESSENTRY32W = unsafe { zeroed() };
     entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-    let pid = unsafe { GetCurrentProcessId() };
     let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) };
     while has_entry != 0 {
         if entry.th32ProcessID == pid {
@@ -236,7 +239,62 @@ fn actual_parent() -> Result<u32> {
         }
         has_entry = unsafe { Process32NextW(snapshot, &mut entry) };
     }
-    Err("could not establish helper parent identity".into())
+    Err("could not establish process parent identity".into())
+}
+
+fn actual_parent() -> Result<u32> {
+    parent(unsafe { GetCurrentProcessId() })
+}
+
+pub fn allow_foreground(parent_pid: u32, host_pid: u32) -> Result<()> {
+    if parent_pid == 0
+        || host_pid == 0
+        || host_pid == parent_pid
+        || host_pid == unsafe { GetCurrentProcessId() }
+        || actual_parent()? != parent_pid
+    {
+        return Err("foreground authorization requires the helper's real parent and sibling host".into());
+    }
+    let parent_owner = process(parent_pid)?;
+    let host_owner = process(host_pid)?;
+    let parent_created = created(parent_owner.0)?;
+    if parent(host_pid)? != parent_pid
+        || created(host_owner.0)? < parent_created
+        || created(unsafe { GetCurrentProcess() })? < parent_created
+    {
+        return Err("foreground authorization process ownership changed".into());
+    }
+    let mut image = [0u16; 32_768];
+    let mut length = image.len() as u32;
+    if unsafe { QueryFullProcessImageNameW(host_owner.0, 0, image.as_mut_ptr(), &mut length) } == 0 {
+        return Err(failure("foreground host executable identity"));
+    }
+    let host_image = fs::canonicalize(String::from_utf16_lossy(&image[..length as usize]))
+        .map_err(|error| format!("resolve foreground host executable: {error}"))?;
+    let own_image = fs::canonicalize(std::env::current_exe().map_err(|error| error.to_string())?)
+        .map_err(|error| format!("resolve foreground grantor executable: {error}"))?;
+    if !host_image.to_string_lossy().eq_ignore_ascii_case(&own_image.to_string_lossy()) {
+        return Err("foreground host executable does not match grantor".into());
+    }
+    if unsafe { WaitForSingleObject(parent_owner.0, 0) } != WAIT_TIMEOUT
+        || unsafe { WaitForSingleObject(host_owner.0, 0) } != WAIT_TIMEOUT
+    {
+        return Err("foreground authorization requires the active parent and a running host".into());
+    }
+    let foreground = foreground_window();
+    if foreground.is_null() {
+        emit(json!({ "event": "foreground_deferred", "parent_pid": parent_pid, "host_pid": host_pid }));
+        return Ok(());
+    }
+    if window_pid(foreground) != parent_pid {
+        emit(json!({ "event": "foreground_cancelled", "parent_pid": parent_pid, "host_pid": host_pid }));
+        return Ok(());
+    }
+    if unsafe { AllowSetForegroundWindow(host_pid) } == 0 {
+        return Err(failure("Windows 拒绝程序前台授权"));
+    }
+    emit(json!({ "event": "foreground_allowed", "parent_pid": parent_pid, "host_pid": host_pid }));
+    Ok(())
 }
 
 fn class_name(window: HWND) -> String {
@@ -1245,6 +1303,7 @@ impl Session {
             desktop_bounds: targets[0],
         };
         let restoring = RestoringSignal::new(&journal)?;
+        workspace.bind_restoration(restoring.handle.0)?;
         if let Some(directory) = path.parent() {
             fs::create_dir_all(directory)
                 .map_err(|error| format!("create desktop journal directory: {error}"))?;
@@ -1447,7 +1506,7 @@ impl Session {
         Ok(())
     }
 
-    fn activate_external(&mut self, window_id: &str, allow_remote: bool) -> Result<()> {
+    fn activate_external(&mut self, window_id: &str, allow_remote: bool) -> Result<String> {
         self.refresh_applications(false)?;
         let _transaction = MutexGuard::restoration()?;
         require_session(&self.path, &self.journal.session, &self.restoring)?;
@@ -1812,11 +1871,16 @@ impl Session {
         Ok(())
     }
 
+    fn cancel_operations(&mut self) {
+        self.applications.cancel_operations();
+        self.workspace.cancel_operations();
+    }
+
     fn stop(&mut self) -> Result<()> {
         if self.stopped {
             return Ok(());
         }
-        self.applications.cancel_launches();
+        self.cancel_operations();
         restore(&self.path, Some(&self.journal.session))?;
         retire_guardian(&mut self.guardian)?;
         self.stopped = true;
@@ -1930,7 +1994,21 @@ pub fn host(path: &Path) -> Result<()> {
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
                         .and_then(|active| active.activate_external(&window_id, allow_remote))
-                        .map(|_| json!(null)),
+                        .map(|activation_id| json!({ "activation_id": activation_id })),
+                    Command::CancelExternalInteraction { .. } => {
+                        if let Some(active) = session.as_mut() {
+                            active.applications.cancel_interaction();
+                        }
+                        Ok(json!(null))
+                    }
+                    Command::AuthorizeExternalFocus { activation_id, granted, .. } => session
+                        .as_mut()
+                        .ok_or_else(|| "desktop is not running".to_owned())
+                        .and_then(|active| {
+                            require_session(&active.path, &active.journal.session, &active.restoring)?;
+                            active.applications.authorize_focus(&activation_id, granted, &active.workspace)
+                        })
+                        .map(|status| json!({ "status": status.as_str() })),
                     Command::LaunchExternal { target, app_id, .. } => session
                         .as_mut()
                         .ok_or_else(|| "desktop is not running".to_owned())
@@ -1993,7 +2071,8 @@ pub fn host(path: &Path) -> Result<()> {
                 }
             }
             Ok(Err(reason)) => {
-                if let Some(active) = session.as_ref() {
+                if let Some(active) = session.as_mut() {
+                    active.cancel_operations();
                     if let Err(error) = restore_interrupted(
                         path,
                         &active.journal.session,
@@ -2006,7 +2085,8 @@ pub fn host(path: &Path) -> Result<()> {
                 return Err(reason);
             }
             Err(RecvTimeoutError::Disconnected) => {
-                if let Some(active) = session.as_ref() {
+                if let Some(active) = session.as_mut() {
+                    active.cancel_operations();
                     if let Err(error) = restore_interrupted(
                         path,
                         &active.journal.session,
@@ -2024,6 +2104,7 @@ pub fn host(path: &Path) -> Result<()> {
         }
         if let Some(active) = session.as_mut() {
             if let Err(reason) = active.poll() {
+                active.cancel_operations();
                 return Err(
                     match restore_interrupted(
                         path,

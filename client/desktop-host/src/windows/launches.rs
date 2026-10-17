@@ -167,18 +167,10 @@ struct ProcessIdentity {
     birth: u64,
 }
 
-fn last_input() -> Option<u32> {
-    let mut input = LASTINPUTINFO {
-        cbSize: size_of::<LASTINPUTINFO>() as u32,
-        dwTime: 0,
-    };
-    (unsafe { GetLastInputInfo(&mut input) } != 0).then_some(input.dwTime)
-}
 
 struct MovingWindow {
     identities: Vec<Identity>,
-    relocations: Vec<WindowRelocation>,
-    started: Instant,
+    relocations: Vec<Option<WindowRelocation>>,
     resolve_modal: bool,
 }
 
@@ -187,11 +179,14 @@ struct PendingLaunch {
     started: Instant,
     started_filetime: u64,
     baseline: HashSet<(usize, u32, u64)>,
+    parent_pid: u32,
+    foreground_at_request: usize,
     result: Option<Receiver<Result<ProcessIdentity>>>,
     processes: HashMap<u32, u64>,
     launched_process: Option<ProcessIdentity>,
     launch_process_exited: bool,
     input_at_request: Option<u32>,
+    placement_cancelled: bool,
     handoff_allowed: bool,
     candidate: Option<(String, Instant)>,
     moving: Option<MovingWindow>,
@@ -269,6 +264,10 @@ impl PendingLaunch {
         if !self.new_application_window(tracked) {
             return false;
         }
+        self.associated_process(tracked)
+    }
+
+    fn associated_process(&self, tracked: &TrackedWindow) -> bool {
         if self.processes.get(&tracked.identity.pid) == Some(&tracked.identity.created) {
             return true;
         }
@@ -296,8 +295,12 @@ impl PendingLaunch {
         foreground: HWND,
         input: Option<u32>,
     ) -> Result<Option<&'a TrackedWindow>> {
+        let reused_process = self
+            .launched_process
+            .as_ref()
+            .is_some_and(|process| process.birth < self.started_filetime);
         if !self.handoff_allowed
-            || !self.launch_process_exited
+            || (!self.launch_process_exited && !reused_process)
             || self.input_at_request.is_none()
             || input != self.input_at_request
         {
@@ -306,24 +309,73 @@ impl PendingLaunch {
         let mut matching = windows
             .values()
             .filter(|tracked| self.new_application_window(tracked));
-        let candidate = matching.next();
+        let mut candidate = matching.next();
         if matching.next().is_some() {
             return Err("已提交打开，但匹配到多个程序窗口，未能定位窗口。".into());
         }
-        Ok(candidate.filter(|tracked| owned_by(foreground, tracked.identity.window())))
+        if candidate.is_none() {
+            let mut existing = windows
+                .values()
+                .filter(|tracked| normalize(&tracked.value.app_id) == self.app_id);
+            candidate = existing.next();
+            if existing.next().is_some() {
+                return Err("已提交打开，但匹配到多个程序窗口，未能定位窗口。".into());
+            }
+        }
+        Ok(candidate.filter(|tracked| {
+            owned_by(foreground, tracked.identity.window())
+                && (self.new_application_window(tracked)
+                    || (!owned_by(self.foreground_at_request as HWND, tracked.identity.window())
+                        && (self.launch_process_exited || self.associated_process(tracked))))
+        }))
     }
 
     fn poll(&mut self, windows: &HashMap<usize, TrackedWindow>, workspace: &Workspace) -> Result<bool> {
-        if self.started.elapsed() >= LAUNCH_TIMEOUT {
+        let foreground = foreground_window();
+        if !foreground.is_null() && self.foreground_at_request == 0 {
+            if window_pid(foreground) == self.parent_pid
+                || self.moving.as_ref().is_some_and(|moving| owned_by(foreground, moving.identities[0].window()))
+            {
+                self.foreground_at_request = foreground as usize;
+            }
+        }
+        self.placement_cancelled |= self.moving.as_ref().is_some_and(|moving| {
+            moving.identities.iter().any(|identity| workspace.user_moving(identity.window()))
+                || (!foreground.is_null() && foreground as usize != self.foreground_at_request
+                    && !owned_by(foreground, moving.identities[0].window()))
+        });
+        // 后续输入只取消定位；原启动结果仍在既有预算内收取。
+        if self.cancelled.load(Ordering::Acquire)
+            || (self.placement_cancelled && self.result.is_none())
+        {
+            return Ok(true);
+        }
+        if self.started.elapsed() >= LAUNCH_TIMEOUT && self.moving.is_none() {
+            if self.placement_cancelled {
+                return Ok(true);
+            }
             return Err("已提交打开，但未能定位窗口；请在 Windows 中查看程序。".into());
         }
         if let Some(moving) = &mut self.moving {
             if moving.identities.iter().any(|identity| !identity.valid()) {
                 return Err("已提交打开，但程序窗口已改变，未能定位窗口。".into());
             }
+            if foreground.is_null() {
+                return Ok(false);
+            }
             let mut relocated = true;
-            for relocation in &mut moving.relocations {
-                relocated &= relocation.poll(workspace)?;
+            for (identity, relocation) in moving.identities.iter().zip(&mut moving.relocations) {
+                if let Some(pending) = relocation {
+                    if pending.poll(workspace)? {
+                        *relocation = None;
+                    }
+                }
+                if relocation.is_none() && !workspace.placed(identity.window()) {
+                    // 保留已经关联的窗口；名额繁忙仅延后派发，不重新消耗启动定位预算。
+                    *relocation = workspace.move_to_display(identity.window())?;
+                    relocated = false;
+                }
+                relocated &= relocation.is_none();
             }
             if relocated
                 && moving
@@ -333,28 +385,22 @@ impl PendingLaunch {
             {
                 if moving.resolve_modal {
                     let root = moving.identities[0].window();
-                    let target = match activation_target(root) {
-                        Ok(target) => target,
-                        Err(_) if moving.started.elapsed() < Duration::from_secs(1) => {
-                            return Ok(false);
-                        }
-                        Err(error) => return Err(error),
+                    let Some(target) = activation_target(root)? else {
+                        return Ok(false);
                     };
-                    moving.resolve_modal = false;
                     if target != root {
                         let identity = Identity::capture(target)?;
-                        if !workspace.placed(target) {
-                            moving.relocations.push(workspace.move_to_display(target)?);
+                        if self.placement_cancelled || workspace.user_moving(target) {
+                            return Ok(true);
                         }
+                        moving.relocations.push(None);
                         moving.identities.push(identity);
-                        moving.started = Instant::now();
+                        moving.resolve_modal = false;
                         return Ok(false);
                     }
+                    moving.resolve_modal = false;
                 }
                 return Ok(true);
-            }
-            if moving.started.elapsed() >= Duration::from_secs(1) {
-                return Err("已提交打开，但程序窗口拒绝移动到所选屏幕。".into());
             }
             return Ok(false);
         }
@@ -366,13 +412,16 @@ impl PendingLaunch {
                         return Err("已提交打开，但未能识别启动进程。".into());
                     }
                     self.processes.insert(process.pid, process.birth);
-                    self.handoff_allowed = process.birth >= self.started_filetime;
+                    self.handoff_allowed = true;
                     self.launched_process = Some(process);
                     self.result = None;
                 }
                 Err(TryRecvError::Empty) => return Ok(false),
                 Err(TryRecvError::Disconnected) => return Err("启动程序的操作意外结束。".into()),
             }
+        }
+        if self.placement_cancelled {
+            return Ok(true);
         }
         self.expand_processes()?;
         self.handoff_allowed &=
@@ -382,9 +431,9 @@ impl PendingLaunch {
             .filter(|tracked| self.associated(tracked))
             .collect::<Vec<_>>();
         if candidates.is_empty() {
-            // 单实例程序可由短命启动进程转交给旧进程；只接受无后续输入且唯一的新增前台窗口。
+            // 单实例程序可复用旧进程，或由短命进程转交；前台交接期间不能有后续输入。
             if let Some(candidate) =
-                self.handoff_candidate(windows, unsafe { GetForegroundWindow() }, last_input())?
+                self.handoff_candidate(windows, foreground, last_input())?
             {
                 candidates.push(candidate);
             }
@@ -415,14 +464,20 @@ impl PendingLaunch {
             return Err("已提交打开，但程序窗口已改变，未能定位窗口。".into());
         }
         let root = tracked.identity.window();
-        let mut relocations = Vec::new();
-        if !workspace.placed(root) {
-            relocations.push(workspace.move_to_display(root)?);
+        if foreground.is_null() {
+            return Ok(false);
+        }
+        if self.foreground_at_request == 0 && (window_pid(foreground) == self.parent_pid || owned_by(foreground, root)) {
+            self.foreground_at_request = foreground as usize;
+        }
+        if workspace.user_moving(root)
+            || (foreground as usize != self.foreground_at_request && !owned_by(foreground, root))
+        {
+            return Ok(true);
         }
         self.moving = Some(MovingWindow {
             identities: vec![tracked.identity.clone()],
-            relocations,
-            started: Instant::now(),
+            relocations: vec![None],
             resolve_modal: true,
         });
         Ok(false)
@@ -433,6 +488,13 @@ impl PendingLaunch {
 pub(super) struct Launches(Vec<PendingLaunch>);
 
 impl Launches {
+    pub(super) fn cancel_placement(&mut self) {
+        for pending in &mut self.0 {
+            pending.placement_cancelled = true;
+            pending.moving = None;
+        }
+    }
+
     pub(super) fn pending(&self) -> bool {
         !self.0.is_empty()
     }
@@ -440,6 +502,7 @@ impl Launches {
     pub(super) fn start(
         &mut self,
         request: LaunchRequest,
+        parent_pid: u32,
         workspace: &Workspace,
     ) -> Result<()> {
         let input_at_request = last_input();
@@ -472,11 +535,14 @@ impl Launches {
             started,
             started_filetime,
             baseline,
+            parent_pid,
+            foreground_at_request: foreground_window() as usize,
             result: Some(receiver),
             processes: HashMap::new(),
             launched_process: None,
             launch_process_exited: false,
             input_at_request,
+            placement_cancelled: false,
             handoff_allowed: false,
             candidate: None,
             moving: None,
