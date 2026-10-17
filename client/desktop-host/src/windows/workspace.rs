@@ -384,6 +384,25 @@ impl Workspace {
             transition.x -= self.target.x - self.display.monitor.x;
             transition.y -= self.target.y - self.display.monitor.y;
         }
+        // 最大化窗口仅修改还原矩形不会换屏；先迁移当前外框，再设置还原位置。
+        if was_maximized && unsafe { IsIconic(window) } == 0 {
+            let outer = rectangle(window)?;
+            let visual = visible_bounds(window)?;
+            if unsafe {
+                SetWindowPos(
+                    window,
+                    null_mut(),
+                    self.target.x + outer.x - visual.x,
+                    self.target.y + outer.y - visual.y,
+                    self.target.width + outer.width - visual.width,
+                    self.target.height + outer.height - visual.height,
+                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS,
+                )
+            } == 0
+            {
+                return Err(failure("Windows 拒绝移动最大化程序窗口"));
+            }
+        }
         placement.rcNormalPosition = rect(transition);
         placement.flags = WPF_ASYNCWINDOWPLACEMENT;
         placement.showCmd = if was_maximized {
