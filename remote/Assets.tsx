@@ -629,6 +629,11 @@ function SceneDetail({
   const previous = useRef({ title: scene.title, description: scene.description })
   const [loadedImage, setLoadedImage] = useState('')
   const picker = useRef<HTMLInputElement>(null)
+  const canRetryAnalysis =
+    ((scene.status === 'description_failed' || scene.status === 'cancelled') && Boolean(scene.url)) ||
+    (scene.status === 'failed' && scene.stage === 'review_failed') ||
+    (scene.regeneration?.status === 'failed' &&
+      (scene.regeneration.stage === 'analyze' || scene.regeneration.stage === 'review_failed'))
   const regenerate = () =>
     run(async () => {
       setSubmitted(true)
@@ -720,12 +725,12 @@ function SceneDetail({
         </button>
       </details>
       {scene.error || scene.regeneration?.error ? <Notice>{scene.error || scene.regeneration?.error}</Notice> : null}
-      {scene.status === 'failed' || scene.regeneration?.status === 'failed' ? (
+      {scene.can_retry_generation || (scene.regeneration?.status === 'failed' && !canRetryAnalysis) ? (
         <button disabled={busy || submitted} onClick={regenerate} type="button">
           重试制作背景
         </button>
       ) : null}
-      {scene.status === 'description_failed' ? (
+      {canRetryAnalysis ? (
         <button
           disabled={busy}
           onClick={() =>
@@ -736,7 +741,7 @@ function SceneDetail({
           }
           type="button"
         >
-          重新准备图片
+          重试图片与描述检查
         </button>
       ) : null}
       {error ? <Notice>{error}</Notice> : null}
@@ -805,7 +810,12 @@ function SceneDetail({
         <summary>更多操作</summary>
         <div className="button-row">
           <button
-            disabled={busy || submitted || scene.status === 'pending' || scene.regeneration?.status === 'pending'}
+            disabled={
+              busy ||
+              submitted ||
+              (scene.status !== 'ready' && !scene.can_retry_generation) ||
+              scene.regeneration?.status === 'pending'
+            }
             onClick={regenerate}
             type="button"
           >

@@ -47,7 +47,7 @@ from features.scenes.models import (
 )
 from features.scenes.prompt_assembly import build_scene_prompt
 from features.scenes.prompts import SCENE_DESCRIBE_SYSTEM
-from features.scenes.queries import get_pending_scene_task, get_scene
+from features.scenes.queries import can_retry_scene_generation, get_pending_scene_task, get_scene
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.schemas import SceneDescriptionRequest, SceneImageDimensions, SceneImageSize
 from features.scenes.wallpaper import SCENE_IMAGE_SIZE, WallpaperAsset, prepare_scene_wallpaper, scene_source_extension
@@ -281,41 +281,62 @@ async def schedule_scene_prompt(
 
 async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
     cleanup_paths: set[str] = set()
+    regeneration_task_id: str | None = None
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if row is None:
             raise SceneNotFoundError("找不到对应场景")
-        if row.status != SceneStatus.READY.value or not row.media_path:
-            raise SceneStateError("只有已保存图片的场景才能重新生成")
-        if not row.title.strip() or not row.description.strip():
-            raise SceneStateError("请先补全场景标题和描述")
         if await get_pending_scene_task(db, user_id) is not None:
             raise SceneStateError("已有场景任务正在准备，请等待完成或取消后重试")
-        if row.regeneration_state_json:
-            previous = SceneRegenerationState.model_validate_json(row.regeneration_state_json)
-            cleanup_paths = previous.image_chain.stored_paths()
-        task_id = str(uuid4())
-        state = SceneRegenerationState(
-            task_id=task_id,
-            prompt=build_scene_prompt(notes=row.description),
-            target_size=SCENE_IMAGE_SIZE,
-            selection=ProviderSelection(
-                origin=GenerationOrigin.model_validate_json(row.generation_origin_json)
-                if row.generation_origin_json
-                else None,
-                mode="next",
-            ),
-        )
-        row.regeneration_status = "pending"
-        row.regeneration_stage = "prepare"
-        row.regeneration_error = None
-        row.regeneration_task_id = task_id
-        row.regeneration_state_json = state.model_dump_json()
+        if row.status == SceneStatus.FAILED.value and row.source == SceneSource.GENERATED.value:
+            if not can_retry_scene_generation(row):
+                raise SceneStateError("该场景不能重试生成，请先核对任务结果或重试图片与描述检查")
+            state = (
+                ImageChainState.model_validate_json(row.generation_state_json) if row.generation_state_json else None
+            )
+            # 已返回的图片继续保存或检查；没有可续处理结果时，用原输入重新解析当前模型链。
+            if state and (
+                state.pending_urls or state.best() or any(not candidate.evaluated for candidate in state.candidates)
+            ):
+                row.stage = state.phase
+            else:
+                cleanup_paths = state.stored_paths() if state else set()
+                row.generation_state_json = None
+                row.stage = "prepare"
+            row.status = SceneStatus.PENDING.value
+            row.error = None
+            row.origin = SceneOrigin.USER_REQUEST.value
+            row.auto_activate = False
+        elif row.status == SceneStatus.READY.value and row.media_path:
+            if not row.title.strip() or not row.description.strip():
+                raise SceneStateError("请先补全场景标题和描述")
+            if row.regeneration_state_json:
+                previous = SceneRegenerationState.model_validate_json(row.regeneration_state_json)
+                cleanup_paths = previous.image_chain.stored_paths()
+            regeneration_task_id = str(uuid4())
+            regeneration = SceneRegenerationState(
+                task_id=regeneration_task_id,
+                prompt=build_scene_prompt(notes=row.description),
+                target_size=SCENE_IMAGE_SIZE,
+                selection=ProviderSelection(
+                    origin=GenerationOrigin.model_validate_json(row.generation_origin_json)
+                    if row.generation_origin_json
+                    else None,
+                    mode="next",
+                ),
+            )
+            row.regeneration_status = "pending"
+            row.regeneration_stage = "prepare"
+            row.regeneration_error = None
+            row.regeneration_task_id = regeneration_task_id
+            row.regeneration_state_json = regeneration.model_dump_json()
+        else:
+            raise SceneStateError("只有失败的生成任务或已保存图片的场景才能重新生成")
         await _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
         await enqueue_asset_cleanup(db, user_id, cleanup_paths)
         await db.commit()
     await cleanup_user_assets(user_id)
-    _launch_task(scene_id, user_id, regeneration_task_id=task_id)
+    _launch_task(scene_id, user_id, regeneration_task_id=regeneration_task_id)
     return row
 
 

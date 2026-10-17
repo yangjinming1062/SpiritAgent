@@ -29,6 +29,7 @@ import {
   prepareScenePrompt,
   refreshSceneStatus,
   regenerateScene,
+  reloadSceneImage,
   type SceneAsset,
   setScenePolicy
 } from '@/modules/scene'
@@ -97,6 +98,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
   const createDraft: SceneCreateDraft = { notes: ui.notes, reference }
   const editDrafts = ui.editDrafts
   const [detailLoading, setDetailLoading] = useState(false)
+  const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
   const [zoom, setZoom] = useState<ImageZoom | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SceneAsset | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -205,11 +207,17 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
     }
 
     let current = true
+    const isLive = begin()
     setDetailLoading(true)
+    setDetailLoadError(null)
     void refreshSceneStatus(view.sceneId)
-      .catch(() => null)
+      .catch(error => {
+        if (current && isLive()) {
+          setDetailLoadError(errorMessage(error, tToasts.sceneStatusRefreshFailed))
+        }
+      })
       .finally(() => {
-        if (current) {
+        if (current && isLive()) {
           setDetailLoading(false)
         }
       })
@@ -217,7 +225,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
     return () => {
       current = false
     }
-  }, [view])
+  }, [begin, tToasts.sceneStatusRefreshFailed, view])
 
   const openView = (next: ScenePageView): void => {
     creationRevision.current += 1
@@ -474,6 +482,7 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
               detail={detail}
               draft={editDrafts[view.sceneId]}
               key={view.sceneId}
+              loadError={detailLoadError}
               loading={detailLoading}
               onActivate={sceneId => void handleActivate(sceneId)}
               onBack={returnToLibrary}
@@ -489,12 +498,23 @@ export function ScenePage({ startCreating = false, onMaterialReady }: ScenePageP
                   changeEditDraft(detail.id, { title: detail.title, description: detail.description })
                 }
               }}
-              onLoad={() => refreshSceneStatus(view.sceneId)}
+              onLoad={async () => {
+                const isLive = begin()
+                const loaded = await refreshSceneStatus(view.sceneId)
+                const currentView = $sceneUi.get().view
+
+                if (loaded && isLive() && currentView.kind === 'detail' && currentView.sceneId === view.sceneId) {
+                  setDetailLoadError(null)
+                }
+
+                return loaded
+              }}
               onRegenerate={regenerate}
               onRetryAnalysis={async sceneId => {
                 await analyzeScene(sceneId)
                 await loadSceneDetail(sceneId)
               }}
+              onRetryImage={() => reloadSceneImage(view.sceneId)}
               onSave={async sceneId => {
                 await saveInfo(sceneId)
               }}

@@ -38,6 +38,7 @@ class SceneResponse(BaseModel):
     id: int
     status: SceneStatus
     stage: str
+    can_retry_generation: bool = False
     origin: SceneOrigin
     source: SceneSource
     target_size: SceneImageSize | None = None

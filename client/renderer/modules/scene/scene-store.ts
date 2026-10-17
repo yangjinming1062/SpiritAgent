@@ -29,8 +29,10 @@ export interface ActiveScene {
   /** 后端原始资产 URL，供受限媒体桥取字节；url 是解析后的可显示 src。 */
   assetUrl: string
   thumbnailUrl: string
+  imageLoadFailed: boolean
   status: SceneStatus
   stage: string
+  can_retry_generation: boolean
   source: string
   origin: string
   target_size: SceneImageSize | null
@@ -76,16 +78,21 @@ let submitting = false
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollCount = 0
 
-function toScene(row: SceneWire, url: string): ActiveScene {
-  return { ...row, assetUrl: row.url || '', id: String(row.id), url, thumbnailUrl: url }
+function toScene(row: SceneWire, url: string, imageLoadFailed = false): ActiveScene {
+  return { ...row, assetUrl: row.url || '', id: String(row.id), url, thumbnailUrl: url, imageLoadFailed }
 }
 
 /** 把场景图片解析为可用 src；失败抛出，由调用方决定保留旧图还是占位。 */
-async function resolveSceneUrl(row: SceneWire): Promise<string> {
+async function resolveSceneUrl(row: SceneWire, retryImage = false): Promise<string> {
   const url = row.url || ''
 
   if (url && !url.startsWith('data:') && !url.startsWith('http:') && !url.startsWith('https:')) {
     const key = url.split(/[?#]/)[0]
+
+    if (retryImage) {
+      sceneSrcCache.delete(key)
+    }
+
     const cached = sceneSrcCache.get(key)
 
     if (cached) {
@@ -94,14 +101,18 @@ async function resolveSceneUrl(row: SceneWire): Promise<string> {
 
     const pending = sceneSrcRequests.get(key)
 
-    if (pending !== undefined) {
+    if (pending !== undefined && !retryImage) {
       return (await pending) || url
     }
 
     const epoch = currentClearEpoch()
 
     const request = (async (): Promise<string | null> => {
-      const dataUrl = await backendApi()?.apiAsset({ url, preferCache: true })
+      const dataUrl = await backendApi()?.apiAsset({ url, preferCache: !retryImage })
+
+      if (dataUrl) {
+        await preload(dataUrl)
+      }
 
       if (dataUrl && epoch === currentClearEpoch()) {
         sceneSrcCache.set(key, dataUrl)
@@ -124,13 +135,13 @@ async function resolveSceneUrl(row: SceneWire): Promise<string> {
 }
 
 /** 单张图片加载失败只影响该场景：沿用已缓存的旧图，没有则留空显示占位。 */
-async function resolveScene(row: SceneWire): Promise<ActiveScene> {
+async function resolveScene(row: SceneWire, retryImage = false): Promise<ActiveScene> {
   try {
-    return toScene(row, await resolveSceneUrl(row))
+    return toScene(row, await resolveSceneUrl(row, retryImage))
   } catch (error) {
     log.warn('scene', 'Scene image could not be loaded:', error)
 
-    return toScene(row, detailCache.get(String(row.id))?.url ?? '')
+    return toScene(row, detailCache.get(String(row.id))?.url ?? '', true)
   }
 }
 
@@ -184,10 +195,11 @@ function startPoll(): void {
     pollCount++
 
     if (pollCount > 40) {
-      stopPoll()
       $sceneTaskSlow.set(true)
 
-      return
+      if (pollCount % 4 !== 0) {
+        return
+      }
     }
 
     void hydrateScene()
@@ -241,7 +253,7 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   }
 
   const value = result.value
-  const entries = await Promise.all(value.scenes.map(resolveScene))
+  const entries = await Promise.all(value.scenes.map(row => resolveScene(row)))
 
   if (!isCurrent() || value.version < eventVersion) {
     return
@@ -257,7 +269,10 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   }
 }
 
-async function fetchSceneDetail(sceneId: string, deferMedia = false): Promise<SceneAsset | null> {
+async function fetchSceneDetail(
+  sceneId: string,
+  media: 'defer' | 'resolve' | 'reload' = 'resolve'
+): Promise<SceneAsset | null> {
   const scope = captureAuthScope()
 
   if (!scope) {
@@ -294,8 +309,12 @@ async function fetchSceneDetail(sceneId: string, deferMedia = false): Promise<Sc
 
   const row = result.value
   const cached = detailCache.get(sceneId)
+  const deferMedia = media === 'defer'
+  const sameImage = row.url.split(/[?#]/)[0] === cached?.assetUrl.split(/[?#]/)[0]
 
-  const scene = deferMedia ? toScene(row, row.url ? (cached?.url ?? '') : '') : await resolveScene(row)
+  const scene = deferMedia
+    ? toScene(row, row.url && sameImage ? (cached?.url ?? '') : '', Boolean(sameImage && cached?.imageLoadFailed))
+    : await resolveScene(row, media === 'reload')
 
   if (!isCurrent()) {
     return null
@@ -324,10 +343,14 @@ export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | nul
   }
 }
 
+export async function reloadSceneImage(sceneId: string): Promise<SceneAsset | null> {
+  return fetchSceneDetail(sceneId, 'reload')
+}
+
 /** 刷新单个场景的最新状态；不等待场景列表或图片字节，业务错误交给页面显示。 */
 export async function refreshSceneStatus(sceneId: string): Promise<SceneAsset | null> {
   const scope = captureAuthScope()
-  const detail = await fetchSceneDetail(sceneId, true)
+  const detail = await fetchSceneDetail(sceneId, 'defer')
 
   if (!scope?.() || !detail) {
     return null
@@ -378,6 +401,7 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
 
   try {
     let active = $activeScene.get()
+    let activeDetail: SceneAsset | null = null
 
     // 当前环境的替换图预加载成功后才切换；失败保留旧图，其余状态照常刷新。
     try {
@@ -388,8 +412,12 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
       }
 
       active = nextActive
+      activeDetail = nextActive
     } catch (error) {
       log.warn('scene', 'Active scene image could not be loaded:', error)
+      activeDetail = state.active
+        ? toScene(state.active, active?.id === String(state.active.id) ? active.url : '', true)
+        : null
     }
 
     const pending = state.pending ? await resolveScene(state.pending) : null
@@ -406,16 +434,16 @@ export async function hydrateScene(options: { skipLibraryRefresh?: boolean } = {
     $pendingScene.set(pending)
     $sceneRegenerating.set(regenerating)
     cacheSceneDetails(
-      [...(active ? [active] : []), ...(pending ? [pending] : []), ...(regenerating ? [regenerating] : [])],
+      [...(activeDetail ? [activeDetail] : []), ...(pending ? [pending] : []), ...(regenerating ? [regenerating] : [])],
       read
     )
     $scenePolicy.set(state.policy)
     const taskStatus = !pending ? 'none' : pending.stage === 'waiting_upload' ? 'waiting_upload' : 'pending'
     $sceneTaskStatus.set(taskStatus)
 
-    if ((taskStatus === 'pending' || regenerating) && !$sceneTaskSlow.get()) {
+    if (taskStatus === 'pending' || regenerating) {
       startPoll()
-    } else if (taskStatus !== 'pending' && !regenerating) {
+    } else {
       stopPoll()
       $sceneTaskSlow.set(false)
     }

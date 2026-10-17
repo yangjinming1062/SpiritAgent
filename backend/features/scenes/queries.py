@@ -8,7 +8,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from features.companion.visual_state import persona_snapshot
-from features.scenes.models import CompanionScene, SceneOrigin, ScenePolicy, SceneStatus
+from features.media.character_images import ImageChainState
+from features.scenes.models import CompanionScene, SceneOrigin, ScenePolicy, SceneSource, SceneStatus
 from features.scenes.query_contracts import SceneSnapshot
 from features.scenes.schemas import SceneImageDimensions, SceneImageSize, SceneResponse
 
@@ -122,12 +123,27 @@ async def list_scenes(
     return rows, int(total or 0)
 
 
+def can_retry_scene_generation(row: CompanionScene | SceneSnapshot) -> bool:
+    if (
+        row.status != SceneStatus.FAILED.value
+        or row.source != SceneSource.GENERATED.value
+        or row.media_path
+        or not row.prompt
+        or not row.target_size_json
+        or row.stage in {"submitting", "review_failed"}
+    ):
+        return False
+    state = ImageChainState.model_validate_json(row.generation_state_json) if row.generation_state_json else None
+    return state is None or (state.phase != "submitting" and state.stop_reason != "result_unknown")
+
+
 def response_for_scene(row: CompanionScene | SceneSnapshot) -> SceneResponse:
     return SceneResponse.model_validate(
         {
             "id": row.id,
             "status": row.status,
             "stage": row.stage,
+            "can_retry_generation": can_retry_scene_generation(row),
             "origin": row.origin,
             "source": row.source,
             **{

@@ -51,7 +51,8 @@ export function SceneLibraryView({
   taskBusy,
   total
 }: SceneLibraryViewProps): React.JSX.Element {
-  const t = useStrings().living.scene
+  const strings = useStrings()
+  const t = strings.living.scene
 
   return (
     <>
@@ -61,7 +62,7 @@ export function SceneLibraryView({
             <p className="text-sm font-medium text-strong">{t.policyLabel}</p>
             <p className="mt-1 text-xs leading-relaxed text-muted">{t.policyDesc}</p>
             <p aria-live="polite" className="mt-1 text-xs text-muted">
-              {policyBusy ? t.refreshing : policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
+              {policyBusy ? strings.common.saving : policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
             </p>
           </div>
           <Toggle
@@ -142,7 +143,7 @@ export function SceneLibraryView({
             <span className="min-w-0 flex-1">{t.loadFailed}</span>
             <button className={BTN_SUBTLE} onClick={onRetryLoad} type="button">
               <RefreshCw className="size-3.5" />
-              <span>{t.refresh}</span>
+              <span>{strings.common.retry}</span>
             </button>
           </div>
         </SettingCard>

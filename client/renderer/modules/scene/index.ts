@@ -27,6 +27,7 @@ export {
   prepareScenePrompt,
   refreshSceneStatus,
   regenerateScene,
+  reloadSceneImage,
   SCENE_IMAGE_SIZE,
   type SceneAsset,
   type ScenePolicy,

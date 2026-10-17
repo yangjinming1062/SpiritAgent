@@ -3,7 +3,7 @@ import type React from 'react'
 import { useRef, useState } from 'react'
 
 import { pickAvatarImage, type PickedImage, SelfSourceImageFlow } from '@/modules/character'
-import { $pendingScene, $sceneTaskSlow, $sceneTaskStatus, hydrateScene } from '@/modules/scene'
+import { $pendingScene, $sceneTaskSlow, $sceneTaskStatus } from '@/modules/scene'
 import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowLeft, FileImage, Loader2, Plus, Sparkles } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
@@ -151,9 +151,6 @@ export function SceneCreateView({
             </p>
             <p className={HINT_TEXT}>{waitingUpload ? t.waitingUploadHint : t.pendingOverlayHint}</p>
             <div className="flex flex-wrap gap-2">
-              <button className={BTN_SUBTLE} onClick={() => void hydrateScene()} type="button">
-                {t.refresh}
-              </button>
               {waitingUpload ? (
                 <button
                   className={BTN_PRIMARY}
