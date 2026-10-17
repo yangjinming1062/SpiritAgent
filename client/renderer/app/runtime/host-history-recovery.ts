@@ -32,10 +32,7 @@ export async function resumeHostHistory(isCurrent: () => boolean, replayed = fal
 
       if (replayed && runtime.$historyHydrated.get()) {
         void runtime.recoverUnconfirmedSubmission()
-
-        if (!runtime.$chatTurnInFlight.get()) {
-          runtime.submitPendingBatch()
-        }
+        runtime.submitPendingBatch()
 
         return
       }
@@ -54,10 +51,7 @@ export async function resumeHostHistory(isCurrent: () => boolean, replayed = fal
       runtime.applyRemoteSnapshot(synced, snapshot)
 
       void runtime.recoverUnconfirmedSubmission()
-
-      if (!runtime.$chatTurnInFlight.get()) {
-        runtime.submitPendingBatch()
-      }
+      runtime.submitPendingBatch()
     } catch (error) {
       if (!isCurrent() || $chatSessionId.get() !== sid) {
         return

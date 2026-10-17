@@ -21,12 +21,10 @@ const FIELDS: ReadonlyArray<{
 ]
 
 export function TemperatureSection({
-  disabled,
   state,
   t,
   update
 }: {
-  disabled: boolean
   state: TemperatureFormState
   t: TemperatureCopy
   update: (patch: Partial<TemperatureFormState>) => void
@@ -41,7 +39,6 @@ export function TemperatureSection({
             <div className="flex w-48 items-center gap-3">
               <Slider
                 ariaLabel={t[labelKey]}
-                disabled={disabled}
                 max={1}
                 min={0}
                 onChange={value => update({ [field]: Math.round(value * 100) / 100 } as Partial<TemperatureFormState>)}

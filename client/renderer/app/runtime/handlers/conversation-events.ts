@@ -230,10 +230,7 @@ export function handleConversationEvent(
       applySessionState(payload)
 
       void recoverUnconfirmedSubmission()
-
-      if (!$chatTurnInFlight.get()) {
-        submitPendingBatch()
-      }
+      submitPendingBatch()
 
       syncConversationActivity()
 
@@ -320,10 +317,7 @@ export function handleConversationEvent(
       // in-flight 回合结束——清标记并冲刷回合期间排队的消息（合并为单次批量提交）。
       $chatTurnInFlight.set(false)
       void recoverUnconfirmedSubmission()
-
-      if (!$chatTurnInFlight.get()) {
-        submitPendingBatch()
-      }
+      submitPendingBatch()
 
       syncConversationActivity()
 

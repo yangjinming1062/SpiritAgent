@@ -4,10 +4,6 @@ import path from 'node:path'
 
 import { atomicWriteFile, createSerialQueue, isAccountId } from '../shared/utils'
 
-function cacheKey(voice: string, text: string): string {
-  return crypto.hash('sha1', `${voice}\n${text}`)
-}
-
 export interface TtsDiskCache {
   clear: (accountId: string) => Promise<void>
   read: (options: { accountId: string; language: string; text: string; voice: string }) => Promise<Buffer | null>
@@ -42,7 +38,7 @@ export function createTtsDiskCache({ spiritagentHome }: { spiritagentHome: strin
   }
 
   const filenameFor = (voice: string, text: string, language: string): string =>
-    `${cacheKey(voice, `${language}\n${text}`)}.mp3`
+    `${crypto.hash('sha1', `${voice}\n${language}\n${text}`)}.mp3`
 
   return {
     clear: accountId => withAccount(accountId, directory => fsp.rm(directory, { recursive: true, force: true })),

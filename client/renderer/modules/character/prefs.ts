@@ -3,13 +3,12 @@ import { atom, type WritableAtom } from 'nanostores'
 import { hydrateManualReduceTransparency } from '@/shared/lib/apply-no-blur'
 import {
   accountStorageKey,
+  definePersistedBoolean,
   definePersistedEnum,
-  persistBoolean,
   persistString,
   registerCompanionStorageKey,
   registerStorageClearHandler,
   registerStorageRestoreHandler,
-  storedBoolean,
   storedString
 } from '@/shared/lib/storage'
 import { preferencesApi } from '@/shared/platform/desktop'
@@ -23,9 +22,11 @@ export type ResponsePreference = 'text' | 'voice'
 
 const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
 const RESPONSE_PREFERENCE_STORAGE_KEY = 'da.companion.responsePreference'
-const AUTOPLAY_VOICE_STORAGE_KEY = registerCompanionStorageKey('da.companion.autoplayVoice')
-const POSTS_ENABLED_STORAGE_KEY = registerCompanionStorageKey('da.companion.postsEnabled')
-const INFORMATION_DISCOVERY_STORAGE_KEY = registerCompanionStorageKey('da.companion.informationDiscoveryEnabled')
+const AUTOPLAY_VOICE_STORAGE_KEY = 'da.companion.autoplayVoice'
+const POSTS_ENABLED_STORAGE_KEY = 'da.companion.postsEnabled'
+const INFORMATION_DISCOVERY_STORAGE_KEY = 'da.companion.informationDiscoveryEnabled'
+const LLM_AFFECT_STORAGE_KEY = 'da.companion.llmAffect'
+const LLM_AUTONOMY_STORAGE_KEY = 'da.companion.llmAutonomy'
 
 // localStorage 是各窗口的即时缓存；本地编辑经 prefs:set 合入主进程镜像并上云。服务端确认的音色先同步镜像，再由水合广播回写缓存与 atom。
 function reportCloud(key: string, value: unknown): void {
@@ -73,38 +74,33 @@ export function setResponsePreference(mode: ResponsePreference): void {
 
 registerStorageClearHandler(() => {
   $companionVoiceId.set('')
-  $autoplayVoice.set(true)
-  $postsEnabled.set(true)
-  $informationDiscoveryEnabled.set(false)
 })
 
 registerStorageRestoreHandler(() => {
   $companionVoiceId.set(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
-  $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
-  $postsEnabled.set(storedBoolean(POSTS_ENABLED_STORAGE_KEY, true))
-  $informationDiscoveryEnabled.set(storedBoolean(INFORMATION_DISCOVERY_STORAGE_KEY, false))
 })
 
 interface BooleanPref {
   $atom: WritableAtom<boolean>
+  reload: () => void
   set: (value: boolean) => void
 }
 
 function makeBooleanPref(key: string, fallback: boolean, cloudKey: string): BooleanPref {
-  const $atom = atom<boolean>(storedBoolean(key, fallback))
+  const persisted = definePersistedBoolean({ key, fallback })
 
   return {
-    $atom,
+    $atom: persisted.$atom,
+    reload: persisted.reload,
     set(value: boolean): void {
-      $atom.set(value)
-      persistBoolean(key, value)
+      persisted.set(value)
       reportCloud(cloudKey, value)
     }
   }
 }
 
-const llmAffectPref = makeBooleanPref('da.companion.llmAffect', true, 'companion.llm_affect')
-const llmAutonomyPref = makeBooleanPref('da.companion.llmAutonomy', true, 'companion.llm_autonomy')
+const llmAffectPref = makeBooleanPref(LLM_AFFECT_STORAGE_KEY, true, 'companion.llm_affect')
+const llmAutonomyPref = makeBooleanPref(LLM_AUTONOMY_STORAGE_KEY, true, 'companion.llm_autonomy')
 
 const postsEnabledPref = makeBooleanPref(POSTS_ENABLED_STORAGE_KEY, true, 'companion.posts_enabled')
 export const $postsEnabled = postsEnabledPref.$atom
@@ -141,7 +137,7 @@ export function initCompanionPrefsSync(): () => void {
     }
 
     if (event.key === accountStorageKey(AUTOPLAY_VOICE_STORAGE_KEY) || event.key === null) {
-      $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
+      autoplayVoicePref.reload()
     }
 
     if (event.key === accountStorageKey(RESPONSE_PREFERENCE_STORAGE_KEY) || event.key === null) {
@@ -149,11 +145,19 @@ export function initCompanionPrefsSync(): () => void {
     }
 
     if (event.key === accountStorageKey(POSTS_ENABLED_STORAGE_KEY) || event.key === null) {
-      $postsEnabled.set(storedBoolean(POSTS_ENABLED_STORAGE_KEY, true))
+      postsEnabledPref.reload()
     }
 
     if (event.key === accountStorageKey(INFORMATION_DISCOVERY_STORAGE_KEY) || event.key === null) {
-      $informationDiscoveryEnabled.set(storedBoolean(INFORMATION_DISCOVERY_STORAGE_KEY, false))
+      informationDiscoveryPref.reload()
+    }
+
+    if (event.key === accountStorageKey(LLM_AFFECT_STORAGE_KEY) || event.key === null) {
+      llmAffectPref.reload()
+    }
+
+    if (event.key === accountStorageKey(LLM_AUTONOMY_STORAGE_KEY) || event.key === null) {
+      llmAutonomyPref.reload()
     }
 
     syncDisturbanceFromStorage(event.key)

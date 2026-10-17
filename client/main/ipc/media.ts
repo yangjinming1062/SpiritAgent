@@ -155,6 +155,21 @@ function createMediaHttp(connection: BackendConnection, fetchImpl = globalThis.f
   })
 }
 
+function isAudioUploadResult(value: unknown): value is AudioUploadResult {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'url' in value &&
+    typeof value.url === 'string' &&
+    'mime_type' in value &&
+    typeof value.mime_type === 'string' &&
+    'duration' in value &&
+    typeof value.duration === 'number' &&
+    Number.isFinite(value.duration) &&
+    value.duration > 0
+  )
+}
+
 function formatKv(
   prefix: string,
   event: string,
@@ -355,18 +370,7 @@ export function registerMediaIpc({
 
       assertUploadAccount(authSessionId)
 
-      if (
-        !parsed ||
-        typeof parsed !== 'object' ||
-        !('url' in parsed) ||
-        typeof parsed.url !== 'string' ||
-        !('mime_type' in parsed) ||
-        typeof parsed.mime_type !== 'string' ||
-        !('duration' in parsed) ||
-        typeof parsed.duration !== 'number' ||
-        !Number.isFinite(parsed.duration) ||
-        parsed.duration <= 0
-      ) {
+      if (!isAudioUploadResult(parsed)) {
         throw new Error('Backend audio upload returned invalid metadata')
       }
 
@@ -414,19 +418,10 @@ export function registerMediaIpc({
       assertUploadAccount(authSessionId)
 
       if (
-        !parsed ||
-        typeof parsed !== 'object' ||
+        !isAudioUploadResult(parsed) ||
         !('sample_id' in parsed) ||
         typeof parsed.sample_id !== 'string' ||
-        !parsed.sample_id ||
-        !('url' in parsed) ||
-        typeof parsed.url !== 'string' ||
-        !('mime_type' in parsed) ||
-        typeof parsed.mime_type !== 'string' ||
-        !('duration' in parsed) ||
-        typeof parsed.duration !== 'number' ||
-        !Number.isFinite(parsed.duration) ||
-        parsed.duration <= 0
+        !parsed.sample_id
       ) {
         throw new Error('Backend voice sample upload returned invalid metadata')
       }

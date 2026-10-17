@@ -50,10 +50,7 @@ export function startGatewayView(
 
       if (replayed && runtime.$historyHydrated.get()) {
         void runtime.recoverUnconfirmedSubmission()
-
-        if (!runtime.$chatTurnInFlight.get()) {
-          runtime.submitPendingBatch()
-        }
+        runtime.submitPendingBatch()
 
         continue
       }
@@ -70,10 +67,7 @@ export function startGatewayView(
 
           runtime.applyRemoteSnapshot(result, snapshot)
           void runtime.recoverUnconfirmedSubmission()
-
-          if (!runtime.$chatTurnInFlight.get()) {
-            runtime.submitPendingBatch()
-          }
+          runtime.submitPendingBatch()
         })
         .catch(error => {
           if (isCurrent() && generation === syncGeneration) {

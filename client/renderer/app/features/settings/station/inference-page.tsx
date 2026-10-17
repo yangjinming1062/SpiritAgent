@@ -161,11 +161,11 @@ export function InferencePage(): React.JSX.Element {
     <div className="space-y-6">
       <SettingsSectionIntro hint={a.intro} title={a.heading} />
 
-      <AgentDefaultsSection disabled={false} state={form.state} t={a.agentDefaults} update={form.set} />
+      <AgentDefaultsSection state={form.state} t={a.agentDefaults} update={form.set} />
 
-      <ContextCompressionSection disabled={false} state={form.state} t={a.contextCompression} update={form.set} />
+      <ContextCompressionSection state={form.state} t={a.contextCompression} update={form.set} />
 
-      <TemperatureSection disabled={false} state={form.state} t={a.temperature} update={form.set} />
+      <TemperatureSection state={form.state} t={a.temperature} update={form.set} />
 
       <div className="flex min-h-5 items-center justify-end gap-3 pt-2">
         {saveStatus === 'saving' && <span className={HINT_TEXT}>{t.common.saving}</span>}

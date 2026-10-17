@@ -14,12 +14,10 @@ const THRESHOLD_MAX = 1.0
 const THRESHOLD_STEP = 0.05
 
 export function ContextCompressionSection({
-  disabled,
   state,
   t,
   update
 }: {
-  disabled: boolean
   state: ChatFormState
   t: ContextCompressionCopy
   update: (patch: Partial<ChatFormState>) => void
@@ -35,7 +33,6 @@ export function ContextCompressionSection({
           <Toggle
             ariaLabel={t.enableCompression}
             checked={state.enable_context_compression}
-            disabled={disabled}
             onChange={value => update({ enable_context_compression: value })}
           />
         </SettingRow>
@@ -44,7 +41,6 @@ export function ContextCompressionSection({
           <div className="flex w-48 items-center gap-3">
             <Slider
               ariaLabel={t.threshold}
-              disabled={disabled}
               max={THRESHOLD_MAX}
               min={THRESHOLD_MIN}
               onChange={value =>

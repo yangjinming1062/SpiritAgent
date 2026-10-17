@@ -71,7 +71,7 @@ let presetsLoad: { epoch: number; promise: Promise<void> } | null = null
 let navigationToken = 0
 
 function parseSessionSort(raw: null | string): SessionSort {
-  return SESSION_SORTS.includes(raw as SessionSort) ? (raw as SessionSort) : 'recent'
+  return SESSION_SORTS.find(sort => sort === raw) ?? 'recent'
 }
 
 // 内部查询兜底（供 renameSession 等命令式操作回滚用）。
@@ -383,7 +383,6 @@ export function onSessionListChanged(payload: { session_id?: string; deleted?: b
 }
 
 export async function createNewSession(systemPresetId: string): Promise<string | null> {
-  const epoch = currentClearEpoch()
   const authCurrent = captureAuthScope()
 
   if (!authCurrent) {
@@ -392,13 +391,12 @@ export async function createNewSession(systemPresetId: string): Promise<string |
 
   const token = ++navigationToken
 
-  const isCurrentNavigation = (): boolean =>
-    token === navigationToken && epoch === currentClearEpoch() && Boolean(authCurrent?.())
+  const isCurrentNavigation = (): boolean => token === navigationToken && authCurrent()
 
   try {
     const res = await requestResource('sessions.create_session', { body: { system_preset_id: systemPresetId } })
 
-    if (epoch !== currentClearEpoch() || !authCurrent?.()) {
+    if (!authCurrent()) {
       return null
     }
 
@@ -438,7 +436,7 @@ export function fetchSystemPresets(): Promise<void> {
   }
 
   const token = ++presetsToken
-  const isCurrent = (): boolean => token === presetsToken && epoch === currentClearEpoch() && Boolean(authCurrent?.())
+  const isCurrent = (): boolean => token === presetsToken && authCurrent()
   $systemPresetsLoading.set(true)
 
   const load = Promise.resolve()
@@ -494,15 +492,13 @@ function forkSessionInfo(sourceSessionId: string, res: SessionSnapshot): Session
 
 /** 从源会话某条消息派生新会话并挂载 hydrate；发起后已换号或换网关返回 null，请求失败向上抛出。 */
 export async function forkConversation(sourceSessionId: string, sourceMessageId: number): Promise<string | null> {
-  const epoch = currentClearEpoch()
-  const authCurrent = captureAuthScope()
+  const isCurrent = captureAuthScope()
 
-  if (!authCurrent) {
+  if (!isCurrent) {
     throw new Error(getStrings().chat.fork.internalError)
   }
 
   const token = ++navigationToken
-  const isCurrent = (): boolean => epoch === currentClearEpoch() && Boolean(authCurrent?.())
 
   try {
     const created = await requestResource('sessions.fork_session', {
@@ -545,14 +541,11 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
 
 /** 撤回消息：同会话内硬删除 Message.id >= source_message_id 的全部行（含锚点），锚点载荷落回输入框作草稿；发起后已换号或换网关返回 null，请求失败向上抛出。 */
 export async function undoToMessage(sessionId: string, sourceMessageId: number): Promise<UndoResponse | null> {
-  const epoch = currentClearEpoch()
-  const authCurrent = captureAuthScope()
+  const isCurrent = captureAuthScope()
 
-  if (!authCurrent) {
+  if (!isCurrent) {
     throw new Error(getStrings().chat.undo.internalError)
   }
-
-  const isCurrent = (): boolean => epoch === currentClearEpoch() && Boolean(authCurrent?.())
 
   try {
     const res = await requestResource('sessions.undo', {
@@ -626,7 +619,7 @@ export async function ensureCompanionSession(): Promise<string | null> {
       const snapshot = knownRuntime?.captureHistorySync()
       const result = await resumeMainSession()
 
-      if (epoch !== currentClearEpoch() || !authCurrent?.()) {
+      if (!authCurrent()) {
         return null
       }
 
@@ -687,11 +680,9 @@ export async function switchSession(sessionId: string): Promise<void> {
   }
 
   const token = ++navigationToken
-  const epoch = currentClearEpoch()
   $sessionNavigationError.set(null)
 
-  const isCurrent = (): boolean =>
-    token === navigationToken && epoch === currentClearEpoch() && Boolean(authCurrent?.())
+  const isCurrent = (): boolean => token === navigationToken && authCurrent()
 
   const runtime = getConversationRuntime(sessionId)
   const release = retainConversationRuntime(runtime)
@@ -746,8 +737,7 @@ export async function restoreConversationSelection(sessionId: string): Promise<v
   const runtime = getConversationRuntime(sessionId)
   const release = retainConversationRuntime(runtime)
 
-  const ownerCurrent = (): boolean =>
-    authCurrent() && token === navigationToken && Boolean(authCurrent?.()) && runtime.isCurrent()
+  const ownerCurrent = (): boolean => authCurrent() && token === navigationToken && runtime.isCurrent()
 
   const assertCurrent = (): void => {
     if (!ownerCurrent()) {
@@ -824,7 +814,7 @@ export async function openMainSession(onMounted?: (res: SessionSnapshot) => void
   }
 
   const token = ++navigationToken
-  const isCurrent = (): boolean => epoch === currentClearEpoch() && Boolean(authCurrent?.())
+  const isCurrent = authCurrent
   const isLatest = (): boolean => token === navigationToken
   $sessionNavigationError.set(null)
 
@@ -1011,11 +1001,10 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
 }
 
 async function resumeMainSession(): Promise<SessionSnapshot> {
-  const epoch = currentClearEpoch()
   const authCurrent = captureAuthScope()
   const resource = await requestResource('sessions.get_main_session')
 
-  if (epoch !== currentClearEpoch() || !authCurrent?.()) {
+  if (!authCurrent?.()) {
     throw new Error('Account changed')
   }
 

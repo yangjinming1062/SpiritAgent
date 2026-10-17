@@ -28,8 +28,9 @@ import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
-import { $surfaceOpen, $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
+
+import { useReadingForeground } from '../use-reading-foreground'
 
 import { PostVideoRecovery } from './post-video-recovery'
 import styles from './posts.module.css'
@@ -75,9 +76,6 @@ function PostsContent({
   const persona = useStore($persona)
   const authState = useStore($auth)
   const authKind = authState.kind
-  const surfaceOpen = useStore($surfaceOpen)
-  const surfaceVisible = useStore($surfaceOpenVisible)
-  const screenLocked = useStore($surfaceScreenLocked)
   const locale = useStore($locale)
   const strings = useStrings()
   const t = strings.living.posts
@@ -86,35 +84,13 @@ function PostsContent({
   const [reloadKey, setReloadKey] = useState(0)
   const [readSnapshot, setReadSnapshot] = useState<string[] | null>(null)
 
-  const [documentActive, setDocumentActive] = useState(
-    () => document.visibilityState === 'visible' && document.hasFocus()
-  )
-
   const [readBlocked, setReadBlocked] = useState(false)
   const [confirmedReadIds, setConfirmedReadIds] = useState(new Set<string>())
   const readInFlight = useRef(false)
   const beginAsync = useAsyncGuard()
 
-  const foreground = (suppliedForeground ?? (surfaceOpen && surfaceVisible)) && !screenLocked && documentActive
-
+  const foreground = useReadingForeground(suppliedForeground)
   const wasForeground = useRef(foreground)
-
-  useEffect(() => {
-    const update = (): void => {
-      setDocumentActive(document.visibilityState === 'visible' && document.hasFocus())
-    }
-
-    update()
-    window.addEventListener('focus', update)
-    window.addEventListener('blur', update)
-    document.addEventListener('visibilitychange', update)
-
-    return () => {
-      window.removeEventListener('focus', update)
-      window.removeEventListener('blur', update)
-      document.removeEventListener('visibilitychange', update)
-    }
-  }, [])
 
   // 冷启动可能先挂载动态页，鉴权完成后再水合。
   useEffect(() => {

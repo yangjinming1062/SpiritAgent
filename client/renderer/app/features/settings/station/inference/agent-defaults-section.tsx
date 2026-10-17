@@ -11,12 +11,10 @@ export interface AgentFormState {
 }
 
 export function AgentDefaultsSection({
-  disabled,
   state,
   t,
   update
 }: {
-  disabled: boolean
   state: AgentFormState
   t: AgentDefaultsCopy
   update: (patch: Partial<AgentFormState>) => void
@@ -29,7 +27,6 @@ export function AgentDefaultsSection({
         <SettingRow description={t.reasoningEffortDesc} label={t.reasoningEffort}>
           <CapsuleTabs
             ariaLabel={t.reasoningEffort}
-            disabled={disabled}
             onChange={value => update({ reasoning_effort: value })}
             options={REASONING_EFFORT_VALUES.map(opt => ({ value: opt, label: t.reasoningOptions[opt] }))}
             size="sm"
@@ -41,7 +38,6 @@ export function AgentDefaultsSection({
           <Toggle
             ariaLabel={t.backgroundReview}
             checked={state.enable_background_review}
-            disabled={disabled}
             onChange={value => update({ enable_background_review: value })}
           />
         </SettingRow>

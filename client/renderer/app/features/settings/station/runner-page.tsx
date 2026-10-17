@@ -185,7 +185,7 @@ export function RunnerPage(): React.JSX.Element {
             <SettingCard>
               {group.rows.map(row => (
                 <SettingRow key={row.title} label={row.title}>
-                  {renderRowAction(row, config, updateField, false)}
+                  {renderRowAction(row, config, updateField)}
                 </SettingRow>
               ))}
             </SettingCard>
@@ -212,8 +212,7 @@ export function RunnerPage(): React.JSX.Element {
 function renderRowAction(
   row: Row,
   config: Record<string, unknown>,
-  updateField: (path: readonly string[], value: unknown) => void,
-  disabled: boolean
+  updateField: (path: readonly string[], value: unknown) => void
 ): React.ReactNode {
   if (row.kind === 'select') {
     const rawValue = (getIn(config, row.path) as string) || row.default
@@ -227,7 +226,6 @@ function renderRowAction(
     return (
       <CapsuleTabs
         ariaLabel={row.title}
-        disabled={disabled}
         onChange={v => updateField(row.path, v)}
         options={row.options}
         size="sm"
@@ -237,22 +235,13 @@ function renderRowAction(
   }
 
   if (row.kind === 'switch') {
-    return (
-      <Toggle
-        ariaLabel={row.title}
-        checked={!!getIn(config, row.path)}
-        disabled={disabled}
-        onChange={v => updateField(row.path, v)}
-      />
-    )
+    return <Toggle ariaLabel={row.title} checked={!!getIn(config, row.path)} onChange={v => updateField(row.path, v)} />
   }
 
-  // row.kind === 'input'
   return (
     <input
       aria-label={row.title}
       className={cn(INPUT_CLASS, 'w-36')}
-      disabled={disabled}
       onChange={e => updateField(row.path, readInputValue(row, e.target.value))}
       type={row.type || 'text'}
       value={(getIn(config, row.path) as string | number) ?? row.default}

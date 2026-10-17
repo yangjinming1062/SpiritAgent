@@ -12,8 +12,9 @@ import { BTN_ICON, BTN_SUBTLE } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
-import { $surfaceOpen, $surfaceOpenVisible, $surfaceScreenLocked } from '@/shared/store/surfaces'
 import { type Dictionary, useStrings } from '@/shared/strings'
+
+import { useReadingForeground } from '../use-reading-foreground'
 
 import styles from './diary.module.css'
 
@@ -62,9 +63,6 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
   const auth = useStore($auth)
   const authKind = auth.kind
   const sessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
-  const surfaceOpen = useStore($surfaceOpen)
-  const surfaceVisible = useStore($surfaceOpenVisible)
-  const screenLocked = useStore($surfaceScreenLocked)
   const dict = useStrings()
   const locale = useStore($locale)
   const calendarHeadingId = useId()
@@ -78,34 +76,12 @@ export function DiaryPage({ foreground: suppliedForeground }: { foreground?: boo
   const [readBlocked, setReadBlocked] = useState(false)
   const [confirmedReadIds, setConfirmedReadIds] = useState(new Set<string>())
 
-  const [documentActive, setDocumentActive] = useState(
-    () => document.visibilityState === 'visible' && document.hasFocus()
-  )
-
   const readRequest = useRef<Promise<boolean> | undefined>(undefined)
   const snapshotCaptured = useRef(false)
   const beginAsync = useAsyncGuard()
 
-  const foreground = (suppliedForeground ?? (surfaceOpen && surfaceVisible)) && !screenLocked && documentActive
-
+  const foreground = useReadingForeground(suppliedForeground)
   const wasForeground = useRef(foreground)
-
-  useEffect(() => {
-    const update = (): void => {
-      setDocumentActive(document.visibilityState === 'visible' && document.hasFocus())
-    }
-
-    update()
-    window.addEventListener('focus', update)
-    window.addEventListener('blur', update)
-    document.addEventListener('visibilitychange', update)
-
-    return () => {
-      window.removeEventListener('focus', update)
-      window.removeEventListener('blur', update)
-      document.removeEventListener('visibilitychange', update)
-    }
-  }, [])
 
   useEffect(() => {
     readRequest.current = undefined
