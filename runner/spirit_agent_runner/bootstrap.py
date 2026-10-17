@@ -2,7 +2,7 @@ import asyncio
 import atexit
 import logging
 from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 
 from spirit_agent_runner.contracts.context import invocation_scope
 from spirit_agent_runner.features import execution
@@ -54,11 +54,12 @@ class RunnerApplication:
 
     @contextmanager
     def scope(self) -> Iterator[None]:
-        with ExitStack() as stack:
-            stack.enter_context(execution_scope(self.execution))
-            stack.enter_context(file_scope(self.files))
-            stack.enter_context(desktop_scope(self.desktop))
-            stack.enter_context(skill_scope(self.skills))
+        with (
+            execution_scope(self.execution),
+            file_scope(self.files),
+            desktop_scope(self.desktop),
+            skill_scope(self.skills),
+        ):
             yield
 
     def check(self) -> int:

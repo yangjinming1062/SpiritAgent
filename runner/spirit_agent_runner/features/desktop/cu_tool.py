@@ -134,11 +134,7 @@ def _validate_action_args(action: str, args: dict[str, Any]) -> str | None:
         if action in {"click", "double_click", "right_click", "middle_click"}:
             if args.get("element") is None and args.get("coordinate") is None:
                 return f"{action} requires `element` or `coordinate`; use the latest capture"
-            if (
-                args.get("element") is not None
-                and (element := _optional_int(args["element"])) is not None
-                and element < 0
-            ):
+            if args.get("element") is not None and int(args["element"]) < 0:
                 return "element must be non-negative"
             if args.get("coordinate") is not None:
                 _point(args["coordinate"])
@@ -153,7 +149,7 @@ def _validate_action_args(action: str, args: dict[str, Any]) -> str | None:
             if args.get("to_element") is None and args.get("to_coordinate") is None:
                 return "drag requires to_element or to_coordinate"
             for field in ("from_element", "to_element"):
-                if args.get(field) is not None and (element := _optional_int(args[field])) is not None and element < 0:
+                if args.get(field) is not None and int(args[field]) < 0:
                     return f"{field} must be non-negative"
             for field in ("from_coordinate", "to_coordinate"):
                 if args.get(field) is not None:
@@ -170,10 +166,8 @@ def _validate_action_args(action: str, args: dict[str, Any]) -> str | None:
             amount = int(args.get("amount", 3))
             if not 1 <= amount <= 50:
                 return "amount must be between 1 and 50"
-            if args.get("element") is not None:
-                element = _optional_int(args["element"])
-                if element is not None and element < 0:
-                    return "element must be non-negative"
+            if args.get("element") is not None and int(args["element"]) < 0:
+                return "element must be non-negative"
             if args.get("coordinate") is not None:
                 _point(args["coordinate"])
             _canonical_modifiers(args.get("modifiers"))
@@ -195,8 +189,7 @@ def _validate_action_args(action: str, args: dict[str, Any]) -> str | None:
                 return "set_value requires string or number `value`"
             if args.get("element") is None:
                 return "set_value requires `element`"
-            element = _optional_int(args["element"])
-            if element is not None and element < 0:
+            if int(args["element"]) < 0:
                 return "element must be non-negative"
             return None
         if action == "wait":
@@ -271,35 +264,23 @@ def handle_computer_use(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) -> dict[str, Any]:
+    """分发已通过 _validate_action_args 校验的动作。"""
     capture_after = bool(args.get("capture_after"))
     match action:
         case "capture":
-            if (mode := str(args.get("mode") or "som")) not in _CAPTURE_MODES:
-                return {"error": f"bad mode {mode!r}; use som, vision or ax"}
             return _capture_response(
-                backend.capture(mode=mode, app=args.get("app") or None),
-                _coerce_max_elements(args.get("max_elements")),
+                backend.capture(mode=str(args.get("mode") or "som"), app=args.get("app") or None),
+                int(args.get("max_elements", 100)),
             )
         case "wait":
-            # 超 30s 显式拒绝，防后端截断却看似等满。
-            try:
-                seconds = float(args.get("seconds", 1.0))
-            except (TypeError, ValueError):
-                return {"error": "wait: 'seconds' must be a number"}
-            if not 0 < seconds <= 30:
-                return {"error": f"wait: 'seconds' must be in (0, 30], got {seconds}; loop with shorter waits"}
-            return _respond(backend, backend.wait(seconds), capture_after)
+            res = backend.wait(float(args.get("seconds", 1.0)))
         case "list_apps":
             apps = backend.list_apps()
             return {"apps": apps, "count": len(apps)}
         case "focus_app":
-            if not (app := args.get("app")):
-                return {"error": "focus_app requires `app`"}
-            return _respond(backend, backend.focus_app(str(app), bool(args.get("bring_to_front"))), capture_after)
+            res = backend.focus_app(args["app"], bool(args.get("bring_to_front")))
         case "click" | "double_click" | "right_click" | "middle_click":
             button = {"right_click": "right", "middle_click": "middle"}.get(action) or str(args.get("button") or "left")
-            if button not in _BUTTONS:
-                return {"error": f"bad button {button!r}; use left, right or middle"}
             x, y = _point(args.get("coordinate")) or (None, None)
             res = backend.click(
                 element=_optional_int(args.get("element")),
@@ -309,53 +290,36 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
                 click_count=2 if action == "double_click" else 1,
                 modifiers=_canonical_modifiers(args.get("modifiers")),
             )
-            return _respond(backend, res, capture_after)
         case "drag":
             if args.get("from_element") is None and not args.get("from_coordinate"):
                 return {"error": "drag requires from_coordinate/to_coordinate or from_element/to_element"}
-            if (button := str(args.get("button") or "left")) not in _BUTTONS:
-                return {"error": f"bad button {button!r}; use left, right or middle"}
             res = backend.drag(
                 from_element=_optional_int(args.get("from_element")),
                 to_element=_optional_int(args.get("to_element")),
                 from_xy=_point(args.get("from_coordinate")),
                 to_xy=_point(args.get("to_coordinate")),
-                button=button,
+                button=str(args.get("button") or "left"),
                 modifiers=_canonical_modifiers(args.get("modifiers")),
             )
-            return _respond(backend, res, capture_after)
         case "scroll":
-            if (direction := str(args.get("direction") or "down")) not in _SCROLL_DIRECTIONS:
-                return {"error": f"bad direction {direction!r}; use up, down, left or right"}
             x, y = _point(args.get("coordinate")) or (None, None)
             res = backend.scroll(
-                direction=direction,
+                direction=str(args.get("direction") or "down"),
                 amount=int(args.get("amount", 3)),
                 element=_optional_int(args.get("element")),
                 x=x,
                 y=y,
                 modifiers=_canonical_modifiers(args.get("modifiers")),
             )
-            return _respond(backend, res, capture_after)
         case "type":
-            return _respond(backend, backend.type_text(str(args.get("text", ""))), capture_after)
+            res = backend.type_text(args["text"])
         case "key":
-            if not (keys := _parse_key_combo(str(args.get("keys") or ""))):
-                return {"error": "key requires `keys`"}
-            return _respond(backend, backend.key(keys), capture_after)
+            res = backend.key(_parse_key_combo(args["keys"]))
         case "set_value":
-            if (value := args.get("value")) is None:
-                return {"error": "set_value requires `value`"}
-            return _respond(backend, backend.set_value(str(value), _optional_int(args.get("element"))), capture_after)
-    return {"error": f"unknown action {action!r}"}
-
-
-def _coerce_max_elements(value: Any) -> int:
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return 100
-    return n if 1 <= n <= 1000 else 100
+            res = backend.set_value(str(args["value"]), int(args["element"]))
+        case _:
+            return {"error": f"unknown action {action!r}"}
+    return _respond(backend, res, capture_after)
 
 
 def _action_result_payload(res: ActionResult) -> dict[str, Any]:

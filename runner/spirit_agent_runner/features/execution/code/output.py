@@ -75,41 +75,37 @@ def build_result(
 def _pipe_chunks(pipe: IO[bytes], stop_event: threading.Event) -> Iterator[bytes]:
     """脚本结束后排空现有输出；继承写端的后代不能无限持有读线程。"""
     try:
-        fd = pipe.fileno()
-        os.set_blocking(fd, False)
-        drain_deadline: float | None = None
-        while True:
-            if stop_event.is_set():
-                if drain_deadline is None:
-                    drain_deadline = time.monotonic() + 0.2
-                elif time.monotonic() >= drain_deadline:
-                    return
-            try:
-                data = os.read(fd, 4096)
-            except BlockingIOError:
+        with pipe:
+            fd = pipe.fileno()
+            os.set_blocking(fd, False)
+            drain_deadline: float | None = None
+            while True:
                 if stop_event.is_set():
+                    if drain_deadline is None:
+                        drain_deadline = time.monotonic() + 0.2
+                    elif time.monotonic() >= drain_deadline:
+                        return
+                try:
+                    data = os.read(fd, 4096)
+                except BlockingIOError:
+                    if stop_event.is_set():
+                        return
+                    stop_event.wait(0.02)
+                    continue
+                if not data:
                     return
-                stop_event.wait(0.02)
-                continue
-            if not data:
-                return
-            yield data
+                yield data
     except (ValueError, OSError) as e:
         logger.debug("Error reading process output: %s", e, exc_info=True)
-    finally:
-        pipe.close()
 
 
 def drain_capped(pipe: IO[bytes], chunks: list[bytes], max_bytes: int, stop_event: threading.Event) -> None:
     """读尽管道但只保留前 max_bytes 字节；持续读取避免子进程因管道写满而阻塞。"""
     total = 0
-    try:
-        for data in _pipe_chunks(pipe, stop_event):
-            if total < max_bytes:
-                chunks.append(data[: max_bytes - total])
-            total += len(data)
-    except (ValueError, OSError) as e:
-        logger.debug("Error reading process output: %s", e, exc_info=True)
+    for data in _pipe_chunks(pipe, stop_event):
+        if total < max_bytes:
+            chunks.append(data[: max_bytes - total])
+        total += len(data)
 
 
 def drain_head_tail(
@@ -123,19 +119,16 @@ def drain_head_tail(
     head_collected = 0
     tail_buf: deque[bytes] = deque()
     tail_collected = 0
-    try:
-        for data in _pipe_chunks(pipe, stop_event):
-            total[0] += len(data)
-            if head_collected < STDOUT_HEAD_BYTES:
-                keep = data[: STDOUT_HEAD_BYTES - head_collected]
-                head_chunks.append(keep)
-                head_collected += len(keep)
-                if not (data := data[len(keep) :]):
-                    continue
-            tail_buf.append(data)
-            tail_collected += len(data)
-            while tail_collected > STDOUT_TAIL_BYTES and tail_buf:
-                tail_collected -= len(tail_buf.popleft())
-    except (ValueError, OSError) as e:
-        logger.debug("Error reading process output: %s", e, exc_info=True)
+    for data in _pipe_chunks(pipe, stop_event):
+        total[0] += len(data)
+        if head_collected < STDOUT_HEAD_BYTES:
+            keep = data[: STDOUT_HEAD_BYTES - head_collected]
+            head_chunks.append(keep)
+            head_collected += len(keep)
+            if not (data := data[len(keep) :]):
+                continue
+        tail_buf.append(data)
+        tail_collected += len(data)
+        while tail_collected > STDOUT_TAIL_BYTES and tail_buf:
+            tail_collected -= len(tail_buf.popleft())
     tail_chunks.extend(tail_buf)

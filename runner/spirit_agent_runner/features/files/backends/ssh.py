@@ -287,12 +287,19 @@ class ShellFileOperations(FileOperations):
         if target == "files":
             return self._search_files(pattern, path, limit, offset)
         if self._has_command("rg"):
-            return self._search_content_rg(pattern, path, file_glob, limit, offset, output_mode, context)
-        if self._has_command("grep"):
-            return self._search_content_grep(pattern, path, file_glob, limit, offset, output_mode, context)
-        return SearchResult(
-            error="Content search requires ripgrep (rg) or grep in the terminal environment.",
-        )
+            cmd_parts = ["rg", "--line-number", "--no-heading", "--with-filename"]
+            glob_option = "--glob"
+        elif self._has_command("grep"):
+            # 跳过隐藏项；目录模式不用 '.*'（GNU grep 会误伤）。
+            cmd_parts = ["grep", "-rnHE", "--exclude-dir='.[!.]*'", "--exclude-dir='..?*'", "--exclude='.*'"]
+            glob_option = "--include"
+        else:
+            return SearchResult(error="Content search requires ripgrep (rg) or grep in the terminal environment.")
+        if context > 0:
+            cmd_parts.extend(["-C", str(context)])
+        if file_glob:
+            cmd_parts.extend([glob_option, self._escape_shell_arg(file_glob)])
+        return self._run_content_search(cmd_parts, pattern, path, limit, offset, output_mode, context)
 
     def _search_files(self, pattern: str, path: str, limit: int, offset: int) -> SearchResult:
         """按文件名 glob 搜索，按修改时间倒序；跳过搜索根下的隐藏路径。"""
@@ -302,17 +309,8 @@ class ShellFileOperations(FileOperations):
         if self._has_command("rg"):
             glob_pattern = pattern if "/" in pattern or pattern.startswith("*") else f"*{pattern}"
             q_glob = self._escape_shell_arg(glob_pattern)
-            result = self._exec(
-                f"rg --files --sortr=modified -g {q_glob} {q_path} 2>/dev/null | head -n {fetch}",
-                timeout=60,
-            )
-            if result.exit_code not in (0, 1, 141):
-                return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
-            if not result.stdout.strip():
-                result = self._exec(f"rg --files -g {q_glob} {q_path} 2>/dev/null | head -n {fetch}", timeout=60)
-            if result.exit_code not in (0, 1, 141):
-                return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
-            all_files = [f for f in result.stdout.strip().split("\n") if f]
+            command = f"rg --files --sortr=modified -g {q_glob} {q_path} 2>/dev/null | head -n {fetch}"
+            fallback = f"rg --files -g {q_glob} {q_path} 2>/dev/null | head -n {fetch}"
         elif self._has_command("find"):
             root = path.rstrip("/") or "/"
             hidden = " ".join(
@@ -321,61 +319,25 @@ class ShellFileOperations(FileOperations):
             # find -name 只比文件名。
             name_pattern = self._escape_shell_arg(pattern.rsplit("/", 1)[-1])
             find_cmd = f"find {q_path} {hidden} -type f -name {name_pattern}"
-            result = self._exec(
-                f"{find_cmd} -printf '%T@ %p\\n' 2>/dev/null | sort -rn | cut -d' ' -f2- | head -n {fetch}",
-                timeout=60,
-            )
-            if result.exit_code not in (0, 1, 141):
-                return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
-            if not result.stdout.strip():
-                # BSD 退化为不按时间排序。
-                result = self._exec(f"{find_cmd} 2>/dev/null | head -n {fetch}", timeout=60)
-            if result.exit_code not in (0, 1, 141):
-                return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
-            all_files = [f for f in result.stdout.strip().split("\n") if f]
+            command = f"{find_cmd} -printf '%T@ %p\\n' 2>/dev/null | sort -rn | cut -d' ' -f2- | head -n {fetch}"
+            # BSD 退化为不按时间排序。
+            fallback = f"{find_cmd} 2>/dev/null | head -n {fetch}"
         else:
             return SearchResult(error="File search requires 'rg' (ripgrep) or 'find' in the terminal environment.")
+        result = self._exec(command, timeout=60)
+        if result.exit_code not in (0, 1, 141):
+            return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
+        if not result.stdout.strip():
+            result = self._exec(fallback, timeout=60)
+        if result.exit_code not in (0, 1, 141):
+            return SearchResult(error=f"File search failed: {result.stdout.strip() or result.exit_code}")
+        all_files = [f for f in result.stdout.strip().split("\n") if f]
         truncated = len(all_files) > limit + offset
         return SearchResult(
             files=all_files[offset : offset + limit],
             total_count=min(len(all_files), limit + offset),
             truncated=truncated,
         )
-
-    def _search_content_rg(
-        self,
-        pattern: str,
-        path: str,
-        file_glob: str | None,
-        limit: int,
-        offset: int,
-        output_mode: str,
-        context: int,
-    ) -> SearchResult:
-        cmd_parts = ["rg", "--line-number", "--no-heading", "--with-filename"]
-        if context > 0:
-            cmd_parts.extend(["-C", str(context)])
-        if file_glob:
-            cmd_parts.extend(["--glob", self._escape_shell_arg(file_glob)])
-        return self._run_content_search(cmd_parts, pattern, path, limit, offset, output_mode, context)
-
-    def _search_content_grep(
-        self,
-        pattern: str,
-        path: str,
-        file_glob: str | None,
-        limit: int,
-        offset: int,
-        output_mode: str,
-        context: int,
-    ) -> SearchResult:
-        # 跳过隐藏项；目录模式不用 '.*'（GNU grep 会误伤）。
-        cmd_parts = ["grep", "-rnHE", "--exclude-dir='.[!.]*'", "--exclude-dir='..?*'", "--exclude='.*'"]
-        if context > 0:
-            cmd_parts.extend(["-C", str(context)])
-        if file_glob:
-            cmd_parts.extend(["--include", self._escape_shell_arg(file_glob)])
-        return self._run_content_search(cmd_parts, pattern, path, limit, offset, output_mode, context)
 
     def _run_content_search(
         self,
@@ -396,9 +358,9 @@ class ShellFileOperations(FileOperations):
         # 多取余量以判截断。
         fetch_limit = limit + offset + 1 + (200 if context > 0 else 0)
         result = self._exec(f"set -o pipefail; {' '.join(cmd_parts)} | head -n {fetch_limit}", timeout=60)
-        diagnostics, payload = _split_tool_diagnostics(result.stdout)
-        if result.exit_code not in (0, 1, 2, 141) or (result.exit_code == 2 and not payload.strip()):
+        if result.exit_code not in (0, 1, 141):
             return SearchResult(
-                error=f"Search failed: {diagnostics.strip() or result.stdout.strip() or f'exit code {result.exit_code}'}",
+                error=f"Search failed: {result.stdout.strip() or f'exit code {result.exit_code}'}",
             )
+        _, payload = _split_tool_diagnostics(result.stdout)
         return _parse_search_output(payload, output_mode, limit, offset, context)

@@ -85,22 +85,20 @@ _WINDOWS_ESSENTIAL_ENV_VARS = frozenset(
 def _scrub_child_env(source_env: Mapping[str, str]) -> dict[str, str]:
     scrubbed: dict[str, str] = {}
     _dropped_spiritagent = []
+    config = load_config()
     for k, v in source_env.items():
-        if is_env_passthrough(k, config=load_config()):
+        if is_env_passthrough(k, config=config):
             scrubbed[k] = v
             continue
         if any(s in k.upper() for s in _SECRET_SUBSTRINGS):
             continue
-        if any(k.startswith(p) for p in _SAFE_ENV_PREFIXES):
+        if (
+            k.startswith(_SAFE_ENV_PREFIXES)
+            or k in SPIRITAGENT_CHILD_ALLOWED
+            or (IS_WINDOWS and k.upper() in _WINDOWS_ESSENTIAL_ENV_VARS)
+        ):
             scrubbed[k] = v
-            continue
-        if k in SPIRITAGENT_CHILD_ALLOWED:
-            scrubbed[k] = v
-            continue
-        if IS_WINDOWS and k.upper() in _WINDOWS_ESSENTIAL_ENV_VARS:
-            scrubbed[k] = v
-            continue
-        if k.startswith("SPIRITAGENT_"):
+        elif k.startswith("SPIRITAGENT_"):
             _dropped_spiritagent.append(k)
     if _dropped_spiritagent:
         logger.debug(

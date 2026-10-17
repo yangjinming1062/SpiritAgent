@@ -116,20 +116,17 @@ class FileSyncManager:
         if not to_upload and not to_delete:
             self._last_sync_time = time.monotonic()
             return
-        prev_files, prev_hashes = dict(self._synced_files), dict(self._pushed_hashes)
         try:
             uploaded_hashes = self._bulk_upload_fn(to_upload) if to_upload else {}
             if to_delete:
                 self._delete_fn(to_delete)
             # hash 来自实际上传副本；源文件晚改时仍保留采集前版本，下一轮会补传。
-            self._pushed_hashes.update(uploaded_hashes)
+            pushed_hashes = self._pushed_hashes | uploaded_hashes
             for p in to_delete:
-                current_versions.pop(p, None)
-                self._pushed_hashes.pop(p, None)
-            self._synced_files = current_versions
+                pushed_hashes.pop(p, None)
+            self._synced_files, self._pushed_hashes = current_versions, pushed_hashes
         except Exception as exc:
-            self._synced_files, self._pushed_hashes = prev_files, prev_hashes
-            logger.warning("file_sync: sync failed, rolled back state: %s", exc)
+            logger.warning("file_sync: sync failed, kept previous state: %s", exc)
         self._last_sync_time = time.monotonic()
 
     def sync_back(self) -> None:

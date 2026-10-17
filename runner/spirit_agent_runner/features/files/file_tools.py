@@ -399,6 +399,8 @@ def search_tool(
             )
             for m in result.matches:
                 m.content = redact_sensitive_text(m.content, config=load_config())
+            if result.error:
+                result.error = redact_sensitive_text(result.error, config=load_config())
             result_dict = result.to_dict()
             if result.truncated and not result.hint:
                 result_dict["hint"] = (

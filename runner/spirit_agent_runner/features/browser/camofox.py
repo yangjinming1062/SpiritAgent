@@ -126,31 +126,21 @@ def _get_session(task_id: str | None) -> dict[str, Any]:
     with state.lock:
         if task_id not in state.sessions:
             camofox_cfg = _get_camofox_config()
-            if identity := _camofox_identity_override(task_id, camofox_cfg):
-                state.sessions[task_id] = {
-                    "user_id": identity["user_id"],
-                    "tab_id": None,
-                    "session_key": identity["session_key"],
-                    "managed": True,
-                    "adopt_existing_tab": is_truthy_value(camofox_cfg.get("adopt_existing_tab")),
-                }
-            elif is_truthy_value(camofox_cfg.get("managed_persistence")):
+            identity = _camofox_identity_override(task_id, camofox_cfg)
+            if identity is None and is_truthy_value(camofox_cfg.get("managed_persistence")):
                 identity = get_camofox_identity(task_id)
-                state.sessions[task_id] = {
-                    "user_id": identity["user_id"],
-                    "tab_id": None,
-                    "session_key": identity["session_key"],
-                    "managed": True,
-                    "adopt_existing_tab": is_truthy_value(camofox_cfg.get("adopt_existing_tab")),
-                }
-            else:
-                state.sessions[task_id] = {
+            managed = identity is not None
+            if identity is None:
+                identity = {
                     "user_id": f"spiritagent_{uuid.uuid4().hex[:10]}",
-                    "tab_id": None,
                     "session_key": f"task_{task_id[:16]}",
-                    "managed": False,
-                    "adopt_existing_tab": False,
                 }
+            state.sessions[task_id] = {
+                **identity,
+                "tab_id": None,
+                "managed": managed,
+                "adopt_existing_tab": managed and is_truthy_value(camofox_cfg.get("adopt_existing_tab")),
+            }
         session = state.sessions[task_id]
     return _adopt_existing_tab(session)
 
@@ -159,30 +149,25 @@ def _ensure_tab(task_id: str | None, url: str = "about:blank") -> dict[str, Any]
     session = _get_session(task_id)
     if session["tab_id"]:
         return session
-    base = get_camofox_url()
-    resp = httpx.post(
-        f"{base}/tabs",
-        json={"userId": session["user_id"], "sessionKey": session["session_key"], "url": url},
-        timeout=_DEFAULT_TIMEOUT,
+    data = _post(
+        "/tabs",
+        {"userId": session["user_id"], "sessionKey": session["session_key"], "url": url},
     )
-    resp.raise_for_status()
-    session["tab_id"] = resp.json().get("tabId")
+    session["tab_id"] = data.get("tabId")
     return session
 
 
-def _post(path: str, body: dict, timeout: int = _DEFAULT_TIMEOUT) -> dict:
+def _post(path: str, body: dict[str, Any], timeout: int = _DEFAULT_TIMEOUT) -> dict[str, Any]:
     resp = httpx.post(f"{get_camofox_url()}{path}", json=body, timeout=timeout)
     resp.raise_for_status()
     return resp.json()
 
 
-def _get(path: str, params: dict | None = None, timeout: int = _DEFAULT_TIMEOUT) -> dict:
-    resp = httpx.get(f"{get_camofox_url()}{path}", params=params, timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()
+def _get(path: str, params: dict[str, Any] | None = None, timeout: int = _DEFAULT_TIMEOUT) -> dict[str, Any]:
+    return _get_raw(path, params=params, timeout=timeout).json()
 
 
-def _get_raw(path: str, params: dict | None = None, timeout: int = _DEFAULT_TIMEOUT) -> httpx.Response:
+def _get_raw(path: str, params: dict[str, Any] | None = None, timeout: int = _DEFAULT_TIMEOUT) -> httpx.Response:
     resp = httpx.get(f"{get_camofox_url()}{path}", params=params, timeout=timeout)
     resp.raise_for_status()
     return resp
