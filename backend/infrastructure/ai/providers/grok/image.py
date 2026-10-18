@@ -12,7 +12,7 @@ from infrastructure.ai.providers.http import get_http
 
 
 class GrokImageGenProvider(ImageGenProvider):
-    """通过 xAI 的两个图像端点生图：/images/generations（纯文，返回 URL 列表，认 n 与 aspect_ratio）与 /images/edits（文+参考图，image 字段支持 URL 或 data URI）；base_url 含 /v1，原生 httpx 调用仅用相对路径以避免双前缀；返回原生结果 URL，由媒体层下载与转存；xAI 协议按 aspect_ratio 驱动，size 故意忽略。2.0 起按分辨率×质量计价：resolution 采用请求档位、默认 2k；quality 固定官方默认 medium。
+    """通过 xAI 的两个图像端点生图：/images/generations（纯文，返回 URL 列表，认 n 与 aspect_ratio）与 /images/edits（文+参考图，单图用 image，多图用 images，支持 URL 或 data URI）；base_url 含 /v1，原生 httpx 调用仅用相对路径以避免双前缀；返回原生结果 URL，由媒体层下载与转存；xAI 协议按 aspect_ratio 驱动，size 故意忽略。2.0 起按分辨率×质量计价：resolution 采用请求档位、默认 2k；quality 固定官方默认 medium。
 
     透明背景：grok-imagine-image-2.0 即使提示词直接要求透明背景，返回的仍是不带 Alpha
     通道的 RGB PNG，xAI Images API 亦无背景参数可映射；supports_transparent_background
@@ -22,6 +22,7 @@ class GrokImageGenProvider(ImageGenProvider):
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
     # xAI /images/edits 原生消费 reference_image，工具层可直接透传，无需回退到视觉模型描述。
     supports_reference_image: ClassVar[bool] = True
+    supports_multiple_reference_images: ClassVar[bool] = True
     supports_environment_reference_image: ClassVar[bool] = True
     # /images/edits 是真图像编辑端点：增量重绘、保留未提及区域，官方支持多轮编辑（上一轮输出作下一轮输入）。
     supports_image_edit: ClassVar[bool] = True
@@ -31,6 +32,9 @@ class GrokImageGenProvider(ImageGenProvider):
         self._client = get_http(config.base_url, config.api_key)
 
     async def generate(self, req: ImageGenRequest) -> ImageGenResult:
+        if req.secondary_reference_image and not req.reference_image:
+            raise ValueError("grok image_gen secondary_reference_image requires reference_image")
+
         payload: dict = {
             "model": self.config.model,
             "prompt": req.prompt,
@@ -38,7 +42,15 @@ class GrokImageGenProvider(ImageGenProvider):
             "resolution": req.resolution or "2k",
             "quality": "medium",
         }
-        if req.reference_image:
+        if req.secondary_reference_image:
+            payload["images"] = [
+                {"url": req.reference_image, "type": "image_url"},
+                {"url": req.secondary_reference_image, "type": "image_url"},
+            ]
+            payload["prompt"] = (
+                "参考图对应关系：<IMAGE_0> 是输入第1图（图1），<IMAGE_1> 是输入第2图（图2）。\n\n" + req.prompt
+            )
+        elif req.reference_image:
             payload["image"] = {"url": req.reference_image, "type": "image_url"}
         if req.aspect_ratio:
             payload["aspect_ratio"] = req.aspect_ratio

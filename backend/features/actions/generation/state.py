@@ -6,7 +6,7 @@ from infrastructure.ai.selection import ProviderSelection
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.character_images import ImageChainState
-from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
 
 
 class GenerationContext(BaseModel):
@@ -15,6 +15,7 @@ class GenerationContext(BaseModel):
     storage_directory: str = ""
     identity: CharacterCardSnapshot
     identity_reference_path: str
+    identity_reference_role: CharacterReferenceRole = "portrait"
     reference_chain: ImageChainState = Field(default_factory=ImageChainState)
     reference_alignment: Literal["pending", "running", "ready"]
     persona_definition: dict[str, str]

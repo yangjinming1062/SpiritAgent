@@ -60,7 +60,11 @@ async def build_session_messages(
     if latest is not None:
         messages.reverse()
 
-    replies = {msg.id: CompanionReply.model_validate_json(msg.reply_json) for msg in messages if msg.reply_json}
+    replies = {
+        msg.id: CompanionReply.from_saved_snapshot(msg.reply_json, msg.content or "")
+        for msg in messages
+        if msg.reply_json
+    }
     pending_video_ids = {
         bubble.job_id
         for reply in replies.values()
@@ -89,7 +93,6 @@ async def build_session_messages(
                 item["media"] = client_media_entries([e for e in media if isinstance(e, dict)])
         if msg.reply_json:
             reply = replies[msg.id]
-            reply.validate_content(msg.content or "")
             bubbles = client_reply_bubbles(reply)
             for bubble, client_bubble in zip(reply.bubbles, bubbles, strict=True):
                 if not isinstance(bubble, MediaBubble) or bubble.status != "pending" or bubble.job_id is None:

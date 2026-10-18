@@ -1015,7 +1015,8 @@ export const dict = {
       collapse: '收起全文',
       videoRecoveryHeading: '待核对的视频动态',
       videoRecoveryHint:
-        '这些动态超过了等待时限，系统没有重新制作或发布。查询原任务后，可查看现有视频并决定发布或放弃；采纳不会补做旁白。',
+        '这些动态的原视频结果或身份尚待确认，系统没有重新制作或发布。查看原视频后可决定采纳或放弃；采纳不会补做旁白。',
+      videoIdentityReviewPending: '身份待确认，未自动发布',
       videoRecoveryLoadFailed: '待核对视频加载失败，请刷新动态页。',
       videoRecoveryStatuses: {
         pending: '原视频任务尚未完成',

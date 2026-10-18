@@ -86,7 +86,17 @@ from features.scenes.queries import get_scene_state, scene_environment
 logger = get_logger(__name__)
 _BG = TaskBag("posts.publication")
 _TASKS: dict[str, asyncio.Task[None]] = {}
-_TERMINAL = {"published", "partial", "failed", "blocked", "result_unknown", "declined", "discarded"}
+_TERMINAL = {
+    "published",
+    "partial",
+    "failed",
+    "blocked",
+    "result_unknown",
+    "review_pending",
+    "declined",
+    "discarded",
+}
+_RECOVERABLE_VIDEO_STATUSES = ("result_unknown", "review_pending")
 _RECOVERY_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 _POSTS_SWITCH = "companion.posts_enabled"
 # 视频分辨率按此顺序取供应商链能接单的第一档：768P 为默认档，720P 先于 1080P，因为部分供应商模型最高到 720p；动态视频刻意不含 512P/480P 低清档。
@@ -97,6 +107,10 @@ _VIDEO_DURATIONS: tuple[int, ...] = get_args(PostPlan.model_fields["duration"].a
 
 class _VideoUnsupportedError(PostError):
     """供应商链不支持本次视频的参考模式、时长或分辨率，提交前阻止。"""
+
+
+class _VideoReviewPendingError(PostError):
+    """已取得的原视频未通过自动身份交付准入，保留供用户确认。"""
 
 
 async def available_types(user_id: int) -> list[str]:
@@ -343,8 +357,12 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
             directory = dated_asset_directory(row.created_at, await resolve_user_timezone(db, row.user_id) or "UTC")
         progress["storage_directory"] = directory
         await _save(row.id, **progress)
-    if plan.content_type == PostContentType.TEXT or progress.get("media_url"):
+    if plan.content_type == PostContentType.TEXT or (
+        progress.get("media_url") and plan.content_type != PostContentType.VIDEO
+    ):
         return progress
+    if plan.content_type == PostContentType.VIDEO and progress.get("media_url") and row.video_job_id is None:
+        raise PostError("原视频任务已不可用，未重新制作")
     identity = None
     visual = await load_self_visual_context(row.user_id) if plan.depicts_self and row.video_job_id is None else None
     if visual is not None:
@@ -360,9 +378,13 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 size=plan.size,
                 user_id=row.user_id,
                 storage_directory=directory,
-                reference_image=visual.avatar_image,
-                identity_reference=visual.avatar_image,
+                reference_image=visual.identity_image,
+                identity_reference=visual.identity_image,
                 secondary_reference_image=outfit,
+                identity_reference_mode="primary"
+                if visual.identity_reference_role == "fullbody"
+                else "portrait_and_outfit",
+                goal_review="required",
                 identity_text=render_character_identity(identity),
                 task=AiTaskKey.posts,
             )
@@ -423,6 +445,7 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                     aspect_ratio=plan.aspect_ratio,
                     identity_reference_path=visual.fullbody_path if visual else None,
                     identity=identity,
+                    identity_reference_role=visual.identity_reference_role if visual else "portrait",
                     task=AiTaskKey.posts,
                 )
                 publication.video_job_id = job.id
@@ -438,6 +461,8 @@ async def _generate_media(row: PostPublication, plan: PostPlan) -> dict:
                 raise PostError("视频生成失败")
             if job.status == "result_unknown":
                 raise ProviderResultUnknownError("POST", "")
+            if job.status == "review_pending":
+                raise _VideoReviewPendingError(job.error_message or "视频身份尚待确认，未自动发布")
             if job.status == "succeeded":
                 progress["media_url"] = job.video_url
                 break
@@ -534,6 +559,8 @@ async def _run_publication(task_id: str) -> None:
         raise
     except _VideoUnsupportedError:
         await _save(task_id, status="blocked", error="视频供应商不支持本次视频要求")
+    except _VideoReviewPendingError as exc:
+        await _save(task_id, status="review_pending", error=str(exc))
     except PostBlockedError as exc:
         await _save(task_id, status="blocked", error=str(exc))
     except ProviderResultUnknownError:
@@ -584,7 +611,7 @@ def _recovery_response(row: PostPublication, job: VideoJobSnapshot | None) -> Po
         if parsed is not None and parsed[0] == row.user_id and resolve_companion_asset_path(*parsed) is not None:
             video_status = "ready"
             media_url = signed_companion_asset_url(path)
-            can_adopt = row.status == "result_unknown" and post_video_ready(job)
+            can_adopt = row.status in _RECOVERABLE_VIDEO_STATUSES and post_video_ready(job)
         elif job.status != "result_unknown":
             video_status = "pending"
     return PostPublicationRecovery(
@@ -595,7 +622,7 @@ def _recovery_response(row: PostPublication, job: VideoJobSnapshot | None) -> Po
         can_adopt=can_adopt,
         can_discard=row.post_id is None
         and (
-            row.status == "result_unknown"
+            row.status in _RECOVERABLE_VIDEO_STATUSES
             or (row.status == "discarded" and bool(row.progress_json.get("discard_cleanup_pending")))
         ),
     )
@@ -610,7 +637,7 @@ async def publication_recovery(user_id: int, task_id: str, *, query: bool = Fals
         if row is None:
             raise PostNotFoundError("找不到发布任务")
         job_id = _video_job_id(row)
-        if query and row.status == "result_unknown" and job_id is not None:
+        if query and row.status in _RECOVERABLE_VIDEO_STATUSES and job_id is not None:
             try:
                 job = await query_post_video_job(user_id, job_id)
             except Exception as exc:
@@ -631,7 +658,7 @@ async def list_publication_recoveries(user_id: int, *, limit: int = 50, offset: 
                     .where(
                         PostPublication.user_id == user_id,
                         or_(
-                            PostPublication.status == "result_unknown",
+                            PostPublication.status.in_(_RECOVERABLE_VIDEO_STATUSES),
                             (PostPublication.status == "discarded")
                             & PostPublication.progress_json["discard_cleanup_pending"].as_boolean().is_(True),
                         ),
@@ -666,7 +693,7 @@ async def adopt_publication_video(user_id: int, task_id: str) -> PostPublication
             raise PostNotFoundError("找不到发布任务")
         if row.post_id is not None:
             return response_for_publication(row)
-        if row.status != "result_unknown" or row.plan_json is None:
+        if row.status not in _RECOVERABLE_VIDEO_STATUSES or row.plan_json is None:
             raise PostError("只有待核对的视频动态可以采纳")
         if not await user_is_active(db, user_id) or user_id not in await complete_user_ids(db, (user_id,)):
             raise PostBlockedError("账户或伙伴资料不可用")
@@ -722,7 +749,7 @@ async def discard_publication_video(user_id: int, task_id: str) -> PostPublicati
             )
             if row is None:
                 raise PostNotFoundError("找不到发布任务")
-            if row.status not in ("result_unknown", "discarded") or row.post_id is not None:
+            if row.status not in (*_RECOVERABLE_VIDEO_STATUSES, "discarded") or row.post_id is not None:
                 raise PostError("只有尚未发布的待核对视频动态可以放弃")
             if row.status == "discarded" and not row.progress_json.get("discard_cleanup_pending"):
                 return response_for_publication(row)
@@ -779,7 +806,7 @@ async def gc_autonomous_publications() -> tuple[int, int]:
             statement = (
                 select(PostPublication)
                 .where(
-                    PostPublication.status.in_(_TERMINAL - {"result_unknown"}),
+                    PostPublication.status.in_(_TERMINAL - set(_RECOVERABLE_VIDEO_STATUSES)),
                     PostPublication.updated_at < cutoff,
                 )
                 .order_by(PostPublication.id)

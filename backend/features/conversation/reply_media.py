@@ -55,7 +55,7 @@ async def load_media_turn(
     producer_calls: set[str] = set()
     for message in await load_context_messages(db, conv):
         if message.reply_json:
-            reply = CompanionReply.model_validate_json(message.reply_json)
+            reply = CompanionReply.from_saved_snapshot(message.reply_json, message.content or "")
             for bubble in reply.bubbles:
                 if isinstance(bubble, MediaBubble):
                     state.artifacts[bubble.media_id] = MediaArtifact(**bubble.model_dump())
@@ -102,7 +102,12 @@ async def load_media_turn(
 
 
 def apply_video_status(artifact: MediaArtifact, job: VideoJobSnapshot) -> None:
-    artifact.status = {"succeeded": "ready", "failed": "failed", "result_unknown": "result_unknown"}.get(
+    artifact.status = {
+        "succeeded": "ready",
+        "failed": "failed",
+        "review_pending": "failed",
+        "result_unknown": "result_unknown",
+    }.get(
         job.status,
         "pending",
     )
@@ -187,7 +192,7 @@ async def update_video_reply(db: AsyncSession, job: VideoJobSnapshot) -> None:
     )
     if message is None or message.reply_json is None:
         return
-    reply = CompanionReply.model_validate_json(message.reply_json)
+    reply = CompanionReply.from_saved_snapshot(message.reply_json, message.content or "")
     for index, bubble in enumerate(reply.bubbles):
         if not isinstance(bubble, MediaBubble) or bubble.media_id != job.media_id or bubble.status != "pending":
             continue

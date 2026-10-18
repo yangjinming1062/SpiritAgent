@@ -58,7 +58,7 @@ class ImageGenerationError(Exception):
 
 
 class ImageReviewUnavailableError(ImageGenerationError):
-    """已保存候选尚未完成场景内容核查；仅重试分析，不重新提交生图。"""
+    """已保存候选尚未完成画面核查；仅重试分析，不重新提交生图。"""
 
 
 @dataclass(frozen=True)

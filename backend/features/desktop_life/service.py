@@ -78,6 +78,7 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_LOOP,
     DESKTOP_VIDEO_ONCE,
     DESKTOP_VIDEO_QUIET,
+    desktop_source_reference_prompt,
 )
 from features.desktop_life.queries import activated_desktop_environment
 from features.desktop_life.repository import (
@@ -216,7 +217,10 @@ async def get_desktop_external_prompt(
         [("已确认的起始画面", confirmed)]
         if confirmed
         else [
-            ("头像参考图", snapshot.portrait_path),
+            (
+                "全身身份参考图" if snapshot.identity_reference_role == "fullbody" else "头像参考图",
+                snapshot.primary_reference_path,
+            ),
             ("着装参考图", snapshot.outfit_path),
             ("场景参考图", snapshot.scene_path),
         ]
@@ -266,9 +270,11 @@ async def get_desktop_external_prompt(
             if confirmed and language != "en"
             else "Image 1 is the confirmed opening frame. Preserve its visible identity, clothing, environment, props, framing and lighting."
             if confirmed
-            else "图 1 的头像只提供面容与头部特征，图 2 的着装图提供身体结构、比例和当前造型，图 3 提供环境与光线。头像和着装图的姿态、背景与取景不限制新开场。"
-            if language != "en"
-            else "Image 1 is the portrait and provides only the face and head features. Image 2 provides body structure, proportions and current styling. Image 3 provides the environment and lighting. The poses, backgrounds and framing of images 1 and 2 do not constrain the new opening."
+            else desktop_source_reference_prompt(
+                snapshot.identity_reference_role,
+                language=language,
+                include_scene=True,
+            )
         ),
         kind=kind,
         motion=description,
@@ -2249,7 +2255,7 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int) -> None:
             use_base_reference = request.continuity == "base"
             if use_base_reference and not row.base_image_path:
                 raise DesktopVideoStateError("请先制作安静相伴的基础画面，再设计与它衔接的活动")
-            portrait_path = row.base_image_path if use_base_reference else snapshot.portrait_path
+            portrait_path = row.base_image_path if use_base_reference else snapshot.primary_reference_path
             language = resolve_language(await get_user_setting(db, user_id, "language"))
             existing = list(
                 await db.scalars(
@@ -2317,6 +2323,7 @@ async def _review_desktop_proposal(user_id: int, proposal_id: int) -> None:
                     "outfit": snapshot.outfit_description if not use_base_reference else "",
                     "environment": snapshot.scene_description if not use_base_reference else "以已确认图片中的环境为准",
                     "reference_mode": "confirmed" if use_base_reference else "sources",
+                    "reference_identity_role": snapshot.identity_reference_role if not use_base_reference else None,
                     "existing_actions": existing_payload,
                 },
                 ensure_ascii=False,

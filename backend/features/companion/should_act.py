@@ -77,6 +77,7 @@ async def should_act(
         + "\n\n"
         + presentation_prompt(ctx.presentation, language=ctx.language),
         {
+            "current_time": ctx.current_time,
             "output_language": ctx.language,
             "persona": ctx.persona_extras,
             "idle_minutes": round(idle_seconds / 60, 2),

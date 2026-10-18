@@ -108,16 +108,12 @@ def available_media_tool_schemas(schemas: list[dict], state: MediaTurnState) -> 
     corrections = {
         media_id: inspection.inspection_id
         for media_id, inspection in state.inspections.items()
-        if media_id in ready_images
-        and inspection.verdict == "revise"
-        and state.current_versions.get(ready_images[media_id].goal_id) == media_id
-        and ready_images[media_id].goal_id in state.plans
-        and ready_images[media_id].goal_id not in state.regenerated_goals
+        if state.image_regeneration_blocker(media_id) is None
     }
     available = []
     for schema in schemas:
         name = schema["name"]
-        if name == "image_generate" and state.image_round is not None:
+        if name == "image_generate" and (state.image_round is not None or state.has_unknown_image_result()):
             continue  # 图片请求每回合只受理一次；其后不再披露，避免把交付回复误当成再次生成。
         if name == "video_generate_status" and not any(a.type == "video" for a in state.artifacts.values()):
             continue  # 没有视频任务可查时不披露。

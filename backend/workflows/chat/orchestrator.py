@@ -451,7 +451,10 @@ async def _run_chat_turn(
             )
             media_turn.source_message_id = user_message_id
             if replacement is not None and replacement.previous.reply_json:
-                old_reply = CompanionReply.model_validate_json(replacement.previous.reply_json)
+                old_reply = CompanionReply.from_saved_snapshot(
+                    replacement.previous.reply_json,
+                    replacement.previous.content or "",
+                )
                 retained_ids = {b.media_id for b in old_reply.bubbles if isinstance(b, MediaBubble)}
                 media_turn.artifacts = {
                     key: value for key, value in media_turn.artifacts.items() if key in retained_ids

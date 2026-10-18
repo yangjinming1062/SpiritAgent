@@ -110,13 +110,14 @@ def restore_desktop_payload(table: str, payload: dict[str, Any], id_map: dict[st
             else None
         )
         if progress:
-            if progress.image_chain_json:
-                image_chain = ImageChainState.model_validate_json(progress.image_chain_json)
-                if image_chain.phase != "complete":
-                    progress.image_chain_json = None
             progress.video_chain_json = None
             progress.provider_task_id = progress.download_url = None
-            progress.submission_unknown = False
+            progress.submission_unknown = any(
+                (chain := ImageChainState.model_validate_json(chain_json)).phase == "submitting"
+                or chain.stop_reason == "result_unknown"
+                for chain_json in (progress.reference_alignment_chain_json, progress.image_chain_json)
+                if chain_json
+            )
             payload["generation_state_json"] = progress.model_dump_json()
         payload["update_pending"] = False
         if payload["status"] == "ready" and not payload.get("accepted_asset_json"):
@@ -202,7 +203,8 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
                     if path
                 )
             if field == "generation_state_json":
-                refinement = DesktopVideoProgress.model_validate(value).video_refinement
+                progress = DesktopVideoProgress.model_validate(value)
+                refinement = progress.video_refinement
                 if refinement is not None:
                     references.extend(
                         (refinement.video_path, refinement.original_video_path, refinement.image_path),
@@ -215,9 +217,14 @@ def validate_desktop_owned_paths(payload: dict[str, Any], user_id: int) -> None:
                         value.get("source_path"),
                         value.get("base_image_path"),
                         value.get("source_image_path"),
+                        progress.aligned_outfit_path,
                     )
                     if path
                 )
+                if progress.reference_alignment_chain_json:
+                    references.extend(
+                        ImageChainState.model_validate_json(progress.reference_alignment_chain_json).stored_paths(),
+                    )
     for reference in references:
         parsed = parse_companion_asset_path(normalize_asset_reference(reference))
         if parsed is None or parsed[0] != user_id:
@@ -302,8 +309,19 @@ def validate_desktop_files(
             validate_base_image(progress.pose_path)
             validate_base_image(progress.previous_pose_path)
             validate_base_image(progress.source_image_path)
-            if progress.image_chain_json:
-                image_chain = ImageChainState.model_validate_json(progress.image_chain_json)
+            validate_base_image(progress.aligned_outfit_path)
+            if (
+                progress.aligned_outfit_path
+                and hashlib.sha256(
+                    effective_file(progress.aligned_outfit_path).read_bytes(),
+                ).hexdigest()
+                != progress.aligned_outfit_hash
+            ):
+                raise ValueError("桌面生活派生造型参考与冻结内容不一致。")
+            for chain_json in (progress.reference_alignment_chain_json, progress.image_chain_json):
+                if not chain_json:
+                    continue
+                image_chain = ImageChainState.model_validate_json(chain_json)
                 if image_chain.phase == "complete":
                     if image_chain.inputs is None:
                         raise ValueError("桌面图片制作缺少冻结输入。")

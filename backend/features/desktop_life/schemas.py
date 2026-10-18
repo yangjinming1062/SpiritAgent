@@ -9,7 +9,7 @@ from infrastructure.ai.selection import GenerationOrigin, ProviderSelection
 from infrastructure.constants import POSTGRES_INT4_MAX
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from features.media.identity_contracts import CharacterCardSnapshot
+from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
 from features.media.video_queue.contracts import VideoQueueInfo
 
 DESKTOP_MAX_EDGE = 65536
@@ -23,6 +23,7 @@ class DesktopVisualSnapshot(BaseModel):
     identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     portrait_path: str = Field(min_length=1)
     portrait_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    identity_reference_role: CharacterReferenceRole = "portrait"
     outfit_id: int | None = None
     outfit_path: str = Field(min_length=1)
     outfit_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -32,6 +33,10 @@ class DesktopVisualSnapshot(BaseModel):
     scene_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     scene_path: str = Field(min_length=1)
     persona: dict[str, str] = Field(default_factory=dict)
+
+    @property
+    def primary_reference_path(self) -> str:
+        return self.identity_path if self.identity_reference_role == "fullbody" else self.portrait_path
 
 
 def desktop_visual_hash(snapshot: DesktopVisualSnapshot) -> str:
@@ -47,6 +52,8 @@ def desktop_visual_hash(snapshot: DesktopVisualSnapshot) -> str:
         "scene_hash": snapshot.scene_hash,
         "spec_version": 2,
     }
+    if snapshot.identity_reference_role == "fullbody":
+        visual["identity_reference_role"] = snapshot.identity_reference_role
     return hashlib.sha256(json.dumps(visual, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -128,6 +135,10 @@ class DesktopVideoProgress(BaseModel):
     replace_base: bool = False
     motion_prompt: str = ""
     pose_path: str = ""
+    reference_alignment_chain_json: str | None = None
+    reference_alignment_source_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    aligned_outfit_path: str | None = Field(default=None, min_length=1)
+    aligned_outfit_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     image_chain_json: str | None = None
     video_chain_json: str | None = None
     provider_task_id: str | None = None
@@ -141,6 +152,16 @@ class DesktopVideoProgress(BaseModel):
     review_reason: str = ""
     submission_unknown: bool = False
     failure_reason: str = ""
+
+    @model_validator(mode="after")
+    def valid_aligned_reference(self) -> "DesktopVideoProgress":
+        if bool(self.aligned_outfit_path) != bool(self.aligned_outfit_hash):
+            raise ValueError("桌景派生造型参考须同时保留路径与内容哈希")
+        if (
+            self.reference_alignment_chain_json or self.aligned_outfit_path
+        ) and not self.reference_alignment_source_hash:
+            raise ValueError("桌景参考对齐缺少冻结来源")
+        return self
 
     @model_validator(mode="after")
     def valid_continuity(self) -> "DesktopVideoProgress":

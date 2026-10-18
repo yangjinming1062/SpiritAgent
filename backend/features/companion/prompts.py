@@ -124,7 +124,8 @@ SHOULD_ACT_INSTRUCTIONS: dict[str, str] = {
         "perch 表示安静陪在当前窗口附近；"
         "roam 只适合没有明显打扰风险且距上次动作足够久时；approach 表示走近并主动说一句话，"
         "只在有具体、真诚且低频的理由时选择，不能用负罪感、催促或关系施压。"
-        "last_action_seconds 是距上次自主行为的秒数；local_hour 是用户设备上的本地小时，null 表示未知。"
+        "last_action_seconds 是距上次自主行为的秒数；current_time 是带时区偏移的当前时间，"
+        "与对话 created_at 对照判断时效；local_hour 是用户设备上的本地小时，null 表示未知。"
         f"{RECENT_CONTEXT_GUIDANCE['zh']}"
         "这些交流用来避免重复、打断或违背用户刚表达的意愿，例如用户说过要专心或别打扰时不 approach；"
         "旧请求不等于此刻又提出请求。"
@@ -147,7 +148,8 @@ SHOULD_ACT_INSTRUCTIONS: dict[str, str] = {
         "than ordinary scenes. perch means quietly staying near the current window; roam suits only times with no "
         "obvious disturbance risk and enough time since the last action; approach means walking over and saying one "
         "line — choose it only for a concrete, sincere, low-frequency reason, never via guilt, nagging, or "
-        "relationship pressure. last_action_seconds is the time since the last autonomous action; local_hour is the "
+        "relationship pressure. last_action_seconds is the time since the last autonomous action. current_time "
+        "carries a timezone offset; compare it with conversation created_at values to judge recency. local_hour is the "
         "hour on the user's device, or null when unknown. "
         f"{RECENT_CONTEXT_GUIDANCE['en']}"
         "Use these exchanges to avoid repeating, interrupting, or contradicting what the user just asked for — for example, do not "
@@ -255,16 +257,17 @@ CHECK_IN_INTENT_TEXTS: dict[str, str] = {
 FIRST_MEETING_INTENT_TEXTS: dict[str, str] = {
     "zh": (
         "用户刚认识你，这是你们第一次见面。若对话中还没有你们之间的交流，就按人设和双方关系自然地向用户打个招呼，"
-        "一两句话即可；用户资料里有希望的称呼时可以这样称呼对方。"
+        "一两句话即可；有已知的用户称呼时可以使用，没有则自然招呼，不自行给用户起名。"
         "关系设定不代表你们已有共同经历，不编造过去的相处或回忆，也不谈论软件设置或技术细节。"
-        "若用户已经先开口或你们已经聊过，就不再需要这次问候。"
+        "若用户已经先开口或你们已经聊过，这项初次问候已失效，本轮按主动联系的沉默规则结束，不借此续聊旧话题。"
     ),
     "en": (
         "The user has just met you; this is your first meeting. If the conversation has no exchange between you yet, "
         "greet the user naturally in character and in keeping with your relationship, in one or two sentences; "
-        "if the user profile gives a preferred name, you may address them by it. "
+        "you may use a known preferred name, otherwise greet naturally without inventing one for the user. "
         "The configured relationship does not mean you already share any history, so do not invent past time "
         "together or memories, and do not talk about software setup or technical details. "
-        "If the user has already spoken first or you have already talked, this greeting is no longer needed."
+        "If the user has already spoken first or you have already talked, this first-greeting intention is obsolete. "
+        "End this proactive turn silently under the proactive-contact rules, without using it to continue an earlier topic."
     ),
 }

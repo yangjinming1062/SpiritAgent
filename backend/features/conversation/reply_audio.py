@@ -148,8 +148,7 @@ async def _synthesize_reply_audio(
                 raise LookupError("Reply not found")
             original_content = row.content
             session_id = str(row.conversation_id)
-            reply = CompanionReply.model_validate_json(row.reply_json)
-            reply.validate_content(row.content or "")
+            reply = CompanionReply.from_saved_snapshot(row.reply_json, row.content or "")
             if reply.audio_directory is None:
                 reply.audio_directory = dated_asset_directory(
                     row.created_at,
@@ -193,7 +192,7 @@ async def _synthesize_reply_audio(
                             )
                             if current is None or current.content != original_content or current.reply_json is None:
                                 raise LookupError("Reply changed during synthesis")
-                            latest = CompanionReply.model_validate_json(current.reply_json)
+                            latest = CompanionReply.from_saved_snapshot(current.reply_json, current.content or "")
                             if index >= len(latest.bubbles) or latest.bubbles[index].model_dump(
                                 exclude={"audio"},
                             ) != bubble.model_dump(exclude={"audio"}):

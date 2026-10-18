@@ -99,7 +99,7 @@ async def _fork_conversation_from_message(
     for row in rows:
         copied_reply = row.reply_json
         if copied_reply:
-            reply = CompanionReply.model_validate_json(copied_reply)
+            reply = CompanionReply.from_saved_snapshot(copied_reply, row.content or "")
             for bubble in reply.bubbles:
                 if isinstance(bubble, MediaBubble):
                     bubble.job_id = None

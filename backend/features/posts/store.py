@@ -172,7 +172,7 @@ async def publication_quota_remaining(
     *,
     exclude_publication_id: str | None = None,
 ) -> int:
-    """已发布、在途及24小时内结果未知的任务共同占用账户滚动额度。"""
+    """已发布、在途及24小时内待核对的任务共同占用账户滚动额度。"""
     since = utc_now() - timedelta(hours=24)
     posted = await db.scalar(
         select(func.count())
@@ -189,7 +189,8 @@ async def publication_quota_remaining(
             PostPublication.user_id == user_id,
             or_(
                 PostPublication.status.in_(("queued", "running")),
-                (PostPublication.status == "result_unknown") & (PostPublication.reserved_at >= since),
+                PostPublication.status.in_(("result_unknown", "review_pending"))
+                & (PostPublication.reserved_at >= since),
             ),
         )
     )

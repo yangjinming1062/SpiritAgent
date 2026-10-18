@@ -7,14 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from infrastructure.ai.error_classifier import LlmCallBlockedError
-from infrastructure.ai.prompt_engineer import vision_chat
+from infrastructure.ai.error_classifier import FailoverReason, LlmCallBlockedError, LLMRuntimeError
+from infrastructure.ai.models import ModelModality
+from infrastructure.ai.prompt_engineer import LlmJsonValidationError, call_llm_json
 from infrastructure.ai.tasks import AiTaskKey
+from infrastructure.ai.user_config import load_user_llm_config
 from infrastructure.assets.asset_store import build_data_uri, image_mime_for_extension, sniff_media_ext
 from infrastructure.config import SETTINGS
 from infrastructure.database import SESSION_LOCAL
-from infrastructure.text import parse_llm_json, utc_now
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from infrastructure.text import utc_now
+from pydantic import BaseModel, ConfigDict, Field
 from runtime.paid_work import require_new_generation_call
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +27,7 @@ from features.actions.generation.state import GenerationContext
 from features.actions.materials import accepted_action_asset
 from features.actions.models import ActionProposal, CompanionAction, CompanionActionPack
 from features.actions.policy import ActionPolicyError, _reserve_create_slot_row, is_expression_action
-from features.actions.prompts import ACTION_REVIEW_INSTRUCTIONS
+from features.actions.prompts import ACTION_REVIEW_INSTRUCTIONS, ACTION_REVIEW_REPAIR_INSTRUCTIONS
 from features.actions.repository import ActionNameConflictError, create_action, get_action_by_name, list_pack_actions
 from features.actions.schemas import ActionDesignRequest
 
@@ -35,11 +37,11 @@ _REVIEWABLE_STATUSES = ("pending", "deferred")
 
 
 class ReviewVerdict(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     decision: Literal["approve", "reuse", "defer", "reject"]
-    reason: str = Field(max_length=400)
-    reuse_action_id: int | None = None
+    reason: str = Field(min_length=1, max_length=400)
+    reuse_action_id: int | None = Field(default=None, strict=True, gt=0)
 
 
 @dataclass(frozen=True)
@@ -200,7 +202,7 @@ async def _request_verdict(
     payload: dict[str, Any],
     reference_image: str,
 ) -> ReviewVerdict | str:
-    """调用评审模型；结论不合规时附校验错误重试一次，仍失败返回写入评审理由的简短原因。"""
+    """独立评审与共享格式修复；结构仍无效时返回可展示的简短原因。"""
 
     async def before_submit() -> None:
         require_new_generation_call(user_id)
@@ -211,42 +213,37 @@ async def _request_verdict(
                 raise LlmCallBlockedError(str(exc)) from exc
         require_new_generation_call(user_id)
 
-    failure = "评审失败"
-    for _attempt in range(2):
-        try:
-            raw = await vision_chat(
-                user_id,
-                ACTION_REVIEW_INSTRUCTIONS,
-                json.dumps(payload, ensure_ascii=False),
-                reference_images=(reference_image,),
-                before_submit=before_submit,
-                task=AiTaskKey.window_action,
-            )
-            verdict = ReviewVerdict.model_validate(parse_llm_json(raw))
-            if verdict.decision == "reuse":
-                if verdict.reuse_action_id not in {action["id"] for action in payload["existing_actions"]}:
-                    raise ValueError("reuse_action_id 必须取自 existing_actions 的 id")
-            elif verdict.reuse_action_id is not None:
-                raise ValueError("非 reuse 结论的 reuse_action_id 必须为 null")
-            return verdict
-        except ValidationError as exc:
-            # 校验详情含模型原始输出，只交给本次修复；评审理由会展示给后续模型，只记字段。
-            payload["validation_error"] = str(exc)
-            failure = _validation_summary(exc)
-        except ValueError as exc:
-            payload["validation_error"] = failure = str(exc)
-    return failure
+    def parse_output(value: Any) -> ReviewVerdict:
+        verdict = ReviewVerdict.model_validate(value)
+        if verdict.decision == "reuse":
+            if verdict.reuse_action_id not in {action["id"] for action in payload["existing_actions"]}:
+                raise LlmJsonValidationError("invalid_reuse_action_id", fields=("reuse_action_id",))
+        elif verdict.reuse_action_id is not None:
+            raise LlmJsonValidationError("unexpected_reuse_action_id", fields=("reuse_action_id",))
+        return verdict
 
-
-def _validation_summary(exc: ValidationError) -> str:
-    """只列结论字段名；模型输出的原值与其自造的多余字段名不进入评审理由。"""
-    fields: set[str] = set()
-    for error in exc.errors(include_input=False, include_url=False, include_context=False):
-        if error["type"] == "extra_forbidden":
-            fields.add("多余字段")
-        else:
-            fields.add(str(error["loc"][0]) if error["loc"] else "整体结构")
-    return f"未通过结构校验（{'、'.join(sorted(fields))}）"
+    llm_config = await load_user_llm_config(
+        user_id,
+        AiTaskKey.window_action,
+        required_modalities=frozenset({ModelModality.text, ModelModality.image}),
+    )
+    try:
+        return await call_llm_json(
+            llm_config,
+            ACTION_REVIEW_INSTRUCTIONS,
+            payload,
+            schema=ReviewVerdict.model_json_schema(),
+            schema_name="action_review",
+            parse_output=parse_output,
+            repair_prompt=ACTION_REVIEW_REPAIR_INSTRUCTIONS,
+            reference_images=(reference_image,),
+            preserve_choices=("decision",),
+            before_call=before_submit,
+        )
+    except LLMRuntimeError as exc:
+        if exc.classified.reason != FailoverReason.format_error:
+            raise
+        return "未通过结构校验"
 
 
 async def _commit_verdict(

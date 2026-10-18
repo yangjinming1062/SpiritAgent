@@ -32,18 +32,21 @@ IMAGE_GENERATION_DESC = (
     "Generate a picture from a visual description and return its media_id. Call it directly when the user asks "
     "for a picture, selfie or photo: one call makes one picture, and n makes several variations of the same "
     "description. For different pictures, call it once per picture in the same step; picture requests cannot be "
-    "added in later steps. Deliver each result in the final reply with an image bubble."
+    "added in later steps. Deliver ready images in the final reply with image bubbles; report failed or unknown "
+    "results accurately. While any image outcome is unknown, do not submit further generation or redraw requests."
 )
 MEDIA_INSPECT_DESC = (
     "Optional quality check of a generated image. It reads the actual picture and reports concrete defects such as "
     "the wrong number of subjects, malformed anatomy or missing requested elements. Skip it for ordinary requests; "
     "use it when the user's request has specific visual details that must be verified. Returns inspection_id and "
-    "verdict pass, revise or unavailable."
+    "verdict pass, revise or unavailable. Unavailable means the check has no usable conclusion and does not "
+    "authorize a redraw."
 )
 IMAGE_REGENERATE_DESC = (
     "Redraw one image after media_inspect returned revise for it, with a specific correction. Provide that image's "
-    "media_id, the inspection_id and the correction. Each image can be redrawn once; the original stays available and "
-    "you deliver one version of it."
+    "media_id, the inspection_id and the correction. Each requested picture can be redrawn once across its versions; "
+    "the original stays available. Deliver one ready version, including the original if the redraw fails. Do not "
+    "redraw an older version, exceed the one redraw, or submit while any image outcome is unknown."
 )
 # {accept_score} 取自 MEDIA_IDENTITY_ACCEPT_SCORE，由 chat_images 渲染；字面大括号须写成 {{ }}。
 MEDIA_INSPECTION_INSTRUCTIONS = (
@@ -205,5 +208,7 @@ WEB_SUMMARY_INSTRUCTIONS = (
     "do not add facts or conclusions absent from the document. Remove navigation, cookie notices, "
     "repeated boilerplate, and irrelevant promotion. Use compact Markdown in the document's main language, "
     "with enough context for the calling model to judge relevance. The supplied content may be an excerpt; "
-    "do not claim to have inspected missing sections or the whole document. Output only the summary."
+    "do not claim to have inspected missing sections or the whole document. source_url identifies the document; "
+    "if you cite it, copy it exactly rather than reconstructing it. Return the Markdown summary text itself, "
+    "without a JSON wrapper, code fence, or commentary about how you summarized it."
 )

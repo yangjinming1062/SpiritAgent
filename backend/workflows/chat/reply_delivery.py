@@ -367,19 +367,30 @@ def decode_companion_reply(
             for start, end in reversed(reference_spans(text)):
                 plain_text = plain_text[:start] + "URL" + plain_text[end:]
             if not re.fullmatch(_DIALOGUE_TEXT_PATTERN, plain_text) or len(_sentence_endings(text)) > 1:
+                if re.search(r"[（）()*]", plain_text):
+                    message = (
+                        "Dialogue text cannot contain parentheses ( ) （ ） or asterisks *. Remove formatting delimiters "
+                        "while keeping ordinary explanatory words in order; move audible performance cues to supported "
+                        "speech and remove other narration"
+                    )
+                elif re.search(r"[\r\n\\]", plain_text):
+                    message = "Dialogue text cannot contain line breaks or backslashes; separate sentences into bubbles"
+                else:
+                    message = "Keep one spoken sentence per bubble, with only ending punctuation or emoji after the sentence ending"
                 errors.append(
                     {
                         "type": "value_error",
                         "loc": ("bubbles", index, bubble["type"], "text"),
                         "ctx": {
-                            "error": ValueError(
-                                "Use one spoken sentence per bubble without line breaks or narration markers",
-                            ),
+                            "error": ValueError(message),
                         },
                     },
                 )
         if errors:
             raise ValidationError.from_exception_data("CompanionDialogue", errors)
+        for bubble in values:
+            if bubble.get("type") == "text" and isinstance(bubble.get("text"), str):
+                bubble["text"] = bubble["text"].strip()
     return json.dumps(values, ensure_ascii=False), draft.kind, draft.used_topic_ids
 
 
@@ -408,9 +419,9 @@ def validate_companion_reply_repair(
         and preserve_written
         and original
         and all(b.get("type") == "text" and isinstance(b.get("text"), str) for b in original)
-        and re.sub(r"\s+", "", values[0]["text"]) != re.sub(r"\s+", "", "".join(b["text"] for b in original))
+        and values[0]["text"] != "".join(b["text"] for b in original)
     ):
-        raise ValueError("A written repair must preserve the draft's words and punctuation")
+        raise ValueError("A written repair must preserve the draft's text, whitespace, and punctuation exactly")
     media_goals: dict[tuple[str, str], str] = {}
     for bubble in original:
         if bubble.get("type") not in {"image", "video"} or not isinstance(bubble.get("media_id"), str):

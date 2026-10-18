@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.configuration.settings.timezone import resolve_user_timezone
 from features.media.chain import (
+    MEDIA_IDENTITY_ACCEPT_SCORE,
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
@@ -49,8 +50,8 @@ from features.media.chain import (
 )
 from features.media.contracts import VideoJobSnapshot
 from features.media.delivery import deliver_video_result
-from features.media.identity_contracts import CharacterCardSnapshot
-from features.media.identity_review import score_character_frames_with_references
+from features.media.identity_contracts import CharacterCardSnapshot, CharacterReferenceRole
+from features.media.identity_review import score_character_frames, score_character_frames_with_references
 from features.media.models import VideoGenJob
 from features.media.prompts import CHARACTER_MEDIA_SELF_VIDEO_SCORE
 from features.media.queries import video_job_snapshot
@@ -91,6 +92,7 @@ class _VideoJobParams(BaseModel):
     aspect_ratio: str | None
     identity_reference_path: str | None
     identity_snapshot: CharacterCardSnapshot | None
+    identity_reference_role: CharacterReferenceRole = "portrait"
     asset_generation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     asset_directory: str
 
@@ -141,6 +143,7 @@ async def _score_self_video(
     identity_uri: str | None,
     outfit_uri: str | None = None,
     identity_text: str = "",
+    identity_reference_role: CharacterReferenceRole = "portrait",
     job_id: int | None = None,
 ) -> tuple[str, int | None]:
     """核查候选可解码性，出镜时再评分。undecodable 表示成品本身不可解码，可换下一家；文件缺失、探测工具不可用不是成品问题，返回 invalid，仅非出镜视频在工具不可用时返回 unavailable 照常交付。"""
@@ -162,7 +165,7 @@ async def _score_self_video(
         return "undecodable", None
     if not identity_path:
         return "unavailable", None
-    if not identity_uri or not outfit_uri:
+    if not identity_uri:
         return "invalid", None
     try:
         frames = await asyncio.to_thread(sample_key_frames, local)
@@ -173,15 +176,25 @@ async def _score_self_video(
             require_new_generation_call(user_id)
 
         frame_uris = tuple(build_data_uri(frame, "image/webp") for frame in frames)
-        score = await score_character_frames_with_references(
-            user_id,
-            (identity_uri, outfit_uri),
-            frame_uris,
-            CHARACTER_MEDIA_SELF_VIDEO_SCORE,
-            task=task,
-            identity_text=identity_text,
-            before_submit=before_submit,
-        )
+        if outfit_uri and identity_reference_role == "portrait":
+            score = await score_character_frames_with_references(
+                user_id,
+                (identity_uri, outfit_uri),
+                frame_uris,
+                CHARACTER_MEDIA_SELF_VIDEO_SCORE,
+                task=task,
+                identity_text=identity_text,
+                before_submit=before_submit,
+            )
+        else:
+            score = await score_character_frames(
+                user_id,
+                identity_uri,
+                frame_uris,
+                task=task,
+                identity_text=identity_text,
+                before_submit=before_submit,
+            )
         async with SESSION_LOCAL() as db:
             latest_seed = await active_identity_reference(db, user_id)
         if latest_seed != identity_path:
@@ -342,6 +355,7 @@ async def prepare_video_job(
     reference_images: tuple[str, ...] = (),
     identity_reference_path: str | None = None,
     identity: CharacterCardSnapshot | None = None,
+    identity_reference_role: CharacterReferenceRole = "portrait",
     structured_reply: bool = False,
     media_id: str | None = None,
 ) -> VideoJobSnapshot:
@@ -370,6 +384,7 @@ async def prepare_video_job(
         aspect_ratio=aspect_ratio,
         identity_reference_path=identity_reference_path,
         identity_snapshot=identity,
+        identity_reference_role=identity_reference_role,
         asset_generation_id=state.generation_id,
     )
     job = VideoGenJob(
@@ -424,6 +439,7 @@ async def enqueue_video_job(
     reference_images: tuple[str, ...] = (),
     identity_reference_path: str | None = None,
     identity: CharacterCardSnapshot | None = None,
+    identity_reference_role: CharacterReferenceRole = "portrait",
     structured_reply: bool = False,
     media_id: str | None = None,
 ) -> VideoJobSnapshot:
@@ -441,6 +457,7 @@ async def enqueue_video_job(
         reference_images=reference_images,
         identity_reference_path=identity_reference_path,
         identity=identity,
+        identity_reference_role=identity_reference_role,
         structured_reply=structured_reply,
         media_id=media_id,
     )
@@ -488,7 +505,8 @@ async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> No
         row = await db.get(VideoGenJob, job_id, with_for_update=True)
         if row is None or _settled(row):
             return
-        snapshot = _VideoJobParams.model_validate_json(row.params_json).identity_snapshot
+        params = _VideoJobParams.model_validate_json(row.params_json)
+        snapshot = params.identity_snapshot
         if snapshot is not None and not await character_snapshot_is_current(db, row.user_id, snapshot):
             await db.rollback()
             await _record_failure(job_id, reason="identity_changed")
@@ -496,18 +514,32 @@ async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> No
         storage_url = row.video_url
         if not storage_url or _stored_asset_file(row.user_id, storage_url) is None:
             raise RuntimeError("best video asset is unavailable")
-        row.status = "succeeded"
         state = MediaChainState.model_validate_json(row.generation_state_json)
         state.finish()
-        row.generation_state_json = state.model_dump_json()
         best = state.best()
         if best is None:
             raise RuntimeError("best video candidate is unavailable")
+        if best.path != storage_url:
+            raise RuntimeError("best video candidate does not match stored asset")
         row.provider = state.providers[best.attempt].provider
         row.model = state.providers[best.attempt].model
         row.candidate_video_url = None
-        row.error_reason = state.stop_reason if warning else None
-        row.error_message = warning
+        if (snapshot is not None or params.identity_reference_path) and (
+            best.score is None or best.score < MEDIA_IDENTITY_ACCEPT_SCORE
+        ):
+            row.status = "review_pending"
+            state.source_path = storage_url
+            row.error_reason = "score_unavailable" if best.score is None else "identity_below_threshold"
+            row.error_message = (
+                "视频身份评分暂不可用，未自动交付；原视频已保留"
+                if best.score is None
+                else "视频未通过身份核查，未自动交付；原视频已保留"
+            )
+        else:
+            row.status = "succeeded"
+            row.error_reason = state.stop_reason if warning else None
+            row.error_message = warning
+        row.generation_state_json = state.model_dump_json()
         await deliver_video_result(db, video_job_snapshot(row))
         await db.commit()
 
@@ -538,6 +570,7 @@ async def _evaluate_stored_video(job_id: int) -> str:
             if snapshot is not None and len(params.reference_images) > 1
             else None,
             identity_text=render_character_identity(snapshot) if snapshot else "",
+            identity_reference_role=params.identity_reference_role,
             job_id=job_id,
         )
     except GenerationWorkPaused:

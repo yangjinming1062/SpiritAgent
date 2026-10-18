@@ -151,9 +151,9 @@ export interface ApiSchemas {
   "PostCommentRole": "user" | "companion"
   "PostContentType": "text" | "image" | "video" | "audio"
   "PostListResponse": { "posts": Array<ApiSchemas["PostResponse"]>; "next_cursor": (string | null); "unread_post_ids": Array<string> }
-  "PostPublicationRecovery": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null); "title": string; "video_status": "pending" | "ready" | "failed" | "unknown" | "discarded"; "media_url": (string | null); "can_adopt": boolean; "can_discard": boolean }
+  "PostPublicationRecovery": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "review_pending" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null); "title": string; "video_status": "pending" | "ready" | "failed" | "unknown" | "discarded"; "media_url": (string | null); "can_adopt": boolean; "can_discard": boolean }
   "PostPublicationRecoveryList": { "items": Array<ApiSchemas["PostPublicationRecovery"]>; "next_offset": (number | null) }
-  "PostPublicationResult": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null) }
+  "PostPublicationResult": { "publication_id": string; "status": "queued" | "running" | "published" | "partial" | "failed" | "blocked" | "result_unknown" | "review_pending" | "declined" | "discarded"; "post_id": (string | null); "error": (string | null) }
   "PostReadRequest": { "post_ids": Array<string> }
   "PostResponse": { "id": string; "published_at": string; "content_type": ApiSchemas["PostContentType"]; "title": string; "body": string; "media_url": (string | null); "audio_url": (string | null); "comments": Array<ApiSchemas["PostCommentResponse"]> }
   "PostUnreadResponse": { "has_unread": boolean }

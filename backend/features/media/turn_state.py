@@ -16,6 +16,7 @@ class ImagePlan:
     reference_image: str | None = None
     secondary_reference_image: str | None = None
     identity_json: str | None = None
+    identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit"
 
 
 @dataclass
@@ -80,6 +81,34 @@ class MediaTurnState:
         """记录本回合首个媒体请求受理时所在的工具步。"""
         if self.media_round is None:
             self.media_round = self.tool_round
+
+    def has_unknown_image_result(self) -> bool:
+        return any(
+            artifact.type == "image" and artifact.status == "result_unknown" for artifact in self.artifacts.values()
+        )
+
+    def image_regeneration_blocker(
+        self,
+        media_id: str,
+        inspection_id: str | None = None,
+    ) -> Literal["result_unknown", "not_ready", "inspection", "quota", "stale"] | None:
+        if self.has_unknown_image_result():
+            return "result_unknown"
+        artifact = self.artifacts.get(media_id)
+        if artifact is None or artifact.type != "image" or artifact.status != "ready" or not artifact.url:
+            return "not_ready"
+        inspection = self.inspections.get(media_id)
+        if (
+            inspection is None
+            or inspection.verdict != "revise"
+            or (inspection_id is not None and inspection.inspection_id != inspection_id)
+        ):
+            return "inspection"
+        if artifact.goal_id in self.regenerated_goals:
+            return "quota"
+        if self.current_versions.get(artifact.goal_id) != media_id or artifact.goal_id not in self.plans:
+            return "stale"
+        return None
 
     def final_reply_due(self) -> bool:
         """媒体请求受理后只再允许有限的工具步；用尽后模型调用只生成最终回复，不再披露工具。"""

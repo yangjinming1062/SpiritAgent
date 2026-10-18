@@ -156,8 +156,11 @@ export function PostVideoRecovery(): React.JSX.Element | null {
           <p className={styles.body}>
             {item.status === 'discarded' && item.can_discard
               ? t.videoCleanupPending
-              : t.videoRecoveryStatuses[item.video_status]}
+              : item.status === 'review_pending'
+                ? t.videoIdentityReviewPending
+                : t.videoRecoveryStatuses[item.video_status]}
           </p>
+          {item.error && <p className={styles.body}>{item.error}</p>}
           {item.media_url && <InlineMedia alt={item.title} audioUrl={null} mediaType="video" url={item.media_url} />}
           <div className="flex flex-wrap gap-2">
             <button

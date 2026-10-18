@@ -152,6 +152,7 @@ def _pack_response(
     reference_pending = context is not None and (
         context.reference_chain.phase == "submitting" or context.reference_chain.stop_reason == "result_unknown"
     )
+    reference_review_pending = context is not None and context.reference_chain.can_retry_goal_review()
     actions = []
     for job in sorted(jobs, key=lambda job: _action_order(job.key)):
         script = parse_action_script_entry(job.script_json) if job.script_json else None
@@ -220,8 +221,12 @@ def _pack_response(
             and pack.status == "failed"
             and context is not None
             and not reference_pending
-            and context.reference_alignment != "running"
-            and (any(_can_resume_job(job) for job in jobs) or _can_publish_jobs(jobs, context.must_actions))
+            and (context.reference_alignment != "running" or reference_review_pending)
+            and (
+                reference_review_pending
+                or any(_can_resume_job(job) for job in jobs)
+                or _can_publish_jobs(jobs, context.must_actions)
+            )
         ),
         actions=actions,
     )

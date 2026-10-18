@@ -27,7 +27,12 @@ from features.appearance.character_card import (
     render_character_profile,
     require_character_snapshot,
 )
-from features.appearance.queries import mark_initial_video_started, outfit_snapshot, ready_outfit_snapshot
+from features.appearance.queries import (
+    mark_initial_video_started,
+    outfit_identity_matches,
+    outfit_snapshot,
+    ready_outfit_snapshot,
+)
 from features.companion.persona_service import load_persona_definition
 from features.companion.visual_state import ensure_persona_snapshot
 from features.media.chain import FrozenMediaProvider, spawn_removed_action_task_cancellation
@@ -196,6 +201,8 @@ async def create_pack_from_reference(
         avatar = await _active_avatar(db, user_id)
         reference_hash = await _reference_hash(outfit, avatar)
         identity = await require_character_snapshot(db, user_id)
+        seed_path = avatar.seed_fullbody_url if avatar else ""
+        identity_reference_role = "portrait" if outfit_identity_matches(outfit.source_json, seed_path) else "fullbody"
         if not force:
             reusable = (
                 await db.execute(
@@ -213,12 +220,17 @@ async def create_pack_from_reference(
                 reusable is not None
                 and reusable_context is not None
                 and reusable_context.identity == identity
+                and reusable_context.identity_reference_role == identity_reference_role
                 and await character_snapshot_is_current(db, user_id, identity)
             ):
-                await db.commit()
-                await db.refresh(reusable)
-
-                return ActionPackSnapshot.model_validate(reusable)
+                try:
+                    await _require_current_identity_image(reusable_context, avatar)
+                except VideoPackError:
+                    pass
+                else:
+                    await db.commit()
+                    await db.refresh(reusable)
+                    return ActionPackSnapshot.model_validate(reusable)
         await _reject_pack_regeneration(db, user_id, outfit.id)
         system_seconds: float | None = None
         system_providers: list[FrozenMediaProvider] = []
@@ -255,7 +267,6 @@ async def create_pack_from_reference(
             raise VideoPackStateError("外观参考图不可读")
         pending_assets.callback(unlink_companion_asset, reference_path)
         active_outfit_id = await _active_outfit_id(db, user_id)
-        seed_path = avatar.seed_fullbody_url if avatar else ""
         identity_reference_path = await _copy_portrait_asset(
             seed_path,
             user_id=user_id,
@@ -268,7 +279,7 @@ async def create_pack_from_reference(
         context = GenerationContext(
             identity=identity,
             identity_reference_path=identity_reference_path,
-            # 全身身份图只用于版本守卫；动作包参考由头像与当前着装图合成。
+            identity_reference_role=identity_reference_role,
             reference_alignment="pending",
             persona_definition=load_persona_definition(persona),
             personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
@@ -333,7 +344,11 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> ActionPack
         if any(job.id in _ACTION_INFLIGHT for job in jobs):
             raise VideoPackStateError("动作任务仍在收尾，请等待完成后继续")
         recoverable = [job for job in jobs if _can_resume_job(job)]
-        if not recoverable and not _can_publish_jobs(jobs, context.must_actions):
+        if (
+            not recoverable
+            and not context.reference_chain.can_retry_goal_review()
+            and not _can_publish_jobs(jobs, context.must_actions)
+        ):
             raise VideoPackStateError("没有可继续的动作任务，请先核对原任务结果")
         if recoverable:
             require_action_matting_model()

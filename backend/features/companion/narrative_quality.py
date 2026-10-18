@@ -38,7 +38,7 @@ class NarrativeQualityError(RuntimeError):
                 "issues": sorted({i.kind for i in review.issues}),
             },
         )
-        super().__init__("创作内容仍不完整或缺少依据，暂未发布")
+        super().__init__("创作内容仍有问题，暂未发布")
 
 
 async def review_narrative(
@@ -59,7 +59,7 @@ async def review_narrative(
     return await call_llm_json(
         llm_cfg,
         resolve_prompt_text(NARRATIVE_REVIEW_TEXTS, language),
-        {"draft": draft, "source": source},
+        {"output_language": language, "draft": draft, "source": source},
         schema=NarrativeReview.model_json_schema(),
         schema_name="narrative_review",
         parse_output=parse_output,

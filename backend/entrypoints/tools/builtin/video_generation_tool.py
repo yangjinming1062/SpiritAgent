@@ -2,7 +2,11 @@ import asyncio
 import json
 from uuid import uuid4
 
-from features.appearance.avatar_service import AvatarGenerationError
+from features.appearance.avatar_service import (
+    AvatarGenerationError,
+    AvatarSourceUnreadableError,
+    load_avatar_bytes_as_data_uri,
+)
 from features.appearance.visual_identity import (
     apply_outfit_override,
     build_plain_video_prompt,
@@ -12,6 +16,7 @@ from features.appearance.visual_identity import (
 )
 from features.conversation.reply_media import apply_video_status, require_video_source
 from features.media.contracts import VideoJobSnapshot
+from features.media.identity_contracts import CharacterReferenceRole
 from features.media.prompts import VIDEO_REFERENCE_TEMPLATE
 from features.media.queries import get_job
 from features.media.turn_state import MediaArtifact, MediaTurnState
@@ -83,15 +88,31 @@ async def _submit_video(
 ) -> tuple[dict[str, object], VideoJobSnapshot | None]:
     """提交已校验请求并返回真实任务状态；成品由后台沿原句柄查询及交付。"""
     visual = None
+    identity_reference_role: CharacterReferenceRole = "portrait"
     references = (reference_image,) if reference_image else ()
     if subject == "self":
         try:
-            visual = await load_self_visual_context(user_id)
+            visual = await load_self_visual_context(
+                user_id,
+                use_outfit_reference=not bool((outfit_override or "").strip() or reference_image),
+            )
             plan = apply_outfit_override(visual, outfit_override)
-            references = self_video_references(plan, reference_image)
+            identity_reference_role = visual.identity_reference_role
+            identity_reference = None
+            if reference_image and not plan.override_outfit_description:
+                identity_reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, visual.fullbody_path)
+                if not identity_reference:
+                    raise AvatarSourceUnreadableError("全身身份参考缺失或无法读取")
+                identity_reference_role = "fullbody"
+            references = self_video_references(plan, reference_image, identity_reference=identity_reference)
         except (AvatarGenerationError, VisualReasoningError) as e:
             return {"success": False, "error": str(e)}, None
-        prompt = build_self_video_prompt(plan, prompt, has_outfit_reference=len(references) > 1)
+        prompt = build_self_video_prompt(
+            plan,
+            prompt,
+            has_outfit_reference=len(references) > 1,
+            identity_reference_role=identity_reference_role,
+        )
     elif references:
         prompt = VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
     else:
@@ -113,6 +134,7 @@ async def _submit_video(
                 aspect_ratio=aspect_ratio,
                 identity_reference_path=visual.fullbody_path if visual is not None else None,
                 identity=visual.identity if visual is not None else None,
+                identity_reference_role=identity_reference_role,
                 structured_reply=structured_reply,
                 media_id=media_id,
                 task=task,
@@ -261,7 +283,7 @@ async def video_generate_status_tool(
         payload["url"] = row.video_url
         if row.error_message:
             payload["warning"] = row.error_message
-    elif row.status == "failed":
+    elif row.status in ("failed", "review_pending"):
         payload["error"] = row.error_message
     elif row.status == "result_unknown":
         payload.update({"error": row.error_message, "retry_safe": False})

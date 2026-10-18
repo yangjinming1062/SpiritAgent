@@ -1,5 +1,6 @@
 """外观模块公开的身份引用与首次动作准备状态。"""
 
+from pydantic import ValidationError
 from runtime.events.emit import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from features.companion.appearance_ports import AppearanceReadiness
 from features.companion.queries import portrait_is_confirmed
 
-from .models import AvatarAsset, CompanionOutfit
+from .models import AvatarAsset, CompanionOutfit, OutfitSource
 from .query_contracts import AvatarSnapshot, OutfitSnapshot
 
 
@@ -62,6 +63,15 @@ async def outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int | None)
         select(CompanionOutfit).where(CompanionOutfit.user_id == user_id, CompanionOutfit.id == outfit_id),
     )
     return OutfitSnapshot.model_validate(row) if row is not None else None
+
+
+def outfit_identity_matches(source_json: str, identity_reference_path: str) -> bool:
+    """只核对全身来源；角色卡文字修订不改变身体身份。"""
+    try:
+        source = OutfitSource.model_validate_json(source_json)
+    except ValidationError:
+        return False
+    return bool(identity_reference_path) and source.identity_reference_path == identity_reference_path
 
 
 async def ready_outfit_snapshot(db: AsyncSession, user_id: int, outfit_id: int | None = None) -> OutfitSnapshot | None:

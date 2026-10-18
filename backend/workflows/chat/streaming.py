@@ -266,6 +266,16 @@ async def _generate_llm_response(
                             "goal_id": a.goal_id,
                             "status": a.status,
                             "already_delivered": a.bound_message_id is not None,
+                            **(
+                                {
+                                    "inspection": {
+                                        "verdict": media_turn.inspections[a.media_id].verdict,
+                                        "issues": media_turn.inspections[a.media_id].issues,
+                                    },
+                                }
+                                if a.type == "image" and a.media_id in media_turn.inspections
+                                else {}
+                            ),
                         }
                         for a in media_turn.artifacts.values()
                     ],

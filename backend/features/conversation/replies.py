@@ -1,10 +1,11 @@
+import json
 from datetime import date, datetime
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from infrastructure.ai.speech_contracts import SPEECH_STYLE_ADAPTER, SpeechSegment, SpeechStyle
 from infrastructure.assets.paths import parse_companion_asset_path
-from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints, field_validator, model_validator
 
 
 class SpeechPerformance(BaseModel):
@@ -30,7 +31,14 @@ class TextBubble(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     type: Literal["text"]
-    text: str = Field(min_length=1, max_length=16000)
+    text: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(min_length=1, max_length=16000)
+
+    @field_validator("text")
+    @classmethod
+    def validate_text_content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Text must contain non-whitespace content")
+        return value
 
 
 class VoiceBubbleInput(BaseModel):
@@ -161,6 +169,40 @@ class CompanionReply(BaseModel):
         if value is not None:
             date.fromisoformat(value)
         return value
+
+    @classmethod
+    def from_saved_snapshot(cls, reply_json: str, content: str) -> "CompanionReply":
+        """补回已存快照丢失的首尾空白；原文仅因这些空白超限时保留合法快照正文。"""
+        reply = cls.model_validate_json(reply_json)
+        values = json.loads(content)
+        comparison_content = content
+        if isinstance(values, list) and len(values) == len(reply.bubbles):
+            shortened = False
+            for raw, delivered in zip(values, reply.bubbles, strict=True):
+                if (
+                    isinstance(raw, dict)
+                    and raw.get("type") == "text"
+                    and isinstance(raw.get("text"), str)
+                    and len(raw["text"]) > 16000
+                    and isinstance(delivered, TextBubble)
+                    and raw["text"].strip() == delivered.text
+                ):
+                    raw["text"] = delivered.text
+                    shortened = True
+            if shortened:
+                comparison_content = json.dumps(values, ensure_ascii=False)
+        source = CompanionReplyInput.model_validate_json(comparison_content)
+        if len(source.root) == len(reply.bubbles):
+            for raw, delivered in zip(source.root, reply.bubbles, strict=True):
+                if (
+                    isinstance(raw, TextBubble)
+                    and isinstance(delivered, TextBubble)
+                    and raw.text != delivered.text
+                    and raw.text.strip() == delivered.text
+                ):
+                    delivered.text = raw.text
+        reply.validate_content(comparison_content)
+        return reply
 
     def validate_content(self, content: str) -> None:
         """原文与交付态须对应同一组气泡；供应商绑定与音频仅存在于交付态。"""

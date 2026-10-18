@@ -1,4 +1,4 @@
-"""图片链：角色图按身份评分择优，场景独立核查是否重复桌面伙伴。"""
+"""图片链：角色图按身份与可选画面要求择优，场景独立核查是否重复桌面伙伴。"""
 
 import asyncio
 import io
@@ -8,6 +8,7 @@ from typing import Literal
 
 import httpx
 from infrastructure.ai._image_canvas import ImageCanvas, select_image_canvas
+from infrastructure.ai.llm_client import MissingLlmConfigError
 from infrastructure.ai.providers._reference import resolve_reference_bytes
 from infrastructure.ai.providers._size_aspect import ASPECT_RATIOS, SIZE_TO_ASPECT
 from infrastructure.ai.providers.base import ProviderConfig, ServiceType
@@ -33,6 +34,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
 
 from features.media.chain import (
+    MEDIA_IDENTITY_ACCEPT_SCORE,
     FrozenMediaProvider,
     MediaCandidate,
     MediaChainState,
@@ -40,8 +42,20 @@ from features.media.chain import (
     media_failure_reason,
     resolve_frozen_media_provider,
 )
-from features.media.identity_review import score_character_image, score_character_image_with_references
-from features.media.image_generation import ImageGenerationError, generate_images, resolve_image_gen_chain
+from features.media.identity_review import (
+    ImageGoalReview,
+    ImageGoalReviewFailure,
+    require_image_goal_review_config,
+    review_character_image_goal,
+    score_character_image,
+    score_character_image_with_references,
+)
+from features.media.image_generation import (
+    ImageGenerationError,
+    ImageReviewUnavailableError,
+    generate_images,
+    resolve_image_gen_chain,
+)
 from features.media.scene_review import review_scene_image
 
 logger = get_logger(__name__)
@@ -76,6 +90,8 @@ class CharacterImageInput(BaseModel):
     secondary_reference_image: str | None = None
     image_edit: bool = False
     identity_reference: str
+    identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit"
+    goal_review: Literal["none", "required"] = "none"
     identity_text: str = ""
     max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
     size_enforced: bool = False
@@ -118,6 +134,33 @@ class ImageChainState(MediaChainState):
     size_rejected: int = 0
     expansion_rejected: bool = False
     expansion_canvases: dict[int, ImageExpansionCanvas] = Field(default_factory=dict)
+    goal_reviews: dict[str, ImageGoalReview] = Field(default_factory=dict)
+    goal_review_failures: dict[str, ImageGoalReviewFailure] = Field(default_factory=dict)
+
+    def _goal_enabled(self) -> bool:
+        return isinstance(self.inputs, CharacterImageInput) and self.inputs.goal_review == "required"
+
+    def can_retry_goal_review(self) -> bool:
+        return (
+            self._goal_enabled()
+            and self.phase == "evaluating"
+            and self.stop_reason == "goal_review_unavailable"
+            and any(
+                not candidate.evaluated
+                and (failure := self.goal_review_failures.get(candidate.path)) is not None
+                and failure.status == "unavailable"
+                and failure.score is None
+                and failure.verdict is None
+                and candidate.score is None
+                for candidate in self.candidates
+            )
+        )
+
+    def _passes_review(self, candidate: MediaCandidate | None) -> bool:
+        if candidate is None or candidate.score is None or candidate.score < MEDIA_IDENTITY_ACCEPT_SCORE:
+            return False
+        goal = self.goal_reviews.get(candidate.path)
+        return goal is not None and goal.verdict == "pass"
 
     def selected_origin(self, slot: int = 0) -> GenerationOrigin | None:
         candidate = self.best(slot)
@@ -135,11 +178,27 @@ class ImageChainState(MediaChainState):
                 ),
                 None,
             )
+        if self._goal_enabled():
+            return max(
+                (
+                    candidate
+                    for candidate in self.candidates
+                    if candidate.slot == slot and self._passes_review(candidate)
+                ),
+                key=lambda candidate: candidate.score if candidate.score is not None else -1,
+                default=None,
+            )
         return super().best(slot)
 
     def needs_next(self, slot: int = 0) -> bool:
         if isinstance(self.inputs, SceneImageInput):
             return not self.stop_reason and self.next_index < len(self.providers) and self.best(slot) is None
+        if self._goal_enabled():
+            return (
+                not self.stop_reason
+                and self.next_index < len(self.providers)
+                and not self._passes_review(self.best(slot))
+            )
         return super().needs_next(slot)
 
     def finish(self, slots: int = 1) -> None:
@@ -147,6 +206,12 @@ class ImageChainState(MediaChainState):
             if not self.stop_reason:
                 self.stop_reason = (
                     "accepted" if all(self.best(slot) is not None for slot in range(slots)) else "exhausted"
+                )
+            self.phase = "complete"
+        elif self._goal_enabled():
+            if not self.stop_reason:
+                self.stop_reason = (
+                    "accepted" if all(self._passes_review(self.best(slot)) for slot in range(slots)) else "exhausted"
                 )
             self.phase = "complete"
         else:
@@ -323,7 +388,29 @@ async def _complete_images(
     if state.inputs is None:
         raise ImageGenerationError("图片任务缺少生成输入")
     selected = [candidate.path for slot in range(state.inputs.n) if (candidate := state.best(slot)) is not None]
+    if state.can_retry_goal_review() and (writer is not None or not selected):
+        state.phase = "evaluating"
+        await _save_progress(state, writer)
+        if selected:
+            return selected
+        message = (
+            "图片已生成，画面检查暂未完成，请稍后继续检查已有图片"
+            if writer is not None
+            else "图片已生成，但画面检查暂不可用，本次结果未交付"
+        )
+        raise ImageReviewUnavailableError(message)
     if not selected:
+        if (
+            isinstance(state.inputs, CharacterImageInput)
+            and state.inputs.goal_review == "required"
+            and state.candidates
+        ):
+            state.finish(state.inputs.n)
+            await _save_progress(state, writer)
+            if state.stop_reason == "goal_review_invalid":
+                raise ImageGenerationError("图片检查结果不完整，已取得的视觉决定已保留，不能重新判定")
+            if state.stop_reason != "result_unknown":
+                raise ImageGenerationError("图片未通过身份与画面要求检查，本次结果未交付")
         if state.stop_reason == "result_unknown":
             raise ImageGenerationError(
                 "图片生成结果未知，请核对供应商任务后再决定是否重做",
@@ -378,6 +465,8 @@ async def generate_character_images(
     secondary_reference_image: str | None = None,
     image_edit: bool = False,
     identity_text: str = "",
+    identity_reference_mode: Literal["primary", "portrait_and_outfit"] = "portrait_and_outfit",
+    goal_review: Literal["none", "required"] = "none",
     state: ImageChainState | None = None,
     save_progress: ImageProgressWriter | None = None,
     store_attempts: int = 3,
@@ -412,6 +501,13 @@ async def generate_character_images(
             raise ValueError("最接近分辨率的图片规划需要目标宽高")
         if image_edit and secondary_reference_image:
             raise ImageGenerationError("图像编辑不支持附加参考图，请改用重新生成")
+        if goal_review == "required":
+            if not reference_image or not identity_reference or reference_image != identity_reference:
+                raise ImageGenerationError("画面要求检查须使用非空的第一张生成参考作为身份基准")
+            try:
+                await require_image_goal_review_config(user_id, task)
+            except MissingLlmConfigError as exc:
+                raise ImageGenerationError(str(exc)) from exc
         state.inputs = CharacterImageInput(
             prompt=prompt,
             size=size,
@@ -421,6 +517,8 @@ async def generate_character_images(
             secondary_reference_image=secondary_reference_image,
             image_edit=image_edit,
             identity_reference=identity_reference,
+            identity_reference_mode=identity_reference_mode,
+            goal_review=goal_review,
             identity_text=identity_text,
             max_image_bytes=max_image_bytes,
             size_enforced=size_enforced,
@@ -531,6 +629,10 @@ async def generate_character_images(
         await _save_progress(state, save_progress)
     if not isinstance(state.inputs, CharacterImageInput):
         raise ImageGenerationError("图片任务类型与角色生成不符")
+    if state.inputs.identity_reference_mode != identity_reference_mode:
+        raise ImageGenerationError("图片任务的身份参考职责已变化")
+    if state.inputs.goal_review != "none" and state.inputs.reference_image != state.inputs.identity_reference:
+        raise ImageGenerationError("画面要求检查须使用第一张生成参考作为身份基准")
     return await _run_image_chain(
         state,
         user_id=user_id,
@@ -636,6 +738,10 @@ async def _run_image_chain(
     if inputs is None:
         raise ImageGenerationError("图片任务缺少生成输入")
     scene = isinstance(inputs, SceneImageInput)
+    review_only = state.can_retry_goal_review()
+    if review_only:
+        state.phase = "evaluating"
+        state.stop_reason = ""
     if state.phase == "submitting":
         state.stop_reason = "result_unknown"
         await _save_progress(state, save_progress)
@@ -769,6 +875,8 @@ async def _run_image_chain(
             if state.phase == "evaluating":
                 for candidate in state.candidates:
                     if candidate.evaluated:
+                        if state._goal_enabled() and candidate.path not in state.goal_reviews and not state.stop_reason:
+                            state.stop_reason = "goal_review_invalid"
                         continue
                     data, mime = await image_asset_bytes(candidate.path)
                     uri = await asyncio.to_thread(build_data_uri, data, mime)
@@ -778,9 +886,37 @@ async def _run_image_chain(
                         candidate.evaluated = True
                         candidate.result_json = json.dumps({"accepted": accepted, "reason": reason}, ensure_ascii=False)
                     else:
-                        if state.stop_reason == "score_unavailable":
+                        if state.stop_reason in ("score_unavailable", "goal_review_invalid"):
                             score = None
-                        elif secondary_uri:
+                        elif inputs.goal_review == "required":
+                            review = await review_character_image_goal(
+                                user_id,
+                                reference_uri or "",
+                                uri,
+                                secondary_uri=secondary_uri,
+                                generation_prompt=inputs.prompt,
+                                identity_reference_mode=inputs.identity_reference_mode,
+                                identity_text=inputs.identity_text,
+                                task=task,
+                                before_submit=before_submit,
+                            )
+                            score = review.score
+                            if review.goal is not None:
+                                state.goal_reviews[candidate.path] = review.goal
+                                state.goal_review_failures.pop(candidate.path, None)
+                            else:
+                                failure = review.failure or ImageGoalReviewFailure(status="invalid", score=score)
+                                state.goal_review_failures[candidate.path] = failure
+                                candidate.score = score
+                                if failure.status == "unavailable":
+                                    state.stop_reason = "goal_review_unavailable"
+                                    await _save_progress(state, save_progress)
+                                    return await _complete_images(state, save_progress)
+                                candidate.evaluated = True
+                                state.stop_reason = "goal_review_invalid"
+                                await _save_progress(state, save_progress)
+                                return await _complete_images(state, save_progress)
+                        elif secondary_uri and inputs.identity_reference_mode == "portrait_and_outfit":
                             score = await score_character_image_with_references(
                                 user_id,
                                 (identity_uri or "", secondary_uri),
@@ -802,6 +938,8 @@ async def _run_image_chain(
                     await _save_progress(state, save_progress)
                 state.phase = "ready"
                 await _save_progress(state, save_progress)
+                if review_only:
+                    return await _complete_images(state, save_progress)
             if state.stop_reason:
                 return await _complete_images(state, save_progress)
             if state.remaining_slots:

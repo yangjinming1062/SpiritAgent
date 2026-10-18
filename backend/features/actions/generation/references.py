@@ -176,13 +176,16 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
     if context.reference_alignment == "ready":
         return context
     outfit_reference = await run_blocking(_image_data_uri, _artifact_abs_path(pack.reference_path))
-    async with SESSION_LOCAL() as db:
-        avatar = await avatar_snapshot(db, pack.user_id, context.identity.avatar_id)
-    if avatar is None or not avatar.asset_url:
-        raise VideoPackStateError("头像形象无法读取")
-    portrait_source = await run_blocking(load_avatar_bytes_as_data_uri, avatar.asset_url)
-    if not portrait_source:
-        raise VideoPackStateError("头像形象无法读取")
+    if context.identity_reference_role == "fullbody":
+        identity_source = await run_blocking(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+    else:
+        async with SESSION_LOCAL() as db:
+            avatar = await avatar_snapshot(db, pack.user_id, context.identity.avatar_id)
+        if avatar is None or not avatar.asset_url:
+            raise VideoPackStateError("头像形象无法读取")
+        identity_source = await run_blocking(load_avatar_bytes_as_data_uri, avatar.asset_url)
+        if not identity_source:
+            raise VideoPackStateError("头像形象无法读取")
 
     async def save_progress(state: ImageChainState) -> None:
         context.reference_chain = state
@@ -198,9 +201,10 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
         pack.user_id,
         outfit_reference,
         context.identity,
-        "",
+        context.outfit_description,
         task=AiTaskKey.window_action,
-        identity_reference=portrait_source,
+        identity_reference=identity_source,
+        identity_reference_role=context.identity_reference_role,
         storage_directory=_pack_dir(pack),
         state=context.reference_chain,
         save_progress=save_progress,

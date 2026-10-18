@@ -99,7 +99,6 @@ ACTION_REVIEW_INSTRUCTIONS = """\
 - outfit_snapshot：该形象冻结的着装资料。该形象的参考图随请求一并提供，固定外形、穿着、已有配饰与可见结构均以图像为准，character_snapshot 的 profile 与着装文字仅补充相容信息；着装与动作不能改变图中的固定身份。
 - existing_actions：该形象现有的全部已就绪、可点播的表达动作，按与提案的词面相近度排序，超过 10 个时只保留最相近的 10 个；\
 含动作内容、适用与避免条件、时长、kind。similarity 只表示词面匹配，不是语义等价结论。为空表示该形象还没有表达动作。
-- validation_error（如有）：上次输出未通过的结构校验；重新评估原始资料并返回完整合规对象。
 
 评审的是 design 原案；本次输出不能修改设计，不得以想象中删减道具、改变动作后的版本作为批准依据。\
 综合以下维度作出 approve / reuse / defer / reject 结论，reason 只概括决定性的依据，无需逐项作答：
@@ -132,6 +131,12 @@ once 需要完整过程和自然收束，两者都可以是可复用能力。\
 只输出一个 JSON 对象，不要 Markdown 或额外字段：
 {"decision": "approve|reuse|defer|reject", "reason": "简要说明，不超过200字", "reuse_action_id": null}
 decision 为 reuse 时 reuse_action_id 必须是 existing_actions 中动作的整数 id；其余结论时 reuse_action_id 为 null。"""
+
+ACTION_REVIEW_REPAIR_INSTRUCTIONS = (
+    "\n保留 rejected_response 中合法的 decision、已有 reason 和有效复用目标，不重新评估动作是否值得制作。"
+    "只修复 JSON 语法和输出契约问题，不添加新的动作、判断依据或事实。"
+    "decision 为 reuse 时，reuse_action_id 只能取 original_input.existing_actions 中动作的 id；其余结论必须为 null。"
+)
 
 ACTION_IMAGE_DESCRIPTION_INSTRUCTIONS = (
     "根据提供的角色全身参考图和角色资料，为每个指定动作描述一张独立的角色姿态图片。"

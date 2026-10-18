@@ -50,7 +50,13 @@ from features.appearance.prompt_assembly import (
     describe_character_form,
     enhance_avatar_prompt,
 )
-from features.appearance.prompts import CHARACTER_CARD_EXTRACTION, EDIT_PRESERVE_AVATAR, EDIT_PRESERVE_FULLBODY
+from features.appearance.prompts import (
+    CHARACTER_CARD_BODY_EXTRACTION,
+    CHARACTER_CARD_EXTRACTION,
+    CHARACTER_CARD_PORTRAIT_EXTRACTION,
+    EDIT_PRESERVE_AVATAR,
+    EDIT_PRESERVE_FULLBODY,
+)
 from features.appearance.schemas import FullbodyCandidateResponse, ImageReviseMode
 from features.assets.lifecycle import cleanup_user_assets, enqueue_asset_cleanup
 from features.companion.persona_service import load_persona_definition
@@ -185,9 +191,10 @@ async def extract_card_features[F: BaseModel](
     schema = model.model_json_schema()
     schema["required"] = list(model.model_fields)
     source = "portrait" if model is PortraitFeatures else "body"
+    scope = CHARACTER_CARD_PORTRAIT_EXTRACTION if source == "portrait" else CHARACTER_CARD_BODY_EXTRACTION
     raw = await vision_chat(
         user_id,
-        CHARACTER_CARD_EXTRACTION,
+        scope + "\n\n" + CHARACTER_CARD_EXTRACTION,
         json.dumps({"source": source, "schema": schema}, ensure_ascii=False),
         reference_images=(uri,),
         before_submit=before_submit,

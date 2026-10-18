@@ -23,6 +23,7 @@ class PostPublicationResult(BaseModel):
         "failed",
         "blocked",
         "result_unknown",
+        "review_pending",
         "declined",
         "discarded",
     ]

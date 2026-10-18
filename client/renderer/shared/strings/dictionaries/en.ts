@@ -1072,7 +1072,8 @@ export const dict: Dictionary = {
       collapse: 'Show less',
       videoRecoveryHeading: 'Video posts awaiting review',
       videoRecoveryHint:
-        'These posts exceeded the wait limit and were not recreated or published. Check the original task, review any existing video, then publish or discard it. Adoption does not create narration.',
+        'The original video result or identity needs confirmation. These posts were not recreated or published. Review the video, then adopt or discard it. Adoption does not create narration.',
+      videoIdentityReviewPending: 'Identity needs confirmation; not published automatically',
       videoRecoveryLoadFailed: 'Could not load videos awaiting review. Refresh the posts page.',
       videoRecoveryStatuses: {
         pending: 'The original video task is still pending',

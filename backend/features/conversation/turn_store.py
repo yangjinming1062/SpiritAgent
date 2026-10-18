@@ -237,7 +237,9 @@ async def replace_assistant_message(
             raise ValueError("Previous reply is no longer available")
         reply = data.reply
         if reply is not None:
-            old_reply = CompanionReply.model_validate_json(old.reply_json) if old.reply_json else None
+            old_reply = (
+                CompanionReply.from_saved_snapshot(old.reply_json, old.content or "") if old.reply_json else None
+            )
             selected = {b.media_id for b in reply.bubbles if isinstance(b, MediaBubble)}
             if old_reply is not None and any(
                 isinstance(b, MediaBubble) and b.media_id not in selected for b in old_reply.bubbles

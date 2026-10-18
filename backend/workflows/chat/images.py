@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Literal, get_args
 from uuid import uuid4
 
@@ -59,6 +59,14 @@ class InspectionResult(BaseModel):
     issues: list[str] = Field(max_length=8)
 
 
+@dataclass(frozen=True)
+class ImageSlotResult:
+    status: Literal["ready", "failed", "result_unknown"]
+    url: str | None = None
+    score: int | None = None
+    error: str | None = None
+
+
 async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
     if request.subject != "self":
         return ImagePlan(
@@ -66,16 +74,18 @@ async def _freeze_plan(request: ImageRequest, user_id: int) -> ImagePlan:
             prompt=build_plain_image_prompt(request.prompt),
             size=request.aspect_ratio,
         )
-    visual = await load_self_visual_context(user_id)
+    use_outfit = not bool((request.outfit_override or "").strip())
+    visual = await load_self_visual_context(user_id, use_outfit_reference=use_outfit)
     plan = apply_outfit_override(visual, request.outfit_override)
     outfit = optional_outfit_image_reference(plan)
     return ImagePlan(
         request=request.model_dump_json(),
         prompt=build_self_image_prompt(plan, request.prompt, has_outfit_reference=bool(outfit)),
         size=request.aspect_ratio,
-        reference_image=visual.avatar_image,
+        reference_image=visual.identity_image,
         secondary_reference_image=outfit,
         identity_json=visual.identity.model_dump_json(),
+        identity_reference_mode="primary" if visual.identity_reference_role == "fullbody" else "portrait_and_outfit",
     )
 
 
@@ -85,9 +95,9 @@ async def _generate_batch(
     directory: str,
     task: AiTaskKey,
     n: int,
-) -> list[tuple[str | None, int | None, str | None]]:
-    """为同 request 的 n 张产出 per-slot (url, score, error)；硬失败整体抛出，由调用方按 request 落状态。"""
-    results: list[tuple[str | None, int | None, str | None]] = [(None, None, None)] * n
+) -> list[ImageSlotResult]:
+    """逐张保留就绪、失败与未知结果；硬失败整体抛出，由调用方按 request 落状态。"""
+    results = [ImageSlotResult("failed", error="图片生成失败，未取得可用候选") for _ in range(n)]
 
     async def request(count: int) -> list[str]:
         result = await generate_images(
@@ -105,25 +115,31 @@ async def _generate_batch(
     if identity is None:
         urls = await request(n)
         filled = min(len(urls), n)
-        results[:filled] = [(url, None, None) for url in urls[:filled]]
+        results[:filled] = [ImageSlotResult("ready", url=url) for url in urls[:filled]]
         # 供应商单次出图上限不同可能少给（gemini 忽略 n 等）；缺额先批量补齐，批量不可用再逐张兜底。
         index = filled
         while index < n:
             try:
                 retry = await request(n - index)
-            except ImageGenerationError:
+            except ImageGenerationError as exc:
+                if exc.result_unknown:
+                    results[index:] = [ImageSlotResult("result_unknown", error=str(exc)) for _ in range(index, n)]
+                    return results
                 retry = []
             got = min(len(retry), n - index)
-            results[index : index + got] = [(url, None, None) for url in retry[:got]]
+            results[index : index + got] = [ImageSlotResult("ready", url=url) for url in retry[:got]]
             index += got
             if got == 0:
                 for slot in range(index, n):
                     try:
                         single = await request(1)
                     except ImageGenerationError as exc:
-                        results[slot] = (None, None, str(exc))
+                        if exc.result_unknown:
+                            results[slot:] = [ImageSlotResult("result_unknown", error=str(exc)) for _ in range(slot, n)]
+                            return results
+                        results[slot] = ImageSlotResult("failed", error=str(exc))
                         continue
-                    results[slot] = (single[0], None, None)
+                    results[slot] = ImageSlotResult("ready", url=single[0])
                 break
         return results
     async with SESSION_LOCAL() as db:
@@ -139,6 +155,8 @@ async def _generate_batch(
         reference_image=plan.reference_image or "",
         secondary_reference_image=plan.secondary_reference_image,
         identity_reference=plan.reference_image or "",
+        identity_reference_mode=plan.identity_reference_mode,
+        goal_review="required",
         identity_text=render_character_identity(identity),
         state=state,
         task=task,
@@ -147,9 +165,10 @@ async def _generate_batch(
     for slot in range(n):
         best = state.best(slot)
         if best is None:
-            results[slot] = (None, None, "图片生成失败，未取得可用候选")
+            if state.stop_reason == "result_unknown":
+                results[slot] = ImageSlotResult("result_unknown", error="图片生成结果尚未确认，请勿重复提交")
             continue
-        results[slot] = (best.path, best.score, None)
+        results[slot] = ImageSlotResult("ready", url=best.path, score=best.score)
         delivered.append(best.path)
     async with SESSION_LOCAL() as db:
         current = await character_snapshot_is_current(db, user_id, identity)
@@ -161,10 +180,13 @@ async def _generate_batch(
 
 
 async def _generate(plan: ImagePlan, user_id: int, directory: str, task: AiTaskKey) -> tuple[str, int | None]:
-    url, score, error = (await _generate_batch(plan, user_id, directory, task, 1))[0]
-    if url is None:
-        raise ImageGenerationError(error or "图片生成服务没有返回图片")
-    return url, score
+    result = (await _generate_batch(plan, user_id, directory, task, 1))[0]
+    if result.status != "ready" or result.url is None:
+        raise ImageGenerationError(
+            result.error or "图片生成服务没有返回图片",
+            result_unknown=result.status == "result_unknown",
+        )
+    return result.url, result.score
 
 
 def _artifact_failure(exc: BaseException) -> tuple[str, str]:
@@ -247,7 +269,7 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
             return tool_error(
                 "本回合的图片请求已经提交，不再接受新的图片请求；需要多幅不同的画面须在同一步里一起提交，或下一回合再提出",
             )
-        if any(a.type == "image" and a.status == "result_unknown" for a in state.artifacts.values()):
+        if state.has_unknown_image_result():
             return tool_error("前一次图片生成的结果尚未核实，本轮不再提交新的图片生成")
         if state.image_budget_used + request.n > CHAT_IMAGES_PER_TURN:
             return tool_error(
@@ -291,11 +313,11 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
         except Exception as exc:
             _fail_all(artifacts, *_artifact_failure(exc))
             raise
-        for artifact, (url, score, error) in zip(artifacts, results):
-            if url is None or error is not None:
-                artifact.status, artifact.error = "failed", error or "图片生成服务没有返回图片"
+        for artifact, result in zip(artifacts, results):
+            if result.status != "ready" or result.url is None:
+                artifact.status, artifact.error = result.status, result.error or "图片生成服务没有返回图片"
                 continue
-            artifact.url, artifact.identity_score = url, score
+            artifact.url, artifact.identity_score = result.url, result.score
             artifact.status = "ready"
             state.required_goals.add(artifact.goal_id)
     finally:
@@ -305,12 +327,36 @@ async def generate_chat_images(arguments: dict, state: MediaTurnState) -> str:
     return _call_result(state, media_ids)
 
 
-def _inspection_result(inspection: MediaInspection) -> str:
-    next_step = (
-        "Redraw once with image_regenerate using this inspection_id and a specific correction, or deliver the image as is."
-        if inspection.verdict == "revise"
-        else "Nothing needs fixing; the image can be delivered as is."
-    )
+def _inspection_result(inspection: MediaInspection, state: MediaTurnState) -> str:
+    if inspection.verdict == "unavailable":
+        next_step = (
+            "The check did not produce a usable conclusion. It does not confirm the image is defect-free or authorize "
+            "a redraw. An already ready image can still be delivered, with the check's limitation stated accurately."
+        )
+    elif inspection.verdict == "pass":
+        next_step = "This check found no concrete defects. The ready image can be delivered as is."
+    else:
+        blocker = state.image_regeneration_blocker(inspection.media_id, inspection.inspection_id)
+        next_step = {
+            None: (
+                "Redraw once with image_regenerate using this inspection_id and a specific correction, "
+                "or deliver the ready image as is."
+            ),
+            "result_unknown": (
+                "An image generation outcome is still unverified. Do not submit any generation or redraw request; "
+                "deliver only versions already ready and report the unknown outcome."
+            ),
+            "quota": (
+                "This picture's one redraw has already been used. Choose one of its already ready versions; "
+                "do not redraw again."
+            ),
+            "stale": (
+                "This inspection describes an older version and does not authorize a redraw. "
+                "Choose an already ready version to deliver."
+            ),
+            "not_ready": "This image is not available for redraw. Only already ready images can be delivered.",
+            "inspection": "This inspection does not authorize a redraw. An already ready version can be delivered.",
+        }[blocker]
     return json.dumps({**asdict(inspection), "next": next_step}, ensure_ascii=False)
 
 
@@ -321,7 +367,7 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
             return tool_error("只能检查当前会话中已就绪的图片")
         prior = state.inspections.get(media_id)
         if prior is not None:
-            return _inspection_result(prior)
+            return _inspection_result(prior, state)
         parsed = parse_companion_asset_path(artifact.url)
         local = asset_store.resolve_companion_asset_path(*parsed) if parsed and parsed[0] == state.user_id else None
         if local is None:
@@ -346,7 +392,10 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
             )
             result = InspectionResult.model_validate(parse_llm_json(raw))
             issues = tuple(issue.strip()[:1000] for issue in result.issues if issue.strip())
-            verdict = result.verdict if result.verdict == "pass" or issues else "unavailable"
+            consistent = (result.verdict == "pass" and not issues) or (result.verdict == "revise" and bool(issues))
+            verdict = result.verdict if consistent else "unavailable"
+            if not consistent:
+                issues = ("验图结论与问题列表不一致，未取得有效验图结果，不据此重新生成",)
         except Exception:
             logger.warning(
                 "Image inspection unavailable",
@@ -356,21 +405,24 @@ async def inspect_chat_image(media_id: str, state: MediaTurnState) -> str:
             verdict, issues = "unavailable", ("未取得有效验图结果，不据此重新生成",)
         inspection = MediaInspection(uuid4().hex, media_id, verdict, issues)
         state.inspections[media_id] = inspection
-        return _inspection_result(inspection)
+        return _inspection_result(inspection, state)
 
 
 async def regenerate_chat_image(media_id: str, inspection_id: str, correction: str, state: MediaTurnState) -> str:
     async with state.lock:
-        artifact = state.artifacts.get(media_id)
-        inspection = state.inspections.get(media_id)
-        if artifact is None or artifact.type != "image" or artifact.status != "ready":
-            return tool_error("重做必须引用已成功生成的图片")
-        if not inspection or inspection.inspection_id != inspection_id or inspection.verdict != "revise":
-            return tool_error("需要实际验图发现具体问题后才能重做")
-        if state.current_versions.get(artifact.goal_id) != media_id or artifact.goal_id not in state.plans:
-            return tool_error("验图版本已过期，或图片不是本轮生成的产物")
-        if artifact.goal_id in state.regenerated_goals:
-            return tool_error("该图片本轮的一次重做额度已用完，请从已有版本中选择")
+        blocker = state.image_regeneration_blocker(media_id, inspection_id)
+        if blocker is not None:
+            return tool_error(
+                {
+                    "result_unknown": "前一次图片生成的结果尚未核实，本轮不再提交生成或重做请求",
+                    "not_ready": "重做必须引用已成功生成的图片",
+                    "inspection": "需要实际验图发现具体问题后才能重做",
+                    "quota": "该图片本轮的一次重做额度已用完，请从已有就绪版本中选择",
+                    "stale": "验图版本已过期，或图片不是本轮生成的产物",
+                }[blocker],
+            )
+        artifact = state.artifacts[media_id]
+        inspection = state.inspections[media_id]
         if not correction.strip():
             return tool_error("请说明针对验图问题的修改要求")
         state.regenerated_goals.add(artifact.goal_id)

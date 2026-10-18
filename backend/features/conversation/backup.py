@@ -1,5 +1,6 @@
 """模块拥有的备份表、校验与恢复操作。"""
 
+import json
 from collections import defaultdict
 from datetime import datetime
 from functools import partial
@@ -18,7 +19,7 @@ from features.topics.store import validate_restored_topic_cards
 
 from .context_window import CHECKPOINT_SUBTYPE
 from .models import Conversation, Message
-from .replies import CompanionReply, CompanionReplyInput, LinkBubble, LinkBubbleInput, MediaBubble
+from .replies import CompanionReply, LinkBubble, MediaBubble
 
 
 def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: BackupContext) -> None:
@@ -53,20 +54,20 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
     if table == "messages" and payload.get("reply_json"):
         if payload.get("media_json"):
             raise ValueError("Structured replies cannot contain separate media attachments")
-        reply = CompanionReply.model_validate_json(payload["reply_json"])
+        reply = CompanionReply.from_saved_snapshot(payload["reply_json"], payload.get("content") or "")
         reply.topic_context_at = None
-        source = CompanionReplyInput.model_validate_json(payload.get("content") or "")
+        source = json.loads(payload.get("content") or "")
         topic_ids = set(reply.used_topic_ids)
         topic_ids.update(b.topic_id for b in reply.bubbles if isinstance(b, LinkBubble))
         topic_map = context.id_map.get("companion_topics", {})
         if any(str(topic_id) not in topic_map for topic_id in topic_ids):
             raise ValueError("A shared topic source is missing from backup")
         reply.used_topic_ids = [int(topic_map[str(topic_id)]) for topic_id in reply.used_topic_ids]
-        for bubble in source.root:
-            if isinstance(bubble, LinkBubbleInput):
-                if str(bubble.topic_id) not in topic_map:
+        for bubble in source:
+            if bubble["type"] == "link":
+                if str(bubble["topic_id"]) not in topic_map:
                     raise ValueError("A shared topic source is missing from backup")
-                bubble.topic_id = int(topic_map[str(bubble.topic_id)])
+                bubble["topic_id"] = int(topic_map[str(bubble["topic_id"])])
         for bubble in reply.bubbles:
             if isinstance(bubble, LinkBubble):
                 bubble.topic_id = int(topic_map[str(bubble.topic_id)])
@@ -75,8 +76,8 @@ def _prepare(table: str, raw: dict[str, Any], payload: dict[str, Any], context: 
                 if bubble.status == "pending":
                     bubble.status, bubble.url, bubble.error = "failed", None, "恢复的生成任务不可继续，请重新提出请求"
         # 保留原文缺省字段，避免把供应商默认列表和速度补成 null。
-        payload["content"] = source.model_dump_json(exclude_unset=True)
-        reply.validate_content(payload["content"])
+        payload["content"] = json.dumps(source, ensure_ascii=False)
+        reply = CompanionReply.from_saved_snapshot(reply.model_dump_json(), payload["content"])
         payload["reply_json"] = reply.model_dump_json()
 
 
@@ -220,7 +221,7 @@ async def _restore_context(db: AsyncSession, rows: BackupRows, context: BackupCo
         message = await db.get(Message, int(message_id))
         if message is None or not message.reply_json:
             continue
-        reply = CompanionReply.model_validate_json(message.reply_json)
+        reply = CompanionReply.from_saved_snapshot(message.reply_json, message.content or "")
         cards = [
             TopicCardSnapshot.model_validate(bubble.model_dump())
             for bubble in reply.bubbles

@@ -192,7 +192,7 @@ class ChatProvider(BaseProvider):
                     },
                 },
             }
-        return {"text": {"format": {"type": "json_object"}}} if self.supports_json_object else {}
+        return {"text": {"format": {"type": "json_object"}}} if self.supports_json_object and not allow_tools else {}
 
 
 @dataclass(frozen=True)

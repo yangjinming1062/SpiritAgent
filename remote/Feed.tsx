@@ -270,13 +270,15 @@ function Posts({
             <section className="recovery-item" key={item.publication_id}>
               <strong>{item.title || '视频动态'}</strong>
               <span className="pill">
-                {item.video_status === 'pending'
-                  ? '制作中'
-                  : item.video_status === 'unknown'
-                    ? '等待确认'
-                    : item.video_status === 'ready'
-                      ? '已就绪'
-                      : '制作失败'}
+                {item.status === 'review_pending'
+                  ? '身份待确认，未自动发布'
+                  : item.video_status === 'pending'
+                    ? '制作中'
+                    : item.video_status === 'unknown'
+                      ? '等待确认'
+                      : item.video_status === 'ready'
+                        ? '已就绪'
+                        : '制作失败'}
               </span>
               {item.media_url ? (
                 <Media

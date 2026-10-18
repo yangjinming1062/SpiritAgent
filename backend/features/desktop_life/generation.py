@@ -1,6 +1,7 @@
 """桌面生活视频制作；冻结输入并凭供应商句柄、源文件和候选恢复。"""
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from fractions import Fraction
@@ -55,7 +56,8 @@ from features.appearance.character_card import (
     require_character_snapshot,
 )
 from features.appearance.onboarding import initial_outfit
-from features.appearance.queries import avatar_snapshot, ready_outfit_snapshot
+from features.appearance.queries import avatar_snapshot, outfit_identity_matches, ready_outfit_snapshot
+from features.appearance.visual_identity import align_character_reference
 from features.assets.lifecycle import cleanup_asset_directories_after_task
 from features.companion.disturbance import get_disturbance_tier
 from features.companion.persona_service import load_persona_definition
@@ -82,6 +84,7 @@ from features.desktop_life.prompts import (
     DESKTOP_VIDEO_REFINE_SCORE,
     DESKTOP_VIDEO_REVIEW,
     DESKTOP_VIDEO_SCORE,
+    desktop_source_reference_prompt,
 )
 from features.desktop_life.repository import (
     DesktopVideoStateError,
@@ -171,8 +174,10 @@ class DesktopCandidateResult(BaseModel):
 def desktop_progress_has_unknown_submission(progress: DesktopVideoProgress) -> bool:
     if progress.submission_unknown:
         return True
-    if progress.image_chain_json:
-        image = ImageChainState.model_validate_json(progress.image_chain_json)
+    for chain_json in (progress.reference_alignment_chain_json, progress.image_chain_json):
+        if not chain_json:
+            continue
+        image = ImageChainState.model_validate_json(chain_json)
         if image.phase == "submitting" or image.stop_reason == "result_unknown":
             return True
     if progress.video_chain_json and not progress.provider_task_id:
@@ -189,7 +194,16 @@ def _queued_video_request(progress: DesktopVideoProgress) -> str | None:
 
 
 def _unknown_submission_message(progress: DesktopVideoProgress) -> str:
-    if progress.image_only:
+    alignment = (
+        ImageChainState.model_validate_json(progress.reference_alignment_chain_json)
+        if progress.reference_alignment_chain_json
+        else None
+    )
+    if (
+        progress.image_only
+        or alignment is not None
+        and (alignment.phase == "submitting" or alignment.stop_reason == "result_unknown")
+    ):
         return "图片提交结果不确定，请先核对结果或放弃本次制作，系统没有自动重试"
     return video_failure_message("result_unknown")
 
@@ -234,7 +248,30 @@ def desktop_progress_can_resume(progress: DesktopVideoProgress) -> bool:
         return True
     if progress.image_chain_json:
         image = ImageChainState.model_validate_json(progress.image_chain_json)
-        return bool(image.candidates or image.pending_urls or image.pending_path)
+        return bool(
+            image.candidates
+            or image.pending_urls
+            or image.pending_path
+            or image.inputs is not None
+            and image.phase == "ready"
+            and not image.stop_reason
+            and image.next_index < len(image.providers),
+        )
+    if progress.aligned_outfit_path:
+        return True
+    if progress.reference_alignment_chain_json:
+        alignment = ImageChainState.model_validate_json(progress.reference_alignment_chain_json)
+        return alignment.can_retry_goal_review() or bool(
+            alignment.best()
+            or alignment.pending_urls
+            or alignment.pending_path
+            or alignment.inputs is None
+            and not alignment.stop_reason
+            or alignment.inputs is not None
+            and alignment.phase == "ready"
+            and not alignment.stop_reason
+            and alignment.next_index < len(alignment.providers),
+        )
     return False
 
 
@@ -283,6 +320,9 @@ async def load_desktop_visual_snapshot(
         identity_hash=identity_hash,
         portrait_path=avatar.asset_url,
         portrait_hash=portrait_hash,
+        identity_reference_role=(
+            "portrait" if outfit_identity_matches(outfit.source_json, avatar.seed_fullbody_url) else "fullbody"
+        ),
         outfit_id=outfit.id,
         outfit_path=outfit.fullbody_url,
         outfit_hash=outfit_hash,
@@ -417,11 +457,88 @@ async def _save_progress(user_id: int, action_id: int, progress: DesktopVideoPro
 
 
 async def _references(snapshot: DesktopVisualSnapshot) -> tuple[str, str]:
-    portrait = await asyncio.to_thread(read_valid_image_data_uri, snapshot.portrait_path)
+    portrait = await asyncio.to_thread(read_valid_image_data_uri, snapshot.primary_reference_path)
     outfit = await asyncio.to_thread(read_valid_image_data_uri, snapshot.outfit_path)
     if not portrait or not outfit:
         raise DesktopVideoStateError("画面的参考图片无法读取")
     return portrait, outfit
+
+
+def _alignment_source_hash(snapshot: DesktopVisualSnapshot) -> str:
+    source = {
+        "identity_hash": snapshot.identity_hash,
+        "identity": snapshot.identity.model_dump(mode="json", exclude={"avatar_id"}),
+        "outfit_hash": snapshot.outfit_hash,
+        "outfit_description": snapshot.outfit_description,
+        "identity_reference_role": snapshot.identity_reference_role,
+    }
+    return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+async def _aligned_outfit_reference(
+    user_id: int,
+    action_id: int,
+    snapshot: DesktopVisualSnapshot,
+    progress: DesktopVideoProgress,
+    directory: str,
+    identity_uri: str,
+    outfit_uri: str,
+) -> str:
+    source_hash = _alignment_source_hash(snapshot)
+    if progress.reference_alignment_source_hash is None:
+        progress.reference_alignment_source_hash = source_hash
+    elif progress.reference_alignment_source_hash != source_hash:
+        raise DesktopVideoStateError("桌景参考对齐的冻结来源已变化")
+    state = ImageChainState.model_validate_json(progress.reference_alignment_chain_json or "{}")
+    if state.phase == "submitting" or state.stop_reason == "result_unknown":
+        raise ImageGenerationError(_unknown_submission_message(progress), result_unknown=True)
+    if state.inputs is not None and getattr(state.inputs, "goal_review", None) != "required":
+        raise DesktopVideoStateError("桌景参考对齐缺少画面检查约束")
+    if (
+        await asyncio.to_thread(_asset_hash, snapshot.identity_path) != snapshot.identity_hash
+        or await asyncio.to_thread(_asset_hash, snapshot.outfit_path) != snapshot.outfit_hash
+    ):
+        raise DesktopVideoStateError("桌景参考对齐的来源图片与冻结内容不一致")
+    if progress.aligned_outfit_path:
+        selected = state.best()
+        if state.phase != "complete" or selected is None or selected.path != progress.aligned_outfit_path:
+            raise DesktopVideoStateError("桌景派生造型参考缺少已通过的对齐结果")
+        if await asyncio.to_thread(_asset_hash, progress.aligned_outfit_path) != progress.aligned_outfit_hash:
+            raise DesktopVideoStateError("桌景派生造型参考与冻结内容不一致")
+        reference = await asyncio.to_thread(read_valid_image_data_uri, progress.aligned_outfit_path)
+        if not reference:
+            raise DesktopVideoStateError("桌景派生造型参考无法读取")
+        return reference
+
+    async def save_alignment(value: ImageChainState) -> None:
+        progress.reference_alignment_chain_json = value.model_dump_json()
+        await _save_progress(user_id, action_id, progress, stage="image")
+
+    async def before_submit() -> None:
+        await _require_active_job(user_id, action_id, progress.generation_id)
+
+    await save_alignment(state)
+    path = await align_character_reference(
+        user_id,
+        outfit_uri,
+        snapshot.identity,
+        snapshot.outfit_description,
+        task=AiTaskKey.desktop_life,
+        identity_reference=identity_uri,
+        identity_reference_role="fullbody",
+        storage_directory=directory,
+        state=state,
+        save_progress=save_alignment,
+        before_submit=before_submit,
+        selection=progress.image_selection,
+    )
+    progress.aligned_outfit_path = path
+    progress.aligned_outfit_hash = await asyncio.to_thread(_asset_hash, path)
+    await _save_progress(user_id, action_id, progress, stage="image")
+    reference = await asyncio.to_thread(read_valid_image_data_uri, path)
+    if not reference:
+        raise DesktopVideoStateError("桌景派生造型参考无法读取")
+    return reference
 
 
 def _frame_bytes(
@@ -699,10 +816,25 @@ async def _prepare_pose(
         prompt = DESKTOP_POSE_EDIT_TEMPLATE.format(feedback=progress.feedback, aspect_ratio=progress.aspect_ratio)
     else:
         portrait, outfit = await _references(snapshot)
+        if (
+            snapshot.identity_reference_role == "fullbody"
+            and progress.source != "external_upload"
+            and not progress.image_chain_json
+        ):
+            outfit = await _aligned_outfit_reference(
+                user_id,
+                action.id,
+                snapshot,
+                progress,
+                directory,
+                portrait,
+                outfit,
+            )
         pose = progress.action_description
         if progress.feedback:
             pose += "\n本次画面要求：" + progress.feedback
         prompt = DESKTOP_POSE_IMAGE_TEMPLATE.format(
+            references=desktop_source_reference_prompt(snapshot.identity_reference_role),
             pose=pose,
             environment=snapshot.scene_description,
             outfit=snapshot.outfit_description,
@@ -726,6 +858,9 @@ async def _prepare_pose(
         reference_image=portrait,
         secondary_reference_image=outfit,
         identity_reference=portrait,
+        identity_reference_mode=(
+            "primary" if not editing and snapshot.identity_reference_role == "fullbody" else "portrait_and_outfit"
+        ),
         identity_text="" if editing else render_character_identity(snapshot.identity),
         image_edit=editing,
         size=f"{progress.frame_width or progress.target_width}x{progress.frame_height or progress.target_height}",
