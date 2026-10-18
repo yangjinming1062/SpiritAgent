@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from infrastructure.ai.error_classifier import LlmCallBlockedError
 from infrastructure.ai.llm_client import build_provider, resolve_provider_chain, resolve_vision_chain
-from infrastructure.ai.prompt_engineer import vision_chat
+from infrastructure.ai.prompt_engineer import VisualReasoningError, vision_chat, vision_chat_json
 from infrastructure.ai.providers.base import ServiceType, VideoGenProvider, VideoGenRequest
 from infrastructure.ai.selection import ProviderSelection, has_provider_selection, order_provider_chain
 from infrastructure.ai.tasks import AiTaskKey
@@ -44,7 +44,7 @@ from infrastructure.video_processing.desktop import (
 )
 from infrastructure.video_processing.ffmpeg import VideoProcessError, VideoToolUnavailableError
 from PIL import Image, ImageOps
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from runtime.paid_work import GenerationWorkPaused, require_new_generation_call
 from runtime.user_maintenance import track_user_task
 from sqlalchemy import select
@@ -170,17 +170,34 @@ def set_desktop_update_handler(handler: Callable[[int, int], Awaitable[None]]) -
 
 class DesktopVideoScript(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    feasible: bool
+    feasible: bool = Field(strict=True)
     reason: str = Field(max_length=200)
     motion_prompt: str = Field(max_length=2000)
     visual_description: str = Field(max_length=1500)
-    failure_kind: Literal["image", "duration", "unsupported"] | None = None
+    failure_kind: Literal["image", "duration", "unsupported", None] = None
     minimum_duration_seconds: int | None = Field(default=None, gt=0, le=600, strict=True)
+
+    @model_validator(mode="after")
+    def valid_motion(self) -> "DesktopVideoScript":
+        if self.feasible:
+            if (
+                not self.motion_prompt.strip()
+                or self.failure_kind is not None
+                or self.minimum_duration_seconds is not None
+            ):
+                raise ValueError("可实现的活动须提供运动描述，失败类型与所需时长须为空")
+        elif (
+            self.motion_prompt.strip()
+            or self.failure_kind is None
+            or (self.failure_kind == "duration") != (self.minimum_duration_seconds is not None)
+        ):
+            raise ValueError("不可实现的活动须说明失败类型，仅时长不足时提供所需时长，运动描述须为空")
+        return self
 
 
 class DesktopVideoReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    verdict: str = Field(pattern=r"^(pass|review)$")
+    verdict: Literal["pass", "review"]
     reason: str = Field(max_length=500)
 
 
@@ -1052,6 +1069,7 @@ async def _prepare_motion(
 ) -> None:
     if progress.motion_prompt:
         return
+    await _save_progress(user_id, action.id, progress, stage="motion")
     pose = await asyncio.to_thread(read_valid_image_data_uri, progress.pose_path)
     if not pose:
         raise DesktopVideoStateError("已确认的起始画面无法读取")
@@ -1059,31 +1077,30 @@ async def _prepare_motion(
     async def before_submit() -> None:
         await _require_active_job(user_id, action.id, progress.generation_id)
 
-    raw = await vision_chat(
+    script = await vision_chat_json(
         user_id,
         DESKTOP_ACTION_DESIGN,
-        json.dumps(
-            {
-                "persona": snapshot.persona,
-                "action": progress.action_description,
-                "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
-                "kind": action.kind,
-                "quiet_companionship": action.key == "idle",
-                "duration_seconds": progress.duration_seconds,
-                "feedback": progress.feedback,
-                "video_feedback": progress.video_feedback,
-                "customization_priority": progress.customization_priority,
-                "continuity": progress.continuity,
-                "use_when": json.loads(action.use_when_json),
-                "avoid_when": json.loads(action.avoid_when_json),
-            },
-            ensure_ascii=False,
-        ),
+        {
+            "persona": snapshot.persona,
+            "action": progress.action_description,
+            "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
+            "kind": action.kind,
+            "quiet_companionship": action.key == "idle",
+            "duration_seconds": progress.duration_seconds,
+            "feedback": progress.feedback,
+            "video_feedback": progress.video_feedback,
+            "customization_priority": progress.customization_priority,
+            "continuity": progress.continuity,
+            "use_when": json.loads(action.use_when_json),
+            "avoid_when": json.loads(action.avoid_when_json),
+        },
+        response_model=DesktopVideoScript,
+        schema_name="desktop_motion_script",
+        preserve_choices=("feasible", "failure_kind"),
         reference_images=(pose,),
         before_submit=before_submit,
         task=AiTaskKey.desktop_life,
     )
-    script = DesktopVideoScript.model_validate(parse_llm_json(raw))
     if not script.feasible or not script.motion_prompt.strip():
         raise DesktopMotionError(script)
     progress.motion_prompt = script.motion_prompt
@@ -1295,18 +1312,17 @@ async def _evaluate_candidate(
                         "continuity": progress.continuity,
                     },
                 )
-            raw = await vision_chat(
+            review = await vision_chat_json(
                 user_id,
                 DESKTOP_VIDEO_REFINE_REVIEW if progress.video_refinement else DESKTOP_VIDEO_REVIEW,
-                json.dumps(
-                    review_payload,
-                    ensure_ascii=False,
-                ),
+                review_payload,
+                response_model=DesktopVideoReview,
+                schema_name="desktop_video_review",
+                preserve_choices=("verdict",),
                 reference_images=(*references, *uris),
                 before_submit=before_submit,
                 task=AiTaskKey.desktop_life,
             )
-            review = DesktopVideoReview.model_validate(parse_llm_json(raw))
             progress.review_verdict, progress.review_reason = review.verdict, review.reason
         except LlmCallBlockedError:
             raise
@@ -1430,6 +1446,27 @@ async def _pause_desktop_job(
         await db.commit()
 
 
+def _desktop_job_error(exc: Exception, progress: DesktopVideoProgress, *, stage: str) -> str:
+    if progress.submission_unknown:
+        return _unknown_submission_message(progress)
+    if isinstance(exc, (DesktopVideoStateError, VideoProcessError, ImageGenerationError, VideoQueueStoppedError)):
+        return str(exc)
+    phase = {
+        "planning": "安排活动",
+        "repairing": "完善画面",
+        "checking": "检查画面",
+        "image": "制作画面",
+        "motion": "设计视频动作",
+        "video": "制作视频",
+        "download": "下载视频",
+        "process": "处理视频",
+        "review": "检查视频",
+    }.get(stage, "准备素材")
+    if isinstance(exc, VisualReasoningError):
+        return f"{phase}未完成：{exc}"
+    return f"{phase}时发生异常，已保留当前进度，可点击“再试一次”继续。"
+
+
 async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: bool = True) -> None:
     generation_id = ""
     directory = ""
@@ -1548,7 +1585,7 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     if progress.motion_replan_count or minimum is None or minimum > 15:
                         raise DesktopCreationError(str(exc), "activity_unsupported") from exc
                     progress.motion_replan_count = 1
-                    await _save_progress(user_id, action_id, progress, stage="planning")
+                    await _save_progress(user_id, action_id, progress, stage="motion")
                     try:
                         seconds, providers = await resolve_desktop_video_plan(
                             user_id,
@@ -1893,32 +1930,9 @@ async def _run_desktop_job(user_id: int, action_id: int, *, allow_model_steps: b
                     if saved.provider_task_id or saved.source_path or saved.candidate
                     else "failed"
                 )
-                restored_image = bool(
-                    saved.previous_pose_path
-                    and not saved.pose_path
-                    and not saved.submission_unknown
-                    and not saved.expand_image
-                    and saved.creation_plan is None,
-                )
-                if restored_image:
-                    saved.pose_path = saved.previous_pose_path
-                    saved.image_origin = saved.previous_image_origin
-                    saved.image_confirmed = False
-                    saved.image_only = True
                 row.generation_state_json = saved.model_dump_json()
-                row.status = "review_pending" if restored_image else "failed"
-                if restored_image:
-                    row.stage = "image_review"
-                row.error = (
-                    _unknown_submission_message(saved)
-                    if saved.submission_unknown
-                    else str(exc)
-                    if isinstance(
-                        exc,
-                        (DesktopVideoStateError, VideoProcessError, ImageGenerationError, VideoQueueStoppedError),
-                    )
-                    else "视频制作失败，请查看状态后重试"
-                )
+                row.status = "failed"
+                row.error = _desktop_job_error(exc, saved, stage=row.stage)
                 await touch_desktop_state(db, user_id)
                 await db.commit()
     finally:

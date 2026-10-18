@@ -6,7 +6,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
-from infrastructure.ai.prompt_engineer import vision_chat
+from infrastructure.ai.prompt_engineer import vision_chat_json
 from infrastructure.ai.tasks import AiTaskKey
 from infrastructure.assets.asset_store import (
     build_data_uri,
@@ -14,8 +14,7 @@ from infrastructure.assets.asset_store import (
     read_valid_image_data_uri,
     resolve_asset_reference,
 )
-from infrastructure.text import parse_llm_json
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from features.desktop_life.prompts import DESKTOP_CREATION_PLAN, DESKTOP_OPENING_REPAIR, desktop_source_reference_prompt
 from features.desktop_life.repository import DesktopVideoStateError
@@ -44,6 +43,12 @@ class _CreationDecision(BaseModel):
     reason: str = Field(max_length=200)
     plan: DesktopCreationPlan | None
 
+    @model_validator(mode="after")
+    def valid_plan(self) -> "_CreationDecision":
+        if self.supported != (self.plan is not None):
+            raise ValueError("支持活动时必须提供计划，不支持时计划须为空")
+        return self
+
 
 class _OpeningRepair(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -70,40 +75,37 @@ async def ensure_creation_plan(
     images = tuple(await asyncio.gather(*(asyncio.to_thread(read_valid_image_data_uri, path) for path in paths)))
     if not all(images):
         raise DesktopVideoStateError("活动参考画面无法读取，请重新准备素材")
-    raw = await vision_chat(
+    decision = await vision_chat_json(
         user_id,
         DESKTOP_CREATION_PLAN,
-        json.dumps(
-            {
-                "reference_mode": "opening" if opening else "sources",
-                "reference_roles": desktop_source_reference_prompt(
-                    snapshot.identity_reference_role,
-                    include_scene=True,
-                ),
-                "persona": snapshot.persona,
-                "environment": snapshot.scene_description,
-                "action": progress.action_description,
-                "feedback": progress.feedback,
-                "video_feedback": progress.video_feedback,
-                "customization_priority": progress.customization_priority,
-                "kind": kind,
-                "duration_seconds": progress.duration_seconds,
-                "continuity": progress.continuity,
-            },
-            ensure_ascii=False,
-        ),
+        {
+            "reference_mode": "opening" if opening else "sources",
+            "reference_roles": desktop_source_reference_prompt(
+                snapshot.identity_reference_role,
+                include_scene=True,
+            ),
+            "persona": snapshot.persona,
+            "environment": snapshot.scene_description,
+            "action": progress.action_description,
+            "feedback": progress.feedback,
+            "video_feedback": progress.video_feedback,
+            "customization_priority": progress.customization_priority,
+            "kind": kind,
+            "duration_seconds": progress.duration_seconds,
+            "continuity": progress.continuity,
+        },
+        response_model=_CreationDecision,
+        schema_name="desktop_creation_plan",
+        preserve_choices=("supported",),
         reference_images=images,
         before_submit=before_submit,
         task=AiTaskKey.desktop_life,
     )
-    decision = _CreationDecision.model_validate(parse_llm_json(raw))
     if not decision.supported:
         raise DesktopCreationError(
             decision.reason or "当前角色或环境不适合这个活动，请选择其他活动",
             "activity_unsupported",
         )
-    if decision.plan is None:
-        raise DesktopCreationError("活动计划暂未准备好，可以重试", "planning_unavailable")
     progress.creation_plan = decision.plan
     progress.motion_prompt = ""
 
@@ -121,25 +123,24 @@ async def ensure_opening_repair(
     image = await asyncio.to_thread(read_valid_image_data_uri, reference_path)
     if not image:
         raise DesktopVideoStateError("修复参考画面无法读取")
-    raw = await vision_chat(
+    repair = await vision_chat_json(
         user_id,
         DESKTOP_OPENING_REPAIR,
-        json.dumps(
-            {
-                "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
-                "user_requirements": progress.feedback,
-                "video_feedback": progress.video_feedback,
-                "customization_priority": progress.customization_priority,
-                "review_reason": progress.repair_reason,
-                "reference_role": "opening" if progress.previous_pose_path else "identity",
-            },
-            ensure_ascii=False,
-        ),
+        {
+            "creation_plan": progress.creation_plan.model_dump() if progress.creation_plan else None,
+            "user_requirements": progress.feedback,
+            "video_feedback": progress.video_feedback,
+            "customization_priority": progress.customization_priority,
+            "review_reason": progress.repair_reason,
+            "reference_role": "opening" if progress.previous_pose_path else "identity",
+        },
+        response_model=_OpeningRepair,
+        schema_name="desktop_opening_repair",
         reference_images=(image,),
         before_submit=before_submit,
         task=AiTaskKey.desktop_life,
     )
-    progress.repair_description = _OpeningRepair.model_validate(parse_llm_json(raw)).opening_description
+    progress.repair_description = repair.opening_description
 
 
 def opening_requirements(progress: DesktopVideoProgress) -> str:

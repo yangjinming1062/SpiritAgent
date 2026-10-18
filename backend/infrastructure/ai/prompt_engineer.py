@@ -274,9 +274,10 @@ async def call_llm_json[T](
     discriminator_choices = _schema_discriminator_choices(schema)
     explicit_choices: dict[str, list[Any]] = {}
     for name in preserve_choices:
-        values = schema.get("properties", {}).get(name, {}).get("enum")
+        field = schema.get("properties", {}).get(name, {})
+        values = [False, True] if field.get("type") == "boolean" else field.get("enum")
         if not isinstance(values, list) or not values:
-            raise ValueError(f"Preserved choice {name!r} must be a root enum field")
+            raise ValueError(f"Preserved choice {name!r} must be a root enum or boolean field")
         explicit_choices[name] = values
     if any(not isinstance(uri, str) or not uri for uri in reference_images):
         raise ValueError("Visual structured output requires readable reference images")
@@ -462,6 +463,59 @@ async def call_llm_json[T](
             return result
 
     return await execute_with_fallback(llm_cfg.chain, ChatProvider, call, user_id=llm_cfg.user_id)
+
+
+async def vision_chat_json[T: BaseModel](
+    user_id: int | None,
+    system_prompt: str,
+    user_payload: Any,
+    *,
+    response_model: type[T],
+    schema_name: str,
+    task: AiTaskKey,
+    reference_images: tuple[str, ...],
+    preserve_choices: tuple[str, ...] = (),
+    before_submit: Callable[[], Awaitable[None]] | None = None,
+) -> T:
+    """视觉结构输出沿用一次格式校正与供应商回退，校正不重新判断图片。"""
+    if not reference_images or any(not uri for uri in reference_images):
+        raise ValueError("visual reasoning requires readable reference images")
+    async with SESSION_LOCAL() as chain_db:
+        chain = await resolve_vision_chain(chain_db, user_id, task=task)
+    if not chain:
+        raise VisualReasoningError("视觉分析服务未配置，请联系管理员")
+    diagnostics: list[LlmAttemptDiagnostic] = []
+    try:
+        return await call_llm_json(
+            UserLlmConfig(chain[0], tuple(chain[1:]), user_id),
+            system_prompt,
+            user_payload,
+            schema=response_model.model_json_schema(),
+            schema_name=schema_name,
+            parse_output=response_model.model_validate,
+            repair_prompt="",
+            reference_images=reference_images,
+            preserve_choices=preserve_choices,
+            before_call=before_submit,
+            diagnostics=diagnostics,
+        )
+    except LlmCallBlockedError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "visual structured reasoning failed",
+            extra={"user_id": user_id, "schema_name": schema_name},
+            exc_info=True,
+        )
+        validation = diagnostics[-1].validation if diagnostics else None
+        message = (
+            "模型返回的分析结果格式不符合要求，自动校正后仍未通过，请重试"
+            if validation in {"invalid_json", "invalid_contract"}
+            else "模型未返回完整的分析结果，请重试"
+            if validation in {"unexpected_output", "empty_output", "incomplete"}
+            else "视觉分析服务调用失败，请稍后重试"
+        )
+        raise VisualReasoningError(message) from exc
 
 
 async def vision_chat(

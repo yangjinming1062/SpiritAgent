@@ -7,6 +7,15 @@ export function isActionPaused(action: DesktopVideoAction): boolean {
   return action.status === 'processing' && action.stage === 'paused'
 }
 
+export function desktopLifeCreationStage(
+  action: DesktopVideoAction,
+  t: ReturnType<typeof useDesktopLifeStrings>
+): string {
+  const stages: Record<string, string> = t.creationStages
+
+  return stages[action.stage] ?? t.creationStages.prepare
+}
+
 export function desktopLifeActionStatus(
   action: DesktopVideoAction,
   t: ReturnType<typeof useDesktopLifeStrings>,
@@ -51,7 +60,7 @@ export function desktopLifeActionStatus(
       return t.processingVideo
     }
 
-    return action.stage === 'video' ? t.generatingVideo : t.preparing
+    return action.stage === 'video' || action.stage === 'motion' ? t.generatingVideo : t.preparing
   }
 
   if (action.status === 'failed') {

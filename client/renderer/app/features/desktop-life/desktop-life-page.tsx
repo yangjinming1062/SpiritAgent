@@ -71,7 +71,7 @@ import { DesktopLifeReferences } from './desktop-life-materials'
 import { DesktopLifeCover, DesktopLifePreview, type DesktopLifePreviewStatus } from './desktop-life-preview'
 import { DesktopLifeDisplayPicker, DesktopLifeRecommendation, resolutionLabel } from './desktop-life-resolution'
 import { $desktopLifeUi, newDesktopLifeCreation, updateDesktopLifeUi } from './desktop-life-state'
-import { desktopLifeActionStatus, isActionPaused } from './desktop-life-status'
+import { desktopLifeActionStatus, desktopLifeCreationStage, isActionPaused } from './desktop-life-status'
 import { useDesktopLifeStrings } from './desktop-life-strings'
 import styles from './desktop-life.module.css'
 
@@ -1158,6 +1158,7 @@ export function DesktopLifePage({
       return {
         kind: 'error',
         title: t.statuses.failed,
+        phase: desktopLifeCreationStage(item, t),
         description:
           item.draft?.recovery_action === 'choose_activity'
             ? t.chooseActivityHint
@@ -1198,7 +1199,19 @@ export function DesktopLifePage({
     const chooseActivity = item.draft?.recovery_action === 'choose_activity'
     const replaceUpload = item.draft?.recovery_action === 'replace_upload'
     const processing = item.status === 'processing' && !isActionPaused(item) && !unknown
-    const imageReview = Boolean(item.stage === 'image_review' && item.draft?.image_url && !item.draft.image_confirmed)
+
+    const imageReview = Boolean(
+      item.status === 'review_pending' &&
+      item.stage === 'image_review' &&
+      item.draft?.image_url &&
+      !item.draft.image_confirmed
+    )
+
+    const preparingImage = Boolean(
+      item.draft &&
+      !item.draft.video_refinement &&
+      ['planning', 'checking', 'repairing', 'image', 'image_upload'].includes(item.stage)
+    )
 
     const candidate = Boolean(
       item.status === 'review_pending' && item.stage !== 'image_review' && item.draft?.candidate_video_url
@@ -1211,7 +1224,7 @@ export function DesktopLifePage({
     const step =
       candidate || (!item.draft && item.current)
         ? 3
-        : imageReview
+        : imageReview || preparingImage
           ? 1
           : item.draft
             ? item.draft.image_confirmed || item.draft.video_refinement || item.draft.source === 'external_upload'

@@ -94,6 +94,7 @@ from features.desktop_life.repository import (
     desktop_action_description,
     desktop_action_response,
     desktop_asset_description,
+    desktop_failed_opening_review,
     desktop_image_origin,
     desktop_preferences,
     desktop_progress,
@@ -1131,6 +1132,8 @@ async def confirm_desktop_image(
         )
         if progress is None or not progress.pose_path:
             raise DesktopVideoStateError("请先准备基础图片")
+        if desktop_failed_opening_review(action, progress):
+            raise DesktopVideoStateError("当前画面尚未完成活动检查，请先重试制作")
         if desktop_progress_has_unknown_submission(progress):
             raise DesktopVideoStateError("供应商提交结果尚未确认，请先放弃本次制作再重新开始")
         if progress.image_confirmed and action.stage not in {"image_review", "image_confirmed"}:
@@ -1214,6 +1217,7 @@ async def retry_desktop_action(
             return desktop_action_response(action)
         if (
             action.stage in {"complete", "review", "image_review", "image_confirmed"}
+            and not desktop_failed_opening_review(action, progress)
             or progress.failure_reason == "activity_unsupported"
         ):
             return desktop_action_response(action)
@@ -1428,7 +1432,12 @@ async def resume_desktop_action(
             return desktop_action_response(action)
         if desktop_progress_has_unknown_submission(progress):
             raise DesktopVideoStateError("供应商提交结果尚未确认，请先核对结果或放弃本次制作")
-        if action.stage in {"complete", "review", "image_review", "image_confirmed"}:
+        if action.stage in {
+            "complete",
+            "review",
+            "image_review",
+            "image_confirmed",
+        } and not desktop_failed_opening_review(action, progress):
             raise DesktopVideoStateError("请先确认当前制作结果")
         if progress.failure_reason == "material_rejected":
             raise DesktopVideoStateError(

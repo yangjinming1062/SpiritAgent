@@ -17,6 +17,7 @@ import { useDesktopLifeStrings } from './desktop-life-strings'
 export interface DesktopLifePreviewStatus {
   kind: 'working' | 'paused' | 'error' | 'unknown' | 'empty'
   title: string
+  phase?: string
   description?: string
   detail?: string
   actions?: React.ReactNode
@@ -274,10 +275,11 @@ function ResolvedDesktopLifePreview({
             >
               {displayedStatus.kind === 'working' && <span aria-hidden="true" className={styles.spinner} />}
               <strong className={styles.statusTitle}>{displayedStatus.title}</strong>
+              {displayedStatus.phase && <p className={styles.statusDescription}>{t.failedAt(displayedStatus.phase)}</p>}
               {displayedStatus.description && <p className={styles.statusDescription}>{displayedStatus.description}</p>}
               {displayedStatus.detail && (
                 <details className={styles.details}>
-                  <summary>{t.reviewDetails}</summary>
+                  <summary>{displayedStatus.kind === 'error' ? t.details : t.reviewDetails}</summary>
                   <p>{displayedStatus.detail}</p>
                 </details>
               )}

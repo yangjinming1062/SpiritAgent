@@ -188,6 +188,10 @@ def desktop_asset_description(action: DesktopVideoAction, asset: DesktopVideoAss
     return description
 
 
+def desktop_failed_opening_review(action: DesktopVideoAction, progress: DesktopVideoProgress | None) -> bool:
+    return bool(action.stage == "image_review" and action.error and progress and progress.failure_reason)
+
+
 def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionResponse:
     accepted = desktop_accepted_asset(action)
     progress = desktop_progress(action)
@@ -195,10 +199,19 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
     poster = accepted.poster_path if accepted else progress.pose_path if progress else ""
     playable = accepted is not None and action.enabled and not action.needs_update
     draft = progress if progress is not None and action.stage != "complete" else None
+    failed_opening = desktop_failed_opening_review(action, progress)
+    status = "failed" if failed_opening else action.status
+    stage = ("planning" if draft and draft.creation_plan is None else "checking") if failed_opening else action.stage
     video_review_pending = (
         action.status == "review_pending" and action.stage != "image_review" and candidate is not None
     )
-    error = None if video_review_pending else action.error
+    error = (
+        "活动画面尚未完成规划与检查，已保留原图，点击“再试一次”继续准备。"
+        if failed_opening
+        else None
+        if video_review_pending
+        else action.error
+    )
     video_queue = (
         MediaChainState.model_validate_json(progress.video_chain_json).video_queue
         if progress is not None and progress.video_chain_json
@@ -224,7 +237,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         else None,
         draft=DesktopVideoDraftResponse(
             id=draft.generation_id,
-            stage=action.stage,
+            stage=stage,
             source=draft.source,
             target_width=draft.target_width,
             target_height=draft.target_height,
@@ -247,7 +260,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
             else "choose_activity"
             if draft.failure_reason == "activity_unsupported"
             else "replace_upload"
-            if action.status == "failed"
+            if status == "failed"
             and draft.source == "external_upload"
             and draft.video_refinement is None
             and (
@@ -255,7 +268,7 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
                 or not (draft.source_path or draft.candidate)
             )
             else "retry"
-            if action.status == "failed"
+            if status == "failed"
             else None,
             candidate_video_url=client_asset_url(candidate.video_path) if candidate else "",
             candidate_poster_url=client_asset_url(candidate.poster_path) if candidate else "",
@@ -282,8 +295,8 @@ def desktop_action_response(action: DesktopVideoAction) -> DesktopVideoActionRes
         kind=action.kind,
         duration_seconds=action.duration_seconds,
         target_duration_seconds=action.target_duration_seconds,
-        status="queued" if action.status == "ready" and accepted is None else action.status,
-        stage=action.stage,
+        status="queued" if status == "ready" and accepted is None else status,
+        stage=stage,
         error=error,
         video_queue=video_queue,
         enabled=action.enabled,
