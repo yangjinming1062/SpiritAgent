@@ -9,7 +9,7 @@ import { useDesktopLifeStrings } from '@/app/features/desktop-life/desktop-life-
 import { DiaryPage } from '@/app/features/diary/diary-page'
 import { PostsPage } from '@/app/features/posts/posts-page'
 import { AppSettings } from '@/app/features/settings/app-settings'
-import { $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
+import { $appNavigationRevision, $appPage, applyAppNavigation, setAppPage } from '@/app/navigation/app-navigation'
 import { $persona, $portraitUrl, hydratePersona, hydratePortrait } from '@/modules/character'
 import {
   $chatSessionId,
@@ -58,6 +58,7 @@ export function DesktopRoot(): React.JSX.Element {
   const auth = useStore($auth)
   const uiStateReady = useStore($uiStateReady)
   const appPage = useStore($appPage)
+  const navigationRevision = useStore($appNavigationRevision)
   const gatewayState = useStore($gatewayState)
   const gateway = useStore($gateway)
   const screenLocked = useStore($surfaceScreenLocked)
@@ -100,6 +101,7 @@ export function DesktopRoot(): React.JSX.Element {
   })
 
   const initialized = useRef(false)
+  const handledNavigationRevision = useRef(0)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -254,22 +256,26 @@ export function DesktopRoot(): React.JSX.Element {
       shellApi().desktop.onNavigate(payload => {
         void applyAppNavigation(payload)
           .then(() => {
-            activatePanel($appPage.get())
-
             if (payload.messageKey) {
               setUnreadReveal({ key: payload.messageKey, request: ++revealRequest.current })
             }
           })
           .catch(error => notifyError(error, t.chat))
       }),
-    [activatePanel, t.chat]
+    [t.chat]
   )
 
   useEffect(() => {
-    if (uiStateReady) {
-      activatePanel(appPage)
+    if (!uiStateReady || navigationRevision <= handledNavigationRevision.current) {
+      return
     }
-  }, [uiStateReady, appPage, activatePanel])
+
+    // 持久页面只记录选择；显式导航与模式交接才激活对应窗口。
+    handledNavigationRevision.current = navigationRevision
+    activate(appPage)
+    setOverlay(null)
+    setFocusedConversation(appPage === 'chat' ? 'main' : null)
+  }, [uiStateReady, navigationRevision, appPage, activate])
 
   useEffect(() => {
     document.title = `${dict.brand.name} · ${t.title}`
